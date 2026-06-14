@@ -1,0 +1,1 @@
+"""Object-tree walk -> content-id set (+ visitor hook for the index). PORT: walk(), _walk_new(), _expand_indirect(). KEEP the indirect-DIR fix (route I-prefixed dirs to indirect-size + resolve children via kopia show). TODO."""

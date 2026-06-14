@@ -1,0 +1,1 @@
+"""Physical/freeable/dedup/accum + global refcount. PORT: source_set(), build_global(), cached_refcount(), and the tool_physical/tool_freeable/tool_table logic. PARITY-CHECK output vs the CLI. TODO."""

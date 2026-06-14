@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+duckdb
+pydantic
+pystray
+pillow
