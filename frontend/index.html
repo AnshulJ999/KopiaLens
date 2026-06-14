@@ -14,126 +14,133 @@
     body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
     [x-cloak] { display: none !important; }
     .tabulator { border: 1px solid var(--bd); border-radius: 8px; font-size: 12.5px; background: var(--surface); }
-    .tabulator .tabulator-header { background: var(--head); border-bottom: 1px solid var(--bd); color: var(--fg); }
-    .tabulator .tabulator-header .tabulator-col { background: var(--head); border-right: 1px solid var(--bd); }
+    .tabulator .tabulator-header, .tabulator .tabulator-header .tabulator-col { background: var(--head); border-color: var(--bd); color: var(--fg); }
     .tabulator .tabulator-row { background: var(--surface); color: var(--fg); }
     .tabulator .tabulator-row.tabulator-row-even { background: var(--surface2); }
     .tabulator .tabulator-row:hover { background: var(--hover) !important; cursor: pointer; }
     .tabulator .tabulator-row.tabulator-selected { background: var(--sel) !important; }
     .tabulator .tabulator-row .tabulator-cell { border-right: 1px solid var(--bd); }
     .tabulator .tabulator-placeholder, .tabulator .tabulator-placeholder-contents { color: var(--muted); }
+    .tabulator .tabulator-menu { background: var(--surface); color: var(--fg); border: 1px solid var(--bd); }
+    .tabulator .tabulator-menu .tabulator-menu-item:hover { background: var(--hover); }
     :root { --surface:#fff; --surface2:#fafaf9; --head:#f5f5f4; --bd:#e7e5e4; --fg:#1c1917; --muted:#78716c; --hover:#f5f5f4; --sel:#e7e5e4; }
     .dark { --surface:#1c1917; --surface2:#242120; --head:#292524; --bd:#44403c; --fg:#e7e5e4; --muted:#a8a29e; --hover:#332f2c; --sel:#3f3a36; }
     .pill { display:inline-block; font-size:10.5px; padding:1px 6px; border-radius:9px; margin:1px; }
+    .tab { padding:6px 14px; font-size:13px; border-radius:7px; cursor:pointer; }
+    .fld { height:34px; border-radius:6px; padding:0 8px; font-size:13px; }
   </style>
 </head>
 <body class="bg-stone-100 dark:bg-stone-950 text-stone-900 dark:text-stone-100">
   <div id="app" x-data="kopiaLens()" x-init="init()" x-cloak class="h-screen flex flex-col">
 
     <header class="h-14 shrink-0 border-b border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 flex items-center gap-3 px-4">
-      <button @click="goRoot()" class="font-semibold text-lg shrink-0">Kopia<span class="text-emerald-600">Lens</span></button>
-      <select x-model="repo" @change="repoChanged()" class="h-9 rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 px-2 text-sm shrink-0">
+      <button @click="active='dashboard'; loadDashboard()" class="font-semibold text-lg shrink-0">Kopia<span class="text-emerald-600">Lens</span></button>
+      <select x-model="repo" @change="repoChanged()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 shrink-0">
         <template x-for="item in repos" :key="item.id"><option :value="item.id" x-text="item.name"></option></template>
       </select>
-
-      <div class="relative flex-1 max-w-2xl">
-        <input x-model.debounce.300ms="query" @input="runOmnibox()" @focus="omniOpen = !!query"
-          class="h-9 w-full rounded-full border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 pl-9 pr-3 text-sm"
+      <div class="relative flex-1 max-w-xl">
+        <input x-model.debounce.300ms="query" @input="active='search'; loadSearch()" @focus="active='search'"
+          class="fld w-full border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 pl-9"
           placeholder="Search files across all snapshots...">
         <svg class="absolute left-3 top-2.5 h-4 w-4 text-stone-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-        <div x-show="omniOpen" @click.outside="omniOpen=false" x-cloak
-          class="absolute z-30 mt-1 w-[44rem] max-w-[90vw] rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 shadow-xl p-3">
-          <div class="mb-2 flex items-center gap-2 text-xs">
-            <label class="flex items-center gap-1.5 rounded border border-stone-300 dark:border-stone-700 px-2 py-1"><input type="checkbox" x-model="deletedOnly" @change="runOmnibox()"> Deleted from disk</label>
-            <label class="flex items-center gap-1.5 rounded border border-stone-300 dark:border-stone-700 px-2 py-1"><input type="checkbox" x-model="overOneGb" @change="runOmnibox()"> &gt;1 GB</label>
-            <span class="ml-auto text-stone-500" x-text="omniMeta"></span>
-          </div>
-          <div id="omniTable" class="max-h-[60vh]"></div>
-          <div x-show="!indexReady" class="mt-2 text-xs text-amber-600">Index not built yet - search needs the file index (Index button, top right).</div>
-        </div>
       </div>
-
       <div class="ml-auto flex items-center gap-2 text-xs shrink-0">
         <span class="rounded border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 px-2 py-1" x-text="indexLine()"></span>
-        <button @click="buildIndex(false)" :disabled="!!busy" class="h-8 rounded bg-stone-800 dark:bg-stone-700 px-3 text-white disabled:opacity-50" title="Build/refresh the file index (background, can be slow on first run)">Index</button>
-        <button @click="toggleDark()" class="h-8 w-8 rounded border border-stone-300 dark:border-stone-700" :title="dark ? 'Light mode' : 'Dark mode'" x-text="dark ? '☀' : '☽'"></button>
+        <button @click="buildIndex()" :disabled="indexStatus.building" class="h-8 rounded bg-stone-800 dark:bg-stone-700 px-3 text-white disabled:opacity-50">Index</button>
+        <button @click="toggleDark()" class="h-8 w-8 rounded border border-stone-300 dark:border-stone-700" x-text="dark ? '☀' : '☽'"></button>
       </div>
     </header>
 
-    <div class="shrink-0 border-b border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 px-4 py-2 flex items-center gap-1.5 text-sm">
-      <template x-for="(crumb, i) in crumbs" :key="i">
-        <span class="flex items-center gap-1.5">
-          <button @click="crumb.go()" class="hover:underline" :class="i===crumbs.length-1 ? 'font-medium' : 'text-stone-500'" x-text="crumb.label"></button>
-          <span x-show="i < crumbs.length-1" class="text-stone-400">/</span>
-        </span>
+    <nav class="shrink-0 border-b border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 px-3 py-1.5 flex items-center gap-1">
+      <template x-for="t in tabs" :key="t.id">
+        <button class="tab" @click="active=t.id; activate()" :class="active===t.id ? 'bg-stone-200 dark:bg-stone-700 font-medium' : 'hover:bg-stone-100 dark:hover:bg-stone-800'" x-text="t.label"></button>
       </template>
-      <div class="ml-auto flex items-center gap-2">
+      <div class="ml-auto flex items-center gap-2 text-xs pr-2">
         <span x-show="busy" class="text-amber-600" x-text="busy"></span>
-        <span x-show="error" class="text-red-600" x-text="error"></span>
-        <button x-show="level==='sources'" @click="loadDashboard(true)" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs">Refresh</button>
-        <span x-show="level==='sources'" class="text-xs text-stone-500" x-text="dashboardMeta"></span>
+        <span x-show="error" class="text-red-600 max-w-md truncate" x-text="error"></span>
+        <span class="text-stone-400" x-show="selectedSource" x-text="'· ' + shortSource(selectedSource)"></span>
       </div>
-    </div>
+    </nav>
 
     <main class="min-w-0 flex-1 overflow-auto p-4">
-
-      <section x-show="level==='sources'" class="h-full">
-        <div id="dashboardTable" class="h-full"></div>
+      <section x-show="active==='dashboard'" class="h-full flex flex-col gap-2">
+        <div class="flex items-center gap-2 text-sm">
+          <button @click="loadDashboard(true)" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs">Recompute analysis</button>
+          <span class="text-stone-500 text-xs" x-text="dashboardMeta"></span>
+          <span class="text-stone-400 text-xs ml-auto">right-click a header to show/hide columns</span>
+        </div>
+        <div id="dashboardTable" class="flex-1 min-h-0"></div>
       </section>
 
-      <section x-show="level==='source'" class="h-full flex flex-col gap-3">
+      <section x-show="active==='snapshots'" class="h-full flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
-          <div class="text-sm font-medium break-all" x-text="selectedSource"></div>
-          <div class="ml-auto flex items-center gap-2">
-            <label class="flex items-center gap-1.5 text-xs rounded border border-stone-300 dark:border-stone-700 px-2 py-1.5"><input type="checkbox" x-model="showChurn" @change="loadSourceDetail()"> Show churn (slower)</label>
-            <button @click="simOpen=!simOpen" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm">Simulate retention</button>
-          </div>
-        </div>
-        <div x-show="simOpen" class="rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
-          <div class="flex flex-wrap items-end gap-3">
-            <template x-for="key in policyKeys" :key="key">
-              <label class="text-[11px] uppercase text-stone-500"><span x-text="key"></span><br><input type="number" min="0" x-model.number="policy[key]" class="mt-0.5 h-8 w-20 rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 px-2 text-sm"></label>
-            </template>
-            <button @click="runSimulate()" class="h-8 rounded bg-emerald-700 px-3 text-sm text-white">Run</button>
-            <div x-show="simResult" class="text-sm">
-              <span class="text-stone-500">reclaim</span> <span class="font-semibold text-emerald-600" x-text="simResult && fmtB(simResult.reclaim)"></span>
-              &middot; keep <span x-text="simResult && simResult.keep"></span> / del <span x-text="simResult && simResult.deleted"></span>
-              &middot; <span class="text-stone-500">pinned-elsewhere</span> <span x-text="simResult && fmtB(simResult.pinned)"></span>
-            </div>
-          </div>
+          <select x-model="selectedSource" @change="loadSnapshots()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[34rem] max-w-full">
+            <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
+          </select>
+          <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="showChurn" @change="loadSnapshots()"> Show churn (slower)</label>
         </div>
         <div id="snapshotsTable" class="flex-1 min-h-0"></div>
       </section>
 
-      <section x-show="level==='snapshot'" class="h-full flex flex-col gap-3">
+      <section x-show="active==='tree'" class="h-full flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
-          <div class="flex items-center gap-1.5 text-sm flex-wrap">
-            <button @click="treeGo(-1)" class="hover:underline text-stone-500">root</button>
-            <template x-for="(seg, i) in treeSegs" :key="i">
-              <span class="flex items-center gap-1.5"><span class="text-stone-400">\</span><button @click="treeGo(i)" class="hover:underline" x-text="seg"></button></span>
-            </template>
-          </div>
-          <div class="ml-auto flex items-center gap-2">
-            <button @click="mountCurrent()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Mount this whole snapshot as a drive">Mount snapshot</button>
-            <button @click="restoreOpen=!restoreOpen" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm">Restore...</button>
-          </div>
-        </div>
-        <div x-show="restoreOpen" class="rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3 flex flex-wrap items-end gap-2 text-sm">
-          <label class="text-xs text-stone-500">What<br><input x-model="restoreSource" class="mt-0.5 h-8 w-96 rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 px-2"></label>
-          <label class="text-xs text-stone-500">Destination<br><input x-model="restoreDest" class="mt-0.5 h-8 w-72 rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 px-2" placeholder="D:\restore-here"></label>
-          <button @click="restorePreview()" class="h-8 rounded bg-stone-800 dark:bg-stone-700 px-3 text-white">Preview command</button>
+          <select x-model="selectedSource" @change="loadSnapshots()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[26rem]">
+            <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
+          </select>
+          <select x-model="selectedSnapshot" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[20rem]">
+            <template x-for="sn in snapshots" :key="sn.id"><option :value="sn.id" x-text="humanTime(sn.start_time)"></option></template>
+          </select>
+          <input x-model="treePrefix" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[18rem]" placeholder="Path prefix" @keydown.enter="loadTree()">
+          <button @click="treePrefix=''; loadTree()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm">Open root</button>
         </div>
         <div id="treeTable" class="flex-1 min-h-0"></div>
       </section>
 
+      <section x-show="active==='search'" class="h-full flex flex-col gap-2">
+        <div class="flex flex-wrap items-center gap-2">
+          <input x-model.debounce.300ms="query" @input="loadSearch()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[26rem]" placeholder="Search paths">
+          <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="deletedOnly" @change="loadSearch()"> Deleted from disk</label>
+          <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="overOneGb" @change="loadSearch()"> &gt;1 GB</label>
+          <span class="text-xs text-stone-500" x-text="omniMeta"></span>
+        </div>
+        <div id="searchTable" class="flex-1 min-h-0"></div>
+      </section>
+
+      <section x-show="active==='simulate'" class="h-full flex flex-col gap-3">
+        <div class="flex flex-wrap items-end gap-3">
+          <select x-model="selectedSource" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[30rem]">
+            <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
+          </select>
+          <template x-for="k in policyKeys" :key="k">
+            <label class="text-[11px] uppercase text-stone-500"><span x-text="k"></span><br><input type="number" min="0" x-model.number="policy[k]" class="mt-0.5 fld w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800"></label>
+          </template>
+          <button @click="runSimulate()" class="h-8 rounded bg-emerald-700 px-3 text-sm text-white">Run</button>
+        </div>
+        <pre class="flex-1 min-h-0 overflow-auto rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3 text-sm" x-text="simText"></pre>
+      </section>
+
+      <section x-show="active==='actions'" class="h-full flex flex-col gap-3">
+        <div class="grid max-w-5xl grid-cols-1 gap-3 lg:grid-cols-2">
+          <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+            <div class="mb-2 font-medium">Mount snapshot (read-only)</div>
+            <input x-model="mountSnapshot" class="mb-2 fld w-full border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="Snapshot ID">
+            <input x-model="mountPoint" class="mb-2 fld w-full border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="Mount folder / drive">
+            <button @click="mount()" class="h-8 rounded bg-emerald-700 px-3 text-sm text-white">Mount</button>
+          </div>
+          <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+            <div class="mb-2 font-medium">Restore (preview command only)</div>
+            <input x-model="restoreSource" class="mb-2 fld w-full border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="Snapshot/path">
+            <input x-model="restoreDest" class="mb-2 fld w-full border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="Destination">
+            <button @click="restorePreview()" class="h-8 rounded bg-stone-800 dark:bg-stone-700 px-3 text-sm text-white">Preview</button>
+          </div>
+        </div>
+        <pre class="flex-1 min-h-0 overflow-auto rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3 text-sm" x-text="actionText"></pre>
+      </section>
     </main>
 
     <div x-show="detail" @click.self="detail=null" x-cloak class="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-6">
       <div class="w-[48rem] max-w-full max-h-[80vh] overflow-auto rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-4">
-        <div class="flex items-start gap-2">
-          <div class="font-medium break-all text-sm" x-text="detail && detail.title"></div>
-          <button @click="detail=null" class="ml-auto text-stone-500">&times;</button>
-        </div>
+        <div class="flex items-start gap-2"><div class="font-medium break-all text-sm" x-text="detail && detail.title"></div><button @click="detail=null" class="ml-auto text-stone-500">&times;</button></div>
         <pre class="mt-3 whitespace-pre-wrap text-xs bg-stone-50 dark:bg-stone-800 rounded p-3" x-text="detail && detail.body"></pre>
       </div>
     </div>

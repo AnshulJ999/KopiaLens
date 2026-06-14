@@ -173,15 +173,13 @@ def _table_snaphash(repo: str, mode: str, recent) -> str:
 
 
 def table_rows(repo: str, recent: int | str | None = None, refresh: bool = False, mode: str = "all") -> dict:
-    key_hash = _table_snaphash(repo, mode, recent)
     cache_file = _table_cache_path(repo, mode)
-    if not refresh:
+    if not refresh:                       # serve cache directly -> instant; recompute only on refresh
         try:
             with open(cache_file, encoding="utf-8") as fh:
-                cached = json.load(fh)
-            if cached.get("key") == key_hash:
-                cached["data"]["cached"] = True
-                return cached["data"]
+                cached = json.load(fh)["data"]
+            cached["cached"] = True
+            return cached
         except Exception:
             pass
     db = cache_db(repo)
@@ -212,7 +210,7 @@ def table_rows(repo: str, recent: int | str | None = None, refresh: bool = False
     data = {"rows": ordered, "elapsed": elapsed, "union_total": union_total, "mode": mode, "recent": recent, "cached": False}
     try:
         with open(cache_file, "w", encoding="utf-8") as fh:
-            json.dump({"key": key_hash, "data": data}, fh)
+            json.dump({"data": data}, fh)
     except Exception:
         pass
     return data
