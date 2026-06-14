@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import collections
 import hashlib
+import json
 import os
 import pickle
 import time
@@ -149,14 +150,40 @@ def physical_report(repo: str, source: str, recent: int | str | None = None, ref
         "physical_all": phys_all,
         "physical_latest": phys_latest,
         "dedup": stats["sum"] / phys_all if phys_all else 0,
-        "accum": phys_all / phys_latest if phys_latest else 0,
+        "accum": phys_all / phys_latest if phys_latest > 1_000_000 else 0,
         "walk": walk_stats,
         "content_ids": len(cids),
         "missing": missing,
     }
 
 
+def _table_cache_path(repo: str, mode: str) -> str:
+    return os.path.join(CACHEDIR, f"table_cache_repo{repo}_{mode}.json")
+
+
+def _table_snaphash(repo: str, mode: str, recent) -> str:
+    srcs = sources_index(repo)
+    membership, _ = split_sources(srcs, mode)
+    h = hashlib.md5()
+    h.update(f"v1|{recent}|{mode}".encode())
+    for key in membership:
+        for snap in srcs[key]:
+            h.update((snap.get("id", "")).encode())
+    return h.hexdigest()
+
+
 def table_rows(repo: str, recent: int | str | None = None, refresh: bool = False, mode: str = "all") -> dict:
+    key_hash = _table_snaphash(repo, mode, recent)
+    cache_file = _table_cache_path(repo, mode)
+    if not refresh:
+        try:
+            with open(cache_file, encoding="utf-8") as fh:
+                cached = json.load(fh)
+            if cached.get("key") == key_hash:
+                cached["data"]["cached"] = True
+                return cached["data"]
+        except Exception:
+            pass
     db = cache_db(repo)
     smap = load_sizemap(repo, refresh=refresh)
     rows, elapsed, _count, union_total = build_global(repo, db, smap, recent=recent, mode=mode)
@@ -173,7 +200,7 @@ def table_rows(repo: str, recent: int | str | None = None, refresh: bool = False
                 "logical_sum": stats["sum"],
                 "physical": row["total"],
                 "physical_latest": row["phys_latest"],
-                "accum": row["total"] / row["phys_latest"] if row["phys_latest"] else 0,
+                "accum": row["total"] / row["phys_latest"] if row["phys_latest"] > 1_000_000 else 0,
                 "repo_pct": 100 * row["total"] / union_total if union_total else 0,
                 "freeable": row["free"],
                 "dedup": stats["sum"] / row["total"] if row["total"] else 0,
@@ -182,4 +209,10 @@ def table_rows(repo: str, recent: int | str | None = None, refresh: bool = False
                 "last": stats["last"],
             }
         )
-    return {"rows": ordered, "elapsed": elapsed, "union_total": union_total, "mode": mode, "recent": recent}
+    data = {"rows": ordered, "elapsed": elapsed, "union_total": union_total, "mode": mode, "recent": recent, "cached": False}
+    try:
+        with open(cache_file, "w", encoding="utf-8") as fh:
+            json.dump({"key": key_hash, "data": data}, fh)
+    except Exception:
+        pass
+    return data

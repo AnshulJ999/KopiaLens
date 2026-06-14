@@ -5,133 +5,139 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>KopiaLens</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = { darkMode: 'class' };</script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/css/tabulator_simple.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/js/tabulator.min.js"></script>
   <style>
     html, body { height: 100%; }
-    body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    .tabulator { border: 1px solid #d6d3d1; border-radius: 6px; font-size: 12px; }
-    .tabulator .tabulator-header { background: #f5f5f4; border-bottom: 1px solid #d6d3d1; }
-    .tabulator-row .tabulator-cell { border-right: 1px solid #e7e5e4; }
+    body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
     [x-cloak] { display: none !important; }
+    .tabulator { border: 1px solid var(--bd); border-radius: 8px; font-size: 12.5px; background: var(--surface); }
+    .tabulator .tabulator-header { background: var(--head); border-bottom: 1px solid var(--bd); color: var(--fg); }
+    .tabulator .tabulator-header .tabulator-col { background: var(--head); border-right: 1px solid var(--bd); }
+    .tabulator .tabulator-row { background: var(--surface); color: var(--fg); }
+    .tabulator .tabulator-row.tabulator-row-even { background: var(--surface2); }
+    .tabulator .tabulator-row:hover { background: var(--hover) !important; cursor: pointer; }
+    .tabulator .tabulator-row.tabulator-selected { background: var(--sel) !important; }
+    .tabulator .tabulator-row .tabulator-cell { border-right: 1px solid var(--bd); }
+    .tabulator .tabulator-placeholder, .tabulator .tabulator-placeholder-contents { color: var(--muted); }
+    :root { --surface:#fff; --surface2:#fafaf9; --head:#f5f5f4; --bd:#e7e5e4; --fg:#1c1917; --muted:#78716c; --hover:#f5f5f4; --sel:#e7e5e4; }
+    .dark { --surface:#1c1917; --surface2:#242120; --head:#292524; --bd:#44403c; --fg:#e7e5e4; --muted:#a8a29e; --hover:#332f2c; --sel:#3f3a36; }
+    .pill { display:inline-block; font-size:10.5px; padding:1px 6px; border-radius:9px; margin:1px; }
   </style>
 </head>
-<body class="bg-stone-100 text-stone-950">
-  <div id="app" x-data="kopiaLens()" x-init="init()" x-cloak class="h-screen min-h-screen flex flex-col">
-    <header class="h-14 shrink-0 border-b border-stone-300 bg-white flex items-center gap-3 px-4">
-      <div class="font-semibold tracking-normal text-lg">KopiaLens</div>
-      <select x-model="repo" @change="repoChanged()" class="h-9 rounded border border-stone-300 bg-white px-2 text-sm">
-        <template x-for="item in repos" :key="item.id">
-          <option :value="item.id" x-text="item.name"></option>
-        </template>
+<body class="bg-stone-100 dark:bg-stone-950 text-stone-900 dark:text-stone-100">
+  <div id="app" x-data="kopiaLens()" x-init="init()" x-cloak class="h-screen flex flex-col">
+
+    <header class="h-14 shrink-0 border-b border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 flex items-center gap-3 px-4">
+      <button @click="goRoot()" class="font-semibold text-lg shrink-0">Kopia<span class="text-emerald-600">Lens</span></button>
+      <select x-model="repo" @change="repoChanged()" class="h-9 rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 px-2 text-sm shrink-0">
+        <template x-for="item in repos" :key="item.id"><option :value="item.id" x-text="item.name"></option></template>
       </select>
-      <select x-model="mode" @change="loadDashboard()" class="h-9 rounded border border-stone-300 bg-white px-2 text-sm">
-        <option value="all">Laptop: all</option>
-        <option value="hide">Laptop: hide</option>
-        <option value="ignore">Laptop: ignore</option>
-      </select>
-      <div class="ml-auto flex items-center gap-2 text-xs">
-        <span class="rounded border border-stone-300 bg-stone-50 px-2 py-1" x-text="indexLine()"></span>
-        <button @click="buildIndex(true)" class="h-8 rounded bg-emerald-700 px-3 text-white hover:bg-emerald-800">Index Source</button>
-        <button @click="buildIndex(false)" class="h-8 rounded bg-stone-900 px-3 text-white hover:bg-stone-800">Index All</button>
+
+      <div class="relative flex-1 max-w-2xl">
+        <input x-model.debounce.300ms="query" @input="runOmnibox()" @focus="omniOpen = !!query"
+          class="h-9 w-full rounded-full border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 pl-9 pr-3 text-sm"
+          placeholder="Search files across all snapshots...">
+        <svg class="absolute left-3 top-2.5 h-4 w-4 text-stone-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <div x-show="omniOpen" @click.outside="omniOpen=false" x-cloak
+          class="absolute z-30 mt-1 w-[44rem] max-w-[90vw] rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 shadow-xl p-3">
+          <div class="mb-2 flex items-center gap-2 text-xs">
+            <label class="flex items-center gap-1.5 rounded border border-stone-300 dark:border-stone-700 px-2 py-1"><input type="checkbox" x-model="deletedOnly" @change="runOmnibox()"> Deleted from disk</label>
+            <label class="flex items-center gap-1.5 rounded border border-stone-300 dark:border-stone-700 px-2 py-1"><input type="checkbox" x-model="overOneGb" @change="runOmnibox()"> &gt;1 GB</label>
+            <span class="ml-auto text-stone-500" x-text="omniMeta"></span>
+          </div>
+          <div id="omniTable" class="max-h-[60vh]"></div>
+          <div x-show="!indexReady" class="mt-2 text-xs text-amber-600">Index not built yet - search needs the file index (Index button, top right).</div>
+        </div>
+      </div>
+
+      <div class="ml-auto flex items-center gap-2 text-xs shrink-0">
+        <span class="rounded border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 px-2 py-1" x-text="indexLine()"></span>
+        <button @click="buildIndex(false)" :disabled="!!busy" class="h-8 rounded bg-stone-800 dark:bg-stone-700 px-3 text-white disabled:opacity-50" title="Build/refresh the file index (background, can be slow on first run)">Index</button>
+        <button @click="toggleDark()" class="h-8 w-8 rounded border border-stone-300 dark:border-stone-700" :title="dark ? 'Light mode' : 'Dark mode'" x-text="dark ? '☀' : '☽'"></button>
       </div>
     </header>
 
-    <div class="flex h-[calc(100vh-3.5rem)]">
-      <nav class="w-48 shrink-0 border-r border-stone-300 bg-white p-2">
-        <template x-for="tab in tabs" :key="tab.id">
-          <button @click="active=tab.id; activateTab()" class="mb-1 flex h-9 w-full items-center rounded px-3 text-left text-sm hover:bg-stone-100" :class="active===tab.id ? 'bg-stone-200 font-medium' : ''" x-text="tab.label"></button>
-        </template>
-      </nav>
-
-      <main class="min-w-0 flex-1 overflow-auto p-4">
-        <div x-show="busy" class="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900" x-text="busy"></div>
-        <div x-show="error" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900" x-text="error"></div>
-
-        <section x-show="active==='dashboard'" class="space-y-3">
-          <div class="flex items-center gap-2">
-            <button @click="loadDashboard(true)" class="h-8 rounded bg-stone-900 px-3 text-sm text-white">Refresh</button>
-            <span class="text-sm text-stone-600" x-text="dashboardMeta"></span>
-          </div>
-          <div id="dashboardTable" class="h-[calc(100vh-8.5rem)]"></div>
-        </section>
-
-        <section x-show="active==='snapshots'" class="space-y-3">
-          <div class="flex items-center gap-2">
-            <select x-model="selectedSource" @change="loadSnapshots()" class="h-9 min-w-[36rem] max-w-full rounded border border-stone-300 bg-white px-2 text-sm">
-              <template x-for="source in sources" :key="source">
-                <option :value="source" x-text="source"></option>
-              </template>
-            </select>
-            <button @click="loadSnapshots()" class="h-8 rounded bg-stone-900 px-3 text-sm text-white">Load</button>
-          </div>
-          <div id="snapshotsTable" class="h-[calc(100vh-8.5rem)]"></div>
-        </section>
-
-        <section x-show="active==='tree'" class="space-y-3">
-          <div class="flex flex-wrap items-center gap-2">
-            <select x-model="selectedSource" @change="loadSnapshots()" class="h-9 min-w-[28rem] rounded border border-stone-300 bg-white px-2 text-sm">
-              <template x-for="source in sources" :key="source">
-                <option :value="source" x-text="source"></option>
-              </template>
-            </select>
-            <select x-model="selectedSnapshot" class="h-9 min-w-[18rem] rounded border border-stone-300 bg-white px-2 text-sm">
-              <template x-for="snap in snapshots" :key="snap.id">
-                <option :value="snap.id" x-text="`${snap.start_time.slice(0, 19)}  ${snap.id}`"></option>
-              </template>
-            </select>
-            <input x-model="treePrefix" class="h-9 min-w-[18rem] rounded border border-stone-300 px-2 text-sm" placeholder="Path prefix">
-            <button @click="loadTree()" class="h-8 rounded bg-stone-900 px-3 text-sm text-white">Open</button>
-          </div>
-          <div id="treeTable" class="h-[calc(100vh-8.5rem)]"></div>
-        </section>
-
-        <section x-show="active==='search'" class="space-y-3">
-          <div class="flex flex-wrap items-center gap-2">
-            <input x-model.debounce.350ms="query" @input="loadSearch()" class="h-9 min-w-[26rem] rounded border border-stone-300 px-3 text-sm" placeholder="Search paths">
-            <label class="flex h-9 items-center gap-2 rounded border border-stone-300 bg-white px-3 text-sm"><input type="checkbox" x-model="deletedOnly" @change="loadSearch()"> Deleted</label>
-            <label class="flex h-9 items-center gap-2 rounded border border-stone-300 bg-white px-3 text-sm"><input type="checkbox" x-model="overOneGb" @change="loadSearch()"> &gt;1GB</label>
-            <button @click="loadSearch()" class="h-8 rounded bg-stone-900 px-3 text-sm text-white">Search</button>
-          </div>
-          <div id="searchTable" class="h-[calc(100vh-8.5rem)]"></div>
-          <pre class="min-h-28 rounded border border-stone-300 bg-white p-3 text-xs" x-text="searchDetail"></pre>
-        </section>
-
-        <section x-show="active==='simulate'" class="space-y-3">
-          <div class="flex flex-wrap items-center gap-2">
-            <select x-model="selectedSource" class="h-9 min-w-[34rem] rounded border border-stone-300 bg-white px-2 text-sm">
-              <template x-for="source in sources" :key="source">
-                <option :value="source" x-text="source"></option>
-              </template>
-            </select>
-            <template x-for="key in policyKeys" :key="key">
-              <label class="text-xs uppercase text-stone-600"><span x-text="key"></span><input type="number" min="0" x-model.number="policy[key]" class="ml-1 h-8 w-20 rounded border border-stone-300 px-2 text-sm"></label>
-            </template>
-            <button @click="runSimulate()" class="h-8 rounded bg-stone-900 px-3 text-sm text-white">Run</button>
-          </div>
-          <pre class="min-h-48 rounded border border-stone-300 bg-white p-3 text-sm" x-text="simText"></pre>
-        </section>
-
-        <section x-show="active==='actions'" class="space-y-4">
-          <div class="grid max-w-5xl grid-cols-1 gap-3 lg:grid-cols-2">
-            <div class="rounded border border-stone-300 bg-white p-3">
-              <div class="mb-2 font-medium">Mount</div>
-              <input x-model="mountSnapshot" class="mb-2 h-9 w-full rounded border border-stone-300 px-2 text-sm" placeholder="Snapshot ID">
-              <input x-model="mountPoint" class="mb-2 h-9 w-full rounded border border-stone-300 px-2 text-sm" placeholder="Mount folder">
-              <button @click="mount()" class="h-8 rounded bg-emerald-700 px-3 text-sm text-white">Mount</button>
-            </div>
-            <div class="rounded border border-stone-300 bg-white p-3">
-              <div class="mb-2 font-medium">Restore Preview</div>
-              <input x-model="restoreSource" class="mb-2 h-9 w-full rounded border border-stone-300 px-2 text-sm" placeholder="Snapshot/path">
-              <input x-model="restoreDest" class="mb-2 h-9 w-full rounded border border-stone-300 px-2 text-sm" placeholder="Destination">
-              <button @click="restorePreview()" class="h-8 rounded bg-stone-900 px-3 text-sm text-white">Preview</button>
-            </div>
-          </div>
-          <pre class="min-h-40 rounded border border-stone-300 bg-white p-3 text-sm" x-text="actionText"></pre>
-        </section>
-      </main>
+    <div class="shrink-0 border-b border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 px-4 py-2 flex items-center gap-1.5 text-sm">
+      <template x-for="(crumb, i) in crumbs" :key="i">
+        <span class="flex items-center gap-1.5">
+          <button @click="crumb.go()" class="hover:underline" :class="i===crumbs.length-1 ? 'font-medium' : 'text-stone-500'" x-text="crumb.label"></button>
+          <span x-show="i < crumbs.length-1" class="text-stone-400">/</span>
+        </span>
+      </template>
+      <div class="ml-auto flex items-center gap-2">
+        <span x-show="busy" class="text-amber-600" x-text="busy"></span>
+        <span x-show="error" class="text-red-600" x-text="error"></span>
+        <button x-show="level==='sources'" @click="loadDashboard(true)" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs">Refresh</button>
+        <span x-show="level==='sources'" class="text-xs text-stone-500" x-text="dashboardMeta"></span>
+      </div>
     </div>
+
+    <main class="min-w-0 flex-1 overflow-auto p-4">
+
+      <section x-show="level==='sources'" class="h-full">
+        <div id="dashboardTable" class="h-full"></div>
+      </section>
+
+      <section x-show="level==='source'" class="h-full flex flex-col gap-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="text-sm font-medium break-all" x-text="selectedSource"></div>
+          <div class="ml-auto flex items-center gap-2">
+            <label class="flex items-center gap-1.5 text-xs rounded border border-stone-300 dark:border-stone-700 px-2 py-1.5"><input type="checkbox" x-model="showChurn" @change="loadSourceDetail()"> Show churn (slower)</label>
+            <button @click="simOpen=!simOpen" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm">Simulate retention</button>
+          </div>
+        </div>
+        <div x-show="simOpen" class="rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+          <div class="flex flex-wrap items-end gap-3">
+            <template x-for="key in policyKeys" :key="key">
+              <label class="text-[11px] uppercase text-stone-500"><span x-text="key"></span><br><input type="number" min="0" x-model.number="policy[key]" class="mt-0.5 h-8 w-20 rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 px-2 text-sm"></label>
+            </template>
+            <button @click="runSimulate()" class="h-8 rounded bg-emerald-700 px-3 text-sm text-white">Run</button>
+            <div x-show="simResult" class="text-sm">
+              <span class="text-stone-500">reclaim</span> <span class="font-semibold text-emerald-600" x-text="simResult && fmtB(simResult.reclaim)"></span>
+              &middot; keep <span x-text="simResult && simResult.keep"></span> / del <span x-text="simResult && simResult.deleted"></span>
+              &middot; <span class="text-stone-500">pinned-elsewhere</span> <span x-text="simResult && fmtB(simResult.pinned)"></span>
+            </div>
+          </div>
+        </div>
+        <div id="snapshotsTable" class="flex-1 min-h-0"></div>
+      </section>
+
+      <section x-show="level==='snapshot'" class="h-full flex flex-col gap-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="flex items-center gap-1.5 text-sm flex-wrap">
+            <button @click="treeGo(-1)" class="hover:underline text-stone-500">root</button>
+            <template x-for="(seg, i) in treeSegs" :key="i">
+              <span class="flex items-center gap-1.5"><span class="text-stone-400">\</span><button @click="treeGo(i)" class="hover:underline" x-text="seg"></button></span>
+            </template>
+          </div>
+          <div class="ml-auto flex items-center gap-2">
+            <button @click="mountCurrent()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Mount this whole snapshot as a drive">Mount snapshot</button>
+            <button @click="restoreOpen=!restoreOpen" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm">Restore...</button>
+          </div>
+        </div>
+        <div x-show="restoreOpen" class="rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3 flex flex-wrap items-end gap-2 text-sm">
+          <label class="text-xs text-stone-500">What<br><input x-model="restoreSource" class="mt-0.5 h-8 w-96 rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 px-2"></label>
+          <label class="text-xs text-stone-500">Destination<br><input x-model="restoreDest" class="mt-0.5 h-8 w-72 rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 px-2" placeholder="D:\restore-here"></label>
+          <button @click="restorePreview()" class="h-8 rounded bg-stone-800 dark:bg-stone-700 px-3 text-white">Preview command</button>
+        </div>
+        <div id="treeTable" class="flex-1 min-h-0"></div>
+      </section>
+
+    </main>
+
+    <div x-show="detail" @click.self="detail=null" x-cloak class="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-6">
+      <div class="w-[48rem] max-w-full max-h-[80vh] overflow-auto rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-4">
+        <div class="flex items-start gap-2">
+          <div class="font-medium break-all text-sm" x-text="detail && detail.title"></div>
+          <button @click="detail=null" class="ml-auto text-stone-500">&times;</button>
+        </div>
+        <pre class="mt-3 whitespace-pre-wrap text-xs bg-stone-50 dark:bg-stone-800 rounded p-3" x-text="detail && detail.body"></pre>
+      </div>
+    </div>
+
   </div>
   <script src="/static/js/app.js"></script>
 </body>

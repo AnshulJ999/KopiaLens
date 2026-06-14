@@ -8,7 +8,7 @@ from config import REPOS
 
 from ..core.metrics import table_rows
 from ..core.sources import sources_index
-from ..index.builder import build_index, index_status
+from ..index.builder import start_build, index_status
 from ..index.queries import index_summary
 from ..settings import load_settings, save_settings
 
@@ -39,16 +39,17 @@ def sources(repo: str = "1") -> dict:
 def get_index_status(repo: str = "1") -> dict:
     try:
         status = index_status(repo)
-        status["summary"] = index_summary(repo)
+        if not status.get("building"):
+            status["summary"] = index_summary(repo)
         return status
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/index/build")
-def post_index_build(repo: str = "1", source: str | None = None, max_snapshots: int | None = Query(default=None, ge=1)) -> dict:
+def post_index_build(repo: str = "1", source: str | None = None) -> dict:
     try:
-        return build_index(repo, source=source, max_snapshots=max_snapshots)
+        return start_build(repo, source=source)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

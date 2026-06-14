@@ -134,3 +134,33 @@ def walk_new(repo: str, db: sqlite3.Connection, roots: list[str], seen_dirs: set
 
     found |= expand_indirect(repo, db, indirect)
     return found
+
+
+def walk_new_visit(repo: str, db: sqlite3.Connection, roots: list[str], seen_dirs: set[str], visitor: Visitor) -> None:
+    """Delta walk for the file index: descend only directories whose OID is NEW
+    (not in seen_dirs), and call visitor(parent_path, entry) for every FILE entry under
+    them. Accumulating seen_dirs across a source's snapshots (newest-first) means each
+    unique directory is emitted once -> the index stays ~one row per file-version, not
+    files x snapshots. Indirect dirs are resolved by get_children (kopia show)."""
+
+    frontier: list = [(root, "") for root in roots if root not in seen_dirs]
+    while frontier:
+        batch: list[str] = []
+        pathmap: dict[str, str] = {}
+        for oid, path in frontier:
+            if oid in seen_dirs:
+                continue
+            seen_dirs.add(oid)
+            batch.append(oid)
+            pathmap[oid] = path
+        frontier = []
+        for oid, entries in get_children(repo, db, batch).items():
+            base = pathmap.get(oid, "")
+            for entry in entries:
+                etype = entry.get("type")
+                if etype == "d":
+                    obj = entry.get("obj", "")
+                    if obj and obj not in seen_dirs:
+                        frontier.append((obj, base + "\\" + entry.get("name", "")))
+                elif etype == "f":
+                    visitor(base, entry)

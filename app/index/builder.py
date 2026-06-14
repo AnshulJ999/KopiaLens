@@ -1,13 +1,24 @@
-"""Incremental DuckDB index builder."""
+"""DuckDB index builder.
+
+Delta strategy: index each source's snapshots NEWEST-first with an accumulating
+``seen_dirs`` set. The latest snapshot is indexed fully (powers the tree + the
+``in_latest``/deleted-from-disk logic); older snapshots emit only their UNIQUE
+(changed/deleted) files. Each unique directory-OID is walked once, so the index is
+~one row per file-version (not files x snapshots). Reads the warm sqlite dir cache -
+no kopia re-walk. Runs in a background thread so the UI never blocks.
+"""
 
 from __future__ import annotations
 
+import threading
 import time
 
 from .schema import connect, init_schema
 from ..core.cache import cache_db
 from ..core.sources import sources_index
-from ..core.walk import walk
+from ..core.walk import walk_new_visit
+
+_JOBS: dict[str, dict] = {}
 
 
 def _source_root(source: str) -> str:
@@ -27,80 +38,95 @@ def _full_path(source: str, relative: str) -> str:
 def index_status(repo: str) -> dict:
     srcs = sources_index(repo)
     total = sum(len(snaps) for snaps in srcs.values())
+    job = _JOBS.get(repo, {})
+    if job.get("building"):
+        return {
+            "repo": repo, "snapshots": total,
+            "indexed_snapshots": job.get("indexed", 0),
+            "files": None, "building": True, "error": None,
+            "current_source": job.get("current_source"),
+        }
     con = connect(repo)
     init_schema(con)
     indexed = con.execute("SELECT COUNT(*) FROM indexed_snapshots WHERE repo=?", [repo]).fetchone()[0]
     files = con.execute("SELECT COUNT(*) FROM files WHERE repo=?", [repo]).fetchone()[0]
-    last = con.execute(
-        "SELECT max(indexed_at) FROM indexed_snapshots WHERE repo=?",
-        [repo],
-    ).fetchone()[0]
+    last = con.execute("SELECT max(indexed_at) FROM indexed_snapshots WHERE repo=?", [repo]).fetchone()[0]
     con.close()
-    return {"repo": repo, "snapshots": total, "indexed_snapshots": indexed, "missing_snapshots": total - indexed, "files": files, "last_indexed_at": last}
-
-
-def build_index(repo: str, source: str | None = None, max_snapshots: int | None = None) -> dict:
-    """Index missing snapshots. Use ``max_snapshots`` for cautious first runs."""
-
-    srcs = sources_index(repo)
-    targets = {source: srcs[source]} if source else srcs
-    con = connect(repo)
-    init_schema(con)
-    already = {
-        row[0]
-        for row in con.execute("SELECT snapshot_id FROM indexed_snapshots WHERE repo=?", [repo]).fetchall()
+    return {
+        "repo": repo, "snapshots": total, "indexed_snapshots": indexed,
+        "missing_snapshots": total - indexed, "files": files,
+        "last_indexed_at": str(last) if last else None,
+        "building": False, "error": job.get("error"),
     }
-    db = cache_db(repo)
-    started = time.time()
-    indexed = 0
-    inserted_files = 0
 
-    for key in sorted(targets):
-        for snap in targets[key]:
-            if max_snapshots is not None and indexed >= max_snapshots:
-                con.close()
-                return {"repo": repo, "indexed": indexed, "files": inserted_files, "elapsed": time.time() - started, "limited": True}
-            snap_id = snap["id"]
-            if snap_id in already:
+
+def _run_build(repo: str, source: str | None) -> None:
+    job = _JOBS[repo]
+    con = None
+    try:
+        srcs = sources_index(repo)
+        keys = [source] if source else sorted(srcs)
+        con = connect(repo)
+        init_schema(con)
+        db = cache_db(repo)
+        job["total"] = sum(len(srcs[k]) for k in keys if k in srcs)
+        job["indexed"] = 0
+        for key in keys:
+            if key not in srcs:
                 continue
-            root = snap.get("rootEntry", {}).get("obj")
-            if not root:
-                continue
+            job["current_source"] = key
+            con.execute("DELETE FROM files WHERE repo=? AND source=?", [repo, key])
+            con.execute("DELETE FROM indexed_snapshots WHERE repo=? AND source=?", [repo, key])
+            seen_dirs: set[str] = set()
+            snaps = sorted(srcs[key], key=lambda s: s.get("startTime", ""), reverse=True)  # newest first
+            for snap in snaps:
+                root = snap.get("rootEntry", {}).get("obj")
+                snap_id = snap["id"]
+                start = snap.get("startTime", "") or None
+                if not root:
+                    job["indexed"] += 1
+                    continue
+                rows: list[tuple] = []
+                count = [0]
 
-            rows: list[tuple] = []
-            ordinal = 0
+                def visitor(parent: str, entry: dict, _key=key, _sid=snap_id, _start=start) -> None:
+                    rel = (parent + "\\" + entry.get("name", "")).lstrip("\\")
+                    rows.append((
+                        repo, _key, _full_path(_key, rel), entry.get("name", ""),
+                        int(entry.get("size", 0) or 0), entry.get("obj", ""), _sid, _start, count[0],
+                    ))
+                    count[0] += 1
+                    if len(rows) >= 5000:
+                        con.executemany("INSERT INTO files VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+                        rows.clear()
 
-            def visitor(parent: str, entry: dict) -> None:
-                nonlocal ordinal
-                if entry.get("type") != "f":
-                    return
-                rel = (parent + "\\" + entry.get("name", "")).lstrip("\\")
-                rows.append(
-                    (
-                        repo,
-                        key,
-                        _full_path(key, rel),
-                        entry.get("name", ""),
-                        int(entry.get("size", 0) or 0),
-                        entry.get("obj", ""),
-                        snap_id,
-                        snap.get("startTime", ""),
-                        ordinal,
-                    )
-                )
-                ordinal += 1
-                if len(rows) >= 5000:
+                walk_new_visit(repo, db, [root], seen_dirs, visitor)
+                if rows:
                     con.executemany("INSERT INTO files VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
-                    rows.clear()
+                con.execute(
+                    "INSERT OR REPLACE INTO indexed_snapshots(repo, snapshot_id, source, start_time, root_obj, file_count) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    [repo, snap_id, key, start, root, count[0]],
+                )
+                job["indexed"] += 1
+        con.commit()
+    except Exception as exc:  # noqa: BLE001 - surfaced to the UI
+        job["error"] = str(exc)
+    finally:
+        if con is not None:
+            try:
+                con.commit()
+            except Exception:
+                pass
+            con.close()
+        job["building"] = False
+        job["finished_at"] = time.time()
 
-            walk(repo, [root], db, visitor=visitor)
-            if rows:
-                con.executemany("INSERT INTO files VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
-            con.execute(
-                "INSERT OR REPLACE INTO indexed_snapshots(repo, snapshot_id, source, start_time, root_obj, file_count) VALUES (?, ?, ?, ?, ?, ?)",
-                [repo, snap_id, key, snap.get("startTime", ""), root, ordinal],
-            )
-            inserted_files += ordinal
-            indexed += 1
-    con.close()
-    return {"repo": repo, "indexed": indexed, "files": inserted_files, "elapsed": time.time() - started, "limited": False}
+
+def start_build(repo: str, source: str | None = None) -> dict:
+    """Kick off a background index build (delta). Returns immediately; poll index_status."""
+    if _JOBS.get(repo, {}).get("building"):
+        return {"started": False, "reason": "already building", "repo": repo}
+    _JOBS[repo] = {"building": True, "indexed": 0, "total": 0, "error": None, "current_source": None}
+    threading.Thread(target=_run_build, args=(repo, source), daemon=True).start()
+    return {"started": True, "repo": repo, "source": source}
