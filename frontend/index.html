@@ -1,1 +1,136 @@
-<div id="app">KopiaLens -- TODO frontend (Tailwind + Alpine + Tabulator via CDN). Panels: dashboard, snapshots, tree, search, simulate.</div>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KopiaLens</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/css/tabulator_simple.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/js/tabulator.min.js"></script>
+  <style>
+    html, body { height: 100%; }
+    body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .tabulator { border: 1px solid #d6d3d1; border-radius: 6px; font-size: 12px; }
+    .tabulator .tabulator-header { background: #f5f5f4; border-bottom: 1px solid #d6d3d1; }
+    .tabulator-row .tabulator-cell { border-right: 1px solid #e7e5e4; }
+    [x-cloak] { display: none !important; }
+  </style>
+</head>
+<body class="bg-stone-100 text-stone-950">
+  <div id="app" x-data="kopiaLens()" x-init="init()" x-cloak class="h-screen min-h-screen flex flex-col">
+    <header class="h-14 shrink-0 border-b border-stone-300 bg-white flex items-center gap-3 px-4">
+      <div class="font-semibold tracking-normal text-lg">KopiaLens</div>
+      <select x-model="repo" @change="repoChanged()" class="h-9 rounded border border-stone-300 bg-white px-2 text-sm">
+        <template x-for="item in repos" :key="item.id">
+          <option :value="item.id" x-text="item.name"></option>
+        </template>
+      </select>
+      <select x-model="mode" @change="loadDashboard()" class="h-9 rounded border border-stone-300 bg-white px-2 text-sm">
+        <option value="all">Laptop: all</option>
+        <option value="hide">Laptop: hide</option>
+        <option value="ignore">Laptop: ignore</option>
+      </select>
+      <div class="ml-auto flex items-center gap-2 text-xs">
+        <span class="rounded border border-stone-300 bg-stone-50 px-2 py-1" x-text="indexLine()"></span>
+        <button @click="buildIndex()" class="h-8 rounded bg-emerald-700 px-3 text-white hover:bg-emerald-800">Build Index</button>
+      </div>
+    </header>
+
+    <div class="flex h-[calc(100vh-3.5rem)]">
+      <nav class="w-48 shrink-0 border-r border-stone-300 bg-white p-2">
+        <template x-for="tab in tabs" :key="tab.id">
+          <button @click="active=tab.id; activateTab()" class="mb-1 flex h-9 w-full items-center rounded px-3 text-left text-sm hover:bg-stone-100" :class="active===tab.id ? 'bg-stone-200 font-medium' : ''" x-text="tab.label"></button>
+        </template>
+      </nav>
+
+      <main class="min-w-0 flex-1 overflow-auto p-4">
+        <div x-show="busy" class="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900" x-text="busy"></div>
+        <div x-show="error" class="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900" x-text="error"></div>
+
+        <section x-show="active==='dashboard'" class="space-y-3">
+          <div class="flex items-center gap-2">
+            <button @click="loadDashboard(true)" class="h-8 rounded bg-stone-900 px-3 text-sm text-white">Refresh</button>
+            <span class="text-sm text-stone-600" x-text="dashboardMeta"></span>
+          </div>
+          <div id="dashboardTable" class="h-[calc(100vh-8.5rem)]"></div>
+        </section>
+
+        <section x-show="active==='snapshots'" class="space-y-3">
+          <div class="flex items-center gap-2">
+            <select x-model="selectedSource" @change="loadSnapshots()" class="h-9 min-w-[36rem] max-w-full rounded border border-stone-300 bg-white px-2 text-sm">
+              <template x-for="source in sources" :key="source">
+                <option :value="source" x-text="source"></option>
+              </template>
+            </select>
+            <button @click="loadSnapshots()" class="h-8 rounded bg-stone-900 px-3 text-sm text-white">Load</button>
+          </div>
+          <div id="snapshotsTable" class="h-[calc(100vh-8.5rem)]"></div>
+        </section>
+
+        <section x-show="active==='tree'" class="space-y-3">
+          <div class="flex flex-wrap items-center gap-2">
+            <select x-model="selectedSource" @change="loadSnapshots()" class="h-9 min-w-[28rem] rounded border border-stone-300 bg-white px-2 text-sm">
+              <template x-for="source in sources" :key="source">
+                <option :value="source" x-text="source"></option>
+              </template>
+            </select>
+            <select x-model="selectedSnapshot" class="h-9 min-w-[18rem] rounded border border-stone-300 bg-white px-2 text-sm">
+              <template x-for="snap in snapshots" :key="snap.id">
+                <option :value="snap.id" x-text="`${snap.start_time.slice(0, 19)}  ${snap.id}`"></option>
+              </template>
+            </select>
+            <input x-model="treePrefix" class="h-9 min-w-[18rem] rounded border border-stone-300 px-2 text-sm" placeholder="Path prefix">
+            <button @click="loadTree()" class="h-8 rounded bg-stone-900 px-3 text-sm text-white">Open</button>
+          </div>
+          <div id="treeTable" class="h-[calc(100vh-8.5rem)]"></div>
+        </section>
+
+        <section x-show="active==='search'" class="space-y-3">
+          <div class="flex flex-wrap items-center gap-2">
+            <input x-model.debounce.350ms="query" @input="loadSearch()" class="h-9 min-w-[26rem] rounded border border-stone-300 px-3 text-sm" placeholder="Search paths">
+            <label class="flex h-9 items-center gap-2 rounded border border-stone-300 bg-white px-3 text-sm"><input type="checkbox" x-model="deletedOnly" @change="loadSearch()"> Deleted</label>
+            <label class="flex h-9 items-center gap-2 rounded border border-stone-300 bg-white px-3 text-sm"><input type="checkbox" x-model="overOneGb" @change="loadSearch()"> &gt;1GB</label>
+            <button @click="loadSearch()" class="h-8 rounded bg-stone-900 px-3 text-sm text-white">Search</button>
+          </div>
+          <div id="searchTable" class="h-[calc(100vh-8.5rem)]"></div>
+        </section>
+
+        <section x-show="active==='simulate'" class="space-y-3">
+          <div class="flex flex-wrap items-center gap-2">
+            <select x-model="selectedSource" class="h-9 min-w-[34rem] rounded border border-stone-300 bg-white px-2 text-sm">
+              <template x-for="source in sources" :key="source">
+                <option :value="source" x-text="source"></option>
+              </template>
+            </select>
+            <template x-for="key in policyKeys" :key="key">
+              <label class="text-xs uppercase text-stone-600"><span x-text="key"></span><input type="number" min="0" x-model.number="policy[key]" class="ml-1 h-8 w-20 rounded border border-stone-300 px-2 text-sm"></label>
+            </template>
+            <button @click="runSimulate()" class="h-8 rounded bg-stone-900 px-3 text-sm text-white">Run</button>
+          </div>
+          <pre class="min-h-48 rounded border border-stone-300 bg-white p-3 text-sm" x-text="simText"></pre>
+        </section>
+
+        <section x-show="active==='actions'" class="space-y-4">
+          <div class="grid max-w-5xl grid-cols-1 gap-3 lg:grid-cols-2">
+            <div class="rounded border border-stone-300 bg-white p-3">
+              <div class="mb-2 font-medium">Mount</div>
+              <input x-model="mountSnapshot" class="mb-2 h-9 w-full rounded border border-stone-300 px-2 text-sm" placeholder="Snapshot ID">
+              <input x-model="mountPoint" class="mb-2 h-9 w-full rounded border border-stone-300 px-2 text-sm" placeholder="Mount folder">
+              <button @click="mount()" class="h-8 rounded bg-emerald-700 px-3 text-sm text-white">Mount</button>
+            </div>
+            <div class="rounded border border-stone-300 bg-white p-3">
+              <div class="mb-2 font-medium">Restore Preview</div>
+              <input x-model="restoreSource" class="mb-2 h-9 w-full rounded border border-stone-300 px-2 text-sm" placeholder="Snapshot/path">
+              <input x-model="restoreDest" class="mb-2 h-9 w-full rounded border border-stone-300 px-2 text-sm" placeholder="Destination">
+              <button @click="restorePreview()" class="h-8 rounded bg-stone-900 px-3 text-sm text-white">Preview</button>
+            </div>
+          </div>
+          <pre class="min-h-40 rounded border border-stone-300 bg-white p-3 text-sm" x-text="actionText"></pre>
+        </section>
+      </main>
+    </div>
+  </div>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
