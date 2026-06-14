@@ -56,6 +56,7 @@ document.addEventListener("alpine:init", () => {
     query: "",
     deletedOnly: false,
     overOneGb: false,
+    searchDetail: "",
     policyKeys: ["latest", "hourly", "daily", "weekly", "monthly", "annual"],
     policy: { latest: 100, hourly: 96, daily: 30, weekly: 52, monthly: 36, annual: 5 },
     simText: "",
@@ -118,9 +119,10 @@ document.addEventListener("alpine:init", () => {
       if (this.active === "search") return this.loadSearch();
     },
 
-    async buildIndex() {
+    async buildIndex(selectedOnly = true) {
       await this.wrap(async () => {
-        const data = await getJson(`/api/index/build?repo=${encodeURIComponent(this.repo)}`, { method: "POST" });
+        const source = selectedOnly && this.selectedSource ? `&source=${encodeURIComponent(this.selectedSource)}` : "";
+        const data = await getJson(`/api/index/build?repo=${encodeURIComponent(this.repo)}${source}`, { method: "POST" });
         this.actionText = JSON.stringify(data, null, 2);
         await this.refreshBase();
       }, "Indexing snapshots...");
@@ -212,7 +214,13 @@ document.addEventListener("alpine:init", () => {
             const item = row.getData();
             this.selectedSource = item.source;
             this.restoreSource = item.full_path;
-            this.actionText = JSON.stringify(item, null, 2);
+            const params = `repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(item.source)}&full_path=${encodeURIComponent(item.full_path)}`;
+            const [versions, purge] = await Promise.all([
+              getJson(`/api/search/versions?${params}`),
+              getJson(`/api/actions/purge-plan?${params}`),
+            ]);
+            this.searchDetail = JSON.stringify({ file: item, versions: versions.versions, purge_plan: purge }, null, 2);
+            this.actionText = this.searchDetail;
           },
         });
       }, "Searching...");
