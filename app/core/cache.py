@@ -40,7 +40,7 @@ def cache_db(repo: str) -> sqlite3.Connection:
     db.execute("PRAGMA synchronous=NORMAL")
     db.execute("PRAGMA temp_store=MEMORY")
     db.execute("PRAGMA cache_size=-262144")    # 256 MB page cache
-    db.execute("PRAGMA mmap_size=8589934592")  # 8 GB memory-map (covers the 5.2 GB repo1 db)
+    db.execute("PRAGMA mmap_size=2147483648")  # 2 GB memory-map cap (mapped pages count as RSS)
     db.execute("CREATE TABLE IF NOT EXISTS dir_children (oid TEXT PRIMARY KEY, children TEXT)")
     db.execute("CREATE TABLE IF NOT EXISTS indirect (oid TEXT PRIMARY KEY, parts TEXT)")
     return db

@@ -68,10 +68,15 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
             content_id VARCHAR,
             snapshot_id VARCHAR,
             start_time TIMESTAMP,
-            ordinal BIGINT
+            ordinal BIGINT,
+            mtime TIMESTAMP
         )
         """
     )
+    try:  # migrate pre-existing files tables that lack the mtime column
+        con.execute("ALTER TABLE files ADD COLUMN mtime TIMESTAMP")
+    except Exception:
+        pass  # column already present
     con.execute(
         """
         CREATE TABLE IF NOT EXISTS indexed_snapshots (
@@ -86,5 +91,22 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
         )
         """
     )
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS paths (
+            repo VARCHAR,
+            source VARCHAR,
+            full_path VARCHAR,
+            name VARCHAR,
+            ext VARCHAR,
+            size UBIGINT,
+            versions BIGINT,
+            first_seen TIMESTAMP,
+            last_seen TIMESTAMP,
+            in_latest BOOLEAN
+        )
+        """
+    )
     con.execute("CREATE INDEX IF NOT EXISTS files_repo_source_path ON files(repo, source, full_path)")
     con.execute("CREATE INDEX IF NOT EXISTS files_snapshot ON files(repo, snapshot_id)")
+    con.execute("CREATE INDEX IF NOT EXISTS paths_repo_source ON paths(repo, source)")

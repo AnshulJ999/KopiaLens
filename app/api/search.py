@@ -16,14 +16,19 @@ def search(
     deleted_only: bool = False,
     largest: bool = False,
     over_gb: float = 0,
-    limit: int = 200,
+    source: str | None = None,
+    ext: str | None = None,
+    limit: int = 400,
     confirm_exists: bool = False,
 ) -> dict:
     min_size = int(over_gb * 1_000_000_000) if over_gb else 0
     if largest and not min_size:
         min_size = 1
     try:
-        return {"results": search_paths(repo, query=q, deleted_only=deleted_only, min_size=min_size, limit=limit, confirm_exists=confirm_exists)}
+        return {"results": search_paths(
+            repo, query=q, deleted_only=deleted_only, min_size=min_size,
+            source=source or None, ext=ext or None, limit=limit, confirm_exists=confirm_exists,
+        )}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

@@ -1,11 +1,17 @@
-"""DuckDB index builder.
+"""DuckDB index builder - incremental, self-healing.
 
-Delta strategy: index each source's snapshots NEWEST-first with an accumulating
-``seen_dirs`` set. The latest snapshot is indexed fully (powers the tree + the
-``in_latest``/deleted-from-disk logic); older snapshots emit only their UNIQUE
-(changed/deleted) files. Each unique directory-OID is walked once, so the index is
-~one row per file-version (not files x snapshots). Reads the warm sqlite dir cache -
-no kopia re-walk. Runs in a background thread so the UI never blocks.
+Delta strategy per source: index snapshots NEWEST-first with an accumulating
+``seen_dirs`` set. The latest snapshot is indexed fully (powers the tree +
+``in_latest``/deleted-from-disk); older snapshots emit only their UNIQUE files. Each
+unique directory-OID is walked once, so the index is ~one row per file-version. Reads
+the warm sqlite dir cache (no kopia re-walk).
+
+Incremental & self-healing: a normal build only rebuilds sources whose snapshot SET
+changed since last index, and drops sources that no longer exist - so the index always
+reflects the current repo without re-doing unchanged sources. ``full=True`` forces a
+rebuild of everything. After each source is (re)built, its rows in the ``paths``
+aggregate table (one row per distinct path) are recomputed - that table powers instant
+search. Runs in a background thread.
 """
 
 from __future__ import annotations
@@ -22,6 +28,30 @@ from ..core.walk import walk_new_visit
 
 _JOBS: dict[str, dict] = {}
 
+_FLUSH_ROWS = 50_000
+_INSERT_SQL = (
+    "INSERT INTO files SELECT repo, source, full_path, name, size, content_id, "
+    "snapshot_id, CAST(start_time AS TIMESTAMP), ordinal, CAST(mtime AS TIMESTAMP) FROM _ingest"
+)
+_FILE_INDEXES = (
+    ("files_repo_source_path", "files(repo, source, full_path)"),
+    ("files_snapshot", "files(repo, snapshot_id)"),
+    ("paths_repo_source", "paths(repo, source)"),
+)
+# Recompute the paths aggregate (1 row per distinct path) for one source.
+_PATHS_SQL = """
+INSERT INTO paths
+SELECT repo, source, full_path, name,
+       CASE WHEN contains(name, '.') THEN lower(list_extract(string_split(name, '.'), -1)) ELSE '' END AS ext,
+       size, versions, first_seen, last_seen, in_latest
+FROM (
+  SELECT repo, source, full_path, any_value(name) AS name, max(size) AS size,
+         count(DISTINCT snapshot_id) AS versions, min(start_time) AS first_seen,
+         max(start_time) AS last_seen, bool_or(snapshot_id = ?) AS in_latest
+  FROM files WHERE repo=? AND source=? GROUP BY repo, source, full_path
+)
+"""
+
 
 def _source_root(source: str) -> str:
     return source.split(":", 1)[1] if ":" in source else source
@@ -37,43 +67,6 @@ def _full_path(source: str, relative: str) -> str:
     return root + "\\" + rel
 
 
-def index_status(repo: str) -> dict:
-    srcs = sources_index(repo)
-    total = sum(len(snaps) for snaps in srcs.values())
-    job = _JOBS.get(repo, {})
-    if job.get("building"):
-        return {
-            "repo": repo, "snapshots": total,
-            "indexed_snapshots": job.get("indexed", 0),
-            "files": None, "building": True, "error": None,
-            "current_source": job.get("current_source"),
-        }
-    cur = read_cursor(repo)
-    try:
-        indexed = cur.execute("SELECT COUNT(*) FROM indexed_snapshots WHERE repo=?", [repo]).fetchone()[0]
-        files = cur.execute("SELECT COUNT(*) FROM files WHERE repo=?", [repo]).fetchone()[0]
-        last = cur.execute("SELECT max(indexed_at) FROM indexed_snapshots WHERE repo=?", [repo]).fetchone()[0]
-    finally:
-        cur.close()
-    return {
-        "repo": repo, "snapshots": total, "indexed_snapshots": indexed,
-        "missing_snapshots": total - indexed, "files": files,
-        "last_indexed_at": str(last) if last else None,
-        "building": False, "error": job.get("error"),
-    }
-
-
-_FLUSH_ROWS = 50_000
-_INSERT_SQL = (
-    "INSERT INTO files SELECT repo, source, full_path, name, size, content_id, "
-    "snapshot_id, CAST(start_time AS TIMESTAMP), ordinal FROM _ingest"
-)
-_FILE_INDEXES = (
-    ("files_repo_source_path", "files(repo, source, full_path)"),
-    ("files_snapshot", "files(repo, snapshot_id)"),
-)
-
-
 def _flush(con, rows: list[tuple]) -> None:
     """Bulk-insert a row batch via an Arrow table (~150x faster than executemany)."""
     if not rows:
@@ -82,6 +75,7 @@ def _flush(con, rows: list[tuple]) -> None:
     tbl = pa.table({
         "repo": c[0], "source": c[1], "full_path": c[2], "name": c[3],
         "size": c[4], "content_id": c[5], "snapshot_id": c[6], "start_time": c[7], "ordinal": c[8],
+        "mtime": c[9],
     })
     con.register("_ingest", tbl)
     con.execute(_INSERT_SQL)
@@ -99,62 +93,99 @@ def _create_indexes(con) -> None:
         con.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {cols}")
 
 
-def _run_build(repo: str, source: str | None) -> None:
+def _delete_source(con, repo: str, key: str) -> None:
+    con.execute("DELETE FROM files WHERE repo=? AND source=?", [repo, key])
+    con.execute("DELETE FROM indexed_snapshots WHERE repo=? AND source=?", [repo, key])
+    con.execute("DELETE FROM paths WHERE repo=? AND source=?", [repo, key])
+
+
+def _refresh_paths(con, repo: str, key: str) -> None:
+    row = con.execute(
+        "SELECT snapshot_id FROM indexed_snapshots WHERE repo=? AND source=? ORDER BY start_time DESC LIMIT 1",
+        [repo, key],
+    ).fetchone()
+    latest_id = row[0] if row else ""
+    con.execute(_PATHS_SQL, [latest_id, repo, key])
+
+
+def _build_source(con, db, repo: str, key: str, snaps: list[dict], job: dict) -> None:
+    _delete_source(con, repo, key)
+    seen_dirs: set[str] = set()
+    snaps_sorted = sorted(snaps, key=lambda s: s.get("startTime", ""), reverse=True)  # newest first
+    rows: list[tuple] = []
+    for snap in snaps_sorted:
+        root = snap.get("rootEntry", {}).get("obj")
+        snap_id = snap["id"]
+        start = snap.get("startTime", "") or None
+        if not root:
+            job["indexed"] += 1
+            continue
+        count = [0]
+
+        def visitor(parent: str, entry: dict, _key=key, _sid=snap_id, _start=start) -> None:
+            rel = (parent + "\\" + entry.get("name", "")).lstrip("\\")
+            rows.append((
+                repo, _key, _full_path(_key, rel), entry.get("name", ""),
+                int(entry.get("size", 0) or 0), entry.get("obj", ""), _sid, _start, count[0],
+                entry.get("mtime") or None,
+            ))
+            count[0] += 1
+            if len(rows) >= _FLUSH_ROWS:
+                _flush(con, rows)
+
+        walk_new_visit(repo, db, [root], seen_dirs, visitor)
+        con.execute(
+            "INSERT OR REPLACE INTO indexed_snapshots(repo, snapshot_id, source, start_time, root_obj, file_count) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [repo, snap_id, key, start, root, count[0]],
+        )
+        job["indexed"] += 1
+    _flush(con, rows)
+    _refresh_paths(con, repo, key)
+
+
+def _indexed_sets(con, repo: str) -> dict[str, set[str]]:
+    out: dict[str, set[str]] = {}
+    for src, sid in con.execute(
+        "SELECT source, snapshot_id FROM indexed_snapshots WHERE repo=?", [repo]
+    ).fetchall():
+        out.setdefault(src, set()).add(sid)
+    return out
+
+
+def _run_build(repo: str, source: str | None, full: bool) -> None:
     job = _JOBS[repo]
     con = None
-    full_build = source is None
     try:
         srcs = sources_index(repo)
-        keys = [source] if source else sorted(srcs)
         con = get_db(repo).cursor()  # build writes via its own cursor off the shared pool
         db = cache_db(repo)
-        if full_build:  # bulk-load without index maintenance, rebuild indexes once at the end
-            _drop_indexes(con)
-        job["total"] = sum(len(srcs[k]) for k in keys if k in srcs)
+        indexed = _indexed_sets(con, repo)
+        if source:
+            targets = [source] if source in srcs else []
+        elif full:
+            targets = sorted(srcs)
+        else:  # incremental: only sources whose snapshot SET changed
+            targets = [k for k in sorted(srcs) if {s["id"] for s in srcs[k]} != indexed.get(k, set())]
+        stale = [k for k in indexed if k not in srcs]  # self-heal: removed sources
+
+        job["total"] = sum(len(srcs[k]) for k in targets if k in srcs)
         job["indexed"] = 0
-        for key in keys:
-            if key not in srcs:
-                continue
+        job["targets"] = len(targets)
+        if full:
+            _drop_indexes(con)
+        for key in stale:
+            _delete_source(con, repo, key)
+        for key in targets:
             job["current_source"] = key
-            con.execute("DELETE FROM files WHERE repo=? AND source=?", [repo, key])
-            con.execute("DELETE FROM indexed_snapshots WHERE repo=? AND source=?", [repo, key])
-            seen_dirs: set[str] = set()
-            snaps = sorted(srcs[key], key=lambda s: s.get("startTime", ""), reverse=True)  # newest first
-            rows: list[tuple] = []  # per-source buffer, flushed in Arrow batches
-            for snap in snaps:
-                root = snap.get("rootEntry", {}).get("obj")
-                snap_id = snap["id"]
-                start = snap.get("startTime", "") or None
-                if not root:
-                    job["indexed"] += 1
-                    continue
-                count = [0]
-
-                def visitor(parent: str, entry: dict, _key=key, _sid=snap_id, _start=start) -> None:
-                    rel = (parent + "\\" + entry.get("name", "")).lstrip("\\")
-                    rows.append((
-                        repo, _key, _full_path(_key, rel), entry.get("name", ""),
-                        int(entry.get("size", 0) or 0), entry.get("obj", ""), _sid, _start, count[0],
-                    ))
-                    count[0] += 1
-                    if len(rows) >= _FLUSH_ROWS:
-                        _flush(con, rows)
-
-                walk_new_visit(repo, db, [root], seen_dirs, visitor)
-                con.execute(
-                    "INSERT OR REPLACE INTO indexed_snapshots(repo, snapshot_id, source, start_time, root_obj, file_count) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    [repo, snap_id, key, start, root, count[0]],
-                )
-                job["indexed"] += 1
-            _flush(con, rows)  # flush this source's remaining rows
+            _build_source(con, db, repo, key, srcs[key], job)
         con.commit()
     except Exception as exc:  # noqa: BLE001 - surfaced to the UI
         job["error"] = str(exc)
     finally:
         if con is not None:
             try:
-                if full_build:
+                if full:
                     _create_indexes(con)
                 con.commit()
             except Exception:
@@ -164,10 +195,49 @@ def _run_build(repo: str, source: str | None) -> None:
         job["finished_at"] = time.time()
 
 
-def start_build(repo: str, source: str | None = None) -> dict:
-    """Kick off a background index build (delta). Returns immediately; poll index_status."""
+def index_status(repo: str) -> dict:
+    srcs = sources_index(repo)
+    total = sum(len(snaps) for snaps in srcs.values())
+    job = _JOBS.get(repo, {})
+    if job.get("building"):
+        return {
+            "repo": repo, "snapshots": total,
+            "indexed_snapshots": job.get("indexed", 0),
+            "files": None, "building": True, "error": None,
+            "current_source": job.get("current_source"), "targets": job.get("targets"),
+        }
+    cur = read_cursor(repo)
+    try:
+        indexed = cur.execute("SELECT COUNT(*) FROM indexed_snapshots WHERE repo=?", [repo]).fetchone()[0]
+        files = cur.execute("SELECT COUNT(*) FROM files WHERE repo=?", [repo]).fetchone()[0]
+        last = cur.execute("SELECT max(indexed_at) FROM indexed_snapshots WHERE repo=?", [repo]).fetchone()[0]
+    finally:
+        cur.close()
+    return {
+        "repo": repo, "snapshots": total, "indexed_snapshots": indexed,
+        "missing_snapshots": total - indexed, "files": files,
+        "last_indexed_at": str(last) if last else None,
+        "building": False, "error": job.get("error"),
+    }
+
+
+def start_build(repo: str, source: str | None = None, full: bool = False) -> dict:
+    """Kick off a background index build. Default = incremental (only changed sources);
+    ``full=True`` rebuilds everything; ``source`` rebuilds one source. Poll index_status."""
     if _JOBS.get(repo, {}).get("building"):
         return {"started": False, "reason": "already building", "repo": repo}
     _JOBS[repo] = {"building": True, "indexed": 0, "total": 0, "error": None, "current_source": None}
-    threading.Thread(target=_run_build, args=(repo, source), daemon=True).start()
-    return {"started": True, "repo": repo, "source": source}
+    threading.Thread(target=_run_build, args=(repo, source, full), daemon=True).start()
+    return {"started": True, "repo": repo, "source": source, "full": full}
+
+
+def auto_reindex(repo: str) -> None:
+    """Background reindex (self-heal). Full rebuild if the paths table is unpopulated
+    (schema migration), else incremental - a no-op-fast pass when nothing changed."""
+    cur = read_cursor(repo)
+    try:
+        npaths = cur.execute("SELECT count(*) FROM paths WHERE repo=?", [repo]).fetchone()[0]
+        nidx = cur.execute("SELECT count(*) FROM indexed_snapshots WHERE repo=?", [repo]).fetchone()[0]
+    finally:
+        cur.close()
+    start_build(repo, full=(npaths == 0 and nidx > 0))

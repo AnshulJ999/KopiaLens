@@ -14,10 +14,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "laptop_mode": "all",
     "verbose": False,
     "recent": "",
+    "listing_backend": "subprocess",  # "subprocess" (default, no bg activity) | "server" (persistent kopia server)
     "kopialens": {
         "columns": [],
         "last_panel": "dashboard",
         "window": {},
+        "time_format": "absolute",
     },
 }
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,25 +11,57 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from config import REPOS
+
 from .api import actions, dashboard, search, simulate, snapshots, tree
 from .core import kopia as kopia_mod
 from .core.applog import get_logger, setup_logging
+from .core.schedule import compute_next_snapshots
 from .core.server import SERVERS
+from .index.builder import auto_reindex
 from .index.schema import close_all as close_duckdb
+from .settings import load_settings
+
+log = get_logger("app")
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "frontend"
 
-log = get_logger("app")
+_bg_stop = threading.Event()
+_REINDEX_INTERVAL = 1800  # seconds between background incremental reindex passes
+
+
+def _bg_worker() -> None:
+    """Self-healing background maintenance: keep the index complete + next-snapshot times
+    fresh. All work is DuckDB + bounded subprocess bursts - no persistent kopia server."""
+    for repo in REPOS:
+        try:
+            auto_reindex(repo)  # full rebuild if schema migrated, else incremental no-op
+        except Exception as exc:  # noqa: BLE001
+            log.error("startup reindex repo=%s failed: %s", repo, exc)
+    for repo in REPOS:
+        try:
+            compute_next_snapshots(repo)
+        except Exception as exc:  # noqa: BLE001
+            log.error("next_snapshots repo=%s failed: %s", repo, exc)
+    while not _bg_stop.wait(_REINDEX_INTERVAL):
+        for repo in REPOS:
+            try:
+                auto_reindex(repo)  # incremental; cheap no-op when nothing changed
+            except Exception as exc:  # noqa: BLE001
+                log.error("periodic reindex repo=%s failed: %s", repo, exc)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     setup_logging()
     log.info("KopiaLens starting up")
-    SERVERS.warmup()  # start the per-repo kopia servers (lazy retry if one fails)
+    if load_settings().get("listing_backend") == "server":
+        SERVERS.warmup()  # only when explicitly opted into the persistent-server backend
+    threading.Thread(target=_bg_worker, daemon=True).start()
     yield
     log.info("KopiaLens shutting down")
+    _bg_stop.set()
     SERVERS.shutdown()
     close_duckdb()
 

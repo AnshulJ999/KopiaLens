@@ -13,6 +13,7 @@ from config import CACHEDIR
 
 from .cache import cache_db
 from .sizemap import load_sizemap
+from .schedule import load_next_snapshots
 from .sources import logical_stats, roots_of, sources_index, sources_meta, split_sources
 from .walk import walk
 
@@ -185,6 +186,7 @@ def table_rows(repo: str, recent: int | str | None = None, refresh: bool = False
     db = cache_db(repo)
     smap = load_sizemap(repo, refresh=refresh)
     meta = sources_meta(repo)
+    nexts = load_next_snapshots(repo)  # computed next-snapshot times (subprocess mode)
     rows, elapsed, _count, union_total = build_global(repo, db, smap, recent=recent, mode=mode)
     ordered = []
     for index, key in enumerate(sorted(rows, key=lambda item: rows[item]["total"], reverse=True)):
@@ -209,7 +211,7 @@ def table_rows(repo: str, recent: int | str | None = None, refresh: bool = False
                 "last": stats["last"],
                 "first_time": stats["first_time"],
                 "last_time": stats["last_time"],
-                "next_snapshot": smeta.get("nextSnapshotTime"),
+                "next_snapshot": nexts.get(key) or smeta.get("nextSnapshotTime"),
                 "status": smeta.get("status"),
             }
         )

@@ -1,19 +1,21 @@
 """Snapshot and source helpers, ported from ``kopiatoolkit.py``.
 
-``sources_index()`` is the hot path - nearly every endpoint depends on it. It is served
-from the persistent kopia server (repo kept open = fast + fresh) and RAM-cached: a
-lastSnapshot fingerprint detects new snapshots instantly, and a max-age refresh catches
-deletions. Falls back to a subprocess ``snapshot list --json`` if the server is down.
+``sources_index()`` is the hot path - nearly every endpoint depends on it. It is
+RAM-cached and served instantly; when the cache goes stale (TTL) it is served stale and
+refreshed in a background thread (so navigation never blocks). The listing backend is
+chosen by the ``listing_backend`` setting: ``subprocess`` (default - a plain
+``snapshot list --json``, zero background activity) or ``server`` (a persistent kopia
+server). Subprocess falls through automatically if the server path errors.
 """
 
 from __future__ import annotations
 
 import collections
-import hashlib
 import json
 import threading
 import time
 
+from ..settings import load_settings
 from .applog import get_logger
 from .kopia import kopia
 from .server import SERVERS
@@ -22,26 +24,18 @@ log = get_logger("sources")
 
 _CACHE: dict[str, dict] = {}
 _LOCK = threading.Lock()
-_POLL_INTERVAL = 3.0   # min seconds between cheap /sources freshness polls
-_MAX_AGE = 120.0       # force a full rebuild at least this often (catches deletions)
+_REFRESHING: set[str] = set()
+_TTL = 45.0  # serve cache up to this age; past it, serve stale + refresh in background
 
 
 def all_snapshots(repo: str) -> list[dict]:
-    """Subprocess fallback: full-repo snapshot list in CLI (``--json``) shape."""
+    """Full-repo snapshot list in CLI (``--json``) shape (includes retentionReason + pins)."""
     out = kopia(repo, ["snapshot", "list", "--json"]).stdout
     return json.loads(out) if out.strip() else []
 
 
 def _key_of(src: dict) -> str:
     return f"{src.get('userName')}@{src.get('host')}:{src.get('path')}"
-
-
-def _fingerprint(sources: list[dict]) -> str:
-    digest = hashlib.md5()
-    for s in sorted(sources, key=lambda x: _key_of(x.get("source", {}))):
-        last = (s.get("lastSnapshot") or {}).get("id", "")
-        digest.update(f"{_key_of(s.get('source', {}))}|{last}".encode())
-    return digest.hexdigest()
 
 
 def _build_from_server(repo: str, sources: list[dict]) -> dict[str, list[dict]]:
@@ -57,35 +51,49 @@ def _build_from_server(repo: str, sources: list[dict]) -> dict[str, list[dict]]:
 def _build_from_subprocess(repo: str) -> dict[str, list[dict]]:
     by_source: dict[str, list[dict]] = collections.defaultdict(list)
     for snap in all_snapshots(repo):
+        snap["retention"] = snap.get("retentionReason", []) or []  # normalize to the shape endpoints expect
         by_source[_key_of(snap["source"])].append(snap)
     for key in by_source:
         by_source[key].sort(key=lambda item: item.get("endTime", ""))
     return dict(by_source)
 
 
+def _build_now(repo: str) -> dict:
+    backend = load_settings().get("listing_backend", "subprocess")
+    meta: dict[str, dict] = {}
+    try:
+        if backend == "server":
+            sources = SERVERS.list_sources(repo)
+            srcs = _build_from_server(repo, sources)
+            meta = {_key_of(s.get("source", {})): s for s in sources}
+        else:
+            srcs = _build_from_subprocess(repo)
+    except Exception as exc:  # noqa: BLE001 - any backend error -> subprocess
+        log.warning("sources_index repo=%s backend=%s failed (%s); using subprocess", repo, backend, exc)
+        srcs = _build_from_subprocess(repo)
+        meta = {}
+    entry = {"srcs": srcs, "meta": meta, "built": time.time()}
+    with _LOCK:
+        _CACHE[repo] = entry
+        _REFRESHING.discard(repo)
+    log.info("sources_index repo=%s built (%s): %d sources", repo, backend, len(srcs))
+    return entry
+
+
 def _ensure(repo: str, force: bool = False) -> dict:
     now = time.time()
     with _LOCK:
         entry = _CACHE.get(repo)
-        if entry and not force and (now - entry["polled"] < _POLL_INTERVAL) and (now - entry["built"] < _MAX_AGE):
-            return entry
-        try:
-            sources = SERVERS.list_sources(repo)
-            fp = _fingerprint(sources)
-            if entry and not force and fp == entry["fp"] and (now - entry["built"] < _MAX_AGE):
-                entry["polled"] = now
-                return entry
-            srcs = _build_from_server(repo, sources)
-            meta = {_key_of(s.get("source", {})): s for s in sources}  # nextSnapshotTime/status/lastSnapshot
-            log.info("sources_index repo=%s rebuilt from server: %d sources", repo, len(srcs))
-        except Exception as exc:  # noqa: BLE001 - server unavailable -> subprocess fallback
-            log.warning("sources_index repo=%s server failed (%s); using subprocess", repo, exc)
-            srcs = _build_from_subprocess(repo)
-            meta = {}
-            fp = ""
-        entry = {"srcs": srcs, "meta": meta, "fp": fp, "built": now, "polled": now}
-        _CACHE[repo] = entry
+        fresh = bool(entry) and (now - entry["built"] < _TTL)
+    if force or entry is None:
+        return _build_now(repo)  # synchronous: forced refresh or first load
+    if fresh:
         return entry
+    with _LOCK:  # stale: serve stale now, refresh in the background
+        if repo not in _REFRESHING:
+            _REFRESHING.add(repo)
+            threading.Thread(target=_build_now, args=(repo,), daemon=True).start()
+    return entry
 
 
 def sources_index(repo: str, force: bool = False) -> dict[str, list[dict]]:
@@ -93,7 +101,7 @@ def sources_index(repo: str, force: bool = False) -> dict[str, list[dict]]:
 
 
 def sources_meta(repo: str, force: bool = False) -> dict[str, dict]:
-    """Per-source server metadata keyed by source: nextSnapshotTime, status, lastSnapshot."""
+    """Per-source server metadata (server backend only): nextSnapshotTime/status/lastSnapshot."""
     return _ensure(repo, force)["meta"]
 
 

@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..core.kopia import mount_snapshot, restore_command, snapshot_delete_commands
+from ..core.sources import sources_index
 from ..index.queries import snapshots_for_path
 
 router = APIRouter(tags=["actions"])
@@ -47,11 +48,21 @@ def purge_plan(repo: str = "1", source: str | None = None, full_path: str | None
     if not source or not full_path:
         raise HTTPException(status_code=400, detail="source and full_path are required")
     snapshot_ids = snapshots_for_path(repo, source, full_path)
+    snaps = {s["id"]: s for s in sources_index(repo).get(source, [])}
+    items = [
+        {
+            "id": sid,
+            "retention": snaps.get(sid, {}).get("retention", []),
+            "pinned": bool(snaps.get(sid, {}).get("pins")),
+        }
+        for sid in snapshot_ids
+    ]
     return {
         "repo": repo,
         "source": source,
         "full_path": full_path,
         "snapshot_ids": snapshot_ids,
+        "items": items,  # per-snapshot retention/pin status (don't purge a kept one)
         "commands": snapshot_delete_commands(repo, snapshot_ids),
         "executes": False,
     }

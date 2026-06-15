@@ -30,8 +30,8 @@ def dashboard(repo: str = "1", mode: str = "all", refresh: bool = False) -> dict
 
 
 @router.get("/sources")
-def sources(repo: str = "1") -> dict:
-    srcs = sources_index(repo)
+def sources(repo: str = "1", force: bool = False) -> dict:
+    srcs = sources_index(repo, force=force)
     return {"sources": sorted(srcs)}
 
 
@@ -47,9 +47,9 @@ def get_index_status(repo: str = "1") -> dict:
 
 
 @router.post("/index/build")
-def post_index_build(repo: str = "1", source: str | None = None) -> dict:
+def post_index_build(repo: str = "1", source: str | None = None, full: bool = False) -> dict:
     try:
-        return start_build(repo, source=source)
+        return start_build(repo, source=source, full=full)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
