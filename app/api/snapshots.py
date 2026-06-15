@@ -2,48 +2,27 @@
 
 from __future__ import annotations
 
-import re
-
 from fastapi import APIRouter, HTTPException
 
 from ..core.churn import churn_rows
-from ..core.kopia import kopia
 from ..core.sources import resolve_source
 
 router = APIRouter(tags=["snapshots"])
 
-_RET_RE = re.compile(r"\b(?:latest|hourly|daily|weekly|monthly|annual)-\d+")
-
-
-def _retention_reasons(repo: str, key: str, all_ids: set[str]) -> dict[str, list[str]]:
-    """Per-snapshot retention reasons under the current policy (KopiaUI-style pills)."""
-    out: dict[str, list[str]] = {}
-    try:
-        text = kopia(repo, ["snapshot", "list", key, "--manifest-id"]).stdout
-        for line in text.splitlines():
-            reasons = _RET_RE.findall(line)
-            if not (reasons or "pins:" in line):
-                continue
-            ids = [t for t in re.findall(r"[0-9a-f]{16,40}", line) if t in all_ids]
-            if ids:
-                out[ids[0]] = sorted(set(reasons))
-    except Exception:
-        pass
-    return out
-
 
 @router.get("/snapshots")
 def snapshots(repo: str = "1", source: str | None = None, source_index: int | None = None) -> dict:
+    """Snapshots for a source. Retention reasons + pins come straight from the kopia
+    server (no per-load subprocess); everything is served from the cached source index."""
     try:
         key, srcs = resolve_source(repo, source=source, index=source_index)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    all_ids = {snap["id"] for snap in srcs[key]}
-    reasons = _retention_reasons(repo, key, all_ids)
     rows = []
     for snap in srcs[key]:
         stats = snap.get("stats", {})
+        summ = snap.get("rootEntry", {}).get("summ", {})
         rows.append(
             {
                 "id": snap["id"],
@@ -51,10 +30,10 @@ def snapshots(repo: str = "1", source: str | None = None, source_index: int | No
                 "start_time": snap.get("startTime", ""),
                 "end_time": snap.get("endTime", ""),
                 "logical": stats.get("totalSize", 0),
-                "files": snap.get("rootEntry", {}).get("summ", {}).get("files", 0),
-                "dirs": snap.get("rootEntry", {}).get("summ", {}).get("dirs", 0),
+                "files": summ.get("files", 0),
+                "dirs": summ.get("dirs", 0),
                 "pins": snap.get("pins"),
-                "retention": reasons.get(snap["id"], []),
+                "retention": snap.get("retention", []),
                 "root": snap.get("rootEntry", {}).get("obj"),
             }
         )

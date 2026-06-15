@@ -63,26 +63,38 @@ def _build_from_subprocess(repo: str) -> dict[str, list[dict]]:
     return dict(by_source)
 
 
-def sources_index(repo: str, force: bool = False) -> dict[str, list[dict]]:
+def _ensure(repo: str, force: bool = False) -> dict:
     now = time.time()
     with _LOCK:
         entry = _CACHE.get(repo)
         if entry and not force and (now - entry["polled"] < _POLL_INTERVAL) and (now - entry["built"] < _MAX_AGE):
-            return entry["srcs"]
+            return entry
         try:
             sources = SERVERS.list_sources(repo)
             fp = _fingerprint(sources)
             if entry and not force and fp == entry["fp"] and (now - entry["built"] < _MAX_AGE):
                 entry["polled"] = now
-                return entry["srcs"]
+                return entry
             srcs = _build_from_server(repo, sources)
+            meta = {_key_of(s.get("source", {})): s for s in sources}  # nextSnapshotTime/status/lastSnapshot
             log.info("sources_index repo=%s rebuilt from server: %d sources", repo, len(srcs))
         except Exception as exc:  # noqa: BLE001 - server unavailable -> subprocess fallback
             log.warning("sources_index repo=%s server failed (%s); using subprocess", repo, exc)
             srcs = _build_from_subprocess(repo)
+            meta = {}
             fp = ""
-        _CACHE[repo] = {"srcs": srcs, "fp": fp, "built": now, "polled": now}
-        return srcs
+        entry = {"srcs": srcs, "meta": meta, "fp": fp, "built": now, "polled": now}
+        _CACHE[repo] = entry
+        return entry
+
+
+def sources_index(repo: str, force: bool = False) -> dict[str, list[dict]]:
+    return _ensure(repo, force)["srcs"]
+
+
+def sources_meta(repo: str, force: bool = False) -> dict[str, dict]:
+    """Per-source server metadata keyed by source: nextSnapshotTime, status, lastSnapshot."""
+    return _ensure(repo, force)["meta"]
 
 
 def invalidate(repo: str | None = None) -> None:
@@ -115,6 +127,8 @@ def logical_stats(snaps: list[dict]) -> dict:
         "count": len(snaps),
         "first": dates[0] if dates else "?",
         "last": dates[-1] if dates else "?",
+        "first_time": snaps[0].get("startTime", "") if snaps else "",
+        "last_time": (snaps[-1].get("endTime") or snaps[-1].get("startTime") or "") if snaps else "",
         "latest": sizes[-1] if sizes else 0,
         "largest": sizes[largest_index] if sizes else 0,
         "largest_date": snaps[largest_index].get("startTime", "")[:10] if snaps else "?",

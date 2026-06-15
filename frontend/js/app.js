@@ -7,11 +7,29 @@ const fmtBytes = (value) => {
   return `${n} B`;
 };
 
-const humanTime = (s) => {
+const fmtAbs = (s) => {
   if (!s) return "";
   const d = new Date(s);
   return isNaN(d.getTime()) ? String(s).slice(0, 19)
-    : d.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    : d.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
+};
+const fmtRel = (s) => {
+  if (!s) return "";
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return String(s).slice(0, 19);
+  let sec = (Date.now() - d.getTime()) / 1000;
+  const future = sec < 0; sec = Math.abs(sec);
+  for (const [name, span] of [["year", 31536000], ["month", 2592000], ["day", 86400], ["hour", 3600], ["minute", 60]]) {
+    if (sec >= span) { const n = Math.floor(sec / span); const lbl = `${n} ${name}${n > 1 ? "s" : ""}`; return future ? `in ${lbl}` : `${lbl} ago`; }
+  }
+  return future ? "in a moment" : "just now";
+};
+let TIME_FMT = localStorage.getItem("kl-timefmt") || "absolute";  // "absolute" (12h AM/PM) | "relative"
+const humanTime = (s) => (TIME_FMT === "relative" ? fmtRel(s) : fmtAbs(s));  // plain text (for <pre> blocks)
+const timeCell = (s) => {  // table cell: chosen format shown, the other on hover
+  if (!s) return "—";
+  const abs = fmtAbs(s), rel = fmtRel(s);
+  return TIME_FMT === "relative" ? `<span title="${abs}">${rel}</span>` : `<span title="${rel}">${abs}</span>`;
 };
 
 const getJson = async (url, options = {}) => {
@@ -61,6 +79,7 @@ document.addEventListener("alpine:init", () => {
     ],
     active: "dashboard",
     dark: false,
+    timeFmt: localStorage.getItem("kl-timefmt") || "absolute",
     indexStatus: {},
     sources: [], selectedSource: "",
     snapshots: [], selectedSnapshot: "",
@@ -98,6 +117,13 @@ document.addEventListener("alpine:init", () => {
       this.dark = !this.dark;
       document.documentElement.classList.toggle("dark", this.dark);
       localStorage.setItem("kl-dark", this.dark ? "1" : "0");
+    },
+
+    toggleTimeFmt() {
+      TIME_FMT = TIME_FMT === "relative" ? "absolute" : "relative";
+      this.timeFmt = TIME_FMT;
+      localStorage.setItem("kl-timefmt", TIME_FMT);
+      this.activate();  // re-render the current table with the new format
     },
 
     indexLine() {
@@ -155,8 +181,8 @@ document.addEventListener("alpine:init", () => {
           { title: "Freeable", field: "freeable", width: 100, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
           { title: "Dedup", field: "dedup", width: 72, formatter: (c) => `${Number(c.getValue()).toFixed(0)}x`, hozAlign: "right" },
           { title: "Latest size", field: "logical_latest", width: 100, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
-          { title: "Last snapshot", field: "last", width: 150, formatter: (c) => humanTime(c.getValue()) },
-          { title: "Next snapshot", field: "next_snapshot", width: 150, formatter: (c) => c.getValue() ? humanTime(c.getValue()) : "—" },
+          { title: "Last snapshot", field: "last_time", width: 165, formatter: (c) => timeCell(c.getValue()) },
+          { title: "Next snapshot", field: "next_snapshot", width: 165, formatter: (c) => timeCell(c.getValue()) },
           { title: "Pins", field: "pins", width: 64, hozAlign: "right" },
         ], { onRowClick: (_e, row) => { this.selectedSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); } });
       }, "Loading dashboard...");
@@ -169,7 +195,7 @@ document.addEventListener("alpine:init", () => {
         this.snapshots = data.snapshots || [];
         if (!this.snapshots.find((x) => x.id === this.selectedSnapshot)) this.selectedSnapshot = this.snapshots.length ? this.snapshots[this.snapshots.length - 1].id : "";
         const cols = [
-          { title: "Start", field: "start_time", width: 185, formatter: (c) => humanTime(c.getValue()) },
+          { title: "Start", field: "start_time", width: 185, formatter: (c) => timeCell(c.getValue()) },
           { title: "Logical", field: "logical", width: 100, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
           { title: "Files", field: "files", width: 95, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
           { title: "Dirs", field: "dirs", width: 85, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
@@ -212,7 +238,7 @@ document.addEventListener("alpine:init", () => {
           { title: "Path", field: "full_path", widthGrow: 4, minWidth: 320, formatter: (c) => this.shortSource(c.getValue()) },
           { title: "Size", field: "size", width: 100, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
           { title: "Versions", field: "versions", width: 80, hozAlign: "right" },
-          { title: "Last seen", field: "last_seen", width: 160, formatter: (c) => humanTime(c.getValue()) },
+          { title: "Last seen", field: "last_seen", width: 160, formatter: (c) => timeCell(c.getValue()) },
           { title: "On disk", field: "in_latest", width: 90, formatter: (c) => c.getValue() ? "yes" : "<span style='color:#dc2626'>deleted</span>" },
         ], { onRowClick: (_e, row) => this.openFileDetail(row.getData()) });
       }, "Searching...");

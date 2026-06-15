@@ -11,9 +11,12 @@ dir cache - the server's per-OID object endpoint has no batch form and would be 
 there.
 
 Security: localhost-only, plain HTTP, CSRF disabled (safe: 127.0.0.1, single user,
-app-internal calls - not a browser session). No ``--readonly`` so mount/restore remain
-usable; destructive ops are gated at the app layer. (``--readonly`` is the future lever
-if we ever want a hard repo-write block, but it also blocks mount, so it is off.)
+app-internal calls - not a browser session). Started ``--readonly``: the server never
+writes the repo and - crucially - does NOT run the repos' snapshot schedules in the
+background (a non-readonly server auto-snapshots like KopiaUI, which duplicated backups
+and held files open). Mount/Restore are unaffected - they run as separate ``kopia``
+subprocesses (kopia.py), not through this server. Trade-off: kopia reports
+nextSnapshotTime=nil in read-only mode, so that column is computed app-side instead.
 """
 
 from __future__ import annotations
@@ -106,6 +109,7 @@ class KopiaServers:
             + [
                 "server", "start",
                 "--insecure", "--disable-csrf-token-checks", "--no-grpc",
+                "--readonly",  # pure read helper: never writes, never runs the snapshot schedule
                 f"--address=127.0.0.1:{port}",
                 f"--server-username={USERNAME}",
                 f"--server-password={self._password}",

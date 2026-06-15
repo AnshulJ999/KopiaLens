@@ -5,14 +5,18 @@ Usage (run from the kopialens/ folder):
     python reindex.py 1          # just repo 1
     python reindex.py 2
 
-IMPORTANT: STOP the web server first (python main.py) so it doesn't hold the DuckDB
-file open - two processes can't open the same .duckdb read-write. Restart the server
-after this finishes; it will then read the freshly-built index.
+IMPORTANT - QUIT THE KOPIALENS APP FIRST (tray -> Quit, or close the console window).
+While it runs, the app holds the DuckDB file open read-write AND binds the kopia-server
+ports 51831/51832 - this script needs both, so they would collide. This script starts
+its own kopia servers (for the snapshot listing), builds the index, then shuts them
+down. Restart the app afterwards; it will read the freshly-built index.
 """
 import sys
 import time
 
 from app.index import builder
+from app.index.schema import close_all
+from app.core.server import SERVERS
 from app.core.sources import sources_index
 
 repos = [a for a in sys.argv[1:] if a in ("1", "2")] or ["1", "2"]
@@ -39,4 +43,6 @@ for repo in repos:
     print(f"=== repo {repo} DONE in {time.time()-t0:.0f}s | snapshots indexed={final.get('indexed_snapshots')} "
           f"file rows={final.get('files')} | error={err} ===", flush=True)
 
-print("\nAll done. Restart the web server (python main.py) to use the new index.", flush=True)
+SERVERS.shutdown()  # stop the kopia servers this script started (frees the ports)
+close_all()         # close the DuckDB connection (frees the file)
+print("\nAll done. Restart the KopiaLens app to use the new index.", flush=True)

@@ -47,6 +47,7 @@
       <div class="ml-auto flex items-center gap-2 text-xs shrink-0">
         <span class="rounded border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 px-2 py-1" x-text="indexLine()"></span>
         <button @click="buildIndex()" :disabled="indexStatus.building" class="h-8 rounded bg-stone-800 dark:bg-stone-700 px-3 text-white disabled:opacity-50">Index</button>
+        <button @click="toggleTimeFmt()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2" :title="timeFmt==='relative' ? 'Times: relative (click for absolute 12h)' : 'Times: absolute 12h (click for relative)'" x-text="timeFmt==='relative' ? '⏱ rel' : '🕒 abs'"></button>
         <button @click="toggleDark()" class="h-8 w-8 rounded border border-stone-300 dark:border-stone-700" x-text="dark ? '☀' : '☽'"></button>
       </div>
     </header>
