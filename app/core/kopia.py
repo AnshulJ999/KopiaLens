@@ -89,6 +89,7 @@ def kopia(repo: str, args: list[str], ro: bool = True) -> KopiaResult:
         text=True,
         encoding="utf-8",
         errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash under pythonw
     )
     elapsed = time.time() - start
     KOPIA_CALLS += 1
@@ -114,7 +115,7 @@ def mount_snapshot(repo: str, snapshot_id: str, mountpoint: str) -> KopiaProcess
 
     args = ["mount", snapshot_id, mountpoint]
     full = _base_command(repo, args)
-    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     proc = subprocess.Popen(
         full,
         stdout=subprocess.DEVNULL,

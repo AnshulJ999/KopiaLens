@@ -3,17 +3,33 @@
 from __future__ import annotations
 
 import collections
-import json
 import os
 import sqlite3
+import threading
 
 from config import CACHEDIR
 
 from .kopia import kopia
 
+try:  # orjson is ~3x faster at parsing the children JSON (the warm-walk hot path)
+    import orjson
+
+    _loads = orjson.loads  # direct alias - avoids a wrapper call per dir (hot path)
+
+    def _dumps(obj) -> str:
+        return orjson.dumps(obj).decode()
+except ImportError:  # pragma: no cover - orjson is a declared dependency
+    import json
+
+    _loads = json.loads
+
+    def _dumps(obj) -> str:
+        return json.dumps(obj)
+
 BATCH = 800
 DIR_MEMO_MAX = 400_000
 DIR_MEMO: collections.OrderedDict[str, list[dict]] = collections.OrderedDict()
+_MEMO_LOCK = threading.Lock()  # guards the shared LRU across the request threadpool + build thread
 
 
 def cache_db(repo: str) -> sqlite3.Connection:
@@ -21,16 +37,21 @@ def cache_db(repo: str) -> sqlite3.Connection:
     db = sqlite3.connect(os.path.join(CACHEDIR, f"repo{repo}.db"), timeout=60)
     db.execute("PRAGMA busy_timeout=60000")
     db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA synchronous=NORMAL")
+    db.execute("PRAGMA temp_store=MEMORY")
+    db.execute("PRAGMA cache_size=-262144")    # 256 MB page cache
+    db.execute("PRAGMA mmap_size=8589934592")  # 8 GB memory-map (covers the 5.2 GB repo1 db)
     db.execute("CREATE TABLE IF NOT EXISTS dir_children (oid TEXT PRIMARY KEY, children TEXT)")
     db.execute("CREATE TABLE IF NOT EXISTS indirect (oid TEXT PRIMARY KEY, parts TEXT)")
     return db
 
 
 def memo_put(oid: str, entries: list[dict]) -> None:
-    DIR_MEMO[oid] = entries
-    DIR_MEMO.move_to_end(oid)
-    if len(DIR_MEMO) > DIR_MEMO_MAX:
-        DIR_MEMO.popitem(last=False)
+    with _MEMO_LOCK:
+        DIR_MEMO[oid] = entries
+        DIR_MEMO.move_to_end(oid)
+        if len(DIR_MEMO) > DIR_MEMO_MAX:
+            DIR_MEMO.popitem(last=False)
 
 
 def get_children(repo: str, db: sqlite3.Connection, oids: list[str]) -> dict[str, list[dict]]:
@@ -38,13 +59,14 @@ def get_children(repo: str, db: sqlite3.Connection, oids: list[str]) -> dict[str
 
     out: dict[str, list[dict]] = {}
     misses: list[str] = []
-    for oid in oids:
-        entries = DIR_MEMO.get(oid)
-        if entries is not None:
-            DIR_MEMO.move_to_end(oid)
-            out[oid] = entries
-            continue
-        misses.append(oid)
+    with _MEMO_LOCK:
+        for oid in oids:
+            entries = DIR_MEMO.get(oid)
+            if entries is not None:
+                DIR_MEMO.move_to_end(oid)
+                out[oid] = entries
+            else:
+                misses.append(oid)
 
     cur = db.cursor()
     still: list[str] = []
@@ -63,7 +85,7 @@ def get_children(repo: str, db: sqlite3.Connection, oids: list[str]) -> dict[str
             if row is None:
                 still.append(oid)
                 continue
-            entries = json.loads(row)
+            entries = _loads(row)
             out[oid] = entries
             memo_put(oid, entries)
 
@@ -77,23 +99,23 @@ def get_children(repo: str, db: sqlite3.Connection, oids: list[str]) -> dict[str
         lines = [line for line in res.stdout.splitlines() if line.strip()]
         for oid, line in zip(group, lines):
             try:
-                entries = json.loads(line).get("entries") or []
+                entries = _loads(line).get("entries") or []
             except json.JSONDecodeError:
                 entries = []
             out[oid] = entries
             memo_put(oid, entries)
-            db.execute("INSERT OR REPLACE INTO dir_children VALUES (?,?)", (oid, json.dumps(entries)))
+            db.execute("INSERT OR REPLACE INTO dir_children VALUES (?,?)", (oid, _dumps(entries)))
             wrote = True
 
     for oid in indirect_dirs:
         res = kopia(repo, ["show", oid])
         try:
-            entries = json.loads(res.stdout).get("entries") or []
+            entries = _loads(res.stdout).get("entries") or []
         except json.JSONDecodeError:
             entries = []
         out[oid] = entries
         memo_put(oid, entries)
-        db.execute("INSERT OR REPLACE INTO dir_children VALUES (?,?)", (oid, json.dumps(entries)))
+        db.execute("INSERT OR REPLACE INTO dir_children VALUES (?,?)", (oid, _dumps(entries)))
         wrote = True
 
     if wrote:
