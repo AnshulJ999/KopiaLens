@@ -14,6 +14,7 @@ from .api import actions, dashboard, search, simulate, snapshots, tree
 from .core import kopia as kopia_mod
 from .core.applog import get_logger, setup_logging
 from .core.server import SERVERS
+from .index.schema import close_all as close_duckdb
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "frontend"
@@ -29,6 +30,7 @@ async def lifespan(_app: FastAPI):
     yield
     log.info("KopiaLens shutting down")
     SERVERS.shutdown()
+    close_duckdb()
 
 
 app = FastAPI(title="KopiaLens", version="0.1.0", lifespan=lifespan)

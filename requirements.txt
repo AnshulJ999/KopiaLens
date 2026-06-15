@@ -3,6 +3,7 @@ uvicorn[standard]
 httpx
 orjson
 duckdb
+pyarrow
 pydantic
 pystray
 pillow
