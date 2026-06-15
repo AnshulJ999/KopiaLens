@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import threading
 import time
 import webbrowser
 from pathlib import Path
@@ -16,6 +15,7 @@ from config import HOST, PORT
 
 HERE = Path(__file__).resolve().parent
 URL = f"http://{HOST}:{PORT}"
+_NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW (Windows) - suppress the child console (no flicker)
 proc: subprocess.Popen | None = None
 
 
@@ -37,7 +37,7 @@ def start_server() -> None:
         cwd=str(HERE),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+        creationflags=_NO_WINDOW,
     )
 
 
@@ -70,10 +70,9 @@ def quit_app(icon: pystray.Icon, _item=None) -> None:
 
 
 def main() -> None:
-    start_server()
-    threading.Timer(1.0, lambda: webbrowser.open(URL)).start()
+    start_server()  # start the backend, but do NOT auto-open the browser (use the tray menu)
     menu = pystray.Menu(
-        pystray.MenuItem("Open", open_ui),
+        pystray.MenuItem("Open", open_ui, default=True),
         pystray.MenuItem("Restart", restart),
         pystray.MenuItem("Quit", quit_app),
     )

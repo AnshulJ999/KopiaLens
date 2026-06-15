@@ -1,27 +1,96 @@
-"""Snapshot and source helpers, ported from ``kopiatoolkit.py``."""
+"""Snapshot and source helpers, ported from ``kopiatoolkit.py``.
+
+``sources_index()`` is the hot path - nearly every endpoint depends on it. It is served
+from the persistent kopia server (repo kept open = fast + fresh) and RAM-cached: a
+lastSnapshot fingerprint detects new snapshots instantly, and a max-age refresh catches
+deletions. Falls back to a subprocess ``snapshot list --json`` if the server is down.
+"""
 
 from __future__ import annotations
 
 import collections
+import hashlib
 import json
+import threading
+import time
 
+from .applog import get_logger
 from .kopia import kopia
+from .server import SERVERS
+
+log = get_logger("sources")
+
+_CACHE: dict[str, dict] = {}
+_LOCK = threading.Lock()
+_POLL_INTERVAL = 3.0   # min seconds between cheap /sources freshness polls
+_MAX_AGE = 120.0       # force a full rebuild at least this often (catches deletions)
 
 
 def all_snapshots(repo: str) -> list[dict]:
+    """Subprocess fallback: full-repo snapshot list in CLI (``--json``) shape."""
     out = kopia(repo, ["snapshot", "list", "--json"]).stdout
     return json.loads(out) if out.strip() else []
 
 
-def sources_index(repo: str) -> dict[str, list[dict]]:
+def _key_of(src: dict) -> str:
+    return f"{src.get('userName')}@{src.get('host')}:{src.get('path')}"
+
+
+def _fingerprint(sources: list[dict]) -> str:
+    digest = hashlib.md5()
+    for s in sorted(sources, key=lambda x: _key_of(x.get("source", {}))):
+        last = (s.get("lastSnapshot") or {}).get("id", "")
+        digest.update(f"{_key_of(s.get('source', {}))}|{last}".encode())
+    return digest.hexdigest()
+
+
+def _build_from_server(repo: str, sources: list[dict]) -> dict[str, list[dict]]:
+    by_source: dict[str, list[dict]] = {}
+    for s in sources:
+        key = _key_of(s.get("source", {}))
+        snaps = SERVERS.list_snapshots(repo, key)
+        snaps.sort(key=lambda item: item.get("endTime", ""))
+        by_source[key] = snaps
+    return by_source
+
+
+def _build_from_subprocess(repo: str) -> dict[str, list[dict]]:
     by_source: dict[str, list[dict]] = collections.defaultdict(list)
     for snap in all_snapshots(repo):
-        src = snap["source"]
-        key = f"{src['userName']}@{src['host']}:{src['path']}"
-        by_source[key].append(snap)
+        by_source[_key_of(snap["source"])].append(snap)
     for key in by_source:
         by_source[key].sort(key=lambda item: item.get("endTime", ""))
     return dict(by_source)
+
+
+def sources_index(repo: str, force: bool = False) -> dict[str, list[dict]]:
+    now = time.time()
+    with _LOCK:
+        entry = _CACHE.get(repo)
+        if entry and not force and (now - entry["polled"] < _POLL_INTERVAL) and (now - entry["built"] < _MAX_AGE):
+            return entry["srcs"]
+        try:
+            sources = SERVERS.list_sources(repo)
+            fp = _fingerprint(sources)
+            if entry and not force and fp == entry["fp"] and (now - entry["built"] < _MAX_AGE):
+                entry["polled"] = now
+                return entry["srcs"]
+            srcs = _build_from_server(repo, sources)
+            log.info("sources_index repo=%s rebuilt from server: %d sources", repo, len(srcs))
+        except Exception as exc:  # noqa: BLE001 - server unavailable -> subprocess fallback
+            log.warning("sources_index repo=%s server failed (%s); using subprocess", repo, exc)
+            srcs = _build_from_subprocess(repo)
+            fp = ""
+        _CACHE[repo] = {"srcs": srcs, "fp": fp, "built": now, "polled": now}
+        return srcs
+
+
+def invalidate(repo: str | None = None) -> None:
+    with _LOCK:
+        if repo is None:
+            _CACHE.clear()
+        else:
+            _CACHE.pop(repo, None)
 
 
 def is_laptop(key: str) -> bool:
