@@ -81,7 +81,7 @@
           <select x-model="selectedSource" @change="loadSnapshots()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[34rem] max-w-full">
             <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
           </select>
-          <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="showChurn" @change="loadSnapshots()"> Show churn (slower)</label>
+          <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="showChurn" @change="localStorage.setItem('kl-churn', showChurn ? '1' : '0'); loadSnapshots()"> Show churn (slower)</label>
         </div>
         <div id="snapshotsTable" class="flex-1 min-h-0"></div>
       </section>

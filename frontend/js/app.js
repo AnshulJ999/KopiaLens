@@ -95,7 +95,7 @@ document.addEventListener("alpine:init", () => {
     indexStatus: {},
     sources: [], selectedSource: "",
     snapshots: [], selectedSnapshot: "",
-    showChurn: false,
+    showChurn: localStorage.getItem("kl-churn") === "1",
     query: "", deletedOnly: false, overOneGb: false, searchSource: "", searchExt: "", omniMeta: "", _searchSeq: 0,
     treePrefix: "",
     policyKeys: ["latest", "hourly", "daily", "weekly", "monthly", "annual"],
@@ -168,6 +168,7 @@ document.addEventListener("alpine:init", () => {
 
     async repoChanged() {
       this.selectedSnapshot = ""; this.snapshots = [];
+      getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ last_repo: this.repo }) }).catch(() => {});  // persist
       await this.wrap(async () => {
         await this.refreshBase(true);
         this.selectedSource = this.sources[0] || "";
