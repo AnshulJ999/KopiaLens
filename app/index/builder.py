@@ -165,8 +165,11 @@ def _run_build(repo: str, source: str | None, full: bool) -> None:
             targets = [source] if source in srcs else []
         elif full:
             targets = sorted(srcs)
-        else:  # incremental: only sources whose snapshot SET changed
-            targets = [k for k in sorted(srcs) if {s["id"] for s in srcs[k]} != indexed.get(k, set())]
+        else:  # incremental: sources whose snapshot SET changed, or that lack the paths aggregate (migration)
+            changed = {k for k in srcs if {s["id"] for s in srcs[k]} != indexed.get(k, set())}
+            have_paths = {r[0] for r in con.execute("SELECT DISTINCT source FROM paths WHERE repo=?", [repo]).fetchall()}
+            migrate = (set(indexed) & set(srcs)) - have_paths  # indexed but no paths rows yet
+            targets = sorted(changed | migrate)
         stale = [k for k in indexed if k not in srcs]  # self-heal: removed sources
 
         job["total"] = sum(len(srcs[k]) for k in targets if k in srcs)
@@ -232,12 +235,13 @@ def start_build(repo: str, source: str | None = None, full: bool = False) -> dic
 
 
 def auto_reindex(repo: str) -> None:
-    """Background reindex (self-heal). Full rebuild if the paths table is unpopulated
-    (schema migration), else incremental - a no-op-fast pass when nothing changed."""
+    """Background reindex (self-heal). When many indexed sources lack the paths aggregate
+    (a schema migration), do a full rebuild (drops indexes = faster); otherwise incremental
+    - a no-op-fast pass when nothing changed (the incremental path still migrates stragglers)."""
     cur = read_cursor(repo)
     try:
-        npaths = cur.execute("SELECT count(*) FROM paths WHERE repo=?", [repo]).fetchone()[0]
-        nidx = cur.execute("SELECT count(*) FROM indexed_snapshots WHERE repo=?", [repo]).fetchone()[0]
+        nfiles_src = cur.execute("SELECT count(DISTINCT source) FROM files WHERE repo=?", [repo]).fetchone()[0]
+        npaths_src = cur.execute("SELECT count(DISTINCT source) FROM paths WHERE repo=?", [repo]).fetchone()[0]
     finally:
         cur.close()
-    start_build(repo, full=(npaths == 0 and nidx > 0))
+    start_build(repo, full=(nfiles_src - npaths_src > 5))

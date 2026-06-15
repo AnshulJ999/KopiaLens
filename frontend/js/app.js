@@ -57,7 +57,11 @@ const setTable = (id, data, columns, opts = {}) => {
   if (!el) return null;
   const { onRowDblClick, rowMenu, initialSort, ...rest } = opts;
   if (el._tabulator) { try { el._tabulator.destroy(); } catch (e) {} el._tabulator = null; }
-  columns.forEach((c) => { c.headerContextMenu = colVisibilityMenu; });
+  columns.forEach((c) => {
+    c.headerContextMenu = colVisibilityMenu;
+    // numeric columns must sort as numbers, not lexically ("1000" vs "9")
+    if (!c.sorter && data && data.length && typeof data[0][c.field] === "number") c.sorter = "number";
+  });
   const table = new Tabulator(id, {
     data, columns,
     layout: "fitColumns",
@@ -92,7 +96,7 @@ document.addEventListener("alpine:init", () => {
     sources: [], selectedSource: "",
     snapshots: [], selectedSnapshot: "",
     showChurn: false,
-    query: "", deletedOnly: false, overOneGb: false, searchSource: "", searchExt: "", omniMeta: "",
+    query: "", deletedOnly: false, overOneGb: false, searchSource: "", searchExt: "", omniMeta: "", _searchSeq: 0,
     treePrefix: "",
     policyKeys: ["latest", "hourly", "daily", "weekly", "monthly", "annual"],
     policy: { latest: 100, hourly: 96, daily: 30, weekly: 52, monthly: 36, annual: 5 },
@@ -324,12 +328,14 @@ document.addEventListener("alpine:init", () => {
     },
 
     async loadSearch() {
+      const seq = ++this._searchSeq;  // drop stale responses if a newer search started
       await this.wrap(async () => {
         const over = this.overOneGb ? 1 : 0;
         const params = new URLSearchParams({ repo: this.repo, q: this.query, deleted_only: this.deletedOnly, over_gb: over, limit: 400 });
         if (this.searchSource) params.set("source", this.searchSource);
         if (this.searchExt) params.set("ext", this.searchExt);
         const data = await getJson(`/api/search?${params.toString()}`);
+        if (seq !== this._searchSeq) return;  // a newer query is in flight; ignore this result
         this.omniMeta = `${(data.results || []).length} results`;
         setTable("#searchTable", data.results || [], [
           { title: "Path", field: "full_path", widthGrow: 5, minWidth: 320 },

@@ -41,7 +41,7 @@
         <template x-for="item in repos" :key="item.id"><option :value="item.id" x-text="item.name"></option></template>
       </select>
       <div class="relative flex-1 max-w-xl">
-        <input x-model.debounce.300ms="query" @input="active='search'; loadSearch()" @focus="active='search'"
+        <input x-model="query" @input.debounce.300ms="active='search'; loadSearch()" @focus="active='search'"
           class="fld w-full border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 pl-9"
           placeholder="Search files across all snapshots...">
         <svg class="absolute left-3 top-2.5 h-4 w-4 text-stone-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
@@ -106,12 +106,12 @@
 
       <section x-show="active==='search'" class="h-full flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
-          <input x-model.debounce.300ms="query" @input="loadSearch()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[22rem]" placeholder="Search paths">
+          <input x-model="query" @input.debounce.300ms="loadSearch()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[22rem]" placeholder="Search paths">
           <select x-model="searchSource" @change="loadSearch()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 max-w-[18rem]">
             <option value="">All sources</option>
             <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
           </select>
-          <input x-model.debounce.300ms="searchExt" @input="loadSearch()" class="fld w-28 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="ext (vhdx)">
+          <input x-model="searchExt" @input.debounce.300ms="loadSearch()" class="fld w-28 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="ext (vhdx)">
           <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="deletedOnly" @change="loadSearch()"> Deleted from disk</label>
           <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="overOneGb" @change="loadSearch()"> &gt;1 GB</label>
           <span class="text-xs text-stone-500" x-text="omniMeta"></span>

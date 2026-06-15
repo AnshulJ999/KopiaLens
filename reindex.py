@@ -26,7 +26,7 @@ for repo in repos:
     total = sum(len(v) for v in srcs.values())
     print(f"\n=== repo {repo}: {len(srcs)} sources, {total} snapshots -> building (delta, from warm cache) ===", flush=True)
     t0 = time.time()
-    builder.start_build(repo)
+    builder.start_build(repo, full=True)  # explicit full rebuild (drops indexes = faster)
     last = -1
     while True:
         st = builder.index_status(repo)
