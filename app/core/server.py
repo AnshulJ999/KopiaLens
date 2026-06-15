@@ -22,6 +22,7 @@ nextSnapshotTime=nil in read-only mode, so that column is computed app-side inst
 from __future__ import annotations
 
 import atexit
+import os
 import secrets
 import subprocess
 import threading
@@ -33,7 +34,7 @@ import httpx
 from config import REPOS
 
 from ..settings import load_settings, save_settings
-from .applog import get_logger
+from .applog import LOG_DIR, get_logger
 
 log = get_logger("server")
 
@@ -117,13 +118,16 @@ class KopiaServers:
             ]
         )
         log.info("starting kopia server repo=%s on 127.0.0.1:%d", repo, port)
+        os.makedirs(LOG_DIR, exist_ok=True)
+        logf = open(os.path.join(LOG_DIR, f"kopia-server-repo{repo}.log"), "a", encoding="utf-8", errors="replace")
         proc = subprocess.Popen(
             args,
             stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=logf,
+            stderr=subprocess.STDOUT,
             creationflags=_NO_WINDOW,
         )
+        logf.close()  # child keeps its own handle; we don't need ours
         client = httpx.Client(
             base_url=f"http://127.0.0.1:{port}",
             auth=(USERNAME, self._password),
