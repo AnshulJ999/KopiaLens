@@ -16,8 +16,16 @@ import duckdb
 
 from config import DATA_DIR
 
+from ..core.applog import get_logger
+
+log = get_logger("duckdb")
+
 _POOL: dict[str, duckdb.DuckDBPyConnection] = {}
 _LOCK = threading.Lock()
+
+# Bound DuckDB's buffer pool so two open repos can't grow to ~80% of system RAM (the default).
+# DuckDB spills above this to the temp directory, so it only costs disk, never correctness.
+MEMORY_LIMIT = os.environ.get("KOPIALENS_DUCKDB_MEMORY", "2GB")
 
 
 def db_path(repo: str) -> str:
@@ -32,6 +40,14 @@ def get_db(repo: str) -> duckdb.DuckDBPyConnection:
         if con is None:
             con = duckdb.connect(db_path(repo))
             con.execute("PRAGMA threads=4")
+            tmp = os.path.join(DATA_DIR, f"duck_tmp_repo{repo}")
+            os.makedirs(tmp, exist_ok=True)
+            try:
+                con.execute(f"PRAGMA memory_limit='{MEMORY_LIMIT}'")
+                con.execute(f"PRAGMA temp_directory='{tmp}'")
+            except Exception as exc:  # noqa: BLE001 - never block startup on a pragma
+                log.warning("repo=%s memory_limit/temp_directory pragma failed: %s", repo, exc)
+            log.info("repo=%s DuckDB connection opened (memory_limit=%s)", repo, MEMORY_LIMIT)
             init_schema(con)
             _POOL[repo] = con
         return con

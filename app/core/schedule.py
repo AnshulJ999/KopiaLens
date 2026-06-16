@@ -99,20 +99,37 @@ def _to_local_naive(iso: str | None, fallback: dt.datetime) -> dt.datetime:
         return fallback
 
 
-def compute_next_snapshots(repo: str) -> dict[str, str]:
-    """Recompute next-snapshot times for all sources (one ``policy show`` each) and cache."""
+def compute_next_snapshots(repo: str, force: bool = False) -> dict[str, str]:
+    """Compute next-snapshot times for all sources and cache them.
+
+    Each source needs one ``policy show`` subprocess, so to avoid spawning kopia for every
+    source on every background cycle we REUSE any cached next-time that is still in the future
+    and only recompute sources that are missing or past-due (``force`` recomputes all). A
+    past-due cached time means a snapshot likely just ran, so recomputing then keeps it fresh.
+    """
     from .sources import sources_index  # local import avoids a circular dependency
 
     srcs = sources_index(repo)
     now = dt.datetime.now()
+    prev = load_next_snapshots(repo) if not force else {}
     out: dict[str, str] = {}
+    spawned = 0
     for key, snaps in srcs.items():
+        cached = prev.get(key)
+        if cached:
+            try:
+                if dt.datetime.fromisoformat(cached) > now:  # still in the future -> trust it, skip kopia
+                    out[key] = cached
+                    continue
+            except Exception:
+                pass
         try:
             res = kopia(repo, ["policy", "show", key, "--json"])
             pol = json.loads(res.stdout) if res.stdout.strip() else {}
             sched = pol.get("scheduling", {}) or {}
             last_dt = _to_local_naive(snaps[-1].get("startTime") if snaps else None, now)
             nt = next_time(sched, last_dt, now)
+            spawned += 1
             if nt:
                 out[key] = nt.isoformat()
         except Exception as exc:  # noqa: BLE001 - per-source, keep going
@@ -122,5 +139,5 @@ def compute_next_snapshots(repo: str) -> dict[str, str]:
             json.dump(out, fh)
     except Exception:
         pass
-    log.info("next_snapshots repo=%s computed for %d sources", repo, len(out))
+    log.info("next_snapshots repo=%s: %d sources (%d recomputed via policy show)", repo, len(out), spawned)
     return out

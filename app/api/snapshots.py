@@ -6,12 +6,13 @@ import threading
 
 from fastapi import APIRouter, HTTPException
 
-from ..core.sources import resolve_source
+from ..core.sources import resolve_source, sources_index
 from ..index.snapanalysis import compute_source, read_analysis
 
 router = APIRouter(tags=["snapshots"])
 
 _ANALYZING: set[str] = set()
+_ANALYZING_ALL: set[str] = set()  # repo-level "analyze everything" in progress
 
 
 @router.get("/snapshots")
@@ -68,3 +69,31 @@ def analyze(repo: str = "1", source: str | None = None, reclaim: bool = True) ->
     _ANALYZING.add(tag)
     threading.Thread(target=run, daemon=True).start()
     return {"started": True, "source": key}
+
+
+@router.post("/snapshots/analyze-all")
+def analyze_all(repo: str = "1", reclaim: bool = True) -> dict:
+    """Compute churn + reclaimable for EVERY source in the repo, in the background, and cache it.
+    Reclaimable reads the materialized content_refs (kept fresh by the dashboard refresh), so this
+    is a one-shot repo-wide pass. Poll /snapshots/analyze-status for completion."""
+    if repo in _ANALYZING_ALL:
+        return {"started": False, "reason": "already analyzing repo"}
+
+    def run() -> None:
+        try:
+            for key in sorted(sources_index(repo)):
+                try:
+                    compute_source(repo, key, with_reclaim=reclaim)
+                except Exception:  # noqa: BLE001 - one bad source must not stop the rest
+                    continue
+        finally:
+            _ANALYZING_ALL.discard(repo)
+
+    _ANALYZING_ALL.add(repo)
+    threading.Thread(target=run, daemon=True).start()
+    return {"started": True, "repo": repo}
+
+
+@router.get("/snapshots/analyze-status")
+def analyze_status(repo: str = "1") -> dict:
+    return {"repo": repo, "analyzing_all": repo in _ANALYZING_ALL}

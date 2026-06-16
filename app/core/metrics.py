@@ -11,11 +11,18 @@ import time
 
 from config import CACHEDIR
 
+from .applog import get_logger
 from .cache import cache_db
 from .sizemap import load_sizemap
 from .schedule import load_next_snapshots
 from .sources import logical_stats, roots_of, sources_index, sources_meta, split_sources
 from .walk import walk
+
+log = get_logger("metrics")
+
+# Bump when the dashboard row schema changes so stale on-disk caches auto-invalidate
+# (the cache used to be served verbatim, which is how added columns silently went blank).
+TABLE_CACHE_VERSION = 2
 
 
 def gb(value: int | float) -> float:
@@ -76,30 +83,40 @@ def build_global(
     recent: int | str | None = None,
     mode: str = "all",
 ) -> tuple[dict[str, dict], float, dict[str, int], int]:
+    """Global content refcount + per-source physical/freeable.
+
+    Memory-light streaming: we build the refcount Counter one source at a time and DISCARD
+    each source's content-id set immediately (it is cheap to reload from the on-disk
+    ``srcsets`` pkl cache for the freeable pass), instead of holding every source's set in RAM
+    simultaneously. Peak RAM drops from (all sets + counter) to (counter + one set). The
+    refcount is also persisted to the DuckDB ``content_refs`` table so file_detail /
+    reclaimable read it without recomputing.
+    """
     srcs = sources_index(repo)
     membership, display = split_sources(srcs, mode)
     rec = int(recent) if recent else None
     count: collections.Counter[str] = collections.Counter()
-    sets: dict[str, set[str]] = {}
     latest: dict[str, int] = {}
     start = time.time()
 
+    # Pass 1: accumulate the global refcount, keeping only the counter (sets discarded).
     for key in membership:
         cids, phys_latest = source_set(repo, db, smap, key, srcs[key], recent)
-        sets[key] = cids
         latest[key] = phys_latest
-        for cid in cids:
-            count[cid] += 1
+        count.update(cids)
+        del cids  # release this source's set before loading the next
 
+    # Pass 2: per-source physical/freeable, reloading each set (from the pkl cache) then discarding.
     rows: dict[str, dict] = {}
     for key in display:
-        cids = sets[key]
+        cids, _ = source_set(repo, db, smap, key, srcs[key], recent)
         snaps = srcs[key][-rec:] if rec else srcs[key]
         st = logical_stats(snaps)
         total = sum(smap.get(cid, 0) for cid in cids)
         free = sum(smap.get(cid, 0) for cid in cids if count[cid] == 1)
         pins = sum(1 for snap in snaps if snap.get("pins"))
-        rows[key] = {"st": st, "total": total, "free": free, "phys_latest": latest[key], "pins": pins}
+        rows[key] = {"st": st, "total": total, "free": free, "phys_latest": latest.get(key, 0), "pins": pins}
+        del cids
 
     union_total = sum(smap.get(cid, 0) for cid in count)
     try:
@@ -109,8 +126,23 @@ def build_global(
                 handle,
                 protocol=4,
             )
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001
+        log.warning("repo=%s refcount pkl write failed: %s", repo, exc)
+
+    if mode == "all" and not rec:  # persist the canonical full refcount into DuckDB
+        try:
+            from ..index.physical import materialize_refcount  # lazy: avoids core<-index import cycle
+            from ..index.schema import get_db
+            con = get_db(repo).cursor()
+            try:
+                materialize_refcount(con, repo, dict(count))
+                con.commit()
+            finally:
+                con.close()
+            log.info("repo=%s content_refs materialized (%d contents)", repo, len(count))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("repo=%s content_refs materialize failed: %s", repo, exc)
+
     return rows, time.time() - start, dict(count), union_total
 
 
@@ -173,20 +205,52 @@ def _table_snaphash(repo: str, mode: str, recent) -> str:
     return h.hexdigest()
 
 
+def _file_counts(repo: str) -> dict[str, dict[str, int]]:
+    """Per-source file counts for the dashboard: ``latest`` = files in the newest snapshot
+    (fully walked), ``distinct`` = distinct paths ever seen across all snapshots."""
+    from ..index.schema import read_cursor  # lazy: avoids core<-index import cycle on load
+    out: dict[str, dict[str, int]] = {}
+    cur = read_cursor(repo)
+    try:
+        for src, n in cur.execute(
+            "SELECT source, count(*) FROM paths WHERE repo=? GROUP BY source", [repo]
+        ).fetchall():
+            out.setdefault(src, {})["distinct"] = int(n or 0)
+        for src, fc in cur.execute(
+            """
+            SELECT source, file_count FROM indexed_snapshots i
+            WHERE repo=? AND start_time = (
+                SELECT max(start_time) FROM indexed_snapshots i2
+                WHERE i2.repo = i.repo AND i2.source = i.source)
+            """,
+            [repo],
+        ).fetchall():
+            out.setdefault(src, {})["latest"] = int(fc or 0)
+    except Exception as exc:  # noqa: BLE001 - counts are decorative; never fail the dashboard
+        log.warning("repo=%s file_counts failed: %s", repo, exc)
+    finally:
+        cur.close()
+    return out
+
+
 def table_rows(repo: str, recent: int | str | None = None, refresh: bool = False, mode: str = "all") -> dict:
     cache_file = _table_cache_path(repo, mode)
-    if not refresh:                       # serve cache directly -> instant; recompute only on refresh
+    want_hash = _table_snaphash(repo, mode, recent)
+    if not refresh:                       # serve cache -> instant, but only if version + snaphash still match
         try:
             with open(cache_file, encoding="utf-8") as fh:
-                cached = json.load(fh)["data"]
-            cached["cached"] = True
-            return cached
+                blob = json.load(fh)
+            if blob.get("version") == TABLE_CACHE_VERSION and blob.get("hash") == want_hash:
+                cached = blob["data"]
+                cached["cached"] = True
+                return cached
         except Exception:
             pass
     db = cache_db(repo)
     smap = load_sizemap(repo, refresh=refresh)
     meta = sources_meta(repo)
     nexts = load_next_snapshots(repo)  # computed next-snapshot times (subprocess mode)
+    fcounts = _file_counts(repo)
     rows, elapsed, _count, union_total = build_global(repo, db, smap, recent=recent, mode=mode)
     ordered = []
     for index, key in enumerate(sorted(rows, key=lambda item: rows[item]["total"], reverse=True)):
@@ -213,12 +277,14 @@ def table_rows(repo: str, recent: int | str | None = None, refresh: bool = False
                 "last_time": stats["last_time"],
                 "next_snapshot": nexts.get(key) or smeta.get("nextSnapshotTime"),
                 "status": smeta.get("status"),
+                "files_latest": (fcounts.get(key) or {}).get("latest", 0),
+                "files_distinct": (fcounts.get(key) or {}).get("distinct", 0),
             }
         )
     data = {"rows": ordered, "elapsed": elapsed, "union_total": union_total, "mode": mode, "recent": recent, "cached": False}
     try:
         with open(cache_file, "w", encoding="utf-8") as fh:
-            json.dump({"data": data}, fh)
-    except Exception:
-        pass
+            json.dump({"version": TABLE_CACHE_VERSION, "hash": want_hash, "data": data}, fh)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("repo=%s table cache write failed: %s", repo, exc)
     return data

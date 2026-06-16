@@ -16,6 +16,7 @@ from config import REPOS
 from .api import actions, dashboard, search, simulate, snapshots, stats, tree
 from .core import kopia as kopia_mod
 from .core.applog import get_logger, setup_logging
+from .core.metrics import table_rows
 from .core.schedule import compute_next_snapshots
 from .core.server import SERVERS
 from .index.builder import auto_reindex
@@ -29,13 +30,32 @@ ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "frontend"
 
 _bg_stop = threading.Event()
-_REINDEX_INTERVAL = 1800  # seconds between background incremental reindex passes
+_DEFAULT_REINDEX_INTERVAL = 1800  # fallback seconds between background passes (overridable in settings)
+
+
+def _reindex_interval() -> float:
+    """Background-pass interval, read live from settings so a change takes effect without restart."""
+    try:
+        val = float(load_settings().get("kopialens", {}).get("reindex_interval", _DEFAULT_REINDEX_INTERVAL))
+        return max(60.0, val)  # never tighter than 1 minute
+    except Exception:
+        return _DEFAULT_REINDEX_INTERVAL
+
+
+def _refresh_dashboard(repo: str) -> None:
+    """Recompute the dashboard cache so the open UI auto-updates without a manual Refresh. Cheap
+    now that build_global streams the refcount; unchanged sources hit the warm srcset cache."""
+    try:
+        data = table_rows(repo, refresh=True, mode="all")
+        log.info("dashboard refreshed repo=%s in %.1fs", repo, float(data.get("elapsed") or 0))
+    except Exception as exc:  # noqa: BLE001
+        log.error("dashboard refresh repo=%s failed: %s", repo, exc)
 
 
 def _warm(repo: str) -> None:
-    """Post-index warm pass (background, memory-light): next-snapshot times + per-snapshot churn
-    pre-warm (forward walk only). Reclaimable stays on-demand (the 'Analyze' button) because it
-    needs the global refcount, which is RAM-heavy - kept lazy until the RAM work is done."""
+    """Post-index warm pass (background): next-snapshot times + per-snapshot churn pre-warm
+    (forward walk only) + dashboard cache refresh. Reclaimable stays on the per-source/repo
+    Analyze action; churn is automatic here."""
     try:
         compute_next_snapshots(repo)
     except Exception as exc:  # noqa: BLE001
@@ -44,18 +64,19 @@ def _warm(repo: str) -> None:
         snap_prewarm(repo)  # churn only (with_reclaim=False) - light forward walk
     except Exception as exc:  # noqa: BLE001
         log.error("warm snap_prewarm repo=%s failed: %s", repo, exc)
+    _refresh_dashboard(repo)
 
 
 def _bg_worker() -> None:
     """Self-healing background maintenance: keep the index complete + per-snapshot churn +
-    next-snapshot times fresh. All work is DuckDB + bounded subprocess bursts - no kopia server."""
+    next-snapshot times + dashboard fresh. All work is DuckDB + bounded subprocess bursts."""
     for repo in REPOS:
         try:
             auto_reindex(repo)  # full rebuild if schema migrated, else incremental no-op
         except Exception as exc:  # noqa: BLE001
             log.error("startup reindex repo=%s failed: %s", repo, exc)
         _warm(repo)
-    while not _bg_stop.wait(_REINDEX_INTERVAL):
+    while not _bg_stop.wait(_reindex_interval()):
         for repo in REPOS:
             try:
                 auto_reindex(repo)  # incremental; cheap no-op when nothing changed

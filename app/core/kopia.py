@@ -7,12 +7,19 @@ does not mutate the repository. Restore is command-preview only in v1.
 
 from __future__ import annotations
 
+import os
+import string
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from typing import Iterable
 
 from config import REPOS
+
+from .applog import get_logger
+
+log = get_logger("kopia")
 
 ALLOWED = {
     ("repository", "status"),
@@ -175,6 +182,73 @@ def restore_command(repo: str, source: str, destination: str, overwrite: bool = 
 
 
 def snapshot_delete_commands(repo: str, snapshot_ids: list[str]) -> list[list[str]]:
-    """Generate, never execute, repo-destructive delete commands."""
+    """Generate, never execute, repo-destructive delete commands (the ``--delete`` flag is what
+    actually deletes; without it kopia only previews)."""
 
-    return [["kopia"] + REPOS[repo]["args"] + ["snapshot", "delete", sid] for sid in snapshot_ids]
+    return [
+        ["kopia"] + REPOS[repo]["args"] + ["snapshot", "delete", sid, "--delete"]
+        for sid in snapshot_ids
+    ]
+
+
+def snapshot_delete_execute(repo: str, snapshot_ids: list[str]) -> dict:
+    """ACTUALLY delete snapshots (one ``kopia snapshot delete <ids...> --delete``). This is the
+    only mutating kopia call in the app; it bypasses the read-only allowlist deliberately and is
+    logged. Space is reclaimed only after a later ``maintenance run --full`` (kopia's own step)."""
+    if not snapshot_ids:
+        return {"deleted": 0, "returncode": 0, "stdout": "", "stderr": "no ids"}
+    full = ["kopia"] + REPOS[repo]["args"] + ["snapshot", "delete", *snapshot_ids, "--delete", "--no-progress"]
+    log.warning("EXECUTING snapshot delete repo=%s count=%d ids=%s", repo, len(snapshot_ids), ",".join(snapshot_ids))
+    res = subprocess.run(
+        full, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    log.warning("snapshot delete repo=%s rc=%d stderr=%s", repo, res.returncode, (res.stderr or "").strip()[:300])
+    return {
+        "deleted": len(snapshot_ids) if res.returncode == 0 else 0,
+        "returncode": res.returncode,
+        "stdout": res.stdout, "stderr": res.stderr,
+        "command": full,
+    }
+
+
+def next_free_drive() -> str | None:
+    """First free Windows drive letter (Z: down to E:) for an auto-assigned mountpoint."""
+    for letter in reversed(string.ascii_uppercase[4:]):  # Z..E (skip A-D)
+        root = f"{letter}:\\"
+        if not os.path.exists(root):
+            return f"{letter}:"
+    return None
+
+
+def open_in_explorer(target: str) -> None:
+    """Open Windows Explorer at ``target`` (selecting it if it's a file). Localhost-only app, so
+    launching the shell here is safe; failures are swallowed (best-effort convenience)."""
+    try:
+        if os.path.isdir(target):
+            subprocess.Popen(["explorer", target], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            subprocess.Popen(["explorer", "/select,", target], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("open_in_explorer failed for %s: %s", target, exc)
+
+
+def mount_and_browse(repo: str, snapshot_id: str, mountpoint: str, in_mount_target: str | None = None,
+                     browse: bool = True) -> KopiaProcess:
+    """Mount a snapshot, then (in the background) wait for the filesystem to become ready and open
+    Explorer at the requested in-mount path. Returns immediately with the mount process."""
+    proc = mount_snapshot(repo, snapshot_id, mountpoint)
+    if browse:
+        target = in_mount_target or mountpoint
+
+        def _wait_and_open() -> None:
+            for _ in range(60):  # up to ~30s for the mount FS to appear
+                if os.path.exists(mountpoint) and (in_mount_target is None or os.path.exists(target)):
+                    open_in_explorer(target)
+                    return
+                time.sleep(0.5)
+            log.warning("mount %s not ready in time; opening mountpoint root", mountpoint)
+            open_in_explorer(mountpoint)
+
+        threading.Thread(target=_wait_and_open, daemon=True).start()
+    return proc

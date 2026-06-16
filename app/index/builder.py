@@ -185,10 +185,12 @@ def _run_build(repo: str, source: str | None, full: bool) -> None:
         for key in targets:
             job["current_source"] = key
             _build_source(con, db, repo, key, srcs[key], job)
-        # Physical/dedup materialization (cheap when the sizemap is unchanged). Always run so
-        # paths.physical stays correct after the first post-migration build and as content grows.
-        job["current_source"] = "(physical maps)"
-        materialize_physical(con, repo)
+        # Physical/dedup materialization only when something actually changed - skipping it on
+        # no-op incremental passes is the main fix for the periodic idle disk churn (it used to
+        # run an UPDATE over the whole paths table every cycle even when nothing was rebuilt).
+        if targets or stale or full:
+            job["current_source"] = "(physical maps)"
+            materialize_physical(con, repo)
         con.commit()
     except Exception as exc:  # noqa: BLE001 - surfaced to the UI
         job["error"] = str(exc)

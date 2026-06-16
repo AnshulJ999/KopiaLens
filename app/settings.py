@@ -20,8 +20,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "last_panel": "dashboard",
         "window": {},
         "time_format": "absolute",
-        "tables": {},        # per-table Tabulator persistence (columns + sort), keyed by table id
-        "page_size": 500,    # search default page size
+        "tables": {},          # per-table Tabulator persistence (columns + sort), keyed by table id
+        "page_size": 500,      # search default page size (may be "Infinite")
+        "reindex_interval": 1800,  # seconds between background incremental reindex + dashboard-refresh passes
+        "churn_default": False,    # show churn column by default
+        "tree_mode": "full",       # default tree view mode
+        "search_sort": "size",     # persisted search sort column
+        "search_dir": "desc",      # persisted search sort direction
     },
 }
 

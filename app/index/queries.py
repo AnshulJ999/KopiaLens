@@ -54,24 +54,54 @@ _SEARCH_SORT = {
 }
 
 
-def _search_where(query: str, deleted_only: bool, min_size: int,
-                  source: str | None, ext: str | None) -> tuple[list[str], list]:
+def _search_where(repo: str, query: str, deleted_only: bool, min_size: int,
+                  source: str | None, ext: str | None, max_size: int = 0,
+                  date_from: str | None = None, date_to: str | None = None,
+                  min_versions: int = 0, shared_min: int = 0) -> tuple[list[str], list]:
+    """Build the WHERE clause + params for a paths search. ``repo`` is prepended by the caller, so
+    the first placeholder (``repo = ?``) is filled there; every condition added here appends its
+    params in clause order. Multi-value source/ext accept comma-separated lists (-> IN)."""
     where = ["repo = ?"]
-    params: list = []  # repo prepended by caller
+    params: list = []
     if query:
         where.append("full_path ILIKE ?")
         params.append(f"%{query}%")
     if min_size:
         where.append("size >= ?")
-        params.append(min_size)
+        params.append(int(min_size))
+    if max_size:
+        where.append("size <= ?")
+        params.append(int(max_size))
     if deleted_only:
         where.append("in_latest = false")
     if source:
-        where.append("source = ?")
-        params.append(source)
+        srcs = [s for s in (x.strip() for x in source.split(",")) if s]
+        if len(srcs) > 1:
+            where.append("source IN (%s)" % ",".join("?" * len(srcs)))
+            params.extend(srcs)
+        else:
+            where.append("source = ?")
+            params.append(srcs[0] if srcs else source)
     if ext:
-        where.append("ext = ?")
-        params.append(ext.lower().lstrip("."))
+        exts = [e.lower().lstrip(".") for e in (x.strip() for x in ext.split(",")) if e]
+        if exts:
+            where.append("ext IN (%s)" % ",".join("?" * len(exts)))
+            params.extend(exts)
+    if date_from:
+        where.append("last_seen >= ?")
+        params.append(date_from)
+    if date_to:
+        where.append("last_seen <= ?")
+        params.append(date_to)
+    if min_versions:
+        where.append("versions >= ?")
+        params.append(int(min_versions))
+    if shared_min and shared_min > 1:  # content backing >= N distinct paths (exact-duplicate candidates)
+        where.append(
+            "content_id IN (SELECT content_id FROM paths WHERE repo = ? AND content_id IS NOT NULL "
+            "GROUP BY content_id HAVING count(DISTINCT full_path) >= ?)"
+        )
+        params.extend([repo, int(shared_min)])
     return where, params
 
 
@@ -83,10 +113,13 @@ def _order_clause(sort: str, direction: str) -> str:
 
 def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_size: int = 0,
                  source: str | None = None, ext: str | None = None, limit: int = 500, offset: int = 0,
-                 sort: str = "size", direction: str = "desc", confirm_exists: bool = False) -> dict:
+                 sort: str = "size", direction: str = "desc", confirm_exists: bool = False,
+                 max_size: int = 0, date_from: str | None = None, date_to: str | None = None,
+                 min_versions: int = 0, shared_min: int = 0) -> dict:
     """Search the pre-aggregated ``paths`` table. Returns the TRUE total count plus one page,
     with sort + filters applied in SQL over the entire matched set (the page is display-only)."""
-    where, params = _search_where(query, deleted_only, min_size, source, ext)
+    where, params = _search_where(repo, query, deleted_only, min_size, source, ext, max_size,
+                                  date_from, date_to, min_versions, shared_min)
     where_sql = " AND ".join(where)
     cur = read_cursor(repo)
     try:
@@ -112,9 +145,12 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
 
 def search_export(repo: str, query: str = "", deleted_only: bool = False, min_size: int = 0,
                   source: str | None = None, ext: str | None = None,
-                  sort: str = "size", direction: str = "desc", cap: int = 2_000_000):
+                  sort: str = "size", direction: str = "desc", cap: int = 2_000_000,
+                  max_size: int = 0, date_from: str | None = None, date_to: str | None = None,
+                  min_versions: int = 0, shared_min: int = 0):
     """Yield every matching row (full filtered set) for CSV export - not limited to a page."""
-    where, params = _search_where(query, deleted_only, min_size, source, ext)
+    where, params = _search_where(repo, query, deleted_only, min_size, source, ext, max_size,
+                                  date_from, date_to, min_versions, shared_min)
     where_sql = " AND ".join(where)
     cur = read_cursor(repo)
     cur.execute(
@@ -194,6 +230,35 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "") ->
 
 def snapshots_for_path(repo: str, source: str, full_path: str) -> list[str]:
     return [row["snapshot_id"] for row in versions(repo, source, full_path)]
+
+
+def paths_for_content(repo: str, content_id: str) -> list[dict]:
+    """Every distinct (source, full_path) whose latest version IS this exact content object -
+    i.e. all locations of an exact-duplicate file across sources/paths."""
+    cur = read_cursor(repo)
+    try:
+        return _rows(
+            cur,
+            "SELECT DISTINCT source, full_path FROM files WHERE repo=? AND content_id=? "
+            "ORDER BY source, full_path",
+            [repo, content_id],
+        )
+    finally:
+        cur.close()
+
+
+def snapshots_for_content(repo: str, content_id: str) -> list[str]:
+    """Every distinct snapshot id that references this content object (across all paths/sources).
+    This is the full set that must be deleted to free the content everywhere."""
+    cur = read_cursor(repo)
+    try:
+        rows = cur.execute(
+            "SELECT DISTINCT snapshot_id FROM files WHERE repo=? AND content_id=?",
+            [repo, content_id],
+        ).fetchall()
+    finally:
+        cur.close()
+    return [r[0] for r in rows]
 
 
 def _source_root_path(source: str) -> str:

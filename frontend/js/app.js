@@ -123,14 +123,16 @@ document.addEventListener("alpine:init", () => {
     query: "", deletedOnly: false, overOneGb: false, searchSource: "", searchExt: "", omniMeta: "",
     searchTotal: 0, searchPage: 1, searchPageSize: "500", searchSort: "size", searchDir: "desc",
     pageSizes: ["100", "200", "500", "1000", "2000", "5000", "10000", "Infinite"],
+    showFilters: false, minGb: "", maxGb: "", dateFrom: "", dateTo: "", minVersions: "", sharedMin: "",
     policyKeys: ["latest", "hourly", "daily", "weekly", "monthly", "annual"],
     policy: { latest: 100, hourly: 96, daily: 30, weekly: 52, monthly: 36, annual: 5 },
     simMode: "all", simMeta: "", simText: "", actionText: "",
     mounts: [],
     statsData: null, blobStats: "", blobLoading: false, _statsLoading: false,
     mountSnapshot: "", mountPoint: "", restoreSource: "", restoreDest: "",
-    dashboardMeta: "", busy: "", error: "", detail: null, _poll: null, _searchSeq: 0,
-    showSettings: false, backend: "subprocess",
+    dashboardMeta: "", busy: "", error: "", detail: null, _poll: null, _searchSeq: 0, _detailSeq: 0,
+    showSettings: false, backend: "subprocess", repoPinned: false, reindexInterval: 1800,
+    analyzingAll: false, showDelete: false, deletePlan: null, deleteConfirm: "", _autoRefresh: null,
 
     fmtB(v) { return fmtBytes(v); },
     fmtPhys(v) { return fmtPhys(v); },
@@ -162,13 +164,30 @@ document.addEventListener("alpine:init", () => {
         TABLE_PREFS = await getJson("/api/settings/tables").catch(() => ({})) || {};
         const data = await getJson("/api/repos");
         this.repos = data.repos;
-        this.repo = data.settings?.last_repo || "1";
+        const kl = data.settings?.kopialens || {};
+        // URL ?repo= pins this tab to a repo (survives refresh, never writes last_repo) -> two
+        // browser tabs can hold different repos without the last_repo setting flip-flopping.
+        const urlRepo = new URLSearchParams(location.search).get("repo");
+        if (urlRepo && data.repos.some((r) => r.id === urlRepo)) { this.repo = urlRepo; this.repoPinned = true; }
+        else this.repo = data.settings?.last_repo || "1";
         this.backend = data.settings?.listing_backend || "subprocess";
-        this.searchPageSize = String(data.settings?.kopialens?.page_size || 500);
+        this.searchPageSize = String(kl.page_size || 500);
+        this.searchSort = kl.search_sort || "size";
+        this.searchDir = kl.search_dir || "desc";
+        this.treeMode = kl.tree_mode || "full";
+        this.reindexInterval = Number(kl.reindex_interval || 1800);
+        if (kl.time_format) { TIME_FMT = kl.time_format; this.timeFmt = kl.time_format; }
         await this.refreshBase();
         if (this.indexStatus.building) this.pollIndex();  // show progress for the auto-triggered (migration) rebuild
         await this.loadDashboard();
       });
+      // Auto-refresh the dashboard view from the cache (the backend recomputes it in the
+      // background) so an open tab never silently shows stale per-source numbers.
+      this._autoRefresh = setInterval(() => { if (this.active === "dashboard" && !this.busy) this.loadDashboard(); }, 180000);
+    },
+
+    klSet(patch) {  // persist a kopialens settings patch in the backend (all prefs are permanent)
+      getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kopialens: patch }) }).catch(() => {});
     },
 
     async wrap(fn, label = "") {
@@ -185,6 +204,7 @@ document.addEventListener("alpine:init", () => {
       TIME_FMT = TIME_FMT === "relative" ? "absolute" : "relative";
       this.timeFmt = TIME_FMT;
       localStorage.setItem("kl-timefmt", TIME_FMT);
+      this.klSet({ time_format: TIME_FMT });  // permanent in backend too
       this.activate();
     },
     copyText(t) { try { navigator.clipboard.writeText(t); } catch (e) {} },
@@ -199,7 +219,11 @@ document.addEventListener("alpine:init", () => {
     async repoChanged() {
       this.selectedSnapshot = ""; this.snapshots = [];
       this.statsData = null; this.blobStats = "";  // stats are per-repo; force reload
-      getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ last_repo: this.repo }) }).catch(() => {});
+      if (this.repoPinned) {  // pinned tab: keep the choice in the URL, don't touch shared last_repo
+        const u = new URL(location.href); u.searchParams.set("repo", this.repo); history.replaceState(null, "", u);
+      } else {
+        getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ last_repo: this.repo }) }).catch(() => {});
+      }
       await this.wrap(async () => {
         await this.refreshBase(true);
         this.selectedSource = this.sources[0] || "";
@@ -266,9 +290,16 @@ document.addEventListener("alpine:init", () => {
       await this.wrap(async () => {
         const data = await getJson(`/api/dashboard?repo=${encodeURIComponent(this.repo)}&refresh=${refresh}`);
         this.dashboardMeta = `true physical ${fmtBytes(data.union_total)}` + (data.cached ? "" : ` · computed in ${Number(data.elapsed || 0).toFixed(1)}s`);
+        // Skip re-rendering on the periodic auto-refresh when the data is unchanged (avoids flicker).
+        const sig = `${this.repo}|${data.union_total}|${(data.rows || []).length}|${(data.rows && data.rows[0] && data.rows[0].last_time) || ""}`;
+        const dEl = document.querySelector("#dashboardTable");
+        if (!refresh && dEl && dEl._tabulator && sig === this._dashSig) return;
+        this._dashSig = sig;
         setTable("#dashboardTable", data.rows || [], [
           { title: "Source", field: "source", widthGrow: 4, minWidth: 240, sorter: srcSorter, formatter: (c) => sourcePath(c.getValue()) },
           { title: "Snaps", field: "snaps", width: 70, hozAlign: "right" },
+          { title: "Files (latest)", field: "files_latest", width: 100, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+          { title: "Paths (all)", field: "files_distinct", width: 95, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
           { title: "Physical", field: "physical", width: 100, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
           { title: "Accum", field: "accum", width: 75, formatter: (c) => `${Number(c.getValue()).toFixed(1)}x`, hozAlign: "right" },
           { title: "%Repo", field: "repo_pct", width: 72, formatter: (c) => `${Number(c.getValue()).toFixed(1)}%`, hozAlign: "right" },
@@ -312,15 +343,64 @@ document.addEventListener("alpine:init", () => {
           { title: "ID", field: "id", width: 200 },
         ];
         setTable("#snapshotsTable", this.snapshots, cols, {
+          selectableRows: true,  // multi-select for bulk delete
           initialSort: [{ column: "start_time", dir: "desc" }],
           onRowDblClick: (_e, row) => { this.selectedSnapshot = row.getData().id; this.mountSnapshot = this.selectedSnapshot; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); },
           rowMenu: [
             { label: "Browse files", action: (_e, row) => { this.selectedSnapshot = row.getData().id; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); } },
             { label: "Mount snapshot (read-only)", action: (_e, row) => this.mountRow(row.getData().id) },
+            { label: "Mount + open in Explorer", action: (_e, row) => this.mountOpen(row.getData().id, this.selectedSource, this.sourceRoot()) },
+            { label: "Delete selected snapshots…", action: () => this.planDelete() },
             { label: "Copy snapshot ID", action: (_e, row) => this.copyText(row.getData().id) },
           ],
         });
       }, "Loading snapshots...");
+    },
+
+    snapSelected() {
+      const el = document.querySelector("#snapshotsTable");
+      return (el && el._tabulator) ? el._tabulator.getSelectedData() : [];
+    },
+    planDelete() {  // build a confirm plan from the currently-selected snapshot rows
+      const rows = this.snapSelected();
+      if (!rows.length) { window.alert("Select one or more snapshots first (click rows / checkboxes)."); return; }
+      const reclaimVals = rows.map((r) => r.reclaimable).filter((v) => v !== null && v !== undefined);
+      this.deletePlan = {
+        ids: rows.map((r) => r.id),
+        count: rows.length,
+        reclaim: reclaimVals.reduce((a, b) => a + b, 0),
+        reclaimKnown: reclaimVals.length === rows.length,
+        pinned: rows.filter((r) => r.pins && r.pins.length).length,
+        retained: rows.filter((r) => r.retention && r.retention.length).length,
+        commands: "",
+      };
+      this.deleteConfirm = "";
+      this.showDelete = true;
+      // fetch the exact commands (handles repo2's --config-file) for the copy button
+      getJson("/api/actions/snapshot-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_ids: this.deletePlan.ids, confirm: false }) })
+        .then((r) => { if (this.deletePlan) this.deletePlan.commands = r.commands || ""; }).catch(() => {});
+    },
+    async executeDelete() {
+      if (!this.deletePlan) return;
+      if (this.deleteConfirm.trim().toUpperCase() !== "DELETE") { window.alert('Type DELETE to confirm.'); return; }
+      await this.wrap(async () => {
+        const r = await getJson("/api/actions/snapshot-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_ids: this.deletePlan.ids, confirm: true }) });
+        this.showDelete = false; this.deletePlan = null; this.deleteConfirm = "";
+        this.actionText = `Deleted ${r.deleted} snapshot(s). Run 'kopia maintenance run --full' to reclaim the space.`;
+        await this.loadSnapshots(true);
+        this.loadDashboard(true);
+      }, "Deleting snapshots…");
+    },
+
+    async analyzeAll() {  // churn + reclaimable for the whole repo, cached
+      await this.wrap(async () => {
+        await getJson(`/api/snapshots/analyze-all?repo=${encodeURIComponent(this.repo)}&reclaim=true`, { method: "POST" });
+        this.analyzingAll = true;
+        const poll = setInterval(async () => {
+          const d = await getJson(`/api/snapshots/analyze-status?repo=${encodeURIComponent(this.repo)}`).catch(() => null);
+          if (d && !d.analyzing_all) { clearInterval(poll); this.analyzingAll = false; if (this.active === "snapshots") this.loadSnapshots(); }
+        }, 5000);
+      }, "Analyzing entire repo (churn + reclaimable)…");
     },
 
     async analyzeSnapshots() {
@@ -347,7 +427,7 @@ document.addEventListener("alpine:init", () => {
       });
     },
     treeSourceChanged() { this.snapshots = []; this.selectedSnapshot = ""; this.treePrefix = this.sourceRoot(); this.openTree(); },
-    treeModeChanged() { this.treePrefix = this.sourceRoot(); this.openTree(); },
+    treeModeChanged() { this.treePrefix = this.sourceRoot(); this.klSet({ tree_mode: this.treeMode }); this.openTree(); },
     navTree(prefix) { this.treePrefix = prefix; this.loadTree(); },
     treeUp() { const c = this.treeCrumbs(); if (c.length > 1) this.navTree(c[c.length - 2].prefix); },
 
@@ -398,14 +478,25 @@ document.addEventListener("alpine:init", () => {
       const p = new URLSearchParams({ repo: this.repo, q: this.query, deleted_only: this.deletedOnly, over_gb: this.overOneGb ? 1 : 0, sort: this.searchSort, dir: this.searchDir });
       if (this.searchSource) p.set("source", this.searchSource);
       if (this.searchExt) p.set("ext", this.searchExt);
+      if (this.minGb !== "" && this.minGb != null) p.set("min_gb", this.minGb);
+      if (this.maxGb !== "" && this.maxGb != null) p.set("max_gb", this.maxGb);
+      if (this.dateFrom) p.set("date_from", this.dateFrom);
+      if (this.dateTo) p.set("date_to", this.dateTo);
+      if (this.minVersions !== "" && this.minVersions != null) p.set("min_versions", this.minVersions);
+      if (this.sharedMin !== "" && this.sharedMin != null) p.set("shared_min", this.sharedMin);
       return p;
     },
     searchPages() { return Math.max(1, Math.ceil(this.searchTotal / (parseInt(this.searchPageSize, 10) || 500))); },
     setSearchPage(n) { this.searchPage = Math.min(Math.max(1, n), this.searchPages()); this.loadSearch(true); },
-    setSearchSort(field, dir) { this.searchSort = field; this.searchDir = dir; this.searchPage = 1; this.loadSearch(); },
+    setSearchSort(field, dir) { this.searchSort = field; this.searchDir = dir; this.searchPage = 1; this.klSet({ search_sort: field, search_dir: dir }); this.loadSearch(); },
     changePageSize() {
-      getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kopialens: { page_size: this.searchPageSize === "Infinite" ? 500 : this.searchPageSize } }) }).catch(() => {});
+      this.klSet({ page_size: this.searchPageSize });  // persist the raw value, including "Infinite"
       this.searchPage = 1; this.loadSearch();
+    },
+    clearFilters() {
+      this.minGb = ""; this.maxGb = ""; this.dateFrom = ""; this.dateTo = ""; this.minVersions = ""; this.sharedMin = "";
+      this.searchExt = ""; this.searchSource = ""; this.deletedOnly = false; this.overOneGb = false;
+      this.loadSearch();
     },
 
     async loadSearch(keepPage = false) {
@@ -441,18 +532,29 @@ document.addEventListener("alpine:init", () => {
           H("On disk", "in_latest", { width: 90, formatter: (c) => c.getValue() ? "yes" : "<span style='color:#dc2626'>deleted</span>" }),
           H("Source", "source", { widthGrow: 2, minWidth: 180, formatter: (c) => sourcePath(c.getValue()) }),
         ];
-        setTable("#searchTable", data.results || [], cols, {
-          persistSort: false,
-          onRowDblClick: (_e, row) => this.openFileDetail(row.getData()),
-          rowMenu: [
-            { label: "File detail (physical / reclaim / dedup)", action: (_e, row) => this.openFileDetail(row.getData()) },
-            { label: "Version history", action: (_e, row) => this.openFileDetail(row.getData()) },
-            { label: "Mount the snapshot it lives in", action: (_e, row) => this.mountLatestFor(row.getData()) },
-            { label: "Jump to it in tree", action: (_e, row) => this.jumpToTree(row.getData()) },
-            { label: "Browse this source", action: (_e, row) => { this.selectedSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); } },
-            { label: "Copy full path", action: (_e, row) => this.copyText(row.getData().full_path) },
-          ],
-        });
+        // Reuse the existing Tabulator (replaceData + header-title update) rather than
+        // destroy+recreate, so re-querying on sort/filter no longer flickers the whole table.
+        const sEl = document.querySelector("#searchTable");
+        if (sEl && sEl._tabulator) {
+          const t = sEl._tabulator;
+          // pass the full def (keeps headerClick + formatter) so only the rows + sort arrow change
+          cols.forEach((c) => { try { t.updateColumnDefinition(c.field, c); } catch (e) {} });
+          t.replaceData(data.results || []);
+        } else {
+          setTable("#searchTable", data.results || [], cols, {
+            persistSort: false,
+            onRowDblClick: (_e, row) => this.openFileDetail(row.getData()),
+            rowMenu: [
+              { label: "File detail (physical / reclaim / dedup)", action: (_e, row) => this.openFileDetail(row.getData()) },
+              { label: "Version history", action: (_e, row) => this.openFileDetail(row.getData()) },
+              { label: "Mount + open in Explorer (latest)", action: (_e, row) => this.mountFileOpen(row.getData()) },
+              { label: "Mount the snapshot it lives in", action: (_e, row) => this.mountLatestFor(row.getData()) },
+              { label: "Jump to it in tree", action: (_e, row) => this.jumpToTree(row.getData()) },
+              { label: "Browse this source", action: (_e, row) => { this.selectedSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); } },
+              { label: "Copy full path", action: (_e, row) => this.copyText(row.getData().full_path) },
+            ],
+          });
+        }
       }, "Searching...");
     },
 
@@ -475,32 +577,68 @@ document.addEventListener("alpine:init", () => {
 
     // ---------- File / folder detail ----------
     async openFileDetail(item) {
-      await this.wrap(async () => {
-        const base = `repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(item.source)}&full_path=${encodeURIComponent(item.full_path)}`;
+      const seq = ++this._detailSeq;
+      // Render the panel immediately from the row we already have; the heavy fields (refcount,
+      // dedup chunks, purge plan) fill in when they arrive. A second click bumps _detailSeq so a
+      // stale in-flight response is dropped (no race).
+      this.detail = {
+        kind: "file", loading: true, title: item.full_path, source: item.source,
+        on_disk: item.in_latest, logical: item.size, physical: item.physical,
+        freeable: null, shared: null, chunks: [], others: [], versions: [], purge: [],
+      };
+      const base = `repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(item.source)}&full_path=${encodeURIComponent(item.full_path)}`;
+      try {
         const [detail, vres, purge] = await Promise.all([
           getJson(`/api/search/detail?${base}`),
           getJson(`/api/search/versions?${base}`),
           getJson(`/api/actions/purge-plan?${base}`),
         ]);
+        if (seq !== this._detailSeq) return;  // a newer file was opened meanwhile - drop this result
         const items = purge.items || [];
         const purgeRows = (purge.commands || []).map((c, i) => {
           const it = items[i] || {};
           return { cmd: Array.isArray(c) ? c.join(" ") : c, tag: it.pinned ? "PINNED" : ((it.retention && it.retention.length) ? `retained: ${it.retention.join(",")}` : "") };
         });
         this.detail = {
-          kind: "file",
+          kind: "file", loading: false,
           title: item.full_path,
           source: detail.source || item.source,
           on_disk: item.in_latest,
+          content_id: detail.content_id,
           logical: detail.logical, physical: detail.physical, freeable: detail.freeable,
           shared: detail.shared, physical_all: detail.physical_all_versions, chunk_count: detail.chunk_count,
           chunks: detail.chunks || [],
           others: detail.other_paths || [],
+          locations: detail.locations, instances: detail.instances,
+          reclaim_everywhere: detail.reclaim_everywhere, purge_everywhere_count: detail.purge_everywhere_count,
+          purgeEverywhereCmds: detail.purge_everywhere_cmds || "",
           versions: (vres.versions || []).map((x) => ({ time: humanTime(x.start_time), size: x.size, snapshot_id: x.snapshot_id, content_id: x.content_id })),
           purge: purgeRows,
           purgeCmds: purgeRows.map((r) => r.cmd).join("\n"),
         };
-      }, "Loading file detail...");
+      } catch (err) {
+        if (seq === this._detailSeq) this.error = err.message || String(err);
+      }
+    },
+
+    // ---- Mount + open in Explorer (auto drive letter, registered in the mount manager) ----
+    async mountFileOpen(item) {  // mount the latest snapshot carrying a file and open its folder
+      const v = await getJson(`/api/search/versions?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(item.source)}&full_path=${encodeURIComponent(item.full_path)}`).catch(() => null);
+      const snap = v && v.versions && v.versions[0] && v.versions[0].snapshot_id;
+      if (!snap) { window.alert("No snapshot found for this file."); return; }
+      this.mountOpen(snap, item.source, item.full_path);
+    },
+    mountOpen(snapshotId, source, fullPath) {
+      this.wrap(async () => {
+        const r = await getJson("/api/actions/mount-open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_id: snapshotId, source, full_path: fullPath || null }) });
+        this.actionText = `Mounted at ${r.mountpoint} (pid ${r.pid}); opening Explorer…\n${(r.command || []).join(" ")}`;
+        this.loadMounts();
+      }, "Mounting + opening…");
+    },
+    mountVersionOpen(v) { if (this.detail) this.mountOpen(v.snapshot_id, this.detail.source, this.detail.title); },
+    mountTreeSnapshot() {  // tree control-bar: mount the selected snapshot + open the current folder
+      if (!this.selectedSnapshot) { window.alert("Pick a snapshot first."); return; }
+      this.mountOpen(this.selectedSnapshot, this.selectedSource, this.treePrefix || this.sourceRoot());
     },
 
     // ---------- Simulate (all sources or one) ----------
@@ -595,9 +733,9 @@ document.addEventListener("alpine:init", () => {
 
     async saveSettings() {
       await this.wrap(async () => {
-        await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listing_backend: this.backend }) });
+        await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listing_backend: this.backend, kopialens: { reindex_interval: Number(this.reindexInterval) || 1800 } }) });
         this.showSettings = false;
-        window.alert("Saved. Restart KopiaLens for the listing backend change to take effect.");
+        window.alert("Saved. The background interval applies on the next cycle; the listing backend change needs a restart.");
       });
     },
   }));

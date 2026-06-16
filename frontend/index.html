@@ -82,9 +82,11 @@
           <select x-model="selectedSource" @change="loadSnapshots()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[34rem] max-w-full">
             <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
           </select>
-          <button @click="analyzeSnapshots()" :disabled="analyzing" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm disabled:opacity-50" title="Compute churn + reclaimable for every snapshot (cached after)"><span x-text="analyzing ? 'Analyzing…' : 'Analyze (churn + reclaimable)'"></span></button>
+          <button @click="analyzeSnapshots()" :disabled="analyzing" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm disabled:opacity-50" title="Compute churn + reclaimable for this source (cached after)"><span x-text="analyzing ? 'Analyzing…' : 'Analyze this source'"></span></button>
+          <button @click="analyzeAll()" :disabled="analyzingAll" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm disabled:opacity-50" title="Compute churn + reclaimable for EVERY source in the repo (cached)"><span x-text="analyzingAll ? 'Analyzing repo…' : 'Analyze entire repo'"></span></button>
+          <button @click="planDelete()" class="h-8 rounded border border-red-300 text-red-600 px-3 text-sm" title="Delete the selected snapshots (select rows first)">🗑 Delete selected</button>
           <button @click="csv('#snapshotsTable','snapshots')" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Export CSV">⬇ CSV</button>
-          <span class="text-xs text-stone-500">Churn = new data · Reclaimable = freed if this snapshot is deleted</span>
+          <span class="text-xs text-stone-500">Select rows to delete · Churn = new data · Reclaimable = freed if deleted</span>
         </div>
         <div id="snapshotsTable" class="flex-1 min-h-0"></div>
       </section>
@@ -103,6 +105,7 @@
             <template x-for="sn in snapshots" :key="sn.id"><option :value="sn.id" x-text="humanTime(sn.start_time)"></option></template>
           </select>
           <button @click="treeUp()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Up one level">⬆ Up</button>
+          <button x-show="treeMode!=='all'" @click="mountTreeSnapshot()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Mount this snapshot (read-only) and open the current folder in Explorer">⤓ Mount &amp; browse</button>
           <button @click="csv('#treeTable','tree')" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Export CSV">⬇ CSV</button>
         </div>
         <div class="flex items-center gap-1 text-sm flex-wrap px-1">
@@ -115,15 +118,27 @@
 
       <section x-show="active==='search'" class="h-full flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
-          <input x-model="query" @input.debounce.300ms="loadSearch()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[22rem]" placeholder="Search paths">
+          <input x-model="query" @input.debounce.300ms="loadSearch()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[22rem]" placeholder="Search paths (matches the full path)">
           <select x-model="searchSource" @change="loadSearch()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 max-w-[18rem]">
             <option value="">All sources</option>
             <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
           </select>
-          <input x-model="searchExt" @input.debounce.300ms="loadSearch()" class="fld w-28 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="ext (vhdx)">
+          <input x-model="searchExt" @input.debounce.300ms="loadSearch()" class="fld w-36 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="ext: vhdx,iso,7z">
           <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="deletedOnly" @change="loadSearch()"> Deleted from disk</label>
           <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="overOneGb" @change="loadSearch()"> &gt;1 GB</label>
+          <button @click="showFilters=!showFilters" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="showFilters ? 'bg-stone-200 dark:bg-stone-700' : ''" title="More filters">⛃ Filters</button>
           <button @click="exportSearch()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Export the FULL filtered set to CSV">⬇ CSV (all)</button>
+        </div>
+        <div x-show="showFilters" class="flex flex-wrap items-center gap-2 text-xs rounded border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800/40 p-2">
+          <label class="flex items-center gap-1">Size GB <input type="number" min="0" step="0.1" x-model="minGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="min"></label>
+          <span>–</span>
+          <input type="number" min="0" step="0.1" x-model="maxGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="max">
+          <label class="flex items-center gap-1 ml-2">Last seen <input type="date" x-model="dateFrom" @change="loadSearch()" class="fld h-7 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800"></label>
+          <span>–</span>
+          <input type="date" x-model="dateTo" @change="loadSearch()" class="fld h-7 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+          <label class="flex items-center gap-1 ml-2">Min versions <input type="number" min="0" x-model="minVersions" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="0"></label>
+          <label class="flex items-center gap-1 ml-2" title="Files whose exact content backs at least N distinct paths (exact-duplicate candidates)">Shared ≥ <input type="number" min="0" x-model="sharedMin" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="2"></label>
+          <button @click="clearFilters()" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 ml-1">Clear</button>
         </div>
         <div class="flex flex-wrap items-center gap-2 text-xs">
           <span class="text-stone-600 dark:text-stone-300 font-medium" x-text="omniMeta"></span>
@@ -235,6 +250,15 @@
               <option value="server">Kopia server</option>
             </select></div>
           <p class="text-xs text-stone-500">Subprocess = zero background kopia activity. Server = persistent kopia server (faster refresh, runs in background). Restart required to switch.</p>
+          <div class="flex items-center justify-between gap-2"><span>Background refresh interval</span>
+            <select x-model.number="reindexInterval" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+              <option :value="900">15 minutes</option>
+              <option :value="1800">30 minutes</option>
+              <option :value="3600">1 hour</option>
+              <option :value="7200">2 hours</option>
+              <option :value="14400">4 hours</option>
+            </select></div>
+          <p class="text-xs text-stone-500">How often the index, next-snapshot times, and dashboard are refreshed in the background. Applies on the next cycle.</p>
           <div class="flex items-center justify-between gap-2"><span>Index</span>
             <button @click="rebuildIndex()" :disabled="indexStatus.building" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 disabled:opacity-50">Rebuild full index</button></div>
           <div class="flex justify-end gap-2 pt-2">
@@ -249,9 +273,11 @@
       <div class="w-[52rem] max-w-full max-h-[85vh] overflow-auto rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 text-sm" x-show="detail">
         <div class="flex items-start gap-2">
           <div class="font-medium break-all" x-text="detail && detail.title"></div>
-          <button @click="detail=null" class="ml-auto text-stone-500 text-lg leading-none">&times;</button>
+          <button x-show="detail && detail.kind==='file'" @click="mountFileOpen({source: detail.source, full_path: detail.title})" class="ml-auto shrink-0 h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Mount the latest snapshot carrying this file and open it in Explorer">⤓ Mount &amp; open</button>
+          <button @click="detail=null" class="shrink-0 text-stone-500 text-lg leading-none">&times;</button>
         </div>
         <div class="text-xs text-stone-500 mt-1 break-all" x-show="detail && detail.source" x-text="detail && ('source: ' + shortSource(detail.source))"></div>
+        <div class="text-[11px] text-amber-600 mt-1" x-show="detail && detail.loading">Loading physical / dedup / purge details…</div>
 
         <!-- size cards -->
         <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -291,6 +317,19 @@
           </div>
         </template>
 
+        <!-- content-centric: reclaim if purged everywhere -->
+        <template x-if="detail && detail.kind==='file' && detail.instances > 1">
+          <div class="mt-3 rounded border border-amber-300 dark:border-amber-800 p-2">
+            <div class="font-medium text-xs mb-1">Exact duplicate · <span x-text="detail.instances"></span> paths across <span x-text="detail.locations"></span> sources</div>
+            <div class="text-[11px] text-stone-600 dark:text-stone-300">Per-file "Freeable" reads ~0 here because the other copies keep the content alive. To actually free it you must delete EVERY snapshot that references it across ALL locations.</div>
+            <div class="mt-1.5 flex items-center gap-3 text-xs flex-wrap">
+              <span>Reclaim if purged everywhere: <span class="font-medium text-emerald-600" x-text="fmtPhys(detail.reclaim_everywhere)"></span></span>
+              <span>Snapshots to delete: <span class="font-medium" x-text="detail.purge_everywhere_count"></span></span>
+              <button @click="copyText(detail.purgeEverywhereCmds)" class="ml-auto rounded border border-stone-300 dark:border-stone-700 px-2 py-0.5">Copy delete-everywhere commands</button>
+            </div>
+          </div>
+        </template>
+
         <!-- versions -->
         <template x-if="detail && detail.versions && detail.versions.length">
           <div class="mt-3">
@@ -300,6 +339,7 @@
                 <div class="flex items-center gap-2 px-2 py-0.5 border-b border-stone-100 dark:border-stone-800">
                   <span x-text="v.time"></span><span class="text-stone-500" x-text="fmtB(v.size)"></span>
                   <span class="ml-auto font-mono text-stone-400" x-text="'snap ' + v.snapshot_id.slice(0,16)"></span>
+                  <button @click="mountVersionOpen(v)" class="text-sky-600" title="Mount this version's snapshot and open it in Explorer">mount</button>
                   <button @click="copyText('kopia restore ' + v.content_id + ' <destination>')" class="text-emerald-600" title="Copy restore command">copy restore</button>
                 </div>
               </template>
@@ -322,6 +362,24 @@
             </div>
           </div>
         </template>
+      </div>
+    </div>
+
+    <!-- delete-snapshots confirm -->
+    <div x-show="showDelete && deletePlan" @click.self="showDelete=false" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+      <div class="w-[42rem] max-w-full rounded-lg border border-red-300 dark:border-red-800 bg-white dark:bg-stone-900 p-4 text-sm">
+        <div class="flex items-center gap-2"><div class="font-medium text-red-600">Delete <span x-text="deletePlan && deletePlan.count"></span> snapshot(s)</div><button @click="showDelete=false" class="ml-auto text-stone-500 text-lg leading-none">&times;</button></div>
+        <div class="mt-3 grid grid-cols-2 gap-2">
+          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Est. reclaim (selected)</div><div class="font-medium" x-text="deletePlan && (fmtPhys(deletePlan.reclaim) + (deletePlan.reclaimKnown ? '' : ' · partial — Analyze first'))"></div></div>
+          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Pinned / retained in selection</div><div class="font-medium" :class="(deletePlan && (deletePlan.pinned||deletePlan.retained)) ? 'text-amber-600' : ''" x-text="deletePlan && (deletePlan.pinned + ' pinned · ' + deletePlan.retained + ' retained')"></div></div>
+        </div>
+        <div x-show="deletePlan && (deletePlan.pinned || deletePlan.retained)" class="mt-2 text-[11px] text-amber-600">⚠ Some selected snapshots are pinned or kept by a retention rule — deleting removes those restore points (and any pins).</div>
+        <div class="mt-2 text-[11px] text-stone-500">Space is reclaimed only after <span class="font-mono">kopia maintenance run --full</span>. Files that also exist in other (retained) snapshots are not affected.</div>
+        <div class="mt-3 flex items-center gap-2">
+          <button @click="copyText(deletePlan.commands)" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-xs" title="Copy the exact kopia delete commands to run yourself">Copy commands</button>
+          <input x-model="deleteConfirm" @keydown.enter="executeDelete()" placeholder="type DELETE to confirm" class="fld h-8 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 flex-1">
+          <button @click="executeDelete()" class="h-8 rounded bg-red-600 px-3 text-xs text-white">Execute delete</button>
+        </div>
       </div>
     </div>
 

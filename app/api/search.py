@@ -17,6 +17,14 @@ _EXPORT_COLS = ["source", "full_path", "name", "ext", "size", "physical", "versi
                 "first_seen", "last_seen", "in_latest"]
 
 
+def _bounds(over_gb: float, largest: bool, min_gb: float, max_gb: float) -> tuple[int, int]:
+    min_size = int(min_gb * 1_000_000_000) if min_gb else (int(over_gb * 1_000_000_000) if over_gb else 0)
+    if largest and not min_size:
+        min_size = 1
+    max_size = int(max_gb * 1_000_000_000) if max_gb else 0
+    return min_size, max_size
+
+
 @router.get("/search")
 def search(
     repo: str = "1",
@@ -31,15 +39,21 @@ def search(
     limit: int = 500,
     offset: int = 0,
     confirm_exists: bool = False,
+    min_gb: float = 0,
+    max_gb: float = 0,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    min_versions: int = 0,
+    shared_min: int = 0,
 ) -> dict:
-    min_size = int(over_gb * 1_000_000_000) if over_gb else 0
-    if largest and not min_size:
-        min_size = 1
+    min_size, max_size = _bounds(over_gb, largest, min_gb, max_gb)
     try:
         res = search_paths(
             repo, query=q, deleted_only=deleted_only, min_size=min_size,
             source=source or None, ext=ext or None, sort=sort, direction=dir,
             limit=limit, offset=offset, confirm_exists=confirm_exists,
+            max_size=max_size, date_from=date_from or None, date_to=date_to or None,
+            min_versions=min_versions, shared_min=shared_min,
         )
         return {"results": res["rows"], "total": res["total"], "offset": res["offset"], "limit": res["limit"]}
     except Exception as exc:
@@ -51,12 +65,14 @@ def export(
     repo: str = "1", q: str = "", deleted_only: bool = False, largest: bool = False,
     over_gb: float = 0, source: str | None = None, ext: str | None = None,
     sort: str = "size", dir: str = "desc",
+    min_gb: float = 0, max_gb: float = 0, date_from: str | None = None, date_to: str | None = None,
+    min_versions: int = 0, shared_min: int = 0,
 ) -> StreamingResponse:
-    min_size = int(over_gb * 1_000_000_000) if over_gb else 0
-    if largest and not min_size:
-        min_size = 1
+    min_size, max_size = _bounds(over_gb, largest, min_gb, max_gb)
     cur = search_export(repo, query=q, deleted_only=deleted_only, min_size=min_size,
-                        source=source or None, ext=ext or None, sort=sort, direction=dir)
+                        source=source or None, ext=ext or None, sort=sort, direction=dir,
+                        max_size=max_size, date_from=date_from or None, date_to=date_to or None,
+                        min_versions=min_versions, shared_min=shared_min)
 
     def rows():
         buf = io.StringIO()
