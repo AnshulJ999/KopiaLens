@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from ..core.kopia import diff_execute, snapshot_diff_command, snapshot_pin_command
 from ..core.sources import resolve_source, sources_index
 from ..index.queries import snapshot_files
-from ..index.snapanalysis import compute_source, read_analysis
+from ..index.snapanalysis import compute_source, read_analysis, reclaimable_files
 
 router = APIRouter(tags=["snapshots"])
 
@@ -160,9 +160,15 @@ def diff(repo: str = "1", id1: str | None = None, id2: str | None = None, run: b
 
 
 @router.get("/snapshots/delete-preview")
-def delete_preview(repo: str = "1", ids: str = "", precise: bool = False, limit: int = 40) -> dict:
-    """Largest files that are NEW in the selected snapshots (the 'what gets reclaimed' preview).
-    precise=true filters to content exclusive to this source (refcount<=1)."""
+def delete_preview(repo: str = "1", ids: str = "", precise: bool = False, limit: int = 60) -> dict:
+    """What gets reclaimed by deleting the selected snapshots.
+    Fast = largest files new in them (delta). Precise (single snapshot) = the ACCURATE
+    exclusive-content file list (matches the reclaimable number)."""
     snap_ids = [s for s in ids.split(",") if s]
+    if precise and len(snap_ids) == 1:
+        sid = snap_ids[0]
+        src = next((k for k, lst in sources_index(repo).items() if any(s["id"] == sid for s in lst)), None)
+        if src:
+            return {"files": reclaimable_files(repo, src, sid, limit=limit), "precise": True, "exact": True}
     files = snapshot_files(repo, snap_ids, limit=limit, reclaimable_only=precise)
-    return {"files": files, "precise": precise}
+    return {"files": files, "precise": precise, "exact": False}

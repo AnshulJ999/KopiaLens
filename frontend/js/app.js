@@ -176,6 +176,8 @@ document.addEventListener("alpine:init", () => {
         this.searchPageSize = String(kl.page_size || 500);
         this.searchSort = kl.search_sort || "size";
         this.searchDir = kl.search_dir || "desc";
+        this.dedupe = !!kl.search_dedupe;
+        this.treeDedupe = !!kl.tree_dedupe;
         this.treeMode = kl.tree_mode || "full";
         this.reindexInterval = Number(kl.reindex_interval || 1800);
         this.dashRefresh = Number(kl.dashboard_refresh ?? 900);
@@ -247,7 +249,7 @@ document.addEventListener("alpine:init", () => {
       ]);
       this.indexStatus = status;
       this.sources = sources.sources || [];
-      if (!this.sources.includes(this.selectedSource)) this.selectedSource = this.sources[0] || "";
+      if (this.selectedSource !== "*ALL*" && !this.sources.includes(this.selectedSource)) this.selectedSource = this.sources[0] || "";
     },
 
     activate() {
@@ -369,12 +371,13 @@ document.addEventListener("alpine:init", () => {
             { label: "Copy snapshot ID", action: (_e, row) => this.copyText(row.getData().id) },
           ],
         });
-        if (stbl) stbl.on("rowClick", (e, row) => {  // Shift+Click selects a range
-          if (e.shiftKey && this._lastSnapRow) {
-            const rs = stbl.getRows(); const i1 = rs.indexOf(this._lastSnapRow); const i2 = rs.indexOf(row);
-            if (i1 >= 0 && i2 >= 0) { const a = Math.min(i1, i2); const b = Math.max(i1, i2); for (let k = a; k <= b; k++) rs[k].select(); }
+        if (stbl) stbl.on("rowClick", (e, row) => {  // Shift+Click selects a range from the anchor
+          const rs = stbl.getRows(); const idx = rs.indexOf(row);
+          if (e.shiftKey && this._lastSnapIdx != null && this._lastSnapIdx >= 0 && idx >= 0) {
+            const a = Math.min(this._lastSnapIdx, idx); const b = Math.max(this._lastSnapIdx, idx);
+            for (let k = a; k <= b; k++) rs[k].select();
           }
-          this._lastSnapRow = row;
+          this._lastSnapIdx = idx;
         });
       }, "Loading snapshots...");
     },
@@ -686,8 +689,8 @@ document.addEventListener("alpine:init", () => {
     async loadRemoveFiles(by) {  // by = 'object-id' (precise) | 'filename' (basename + source)
       if (!this.detail) return;
       try {
-        const r = await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.detail.source, full_path: this.detail.title, by, confirm: false }) });
-        this.detail.removeFiles = { by, dry: r.dry_run, commit: r.commit, count: r.count };
+        const r = await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.detail.source, full_path: this.detail.title, by, everywhere: !!this.detail.rfEverywhere, confirm: false }) });
+        this.detail.removeFiles = { by, dry: r.dry_run, commit: r.commit, count: r.count, everywhere: r.everywhere };
       } catch (err) { this.error = err.message || String(err); }
     },
     async executeRemoveFiles() {
@@ -695,7 +698,7 @@ document.addEventListener("alpine:init", () => {
       if (!rf) return;
       if ((window.prompt("Remove this file from ALL snapshots (rewrites manifests, keeps the snapshots)?\nType REMOVE to confirm:") || "").trim().toUpperCase() !== "REMOVE") return;
       await this.wrap(async () => {
-        await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.detail.source, full_path: this.detail.title, by: rf.by, confirm: true }) });
+        await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.detail.source, full_path: this.detail.title, by: rf.by, everywhere: !!this.detail.rfEverywhere, confirm: true }) });
         this.actionText = "Removed from snapshots. Run 'kopia maintenance run --full' to reclaim the space.";
         this.detail = null;
       }, "Removing file from all snapshots…");
@@ -725,7 +728,8 @@ document.addEventListener("alpine:init", () => {
     },
 
     // ---- Dedupe + compute-reclaim (Search) ----
-    toggleDedupe() { this.dedupe = !this.dedupe; this.searchPage = 1; this.loadSearch(); },
+    toggleDedupe() { this.dedupe = !this.dedupe; this.searchPage = 1; this.klSet({ search_dedupe: this.dedupe }); this.loadSearch(); },
+    toggleTreeDedupe() { this.treeDedupe = !this.treeDedupe; this.klSet({ tree_dedupe: this.treeDedupe }); this.loadTree(); },
     async computeReclaim() {
       const el = document.querySelector("#searchTable");
       if (!el || !el._tabulator) return;

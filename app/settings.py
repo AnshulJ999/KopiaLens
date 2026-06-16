@@ -28,6 +28,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "tree_mode": "full",       # default tree view mode
         "search_sort": "size",     # persisted search sort column
         "search_dir": "desc",      # persisted search sort direction
+        "search_dedupe": False,    # persisted dedupe toggle (search)
+        "tree_dedupe": False,      # persisted dedupe toggle (tree)
     },
 }
 

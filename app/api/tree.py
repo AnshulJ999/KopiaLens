@@ -48,11 +48,19 @@ def tree(
     try:
         if mode == "all":
             children = tree_children_paths(repo, source, prefix)
+        elif mode == "reclaimable":
+            if not snapshot_id:
+                raise HTTPException(status_code=400, detail="snapshot_id is required")
+            from ..index.snapanalysis import reclaimable_files  # accurate exclusive-content list (flat)
+            rfs = reclaimable_files(repo, source, snapshot_id, limit=500)
+            children = [{"path": f["full_path"], "name": f["full_path"].split("\\")[-1].split("/")[-1],
+                         "size": f["size"], "physical": f["size"], "files": 1, "modified": "", "type": "file"}
+                        for f in rfs]
         else:
             if not snapshot_id:
                 raise HTTPException(status_code=400, detail="snapshot_id is required")
-            if mode in ("changed", "reclaimable"):
-                children = tree_children(repo, source, snapshot_id, prefix, reclaimable_only=(mode == "reclaimable"))
+            if mode == "changed":
+                children = tree_children(repo, source, snapshot_id, prefix)
             else:
                 root = _root_obj(repo, source, snapshot_id)
                 if not root:

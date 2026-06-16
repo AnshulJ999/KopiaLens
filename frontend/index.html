@@ -103,7 +103,7 @@
             <option value="reclaimable">Reclaimable (freed if deleted)</option>
             <option value="all">All snapshots</option>
           </select>
-          <button @click="treeDedupe=!treeDedupe; loadTree()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-sm" :class="treeDedupe ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Dedupe: collapse same-content files">⧉ Dedupe</button>
+          <button @click="toggleTreeDedupe()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-sm" :class="treeDedupe ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Dedupe: collapse same-content files">⧉ Dedupe</button>
           <select x-show="treeMode!=='all'" x-model="selectedSnapshot" @change="treePrefix=sourceRoot(); loadTree()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[18rem]">
             <template x-for="sn in snapshots" :key="sn.id"><option :value="sn.id" x-text="humanTime(sn.start_time)"></option></template>
           </select>
@@ -397,6 +397,7 @@
             <div class="mt-1.5 flex items-center gap-2 flex-wrap">
               <button @click="loadRemoveFiles('object-id')" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Precise: every distinct content object across versions">Build (by exact content)</button>
               <button @click="loadRemoveFiles('filename')" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Easy: --filename + --source">Build (by filename)</button>
+              <label class="flex items-center gap-1 text-[11px]" title="Drop --source: removes from EVERY source that has this exact content (sweeps the whole repo)"><input type="checkbox" x-model="detail.rfEverywhere"> all sources</label>
               <span class="text-[11px] text-stone-500" x-show="detail.removeFiles" x-text="detail.removeFiles && (detail.removeFiles.count + (detail.removeFiles.by==='object-id' ? ' object-id(s)' : ' filename(s)'))"></span>
             </div>
             <template x-if="detail.removeFiles">

@@ -75,8 +75,9 @@ class SnapshotDeleteRequest(BaseModel):
 
 class RemoveFilesRequest(BaseModel):
     repo: str = "1"
-    by: str = "object-id"   # "object-id" (precise, all versions, all sources) | "filename" (per-source)
+    by: str = "object-id"   # "object-id" (precise content) | "filename" (by name)
     confirm: bool = False
+    everywhere: bool = False  # object-id: drop --source to remove from ALL sources (sweeps whole repo)
     source: str | None = None      # single-file form
     full_path: str | None = None
     files: list[dict] | None = None  # batch form: [{"source":..., "full_path":...}]
@@ -210,11 +211,15 @@ def remove_files(payload: RemoveFilesRequest) -> dict:
                 oids.append(oid)
     if not oids:
         raise HTTPException(status_code=404, detail="no content objects found")
+    # Default: scope to the file's source (predictable, fast). everywhere=true drops --source to
+    # sweep the whole repo (only do this deliberately - a deduped common file would match widely).
+    src_set = {s for s, _ in targets}
+    scope = None if (payload.everywhere or len(src_set) != 1) else next(iter(src_set))
     if not payload.confirm:
-        return {"executed": False, "by": "object-id", "count": len(oids),
-                "dry_run": _fmt_cmd(remove_files_command(payload.repo, object_ids=oids, commit=False)),
-                "commit": _fmt_cmd(remove_files_command(payload.repo, object_ids=oids, commit=True))}
-    r = remove_files_execute(payload.repo, object_ids=oids)
+        return {"executed": False, "by": "object-id", "count": len(oids), "everywhere": scope is None,
+                "dry_run": _fmt_cmd(remove_files_command(payload.repo, object_ids=oids, source=scope, commit=False)),
+                "commit": _fmt_cmd(remove_files_command(payload.repo, object_ids=oids, source=scope, commit=True))}
+    r = remove_files_execute(payload.repo, object_ids=oids, source=scope)
     if r["returncode"] != 0:
         raise HTTPException(status_code=500, detail=r["stderr"].strip() or "remove-files failed")
     _post_remove(payload.repo)

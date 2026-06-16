@@ -14,9 +14,60 @@ import hashlib
 from ..core.cache import cache_db
 from ..core.sizemap import load_sizemap
 from ..core.sources import resolve_source
-from ..core.walk import walk_new
-from .physical import _refcount_map
+from ..core.walk import walk, walk_new
+from .physical import _chunks_for_obj, _refcount_map
 from .schema import get_db, read_cursor
+
+_RECL_FILES_CACHE: dict[tuple, list] = {}  # (repo, snapshot_id) -> reclaimable files
+
+
+def reclaimable_files(repo: str, source: str, snapshot_id: str, limit: int = 200) -> list[dict]:
+    """ACCURATE 'what is freed if this snapshot is deleted': files whose content chunks are
+    exclusive to this snapshot (in no other snapshot of any source). Uses the SAME exclusive-chunk
+    set as the reclaimable byte total, then maps it to files via a full tree walk. On-demand +
+    cached (expensive: walks the whole source once)."""
+    ck = (repo, snapshot_id)
+    if ck in _RECL_FILES_CACHE:
+        return _RECL_FILES_CACHE[ck][:limit]
+    key, srcs = resolve_source(repo, source=source)
+    snaps = sorted(srcs[key], key=lambda s: s.get("startTime", ""))
+    target = next((s for s in snaps if s["id"] == snapshot_id), None)
+    troot = target and target.get("rootEntry", {}).get("obj")
+    if not troot:
+        return []
+    db = cache_db(repo)
+    smap = load_sizemap(repo)
+    target_chunks = walk_new(repo, db, [troot], set())
+    others: set[str] = set()
+    seen: set[str] = set()
+    for s in snaps:
+        if s["id"] == snapshot_id:
+            continue
+        r = s.get("rootEntry", {}).get("obj")
+        if r:
+            others |= walk_new(repo, db, [r], seen)
+    refs = _refcount_map(repo)
+    exclusive = {c for c in (target_chunks - others) if refs.get(c, 0) <= 1}
+    if not exclusive:
+        _RECL_FILES_CACHE[ck] = []
+        return []
+    root_path = key.split(":", 1)[1] if ":" in key else key
+    files: list[dict] = []
+
+    def visitor(parent: str, entry: dict) -> None:
+        if entry.get("type") != "f":
+            return
+        chunks = _chunks_for_obj(repo, db, entry.get("obj", ""))
+        excl = chunks & exclusive
+        if excl:
+            rel = (parent + "\\" + entry.get("name", "")).lstrip("\\")
+            files.append({"full_path": root_path.rstrip("\\") + "\\" + rel,
+                          "size": sum(smap.get(c, 0) for c in excl)})
+
+    walk(repo, [troot], db, visitor)
+    files.sort(key=lambda f: f["size"], reverse=True)
+    _RECL_FILES_CACHE[ck] = files
+    return files[:limit]
 
 
 def _snaphash(snaps: list[dict]) -> str:
