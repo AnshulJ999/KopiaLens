@@ -127,7 +127,7 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
         rows = _rows(
             cur,
             f"""
-            SELECT source, full_path, name, ext, size, physical, versions, first_seen, last_seen, in_latest
+            SELECT source, full_path, name, ext, size, physical, versions, first_seen, last_seen, in_latest, content_id
             FROM paths
             WHERE {where_sql}
             {_order_clause(sort, direction)}
@@ -135,8 +135,22 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
             """,
             [repo, *params, limit, offset],
         )
+        # copies = how many distinct paths share each row's exact content (1 = unique). One grouped
+        # query over just this page's content ids, then mapped back - the dedup indicator column.
+        page_cids = list({r["content_id"] for r in rows if r.get("content_id")})
+        copies: dict[str, int] = {}
+        for i in range(0, len(page_cids), 900):
+            grp = page_cids[i:i + 900]
+            if not grp:
+                continue
+            q = ("SELECT content_id, count(*) FROM paths WHERE repo=? AND content_id IN (%s) "
+                 "GROUP BY content_id" % ",".join("?" * len(grp)))
+            for c, n in cur.execute(q, [repo, *grp]).fetchall():
+                copies[c] = n
     finally:
         cur.close()
+    for row in rows:
+        row["copies"] = copies.get(row.get("content_id"), 1)
     if confirm_exists:
         for row in rows:
             row["on_disk"] = os.path.exists(row["full_path"])

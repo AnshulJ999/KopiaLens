@@ -338,7 +338,9 @@ document.addEventListener("alpine:init", () => {
         this.snapshots = data.snapshots || [];
         this.analyzing = !!data.analyzing;
         if (!this.snapshots.find((x) => x.id === this.selectedSnapshot)) this.selectedSnapshot = this.snapshots.length ? this.snapshots[this.snapshots.length - 1].id : "";
+        const allSrc = this.selectedSource === "*ALL*";
         const cols = [
+          ...(allSrc ? [{ title: "Source", field: "source", widthGrow: 2, minWidth: 200, formatter: (c) => sourcePath(c.getValue()) }] : []),
           { title: "Start", field: "start_time", width: 185, formatter: (c) => timeCell(c.getValue()) },
           { title: "Logical", field: "logical", width: 100, sorter: "number", formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
           { title: "Churn (new)", field: "churn", width: 105, sorter: "number", formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },
@@ -351,10 +353,10 @@ document.addEventListener("alpine:init", () => {
         ];
         setTable("#snapshotsTable", this.snapshots, cols, {
           selectableRows: true,  // multi-select for bulk delete
-          initialSort: [{ column: "start_time", dir: "desc" }],
-          onRowDblClick: (_e, row) => { this.selectedSnapshot = row.getData().id; this.mountSnapshot = this.selectedSnapshot; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); },
+          initialSort: allSrc ? [{ column: "reclaimable", dir: "desc" }] : [{ column: "start_time", dir: "desc" }],
+          onRowDblClick: (_e, row) => { const d = row.getData(); if (allSrc) this.selectedSource = d.source; this.selectedSnapshot = d.id; this.mountSnapshot = this.selectedSnapshot; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); },
           rowMenu: [
-            { label: "Browse files", action: (_e, row) => { this.selectedSnapshot = row.getData().id; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); } },
+            { label: "Browse files", action: (_e, row) => { const d = row.getData(); if (allSrc) this.selectedSource = d.source; this.selectedSnapshot = d.id; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); } },
             { label: "Mount snapshot (read-only)", action: (_e, row) => this.mountRow(row.getData().id) },
             { label: "Mount + open in Explorer", action: (_e, row) => this.mountOpen(row.getData().id, this.selectedSource, this.sourceRoot()) },
             { label: "Delete selected snapshots…", action: () => this.planDelete() },
@@ -412,6 +414,7 @@ document.addEventListener("alpine:init", () => {
 
     async analyzeSnapshots() {
       if (!this.selectedSource) return;
+      if (this.selectedSource === "*ALL*") return this.analyzeAll();  // all-sources view -> repo-wide
       await this.wrap(async () => {
         await getJson(`/api/snapshots/analyze?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.selectedSource)}&reclaim=true`, { method: "POST" });
         this.analyzing = true;
@@ -535,6 +538,8 @@ document.addEventListener("alpine:init", () => {
           H("Physical", "physical", { width: 100, formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" }),
           H("Ext", "ext", { width: 70 }),
           H("Versions", "versions", { width: 80, hozAlign: "right" }),
+          { title: "Copies", field: "copies", headerSort: false, width: 75, hozAlign: "right",
+            formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:#d97706" title="this exact content is at ${v} paths (filter: Shared ≥ N)">${v}</span>` : "1"; } },
           H("Last seen", "last_seen", { width: 160, formatter: (c) => timeCell(c.getValue()) }),
           H("On disk", "in_latest", { width: 90, formatter: (c) => c.getValue() ? "yes" : "<span style='color:#dc2626'>deleted</span>" }),
           H("Source", "source", { widthGrow: 2, minWidth: 180, formatter: (c) => sourcePath(c.getValue()) }),
@@ -646,6 +651,48 @@ document.addEventListener("alpine:init", () => {
     mountTreeSnapshot() {  // tree control-bar: mount the selected snapshot + open the current folder
       if (!this.selectedSnapshot) { window.alert("Pick a snapshot first."); return; }
       this.mountOpen(this.selectedSnapshot, this.selectedSource, this.treePrefix || this.sourceRoot());
+    },
+
+    // ---- Remove file from ALL snapshots (kopia snapshot fix remove-files) ----
+    async loadRemoveFiles(by) {  // by = 'object-id' (precise) | 'filename' (basename + source)
+      if (!this.detail) return;
+      try {
+        const r = await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.detail.source, full_path: this.detail.title, by, confirm: false }) });
+        this.detail.removeFiles = { by, dry: r.dry_run, commit: r.commit, count: (r.object_ids || []).length, filename: r.filename };
+      } catch (err) { this.error = err.message || String(err); }
+    },
+    async executeRemoveFiles() {
+      const rf = this.detail && this.detail.removeFiles;
+      if (!rf) return;
+      if ((window.prompt("Remove this file from ALL snapshots (rewrites manifests, keeps the snapshots)?\nType REMOVE to confirm:") || "").trim().toUpperCase() !== "REMOVE") return;
+      await this.wrap(async () => {
+        await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.detail.source, full_path: this.detail.title, by: rf.by, confirm: true }) });
+        this.actionText = "Removed from snapshots. Run 'kopia maintenance run --full' to reclaim the space.";
+        this.detail = null;
+      }, "Removing file from all snapshots…");
+    },
+
+    // ---- Exclusion-pattern suggestions (paste into the KopiaUI policy) ----
+    excludePatterns() {
+      if (!this.detail || this.detail.kind !== "file") return [];
+      const full = this.detail.title || "";
+      const root = sourcePath(this.detail.source || "").replace(/[\\/]+$/, "");
+      const rel = full.startsWith(root) ? full.slice(root.length).replace(/^[\\/]+/, "") : full;
+      const relFwd = rel.replace(/\\/g, "/");
+      const name = full.split("\\").pop().split("/").pop();
+      const parentRel = relFwd.includes("/") ? relFwd.slice(0, relFwd.lastIndexOf("/")) : "";
+      const parentName = parentRel ? parentRel.split("/").pop() : "";
+      const dot = name.lastIndexOf(".");
+      const out = [
+        { label: "This file (any depth)", pat: name },
+        { label: "This file (anchored)", pat: "/" + relFwd },
+      ];
+      if (parentName) {
+        out.push({ label: "Containing folder (any depth)", pat: parentName });
+        out.push({ label: "Containing folder (anchored)", pat: "/" + parentRel + "/**" });
+      }
+      if (dot > 0) out.push({ label: "By extension", pat: "*" + name.slice(dot) });
+      return out;
     },
 
     // ---------- Simulate (all sources or one) ----------

@@ -212,6 +212,40 @@ def snapshot_delete_execute(repo: str, snapshot_ids: list[str]) -> dict:
     }
 
 
+def remove_files_command(repo: str, object_ids: list[str] | None = None, filename: str | None = None,
+                         source: str | None = None, commit: bool = False) -> list[str]:
+    """Build a ``kopia snapshot fix remove-files`` command (NEVER executed here). Removes a file's
+    references from ALL snapshots (rewrites the manifests without it) so GC can free its content -
+    without deleting the snapshots. ``--commit`` applies it; without it kopia only previews."""
+    cmd = ["kopia"] + REPOS[repo]["args"] + ["snapshot", "fix", "remove-files"]
+    for oid in object_ids or []:
+        cmd += ["--object-id", oid]
+    if filename:
+        cmd += ["--filename", filename]
+    if source:
+        cmd += ["--source", source]
+    if commit:
+        cmd.append("--commit")
+    return cmd
+
+
+def remove_files_execute(repo: str, object_ids: list[str] | None = None, filename: str | None = None,
+                         source: str | None = None) -> dict:
+    """ACTUALLY run remove-files with --commit (mutating: rewrites snapshot manifests). Logged.
+    Space is reclaimed only after a later ``maintenance run --full``."""
+    if not object_ids and not filename:
+        return {"returncode": 1, "stdout": "", "stderr": "nothing specified (object_ids or filename required)"}
+    full = remove_files_command(repo, object_ids, filename, source, commit=True) + ["--no-progress"]
+    log.warning("EXECUTING remove-files repo=%s filename=%r object_ids=%d source=%r",
+                repo, filename, len(object_ids or []), source)
+    res = subprocess.run(
+        full, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    log.warning("remove-files repo=%s rc=%d stderr=%s", repo, res.returncode, (res.stderr or "").strip()[:300])
+    return {"returncode": res.returncode, "stdout": res.stdout, "stderr": res.stderr, "command": full}
+
+
 def next_free_drive() -> str | None:
     """First free Windows drive letter (Z: down to E:) for an auto-assigned mountpoint."""
     for letter in reversed(string.ascii_uppercase[4:]):  # Z..E (skip A-D)

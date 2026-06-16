@@ -15,10 +15,33 @@ _ANALYZING: set[str] = set()
 _ANALYZING_ALL: set[str] = set()  # repo-level "analyze everything" in progress
 
 
+def _snap_row(key: str, snap: dict, a: dict) -> dict:
+    stats = snap.get("stats", {})
+    summ = snap.get("rootEntry", {}).get("summ", {})
+    return {
+        "id": snap["id"], "source": key,
+        "start_time": snap.get("startTime", ""), "end_time": snap.get("endTime", ""),
+        "logical": stats.get("totalSize", 0), "files": summ.get("files", 0), "dirs": summ.get("dirs", 0),
+        "pins": snap.get("pins"), "retention": snap.get("retention", []),
+        "root": snap.get("rootEntry", {}).get("obj"),
+        "churn": a.get("churn"), "reclaimable": a.get("reclaimable"),
+    }
+
+
 @router.get("/snapshots")
 def snapshots(repo: str = "1", source: str | None = None, source_index: int | None = None) -> dict:
     """Snapshots for a source, merged with persisted per-snapshot churn + reclaimable (when
-    available; computed by the background pre-warm or the analyze endpoint)."""
+    available; computed by the background pre-warm or the analyze endpoint). source="*ALL*"
+    returns every snapshot across all sources (for the repo-wide by-reclaimable view)."""
+    if source == "*ALL*":
+        rows, any_analysis = [], False
+        for key in sorted(sources_index(repo)):
+            analysis = read_analysis(repo, key).get("by_id", {})
+            any_analysis = any_analysis or bool(analysis)
+            for snap in sources_index(repo)[key]:
+                rows.append(_snap_row(key, snap, analysis.get(snap["id"], {})))
+        return {"source": "*ALL*", "snapshots": rows, "analyzed": any_analysis,
+                "analyzing": False, "all_sources": True}
     try:
         key, srcs = resolve_source(repo, source=source, index=source_index)
     except Exception as exc:

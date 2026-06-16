@@ -14,6 +14,8 @@ from ..core.kopia import (
     mount_and_browse,
     mount_snapshot,
     next_free_drive,
+    remove_files_command,
+    remove_files_execute,
     restore_command,
     snapshot_delete_commands,
     snapshot_delete_execute,
@@ -21,7 +23,7 @@ from ..core.kopia import (
 )
 from ..core.sources import invalidate as invalidate_sources, sources_index
 from ..index.builder import start_build
-from ..index.queries import snapshots_for_path
+from ..index.queries import snapshots_for_path, versions as file_versions
 
 router = APIRouter(tags=["actions"])
 
@@ -30,6 +32,12 @@ _SEP = chr(92)  # backslash
 
 def _source_root(source: str) -> str:
     return source.split(":", 1)[1] if ":" in source else source
+
+
+def _fmt_cmd(cmd: list[str]) -> str:
+    """Render a kopia arg-list as a shell-pasteable string, double-quoting args with spaces
+    (sources/filenames like 'C:\\Program Files\\Apollo' would otherwise split on paste)."""
+    return " ".join(f'"{a}"' if (not a or " " in a) else a for a in cmd)
 
 
 class RestorePreview(BaseModel):
@@ -56,6 +64,14 @@ class MountOpenRequest(BaseModel):
 class SnapshotDeleteRequest(BaseModel):
     repo: str = "1"
     snapshot_ids: list[str]
+    confirm: bool = False
+
+
+class RemoveFilesRequest(BaseModel):
+    repo: str = "1"
+    source: str
+    full_path: str
+    by: str = "object-id"   # "object-id" (precise, all versions) | "filename" (basename + source)
     confirm: bool = False
 
 
@@ -116,6 +132,42 @@ def snapshot_delete(payload: SnapshotDeleteRequest) -> dict:
     except Exception:  # noqa: BLE001 - reindex is best-effort; UI Refresh also recovers
         pass
     return {"deleted": result["deleted"], "command": result.get("command")}
+
+
+@router.post("/actions/remove-files")
+def remove_files(payload: RemoveFilesRequest) -> dict:
+    """Remove a file from ALL snapshots (without deleting the snapshots), via
+    `kopia snapshot fix remove-files`. confirm=false -> return the dry-run + commit commands
+    (nothing happens). confirm=true -> execute with --commit, then reindex. GC frees the space
+    on the next maintenance run."""
+    name = payload.full_path.rsplit(_SEP, 1)[-1].rsplit("/", 1)[-1]
+    object_ids: list[str] = []
+    filename = None
+    if payload.by == "filename":
+        filename = name
+    else:  # object-id: every distinct content object this file had across versions (precise)
+        seen: set[str] = set()
+        for v in file_versions(payload.repo, payload.source, payload.full_path):
+            oid = v.get("content_id")
+            if oid and oid not in seen:
+                seen.add(oid)
+                object_ids.append(oid)
+        if not object_ids:
+            raise HTTPException(status_code=404, detail="no content objects found for this file")
+    if not payload.confirm:
+        dry = remove_files_command(payload.repo, object_ids or None, filename, payload.source, commit=False)
+        com = remove_files_command(payload.repo, object_ids or None, filename, payload.source, commit=True)
+        return {"executed": False, "by": payload.by, "object_ids": object_ids, "filename": filename,
+                "dry_run": _fmt_cmd(dry), "commit": _fmt_cmd(com)}
+    result = remove_files_execute(payload.repo, object_ids or None, filename, payload.source)
+    if result["returncode"] != 0:
+        raise HTTPException(status_code=500, detail=result["stderr"].strip() or "remove-files failed")
+    invalidate_sources(payload.repo)
+    try:
+        start_build(payload.repo)  # snapshots were rewritten -> reindex so the UI reflects reality
+    except Exception:  # noqa: BLE001
+        pass
+    return {"executed": True, "command": result.get("command")}
 
 
 @router.get("/actions/mounts")
