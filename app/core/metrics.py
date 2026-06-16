@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import pickle
+import threading
 import time
 
 from config import CACHEDIR
@@ -23,6 +24,24 @@ log = get_logger("metrics")
 # Bump when the dashboard row schema changes so stale on-disk caches auto-invalidate
 # (the cache used to be served verbatim, which is how added columns silently went blank).
 TABLE_CACHE_VERSION = 2
+
+# Single-flight: only ONE dashboard build per (repo, mode) may run at a time. Concurrent callers
+# (two browser tabs + the auto-refresh timer + the background warm pass) serve the existing cache
+# instead of each launching their own 80s+ build_global - that pile-up was the 18 GB / 3-min storm.
+_BUILD_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+# Serializes the content_refs reinsert so concurrent builds can't collide (the DuckDB
+# "Conflict on tuple deletion" we saw).
+_REFCOUNT_WRITE_LOCK = threading.Lock()
+
+
+def _build_lock(repo: str, mode: str) -> threading.Lock:
+    key = f"{repo}|{mode}"
+    with _LOCKS_GUARD:
+        lk = _BUILD_LOCKS.get(key)
+        if lk is None:
+            lk = _BUILD_LOCKS[key] = threading.Lock()
+        return lk
 
 
 def gb(value: int | float) -> float:
@@ -129,27 +148,25 @@ def build_global(
     except Exception as exc:  # noqa: BLE001
         log.warning("repo=%s refcount pkl write failed: %s", repo, exc)
 
-    if mode == "all" and not rec:  # persist the canonical full refcount into DuckDB
-        try:
-            from ..index.physical import materialize_refcount  # lazy: avoids core<-index import cycle
-            from ..index.schema import get_db
-            con = get_db(repo).cursor()
+    if mode == "all" and not rec:  # persist the canonical full refcount into DuckDB (serialized)
+        with _REFCOUNT_WRITE_LOCK:
             try:
-                materialize_refcount(con, repo, dict(count))
-                con.commit()
-            finally:
-                con.close()
-            log.info("repo=%s content_refs materialized (%d contents)", repo, len(count))
-        except Exception as exc:  # noqa: BLE001
-            log.warning("repo=%s content_refs materialize failed: %s", repo, exc)
+                from ..index.physical import materialize_refcount  # lazy: avoids core<-index import cycle
+                from ..index.schema import get_db
+                con = get_db(repo).cursor()
+                try:
+                    materialize_refcount(con, repo, dict(count))
+                    con.commit()
+                finally:
+                    con.close()
+                log.info("repo=%s content_refs materialized (%d contents)", repo, len(count))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("repo=%s content_refs materialize failed: %s", repo, exc)
 
     return rows, time.time() - start, dict(count), union_total
 
 
-def cached_refcount(repo: str, db, smap: dict[str, int], mode: str = "all", recent: int | str | None = None):
-    srcs = sources_index(repo)
-    membership, _ = split_sources(srcs, mode)
-    key = snaphash(srcs, membership, recent, mode)
+def _read_refcount_pkl(repo: str, mode: str, key: str):
     try:
         with open(refcount_path(repo, mode), "rb") as handle:
             cached = pickle.load(handle)
@@ -157,8 +174,24 @@ def cached_refcount(repo: str, db, smap: dict[str, int], mode: str = "all", rece
             return cached["count"], cached["union"]
     except Exception:
         pass
-    _, _, count, union = build_global(repo, db, smap, recent=recent, mode=mode)
-    return count, union
+    return None
+
+
+def cached_refcount(repo: str, db, smap: dict[str, int], mode: str = "all", recent: int | str | None = None):
+    srcs = sources_index(repo)
+    membership, _ = split_sources(srcs, mode)
+    key = snaphash(srcs, membership, recent, mode)
+    hit = _read_refcount_pkl(repo, mode, key)
+    if hit is not None:
+        return hit
+    # Share the dashboard single-flight lock so a refcount build can't run concurrently with a
+    # table_rows build (or another refcount build) - that was part of the multi-build RAM storm.
+    with _build_lock(repo, mode):
+        hit = _read_refcount_pkl(repo, mode, key)  # a concurrent build may have just written it
+        if hit is not None:
+            return hit
+        _, _, count, union = build_global(repo, db, smap, recent=recent, mode=mode)
+        return count, union
 
 
 def physical_report(repo: str, source: str, recent: int | str | None = None, refresh: bool = False) -> dict:
@@ -233,21 +266,60 @@ def _file_counts(repo: str) -> dict[str, dict[str, int]]:
     return out
 
 
+def _read_cache(repo: str, mode: str, want_hash: str | None) -> dict | None:
+    """Return the cached dashboard data. If ``want_hash`` is given, only return it when the
+    version + snaphash still match (a valid serve); if None, return whatever is on disk (a
+    best-effort stale serve while a build is in progress)."""
+    try:
+        with open(_table_cache_path(repo, mode), encoding="utf-8") as fh:
+            blob = json.load(fh)
+    except Exception:
+        return None
+    if blob.get("version") != TABLE_CACHE_VERSION:
+        return None
+    if want_hash is not None and blob.get("hash") != want_hash:
+        return None
+    data = blob.get("data")
+    if data is None:
+        return None
+    data = dict(data)
+    data["cached"] = True
+    return data
+
+
 def table_rows(repo: str, recent: int | str | None = None, refresh: bool = False, mode: str = "all") -> dict:
-    cache_file = _table_cache_path(repo, mode)
+    """Single-flight dashboard build. A valid cache is served instantly. When a (re)compute is
+    needed, exactly one thread runs build_global per (repo, mode); concurrent callers serve the
+    existing cache instead of piling on (the fix for the multi-build RAM/latency storm)."""
     want_hash = _table_snaphash(repo, mode, recent)
-    if not refresh:                       # serve cache -> instant, but only if version + snaphash still match
-        try:
-            with open(cache_file, encoding="utf-8") as fh:
-                blob = json.load(fh)
-            if blob.get("version") == TABLE_CACHE_VERSION and blob.get("hash") == want_hash:
-                cached = blob["data"]
-                cached["cached"] = True
-                return cached
-        except Exception:
-            pass
+    if not refresh:
+        valid = _read_cache(repo, mode, want_hash)
+        if valid is not None:
+            return valid
+
+    lock = _build_lock(repo, mode)
+    if not lock.acquire(blocking=False):
+        # a build is already running: don't start another. Serve the best cache we have right now.
+        existing = _read_cache(repo, mode, want_hash) or _read_cache(repo, mode, None)
+        if existing is not None:
+            existing["stale_build_in_progress"] = True
+            return existing
+        lock.acquire()  # nothing cached at all (first cold start) -> wait for the in-flight build
+    try:
+        # We hold the lock. A concurrent build may have finished while we waited - reuse it.
+        if not refresh:
+            valid = _read_cache(repo, mode, want_hash)
+            if valid is not None:
+                return valid
+        return _compute_table_rows(repo, recent, mode, want_hash)
+    finally:
+        lock.release()
+
+
+def _compute_table_rows(repo: str, recent: int | str | None, mode: str, want_hash: str) -> dict:
+    cache_file = _table_cache_path(repo, mode)
     db = cache_db(repo)
-    smap = load_sizemap(repo, refresh=refresh)
+    smap = load_sizemap(repo)
     meta = sources_meta(repo)
     nexts = load_next_snapshots(repo)  # computed next-snapshot times (subprocess mode)
     fcounts = _file_counts(repo)

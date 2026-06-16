@@ -116,6 +116,29 @@ def materialize_refcount(con, repo: str, count: dict) -> None:
     )
 
 
+def _refcount_for(repo: str, cids) -> dict[str, int] | None:
+    """Targeted refcount for just these content chunks (one file's chunks), via batched IN
+    queries - far faster + lighter than loading the whole 4M-row content_refs table into a dict
+    on every file-detail open. Returns None when content_refs isn't built yet (cold start), so
+    the caller can fall back to the full map."""
+    cids = list(cids)
+    cur = read_cursor(repo)
+    out: dict[str, int] = {}
+    try:
+        if not cur.execute("SELECT count(*) FROM content_refs WHERE repo=?", [repo]).fetchone()[0]:
+            return None
+        for i in range(0, len(cids), 900):
+            grp = cids[i:i + 900]
+            if not grp:
+                continue
+            q = "SELECT cid, refs FROM content_refs WHERE repo=? AND cid IN (%s)" % ",".join("?" * len(grp))
+            for c, r in cur.execute(q, [repo, *grp]).fetchall():
+                out[c] = r
+    finally:
+        cur.close()
+    return out
+
+
 def _refcount_map(repo: str) -> dict[str, int]:
     """Global content refcount: prefer the materialized DuckDB table; fall back to the engine
     pkl (rebuilds once if absent)."""
@@ -148,7 +171,6 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
 
     dbsql = cache_db(repo)
     smap = load_sizemap(repo)
-    refs = _refcount_map(repo)
 
     obj_chunks: dict[str, set[str]] = {}
     this_refs: dict[str, int] = {}  # references this file contributes per chunk (across versions)
@@ -163,6 +185,10 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
     latest_obj = versions[0][3]
     latest_chunks = obj_chunks.get(latest_obj, set())
     union_chunks = set(this_refs)
+
+    refs = _refcount_for(repo, union_chunks)  # targeted (fast); None => content_refs not built yet
+    if refs is None:
+        refs = _refcount_map(repo)            # cold-start fallback (full map / rebuild)
 
     physical_latest = sum(smap.get(c, 0) for c in latest_chunks)
     physical_total = sum(smap.get(c, 0) for c in union_chunks)

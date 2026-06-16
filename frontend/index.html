@@ -259,6 +259,15 @@
               <option :value="14400">4 hours</option>
             </select></div>
           <p class="text-xs text-stone-500">How often the index, next-snapshot times, and dashboard are refreshed in the background. Applies on the next cycle.</p>
+          <div class="flex items-center justify-between gap-2"><span>Dashboard auto-refresh</span>
+            <select x-model.number="dashRefresh" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+              <option :value="0">Off</option>
+              <option :value="300">5 minutes</option>
+              <option :value="900">15 minutes</option>
+              <option :value="1800">30 minutes</option>
+              <option :value="3600">1 hour</option>
+            </select></div>
+          <p class="text-xs text-stone-500">How often the open Dashboard view re-fetches the cached numbers (cheap; just a re-render when something changed).</p>
           <div class="flex items-center justify-between gap-2"><span>Index</span>
             <button @click="rebuildIndex()" :disabled="indexStatus.building" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 disabled:opacity-50">Rebuild full index</button></div>
           <div class="flex justify-end gap-2 pt-2">

@@ -158,6 +158,15 @@ def resolve_source(repo: str, source: str | None = None, index: int | str | None
     if source:
         if source in srcs:
             return source, srcs
+        # Tolerate a trailing-separator discrepancy (a lost/extra backslash in transit) BEFORE
+        # falling back to substring - an exact source key is a substring of every deeper source
+        # (e.g. "...:C:\" is inside 49 "...:C:\..." keys), which made the fallback misfire.
+        def _norm(s: str) -> str:
+            return s.rstrip("\\/").lower()
+        nsrc = _norm(source)
+        norm_hits = [key for key in keys if _norm(key) == nsrc]
+        if len(norm_hits) == 1:
+            return norm_hits[0], srcs
         hits = [key for key in keys if source.lower() in key.lower()]
         if len(hits) == 1:
             return hits[0], srcs

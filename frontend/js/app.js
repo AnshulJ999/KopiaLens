@@ -131,7 +131,7 @@ document.addEventListener("alpine:init", () => {
     statsData: null, blobStats: "", blobLoading: false, _statsLoading: false,
     mountSnapshot: "", mountPoint: "", restoreSource: "", restoreDest: "",
     dashboardMeta: "", busy: "", error: "", detail: null, _poll: null, _searchSeq: 0, _detailSeq: 0,
-    showSettings: false, backend: "subprocess", repoPinned: false, reindexInterval: 1800,
+    showSettings: false, backend: "subprocess", repoPinned: false, reindexInterval: 1800, dashRefresh: 900,
     analyzingAll: false, showDelete: false, deletePlan: null, deleteConfirm: "", _autoRefresh: null,
 
     fmtB(v) { return fmtBytes(v); },
@@ -176,14 +176,21 @@ document.addEventListener("alpine:init", () => {
         this.searchDir = kl.search_dir || "desc";
         this.treeMode = kl.tree_mode || "full";
         this.reindexInterval = Number(kl.reindex_interval || 1800);
+        this.dashRefresh = Number(kl.dashboard_refresh ?? 900);
         if (kl.time_format) { TIME_FMT = kl.time_format; this.timeFmt = kl.time_format; }
         await this.refreshBase();
         if (this.indexStatus.building) this.pollIndex();  // show progress for the auto-triggered (migration) rebuild
         await this.loadDashboard();
       });
-      // Auto-refresh the dashboard view from the cache (the backend recomputes it in the
-      // background) so an open tab never silently shows stale per-source numbers.
-      this._autoRefresh = setInterval(() => { if (this.active === "dashboard" && !this.busy) this.loadDashboard(); }, 180000);
+      this.armAutoRefresh();
+    },
+
+    armAutoRefresh() {
+      // Re-fetch the dashboard from the (background-recomputed) cache on an interval so an open
+      // tab never silently shows stale numbers. The signature guard skips re-render when unchanged.
+      if (this._autoRefresh) { clearInterval(this._autoRefresh); this._autoRefresh = null; }
+      const sec = Number(this.dashRefresh) || 0;
+      if (sec > 0) this._autoRefresh = setInterval(() => { if (this.active === "dashboard" && !this.busy) this.loadDashboard(); }, sec * 1000);
     },
 
     klSet(patch) {  // persist a kopialens settings patch in the backend (all prefs are permanent)
@@ -733,7 +740,8 @@ document.addEventListener("alpine:init", () => {
 
     async saveSettings() {
       await this.wrap(async () => {
-        await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listing_backend: this.backend, kopialens: { reindex_interval: Number(this.reindexInterval) || 1800 } }) });
+        await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listing_backend: this.backend, kopialens: { reindex_interval: Number(this.reindexInterval) || 1800, dashboard_refresh: Number(this.dashRefresh) || 0 } }) });
+        this.armAutoRefresh();  // apply the new dashboard auto-refresh interval immediately
         this.showSettings = false;
         window.alert("Saved. The background interval applies on the next cycle; the listing backend change needs a restart.");
       });
