@@ -6,10 +6,24 @@ import threading
 
 from fastapi import APIRouter, HTTPException
 
+from pydantic import BaseModel
+
+from ..core.kopia import diff_execute, snapshot_diff_command, snapshot_pin_command
 from ..core.sources import resolve_source, sources_index
+from ..index.queries import snapshot_files
 from ..index.snapanalysis import compute_source, read_analysis
 
 router = APIRouter(tags=["snapshots"])
+
+
+def _fmt_cmd(cmd: list[str]) -> str:
+    return " ".join(f'"{a}"' if (not a or " " in a) else a for a in cmd)
+
+
+class PinRequest(BaseModel):
+    repo: str = "1"
+    snapshot_ids: list[str]
+    remove: bool = False
 
 _ANALYZING: set[str] = set()
 _ANALYZING_ALL: set[str] = set()  # repo-level "analyze everything" in progress
@@ -120,3 +134,35 @@ def analyze_all(repo: str = "1", reclaim: bool = True) -> dict:
 @router.get("/snapshots/analyze-status")
 def analyze_status(repo: str = "1") -> dict:
     return {"repo": repo, "analyzing_all": repo in _ANALYZING_ALL}
+
+
+@router.post("/snapshots/pin")
+def pin(payload: PinRequest) -> dict:
+    """Generate (never execute) a pin/unpin command for the selected snapshots."""
+    if not payload.snapshot_ids:
+        raise HTTPException(status_code=400, detail="snapshot_ids is empty")
+    cmd = snapshot_pin_command(payload.repo, payload.snapshot_ids, remove=payload.remove)
+    return {"remove": payload.remove, "command": _fmt_cmd(cmd)}
+
+
+@router.get("/snapshots/diff")
+def diff(repo: str = "1", id1: str | None = None, id2: str | None = None, run: bool = False) -> dict:
+    """Diff two snapshots. run=false -> the command; run=true -> execute and return the text."""
+    if not id1 or not id2:
+        raise HTTPException(status_code=400, detail="id1 and id2 are required")
+    out: dict = {"command": _fmt_cmd(snapshot_diff_command(repo, id1, id2))}
+    if run:
+        try:
+            out["output"] = diff_execute(repo, id1, id2)
+        except Exception as exc:  # noqa: BLE001
+            out["output"] = f"(diff failed: {exc})"
+    return out
+
+
+@router.get("/snapshots/delete-preview")
+def delete_preview(repo: str = "1", ids: str = "", precise: bool = False, limit: int = 40) -> dict:
+    """Largest files that are NEW in the selected snapshots (the 'what gets reclaimed' preview).
+    precise=true filters to content exclusive to this source (refcount<=1)."""
+    snap_ids = [s for s in ids.split(",") if s]
+    files = snapshot_files(repo, snap_ids, limit=limit, reclaimable_only=precise)
+    return {"files": files, "precise": precise}

@@ -212,16 +212,17 @@ def snapshot_delete_execute(repo: str, snapshot_ids: list[str]) -> dict:
     }
 
 
-def remove_files_command(repo: str, object_ids: list[str] | None = None, filename: str | None = None,
+def remove_files_command(repo: str, object_ids: list[str] | None = None, filenames: list[str] | None = None,
                          source: str | None = None, commit: bool = False) -> list[str]:
-    """Build a ``kopia snapshot fix remove-files`` command (NEVER executed here). Removes a file's
-    references from ALL snapshots (rewrites the manifests without it) so GC can free its content -
-    without deleting the snapshots. ``--commit`` applies it; without it kopia only previews."""
+    """Build a ``kopia snapshot fix remove-files`` command (NEVER executed here). Removes file
+    references from ALL snapshots (rewrites the manifests without them) so GC can free their
+    content - without deleting the snapshots. Both --object-id and --filename are repeatable
+    (batch). ``--commit`` applies it; without it kopia only previews."""
     cmd = ["kopia"] + REPOS[repo]["args"] + ["snapshot", "fix", "remove-files"]
     for oid in object_ids or []:
         cmd += ["--object-id", oid]
-    if filename:
-        cmd += ["--filename", filename]
+    for fn in filenames or []:
+        cmd += ["--filename", fn]
     if source:
         cmd += ["--source", source]
     if commit:
@@ -229,21 +230,108 @@ def remove_files_command(repo: str, object_ids: list[str] | None = None, filenam
     return cmd
 
 
-def remove_files_execute(repo: str, object_ids: list[str] | None = None, filename: str | None = None,
+def remove_files_execute(repo: str, object_ids: list[str] | None = None, filenames: list[str] | None = None,
                          source: str | None = None) -> dict:
     """ACTUALLY run remove-files with --commit (mutating: rewrites snapshot manifests). Logged.
     Space is reclaimed only after a later ``maintenance run --full``."""
-    if not object_ids and not filename:
-        return {"returncode": 1, "stdout": "", "stderr": "nothing specified (object_ids or filename required)"}
-    full = remove_files_command(repo, object_ids, filename, source, commit=True) + ["--no-progress"]
-    log.warning("EXECUTING remove-files repo=%s filename=%r object_ids=%d source=%r",
-                repo, filename, len(object_ids or []), source)
+    if not object_ids and not filenames:
+        return {"returncode": 1, "stdout": "", "stderr": "nothing specified (object_ids or filenames required)"}
+    full = remove_files_command(repo, object_ids, filenames, source, commit=True) + ["--no-progress"]
+    log.warning("EXECUTING remove-files repo=%s filenames=%d object_ids=%d source=%r",
+                repo, len(filenames or []), len(object_ids or []), source)
     res = subprocess.run(
         full, capture_output=True, text=True, encoding="utf-8", errors="replace",
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     log.warning("remove-files repo=%s rc=%d stderr=%s", repo, res.returncode, (res.stderr or "").strip()[:300])
     return {"returncode": res.returncode, "stdout": res.stdout, "stderr": res.stderr, "command": full}
+
+
+def snapshot_pin_command(repo: str, ids: list[str], remove: bool = False,
+                         pin_name: str = "do-not-delete") -> list[str]:
+    """Pin (protect from retention deletion) or unpin snapshots. Command-gen only."""
+    flag = "--remove" if remove else "--pins"
+    return ["kopia"] + REPOS[repo]["args"] + ["snapshot", "pin", *ids, flag, pin_name]
+
+
+def snapshot_diff_command(repo: str, id1: str, id2: str) -> list[str]:
+    return ["kopia"] + REPOS[repo]["args"] + ["diff", id1, id2]
+
+
+def diff_execute(repo: str, id1: str, id2: str) -> str:
+    """Run `kopia diff` (read-only) and return its textual output."""
+    res = kopia(repo, ["diff", id1, id2])  # diff is in the RO allowlist
+    return (res.stdout or res.stderr or "").strip()
+
+
+_RESTORE_FLAG_MAP = {
+    # option key -> (flag, emit-when-value-is)
+    "skip_existing": ("--skip-existing", True),
+    "ignore_errors": ("--ignore-errors", True),
+    "write_files_atomically": ("--write-files-atomically", True),
+    "write_sparse_files": ("--write-sparse-files", True),
+    "ignore_permission_errors": ("--ignore-permission-errors", True),
+    "delete_extra": ("--delete-extra", True),
+    # "restore X" toggles: when FALSE we pass --skip-X
+    "restore_owners": ("--skip-owners", False),
+    "restore_permissions": ("--skip-permissions", False),
+    "restore_times": ("--skip-times", False),
+    # overwrite toggles: default kopia overwrites, so when FALSE we pass --no-overwrite-X
+    "overwrite_files": ("--no-overwrite-files", False),
+    "overwrite_directories": ("--no-overwrite-directories", False),
+    "overwrite_symlinks": ("--no-overwrite-symlinks", False),
+}
+
+
+def restore_command_full(repo: str, source_id: str, target: str, options: dict | None = None) -> list[str]:
+    """Build a full `kopia restore <source> <target>` command from the panel options. NEVER
+    executed here. ``source_id`` is an object id (file/dir/snapshot root), optionally with a
+    sub-path; target is a folder or a .zip/.tar archive."""
+    opts = options or {}
+    cmd = ["kopia"] + REPOS[repo]["args"] + ["restore", source_id, target]
+    for key, (flag, when) in _RESTORE_FLAG_MAP.items():
+        if bool(opts.get(key)) == when:
+            cmd.append(flag)
+    if opts.get("parallel"):
+        cmd += ["--parallel", str(int(opts["parallel"]))]
+    if opts.get("shallow") not in (None, ""):
+        cmd += [f"--shallow={int(opts['shallow'])}"]
+    return cmd
+
+
+def restore_execute(repo: str, source_id: str, target: str, options: dict | None = None) -> dict:
+    """ACTUALLY run a restore (writes files/archive to ``target``). Logged. Non-destructive for a
+    new folder / archive; can overwrite when the overwrite/delete-extra options are enabled."""
+    full = restore_command_full(repo, source_id, target, options) + ["--no-progress"]
+    log.warning("EXECUTING restore repo=%s source=%s -> %s", repo, source_id, target)
+    res = subprocess.run(
+        full, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    log.warning("restore repo=%s rc=%d stderr=%s", repo, res.returncode, (res.stderr or "").strip()[:300])
+    return {"returncode": res.returncode, "stdout": res.stdout, "stderr": res.stderr, "command": full}
+
+
+def pick_folder(initial: str | None = None) -> str | None:
+    """Open the native Windows folder picker (on the user's desktop, since the server is local)
+    and return the chosen path. Blocks until the user picks or cancels."""
+    ps = (
+        "Add-Type -AssemblyName System.Windows.Forms; "
+        "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
+        "$f.Description = 'Select restore destination'; "
+        + (f"$f.SelectedPath = '{initial}'; " if initial else "")
+        + "if ($f.ShowDialog() -eq 'OK') { [Console]::Out.Write($f.SelectedPath) }"
+    )
+    try:
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-STA", "-Command", ps],
+            capture_output=True, text=True, timeout=300,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return res.stdout.strip() or None
+    except Exception as exc:  # noqa: BLE001
+        log.warning("folder picker failed: %s", exc)
+        return None
 
 
 def next_free_drive() -> str | None:

@@ -54,8 +54,8 @@ def _refresh_dashboard(repo: str) -> None:
 
 def _warm(repo: str) -> None:
     """Post-index warm pass (background): next-snapshot times + per-snapshot churn pre-warm
-    (forward walk only) + dashboard cache refresh. Reclaimable stays on the per-source/repo
-    Analyze action; churn is automatic here."""
+    (forward walk only) + dashboard + stats + search-landing cache refresh. Everything cacheable
+    is kept warm here so the open UI always serves from cache (serve-stale-while-revalidate)."""
     try:
         compute_next_snapshots(repo)
     except Exception as exc:  # noqa: BLE001
@@ -65,6 +65,16 @@ def _warm(repo: str) -> None:
     except Exception as exc:  # noqa: BLE001
         log.error("warm snap_prewarm repo=%s failed: %s", repo, exc)
     _refresh_dashboard(repo)
+    try:
+        from .api.stats import refresh_stats
+        refresh_stats(repo)
+    except Exception as exc:  # noqa: BLE001
+        log.error("warm stats repo=%s failed: %s", repo, exc)
+    try:
+        from .index.queries import warm_landing
+        warm_landing(repo)
+    except Exception as exc:  # noqa: BLE001
+        log.error("warm search-landing repo=%s failed: %s", repo, exc)
 
 
 def _bg_worker() -> None:

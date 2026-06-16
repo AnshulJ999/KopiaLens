@@ -7,6 +7,8 @@ All reads go through a thread-local cursor off the shared pooled connection
 from __future__ import annotations
 
 import os
+import threading
+import time
 
 from .schema import read_cursor
 
@@ -115,46 +117,90 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                  source: str | None = None, ext: str | None = None, limit: int = 500, offset: int = 0,
                  sort: str = "size", direction: str = "desc", confirm_exists: bool = False,
                  max_size: int = 0, date_from: str | None = None, date_to: str | None = None,
-                 min_versions: int = 0, shared_min: int = 0) -> dict:
+                 min_versions: int = 0, shared_min: int = 0, dedupe: bool = False) -> dict:
     """Search the pre-aggregated ``paths`` table. Returns the TRUE total count plus one page,
-    with sort + filters applied in SQL over the entire matched set (the page is display-only)."""
+    with sort + filters applied in SQL over the entire matched set. ``dedupe`` collapses all
+    path/source variations of the SAME content (group by content_id) into one content-aware row."""
     where, params = _search_where(repo, query, deleted_only, min_size, source, ext, max_size,
                                   date_from, date_to, min_versions, shared_min)
     where_sql = " AND ".join(where)
     cur = read_cursor(repo)
     try:
-        total = cur.execute(f"SELECT count(*) FROM paths WHERE {where_sql}", [repo, *params]).fetchone()[0]
-        rows = _rows(
-            cur,
-            f"""
-            SELECT source, full_path, name, ext, size, physical, versions, first_seen, last_seen, in_latest, content_id
-            FROM paths
-            WHERE {where_sql}
-            {_order_clause(sort, direction)}
-            LIMIT ? OFFSET ?
-            """,
-            [repo, *params, limit, offset],
-        )
-        # copies = how many distinct paths share each row's exact content (1 = unique). One grouped
-        # query over just this page's content ids, then mapped back - the dedup indicator column.
-        page_cids = list({r["content_id"] for r in rows if r.get("content_id")})
-        copies: dict[str, int] = {}
-        for i in range(0, len(page_cids), 900):
-            grp = page_cids[i:i + 900]
-            if not grp:
-                continue
-            q = ("SELECT content_id, count(*) FROM paths WHERE repo=? AND content_id IN (%s) "
-                 "GROUP BY content_id" % ",".join("?" * len(grp)))
-            for c, n in cur.execute(q, [repo, *grp]).fetchall():
-                copies[c] = n
+        if dedupe:
+            total = cur.execute(
+                f"SELECT count(DISTINCT content_id) FROM paths WHERE {where_sql} AND content_id IS NOT NULL",
+                [repo, *params],
+            ).fetchone()[0]
+            rows = _rows(
+                cur,
+                f"""
+                SELECT arg_max(source, last_seen) AS source, arg_max(full_path, last_seen) AS full_path,
+                       arg_max(name, last_seen) AS name, arg_max(ext, last_seen) AS ext,
+                       max(size) AS size, max(physical) AS physical, max(versions) AS versions,
+                       min(first_seen) AS first_seen, max(last_seen) AS last_seen,
+                       bool_or(in_latest) AS in_latest, content_id, count(DISTINCT full_path) AS copies
+                FROM paths
+                WHERE {where_sql} AND content_id IS NOT NULL
+                GROUP BY content_id
+                {_order_clause(sort, direction)}
+                LIMIT ? OFFSET ?
+                """,
+                [repo, *params, limit, offset],
+            )
+        else:
+            total = cur.execute(f"SELECT count(*) FROM paths WHERE {where_sql}", [repo, *params]).fetchone()[0]
+            rows = _rows(
+                cur,
+                f"""
+                SELECT source, full_path, name, ext, size, physical, versions, first_seen, last_seen, in_latest, content_id
+                FROM paths
+                WHERE {where_sql}
+                {_order_clause(sort, direction)}
+                LIMIT ? OFFSET ?
+                """,
+                [repo, *params, limit, offset],
+            )
+            # copies = how many distinct paths share each row's exact content (1 = unique). One
+            # grouped query over just this page's content ids, then mapped back.
+            page_cids = list({r["content_id"] for r in rows if r.get("content_id")})
+            cp: dict[str, int] = {}
+            for i in range(0, len(page_cids), 900):
+                grp = page_cids[i:i + 900]
+                if not grp:
+                    continue
+                q = ("SELECT content_id, count(*) FROM paths WHERE repo=? AND content_id IN (%s) "
+                     "GROUP BY content_id" % ",".join("?" * len(grp)))
+                for c, n in cur.execute(q, [repo, *grp]).fetchall():
+                    cp[c] = n
+            for row in rows:
+                row["copies"] = cp.get(row.get("content_id"), 1)
     finally:
         cur.close()
-    for row in rows:
-        row["copies"] = copies.get(row.get("content_id"), 1)
     if confirm_exists:
         for row in rows:
             row["on_disk"] = os.path.exists(row["full_path"])
     return {"rows": rows, "total": total, "offset": offset, "limit": limit}
+
+
+# ---- Search "landing view" cache (default empty-query view) — serve-stale + bg revalidate ----
+_LANDING: dict[str, dict] = {}
+_LANDING_TTL = 300.0
+
+
+def warm_landing(repo: str, limit: int = 500) -> dict:
+    res = search_paths(repo, limit=limit, sort="size", direction="desc")
+    _LANDING[repo] = {"result": res, "ts": time.time(), "limit": limit}
+    return res
+
+
+def landing(repo: str, limit: int = 500) -> dict:
+    c = _LANDING.get(repo)
+    if c and c.get("limit") == limit:
+        if time.time() - c["ts"] < _LANDING_TTL:
+            return c["result"]
+        threading.Thread(target=warm_landing, args=(repo, limit), daemon=True).start()  # serve-stale
+        return c["result"]
+    return warm_landing(repo, limit)
 
 
 def search_export(repo: str, query: str = "", deleted_only: bool = False, min_size: int = 0,
@@ -196,21 +242,53 @@ def largest_files(repo: str, limit: int = 200) -> list[dict]:
     return search_paths(repo, query="", deleted_only=False, min_size=0, limit=limit)["rows"]
 
 
-def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "") -> list[dict]:
-    """Immediate children under ``prefix`` for one snapshot, aggregated in SQL."""
+def snapshot_files(repo: str, snapshot_ids: list[str], limit: int = 40,
+                   reclaimable_only: bool = False) -> list[dict]:
+    """Largest files that are NEW in the given snapshots (delta index) - the 'what would be
+    reclaimed' preview for the delete panel. reclaimable_only adds the content-refcount<=1 filter
+    (content exclusive to this source = the precise reclaimable view)."""
+    if not snapshot_ids:
+        return []
+    ph = ",".join("?" * len(snapshot_ids))
+    params: list = [repo, *snapshot_ids]
+    extra = ""
+    if reclaimable_only:
+        extra = " AND content_id IN (SELECT cid FROM content_refs WHERE repo=? AND refs<=1)"
+        params.append(repo)
+    cur = read_cursor(repo)
+    try:
+        return _rows(
+            cur,
+            f"""
+            SELECT full_path, any_value(source) AS source, max(size) AS size
+            FROM files WHERE repo=? AND snapshot_id IN ({ph}){extra}
+            GROUP BY full_path ORDER BY size DESC LIMIT ?
+            """,
+            [*params, limit],
+        )
+    finally:
+        cur.close()
+
+
+def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "",
+                  reclaimable_only: bool = False) -> list[dict]:
+    """Immediate children under ``prefix`` for one snapshot, aggregated in SQL. reclaimable_only
+    keeps only files whose content is exclusive to this source (global refcount <= 1) = the
+    Reclaimable tree mode (what is freed if this snapshot is deleted)."""
     base = prefix.rstrip(_SEP)
     like = base + _SEP + "%" if base else "%"
+    recl = (" AND content_id IN (SELECT cid FROM content_refs WHERE repo='%s' AND refs<=1)" % repo) if reclaimable_only else ""
     cur = read_cursor(repo)
     try:
         rows = _rows(
             cur,
-            """
+            f"""
             WITH sub AS (
                 SELECT size, mtime,
                        CASE WHEN ? = '' THEN full_path
                             ELSE substr(full_path, length(?) + 2) END AS remainder
                 FROM files
-                WHERE repo = ? AND source = ? AND snapshot_id = ? AND full_path LIKE ?
+                WHERE repo = ? AND source = ? AND snapshot_id = ? AND full_path LIKE ?{recl}
             )
             SELECT split_part(remainder, ?, 1) AS name,
                    sum(size) AS size,

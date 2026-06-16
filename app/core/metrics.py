@@ -287,15 +287,39 @@ def _read_cache(repo: str, mode: str, want_hash: str | None) -> dict | None:
     return data
 
 
+def _kick_bg_recompute(repo: str, recent: int | str | None, mode: str) -> None:
+    """Recompute the dashboard cache in the background (single-flight). Used by serve-stale."""
+    def run() -> None:
+        lock = _build_lock(repo, mode)
+        if not lock.acquire(blocking=False):
+            return  # a build is already running
+        try:
+            want = _table_snaphash(repo, mode, recent)
+            if _read_cache(repo, mode, want) is None:  # still stale
+                _compute_table_rows(repo, recent, mode, want)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("bg dashboard recompute repo=%s failed: %s", repo, exc)
+        finally:
+            lock.release()
+    threading.Thread(target=run, daemon=True).start()
+
+
 def table_rows(repo: str, recent: int | str | None = None, refresh: bool = False, mode: str = "all") -> dict:
-    """Single-flight dashboard build. A valid cache is served instantly. When a (re)compute is
-    needed, exactly one thread runs build_global per (repo, mode); concurrent callers serve the
-    existing cache instead of piling on (the fix for the multi-build RAM/latency storm)."""
+    """Single-flight + serve-stale-while-revalidate dashboard build. A hash-valid cache serves
+    instantly; a hash-STALE (but schema-valid) cache also serves instantly and triggers a
+    background recompute - so the dashboard is never slow, freshness arrives in the background.
+    Only a total cache miss (or refresh=True) computes synchronously, and even then exactly one
+    thread runs build_global per (repo, mode) (concurrent callers serve cache)."""
     want_hash = _table_snaphash(repo, mode, recent)
     if not refresh:
         valid = _read_cache(repo, mode, want_hash)
         if valid is not None:
             return valid
+        stale = _read_cache(repo, mode, None)  # any schema-valid cache -> serve + revalidate
+        if stale is not None:
+            _kick_bg_recompute(repo, recent, mode)
+            stale["stale"] = True
+            return stale
 
     lock = _build_lock(repo, mode)
     if not lock.acquire(blocking=False):

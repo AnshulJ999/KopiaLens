@@ -100,13 +100,17 @@
           <select x-model="treeMode" @change="treeModeChanged()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" title="Tree view mode">
             <option value="full">Full snapshot</option>
             <option value="changed">Changed in this snapshot</option>
-            <option value="all">All snapshots (deduped)</option>
+            <option value="reclaimable">Reclaimable (freed if deleted)</option>
+            <option value="all">All snapshots</option>
           </select>
+          <button @click="treeDedupe=!treeDedupe; loadTree()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-sm" :class="treeDedupe ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Dedupe: collapse same-content files">⧉ Dedupe</button>
           <select x-show="treeMode!=='all'" x-model="selectedSnapshot" @change="treePrefix=sourceRoot(); loadTree()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[18rem]">
             <template x-for="sn in snapshots" :key="sn.id"><option :value="sn.id" x-text="humanTime(sn.start_time)"></option></template>
           </select>
           <button @click="treeUp()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Up one level">⬆ Up</button>
           <button x-show="treeMode!=='all'" @click="mountTreeSnapshot()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Mount this snapshot (read-only) and open the current folder in Explorer">⤓ Mount &amp; browse</button>
+          <button @click="batchRemove('tree')" class="h-8 rounded border border-rose-300 text-rose-600 px-2 text-sm" title="Remove selected files from all snapshots">🗑 Remove</button>
+          <button @click="batchExclude('tree')" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-sm" title="Copy exclude patterns for selected files">⊘ Exclude</button>
           <button @click="csv('#treeTable','tree')" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Export CSV">⬇ CSV</button>
         </div>
         <div class="flex items-center gap-1 text-sm flex-wrap px-1">
@@ -128,7 +132,14 @@
           <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="deletedOnly" @change="loadSearch()"> Deleted from disk</label>
           <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="overOneGb" @change="loadSearch()"> &gt;1 GB</label>
           <button @click="showFilters=!showFilters" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="showFilters ? 'bg-stone-200 dark:bg-stone-700' : ''" title="More filters">⛃ Filters</button>
+          <button @click="toggleDedupe()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="dedupe ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Dedupe: collapse path/source copies of the same content into one row">⧉ Dedupe</button>
+          <button @click="computeReclaim()" :disabled="reclaimComputing" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs disabled:opacity-50" title="Compute true reclaim (all versions, everywhere) for the visible rows, then sort by it"><span x-text="reclaimComputing ? 'Computing…' : '∑ Reclaim'"></span></button>
           <button @click="exportSearch()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Export the FULL filtered set to CSV">⬇ CSV (all)</button>
+          <span class="ml-2 flex items-center gap-1">
+            <span class="text-[11px] text-stone-400">selected:</span>
+            <button @click="batchRemove('search')" class="h-8 rounded border border-rose-300 text-rose-600 px-2 text-xs" title="Remove selected files from all snapshots">🗑 Remove</button>
+            <button @click="batchExclude('search')" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Copy exclude patterns for selected files">⊘ Exclude</button>
+          </span>
         </div>
         <div x-show="showFilters" class="flex flex-wrap items-center gap-2 text-xs rounded border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800/40 p-2">
           <label class="flex items-center gap-1">Size GB <input type="number" min="0" step="0.1" x-model="minGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="min"></label>
@@ -284,6 +295,7 @@
         <div class="flex items-start gap-2">
           <div class="font-medium break-all" x-text="detail && detail.title"></div>
           <button x-show="detail && detail.kind==='file'" @click="mountFileOpen({source: detail.source, full_path: detail.title})" class="ml-auto shrink-0 h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Mount the latest snapshot carrying this file and open it in Explorer">⤓ Mount &amp; open</button>
+          <button x-show="detail && detail.kind==='file'" @click="restoreFromDetail()" class="shrink-0 h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Restore this file">⤴ Restore</button>
           <button @click="detail=null" class="shrink-0 text-stone-500 text-lg leading-none">&times;</button>
         </div>
         <div class="text-xs text-stone-500 mt-1 break-all" x-show="detail && detail.source" x-text="detail && ('source: ' + shortSource(detail.source))"></div>
@@ -297,7 +309,11 @@
           <div class="rounded border border-stone-200 dark:border-stone-700 p-2" x-show="detail && detail.kind==='file'"><div class="text-[10px] uppercase text-stone-500">Shared (won't free)</div><div class="font-medium" x-text="detail && fmtPhys(detail.shared)"></div></div>
         </div>
         <div class="text-[11px] text-stone-500 mt-1" x-show="detail && detail.kind==='file'">Freeable = packed bytes referenced only by this file (freed if you delete every snapshot carrying it). <span x-show="detail && detail.physical_all" x-text="'Across all versions: ' + fmtPhys(detail && detail.physical_all)"></span></div>
-        <div class="text-[11px] text-stone-500 mt-1" x-show="detail && detail.kind==='folder'">Folder summary. Per-folder reclaim detail is computed per-file for now.</div>
+        <div class="mt-1 flex items-center gap-2" x-show="detail && detail.kind==='folder'">
+          <span class="text-[11px] text-stone-500">Folder summary.</span>
+          <button @click="computeFolderReclaim()" :disabled="detail && detail.reclaimLoading" class="h-6 rounded border border-stone-300 dark:border-stone-700 px-2 text-[11px] disabled:opacity-50"><span x-text="(detail && detail.reclaimLoading) ? 'Computing…' : 'Compute folder reclaim'"></span></button>
+          <span class="text-[11px] text-emerald-600" x-show="detail && detail.freeable != null" x-text="detail && ('freeable ' + fmtPhys(detail.freeable))"></span>
+        </div>
 
         <!-- content chunks / dedup -->
         <template x-if="detail && detail.kind==='file' && detail.chunks && detail.chunks.length">
@@ -381,7 +397,7 @@
             <div class="mt-1.5 flex items-center gap-2 flex-wrap">
               <button @click="loadRemoveFiles('object-id')" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Precise: every distinct content object across versions">Build (by exact content)</button>
               <button @click="loadRemoveFiles('filename')" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Easy: --filename + --source">Build (by filename)</button>
-              <span class="text-[11px] text-stone-500" x-show="detail.removeFiles" x-text="detail.removeFiles && (detail.removeFiles.by==='object-id' ? (detail.removeFiles.count + ' object-id(s)') : ('filename: ' + detail.removeFiles.filename))"></span>
+              <span class="text-[11px] text-stone-500" x-show="detail.removeFiles" x-text="detail.removeFiles && (detail.removeFiles.count + (detail.removeFiles.by==='object-id' ? ' object-id(s)' : ' filename(s)'))"></span>
             </div>
             <template x-if="detail.removeFiles">
               <div class="mt-1.5 space-y-1">
@@ -423,11 +439,75 @@
         </div>
         <div x-show="deletePlan && (deletePlan.pinned || deletePlan.retained)" class="mt-2 text-[11px] text-amber-600">⚠ Some selected snapshots are pinned or kept by a retention rule — deleting removes those restore points (and any pins).</div>
         <div class="mt-2 text-[11px] text-stone-500">Space is reclaimed only after <span class="font-mono">kopia maintenance run --full</span>. Files that also exist in other (retained) snapshots are not affected.</div>
+        <div class="mt-2">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="font-medium text-xs">Largest files new in these snapshots</span>
+            <button @click="loadDeletePreview(false)" class="text-[11px] rounded border border-stone-300 dark:border-stone-700 px-1.5" :class="!(deletePlan&&deletePlan.precise)?'bg-stone-200 dark:bg-stone-700':''">Fast</button>
+            <button @click="loadDeletePreview(true)" class="text-[11px] rounded border border-stone-300 dark:border-stone-700 px-1.5" :class="(deletePlan&&deletePlan.precise)?'bg-stone-200 dark:bg-stone-700':''" title="Only content exclusive to this source (refcount ≤ 1)">Precise</button>
+          </div>
+          <div class="rounded border border-stone-200 dark:border-stone-700 max-h-40 overflow-auto text-[11px]">
+            <template x-for="(f,i) in (deletePlan && deletePlan.preview || [])" :key="i">
+              <div class="flex items-center gap-2 px-2 py-0.5 border-b border-stone-100 dark:border-stone-800">
+                <span class="text-stone-500" x-text="fmtB(f.size)"></span>
+                <span class="break-all flex-1" x-text="f.full_path"></span>
+              </div>
+            </template>
+            <div x-show="!(deletePlan && deletePlan.preview && deletePlan.preview.length)" class="px-2 py-1 text-stone-400">No preview (or computing)…</div>
+          </div>
+        </div>
         <div class="mt-3 flex items-center gap-2">
           <button @click="copyText(deletePlan.commands)" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-xs" title="Copy the exact kopia delete commands to run yourself">Copy commands</button>
           <input x-model="deleteConfirm" @keydown.enter="executeDelete()" placeholder="type DELETE to confirm" class="fld h-8 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 flex-1">
           <button @click="executeDelete()" class="h-8 rounded bg-red-600 px-3 text-xs text-white">Execute delete</button>
         </div>
+      </div>
+    </div>
+
+    <!-- restore -->
+    <div x-show="showRestore && restore" @click.self="showRestore=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+      <div class="w-[44rem] max-w-full max-h-[88vh] overflow-auto rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 text-sm">
+        <div class="flex items-center gap-2"><div class="font-medium">Restore</div><button @click="showRestore=false" class="ml-auto text-stone-500 text-lg leading-none">&times;</button></div>
+        <div class="text-xs text-stone-500 mt-1 break-all" x-text="restore && ('source: ' + restore.name)"></div>
+        <div class="mt-3">
+          <label class="text-[11px] uppercase text-stone-500">Destination (folder, or a .zip / .tar path)</label>
+          <div class="flex items-center gap-2 mt-0.5">
+            <input x-model="restore.target" class="fld flex-1 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="D:\Restored   or   D:\out.zip">
+            <button @click="browseFolder()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-xs">Browse…</button>
+          </div>
+        </div>
+        <div class="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
+          <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.restore_owners"> Restore ownership</label>
+          <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.restore_permissions"> Restore permissions</label>
+          <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.restore_times"> Restore mtime</label>
+          <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.skip_existing"> Skip existing</label>
+          <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.ignore_errors"> Continue on errors</label>
+          <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.write_files_atomically"> Write atomically</label>
+          <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.write_sparse_files"> Sparse files</label>
+          <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.ignore_permission_errors"> Ignore perm errors</label>
+          <label class="flex items-center gap-1.5 text-amber-600"><input type="checkbox" x-model="restore.options.overwrite_files"> Overwrite files</label>
+          <label class="flex items-center gap-1.5 text-amber-600"><input type="checkbox" x-model="restore.options.overwrite_directories"> Overwrite dirs</label>
+          <label class="flex items-center gap-1.5 text-amber-600"><input type="checkbox" x-model="restore.options.overwrite_symlinks"> Overwrite symlinks</label>
+          <label class="flex items-center gap-1.5 text-red-600"><input type="checkbox" x-model="restore.options.delete_extra"> Delete extra (sync)</label>
+        </div>
+        <div class="mt-2 flex items-center gap-3 text-xs">
+          <label class="flex items-center gap-1">Parallel <input type="number" min="1" x-model.number="restore.options.parallel" class="fld h-7 w-16 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800"></label>
+          <label class="flex items-center gap-1">Shallow depth <input type="number" min="0" x-model="restore.options.shallow" class="fld h-7 w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="(deep)"></label>
+        </div>
+        <div class="mt-2 text-[11px] text-amber-600" x-show="restore && (restore.options.overwrite_files || restore.options.overwrite_directories || restore.options.delete_extra)">⚠ Overwrite / Delete-extra can modify or remove files at the destination.</div>
+        <div class="mt-3 flex items-center gap-2">
+          <button @click="restorePreview()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-xs">Preview command</button>
+          <button @click="copyText(restore.command)" x-show="restore && restore.command" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-xs">Copy</button>
+          <button @click="restoreExecute()" class="h-8 rounded bg-emerald-700 px-3 text-xs text-white ml-auto">Begin Restore</button>
+        </div>
+        <pre x-show="restore && restore.command" class="mt-2 text-[11px] whitespace-pre-wrap break-all bg-stone-50 dark:bg-stone-800 rounded p-2" x-text="restore && restore.command"></pre>
+      </div>
+    </div>
+
+    <!-- snapshot diff -->
+    <div x-show="showDiff" @click.self="showDiff=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+      <div class="w-[52rem] max-w-full max-h-[85vh] overflow-auto rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 text-sm">
+        <div class="flex items-center gap-2"><div class="font-medium">Snapshot diff</div><span class="text-xs text-amber-600" x-show="diffBusy">running…</span><button @click="showDiff=false" class="ml-auto text-stone-500 text-lg leading-none">&times;</button></div>
+        <pre class="mt-2 text-[11px] whitespace-pre-wrap bg-stone-50 dark:bg-stone-800 rounded p-2 max-h-[70vh] overflow-auto" x-text="diffText"></pre>
       </div>
     </div>
 

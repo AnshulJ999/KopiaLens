@@ -27,7 +27,7 @@ def setup_logging(level: int = logging.INFO) -> None:
     if _configured:
         return
     os.makedirs(LOG_DIR, exist_ok=True)
-    handler = RotatingFileHandler(LOG_FILE, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+    handler = RotatingFileHandler(LOG_FILE, maxBytes=1_000_000, backupCount=15, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-5s %(name)s | %(message)s"))
     root = logging.getLogger("kopialens")
     root.setLevel(level)

@@ -124,6 +124,8 @@ document.addEventListener("alpine:init", () => {
     searchTotal: 0, searchPage: 1, searchPageSize: "500", searchSort: "size", searchDir: "desc",
     pageSizes: ["100", "200", "500", "1000", "2000", "5000", "10000", "Infinite"],
     showFilters: false, minGb: "", maxGb: "", dateFrom: "", dateTo: "", minVersions: "", sharedMin: "",
+    dedupe: false, treeDedupe: false, reclaimMap: {}, reclaimComputing: false,
+    showRestore: false, restore: null, showDiff: false, diffText: "", diffBusy: false,
     policyKeys: ["latest", "hourly", "daily", "weekly", "monthly", "annual"],
     policy: { latest: 100, hourly: 96, daily: 30, weekly: 52, monthly: 36, annual: 5 },
     simMode: "all", simMeta: "", simText: "", actionText: "",
@@ -351,17 +353,28 @@ document.addEventListener("alpine:init", () => {
           { title: "Pins", field: "pins", widthGrow: 1, minWidth: 90, formatter: (c) => (c.getValue() || []).map((p) => `<span class="pill" style="background:#fef3c7;color:#92400e">${p}</span>`).join("") },
           { title: "ID", field: "id", width: 200 },
         ];
-        setTable("#snapshotsTable", this.snapshots, cols, {
-          selectableRows: true,  // multi-select for bulk delete
+        const stbl = setTable("#snapshotsTable", this.snapshots, cols, {
+          selectableRows: true,  // multi-select for bulk delete / pin / diff
           initialSort: allSrc ? [{ column: "reclaimable", dir: "desc" }] : [{ column: "start_time", dir: "desc" }],
           onRowDblClick: (_e, row) => { const d = row.getData(); if (allSrc) this.selectedSource = d.source; this.selectedSnapshot = d.id; this.mountSnapshot = this.selectedSnapshot; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); },
           rowMenu: [
             { label: "Browse files", action: (_e, row) => { const d = row.getData(); if (allSrc) this.selectedSource = d.source; this.selectedSnapshot = d.id; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); } },
+            { label: "Restore this snapshot…", action: (_e, row) => this.openRestore(row.getData().root || row.getData().id, "snapshot " + row.getData().id.slice(0, 12)) },
             { label: "Mount snapshot (read-only)", action: (_e, row) => this.mountRow(row.getData().id) },
             { label: "Mount + open in Explorer", action: (_e, row) => this.mountOpen(row.getData().id, this.selectedSource, this.sourceRoot()) },
-            { label: "Delete selected snapshots…", action: () => this.planDelete() },
+            { label: "Delete selected…", action: () => this.planDelete() },
+            { label: "Pin selected (protect)", action: () => this.pinSelected(false) },
+            { label: "Unpin selected", action: () => this.pinSelected(true) },
+            { label: "Diff selected (pick 2)", action: () => this.diffSelected() },
             { label: "Copy snapshot ID", action: (_e, row) => this.copyText(row.getData().id) },
           ],
+        });
+        if (stbl) stbl.on("rowClick", (e, row) => {  // Shift+Click selects a range
+          if (e.shiftKey && this._lastSnapRow) {
+            const rs = stbl.getRows(); const i1 = rs.indexOf(this._lastSnapRow); const i2 = rs.indexOf(row);
+            if (i1 >= 0 && i2 >= 0) { const a = Math.min(i1, i2); const b = Math.max(i1, i2); for (let k = a; k <= b; k++) rs[k].select(); }
+          }
+          this._lastSnapRow = row;
         });
       }, "Loading snapshots...");
     },
@@ -384,10 +397,19 @@ document.addEventListener("alpine:init", () => {
         commands: "",
       };
       this.deleteConfirm = "";
+      this.deletePlan.preview = [];
       this.showDelete = true;
       // fetch the exact commands (handles repo2's --config-file) for the copy button
       getJson("/api/actions/snapshot-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_ids: this.deletePlan.ids, confirm: false }) })
         .then((r) => { if (this.deletePlan) this.deletePlan.commands = r.commands || ""; }).catch(() => {});
+      // fetch the largest files that would be reclaimed (preview)
+      this.loadDeletePreview(false);
+    },
+    async loadDeletePreview(precise) {
+      if (!this.deletePlan) return;
+      const ids = this.deletePlan.ids.join(",");
+      const r = await getJson(`/api/snapshots/delete-preview?repo=${encodeURIComponent(this.repo)}&ids=${encodeURIComponent(ids)}&precise=${precise ? 1 : 0}&limit=40`).catch(() => null);
+      if (r && this.deletePlan) { this.deletePlan.preview = r.files || []; this.deletePlan.precise = precise; }
     },
     async executeDelete() {
       if (!this.deletePlan) return;
@@ -446,7 +468,8 @@ document.addEventListener("alpine:init", () => {
       if (this.treeMode !== "all" && !this.selectedSnapshot) return;
       await this.wrap(async () => {
         const url = `/api/tree?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.selectedSource)}`
-          + `&snapshot_id=${encodeURIComponent(this.selectedSnapshot)}&prefix=${encodeURIComponent(this.treePrefix)}&mode=${this.treeMode}`;
+          + `&snapshot_id=${encodeURIComponent(this.selectedSnapshot)}&prefix=${encodeURIComponent(this.treePrefix)}&mode=${this.treeMode}`
+          + `&dedupe=${this.treeDedupe ? 1 : 0}`;
         const data = await getJson(url);
         const children = data.children || [];
         if (!children.length && !(this.indexStatus.indexed_snapshots > 0)) this.error = "Snapshot not indexed yet - click Index (top right).";
@@ -461,15 +484,17 @@ document.addEventListener("alpine:init", () => {
           { title: "Modified", field: "modified", width: 165, formatter: (c) => timeCell(c.getValue()) },
           { title: "Type", field: "type", width: 75 },
         ], {
+          selectableRows: true,
           initialSort: [{ column: "size", dir: "desc" }],
           onRowDblClick: (_e, row) => { const d = row.getData(); if (d.type === "folder") this.navTree(d.path); else this.openFileDetail({ source: this.selectedSource, full_path: d.path }); },
           rowMenu: [
             { label: "Open / drill in", action: (_e, row) => { const d = row.getData(); if (d.type === "folder") this.navTree(d.path); } },
             { label: "Details (physical / dedup)", action: (_e, row) => this.openRowDetail(row.getData()) },
             { label: "Version history", action: (_e, row) => this.openFileDetail({ source: this.selectedSource, full_path: row.getData().path }) },
+            { label: "Restore…", action: (_e, row) => { const d = row.getData(); this.openRestore(d.content_id || d.path, d.name); } },
+            { label: "Mount + open in Explorer", action: (_e, row) => this.mountOpen(this.selectedSnapshot, this.selectedSource, row.getData().path) },
             { label: "Find in search", action: (_e, row) => { this.query = row.getData().name; this.searchSource = ""; this.active = "search"; this.loadSearch(); } },
             { label: "Copy path", action: (_e, row) => this.copyText(row.getData().path) },
-            { label: "Mount this snapshot (read-only)", action: () => this.mountRow(this.selectedSnapshot) },
           ],
         });
       }, "Loading tree...");
@@ -494,6 +519,7 @@ document.addEventListener("alpine:init", () => {
       if (this.dateTo) p.set("date_to", this.dateTo);
       if (this.minVersions !== "" && this.minVersions != null) p.set("min_versions", this.minVersions);
       if (this.sharedMin !== "" && this.sharedMin != null) p.set("shared_min", this.sharedMin);
+      if (this.dedupe) p.set("dedupe", "1");
       return p;
     },
     searchPages() { return Math.max(1, Math.ceil(this.searchTotal / (parseInt(this.searchPageSize, 10) || 500))); },
@@ -535,7 +561,9 @@ document.addEventListener("alpine:init", () => {
         const cols = [
           H("Path", "full_path", { widthGrow: 5, minWidth: 320 }),
           H("Size", "size", { width: 100, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" }),
-          H("Physical", "physical", { width: 100, formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" }),
+          H("Physical (latest)", "physical", { width: 120, formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" }),
+          { title: "Reclaim", field: "reclaim", headerSort: false, width: 110, hozAlign: "right",
+            formatter: (c) => { const v = c.getValue(); return (v == null) ? "<span style='color:#94a3b8'>—</span>" : fmtBytes(v); } },
           H("Ext", "ext", { width: 70 }),
           H("Versions", "versions", { width: 80, hozAlign: "right" }),
           { title: "Copies", field: "copies", headerSort: false, width: 75, hozAlign: "right",
@@ -555,12 +583,13 @@ document.addEventListener("alpine:init", () => {
         } else {
           setTable("#searchTable", data.results || [], cols, {
             persistSort: false,
+            selectableRows: true,
             onRowDblClick: (_e, row) => this.openFileDetail(row.getData()),
             rowMenu: [
               { label: "File detail (physical / reclaim / dedup)", action: (_e, row) => this.openFileDetail(row.getData()) },
               { label: "Version history", action: (_e, row) => this.openFileDetail(row.getData()) },
               { label: "Mount + open in Explorer (latest)", action: (_e, row) => this.mountFileOpen(row.getData()) },
-              { label: "Mount the snapshot it lives in", action: (_e, row) => this.mountLatestFor(row.getData()) },
+              { label: "Restore…", action: (_e, row) => { const d = row.getData(); this.openRestore(d.content_id || d.full_path, d.name || d.full_path); } },
               { label: "Jump to it in tree", action: (_e, row) => this.jumpToTree(row.getData()) },
               { label: "Browse this source", action: (_e, row) => { this.selectedSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); } },
               { label: "Copy full path", action: (_e, row) => this.copyText(row.getData().full_path) },
@@ -658,7 +687,7 @@ document.addEventListener("alpine:init", () => {
       if (!this.detail) return;
       try {
         const r = await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.detail.source, full_path: this.detail.title, by, confirm: false }) });
-        this.detail.removeFiles = { by, dry: r.dry_run, commit: r.commit, count: (r.object_ids || []).length, filename: r.filename };
+        this.detail.removeFiles = { by, dry: r.dry_run, commit: r.commit, count: r.count };
       } catch (err) { this.error = err.message || String(err); }
     },
     async executeRemoveFiles() {
@@ -693,6 +722,124 @@ document.addEventListener("alpine:init", () => {
       }
       if (dot > 0) out.push({ label: "By extension", pat: "*" + name.slice(dot) });
       return out;
+    },
+
+    // ---- Dedupe + compute-reclaim (Search) ----
+    toggleDedupe() { this.dedupe = !this.dedupe; this.searchPage = 1; this.loadSearch(); },
+    async computeReclaim() {
+      const el = document.querySelector("#searchTable");
+      if (!el || !el._tabulator) return;
+      const rows = el._tabulator.getData();
+      const top = [...rows].sort((a, b) => (b.physical || 0) - (a.physical || 0)).slice(0, 500);
+      const cids = [...new Set(top.map((r) => r.content_id).filter(Boolean))];
+      if (!cids.length) return;
+      this.reclaimComputing = true;
+      try {
+        const r = await getJson("/api/search/reclaim", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, content_ids: cids, cap: 500 }) });
+        const map = r.reclaim || {};
+        rows.forEach((row) => { row.reclaim = map[row.content_id]; });
+        rows.sort((a, b) => (b.reclaim || 0) - (a.reclaim || 0));  // most freeable first
+        el._tabulator.replaceData(rows);
+      } catch (err) { this.error = err.message || String(err); }
+      finally { this.reclaimComputing = false; }
+    },
+
+    // ---- Multi-select batch actions (Search + Tree) ----
+    selectedRows(scope) {
+      const el = document.querySelector(scope === "tree" ? "#treeTable" : "#searchTable");
+      return (el && el._tabulator) ? el._tabulator.getSelectedData() : [];
+    },
+    _selFiles(scope) {
+      return this.selectedRows(scope).filter((r) => r.type !== "folder")
+        .map((r) => ({ source: r.source || this.selectedSource, full_path: r.full_path || r.path }))
+        .filter((f) => f.source && f.full_path);
+    },
+    async batchRemove(scope) {
+      const files = this._selFiles(scope);
+      if (!files.length) { window.alert("Select one or more files first."); return; }
+      const r = await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, by: "filename", files, confirm: false }) }).catch((e) => { this.error = e.message; return null; });
+      if (!r) return;
+      const ans = window.prompt(`Remove ${files.length} file(s) from ALL snapshots (keeps the snapshots).\n\nDRY-RUN:\n${r.dry_run}\n\nType REMOVE to execute now, or Cancel to just copy the commit commands:`);
+      if (ans === null) { this.copyText(r.commit); this.actionText = "Remove commands copied:\n" + r.commit; return; }
+      if (ans.trim().toUpperCase() !== "REMOVE") return;
+      await this.wrap(async () => {
+        await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, by: "filename", files, confirm: true }) });
+        this.actionText = "Removed from snapshots. Run 'kopia maintenance run --full' to reclaim.";
+        this.loadSearch();
+      }, "Removing files…");
+    },
+    batchExclude(scope) {
+      const names = [...new Set(this._selFiles(scope).map((f) => f.full_path.split("\\").pop().split("/").pop()))].filter(Boolean);
+      if (!names.length) { window.alert("Select one or more files first."); return; }
+      this.copyText(names.join("\n"));
+      this.actionText = "Exclude patterns (bare names — paste into KopiaUI policy):\n" + names.join("\n");
+    },
+
+    // ---- Restore (accessible everywhere) ----
+    openRestore(sourceId, name) {
+      this.restore = {
+        source_id: sourceId, name: name || sourceId, target: "", command: "",
+        options: {
+          restore_owners: true, restore_permissions: true, restore_times: true, skip_existing: true,
+          overwrite_files: false, overwrite_directories: false, overwrite_symlinks: false,
+          ignore_errors: false, write_files_atomically: false, write_sparse_files: false,
+          ignore_permission_errors: false, delete_extra: false, parallel: 8, shallow: "",
+        },
+      };
+      this.showRestore = true;
+    },
+    async restorePreview() {
+      if (!this.restore || !this.restore.target) { window.alert("Enter a destination (folder, or a .zip/.tar path)."); return; }
+      const r = await getJson("/api/actions/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source_id: this.restore.source_id, target: this.restore.target, options: this.restore.options, confirm: false }) }).catch((e) => { this.error = e.message; return null; });
+      if (r) this.restore.command = r.command;
+    },
+    async restoreExecute() {
+      if (!this.restore || !this.restore.target) { window.alert("Enter a destination."); return; }
+      const o = this.restore.options;
+      if (o.overwrite_files || o.overwrite_directories || o.delete_extra) {
+        if ((window.prompt("This restore can OVERWRITE or DELETE files at the destination. Type RESTORE to confirm:") || "").trim().toUpperCase() !== "RESTORE") return;
+      }
+      await this.wrap(async () => {
+        const r = await getJson("/api/actions/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source_id: this.restore.source_id, target: this.restore.target, options: o, confirm: true }) });
+        this.actionText = "Restore complete:\n" + (r.command || []).join(" ");
+        this.showRestore = false;
+      }, "Restoring (large restores can take a while)…");
+    },
+    async browseFolder() {
+      const r = await getJson("/api/actions/browse-folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial: this.restore && this.restore.target || null }) }).catch(() => null);
+      if (r && r.path) this.restore.target = r.path;
+    },
+    restoreFromDetail() { if (this.detail) this.openRestore(this.detail.content_id || this.detail.title, this.detail.title); },
+
+    // ---- Snapshots: pin / unpin / diff ----
+    async pinSelected(remove) {
+      const rows = this.snapSelected();
+      if (!rows.length) { window.alert("Select snapshots first."); return; }
+      const r = await getJson("/api/snapshots/pin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_ids: rows.map((x) => x.id), remove }) }).catch((e) => { this.error = e.message; return null; });
+      if (!r) return;
+      this.copyText(r.command);
+      this.actionText = (remove ? "Unpin" : "Pin") + " command copied (run it yourself):\n" + r.command;
+    },
+    async diffSelected() {
+      const rows = this.snapSelected();
+      if (rows.length !== 2) { window.alert("Select exactly 2 snapshots to diff."); return; }
+      this.showDiff = true; this.diffText = "Running diff…"; this.diffBusy = true;
+      try {
+        const r = await getJson(`/api/snapshots/diff?repo=${encodeURIComponent(this.repo)}&id1=${encodeURIComponent(rows[0].id)}&id2=${encodeURIComponent(rows[1].id)}&run=true`);
+        this.diffText = r.output || r.command || "(no output)";
+      } catch (e) { this.diffText = "(diff failed: " + (e.message || e) + ")"; }
+      finally { this.diffBusy = false; }
+    },
+
+    // ---- Folder reclaim (detail panel) ----
+    async computeFolderReclaim() {
+      if (!this.detail || this.detail.kind !== "folder") return;
+      this.detail.reclaimLoading = true;
+      try {
+        const r = await getJson("/api/actions/folder-reclaim", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.selectedSource, prefix: this.detail.title }) });
+        this.detail.physical = r.physical; this.detail.freeable = r.freeable; this.detail.shared = r.shared; this.detail.files = r.files;
+      } catch (e) { this.error = e.message || String(e); }
+      finally { this.detail.reclaimLoading = false; }
     },
 
     // ---------- Simulate (all sources or one) ----------

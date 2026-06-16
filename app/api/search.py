@@ -8,10 +8,18 @@ import io
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from ..index.physical import file_detail
-from ..index.queries import search_export, search_paths, versions
+from pydantic import BaseModel
+
+from ..index.physical import file_detail, reclaim_for
+from ..index.queries import landing, search_export, search_paths, versions
 
 router = APIRouter(tags=["search"])
+
+
+class ReclaimRequest(BaseModel):
+    repo: str = "1"
+    content_ids: list[str] = []
+    cap: int = 500
 
 _EXPORT_COLS = ["source", "full_path", "name", "ext", "size", "physical", "versions",
                 "first_seen", "last_seen", "in_latest"]
@@ -45,17 +53,37 @@ def search(
     date_to: str | None = None,
     min_versions: int = 0,
     shared_min: int = 0,
+    dedupe: bool = False,
 ) -> dict:
     min_size, max_size = _bounds(over_gb, largest, min_gb, max_gb)
+    # The default landing view (no query/filters, size-desc, first page) is served from a cached,
+    # background-revalidated result so opening the Search tab is instant.
+    is_landing = (not q and not deleted_only and not largest and not over_gb and not source and not ext
+                  and not min_gb and not max_gb and not date_from and not date_to and not min_versions
+                  and not shared_min and not dedupe and not confirm_exists and offset == 0
+                  and sort == "size" and dir == "desc")
     try:
-        res = search_paths(
-            repo, query=q, deleted_only=deleted_only, min_size=min_size,
-            source=source or None, ext=ext or None, sort=sort, direction=dir,
-            limit=limit, offset=offset, confirm_exists=confirm_exists,
-            max_size=max_size, date_from=date_from or None, date_to=date_to or None,
-            min_versions=min_versions, shared_min=shared_min,
-        )
+        if is_landing:
+            res = landing(repo, limit=limit)
+        else:
+            res = search_paths(
+                repo, query=q, deleted_only=deleted_only, min_size=min_size,
+                source=source or None, ext=ext or None, sort=sort, direction=dir,
+                limit=limit, offset=offset, confirm_exists=confirm_exists,
+                max_size=max_size, date_from=date_from or None, date_to=date_to or None,
+                min_versions=min_versions, shared_min=shared_min, dedupe=dedupe,
+            )
         return {"results": res["rows"], "total": res["total"], "offset": res["offset"], "limit": res["limit"]}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/search/reclaim")
+def search_reclaim(payload: ReclaimRequest) -> dict:
+    """Compute the TRUE 'reclaim if purged everywhere' (all versions, content-aware) for the given
+    content ids (the visible page, capped). Cached per content id. Frontend sorts by it."""
+    try:
+        return {"reclaim": reclaim_for(payload.repo, payload.content_ids, cap=payload.cap)}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

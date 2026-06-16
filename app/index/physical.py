@@ -154,6 +154,92 @@ def _refcount_map(repo: str) -> dict[str, int]:
     return count
 
 
+_SEP = chr(92)
+_RECLAIM_CACHE: dict[tuple, int] = {}  # (repo, content_id) -> reclaim-everywhere bytes
+
+
+def reclaim_for(repo: str, content_ids: list[str], cap: int = 500) -> dict[str, int]:
+    """For each content id (a file's latest object), compute the TRUE 'reclaim if purged
+    everywhere': the deduped union of chunks across ALL versions of ALL paths sharing that
+    content, whose global refcount is fully attributable to those paths. Cached per content id.
+    This is the honest all-versions, content-aware freeable for the search 'Reclaim' column."""
+    dbsql = cache_db(repo)
+    smap = load_sizemap(repo)
+    uniq: list[str] = []
+    seen: set[str] = set()
+    for cid in content_ids:
+        if cid and cid not in seen:
+            seen.add(cid)
+            uniq.append(cid)
+        if len(uniq) >= cap:
+            break
+    out: dict[str, int] = {}
+    cur = read_cursor(repo)
+    try:
+        for cid in uniq:
+            ck = (repo, cid)
+            if ck in _RECLAIM_CACHE:
+                out[cid] = _RECLAIM_CACHE[ck]
+                continue
+            dup_paths = cur.execute(
+                "SELECT DISTINCT source, full_path FROM files WHERE repo=? AND content_id=?", [repo, cid]
+            ).fetchall()
+            this_refs: dict[str, int] = {}
+            obj_chunks: dict[str, set] = {}
+            for src, fp in dup_paths:
+                for (obj,) in cur.execute(
+                    "SELECT DISTINCT content_id FROM files WHERE repo=? AND source=? AND full_path=?",
+                    [repo, src, fp],
+                ).fetchall():
+                    chunks = obj_chunks.get(obj)
+                    if chunks is None:
+                        chunks = _chunks_for_obj(repo, dbsql, obj)
+                        obj_chunks[obj] = chunks
+                    for c in chunks:
+                        this_refs[c] = this_refs.get(c, 0) + 1
+            refs = _refcount_for(repo, this_refs.keys()) or {}
+            reclaim = sum(smap.get(c, 0) for c in this_refs if refs.get(c, 0) <= this_refs[c])
+            _RECLAIM_CACHE[ck] = reclaim
+            out[cid] = reclaim
+    finally:
+        cur.close()
+    return out
+
+
+def folder_detail(repo: str, source: str, prefix: str) -> dict:
+    """Subtree reclaim: logical, deduped physical, and freeable (chunks under this folder whose
+    global refcount is fully attributable to the folder) over the all-snapshots paths under a
+    prefix. On-demand (a subtree walk); expensive for huge folders."""
+    like = prefix.rstrip(_SEP) + _SEP + "%"
+    dbsql = cache_db(repo)
+    smap = load_sizemap(repo)
+    cur = read_cursor(repo)
+    try:
+        rows = cur.execute(
+            "SELECT content_id, size FROM paths WHERE repo=? AND source=? AND full_path LIKE ?",
+            [repo, source, like],
+        ).fetchall()
+    finally:
+        cur.close()
+    logical = sum(int(s or 0) for _, s in rows)
+    this_refs: dict[str, int] = {}
+    obj_chunks: dict[str, set] = {}
+    for cid, _ in rows:
+        if not cid:
+            continue
+        chunks = obj_chunks.get(cid)
+        if chunks is None:
+            chunks = _chunks_for_obj(repo, dbsql, cid)
+            obj_chunks[cid] = chunks
+        for c in chunks:
+            this_refs[c] = this_refs.get(c, 0) + 1
+    refs = _refcount_for(repo, this_refs.keys()) or {}
+    physical = sum(smap.get(c, 0) for c in this_refs)
+    freeable = sum(smap.get(c, 0) for c in this_refs if refs.get(c, 0) <= this_refs[c])
+    return {"logical": logical, "physical": physical, "freeable": freeable, "files": len(rows),
+            "shared": physical - freeable}
+
+
 def file_detail(repo: str, source: str, full_path: str) -> dict:
     """Accurate per-file footprint: logical/physical/freeable + dedup chunk breakdown +
     other paths sharing the same content object."""

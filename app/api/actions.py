@@ -9,20 +9,26 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from collections import defaultdict
+
 from ..core.kopia import (
     list_mounts,
     mount_and_browse,
     mount_snapshot,
     next_free_drive,
+    pick_folder,
     remove_files_command,
     remove_files_execute,
     restore_command,
+    restore_command_full,
+    restore_execute,
     snapshot_delete_commands,
     snapshot_delete_execute,
     unmount,
 )
 from ..core.sources import invalidate as invalidate_sources, sources_index
 from ..index.builder import start_build
+from ..index.physical import folder_detail
 from ..index.queries import snapshots_for_path, versions as file_versions
 
 router = APIRouter(tags=["actions"])
@@ -69,10 +75,25 @@ class SnapshotDeleteRequest(BaseModel):
 
 class RemoveFilesRequest(BaseModel):
     repo: str = "1"
-    source: str
-    full_path: str
-    by: str = "object-id"   # "object-id" (precise, all versions) | "filename" (basename + source)
+    by: str = "object-id"   # "object-id" (precise, all versions, all sources) | "filename" (per-source)
     confirm: bool = False
+    source: str | None = None      # single-file form
+    full_path: str | None = None
+    files: list[dict] | None = None  # batch form: [{"source":..., "full_path":...}]
+
+
+class RestoreRequest(BaseModel):
+    repo: str = "1"
+    source_id: str                 # object id (file/dir/snapshot root), optionally with /sub/path
+    target: str                    # destination folder or a .zip/.tar archive
+    options: dict = {}
+    confirm: bool = False
+
+
+class FolderReclaimRequest(BaseModel):
+    repo: str = "1"
+    source: str
+    prefix: str
 
 
 class UnmountRequest(BaseModel):
@@ -134,40 +155,100 @@ def snapshot_delete(payload: SnapshotDeleteRequest) -> dict:
     return {"deleted": result["deleted"], "command": result.get("command")}
 
 
+def _rf_targets(payload: RemoveFilesRequest) -> list[tuple[str, str]]:
+    if payload.files:
+        return [(f["source"], f["full_path"]) for f in payload.files if f.get("source") and f.get("full_path")]
+    if payload.source and payload.full_path:
+        return [(payload.source, payload.full_path)]
+    return []
+
+
+def _post_remove(repo: str) -> None:
+    invalidate_sources(repo)
+    try:
+        start_build(repo)  # snapshots were rewritten -> reindex so the UI reflects reality
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @router.post("/actions/remove-files")
 def remove_files(payload: RemoveFilesRequest) -> dict:
-    """Remove a file from ALL snapshots (without deleting the snapshots), via
-    `kopia snapshot fix remove-files`. confirm=false -> return the dry-run + commit commands
-    (nothing happens). confirm=true -> execute with --commit, then reindex. GC frees the space
-    on the next maintenance run."""
-    name = payload.full_path.rsplit(_SEP, 1)[-1].rsplit("/", 1)[-1]
-    object_ids: list[str] = []
-    filename = None
-    if payload.by == "filename":
-        filename = name
-    else:  # object-id: every distinct content object this file had across versions (precise)
-        seen: set[str] = set()
-        for v in file_versions(payload.repo, payload.source, payload.full_path):
+    """Remove file(s) from ALL snapshots (without deleting the snapshots), via
+    `kopia snapshot fix remove-files`. Supports single or batch. by="object-id" removes the exact
+    content everywhere (no --source); by="filename" is scoped per source. confirm=false returns
+    dry-run + commit commands; confirm=true executes with --commit then reindexes."""
+    targets = _rf_targets(payload)
+    if not targets:
+        raise HTTPException(status_code=400, detail="no files specified")
+
+    if payload.by == "filename":  # group basenames per source (scoped, safe)
+        groups: dict[str, list[str]] = defaultdict(list)
+        for src, fp in targets:
+            name = fp.rsplit(_SEP, 1)[-1].rsplit("/", 1)[-1]
+            if name not in groups[src]:
+                groups[src].append(name)
+        if not payload.confirm:
+            dry = [_fmt_cmd(remove_files_command(payload.repo, filenames=n, source=s, commit=False)) for s, n in groups.items()]
+            com = [_fmt_cmd(remove_files_command(payload.repo, filenames=n, source=s, commit=True)) for s, n in groups.items()]
+            return {"executed": False, "by": "filename", "count": sum(len(n) for n in groups.values()),
+                    "dry_run": "\n".join(dry), "commit": "\n".join(com)}
+        for s, n in groups.items():
+            r = remove_files_execute(payload.repo, filenames=n, source=s)
+            if r["returncode"] != 0:
+                raise HTTPException(status_code=500, detail=r["stderr"].strip() or "remove-files failed")
+        _post_remove(payload.repo)
+        return {"executed": True}
+
+    # object-id: distinct content objects across all targets' versions (precise, all sources)
+    seen: set[str] = set()
+    oids: list[str] = []
+    for src, fp in targets:
+        for v in file_versions(payload.repo, src, fp):
             oid = v.get("content_id")
             if oid and oid not in seen:
                 seen.add(oid)
-                object_ids.append(oid)
-        if not object_ids:
-            raise HTTPException(status_code=404, detail="no content objects found for this file")
+                oids.append(oid)
+    if not oids:
+        raise HTTPException(status_code=404, detail="no content objects found")
     if not payload.confirm:
-        dry = remove_files_command(payload.repo, object_ids or None, filename, payload.source, commit=False)
-        com = remove_files_command(payload.repo, object_ids or None, filename, payload.source, commit=True)
-        return {"executed": False, "by": payload.by, "object_ids": object_ids, "filename": filename,
-                "dry_run": _fmt_cmd(dry), "commit": _fmt_cmd(com)}
-    result = remove_files_execute(payload.repo, object_ids or None, filename, payload.source)
+        return {"executed": False, "by": "object-id", "count": len(oids),
+                "dry_run": _fmt_cmd(remove_files_command(payload.repo, object_ids=oids, commit=False)),
+                "commit": _fmt_cmd(remove_files_command(payload.repo, object_ids=oids, commit=True))}
+    r = remove_files_execute(payload.repo, object_ids=oids)
+    if r["returncode"] != 0:
+        raise HTTPException(status_code=500, detail=r["stderr"].strip() or "remove-files failed")
+    _post_remove(payload.repo)
+    return {"executed": True}
+
+
+@router.post("/actions/restore")
+def restore(payload: RestoreRequest) -> dict:
+    """confirm=false -> the restore command preview. confirm=true -> execute it (writes to the
+    target folder / archive). Overwrite/delete-extra only happen if those options are enabled."""
+    if not payload.target:
+        raise HTTPException(status_code=400, detail="target is required")
+    if not payload.confirm:
+        cmd = restore_command_full(payload.repo, payload.source_id, payload.target, payload.options)
+        return {"executed": False, "command": _fmt_cmd(cmd)}
+    result = restore_execute(payload.repo, payload.source_id, payload.target, payload.options)
     if result["returncode"] != 0:
-        raise HTTPException(status_code=500, detail=result["stderr"].strip() or "remove-files failed")
-    invalidate_sources(payload.repo)
-    try:
-        start_build(payload.repo)  # snapshots were rewritten -> reindex so the UI reflects reality
-    except Exception:  # noqa: BLE001
-        pass
+        raise HTTPException(status_code=500, detail=result["stderr"].strip() or "restore failed")
     return {"executed": True, "command": result.get("command")}
+
+
+@router.post("/actions/browse-folder")
+def browse_folder(payload: dict) -> dict:
+    """Open the native Windows folder picker and return the chosen path (server is local)."""
+    return {"path": pick_folder(payload.get("initial"))}
+
+
+@router.post("/actions/folder-reclaim")
+def folder_reclaim(payload: FolderReclaimRequest) -> dict:
+    """Subtree reclaim (logical / physical / freeable) for a folder - an on-demand walk."""
+    try:
+        return folder_detail(payload.repo, payload.source, payload.prefix)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get("/actions/mounts")
