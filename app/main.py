@@ -7,9 +7,6 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import os
-import pickle
-
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,12 +16,10 @@ from config import REPOS
 from .api import actions, dashboard, search, simulate, snapshots, stats, tree
 from .core import kopia as kopia_mod
 from .core.applog import get_logger, setup_logging
-from .core.metrics import refcount_path
 from .core.schedule import compute_next_snapshots
 from .core.server import SERVERS
 from .index.builder import auto_reindex
-from .index.physical import materialize_refcount
-from .index.schema import close_all as close_duckdb, get_db
+from .index.schema import close_all as close_duckdb
 from .index.snapanalysis import prewarm as snap_prewarm
 from .settings import load_settings
 
@@ -37,29 +32,18 @@ _bg_stop = threading.Event()
 _REINDEX_INTERVAL = 1800  # seconds between background incremental reindex passes
 
 
-def _materialize_refcount_from_pkl(repo: str) -> None:
-    """Populate content_refs (powers accurate freeable) from the dashboard's refcount pkl when
-    it already exists - never forces the heavy global walk here (file_detail falls back lazily)."""
-    path = refcount_path(repo, "all")
-    if not os.path.exists(path):
-        return
-    with open(path, "rb") as fh:
-        cached = pickle.load(fh)
-    con = get_db(repo).cursor()
-    try:
-        materialize_refcount(con, repo, cached.get("count", {}))
-        con.commit()
-    finally:
-        con.close()
-
-
 def _warm(repo: str) -> None:
-    """Post-index warm pass: next-snapshot times, churn pre-warm (persisted), refcount table."""
-    for fn in (compute_next_snapshots, snap_prewarm, _materialize_refcount_from_pkl):
-        try:
-            fn(repo)
-        except Exception as exc:  # noqa: BLE001
-            log.error("warm %s repo=%s failed: %s", getattr(fn, "__name__", fn), repo, exc)
+    """Post-index warm pass (background, memory-light): next-snapshot times + per-snapshot churn
+    pre-warm (forward walk only). Reclaimable stays on-demand (the 'Analyze' button) because it
+    needs the global refcount, which is RAM-heavy - kept lazy until the RAM work is done."""
+    try:
+        compute_next_snapshots(repo)
+    except Exception as exc:  # noqa: BLE001
+        log.error("warm next_snapshots repo=%s failed: %s", repo, exc)
+    try:
+        snap_prewarm(repo)  # churn only (with_reclaim=False) - light forward walk
+    except Exception as exc:  # noqa: BLE001
+        log.error("warm snap_prewarm repo=%s failed: %s", repo, exc)
 
 
 def _bg_worker() -> None:

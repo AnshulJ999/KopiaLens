@@ -100,7 +100,11 @@ def materialize_physical(con, repo: str) -> None:
 
 def materialize_refcount(con, repo: str, count: dict) -> None:
     """Persist the global content reference-count map into DuckDB (called from the pre-warm
-    pass / dashboard build, which compute it anyway). Powers accurate ``freeable``."""
+    pass / dashboard build, which compute it anyway). Powers accurate ``freeable``. Skips the
+    reinsert when the row count already matches (cheap to call every warm cycle)."""
+    existing = con.execute("SELECT count(*) FROM content_refs WHERE repo=?", [repo]).fetchone()[0]
+    if existing == len(count):
+        return
     con.execute("DELETE FROM content_refs WHERE repo=?", [repo])
     cids = list(count.keys())
     _arrow_insert(

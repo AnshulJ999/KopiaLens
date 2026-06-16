@@ -127,7 +127,7 @@ document.addEventListener("alpine:init", () => {
     policy: { latest: 100, hourly: 96, daily: 30, weekly: 52, monthly: 36, annual: 5 },
     simMode: "all", simMeta: "", simText: "", actionText: "",
     mounts: [],
-    statsData: null,
+    statsData: null, blobStats: "", blobLoading: false, _statsLoading: false,
     mountSnapshot: "", mountPoint: "", restoreSource: "", restoreDest: "",
     dashboardMeta: "", busy: "", error: "", detail: null, _poll: null, _searchSeq: 0,
     showSettings: false, backend: "subprocess",
@@ -166,6 +166,7 @@ document.addEventListener("alpine:init", () => {
         this.backend = data.settings?.listing_backend || "subprocess";
         this.searchPageSize = String(data.settings?.kopialens?.page_size || 500);
         await this.refreshBase();
+        if (this.indexStatus.building) this.pollIndex();  // show progress for the auto-triggered (migration) rebuild
         await this.loadDashboard();
       });
     },
@@ -197,6 +198,7 @@ document.addEventListener("alpine:init", () => {
 
     async repoChanged() {
       this.selectedSnapshot = ""; this.snapshots = [];
+      this.statsData = null; this.blobStats = "";  // stats are per-repo; force reload
       getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ last_repo: this.repo }) }).catch(() => {});
       await this.wrap(async () => {
         await this.refreshBase(true);
@@ -273,6 +275,7 @@ document.addEventListener("alpine:init", () => {
           { title: "Freeable", field: "freeable", width: 100, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
           { title: "Dedup", field: "dedup", width: 72, formatter: (c) => `${Number(c.getValue()).toFixed(0)}x`, hozAlign: "right" },
           { title: "Latest size", field: "logical_latest", width: 100, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
+          { title: "Latest physical", field: "physical_latest", width: 110, formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },
           { title: "Last snapshot", field: "last_time", width: 165, formatter: (c) => timeCell(c.getValue()) },
           { title: "Next snapshot", field: "next_snapshot", width: 165, formatter: (c) => timeCell(c.getValue()) },
           { title: "Pins", field: "pins", width: 64, hozAlign: "right" },
@@ -419,20 +422,27 @@ document.addEventListener("alpine:init", () => {
         const shownFrom = this.searchTotal ? offset + 1 : 0;
         const shownTo = Math.min(offset + (data.results || []).length, this.searchTotal);
         this.omniMeta = `${this.searchTotal.toLocaleString()} results` + (infinite ? "" : ` · showing ${shownFrom.toLocaleString()}-${shownTo.toLocaleString()}`);
+        // Headers do NOT sort locally (headerSort:false) - a click re-queries the server so the
+        // sort is always over the ENTIRE result set, never just the visible page. Active column
+        // shows a ▼/▲ arrow.
+        const self = this;
+        const arrow = (f) => (this.searchSort === f ? (this.searchDir === "desc" ? "  ▼" : "  ▲") : "");
+        const H = (title, field, extra) => Object.assign({
+          title: title + arrow(field), field, headerSort: false,
+          headerClick: () => self.setSearchSort(field, (self.searchSort === field && self.searchDir === "desc") ? "asc" : "desc"),
+        }, extra || {});
         const cols = [
-          { title: "Path", field: "full_path", widthGrow: 5, minWidth: 320, headerSortStartingDir: "asc" },
-          { title: "Size", field: "size", width: 100, sorter: "number", formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
-          { title: "Physical", field: "physical", width: 100, sorter: "number", formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },
-          { title: "Ext", field: "ext", width: 70 },
-          { title: "Versions", field: "versions", width: 80, hozAlign: "right" },
-          { title: "Last seen", field: "last_seen", width: 160, formatter: (c) => timeCell(c.getValue()) },
-          { title: "On disk", field: "in_latest", width: 90, formatter: (c) => c.getValue() ? "yes" : "<span style='color:#dc2626'>deleted</span>" },
-          { title: "Source", field: "source", widthGrow: 2, minWidth: 180, formatter: (c) => sourcePath(c.getValue()) },
+          H("Path", "full_path", { widthGrow: 5, minWidth: 320 }),
+          H("Size", "size", { width: 100, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" }),
+          H("Physical", "physical", { width: 100, formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" }),
+          H("Ext", "ext", { width: 70 }),
+          H("Versions", "versions", { width: 80, hozAlign: "right" }),
+          H("Last seen", "last_seen", { width: 160, formatter: (c) => timeCell(c.getValue()) }),
+          H("On disk", "in_latest", { width: 90, formatter: (c) => c.getValue() ? "yes" : "<span style='color:#dc2626'>deleted</span>" }),
+          H("Source", "source", { widthGrow: 2, minWidth: 180, formatter: (c) => sourcePath(c.getValue()) }),
         ];
-        const sortMap = { full_path: "full_path", size: "size", physical: "physical", ext: "ext", versions: "versions", last_seen: "last_seen", in_latest: "in_latest", source: "source" };
-        const table = setTable("#searchTable", data.results || [], cols, {
-          persistSort: false,  // server controls sort; client-persisted sort would fight it
-          initialSort: [{ column: this.searchSort, dir: this.searchDir }],
+        setTable("#searchTable", data.results || [], cols, {
+          persistSort: false,
           onRowDblClick: (_e, row) => this.openFileDetail(row.getData()),
           rowMenu: [
             { label: "File detail (physical / reclaim / dedup)", action: (_e, row) => this.openFileDetail(row.getData()) },
@@ -442,13 +452,6 @@ document.addEventListener("alpine:init", () => {
             { label: "Browse this source", action: (_e, row) => { this.selectedSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); } },
             { label: "Copy full path", action: (_e, row) => this.copyText(row.getData().full_path) },
           ],
-        });
-        // server-side sort: re-query when the user clicks a header (don't sort the page locally)
-        if (table) table.on("dataSorting", (sorters) => {
-          if (!sorters.length) return;
-          const f = sortMap[sorters[0].field]; if (!f) return;
-          if (f === this.searchSort && sorters[0].dir === this.searchDir) return;
-          this.setSearchSort(f, sorters[0].dir);
         });
       }, "Searching...");
     },
@@ -534,9 +537,23 @@ document.addEventListener("alpine:init", () => {
 
     // ---------- Stats ----------
     async loadStats(refresh = false) {
-      await this.wrap(async () => {
-        this.statsData = await getJson(`/api/stats?repo=${encodeURIComponent(this.repo)}`);
-      }, "Loading stats...");
+      if (this._statsLoading) return;        // never let stats requests pile up
+      this._statsLoading = true;
+      try {
+        await this.wrap(async () => {
+          this.statsData = await getJson(`/api/stats?repo=${encodeURIComponent(this.repo)}`);
+        }, "Loading stats...");
+      } finally { this._statsLoading = false; }
+    },
+    async loadBlobStats() {
+      if (this.blobLoading) return;
+      this.blobLoading = true;
+      try {
+        await this.wrap(async () => {
+          const r = await getJson(`/api/stats/blob?repo=${encodeURIComponent(this.repo)}`);
+          this.blobStats = r.blob_stats || "(empty)";
+        }, "Running blob stats (slow, one-off)...");
+      } finally { this.blobLoading = false; }
     },
     statsBlock(v) { return typeof v === "string" ? v : JSON.stringify(v, null, 2); },
 

@@ -174,12 +174,18 @@
         </div>
         <template x-if="statsData">
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            <template x-for="blk in [['Repository status','repository_status'],['Content stats','content_stats'],['Maintenance','maintenance'],['Cache info','cache_info'],['Blob stats','blob_stats']]" :key="blk[1]">
+            <template x-for="blk in [['Repository status','repository_status'],['Content stats','content_stats'],['Maintenance','maintenance'],['Cache info','cache_info']]" :key="blk[1]">
               <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
                 <div class="mb-1 font-medium text-sm" x-text="blk[0]"></div>
                 <pre class="text-[11px] whitespace-pre-wrap overflow-auto max-h-72 bg-stone-50 dark:bg-stone-800 rounded p-2" x-text="statsBlock(statsData[blk[1]])"></pre>
               </div>
             </template>
+            <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+              <div class="mb-1 flex items-center gap-2"><span class="font-medium text-sm">Blob stats</span>
+                <button @click="loadBlobStats()" :disabled="blobLoading" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs disabled:opacity-50" x-text="blobLoading ? 'Running… (slow)' : 'Load blob stats'"></button>
+                <span class="text-[11px] text-stone-500">scans all storage blobs — slow on big repos</span></div>
+              <pre x-show="blobStats" class="text-[11px] whitespace-pre-wrap overflow-auto max-h-72 bg-stone-50 dark:bg-stone-800 rounded p-2" x-text="blobStats"></pre>
+            </div>
           </div>
         </template>
       </section>

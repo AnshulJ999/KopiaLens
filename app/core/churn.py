@@ -1,9 +1,12 @@
 """Churn calculations ported from ``kopiatoolkit.py``.
 
+DEAD CODE (kept for reference): superseded by ``app/index/snapanalysis.py``, which computes
+churn + reclaimable per snapshot and PERSISTS them to DuckDB (survives restarts) and is what
+the snapshots endpoint now uses. This RAM-only module is no longer imported by any endpoint.
+
 Churn is a per-source object-tree walk (heavy). Results are RAM-cached keyed by the
 source's snapshot-set hash, so re-viewing the same source is instant; it recomputes only
-when that source gets new/removed snapshots (or on ``refresh``). Background pre-warming
-of every source is a later step.
+when that source gets new/removed snapshots (or on ``refresh``).
 """
 
 from __future__ import annotations
