@@ -28,6 +28,8 @@ ALLOWED = {
     ("blob", "stats"),
     ("manifest", "list"),
     ("manifest", "show"),
+    ("maintenance", "info"),  # read-only ("maintenance run" stays refused - it's not allowlisted)
+    ("cache", "info"),
     ("show",),
 }
 
@@ -106,6 +108,9 @@ def kopia_json(repo: str, args: list[str]) -> object:
     return json.loads(res.stdout) if res.stdout.strip() else None
 
 
+_MOUNTS: dict[int, dict] = {}  # pid -> {repo, snapshot_id, mountpoint, proc, started}
+
+
 def mount_snapshot(repo: str, snapshot_id: str, mountpoint: str) -> KopiaProcess:
     """Start a Kopia mount process and return the immediate command result.
 
@@ -125,7 +130,39 @@ def mount_snapshot(repo: str, snapshot_id: str, mountpoint: str) -> KopiaProcess
         errors="replace",
         creationflags=creationflags,
     )
+    _MOUNTS[proc.pid] = {
+        "repo": repo, "snapshot_id": snapshot_id, "mountpoint": mountpoint,
+        "proc": proc, "started": time.time(),
+    }
     return KopiaProcess(args=full, pid=proc.pid)
+
+
+def list_mounts() -> list[dict]:
+    """Active mounts started by this process (drops any whose process has exited)."""
+    out = []
+    for pid, m in list(_MOUNTS.items()):
+        if m["proc"].poll() is not None:  # process exited -> unmounted
+            _MOUNTS.pop(pid, None)
+            continue
+        out.append({"pid": pid, "repo": m["repo"], "snapshot_id": m["snapshot_id"],
+                    "mountpoint": m["mountpoint"], "started": m["started"]})
+    return out
+
+
+def unmount(pid: int) -> bool:
+    """Unmount by terminating the foreground mount process that holds it."""
+    m = _MOUNTS.get(pid)
+    if not m:
+        return False
+    proc = m["proc"]
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    _MOUNTS.pop(pid, None)
+    return True
 
 
 def restore_command(repo: str, source: str, destination: str, overwrite: bool = False) -> list[str]:

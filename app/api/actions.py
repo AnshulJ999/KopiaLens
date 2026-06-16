@@ -9,7 +9,13 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..core.kopia import mount_snapshot, restore_command, snapshot_delete_commands
+from ..core.kopia import (
+    list_mounts,
+    mount_snapshot,
+    restore_command,
+    snapshot_delete_commands,
+    unmount,
+)
 from ..core.sources import sources_index
 from ..index.queries import snapshots_for_path
 
@@ -29,6 +35,10 @@ class MountRequest(BaseModel):
     mountpoint: str
 
 
+class UnmountRequest(BaseModel):
+    pid: int
+
+
 @router.post("/actions/restore-preview")
 def restore_preview(payload: RestorePreview) -> dict:
     return {"command": restore_command(payload.repo, payload.source, payload.destination, overwrite=payload.overwrite)}
@@ -41,6 +51,16 @@ def mount(payload: MountRequest) -> dict:
         return {"pid": proc.pid, "command": proc.args}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/actions/mounts")
+def mounts() -> dict:
+    return {"mounts": list_mounts()}
+
+
+@router.post("/actions/unmount")
+def do_unmount(payload: UnmountRequest) -> dict:
+    return {"ok": unmount(payload.pid)}
 
 
 @router.get("/actions/purge-plan")

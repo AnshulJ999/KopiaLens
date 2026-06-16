@@ -103,10 +103,43 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
             versions BIGINT,
             first_seen TIMESTAMP,
             last_seen TIMESTAMP,
-            in_latest BOOLEAN
+            in_latest BOOLEAN,
+            content_id VARCHAR,
+            physical UBIGINT
         )
         """
     )
+    for col, decl in (("content_id", "VARCHAR"), ("physical", "UBIGINT")):  # migrate older paths tables
+        try:
+            con.execute(f"ALTER TABLE paths ADD COLUMN {col} {decl}")
+        except Exception:
+            pass
+
+    # Materialized physical/dedup maps (populated from the toolkit engine artifacts each build).
+    con.execute("CREATE TABLE IF NOT EXISTS content_sizes (repo VARCHAR, cid VARCHAR, packed UBIGINT)")
+    con.execute("CREATE TABLE IF NOT EXISTS content_refs (repo VARCHAR, cid VARCHAR, refs BIGINT)")
+    con.execute("CREATE TABLE IF NOT EXISTS indirect_phys (repo VARCHAR, oid VARCHAR, packed UBIGINT)")
+
+    # Per-snapshot analysis (churn / physical / reclaimable) - one pre-warmed pass, persisted.
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS snapshot_analysis (
+            repo VARCHAR,
+            source VARCHAR,
+            snapshot_id VARCHAR,
+            churn UBIGINT,
+            physical UBIGINT,
+            reclaimable UBIGINT,
+            snaphash VARCHAR,
+            computed_at TIMESTAMP DEFAULT now(),
+            PRIMARY KEY (repo, snapshot_id)
+        )
+        """
+    )
+
     con.execute("CREATE INDEX IF NOT EXISTS files_repo_source_path ON files(repo, source, full_path)")
     con.execute("CREATE INDEX IF NOT EXISTS files_snapshot ON files(repo, snapshot_id)")
     con.execute("CREATE INDEX IF NOT EXISTS paths_repo_source ON paths(repo, source)")
+    con.execute("CREATE INDEX IF NOT EXISTS content_sizes_cid ON content_sizes(repo, cid)")
+    con.execute("CREATE INDEX IF NOT EXISTS content_refs_cid ON content_refs(repo, cid)")
+    con.execute("CREATE INDEX IF NOT EXISTS indirect_phys_oid ON indirect_phys(repo, oid)")

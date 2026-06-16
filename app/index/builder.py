@@ -21,6 +21,7 @@ import time
 
 import pyarrow as pa
 
+from .physical import materialize_physical
 from .schema import get_db, read_cursor
 from ..core.cache import cache_db
 from ..core.sources import sources_index
@@ -38,16 +39,18 @@ _FILE_INDEXES = (
     ("files_snapshot", "files(repo, snapshot_id)"),
     ("paths_repo_source", "paths(repo, source)"),
 )
-# Recompute the paths aggregate (1 row per distinct path) for one source.
+# Recompute the paths aggregate (1 row per distinct path) for one source. content_id =
+# the latest version's object id; physical is filled later by materialize_physical().
 _PATHS_SQL = """
 INSERT INTO paths
 SELECT repo, source, full_path, name,
        CASE WHEN contains(name, '.') THEN lower(list_extract(string_split(name, '.'), -1)) ELSE '' END AS ext,
-       size, versions, first_seen, last_seen, in_latest
+       size, versions, first_seen, last_seen, in_latest, content_id, 0
 FROM (
   SELECT repo, source, full_path, any_value(name) AS name, max(size) AS size,
          count(DISTINCT snapshot_id) AS versions, min(start_time) AS first_seen,
-         max(start_time) AS last_seen, bool_or(snapshot_id = ?) AS in_latest
+         max(start_time) AS last_seen, bool_or(snapshot_id = ?) AS in_latest,
+         arg_max(content_id, start_time) AS content_id
   FROM files WHERE repo=? AND source=? GROUP BY repo, source, full_path
 )
 """
@@ -182,6 +185,10 @@ def _run_build(repo: str, source: str | None, full: bool) -> None:
         for key in targets:
             job["current_source"] = key
             _build_source(con, db, repo, key, srcs[key], job)
+        # Physical/dedup materialization (cheap when the sizemap is unchanged). Always run so
+        # paths.physical stays correct after the first post-migration build and as content grows.
+        job["current_source"] = "(physical maps)"
+        materialize_physical(con, repo)
         con.commit()
     except Exception as exc:  # noqa: BLE001 - surfaced to the UI
         job["error"] = str(exc)
@@ -235,13 +242,14 @@ def start_build(repo: str, source: str | None = None, full: bool = False) -> dic
 
 
 def auto_reindex(repo: str) -> None:
-    """Background reindex (self-heal). When many indexed sources lack the paths aggregate
-    (a schema migration), do a full rebuild (drops indexes = faster); otherwise incremental
-    - a no-op-fast pass when nothing changed (the incremental path still migrates stragglers)."""
+    """Background reindex (self-heal). When many indexed sources lack the paths aggregate, or
+    paths predate the content_id/physical columns (a schema migration), do a full rebuild
+    (drops indexes = faster); otherwise incremental - a no-op-fast pass when nothing changed."""
     cur = read_cursor(repo)
     try:
         nfiles_src = cur.execute("SELECT count(DISTINCT source) FROM files WHERE repo=?", [repo]).fetchone()[0]
         npaths_src = cur.execute("SELECT count(DISTINCT source) FROM paths WHERE repo=?", [repo]).fetchone()[0]
+        null_cid = cur.execute("SELECT count(*) FROM paths WHERE repo=? AND content_id IS NULL", [repo]).fetchone()[0]
     finally:
         cur.close()
-    start_build(repo, full=(nfiles_src - npaths_src > 5))
+    start_build(repo, full=(nfiles_src - npaths_src > 5 or null_cid > 0))

@@ -57,6 +57,28 @@ def post_index_build(repo: str = "1", source: str | None = None, full: bool = Fa
 @router.post("/settings")
 def post_settings(payload: dict) -> dict:
     settings = load_settings()
+    kl = payload.pop("kopialens", None)
     settings.update(payload)
+    if isinstance(kl, dict):  # merge nested kopialens, don't clobber the whole sub-dict
+        settings["kopialens"] = {**settings.get("kopialens", {}), **kl}
     save_settings(settings)
     return settings
+
+
+@router.get("/settings/tables")
+def get_table_prefs() -> dict:
+    return load_settings().get("kopialens", {}).get("tables", {})
+
+
+@router.post("/settings/table")
+def post_table_pref(payload: dict) -> dict:
+    """Persist one table's Tabulator config (columns/sort) in the backend settings file."""
+    table_id = payload.get("id")
+    if not table_id:
+        return {"ok": False}
+    settings = load_settings()
+    kl = settings.setdefault("kopialens", {})
+    tables = kl.setdefault("tables", {})
+    tables[table_id] = payload.get("config")
+    save_settings(settings)
+    return {"ok": True}

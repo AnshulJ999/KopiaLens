@@ -46,13 +46,18 @@ def index_summary(repo: str) -> dict:
     }
 
 
-def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_size: int = 0,
-                 source: str | None = None, ext: str | None = None, limit: int = 200,
-                 confirm_exists: bool = False) -> list[dict]:
-    """Fast search against the pre-aggregated ``paths`` table (1 row per distinct path)."""
-    cur = read_cursor(repo)
+# Whitelisted sort columns (server-side sort over the FULL filtered set, never the page).
+_SEARCH_SORT = {
+    "size": "size", "physical": "physical", "full_path": "full_path", "name": "name",
+    "ext": "ext", "versions": "versions", "last_seen": "last_seen", "first_seen": "first_seen",
+    "in_latest": "in_latest", "source": "source",
+}
+
+
+def _search_where(query: str, deleted_only: bool, min_size: int,
+                  source: str | None, ext: str | None) -> tuple[list[str], list]:
     where = ["repo = ?"]
-    params: list = [repo]
+    params: list = []  # repo prepended by caller
     if query:
         where.append("full_path ILIKE ?")
         params.append(f"%{query}%")
@@ -67,25 +72,57 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
     if ext:
         where.append("ext = ?")
         params.append(ext.lower().lstrip("."))
-    params.append(limit)
+    return where, params
+
+
+def _order_clause(sort: str, direction: str) -> str:
+    col = _SEARCH_SORT.get(sort, "size")
+    dirn = "ASC" if str(direction).lower() == "asc" else "DESC"
+    return f"ORDER BY {col} {dirn}, last_seen DESC"
+
+
+def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_size: int = 0,
+                 source: str | None = None, ext: str | None = None, limit: int = 500, offset: int = 0,
+                 sort: str = "size", direction: str = "desc", confirm_exists: bool = False) -> dict:
+    """Search the pre-aggregated ``paths`` table. Returns the TRUE total count plus one page,
+    with sort + filters applied in SQL over the entire matched set (the page is display-only)."""
+    where, params = _search_where(query, deleted_only, min_size, source, ext)
+    where_sql = " AND ".join(where)
+    cur = read_cursor(repo)
     try:
+        total = cur.execute(f"SELECT count(*) FROM paths WHERE {where_sql}", [repo, *params]).fetchone()[0]
         rows = _rows(
             cur,
             f"""
-            SELECT source, full_path, name, ext, size, versions, first_seen, last_seen, in_latest
+            SELECT source, full_path, name, ext, size, physical, versions, first_seen, last_seen, in_latest
             FROM paths
-            WHERE {" AND ".join(where)}
-            ORDER BY size DESC, last_seen DESC
-            LIMIT ?
+            WHERE {where_sql}
+            {_order_clause(sort, direction)}
+            LIMIT ? OFFSET ?
             """,
-            params,
+            [repo, *params, limit, offset],
         )
     finally:
         cur.close()
     if confirm_exists:
         for row in rows:
             row["on_disk"] = os.path.exists(row["full_path"])
-    return rows
+    return {"rows": rows, "total": total, "offset": offset, "limit": limit}
+
+
+def search_export(repo: str, query: str = "", deleted_only: bool = False, min_size: int = 0,
+                  source: str | None = None, ext: str | None = None,
+                  sort: str = "size", direction: str = "desc", cap: int = 2_000_000):
+    """Yield every matching row (full filtered set) for CSV export - not limited to a page."""
+    where, params = _search_where(query, deleted_only, min_size, source, ext)
+    where_sql = " AND ".join(where)
+    cur = read_cursor(repo)
+    cur.execute(
+        f"SELECT source, full_path, name, ext, size, physical, versions, first_seen, last_seen, in_latest "
+        f"FROM paths WHERE {where_sql} {_order_clause(sort, direction)} LIMIT {int(cap)}",
+        [repo, *params],
+    )
+    return cur
 
 
 def versions(repo: str, source: str, full_path: str) -> list[dict]:
@@ -106,7 +143,7 @@ def versions(repo: str, source: str, full_path: str) -> list[dict]:
 
 
 def largest_files(repo: str, limit: int = 200) -> list[dict]:
-    return search_paths(repo, query="", deleted_only=False, min_size=0, limit=limit)
+    return search_paths(repo, query="", deleted_only=False, min_size=0, limit=limit)["rows"]
 
 
 def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "") -> list[dict]:
@@ -157,3 +194,107 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "") ->
 
 def snapshots_for_path(repo: str, source: str, full_path: str) -> list[str]:
     return [row["snapshot_id"] for row in versions(repo, source, full_path)]
+
+
+def _source_root_path(source: str) -> str:
+    return source.split(":", 1)[1] if ":" in source else source
+
+
+def tree_children_live(repo: str, source: str, root_obj: str, prefix: str) -> list[dict]:
+    """FULL point-in-time tree of one snapshot: walk the snapshot's directory objects via the
+    warm dir cache (Kopia-accurate, complete - not the delta index). Folder sizes come from each
+    entry's ``summ`` (no deep walk); per-file physical comes from the sizemap / indirect map."""
+    from ..core.cache import cache_db, get_children  # local import: avoid core<-index cycle on load
+    dbsql = cache_db(repo)
+    root = _source_root_path(source)
+    rel = prefix[len(root):] if prefix.startswith(root) else prefix
+    oid = root_obj
+    for seg in [s for s in rel.split(_SEP) if s]:
+        entries = get_children(repo, dbsql, [oid]).get(oid, [])
+        match = next((e for e in entries if e.get("type") == "d" and e.get("name") == seg), None)
+        if not match:
+            return []
+        oid = match.get("obj")
+    entries = get_children(repo, dbsql, [oid]).get(oid, [])
+
+    from ..core.sizemap import load_sizemap
+    smap = load_sizemap(repo)
+    ind_objs = [e.get("obj") for e in entries if e.get("type") == "f" and (e.get("obj") or "").startswith("I")]
+    ind_phys: dict[str, int] = {}
+    if ind_objs:
+        cur = read_cursor(repo)
+        try:
+            q = "SELECT oid, packed FROM indirect_phys WHERE repo=? AND oid IN (%s)" % ",".join("?" * len(ind_objs))
+            for o, p in cur.execute(q, [repo, *ind_objs]).fetchall():
+                ind_phys[o] = p
+        finally:
+            cur.close()
+
+    base = prefix.rstrip(_SEP)
+    children: list[dict] = []
+    for e in entries:
+        name = e.get("name", "")
+        path = (base + _SEP + name) if base else name
+        if e.get("type") == "d":
+            summ = e.get("summ", {}) or {}
+            children.append({
+                "path": path, "name": name, "size": summ.get("size", 0) or 0,
+                "files": summ.get("files", 0) or 0, "modified": e.get("mtime", "") or "",
+                "type": "folder", "physical": None, "content_id": e.get("obj", ""),
+            })
+        elif e.get("type") == "f":
+            obj = e.get("obj", "")
+            phys = ind_phys.get(obj) if obj.startswith("I") else smap.get(obj, 0)
+            children.append({
+                "path": path, "name": name, "size": int(e.get("size", 0) or 0),
+                "files": 1, "modified": e.get("mtime", "") or "",
+                "type": "file", "physical": phys, "content_id": obj,
+            })
+    return children
+
+
+def tree_children_paths(repo: str, source: str, prefix: str) -> list[dict]:
+    """ALL-snapshots (deduped) tree for a source: aggregate the distinct ``paths`` rows under a
+    prefix - the source's total file set across every snapshot, not a point-in-time view."""
+    base = prefix.rstrip(_SEP)
+    like = base + _SEP + "%" if base else "%"
+    cur = read_cursor(repo)
+    try:
+        rows = _rows(
+            cur,
+            """
+            WITH sub AS (
+                SELECT size, physical, last_seen,
+                       CASE WHEN ? = '' THEN full_path
+                            ELSE substr(full_path, length(?) + 2) END AS remainder
+                FROM paths
+                WHERE repo = ? AND source = ? AND full_path LIKE ?
+            )
+            SELECT split_part(remainder, ?, 1) AS name,
+                   sum(size) AS size,
+                   sum(physical) AS physical,
+                   count(*) AS files,
+                   max(last_seen) AS modified,
+                   max(CASE WHEN position(? IN remainder) > 0 THEN 1 ELSE 0 END) AS is_folder
+            FROM sub
+            WHERE remainder <> ''
+            GROUP BY name
+            ORDER BY size DESC
+            """,
+            [base, base, repo, source, like, _SEP, _SEP],
+        )
+    finally:
+        cur.close()
+    children = []
+    for r in rows:
+        name = r["name"]
+        children.append({
+            "path": (base + _SEP + name) if base else name,
+            "name": name,
+            "size": r["size"] or 0,
+            "physical": r["physical"] or 0,
+            "files": r["files"],
+            "modified": str(r["modified"]) if r["modified"] else "",
+            "type": "folder" if r["is_folder"] else "file",
+        })
+    return children

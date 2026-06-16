@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import time
 import webbrowser
 from pathlib import Path
 
@@ -60,8 +59,8 @@ def open_ui(_icon=None, _item=None) -> None:
 def restart(_icon=None, _item=None) -> None:
     stop_server()
     start_server()
-    time.sleep(0.5)
-    webbrowser.open(URL)
+    # Do NOT auto-open the browser on restart (user opens via the "Open" menu).
+    # time.sleep(0.5); webbrowser.open(URL)
 
 
 def quit_app(icon: pystray.Icon, _item=None) -> None:

@@ -71,7 +71,8 @@
       <section x-show="active==='dashboard'" class="h-full flex flex-col gap-2">
         <div class="flex items-center gap-2 text-sm">
           <span class="text-stone-500 text-xs" x-text="dashboardMeta"></span>
-          <span class="text-stone-400 text-xs ml-auto">double-click a row to drill · right-click for actions / column show-hide</span>
+          <button @click="csv('#dashboardTable','dashboard')" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs ml-auto" title="Export CSV">⬇ CSV</button>
+          <span class="text-stone-400 text-xs">double-click a row to drill · right-click for actions / column show-hide</span>
         </div>
         <div id="dashboardTable" class="flex-1 min-h-0"></div>
       </section>
@@ -81,20 +82,28 @@
           <select x-model="selectedSource" @change="loadSnapshots()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[34rem] max-w-full">
             <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
           </select>
-          <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="showChurn" @change="localStorage.setItem('kl-churn', showChurn ? '1' : '0'); loadSnapshots()"> Show churn (slower)</label>
+          <button @click="analyzeSnapshots()" :disabled="analyzing" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm disabled:opacity-50" title="Compute churn + reclaimable for every snapshot (cached after)"><span x-text="analyzing ? 'Analyzing…' : 'Analyze (churn + reclaimable)'"></span></button>
+          <button @click="csv('#snapshotsTable','snapshots')" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Export CSV">⬇ CSV</button>
+          <span class="text-xs text-stone-500">Churn = new data · Reclaimable = freed if this snapshot is deleted</span>
         </div>
         <div id="snapshotsTable" class="flex-1 min-h-0"></div>
       </section>
 
       <section x-show="active==='tree'" class="h-full flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
-          <select x-model="selectedSource" @change="openTree()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[24rem]">
+          <select x-model="selectedSource" @change="treeSourceChanged()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[24rem]">
             <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
           </select>
-          <select x-model="selectedSnapshot" @change="treePrefix=sourceRoot(); loadTree()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[18rem]">
+          <select x-model="treeMode" @change="treeModeChanged()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" title="Tree view mode">
+            <option value="full">Full snapshot</option>
+            <option value="changed">Changed in this snapshot</option>
+            <option value="all">All snapshots (deduped)</option>
+          </select>
+          <select x-show="treeMode!=='all'" x-model="selectedSnapshot" @change="treePrefix=sourceRoot(); loadTree()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[18rem]">
             <template x-for="sn in snapshots" :key="sn.id"><option :value="sn.id" x-text="humanTime(sn.start_time)"></option></template>
           </select>
           <button @click="treeUp()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Up one level">⬆ Up</button>
+          <button @click="csv('#treeTable','tree')" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Export CSV">⬇ CSV</button>
         </div>
         <div class="flex items-center gap-1 text-sm flex-wrap px-1">
           <template x-for="(c, i) in treeCrumbs()" :key="i">
@@ -114,25 +123,68 @@
           <input x-model="searchExt" @input.debounce.300ms="loadSearch()" class="fld w-28 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="ext (vhdx)">
           <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="deletedOnly" @change="loadSearch()"> Deleted from disk</label>
           <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="overOneGb" @change="loadSearch()"> &gt;1 GB</label>
-          <span class="text-xs text-stone-500" x-text="omniMeta"></span>
+          <button @click="exportSearch()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Export the FULL filtered set to CSV">⬇ CSV (all)</button>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 text-xs">
+          <span class="text-stone-600 dark:text-stone-300 font-medium" x-text="omniMeta"></span>
+          <span class="ml-auto flex items-center gap-1.5">
+            <span class="text-stone-500">Per page</span>
+            <select x-model="searchPageSize" @change="changePageSize()" class="fld h-7 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-xs">
+              <template x-for="n in pageSizes" :key="n"><option :value="n" x-text="n"></option></template>
+            </select>
+            <template x-if="searchPageSize!=='Infinite'">
+              <span class="flex items-center gap-1">
+                <button @click="setSearchPage(1)" :disabled="searchPage<=1" class="h-7 px-2 rounded border border-stone-300 dark:border-stone-700 disabled:opacity-40">«</button>
+                <button @click="setSearchPage(searchPage-1)" :disabled="searchPage<=1" class="h-7 px-2 rounded border border-stone-300 dark:border-stone-700 disabled:opacity-40">‹</button>
+                <span class="px-1">Page <span x-text="searchPage"></span> / <span x-text="searchPages()"></span></span>
+                <button @click="setSearchPage(searchPage+1)" :disabled="searchPage>=searchPages()" class="h-7 px-2 rounded border border-stone-300 dark:border-stone-700 disabled:opacity-40">›</button>
+                <button @click="setSearchPage(searchPages())" :disabled="searchPage>=searchPages()" class="h-7 px-2 rounded border border-stone-300 dark:border-stone-700 disabled:opacity-40">»</button>
+              </span>
+            </template>
+          </span>
         </div>
         <div id="searchTable" class="flex-1 min-h-0"></div>
       </section>
 
       <section x-show="active==='simulate'" class="h-full flex flex-col gap-3">
         <div class="flex flex-wrap items-end gap-3">
-          <select x-model="selectedSource" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[30rem]">
+          <label class="text-[11px] uppercase text-stone-500">Scope<br>
+            <select x-model="simMode" class="mt-0.5 fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+              <option value="all">All sources (combined)</option>
+              <option value="one">This source</option>
+            </select></label>
+          <select x-show="simMode==='one'" x-model="selectedSource" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[26rem]">
             <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
           </select>
           <template x-for="k in policyKeys" :key="k">
             <label class="text-[11px] uppercase text-stone-500"><span x-text="k"></span><br><input type="number" min="0" x-model.number="policy[k]" class="mt-0.5 fld w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800"></label>
           </template>
           <button @click="runSimulate()" class="h-8 rounded bg-emerald-700 px-3 text-sm text-white">Run</button>
+          <button @click="runSimulate(true)" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Recompute (ignore cache)">↻ Recompute</button>
+          <button @click="csv('#simulateTable','simulate')" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm">⬇ CSV</button>
         </div>
-        <pre class="flex-1 min-h-0 overflow-auto rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3 text-sm" x-text="simText"></pre>
+        <div class="text-sm text-stone-600 dark:text-stone-300" x-text="simMeta"></div>
+        <div id="simulateTable" class="flex-1 min-h-0"></div>
       </section>
 
-      <section x-show="active==='actions'" class="h-full flex flex-col gap-3">
+      <section x-show="active==='stats'" class="h-full flex flex-col gap-3 overflow-auto">
+        <div class="flex items-center gap-2">
+          <span class="font-medium">Repo-level stats</span>
+          <button @click="loadStats(true)" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs">⟳ Refresh</button>
+        </div>
+        <template x-if="statsData">
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <template x-for="blk in [['Repository status','repository_status'],['Content stats','content_stats'],['Maintenance','maintenance'],['Cache info','cache_info'],['Blob stats','blob_stats']]" :key="blk[1]">
+              <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+                <div class="mb-1 font-medium text-sm" x-text="blk[0]"></div>
+                <pre class="text-[11px] whitespace-pre-wrap overflow-auto max-h-72 bg-stone-50 dark:bg-stone-800 rounded p-2" x-text="statsBlock(statsData[blk[1]])"></pre>
+              </div>
+            </template>
+          </div>
+        </template>
+      </section>
+
+      <section x-show="active==='actions'" class="h-full flex flex-col gap-3 overflow-auto">
         <div class="grid max-w-5xl grid-cols-1 gap-3 lg:grid-cols-2">
           <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
             <div class="mb-2 font-medium">Mount snapshot (read-only)</div>
@@ -147,7 +199,19 @@
             <button @click="restorePreview()" class="h-8 rounded bg-stone-800 dark:bg-stone-700 px-3 text-sm text-white">Preview</button>
           </div>
         </div>
-        <pre class="flex-1 min-h-0 overflow-auto rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3 text-sm" x-text="actionText"></pre>
+        <div class="max-w-5xl rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+          <div class="mb-2 flex items-center gap-2"><span class="font-medium">Active mounts</span>
+            <button @click="loadMounts()" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs">⟳</button></div>
+          <div x-show="!mounts.length" class="text-xs text-stone-500">No active mounts started by KopiaLens.</div>
+          <template x-for="m in mounts" :key="m.pid">
+            <div class="flex items-center gap-3 py-1 text-sm border-t border-stone-200 dark:border-stone-700">
+              <span class="font-mono" x-text="m.mountpoint"></span>
+              <span class="text-stone-500 text-xs" x-text="'snap ' + m.snapshot_id.slice(0,16) + ' · pid ' + m.pid + ' · repo ' + m.repo"></span>
+              <button @click="unmount(m.pid)" class="ml-auto h-7 rounded border border-red-300 text-red-600 px-2 text-xs">Unmount</button>
+            </div>
+          </template>
+        </div>
+        <pre class="min-h-0 overflow-auto rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3 text-sm" x-text="actionText"></pre>
       </section>
     </main>
 
@@ -176,9 +240,82 @@
     </div>
 
     <div x-show="detail" @click.self="detail=null" x-cloak class="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-6">
-      <div class="w-[48rem] max-w-full max-h-[80vh] overflow-auto rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-4">
-        <div class="flex items-start gap-2"><div class="font-medium break-all text-sm" x-text="detail && detail.title"></div><button @click="detail=null" class="ml-auto text-stone-500">&times;</button></div>
-        <pre class="mt-3 whitespace-pre-wrap text-xs bg-stone-50 dark:bg-stone-800 rounded p-3" x-text="detail && detail.body"></pre>
+      <div class="w-[52rem] max-w-full max-h-[85vh] overflow-auto rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 text-sm" x-show="detail">
+        <div class="flex items-start gap-2">
+          <div class="font-medium break-all" x-text="detail && detail.title"></div>
+          <button @click="detail=null" class="ml-auto text-stone-500 text-lg leading-none">&times;</button>
+        </div>
+        <div class="text-xs text-stone-500 mt-1 break-all" x-show="detail && detail.source" x-text="detail && ('source: ' + shortSource(detail.source))"></div>
+
+        <!-- size cards -->
+        <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Logical</div><div class="font-medium" x-text="detail && fmtB(detail.logical)"></div></div>
+          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Physical (packed)</div><div class="font-medium" x-text="detail && fmtPhys(detail.physical)"></div></div>
+          <div class="rounded border border-emerald-300 dark:border-emerald-800 p-2" x-show="detail && detail.kind==='file'"><div class="text-[10px] uppercase text-emerald-700 dark:text-emerald-400">Freeable</div><div class="font-medium" x-text="detail && fmtPhys(detail.freeable)"></div></div>
+          <div class="rounded border border-stone-200 dark:border-stone-700 p-2" x-show="detail && detail.kind==='file'"><div class="text-[10px] uppercase text-stone-500">Shared (won't free)</div><div class="font-medium" x-text="detail && fmtPhys(detail.shared)"></div></div>
+        </div>
+        <div class="text-[11px] text-stone-500 mt-1" x-show="detail && detail.kind==='file'">Freeable = packed bytes referenced only by this file (freed if you delete every snapshot carrying it). <span x-show="detail && detail.physical_all" x-text="'Across all versions: ' + fmtPhys(detail && detail.physical_all)"></span></div>
+        <div class="text-[11px] text-stone-500 mt-1" x-show="detail && detail.kind==='folder'">Folder summary. Per-folder reclaim detail is computed per-file for now.</div>
+
+        <!-- content chunks / dedup -->
+        <template x-if="detail && detail.kind==='file' && detail.chunks && detail.chunks.length">
+          <div class="mt-3">
+            <div class="font-medium text-xs mb-1">Content chunks (<span x-text="detail.chunk_count"></span> total · dedup)</div>
+            <div class="rounded border border-stone-200 dark:border-stone-700 max-h-40 overflow-auto">
+              <template x-for="ck in detail.chunks" :key="ck.cid">
+                <div class="flex items-center gap-2 px-2 py-0.5 text-[11px] border-b border-stone-100 dark:border-stone-800">
+                  <span class="font-mono text-stone-500" x-text="ck.cid.slice(0,16)"></span>
+                  <span x-text="fmtB(ck.packed)"></span>
+                  <span class="ml-auto" :class="ck.exclusive ? 'text-emerald-600' : 'text-amber-600'" x-text="ck.exclusive ? 'exclusive' : ('shared by ' + ck.refs)"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- other paths sharing this content -->
+        <template x-if="detail && detail.others && detail.others.length">
+          <div class="mt-3">
+            <div class="font-medium text-xs mb-1">Other files deduped against this one (<span x-text="detail.others.length"></span>)</div>
+            <div class="rounded border border-stone-200 dark:border-stone-700 max-h-32 overflow-auto text-[11px]">
+              <template x-for="(o,i) in detail.others" :key="i">
+                <div class="px-2 py-0.5 break-all border-b border-stone-100 dark:border-stone-800" x-text="shortSource(o.source) + '  ·  ' + o.full_path"></div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- versions -->
+        <template x-if="detail && detail.versions && detail.versions.length">
+          <div class="mt-3">
+            <div class="font-medium text-xs mb-1">Versions (newest first)</div>
+            <div class="rounded border border-stone-200 dark:border-stone-700 max-h-40 overflow-auto text-[11px]">
+              <template x-for="(v,i) in detail.versions" :key="i">
+                <div class="flex items-center gap-2 px-2 py-0.5 border-b border-stone-100 dark:border-stone-800">
+                  <span x-text="v.time"></span><span class="text-stone-500" x-text="fmtB(v.size)"></span>
+                  <span class="ml-auto font-mono text-stone-400" x-text="'snap ' + v.snapshot_id.slice(0,16)"></span>
+                  <button @click="copyText('kopia restore ' + v.content_id + ' <destination>')" class="text-emerald-600" title="Copy restore command">copy restore</button>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- purge plan -->
+        <template x-if="detail && detail.purge && detail.purge.length">
+          <div class="mt-3">
+            <div class="flex items-center gap-2 mb-1"><span class="font-medium text-xs">Purge plan (deletes whole snapshots - run yourself)</span>
+              <button @click="copyText(detail.purgeCmds)" class="text-xs rounded border border-stone-300 dark:border-stone-700 px-2">Copy purge commands</button></div>
+            <div class="rounded border border-stone-200 dark:border-stone-700 max-h-40 overflow-auto text-[11px]">
+              <template x-for="(p,i) in detail.purge" :key="i">
+                <div class="flex items-center gap-2 px-2 py-0.5 border-b border-stone-100 dark:border-stone-800">
+                  <span class="font-mono break-all" x-text="p.cmd"></span>
+                  <span class="ml-auto text-amber-600" x-show="p.tag" x-text="'⚠ ' + p.tag"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
       </div>
     </div>
 

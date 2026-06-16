@@ -20,6 +20,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "last_panel": "dashboard",
         "window": {},
         "time_format": "absolute",
+        "tables": {},        # per-table Tabulator persistence (columns + sort), keyed by table id
+        "page_size": 500,    # search default page size
     },
 }
 

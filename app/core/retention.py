@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import collections
 import datetime
+import hashlib
 import json
+import os
 import re
+
+from config import CACHEDIR
 
 from .cache import cache_db
 from .kopia import kopia
 from .metrics import cached_refcount, gb
 from .sizemap import load_sizemap
-from .sources import resolve_source, split_sources
+from .sources import resolve_source, roots_of, sources_index, split_sources
 from .walk import walk
 
 RET_RE = re.compile(r"\b(?:latest|hourly|daily|weekly|monthly|annual)-\d+")
@@ -98,6 +102,81 @@ def simulate(
         "delete_ids": [snap["id"] for snap in del_snaps],
         "reasons": dict(reasons),
     }
+
+
+def _simall_cache(repo: str, policy: dict, mode: str) -> str:
+    h = hashlib.md5(f"{sorted(policy.items())}|{mode}".encode())
+    srcs = sources_index(repo)
+    for key in sorted(srcs):
+        for snap in srcs[key]:
+            h.update(snap.get("id", "").encode())
+    return os.path.join(CACHEDIR, f"simall_repo{repo}_{h.hexdigest()}.json")
+
+
+def simulate_all(repo: str, policy: dict[str, int], mode: str = "all", refresh: bool = False) -> dict:
+    """Simulate retention across EVERY source in one combined pass. Per-source reclaim is the
+    content freed and attributable to that source alone (global refcount == 1); the combined
+    total is the true union (content that leaves no kept snapshot anywhere) - NOT the per-source
+    sum, which double-counts content shared between sources. Cached by policy+mode+snapshot-set."""
+    cache_file = _simall_cache(repo, policy, mode)
+    if not refresh:
+        try:
+            with open(cache_file, encoding="utf-8") as fh:
+                data = json.load(fh)
+            data["cached"] = True
+            return data
+        except Exception:
+            pass
+
+    srcs = sources_index(repo)
+    db = cache_db(repo)
+    smap = load_sizemap(repo)
+    _, display = split_sources(srcs, mode)
+    count, _ = cached_refcount(repo, db, smap, mode=mode)
+
+    union_del: set[str] = set()
+    global_kept: set[str] = set()
+    rows = []
+    for key in display:
+        snaps = srcs[key]
+        keep_ids, _ = retention_keep(snaps, policy)
+        keep_snaps = [s for s in snaps if s["id"] in keep_ids]
+        del_snaps = [s for s in snaps if s["id"] not in keep_ids]
+        kept_c = walk(repo, roots_of(keep_snaps), db)[0] if keep_snaps else set()
+        del_c = walk(repo, roots_of(del_snaps), db)[0] if del_snaps else set()
+        cand = del_c - kept_c
+        reclaim = sum(smap.get(cid, 0) for cid in cand if count.get(cid, 0) == 1)
+        rows.append({
+            "source": key,
+            "total_snapshots": len(snaps),
+            "keep_snapshots": len(keep_snaps),
+            "delete_snapshots": len(del_snaps),
+            "reclaim": reclaim,
+            "reclaim_gb": gb(reclaim),
+            "pins": sum(1 for s in snaps if s.get("pins")),
+        })
+        union_del |= del_c
+        global_kept |= kept_c
+
+    combined = sum(smap.get(cid, 0) for cid in (union_del - global_kept))
+    sum_per = sum(r["reclaim"] for r in rows)
+    data = {
+        "rows": sorted(rows, key=lambda r: r["reclaim"], reverse=True),
+        "combined_reclaim": combined,
+        "combined_reclaim_gb": gb(combined),
+        "sum_per_source": sum_per,
+        "shared_between_sources": combined - sum_per,
+        "shared_between_sources_gb": gb(combined - sum_per),
+        "policy": policy,
+        "mode": mode,
+        "cached": False,
+    }
+    try:
+        with open(cache_file, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+    except Exception:
+        pass
+    return data
 
 
 def parse_policy_retention(repo: str, target: str) -> tuple[dict[str, int], str]:
