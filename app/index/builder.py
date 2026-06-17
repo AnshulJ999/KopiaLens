@@ -45,10 +45,10 @@ _FILE_INDEXES = (
 # Recompute the paths aggregate (1 row per distinct path) for one source. content_id =
 # the latest version's object id; physical is filled later by materialize_physical().
 _PATHS_SQL = """
-INSERT INTO paths
+INSERT INTO paths (repo, source, full_path, name, ext, size, versions, first_seen, last_seen, in_latest, content_id, physical, path_lc)
 SELECT repo, source, full_path, name,
        CASE WHEN contains(name, '.') THEN lower(list_extract(string_split(name, '.'), -1)) ELSE '' END AS ext,
-       size, versions, first_seen, last_seen, in_latest, content_id, 0
+       size, versions, first_seen, last_seen, in_latest, content_id, 0, lower(full_path)
 FROM (
   SELECT repo, source, full_path, any_value(name) AS name, max(size) AS size,
          count(DISTINCT snapshot_id) AS versions, min(start_time) AS first_seen,

@@ -217,6 +217,27 @@
         </template>
       </section>
 
+      <section x-show="active==='excluded'" class="h-full flex flex-col gap-2">
+        <div class="flex flex-wrap items-center gap-2">
+          <button @click="excludedNav('')" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="All drives">🖥 This PC</button>
+          <button @click="excludedUp()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Up one level">⬆ Up</button>
+          <div class="inline-flex rounded border border-stone-300 dark:border-stone-700 overflow-hidden text-sm">
+            <button @click="setExcludedFilter('excluded')" :class="excludedFilter==='excluded' ? 'bg-rose-200 dark:bg-rose-800' : ''" class="px-2 h-8">Not backed up</button>
+            <button @click="setExcludedFilter('backed')" :class="excludedFilter==='backed' ? 'bg-emerald-200 dark:bg-emerald-800' : ''" class="px-2 h-8 border-l border-stone-300 dark:border-stone-700">Backed up</button>
+            <button @click="setExcludedFilter('all')" :class="excludedFilter==='all' ? 'bg-stone-200 dark:bg-stone-700' : ''" class="px-2 h-8 border-l border-stone-300 dark:border-stone-700">All</button>
+          </div>
+          <span class="text-sm text-stone-500" x-text="excludedMeta"></span>
+          <span x-show="!excludedOk" class="text-sm text-rose-600 font-medium">⚠ Everything (es.exe) not reachable — is it running?</span>
+        </div>
+        <div class="flex items-center gap-1 text-sm flex-wrap px-1">
+          <template x-for="(c, i) in excludedCrumbs()" :key="i">
+            <span><span class="crumb" @click="excludedNav(c.path)" x-text="c.label"></span><span class="text-stone-400" x-show="i < excludedCrumbs().length - 1"> › </span></span>
+          </template>
+        </div>
+        <div class="text-[11px] text-stone-500 px-1">"Not backed up" = on disk but absent from <span class="font-medium">paths(in_latest)</span> of either repo. Local fixed drives only. Folder sizes &amp; the disk listing come from Everything.</div>
+        <div id="excludedTable" class="flex-1 min-h-0"></div>
+      </section>
+
       <section x-show="active==='actions'" class="h-full flex flex-col gap-3 overflow-auto">
         <div class="grid max-w-5xl grid-cols-1 gap-3 lg:grid-cols-2">
           <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">

@@ -109,7 +109,7 @@ document.addEventListener("alpine:init", () => {
       { id: "dashboard", label: "Dashboard" }, { id: "snapshots", label: "Snapshots" },
       { id: "tree", label: "Tree" }, { id: "search", label: "Search" },
       { id: "simulate", label: "Simulate" }, { id: "stats", label: "Stats" },
-      { id: "actions", label: "Actions" },
+      { id: "excluded", label: "Excluded" }, { id: "actions", label: "Actions" },
     ],
     active: "dashboard",
     dark: false,
@@ -133,6 +133,7 @@ document.addEventListener("alpine:init", () => {
     statsData: null, blobStats: "", blobLoading: false, _statsLoading: false,
     mountSnapshot: "", mountPoint: "", restoreSource: "", restoreDest: "",
     dashboardMeta: "", busy: "", error: "", detail: null, batch: null, showBatch: false, snapSource: "*ALL*", _poll: null, _searchSeq: 0, _detailSeq: 0,
+    excludedDrives: [], excludedOk: true, excludedPath: "", excludedFilter: "excluded", excludedMeta: "", _excludedItems: [],
     showSettings: false, backend: "subprocess", repoPinned: false, reindexInterval: 1800, dashRefresh: 900,
     analyzingAll: false, showDelete: false, deletePlan: null, deleteConfirm: "", _autoRefresh: null,
 
@@ -262,6 +263,7 @@ document.addEventListener("alpine:init", () => {
       if (this.active === "simulate") return;  // heavy - user clicks Run
       if (this.active === "stats") return this.statsData ? null : this.loadStats();
       if (this.active === "actions") return this.loadMounts();
+      if (this.active === "excluded") return this.loadExcluded();
     },
 
     async refreshAll() {
@@ -829,6 +831,80 @@ document.addEventListener("alpine:init", () => {
         this.showBatch = false; this.batch = null;
         this.loadSearch(true);
       }, "Removing files…");
+    },
+
+    // ---- Excluded browser (local-disk coverage gaps vs both repos; es.exe disk side) ----
+    async loadExcluded() {
+      if (!this.excludedDrives.length) {
+        const d = await getJson("/api/excluded/drives").catch(() => null);
+        if (d) { this.excludedDrives = d.drives || []; this.excludedOk = !!d.everything_ok; }
+      }
+      if (this.excludedPath) return this.listExcluded(this.excludedPath);
+      this.renderExcludedDrives();
+    },
+    renderExcludedDrives() {
+      this.excludedPath = "";
+      this.excludedMeta = this.excludedOk ? `${this.excludedDrives.length} drive(s)` : "Everything (es.exe) not reachable";
+      this.renderExcluded(this.excludedDrives.map((dr) => ({ name: dr.replace(/\\$/, ""), path: dr, is_dir: true, status: "drive", disk_bytes: 0, excluded_bytes: 0, mtime: "" })));
+    },
+    excludedNav(path) { if (!path) return this.renderExcludedDrives(); this.listExcluded(path); },
+    async listExcluded(path) {
+      this.excludedPath = path;
+      await this.wrap(async () => {
+        const r = await getJson(`/api/excluded/list?path=${encodeURIComponent(path)}`);
+        this.excludedMeta = `${r.count} items · ${fmtBytes(r.total_excluded)} not backed up here`;
+        this.renderExcluded(r.items || []);
+      }, "Listing (Everything)…");
+    },
+    excludedRowOpen(row) {
+      if (row.status === "drive") return this.listExcluded(row.path);
+      if (!row.is_dir) return;
+      const base = this.excludedPath.replace(/[\\/]+$/, "");
+      this.listExcluded(base + "\\" + row.name);
+    },
+    excludedUp() {
+      const p = (this.excludedPath || "").replace(/[\\/]+$/, "");
+      if (!p) return;
+      if (/^[A-Za-z]:$/.test(p)) return this.renderExcludedDrives();
+      const idx = p.lastIndexOf("\\");
+      this.listExcluded(idx <= 2 ? p.slice(0, 2) + "\\" : p.slice(0, idx));
+    },
+    excludedCrumbs() {
+      const out = [{ label: "This PC", path: "" }];
+      if (!this.excludedPath) return out;
+      const p = this.excludedPath.replace(/[\\/]+$/, "");
+      let acc = "";
+      p.split("\\").forEach((seg, i) => {
+        acc = i === 0 ? seg + "\\" : acc + (acc.endsWith("\\") ? "" : "\\") + seg;
+        out.push({ label: seg, path: acc });
+      });
+      return out;
+    },
+    setExcludedFilter(f) { this.excludedFilter = f; this._drawExcluded(); },
+    renderExcluded(items) { this._excludedItems = items; this._drawExcluded(); },
+    _drawExcluded() {
+      const f = this.excludedFilter;
+      const items = (this._excludedItems || []).filter((it) => {
+        if (f === "all" || it.status === "drive") return true;
+        if (f === "backed") return it.status === "backed" || it.status === "partial";
+        return it.status !== "backed";  // "Not backed up" view = excluded / partial / new
+      });
+      const pill = (s) => {
+        const m = { backed: ["#dcfce7", "#166534", "backed up"], excluded: ["#fee2e2", "#991b1b", "NOT backed up"], partial: ["#fef9c3", "#854d0e", "partial"], new: ["#dbeafe", "#1e40af", "new (not yet)"], drive: ["#e2e8f0", "#334155", "drive"] };
+        const [bg, fg, label] = m[s] || ["#e2e8f0", "#334155", s];
+        return `<span class="pill" style="background:${bg};color:${fg}">${label}</span>`;
+      };
+      const cols = [
+        { title: "Name", field: "name", widthGrow: 4, minWidth: 260, formatter: (c) => (c.getRow().getData().is_dir ? "📁 " : "📄 ") + c.getValue() },
+        { title: "Status", field: "status", width: 130, formatter: (c) => pill(c.getValue()) },
+        { title: "Size (disk)", field: "disk_bytes", width: 110, hozAlign: "right", formatter: (c) => c.getValue() ? fmtBytes(c.getValue()) : "" },
+        { title: "Excluded here", field: "excluded_bytes", width: 120, hozAlign: "right", formatter: (c) => c.getValue() ? fmtBytes(c.getValue()) : "" },
+        { title: "Modified", field: "mtime", width: 165, formatter: (c) => (c.getValue() || "").replace("T", " ") },
+      ];
+      setTable("#excludedTable", items, cols, {
+        onRowDblClick: (_e, row) => this.excludedRowOpen(row.getData()),
+        rowMenu: [{ label: "Open", action: (_e, row) => this.excludedRowOpen(row.getData()) }],
+      });
     },
 
     // ---- Restore (accessible everywhere) ----

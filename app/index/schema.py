@@ -124,7 +124,8 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
             last_seen TIMESTAMP,
             in_latest BOOLEAN,
             content_id VARCHAR,
-            physical UBIGINT
+            physical UBIGINT,
+            path_lc VARCHAR
         )
         """
     )
@@ -133,6 +134,12 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
             con.execute(f"ALTER TABLE paths ADD COLUMN {col} {decl}")
         except Exception:
             pass
+    try:  # path_lc = lowercased full_path; powers the Excluded browser's fast prefix lookups
+        con.execute("ALTER TABLE paths ADD COLUMN path_lc VARCHAR")
+        con.execute("UPDATE paths SET path_lc = lower(full_path)")  # one-time backfill (no kopia re-walk)
+        log.info("paths.path_lc added + backfilled")
+    except Exception:
+        pass  # column already present
 
     # Materialized physical/dedup maps (populated from the toolkit engine artifacts each build).
     con.execute("CREATE TABLE IF NOT EXISTS content_sizes (repo VARCHAR, cid VARCHAR, packed UBIGINT)")
@@ -160,6 +167,7 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     con.execute("CREATE INDEX IF NOT EXISTS files_snapshot ON files(repo, snapshot_id)")
     con.execute("CREATE INDEX IF NOT EXISTS paths_repo_source ON paths(repo, source)")
     con.execute("CREATE INDEX IF NOT EXISTS paths_content ON paths(repo, content_id)")  # copies count + shared_min
+    con.execute("CREATE INDEX IF NOT EXISTS paths_path_lc ON paths(repo, path_lc)")  # Excluded browser prefix scans
     con.execute("CREATE INDEX IF NOT EXISTS content_sizes_cid ON content_sizes(repo, cid)")
     con.execute("CREATE INDEX IF NOT EXISTS content_refs_cid ON content_refs(repo, cid)")
     con.execute("CREATE INDEX IF NOT EXISTS indirect_phys_oid ON indirect_phys(repo, oid)")

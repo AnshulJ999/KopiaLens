@@ -31,6 +31,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "search_dir": "desc",      # persisted search sort direction
         "search_dedupe": False,    # persisted dedupe toggle (search)
         "tree_dedupe": False,      # persisted dedupe toggle (tree)
+        "es_path": r"G:\Apps\CLI Tools\es.exe",  # Everything CLI for the Excluded browser (local disk side)
     },
 }
 

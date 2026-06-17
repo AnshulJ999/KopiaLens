@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import REPOS
 
-from .api import actions, dashboard, search, simulate, snapshots, stats, tree
+from .api import actions, dashboard, excluded, search, simulate, snapshots, stats, tree
 from .core import kopia as kopia_mod
 from .core.applog import get_logger, setup_logging
 from .core.instrument import log_memory, memory_snapshot
@@ -166,6 +166,7 @@ app.include_router(search.router, prefix="/api")
 app.include_router(simulate.router, prefix="/api")
 app.include_router(actions.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
+app.include_router(excluded.router, prefix="/api")
 
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
 
