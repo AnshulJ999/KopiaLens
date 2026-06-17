@@ -401,10 +401,17 @@ document.addEventListener("alpine:init", () => {
       };
       this.deleteConfirm = "";
       this.deletePlan.preview = [];
+      this.deletePlan.combinedReclaim = null;     // accurate union(deleted)-union(kept), filled async
+      this.deletePlan.combinedExact = true;
+      this.deletePlan.combinedComputing = true;
       this.showDelete = true;
       // fetch the exact commands (handles repo2's --config-file) for the copy button
       getJson("/api/actions/snapshot-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_ids: this.deletePlan.ids, confirm: false }) })
         .then((r) => { if (this.deletePlan) this.deletePlan.commands = r.commands || ""; }).catch(() => {});
+      // accurate combined reclaim for the WHOLE set (not the per-snapshot sum, which under-counts)
+      getJson("/api/snapshots/set-reclaim", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_ids: this.deletePlan.ids }) })
+        .then((r) => { if (this.deletePlan) { this.deletePlan.combinedReclaim = r.reclaim; this.deletePlan.combinedExact = r.exact; this.deletePlan.combinedComputing = false; } })
+        .catch(() => { if (this.deletePlan) this.deletePlan.combinedComputing = false; });
       // fetch the largest files that would be reclaimed (preview)
       this.loadDeletePreview(false);
     },

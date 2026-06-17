@@ -16,6 +16,7 @@ from config import REPOS
 from .api import actions, dashboard, search, simulate, snapshots, stats, tree
 from .core import kopia as kopia_mod
 from .core.applog import get_logger, setup_logging
+from .core.instrument import log_memory, memory_snapshot
 from .core.metrics import table_rows
 from .core.schedule import compute_next_snapshots
 from .core.server import SERVERS
@@ -30,7 +31,9 @@ ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "frontend"
 
 _bg_stop = threading.Event()
-_DEFAULT_REINDEX_INTERVAL = 1800  # fallback seconds between background passes (overridable in settings)
+_DEFAULT_REINDEX_INTERVAL = 1800   # fallback seconds between background passes (overridable in settings)
+_DEFAULT_RECLAIM_INTERVAL = 10800  # fallback seconds between reclaimable pre-warm passes (heavy)
+_last_reclaim: dict[str, float] = {}
 
 
 def _reindex_interval() -> float:
@@ -40,6 +43,30 @@ def _reindex_interval() -> float:
         return max(60.0, val)  # never tighter than 1 minute
     except Exception:
         return _DEFAULT_REINDEX_INTERVAL
+
+
+def _reclaim_interval() -> float:
+    """How often to pre-warm per-snapshot reclaimable (heavy op), read live from settings."""
+    try:
+        val = float(load_settings().get("kopialens", {}).get("reclaim_interval", _DEFAULT_RECLAIM_INTERVAL))
+        return max(300.0, val)  # never tighter than 5 minutes (it is expensive)
+    except Exception:
+        return _DEFAULT_RECLAIM_INTERVAL
+
+
+def _maybe_warm_reclaim(repo: str) -> None:
+    """Pre-compute per-snapshot reclaimable on a slow cadence so it is always cached/available.
+    Runs AFTER _warm (which refreshes the dashboard -> content_refs), so the refcount it reads is
+    fresh (the overestimate guard). Heavy (refcount + forward+backward walk), hence its own timer."""
+    now = time.time()
+    if now - _last_reclaim.get(repo, 0.0) < _reclaim_interval():
+        return
+    try:
+        snap_prewarm(repo, with_reclaim=True)
+        _last_reclaim[repo] = now
+        log.info("reclaim pre-warm done repo=%s", repo)
+    except Exception as exc:  # noqa: BLE001
+        log.error("reclaim pre-warm repo=%s failed: %s", repo, exc)
 
 
 def _refresh_dashboard(repo: str) -> None:
@@ -86,6 +113,8 @@ def _bg_worker() -> None:
         except Exception as exc:  # noqa: BLE001
             log.error("startup reindex repo=%s failed: %s", repo, exc)
         _warm(repo)
+        _maybe_warm_reclaim(repo)
+    log_memory("startup cycle done")
     while not _bg_stop.wait(_reindex_interval()):
         for repo in REPOS:
             try:
@@ -93,6 +122,8 @@ def _bg_worker() -> None:
             except Exception as exc:  # noqa: BLE001
                 log.error("periodic reindex repo=%s failed: %s", repo, exc)
             _warm(repo)
+            _maybe_warm_reclaim(repo)
+        log_memory("cycle done")
 
 
 @asynccontextmanager
@@ -147,3 +178,9 @@ def index() -> FileResponse:
 @app.get("/health")
 def health() -> dict:
     return {"ok": True}
+
+
+@app.get("/debug/memory")
+def debug_memory() -> dict:
+    """On-demand RSS + cache/table sizes (the same snapshot the background worker logs each cycle)."""
+    return memory_snapshot()

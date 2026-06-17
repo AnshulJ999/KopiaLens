@@ -179,6 +179,42 @@ def simulate_all(repo: str, policy: dict[str, int], mode: str = "all", refresh: 
     return data
 
 
+def set_reclaim(repo: str, delete_ids: list[str], refresh: bool = False) -> dict:
+    """Accurate reclaim for an ARBITRARY set of snapshots (what the delete panel needs): the true
+    ``union(deleted content) - union(kept content)``, NOT the per-snapshot sum (which under-counts
+    content shared among the deleted set but exclusive to none of them individually).
+
+    Kept = every OTHER snapshot of each affected source. ``refcount<=#affected-sources`` excludes
+    content also held by an unaffected source. EXACT for a single-source selection (the normal
+    case); for a cross-source selection it is approximate (cross-source shared churn not fully
+    deducted) and flagged ``exact=false``."""
+    delete_set = set(delete_ids)
+    srcs = sources_index(repo)
+    affected = sorted({k for k, lst in srcs.items() if any(s["id"] in delete_set for s in lst)})
+    if not affected:
+        return {"reclaim": 0, "reclaim_gb": 0.0, "delete_snapshots": 0, "sources": [], "exact": True}
+    db = cache_db(repo)
+    smap = load_sizemap(repo, refresh=refresh)
+    count, _ = cached_refcount(repo, db, smap, mode="all")
+    del_snaps, kept_snaps = [], []
+    for key in affected:
+        for snap in srcs[key]:
+            (del_snaps if snap["id"] in delete_set else kept_snaps).append(snap)
+    del_c = walk(repo, roots_of(del_snaps), db)[0] if del_snaps else set()
+    kept_c = walk(repo, roots_of(kept_snaps), db)[0] if kept_snaps else set()
+    candidates = del_c - kept_c
+    na = len(affected)
+    reclaim = sum(smap.get(cid, 0) for cid in candidates if count.get(cid, 0) <= na)
+    return {
+        "reclaim": reclaim,
+        "reclaim_gb": gb(reclaim),
+        "delete_snapshots": len(del_snaps),
+        "kept_snapshots": len(kept_snaps),
+        "sources": affected,
+        "exact": na == 1,
+    }
+
+
 def parse_policy_retention(repo: str, target: str) -> tuple[dict[str, int], str]:
     out = kopia(repo, ["policy", "show", target, "--json"]).stdout
     policy = {"latest": 0, "hourly": 0, "daily": 0, "weekly": 0, "monthly": 0, "annual": 0}

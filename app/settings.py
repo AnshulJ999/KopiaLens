@@ -23,6 +23,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "tables": {},          # per-table Tabulator persistence (columns + sort), keyed by table id
         "page_size": 500,      # search default page size (may be "Infinite")
         "reindex_interval": 1800,    # seconds between background incremental reindex + dashboard-recompute passes
+        "reclaim_interval": 10800,   # seconds between background reclaimable pre-warm passes (heavy: refcount + double walk)
         "dashboard_refresh": 900,    # seconds: how often the open Dashboard view re-fetches the cache (0 = off)
         "churn_default": False,      # show churn column by default
         "tree_mode": "full",       # default tree view mode

@@ -23,9 +23,12 @@ import pyarrow as pa
 
 from .physical import materialize_physical
 from .schema import get_db, read_cursor
+from ..core.applog import get_logger
 from ..core.cache import cache_db
 from ..core.sources import sources_index
 from ..core.walk import walk_new_visit
+
+log = get_logger("index")
 
 _JOBS: dict[str, dict] = {}
 
@@ -147,6 +150,76 @@ def _build_source(con, db, repo: str, key: str, snaps: list[dict], job: dict) ->
     _refresh_paths(con, repo, key)
 
 
+def _append_set(snaps: list[dict], indexed_ids: set[str]) -> list[dict] | None:
+    """Append-only eligibility: return the new snapshots IFF the ONLY change to this source is
+    snapshots strictly NEWER than every already-indexed one (the daily-snapshot case). Returns
+    None for anything else (a removed/rewritten snapshot id - e.g. remove-files - or a new
+    snapshot landing mid-timeline) so the caller falls back to the safe full-source rebuild.
+    ISO-8601 startTime strings compare chronologically as plain strings."""
+    if not indexed_ids:
+        return None
+    cur_ids = {s["id"] for s in snaps}
+    if not indexed_ids <= cur_ids:
+        return None  # an indexed snapshot vanished/was rewritten -> rebuild the source
+    new_ids = cur_ids - indexed_ids
+    if not new_ids:
+        return None
+    max_indexed_start = max((s.get("startTime", "") or "" for s in snaps if s["id"] in indexed_ids), default="")
+    new_snaps = [s for s in snaps if s["id"] in new_ids]
+    if any((s.get("startTime", "") or "") <= max_indexed_start for s in new_snaps):
+        return None  # a new snapshot is not strictly the newest -> rebuild (keeps the delta sound)
+    return new_snaps
+
+
+def _extend_source(con, db, repo: str, key: str, snaps: list[dict], new_snaps: list[dict], job: dict) -> int:
+    """Append-only fast path: walk only the new (strictly newest) snapshots + re-walk the previous
+    latest as a delta, and KEEP every older snapshot's rows untouched. This preserves the exact
+    newest-full / older-delta invariant of a full rebuild: adding newer snapshots on top does not
+    change an older snapshot's unique-content set. Returns the number of snapshots actually walked."""
+    snaps_sorted = sorted(snaps, key=lambda s: s.get("startTime", "") or "", reverse=True)  # newest first
+    new_ids = {s["id"] for s in new_snaps}
+    prev_latest = next((s for s in snaps_sorted if s["id"] not in new_ids), None)
+    rewalk = [s for s in snaps_sorted if s["id"] in new_ids or (prev_latest and s["id"] == prev_latest["id"])]
+    ids = [s["id"] for s in rewalk]
+    if ids:  # drop only the rows we will rewrite: prev_latest changes full->delta; new ones have none yet
+        placeholders = ",".join("?" * len(ids))
+        con.execute(f"DELETE FROM files WHERE repo=? AND source=? AND snapshot_id IN ({placeholders})", [repo, key, *ids])
+        con.execute(f"DELETE FROM indexed_snapshots WHERE repo=? AND snapshot_id IN ({placeholders})", [repo, *ids])
+    seen_dirs: set[str] = set()
+    rows: list[tuple] = []
+    for snap in rewalk:  # newest-first so seen_dirs accumulates correctly (new snaps, then prev_latest)
+        root = snap.get("rootEntry", {}).get("obj")
+        snap_id = snap["id"]
+        start = snap.get("startTime", "") or None
+        if not root:
+            job["indexed"] += 1
+            continue
+        count = [0]
+
+        def visitor(parent: str, entry: dict, _key=key, _sid=snap_id, _start=start) -> None:
+            rel = (parent + "\\" + entry.get("name", "")).lstrip("\\")
+            rows.append((
+                repo, _key, _full_path(_key, rel), entry.get("name", ""),
+                int(entry.get("size", 0) or 0), entry.get("obj", ""), _sid, _start, count[0],
+                entry.get("mtime") or None,
+            ))
+            count[0] += 1
+            if len(rows) >= _FLUSH_ROWS:
+                _flush(con, rows)
+
+        walk_new_visit(repo, db, [root], seen_dirs, visitor)
+        con.execute(
+            "INSERT OR REPLACE INTO indexed_snapshots(repo, snapshot_id, source, start_time, root_obj, file_count) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [repo, snap_id, key, start, root, count[0]],
+        )
+        job["indexed"] += 1
+    _flush(con, rows)
+    _refresh_paths(con, repo, key)
+    job["indexed"] += max(0, len(snaps) - len(rewalk))  # older snaps stay indexed -> keep progress honest
+    return len(rewalk)
+
+
 def _indexed_sets(con, repo: str) -> dict[str, set[str]]:
     out: dict[str, set[str]] = {}
     for src, sid in con.execute(
@@ -164,13 +237,13 @@ def _run_build(repo: str, source: str | None, full: bool) -> None:
         con = get_db(repo).cursor()  # build writes via its own cursor off the shared pool
         db = cache_db(repo)
         indexed = _indexed_sets(con, repo)
+        have_paths = {r[0] for r in con.execute("SELECT DISTINCT source FROM paths WHERE repo=?", [repo]).fetchall()}
         if source:
             targets = [source] if source in srcs else []
         elif full:
             targets = sorted(srcs)
         else:  # incremental: sources whose snapshot SET changed, or that lack the paths aggregate (migration)
             changed = {k for k in srcs if {s["id"] for s in srcs[k]} != indexed.get(k, set())}
-            have_paths = {r[0] for r in con.execute("SELECT DISTINCT source FROM paths WHERE repo=?", [repo]).fetchall()}
             migrate = (set(indexed) & set(srcs)) - have_paths  # indexed but no paths rows yet
             targets = sorted(changed | migrate)
         stale = [k for k in indexed if k not in srcs]  # self-heal: removed sources
@@ -184,7 +257,18 @@ def _run_build(repo: str, source: str | None, full: bool) -> None:
             _delete_source(con, repo, key)
         for key in targets:
             job["current_source"] = key
-            _build_source(con, db, repo, key, srcs[key], job)
+            t0 = time.perf_counter()
+            # Append-only fast path for the common daily-snapshot case (only when the source already
+            # has a paths aggregate); anything else (remove-files rewrites, mid-timeline snapshots,
+            # migration) falls back to the safe full-source rebuild.
+            append_set = _append_set(srcs[key], indexed.get(key, set())) if (not full and key in have_paths) else None
+            if append_set:
+                walked = _extend_source(con, db, repo, key, srcs[key], append_set, job)
+                mode_used = f"append(+{len(append_set)} new, walked {walked})"
+            else:
+                _build_source(con, db, repo, key, srcs[key], job)
+                mode_used = "rebuild"
+            log.info("repo=%s source=%s %s %d snaps %.1fs", repo, key, mode_used, len(srcs[key]), time.perf_counter() - t0)
         # Physical/dedup materialization only when something actually changed - skipping it on
         # no-op incremental passes is the main fix for the periodic idle disk churn (it used to
         # run an UPDATE over the whole paths table every cycle even when nothing was rebuilt).
@@ -192,6 +276,12 @@ def _run_build(repo: str, source: str | None, full: bool) -> None:
             job["current_source"] = "(physical maps)"
             materialize_physical(con, repo)
         con.commit()
+        if targets or stale or full:  # only log when real work happened (no spam on no-op passes)
+            try:
+                from ..core.instrument import log_memory
+                log_memory(f"post-index repo={repo} targets={len(targets)} stale={len(stale)} full={full}")
+            except Exception:  # noqa: BLE001 - instrumentation must never break a build
+                pass
     except Exception as exc:  # noqa: BLE001 - surfaced to the UI
         job["error"] = str(exc)
     finally:

@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..core.kopia import diff_execute, snapshot_diff_command, snapshot_pin_command
+from ..core.retention import set_reclaim
 from ..core.sources import resolve_source, sources_index
 from ..index.queries import snapshot_files
 from ..index.snapanalysis import compute_source, read_analysis, reclaimable_files
@@ -24,6 +25,12 @@ class PinRequest(BaseModel):
     repo: str = "1"
     snapshot_ids: list[str]
     remove: bool = False
+
+
+class SetReclaimRequest(BaseModel):
+    repo: str = "1"
+    snapshot_ids: list[str]
+    refresh: bool = False
 
 _ANALYZING: set[str] = set()
 _ANALYZING_ALL: set[str] = set()  # repo-level "analyze everything" in progress
@@ -134,6 +141,19 @@ def analyze_all(repo: str = "1", reclaim: bool = True) -> dict:
 @router.get("/snapshots/analyze-status")
 def analyze_status(repo: str = "1") -> dict:
     return {"repo": repo, "analyzing_all": repo in _ANALYZING_ALL}
+
+
+@router.post("/snapshots/set-reclaim")
+def set_reclaim_route(payload: SetReclaimRequest) -> dict:
+    """Accurate combined reclaim for the SELECTED set of snapshots: union(deleted) - union(kept),
+    not the per-snapshot sum. Exact for a single-source selection. Can be slow the first time on a
+    big source (walks its kept snapshots), then served warm from the dir cache."""
+    if not payload.snapshot_ids:
+        raise HTTPException(status_code=400, detail="snapshot_ids is empty")
+    try:
+        return set_reclaim(payload.repo, payload.snapshot_ids, refresh=payload.refresh)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/snapshots/pin")
