@@ -132,7 +132,7 @@ document.addEventListener("alpine:init", () => {
     mounts: [],
     statsData: null, blobStats: "", blobLoading: false, _statsLoading: false,
     mountSnapshot: "", mountPoint: "", restoreSource: "", restoreDest: "",
-    dashboardMeta: "", busy: "", error: "", detail: null, _poll: null, _searchSeq: 0, _detailSeq: 0,
+    dashboardMeta: "", busy: "", error: "", detail: null, batch: null, showBatch: false, snapSource: "*ALL*", _poll: null, _searchSeq: 0, _detailSeq: 0,
     showSettings: false, backend: "subprocess", repoPinned: false, reindexInterval: 1800, dashRefresh: 900,
     analyzingAll: false, showDelete: false, deletePlan: null, deleteConfirm: "", _autoRefresh: null,
 
@@ -173,7 +173,9 @@ document.addEventListener("alpine:init", () => {
         if (urlRepo && data.repos.some((r) => r.id === urlRepo)) { this.repo = urlRepo; this.repoPinned = true; }
         else this.repo = data.settings?.last_repo || "1";
         this.backend = data.settings?.listing_backend || "subprocess";
-        this.searchPageSize = String(kl.page_size || 500);
+        const _ps = String(kl.page_size || 500);  // snap to a valid <option> so the select can't visually revert to 100
+        this.searchPageSize = this.pageSizes.includes(_ps) ? _ps : "500";
+        this.snapSource = kl.snap_source || "*ALL*";  // snapshots-view scope (persisted, default All sources)
         this.searchSort = kl.search_sort || "size";
         this.searchDir = kl.search_dir || "desc";
         this.dedupe = !!kl.search_dedupe;
@@ -336,13 +338,14 @@ document.addEventListener("alpine:init", () => {
 
     // ---------- Snapshots ----------
     async loadSnapshots(refresh = false) {
-      if (!this.selectedSource) return;
+      if (!this.snapSource) this.snapSource = "*ALL*";
+      if (this.snapSource !== "*ALL*") this.selectedSource = this.snapSource;  // keep tree-drill/mount in sync
       await this.wrap(async () => {
-        const data = await getJson(`/api/snapshots?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.selectedSource)}`);
+        const data = await getJson(`/api/snapshots?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.snapSource)}`);
         this.snapshots = data.snapshots || [];
         this.analyzing = !!data.analyzing;
         if (!this.snapshots.find((x) => x.id === this.selectedSnapshot)) this.selectedSnapshot = this.snapshots.length ? this.snapshots[this.snapshots.length - 1].id : "";
-        const allSrc = this.selectedSource === "*ALL*";
+        const allSrc = this.snapSource === "*ALL*";
         const cols = [
           ...(allSrc ? [{ title: "Source", field: "source", widthGrow: 2, minWidth: 200, formatter: (c) => sourcePath(c.getValue()) }] : []),
           { title: "Start", field: "start_time", width: 185, formatter: (c) => timeCell(c.getValue()) },
@@ -358,9 +361,9 @@ document.addEventListener("alpine:init", () => {
         const stbl = setTable("#snapshotsTable", this.snapshots, cols, {
           selectableRows: true,  // multi-select for bulk delete / pin / diff
           initialSort: allSrc ? [{ column: "reclaimable", dir: "desc" }] : [{ column: "start_time", dir: "desc" }],
-          onRowDblClick: (_e, row) => { const d = row.getData(); if (allSrc) this.selectedSource = d.source; this.selectedSnapshot = d.id; this.mountSnapshot = this.selectedSnapshot; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); },
+          onRowDblClick: (_e, row) => { const d = row.getData(); this.selectedSource = d.source; this.selectedSnapshot = d.id; this.mountSnapshot = this.selectedSnapshot; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); },
           rowMenu: [
-            { label: "Browse files", action: (_e, row) => { const d = row.getData(); if (allSrc) this.selectedSource = d.source; this.selectedSnapshot = d.id; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); } },
+            { label: "Browse files", action: (_e, row) => { const d = row.getData(); this.selectedSource = d.source; this.selectedSnapshot = d.id; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); } },
             { label: "Restore this snapshot…", action: (_e, row) => this.openRestore(row.getData().root || row.getData().id, "snapshot " + row.getData().id.slice(0, 12)) },
             { label: "Mount snapshot (read-only)", action: (_e, row) => this.mountRow(row.getData().id) },
             { label: "Mount + open in Explorer", action: (_e, row) => this.mountOpen(row.getData().id, this.selectedSource, this.sourceRoot()) },
@@ -371,20 +374,18 @@ document.addEventListener("alpine:init", () => {
             { label: "Copy snapshot ID", action: (_e, row) => this.copyText(row.getData().id) },
           ],
         });
-        if (stbl) stbl.on("rowClick", (e, row) => {  // Shift+Click selects a range from the anchor
-          const rs = stbl.getRows(); const idx = rs.indexOf(row);
-          if (e.shiftKey && this._lastSnapIdx != null && this._lastSnapIdx >= 0 && idx >= 0) {
-            const a = Math.min(this._lastSnapIdx, idx); const b = Math.max(this._lastSnapIdx, idx);
-            for (let k = a; k <= b; k++) rs[k].select();
-          }
-          this._lastSnapIdx = idx;
-        });
+        if (stbl) stbl.on("rowClick", (e, row) => this._rangeClick(stbl, e, row));  // Shift+Click range select
       }, "Loading snapshots...");
     },
 
     snapSelected() {
       const el = document.querySelector("#snapshotsTable");
       return (el && el._tabulator) ? el._tabulator.getSelectedData() : [];
+    },
+    changeSnapSource() {  // persist the snapshots-view scope; keep selectedSource in sync for single-source
+      this.klSet({ snap_source: this.snapSource });
+      if (this.snapSource !== "*ALL*") this.selectedSource = this.snapSource;
+      this.loadSnapshots();
     },
     planDelete() {  // build a confirm plan from the currently-selected snapshot rows
       const rows = this.snapSelected();
@@ -445,13 +446,13 @@ document.addEventListener("alpine:init", () => {
     },
 
     async analyzeSnapshots() {
-      if (!this.selectedSource) return;
-      if (this.selectedSource === "*ALL*") return this.analyzeAll();  // all-sources view -> repo-wide
+      if (!this.snapSource) this.snapSource = "*ALL*";
+      if (this.snapSource === "*ALL*") return this.analyzeAll();  // all-sources view -> repo-wide
       await this.wrap(async () => {
-        await getJson(`/api/snapshots/analyze?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.selectedSource)}&reclaim=true`, { method: "POST" });
+        await getJson(`/api/snapshots/analyze?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.snapSource)}&reclaim=true`, { method: "POST" });
         this.analyzing = true;
         const poll = setInterval(async () => {
-          const d = await getJson(`/api/snapshots?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.selectedSource)}`).catch(() => null);
+          const d = await getJson(`/api/snapshots?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.snapSource)}`).catch(() => null);
           if (d && !d.analyzing) { clearInterval(poll); this.loadSnapshots(); }
         }, 4000);
       }, "Analyzing snapshots (churn + reclaimable)...");
@@ -591,7 +592,7 @@ document.addEventListener("alpine:init", () => {
           cols.forEach((c) => { try { t.updateColumnDefinition(c.field, c); } catch (e) {} });
           t.replaceData(data.results || []);
         } else {
-          setTable("#searchTable", data.results || [], cols, {
+          const sStbl = setTable("#searchTable", data.results || [], cols, {
             persistSort: false,
             selectableRows: true,
             onRowDblClick: (_e, row) => this.openFileDetail(row.getData()),
@@ -605,6 +606,7 @@ document.addEventListener("alpine:init", () => {
               { label: "Copy full path", action: (_e, row) => this.copyText(row.getData().full_path) },
             ],
           });
+          if (sStbl) sStbl.on("rowClick", (e, row) => this._rangeClick(sStbl, e, row));  // Shift+Click range select
         }
       }, "Searching...");
     },
@@ -650,7 +652,7 @@ document.addEventListener("alpine:init", () => {
           const it = items[i] || {};
           return { cmd: Array.isArray(c) ? c.join(" ") : c, tag: it.pinned ? "PINNED" : ((it.retention && it.retention.length) ? `retained: ${it.retention.join(",")}` : "") };
         });
-        this.detail = {
+        Object.assign(this.detail, {   // merge (not replace) so a command built meanwhile (removeFiles) survives
           kind: "file", loading: false,
           title: item.full_path,
           source: detail.source || item.source,
@@ -666,7 +668,7 @@ document.addEventListener("alpine:init", () => {
           versions: (vres.versions || []).map((x) => ({ time: humanTime(x.start_time), size: x.size, snapshot_id: x.snapshot_id, content_id: x.content_id })),
           purge: purgeRows,
           purgeCmds: purgeRows.map((r) => r.cmd).join("\n"),
-        };
+        });
       } catch (err) {
         if (seq === this._detailSeq) this.error = err.message || String(err);
       }
@@ -784,6 +786,49 @@ document.addEventListener("alpine:init", () => {
       if (!names.length) { window.alert("Select one or more files first."); return; }
       this.copyText(names.join("\n"));
       this.actionText = "Exclude patterns (bare names — paste into KopiaUI policy):\n" + names.join("\n");
+    },
+
+    // ---- Range select (Shift+Click) — shared by search + snapshots tables ----
+    _rangeClick(table, e, row) {
+      const rows = table.getRows("active");                              // current display order
+      const idx = rows.findIndex((r) => r.getData() === row.getData());  // identity match (indexOf was unreliable)
+      if (idx < 0) return;
+      if (e.shiftKey && table._rangeAnchor != null && table._rangeAnchor >= 0) {
+        const a = Math.min(table._rangeAnchor, idx), b = Math.max(table._rangeAnchor, idx);
+        for (let k = a; k <= b; k++) rows[k].select();
+      }
+      table._rangeAnchor = idx;
+    },
+
+    // ---- Batch detail panel (multi-file union: physical/freeable + multi-choice removal) ----
+    async batchDetail(scope) {
+      const files = this._selFiles(scope);
+      if (!files.length) { window.alert("Select one or more files first (Shift+Click for a range)."); return; }
+      this.batch = { loading: true, files, count: files.length, by: "object-id", everywhere: false, stats: null, cmd: null, cmdLoading: false };
+      this.showBatch = true;
+      const r = await getJson("/api/actions/batch-detail", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, files }) }).catch((e) => { this.error = e.message; return null; });
+      if (this.batch) { this.batch.stats = r; this.batch.loading = false; }
+      this.buildBatchCmd();
+    },
+    async buildBatchCmd() {
+      if (!this.batch) return;
+      this.batch.cmd = null; this.batch.cmdLoading = true;
+      const body = { repo: this.repo, by: this.batch.by, everywhere: this.batch.everywhere, files: this.batch.files, confirm: false };
+      const r = await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch((e) => { this.error = e.message; return null; });
+      if (this.batch) { if (r) this.batch.cmd = { dry: r.dry_run, commit: r.commit, count: r.count, everywhere: r.everywhere }; this.batch.cmdLoading = false; }
+    },
+    setBatchBy(by) { if (this.batch) { this.batch.by = by; this.buildBatchCmd(); } },
+    toggleBatchEverywhere() { if (this.batch) { this.batch.everywhere = !this.batch.everywhere; this.buildBatchCmd(); } },
+    async executeBatchRemove() {
+      if (!this.batch) return;
+      if ((window.prompt(`Remove ${this.batch.count} file(s) from snapshots (keeps the snapshots).\nType REMOVE to confirm:`) || "").trim().toUpperCase() !== "REMOVE") return;
+      const b = this.batch;
+      await this.wrap(async () => {
+        await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, by: b.by, everywhere: b.everywhere, files: b.files, confirm: true }) });
+        this.actionText = "Removed from snapshots. Run 'kopia maintenance run --full' to reclaim.";
+        this.showBatch = false; this.batch = null;
+        this.loadSearch(true);
+      }, "Removing files…");
     },
 
     // ---- Restore (accessible everywhere) ----

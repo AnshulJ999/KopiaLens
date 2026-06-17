@@ -25,7 +25,7 @@ _LOCK = threading.Lock()
 
 # Bound DuckDB's buffer pool so two open repos can't grow to ~80% of system RAM (the default).
 # DuckDB spills above this to the temp directory, so it only costs disk, never correctness.
-MEMORY_LIMIT = os.environ.get("KOPIALENS_DUCKDB_MEMORY", "2GB")
+MEMORY_LIMIT = os.environ.get("KOPIALENS_DUCKDB_MEMORY", "3GB")
 
 
 def db_path(repo: str) -> str:
@@ -45,6 +45,9 @@ def get_db(repo: str) -> duckdb.DuckDBPyConnection:
             try:
                 con.execute(f"PRAGMA memory_limit='{MEMORY_LIMIT}'")
                 con.execute(f"PRAGMA temp_directory='{tmp}'")
+                # We always ORDER BY explicitly, so insertion order is irrelevant -> let DuckDB
+                # stream large sorts/aggregations instead of buffering them (was OOMing Search).
+                con.execute("PRAGMA preserve_insertion_order=false")
             except Exception as exc:  # noqa: BLE001 - never block startup on a pragma
                 log.warning("repo=%s memory_limit/temp_directory pragma failed: %s", repo, exc)
             log.info("repo=%s DuckDB connection opened (memory_limit=%s)", repo, MEMORY_LIMIT)

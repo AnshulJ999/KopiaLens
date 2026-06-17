@@ -240,6 +240,75 @@ def folder_detail(repo: str, source: str, prefix: str) -> dict:
             "shared": physical - freeable}
 
 
+def batch_detail(repo: str, files: list[dict]) -> dict:
+    """Union (content-aware / deduped) footprint for a SET of selected files - the multi-file
+    equivalent of file_detail. Unions every selected file's content chunks across all its
+    versions, then: physical = packed bytes of the union; freeable = packed bytes referenced
+    ONLY by the selection (global refcount fully attributable to it -> removing the whole
+    selection frees them); logical = sum of distinct latest-content sizes (deduped)."""
+    pairs = [(f.get("source"), f.get("full_path")) for f in files if f.get("source") and f.get("full_path")]
+    if not pairs:
+        return {"found": False}
+    dbsql = cache_db(repo)
+    smap = load_sizemap(repo)
+    obj_chunks: dict[str, set[str]] = {}
+    this_refs: dict[str, int] = {}     # references the selection contributes per chunk (all versions)
+    latest: dict[tuple, tuple] = {}    # (source,fp) -> (latest content_id, latest size)
+    versions = 0
+    cur = read_cursor(repo)
+    try:
+        for src, fp in pairs:
+            rows = cur.execute(
+                "SELECT content_id, size, start_time FROM files WHERE repo=? AND source=? AND full_path=? "
+                "ORDER BY start_time DESC",
+                [repo, src, fp],
+            ).fetchall()
+            if not rows:
+                continue
+            latest[(src, fp)] = (rows[0][0], int(rows[0][1] or 0))
+            for obj, _sz, _st in rows:
+                versions += 1
+                chunks = obj_chunks.get(obj)
+                if chunks is None:
+                    chunks = _chunks_for_obj(repo, dbsql, obj)
+                    obj_chunks[obj] = chunks
+                for c in chunks:
+                    this_refs[c] = this_refs.get(c, 0) + 1
+    finally:
+        cur.close()
+    if not latest:
+        return {"found": False}
+
+    union_chunks = set(this_refs)
+    refs = _refcount_for(repo, union_chunks)
+    if refs is None:
+        refs = _refcount_map(repo)
+    physical = sum(smap.get(c, 0) for c in union_chunks)
+    freeable = sum(smap.get(c, 0) for c in union_chunks if refs.get(c, 0) <= this_refs.get(c, 0))
+
+    seen_cid: set[str] = set()
+    logical = 0
+    for cid, sz in latest.values():
+        if cid in seen_cid:
+            continue
+        seen_cid.add(cid)
+        logical += sz
+    sources = sorted({s for s, _ in latest})
+    return {
+        "found": True,
+        "files": len(latest),
+        "distinct_content": len(seen_cid),
+        "sources": sources,
+        "source_count": len(sources),
+        "versions": versions,
+        "chunk_count": len(union_chunks),
+        "logical": logical,
+        "physical": physical,
+        "freeable": freeable,
+        "shared": physical - freeable,
+    }
+
+
 def file_detail(repo: str, source: str, full_path: str) -> dict:
     """Accurate per-file footprint: logical/physical/freeable + dedup chunk breakdown +
     other paths sharing the same content object."""

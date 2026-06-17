@@ -28,7 +28,7 @@ from ..core.kopia import (
 )
 from ..core.sources import invalidate as invalidate_sources, sources_index
 from ..index.builder import start_build
-from ..index.physical import folder_detail
+from ..index.physical import batch_detail, folder_detail
 from ..index.queries import snapshots_for_path, versions as file_versions
 
 router = APIRouter(tags=["actions"])
@@ -211,10 +211,12 @@ def remove_files(payload: RemoveFilesRequest) -> dict:
                 oids.append(oid)
     if not oids:
         raise HTTPException(status_code=404, detail="no content objects found")
-    # Default: scope to the file's source (predictable, fast). everywhere=true drops --source to
-    # sweep the whole repo (only do this deliberately - a deduped common file would match widely).
-    src_set = {s for s, _ in targets}
-    scope = None if (payload.everywhere or len(src_set) != 1) else next(iter(src_set))
+    # Scope to the UNION of the selected files' sources (one command, multiple --source). object-ids
+    # are content-exact, so listing several sources doesn't over-match (a mismatch is a no-op); naming
+    # only the affected sources avoids kopia's slow whole-repo scan. everywhere=true drops --source to
+    # sweep the whole repo (only to chase deduped copies into sources you didn't select).
+    src_list = sorted({s for s, _ in targets})
+    scope = None if payload.everywhere else src_list
     if not payload.confirm:
         return {"executed": False, "by": "object-id", "count": len(oids), "everywhere": scope is None,
                 "dry_run": _fmt_cmd(remove_files_command(payload.repo, object_ids=oids, source=scope, commit=False)),
@@ -253,6 +255,24 @@ def folder_reclaim(payload: FolderReclaimRequest) -> dict:
     try:
         return folder_detail(payload.repo, payload.source, payload.prefix)
     except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+class BatchDetailRequest(BaseModel):
+    repo: str = "1"
+    files: list[dict]  # [{"source":..., "full_path":...}, ...]
+
+
+@router.post("/actions/batch-detail")
+def batch_detail_route(payload: BatchDetailRequest) -> dict:
+    """Union (content-aware/deduped) footprint for a multi-file selection - the multi-file
+    equivalent of /search/detail. Can be slow the first time on a big selection (walks each
+    file's chunks), then served from the warm dir cache."""
+    if not payload.files:
+        raise HTTPException(status_code=400, detail="no files specified")
+    try:
+        return batch_detail(payload.repo, payload.files)
+    except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 

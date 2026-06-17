@@ -79,7 +79,7 @@
 
       <section x-show="active==='snapshots'" class="h-full flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
-          <select x-model="selectedSource" @change="loadSnapshots()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[34rem] max-w-full">
+          <select x-model="snapSource" @change="changeSnapSource()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[34rem] max-w-full">
             <option value="*ALL*">★ All sources (by reclaimable — run Analyze entire repo first)</option>
             <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
           </select>
@@ -109,7 +109,7 @@
           </select>
           <button @click="treeUp()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Up one level">⬆ Up</button>
           <button x-show="treeMode!=='all'" @click="mountTreeSnapshot()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Mount this snapshot (read-only) and open the current folder in Explorer">⤓ Mount &amp; browse</button>
-          <button @click="batchRemove('tree')" class="h-8 rounded border border-rose-300 text-rose-600 px-2 text-sm" title="Remove selected files from all snapshots">🗑 Remove</button>
+          <button @click="batchDetail('tree')" class="h-8 rounded border border-rose-300 text-rose-600 px-2 text-sm" title="Open batch detail: union size/freeable + remove selected files">🗑 Remove…</button>
           <button @click="batchExclude('tree')" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-sm" title="Copy exclude patterns for selected files">⊘ Exclude</button>
           <button @click="csv('#treeTable','tree')" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Export CSV">⬇ CSV</button>
         </div>
@@ -137,7 +137,7 @@
           <button @click="exportSearch()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Export the FULL filtered set to CSV">⬇ CSV (all)</button>
           <span class="ml-2 flex items-center gap-1">
             <span class="text-[11px] text-stone-400">selected:</span>
-            <button @click="batchRemove('search')" class="h-8 rounded border border-rose-300 text-rose-600 px-2 text-xs" title="Remove selected files from all snapshots">🗑 Remove</button>
+            <button @click="batchDetail('search')" class="h-8 rounded border border-rose-300 text-rose-600 px-2 text-xs" title="Open batch detail: union size/freeable + remove selected files">🗑 Remove…</button>
             <button @click="batchExclude('search')" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Copy exclude patterns for selected files">⊘ Exclude</button>
           </span>
         </div>
@@ -465,6 +465,42 @@
     </div>
 
     <!-- restore -->
+    <!-- Batch detail panel (multi-file union: physical/freeable + multi-choice removal) -->
+    <div x-show="showBatch && batch" @click.self="showBatch=false" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+      <div class="w-[46rem] max-w-full max-h-[85vh] overflow-auto rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 text-sm">
+        <div class="flex items-center gap-2"><div class="font-medium">Batch — <span x-text="batch && batch.count"></span> file(s)</div><button @click="showBatch=false" class="ml-auto text-stone-500 text-lg leading-none">&times;</button></div>
+        <div class="text-[11px] text-amber-600 mt-1" x-show="batch && batch.loading">Computing union (physical / freeable)…</div>
+        <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2" x-show="batch && batch.stats && batch.stats.found">
+          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Logical (deduped)</div><div class="font-medium" x-text="batch && batch.stats && fmtBytes(batch.stats.logical)"></div></div>
+          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Physical</div><div class="font-medium" x-text="batch && batch.stats && fmtPhys(batch.stats.physical)"></div></div>
+          <div class="rounded border border-emerald-300 dark:border-emerald-800 p-2"><div class="text-[10px] uppercase text-emerald-700 dark:text-emerald-400">Freeable</div><div class="font-medium" x-text="batch && batch.stats && fmtPhys(batch.stats.freeable)"></div></div>
+          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Shared (won't free)</div><div class="font-medium" x-text="batch && batch.stats && fmtPhys(batch.stats.shared)"></div></div>
+        </div>
+        <div class="text-[11px] text-stone-500 mt-1" x-show="batch && batch.stats && batch.stats.found" x-text="batch && batch.stats && (batch.stats.files + ' files · ' + batch.stats.distinct_content + ' distinct contents · ' + batch.stats.source_count + ' source(s) · ' + batch.stats.versions + ' versions')"></div>
+        <div class="text-[11px] text-stone-500 mt-1">Freeable = packed bytes referenced ONLY by this selection (freed once you remove them and run <span class="font-mono">maintenance run --full</span>).</div>
+
+        <div class="mt-3 border-t border-stone-200 dark:border-stone-700 pt-2">
+          <div class="font-medium text-rose-600 text-xs">Remove from snapshots (keeps the snapshots)</div>
+          <div class="flex flex-wrap items-center gap-3 mt-2 text-xs">
+            <label class="flex items-center gap-1"><input type="radio" name="bby" :checked="batch && batch.by==='object-id'" @change="setBatchBy('object-id')"> Object ID (exact content)</label>
+            <label class="flex items-center gap-1"><input type="radio" name="bby" :checked="batch && batch.by==='filename'" @change="setBatchBy('filename')"> Filename (by name)</label>
+            <label class="flex items-center gap-1" x-show="batch && batch.by==='object-id'"><input type="checkbox" :checked="batch && batch.everywhere" @change="toggleBatchEverywhere()"> everywhere (drop --source; whole repo, slow)</label>
+          </div>
+          <div class="text-[11px] text-amber-600 mt-1" x-show="batch && batch.cmdLoading">Building command…</div>
+          <template x-if="batch && batch.cmd">
+            <div class="mt-2 space-y-1">
+              <div class="text-[11px] text-stone-500" x-text="batch.cmd.count + (batch.by==='object-id' ? ' object-id(s)' : ' filename(s)') + (batch.cmd.everywhere ? ' · everywhere (whole repo)' : ' · scoped to selected source(s)')"></div>
+              <div class="rounded bg-stone-100 dark:bg-stone-800 p-2 font-mono break-all text-[11px]" x-text="batch.cmd.commit"></div>
+              <div class="flex items-center gap-2 pt-1">
+                <button @click="copyText(batch.cmd.commit)" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs">Copy command</button>
+                <button @click="executeBatchRemove()" class="h-7 rounded border border-rose-300 text-rose-600 px-2 text-xs">Execute now</button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+
     <div x-show="showRestore && restore" @click.self="showRestore=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
       <div class="w-[44rem] max-w-full max-h-[88vh] overflow-auto rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 text-sm">
         <div class="flex items-center gap-2"><div class="font-medium">Restore</div><button @click="showRestore=false" class="ml-auto text-stone-500 text-lg leading-none">&times;</button></div>

@@ -213,18 +213,20 @@ def snapshot_delete_execute(repo: str, snapshot_ids: list[str]) -> dict:
 
 
 def remove_files_command(repo: str, object_ids: list[str] | None = None, filenames: list[str] | None = None,
-                         source: str | None = None, commit: bool = False) -> list[str]:
+                         source: str | list[str] | None = None, commit: bool = False) -> list[str]:
     """Build a ``kopia snapshot fix remove-files`` command (NEVER executed here). Removes file
     references from ALL snapshots (rewrites the manifests without them) so GC can free their
-    content - without deleting the snapshots. Both --object-id and --filename are repeatable
-    (batch). ``--commit`` applies it; without it kopia only previews."""
+    content - without deleting the snapshots. --object-id, --filename AND --source are all
+    repeatable: ``source`` may be a single string or a LIST (scope to several sources in ONE
+    command - object-ids are content-exact so cross-source mismatches are harmless no-ops, and
+    listing only the affected sources avoids the slow whole-repo scan). ``--commit`` applies it."""
     cmd = ["kopia"] + REPOS[repo]["args"] + ["snapshot", "fix", "remove-files"]
     for oid in object_ids or []:
         cmd += ["--object-id", oid]
     for fn in filenames or []:
         cmd += ["--filename", fn]
-    if source:
-        cmd += ["--source", source]
+    for s in (source if isinstance(source, list) else ([source] if source else [])):
+        cmd += ["--source", s]
     if commit:
         cmd.append("--commit")
     return cmd
