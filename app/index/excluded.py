@@ -31,16 +31,21 @@ def backed_children(folder: str) -> dict[str, dict]:
     for repo in REPOS:
         cur = read_cursor(repo)
         try:
+            # Dedupe by path FIRST (GROUP BY path_lc): a file backed by several overlapping sources
+            # (e.g. the C:\ source AND a granular C:\Users\... source) must count ONCE, not per-source
+            # - else backed size inflates past disk size and the folder wrongly reads fully-backed.
             rows = cur.execute(
                 """
                 SELECT seg, bool_or(is_file) AS has_file, sum(sz) AS logical, count(*) AS cnt,
                        max(ls) AS last_seen
                 FROM (
-                    SELECT split_part(substr(path_lc, ?), ?, 1) AS seg,
-                           (instr(substr(path_lc, ?), ?) = 0) AS is_file,
-                           size AS sz, last_seen AS ls
+                    SELECT path_lc,
+                           any_value(split_part(substr(path_lc, ?), ?, 1)) AS seg,
+                           any_value(instr(substr(path_lc, ?), ?) = 0) AS is_file,
+                           max(size) AS sz, max(last_seen) AS ls
                     FROM paths
                     WHERE repo = ? AND in_latest AND path_lc >= ? AND path_lc < ?
+                    GROUP BY path_lc
                 )
                 GROUP BY seg
                 """,

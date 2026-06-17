@@ -465,12 +465,19 @@ document.addEventListener("alpine:init", () => {
     },
 
     // ---------- Tree ----------
+    async _treeSnapshots() {  // snapshots for the TREE's own source (selectedSource), NOT the snapshots-view snapSource scope
+      const data = await getJson(`/api/snapshots?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.selectedSource)}`).catch(() => null);
+      this.snapshots = (data && data.snapshots) || [];
+    },
     openTree() {
       if (!this.selectedSource) return;
       if (this.treeMode === "all") { this.treePrefix = this.sourceRoot(); return this.loadTree(); }
-      const ensure = (!this.snapshots.length || !this.snapshots.find((s) => s.id === this.selectedSnapshot)) ? this.loadSnapshots() : Promise.resolve();
+      // Ensure this.snapshots belong to THIS source - the snapshots view loads snapSource (e.g. *ALL*),
+      // which would leave a selectedSnapshot that isn't in this source -> "snapshot root not found".
+      const haveForSource = this.snapshots.length && this.snapshots[0].source === this.selectedSource;
+      const ensure = (haveForSource && this.snapshots.find((s) => s.id === this.selectedSnapshot)) ? Promise.resolve() : this._treeSnapshots();
       return Promise.resolve(ensure).then(() => {
-        if (!this.selectedSnapshot && this.snapshots.length) this.selectedSnapshot = this.snapshots[this.snapshots.length - 1].id;
+        if ((!this.selectedSnapshot || !this.snapshots.find((s) => s.id === this.selectedSnapshot)) && this.snapshots.length) this.selectedSnapshot = this.snapshots[this.snapshots.length - 1].id;
         if (!this.treePrefix || !this.treePrefix.startsWith(this.sourceRoot().replace(/[\\/]+$/, ""))) this.treePrefix = this.sourceRoot();
         return this.loadTree();
       });
@@ -1075,6 +1082,19 @@ document.addEventListener("alpine:init", () => {
 
     csv(id, name) { downloadTable(id, name); },
 
+    async openSettings() {  // re-read the live settings file each open so the modal can't show stale state
+      try {
+        const data = await getJson("/api/repos");
+        const kl = data.settings?.kopialens || {};
+        this.backend = data.settings?.listing_backend || "subprocess";
+        this.reindexInterval = Number(kl.reindex_interval || 1800);
+        this.dashRefresh = Number(kl.dashboard_refresh ?? 900);
+        this.reclaimInterval = Number(kl.reclaim_interval || 10800);
+        this.excludedTolerance = Number(kl.excluded_tolerance ?? 0.05);
+        this.esPath = kl.es_path || "";
+      } catch (e) { /* keep last-known state on fetch failure */ }
+      this.showSettings = true;
+    },
     async saveSettings() {
       await this.wrap(async () => {
         await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listing_backend: this.backend, kopialens: { reindex_interval: Number(this.reindexInterval) || 1800, dashboard_refresh: Number(this.dashRefresh) || 0, reclaim_interval: Number(this.reclaimInterval) || 10800, excluded_tolerance: Number(this.excludedTolerance), es_path: this.esPath || "" } }) });

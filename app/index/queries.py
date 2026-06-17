@@ -354,11 +354,12 @@ def snapshots_for_content(repo: str, content_id: str) -> list[str]:
 
 
 def sources_for_content(repo: str, object_ids: list[str]) -> list[str]:
-    """Every distinct source whose LATEST version of some path IS one of these content objects -
-    i.e. all sources that must be scoped in a remove-files so GC can actually free the content
-    everywhere (a copy left in another source keeps it alive). Indexed via paths(repo, content_id),
-    batched. NOTE: latest-version keyed - content lingering only in OLD snapshots of an extra source
-    is not caught here (use the whole-repo 'everywhere' sweep for that paranoid case)."""
+    """Every distinct source that references these content objects in ANY snapshot (all versions) -
+    the complete set that a remove-files must scope so GC can actually free the content (a copy left
+    in another source keeps it alive). Queries the `files` delta table (every source that holds the
+    content has >=1 row), so it is COMPLETE - not latest-version-only. No content_id index on files,
+    so it's a bounded columnar scan per build (~tens-to-low-hundreds of ms) - fine for a one-off
+    Build action, not a hot path."""
     oids = list(dict.fromkeys(o for o in object_ids if o))
     if not oids:
         return []
@@ -367,7 +368,7 @@ def sources_for_content(repo: str, object_ids: list[str]) -> list[str]:
     try:
         for i in range(0, len(oids), 900):
             grp = oids[i:i + 900]
-            q = "SELECT DISTINCT source FROM paths WHERE repo=? AND content_id IN (%s)" % ",".join("?" * len(grp))
+            q = "SELECT DISTINCT source FROM files WHERE repo=? AND content_id IN (%s)" % ",".join("?" * len(grp))
             for (s,) in cur.execute(q, [repo, *grp]).fetchall():
                 out.add(s)
     finally:

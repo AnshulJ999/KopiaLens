@@ -52,7 +52,7 @@
         <button @click="refreshAll()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3" title="Refresh current view + sources">⟳ Refresh</button>
         <button @click="toggleTimeFmt()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2" :title="timeFmt==='relative' ? 'Times: relative (click for absolute 12h)' : 'Times: absolute 12h (click for relative)'" x-text="timeFmt==='relative' ? '⏱ rel' : '🕒 abs'"></button>
         <button @click="toggleDark()" class="h-8 w-8 rounded border border-stone-300 dark:border-stone-700" x-text="dark ? '☀' : '☽'"></button>
-        <button @click="showSettings=true" class="h-8 w-8 rounded border border-stone-300 dark:border-stone-700" title="Settings">⚙</button>
+        <button @click="openSettings()" class="h-8 w-8 rounded border border-stone-300 dark:border-stone-700" title="Settings">⚙</button>
       </div>
     </header>
 
