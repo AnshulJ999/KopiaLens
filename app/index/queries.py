@@ -353,6 +353,28 @@ def snapshots_for_content(repo: str, content_id: str) -> list[str]:
     return [r[0] for r in rows]
 
 
+def sources_for_content(repo: str, object_ids: list[str]) -> list[str]:
+    """Every distinct source whose LATEST version of some path IS one of these content objects -
+    i.e. all sources that must be scoped in a remove-files so GC can actually free the content
+    everywhere (a copy left in another source keeps it alive). Indexed via paths(repo, content_id),
+    batched. NOTE: latest-version keyed - content lingering only in OLD snapshots of an extra source
+    is not caught here (use the whole-repo 'everywhere' sweep for that paranoid case)."""
+    oids = list(dict.fromkeys(o for o in object_ids if o))
+    if not oids:
+        return []
+    cur = read_cursor(repo)
+    out: set[str] = set()
+    try:
+        for i in range(0, len(oids), 900):
+            grp = oids[i:i + 900]
+            q = "SELECT DISTINCT source FROM paths WHERE repo=? AND content_id IN (%s)" % ",".join("?" * len(grp))
+            for (s,) in cur.execute(q, [repo, *grp]).fetchall():
+                out.add(s)
+    finally:
+        cur.close()
+    return sorted(out)
+
+
 def _source_root_path(source: str) -> str:
     return source.split(":", 1)[1] if ":" in source else source
 

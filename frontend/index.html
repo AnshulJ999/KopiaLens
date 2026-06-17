@@ -285,11 +285,14 @@
           <p class="text-xs text-stone-500">Subprocess = zero background kopia activity. Server = persistent kopia server (faster refresh, runs in background). Restart required to switch.</p>
           <div class="flex items-center justify-between gap-2"><span>Background refresh interval</span>
             <select x-model.number="reindexInterval" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+              <option :value="300">5 minutes</option>
+              <option :value="600">10 minutes</option>
               <option :value="900">15 minutes</option>
               <option :value="1800">30 minutes</option>
               <option :value="3600">1 hour</option>
               <option :value="7200">2 hours</option>
               <option :value="14400">4 hours</option>
+              <option :value="28800">8 hours</option>
             </select></div>
           <p class="text-xs text-stone-500">How often the index, next-snapshot times, and dashboard are refreshed in the background. Applies on the next cycle.</p>
           <div class="flex items-center justify-between gap-2"><span>Dashboard auto-refresh</span>
@@ -301,6 +304,27 @@
               <option :value="3600">1 hour</option>
             </select></div>
           <p class="text-xs text-stone-500">How often the open Dashboard view re-fetches the cached numbers (cheap; just a re-render when something changed).</p>
+          <div class="flex items-center justify-between gap-2"><span>Reclaimable pre-warm</span>
+            <select x-model.number="reclaimInterval" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+              <option :value="3600">1 hour</option>
+              <option :value="7200">2 hours</option>
+              <option :value="10800">3 hours</option>
+              <option :value="21600">6 hours</option>
+              <option :value="43200">12 hours</option>
+            </select></div>
+          <p class="text-xs text-stone-500">How often per-snapshot reclaimable is recomputed in the background (heavy; keeps it always cached).</p>
+          <div class="flex items-center justify-between gap-2"><span>Excluded-folder tolerance</span>
+            <select x-model.number="excludedTolerance" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+              <option :value="0">0% (strict)</option>
+              <option :value="0.02">2%</option>
+              <option :value="0.05">5%</option>
+              <option :value="0.1">10%</option>
+              <option :value="0.15">15%</option>
+            </select></div>
+          <p class="text-xs text-stone-500">In the Excluded browser, a folder counts as "backed up" when less than this fraction of it is excluded (cuts "partial" noise).</p>
+          <div class="flex items-center justify-between gap-2"><span>Everything (es.exe) path</span>
+            <input x-model="esPath" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[15rem]" placeholder="es.exe path"></div>
+          <p class="text-xs text-stone-500">CLI for the Excluded browser's disk listing. Restart after changing.</p>
           <div class="flex items-center justify-between gap-2"><span>Index</span>
             <button @click="rebuildIndex()" :disabled="indexStatus.building" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 disabled:opacity-50">Rebuild full index</button></div>
           <div class="flex justify-end gap-2 pt-2">

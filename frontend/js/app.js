@@ -135,6 +135,7 @@ document.addEventListener("alpine:init", () => {
     dashboardMeta: "", busy: "", error: "", detail: null, batch: null, showBatch: false, snapSource: "*ALL*", _poll: null, _searchSeq: 0, _detailSeq: 0,
     excludedDrives: [], excludedOk: true, excludedPath: "", excludedFilter: "excluded", excludedMeta: "", _excludedItems: [],
     showSettings: false, backend: "subprocess", repoPinned: false, reindexInterval: 1800, dashRefresh: 900,
+    reclaimInterval: 10800, excludedTolerance: 0.05, esPath: "",
     analyzingAll: false, showDelete: false, deletePlan: null, deleteConfirm: "", _autoRefresh: null,
 
     fmtB(v) { return fmtBytes(v); },
@@ -184,6 +185,9 @@ document.addEventListener("alpine:init", () => {
         this.treeMode = kl.tree_mode || "full";
         this.reindexInterval = Number(kl.reindex_interval || 1800);
         this.dashRefresh = Number(kl.dashboard_refresh ?? 900);
+        this.reclaimInterval = Number(kl.reclaim_interval || 10800);
+        this.excludedTolerance = Number(kl.excluded_tolerance ?? 0.05);
+        this.esPath = kl.es_path || "";
         if (kl.time_format) { TIME_FMT = kl.time_format; this.timeFmt = kl.time_format; }
         await this.refreshBase();
         if (this.indexStatus.building) this.pollIndex();  // show progress for the auto-triggered (migration) rebuild
@@ -845,7 +849,7 @@ document.addEventListener("alpine:init", () => {
     renderExcludedDrives() {
       this.excludedPath = "";
       this.excludedMeta = this.excludedOk ? `${this.excludedDrives.length} drive(s)` : "Everything (es.exe) not reachable";
-      this.renderExcluded(this.excludedDrives.map((dr) => ({ name: dr.replace(/\\$/, ""), path: dr, is_dir: true, status: "drive", disk_bytes: 0, excluded_bytes: 0, mtime: "" })));
+      this.renderExcluded(this.excludedDrives.map((dr) => ({ name: dr.path.replace(/\\$/, ""), path: dr.path, is_dir: true, status: "drive", disk_bytes: dr.used || 0, total_bytes: dr.total || 0, backed_bytes: 0, excluded_bytes: 0, pct_excluded: null, backed_files: 0, last_backed: "", repo: "", mtime: "" })));
     },
     excludedNav(path) { if (!path) return this.renderExcludedDrives(); this.listExcluded(path); },
     async listExcluded(path) {
@@ -894,12 +898,19 @@ document.addEventListener("alpine:init", () => {
         const [bg, fg, label] = m[s] || ["#e2e8f0", "#334155", s];
         return `<span class="pill" style="background:${bg};color:${fg}">${label}</span>`;
       };
+      const bytes = (c) => c.getValue() ? fmtBytes(c.getValue()) : "";
+      const sizeField = f === "backed" ? "backed_bytes" : (f === "all" ? "disk_bytes" : "excluded_bytes");
       const cols = [
-        { title: "Name", field: "name", widthGrow: 4, minWidth: 260, formatter: (c) => (c.getRow().getData().is_dir ? "📁 " : "📄 ") + c.getValue() },
-        { title: "Status", field: "status", width: 130, formatter: (c) => pill(c.getValue()) },
-        { title: "Size (disk)", field: "disk_bytes", width: 110, hozAlign: "right", formatter: (c) => c.getValue() ? fmtBytes(c.getValue()) : "" },
-        { title: "Excluded here", field: "excluded_bytes", width: 120, hozAlign: "right", formatter: (c) => c.getValue() ? fmtBytes(c.getValue()) : "" },
-        { title: "Modified", field: "mtime", width: 165, formatter: (c) => (c.getValue() || "").replace("T", " ") },
+        { title: "Name", field: "name", widthGrow: 4, minWidth: 240, formatter: (c) => (c.getRow().getData().is_dir ? "📁 " : "📄 ") + c.getValue() },
+        { title: "Status", field: "status", width: 120, formatter: (c) => pill(c.getValue()) },
+        { title: "Size", field: sizeField, width: 100, hozAlign: "right", sorter: "number", formatter: (c) => { const d = c.getRow().getData(); const v = d.status === "drive" ? d.disk_bytes : c.getValue(); return v ? fmtBytes(v) : ""; } },
+        { title: "Backed", field: "backed_bytes", width: 95, hozAlign: "right", sorter: "number", formatter: bytes },
+        { title: "Excluded", field: "excluded_bytes", width: 95, hozAlign: "right", sorter: "number", formatter: bytes },
+        { title: "% Excl", field: "pct_excluded", width: 75, hozAlign: "right", sorter: "number", formatter: (c) => { const d = c.getRow().getData(); return (d.status !== "drive" && c.getValue() != null) ? c.getValue() + "%" : ""; } },
+        { title: "Backed files", field: "backed_files", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? Number(c.getValue()).toLocaleString() : "" },
+        { title: "Last backed", field: "last_backed", width: 150, formatter: (c) => c.getValue() || "" },
+        { title: "Repo", field: "repo", width: 70 },
+        { title: "Modified", field: "mtime", width: 150, formatter: (c) => (c.getValue() || "").replace("T", " ") },
       ];
       setTable("#excludedTable", items, cols, {
         onRowDblClick: (_e, row) => this.excludedRowOpen(row.getData()),
@@ -1066,7 +1077,7 @@ document.addEventListener("alpine:init", () => {
 
     async saveSettings() {
       await this.wrap(async () => {
-        await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listing_backend: this.backend, kopialens: { reindex_interval: Number(this.reindexInterval) || 1800, dashboard_refresh: Number(this.dashRefresh) || 0 } }) });
+        await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listing_backend: this.backend, kopialens: { reindex_interval: Number(this.reindexInterval) || 1800, dashboard_refresh: Number(this.dashRefresh) || 0, reclaim_interval: Number(this.reclaimInterval) || 10800, excluded_tolerance: Number(this.excludedTolerance), es_path: this.esPath || "" } }) });
         this.armAutoRefresh();  // apply the new dashboard auto-refresh interval immediately
         this.showSettings = false;
         window.alert("Saved. The background interval applies on the next cycle; the listing backend change needs a restart.");

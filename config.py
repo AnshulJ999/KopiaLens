@@ -4,7 +4,7 @@ import os
 HERE = os.path.dirname(os.path.abspath(__file__))
 KOPIA_DIR = os.path.dirname(HERE)                                       # ..\Kopia
 CACHEDIR = os.path.join(KOPIA_DIR, ".cache")                            # shared, already-warm cache
-SETTINGS_FILE = os.path.join(KOPIA_DIR, "kopiatoolkit-settings.json")   # shared with the CLI; extend
+SETTINGS_FILE = os.path.join(HERE, "settings.json")                    # KopiaLens-local (migrated from the old shared CLI file)
 DATA_DIR = os.path.join(HERE, "data")                                   # duckdb + logs (gitignored)
 
 HOST, PORT = "127.0.0.1", 7123                                          # localhost-only

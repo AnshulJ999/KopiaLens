@@ -43,16 +43,20 @@ def available() -> bool:
     return bool(_run(["-n", "1", "-name", "*"]).strip())
 
 
-def list_drives() -> list[str]:
-    """Local fixed drives only (psutil), e.g. ['C:\\\\', 'D:\\\\']. Network/removable excluded."""
+def list_drives() -> list[dict]:
+    """Local fixed drives only (psutil), each with used/total bytes. Network/removable excluded."""
     import psutil
 
-    out: list[str] = []
+    out: list[dict] = []
     for part in psutil.disk_partitions(all=False):
         if "fixed" in (part.opts or "").lower() and ":" in (part.mountpoint or ""):
-            mp = part.mountpoint
-            out.append(mp if mp.endswith("\\") else mp + "\\")
-    return sorted(set(out))
+            mp = part.mountpoint if part.mountpoint.endswith("\\") else part.mountpoint + "\\"
+            try:
+                u = psutil.disk_usage(mp)
+                out.append({"path": mp, "used": int(u.used), "total": int(u.total)})
+            except Exception:  # noqa: BLE001
+                out.append({"path": mp, "used": 0, "total": 0})
+    return sorted(out, key=lambda d: d["path"])
 
 
 def es_children(folder: str) -> list[dict]:

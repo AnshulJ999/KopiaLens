@@ -7,7 +7,9 @@ import os
 from copy import deepcopy
 from typing import Any
 
-from config import SETTINGS_FILE
+from config import KOPIA_DIR, SETTINGS_FILE
+
+_OLD_SETTINGS_FILE = os.path.join(KOPIA_DIR, "kopiatoolkit-settings.json")  # legacy shared-with-CLI file
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "last_repo": "1",
@@ -32,8 +34,26 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "search_dedupe": False,    # persisted dedupe toggle (search)
         "tree_dedupe": False,      # persisted dedupe toggle (tree)
         "es_path": r"G:\Apps\CLI Tools\es.exe",  # Everything CLI for the Excluded browser (local disk side)
+        "excluded_tolerance": 0.05,  # folder counts as "backed" when excluded fraction is below this (cuts partial noise)
     },
 }
+
+
+def _migrate_settings() -> None:
+    """One-time: seed the new KopiaLens-local settings file from the old shared CLI file."""
+    if os.path.exists(SETTINGS_FILE) or not os.path.exists(_OLD_SETTINGS_FILE):
+        return
+    try:
+        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+        with open(_OLD_SETTINGS_FILE, encoding="utf-8") as src:
+            data = src.read()
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as dst:
+            dst.write(data)
+    except Exception:
+        pass
+
+
+_migrate_settings()
 
 
 def load_settings() -> dict[str, Any]:

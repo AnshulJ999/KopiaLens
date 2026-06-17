@@ -24,8 +24,8 @@ def _prefix_bounds(folder: str) -> tuple[str, str, int]:
 
 def backed_children(folder: str) -> dict[str, dict]:
     """Per immediate child segment under `folder`, the backed-up (in_latest) coverage from BOTH
-    repos combined: {seg_lower: {"logical": bytes, "files": n, "has_file": bool}}. `logical` uses
-    file size (comparable to Everything's disk size); `has_file` marks a direct backed-up file."""
+    repos combined: {seg_lower: {logical bytes, files, has_file, last_seen, repos:set}}. `logical`
+    = kopia's stored file size (exact backed size, comparable to Everything's disk size)."""
     lo, hi, plen = _prefix_bounds(folder)
     agg: dict[str, dict] = {}
     for repo in REPOS:
@@ -33,11 +33,12 @@ def backed_children(folder: str) -> dict[str, dict]:
         try:
             rows = cur.execute(
                 """
-                SELECT seg, bool_or(is_file) AS has_file, sum(sz) AS logical, count(*) AS cnt
+                SELECT seg, bool_or(is_file) AS has_file, sum(sz) AS logical, count(*) AS cnt,
+                       max(ls) AS last_seen
                 FROM (
                     SELECT split_part(substr(path_lc, ?), ?, 1) AS seg,
                            (instr(substr(path_lc, ?), ?) = 0) AS is_file,
-                           size AS sz
+                           size AS sz, last_seen AS ls
                     FROM paths
                     WHERE repo = ? AND in_latest AND path_lc >= ? AND path_lc < ?
                 )
@@ -47,13 +48,17 @@ def backed_children(folder: str) -> dict[str, dict]:
             ).fetchall()
         finally:
             cur.close()
-        for seg, has_file, logical, cnt in rows:
+        for seg, has_file, logical, cnt, last_seen in rows:
             if not seg:
                 continue
-            a = agg.setdefault(seg, {"logical": 0, "files": 0, "has_file": False})
+            a = agg.setdefault(seg, {"logical": 0, "files": 0, "has_file": False, "last_seen": "", "repos": set()})
             a["logical"] += int(logical or 0)
             a["files"] += int(cnt or 0)
             a["has_file"] = a["has_file"] or bool(has_file)
+            ls = str(last_seen)[:19].replace("T", " ") if last_seen else ""
+            if ls > a["last_seen"]:
+                a["last_seen"] = ls
+            a["repos"].add(repo)
     return agg
 
 
@@ -74,10 +79,11 @@ def _newest_snapshot() -> str:
     return best
 
 
-def folder_listing(folder: str) -> dict:
-    """Combine the disk listing (es.exe) with backup coverage (index) for one folder. Files get a
-    backed/excluded/new status; folders get backed/partial/excluded + an 'excluded under here'
-    byte total (disk recursive size - backed-up logical)."""
+def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
+    """Combine the disk listing (es.exe) with backup coverage (index) for one folder. BACKED bytes
+    are exact (index sum of in_latest sizes). EXCLUDED bytes are disk - backed (approximate by the
+    changed/deleted-file drift; the backed-file COUNT helps tell drift from real exclusion). A
+    folder counts as 'backed' when its excluded fraction is below `tolerance` (cuts partial noise)."""
     disk = es_children(folder)
     backed = backed_children(folder)
     newest = _newest_snapshot()
@@ -85,29 +91,37 @@ def folder_listing(folder: str) -> dict:
     for d in disk:
         seg = d["name"].lower()
         b = backed.get(seg)
+        repos = sorted(b["repos"]) if b else []
+        repo_label = "both" if len(repos) == 2 else (repos[0] if repos else "")
+        last_backed = b["last_seen"] if b else ""
         if d["is_dir"]:
             bb = b["logical"] if b else 0
             db = d["size"] or 0
             excl = max(0, db - bb)
-            status = "backed" if (bb > 0 and excl == 0) else ("excluded" if bb == 0 else "partial")
+            frac = (excl / db) if db else 0
+            status = "excluded" if bb == 0 else ("backed" if frac <= tolerance else "partial")
             items.append({
                 "name": d["name"], "is_dir": True, "disk_bytes": db, "backed_bytes": bb,
-                "excluded_bytes": excl, "status": status, "mtime": d["mtime"],
+                "excluded_bytes": excl, "pct_excluded": round(frac * 100, 1),
+                "backed_files": b["files"] if b else 0, "last_backed": last_backed,
+                "repo": repo_label, "status": status, "mtime": d["mtime"],
             })
         else:
             backed_file = bool(b and b.get("has_file"))
             mt = (d["mtime"] or "").replace("T", " ")[:19]
             status = "backed" if backed_file else ("new" if (newest and mt > newest) else "excluded")
+            sz = d["size"] or 0
             items.append({
-                "name": d["name"], "is_dir": False, "disk_bytes": d["size"] or 0,
-                "backed_bytes": (d["size"] or 0) if backed_file else 0,
-                "excluded_bytes": 0 if backed_file else (d["size"] or 0),
-                "status": status, "mtime": d["mtime"],
+                "name": d["name"], "is_dir": False, "disk_bytes": sz,
+                "backed_bytes": sz if backed_file else 0, "excluded_bytes": 0 if backed_file else sz,
+                "pct_excluded": 0 if backed_file else 100, "backed_files": 1 if backed_file else 0,
+                "last_backed": last_backed, "repo": repo_label, "status": status, "mtime": d["mtime"],
             })
     items.sort(key=lambda x: (not x["is_dir"], -x["excluded_bytes"], x["name"].lower()))
     return {
         "folder": folder,
         "items": items,
         "total_excluded": sum(i["excluded_bytes"] for i in items),
+        "total_backed": sum(i["backed_bytes"] for i in items),
         "count": len(items),
     }

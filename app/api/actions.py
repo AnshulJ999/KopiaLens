@@ -9,8 +9,6 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from collections import defaultdict
-
 from ..core.kopia import (
     list_mounts,
     mount_and_browse,
@@ -29,7 +27,7 @@ from ..core.kopia import (
 from ..core.sources import invalidate as invalidate_sources, sources_index
 from ..index.builder import start_build
 from ..index.physical import batch_detail, folder_detail
-from ..index.queries import snapshots_for_path, versions as file_versions
+from ..index.queries import snapshots_for_path, sources_for_content, versions as file_versions
 
 router = APIRouter(tags=["actions"])
 
@@ -182,25 +180,11 @@ def remove_files(payload: RemoveFilesRequest) -> dict:
     if not targets:
         raise HTTPException(status_code=400, detail="no files specified")
 
-    if payload.by == "filename":  # group basenames per source (scoped, safe)
-        groups: dict[str, list[str]] = defaultdict(list)
-        for src, fp in targets:
-            name = fp.rsplit(_SEP, 1)[-1].rsplit("/", 1)[-1]
-            if name not in groups[src]:
-                groups[src].append(name)
-        if not payload.confirm:
-            dry = [_fmt_cmd(remove_files_command(payload.repo, filenames=n, source=s, commit=False)) for s, n in groups.items()]
-            com = [_fmt_cmd(remove_files_command(payload.repo, filenames=n, source=s, commit=True)) for s, n in groups.items()]
-            return {"executed": False, "by": "filename", "count": sum(len(n) for n in groups.values()),
-                    "dry_run": "\n".join(dry), "commit": "\n".join(com)}
-        for s, n in groups.items():
-            r = remove_files_execute(payload.repo, filenames=n, source=s)
-            if r["returncode"] != 0:
-                raise HTTPException(status_code=500, detail=r["stderr"].strip() or "remove-files failed")
-        _post_remove(payload.repo)
-        return {"executed": True}
-
-    # object-id: distinct content objects across all targets' versions (precise, all sources)
+    # Distinct content objects across all targets' versions. Used both as the object-id set AND to
+    # find EVERY source that references this content - because a deduped copy left in another source
+    # keeps the content alive (GC won't free it). So we scope --source to all referencing sources:
+    # complete (frees everywhere it lives) AND bounded (not the slow whole-repo scan). everywhere=true
+    # drops --source for a full-repo sweep (the paranoid fallback for old-snapshot-only references).
     seen: set[str] = set()
     oids: list[str] = []
     for src, fp in targets:
@@ -209,16 +193,31 @@ def remove_files(payload: RemoveFilesRequest) -> dict:
             if oid and oid not in seen:
                 seen.add(oid)
                 oids.append(oid)
+    scope = None if payload.everywhere else (sources_for_content(payload.repo, oids) or sorted({s for s, _ in targets}))
+
+    if payload.by == "filename":
+        names: list[str] = []
+        for _src, fp in targets:
+            name = fp.rsplit(_SEP, 1)[-1].rsplit("/", 1)[-1]
+            if name not in names:
+                names.append(name)
+        if not payload.confirm:
+            return {"executed": False, "by": "filename", "count": len(names), "everywhere": scope is None,
+                    "sources": scope or [],
+                    "dry_run": _fmt_cmd(remove_files_command(payload.repo, filenames=names, source=scope, commit=False)),
+                    "commit": _fmt_cmd(remove_files_command(payload.repo, filenames=names, source=scope, commit=True))}
+        r = remove_files_execute(payload.repo, filenames=names, source=scope)
+        if r["returncode"] != 0:
+            raise HTTPException(status_code=500, detail=r["stderr"].strip() or "remove-files failed")
+        _post_remove(payload.repo)
+        return {"executed": True}
+
+    # object-id (exact content)
     if not oids:
         raise HTTPException(status_code=404, detail="no content objects found")
-    # Scope to the UNION of the selected files' sources (one command, multiple --source). object-ids
-    # are content-exact, so listing several sources doesn't over-match (a mismatch is a no-op); naming
-    # only the affected sources avoids kopia's slow whole-repo scan. everywhere=true drops --source to
-    # sweep the whole repo (only to chase deduped copies into sources you didn't select).
-    src_list = sorted({s for s, _ in targets})
-    scope = None if payload.everywhere else src_list
     if not payload.confirm:
         return {"executed": False, "by": "object-id", "count": len(oids), "everywhere": scope is None,
+                "sources": scope or [],
                 "dry_run": _fmt_cmd(remove_files_command(payload.repo, object_ids=oids, source=scope, commit=False)),
                 "commit": _fmt_cmd(remove_files_command(payload.repo, object_ids=oids, source=scope, commit=True))}
     r = remove_files_execute(payload.repo, object_ids=oids, source=scope)

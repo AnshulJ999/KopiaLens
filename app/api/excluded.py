@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..core.everything import available, list_drives
 from ..index.excluded import folder_listing
+from ..settings import load_settings
 
 router = APIRouter(tags=["excluded"])
 
@@ -23,6 +24,7 @@ def list_folder(path: str = "") -> dict:
     if not path:
         raise HTTPException(status_code=400, detail="path is required (use /excluded/drives for roots)")
     try:
-        return folder_listing(path)
+        tol = float(load_settings().get("kopialens", {}).get("excluded_tolerance", 0.05) or 0.05)
+        return folder_listing(path, tolerance=tol)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
