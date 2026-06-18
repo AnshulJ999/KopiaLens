@@ -496,6 +496,16 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
                 if cid and cid not in seen:
                     seen.add(cid)
                     oids.append(cid)
+        # Basenames (deduped, biggest-files-first) for the --filename mechanism (mirrors the batch
+        # panel's by-name removal). pairs = every matched (source, full_path) for on-demand detail.
+        names: list[str] = []
+        seenn: set[str] = set()
+        for f in files:
+            nm = f["full_path"].rsplit(_SEP, 1)[-1].rsplit("/", 1)[-1]
+            if nm and nm not in seenn:
+                seenn.add(nm)
+                names.append(nm)
+        pairs = [(f["source"], f["full_path"]) for f in files]
     finally:
         cur.close()
     return {
@@ -503,9 +513,43 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
         "logical": logical,
         "physical": physical,
         "object_ids": oids,             # deduped, biggest-files-first
+        "names": names,                 # deduped basenames, biggest-files-first
+        "pairs": pairs,                 # all (source, full_path) - server-side only (detail/batch)
         "files": files[:200],           # preview (already physical-desc)
         "sources": sorted({f["source"] for f in files}),
     }
+
+
+def flat_files(repo: str, source: str, prefix: str = "", deleted_only: bool = False,
+               min_size: int = 0, ext: str | None = None, ext_exclude: str | None = None,
+               limit: int = 20000) -> list[dict]:
+    """Recursive FLAT file list under a prefix (collapse the folder hierarchy - the Tree's
+    'just show me the files' view, like Search but anchored to a tree location). Paths-based, so it
+    works in any tree mode; ordered biggest-physical-first. ``name`` carries the full path so the
+    flat table shows where each file lives."""
+    where, params = _search_where(repo, "", deleted_only, min_size, source, ext, 0,
+                                  None, None, 0, 0, ext_exclude)
+    base = prefix.rstrip(_SEP)
+    if base:
+        where.append("(full_path = ? OR full_path LIKE ?)")
+        params.extend([base, base + _SEP + "%"])
+    where_sql = " AND ".join(where)
+    cur = read_cursor(repo)
+    try:
+        rows = _rows(
+            cur,
+            f"SELECT source, full_path AS path, full_path AS name, size, physical, "
+            f"last_seen AS modified, content_id FROM paths WHERE {where_sql} "
+            f"ORDER BY physical DESC NULLS LAST, size DESC LIMIT {int(limit)}",
+            [repo, *params],
+        )
+    finally:
+        cur.close()
+    for r in rows:
+        r["type"] = "file"
+        r["files"] = 1
+        r["modified"] = str(r["modified"]) if r.get("modified") else ""
+    return rows
 
 
 def _source_root_path(source: str) -> str:

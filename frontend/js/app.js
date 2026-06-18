@@ -120,7 +120,7 @@ document.addEventListener("alpine:init", () => {
     showChurn: localStorage.getItem("kl-churn") === "1",
     analyzing: false,
     treeMode: "full",
-    treeDeletedOnly: false, treeOverGb: false, treeExt: "",
+    treeDeletedOnly: false, treeOverGb: false, treeExt: "", treeFlat: false,
     query: "", deletedOnly: false, overOneGb: false, searchSource: "", searchExt: "", searchExtExclude: "", omniMeta: "",
     groupByFolder: false, groupDepth: 3, groupMinGb: 0, groupMinFiles: 0,
     searchTotal: 0, searchPage: 1, searchPageSize: "500", searchSort: "size", searchDir: "desc",
@@ -378,6 +378,7 @@ document.addEventListener("alpine:init", () => {
             { label: "Restore this snapshot…", action: (_e, row) => this.openRestore(row.getData().root || row.getData().id, "snapshot " + row.getData().id.slice(0, 12)) },
             { label: "Mount snapshot (read-only)", action: (_e, row) => this.mountRow(row.getData().id) },
             { label: "Mount + open in Explorer", action: (_e, row) => this.mountOpen(row.getData().id, this.selectedSource, this.sourceRoot()) },
+            { label: "Select all unretained (no retention/pin)", action: () => this.selectUnretained() },
             { label: "Delete selected…", action: () => this.planDelete() },
             { label: "Pin selected (protect)", action: () => this.pinSelected(false) },
             { label: "Unpin selected", action: () => this.pinSelected(true) },
@@ -392,6 +393,17 @@ document.addEventListener("alpine:init", () => {
     snapSelected() {
       const el = document.querySelector("#snapshotsTable");
       return (el && el._tabulator) ? el._tabulator.getSelectedData() : [];
+    },
+    selectUnretained() {  // select snapshots with NO retention reason AND no pin = the safe-to-delete set
+      const el = document.querySelector("#snapshotsTable");
+      if (!el || !el._tabulator) return;
+      let n = 0;
+      el._tabulator.getRows().forEach((r) => {
+        const d = r.getData();
+        const keep = (d.retention && d.retention.length) || (d.pins && d.pins.length);
+        if (keep) r.deselect(); else { r.select(); n++; }
+      });
+      this.actionText = `Selected ${n} unretained snapshot(s) (no retention, no pin). Use 'Delete selected…' to preview/copy the kopia command or delete.`;
     },
     changeSnapSource() {  // persist the snapshots-view scope; keep selectedSource in sync for single-source
       this.klSet({ snap_source: this.snapSource });
@@ -500,6 +512,7 @@ document.addEventListener("alpine:init", () => {
           + `&snapshot_id=${encodeURIComponent(this.selectedSnapshot)}&prefix=${encodeURIComponent(this.treePrefix)}&mode=${this.treeMode}`
           + `&dedupe=${this.treeDedupe ? 1 : 0}`
           + `&deleted_only=${this.treeDeletedOnly ? 1 : 0}&over_gb=${this.treeOverGb ? 1 : 0}`
+          + `&flat=${this.treeFlat ? 1 : 0}`
           + (this.treeExt ? `&ext=${encodeURIComponent(this.treeExt)}` : "");
         const data = await getJson(url);
         const children = data.children || [];
@@ -532,6 +545,14 @@ document.addEventListener("alpine:init", () => {
       }, "Loading tree...");
     },
     treeFilterChanged() { this.loadTree(); },
+    toggleTreeFlat() { this.treeFlat = !this.treeFlat; this.loadTree(); },
+    removeSelectedTree() {  // Remove button: route a selected folder to the chunked plan; files -> batch panel
+      const rows = this.selectedRows("tree");
+      const folders = rows.filter((r) => r.type === "folder");
+      if (folders.length === 1 && rows.length === 1) return this.openRemoveFolder(folders[0]);
+      if (folders.length) { window.alert("Select a single folder (or right-click it → Delete), or select files. Tip: use ☰ Flat to list files and multi-select."); return; }
+      return this.batchDetail("tree");
+    },
 
     openRowDetail(d) {
       if (d.type === "folder") {
@@ -910,20 +931,27 @@ document.addEventListener("alpine:init", () => {
       this.buildRemovePlan();
     },
     buildRemovePlan() {
-      this.removePlan = { loading: true, label: this._removeLabel, all_versions: false, everywhere: false, job: null, batSaved: null };
+      this.removePlan = { loading: true, label: this._removeLabel, all_versions: false, everywhere: false, by: "object-id", detail: null, detailLoading: false, job: null, batSaved: null };
       this.showRemove = true;
       this._fetchRemovePlan();
     },
     async _fetchRemovePlan() {
       if (!this.removePlan) return;
       this.removePlan.loading = true;
-      const body = { ...this._removeBase, all_versions: this.removePlan.all_versions, everywhere: this.removePlan.everywhere };
-      const r = await getJson("/api/actions/remove-plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch((e) => { this.error = e.message; return null; });
+      this.removePlan.detail = null;  // freeable/shared depends on the matched set
+      const r = await getJson("/api/actions/remove-plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
       if (this.removePlan) { if (r) Object.assign(this.removePlan, r); this.removePlan.loading = false; }
     },
     toggleRemoveAllVersions() { if (this.removePlan && !this.removePlan.job) { this.removePlan.all_versions = !this.removePlan.all_versions; this._fetchRemovePlan(); } },
     toggleRemoveEverywhere() { if (this.removePlan && !this.removePlan.job) { this.removePlan.everywhere = !this.removePlan.everywhere; this._fetchRemovePlan(); } },
-    _removeBody() { return { ...this._removeBase, all_versions: this.removePlan.all_versions, everywhere: this.removePlan.everywhere }; },
+    setRemoveBy(by) { if (this.removePlan && !this.removePlan.job) { this.removePlan.by = by; this._fetchRemovePlan(); } },
+    async removeComputeReclaim() {
+      if (!this.removePlan) return;
+      this.removePlan.detailLoading = true;
+      const r = await getJson("/api/actions/remove-detail", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
+      if (this.removePlan) { this.removePlan.detail = r; this.removePlan.detailLoading = false; }
+    },
+    _removeBody() { return { ...this._removeBase, all_versions: this.removePlan.all_versions, everywhere: this.removePlan.everywhere, by: this.removePlan.by }; },
     async removeSaveBat() {
       const r = await getJson("/api/actions/remove-bat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
       if (r && this.removePlan) { this.removePlan.batSaved = r; this.actionText = `Saved .bat (${r.batches} batches):\n${r.bat}\nkopia output will append to:\n${r.log}`; }

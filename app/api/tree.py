@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ..core.sources import sources_index
-from ..index.queries import tree_children, tree_children_live, tree_children_paths
+from ..index.queries import flat_files, tree_children, tree_children_live, tree_children_paths
 
 router = APIRouter(tags=["tree"])
 
@@ -69,14 +69,22 @@ def tree(
     over_gb: bool = False,
     ext: str | None = None,
     ext_exclude: str | None = None,
+    flat: bool = False,
 ) -> dict:
     """mode=full (complete point-in-time tree, default) | changed (only what changed) |
     reclaimable (files freed if this snapshot is deleted) | all (every snapshot, source-wide).
     ``dedupe`` collapses same-content files into one row (content-aware). Filters: deleted_only
-    (all mode only) / over_gb / ext / ext_exclude."""
+    (all mode only) / over_gb / ext / ext_exclude. ``flat`` = recursive flat file list under the
+    prefix (collapse folders) - paths-based, works in any mode."""
     if not source:
         raise HTTPException(status_code=400, detail="source is required")
     try:
+        if flat:
+            children = flat_files(
+                repo, source, prefix, deleted_only=deleted_only,
+                min_size=1_000_000_000 if over_gb else 0, ext=ext, ext_exclude=ext_exclude,
+            )
+            return {"children": children, "mode": "flat"}
         if mode == "all":
             children = tree_children_paths(
                 repo, source, prefix, deleted_only=deleted_only,

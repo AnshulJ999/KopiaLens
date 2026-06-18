@@ -259,13 +259,13 @@ def _source_args(source: str | list[str] | None) -> list[str]:
             for x in ("--source", s)]
 
 
-def remove_files_chunked_commands(repo: str, object_ids: list[str], source: str | list[str] | None = None,
-                                  commit: bool = False, max_chars: int = 8000) -> list[list[str]]:
-    """Split object-ids across MULTIPLE remove-files commands so each command line stays under a
-    safe limit (default 8000 - works in a .bat / cmd.exe line too, not just CreateProcess's 32k).
-    Biggest-files-first order is preserved (caller pre-sorts). Each command is --source-scoped (a
-    list is fine: object-ids are content-exact, so listing only the holding sources avoids the slow
-    whole-repo scan). ``source=None`` = the explicit whole-repo sweep."""
+def remove_files_chunked_commands(repo: str, items: list[str], source: str | list[str] | None = None,
+                                  commit: bool = False, max_chars: int = 8000,
+                                  flag: str = "--object-id") -> list[list[str]]:
+    """Split items (object-ids OR filenames, per ``flag``) across MULTIPLE remove-files commands so
+    each command line stays under a safe limit (default 8000 - works in a .bat / cmd.exe line too,
+    not just CreateProcess's 32k). Biggest-files-first order is preserved (caller pre-sorts). Each
+    command is --source-scoped to the folder's own sources; ``source=None`` = whole-repo sweep."""
     base = ["kopia"] + REPOS[repo]["args"] + ["snapshot", "fix", "remove-files"]
     src_args = _source_args(source)
     tail = ["--commit"] if commit else []
@@ -274,15 +274,15 @@ def remove_files_chunked_commands(repo: str, object_ids: list[str], source: str 
     cmds: list[list[str]] = []
     cur: list[str] = []
     cur_len = 0
-    for oid in object_ids:
-        add = len("--object-id") + 1 + len(_quote_arg(oid)) + 1
+    for it in items:
+        add = len(flag) + 1 + len(_quote_arg(it)) + 1
         if cur and cur_len + add > budget:
-            cmds.append(base + [x for o in cur for x in ("--object-id", o)] + src_args + tail)
+            cmds.append(base + [x for v in cur for x in (flag, v)] + src_args + tail)
             cur, cur_len = [], 0
-        cur.append(oid)
+        cur.append(it)
         cur_len += add
     if cur:
-        cmds.append(base + [x for o in cur for x in ("--object-id", o)] + src_args + tail)
+        cmds.append(base + [x for v in cur for x in (flag, v)] + src_args + tail)
     return cmds
 
 
@@ -318,20 +318,20 @@ def remove_files_save_bat(commands: list[list[str]], bat_path: str, log_path: st
 _REMOVE_JOBS: dict[str, dict] = {}
 
 
-def remove_files_chunked_execute(repo: str, object_ids: list[str], source: str | list[str] | None,
-                                 job_id: str, log_path: str) -> dict:
+def remove_files_chunked_execute(repo: str, items: list[str], source: str | list[str] | None,
+                                 job_id: str, log_path: str, flag: str = "--object-id") -> dict:
     """Run the chunked remove-files commands sequentially (--commit), appending kopia output to
-    ``log_path`` and updating ``_REMOVE_JOBS[job_id]`` for progress polling. Mutating + logged.
-    Space frees only after a later ``maintenance run --full``."""
-    cmds = remove_files_chunked_commands(repo, object_ids, source, commit=True, max_chars=32000)
+    ``log_path`` and updating ``_REMOVE_JOBS[job_id]`` for progress polling. ``flag`` selects
+    object-id vs filename. Mutating + logged. Space frees only after ``maintenance run --full``."""
+    cmds = remove_files_chunked_commands(repo, items, source, commit=True, max_chars=32000, flag=flag)
     job = _REMOVE_JOBS.setdefault(job_id, {})
     job.update({"total": len(cmds), "done": 0, "running": True, "errors": 0,
-                "log": log_path, "objects": len(object_ids), "rc": 0})
-    log.warning("EXECUTING chunked remove-files repo=%s objects=%d batches=%d source=%r",
-                repo, len(object_ids), len(cmds), source)
+                "log": log_path, "objects": len(items), "rc": 0})
+    log.warning("EXECUTING chunked remove-files repo=%s flag=%s items=%d batches=%d source=%r",
+                repo, flag, len(items), len(cmds), source)
     try:
         with open(log_path, "a", encoding="utf-8", errors="replace") as lf:
-            lf.write(f"=== chunked remove-files repo={repo} objects={len(object_ids)} batches={len(cmds)} ===\n")
+            lf.write(f"=== chunked remove-files repo={repo} {flag} items={len(items)} batches={len(cmds)} ===\n")
             lf.flush()
             for i, cmd in enumerate(cmds, 1):
                 lf.write(f"\n--- batch {i}/{len(cmds)} ---\n"); lf.flush()
