@@ -19,7 +19,9 @@ from .physical import _chunks_for_obj, _refcount_map
 from .schema import get_db, read_cursor
 
 _RECL_FILES_CACHE: dict[tuple, list] = {}  # (repo, snapshot_id) -> reclaimable files
-_MAX_HEAVY_PER_CYCLE = 5  # cap heavy (physical+reclaim) source recomputes per background cycle
+_MAX_HEAVY_PER_CYCLE = 100  # cap heavy (physical+reclaim) source recomputes per cycle (a soft guard;
+# the crash it once mitigated is fixed by the drop-index rewrite, so this is set high to not delay
+# population - effectively "all sources per cycle" for the current ~72-source repos)
 
 
 def reclaimable_files(repo: str, source: str, snapshot_id: str, limit: int = 200) -> list[dict]:
