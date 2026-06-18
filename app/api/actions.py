@@ -20,11 +20,11 @@ from ..core.kopia import (
     mount_snapshot,
     next_free_drive,
     pick_folder,
+    remove_files_bat_text,
     remove_files_chunked_commands,
     remove_files_chunked_execute,
     remove_files_command,
     remove_files_execute,
-    remove_files_save_bat,
     remove_log_path,
     restore_command,
     restore_command_full,
@@ -179,6 +179,23 @@ def _post_remove(repo: str) -> None:
         pass
 
 
+def _rf_preview(repo: str, items: list[str], flag: str, scope, by: str) -> dict:
+    """confirm=false response for the batch-remove panel: 8k-chunked (terminal-pasteable) dry-run +
+    commit text, batch count, and a downloadable .bat. Keeps the batch panel self-sufficient for
+    large selections without sharing the folder-delete plan machinery."""
+    commit_cmds = remove_files_chunked_commands(repo, items, source=scope, commit=True, max_chars=8000, flag=flag)
+    dry_cmds = remove_files_chunked_commands(repo, items, source=scope, commit=False, max_chars=8000, flag=flag)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    return {
+        "executed": False, "by": by, "count": len(items), "everywhere": scope is None,
+        "sources": scope or [], "batches": len(commit_cmds),
+        "dry_run": "\n".join(_fmt_cmd(c) for c in dry_cmds),
+        "commit": "\n".join(_fmt_cmd(c) for c in commit_cmds),
+        "bat_name": f"kopialens_remove_repo{repo}_{ts}.bat",
+        "bat": remove_files_bat_text(commit_cmds, f"kopialens_remove_repo{repo}_{ts}.log"),
+    }
+
+
 @router.post("/actions/remove-files")
 def remove_files(payload: RemoveFilesRequest) -> dict:
     """Remove file(s) from ALL snapshots (without deleting the snapshots), via
@@ -211,10 +228,7 @@ def remove_files(payload: RemoveFilesRequest) -> dict:
             if name not in names:
                 names.append(name)
         if not payload.confirm:
-            return {"executed": False, "by": "filename", "count": len(names), "everywhere": scope is None,
-                    "sources": scope or [],
-                    "dry_run": _fmt_cmd(remove_files_command(payload.repo, filenames=names, source=scope, commit=False)),
-                    "commit": _fmt_cmd(remove_files_command(payload.repo, filenames=names, source=scope, commit=True))}
+            return _rf_preview(payload.repo, names, "--filename", scope, "filename")
         r = remove_files_execute(payload.repo, filenames=names, source=scope)
         if r["returncode"] != 0:
             raise HTTPException(status_code=500, detail=r["stderr"].strip() or "remove-files failed")
@@ -225,10 +239,7 @@ def remove_files(payload: RemoveFilesRequest) -> dict:
     if not oids:
         raise HTTPException(status_code=404, detail="no content objects found")
     if not payload.confirm:
-        return {"executed": False, "by": "object-id", "count": len(oids), "everywhere": scope is None,
-                "sources": scope or [],
-                "dry_run": _fmt_cmd(remove_files_command(payload.repo, object_ids=oids, source=scope, commit=False)),
-                "commit": _fmt_cmd(remove_files_command(payload.repo, object_ids=oids, source=scope, commit=True))}
+        return _rf_preview(payload.repo, oids, "--object-id", scope, "object-id")
     r = remove_files_execute(payload.repo, object_ids=oids, source=scope)
     if r["returncode"] != 0:
         raise HTTPException(status_code=500, detail=r["stderr"].strip() or "remove-files failed")
@@ -294,8 +305,10 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
                 "logical": 0, "physical": 0, "all_versions": payload.all_versions, "by": payload.by,
                 "sources_matched": []}
     scope = _remove_scope(payload.everywhere, t["sources"])
-    commit_cmds = remove_files_chunked_commands(payload.repo, items, source=scope, commit=True, max_chars=32000, flag=flag)
-    dry_cmds = remove_files_chunked_commands(payload.repo, items, source=scope, commit=False, max_chars=32000, flag=flag)
+    # 8k per command so the copied lines are pasteable into a terminal (cmd.exe line cap ~8191).
+    # The background executor uses larger 32k batches (fewer kopia invocations).
+    commit_cmds = remove_files_chunked_commands(payload.repo, items, source=scope, commit=True, max_chars=8000, flag=flag)
+    dry_cmds = remove_files_chunked_commands(payload.repo, items, source=scope, commit=False, max_chars=8000, flag=flag)
     return {
         "file_count": t["file_count"], "object_count": len(t["object_ids"]), "name_count": len(t["names"]),
         "item_count": len(items), "by": payload.by,
@@ -335,10 +348,9 @@ def remove_bat(payload: RemovePlanRequest) -> dict:
     scope = _remove_scope(payload.everywhere, t["sources"])
     cmds = remove_files_chunked_commands(payload.repo, items, source=scope, commit=True, max_chars=8000, flag=flag)
     ts = time.strftime("%Y%m%d_%H%M%S")
-    log_path = remove_log_path(f"remove_repo{payload.repo}_{ts}.log")
-    bat_path = remove_log_path(f"remove_repo{payload.repo}_{ts}.bat")
-    remove_files_save_bat(cmds, bat_path, log_path)
-    return {"bat": bat_path, "log": log_path, "batches": len(cmds), "items": len(items)}
+    fname = f"kopialens_remove_repo{payload.repo}_{ts}.bat"
+    content = remove_files_bat_text(cmds, f"kopialens_remove_repo{payload.repo}_{ts}.log")
+    return {"filename": fname, "content": content, "batches": len(cmds), "items": len(items)}
 
 
 @router.post("/actions/remove-execute")

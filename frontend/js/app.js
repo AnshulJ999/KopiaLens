@@ -145,7 +145,7 @@ document.addEventListener("alpine:init", () => {
     fmtPhys(v) { return fmtPhys(v); },
     humanTime(s) { return humanTime(s); },
     shortSource(s) { return sourcePath(s); },
-    sourceRoot() { return sourcePath(this.selectedSource); },
+    sourceRoot() { return this.selectedSource === "*ALL*" ? "" : sourcePath(this.selectedSource); },
 
     treeCrumbs() {
       const root = this.sourceRoot();
@@ -229,6 +229,12 @@ document.addEventListener("alpine:init", () => {
       this.activate();
     },
     copyText(t) { try { navigator.clipboard.writeText(t); } catch (e) {} },
+    _downloadText(name, text) {  // trigger a browser download of generated text (e.g. a .bat)
+      const blob = new Blob([text], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = name; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    },
 
     indexLine() {
       const s = this.indexStatus;
@@ -379,6 +385,7 @@ document.addEventListener("alpine:init", () => {
             { label: "Mount snapshot (read-only)", action: (_e, row) => this.mountRow(row.getData().id) },
             { label: "Mount + open in Explorer", action: (_e, row) => this.mountOpen(row.getData().id, this.selectedSource, this.sourceRoot()) },
             { label: "Select all unretained (no retention/pin)", action: () => this.selectUnretained() },
+            { label: "Select identical duplicates (keep newest of each run)", action: () => this.selectIdenticalDuplicates() },
             { label: "Delete selected…", action: () => this.planDelete() },
             { label: "Pin selected (protect)", action: () => this.pinSelected(false) },
             { label: "Unpin selected", action: () => this.pinSelected(true) },
@@ -405,9 +412,29 @@ document.addEventListener("alpine:init", () => {
       });
       this.actionText = `Selected ${n} unretained snapshot(s) (no retention, no pin). Use 'Delete selected…' to preview/copy the kopia command or delete.`;
     },
-    changeSnapSource() {  // persist the snapshots-view scope; keep selectedSource in sync for single-source
+    selectIdenticalDuplicates() {  // conservative: within each CONSECUTIVE run of byte-identical snaps
+      const el = document.querySelector("#snapshotsTable");                       // (same root object), keep the
+      if (!el || !el._tabulator) return;                                          // newest, delete the rest.
+      const tbl = el._tabulator;
+      const sorted = [...tbl.getData()].sort((a, b) => String(a.start_time).localeCompare(String(b.start_time)));
+      const del = new Set();
+      let run = [];
+      const flush = () => { if (run.length > 1) run.slice(0, -1).forEach((s) => del.add(s.id)); run = []; };
+      let prev = null;
+      for (const s of sorted) {
+        const prot = (s.retention && s.retention.length) || (s.pins && s.pins.length);
+        if (prot) { flush(); prev = null; continue; }          // protected snap = run boundary, never deleted
+        if (s.root && s.root === prev) run.push(s);
+        else { flush(); run = [s]; prev = s.root; }
+      }
+      flush();
+      let n = 0;
+      tbl.getRows().forEach((r) => { if (del.has(r.getData().id)) { r.select(); n++; } else r.deselect(); });
+      this.actionText = `Selected ${n} identical duplicate snapshot(s) (kept newest of each run; skipped pinned/retained). Use 'Delete selected…'.`;
+    },
+    changeSnapSource() {  // persist scope; Tree mirrors it (incl. *ALL*) so the two views stay in parity
       this.klSet({ snap_source: this.snapSource });
-      if (this.snapSource !== "*ALL*") this.selectedSource = this.snapSource;
+      this.selectedSource = this.snapSource;
       this.loadSnapshots();
     },
     planDelete() {  // build a confirm plan from the currently-selected snapshot rows
@@ -488,7 +515,8 @@ document.addEventListener("alpine:init", () => {
     },
     openTree() {
       if (!this.selectedSource) return;
-      if (this.treeMode === "all") { this.treePrefix = this.sourceRoot(); return this.loadTree(); }
+      // *ALL* (repo-wide) and 'all' mode don't need a single snapshot - go straight to loadTree.
+      if (this.selectedSource === "*ALL*" || this.treeMode === "all") { this.treePrefix = this.sourceRoot(); return this.loadTree(); }
       // Ensure this.snapshots belong to THIS source - the snapshots view loads snapSource (e.g. *ALL*),
       // which would leave a selectedSnapshot that isn't in this source -> "snapshot root not found".
       const haveForSource = this.snapshots.length && this.snapshots[0].source === this.selectedSource;
@@ -499,14 +527,14 @@ document.addEventListener("alpine:init", () => {
         return this.loadTree();
       });
     },
-    treeSourceChanged() { this.snapshots = []; this.selectedSnapshot = ""; this.treePrefix = this.sourceRoot(); this.openTree(); },
+    treeSourceChanged() { this.snapshots = []; this.selectedSnapshot = ""; if (this.selectedSource === "*ALL*") this.snapSource = "*ALL*"; this.treePrefix = this.sourceRoot(); this.openTree(); },
     treeModeChanged() { this.treePrefix = this.sourceRoot(); this.klSet({ tree_mode: this.treeMode }); this.openTree(); },
     navTree(prefix) { this.treePrefix = prefix; this.loadTree(); },
     treeUp() { const c = this.treeCrumbs(); if (c.length > 1) this.navTree(c[c.length - 2].prefix); },
 
     async loadTree() {
       if (!this.selectedSource) return;
-      if (this.treeMode !== "all" && !this.selectedSnapshot) return;
+      if (this.selectedSource !== "*ALL*" && this.treeMode !== "all" && !this.selectedSnapshot) return;
       await this.wrap(async () => {
         const url = `/api/tree?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.selectedSource)}`
           + `&snapshot_id=${encodeURIComponent(this.selectedSnapshot)}&prefix=${encodeURIComponent(this.treePrefix)}&mode=${this.treeMode}`
@@ -519,7 +547,7 @@ document.addEventListener("alpine:init", () => {
         if (!children.length && !(this.indexStatus.indexed_snapshots > 0)) this.error = "Snapshot not indexed yet - click Index (top right).";
         const total = children.reduce((a, c) => a + (c.size || 0), 0) || 1;
         children.forEach((c) => { c.pct = 100 * (c.size || 0) / total; });
-        setTable("#treeTable", children, [
+        const ttbl = setTable("#treeTable", children, [
           { title: "Name", field: "name", widthGrow: 4, minWidth: 260, formatter: (c) => `${c.getData().type === "folder" ? "📁 " : "📄 "}${c.getValue()}` },
           { title: "Size", field: "size", width: 105, sorter: "number", formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
           { title: "Physical", field: "physical", width: 100, sorter: "number", formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },
@@ -542,6 +570,7 @@ document.addEventListener("alpine:init", () => {
             { label: "Copy path", action: (_e, row) => this.copyText(row.getData().path) },
           ],
         });
+        if (ttbl) ttbl.on("rowClick", (e, row) => this._rangeClick(ttbl, e, row));  // Shift+Click range select
       }, "Loading tree...");
     },
     treeFilterChanged() { this.loadTree(); },
@@ -892,12 +921,19 @@ document.addEventListener("alpine:init", () => {
       this.batch.cmd = null; this.batch.cmdLoading = true;
       const body = { repo: this.repo, by: this.batch.by, everywhere: this.batch.everywhere, files: this.batch.files, confirm: false };
       const r = await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch((e) => { this.error = e.message; return null; });
-      if (this.batch) { if (r) this.batch.cmd = { dry: r.dry_run, commit: r.commit, count: r.count, everywhere: r.everywhere }; this.batch.cmdLoading = false; }
+      if (this.batch) { if (r) this.batch.cmd = { dry: r.dry_run, commit: r.commit, count: r.count, everywhere: r.everywhere, batches: r.batches, bat: r.bat, bat_name: r.bat_name }; this.batch.cmdLoading = false; }
+    },
+    batchSaveBat() {
+      const c = this.batch && this.batch.cmd;
+      if (!c || !c.bat) return;
+      this._downloadText(c.bat_name || "kopialens_remove.bat", c.bat);
+      this.actionText = `Downloaded ${c.bat_name} (${c.batches} batch(es)).`;
     },
     setBatchBy(by) { if (this.batch) { this.batch.by = by; this.buildBatchCmd(); } },
     toggleBatchEverywhere() { if (this.batch) { this.batch.everywhere = !this.batch.everywhere; this.buildBatchCmd(); } },
     async executeBatchRemove() {
       if (!this.batch) return;
+      if (this.batch.cmd && this.batch.cmd.batches > 1) { window.alert(`Too many for one command (${this.batch.cmd.batches} batches). Use Copy or Save .bat to run it in chunks.`); return; }
       if ((window.prompt(`Remove ${this.batch.count} file(s) from snapshots (keeps the snapshots).\nType REMOVE to confirm:`) || "").trim().toUpperCase() !== "REMOVE") return;
       const b = this.batch;
       await this.wrap(async () => {
@@ -940,7 +976,12 @@ document.addEventListener("alpine:init", () => {
       this.removePlan.loading = true;
       this.removePlan.detail = null;  // freeable/shared depends on the matched set
       const r = await getJson("/api/actions/remove-plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
-      if (this.removePlan) { if (r) Object.assign(this.removePlan, r); this.removePlan.loading = false; }
+      if (this.removePlan) {
+        if (r) Object.assign(this.removePlan, r);
+        this.removePlan.loading = false;
+        // Auto-compute freeable/shared (like the file panel) unless the set is huge (avoid a long walk).
+        if (r && (r.file_count || 0) <= 200000) this.removeComputeReclaim();
+      }
     },
     toggleRemoveAllVersions() { if (this.removePlan && !this.removePlan.job) { this.removePlan.all_versions = !this.removePlan.all_versions; this._fetchRemovePlan(); } },
     toggleRemoveEverywhere() { if (this.removePlan && !this.removePlan.job) { this.removePlan.everywhere = !this.removePlan.everywhere; this._fetchRemovePlan(); } },
@@ -954,7 +995,10 @@ document.addEventListener("alpine:init", () => {
     _removeBody() { return { ...this._removeBase, all_versions: this.removePlan.all_versions, everywhere: this.removePlan.everywhere, by: this.removePlan.by }; },
     async removeSaveBat() {
       const r = await getJson("/api/actions/remove-bat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
-      if (r && this.removePlan) { this.removePlan.batSaved = r; this.actionText = `Saved .bat (${r.batches} batches):\n${r.bat}\nkopia output will append to:\n${r.log}`; }
+      if (!r || !this.removePlan) return;
+      this._downloadText(r.filename, r.content);
+      this.removePlan.batSaved = { filename: r.filename, batches: r.batches };
+      this.actionText = `Downloaded ${r.filename} (${r.batches} batches). Run it; kopia output logs next to it.`;
     },
     async removeRun() {
       if (!this.removePlan) return;

@@ -315,6 +315,25 @@ def remove_files_save_bat(commands: list[list[str]], bat_path: str, log_path: st
     return bat_path
 
 
+def remove_files_bat_text(commands: list[list[str]], log_name: str) -> str:
+    """Return the .bat text (for browser download — no server file). It logs kopia output to
+    ``log_name`` NEXT TO the .bat (`%~dp0`) so the run is self-contained + inspectable."""
+    n = len(commands)
+    lines = [
+        "@echo off", "setlocal", f'set "LOG=%~dp0{log_name}"',
+        'echo KopiaLens chunked remove-files - %DATE% %TIME%> "%LOG%"',
+        f'echo {n} batch(es). kopia output appends to "%LOG%".',
+        'echo Aborting (Ctrl+C) between batches is safe - rewrites are per-snapshot atomic.', "echo.",
+    ]
+    for i, cmd in enumerate(commands, 1):
+        s = " ".join(_quote_arg(a) for a in cmd)
+        lines.append(f'echo [batch {i}/{n}] %TIME%')
+        lines.append(f'echo === batch {i}/{n} ===>> "%LOG%"')
+        lines.append(f'{s}>> "%LOG%" 2>&1')
+    lines += ["echo.", 'echo Done. Now run:  kopia maintenance run --full   to reclaim the space.', "pause"]
+    return "\r\n".join(lines)
+
+
 _REMOVE_JOBS: dict[str, dict] = {}
 
 

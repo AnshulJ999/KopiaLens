@@ -19,6 +19,7 @@ from .physical import _chunks_for_obj, _refcount_map
 from .schema import get_db, read_cursor
 
 _RECL_FILES_CACHE: dict[tuple, list] = {}  # (repo, snapshot_id) -> reclaimable files
+_MAX_HEAVY_PER_CYCLE = 5  # cap heavy (physical+reclaim) source recomputes per background cycle
 
 
 def reclaimable_files(repo: str, source: str, snapshot_id: str, limit: int = 200) -> list[dict]:
@@ -117,6 +118,12 @@ def _existing_analysis(repo: str, source: str) -> dict:
     finally:
         cur.close()
     return {sid: (phys, rec) for sid, phys, rec in rows}
+
+
+def cached_reclaimable_files(repo: str, snapshot_id: str) -> list | None:
+    """Already-computed reclaimable file list for a snapshot, or None (never triggers a walk).
+    Used by the all-sources Tree 'reclaimable' view (shows only what's cached, per the cheap option)."""
+    return _RECL_FILES_CACHE.get((repo, snapshot_id))
 
 
 def _snaphash(snaps: list[dict]) -> str:
@@ -238,11 +245,20 @@ def prewarm(repo: str, with_reclaim: bool = False) -> None:
     physical/reclaimable are missing for any snapshot - so the slow pass actually refills the heavy
     fields instead of being skipped because churn looks fresh (the old reclaimable-blank bug)."""
     from ..core.sources import sources_index
+    heavy = 0
     for key in sorted(sources_index(repo)):
         try:
             info = read_analysis(repo, key)
             need = (not info["fresh"]) or (with_reclaim and not (info["recl_complete"] and info["phys_complete"]))
-            if need:
-                compute_source(repo, key, with_reclaim=with_reclaim)
+            if not need:
+                continue
+            # Throttle the HEAVY (with_reclaim) recompute to a few sources per cycle so the
+            # first-time populate doesn't burst-DELETE the indexed maps and corrupt DuckDB (the
+            # repo1 fatal-index incident). The rest catch up on subsequent cycles.
+            if with_reclaim:
+                if heavy >= _MAX_HEAVY_PER_CYCLE:
+                    continue
+                heavy += 1
+            compute_source(repo, key, with_reclaim=with_reclaim)
         except Exception:
             continue

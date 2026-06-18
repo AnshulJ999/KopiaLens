@@ -609,6 +609,98 @@ def tree_children_live(repo: str, source: str, root_obj: str, prefix: str) -> li
     return children
 
 
+def tree_children_all(repo: str, prefix: str, latest_only: bool = False, deleted_only: bool = False,
+                      min_size: int = 0, ext: str | None = None, ext_exclude: str | None = None) -> list[dict]:
+    """ALL-SOURCES aggregate tree: every source's paths merged under a prefix, **DEDUPED by
+    full_path** (a path backed by several sources counts once). ``latest_only`` keeps only paths in
+    their source's latest snapshot (= 'latest snapshot of each source' view, A#2); else all-snapshots
+    aggregate (A#1). Node sizes are per-location; the true repo-wide deduped total is the dashboard's
+    `union_total` (siblings can overlap on shared content). Top level = merged drive roots."""
+    where, params = _search_where(repo, "", deleted_only, min_size, None, ext, 0, None, None, 0, 0, ext_exclude)
+    if latest_only:
+        where.append("in_latest = true")
+    base = prefix.rstrip(_SEP)
+    if base:
+        where.append("full_path LIKE ?")
+        params.append(base + _SEP + "%")
+    where_sql = " AND ".join(where)
+    cur = read_cursor(repo)
+    try:
+        rows = _rows(
+            cur,
+            f"""
+            WITH dp AS (
+                SELECT full_path, max(size) AS size, max(physical) AS physical, max(last_seen) AS last_seen
+                FROM paths WHERE {where_sql} GROUP BY full_path
+            ), sub AS (
+                SELECT size, physical, last_seen,
+                       CASE WHEN ? = '' THEN full_path ELSE substr(full_path, length(?) + 2) END AS remainder
+                FROM dp
+            )
+            SELECT split_part(remainder, ?, 1) AS name, sum(size) AS size, sum(physical) AS physical,
+                   count(*) AS files, max(last_seen) AS modified,
+                   max(CASE WHEN position(? IN remainder) > 0 THEN 1 ELSE 0 END) AS is_folder
+            FROM sub WHERE remainder <> '' GROUP BY name ORDER BY size DESC
+            """,
+            [repo, *params, base, base, _SEP, _SEP],
+        )
+    finally:
+        cur.close()
+    out = []
+    for r in rows:
+        name = r["name"]
+        out.append({
+            "path": (base + _SEP + name) if base else name, "name": name,
+            "size": r["size"] or 0, "physical": r["physical"] or 0, "files": r["files"],
+            "modified": str(r["modified"]) if r["modified"] else "",
+            "type": "folder" if r["is_folder"] else "file",
+        })
+    return out
+
+
+def tree_children_snaps(repo: str, snapshot_ids: list[str], prefix: str = "") -> list[dict]:
+    """Immediate children under a prefix across a SET of snapshots (e.g. each source's latest), from
+    the delta `files` table, deduped by full_path. Powers the all-sources 'changed' view."""
+    if not snapshot_ids:
+        return []
+    base = prefix.rstrip(_SEP)
+    like = base + _SEP + "%" if base else "%"
+    ph = ",".join("?" * len(snapshot_ids))
+    cur = read_cursor(repo)
+    try:
+        rows = _rows(
+            cur,
+            f"""
+            WITH dp AS (
+                SELECT full_path, max(size) AS size, max(mtime) AS mtime
+                FROM files WHERE repo=? AND snapshot_id IN ({ph}) AND full_path LIKE ?
+                GROUP BY full_path
+            ), sub AS (
+                SELECT size, mtime,
+                       CASE WHEN ? = '' THEN full_path ELSE substr(full_path, length(?) + 2) END AS remainder
+                FROM dp
+            )
+            SELECT split_part(remainder, ?, 1) AS name, sum(size) AS size, count(*) AS files,
+                   max(mtime) AS modified,
+                   max(CASE WHEN position(? IN remainder) > 0 THEN 1 ELSE 0 END) AS is_folder
+            FROM sub WHERE remainder <> '' GROUP BY name ORDER BY size DESC
+            """,
+            [repo, *snapshot_ids, like, base, base, _SEP, _SEP],
+        )
+    finally:
+        cur.close()
+    out = []
+    for r in rows:
+        name = r["name"]
+        out.append({
+            "path": (base + _SEP + name) if base else name, "name": name,
+            "size": r["size"] or 0, "physical": None, "files": r["files"],
+            "modified": str(r["modified"]) if r["modified"] else "",
+            "type": "folder" if r["is_folder"] else "file",
+        })
+    return out
+
+
 def tree_children_paths(repo: str, source: str, prefix: str, deleted_only: bool = False,
                         min_size: int = 0, ext: str | None = None,
                         ext_exclude: str | None = None) -> list[dict]:

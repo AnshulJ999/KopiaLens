@@ -5,7 +5,14 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ..core.sources import sources_index
-from ..index.queries import flat_files, tree_children, tree_children_live, tree_children_paths
+from ..index.queries import (
+    flat_files,
+    tree_children,
+    tree_children_all,
+    tree_children_live,
+    tree_children_paths,
+    tree_children_snaps,
+)
 
 router = APIRouter(tags=["tree"])
 
@@ -79,6 +86,39 @@ def tree(
     if not source:
         raise HTTPException(status_code=400, detail="source is required")
     try:
+        if source == "*ALL*":  # repo-wide aggregate across every source (parity with Snapshots *ALL*)
+            min_size = 1_000_000_000 if over_gb else 0
+            if flat:
+                children = flat_files(repo, None, prefix, deleted_only=deleted_only,
+                                      min_size=min_size, ext=ext, ext_exclude=ext_exclude)
+            elif mode == "changed":  # union of each source's LATEST-snapshot delta
+                latest = [max(s, key=lambda x: x.get("startTime", "")).get("id")
+                          for s in sources_index(repo).values() if s]
+                children = _post_filter(tree_children_snaps(repo, [i for i in latest if i], prefix),
+                                        over_gb, ext, ext_exclude)
+            elif mode == "reclaimable":  # option (b): only ALREADY-CACHED reclaimable (never walks)
+                from ..index.snapanalysis import cached_reclaimable_files
+                b = prefix.rstrip("\\")
+                acc: list[dict] = []
+                for snaps in sources_index(repo).values():
+                    if not snaps:
+                        continue
+                    sid = max(snaps, key=lambda x: x.get("startTime", "")).get("id")
+                    for f in (cached_reclaimable_files(repo, sid) or []):
+                        fp = f["full_path"]
+                        if (not b) or fp.startswith(b):
+                            acc.append({"path": fp, "name": fp.split("\\")[-1].split("/")[-1],
+                                        "size": f["size"], "physical": f["size"], "files": 1,
+                                        "modified": "", "type": "file"})
+                acc.sort(key=lambda x: x["size"], reverse=True)
+                children = acc[:1000]
+            else:  # full = latest snapshot of each source (A#2); all = all-snapshots aggregate (A#1)
+                children = tree_children_all(repo, prefix, latest_only=(mode != "all"),
+                                             deleted_only=deleted_only, min_size=min_size,
+                                             ext=ext, ext_exclude=ext_exclude)
+            if dedupe:
+                children = _dedupe_children(children)
+            return {"children": children, "mode": mode}
         if flat:
             children = flat_files(
                 repo, source, prefix, deleted_only=deleted_only,
