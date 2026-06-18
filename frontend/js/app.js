@@ -332,9 +332,9 @@ document.addEventListener("alpine:init", () => {
           { title: "Pins", field: "pins", width: 64, hozAlign: "right" },
         ], {
           initialSort: [{ column: "source", dir: "asc" }],
-          onRowDblClick: (_e, row) => { this.selectedSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); },
+          onRowDblClick: (_e, row) => { this.selectedSource = row.getData().source; this.snapSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); },
           rowMenu: [
-            { label: "Browse snapshots", action: (_e, row) => { this.selectedSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); } },
+            { label: "Browse snapshots", action: (_e, row) => { this.selectedSource = row.getData().source; this.snapSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); } },
             { label: "Browse files (tree)", action: (_e, row) => { this.selectedSource = row.getData().source; this.active = "tree"; this.openTree(); } },
             { label: "Simulate this source", action: (_e, row) => { this.selectedSource = row.getData().source; this.simMode = "one"; this.active = "simulate"; this.runSimulate(); } },
             { label: "Copy source", action: (_e, row) => this.copyText(row.getData().source) },
@@ -647,7 +647,7 @@ document.addEventListener("alpine:init", () => {
               { label: "Mount + open in Explorer (latest)", action: (_e, row) => this.mountFileOpen(row.getData()) },
               { label: "Restore…", action: (_e, row) => { const d = row.getData(); this.openRestore(d.content_id || d.full_path, d.name || d.full_path); } },
               { label: "Jump to it in tree", action: (_e, row) => this.jumpToTree(row.getData()) },
-              { label: "Browse this source", action: (_e, row) => { this.selectedSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); } },
+              { label: "Browse this source", action: (_e, row) => { this.selectedSource = row.getData().source; this.snapSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); } },
               { label: "Copy full path", action: (_e, row) => this.copyText(row.getData().full_path) },
             ],
           });
@@ -1093,7 +1093,7 @@ document.addEventListener("alpine:init", () => {
             { title: "Pins", field: "pins", width: 64, hozAlign: "right" },
           ], {
             initialSort: [{ column: "reclaim", dir: "desc" }],
-            onRowDblClick: (_e, row) => { this.selectedSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); },
+            onRowDblClick: (_e, row) => { this.selectedSource = row.getData().source; this.snapSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); },
           });
         }
       }, "Simulating retention...");
