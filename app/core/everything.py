@@ -59,6 +59,24 @@ def list_drives() -> list[dict]:
     return sorted(out, key=lambda d: d["path"])
 
 
+def _count_out(out: str) -> int:
+    lines = [ln for ln in out.strip().splitlines() if ln.strip()]
+    try:
+        return int(lines[-1]) if lines else 0
+    except ValueError:
+        return 0
+
+
+def recursive_count(path: str) -> int:
+    """Recursive FILE count under `path` - Everything-computed, instant (no enumeration)."""
+    return _count_out(_run(["-path", path, "file:", "-get-result-count"]))
+
+
+def recursive_size(path: str) -> int:
+    """Recursive FILE byte total under `path` - Everything-computed, instant."""
+    return _count_out(_run(["-path", path, "file:", "-get-total-size"]))
+
+
 def es_children(folder: str) -> list[dict]:
     """Direct children (files + folders) of `folder` from Everything: name, size (bytes), mtime,
     is_dir. Folders report their RECURSIVE size (Everything 1.5 folder-size index). One es call."""

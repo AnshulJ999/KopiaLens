@@ -134,6 +134,7 @@
           <button @click="showFilters=!showFilters" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="showFilters ? 'bg-stone-200 dark:bg-stone-700' : ''" title="More filters">⛃ Filters</button>
           <button @click="toggleDedupe()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="dedupe ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Dedupe: collapse path/source copies of the same content into one row">⧉ Dedupe</button>
           <button @click="computeReclaim()" :disabled="reclaimComputing" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs disabled:opacity-50" title="Compute true reclaim (all versions, everywhere) for the visible rows, then sort by it"><span x-text="reclaimComputing ? 'Computing…' : '∑ Reclaim'"></span></button>
+          <button @click="toggleGroupByFolder()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="groupByFolder ? 'bg-amber-200 dark:bg-amber-800' : ''" title="Group results by folder (find bloated folders), ranked by physical size">⊞ By folder</button>
           <button @click="exportSearch()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Export the FULL filtered set to CSV">⬇ CSV (all)</button>
           <span class="ml-2 flex items-center gap-1">
             <span class="text-[11px] text-stone-400">selected:</span>
@@ -151,6 +152,13 @@
           <label class="flex items-center gap-1 ml-2">Min versions <input type="number" min="0" x-model="minVersions" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="0"></label>
           <label class="flex items-center gap-1 ml-2" title="Files whose exact content backs at least N distinct paths (exact-duplicate candidates)">Shared ≥ <input type="number" min="0" x-model="sharedMin" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="2"></label>
           <button @click="clearFilters()" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 ml-1">Clear</button>
+        </div>
+        <div x-show="groupByFolder" class="flex flex-wrap items-center gap-2 text-xs rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-2">
+          <span class="font-medium">Group by folder</span>
+          <label class="flex items-center gap-1">Depth <input type="number" min="1" max="8" x-model.number="groupDepth" @change="loadSearch()" class="fld h-7 w-16 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800"></label>
+          <label class="flex items-center gap-1">Min GB <input type="number" min="0" step="0.1" x-model.number="groupMinGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="0"></label>
+          <label class="flex items-center gap-1">Min files <input type="number" min="0" x-model.number="groupMinFiles" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="0"></label>
+          <span class="text-stone-500">Double-click a folder → drill into its files → batch-remove.</span>
         </div>
         <div class="flex flex-wrap items-center gap-2 text-xs">
           <span class="text-stone-600 dark:text-stone-300 font-medium" x-text="omniMeta"></span>
@@ -510,6 +518,28 @@
     </div>
 
     <!-- restore -->
+    <!-- Excluded item detail -->
+    <div x-show="showExcludedDetail && excludedDetail" @click.self="showExcludedDetail=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+      <div class="w-[44rem] max-w-full max-h-[85vh] overflow-auto rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 text-sm">
+        <div class="flex items-center gap-2"><div class="font-medium" x-text="excludedDetail && ((excludedDetail.is_dir ? '📁 ' : '📄 ') + excludedDetail.name)"></div><button @click="showExcludedDetail=false" class="ml-auto text-stone-500 text-lg leading-none">&times;</button></div>
+        <div class="text-xs text-stone-500 mt-1 break-all" x-text="excludedDetail && excludedDetail.full_path"></div>
+        <div class="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2" x-show="excludedDetail">
+          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Total</div><div class="font-medium" x-text="excludedDetail && fmtBytes(excludedDetail.total_size)"></div></div>
+          <div class="rounded border border-emerald-300 dark:border-emerald-800 p-2"><div class="text-[10px] uppercase text-emerald-700 dark:text-emerald-400">Backed up</div><div class="font-medium" x-text="excludedDetail && fmtBytes(excludedDetail.backed_bytes)"></div></div>
+          <div class="rounded border border-rose-300 dark:border-rose-800 p-2"><div class="text-[10px] uppercase text-rose-700 dark:text-rose-400">Excluded</div><div class="font-medium" x-text="excludedDetail && fmtBytes(excludedDetail.excluded_bytes)"></div></div>
+          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Files (total / excluded)</div><div class="font-medium" x-text="excludedDetail && ((Number(excludedDetail.total_files||0)).toLocaleString() + ' / ' + (Number(excludedDetail.excluded_files||0)).toLocaleString())"></div></div>
+          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">% Excluded</div><div class="font-medium" x-text="excludedDetail && (excludedDetail.pct_excluded != null ? excludedDetail.pct_excluded + '%' : '—')"></div></div>
+          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Backed by repo</div><div class="font-medium" x-text="excludedDetail && (excludedDetail.repo || '—')"></div></div>
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <button @click="excludedInclude(excludedDetail)" class="h-8 rounded border border-emerald-300 text-emerald-700 px-3 text-xs">Include in Kopia (copy commands)</button>
+          <button @click="excludedExclude(excludedDetail)" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-xs">Exclude (copy patterns)</button>
+          <button @click="copyText(excludedDetail.full_path)" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-xs">Copy path</button>
+        </div>
+        <div class="text-[11px] text-stone-500 mt-2 whitespace-pre-wrap break-all" x-show="actionText" x-text="actionText"></div>
+      </div>
+    </div>
+
     <!-- Batch detail panel (multi-file union: physical/freeable + multi-choice removal) -->
     <div x-show="showBatch && batch" @click.self="showBatch=false" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
       <div class="w-[46rem] max-w-full max-h-[85vh] overflow-auto rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 text-sm">

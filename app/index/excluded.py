@@ -7,9 +7,11 @@ indexed range scan per repo (bounded to that subtree), aggregated by immediate c
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from config import REPOS
 
-from ..core.everything import es_children
+from ..core.everything import es_children, list_drives, recursive_count, recursive_size
 from .schema import read_cursor
 
 _SEP = chr(92)  # backslash
@@ -122,6 +124,23 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
                 "pct_excluded": 0 if backed_file else 100, "backed_files": 1 if backed_file else 0,
                 "last_backed": last_backed, "repo": repo_label, "status": status, "mtime": d["mtime"],
             })
+    # Recursive FILE counts: direct files = 1; child folders via parallel Everything count-queries
+    # (instant, index-computed). total_size = disk_bytes; excluded_files = total - backed.
+    sep = _SEP
+    base = folder.rstrip(sep)
+    dirs = [it for it in items if it["is_dir"]]
+
+    def _cnt(it):
+        return recursive_count(base + sep + it["name"])
+
+    counts = list(ThreadPoolExecutor(max_workers=16).map(_cnt, dirs)) if dirs else []
+    cmap = {id(it): n for it, n in zip(dirs, counts)}
+    for it in items:
+        it["total_size"] = it["disk_bytes"]
+        tf = cmap.get(id(it), 1) if it["is_dir"] else 1
+        it["total_files"] = tf
+        it["excluded_files"] = max(0, tf - it["backed_files"])
+
     items.sort(key=lambda x: (not x["is_dir"], -x["excluded_bytes"], x["name"].lower()))
     return {
         "folder": folder,
@@ -130,3 +149,36 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
         "total_backed": sum(i["backed_bytes"] for i in items),
         "count": len(items),
     }
+
+
+def drive_stats() -> list[dict]:
+    """Per local drive: total (Everything) vs backed (index, deduped) → excluded size + file count.
+    Parallel es calls. Used by the drives ('This PC') view so each drive shows its REAL excluded
+    total, not its used-disk size."""
+    drives = list_drives()  # [{path, used, total}]
+
+    def _one(d: dict) -> dict:
+        p = d["path"]
+        ts, tc = recursive_size(p), recursive_count(p)
+        lo = p.lower().rstrip(_SEP) + _SEP
+        hi = lo + "￿"
+        bs = bc = 0
+        for repo in REPOS:
+            cur = read_cursor(repo)
+            try:
+                row = cur.execute(
+                    "SELECT sum(sz), count(*) FROM (SELECT max(size) AS sz FROM paths "
+                    "WHERE repo=? AND in_latest AND path_lc >= ? AND path_lc < ? GROUP BY path_lc)",
+                    [repo, lo, hi],
+                ).fetchone()
+            finally:
+                cur.close()
+            bs += int(row[0] or 0)
+            bc += int(row[1] or 0)
+        return {
+            "path": p, "used": d["used"], "total_size": ts, "total_files": tc,
+            "backed_bytes": bs, "backed_files": bc,
+            "excluded_bytes": max(0, ts - bs), "excluded_files": max(0, tc - bc),
+        }
+
+    return list(ThreadPoolExecutor(max_workers=8).map(_one, drives)) if drives else []

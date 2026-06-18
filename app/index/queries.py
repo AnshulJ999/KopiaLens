@@ -339,6 +339,49 @@ def paths_for_content(repo: str, content_id: str) -> list[dict]:
         cur.close()
 
 
+def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | None = None,
+                    ext: str | None = None, deleted_only: bool = False, min_size: int = 0,
+                    min_files: int = 0, sort: str = "physical", direction: str = "desc",
+                    limit: int = 500) -> dict:
+    """Bloat finder: roll the (filtered) `paths` up by the first `depth` path segments, summing
+    physical + logical + file count per folder, ranked. Find backed-up folders that shouldn't be
+    there. Reclaim (freeable) is computed on demand per folder (folder_detail), not here."""
+    conds = ["repo=?"]
+    params: list = [repo]
+    if source:
+        conds.append("source=?")
+        params.append(source)
+    if ext:
+        conds.append("ext=?")
+        params.append(ext.lower().lstrip("."))
+    if deleted_only:
+        conds.append("in_latest=false")
+    if query:
+        conds.append("full_path ILIKE ?")
+        params.append(f"%{query}%")
+    where = " AND ".join(conds)
+    order = {"physical": "phys", "logical": "logical", "files": "files"}.get(sort, "phys")
+    dirn = "ASC" if direction == "asc" else "DESC"
+    d = max(1, int(depth))
+    cur = read_cursor(repo)
+    try:
+        rows = _rows(
+            cur,
+            f"""
+            SELECT array_to_string(list_slice(string_split(full_path, ?), 1, {d}), ?) AS folder,
+                   sum(physical) AS phys, sum(size) AS logical, count(*) AS files
+            FROM paths WHERE {where}
+            GROUP BY folder
+            HAVING sum(physical) >= {int(min_size)} AND count(*) >= {int(min_files)}
+            ORDER BY {order} {dirn} LIMIT {int(limit)}
+            """,
+            [_SEP, _SEP, *params],
+        )
+    finally:
+        cur.close()
+    return {"rows": rows, "depth": d}
+
+
 def snapshots_for_content(repo: str, content_id: str) -> list[str]:
     """Every distinct snapshot id that references this content object (across all paths/sources).
     This is the full set that must be deleted to free the content everywhere."""

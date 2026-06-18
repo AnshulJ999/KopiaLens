@@ -11,9 +11,26 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..index.physical import file_detail, reclaim_for
-from ..index.queries import landing, search_export, search_paths, versions
+from ..index.queries import group_by_folder, landing, search_export, search_paths, versions
 
 router = APIRouter(tags=["search"])
+
+
+@router.get("/search/group-by-folder")
+def search_group_by_folder(
+    repo: str = "1", depth: int = 3, q: str = "", source: str | None = None, ext: str | None = None,
+    deleted_only: bool = False, min_gb: float = 0, min_files: int = 0,
+    sort: str = "physical", direction: str = "desc", limit: int = 500,
+) -> dict:
+    """Bloat finder: backed-up folders rolled up to `depth` segments, ranked by physical."""
+    try:
+        return group_by_folder(
+            repo, depth=depth, query=q, source=source, ext=ext, deleted_only=deleted_only,
+            min_size=int(min_gb * 1_000_000_000), min_files=min_files, sort=sort,
+            direction=direction, limit=limit,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 class ReclaimRequest(BaseModel):

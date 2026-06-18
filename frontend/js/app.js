@@ -121,6 +121,7 @@ document.addEventListener("alpine:init", () => {
     analyzing: false,
     treeMode: "full",
     query: "", deletedOnly: false, overOneGb: false, searchSource: "", searchExt: "", omniMeta: "",
+    groupByFolder: false, groupDepth: 3, groupMinGb: 0, groupMinFiles: 0,
     searchTotal: 0, searchPage: 1, searchPageSize: "500", searchSort: "size", searchDir: "desc",
     pageSizes: ["100", "200", "500", "1000", "2000", "5000", "10000", "Infinite"],
     showFilters: false, minGb: "", maxGb: "", dateFrom: "", dateTo: "", minVersions: "", sharedMin: "",
@@ -133,7 +134,7 @@ document.addEventListener("alpine:init", () => {
     statsData: null, blobStats: "", blobLoading: false, _statsLoading: false,
     mountSnapshot: "", mountPoint: "", restoreSource: "", restoreDest: "",
     dashboardMeta: "", busy: "", error: "", detail: null, batch: null, showBatch: false, snapSource: "*ALL*", _poll: null, _searchSeq: 0, _detailSeq: 0,
-    excludedDrives: [], excludedOk: true, excludedPath: "", excludedFilter: "excluded", excludedMeta: "", _excludedItems: [],
+    excludedDrives: [], excludedOk: true, excludedPath: "", excludedFilter: "excluded", excludedMeta: "", _excludedItems: [], _excludedSeq: 0, excludedDetail: null, showExcludedDetail: false,
     showSettings: false, backend: "subprocess", repoPinned: false, reindexInterval: 1800, dashRefresh: 900,
     reclaimInterval: 10800, excludedTolerance: 0.05, esPath: "",
     analyzingAll: false, showDelete: false, deletePlan: null, deleteConfirm: "", _autoRefresh: null,
@@ -559,7 +560,35 @@ document.addEventListener("alpine:init", () => {
       this.loadSearch();
     },
 
+    // ---- Bloat finder: group backed-up paths by folder, ranked by physical ----
+    _resetSearchTable() { const el = document.querySelector("#searchTable"); if (el && el._tabulator) { try { el._tabulator.destroy(); } catch (e) {} el._tabulator = null; } },
+    toggleGroupByFolder() { this._resetSearchTable(); this.groupByFolder = !this.groupByFolder; this.searchPage = 1; this.loadSearch(); },
+    drillFolder(row) { this._resetSearchTable(); this.groupByFolder = false; this.query = row.folder; this.searchPage = 1; this.loadSearch(); },
+    async loadGroupByFolder() {
+      await this.wrap(async () => {
+        const p = new URLSearchParams({ repo: this.repo, depth: this.groupDepth, q: this.query || "", sort: "physical", direction: "desc", limit: 500 });
+        if (this.searchSource) p.set("source", this.searchSource);
+        if (this.searchExt) p.set("ext", this.searchExt);
+        if (this.deletedOnly) p.set("deleted_only", "1");
+        if (this.groupMinGb) p.set("min_gb", this.groupMinGb);
+        if (this.groupMinFiles) p.set("min_files", this.groupMinFiles);
+        const data = await getJson(`/api/search/group-by-folder?${p.toString()}`);
+        const rows = data.rows || [];
+        this.omniMeta = `${rows.length} folders · depth ${data.depth} · ranked by physical`;
+        const cols = [
+          { title: "Folder", field: "folder", widthGrow: 5, minWidth: 320 },
+          { title: "Physical", field: "phys", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => fmtPhys(c.getValue()) },
+          { title: "Logical", field: "logical", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => fmtBytes(c.getValue()) },
+          { title: "Files", field: "files", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+        ];
+        setTable("#searchTable", rows, cols, {
+          onRowDblClick: (_e, row) => this.drillFolder(row.getData()),
+          rowMenu: [{ label: "Drill into files (then batch-remove)", action: (_e, row) => this.drillFolder(row.getData()) }],
+        });
+      }, "Grouping folders…");
+    },
     async loadSearch(keepPage = false) {
+      if (this.groupByFolder) return this.loadGroupByFolder();
       const seq = ++this._searchSeq;
       if (!keepPage) this.searchPage = 1;
       await this.wrap(async () => {
@@ -856,13 +885,22 @@ document.addEventListener("alpine:init", () => {
     renderExcludedDrives() {
       this.excludedPath = "";
       this.excludedMeta = this.excludedOk ? `${this.excludedDrives.length} drive(s)` : "Everything (es.exe) not reachable";
-      this.renderExcluded(this.excludedDrives.map((dr) => ({ name: dr.path.replace(/\\$/, ""), path: dr.path, is_dir: true, status: "drive", disk_bytes: dr.used || 0, total_bytes: dr.total || 0, backed_bytes: 0, excluded_bytes: 0, pct_excluded: null, backed_files: 0, last_backed: "", repo: "", mtime: "" })));
+      this.renderExcluded(this.excludedDrives.map((dr) => ({
+        name: dr.path.replace(/\\$/, ""), path: dr.path, is_dir: true, status: "drive",
+        total_size: dr.total_size || 0, disk_bytes: dr.total_size || 0,
+        backed_bytes: dr.backed_bytes || 0, excluded_bytes: dr.excluded_bytes || 0,
+        pct_excluded: dr.total_size ? Math.round((dr.excluded_bytes / dr.total_size) * 1000) / 10 : null,
+        total_files: dr.total_files || 0, backed_files: dr.backed_files || 0, excluded_files: dr.excluded_files || 0,
+        last_backed: "", repo: "", mtime: "",
+      })));
     },
     excludedNav(path) { if (!path) return this.renderExcludedDrives(); this.listExcluded(path); },
     async listExcluded(path) {
+      const seq = ++this._excludedSeq;
       this.excludedPath = path;
       await this.wrap(async () => {
         const r = await getJson(`/api/excluded/list?path=${encodeURIComponent(path)}`);
+        if (seq !== this._excludedSeq) return;  // a newer navigation superseded this one
         this.excludedMeta = `${r.count} items · ${fmtBytes(r.total_excluded)} not backed up here`;
         this.renderExcluded(r.items || []);
       }, "Listing (Everything)…");
@@ -906,23 +944,54 @@ document.addEventListener("alpine:init", () => {
         return `<span class="pill" style="background:${bg};color:${fg}">${label}</span>`;
       };
       const bytes = (c) => c.getValue() ? fmtBytes(c.getValue()) : "";
-      const sizeField = f === "backed" ? "backed_bytes" : (f === "all" ? "disk_bytes" : "excluded_bytes");
+      const num = (c) => c.getValue() ? Number(c.getValue()).toLocaleString() : "";
       const cols = [
-        { title: "Name", field: "name", widthGrow: 4, minWidth: 240, formatter: (c) => (c.getRow().getData().is_dir ? "📁 " : "📄 ") + c.getValue() },
-        { title: "Status", field: "status", width: 120, formatter: (c) => pill(c.getValue()) },
-        { title: "Size", field: sizeField, width: 100, hozAlign: "right", sorter: "number", formatter: (c) => { const d = c.getRow().getData(); const v = d.status === "drive" ? d.disk_bytes : c.getValue(); return v ? fmtBytes(v) : ""; } },
-        { title: "Backed", field: "backed_bytes", width: 95, hozAlign: "right", sorter: "number", formatter: bytes },
+        { title: "Name", field: "name", widthGrow: 4, minWidth: 220, formatter: (c) => (c.getRow().getData().is_dir ? "📁 " : "📄 ") + c.getValue() },
+        { title: "Status", field: "status", width: 115, formatter: (c) => pill(c.getValue()) },
+        { title: "Total", field: "total_size", width: 90, hozAlign: "right", sorter: "number", formatter: bytes },
+        { title: "Backed", field: "backed_bytes", width: 90, hozAlign: "right", sorter: "number", formatter: bytes },
         { title: "Excluded", field: "excluded_bytes", width: 95, hozAlign: "right", sorter: "number", formatter: bytes },
-        { title: "% Excl", field: "pct_excluded", width: 75, hozAlign: "right", sorter: "number", formatter: (c) => { const d = c.getRow().getData(); return (d.status !== "drive" && c.getValue() != null) ? c.getValue() + "%" : ""; } },
-        { title: "Backed files", field: "backed_files", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? Number(c.getValue()).toLocaleString() : "" },
-        { title: "Last backed", field: "last_backed", width: 150, formatter: (c) => c.getValue() || "" },
-        { title: "Repo", field: "repo", width: 70 },
-        { title: "Modified", field: "mtime", width: 150, formatter: (c) => (c.getValue() || "").replace("T", " ") },
+        { title: "% Excl", field: "pct_excluded", width: 70, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() != null ? c.getValue() + "%" : "" },
+        { title: "Files", field: "total_files", width: 80, hozAlign: "right", sorter: "number", formatter: num },
+        { title: "Bkd #", field: "backed_files", width: 75, hozAlign: "right", sorter: "number", formatter: num },
+        { title: "Excl #", field: "excluded_files", width: 75, hozAlign: "right", sorter: "number", formatter: num },
+        { title: "Last backed", field: "last_backed", width: 145, formatter: (c) => c.getValue() || "" },
+        { title: "Repo", field: "repo", width: 65 },
+        { title: "Modified", field: "mtime", width: 145, formatter: (c) => (c.getValue() || "").replace("T", " ") },
       ];
       setTable("#excludedTable", items, cols, {
         onRowDblClick: (_e, row) => this.excludedRowOpen(row.getData()),
-        rowMenu: [{ label: "Open", action: (_e, row) => this.excludedRowOpen(row.getData()) }],
+        rowMenu: [
+          { label: "Open", action: (_e, row) => this.excludedRowOpen(row.getData()) },
+          { label: "Details", action: (_e, row) => this.openExcludedDetail(row.getData()) },
+          { label: "Include in Kopia… (copy commands)", action: (_e, row) => this.excludedInclude(row.getData()) },
+          { label: "Exclude from Kopia (copy patterns)", action: (_e, row) => this.excludedExclude(row.getData()) },
+          { label: "Copy path", action: (_e, row) => this.copyText(this._excludedPath(row.getData())) },
+        ],
       });
+    },
+    _excludedPath(row) {
+      if (row.status === "drive") return row.path;
+      return this.excludedPath.replace(/[\\/]+$/, "") + "\\" + row.name;
+    },
+    async excludedInclude(row) {
+      const path = this._excludedPath(row);
+      const r = await getJson(`/api/excluded/include-cmds?path=${encodeURIComponent(path)}`).catch((e) => { this.error = e.message; return null; });
+      if (!r) return;
+      const txt = (r.commands || []).map((c) => `# ${c.name}\n${c.command}`).join("\n\n");
+      this.copyText(txt);
+      this.actionText = "Include commands (copied — run the one for the repo you want):\n" + txt;
+    },
+    excludedExclude(row) {
+      const name = row.name;
+      const pats = [name];
+      if (!row.is_dir) { const dot = name.lastIndexOf("."); if (dot > 0) pats.push("*" + name.slice(dot)); }
+      this.copyText(pats.join("\n"));
+      this.actionText = "Exclude patterns (copied — paste into the KopiaUI policy ignore rules):\n" + pats.join("\n");
+    },
+    openExcludedDetail(row) {
+      this.excludedDetail = { ...row, full_path: this._excludedPath(row) };
+      this.showExcludedDetail = true;
     },
 
     // ---- Restore (accessible everywhere) ----

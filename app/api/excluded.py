@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from ..core.everything import available, list_drives
-from ..index.excluded import folder_listing
+from config import REPOS
+
+from ..core.everything import available
+from ..index.excluded import drive_stats, folder_listing
 from ..settings import load_settings
 
 router = APIRouter(tags=["excluded"])
@@ -13,8 +15,23 @@ router = APIRouter(tags=["excluded"])
 
 @router.get("/excluded/drives")
 def drives() -> dict:
-    """Local fixed drives + whether Everything (es.exe) is reachable."""
-    return {"drives": list_drives(), "everything_ok": available()}
+    """Local fixed drives, each with REAL total/backed/excluded size + file count (Everything vs
+    index), so a drive row shows its excluded total - not its used-disk size. + es.exe liveness."""
+    return {"drives": drive_stats(), "everything_ok": available()}
+
+
+@router.get("/excluded/include-cmds")
+def include_cmds(path: str = "") -> dict:
+    """Commands to ADD this path to Kopia (one per repo). KopiaLens stays read-only on config; you
+    copy/run. Adding it as a source means the global policy + schedule then apply."""
+    if not path:
+        raise HTTPException(status_code=400, detail="path is required")
+    cmds = []
+    for repo, cfg in REPOS.items():
+        parts = ["kopia"] + cfg["args"] + ["snapshot", "create", path]
+        cmds.append({"repo": repo, "name": cfg["name"],
+                     "command": " ".join(f'"{a}"' if (" " in a or not a) else a for a in parts)})
+    return {"path": path, "commands": cmds}
 
 
 @router.get("/excluded/list")
