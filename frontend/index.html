@@ -104,6 +104,9 @@
             <option value="all">All snapshots</option>
           </select>
           <button @click="toggleTreeDedupe()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-sm" :class="treeDedupe ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Dedupe: collapse same-content files">⧉ Dedupe</button>
+          <label class="flex items-center gap-1.5 text-xs" :class="treeMode!=='all' ? 'opacity-40' : ''" title="Only folders containing files deleted from disk (All-snapshots mode only)"><input type="checkbox" x-model="treeDeletedOnly" :disabled="treeMode!=='all'" @change="treeFilterChanged()"> Deleted</label>
+          <label class="flex items-center gap-1.5 text-xs" title="Only files ≥ 1 GB"><input type="checkbox" x-model="treeOverGb" @change="treeFilterChanged()"> &gt;1 GB</label>
+          <input x-model="treeExt" @input.debounce.400ms="treeFilterChanged()" class="fld w-32 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-xs" placeholder="ext: iso,7z">
           <select x-show="treeMode!=='all'" x-model="selectedSnapshot" @change="treePrefix=sourceRoot(); loadTree()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[18rem]">
             <template x-for="sn in snapshots" :key="sn.id"><option :value="sn.id" x-text="humanTime(sn.start_time)"></option></template>
           </select>
@@ -129,6 +132,7 @@
             <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
           </select>
           <input x-model="searchExt" @input.debounce.300ms="loadSearch()" class="fld w-36 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="ext: vhdx,iso,7z">
+          <input x-model="searchExtExclude" @input.debounce.300ms="loadSearch()" class="fld w-36 border border-amber-300 dark:border-amber-700 bg-white dark:bg-stone-800" placeholder="hide ext: mp4,mkv" title="Hide these extensions (focus on the rest)">
           <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="deletedOnly" @change="loadSearch()"> Deleted from disk</label>
           <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="overOneGb" @change="loadSearch()"> &gt;1 GB</label>
           <button @click="showFilters=!showFilters" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="showFilters ? 'bg-stone-200 dark:bg-stone-700' : ''" title="More filters">⛃ Filters</button>
@@ -136,6 +140,7 @@
           <button @click="computeReclaim()" :disabled="reclaimComputing" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs disabled:opacity-50" title="Compute true reclaim (all versions, everywhere) for the visible rows, then sort by it"><span x-text="reclaimComputing ? 'Computing…' : '∑ Reclaim'"></span></button>
           <button @click="toggleGroupByFolder()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="groupByFolder ? 'bg-amber-200 dark:bg-amber-800' : ''" title="Group results by folder (find bloated folders), ranked by physical size">⊞ By folder</button>
           <button @click="exportSearch()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Export the FULL filtered set to CSV">⬇ CSV (all)</button>
+          <button x-show="!groupByFolder" @click="openRemoveFromSearch()" class="h-8 rounded border border-rose-400 text-rose-600 dark:text-rose-400 px-2 text-xs font-medium" title="Delete EVERY file matching this filter (chunked remove-files, biggest first) — copy / .bat / run">🗑 Delete matching…</button>
           <span class="ml-2 flex items-center gap-1">
             <span class="text-[11px] text-stone-400">selected:</span>
             <button @click="batchDetail('search')" class="h-8 rounded border border-rose-300 text-rose-600 px-2 text-xs" title="Open batch detail: union size/freeable + remove selected files">🗑 Remove…</button>
@@ -574,6 +579,71 @@
             </div>
           </template>
         </div>
+      </div>
+    </div>
+
+    <div x-show="showRemove && removePlan" @click.self="closeRemove()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+      <div class="w-[52rem] max-w-full max-h-[88vh] overflow-auto rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 text-sm">
+        <div class="flex items-center gap-2">
+          <div class="font-medium text-rose-600">Delete matching — <span class="font-normal text-stone-600 dark:text-stone-300" x-text="removePlan && removePlan.label"></span></div>
+          <button @click="closeRemove()" class="ml-auto text-stone-500 text-lg leading-none">&times;</button>
+        </div>
+        <div class="text-[11px] text-amber-600 mt-1" x-show="removePlan && removePlan.loading">Building plan (sorting by physical, resolving sources)…</div>
+
+        <template x-if="removePlan && !removePlan.loading">
+          <div>
+            <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Files</div><div class="font-medium" x-text="Number(removePlan.file_count||0).toLocaleString()"></div></div>
+              <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Content objects</div><div class="font-medium" x-text="Number(removePlan.object_count||0).toLocaleString()"></div></div>
+              <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Physical</div><div class="font-medium" x-text="fmtPhys(removePlan.physical)"></div></div>
+              <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Batches</div><div class="font-medium" x-text="removePlan.batches"></div></div>
+            </div>
+
+            <div class="mt-2 flex flex-wrap items-center gap-3 text-xs">
+              <label class="flex items-center gap-1" title="Remove every version of these files (full purge), not just the latest"><input type="checkbox" :checked="removePlan.all_versions" @change="toggleRemoveAllVersions()" :disabled="removePlan.job"> All versions (full purge)</label>
+              <label class="flex items-center gap-1 text-rose-600" title="Drop --source: sweep the WHOLE repo (slow). Off = scoped to the sources that hold this content."><input type="checkbox" :checked="removePlan.everywhere" @change="toggleRemoveEverywhere()" :disabled="removePlan.job"> Everywhere (whole-repo sweep ⚠)</label>
+            </div>
+
+            <div class="text-[11px] text-stone-500 mt-2">
+              <span x-show="!removePlan.everywhere">Scoped to <span class="font-medium" x-text="(removePlan.sources_scope||[]).length"></span> source(s):</span>
+              <span x-show="removePlan.everywhere" class="text-rose-600">⚠ NOT source-scoped — removes this content from every source in the repo.</span>
+              <span x-show="!removePlan.everywhere" class="font-mono break-all" x-text="(removePlan.sources_scope||[]).map(shortSource).join('  ·  ')"></span>
+            </div>
+
+            <div class="mt-3 border-t border-stone-200 dark:border-stone-700 pt-2" x-show="removePlan.preview && removePlan.preview.length">
+              <div class="text-[10px] uppercase text-stone-500">Biggest files first (preview)</div>
+              <div class="mt-1 max-h-44 overflow-auto rounded border border-stone-200 dark:border-stone-700">
+                <template x-for="(f,i) in removePlan.preview.slice(0,40)" :key="i">
+                  <div class="flex items-center gap-2 px-2 py-0.5 text-[11px] border-b border-stone-100 dark:border-stone-800">
+                    <span class="font-mono truncate" x-text="f.full_path"></span>
+                    <span class="ml-auto text-stone-500 shrink-0" x-text="fmtPhys(f.physical)"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <div class="mt-3 border-t border-stone-200 dark:border-stone-700 pt-2">
+              <div class="text-[11px] text-stone-500">Dry-run (preview — change nothing). The commit commands are chunked, biggest-files first.</div>
+              <div class="mt-1 rounded bg-stone-100 dark:bg-stone-800 p-2 font-mono break-all text-[10px] max-h-32 overflow-auto" x-text="removePlan.dry_run"></div>
+              <div class="flex flex-wrap items-center gap-2 pt-2">
+                <button @click="copyText(removePlan.dry_run)" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs">Copy dry-run</button>
+                <button @click="copyText(removePlan.commit)" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs">Copy commit commands</button>
+                <button @click="removeSaveBat()" class="h-7 rounded border border-sky-400 text-sky-700 dark:text-sky-300 px-2 text-xs" title="Write a .bat that runs the chunked commands and logs kopia's output">💾 Save .bat</button>
+                <button @click="removeRun()" :disabled="removePlan.job && removePlan.job.running" class="h-7 rounded border border-rose-400 text-rose-600 px-2 text-xs disabled:opacity-50" title="Run the chunked delete now (background, progress below)">▶ Run now</button>
+              </div>
+              <div class="text-[11px] text-sky-700 dark:text-sky-300 mt-1" x-show="removePlan.batSaved" x-text="removePlan.batSaved && ('Saved: ' + removePlan.batSaved.bat)"></div>
+            </div>
+
+            <div class="mt-3 border-t border-stone-200 dark:border-stone-700 pt-2" x-show="removePlan.job">
+              <div class="text-xs font-medium" x-text="removePlan.job && (removePlan.job.running ? 'Removing…' : 'Done')"></div>
+              <div class="mt-1 h-2 rounded bg-stone-200 dark:bg-stone-700 overflow-hidden">
+                <div class="h-full bg-rose-500" :style="`width:${removePlan.job && removePlan.job.total ? Math.round(100*removePlan.job.done/removePlan.job.total) : 0}%`"></div>
+              </div>
+              <div class="text-[11px] text-stone-500 mt-1" x-text="removePlan.job && ((removePlan.job.done||0)+' / '+(removePlan.job.total||0)+' batches'+(removePlan.job.errors?(' · '+removePlan.job.errors+' error(s)'):'')+(removePlan.job.running?'':' — run kopia maintenance run --full to reclaim'))"></div>
+              <div class="text-[10px] text-stone-400 break-all" x-text="removePlan.job && removePlan.job.log && ('log: '+removePlan.job.log)"></div>
+            </div>
+          </div>
+        </template>
       </div>
     </div>
 

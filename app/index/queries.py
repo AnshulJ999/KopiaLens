@@ -56,10 +56,15 @@ _SEARCH_SORT = {
 }
 
 
+def _split_exts(ext: str) -> list[str]:
+    return [e.lower().lstrip(".") for e in (x.strip() for x in ext.split(",")) if e]
+
+
 def _search_where(repo: str, query: str, deleted_only: bool, min_size: int,
                   source: str | None, ext: str | None, max_size: int = 0,
                   date_from: str | None = None, date_to: str | None = None,
-                  min_versions: int = 0, shared_min: int = 0) -> tuple[list[str], list]:
+                  min_versions: int = 0, shared_min: int = 0,
+                  ext_exclude: str | None = None) -> tuple[list[str], list]:
     """Build the WHERE clause + params for a paths search. ``repo`` is prepended by the caller, so
     the first placeholder (``repo = ?``) is filled there; every condition added here appends its
     params in clause order. Multi-value source/ext accept comma-separated lists (-> IN)."""
@@ -85,10 +90,15 @@ def _search_where(repo: str, query: str, deleted_only: bool, min_size: int,
             where.append("source = ?")
             params.append(srcs[0] if srcs else source)
     if ext:
-        exts = [e.lower().lstrip(".") for e in (x.strip() for x in ext.split(",")) if e]
+        exts = _split_exts(ext)
         if exts:
             where.append("ext IN (%s)" % ",".join("?" * len(exts)))
             params.extend(exts)
+    if ext_exclude:
+        exx = _split_exts(ext_exclude)
+        if exx:  # hide these extensions; keep ext-less rows (NULL/'')
+            where.append("(ext IS NULL OR ext NOT IN (%s))" % ",".join("?" * len(exx)))
+            params.extend(exx)
     if date_from:
         where.append("last_seen >= ?")
         params.append(date_from)
@@ -117,12 +127,13 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                  source: str | None = None, ext: str | None = None, limit: int = 500, offset: int = 0,
                  sort: str = "size", direction: str = "desc", confirm_exists: bool = False,
                  max_size: int = 0, date_from: str | None = None, date_to: str | None = None,
-                 min_versions: int = 0, shared_min: int = 0, dedupe: bool = False) -> dict:
+                 min_versions: int = 0, shared_min: int = 0, dedupe: bool = False,
+                 ext_exclude: str | None = None) -> dict:
     """Search the pre-aggregated ``paths`` table. Returns the TRUE total count plus one page,
     with sort + filters applied in SQL over the entire matched set. ``dedupe`` collapses all
     path/source variations of the SAME content (group by content_id) into one content-aware row."""
     where, params = _search_where(repo, query, deleted_only, min_size, source, ext, max_size,
-                                  date_from, date_to, min_versions, shared_min)
+                                  date_from, date_to, min_versions, shared_min, ext_exclude)
     where_sql = " AND ".join(where)
     cur = read_cursor(repo)
     try:
@@ -207,10 +218,10 @@ def search_export(repo: str, query: str = "", deleted_only: bool = False, min_si
                   source: str | None = None, ext: str | None = None,
                   sort: str = "size", direction: str = "desc", cap: int = 2_000_000,
                   max_size: int = 0, date_from: str | None = None, date_to: str | None = None,
-                  min_versions: int = 0, shared_min: int = 0):
+                  min_versions: int = 0, shared_min: int = 0, ext_exclude: str | None = None):
     """Yield every matching row (full filtered set) for CSV export - not limited to a page."""
     where, params = _search_where(repo, query, deleted_only, min_size, source, ext, max_size,
-                                  date_from, date_to, min_versions, shared_min)
+                                  date_from, date_to, min_versions, shared_min, ext_exclude)
     where_sql = " AND ".join(where)
     cur = read_cursor(repo)
     cur.execute(
@@ -342,7 +353,7 @@ def paths_for_content(repo: str, content_id: str) -> list[dict]:
 def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | None = None,
                     ext: str | None = None, deleted_only: bool = False, min_size: int = 0,
                     min_files: int = 0, sort: str = "physical", direction: str = "desc",
-                    limit: int = 500) -> dict:
+                    limit: int = 500, ext_exclude: str | None = None) -> dict:
     """Bloat finder: roll the (filtered) `paths` up by the first `depth` path segments, summing
     physical + logical + file count per folder, ranked. Find backed-up folders that shouldn't be
     there. Reclaim (freeable) is computed on demand per folder (folder_detail), not here."""
@@ -352,8 +363,15 @@ def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | No
         conds.append("source=?")
         params.append(source)
     if ext:
-        conds.append("ext=?")
-        params.append(ext.lower().lstrip("."))
+        exts = _split_exts(ext)
+        if exts:
+            conds.append("ext IN (%s)" % ",".join("?" * len(exts)))
+            params.extend(exts)
+    if ext_exclude:
+        exx = _split_exts(ext_exclude)
+        if exx:
+            conds.append("(ext IS NULL OR ext NOT IN (%s))" % ",".join("?" * len(exx)))
+            params.extend(exx)
     if deleted_only:
         conds.append("in_latest=false")
     if query:
@@ -424,6 +442,72 @@ def sources_for_content(repo: str, object_ids: list[str]) -> list[str]:
     return sorted(out)
 
 
+def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, min_size: int = 0,
+                   max_size: int = 0, source: str | None = None, ext: str | None = None,
+                   ext_exclude: str | None = None, date_from: str | None = None,
+                   date_to: str | None = None, min_versions: int = 0, shared_min: int = 0,
+                   prefix: str | None = None, all_versions: bool = False, cap: int = 200000) -> dict:
+    """Files matching the CURRENT view/filter (optionally scoped to a folder ``prefix``), ordered
+    by physical size DESC, plus the object-ids to feed ``remove-files`` - biggest files first so a
+    chunked run reclaims the most space soonest. ``all_versions`` expands each path to EVERY
+    version's object; otherwise just the latest content. Used by the chunked folder/filter delete."""
+    where, params = _search_where(repo, query, deleted_only, min_size, source, ext, max_size,
+                                  date_from, date_to, min_versions, shared_min, ext_exclude)
+    if prefix:
+        base = prefix.rstrip(_SEP)
+        where.append("(full_path = ? OR full_path LIKE ?)")
+        params.extend([base, base + _SEP + "%"])
+    where_sql = " AND ".join(where)
+    cur = read_cursor(repo)
+    try:
+        files = _rows(
+            cur,
+            f"SELECT source, full_path, content_id, size, physical FROM paths WHERE {where_sql} "
+            f"ORDER BY physical DESC NULLS LAST, size DESC LIMIT {int(cap)}",
+            [repo, *params],
+        )
+        logical = sum(int(f["size"] or 0) for f in files)
+        physical = sum(int(f["physical"] or 0) for f in files)
+        oids: list[str] = []
+        seen: set[str] = set()
+        if all_versions:
+            # Map (source, full_path) -> all version object-ids, queried per-source in chunks, then
+            # emitted in the files' physical-desc order so the biggest files' objects come first.
+            by_src: dict[str, list[str]] = {}
+            for f in files:
+                by_src.setdefault(f["source"], []).append(f["full_path"])
+            ver: dict[tuple, list[str]] = {}
+            for src, paths in by_src.items():
+                for i in range(0, len(paths), 900):
+                    grp = paths[i:i + 900]
+                    q = ("SELECT full_path, content_id FROM files WHERE repo=? AND source=? "
+                         "AND full_path IN (%s)" % ",".join("?" * len(grp)))
+                    for fp, cid in cur.execute(q, [repo, src, *grp]).fetchall():
+                        if cid:
+                            ver.setdefault((src, fp), []).append(cid)
+            for f in files:
+                for cid in ver.get((f["source"], f["full_path"]), []):
+                    if cid not in seen:
+                        seen.add(cid)
+                        oids.append(cid)
+        else:
+            for f in files:
+                cid = f.get("content_id")
+                if cid and cid not in seen:
+                    seen.add(cid)
+                    oids.append(cid)
+    finally:
+        cur.close()
+    return {
+        "file_count": len(files),
+        "logical": logical,
+        "physical": physical,
+        "object_ids": oids,             # deduped, biggest-files-first
+        "files": files[:200],           # preview (already physical-desc)
+        "sources": sorted({f["source"] for f in files}),
+    }
+
+
 def _source_root_path(source: str) -> str:
     return source.split(":", 1)[1] if ":" in source else source
 
@@ -481,22 +565,44 @@ def tree_children_live(repo: str, source: str, root_obj: str, prefix: str) -> li
     return children
 
 
-def tree_children_paths(repo: str, source: str, prefix: str) -> list[dict]:
+def tree_children_paths(repo: str, source: str, prefix: str, deleted_only: bool = False,
+                        min_size: int = 0, ext: str | None = None,
+                        ext_exclude: str | None = None) -> list[dict]:
     """ALL-snapshots (deduped) tree for a source: aggregate the distinct ``paths`` rows under a
-    prefix - the source's total file set across every snapshot, not a point-in-time view."""
+    prefix - the source's total file set across every snapshot, not a point-in-time view. Optional
+    filters (deleted-from-disk / >= size / ext include+exclude) keep only matching descendants, so
+    folders with no match drop out (e.g. 'folders containing deleted files')."""
     base = prefix.rstrip(_SEP)
     like = base + _SEP + "%" if base else "%"
+    conds = ["repo = ?", "source = ?", "full_path LIKE ?"]
+    params: list = [repo, source, like]
+    if deleted_only:
+        conds.append("in_latest = false")
+    if min_size:
+        conds.append("size >= ?")
+        params.append(int(min_size))
+    if ext:
+        exts = _split_exts(ext)
+        if exts:
+            conds.append("ext IN (%s)" % ",".join("?" * len(exts)))
+            params.extend(exts)
+    if ext_exclude:
+        exx = _split_exts(ext_exclude)
+        if exx:
+            conds.append("(ext IS NULL OR ext NOT IN (%s))" % ",".join("?" * len(exx)))
+            params.extend(exx)
+    where_sql = " AND ".join(conds)
     cur = read_cursor(repo)
     try:
         rows = _rows(
             cur,
-            """
+            f"""
             WITH sub AS (
                 SELECT size, physical, last_seen,
                        CASE WHEN ? = '' THEN full_path
                             ELSE substr(full_path, length(?) + 2) END AS remainder
                 FROM paths
-                WHERE repo = ? AND source = ? AND full_path LIKE ?
+                WHERE {where_sql}
             )
             SELECT split_part(remainder, ?, 1) AS name,
                    sum(size) AS size,
@@ -509,7 +615,7 @@ def tree_children_paths(repo: str, source: str, prefix: str) -> list[dict]:
             GROUP BY name
             ORDER BY size DESC
             """,
-            [base, base, repo, source, like, _SEP, _SEP],
+            [base, base, *params, _SEP, _SEP],
         )
     finally:
         cur.close()

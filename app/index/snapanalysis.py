@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 
-from ..core.cache import cache_db
+from ..core.cache import cache_db, get_children
 from ..core.sizemap import load_sizemap
 from ..core.sources import resolve_source
 from ..core.walk import walk, walk_new
@@ -70,6 +70,55 @@ def reclaimable_files(repo: str, source: str, snapshot_id: str, limit: int = 200
     return files[:limit]
 
 
+def _obj_physical(repo: str, db, obj: str, smap, icache: dict) -> int:
+    """Packed bytes backing one file object (indirect/split objects expanded + cached)."""
+    if not obj:
+        return 0
+    if obj.startswith("I"):
+        p = icache.get(obj)
+        if p is None:
+            p = sum(smap.get(c, 0) for c in _chunks_for_obj(repo, db, obj))
+            icache[obj] = p
+        return p
+    return smap.get(obj, 0)
+
+
+def _subtree_physical(repo: str, db, oid: str, smap, memo: dict, icache: dict) -> int:
+    """Absolute physical of a directory subtree = sum of its files' packed bytes, MEMOIZED per
+    directory object so subtrees shared across snapshots (the dedup norm) are computed once.
+    Additive: intra-snapshot duplicate content is counted per file (a minor over-count) - this is
+    the snapshot's standalone deduped footprint, the basis for its accumulation factor."""
+    if not oid:
+        return 0
+    cached = memo.get(oid)
+    if cached is not None:
+        return cached
+    total = 0
+    for e in get_children(repo, db, [oid]).get(oid, []):
+        t = e.get("type")
+        obj = e.get("obj", "")
+        if t == "d":
+            total += _subtree_physical(repo, db, obj, smap, memo, icache)
+        elif t == "f":
+            total += _obj_physical(repo, db, obj, smap, icache)
+    memo[oid] = total
+    return total
+
+
+def _existing_analysis(repo: str, source: str) -> dict:
+    """Current persisted (physical, reclaimable) per snapshot - lets the light churn pass refresh
+    churn WITHOUT wiping the heavy fields (physical/reclaimable) the slow pass computed."""
+    cur = read_cursor(repo)
+    try:
+        rows = cur.execute(
+            "SELECT snapshot_id, physical, reclaimable FROM snapshot_analysis WHERE repo=? AND source=?",
+            [repo, source],
+        ).fetchall()
+    finally:
+        cur.close()
+    return {sid: (phys, rec) for sid, phys, rec in rows}
+
+
 def _snaphash(snaps: list[dict]) -> str:
     digest = hashlib.md5()
     for snap in snaps:
@@ -86,7 +135,8 @@ def _persist(repo: str, source: str, rows: list[dict], snaphash: str) -> None:
             con.execute(
                 "INSERT OR REPLACE INTO snapshot_analysis(repo, source, snapshot_id, churn, physical, reclaimable, snaphash) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                [repo, source, r["id"], int(r["churn"]), 0, None if rec is None else int(rec), snaphash],
+                [repo, source, r["id"], int(r["churn"]), int(r.get("physical") or 0),
+                 None if rec is None else int(rec), snaphash],
             )
         con.commit()
     finally:
@@ -94,7 +144,10 @@ def _persist(repo: str, source: str, rows: list[dict], snaphash: str) -> None:
 
 
 def compute_source(repo: str, source: str, with_reclaim: bool = True) -> dict:
-    """Walk a source's snapshots and compute per-snapshot churn (+ reclaimable). Persisted."""
+    """Walk a source's snapshots and compute per-snapshot churn. ``with_reclaim`` ALSO computes the
+    heavy fields - absolute per-snapshot physical (memoized subtree walk) + reclaimable; the light
+    (churn-only) pass PRESERVES the previously-computed physical/reclaimable rather than wiping
+    them. Persisted to DuckDB."""
     key, srcs = resolve_source(repo, source=source)
     snaps = sorted(srcs[key], key=lambda s: s.get("startTime", ""))  # oldest -> newest
     db = cache_db(repo)
@@ -113,8 +166,17 @@ def compute_source(repo: str, source: str, with_reclaim: bool = True) -> dict:
         churn[snap["id"]] = sum(smap.get(c, 0) for c in new_here)
         seen_content |= found
 
+    physical: dict[str, int] = {sid: 0 for sid in churn}      # 0 = not yet computed
     reclaim: dict[str, int | None] = {sid: None for sid in churn}  # None = not computed (shows "—")
+
     if with_reclaim:
+        # Heavy pass: absolute per-snapshot physical (memoized across shared subtrees) ...
+        phys_memo: dict[str, int] = {}
+        icache: dict[str, int] = {}
+        for snap in snaps:
+            root = snap.get("rootEntry", {}).get("obj")
+            physical[snap["id"]] = _subtree_physical(repo, db, root, smap, phys_memo, icache) if root else 0
+        # ... + reclaimable (backward pass: chunks ONLY in this snapshot, source-exclusive).
         refs = _refcount_map(repo)  # global per-source refcount: ==1 means only this source has it
         seen_dirs_b: set[str] = set()
         seen_content_b: set[str] = set()
@@ -125,42 +187,62 @@ def compute_source(repo: str, source: str, with_reclaim: bool = True) -> dict:
             exclusive = fwd_new[snap["id"]] & new_bwd  # only in this snapshot (no older, no newer)
             reclaim[snap["id"]] = sum(smap.get(c, 0) for c in exclusive if refs.get(c, 0) <= 1)
             seen_content_b |= found
+    else:
+        # Light pass: keep the existing heavy fields; brand-new snapshots get 0/None so
+        # phys_complete/recl_complete flip false -> the slow pass refills just those.
+        existing = _existing_analysis(repo, key)
+        for sid in churn:
+            phys, rec = existing.get(sid, (0, None))
+            physical[sid] = int(phys or 0)
+            reclaim[sid] = None if rec is None else int(rec)
 
-    rows = [{"id": sid, "churn": churn[sid], "reclaimable": reclaim[sid]} for sid in churn]
+    rows = [{"id": sid, "churn": churn[sid], "physical": physical[sid], "reclaimable": reclaim[sid]}
+            for sid in churn]
     snaphash = _snaphash(snaps)
     _persist(repo, key, rows, snaphash)
     return {"source": key, "rows": rows, "snaphash": snaphash, "with_reclaim": with_reclaim}
 
 
 def read_analysis(repo: str, source: str, compute_if_stale: bool = False, with_reclaim: bool = True) -> dict:
-    """Return persisted per-snapshot churn/reclaimable; (re)compute if missing/stale when asked."""
+    """Return persisted per-snapshot churn/physical/reclaimable; (re)compute if missing/stale.
+    ``recl_complete`` / ``phys_complete`` tell the background pre-warm whether the heavy fields are
+    populated for EVERY snapshot (separate from churn-freshness, so a churn-only refresh that
+    leaves a new snapshot's reclaimable empty still triggers the heavy recompute)."""
     key, srcs = resolve_source(repo, source=source)
     want = _snaphash(srcs[key])
     cur = read_cursor(repo)
     try:
         rows = cur.execute(
-            "SELECT snapshot_id, churn, reclaimable, snaphash FROM snapshot_analysis WHERE repo=? AND source=?",
+            "SELECT snapshot_id, churn, physical, reclaimable, snaphash FROM snapshot_analysis WHERE repo=? AND source=?",
             [repo, key],
         ).fetchall()
     finally:
         cur.close()
-    fresh = bool(rows) and all(r[3] == want for r in rows)
+    fresh = bool(rows) and all(r[4] == want for r in rows)
     if compute_if_stale and not fresh:
-        rows = [(r["id"], r["churn"], r["reclaimable"], want)
+        rows = [(r["id"], r["churn"], r["physical"], r["reclaimable"], want)
                 for r in compute_source(repo, key, with_reclaim=with_reclaim)["rows"]]
         fresh = True
+    recl_complete = bool(rows) and all(r[3] is not None for r in rows)
+    phys_complete = bool(rows) and all(r[2] for r in rows)
     return {
-        "source": key, "fresh": fresh,
-        "by_id": {r[0]: {"churn": r[1], "reclaimable": r[2]} for r in rows},  # None preserved -> "—"
+        "source": key, "fresh": fresh, "recl_complete": recl_complete, "phys_complete": phys_complete,
+        # None preserved -> "—"
+        "by_id": {r[0]: {"churn": r[1], "physical": r[2], "reclaimable": r[3]} for r in rows},
     }
 
 
 def prewarm(repo: str, with_reclaim: bool = False) -> None:
-    """Background: ensure every source has churn computed + persisted (cheap when unchanged)."""
+    """Background: keep per-snapshot analysis warm. churn-only (``with_reclaim=False``) recomputes
+    only when the snapshot set changed; the heavy pass (``with_reclaim=True``) ALSO recomputes when
+    physical/reclaimable are missing for any snapshot - so the slow pass actually refills the heavy
+    fields instead of being skipped because churn looks fresh (the old reclaimable-blank bug)."""
     from ..core.sources import sources_index
     for key in sorted(sources_index(repo)):
         try:
-            if not read_analysis(repo, key)["fresh"]:
+            info = read_analysis(repo, key)
+            need = (not info["fresh"]) or (with_reclaim and not (info["recl_complete"] and info["phys_complete"]))
+            if need:
                 compute_source(repo, key, with_reclaim=with_reclaim)
         except Exception:
             continue

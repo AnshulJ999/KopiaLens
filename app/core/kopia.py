@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from typing import Iterable
 
-from config import REPOS
+from config import DATA_DIR, REPOS
 
 from .applog import get_logger
 
@@ -247,6 +247,114 @@ def remove_files_execute(repo: str, object_ids: list[str] | None = None, filenam
     )
     log.warning("remove-files repo=%s rc=%d stderr=%s", repo, res.returncode, (res.stderr or "").strip()[:300])
     return {"returncode": res.returncode, "stdout": res.stdout, "stderr": res.stderr, "command": full}
+
+
+def _quote_arg(a: str) -> str:
+    """Quote an arg for a pasteable / .bat command line (paths with spaces would otherwise split)."""
+    return f'"{a}"' if (not a or " " in a) else a
+
+
+def _source_args(source: str | list[str] | None) -> list[str]:
+    return [x for s in (source if isinstance(source, list) else ([source] if source else []))
+            for x in ("--source", s)]
+
+
+def remove_files_chunked_commands(repo: str, object_ids: list[str], source: str | list[str] | None = None,
+                                  commit: bool = False, max_chars: int = 8000) -> list[list[str]]:
+    """Split object-ids across MULTIPLE remove-files commands so each command line stays under a
+    safe limit (default 8000 - works in a .bat / cmd.exe line too, not just CreateProcess's 32k).
+    Biggest-files-first order is preserved (caller pre-sorts). Each command is --source-scoped (a
+    list is fine: object-ids are content-exact, so listing only the holding sources avoids the slow
+    whole-repo scan). ``source=None`` = the explicit whole-repo sweep."""
+    base = ["kopia"] + REPOS[repo]["args"] + ["snapshot", "fix", "remove-files"]
+    src_args = _source_args(source)
+    tail = ["--commit"] if commit else []
+    fixed_len = sum(len(_quote_arg(a)) + 1 for a in base + src_args + tail) + 16  # safety margin
+    budget = max(2000, max_chars - fixed_len)
+    cmds: list[list[str]] = []
+    cur: list[str] = []
+    cur_len = 0
+    for oid in object_ids:
+        add = len("--object-id") + 1 + len(_quote_arg(oid)) + 1
+        if cur and cur_len + add > budget:
+            cmds.append(base + [x for o in cur for x in ("--object-id", o)] + src_args + tail)
+            cur, cur_len = [], 0
+        cur.append(oid)
+        cur_len += add
+    if cur:
+        cmds.append(base + [x for o in cur for x in ("--object-id", o)] + src_args + tail)
+    return cmds
+
+
+def remove_log_path(name: str) -> str:
+    d = os.path.join(DATA_DIR, "logs")
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, name)
+
+
+def remove_files_save_bat(commands: list[list[str]], bat_path: str, log_path: str) -> str:
+    """Write the chunked commands to a .bat the user can run + watch. Each batch appends kopia's
+    own output to ``log_path`` so the run is fully inspectable."""
+    n = len(commands)
+    lines = [
+        "@echo off", "setlocal", f'set "LOG={log_path}"',
+        'echo KopiaLens chunked remove-files - %DATE% %TIME%> "%LOG%"',
+        f'echo {n} batch(es). kopia output appends to "%LOG%".',
+        'echo Aborting (Ctrl+C) between batches is safe - rewrites are per-snapshot atomic.',
+        "echo.",
+    ]
+    for i, cmd in enumerate(commands, 1):
+        s = " ".join(_quote_arg(a) for a in cmd)
+        lines.append(f'echo [batch {i}/{n}] %TIME%')
+        lines.append(f'echo === batch {i}/{n} ===>> "%LOG%"')
+        lines.append(f'{s}>> "%LOG%" 2>&1')
+    lines += ["echo.", 'echo Done. Now run:  kopia maintenance run --full   to reclaim the space.',
+              'echo Done.>> "%LOG%"', "pause"]
+    with open(bat_path, "w", encoding="utf-8", newline="\r\n") as f:
+        f.write("\n".join(lines))
+    return bat_path
+
+
+_REMOVE_JOBS: dict[str, dict] = {}
+
+
+def remove_files_chunked_execute(repo: str, object_ids: list[str], source: str | list[str] | None,
+                                 job_id: str, log_path: str) -> dict:
+    """Run the chunked remove-files commands sequentially (--commit), appending kopia output to
+    ``log_path`` and updating ``_REMOVE_JOBS[job_id]`` for progress polling. Mutating + logged.
+    Space frees only after a later ``maintenance run --full``."""
+    cmds = remove_files_chunked_commands(repo, object_ids, source, commit=True, max_chars=32000)
+    job = _REMOVE_JOBS.setdefault(job_id, {})
+    job.update({"total": len(cmds), "done": 0, "running": True, "errors": 0,
+                "log": log_path, "objects": len(object_ids), "rc": 0})
+    log.warning("EXECUTING chunked remove-files repo=%s objects=%d batches=%d source=%r",
+                repo, len(object_ids), len(cmds), source)
+    try:
+        with open(log_path, "a", encoding="utf-8", errors="replace") as lf:
+            lf.write(f"=== chunked remove-files repo={repo} objects={len(object_ids)} batches={len(cmds)} ===\n")
+            lf.flush()
+            for i, cmd in enumerate(cmds, 1):
+                lf.write(f"\n--- batch {i}/{len(cmds)} ---\n"); lf.flush()
+                res = subprocess.run(
+                    cmd + ["--no-progress"], capture_output=True, text=True,
+                    encoding="utf-8", errors="replace",
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                lf.write(res.stdout or "")
+                if res.stderr:
+                    lf.write("\n[stderr]\n" + res.stderr)
+                lf.flush()
+                job["done"] = i
+                if res.returncode != 0:
+                    job["errors"] += 1
+                    job["rc"] = res.returncode
+            lf.write("\n=== done. Run: kopia maintenance run --full to reclaim. ===\n")
+    except Exception as exc:  # noqa: BLE001
+        job["error"] = str(exc)
+        log.error("chunked remove-files repo=%s failed: %s", repo, exc)
+    finally:
+        job["running"] = False
+    return job
 
 
 def snapshot_pin_command(repo: str, ids: list[str], remove: bool = False,

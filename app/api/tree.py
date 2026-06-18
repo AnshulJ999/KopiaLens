@@ -17,6 +17,32 @@ def _root_obj(repo: str, source: str, snapshot_id: str) -> str | None:
     return None
 
 
+def _post_filter(children: list[dict], over_gb: bool, ext: str | None, ext_exclude: str | None) -> list[dict]:
+    """File-level filters for the point-in-time tree modes (full/changed/reclaimable) where there
+    is no SQL pass. Folders always pass through (so you can still navigate); only FILE rows are
+    filtered by >=1 GB / extension include / extension exclude."""
+    if not over_gb and not ext and not ext_exclude:
+        return children
+    inc = {e.lower().lstrip(".") for e in (ext or "").split(",") if e.strip()}
+    exc = {e.lower().lstrip(".") for e in (ext_exclude or "").split(",") if e.strip()}
+    out = []
+    for c in children:
+        if c.get("type") == "folder":
+            out.append(c)
+            continue
+        name = (c.get("name") or "")
+        dot = name.rfind(".")
+        e = name[dot + 1:].lower() if dot > 0 else ""
+        if over_gb and (c.get("size") or 0) < 1_000_000_000:
+            continue
+        if inc and e not in inc:
+            continue
+        if exc and e in exc:
+            continue
+        out.append(c)
+    return out
+
+
 def _dedupe_children(children: list[dict]) -> list[dict]:
     """Collapse file children sharing the same content (content_id) into one - content-aware view.
     Folders and content-less rows pass through unchanged."""
@@ -39,15 +65,23 @@ def tree(
     prefix: str = "",
     mode: str = "full",
     dedupe: bool = False,
+    deleted_only: bool = False,
+    over_gb: bool = False,
+    ext: str | None = None,
+    ext_exclude: str | None = None,
 ) -> dict:
     """mode=full (complete point-in-time tree, default) | changed (only what changed) |
     reclaimable (files freed if this snapshot is deleted) | all (every snapshot, source-wide).
-    ``dedupe`` collapses same-content files into one row (content-aware)."""
+    ``dedupe`` collapses same-content files into one row (content-aware). Filters: deleted_only
+    (all mode only) / over_gb / ext / ext_exclude."""
     if not source:
         raise HTTPException(status_code=400, detail="source is required")
     try:
         if mode == "all":
-            children = tree_children_paths(repo, source, prefix)
+            children = tree_children_paths(
+                repo, source, prefix, deleted_only=deleted_only,
+                min_size=1_000_000_000 if over_gb else 0, ext=ext, ext_exclude=ext_exclude,
+            )
         elif mode == "reclaimable":
             if not snapshot_id:
                 raise HTTPException(status_code=400, detail="snapshot_id is required")
@@ -66,6 +100,8 @@ def tree(
                 if not root:
                     raise HTTPException(status_code=404, detail="snapshot root not found")
                 children = tree_children_live(repo, source, root, prefix)
+        if mode != "all":  # 'all' filtered in SQL; the point-in-time modes filter in Python
+            children = _post_filter(children, over_gb, ext, ext_exclude)
         if dedupe:
             children = _dedupe_children(children)
         return {"children": children, "mode": mode}

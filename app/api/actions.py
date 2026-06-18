@@ -6,17 +6,26 @@ it is repo-read-only, but it is explicit and returns the spawned process id.
 
 from __future__ import annotations
 
+import threading
+import time
+import uuid
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..core.kopia import (
+    _REMOVE_JOBS,
     list_mounts,
     mount_and_browse,
     mount_snapshot,
     next_free_drive,
     pick_folder,
+    remove_files_chunked_commands,
+    remove_files_chunked_execute,
     remove_files_command,
     remove_files_execute,
+    remove_files_save_bat,
+    remove_log_path,
     restore_command,
     restore_command_full,
     restore_execute,
@@ -27,7 +36,7 @@ from ..core.kopia import (
 from ..core.sources import invalidate as invalidate_sources, sources_index
 from ..index.builder import start_build
 from ..index.physical import batch_detail, folder_detail
-from ..index.queries import snapshots_for_path, sources_for_content, versions as file_versions
+from ..index.queries import remove_targets, snapshots_for_path, sources_for_content, versions as file_versions
 
 router = APIRouter(tags=["actions"])
 
@@ -225,6 +234,116 @@ def remove_files(payload: RemoveFilesRequest) -> dict:
         raise HTTPException(status_code=500, detail=r["stderr"].strip() or "remove-files failed")
     _post_remove(payload.repo)
     return {"executed": True}
+
+
+class RemovePlanRequest(BaseModel):
+    """Chunked folder/filter delete: removes the files matching the CURRENT view/filter (optionally
+    scoped to a folder ``prefix``), biggest-files-first, via chunked remove-files."""
+    repo: str = "1"
+    query: str = ""
+    source: str | None = None
+    ext: str | None = None
+    ext_exclude: str | None = None
+    deleted_only: bool = False
+    over_gb: float = 0
+    min_gb: float = 0
+    max_gb: float = 0
+    min_versions: int = 0
+    shared_min: int = 0
+    date_from: str | None = None
+    date_to: str | None = None
+    prefix: str | None = None       # folder scope (Tree/Bloat); None = the whole filter
+    all_versions: bool = False      # B2: every version's object vs latest only
+    everywhere: bool = False        # B1: drop --source (whole-repo sweep) vs scope to holding sources
+    cap: int = 200000
+
+
+def _remove_targets(p: RemovePlanRequest) -> dict:
+    min_size = int((p.min_gb or p.over_gb or 0) * 1_000_000_000)
+    return remove_targets(
+        p.repo, query=p.query, deleted_only=p.deleted_only, min_size=min_size,
+        max_size=int((p.max_gb or 0) * 1_000_000_000), source=p.source or None, ext=p.ext or None,
+        ext_exclude=p.ext_exclude or None, date_from=p.date_from or None, date_to=p.date_to or None,
+        min_versions=p.min_versions, shared_min=p.shared_min, prefix=p.prefix or None,
+        all_versions=p.all_versions, cap=p.cap,
+    )
+
+
+def _remove_scope(repo: str, oids: list[str], everywhere: bool, matched_sources: list[str]):
+    if everywhere:
+        return None  # explicit whole-repo sweep
+    return sources_for_content(repo, oids) or sorted(set(matched_sources))
+
+
+@router.post("/actions/remove-plan")
+def remove_plan(payload: RemovePlanRequest) -> dict:
+    """Preview the chunked delete for the matched set: counts, scope sources, batch count, the
+    biggest-file preview, and the full dry-run + commit command text (copy-pasteable). Nothing runs."""
+    t = _remove_targets(payload)
+    oids = t["object_ids"]
+    if not oids:
+        return {"file_count": 0, "object_count": 0, "batches": 0, "commit": "", "dry_run": "",
+                "preview": [], "sources_scope": [], "everywhere": False, "logical": 0, "physical": 0,
+                "all_versions": payload.all_versions, "sources_matched": []}
+    scope = _remove_scope(payload.repo, oids, payload.everywhere, t["sources"])
+    commit_cmds = remove_files_chunked_commands(payload.repo, oids, source=scope, commit=True, max_chars=32000)
+    dry_cmds = remove_files_chunked_commands(payload.repo, oids, source=scope, commit=False, max_chars=32000)
+    return {
+        "file_count": t["file_count"], "object_count": len(oids),
+        "logical": t["logical"], "physical": t["physical"],
+        "sources_scope": scope or [], "everywhere": scope is None,
+        "sources_matched": t["sources"], "batches": len(commit_cmds),
+        "preview": t["files"], "all_versions": payload.all_versions,
+        "commit": "\n".join(_fmt_cmd(c) for c in commit_cmds),
+        "dry_run": "\n".join(_fmt_cmd(c) for c in dry_cmds),
+    }
+
+
+@router.post("/actions/remove-bat")
+def remove_bat(payload: RemovePlanRequest) -> dict:
+    """Write the chunked commit commands to a timestamped .bat (each batch logs kopia's output to a
+    .log next to it) so the user can run + monitor it themselves. Returns the file paths."""
+    t = _remove_targets(payload)
+    oids = t["object_ids"]
+    if not oids:
+        raise HTTPException(status_code=404, detail="no matching files")
+    scope = _remove_scope(payload.repo, oids, payload.everywhere, t["sources"])
+    cmds = remove_files_chunked_commands(payload.repo, oids, source=scope, commit=True, max_chars=8000)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    log_path = remove_log_path(f"remove_repo{payload.repo}_{ts}.log")
+    bat_path = remove_log_path(f"remove_repo{payload.repo}_{ts}.bat")
+    remove_files_save_bat(cmds, bat_path, log_path)
+    return {"bat": bat_path, "log": log_path, "batches": len(cmds), "objects": len(oids)}
+
+
+@router.post("/actions/remove-execute")
+def remove_execute(payload: RemovePlanRequest) -> dict:
+    """Run the chunked delete in the background (sequential --commit batches). Returns a job_id;
+    poll /actions/remove-status. kopia output is appended to the returned log path."""
+    t = _remove_targets(payload)
+    oids = t["object_ids"]
+    if not oids:
+        raise HTTPException(status_code=404, detail="no matching files")
+    scope = _remove_scope(payload.repo, oids, payload.everywhere, t["sources"])
+    job_id = uuid.uuid4().hex[:12]
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    log_path = remove_log_path(f"remove_repo{payload.repo}_{ts}.log")
+    _REMOVE_JOBS[job_id] = {"total": 0, "done": 0, "running": True, "errors": 0,
+                            "objects": len(oids), "log": log_path}
+
+    def run() -> None:
+        try:
+            remove_files_chunked_execute(payload.repo, oids, scope, job_id, log_path)
+        finally:
+            _post_remove(payload.repo)  # snapshots rewritten -> reindex so the UI reflects reality
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"job_id": job_id, "objects": len(oids), "log": log_path}
+
+
+@router.get("/actions/remove-status")
+def remove_status(job_id: str) -> dict:
+    return _REMOVE_JOBS.get(job_id, {"running": False, "total": 0, "done": 0, "unknown": True})
 
 
 @router.post("/actions/restore")

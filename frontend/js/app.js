@@ -120,7 +120,8 @@ document.addEventListener("alpine:init", () => {
     showChurn: localStorage.getItem("kl-churn") === "1",
     analyzing: false,
     treeMode: "full",
-    query: "", deletedOnly: false, overOneGb: false, searchSource: "", searchExt: "", omniMeta: "",
+    treeDeletedOnly: false, treeOverGb: false, treeExt: "",
+    query: "", deletedOnly: false, overOneGb: false, searchSource: "", searchExt: "", searchExtExclude: "", omniMeta: "",
     groupByFolder: false, groupDepth: 3, groupMinGb: 0, groupMinFiles: 0,
     searchTotal: 0, searchPage: 1, searchPageSize: "500", searchSort: "size", searchDir: "desc",
     pageSizes: ["100", "200", "500", "1000", "2000", "5000", "10000", "Infinite"],
@@ -134,6 +135,7 @@ document.addEventListener("alpine:init", () => {
     statsData: null, blobStats: "", blobLoading: false, _statsLoading: false,
     mountSnapshot: "", mountPoint: "", restoreSource: "", restoreDest: "",
     dashboardMeta: "", busy: "", error: "", detail: null, batch: null, showBatch: false, snapSource: "*ALL*", _poll: null, _searchSeq: 0, _detailSeq: 0,
+    showRemove: false, removePlan: null, removeJobPoll: null, _removeBase: null,
     excludedDrives: [], excludedOk: true, excludedPath: "", excludedFilter: "excluded", excludedMeta: "", _excludedItems: [], _excludedSeq: 0, excludedDetail: null, showExcludedDetail: false,
     showSettings: false, backend: "subprocess", repoPinned: false, reindexInterval: 1800, dashRefresh: 900,
     reclaimInterval: 10800, excludedTolerance: 0.05, esPath: "",
@@ -357,6 +359,8 @@ document.addEventListener("alpine:init", () => {
           ...(allSrc ? [{ title: "Source", field: "source", widthGrow: 2, minWidth: 200, formatter: (c) => sourcePath(c.getValue()) }] : []),
           { title: "Start", field: "start_time", width: 185, formatter: (c) => timeCell(c.getValue()) },
           { title: "Logical", field: "logical", width: 100, sorter: "number", formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
+          { title: "Physical", field: "physical", width: 100, sorter: "number", formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },
+          { title: "Accum", field: "accum", width: 72, sorter: "number", formatter: (c) => { const v = c.getValue(); return (v == null) ? "—" : `${Number(v).toFixed(2)}x`; }, hozAlign: "right" },
           { title: "Churn (new)", field: "churn", width: 105, sorter: "number", formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },
           { title: "Reclaimable", field: "reclaimable", width: 110, sorter: "number", formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },
           { title: "Files", field: "files", width: 90, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
@@ -494,7 +498,9 @@ document.addEventListener("alpine:init", () => {
       await this.wrap(async () => {
         const url = `/api/tree?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.selectedSource)}`
           + `&snapshot_id=${encodeURIComponent(this.selectedSnapshot)}&prefix=${encodeURIComponent(this.treePrefix)}&mode=${this.treeMode}`
-          + `&dedupe=${this.treeDedupe ? 1 : 0}`;
+          + `&dedupe=${this.treeDedupe ? 1 : 0}`
+          + `&deleted_only=${this.treeDeletedOnly ? 1 : 0}&over_gb=${this.treeOverGb ? 1 : 0}`
+          + (this.treeExt ? `&ext=${encodeURIComponent(this.treeExt)}` : "");
         const data = await getJson(url);
         const children = data.children || [];
         if (!children.length && !(this.indexStatus.indexed_snapshots > 0)) this.error = "Snapshot not indexed yet - click Index (top right).";
@@ -519,11 +525,13 @@ document.addEventListener("alpine:init", () => {
             { label: "Restore…", action: (_e, row) => { const d = row.getData(); this.openRestore(d.content_id || d.path, d.name); } },
             { label: "Mount + open in Explorer", action: (_e, row) => this.mountOpen(this.selectedSnapshot, this.selectedSource, row.getData().path) },
             { label: "Find in search", action: (_e, row) => { this.query = row.getData().name; this.searchSource = ""; this.active = "search"; this.loadSearch(); } },
+            { label: "Delete (chunked, respects filters)…", action: (_e, row) => this.openRemoveFolder(row.getData()) },
             { label: "Copy path", action: (_e, row) => this.copyText(row.getData().path) },
           ],
         });
       }, "Loading tree...");
     },
+    treeFilterChanged() { this.loadTree(); },
 
     openRowDetail(d) {
       if (d.type === "folder") {
@@ -538,6 +546,7 @@ document.addEventListener("alpine:init", () => {
       const p = new URLSearchParams({ repo: this.repo, q: this.query, deleted_only: this.deletedOnly, over_gb: this.overOneGb ? 1 : 0, sort: this.searchSort, dir: this.searchDir });
       if (this.searchSource) p.set("source", this.searchSource);
       if (this.searchExt) p.set("ext", this.searchExt);
+      if (this.searchExtExclude) p.set("ext_exclude", this.searchExtExclude);
       if (this.minGb !== "" && this.minGb != null) p.set("min_gb", this.minGb);
       if (this.maxGb !== "" && this.maxGb != null) p.set("max_gb", this.maxGb);
       if (this.dateFrom) p.set("date_from", this.dateFrom);
@@ -556,7 +565,7 @@ document.addEventListener("alpine:init", () => {
     },
     clearFilters() {
       this.minGb = ""; this.maxGb = ""; this.dateFrom = ""; this.dateTo = ""; this.minVersions = ""; this.sharedMin = "";
-      this.searchExt = ""; this.searchSource = ""; this.deletedOnly = false; this.overOneGb = false;
+      this.searchExt = ""; this.searchExtExclude = ""; this.searchSource = ""; this.deletedOnly = false; this.overOneGb = false;
       this.loadSearch();
     },
 
@@ -568,6 +577,7 @@ document.addEventListener("alpine:init", () => {
         const p = new URLSearchParams({ repo: this.repo, depth: this.groupDepth, q: this.query || "", sort: "physical", direction: "desc", limit: 500 });
         if (this.searchSource) p.set("source", this.searchSource);
         if (this.searchExt) p.set("ext", this.searchExt);
+        if (this.searchExtExclude) p.set("ext_exclude", this.searchExtExclude);
         if (this.deletedOnly) p.set("deleted_only", "1");
         if (this.groupMinGb) p.set("min_gb", this.groupMinGb);
         if (this.groupMinFiles) p.set("min_files", this.groupMinFiles);
@@ -648,6 +658,7 @@ document.addEventListener("alpine:init", () => {
               { label: "Restore…", action: (_e, row) => { const d = row.getData(); this.openRestore(d.content_id || d.full_path, d.name || d.full_path); } },
               { label: "Jump to it in tree", action: (_e, row) => this.jumpToTree(row.getData()) },
               { label: "Browse this source", action: (_e, row) => { this.selectedSource = row.getData().source; this.snapSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); } },
+              { label: "Delete ALL matching this filter (chunked)…", action: () => this.openRemoveFromSearch() },
               { label: "Copy full path", action: (_e, row) => this.copyText(row.getData().full_path) },
             ],
           });
@@ -875,6 +886,71 @@ document.addEventListener("alpine:init", () => {
         this.loadSearch(true);
       }, "Removing files…");
     },
+
+    // ---- Chunked folder/filter delete (remove-files, respects the current view/filter) ----
+    openRemoveFromSearch() {  // delete EVERY file matching the current Search filter (not just selected)
+      this._removeBase = {
+        repo: this.repo, query: this.query, source: this.searchSource || null,
+        ext: this.searchExt || null, ext_exclude: this.searchExtExclude || null,
+        deleted_only: this.deletedOnly, over_gb: this.overOneGb ? 1 : 0,
+        min_gb: this.minGb ? Number(this.minGb) : 0, max_gb: this.maxGb ? Number(this.maxGb) : 0,
+        min_versions: this.minVersions ? Number(this.minVersions) : 0,
+        shared_min: this.sharedMin ? Number(this.sharedMin) : 0,
+        date_from: this.dateFrom || null, date_to: this.dateTo || null, prefix: null,
+      };
+      this._removeLabel = "current Search filter" + (this.query ? ` · “${this.query}”` : "");
+      this.buildRemovePlan();
+    },
+    openRemoveFolder(row) {  // delete a Tree folder/file, honoring the active Tree filters
+      this._removeBase = {
+        repo: this.repo, source: this.selectedSource, prefix: row.path,
+        deleted_only: this.treeDeletedOnly, over_gb: this.treeOverGb ? 1 : 0, ext: this.treeExt || null,
+      };
+      this._removeLabel = (row.type === "folder" ? "folder " : "") + (row.path || row.name);
+      this.buildRemovePlan();
+    },
+    buildRemovePlan() {
+      this.removePlan = { loading: true, label: this._removeLabel, all_versions: false, everywhere: false, job: null, batSaved: null };
+      this.showRemove = true;
+      this._fetchRemovePlan();
+    },
+    async _fetchRemovePlan() {
+      if (!this.removePlan) return;
+      this.removePlan.loading = true;
+      const body = { ...this._removeBase, all_versions: this.removePlan.all_versions, everywhere: this.removePlan.everywhere };
+      const r = await getJson("/api/actions/remove-plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch((e) => { this.error = e.message; return null; });
+      if (this.removePlan) { if (r) Object.assign(this.removePlan, r); this.removePlan.loading = false; }
+    },
+    toggleRemoveAllVersions() { if (this.removePlan && !this.removePlan.job) { this.removePlan.all_versions = !this.removePlan.all_versions; this._fetchRemovePlan(); } },
+    toggleRemoveEverywhere() { if (this.removePlan && !this.removePlan.job) { this.removePlan.everywhere = !this.removePlan.everywhere; this._fetchRemovePlan(); } },
+    _removeBody() { return { ...this._removeBase, all_versions: this.removePlan.all_versions, everywhere: this.removePlan.everywhere }; },
+    async removeSaveBat() {
+      const r = await getJson("/api/actions/remove-bat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
+      if (r && this.removePlan) { this.removePlan.batSaved = r; this.actionText = `Saved .bat (${r.batches} batches):\n${r.bat}\nkopia output will append to:\n${r.log}`; }
+    },
+    async removeRun() {
+      if (!this.removePlan) return;
+      const msg = `Run the chunked delete NOW?\n${this.removePlan.object_count} content objects · ${this.removePlan.batches} batch(es)` +
+        (this.removePlan.everywhere ? "\n\n⚠ EVERYWHERE: not source-scoped (whole-repo sweep)." : "") +
+        "\n\nType DELETE to confirm:";
+      if ((window.prompt(msg) || "").trim().toUpperCase() !== "DELETE") return;
+      const r = await getJson("/api/actions/remove-execute", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
+      if (!r || !this.removePlan) return;
+      this.removePlan.job = { job_id: r.job_id, total: this.removePlan.batches, done: 0, running: true, errors: 0, log: r.log };
+      this._pollRemove(r.job_id);
+    },
+    _pollRemove(jobId) {
+      if (this.removeJobPoll) clearInterval(this.removeJobPoll);
+      this.removeJobPoll = setInterval(async () => {
+        const s = await getJson(`/api/actions/remove-status?job_id=${encodeURIComponent(jobId)}`).catch(() => null);
+        if (s && this.removePlan) this.removePlan.job = { ...this.removePlan.job, ...s };
+        if (s && !s.running) {
+          clearInterval(this.removeJobPoll); this.removeJobPoll = null;
+          this.actionText = `Remove finished: ${s.done}/${s.total} batches, ${s.errors || 0} error(s).\nRun 'kopia maintenance run --full' to reclaim the space.\nLog: ${s.log}`;
+        }
+      }, 1500);
+    },
+    closeRemove() { if (this.removeJobPoll) { clearInterval(this.removeJobPoll); this.removeJobPoll = null; } this.showRemove = false; this.removePlan = null; },
 
     // ---- Excluded browser (local-disk coverage gaps vs both repos; es.exe disk side) ----
     async loadExcluded() {

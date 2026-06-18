@@ -39,12 +39,16 @@ _ANALYZING_ALL: set[str] = set()  # repo-level "analyze everything" in progress
 def _snap_row(key: str, snap: dict, a: dict) -> dict:
     stats = snap.get("stats", {})
     summ = snap.get("rootEntry", {}).get("summ", {})
+    logical = stats.get("totalSize", 0)
+    phys = a.get("physical")  # absolute deduped footprint of this snapshot (heavy pass; 0/None = "—")
     return {
         "id": snap["id"], "source": key,
         "start_time": snap.get("startTime", ""), "end_time": snap.get("endTime", ""),
-        "logical": stats.get("totalSize", 0), "files": summ.get("files", 0), "dirs": summ.get("dirs", 0),
+        "logical": logical, "files": summ.get("files", 0), "dirs": summ.get("dirs", 0),
         "pins": snap.get("pins"), "retention": snap.get("retention", []),
         "root": snap.get("rootEntry", {}).get("obj"),
+        "physical": phys or None,
+        "accum": (round(logical / phys, 2) if phys else None),  # logical / physical = dedup gain
         "churn": a.get("churn"), "reclaimable": a.get("reclaimable"),
     }
 
@@ -69,27 +73,7 @@ def snapshots(repo: str = "1", source: str | None = None, source_index: int | No
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     analysis = read_analysis(repo, key).get("by_id", {})
-    rows = []
-    for snap in srcs[key]:
-        stats = snap.get("stats", {})
-        summ = snap.get("rootEntry", {}).get("summ", {})
-        a = analysis.get(snap["id"], {})
-        rows.append(
-            {
-                "id": snap["id"],
-                "source": key,
-                "start_time": snap.get("startTime", ""),
-                "end_time": snap.get("endTime", ""),
-                "logical": stats.get("totalSize", 0),
-                "files": summ.get("files", 0),
-                "dirs": summ.get("dirs", 0),
-                "pins": snap.get("pins"),
-                "retention": snap.get("retention", []),
-                "root": snap.get("rootEntry", {}).get("obj"),
-                "churn": a.get("churn"),          # None -> "—" (not yet analyzed)
-                "reclaimable": a.get("reclaimable"),
-            }
-        )
+    rows = [_snap_row(key, snap, analysis.get(snap["id"], {})) for snap in srcs[key]]
     return {"source": key, "snapshots": rows, "analyzed": bool(analysis), "analyzing": f"{repo}|{key}" in _ANALYZING}
 
 

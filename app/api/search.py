@@ -19,15 +19,15 @@ router = APIRouter(tags=["search"])
 @router.get("/search/group-by-folder")
 def search_group_by_folder(
     repo: str = "1", depth: int = 3, q: str = "", source: str | None = None, ext: str | None = None,
-    deleted_only: bool = False, min_gb: float = 0, min_files: int = 0,
+    ext_exclude: str | None = None, deleted_only: bool = False, min_gb: float = 0, min_files: int = 0,
     sort: str = "physical", direction: str = "desc", limit: int = 500,
 ) -> dict:
     """Bloat finder: backed-up folders rolled up to `depth` segments, ranked by physical."""
     try:
         return group_by_folder(
-            repo, depth=depth, query=q, source=source, ext=ext, deleted_only=deleted_only,
-            min_size=int(min_gb * 1_000_000_000), min_files=min_files, sort=sort,
-            direction=direction, limit=limit,
+            repo, depth=depth, query=q, source=source, ext=ext, ext_exclude=ext_exclude,
+            deleted_only=deleted_only, min_size=int(min_gb * 1_000_000_000), min_files=min_files,
+            sort=sort, direction=direction, limit=limit,
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -59,6 +59,7 @@ def search(
     over_gb: float = 0,
     source: str | None = None,
     ext: str | None = None,
+    ext_exclude: str | None = None,
     sort: str = "size",
     dir: str = "desc",
     limit: int = 500,
@@ -76,8 +77,8 @@ def search(
     # The default landing view (no query/filters, size-desc, first page) is served from a cached,
     # background-revalidated result so opening the Search tab is instant.
     is_landing = (not q and not deleted_only and not largest and not over_gb and not source and not ext
-                  and not min_gb and not max_gb and not date_from and not date_to and not min_versions
-                  and not shared_min and not dedupe and not confirm_exists and offset == 0
+                  and not ext_exclude and not min_gb and not max_gb and not date_from and not date_to
+                  and not min_versions and not shared_min and not dedupe and not confirm_exists and offset == 0
                   and sort == "size" and dir == "desc")
     try:
         if is_landing:
@@ -85,8 +86,8 @@ def search(
         else:
             res = search_paths(
                 repo, query=q, deleted_only=deleted_only, min_size=min_size,
-                source=source or None, ext=ext or None, sort=sort, direction=dir,
-                limit=limit, offset=offset, confirm_exists=confirm_exists,
+                source=source or None, ext=ext or None, ext_exclude=ext_exclude or None,
+                sort=sort, direction=dir, limit=limit, offset=offset, confirm_exists=confirm_exists,
                 max_size=max_size, date_from=date_from or None, date_to=date_to or None,
                 min_versions=min_versions, shared_min=shared_min, dedupe=dedupe,
             )
@@ -109,13 +110,14 @@ def search_reclaim(payload: ReclaimRequest) -> dict:
 def export(
     repo: str = "1", q: str = "", deleted_only: bool = False, largest: bool = False,
     over_gb: float = 0, source: str | None = None, ext: str | None = None,
-    sort: str = "size", dir: str = "desc",
+    ext_exclude: str | None = None, sort: str = "size", dir: str = "desc",
     min_gb: float = 0, max_gb: float = 0, date_from: str | None = None, date_to: str | None = None,
     min_versions: int = 0, shared_min: int = 0,
 ) -> StreamingResponse:
     min_size, max_size = _bounds(over_gb, largest, min_gb, max_gb)
     cur = search_export(repo, query=q, deleted_only=deleted_only, min_size=min_size,
-                        source=source or None, ext=ext or None, sort=sort, direction=dir,
+                        source=source or None, ext=ext or None, ext_exclude=ext_exclude or None,
+                        sort=sort, direction=dir,
                         max_size=max_size, date_from=date_from or None, date_to=date_to or None,
                         min_versions=min_versions, shared_min=shared_min)
 
