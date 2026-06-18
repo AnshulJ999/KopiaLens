@@ -560,10 +560,9 @@ document.addEventListener("alpine:init", () => {
       this.loadSearch();
     },
 
-    // ---- Bloat finder: group backed-up paths by folder, ranked by physical ----
-    _resetSearchTable() { const el = document.querySelector("#searchTable"); if (el && el._tabulator) { try { el._tabulator.destroy(); } catch (e) {} el._tabulator = null; } },
-    toggleGroupByFolder() { this._resetSearchTable(); this.groupByFolder = !this.groupByFolder; this.searchPage = 1; this.loadSearch(); },
-    drillFolder(row) { this._resetSearchTable(); this.groupByFolder = false; this.query = row.folder; this.searchPage = 1; this.loadSearch(); },
+    // ---- Bloat finder: group backed-up paths by folder, ranked by physical (own #groupTable) ----
+    toggleGroupByFolder() { this.groupByFolder = !this.groupByFolder; this.searchPage = 1; this.loadSearch(); },
+    drillFolder(row) { this.groupByFolder = false; this.query = row.folder; this.searchPage = 1; this.loadSearch(); },
     async loadGroupByFolder() {
       await this.wrap(async () => {
         const p = new URLSearchParams({ repo: this.repo, depth: this.groupDepth, q: this.query || "", sort: "physical", direction: "desc", limit: 500 });
@@ -576,12 +575,16 @@ document.addEventListener("alpine:init", () => {
         const rows = data.rows || [];
         this.omniMeta = `${rows.length} folders · depth ${data.depth} · ranked by physical`;
         const cols = [
-          { title: "Folder", field: "folder", widthGrow: 5, minWidth: 320 },
-          { title: "Physical", field: "phys", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => fmtPhys(c.getValue()) },
-          { title: "Logical", field: "logical", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => fmtBytes(c.getValue()) },
-          { title: "Files", field: "files", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+          { title: "Folder", field: "folder", widthGrow: 5, minWidth: 300 },
+          { title: "Physical", field: "phys", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => fmtPhys(c.getValue()) },
+          { title: "Logical", field: "logical", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => fmtBytes(c.getValue()) },
+          { title: "Files", field: "files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+          { title: "Deleted #", field: "deleted_files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+          { title: "Deleted %", field: "deleted_pct", width: 90, headerSort: false, hozAlign: "right", formatter: (c) => { const d = c.getRow().getData(); return d.files ? Math.round((d.deleted_files / d.files) * 100) + "%" : ""; } },
+          { title: "Avg size", field: "avg_size", width: 95, headerSort: false, hozAlign: "right", formatter: (c) => { const d = c.getRow().getData(); return d.files ? fmtBytes(Math.round(d.phys / d.files)) : ""; } },
+          { title: "Last seen", field: "last_seen", width: 155, formatter: (c) => String(c.getValue() || "").replace("T", " ").slice(0, 19) },
         ];
-        setTable("#searchTable", rows, cols, {
+        setTable("#groupTable", rows, cols, {
           onRowDblClick: (_e, row) => this.drillFolder(row.getData()),
           rowMenu: [{ label: "Drill into files (then batch-remove)", action: (_e, row) => this.drillFolder(row.getData()) }],
         });
@@ -959,7 +962,10 @@ document.addEventListener("alpine:init", () => {
         { title: "Repo", field: "repo", width: 65 },
         { title: "Modified", field: "mtime", width: 145, formatter: (c) => (c.getValue() || "").replace("T", " ") },
       ];
+      const isDrives = this.excludedPath === "";
       setTable("#excludedTable", items, cols, {
+        persistSort: !isDrives,  // drives view = always alphabetical; folders keep your persisted sort
+        initialSort: isDrives ? [{ column: "name", dir: "asc" }] : undefined,
         onRowDblClick: (_e, row) => this.excludedRowOpen(row.getData()),
         rowMenu: [
           { label: "Open", action: (_e, row) => this.excludedRowOpen(row.getData()) },

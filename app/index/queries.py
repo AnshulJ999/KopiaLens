@@ -365,17 +365,22 @@ def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | No
     d = max(1, int(depth))
     cur = read_cursor(repo)
     try:
+        # Group by the file's PARENT folder (drop the filename) capped at depth, so individual files
+        # never masquerade as folders and `depth` means folder depth. + deleted-ratio & last-seen.
         rows = _rows(
             cur,
             f"""
-            SELECT array_to_string(list_slice(string_split(full_path, ?), 1, {d}), ?) AS folder,
-                   sum(physical) AS phys, sum(size) AS logical, count(*) AS files
+            SELECT array_to_string(list_slice(string_split(full_path, ?), 1,
+                       least({d}, len(string_split(full_path, ?)) - 1)), ?) AS folder,
+                   sum(physical) AS phys, sum(size) AS logical, count(*) AS files,
+                   count(*) FILTER (WHERE NOT in_latest) AS deleted_files,
+                   max(last_seen) AS last_seen
             FROM paths WHERE {where}
             GROUP BY folder
             HAVING sum(physical) >= {int(min_size)} AND count(*) >= {int(min_files)}
             ORDER BY {order} {dirn} LIMIT {int(limit)}
             """,
-            [_SEP, _SEP, *params],
+            [_SEP, _SEP, _SEP, *params],
         )
     finally:
         cur.close()

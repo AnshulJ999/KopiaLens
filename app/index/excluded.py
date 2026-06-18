@@ -7,6 +7,7 @@ indexed range scan per repo (bounded to that subtree), aggregated by immediate c
 
 from __future__ import annotations
 
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from config import REPOS
@@ -15,6 +16,8 @@ from ..core.everything import es_children, list_drives, recursive_count, recursi
 from .schema import read_cursor
 
 _SEP = chr(92)  # backslash
+_LIST_CACHE: dict[tuple, tuple] = {}  # (folder_lc, tolerance) -> (ts, result); TTL so repeated nav is instant
+_LIST_TTL = 120
 
 
 def _prefix_bounds(folder: str) -> tuple[str, str, int]:
@@ -91,6 +94,10 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
     are exact (index sum of in_latest sizes). EXCLUDED bytes are disk - backed (approximate by the
     changed/deleted-file drift; the backed-file COUNT helps tell drift from real exclusion). A
     folder counts as 'backed' when its excluded fraction is below `tolerance` (cuts partial noise)."""
+    ckey = (folder.lower(), tolerance)
+    cached = _LIST_CACHE.get(ckey)
+    if cached and time.time() - cached[0] < _LIST_TTL:
+        return cached[1]  # repeated navigation is instant (within TTL)
     disk = es_children(folder)
     backed = backed_children(folder)
     newest = _newest_snapshot()
@@ -142,13 +149,15 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
         it["excluded_files"] = max(0, tf - it["backed_files"])
 
     items.sort(key=lambda x: (not x["is_dir"], -x["excluded_bytes"], x["name"].lower()))
-    return {
+    result = {
         "folder": folder,
         "items": items,
         "total_excluded": sum(i["excluded_bytes"] for i in items),
         "total_backed": sum(i["backed_bytes"] for i in items),
         "count": len(items),
     }
+    _LIST_CACHE[ckey] = (time.time(), result)
+    return result
 
 
 def drive_stats() -> list[dict]:

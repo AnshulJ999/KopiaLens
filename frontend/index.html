@@ -155,14 +155,14 @@
         </div>
         <div x-show="groupByFolder" class="flex flex-wrap items-center gap-2 text-xs rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-2">
           <span class="font-medium">Group by folder</span>
-          <label class="flex items-center gap-1">Depth <input type="number" min="1" max="8" x-model.number="groupDepth" @change="loadSearch()" class="fld h-7 w-16 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800"></label>
+          <label class="flex items-center gap-1">Depth <input type="number" min="1" max="20" x-model.number="groupDepth" @change="loadSearch()" class="fld h-7 w-16 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800"></label>
           <label class="flex items-center gap-1">Min GB <input type="number" min="0" step="0.1" x-model.number="groupMinGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="0"></label>
           <label class="flex items-center gap-1">Min files <input type="number" min="0" x-model.number="groupMinFiles" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="0"></label>
           <span class="text-stone-500">Double-click a folder → drill into its files → batch-remove.</span>
         </div>
         <div class="flex flex-wrap items-center gap-2 text-xs">
           <span class="text-stone-600 dark:text-stone-300 font-medium" x-text="omniMeta"></span>
-          <span class="ml-auto flex items-center gap-1.5">
+          <span class="ml-auto flex items-center gap-1.5" x-show="!groupByFolder">
             <span class="text-stone-500">Per page</span>
             <select x-model="searchPageSize" @change="changePageSize()" class="fld h-7 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-xs">
               <template x-for="n in pageSizes" :key="n"><option :value="n" x-text="n"></option></template>
@@ -178,7 +178,8 @@
             </template>
           </span>
         </div>
-        <div id="searchTable" class="flex-1 min-h-0"></div>
+        <div id="searchTable" class="flex-1 min-h-0" x-show="!groupByFolder"></div>
+        <div id="groupTable" class="flex-1 min-h-0" x-show="groupByFolder"></div>
       </section>
 
       <section x-show="active==='simulate'" class="h-full flex flex-col gap-3">
