@@ -157,11 +157,28 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
             physical UBIGINT,
             reclaimable UBIGINT,
             snaphash VARCHAR,
-            computed_at TIMESTAMP DEFAULT now(),
-            PRIMARY KEY (repo, snapshot_id)
+            computed_at TIMESTAMP DEFAULT now()
         )
+        -- No PRIMARY KEY / index on purpose: the per-source DELETE+INSERT in _persist must not
+        -- delete rows out of an ART index (DuckDB's fatal index-delete bug). The table is small
+        -- (~13k rows) so unindexed scans in read_analysis are cheap.
         """
     )
+    # Migrate pre-existing DBs (compacted/old) whose snapshot_analysis still has the PRIMARY KEY:
+    # recreate it index-free in place (DROP TABLE is wholesale, never a row-delete-from-index).
+    try:
+        has_pk = con.execute(
+            "SELECT count(*) FROM duckdb_constraints() WHERE table_name='snapshot_analysis' "
+            "AND constraint_type='PRIMARY KEY'"
+        ).fetchone()[0]
+        if has_pk:
+            con.execute("CREATE TABLE _sa_new AS SELECT repo, source, snapshot_id, churn, physical, "
+                        "reclaimable, snaphash, computed_at FROM snapshot_analysis")
+            con.execute("DROP TABLE snapshot_analysis")
+            con.execute("ALTER TABLE _sa_new RENAME TO snapshot_analysis")
+            log.info("migrated snapshot_analysis -> dropped PRIMARY KEY (index-delete safety)")
+    except Exception as exc:  # noqa: BLE001 - never block startup on the migration
+        log.warning("snapshot_analysis PK migration skipped: %s", exc)
 
     con.execute("CREATE INDEX IF NOT EXISTS files_repo_source_path ON files(repo, source, full_path)")
     con.execute("CREATE INDEX IF NOT EXISTS files_snapshot ON files(repo, snapshot_id)")

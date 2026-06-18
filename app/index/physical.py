@@ -53,6 +53,7 @@ def materialize_physical(con, repo: str) -> None:
     # 1) content_sizes - reinsert only when the sizemap changed (cheap row-count check).
     existing = con.execute("SELECT count(*) FROM content_sizes WHERE repo=?", [repo]).fetchone()[0]
     if existing != len(smap):
+        con.execute("DROP INDEX IF EXISTS content_sizes_cid")  # avoid DuckDB's ART index-delete bug
         con.execute("DELETE FROM content_sizes WHERE repo=?", [repo])
         cids = list(smap.keys())
         _arrow_insert(
@@ -60,11 +61,13 @@ def materialize_physical(con, repo: str) -> None:
             "INSERT INTO content_sizes SELECT repo, cid, packed FROM _phys_ingest",
             {"repo": [repo] * len(cids), "cid": cids, "packed": [smap[c] for c in cids]},
         )
+        con.execute("CREATE INDEX IF NOT EXISTS content_sizes_cid ON content_sizes(repo, cid)")
 
     # 2) indirect_phys - packed footprint per indirect (large/split) file object.
     objs = [r[0] for r in con.execute(
         "SELECT DISTINCT content_id FROM paths WHERE repo=? AND content_id LIKE 'I%'", [repo]
     ).fetchall()]
+    con.execute("DROP INDEX IF EXISTS indirect_phys_oid")  # avoid DuckDB's ART index-delete bug
     if objs:
         expand_indirect(repo, dbsql, set(objs))  # ensure all expanded + cached in sqlite
         cur = dbsql.cursor()
@@ -85,6 +88,7 @@ def materialize_physical(con, repo: str) -> None:
         )
     else:
         con.execute("DELETE FROM indirect_phys WHERE repo=?", [repo])
+    con.execute("CREATE INDEX IF NOT EXISTS indirect_phys_oid ON indirect_phys(repo, oid)")
 
     # 3) paths.physical via joins: direct content -> content_sizes; indirect -> indirect_phys.
     con.execute("UPDATE paths SET physical = 0 WHERE repo=?", [repo])
@@ -107,6 +111,11 @@ def materialize_refcount(con, repo: str, count: dict) -> None:
     existing = con.execute("SELECT count(*) FROM content_refs WHERE repo=?", [repo]).fetchone()[0]
     if existing == len(count):
         return
+    # Drop the index around the rewrite: DuckDB's ART index has a fatal bug DELETING rows out of an
+    # index ("Failed to delete all rows from index" -> DB invalidated). Deleting from an UN-indexed
+    # table is safe; rebuilding the index after the bulk insert is also faster. (Per-repo DB, so the
+    # repo-scoped delete clears the whole table.)
+    con.execute("DROP INDEX IF EXISTS content_refs_cid")
     con.execute("DELETE FROM content_refs WHERE repo=?", [repo])
     cids = list(count.keys())
     _arrow_insert(
@@ -114,6 +123,7 @@ def materialize_refcount(con, repo: str, count: dict) -> None:
         "INSERT INTO content_refs SELECT repo, cid, refs FROM _phys_ingest",
         {"repo": [repo] * len(cids), "cid": cids, "refs": [int(count[c]) for c in cids]},
     )
+    con.execute("CREATE INDEX IF NOT EXISTS content_refs_cid ON content_refs(repo, cid)")
 
 
 def _refcount_for(repo: str, cids) -> dict[str, int] | None:

@@ -140,8 +140,8 @@ def _persist(repo: str, source: str, rows: list[dict], snaphash: str) -> None:
         for r in rows:
             rec = r["reclaimable"]
             con.execute(
-                "INSERT OR REPLACE INTO snapshot_analysis(repo, source, snapshot_id, churn, physical, reclaimable, snaphash) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO snapshot_analysis(repo, source, snapshot_id, churn, physical, reclaimable, snaphash) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",  # plain INSERT: _persist DELETEs the source's rows first; no PK now
                 [repo, source, r["id"], int(r["churn"]), int(r.get("physical") or 0),
                  None if rec is None else int(rec), snaphash],
             )
