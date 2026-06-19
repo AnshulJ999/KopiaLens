@@ -51,44 +51,44 @@ def materialize_physical(con, repo: str) -> None:
     smap = load_sizemap(repo)
 
     # 1) content_sizes - reinsert only when the sizemap changed (cheap row-count check).
+    # APPEND-ONLY (Lever 2): a content's packed size is immutable, so only INSERT new cids via an
+    # anti-join - never DELETE. No index-delete bug, far less churn/bloat. Stale rows for GC'd
+    # contents are harmless (never looked up; the physical/freeable math sums over current chunks).
     existing = con.execute("SELECT count(*) FROM content_sizes WHERE repo=?", [repo]).fetchone()[0]
     if existing != len(smap):
-        con.execute("DROP INDEX IF EXISTS content_sizes_cid")  # avoid DuckDB's ART index-delete bug
-        con.execute("DELETE FROM content_sizes WHERE repo=?", [repo])
         cids = list(smap.keys())
         _arrow_insert(
             con,
-            "INSERT INTO content_sizes SELECT repo, cid, packed FROM _phys_ingest",
+            "INSERT INTO content_sizes SELECT t.repo, t.cid, t.packed FROM _phys_ingest t "
+            "WHERE NOT EXISTS (SELECT 1 FROM content_sizes cs WHERE cs.repo=t.repo AND cs.cid=t.cid)",
             {"repo": [repo] * len(cids), "cid": cids, "packed": [smap[c] for c in cids]},
         )
-        con.execute("CREATE INDEX IF NOT EXISTS content_sizes_cid ON content_sizes(repo, cid)")
 
     # 2) indirect_phys - packed footprint per indirect (large/split) file object.
+    # APPEND-ONLY (Lever 2): oid->packed is immutable; expand + insert only NEW I-objects, never
+    # DELETE. (Stale rows for objects no longer in paths are harmless.)
     objs = [r[0] for r in con.execute(
         "SELECT DISTINCT content_id FROM paths WHERE repo=? AND content_id LIKE 'I%'", [repo]
     ).fetchall()]
-    con.execute("DROP INDEX IF EXISTS indirect_phys_oid")  # avoid DuckDB's ART index-delete bug
-    if objs:
-        expand_indirect(repo, dbsql, set(objs))  # ensure all expanded + cached in sqlite
+    have = {r[0] for r in con.execute("SELECT oid FROM indirect_phys WHERE repo=?", [repo]).fetchall()}
+    new_objs = [o for o in objs if o not in have]
+    if new_objs:
+        expand_indirect(repo, dbsql, set(new_objs))  # ensure expanded + cached in sqlite
         cur = dbsql.cursor()
         oid_list: list[str] = []
         packed_list: list[int] = []
-        for oid in objs:
+        for oid in new_objs:
             parts = {oid[1:]}  # the index content itself
             row = cur.execute("SELECT parts FROM indirect WHERE oid=?", (oid,)).fetchone()
             if row:
                 parts |= set(json.loads(row[0]))
             oid_list.append(oid)
             packed_list.append(sum(smap.get(p, 0) for p in parts))
-        con.execute("DELETE FROM indirect_phys WHERE repo=?", [repo])
         _arrow_insert(
             con,
             "INSERT INTO indirect_phys SELECT repo, oid, packed FROM _phys_ingest",
             {"repo": [repo] * len(oid_list), "oid": oid_list, "packed": packed_list},
         )
-    else:
-        con.execute("DELETE FROM indirect_phys WHERE repo=?", [repo])
-    con.execute("CREATE INDEX IF NOT EXISTS indirect_phys_oid ON indirect_phys(repo, oid)")
 
     # 3) paths.physical via joins: direct content -> content_sizes; indirect -> indirect_phys.
     con.execute("UPDATE paths SET physical = 0 WHERE repo=?", [repo])

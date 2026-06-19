@@ -70,10 +70,12 @@ def _maybe_warm_reclaim(repo: str) -> None:
 
 
 def _refresh_dashboard(repo: str) -> None:
-    """Recompute the dashboard cache so the open UI auto-updates without a manual Refresh. Cheap
-    now that build_global streams the refcount; unchanged sources hit the warm srcset cache."""
+    """Refresh the dashboard cache so the open UI auto-updates. Uses refresh=False (Lever 2): the
+    table-cache hash already invalidates when the snapshot set changes, so this recomputes (and
+    rewrites content_refs) ONLY when something changed - not every cycle. That removes the biggest
+    DuckDB churn source (the content_refs rewrite was happening every 30 min regardless)."""
     try:
-        data = table_rows(repo, refresh=True, mode="all")
+        data = table_rows(repo, refresh=False, mode="all")
         log.info("dashboard refreshed repo=%s in %.1fs", repo, float(data.get("elapsed") or 0))
     except Exception as exc:  # noqa: BLE001
         log.error("dashboard refresh repo=%s failed: %s", repo, exc)
