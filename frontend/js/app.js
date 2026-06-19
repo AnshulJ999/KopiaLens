@@ -385,7 +385,7 @@ document.addEventListener("alpine:init", () => {
             { label: "Mount snapshot (read-only)", action: (_e, row) => this.mountRow(row.getData().id) },
             { label: "Mount + open in Explorer", action: (_e, row) => this.mountOpen(row.getData().id, this.selectedSource, this.sourceRoot()) },
             { label: "Select all unretained (no retention/pin)", action: () => this.selectUnretained() },
-            { label: "Select identical duplicates (keep newest of each run)", action: () => this.selectIdenticalDuplicates() },
+            { label: "Select identical duplicates (keep oldest+newest per content)", action: () => this.selectIdenticalDuplicates() },
             { label: "Delete selected…", action: () => this.planDelete() },
             { label: "Pin selected (protect)", action: () => this.pinSelected(false) },
             { label: "Unpin selected", action: () => this.pinSelected(true) },
@@ -412,25 +412,30 @@ document.addEventListener("alpine:init", () => {
       });
       this.actionText = `Selected ${n} unretained snapshot(s) (no retention, no pin). Use 'Delete selected…' to preview/copy the kopia command or delete.`;
     },
-    selectIdenticalDuplicates() {  // conservative: within each CONSECUTIVE run of byte-identical snaps
-      const el = document.querySelector("#snapshotsTable");                       // (same root object), keep the
-      if (!el || !el._tabulator) return;                                          // newest, delete the rest.
-      const tbl = el._tabulator;
-      const sorted = [...tbl.getData()].sort((a, b) => String(a.start_time).localeCompare(String(b.start_time)));
-      const del = new Set();
-      let run = [];
-      const flush = () => { if (run.length > 1) run.slice(0, -1).forEach((s) => del.add(s.id)); run = []; };
-      let prev = null;
-      for (const s of sorted) {
-        const prot = (s.retention && s.retention.length) || (s.pins && s.pins.length);
-        if (prot) { flush(); prev = null; continue; }          // protected snap = run boundary, never deleted
-        if (s.root && s.root === prev) run.push(s);
-        else { flush(); run = [s]; prev = s.root; }
+    selectIdenticalDuplicates() {  // HYBRID: group the source's snapshots by `root` (byte-identical
+      const el = document.querySelector("#snapshotsTable");                       // content = same object),
+      if (!el || !el._tabulator) return;                                          // keep OLDEST + NEWEST of
+      const tbl = el._tabulator;                                                  // each group, select the
+      const groups = {};                                                         // middle. Pinned = never
+      for (const s of tbl.getData()) {                                           // selected; retention does
+        if (s.root) (groups[s.root] = groups[s.root] || []).push(s);            // NOT block (the whole point
+      }                                                                          // is to declutter redundant
+      const del = new Set();                                                     // identicals retention keeps).
+      for (const root in groups) {
+        const g = groups[root];
+        if (g.length <= 2) continue;  // oldest+newest already = the whole group; nothing to remove
+        g.sort((a, b) => String(a.start_time).localeCompare(String(b.start_time)));
+        const keep = new Set([g[0].id, g[g.length - 1].id]);  // oldest + newest endpoints
+        for (const s of g) {
+          if (keep.has(s.id) || (s.pins && s.pins.length)) continue;  // keep endpoints + pinned
+          del.add(s.id);
+        }
       }
-      flush();
       let n = 0;
       tbl.getRows().forEach((r) => { if (del.has(r.getData().id)) { r.select(); n++; } else r.deselect(); });
-      this.actionText = `Selected ${n} identical duplicate snapshot(s) (kept newest of each run; skipped pinned/retained). Use 'Delete selected…'.`;
+      this.actionText = n
+        ? `Selected ${n} identical-duplicate snapshot(s) (kept oldest+newest per content; pinned kept; retained ARE included). Use 'Delete selected…'.`
+        : `No identical duplicates to collapse — no content has 3+ snapshots (or 'root' is missing on the rows).`;
     },
     changeSnapSource() {  // persist scope; Tree mirrors it (incl. *ALL*) so the two views stay in parity
       this.klSet({ snap_source: this.snapSource });
