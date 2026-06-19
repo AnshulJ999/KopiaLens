@@ -1331,5 +1331,14 @@ document.addEventListener("alpine:init", () => {
         window.alert("Saved. The background interval applies on the next cycle; the listing backend change needs a restart.");
       });
     },
+    async compactNow() {
+      if (!window.confirm(`Compact repo ${this.repo} DuckDB now? Rewrites the file to reclaim dead space (no kopia rewalk); briefly pauses DB access during the swap.`)) return;
+      await this.wrap(async () => {
+        const r = await getJson("/api/actions/compact", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo }) });
+        this.actionText = r.ok
+          ? `Compacted repo ${this.repo}: ${fmtBytes(r.before)} → ${fmtBytes(r.after)} (saved ${fmtBytes(Math.max(0, r.before - r.after))}).`
+          : `Compaction skipped: ${r.reason || "unknown"}.`;
+      }, "Compacting DuckDB…");
+    },
   }));
 });

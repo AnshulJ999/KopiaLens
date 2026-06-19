@@ -343,6 +343,9 @@
           <p class="text-xs text-stone-500">CLI for the Excluded browser's disk listing. Restart after changing.</p>
           <div class="flex items-center justify-between gap-2"><span>Index</span>
             <button @click="rebuildIndex()" :disabled="indexStatus.building" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 disabled:opacity-50">Rebuild full index</button></div>
+          <div class="flex items-center justify-between gap-2"><span>DuckDB (repo <span x-text="repo"></span>)</span>
+            <button @click="compactNow()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3">🗜 Compact now</button></div>
+          <p class="text-xs text-stone-500">Reclaims DuckDB dead space (no kopia rewalk). Auto-runs when the file bloats; this triggers it now. Briefly pauses DB access for the swap.</p>
           <div class="flex justify-end gap-2 pt-2">
             <button @click="showSettings=false" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3">Close</button>
             <button @click="saveSettings()" class="h-8 rounded bg-emerald-700 px-3 text-white">Save</button>

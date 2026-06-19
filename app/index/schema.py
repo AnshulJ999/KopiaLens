@@ -9,8 +9,11 @@ risked a lock conflict between a query and a running build.
 
 from __future__ import annotations
 
+import gc
+import json
 import os
 import threading
+import time
 
 import duckdb
 
@@ -22,6 +25,66 @@ log = get_logger("duckdb")
 
 _POOL: dict[str, duckdb.DuckDBPyConnection] = {}
 _LOCK = threading.Lock()
+
+# ---- Compaction gating (auto in-place compaction needs to swap the .duckdb file safely) ----
+# A repo's reads go through `read_cursor`, which increments a per-repo counter and decrements on
+# close. Compaction sets `_maint[repo]`, waits for the counter to hit 0 (so no query is mid-fetch),
+# closes the pooled connection, swaps the file, then reopens. New reads/writes wait on `_maint`.
+_MAINT_COND = threading.Condition()
+_maint: dict[str, bool] = {}
+_active_reads: dict[str, int] = {}
+
+
+def _read_done(repo: str) -> None:
+    with _MAINT_COND:
+        _active_reads[repo] = max(0, _active_reads.get(repo, 0) - 1)
+        if _active_reads[repo] == 0:
+            _MAINT_COND.notify_all()
+
+
+class _PooledCursor:
+    """Thin proxy over a DuckDB cursor that decrements the in-flight-read counter on close()."""
+
+    def __init__(self, repo: str, cur) -> None:
+        self._repo = repo
+        self._cur = cur
+        self._closed = False
+
+    def __getattr__(self, name):  # proxy execute/fetchall/fetchone/fetchmany/description/...
+        return getattr(self._cur, name)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._cur.close()
+        finally:
+            _read_done(self._repo)
+
+
+def _compact_state_path() -> str:
+    return os.path.join(DATA_DIR, "compact_state.json")
+
+
+def compact_state() -> dict:
+    try:
+        with open(_compact_state_path(), encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
+def record_compact_size(repo: str, size: int) -> None:
+    """Persist the post-compaction (or baseline) file size + timestamp so the auto-trigger can
+    measure growth since the last compaction."""
+    st = compact_state()
+    st[repo] = {"size": int(size), "ts": time.time()}
+    try:
+        with open(_compact_state_path(), "w", encoding="utf-8") as fh:
+            json.dump(st, fh)
+    except Exception:
+        pass
 
 # Bound DuckDB's buffer pool so two open repos can't grow to ~80% of system RAM (the default).
 # DuckDB spills above this to the temp directory, so it only costs disk, never correctness.
@@ -35,6 +98,9 @@ def db_path(repo: str) -> str:
 
 def get_db(repo: str) -> duckdb.DuckDBPyConnection:
     """The shared read-write connection for a repo, created (and schema-initialised) once."""
+    with _MAINT_COND:  # wait out an in-progress compaction swap (connection is being replaced)
+        while _maint.get(repo):
+            _MAINT_COND.wait()
     with _LOCK:
         con = _POOL.get(repo)
         if con is None:
@@ -56,13 +122,22 @@ def get_db(repo: str) -> duckdb.DuckDBPyConnection:
         return con
 
 
-def read_cursor(repo: str) -> duckdb.DuckDBPyConnection:
-    """A thread-local cursor off the shared connection, for concurrent reads.
-
-    Caller must ``.close()`` it when done (cheap; frees the cursor, not the pool)."""
-    con = get_db(repo)
-    with _LOCK:
-        return con.cursor()
+def read_cursor(repo: str):
+    """A cursor off the shared connection, for concurrent reads. Returns a proxy that MUST be
+    ``.close()``d when done (callers already do) - the close decrements the in-flight-read counter
+    that compaction waits on before swapping the DB file."""
+    with _MAINT_COND:  # don't start a read during a compaction swap; register this read
+        while _maint.get(repo):
+            _MAINT_COND.wait()
+        _active_reads[repo] = _active_reads.get(repo, 0) + 1
+    try:
+        con = get_db(repo)
+        with _LOCK:
+            cur = con.cursor()
+    except Exception:
+        _read_done(repo)
+        raise
+    return _PooledCursor(repo, cur)
 
 
 def close_all() -> None:
@@ -73,6 +148,120 @@ def close_all() -> None:
             except Exception:
                 pass
         _POOL.clear()
+
+
+def _do_compact(repo: str, drain_timeout: float) -> dict:
+    # Wait for in-flight reads to drain, then take the pooled connection.
+    deadline = time.time() + drain_timeout
+    with _MAINT_COND:
+        while _active_reads.get(repo, 0) > 0:
+            rem = deadline - time.time()
+            if rem <= 0:
+                return {"ok": False, "reason": "reads did not drain in time"}
+            _MAINT_COND.wait(timeout=rem)
+        con = _POOL.pop(repo, None)
+
+    live = db_path(repo)
+    if not os.path.exists(live):
+        return {"ok": False, "reason": "no db file"}
+    new = live + ".compact"
+    for f in (new, new + ".wal"):
+        if os.path.exists(f):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+    before = os.path.getsize(live)
+    if con is not None:
+        try:
+            con.execute("CHECKPOINT")
+        except Exception:
+            pass
+        try:
+            con.close()
+        except Exception:
+            pass
+
+    ok, checks = True, {}
+    ctrl = duckdb.connect()
+    try:
+        ctrl.execute("ATTACH '%s' AS s (READ_ONLY)" % live.replace("\\", "/"))
+        ctrl.execute("ATTACH '%s' AS d" % new.replace("\\", "/"))
+        ctrl.execute("COPY FROM DATABASE s TO d")
+        for tbl in ("files", "paths", "content_refs", "snapshot_analysis"):
+            try:
+                a = ctrl.execute("SELECT count(*) FROM s." + tbl).fetchone()[0]
+                b = ctrl.execute("SELECT count(*) FROM d." + tbl).fetchone()[0]
+                checks[tbl] = [a, b]
+                if a != b:
+                    ok = False
+            except Exception:
+                pass
+    except Exception as exc:  # noqa: BLE001
+        ok, checks["error"] = False, str(exc)[:200]
+    finally:
+        for name in ("s", "d"):
+            try:
+                ctrl.execute("DETACH " + name)
+            except Exception:
+                pass
+        ctrl.close()
+
+    after = os.path.getsize(new) if os.path.exists(new) else 0
+    if ok and after > 0:
+        gc.collect()  # force DuckDB to release the file handles (Windows lags closing them)
+        for attempt in range(12):
+            try:
+                os.replace(new, live)  # original replaced only after verify passed
+                break
+            except PermissionError:
+                if attempt == 11:
+                    raise
+                gc.collect()
+                time.sleep(0.3)
+        if os.path.exists(live + ".wal"):
+            try:
+                os.remove(live + ".wal")
+            except Exception:
+                pass
+        record_compact_size(repo, after)
+        log.info("repo=%s compacted %d -> %d bytes", repo, before, after)
+        return {"ok": True, "before": before, "after": after, "checks": checks}
+    if os.path.exists(new):
+        try:
+            os.remove(new)
+        except Exception:
+            pass
+    log.warning("repo=%s compact verify failed (original kept): %s", repo, checks)
+    return {"ok": False, "reason": "verify failed", "checks": checks}
+
+
+def compact_in_place(repo: str, drain_timeout: float = 30.0) -> dict:
+    """Compact a repo's DuckDB in place WITHOUT a kopia rewalk: drain reads → close the pooled
+    connection → ``COPY FROM DATABASE`` into a fresh file → verify row counts → swap → reopen.
+    Reclaims DuckDB's dead space (it never shrinks on DELETE). Blocks dashboard builds + new
+    reads/writes for the brief swap window; the original file is only replaced after verify passes."""
+    from ..core.metrics import _build_lock  # serialize vs dashboard build_global (lazy: import cycle)
+    blk = _build_lock(repo, "all")
+    if not blk.acquire(blocking=False):
+        return {"ok": False, "reason": "dashboard build in progress"}
+    try:
+        with _MAINT_COND:
+            if _maint.get(repo):
+                return {"ok": False, "reason": "already compacting"}
+            _maint[repo] = True
+        try:
+            return _do_compact(repo, drain_timeout)
+        finally:
+            with _MAINT_COND:
+                _maint[repo] = False
+                _MAINT_COND.notify_all()
+            try:
+                get_db(repo)  # reopen the pooled connection on the (possibly swapped) file
+            except Exception:
+                pass
+    finally:
+        blk.release()
 
 
 def init_schema(con: duckdb.DuckDBPyConnection) -> None:

@@ -431,6 +431,14 @@ def batch_detail_route(payload: BatchDetailRequest) -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.post("/actions/compact")
+def compact(payload: dict) -> dict:
+    """Compact a repo's DuckDB in place (reclaim dead space, no kopia rewalk). Briefly pauses DB
+    access for the swap; the original is replaced only after row-count verification passes."""
+    from ..index.schema import compact_in_place
+    return compact_in_place(payload.get("repo", "1"))
+
+
 @router.get("/actions/mounts")
 def mounts() -> dict:
     return {"mounts": list_mounts()}

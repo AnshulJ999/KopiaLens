@@ -35,6 +35,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "tree_dedupe": False,      # persisted dedupe toggle (tree)
         "es_path": r"G:\Apps\CLI Tools\es.exe",  # Everything CLI for the Excluded browser (local disk side)
         "excluded_tolerance": 0.05,  # folder counts as "backed" when excluded fraction is below this (cuts partial noise)
+        "auto_compact": True,        # auto-compact the DuckDB when it bloats (DuckDB has no GC of its own)
+        "compact_ratio": 1.8,        # compact when the file grows past this x its last-compacted size
+        "compact_min_interval": 86400,  # min seconds between auto-compactions (1 day)
     },
 }
 

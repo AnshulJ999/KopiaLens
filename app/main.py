@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -69,6 +70,34 @@ def _maybe_warm_reclaim(repo: str) -> None:
         log.error("reclaim pre-warm repo=%s failed: %s", repo, exc)
 
 
+def _maybe_compact(repo: str) -> None:
+    """Auto-compact the DuckDB when it has grown past a ratio over its last-compacted size, and the
+    min interval has passed (default 1.8x / 24h, from settings). DuckDB never reclaims dead space on
+    its own, so this is its 'GC'. Skips a freshly-built DB (just records the baseline)."""
+    kl = load_settings().get("kopialens", {})
+    if not kl.get("auto_compact", True):
+        return
+    from .index.schema import compact_in_place, compact_state, db_path, record_compact_size
+    live = db_path(repo)
+    if not os.path.exists(live):
+        return
+    cur = os.path.getsize(live)
+    st = compact_state().get(repo, {})
+    base = st.get("size")
+    if not base:
+        record_compact_size(repo, cur)  # establish baseline; never compact a just-rebuilt DB
+        return
+    ratio = float(kl.get("compact_ratio", 1.8))
+    interval = float(kl.get("compact_min_interval", 86400))
+    if time.time() - st.get("ts", 0) < interval or cur < base * ratio:
+        return
+    log.info("repo=%s auto-compact: size %d >= %.2fx baseline %d", repo, cur, ratio, base)
+    try:
+        compact_in_place(repo)  # records the new baseline on success
+    except Exception as exc:  # noqa: BLE001
+        log.error("auto-compact repo=%s failed: %s", repo, exc)
+
+
 def _refresh_dashboard(repo: str) -> None:
     """Refresh the dashboard cache so the open UI auto-updates. Uses refresh=False (Lever 2): the
     table-cache hash already invalidates when the snapshot set changes, so this recomputes (and
@@ -116,6 +145,7 @@ def _bg_worker() -> None:
             log.error("startup reindex repo=%s failed: %s", repo, exc)
         _warm(repo)
         _maybe_warm_reclaim(repo)
+        _maybe_compact(repo)
     log_memory("startup cycle done")
     while not _bg_stop.wait(_reindex_interval()):
         for repo in REPOS:
@@ -125,6 +155,7 @@ def _bg_worker() -> None:
                 log.error("periodic reindex repo=%s failed: %s", repo, exc)
             _warm(repo)
             _maybe_warm_reclaim(repo)
+            _maybe_compact(repo)
         log_memory("cycle done")
 
 
