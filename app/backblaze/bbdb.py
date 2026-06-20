@@ -85,6 +85,14 @@ def _init_schema(con: sqlite3.Connection) -> None:
 
         CREATE TABLE IF NOT EXISTS churn (folder TEXT, cnt INTEGER);
 
+        -- daily per-folder rollup of backed files/bytes (one row per folder per day the indexer
+        -- runs). Foundation for churn-Delta + growth-over-time compare; pruned to history_days.
+        CREATE TABLE IF NOT EXISTS folder_snapshots (
+            day TEXT, drive TEXT, folder TEXT, files INTEGER, bytes INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS fsnap_day    ON folder_snapshots(day);
+        CREATE INDEX IF NOT EXISTS fsnap_folder ON folder_snapshots(folder);
+
         CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
         CREATE TABLE IF NOT EXISTS ingest (source TEXT PRIMARY KEY, mtime REAL, size INTEGER, extra TEXT);
         """

@@ -31,7 +31,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from config import REPOS
+from config import REPOS, kopia_repos
 
 from ..settings import load_settings, save_settings
 from .applog import LOG_DIR, get_logger
@@ -195,7 +195,7 @@ class KopiaServers:
 
     def warmup(self) -> None:
         """Pre-start servers for all configured repos (called at app startup)."""
-        for repo in REPOS:
+        for repo in kopia_repos():  # the persistent-server backend is kopia-only
             try:
                 self._get(repo)
             except Exception as exc:  # noqa: BLE001 - log and continue; lazy spawn retries later

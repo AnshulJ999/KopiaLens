@@ -221,3 +221,134 @@ def coverage_children(folder: str) -> dict[str, dict]:
         agg[r["seg"]] = {"logical": int(r["logical"] or 0), "files": int(r["cnt"] or 0),
                          "has_file": bool(r["has_file"])}
     return agg
+
+
+# ---- folder children (powers the Tree tab + the BZ-native Excluded folder drill) -------
+def folder_children(prefix: str) -> list[dict]:
+    """Immediate children under `prefix` with the full backed/excluded split per child.
+    One indexed range scan over `files`; original-case display name preserved. Serves both the
+    Tree browser and the BZ Excluded coverage drill (different column emphasis in the UI)."""
+    con = bbdb.connect()
+    lo = prefix.lower().rstrip(_SEP) + _SEP
+    hi = lo + "￿"
+    plen = len(lo)
+    rows = con.execute(
+        "SELECT seg_lc, max(orig) name, max(has_file) is_file, "
+        "sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END) backed_files, "
+        "sum(CASE WHEN excluded=0 THEN size ELSE 0 END) backed_bytes, "
+        "sum(CASE WHEN excluded=1 THEN 1 ELSE 0 END) excluded_files, "
+        "sum(CASE WHEN excluded=1 THEN size ELSE 0 END) excluded_bytes, "
+        "count(*) total_files, max(excl_rule) sample_rule FROM ("
+        "  SELECT substr(remlc,1,CASE WHEN instr(remlc,?)>0 THEN instr(remlc,?)-1 ELSE length(remlc) END) seg_lc,"
+        "         substr(rem,1,CASE WHEN instr(rem,?)>0 THEN instr(rem,?)-1 ELSE length(rem) END) orig,"
+        "         (instr(remlc,?)=0) has_file, excluded, size, excl_rule FROM ("
+        "    SELECT substr(path_lc, ?) remlc, substr(full_path, ?) rem, excluded, size, excl_rule"
+        "    FROM files WHERE path_lc>=? AND path_lc<?))"
+        " WHERE seg_lc<>'' GROUP BY seg_lc",
+        [_SEP, _SEP, _SEP, _SEP, _SEP, plen + 1, plen + 1, lo, hi]).fetchall()
+    out = []
+    for r in rows:
+        bf, ef = r["backed_files"] or 0, r["excluded_files"] or 0
+        bb, eb = r["backed_bytes"] or 0, r["excluded_bytes"] or 0
+        is_file = bool(r["is_file"])
+        if is_file:
+            status = "backed" if bf else "excluded"
+        else:
+            status = "excluded" if bf == 0 else ("backed" if ef == 0 else "mixed")
+        out.append({
+            "name": r["name"], "is_dir": not is_file, "total_files": r["total_files"] or 0,
+            "backed_files": bf, "backed_bytes": bb, "excluded_files": ef, "excluded_bytes": eb,
+            "total_bytes": bb + eb, "status": status, "excl_rule": r["sample_rule"],
+        })
+    out.sort(key=lambda x: (not x["is_dir"], -x["total_bytes"], x["name"].lower()))
+    return out
+
+
+# ---- naming-gap hunter (excluded in one spot, NOT in another) --------------------------
+def naming_gap(query: str, depth: int = 2, top: int = 300) -> list[dict]:
+    """Every folder (depth-N) whose path contains `query`, with its backed-vs-excluded split.
+    Surfaces 'you excluded \\google takeout\\ but F:\\GoogleTakeout is still backed up' gaps."""
+    if not query or not query.strip():
+        return []
+    con = bbdb.connect()
+    q = query.strip().lower()
+    if len(q) >= 3 and bbdb.fts_available():
+        rows = con.execute(
+            "SELECT full_path, size, excluded FROM files WHERE rowid IN "
+            "(SELECT rowid FROM files_fts WHERE files_fts MATCH ?)",
+            ['"' + q.replace('"', '""') + '"']).fetchall()
+    else:
+        rows = con.execute(
+            "SELECT full_path, size, excluded FROM files WHERE path_lc LIKE ?", ["%" + q + "%"]).fetchall()
+    agg: dict[str, dict] = {}
+    for full_path, size, excluded in rows:
+        comps = full_path.split(_SEP)
+        key = _SEP.join(comps[:depth + 1]) if len(comps) > depth else full_path
+        e = agg.get(key)
+        if not e:
+            e = agg[key] = {"folder": key, "backed_files": 0, "backed_bytes": 0,
+                            "excluded_files": 0, "excluded_bytes": 0}
+        if excluded:
+            e["excluded_files"] += 1; e["excluded_bytes"] += size
+        else:
+            e["backed_files"] += 1; e["backed_bytes"] += size
+    out = list(agg.values())
+    for e in out:
+        bf, ef = e["backed_files"], e["excluded_files"]
+        e["status"] = "excluded" if bf == 0 else ("backed" if ef == 0 else "mixed")
+        e["total_files"] = bf + ef
+        e["total_bytes"] = e["backed_bytes"] + e["excluded_bytes"]
+    out.sort(key=lambda x: x["total_bytes"], reverse=True)
+    return out[:top]
+
+
+# ---- churn (recently-added folders = early warning for a new high-churn folder) ---------
+def churn(top: int = 200) -> dict:
+    """Top folders by recent fileID additions (the bzfileids tail rolled up at index time).
+    This is the user's #1 lever: catch a new churner (PBS chunks, Docker, *-pg) before it balloons."""
+    con = bbdb.connect()
+    rows = con.execute("SELECT folder, cnt FROM churn ORDER BY cnt DESC LIMIT ?", [int(top)]).fetchall()
+    total = sum(r["cnt"] for r in rows) or 1
+    out = []
+    for r in rows:
+        folder = r["folder"]
+        drive = folder[0].upper() if len(folder) > 1 and folder[1] == ":" else ""
+        out.append({"folder": folder, "count": r["cnt"],
+                    "pct": round(100.0 * r["cnt"] / total, 1), "drive": drive})
+    return {"total_recent": total, "rows": out}
+
+
+# ---- assembled status XMLs (Dashboard cards + Stats) -----------------------------------
+def stats() -> dict:
+    con = bbdb.connect()
+
+    def jget(k, default=None):
+        raw = bbdb.kv_get(con, k)
+        try:
+            return json.loads(raw) if raw else default
+        except Exception:
+            return default
+
+    tb = jget("totalbackup", {"grand": [0, 0], "per_guid": {}})
+    grand = tb.get("grand", [0, 0])
+    return {
+        "grand_files": grand[0], "grand_bytes": grand[1],
+        "filestats": jget("filestats", {}),
+        "remaining": jget("remaining", {}),
+        "last_completed": jget("last_completed", {}),
+        "overview": jget("overview", {}),
+        "zbytes_history": jget("zbytes_history", []),
+        "fileids_total": jget("fileids_total", None),
+    }
+
+
+# ---- index status (built? counts? — the BZ analog of /api/index/status) -----------------
+def status() -> dict:
+    con = bbdb.connect()
+    rows = con.execute(
+        "SELECT drive, count(*) total, sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END) backed "
+        "FROM files GROUP BY drive ORDER BY drive").fetchall()
+    drives = [{"drive": r["drive"], "total": r["total"], "backed": r["backed"] or 0} for r in rows]
+    return {"built": bool(drives), "drives": drives,
+            "total_files": sum(d["total"] for d in drives),
+            "backed_files": sum(d["backed"] for d in drives)}

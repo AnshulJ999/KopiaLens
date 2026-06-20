@@ -14,6 +14,7 @@ class ApiError(BaseModel):
 class RepoInfo(BaseModel):
     id: str
     name: str
+    kind: str = "kopia"
 
 
 class SourceRow(BaseModel):

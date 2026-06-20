@@ -21,6 +21,13 @@ log = logging.getLogger("bz.indexer")
 _BATCH = 50_000
 _CHURN_TAIL_BYTES = 30 * 1024 * 1024  # read ~last 30 MB of bzfileids for "recent additions"
 
+# Lightweight progress/state for the /api/backblaze/status endpoint (no kopia-style start_build).
+_STATE: dict = {"building": False, "last_run": 0.0, "last_summary": None}
+
+
+def state() -> dict:
+    return dict(_STATE)
+
 
 def _reindex_drive(con, vol, engine) -> tuple[int, int, int]:
     """Replace all rows for one drive from its filelist. Returns (total, backed, excluded) counts.
@@ -135,16 +142,71 @@ def _refresh_churn(con) -> None:
         con.executemany("INSERT INTO churn VALUES(?,?)", top)
 
 
+def _refresh_folder_snapshots(con, history_days: int = 90) -> None:
+    """Write ONE per-folder (depth-2) backed rollup for today, if not already written today.
+    This is the time-series foundation for churn-Delta + growth-over-time compare. Cheap (one
+    grouped scan of `files`); pruned to `history_days`."""
+    import time
+    day = time.strftime("%Y-%m-%d")
+    if con.execute("SELECT 1 FROM folder_snapshots WHERE day=? LIMIT 1", [day]).fetchone():
+        return  # already captured today's rollup
+    rows = con.execute(
+        "SELECT drive, full_path, size FROM files WHERE excluded=0").fetchall()
+    agg: dict[tuple, list] = {}
+    for drive, full_path, size in rows:
+        comps = full_path.split("\\")
+        folder = "\\".join(comps[:3]) if len(comps) > 2 else full_path
+        e = agg.get((drive, folder))
+        if e:
+            e[0] += 1; e[1] += size
+        else:
+            agg[(drive, folder)] = [1, size]
+    if agg:
+        con.executemany(
+            "INSERT INTO folder_snapshots(day, drive, folder, files, bytes) VALUES(?,?,?,?,?)",
+            [(day, d, f, v[0], v[1]) for (d, f), v in agg.items()])
+    # prune history
+    cutoff = time.strftime("%Y-%m-%d", time.localtime(time.time() - history_days * 86400))
+    con.execute("DELETE FROM folder_snapshots WHERE day < ?", [cutoff])
+
+
+def _refresh_ids_count(con) -> None:
+    """Count the cumulative bzfileids.dat lines (the ~4M total vs ~1.15M selected = dead/historical).
+    A full 452 MB scan, so only run on a forced/first build and cache in kv."""
+    fp = paths.fileids_path()
+    if not os.path.exists(fp):
+        return
+    try:
+        from .safety import open_ro
+        n = 0
+        with open_ro(fp, encoding="utf-8", errors="replace") as fh:
+            for _ in fh:
+                n += 1
+        bbdb.kv_set(con, "fileids_total", json.dumps(n))
+    except Exception as exc:  # noqa: BLE001 - never fail a refresh on the optional ids count
+        log.warning("fileids count skipped: %s", exc)
+
+
+def _history_days() -> int:
+    try:
+        from ..settings import load_settings
+        return int(load_settings().get("backblaze", {}).get("history_days", 90))
+    except Exception:
+        return 90
+
+
 def refresh(force: bool = False) -> dict:
     """Incremental refresh of the whole BZ index. Returns a per-drive summary."""
     if not paths.exists():
         return {"ok": False, "reason": f"bzdata not found at {paths.bzdata_root()}"}
     t0 = time.time()
+    _STATE["building"] = True
     con = bbdb.connect()
     engine = rules.load_engine()
     changed: list[str] = []
     drives: dict[str, dict] = {}
-    with _LOCKED(con):
+    try:
+      with _LOCKED(con):
         for vol in paths.volumes():
             src = f"filelist:{vol.letter}"
             try:
@@ -172,6 +234,9 @@ def refresh(force: bool = False) -> dict:
         _refresh_events(con)
         _refresh_stats_kv(con)
         _refresh_churn(con)
+        _refresh_folder_snapshots(con, _history_days())
+        if force:
+            _refresh_ids_count(con)
         con.commit()
         # Release pages freed by the DELETE+INSERT churn so the file stays small (cheap; only does
         # real work when auto_vacuum=INCREMENTAL is active and there are free pages to release).
@@ -180,7 +245,12 @@ def refresh(force: bool = False) -> dict:
             con.commit()
         except Exception as exc:  # noqa: BLE001 - never fail a refresh on housekeeping
             log.warning("incremental_vacuum skipped: %s", exc)
-    return {"ok": True, "changed": changed, "drives": drives, "elapsed": round(time.time() - t0, 1)}
+      summary = {"ok": True, "changed": changed, "drives": drives, "elapsed": round(time.time() - t0, 1)}
+      _STATE["last_summary"] = summary
+      _STATE["last_run"] = time.time()
+      return summary
+    finally:
+        _STATE["building"] = False
 
 
 class _LOCKED:

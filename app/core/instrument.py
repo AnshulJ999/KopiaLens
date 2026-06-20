@@ -35,10 +35,10 @@ def memory_snapshot() -> dict:
         "repos": {},
     }
     try:
-        from config import REPOS
+        from config import kopia_repos
         from ..index.schema import read_cursor
 
-        for repo in REPOS:
+        for repo in kopia_repos():  # DuckDB tables only exist for kopia repos
             try:
                 cur = read_cursor(repo)
                 try:

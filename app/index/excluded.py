@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from config import REPOS
+from config import kopia_repos
 
 from ..core.everything import es_children, list_drives, recursive_count, recursive_size
 from .schema import read_cursor
@@ -27,13 +27,13 @@ def _prefix_bounds(folder: str) -> tuple[str, str, int]:
     return lo, lo + "￿", len(lo)
 
 
-def backed_children(folder: str) -> dict[str, dict]:
+def kopia_backed_children(folder: str) -> dict[str, dict]:
     """Per immediate child segment under `folder`, the backed-up (in_latest) coverage from BOTH
-    repos combined: {seg_lower: {logical bytes, files, has_file, last_seen, repos:set}}. `logical`
-    = kopia's stored file size (exact backed size, comparable to Everything's disk size)."""
+    kopia repos combined: {seg_lower: {logical bytes, files, has_file, last_seen, repos:set}}.
+    `logical` = kopia's stored file size (exact backed size, comparable to Everything's disk size)."""
     lo, hi, plen = _prefix_bounds(folder)
     agg: dict[str, dict] = {}
-    for repo in REPOS:
+    for repo in kopia_repos():
         cur = read_cursor(repo)
         try:
             # Dedupe by path FIRST (GROUP BY path_lc): a file backed by several overlapping sources
@@ -72,11 +72,52 @@ def backed_children(folder: str) -> dict[str, dict]:
     return agg
 
 
+def backed_children(folder: str) -> dict[str, dict]:
+    """Kopia coverage (kopia_backed_children) PLUS a Backblaze cross-coverage flag per child.
+    The BZ contribution is additive metadata only - it adds "bz" to the child's `repos` set and a
+    separate `bz_logical`/`bz_files`, but is NEVER folded into `logical`/`files` (those stay the
+    selected-Kopia backed total, so the Excluded math is unchanged - cross-coverage doesn't
+    supersede the per-repo numbers)."""
+    agg = kopia_backed_children(folder)
+    try:
+        from ..backblaze import queries as bzq
+        for seg, cov in bzq.coverage_children(folder).items():
+            a = agg.setdefault(seg, {"logical": 0, "files": 0, "has_file": False,
+                                     "last_seen": "", "repos": set()})
+            a["repos"].add("bz")
+            a["bz_logical"] = int(cov.get("logical", 0))
+            a["bz_files"] = int(cov.get("files", 0))
+    except Exception:  # bzdata missing / BZ index not built - Kopia Excluded still works
+        pass
+    return agg
+
+
+def kopia_drive_backed() -> dict[str, tuple]:
+    """{DRIVE_LETTER: (files, bytes)} of kopia-backed (in_latest, deduped by path) per local drive
+    letter. Used by the BZ Excluded drive view for its Kopia cross-coverage column. Overlap between
+    repo1/repo2 on the same path is counted once per repo (a coarse cross-coverage hint, not exact)."""
+    out: dict[str, tuple] = {}
+    for repo in kopia_repos():
+        cur = read_cursor(repo)
+        try:
+            rows = cur.execute(
+                "SELECT upper(substr(path_lc, 1, 1)) AS drive, sum(sz) AS b, count(*) AS c FROM ("
+                "  SELECT path_lc, max(size) AS sz FROM paths"
+                "  WHERE repo = ? AND in_latest AND substr(path_lc, 2, 1) = ':' GROUP BY path_lc"
+                ") GROUP BY drive", [repo]).fetchall()
+        finally:
+            cur.close()
+        for drive, b, c in rows:
+            f0, b0 = out.get(drive, (0, 0))
+            out[drive] = (f0 + int(c or 0), b0 + int(b or 0))
+    return out
+
+
 def _newest_snapshot() -> str:
     """Newest snapshot start_time across both repos (small `indexed_snapshots` table = instant).
     Used only to label not-backed-up files 'new' (mtime newer than any snapshot) vs 'excluded'."""
     best = ""
-    for repo in REPOS:
+    for repo in kopia_repos():
         cur = read_cursor(repo)
         try:
             row = cur.execute("SELECT max(start_time) FROM indexed_snapshots WHERE repo=?", [repo]).fetchone()
@@ -106,7 +147,9 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
         seg = d["name"].lower()
         b = backed.get(seg)
         repos = sorted(b["repos"]) if b else []
-        repo_label = "both" if len(repos) == 2 else (repos[0] if repos else "")
+        repo_label = "+".join(repos) if repos else ""  # N backends: e.g. "1", "1+2", "bz", "1+2+bz"
+        bz_b = int(b.get("bz_logical", 0)) if b else 0   # BZ cross-coverage (additive display only)
+        bz_f = int(b.get("bz_files", 0)) if b else 0
         last_backed = b["last_seen"] if b else ""
         if d["is_dir"]:
             bb = b["logical"] if b else 0
@@ -118,7 +161,8 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
                 "name": d["name"], "is_dir": True, "disk_bytes": db, "backed_bytes": bb,
                 "excluded_bytes": excl, "pct_excluded": round(frac * 100, 1),
                 "backed_files": b["files"] if b else 0, "last_backed": last_backed,
-                "repo": repo_label, "status": status, "mtime": d["mtime"],
+                "repo": repo_label, "bz_backed_bytes": bz_b, "bz_backed_files": bz_f,
+                "status": status, "mtime": d["mtime"],
             })
         else:
             backed_file = bool(b and b.get("has_file"))
@@ -129,7 +173,9 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
                 "name": d["name"], "is_dir": False, "disk_bytes": sz,
                 "backed_bytes": sz if backed_file else 0, "excluded_bytes": 0 if backed_file else sz,
                 "pct_excluded": 0 if backed_file else 100, "backed_files": 1 if backed_file else 0,
-                "last_backed": last_backed, "repo": repo_label, "status": status, "mtime": d["mtime"],
+                "last_backed": last_backed, "repo": repo_label,
+                "bz_backed_bytes": bz_b, "bz_backed_files": bz_f,
+                "status": status, "mtime": d["mtime"],
             })
     # Recursive FILE counts: direct files = 1; child folders via parallel Everything count-queries
     # (instant, index-computed). total_size = disk_bytes; excluded_files = total - backed.
@@ -165,6 +211,13 @@ def drive_stats() -> list[dict]:
     Parallel es calls. Used by the drives ('This PC') view so each drive shows its REAL excluded
     total, not its used-disk size."""
     drives = list_drives()  # [{path, used, total}]
+    bz_by_letter: dict[str, tuple] = {}
+    try:
+        from ..backblaze import queries as bzq
+        for r in bzq.overview()["rows"]:
+            bz_by_letter[str(r["drive"]).upper()] = (r["backed_files"], r["backed_bytes"])
+    except Exception:  # bzdata missing / BZ index not built - drive view still works without it
+        pass
 
     def _one(d: dict) -> dict:
         p = d["path"]
@@ -172,7 +225,7 @@ def drive_stats() -> list[dict]:
         lo = p.lower().rstrip(_SEP) + _SEP
         hi = lo + "￿"
         bs = bc = 0
-        for repo in REPOS:
+        for repo in kopia_repos():
             cur = read_cursor(repo)
             try:
                 row = cur.execute(
@@ -184,10 +237,12 @@ def drive_stats() -> list[dict]:
                 cur.close()
             bs += int(row[0] or 0)
             bc += int(row[1] or 0)
+        bzf, bzb = bz_by_letter.get(p[:1].upper(), (0, 0))
         return {
             "path": p, "used": d["used"], "total_size": ts, "total_files": tc,
             "backed_bytes": bs, "backed_files": bc,
             "excluded_bytes": max(0, ts - bs), "excluded_files": max(0, tc - bc),
+            "bz_backed_bytes": bzb, "bz_backed_files": bzf,
         }
 
     return list(ThreadPoolExecutor(max_workers=8).map(_one, drives)) if drives else []

@@ -39,6 +39,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "compact_ratio": 1.8,        # compact when the file grows past this x its last-compacted size
         "compact_min_interval": 86400,  # min seconds between auto-compactions (1 day)
     },
+    "backblaze": {
+        "bzdata_path": r"C:\ProgramData\Backblaze\bzdata",  # read-only source root (never written)
+        "history_days": 90,          # how many days of the daily per-folder rollup to retain (growth/churn trend)
+    },
 }
 
 
@@ -66,6 +70,7 @@ def load_settings() -> dict[str, Any]:
             loaded = json.load(handle)
         settings.update(loaded)
         settings["kopialens"] = {**DEFAULT_SETTINGS["kopialens"], **loaded.get("kopialens", {})}
+        settings["backblaze"] = {**DEFAULT_SETTINGS["backblaze"], **loaded.get("backblaze", {})}
     except Exception:
         pass
     return settings

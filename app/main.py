@@ -12,9 +12,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import REPOS
+from config import REPOS, repo_kind
 
-from .api import actions, dashboard, excluded, search, simulate, snapshots, stats, tree
+from .api import actions, backblaze, dashboard, excluded, search, simulate, snapshots, stats, tree
 from .core import kopia as kopia_mod
 from .core.applog import get_logger, setup_logging
 from .core.instrument import log_memory, memory_snapshot
@@ -135,27 +135,37 @@ def _warm(repo: str) -> None:
         log.error("warm search-landing repo=%s failed: %s", repo, exc)
 
 
+def _maintain(repo: str) -> None:
+    """One background-maintenance pass for a single repo, kind-dispatched. Kopia repos run the
+    DuckDB reindex + warm + reclaim + compact; the Backblaze repo runs its own SQLite refresh
+    (a ~9-file stat no-op in steady state) and never touches any kopia/DuckDB code."""
+    if repo_kind(repo) == "backblaze":
+        try:
+            from .backblaze import indexer as bz_indexer
+            summary = bz_indexer.refresh()
+            if summary.get("changed"):
+                log.info("BZ refresh repo=%s: %s", repo, summary)
+        except Exception as exc:  # noqa: BLE001
+            log.error("BZ refresh repo=%s failed: %s", repo, exc)
+        return
+    try:
+        auto_reindex(repo)  # full rebuild if schema migrated, else incremental no-op
+    except Exception as exc:  # noqa: BLE001
+        log.error("reindex repo=%s failed: %s", repo, exc)
+    _warm(repo)
+    _maybe_warm_reclaim(repo)
+    _maybe_compact(repo)
+
+
 def _bg_worker() -> None:
     """Self-healing background maintenance: keep the index complete + per-snapshot churn +
     next-snapshot times + dashboard fresh. All work is DuckDB + bounded subprocess bursts."""
     for repo in REPOS:
-        try:
-            auto_reindex(repo)  # full rebuild if schema migrated, else incremental no-op
-        except Exception as exc:  # noqa: BLE001
-            log.error("startup reindex repo=%s failed: %s", repo, exc)
-        _warm(repo)
-        _maybe_warm_reclaim(repo)
-        _maybe_compact(repo)
+        _maintain(repo)
     log_memory("startup cycle done")
     while not _bg_stop.wait(_reindex_interval()):
         for repo in REPOS:
-            try:
-                auto_reindex(repo)  # incremental; cheap no-op when nothing changed
-            except Exception as exc:  # noqa: BLE001
-                log.error("periodic reindex repo=%s failed: %s", repo, exc)
-            _warm(repo)
-            _maybe_warm_reclaim(repo)
-            _maybe_compact(repo)
+            _maintain(repo)
         log_memory("cycle done")
 
 
@@ -163,6 +173,12 @@ def _bg_worker() -> None:
 async def lifespan(_app: FastAPI):
     setup_logging()
     log.info("KopiaLens starting up")
+    try:  # point the read-only Backblaze backend at the configured bzdata root
+        from .backblaze import paths as bz_paths
+        bz_paths.set_bzdata_root(load_settings().get("backblaze", {}).get("bzdata_path")
+                                 or bz_paths.bzdata_root())
+    except Exception as exc:  # noqa: BLE001
+        log.error("BZ bzdata path setup failed: %s", exc)
     if load_settings().get("listing_backend") == "server":
         SERVERS.warmup()  # only when explicitly opted into the persistent-server backend
     threading.Thread(target=_bg_worker, daemon=True).start()
@@ -171,6 +187,11 @@ async def lifespan(_app: FastAPI):
     _bg_stop.set()
     SERVERS.shutdown()
     close_duckdb()
+    try:
+        from .backblaze import bbdb as bz_bbdb
+        bz_bbdb.close()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 app = FastAPI(title="KopiaLens", version="0.1.0", lifespan=lifespan)
@@ -200,6 +221,7 @@ app.include_router(simulate.router, prefix="/api")
 app.include_router(actions.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
 app.include_router(excluded.router, prefix="/api")
+app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
 
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
 

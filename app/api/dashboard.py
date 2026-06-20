@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
-from config import REPOS
+from config import REPOS, repo_kind
 
 from ..core.metrics import table_rows
 from ..core.sources import sources_index
@@ -15,14 +15,23 @@ from ..settings import load_settings, save_settings
 router = APIRouter(tags=["dashboard"])
 
 
+def _require_kopia(repo: str) -> None:
+    """These endpoints are DuckDB/kopia-only. Reject a non-kopia repo (e.g. backblaze, which
+    has its own /api/backblaze/* routes) so it can never open a stray DuckDB file."""
+    if repo_kind(repo) != "kopia":
+        raise HTTPException(status_code=400, detail=f"repo {repo!r} is not a kopia repo (use /api/backblaze/*)")
+
+
 @router.get("/repos")
 def repos() -> dict:
     settings = load_settings()
-    return {"repos": [{"id": key, "name": value["name"]} for key, value in REPOS.items()], "settings": settings}
+    return {"repos": [{"id": key, "name": value["name"], "kind": value.get("kind", "kopia")}
+                      for key, value in REPOS.items()], "settings": settings}
 
 
 @router.get("/dashboard")
 def dashboard(repo: str = "1", mode: str = "all", refresh: bool = False) -> dict:
+    _require_kopia(repo)
     try:
         return table_rows(repo, refresh=refresh, mode=mode)
     except Exception as exc:
@@ -31,12 +40,14 @@ def dashboard(repo: str = "1", mode: str = "all", refresh: bool = False) -> dict
 
 @router.get("/sources")
 def sources(repo: str = "1", force: bool = False) -> dict:
+    _require_kopia(repo)
     srcs = sources_index(repo, force=force)
     return {"sources": sorted(srcs)}
 
 
 @router.get("/index/status")
 def get_index_status(repo: str = "1") -> dict:
+    _require_kopia(repo)
     try:
         status = index_status(repo)
         if not status.get("building"):
@@ -48,6 +59,7 @@ def get_index_status(repo: str = "1") -> dict:
 
 @router.post("/index/build")
 def post_index_build(repo: str = "1", source: str | None = None, full: bool = False) -> dict:
+    _require_kopia(repo)
     try:
         return start_build(repo, source=source, full=full)
     except Exception as exc:
