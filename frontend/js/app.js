@@ -104,7 +104,8 @@ const downloadTable = (id, name) => {
 
 document.addEventListener("alpine:init", () => {
   Alpine.data("kopiaLens", () => ({
-    repos: [], repo: "1",
+    ...(window.bzMixin ? window.bzMixin() : {}),  // Backblaze view (bz* state + methods, from backblaze.js)
+    repos: [], repo: "1", repoKind: "kopia",
     tabs: [
       { id: "dashboard", label: "Dashboard" }, { id: "snapshots", label: "Snapshots" },
       { id: "tree", label: "Tree" }, { id: "search", label: "Search" },
@@ -112,6 +113,7 @@ document.addEventListener("alpine:init", () => {
       { id: "excluded", label: "Excluded" }, { id: "actions", label: "Actions" },
     ],
     active: "dashboard",
+    currentTabs() { return this.repoKind === "backblaze" ? this.bzTabs : this.tabs; },
     dark: false,
     timeFmt: localStorage.getItem("kl-timefmt") || "absolute",
     indexStatus: {},
@@ -177,6 +179,7 @@ document.addEventListener("alpine:init", () => {
         const urlRepo = new URLSearchParams(location.search).get("repo");
         if (urlRepo && data.repos.some((r) => r.id === urlRepo)) { this.repo = urlRepo; this.repoPinned = true; }
         else this.repo = data.settings?.last_repo || "1";
+        this.repoKind = (data.repos.find((r) => r.id === this.repo) || {}).kind || "kopia";
         this.backend = data.settings?.listing_backend || "subprocess";
         const _ps = String(kl.page_size || 500);  // snap to a valid <option> so the select can't visually revert to 100
         this.searchPageSize = this.pageSizes.includes(_ps) ? _ps : "500";
@@ -192,9 +195,14 @@ document.addEventListener("alpine:init", () => {
         this.excludedTolerance = Number(kl.excluded_tolerance ?? 0.05);
         this.esPath = kl.es_path || "";
         if (kl.time_format) { TIME_FMT = kl.time_format; this.timeFmt = kl.time_format; }
-        await this.refreshBase();
-        if (this.indexStatus.building) this.pollIndex();  // show progress for the auto-triggered (migration) rebuild
-        await this.loadDashboard();
+        if (this.repoKind === "backblaze") {
+          this.active = "bz-dashboard";
+          await this.bzInit();
+        } else {
+          await this.refreshBase();
+          if (this.indexStatus.building) this.pollIndex();  // show progress for the auto-triggered (migration) rebuild
+          await this.loadDashboard();
+        }
       });
       this.armAutoRefresh();
     },
@@ -246,12 +254,18 @@ document.addEventListener("alpine:init", () => {
     async repoChanged() {
       this.selectedSnapshot = ""; this.snapshots = [];
       this.statsData = null; this.blobStats = "";  // stats are per-repo; force reload
+      this.repoKind = (this.repos.find((r) => r.id === this.repo) || {}).kind || "kopia";
       if (this.repoPinned) {  // pinned tab: keep the choice in the URL, don't touch shared last_repo
         const u = new URL(location.href); u.searchParams.set("repo", this.repo); history.replaceState(null, "", u);
       } else {
         getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ last_repo: this.repo }) }).catch(() => {});
       }
       await this.wrap(async () => {
+        if (this.repoKind === "backblaze") {  // BZ repo selected -> its own tabs + loaders
+          if (!String(this.active).startsWith("bz-")) this.active = "bz-dashboard";
+          return this.bzInit();
+        }
+        if (String(this.active).startsWith("bz-")) this.active = "dashboard";  // coming back from BZ
         await this.refreshBase(true);
         this.selectedSource = this.sources[0] || "";
         await this.activate();
@@ -269,6 +283,7 @@ document.addEventListener("alpine:init", () => {
     },
 
     activate() {
+      if (this.repoKind === "backblaze") return this.bzActivate();
       if (this.active === "dashboard") return this.loadDashboard();
       if (this.active === "snapshots") return this.loadSnapshots();
       if (this.active === "tree") return this.openTree();
@@ -279,8 +294,14 @@ document.addEventListener("alpine:init", () => {
       if (this.active === "excluded") return this.loadExcluded();
     },
 
+    headerSearch() {  // top search box (Option B): drives BZ search when a Backblaze repo is active
+      if (this.repoKind === "backblaze") { this.active = "bz-search"; this.bzLoadSearch(); }
+      else { this.active = "search"; this.loadSearch(); }
+    },
+
     async refreshAll() {
       await this.wrap(async () => {
+        if (this.repoKind === "backblaze") { await this.bzRefreshStatus(); return this.bzActivate(); }
         await this.refreshBase(true);
         if (this.active === "dashboard") return this.loadDashboard(true);
         if (this.active === "snapshots") return this.loadSnapshots(true);
@@ -1047,6 +1068,7 @@ document.addEventListener("alpine:init", () => {
         backed_bytes: dr.backed_bytes || 0, excluded_bytes: dr.excluded_bytes || 0,
         pct_excluded: dr.total_size ? Math.round((dr.excluded_bytes / dr.total_size) * 1000) / 10 : null,
         total_files: dr.total_files || 0, backed_files: dr.backed_files || 0, excluded_files: dr.excluded_files || 0,
+        bz_backed_bytes: dr.bz_backed_bytes || 0, bz_backed_files: dr.bz_backed_files || 0,
         last_backed: "", repo: "", mtime: "",
       })));
     },
@@ -1112,7 +1134,8 @@ document.addEventListener("alpine:init", () => {
         { title: "Bkd #", field: "backed_files", width: 75, hozAlign: "right", sorter: "number", formatter: num },
         { title: "Excl #", field: "excluded_files", width: 75, hozAlign: "right", sorter: "number", formatter: num },
         { title: "Last backed", field: "last_backed", width: 145, formatter: (c) => c.getValue() || "" },
-        { title: "Repo", field: "repo", width: 65 },
+        { title: "Repo", field: "repo", width: 80 },
+        { title: "Also in BZ", field: "bz_backed_bytes", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? fmtBytes(c.getValue()) : "<span style='color:#94a3b8'>—</span>" },
         { title: "Modified", field: "mtime", width: 145, formatter: (c) => (c.getValue() || "").replace("T", " ") },
       ];
       const isDrives = this.excludedPath === "";
