@@ -28,7 +28,7 @@ window.bzMixin = function () {
     ],
     bzStatus: { built: false, building: false, total_files: 0, backed_files: 0 },
     bzStats: null, bzOverview: null,
-    bzChurnRows: [], bzChurnTotal: 0,
+    bzChurnRows: [], bzChurnTotal: 0, bzChurnActiveOnly: true, _bzChurnAll: [],
     bzSearchDrive: "", bzSearchExt: "", bzSearchStatus: "all",
     bzSearchSort: "size", bzSearchDir: "desc", bzSearchTotal: 0, bzSearchPage: 1, bzSearchPageSize: "500",
     bzGroupByFolder: false, bzGroupDepth: 2, bzSearchMeta: "",
@@ -83,10 +83,12 @@ window.bzMixin = function () {
         const [ov, st, ch] = await Promise.all([
           getJson("/api/backblaze/overview"),
           getJson("/api/backblaze/stats"),
-          getJson("/api/backblaze/churn?top=10"),
+          getJson("/api/backblaze/churn?top=40"),
         ]);
         this.bzOverview = ov; this.bzStats = st;
-        this.bzChurnRows = (ch.rows || []).slice(0, 10); this.bzChurnTotal = ch.total_recent || 0;
+        this._bzChurnAll = ch.rows || [];
+        this.bzChurnRows = this._bzChurnAll.filter((r) => r.status !== "gone").slice(0, 10);  // drop deleted folders from the at-a-glance panel
+        this.bzChurnTotal = ch.total_recent || 0;
         setTable("#bzDashTable", ov.rows || [], [
           { title: "Drive", field: "drive", width: 70, formatter: (c) => c.getValue() + ":" },
           { title: "Backed files", field: "backed_files", hozAlign: "right", width: 120, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
@@ -180,22 +182,32 @@ window.bzMixin = function () {
     // ---- Tree ----
     bzOpenTree() {
       if (!this.bzTreeDrive) this.bzTreeDrive = (this.bzStatus.drives && this.bzStatus.drives[0] && this.bzStatus.drives[0].drive) || "C";
-      if (!this.bzTreePrefix || this.bzTreePrefix[0].toUpperCase() !== this.bzTreeDrive) this.bzTreePrefix = this.bzTreeDrive + ":\\";
+      if (this.bzTreeDrive !== "*ALL*" && (!this.bzTreePrefix || this.bzTreePrefix[0].toUpperCase() !== this.bzTreeDrive)) this.bzTreePrefix = this.bzTreeDrive + ":\\";
       return this.bzLoadTree();
     },
-    bzTreeChanged() { this.bzTreePrefix = this.bzTreeDrive + ":\\"; this.bzLoadTree(); },
+    bzTreeChanged() { this.bzTreePrefix = this.bzTreeDrive === "*ALL*" ? "" : this.bzTreeDrive + ":\\"; this.bzLoadTree(); },
     bzTreeNav(prefix) { this.bzTreePrefix = prefix; this.bzLoadTree(); },
     bzTreeCrumbs() {
-      const out = []; const p = (this.bzTreePrefix || "").replace(/\\+$/, "");
-      let acc = "";
-      p.split("\\").forEach((seg, i) => { acc = i === 0 ? seg + "\\" : acc + (acc.endsWith("\\") ? "" : "\\") + seg; out.push({ label: seg || acc, prefix: acc }); });
+      const out = [];
+      if (this.bzTreeDrive === "*ALL*") out.push({ label: "All drives", prefix: "" });
+      const p = (this.bzTreePrefix || "").replace(/\\+$/, "");
+      if (p) {
+        let acc = "";
+        p.split("\\").forEach((seg, i) => { acc = i === 0 ? seg + "\\" : acc + (acc.endsWith("\\") ? "" : "\\") + seg; out.push({ label: seg || acc, prefix: acc }); });
+      }
       return out;
     },
     bzTreeUp() { const c = this.bzTreeCrumbs(); if (c.length > 1) this.bzTreeNav(c[c.length - 2].prefix); },
     async bzLoadTree() {
       await this.wrap(async () => {
-        const data = await getJson(`/api/backblaze/folder?prefix=${encodeURIComponent(this.bzTreePrefix)}`);
-        const kids = data.children || [];
+        const atRoot = this.bzTreeDrive === "*ALL*" && !this.bzTreePrefix;
+        let kids;
+        if (atRoot) {  // All-drives top level = the drive roots; drill into one to browse it
+          kids = (this.bzStatus.drives || []).map((d) => ({ name: d.drive + ":", is_dir: true, status: "drive", backed_bytes: 0, excluded_bytes: 0, total_files: d.total, excl_rule: "", _root: d.drive + ":\\" }));
+        } else {
+          const data = await getJson(`/api/backblaze/folder?prefix=${encodeURIComponent(this.bzTreePrefix)}`);
+          kids = data.children || [];
+        }
         setTable("#bzTreeTable", kids, [
           { title: "Name", field: "name", widthGrow: 5, minWidth: 300, formatter: (c) => `${c.getRow().getData().is_dir ? "📁 " : "📄 "}${c.getValue()}` },
           { title: "Status", field: "status", width: 95, formatter: (c) => statusPill(c.getValue()) },
@@ -204,13 +216,13 @@ window.bzMixin = function () {
           { title: "Files", field: "total_files", width: 90, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
           { title: "Excluded by", field: "excl_rule", widthGrow: 2, minWidth: 150, formatter: (c) => c.getValue() || "" },
         ], {
-          initialSort: [{ column: "total_files", dir: "desc" }],
-          onRowDblClick: (_e, row) => { const d = row.getData(); if (d.is_dir) this.bzTreeNav(this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); },
+          initialSort: [{ column: atRoot ? "name" : "total_files", dir: atRoot ? "asc" : "desc" }],
+          onRowDblClick: (_e, row) => { const d = row.getData(); if (d._root) return this.bzTreeNav(d._root); if (d.is_dir) this.bzTreeNav(this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); },
           rowMenu: [
-            { label: "Open / drill in", action: (_e, row) => { const d = row.getData(); if (d.is_dir) this.bzTreeNav(this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); } },
+            { label: "Open / drill in", action: (_e, row) => { const d = row.getData(); if (d._root) return this.bzTreeNav(d._root); if (d.is_dir) this.bzTreeNav(this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); } },
             { label: "Generate exclusion (this folder)", action: (_e, row) => this.bzOpenGen("folder", "\\" + row.getData().name + "\\") },
             { label: "Find in search", action: (_e, row) => { this.query = row.getData().name; this.active = "bz-search"; this.bzLoadSearch(); } },
-            { label: "Copy path", action: (_e, row) => this.copyText(this.bzTreePrefix.replace(/\\+$/, "") + "\\" + row.getData().name) },
+            { label: "Copy path", action: (_e, row) => this.copyText(row.getData()._root || (this.bzTreePrefix.replace(/\\+$/, "") + "\\" + row.getData().name)) },
           ],
         });
       }, "Loading folder…");
@@ -249,8 +261,20 @@ window.bzMixin = function () {
         const r = await getJson(`/api/backblaze/excluded/list?prefix=${encodeURIComponent(path)}`);
         if (seq !== this._bzExclSeq) return;
         this.bzExclMeta = `${r.count} items`;
-        this._bzExclItems = r.items || [];
+        // Render BZ-native instantly; the slower Kopia cross-coverage fills in lazily (5B).
+        // kopia_backed_bytes=null renders as "…" until the second request patches it.
+        this._bzExclItems = (r.items || []).map((it) => ({ ...it, kopia_backed_bytes: null, kopia_backed_files: 0, kopia_repos: [] }));
         this._bzDrawExcl(false);
+        getJson(`/api/backblaze/excluded/kopia-coverage?prefix=${encodeURIComponent(path)}`).then((kr) => {
+          if (seq !== this._bzExclSeq) return;  // a newer navigation superseded this fetch
+          const cov = kr.coverage || {};
+          this._bzExclItems.forEach((it) => {
+            const c = cov[it.name.toLowerCase()];
+            if (c) { it.kopia_backed_bytes = c.bytes; it.kopia_backed_files = c.files; it.kopia_repos = c.repos; }
+            else { it.kopia_backed_bytes = 0; }
+          });
+          this._bzDrawExcl(false);
+        }).catch(() => {});
       }, "Listing folder…");
     },
     bzExclRowOpen(row) {
@@ -287,7 +311,7 @@ window.bzMixin = function () {
         { title: "Bkd #", field: "backed_files", width: 85, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
         { title: "Excl #", field: "excluded_files", width: 85, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
         { title: "Excluded by", field: "excl_rule", widthGrow: 2, minWidth: 150, formatter: (c) => c.getValue() || "" },
-        { title: "Also in Kopia", field: "kopia_backed_bytes", width: 130, hozAlign: "right", sorter: "number", formatter: (c) => { const d = c.getRow().getData(); return (d.kopia_backed_files ? `${reposBadges(d.kopia_repos)} ${bzFmt(c.getValue())}` : "<span style='color:#94a3b8'>—</span>"); } },
+        { title: "Also in Kopia", field: "kopia_backed_bytes", width: 130, hozAlign: "right", sorter: "number", formatter: (c) => { const d = c.getRow().getData(); const v = c.getValue(); if (v === null || v === undefined) return "<span style='color:#cbd5e1'>…</span>"; return d.kopia_backed_files ? `${reposBadges(d.kopia_repos)} ${bzFmt(v)}` : "<span style='color:#94a3b8'>—</span>"; } },
       ], {
         persistSort: !isDrives,
         initialSort: isDrives ? [{ column: "name", dir: "asc" }] : [{ column: "excluded_bytes", dir: "desc" }],
@@ -344,25 +368,33 @@ window.bzMixin = function () {
       await this.wrap(async () => {
         const r = await getJson("/api/backblaze/churn?top=200");
         this.bzChurnTotal = r.total_recent || 0;
-        const rows = r.rows || [];
-        setTable("#bzChurnTable", rows, [
-          { title: "Folder (recently added)", field: "folder", widthGrow: 5, minWidth: 320 },
-          { title: "New IDs", field: "count", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
-          { title: "% of recent", field: "pct", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => `${Number(c.getValue() || 0).toFixed(1)}%` },
-          { title: "Drive", field: "drive", width: 70, formatter: (c) => c.getValue() ? c.getValue() + ":" : "" },
-        ], {
-          initialSort: [{ column: "count", dir: "desc" }],
-          rowMenu: [
-            { label: "Generate exclusion for this folder", action: (_e, row) => { const f = row.getData().folder; const rel = f.length > 2 && f[1] === ":" ? f.slice(2) : f; this.bzOpenGen("folder", rel.replace(/\\+$/, "") + "\\"); } },
-            { label: "Find in search", action: (_e, row) => { this.query = row.getData().folder; this.active = "bz-search"; this.bzLoadSearch(); } },
-          ],
-        });
+        this._bzChurnAll = r.rows || [];
+        this._bzDrawChurn();
       }, "Loading churn…");
     },
+    bzToggleChurnActive() { this.bzChurnActiveOnly = !this.bzChurnActiveOnly; this._bzDrawChurn(); },
+    _bzDrawChurn() {
+      const all = this._bzChurnAll || [];
+      const rows = this.bzChurnActiveOnly ? all.filter((r) => r.status === "active") : all;
+      const cs = (s) => { const m = { active: ["#dcfce7", "#166534"], excluded: ["#fef9c3", "#854d0e"], gone: ["#e2e8f0", "#475569"] }[s] || ["#e2e8f0", "#475569"]; return `<span class="pill" style="background:${m[0]};color:${m[1]}">${s}</span>`; };
+      setTable("#bzChurnTable", rows, [
+        { title: "Folder (recently added)", field: "folder", widthGrow: 5, minWidth: 300 },
+        { title: "Status", field: "status", width: 95, formatter: (c) => cs(c.getValue()) },
+        { title: "New IDs", field: "count", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+        { title: "% of recent", field: "pct", width: 105, hozAlign: "right", sorter: "number", formatter: (c) => `${Number(c.getValue() || 0).toFixed(1)}%` },
+        { title: "Backed now", field: "backed_now", width: 105, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+        { title: "Drive", field: "drive", width: 65, formatter: (c) => c.getValue() ? c.getValue() + ":" : "" },
+      ], {
+        initialSort: [{ column: "count", dir: "desc" }],
+        rowMenu: [
+          { label: "Generate exclusion for this folder", action: (_e, row) => { const f = row.getData().folder; const rel = f.length > 2 && f[1] === ":" ? f.slice(2) : f; this.bzOpenGen("folder", rel.replace(/\\+$/, "") + "\\"); } },
+          { label: "Find in search", action: (_e, row) => { this.query = row.getData().folder; this.active = "bz-search"; this.bzLoadSearch(); } },
+        ],
+      });
+    },
     bzChurnAlerts() {
-      // flag the top churners that are NOT one of the intentional Kopia repos (the "something new
-      // started churning" signal). Heuristic only.
-      return (this.bzChurnRows || []).filter((r) => r.pct >= 3 && !/kopia/i.test(r.folder)).slice(0, 4);
+      // active churners (still backed) that aren't an intentional Kopia repo = "something new started churning".
+      return (this._bzChurnAll || []).filter((r) => r.status === "active" && r.pct >= 3 && !/kopia/i.test(r.folder)).slice(0, 4);
     },
 
     // ---- Queue / Sessions / Health ----
@@ -379,7 +411,7 @@ window.bzMixin = function () {
     },
     async bzLoadSessions() {
       await this.wrap(async () => {
-        const r = await getJson("/api/backblaze/sessions?limit=300");
+        const r = await getJson("/api/backblaze/sessions?limit=400");
         this.bzSessions = r;
         setTable("#bzSessionsTable", r.sessions || [], [
           { title: "Time", field: "ts", width: 190, formatter: (c) => timeCell(c.getValue()) },
@@ -387,6 +419,11 @@ window.bzMixin = function () {
           { title: "Files", field: "files", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? Number(c.getValue()).toLocaleString() : "" },
           { title: "Uploaded", field: "bytes", width: 130, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? bzFmt(c.getValue()) : "" },
         ], { initialSort: [{ column: "ts", dir: "desc" }] });
+        setTable("#bzUploadsTable", r.uploads || [], [
+          { title: "Date", field: "date", width: 160 },
+          { title: "Successful uploads", field: "success", width: 150, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+          { title: "Detail", field: "detail", widthGrow: 3, minWidth: 200 },
+        ], { initialSort: [{ column: "date", dir: "desc" }] });
       }, "Loading sessions…");
     },
     async bzLoadHealth() {

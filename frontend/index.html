@@ -308,6 +308,7 @@
                 <span class="text-stone-500 w-16 text-right" x-text="Number(r.count).toLocaleString()"></span>
                 <span class="text-amber-600 w-12 text-right" x-text="r.pct + '%'"></span>
                 <span class="break-all flex-1" x-text="r.folder"></span>
+                <span class="text-[10px] shrink-0" :class="r.status==='active' ? 'text-emerald-600' : 'text-stone-400'" x-text="r.status"></span>
               </div>
             </template>
           </div>
@@ -363,6 +364,7 @@
       <section x-show="active==='bz-tree'" class="h-full flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
           <select x-model="bzTreeDrive" @change="bzTreeChanged()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+            <option value="*ALL*">★ All drives</option>
             <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" x-text="d.drive + ':\\'"></option></template>
           </select>
           <button @click="bzTreeUp()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Up one level">⬆ Up</button>
@@ -429,7 +431,8 @@
         </div>
         <div class="flex items-center gap-2 text-sm">
           <span class="font-medium">Recently added, by folder</span>
-          <span class="text-stone-400 text-xs">tail of bzfileids = new IDs assigned recently · right-click → generate exclusion · total recent: <span x-text="Number(bzChurnTotal||0).toLocaleString()"></span></span>
+          <button @click="bzToggleChurnActive()" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="bzChurnActiveOnly ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Show only folders that still have backed files (hide excluded / deleted)"><span x-text="bzChurnActiveOnly ? '● Active only' : 'Showing all'"></span></button>
+          <span class="text-stone-400 text-xs">right-click → generate exclusion · total recent IDs: <span x-text="Number(bzChurnTotal||0).toLocaleString()"></span></span>
         </div>
         <div id="bzChurnTable" class="flex-1 min-h-0"></div>
       </section>
@@ -457,9 +460,27 @@
         <div id="bzQueueTable" class="flex-1 min-h-0"></div>
       </section>
 
-      <section x-show="active==='bz-sessions'" class="h-full flex flex-col gap-2">
-        <div class="text-sm font-medium">Backup session history <span class="text-stone-400 text-xs font-normal">(from the rotated event logs, ~1 year)</span></div>
-        <div id="bzSessionsTable" class="flex-1 min-h-0"></div>
+      <section x-show="active==='bz-sessions'" class="h-full flex flex-col gap-3 overflow-auto">
+        <div>
+          <div class="text-sm font-medium mb-1">Recent backup sessions <span class="text-stone-400 text-xs font-normal">(live log; older session detail sits in Backblaze's permission-locked archives)</span></div>
+          <div id="bzSessionsTable" class="min-h-[9rem]"></div>
+        </div>
+        <div>
+          <div class="text-sm font-medium mb-1">Daily upload history <span class="text-stone-400 text-xs font-normal">(per-day successful-upload counts)</span></div>
+          <div id="bzUploadsTable" class="min-h-[12rem]"></div>
+        </div>
+        <div x-show="bzSessions && bzSessions.deletion_events && bzSessions.deletion_events.length">
+          <div class="text-sm font-medium mb-1 text-rose-600">Mass-deletion events <span class="text-stone-400 text-xs font-normal">(big bz_done files = the F: filelist-bug signature)</span></div>
+          <div class="rounded border border-rose-200 dark:border-rose-800">
+            <template x-for="(d,i) in (bzSessions ? bzSessions.deletion_events : [])" :key="i">
+              <div class="text-[12px] flex items-center gap-2 border-b border-stone-100 dark:border-stone-800 px-2 py-0.5">
+                <span class="text-stone-500 w-44 shrink-0" x-text="d.ts"></span>
+                <span class="shrink-0" x-text="fmtB(d.bytes)"></span>
+                <span class="text-rose-600 break-all" x-text="d.detail"></span>
+              </div>
+            </template>
+          </div>
+        </div>
       </section>
 
       <section x-show="active==='bz-health'" class="h-full flex flex-col gap-3 overflow-auto">

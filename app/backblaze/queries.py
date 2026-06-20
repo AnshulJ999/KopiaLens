@@ -305,7 +305,14 @@ def naming_gap(query: str, depth: int = 2, top: int = 300) -> list[dict]:
 # ---- churn (recently-added folders = early warning for a new high-churn folder) ---------
 def churn(top: int = 200) -> dict:
     """Top folders by recent fileID additions (the bzfileids tail rolled up at index time).
-    This is the user's #1 lever: catch a new churner (PBS chunks, Docker, *-pg) before it balloons."""
+    This is the user's #1 lever: catch a new churner (PBS chunks, Docker, *-pg) before it balloons.
+
+    Status-aware: bzfileids is cumulative and never trimmed, so a folder can show heavy historical
+    churn yet be excluded or deleted now. Each folder is cross-checked against the live `files` index:
+      active   = still has backed files (a real ongoing churner)
+      excluded = still on disk but all of it is now excluded
+      gone     = no current files at all (deleted from disk / no longer scanned)
+    """
     con = bbdb.connect()
     rows = con.execute("SELECT folder, cnt FROM churn ORDER BY cnt DESC LIMIT ?", [int(top)]).fetchall()
     total = sum(r["cnt"] for r in rows) or 1
@@ -313,8 +320,15 @@ def churn(top: int = 200) -> dict:
     for r in rows:
         folder = r["folder"]
         drive = folder[0].upper() if len(folder) > 1 and folder[1] == ":" else ""
-        out.append({"folder": folder, "count": r["cnt"],
-                    "pct": round(100.0 * r["cnt"] / total, 1), "drive": drive})
+        lo = folder.lower().rstrip(_SEP) + _SEP
+        hi = lo + "￿"
+        st = con.execute(
+            "SELECT count(*) t, sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END) b "
+            "FROM files WHERE path_lc>=? AND path_lc<?", [lo, hi]).fetchone()
+        tcnt, bcnt = st["t"] or 0, st["b"] or 0
+        status = "gone" if tcnt == 0 else ("active" if bcnt > 0 else "excluded")
+        out.append({"folder": folder, "count": r["cnt"], "pct": round(100.0 * r["cnt"] / total, 1),
+                    "drive": drive, "status": status, "backed_now": bcnt, "files_now": tcnt})
     return {"total_recent": total, "rows": out}
 
 

@@ -192,24 +192,35 @@ def excluded_drives() -> dict:
 
 @router.get("/excluded/list")
 def excluded_list(prefix: str) -> dict:
-    """BZ folder coverage under `prefix` (native backed/excluded per child) + Kopia cross-column."""
+    """BZ-native folder coverage under `prefix` (backed/excluded per child). Fast - one indexed scan.
+    The Kopia cross-coverage column is fetched separately (/excluded/kopia-coverage) so navigation is
+    never blocked on the slower DuckDB queries (lazy fill in the frontend)."""
     _require_data()
     key = prefix.lower()
     hit = _EXCL_CACHE.get(key)
     if hit and time.time() - hit[0] < _EXCL_TTL:
         return hit[1]
     items = bzq.folder_children(prefix)
-    kc: dict = {}
-    try:
-        from ..index.excluded import kopia_backed_children
-        kc = kopia_backed_children(prefix)
-    except Exception:  # noqa: BLE001 - cross-coverage is optional
-        kc = {}
-    for it in items:
-        b = kc.get(it["name"].lower())
-        it["kopia_backed_bytes"] = int(b["logical"]) if b else 0
-        it["kopia_backed_files"] = int(b["files"]) if b else 0
-        it["kopia_repos"] = sorted(b["repos"]) if b else []
     result = {"prefix": prefix, "items": items, "count": len(items)}
     _EXCL_CACHE[key] = (time.time(), result)
+    return result
+
+
+@router.get("/excluded/kopia-coverage")
+def excluded_kopia_coverage(prefix: str) -> dict:
+    """Kopia cross-coverage per immediate child under `prefix` (the slow DuckDB part of the Excluded
+    view, loaded lazily). Returns {seg_lc: {bytes, files, repos}}."""
+    ckey = "kc:" + prefix.lower()
+    hit = _EXCL_CACHE.get(ckey)
+    if hit and time.time() - hit[0] < _EXCL_TTL:
+        return hit[1]
+    cov: dict = {}
+    try:
+        from ..index.excluded import kopia_backed_children
+        for seg, b in kopia_backed_children(prefix).items():
+            cov[seg] = {"bytes": int(b["logical"]), "files": int(b["files"]), "repos": sorted(b["repos"])}
+    except Exception:  # noqa: BLE001 - cross-coverage is optional
+        cov = {}
+    result = {"prefix": prefix, "coverage": cov}
+    _EXCL_CACHE[ckey] = (time.time(), result)
     return result
