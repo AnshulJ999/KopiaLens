@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import ctypes
+import datetime
+import os
 import subprocess
 import sys
 import webbrowser
@@ -16,6 +19,31 @@ HERE = Path(__file__).resolve().parent
 URL = f"http://{HOST}:{PORT}"
 _NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW (Windows) - suppress the child console (no flicker)
 proc: subprocess.Popen | None = None
+
+
+def _is_first_instance() -> bool:
+    """Single-instance guard for the TRAY (the port guard in main.py only covers the server, so
+    multiple VBS launches would each spawn a tray icon). Uses a session-scoped named mutex: returns
+    True if we are the first tray. The handle is intentionally left open (held for the process
+    lifetime); Windows frees it automatically on exit, so there is no stale-lock problem."""
+    try:
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateMutexW(None, False, "KopiaLensTray_SingleInstance")
+        return kernel32.GetLastError() != 183  # 183 = ERROR_ALREADY_EXISTS
+    except Exception:  # noqa: BLE001 - if the guard itself errors, never block startup
+        return True
+
+
+def _log_guard(msg: str) -> None:
+    """Append one line to the shared log file so a duplicate-launch is identifiable. Plain append
+    (NOT a RotatingFileHandler) so it can't clash with the server process's log rotation."""
+    try:
+        from app.core.applog import LOG_FILE
+        os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+        with open(LOG_FILE, "a", encoding="utf-8") as fh:
+            fh.write(f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S} WARNING kopialens.tray | {msg}\n")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def icon_image() -> Image.Image:
@@ -69,6 +97,9 @@ def quit_app(icon: pystray.Icon, _item=None) -> None:
 
 
 def main() -> None:
+    if not _is_first_instance():  # another tray is already running -> exit quietly (logged for diagnosis)
+        _log_guard("tray single-instance guard: a KopiaLens tray is already running - this launch is exiting")
+        return
     start_server()  # start the backend, but do NOT auto-open the browser (use the tray menu)
     menu = pystray.Menu(
         pystray.MenuItem("Open", open_ui, default=True),
