@@ -235,7 +235,7 @@ def refresh(force: bool = False) -> dict:
         _refresh_stats_kv(con)
         _refresh_churn(con)
         _refresh_folder_snapshots(con, _history_days())
-        if force:
+        if force or not bbdb.kv_get(con, "fileids_total"):  # populate once, then only on a forced rebuild
             _refresh_ids_count(con)
         con.commit()
         # Release pages freed by the DELETE+INSERT churn so the file stays small (cheap; only does
