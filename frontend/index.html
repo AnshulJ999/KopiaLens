@@ -435,6 +435,15 @@
       </section>
 
       <section x-show="active==='bz-queue'" class="h-full flex flex-col gap-2">
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-stone-500">Folder depth</label>
+          <select x-model.number="bzQueueDepth" @change="bzLoadQueue()" class="fld h-8 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-xs">
+            <option :value="1">1 (top folder)</option>
+            <option :value="2">2</option>
+            <option :value="3">3</option>
+          </select>
+          <span class="text-xs text-stone-400">depth 1 rolls each Kopia repo up to a single row</span>
+        </div>
         <div class="flex flex-wrap items-center gap-3 text-sm" x-show="bzQueue">
           <span class="font-medium">Upload queue (scheduled for backup)</span>
           <span x-text="bzQueue && (Number(bzQueue.total_files||0).toLocaleString() + ' files · ' + fmtB(bzQueue.total_bytes))"></span>

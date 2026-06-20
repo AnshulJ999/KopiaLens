@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from copy import deepcopy
 from typing import Any
 
@@ -63,20 +64,54 @@ def _migrate_settings() -> None:
 _migrate_settings()
 
 
+# All settings reads/writes go through this lock so a read-modify-write (e.g. the many Tabulator
+# table-persistence POSTs fired across several browser tabs at once) can never interleave - the
+# bug that silently reset settings.json to defaults.
+_SETTINGS_LOCK = threading.RLock()
+
+
 def load_settings() -> dict[str, Any]:
-    settings = deepcopy(DEFAULT_SETTINGS)
-    try:
-        with open(SETTINGS_FILE, encoding="utf-8") as handle:
-            loaded = json.load(handle)
+    with _SETTINGS_LOCK:
+        settings = deepcopy(DEFAULT_SETTINGS)
+        if not os.path.exists(SETTINGS_FILE):
+            return settings
+        try:
+            with open(SETTINGS_FILE, encoding="utf-8") as handle:
+                loaded = json.load(handle)
+        except Exception:
+            # File exists but is unreadable/corrupt. Do NOT silently return defaults that a
+            # following save could persist over the real file (that wipes the user's settings).
+            # Preserve the bad copy for recovery, then fall back to defaults.
+            try:
+                os.replace(SETTINGS_FILE, SETTINGS_FILE + ".corrupt")
+            except Exception:
+                pass
+            return settings
         settings.update(loaded)
         settings["kopialens"] = {**DEFAULT_SETTINGS["kopialens"], **loaded.get("kopialens", {})}
         settings["backblaze"] = {**DEFAULT_SETTINGS["backblaze"], **loaded.get("backblaze", {})}
-    except Exception:
-        pass
-    return settings
+        return settings
 
 
 def save_settings(settings: dict[str, Any]) -> None:
-    os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
-    with open(SETTINGS_FILE, "w", encoding="utf-8") as handle:
-        json.dump(settings, handle, indent=2)
+    """Atomic write under the lock: write a temp file, fsync, then os.replace() (atomic on Windows
+    + POSIX). A concurrent reader can never catch the file mid-truncate, so load_settings can't fall
+    back to defaults from a partial read."""
+    with _SETTINGS_LOCK:
+        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+        tmp = SETTINGS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(settings, handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, SETTINGS_FILE)
+
+
+def mutate_settings(mutator) -> dict[str, Any]:
+    """Atomic read-modify-write: hold the lock across load + mutate + save so concurrent writers
+    cannot interleave and clobber each other's changes. `mutator(settings)` edits in place."""
+    with _SETTINGS_LOCK:
+        settings = load_settings()
+        mutator(settings)
+        save_settings(settings)
+        return settings

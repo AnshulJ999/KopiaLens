@@ -10,7 +10,7 @@ from ..core.metrics import table_rows
 from ..core.sources import sources_index
 from ..index.builder import start_build, index_status
 from ..index.queries import index_summary
-from ..settings import load_settings, save_settings
+from ..settings import load_settings, mutate_settings
 
 router = APIRouter(tags=["dashboard"])
 
@@ -68,13 +68,17 @@ def post_index_build(repo: str = "1", source: str | None = None, full: bool = Fa
 
 @router.post("/settings")
 def post_settings(payload: dict) -> dict:
-    settings = load_settings()
     kl = payload.pop("kopialens", None)
-    settings.update(payload)
-    if isinstance(kl, dict):  # merge nested kopialens, don't clobber the whole sub-dict
-        settings["kopialens"] = {**settings.get("kopialens", {}), **kl}
-    save_settings(settings)
-    return settings
+    bz = payload.pop("backblaze", None)
+
+    def _apply(settings: dict) -> None:
+        settings.update(payload)
+        if isinstance(kl, dict):  # merge nested sub-dicts, don't clobber the whole block
+            settings["kopialens"] = {**settings.get("kopialens", {}), **kl}
+        if isinstance(bz, dict):
+            settings["backblaze"] = {**settings.get("backblaze", {}), **bz}
+
+    return mutate_settings(_apply)
 
 
 @router.get("/settings/tables")
@@ -88,9 +92,6 @@ def post_table_pref(payload: dict) -> dict:
     table_id = payload.get("id")
     if not table_id:
         return {"ok": False}
-    settings = load_settings()
-    kl = settings.setdefault("kopialens", {})
-    tables = kl.setdefault("tables", {})
-    tables[table_id] = payload.get("config")
-    save_settings(settings)
+    mutate_settings(lambda s: s.setdefault("kopialens", {}).setdefault("tables", {}).__setitem__(
+        table_id, payload.get("config")))
     return {"ok": True}

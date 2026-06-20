@@ -36,7 +36,7 @@ window.bzMixin = function () {
     bzExclPath: "", bzExclFilter: "all", bzExclMeta: "", _bzExclItems: [], _bzExclSeq: 0,
     bzExclusions: null, bzNamingQuery: "", bzNamingRows: [],
     bzGen: null, bzShowGen: false,
-    bzQueue: null, bzSessions: null, bzHealth: null,
+    bzQueue: null, bzQueueDepth: 1, bzSessions: null, bzHealth: null,
     bzDetail: null, bzDrives: [],
 
     // ---- lifecycle ----
@@ -368,7 +368,7 @@ window.bzMixin = function () {
     // ---- Queue / Sessions / Health ----
     async bzLoadQueue() {
       await this.wrap(async () => {
-        const r = await getJson("/api/backblaze/queue?depth=2");
+        const r = await getJson(`/api/backblaze/queue?depth=${this.bzQueueDepth || 1}`);
         this.bzQueue = r;
         setTable("#bzQueueTable", r.by_folder || [], [
           { title: "Folder", field: "folder", widthGrow: 5, minWidth: 320 },

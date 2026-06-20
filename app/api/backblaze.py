@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 import io
+import time
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -18,6 +19,11 @@ from ..backblaze import indexer, paths
 from ..backblaze import queries as bzq
 
 router = APIRouter(prefix="/api/backblaze", tags=["backblaze"])
+
+# Short TTL cache for the Excluded views: each drill does a folder scan + 2 kopia DuckDB queries
+# (the slow part), so repeated navigation within the window is instant.
+_EXCL_CACHE: dict = {}
+_EXCL_TTL = 120
 
 
 def _require_data() -> None:
@@ -158,6 +164,9 @@ def dupes(min_size: int = 50_000_000, top: int = 200) -> dict:
 def excluded_drives() -> dict:
     """Per-drive BZ backed/excluded coverage (native, exact) + a Kopia cross-coverage column."""
     _require_data()
+    hit = _EXCL_CACHE.get("*drives*")
+    if hit and time.time() - hit[0] < _EXCL_TTL:
+        return hit[1]
     ov = bzq.overview()
     kd: dict = {}
     try:
@@ -176,13 +185,19 @@ def excluded_drives() -> dict:
             "auth_files": r["auth_files"], "diff": r["diff"],
             "kopia_backed_files": kf, "kopia_backed_bytes": kb,
         })
-    return {"drives": drives, "grand_files": ov["auth_grand_files"], "grand_bytes": ov["auth_grand_bytes"]}
+    result = {"drives": drives, "grand_files": ov["auth_grand_files"], "grand_bytes": ov["auth_grand_bytes"]}
+    _EXCL_CACHE["*drives*"] = (time.time(), result)
+    return result
 
 
 @router.get("/excluded/list")
 def excluded_list(prefix: str) -> dict:
     """BZ folder coverage under `prefix` (native backed/excluded per child) + Kopia cross-column."""
     _require_data()
+    key = prefix.lower()
+    hit = _EXCL_CACHE.get(key)
+    if hit and time.time() - hit[0] < _EXCL_TTL:
+        return hit[1]
     items = bzq.folder_children(prefix)
     kc: dict = {}
     try:
@@ -195,4 +210,6 @@ def excluded_list(prefix: str) -> dict:
         it["kopia_backed_bytes"] = int(b["logical"]) if b else 0
         it["kopia_backed_files"] = int(b["files"]) if b else 0
         it["kopia_repos"] = sorted(b["repos"]) if b else []
-    return {"prefix": prefix, "items": items, "count": len(items)}
+    result = {"prefix": prefix, "items": items, "count": len(items)}
+    _EXCL_CACHE[key] = (time.time(), result)
+    return result
