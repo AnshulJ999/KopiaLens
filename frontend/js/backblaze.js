@@ -479,7 +479,7 @@ window.bzMixin = function () {
     async bzImportArchive() {
       await this.wrap(async () => {
         const r = await getJson("/api/backblaze/import-archive", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-        this.bzImportMsg = r.ok ? `Imported ${r.imported} session events.` : `Import failed: ${r.reason || "unknown"}`;
+        this.bzImportMsg = r.ok ? `Imported ${r.imported} new event(s) · ${r.total} total archived.` : `Import failed: ${r.reason || "unknown"}`;
         await this.bzLoadSessions();
       }, "Importing archived history…");
     },

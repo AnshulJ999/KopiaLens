@@ -117,11 +117,15 @@ def import_eventlog_archive(eventlog_dir: str) -> dict:
            for e in parsers.parse_eventlog(eventlog_dir)
            if e["kind"] in ("session_start", "session_end")]
     with _LOCKED(con):
-        con.execute("DELETE FROM events_archive")
-        if evs:
-            con.executemany("INSERT INTO events_archive VALUES(?,?,?,?,?,?)", evs)
+        # Merge + dedupe (by ts+kind) instead of replace, so re-importing a refreshed copy months
+        # later ACCUMULATES new history without losing the old or duplicating.
+        existing = {(r[0], r[1]) for r in con.execute("SELECT ts, kind FROM events_archive")}
+        new = [e for e in evs if (e[0], e[1]) not in existing]
+        if new:
+            con.executemany("INSERT INTO events_archive VALUES(?,?,?,?,?,?)", new)
         con.commit()
-    return {"ok": True, "imported": len(evs), "dir": eventlog_dir}
+        total = con.execute("SELECT count(*) FROM events_archive").fetchone()[0]
+    return {"ok": True, "imported": len(new), "total": total, "dir": eventlog_dir}
 
 
 def _refresh_queue(con) -> int:

@@ -17,9 +17,10 @@ try:
 except Exception:  # standalone / tests
     DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
 
-_LOCK = threading.RLock()
-_CONN: sqlite3.Connection | None = None
-_FTS_OK = True  # set False if the trigram FTS5 table can't be created (old SQLite)
+_LOCK = threading.RLock()       # serializes the app's own writers (refresh / archive import)
+_local = threading.local()      # per-thread connections - a sqlite3 connection is NOT safe to share across threads
+_FTS_OK = True                  # set False if the trigram FTS5 table can't be created (old SQLite)
+_SCHEMA_READY = False
 
 
 def db_path() -> str:
@@ -32,33 +33,40 @@ def fts_available() -> bool:
 
 
 def connect() -> sqlite3.Connection:
-    """Process-wide connection (created + schema-initialised once). WAL for concurrent reads."""
-    global _CONN
+    """Per-thread connection to the WAL database. A sqlite3 connection must NOT be shared across
+    threads (the background refresh + API read threads sharing one raised 'bad parameter or API
+    misuse'); each thread gets its own, and WAL then allows concurrent readers + one writer. Writers
+    serialize via _LOCK; busy_timeout backstops any SQLite-level lock contention. Schema is
+    initialised once (the first connection in any thread)."""
+    con = getattr(_local, "con", None)
+    if con is not None:
+        return con
+    con = sqlite3.connect(db_path(), check_same_thread=False)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA journal_mode=WAL")     # persistent (db-level); concurrent readers + 1 writer
+    con.execute("PRAGMA synchronous=NORMAL")
+    con.execute("PRAGMA temp_store=MEMORY")
+    con.execute("PRAGMA busy_timeout=5000")    # wait up to 5s for a lock instead of erroring
+    global _SCHEMA_READY
     with _LOCK:
-        if _CONN is None:
-            con = sqlite3.connect(db_path(), check_same_thread=False)
-            con.row_factory = sqlite3.Row
+        if not _SCHEMA_READY:
             # INCREMENTAL auto-vacuum: freed pages go to a freelist that PRAGMA incremental_vacuum
-            # releases cheaply after each index batch - so the file stays small without a slow full
-            # VACUUM. (Takes effect for a fresh DB created here; an existing DB needs one VACUUM to
-            # switch modes, done once via the conversion in bz_verify / a full rebuild.)
+            # releases cheaply after each index batch (an existing DB needs one VACUUM to switch
+            # modes - done in bz_verify / a full rebuild).
             con.execute("PRAGMA auto_vacuum=INCREMENTAL")
-            con.execute("PRAGMA journal_mode=WAL")
-            con.execute("PRAGMA synchronous=NORMAL")
-            con.execute("PRAGMA temp_store=MEMORY")
             _init_schema(con)
-            _CONN = con
-        return _CONN
+            _SCHEMA_READY = True
+    _local.con = con
+    return con
 
 
 def close() -> None:
-    global _CONN
-    with _LOCK:
-        if _CONN is not None:
-            try:
-                _CONN.close()
-            finally:
-                _CONN = None
+    con = getattr(_local, "con", None)
+    if con is not None:
+        try:
+            con.close()
+        finally:
+            _local.con = None
 
 
 def _init_schema(con: sqlite3.Connection) -> None:
