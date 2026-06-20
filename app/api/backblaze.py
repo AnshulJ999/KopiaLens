@@ -31,6 +31,22 @@ def _require_data() -> None:
         raise HTTPException(status_code=503, detail=f"Backblaze data not found at {paths.bzdata_root()}")
 
 
+def _bz_settings() -> dict:
+    try:
+        from ..settings import load_settings
+        return load_settings().get("backblaze", {})
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _collapse_prefixes() -> list:
+    return _bz_settings().get("collapse_prefixes", []) or []
+
+
+def _archive_path() -> str:
+    return _bz_settings().get("eventlog_archive_path", "")
+
+
 # ---- index status / manual refresh -----------------------------------------------------
 @router.get("/status")
 def status() -> dict:
@@ -64,28 +80,28 @@ def stats() -> dict:
 
 
 @router.get("/churn")
-def churn(top: int = 200) -> dict:
+def churn(top: int = 200, depth: int = 2, collapse: bool = True) -> dict:
     _require_data()
-    return bzq.churn(top=top)
+    return bzq.churn(top=top, depth=depth, collapse=_collapse_prefixes() if collapse else None)
 
 
 # ---- Search (FTS5) ---------------------------------------------------------------------
 @router.get("/search")
 def search(q: str = Query("", description="substring over the full path"),
-           drive: str | None = None, ext: str | None = None, status: str = "all",
-           min_size: int = 0, sort: str = "size", direction: str = "desc",
+           drive: str | None = None, ext: str | None = None, ext_exclude: str | None = None,
+           status: str = "all", min_size: int = 0, sort: str = "size", direction: str = "desc",
            limit: int = 500, offset: int = 0) -> dict:
     _require_data()
-    return bzq.search(query=q, drive=drive, ext=ext, status=status, min_size=min_size,
-                      sort=sort, direction=direction, limit=limit, offset=offset)
+    return bzq.search(query=q, drive=drive, ext=ext, ext_exclude=ext_exclude, status=status,
+                      min_size=min_size, sort=sort, direction=direction, limit=limit, offset=offset)
 
 
 @router.get("/export")
-def export(q: str = "", drive: str | None = None, ext: str | None = None, status: str = "all",
-           min_size: int = 0, sort: str = "size", direction: str = "desc") -> StreamingResponse:
+def export(q: str = "", drive: str | None = None, ext: str | None = None, ext_exclude: str | None = None,
+           status: str = "all", min_size: int = 0, sort: str = "size", direction: str = "desc") -> StreamingResponse:
     _require_data()
-    cur = bzq.export_iter(query=q, drive=drive, ext=ext, status=status, min_size=min_size,
-                          sort=sort, direction=direction)
+    cur = bzq.export_iter(query=q, drive=drive, ext=ext, ext_exclude=ext_exclude, status=status,
+                          min_size=min_size, sort=sort, direction=direction)
 
     def gen():
         buf = io.StringIO()
@@ -103,10 +119,11 @@ def export(q: str = "", drive: str | None = None, ext: str | None = None, status
 
 @router.get("/group-by-folder")
 def group_by_folder(drive: str | None = None, depth: int = 2, status: str = "backed",
-                    min_files: int = 1, top: int = 300) -> dict:
+                    min_files: int = 1, top: int = 300, collapse: bool = True) -> dict:
     _require_data()
-    return {"depth": depth, "rows": bzq.group_by_folder(drive=drive, depth=depth, status=status,
-                                                        min_files=min_files, top=top)}
+    return {"depth": depth, "rows": bzq.group_by_folder(
+        drive=drive, depth=depth, status=status, min_files=min_files, top=top,
+        collapse=_collapse_prefixes() if collapse else None)}
 
 
 # ---- Tree (per-drive folder browser; also used by the BZ Excluded drill) ----------------
@@ -136,15 +153,25 @@ def naming_gap(q: str, depth: int = 2) -> dict:
 
 # ---- Queue / Sessions / Health / Dupes -------------------------------------------------
 @router.get("/queue")
-def queue(depth: int = 1) -> dict:
+def queue(depth: int = 1, collapse: bool = True) -> dict:
     _require_data()
-    return bzq.queue(depth=depth)
+    return bzq.queue(depth=depth, collapse=_collapse_prefixes() if collapse else None)
 
 
 @router.get("/sessions")
-def sessions(limit: int = 200) -> dict:
+def sessions(limit: int = 400) -> dict:
     _require_data()
     return bzq.sessions(limit=limit)
+
+
+@router.post("/import-archive")
+def import_archive(payload: dict | None = None) -> dict:
+    """One-time import of the copied (readable) rotated eventlog .zips -> permanent events_archive.
+    Path from the request or the configured eventlog_archive_path."""
+    path = (payload or {}).get("path") or _archive_path()
+    if not path:
+        raise HTTPException(status_code=400, detail="no archive path configured")
+    return indexer.import_eventlog_archive(path)
 
 
 @router.get("/health")

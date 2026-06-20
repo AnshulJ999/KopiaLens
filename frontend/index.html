@@ -315,8 +315,8 @@
           <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
             <div class="mb-1 font-medium text-sm">Category breakdown</div>
             <template x-for="(c,i) in bzCategories()" :key="i">
-              <div class="flex items-center gap-2 py-0.5 text-[12px] border-t border-stone-100 dark:border-stone-800">
-                <span class="w-28 capitalize" x-text="c.name"></span>
+              <div @click="bzCatSearch(c.name)" class="flex items-center gap-2 py-0.5 text-[12px] border-t border-stone-100 dark:border-stone-800 cursor-pointer hover:bg-stone-100 dark:hover:bg-stone-800 rounded px-1" title="Search files in this category">
+                <span class="w-28 capitalize text-sky-600" x-text="c.name"></span>
                 <span class="text-stone-500 w-20 text-right" x-text="Number(c.num).toLocaleString()"></span>
                 <span class="ml-auto" x-text="fmtB(c.bytes)"></span>
               </div>
@@ -338,6 +338,7 @@
             <option value="excluded">Excluded only</option>
           </select>
           <input x-model="bzSearchExt" @input.debounce.300ms="bzLoadSearch()" class="fld w-36 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="ext: mp4,iso">
+          <input x-model="bzSearchExtExclude" @input.debounce.300ms="bzLoadSearch()" class="fld w-36 border border-amber-300 dark:border-amber-700 bg-white dark:bg-stone-800" placeholder="hide ext: mp4,mkv" title="Hide these extensions">
           <button @click="bzToggleGroup()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="bzGroupByFolder ? 'bg-amber-200 dark:bg-amber-800' : ''" title="Group results by folder">⊞ By folder</button>
           <button @click="bzExportSearch()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Export the full filtered set to CSV">⬇ CSV</button>
           <span class="ml-2 text-xs text-stone-600 dark:text-stone-300 font-medium" x-text="bzSearchMeta"></span>
@@ -429,23 +430,30 @@
             <div class="text-[12px] flex items-center gap-2"><span class="text-amber-700 w-12 text-right" x-text="a.pct + '%'"></span><span class="break-all" x-text="a.folder"></span></div>
           </template>
         </div>
-        <div class="flex items-center gap-2 text-sm">
+        <div class="flex flex-wrap items-center gap-2 text-sm">
           <span class="font-medium">Recently added, by folder</span>
-          <button @click="bzToggleChurnActive()" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="bzChurnActiveOnly ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Show only folders that still have backed files (hide excluded / deleted)"><span x-text="bzChurnActiveOnly ? '● Active only' : 'Showing all'"></span></button>
-          <span class="text-stone-400 text-xs">right-click → generate exclusion · total recent IDs: <span x-text="Number(bzChurnTotal||0).toLocaleString()"></span></span>
+          <label class="text-xs text-stone-500">Depth</label>
+          <select x-model.number="bzChurnDepth" @change="bzChurnChanged()" class="fld h-8 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-xs">
+            <template x-for="n in [1,2,3,4,5,6,7,8]" :key="n"><option :value="n" x-text="n"></option></template>
+          </select>
+          <button @click="bzChurnCollapse=!bzChurnCollapse; bzChurnChanged()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="bzChurnCollapse ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Roll the Kopia repos up to one row each">⧉ Collapse Kopia</button>
+          <button @click="bzToggleChurnActive()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="bzChurnActiveOnly ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Show only folders that still have backed files (hide excluded / deleted)"><span x-text="bzChurnActiveOnly ? '● Active only' : 'Showing all'"></span></button>
+          <select x-model="bzChurnDrive" @change="_bzDrawChurn()" class="fld h-8 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-xs">
+            <option value="">All drives</option>
+            <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" x-text="d.drive + ':'"></option></template>
+          </select>
+          <span class="text-stone-400 text-xs">total recent IDs: <span x-text="Number(bzChurnTotal||0).toLocaleString()"></span></span>
         </div>
         <div id="bzChurnTable" class="flex-1 min-h-0"></div>
       </section>
 
       <section x-show="active==='bz-queue'" class="h-full flex flex-col gap-2">
-        <div class="flex items-center gap-2">
+        <div class="flex flex-wrap items-center gap-2">
           <label class="text-xs text-stone-500">Folder depth</label>
-          <select x-model.number="bzQueueDepth" @change="bzLoadQueue()" class="fld h-8 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-xs">
-            <option :value="1">1 (top folder)</option>
-            <option :value="2">2</option>
-            <option :value="3">3</option>
+          <select x-model.number="bzQueueDepth" @change="bzQueueChanged()" class="fld h-8 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-xs">
+            <template x-for="n in [1,2,3,4,5,6,7,8]" :key="n"><option :value="n" x-text="n"></option></template>
           </select>
-          <span class="text-xs text-stone-400">depth 1 rolls each Kopia repo up to a single row</span>
+          <button @click="bzQueueCollapse=!bzQueueCollapse; bzQueueChanged()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="bzQueueCollapse ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Roll the Kopia repos up to one row each">⧉ Collapse Kopia</button>
         </div>
         <div class="flex flex-wrap items-center gap-3 text-sm" x-show="bzQueue">
           <span class="font-medium">Upload queue (scheduled for backup)</span>
@@ -461,9 +469,13 @@
       </section>
 
       <section x-show="active==='bz-sessions'" class="h-full flex flex-col gap-3 overflow-auto">
+        <div class="flex items-center gap-2">
+          <button @click="bzImportArchive()" class="h-8 rounded border border-sky-400 text-sky-700 dark:text-sky-300 px-3 text-sm" title="One-time import of ~1 year of session history from the copied (unlocked) archive">⤓ Import archived history</button>
+          <span class="text-xs text-emerald-600" x-text="bzImportMsg"></span>
+        </div>
         <div>
-          <div class="text-sm font-medium mb-1">Recent backup sessions <span class="text-stone-400 text-xs font-normal">(live log; older session detail sits in Backblaze's permission-locked archives)</span></div>
-          <div id="bzSessionsTable" class="min-h-[9rem]"></div>
+          <div class="text-sm font-medium mb-1">Recent backup sessions <span class="text-stone-400 text-xs font-normal">(live log + imported archive = ~1 year)</span></div>
+          <div id="bzSessionsTable"></div>
         </div>
         <div>
           <div class="text-sm font-medium mb-1">Daily upload history <span class="text-stone-400 text-xs font-normal">(per-day successful-upload counts)</span></div>

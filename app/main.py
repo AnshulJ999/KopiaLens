@@ -5,11 +5,12 @@ from __future__ import annotations
 import os
 import threading
 import time
+import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import REPOS, repo_kind
@@ -211,6 +212,15 @@ async def timing_middleware(request: Request, call_next):
             request.method, request.url.path, response.status_code, ms, kc, kms,
         )
     return response
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    """Log the FULL traceback to kopialens.log and return JSON (never a plain-text 500). Fixes the
+    frontend 'Unexpected token I' crash AND finally records what actually threw. HTTPException has its
+    own handler and never reaches here."""
+    log.error("UNHANDLED %s %s: %s\n%s", request.method, request.url.path, exc, traceback.format_exc())
+    return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
 
 
 app.include_router(dashboard.router, prefix="/api")

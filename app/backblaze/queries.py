@@ -3,16 +3,34 @@
 from __future__ import annotations
 
 import json
+import time
 
-from . import bbdb, paths
+from . import bbdb, parsers, paths
 
 _SEP = "\\"
+_CHURN_TAIL = 30 * 1024 * 1024  # bytes of the bzfileids tail scanned for "recently added"
+_CHURN_CACHE: dict = {}         # (top, depth, collapse_key) -> (ts, result)
+
+
+def _apply_collapse(path: str, depth: int, collapse_lc):
+    """Roll a path up to a folder key at `depth`, EXCEPT paths under a collapse prefix (e.g.
+    `E:\\Kopia`) which roll up to that prefix as a single unit. `collapse_lc` = [(lower, original)]."""
+    pl = path.lower()
+    for clc, corig in collapse_lc:
+        if pl == clc or pl.startswith(clc + _SEP):
+            return corig
+    comps = path.split(_SEP)
+    return _SEP.join(comps[:depth + 1]) if len(comps) > depth else path
 
 _SORT_COLS = {"size": "size", "name": "name", "path": "path_lc", "drive": "drive", "ext": "ext"}
 
 
 # ---- search (Everything-style substring) ----------------------------------------------
-def _where(query, drive, ext, status, min_size):
+def _ext_list(raw):
+    return [e for e in (x.strip().lower().lstrip(".") for x in str(raw).split(",")) if e] if raw else []
+
+
+def _where(query, drive, ext, status, min_size, ext_exclude=None):
     sql, params = [], []
     if query and len(query) >= 3 and bbdb.fts_available():
         sql.append("rowid IN (SELECT rowid FROM files_fts WHERE files_fts MATCH ?)")
@@ -22,8 +40,12 @@ def _where(query, drive, ext, status, min_size):
         params.append("%" + query.lower() + "%")
     if drive:
         sql.append("drive = ?"); params.append(drive.upper())
-    if ext:
-        sql.append("ext = ?"); params.append(ext.lower().lstrip("."))
+    exts = _ext_list(ext)                       # multi-ext include (comma list)
+    if exts:
+        sql.append("ext IN (%s)" % ",".join("?" * len(exts))); params += exts
+    exx = _ext_list(ext_exclude)                # multi-ext exclude (matches Kopia's hide-ext)
+    if exx:
+        sql.append("ext NOT IN (%s)" % ",".join("?" * len(exx))); params += exx
     if status == "backed":
         sql.append("excluded = 0")
     elif status == "excluded":
@@ -34,9 +56,9 @@ def _where(query, drive, ext, status, min_size):
 
 
 def search(query="", drive=None, ext=None, status="all", min_size=0,
-           sort="size", direction="desc", limit=500, offset=0) -> dict:
+           sort="size", direction="desc", limit=500, offset=0, ext_exclude=None) -> dict:
     con = bbdb.connect()
-    where, params = _where(query, drive, ext, status, min_size)
+    where, params = _where(query, drive, ext, status, min_size, ext_exclude)
     total = con.execute(f"SELECT count(*) FROM files{where}", params).fetchone()[0]
     col = _SORT_COLS.get(sort, "size")
     dir_ = "DESC" if str(direction).lower() != "asc" else "ASC"
@@ -47,9 +69,9 @@ def search(query="", drive=None, ext=None, status="all", min_size=0,
 
 
 def export_iter(query="", drive=None, ext=None, status="all", min_size=0,
-                sort="size", direction="desc"):
+                sort="size", direction="desc", ext_exclude=None):
     con = bbdb.connect()
-    where, params = _where(query, drive, ext, status, min_size)
+    where, params = _where(query, drive, ext, status, min_size, ext_exclude)
     col = _SORT_COLS.get(sort, "size")
     dir_ = "DESC" if str(direction).lower() != "asc" else "ASC"
     return con.execute(
@@ -91,13 +113,13 @@ def overview() -> dict:
 
 
 # ---- folder rollup (bloat finder) -----------------------------------------------------
-def group_by_folder(drive=None, depth=2, status="backed", min_files=1, top=300) -> list[dict]:
+def group_by_folder(drive=None, depth=2, status="backed", min_files=1, top=300, collapse=None) -> list[dict]:
     con = bbdb.connect()
     where, params = _where("", drive, None, status, 0)
+    cl = [(c.lower(), c) for c in (collapse or [])]
     counts: dict[str, list] = {}
     for full_path, size in con.execute(f"SELECT full_path, size FROM files{where}", params):
-        comps = full_path.split(_SEP)
-        key = _SEP.join(comps[:depth + 1]) if len(comps) > depth else full_path
+        key = _apply_collapse(full_path, depth, cl)
         e = counts.get(key)
         if e:
             e[0] += 1; e[1] += size
@@ -143,28 +165,32 @@ def generate_exclusion(kind: str, value: str) -> dict:
 
 
 # ---- sessions / history ----------------------------------------------------------------
-def sessions(limit=200) -> dict:
+def sessions(limit=400) -> dict:
     con = bbdb.connect()
+    # live session events (last ~day) UNION the permanent imported archive (~1 year); dedupe overlap
     ses = [dict(r) for r in con.execute(
-        "SELECT ts, kind, files, bytes, detail, src FROM events "
-        "WHERE kind IN ('session_start','session_end') ORDER BY ts DESC LIMIT ?", [limit])]
+        "SELECT ts, kind, files, bytes, detail, src FROM ("
+        "  SELECT ts, kind, files, bytes, detail, src FROM events WHERE kind IN ('session_start','session_end') "
+        "  UNION ALL SELECT ts, kind, files, bytes, detail, src FROM events_archive) "
+        "GROUP BY ts, kind ORDER BY ts DESC LIMIT ?", [limit])]
+    # upload_day rows store success in `files` and fail count in `bytes` (repurposed slot)
     uploads = [dict(r) for r in con.execute(
-        "SELECT ts AS date, files AS success, detail FROM events WHERE kind='upload_day' ORDER BY ts DESC LIMIT ?",
-        [limit])]
+        "SELECT ts AS date, files AS success, bytes AS fail, detail FROM events WHERE kind='upload_day' "
+        "ORDER BY ts DESC LIMIT ?", [limit])]
     deletions = [dict(r) for r in con.execute(
         "SELECT ts, bytes, detail, src FROM events WHERE kind='bz_done_big' ORDER BY ts DESC")]
     return {"sessions": ses, "uploads": uploads, "deletion_events": deletions}
 
 
 # ---- queue ----------------------------------------------------------------------------
-def queue(depth=1) -> dict:
+def queue(depth=1, collapse=None) -> dict:
     con = bbdb.connect()
     by_drive = [dict(r) for r in con.execute(
         "SELECT drive, count(*) files, sum(size) bytes FROM queue GROUP BY drive ORDER BY drive")]
+    cl = [(c.lower(), c) for c in (collapse or [])]
     folders: dict[str, list] = {}
     for full_path, size in con.execute("SELECT full_path, size FROM queue"):
-        comps = full_path.split(_SEP)
-        key = _SEP.join(comps[:depth + 1]) if len(comps) > depth else full_path
+        key = _apply_collapse(full_path, depth, cl)
         e = folders.get(key)
         if e:
             e[0] += 1; e[1] += size
@@ -224,42 +250,62 @@ def coverage_children(folder: str) -> dict[str, dict]:
 
 
 # ---- folder children (powers the Tree tab + the BZ-native Excluded folder drill) -------
+def _rollup_to_children(rr) -> list[dict]:
+    out = []
+    for r in rr:
+        bf, ef = r["backed_files"] or 0, r["excluded_files"] or 0
+        bb, eb = r["backed_bytes"] or 0, r["excluded_bytes"] or 0
+        is_dir = bool(r["is_dir"])
+        status = ("backed" if bf else "excluded") if not is_dir else (
+            "excluded" if bf == 0 else ("backed" if ef == 0 else "mixed"))
+        out.append({"name": r["name"], "is_dir": is_dir, "total_files": bf + ef,
+                    "backed_files": bf, "backed_bytes": bb, "excluded_files": ef, "excluded_bytes": eb,
+                    "total_bytes": bb + eb, "status": status, "excl_rule": r["excl_rule"]})
+    out.sort(key=lambda x: (not x["is_dir"], -x["total_bytes"], x["name"].lower()))
+    return out
+
+
 def folder_children(prefix: str) -> list[dict]:
-    """Immediate children under `prefix` with the full backed/excluded split per child.
-    One indexed range scan over `files`; original-case display name preserved. Serves both the
-    Tree browser and the BZ Excluded coverage drill (different column emphasis in the UI)."""
+    """Immediate children under `prefix` with the full backed/excluded split per child. Serves the
+    Tree browser + the BZ Excluded coverage drill. Shallow levels (drive roots, big folders) come
+    from the precomputed folder_rollup (instant); deeper levels use a fast SQL-optimized live scan
+    (one substr + one instr per row, original-case name from a representative path)."""
     con = bbdb.connect()
     lo = prefix.lower().rstrip(_SEP) + _SEP
+    rr = con.execute(
+        "SELECT child_lc, name, is_dir, backed_files, backed_bytes, excluded_files, excluded_bytes, excl_rule "
+        "FROM folder_rollup WHERE parent_lc=?", [lo]).fetchall()
+    if rr:
+        return _rollup_to_children(rr)
     hi = lo + "￿"
     plen = len(lo)
     rows = con.execute(
-        "SELECT seg_lc, max(orig) name, max(has_file) is_file, "
+        "SELECT seg_lc, min(full_path) fp, max(is_file) is_file, "
         "sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END) backed_files, "
         "sum(CASE WHEN excluded=0 THEN size ELSE 0 END) backed_bytes, "
         "sum(CASE WHEN excluded=1 THEN 1 ELSE 0 END) excluded_files, "
         "sum(CASE WHEN excluded=1 THEN size ELSE 0 END) excluded_bytes, "
-        "count(*) total_files, max(excl_rule) sample_rule FROM ("
-        "  SELECT substr(remlc,1,CASE WHEN instr(remlc,?)>0 THEN instr(remlc,?)-1 ELSE length(remlc) END) seg_lc,"
-        "         substr(rem,1,CASE WHEN instr(rem,?)>0 THEN instr(rem,?)-1 ELSE length(rem) END) orig,"
-        "         (instr(remlc,?)=0) has_file, excluded, size, excl_rule FROM ("
-        "    SELECT substr(path_lc, ?) remlc, substr(full_path, ?) rem, excluded, size, excl_rule"
-        "    FROM files WHERE path_lc>=? AND path_lc<?))"
+        "max(excl_rule) sample_rule FROM ("
+        "  SELECT CASE WHEN p>0 THEN substr(remlc,1,p-1) ELSE remlc END seg_lc, (p=0) is_file, "
+        "         full_path, excluded, size, excl_rule FROM ("
+        "    SELECT remlc, instr(remlc, ?) p, full_path, excluded, size, excl_rule FROM ("
+        "      SELECT substr(path_lc, ?) remlc, full_path, excluded, size, excl_rule "
+        "      FROM files WHERE path_lc>=? AND path_lc<?)))"
         " WHERE seg_lc<>'' GROUP BY seg_lc",
-        [_SEP, _SEP, _SEP, _SEP, _SEP, plen + 1, plen + 1, lo, hi]).fetchall()
+        [_SEP, plen + 1, lo, hi]).fetchall()
     out = []
     for r in rows:
         bf, ef = r["backed_files"] or 0, r["excluded_files"] or 0
         bb, eb = r["backed_bytes"] or 0, r["excluded_bytes"] or 0
         is_file = bool(r["is_file"])
-        if is_file:
-            status = "backed" if bf else "excluded"
-        else:
-            status = "excluded" if bf == 0 else ("backed" if ef == 0 else "mixed")
-        out.append({
-            "name": r["name"], "is_dir": not is_file, "total_files": r["total_files"] or 0,
-            "backed_files": bf, "backed_bytes": bb, "excluded_files": ef, "excluded_bytes": eb,
-            "total_bytes": bb + eb, "status": status, "excl_rule": r["sample_rule"],
-        })
+        rem = (r["fp"] or "")[plen:]
+        si = rem.find(_SEP)
+        name = rem if si < 0 else rem[:si]
+        status = ("backed" if bf else "excluded") if is_file else (
+            "excluded" if bf == 0 else ("backed" if ef == 0 else "mixed"))
+        out.append({"name": name, "is_dir": not is_file, "total_files": bf + ef,
+                    "backed_files": bf, "backed_bytes": bb, "excluded_files": ef, "excluded_bytes": eb,
+                    "total_bytes": bb + eb, "status": status, "excl_rule": r["sample_rule"]})
     out.sort(key=lambda x: (not x["is_dir"], -x["total_bytes"], x["name"].lower()))
     return out
 
@@ -303,33 +349,59 @@ def naming_gap(query: str, depth: int = 2, top: int = 300) -> list[dict]:
 
 
 # ---- churn (recently-added folders = early warning for a new high-churn folder) ---------
-def churn(top: int = 200) -> dict:
-    """Top folders by recent fileID additions (the bzfileids tail rolled up at index time).
-    This is the user's #1 lever: catch a new churner (PBS chunks, Docker, *-pg) before it balloons.
+def _churn_recompute(depth: int, collapse_lc) -> dict:
+    """Roll the recent bzfileids tail up to folder keys at `depth` (collapse-aware)."""
+    fp = paths.fileids_path()
+    size = parsers.fileids_total_size(fp)
+    counts: dict = {}
+    if not size:
+        return counts
+    for path in parsers.iter_fileids_from(fp, max(0, size - _CHURN_TAIL)):
+        k = _apply_collapse(path, depth, collapse_lc)
+        counts[k] = counts.get(k, 0) + 1
+    return counts
 
-    Status-aware: bzfileids is cumulative and never trimmed, so a folder can show heavy historical
-    churn yet be excluded or deleted now. Each folder is cross-checked against the live `files` index:
-      active   = still has backed files (a real ongoing churner)
-      excluded = still on disk but all of it is now excluded
-      gone     = no current files at all (deleted from disk / no longer scanned)
-    """
+
+def churn(top: int = 200, depth: int = 2, collapse=None) -> dict:
+    """Top folders by recent fileID additions (bzfileids tail), recomputed on demand at the requested
+    depth (1-8) with the collapse-list applied, then status/size/Delta-enriched. Cached per
+    (top, depth, collapse). The user's #1 lever: catch a new churner before it balloons.
+
+    status: active (still has backed files) / excluded (still scanned, all excluded) / gone (deleted).
+    delta: backed-files change vs the OLDEST daily snapshot of that folder - auto-fills once >=2 days
+    of folder_snapshots history exist (best at the default depth 2, where snapshots are keyed)."""
+    cl = [(c.lower(), c) for c in (collapse or [])]
+    ckey = (int(top), int(depth), tuple(sorted(c[0] for c in cl)))
+    now = time.time()
+    hit = _CHURN_CACHE.get(ckey)
+    if hit and now - hit[0] < 120:
+        return hit[1]
+    raw = _churn_recompute(int(depth), cl)
+    total = sum(raw.values()) or 1
     con = bbdb.connect()
-    rows = con.execute("SELECT folder, cnt FROM churn ORDER BY cnt DESC LIMIT ?", [int(top)]).fetchall()
-    total = sum(r["cnt"] for r in rows) or 1
-    out = []
-    for r in rows:
-        folder = r["folder"]
+    has_hist = (con.execute("SELECT count(DISTINCT day) FROM folder_snapshots").fetchone()[0] or 0) >= 2
+    rows = []
+    for folder, cnt in sorted(raw.items(), key=lambda x: x[1], reverse=True)[:int(top)]:
         drive = folder[0].upper() if len(folder) > 1 and folder[1] == ":" else ""
         lo = folder.lower().rstrip(_SEP) + _SEP
         hi = lo + "￿"
         st = con.execute(
-            "SELECT count(*) t, sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END) b "
-            "FROM files WHERE path_lc>=? AND path_lc<?", [lo, hi]).fetchone()
-        tcnt, bcnt = st["t"] or 0, st["b"] or 0
+            "SELECT count(*) t, sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END) b, "
+            "sum(CASE WHEN excluded=0 THEN size ELSE 0 END) bb FROM files WHERE path_lc>=? AND path_lc<?",
+            [lo, hi]).fetchone()
+        tcnt, bcnt, bbytes = st["t"] or 0, st["b"] or 0, st["bb"] or 0
         status = "gone" if tcnt == 0 else ("active" if bcnt > 0 else "excluded")
-        out.append({"folder": folder, "count": r["cnt"], "pct": round(100.0 * r["cnt"] / total, 1),
-                    "drive": drive, "status": status, "backed_now": bcnt, "files_now": tcnt})
-    return {"total_recent": total, "rows": out}
+        delta = None
+        if has_hist:
+            old = con.execute("SELECT files FROM folder_snapshots WHERE folder=? ORDER BY day ASC LIMIT 1",
+                              [folder]).fetchone()
+            if old is not None:
+                delta = bcnt - (old[0] or 0)
+        rows.append({"folder": folder, "count": cnt, "pct": round(100.0 * cnt / total, 1), "drive": drive,
+                     "status": status, "backed_now": bcnt, "bytes_now": bbytes, "delta": delta})
+    result = {"total_recent": total, "rows": rows, "depth": int(depth)}
+    _CHURN_CACHE[ckey] = (now, result)
+    return result
 
 
 # ---- assembled status XMLs (Dashboard cards + Stats) -----------------------------------

@@ -16,6 +16,24 @@ window.bzMixin = function () {
     const c = { "1": ["#dbeafe", "#1e40af"], "2": ["#ede9fe", "#5b21b6"], "bz": ["#fee2e2", "#991b1b"] }[r] || ["#e2e8f0", "#334155"];
     return `<span class="pill" style="background:${c[0]};color:${c[1]}">${r}</span>`;
   }).join("");
+  // Backblaze defines categories internally (no on-disk map), so these are sensible hardcoded sets.
+  const CAT_EXT = {
+    video: "mp4,mkv,mov,avi,wmv,flv,m4v,mpg,mpeg,webm,3gp,m2ts,mts,vob,ogv,divx,rm,rmvb,asf,ts",
+    music: "mp3,flac,wav,aac,m4a,ogg,wma,aiff,aif,alac,ape,opus,mid,midi,amr",
+    pict: "jpg,jpeg,png,gif,bmp,tiff,tif,heic,heif,webp,raw,cr2,cr3,nef,arw,dng,orf,rw2,psd,svg,ico",
+    docs: "pdf,doc,docx,txt,rtf,odt,pages,md,tex,wpd,epub,mobi,azw3",
+    spreadsheets: "xls,xlsx,csv,ods,numbers,tsv",
+    presentations: "ppt,pptx,odp,key",
+    zips: "zip,rar,7z,gz,tar,bz2,xz,tgz,iso,cab,arj,z",
+    email: "eml,msg,pst,ost,mbox",
+  };
+  const fmtBzDate = (s) => {  // 'YYYYMMDD' (or longer) -> 'Apr 20, 2026'
+    s = String(s || "");
+    const m = s.match(/^(\d{4})(\d{2})(\d{2})/);
+    if (!m) return s;
+    const dt = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`);
+    return isNaN(dt.getTime()) ? s : dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  };
 
   return {
     // ---- BZ state ----
@@ -29,17 +47,25 @@ window.bzMixin = function () {
     bzStatus: { built: false, building: false, total_files: 0, backed_files: 0 },
     bzStats: null, bzOverview: null,
     bzChurnRows: [], bzChurnTotal: 0, bzChurnActiveOnly: true, _bzChurnAll: [],
-    bzSearchDrive: "", bzSearchExt: "", bzSearchStatus: "all",
+    bzChurnDepth: 2, bzChurnCollapse: true, bzChurnDrive: "", bzImportMsg: "",
+    bzSearchDrive: "", bzSearchExt: "", bzSearchExtExclude: "", bzSearchStatus: "all",
     bzSearchSort: "size", bzSearchDir: "desc", bzSearchTotal: 0, bzSearchPage: 1, bzSearchPageSize: "500",
     bzGroupByFolder: false, bzGroupDepth: 2, bzSearchMeta: "",
     bzTreeDrive: "", bzTreePrefix: "",
     bzExclPath: "", bzExclFilter: "all", bzExclMeta: "", _bzExclItems: [], _bzExclSeq: 0,
     bzExclusions: null, bzNamingQuery: "", bzNamingRows: [],
     bzGen: null, bzShowGen: false,
-    bzQueue: null, bzQueueDepth: 1, bzSessions: null, bzHealth: null,
+    bzQueue: null, bzQueueDepth: 1, bzQueueCollapse: true, bzSessions: null, bzHealth: null,
     bzDetail: null, bzDrives: [],
 
     // ---- lifecycle ----
+    bzApplySettings(kl) {  // restore persisted BZ prefs (called from app.js init with the kopialens settings)
+      if (kl.bz_tree_drive) this.bzTreeDrive = kl.bz_tree_drive;
+      if (kl.bz_queue_depth) this.bzQueueDepth = Number(kl.bz_queue_depth);
+      if (kl.bz_churn_depth) this.bzChurnDepth = Number(kl.bz_churn_depth);
+      if (kl.bz_churn_collapse !== undefined) this.bzChurnCollapse = !!kl.bz_churn_collapse;
+      if (kl.bz_queue_collapse !== undefined) this.bzQueueCollapse = !!kl.bz_queue_collapse;
+    },
     async bzInit() {
       await this.wrap(async () => {
         await this.bzRefreshStatus();
@@ -113,12 +139,20 @@ window.bzMixin = function () {
       const order = ["everything", "video", "music", "pict", "docs", "spreadsheets", "presentations", "financial", "email", "zips", "browserfavorites", "other"];
       return order.filter((k) => fs[k]).map((k) => ({ name: k, num: fs[k].num, bytes: fs[k].bytes }));
     },
+    bzCatSearch(cat) {  // click a category -> Search pre-filtered by its extensions ("other" = exclude all known)
+      this.bzSearchExt = ""; this.bzSearchExtExclude = ""; this.bzSearchStatus = "all";
+      this.bzSearchDrive = ""; this.query = ""; this.bzGroupByFolder = false;
+      if (cat === "other") this.bzSearchExtExclude = Object.values(CAT_EXT).join(",");
+      else if (CAT_EXT[cat]) this.bzSearchExt = CAT_EXT[cat];
+      this.active = "bz-search"; this.bzLoadSearch();
+    },
 
     // ---- Search (FTS5) ----
     bzSearchUrl(extra = {}) {
       const p = new URLSearchParams({ q: this.query || "", sort: this.bzSearchSort, direction: this.bzSearchDir, status: this.bzSearchStatus });
       if (this.bzSearchDrive) p.set("drive", this.bzSearchDrive);
       if (this.bzSearchExt) p.set("ext", this.bzSearchExt);
+      if (this.bzSearchExtExclude) p.set("ext_exclude", this.bzSearchExtExclude);
       for (const [k, v] of Object.entries(extra)) p.set(k, v);
       return p;
     },
@@ -185,7 +219,7 @@ window.bzMixin = function () {
       if (this.bzTreeDrive !== "*ALL*" && (!this.bzTreePrefix || this.bzTreePrefix[0].toUpperCase() !== this.bzTreeDrive)) this.bzTreePrefix = this.bzTreeDrive + ":\\";
       return this.bzLoadTree();
     },
-    bzTreeChanged() { this.bzTreePrefix = this.bzTreeDrive === "*ALL*" ? "" : this.bzTreeDrive + ":\\"; this.bzLoadTree(); },
+    bzTreeChanged() { this.bzTreePrefix = this.bzTreeDrive === "*ALL*" ? "" : this.bzTreeDrive + ":\\"; this.klSet({ bz_tree_drive: this.bzTreeDrive }); this.bzLoadTree(); },
     bzTreeNav(prefix) { this.bzTreePrefix = prefix; this.bzLoadTree(); },
     bzTreeCrumbs() {
       const out = [];
@@ -202,21 +236,31 @@ window.bzMixin = function () {
       await this.wrap(async () => {
         const atRoot = this.bzTreeDrive === "*ALL*" && !this.bzTreePrefix;
         let kids;
-        if (atRoot) {  // All-drives top level = the drive roots; drill into one to browse it
-          kids = (this.bzStatus.drives || []).map((d) => ({ name: d.drive + ":", is_dir: true, status: "drive", backed_bytes: 0, excluded_bytes: 0, total_files: d.total, excl_rule: "", _root: d.drive + ":\\" }));
+        if (atRoot) {  // All-drives top level = the drive roots (with real per-drive bytes from overview)
+          if (!this.bzOverview) this.bzOverview = await getJson("/api/backblaze/overview").catch(() => null);
+          const ov = {}; ((this.bzOverview && this.bzOverview.rows) || []).forEach((r) => { ov[r.drive] = r; });
+          kids = (this.bzStatus.drives || []).map((d) => {
+            const o = ov[d.drive] || {};
+            return { name: d.drive + ":", is_dir: true, status: "drive", _root: d.drive + ":\\", excl_rule: "",
+                     backed_bytes: o.backed_bytes || 0, excluded_bytes: o.excluded_bytes || 0, total_files: d.total };
+          });
         } else {
           const data = await getJson(`/api/backblaze/folder?prefix=${encodeURIComponent(this.bzTreePrefix)}`);
           kids = data.children || [];
         }
+        const tot = kids.reduce((a, c) => a + ((c.backed_bytes || 0) + (c.excluded_bytes || 0)), 0) || 1;
+        kids.forEach((c) => { c.total_bytes = (c.backed_bytes || 0) + (c.excluded_bytes || 0); c.pct = 100 * c.total_bytes / tot; });
         setTable("#bzTreeTable", kids, [
-          { title: "Name", field: "name", widthGrow: 5, minWidth: 300, formatter: (c) => `${c.getRow().getData().is_dir ? "📁 " : "📄 "}${c.getValue()}` },
-          { title: "Status", field: "status", width: 95, formatter: (c) => statusPill(c.getValue()) },
-          { title: "Backed", field: "backed_bytes", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
-          { title: "Excluded", field: "excluded_bytes", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
-          { title: "Files", field: "total_files", width: 90, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
-          { title: "Excluded by", field: "excl_rule", widthGrow: 2, minWidth: 150, formatter: (c) => c.getValue() || "" },
+          { title: "Name", field: "name", widthGrow: 5, minWidth: 280, formatter: (c) => `${c.getRow().getData().is_dir ? "📁 " : "📄 "}${c.getValue()}` },
+          { title: "Status", field: "status", width: 90, formatter: (c) => statusPill(c.getValue()) },
+          { title: "Total", field: "total_bytes", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
+          { title: "%", field: "pct", width: 68, hozAlign: "right", sorter: "number", formatter: (c) => `${Number(c.getValue() || 0).toFixed(1)}%` },
+          { title: "Backed", field: "backed_bytes", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
+          { title: "Excluded", field: "excluded_bytes", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
+          { title: "Files", field: "total_files", width: 85, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+          { title: "Excluded by", field: "excl_rule", widthGrow: 2, minWidth: 140, formatter: (c) => c.getValue() || "" },
         ], {
-          initialSort: [{ column: atRoot ? "name" : "total_files", dir: atRoot ? "asc" : "desc" }],
+          initialSort: [{ column: atRoot ? "name" : "total_bytes", dir: atRoot ? "asc" : "desc" }],
           onRowDblClick: (_e, row) => { const d = row.getData(); if (d._root) return this.bzTreeNav(d._root); if (d.is_dir) this.bzTreeNav(this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); },
           rowMenu: [
             { label: "Open / drill in", action: (_e, row) => { const d = row.getData(); if (d._root) return this.bzTreeNav(d._root); if (d.is_dir) this.bzTreeNav(this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); } },
@@ -366,24 +410,28 @@ window.bzMixin = function () {
     // ---- Churn ----
     async bzLoadChurn() {
       await this.wrap(async () => {
-        const r = await getJson("/api/backblaze/churn?top=200");
+        const r = await getJson(`/api/backblaze/churn?top=200&depth=${this.bzChurnDepth}&collapse=${this.bzChurnCollapse ? 1 : 0}`);
         this.bzChurnTotal = r.total_recent || 0;
         this._bzChurnAll = r.rows || [];
         this._bzDrawChurn();
       }, "Loading churn…");
     },
+    bzChurnChanged() { this.klSet({ bz_churn_depth: this.bzChurnDepth, bz_churn_collapse: this.bzChurnCollapse }); this.bzLoadChurn(); },
     bzToggleChurnActive() { this.bzChurnActiveOnly = !this.bzChurnActiveOnly; this._bzDrawChurn(); },
     _bzDrawChurn() {
       const all = this._bzChurnAll || [];
-      const rows = this.bzChurnActiveOnly ? all.filter((r) => r.status === "active") : all;
+      let rows = this.bzChurnActiveOnly ? all.filter((r) => r.status === "active") : all;
+      if (this.bzChurnDrive) rows = rows.filter((r) => r.drive === this.bzChurnDrive);
       const cs = (s) => { const m = { active: ["#dcfce7", "#166534"], excluded: ["#fef9c3", "#854d0e"], gone: ["#e2e8f0", "#475569"] }[s] || ["#e2e8f0", "#475569"]; return `<span class="pill" style="background:${m[0]};color:${m[1]}">${s}</span>`; };
       setTable("#bzChurnTable", rows, [
-        { title: "Folder (recently added)", field: "folder", widthGrow: 5, minWidth: 300 },
-        { title: "Status", field: "status", width: 95, formatter: (c) => cs(c.getValue()) },
-        { title: "New IDs", field: "count", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
-        { title: "% of recent", field: "pct", width: 105, hozAlign: "right", sorter: "number", formatter: (c) => `${Number(c.getValue() || 0).toFixed(1)}%` },
-        { title: "Backed now", field: "backed_now", width: 105, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
-        { title: "Drive", field: "drive", width: 65, formatter: (c) => c.getValue() ? c.getValue() + ":" : "" },
+        { title: "Folder (recently added)", field: "folder", widthGrow: 5, minWidth: 270 },
+        { title: "Status", field: "status", width: 88, formatter: (c) => cs(c.getValue()) },
+        { title: "New IDs", field: "count", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+        { title: "% recent", field: "pct", width: 85, hozAlign: "right", sorter: "number", formatter: (c) => `${Number(c.getValue() || 0).toFixed(1)}%` },
+        { title: "Backed now", field: "backed_now", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+        { title: "Size", field: "bytes_now", width: 92, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
+        { title: "Δ vs first", field: "delta", width: 92, hozAlign: "right", sorter: "number", formatter: (c) => { const v = c.getValue(); if (v === null || v === undefined) return "<span style='color:#cbd5e1'>—</span>"; const col = v > 0 ? "#dc2626" : (v < 0 ? "#16a34a" : "#64748b"); return `<span style="color:${col}">${v > 0 ? "+" : ""}${Number(v).toLocaleString()}</span>`; } },
+        { title: "Drive", field: "drive", width: 58, formatter: (c) => c.getValue() ? c.getValue() + ":" : "" },
       ], {
         initialSort: [{ column: "count", dir: "desc" }],
         rowMenu: [
@@ -398,9 +446,10 @@ window.bzMixin = function () {
     },
 
     // ---- Queue / Sessions / Health ----
+    bzQueueChanged() { this.klSet({ bz_queue_depth: this.bzQueueDepth, bz_queue_collapse: this.bzQueueCollapse }); this.bzLoadQueue(); },
     async bzLoadQueue() {
       await this.wrap(async () => {
-        const r = await getJson(`/api/backblaze/queue?depth=${this.bzQueueDepth || 1}`);
+        const r = await getJson(`/api/backblaze/queue?depth=${this.bzQueueDepth || 1}&collapse=${this.bzQueueCollapse ? 1 : 0}`);
         this.bzQueue = r;
         setTable("#bzQueueTable", r.by_folder || [], [
           { title: "Folder", field: "folder", widthGrow: 5, minWidth: 320 },
@@ -411,20 +460,28 @@ window.bzMixin = function () {
     },
     async bzLoadSessions() {
       await this.wrap(async () => {
-        const r = await getJson("/api/backblaze/sessions?limit=400");
+        const r = await getJson("/api/backblaze/sessions?limit=500");
         this.bzSessions = r;
+        // explicit heights so the stacked tables don't collapse/overlap inside the scrolling section
         setTable("#bzSessionsTable", r.sessions || [], [
           { title: "Time", field: "ts", width: 190, formatter: (c) => timeCell(c.getValue()) },
-          { title: "Event", field: "kind", width: 140, formatter: (c) => c.getValue() === "session_end" ? "<span style='color:#16a34a'>backup ended</span>" : "backup started" },
-          { title: "Files", field: "files", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? Number(c.getValue()).toLocaleString() : "" },
-          { title: "Uploaded", field: "bytes", width: 130, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? bzFmt(c.getValue()) : "" },
-        ], { initialSort: [{ column: "ts", dir: "desc" }] });
+          { title: "Event", field: "kind", width: 130, formatter: (c) => c.getValue() === "session_end" ? "<span style='color:#16a34a'>backup ended</span>" : "backup started" },
+          { title: "Files", field: "files", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? Number(c.getValue()).toLocaleString() : "" },
+          { title: "Uploaded", field: "bytes", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? bzFmt(c.getValue()) : "" },
+        ], { initialSort: [{ column: "ts", dir: "desc" }], height: "15rem" });
         setTable("#bzUploadsTable", r.uploads || [], [
-          { title: "Date", field: "date", width: 160 },
-          { title: "Successful uploads", field: "success", width: 150, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
-          { title: "Detail", field: "detail", widthGrow: 3, minWidth: 200 },
-        ], { initialSort: [{ column: "date", dir: "desc" }] });
+          { title: "Date", field: "date", width: 170, formatter: (c) => fmtBzDate(c.getValue()) },
+          { title: "Uploaded OK", field: "success", width: 130, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+          { title: "Failed", field: "fail", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => { const v = Number(c.getValue() || 0); return v ? `<span style='color:#dc2626'>${v.toLocaleString()}</span>` : "0"; } },
+        ], { initialSort: [{ column: "date", dir: "desc" }], height: "17rem" });
       }, "Loading sessions…");
+    },
+    async bzImportArchive() {
+      await this.wrap(async () => {
+        const r = await getJson("/api/backblaze/import-archive", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        this.bzImportMsg = r.ok ? `Imported ${r.imported} session events.` : `Import failed: ${r.reason || "unknown"}`;
+        await this.bzLoadSessions();
+      }, "Importing archived history…");
     },
     async bzLoadHealth() {
       await this.wrap(async () => {

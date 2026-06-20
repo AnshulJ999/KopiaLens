@@ -40,8 +40,12 @@ const srcSorter = (a, b) => srcSortKey(a).localeCompare(srcSortKey(b));
 
 const getJson = async (url, options = {}) => {
   const res = await fetch(url, options);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || data.error || res.statusText);
+  // Tolerate a non-JSON body (e.g. a plain-text 500 "Internal Server Error") instead of throwing
+  // an "Unexpected token" parse error - surface the text as the message.
+  const text = await res.text();
+  let data;
+  try { data = text ? JSON.parse(text) : {}; } catch (e) { data = {}; }
+  if (!res.ok) throw new Error((data && (data.detail || data.error)) || text || res.statusText);
   return data;
 };
 
@@ -195,6 +199,7 @@ document.addEventListener("alpine:init", () => {
         this.excludedTolerance = Number(kl.excluded_tolerance ?? 0.05);
         this.esPath = kl.es_path || "";
         if (kl.time_format) { TIME_FMT = kl.time_format; this.timeFmt = kl.time_format; }
+        if (this.bzApplySettings) this.bzApplySettings(kl);  // restore persisted BZ prefs (tree drive, depths, toggles)
         if (this.repoKind === "backblaze") {
           this.active = "bz-dashboard";
           await this.bzInit();

@@ -93,6 +93,24 @@ def _init_schema(con: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS fsnap_day    ON folder_snapshots(day);
         CREATE INDEX IF NOT EXISTS fsnap_folder ON folder_snapshots(folder);
 
+        -- precomputed immediate-child aggregates for SHALLOW parents (drive roots + depth-1 folders),
+        -- built piggyback during a drive reindex. Lets the Tree/Excluded views render the slow shallow
+        -- levels (a drive root scans >1M rows live) instantly. Deeper folders use the fast live query.
+        CREATE TABLE IF NOT EXISTS folder_rollup (
+            parent_lc TEXT, child_lc TEXT, name TEXT, is_dir INTEGER,
+            backed_files INTEGER, backed_bytes INTEGER, excluded_files INTEGER, excluded_bytes INTEGER,
+            excl_rule TEXT
+        );
+        CREATE INDEX IF NOT EXISTS folder_rollup_parent ON folder_rollup(parent_lc);
+
+        -- permanent archive of backup-session events imported one-time from the (normally ACL-locked)
+        -- rotated eventlog .zips. NEVER wiped by the live refresh - the live refresh only rebuilds
+        -- `events`; sessions() unions both. ~1 year of history that the live log alone can't reach.
+        CREATE TABLE IF NOT EXISTS events_archive (
+            ts TEXT, kind TEXT, files INTEGER, bytes INTEGER, detail TEXT, src TEXT
+        );
+        CREATE INDEX IF NOT EXISTS events_archive_ts ON events_archive(ts);
+
         CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
         CREATE TABLE IF NOT EXISTS ingest (source TEXT PRIMARY KEY, mtime REAL, size INTEGER, extra TEXT);
         """

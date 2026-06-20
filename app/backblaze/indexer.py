@@ -20,6 +20,7 @@ log = logging.getLogger("bz.indexer")
 
 _BATCH = 50_000
 _CHURN_TAIL_BYTES = 30 * 1024 * 1024  # read ~last 30 MB of bzfileids for "recent additions"
+_ROLLUP_MIN = 20_000  # depth-1 folders with >= this many files also get a depth-2 rollup (the slow ones)
 
 # Lightweight progress/state for the /api/backblaze/status endpoint (no kopia-style start_build).
 _STATE: dict = {"building": False, "last_run": 0.0, "last_summary": None}
@@ -29,17 +30,50 @@ def state() -> dict:
     return dict(_STATE)
 
 
+def _acc_roll(roll: dict, parent_lc: str, child: str, is_dir: bool, is_excl: bool, size: int, rule) -> None:
+    """Accumulate one file into a parent->child rollup bucket (for folder_rollup)."""
+    key = (parent_lc, child.lower())
+    e = roll.get(key)
+    if e is None:
+        e = roll[key] = [child, 1 if is_dir else 0, 0, 0, 0, 0, None]  # name, is_dir, bf, bb, ef, eb, rule
+    elif is_dir:
+        e[1] = 1
+    if is_excl:
+        e[4] += 1; e[5] += size
+        if e[6] is None:
+            e[6] = rule
+    else:
+        e[2] += 1; e[3] += size
+
+
+def _write_rollup(con, root_lc: str, roll1: dict, roll2: dict) -> None:
+    """Persist depth-1 child aggregates (always) + depth-2 (only for big depth-1 folders) for a drive."""
+    big = set()
+    for (plc, clc), e in roll1.items():
+        if (e[2] + e[4]) >= _ROLLUP_MIN:  # this depth-1 folder is large -> precompute its children too
+            big.add(plc + clc + "\\")
+    rows = [(plc, clc, e[0], e[1], e[2], e[3], e[4], e[5], e[6]) for (plc, clc), e in roll1.items()]
+    rows += [(plc, clc, e[0], e[1], e[2], e[3], e[4], e[5], e[6]) for (plc, clc), e in roll2.items() if plc in big]
+    con.execute("DELETE FROM folder_rollup WHERE parent_lc >= ? AND parent_lc < ?", [root_lc, root_lc + "￿"])
+    if rows:
+        con.executemany("INSERT INTO folder_rollup VALUES(?,?,?,?,?,?,?,?,?)", rows)
+
+
 def _reindex_drive(con, vol, engine) -> tuple[int, int, int]:
     """Replace all rows for one drive from its filelist. Returns (total, backed, excluded) counts.
 
     Dedupes by path: a Backblaze per-volume filelist can list each entry TWICE (the committed
     .dat sometimes contains the whole body duplicated - e.g. E: had 1.19M lines / 595k unique).
     Backblaze's own bzstat count dedupes, so we must too, else backed counts come out ~2x.
-    Deduping before classify also halves the rule work."""
+    Deduping before classify also halves the rule work. Also accumulates the shallow folder_rollup
+    (depth-1/2 child aggregates) so the Tree/Excluded views render the slow shallow levels instantly."""
     con.execute("DELETE FROM files WHERE drive=?", [vol.letter])
     total = backed = excluded = 0
     seen: set[str] = set()
     batch: list[tuple] = []
+    roll1: dict = {}  # depth-1 children of the drive root
+    roll2: dict = {}  # depth-2 children (filtered to big depth-1 folders in _write_rollup)
+    root_lc = vol.letter.lower() + ":\\"
     for mtime_hex, size, full_path in parsers.iter_filelist(vol.filelist):
         plc = full_path.lower()
         if plc in seen:
@@ -57,12 +91,37 @@ def _reindex_drive(con, vol, engine) -> tuple[int, int, int]:
             excluded += 1
         else:
             backed += 1
+        comps = full_path.split("\\")
+        if len(comps) >= 2:
+            _acc_roll(roll1, root_lc, comps[1], len(comps) > 2, is_excl, size, rule)
+            if len(comps) >= 3:
+                _acc_roll(roll2, (comps[0] + "\\" + comps[1] + "\\").lower(), comps[2], len(comps) > 3, is_excl, size, rule)
         if len(batch) >= _BATCH:
             con.executemany("INSERT INTO files VALUES(?,?,?,?,?,?,?,?,?)", batch)
             batch.clear()
     if batch:
         con.executemany("INSERT INTO files VALUES(?,?,?,?,?,?,?,?,?)", batch)
+    _write_rollup(con, root_lc, roll1, roll2)
     return total, backed, excluded
+
+
+def import_eventlog_archive(eventlog_dir: str) -> dict:
+    """One-time import of backup-session events from a copied (readable) rotated-eventlog folder into
+    the permanent events_archive table. The live rotated .zips are ACL-locked; this folder is a copy.
+    Idempotent (replaces the archive each run). Going forward the live .log keeps current sessions
+    fresh, so this is only for the ~1 year of back-history."""
+    if not os.path.isdir(eventlog_dir):
+        return {"ok": False, "reason": f"not found: {eventlog_dir}"}
+    con = bbdb.connect()
+    evs = [(e["ts"], e["kind"], e["files"], e["bytes"], e["detail"], e["src"])
+           for e in parsers.parse_eventlog(eventlog_dir)
+           if e["kind"] in ("session_start", "session_end")]
+    with _LOCKED(con):
+        con.execute("DELETE FROM events_archive")
+        if evs:
+            con.executemany("INSERT INTO events_archive VALUES(?,?,?,?,?,?)", evs)
+        con.commit()
+    return {"ok": True, "imported": len(evs), "dir": eventlog_dir}
 
 
 def _refresh_queue(con) -> int:
@@ -84,7 +143,7 @@ def _refresh_events(con) -> int:
     for e in parsers.parse_eventlog(paths.eventlog_dir()):
         evs.append((e["ts"], e["kind"], "", e["files"], e["bytes"], e["detail"], e["src"]))
     for d in parsers.read_upload_success(paths.report("bzstat_upload_success.xml")):
-        evs.append((d["date"], "upload_day", "", d["success"], 0,
+        evs.append((d["date"], "upload_day", "", d["success"], d["fail"],  # bytes slot repurposed = fail count
                     f"success={d['success']} fail={d['fail']}", "upload_success"))
     # mass-deletion candidates: any RECENT bz_done > 100 MB
     now = time.time()
@@ -233,7 +292,6 @@ def refresh(force: bool = False) -> dict:
         _refresh_queue(con)
         _refresh_events(con)
         _refresh_stats_kv(con)
-        _refresh_churn(con)
         _refresh_folder_snapshots(con, _history_days())
         if force or not bbdb.kv_get(con, "fileids_total"):  # populate once, then only on a forced rebuild
             _refresh_ids_count(con)

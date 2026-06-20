@@ -43,6 +43,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "backblaze": {
         "bzdata_path": r"C:\ProgramData\Backblaze\bzdata",  # read-only source root (never written)
         "history_days": 90,          # how many days of the daily per-folder rollup to retain (growth/churn trend)
+        # folder-rollup views (Queue/Churn/by-folder) roll these prefixes up to a single row instead
+        # of splitting their (chunk-named) subfolders. Toggle per-request from the UI.
+        "collapse_prefixes": [r"E:\Kopia", r"I:\Kopia Big Backup"],
+        # copied (readable) rotated eventlog folder for the one-time session-history import
+        "eventlog_archive_path": r"H:\Excluded\BackblazeData\bzlogs\bzreports_eventlog",
     },
 }
 
