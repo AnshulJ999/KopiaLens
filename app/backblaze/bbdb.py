@@ -38,6 +38,11 @@ def connect() -> sqlite3.Connection:
         if _CONN is None:
             con = sqlite3.connect(db_path(), check_same_thread=False)
             con.row_factory = sqlite3.Row
+            # INCREMENTAL auto-vacuum: freed pages go to a freelist that PRAGMA incremental_vacuum
+            # releases cheaply after each index batch - so the file stays small without a slow full
+            # VACUUM. (Takes effect for a fresh DB created here; an existing DB needs one VACUUM to
+            # switch modes, done once via the conversion in bz_verify / a full rebuild.)
+            con.execute("PRAGMA auto_vacuum=INCREMENTAL")
             con.execute("PRAGMA journal_mode=WAL")
             con.execute("PRAGMA synchronous=NORMAL")
             con.execute("PRAGMA temp_store=MEMORY")

@@ -23,13 +23,22 @@ _CHURN_TAIL_BYTES = 30 * 1024 * 1024  # read ~last 30 MB of bzfileids for "recen
 
 
 def _reindex_drive(con, vol, engine) -> tuple[int, int, int]:
-    """Replace all rows for one drive from its filelist. Returns (total, backed, excluded) counts."""
+    """Replace all rows for one drive from its filelist. Returns (total, backed, excluded) counts.
+
+    Dedupes by path: a Backblaze per-volume filelist can list each entry TWICE (the committed
+    .dat sometimes contains the whole body duplicated - e.g. E: had 1.19M lines / 595k unique).
+    Backblaze's own bzstat count dedupes, so we must too, else backed counts come out ~2x.
+    Deduping before classify also halves the rule work."""
     con.execute("DELETE FROM files WHERE drive=?", [vol.letter])
     total = backed = excluded = 0
+    seen: set[str] = set()
     batch: list[tuple] = []
     for mtime_hex, size, full_path in parsers.iter_filelist(vol.filelist):
-        is_excl, rule = engine.classify(full_path)
         plc = full_path.lower()
+        if plc in seen:
+            continue
+        seen.add(plc)
+        is_excl, rule = engine.classify(full_path)
         name = full_path.rsplit("\\", 1)[-1]
         base = name.lower()
         dot = base.rfind(".")
@@ -164,6 +173,13 @@ def refresh(force: bool = False) -> dict:
         _refresh_stats_kv(con)
         _refresh_churn(con)
         con.commit()
+        # Release pages freed by the DELETE+INSERT churn so the file stays small (cheap; only does
+        # real work when auto_vacuum=INCREMENTAL is active and there are free pages to release).
+        try:
+            con.execute("PRAGMA incremental_vacuum")
+            con.commit()
+        except Exception as exc:  # noqa: BLE001 - never fail a refresh on housekeeping
+            log.warning("incremental_vacuum skipped: %s", exc)
     return {"ok": True, "changed": changed, "drives": drives, "elapsed": round(time.time() - t0, 1)}
 
 
