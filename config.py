@@ -7,7 +7,8 @@ CACHEDIR = os.path.join(KOPIA_DIR, ".cache")                            # shared
 SETTINGS_FILE = os.path.join(HERE, "settings.json")                    # KopiaLens-local (migrated from the old shared CLI file)
 DATA_DIR = os.path.join(HERE, "data")                                   # duckdb + logs (gitignored)
 
-HOST, PORT = "127.0.0.1", 7123                                          # localhost-only
+HOST, PORT = "0.0.0.0", 7123                                            # bind all interfaces (LAN-reachable for Caddy reverse-proxy at kopia.example.com)
+GUARD_HOST = "127.0.0.1"                                                # single-instance guard probes loopback (the 0.0.0.0 bind includes it; connecting to 0.0.0.0 is unreliable on Windows)
 
 REPO2_CONFIG = r"C:\Users\me\AppData\Roaming\kopia\repository.config"
 # Each repo carries a `kind`: "kopia" (DuckDB-backed, the original) or "backblaze" (read-only

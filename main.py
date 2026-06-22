@@ -10,7 +10,7 @@ import sys
 import uvicorn
 
 from app.core.applog import get_logger, setup_logging
-from config import HOST, PORT
+from config import GUARD_HOST, HOST, PORT
 
 
 def _already_running(host: str, port: int) -> bool:
@@ -23,9 +23,9 @@ def _already_running(host: str, port: int) -> bool:
 if __name__ == "__main__":
     setup_logging()
     log = get_logger("startup")
-    if _already_running(HOST, PORT):
-        log.warning("single-instance guard: KopiaLens already listening on %s:%s - this instance is exiting", HOST, PORT)
-        print(f"KopiaLens already running on {HOST}:{PORT} - exiting (single-instance guard).")
+    if _already_running(GUARD_HOST, PORT):
+        log.warning("single-instance guard: KopiaLens already listening on %s:%s - this instance is exiting", GUARD_HOST, PORT)
+        print(f"KopiaLens already running on {GUARD_HOST}:{PORT} - exiting (single-instance guard).")
         sys.exit(0)
     log.info("starting KopiaLens on %s:%s", HOST, PORT)
     uvicorn.run("app.main:app", host=HOST, port=PORT, reload=False)
