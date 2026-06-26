@@ -69,6 +69,7 @@ def search(
     max_gb: float = 0,
     date_from: str | None = None,
     date_to: str | None = None,
+    first_from: str | None = None,
     min_versions: int = 0,
     shared_min: int = 0,
     dedupe: bool = False,
@@ -78,8 +79,8 @@ def search(
     # background-revalidated result so opening the Search tab is instant.
     is_landing = (not q and not deleted_only and not largest and not over_gb and not source and not ext
                   and not ext_exclude and not min_gb and not max_gb and not date_from and not date_to
-                  and not min_versions and not shared_min and not dedupe and not confirm_exists and offset == 0
-                  and sort == "size" and dir == "desc")
+                  and not first_from and not min_versions and not shared_min and not dedupe
+                  and not confirm_exists and offset == 0 and sort == "size" and dir == "desc")
     try:
         if is_landing:
             res = landing(repo, limit=limit)
@@ -89,6 +90,7 @@ def search(
                 source=source or None, ext=ext or None, ext_exclude=ext_exclude or None,
                 sort=sort, direction=dir, limit=limit, offset=offset, confirm_exists=confirm_exists,
                 max_size=max_size, date_from=date_from or None, date_to=date_to or None,
+                first_from=first_from or None,
                 min_versions=min_versions, shared_min=shared_min, dedupe=dedupe,
             )
         return {"results": res["rows"], "total": res["total"], "offset": res["offset"], "limit": res["limit"]}
@@ -112,13 +114,14 @@ def export(
     over_gb: float = 0, source: str | None = None, ext: str | None = None,
     ext_exclude: str | None = None, sort: str = "size", dir: str = "desc",
     min_gb: float = 0, max_gb: float = 0, date_from: str | None = None, date_to: str | None = None,
-    min_versions: int = 0, shared_min: int = 0,
+    first_from: str | None = None, min_versions: int = 0, shared_min: int = 0,
 ) -> StreamingResponse:
     min_size, max_size = _bounds(over_gb, largest, min_gb, max_gb)
     cur = search_export(repo, query=q, deleted_only=deleted_only, min_size=min_size,
                         source=source or None, ext=ext or None, ext_exclude=ext_exclude or None,
                         sort=sort, direction=dir,
                         max_size=max_size, date_from=date_from or None, date_to=date_to or None,
+                        first_from=first_from or None,
                         min_versions=min_versions, shared_min=shared_min)
 
     def rows():

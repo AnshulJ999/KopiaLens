@@ -64,7 +64,7 @@ def _search_where(repo: str, query: str, deleted_only: bool, min_size: int,
                   source: str | None, ext: str | None, max_size: int = 0,
                   date_from: str | None = None, date_to: str | None = None,
                   min_versions: int = 0, shared_min: int = 0,
-                  ext_exclude: str | None = None) -> tuple[list[str], list]:
+                  ext_exclude: str | None = None, first_from: str | None = None) -> tuple[list[str], list]:
     """Build the WHERE clause + params for a paths search. ``repo`` is prepended by the caller, so
     the first placeholder (``repo = ?``) is filled there; every condition added here appends its
     params in clause order. Multi-value source/ext accept comma-separated lists (-> IN)."""
@@ -105,6 +105,9 @@ def _search_where(repo: str, query: str, deleted_only: bool, min_size: int,
     if date_to:
         where.append("last_seen <= ?")
         params.append(date_to)
+    if first_from:  # "recently backed up": path first appeared in a snapshot on/after this cutoff
+        where.append("first_seen >= ?")
+        params.append(first_from)
     if min_versions:
         where.append("versions >= ?")
         params.append(int(min_versions))
@@ -128,12 +131,12 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                  sort: str = "size", direction: str = "desc", confirm_exists: bool = False,
                  max_size: int = 0, date_from: str | None = None, date_to: str | None = None,
                  min_versions: int = 0, shared_min: int = 0, dedupe: bool = False,
-                 ext_exclude: str | None = None) -> dict:
+                 ext_exclude: str | None = None, first_from: str | None = None) -> dict:
     """Search the pre-aggregated ``paths`` table. Returns the TRUE total count plus one page,
     with sort + filters applied in SQL over the entire matched set. ``dedupe`` collapses all
     path/source variations of the SAME content (group by content_id) into one content-aware row."""
     where, params = _search_where(repo, query, deleted_only, min_size, source, ext, max_size,
-                                  date_from, date_to, min_versions, shared_min, ext_exclude)
+                                  date_from, date_to, min_versions, shared_min, ext_exclude, first_from)
     where_sql = " AND ".join(where)
     cur = read_cursor(repo)
     try:
@@ -218,10 +221,11 @@ def search_export(repo: str, query: str = "", deleted_only: bool = False, min_si
                   source: str | None = None, ext: str | None = None,
                   sort: str = "size", direction: str = "desc", cap: int = 2_000_000,
                   max_size: int = 0, date_from: str | None = None, date_to: str | None = None,
-                  min_versions: int = 0, shared_min: int = 0, ext_exclude: str | None = None):
+                  min_versions: int = 0, shared_min: int = 0, ext_exclude: str | None = None,
+                  first_from: str | None = None):
     """Yield every matching row (full filtered set) for CSV export - not limited to a page."""
     where, params = _search_where(repo, query, deleted_only, min_size, source, ext, max_size,
-                                  date_from, date_to, min_versions, shared_min, ext_exclude)
+                                  date_from, date_to, min_versions, shared_min, ext_exclude, first_from)
     where_sql = " AND ".join(where)
     cur = read_cursor(repo)
     cur.execute(

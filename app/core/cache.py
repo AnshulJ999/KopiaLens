@@ -27,7 +27,11 @@ except ImportError:  # pragma: no cover - orjson is a declared dependency
         return json.dumps(obj)
 
 BATCH = 800
-DIR_MEMO_MAX = 400_000
+# In-process LRU over directory entries, on TOP of the durable mmap'd SQLite dir cache. The SQLite
+# cache is the source of truth; this memo only avoids SQLite round-trips on the hot walk path, so a
+# smaller cap just means a few more (fast) SQLite hits, never a kopia re-walk. Default lowered from
+# 400k (which pinned multiple GB of RSS that never released) - overridden from settings at startup.
+DIR_MEMO_MAX = 50_000
 DIR_MEMO: collections.OrderedDict[str, list[dict]] = collections.OrderedDict()
 _MEMO_LOCK = threading.Lock()  # guards the shared LRU across the request threadpool + build thread
 

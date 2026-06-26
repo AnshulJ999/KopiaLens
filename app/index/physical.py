@@ -12,6 +12,7 @@ A file's stored ``content_id`` is the object id: a single content for small file
 
 from __future__ import annotations
 
+import collections
 import json
 
 import pyarrow as pa
@@ -90,16 +91,23 @@ def materialize_physical(con, repo: str) -> None:
             {"repo": [repo] * len(oid_list), "oid": oid_list, "packed": packed_list},
         )
 
-    # 3) paths.physical via joins: direct content -> content_sizes; indirect -> indirect_phys.
-    con.execute("UPDATE paths SET physical = 0 WHERE repo=?", [repo])
+    # 3) paths.physical via joins, TARGETED to freshly-(re)built rows only (the dominant DuckDB
+    # churn fix). _refresh_paths inserts new/rebuilt paths with physical=0; unchanged sources keep
+    # their already-correct value. content_sizes/indirect_phys are append-only with IMMUTABLE packed
+    # sizes, and a path's content_id only changes via a source rebuild (which resets physical to 0),
+    # so a once-correct row never needs recompute. We therefore fill ONLY the physical=0 rows instead
+    # of blanket-zeroing + rewriting all ~8.5M rows every build. Genuinely-zero rows (empty files /
+    # content missing from the sizemap) are harmlessly re-attempted and self-heal if the sizemap later
+    # gains the content. (Removed the prior "UPDATE paths SET physical=0 WHERE repo=?" blanket rewrite.)
     con.execute(
         "UPDATE paths SET physical = cs.packed FROM content_sizes cs "
-        "WHERE paths.repo=? AND cs.repo=? AND paths.content_id = cs.cid AND paths.content_id NOT LIKE 'I%'",
+        "WHERE paths.repo=? AND cs.repo=? AND paths.physical = 0 AND paths.content_id = cs.cid "
+        "AND paths.content_id NOT LIKE 'I%'",
         [repo, repo],
     )
     con.execute(
         "UPDATE paths SET physical = ip.packed FROM indirect_phys ip "
-        "WHERE paths.repo=? AND ip.repo=? AND paths.content_id = ip.oid",
+        "WHERE paths.repo=? AND ip.repo=? AND paths.physical = 0 AND paths.content_id = ip.oid",
         [repo, repo],
     )
 
@@ -165,7 +173,17 @@ def _refcount_map(repo: str) -> dict[str, int]:
 
 
 _SEP = chr(92)
-_RECLAIM_CACHE: dict[tuple, int] = {}  # (repo, content_id) -> reclaim-everywhere bytes
+# (repo, content_id) -> reclaim-everywhere bytes. LRU-bounded (values are small ints, but the key
+# set was unbounded - grew with every distinct content viewed via the ∑Reclaim button).
+_RECLAIM_CACHE: collections.OrderedDict[tuple, int] = collections.OrderedDict()
+_RECLAIM_CACHE_MAX = 100_000
+
+
+def _reclaim_cache_put(ck: tuple, val: int) -> None:
+    _RECLAIM_CACHE[ck] = val
+    _RECLAIM_CACHE.move_to_end(ck)
+    while len(_RECLAIM_CACHE) > _RECLAIM_CACHE_MAX:
+        _RECLAIM_CACHE.popitem(last=False)
 
 
 def reclaim_for(repo: str, content_ids: list[str], cap: int = 500) -> dict[str, int]:
@@ -209,7 +227,7 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500) -> dict[str, 
                         this_refs[c] = this_refs.get(c, 0) + 1
             refs = _refcount_for(repo, this_refs.keys()) or {}
             reclaim = sum(smap.get(c, 0) for c in this_refs if refs.get(c, 0) <= this_refs[c])
-            _RECLAIM_CACHE[ck] = reclaim
+            _reclaim_cache_put(ck, reclaim)
             out[cid] = reclaim
     finally:
         cur.close()

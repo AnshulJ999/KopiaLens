@@ -9,6 +9,7 @@ older snapshot) AND the backward pass (not in any newer), and not present in any
 
 from __future__ import annotations
 
+import collections
 import hashlib
 
 from ..core.cache import cache_db, get_children
@@ -18,7 +19,19 @@ from ..core.walk import walk, walk_new
 from .physical import _chunks_for_obj, _refcount_map
 from .schema import get_db, read_cursor
 
-_RECL_FILES_CACHE: dict[tuple, list] = {}  # (repo, snapshot_id) -> reclaimable files
+# (repo, snapshot_id) -> reclaimable files. LRU-bounded: these lists can be large and were
+# previously never evicted (a slow unbounded leak as snapshots were viewed over a long session).
+_RECL_FILES_CACHE: collections.OrderedDict[tuple, list] = collections.OrderedDict()
+_RECL_FILES_CACHE_MAX = 200
+
+
+def _recl_cache_put(ck: tuple, val: list) -> None:
+    _RECL_FILES_CACHE[ck] = val
+    _RECL_FILES_CACHE.move_to_end(ck)
+    while len(_RECL_FILES_CACHE) > _RECL_FILES_CACHE_MAX:
+        _RECL_FILES_CACHE.popitem(last=False)
+
+
 _MAX_HEAVY_PER_CYCLE = 100  # cap heavy (physical+reclaim) source recomputes per cycle (a soft guard;
 # the crash it once mitigated is fixed by the drop-index rewrite, so this is set high to not delay
 # population - effectively "all sources per cycle" for the current ~72-source repos)
@@ -52,7 +65,7 @@ def reclaimable_files(repo: str, source: str, snapshot_id: str, limit: int = 200
     refs = _refcount_map(repo)
     exclusive = {c for c in (target_chunks - others) if refs.get(c, 0) <= 1}
     if not exclusive:
-        _RECL_FILES_CACHE[ck] = []
+        _recl_cache_put(ck, [])
         return []
     root_path = key.split(":", 1)[1] if ":" in key else key
     files: list[dict] = []
@@ -69,7 +82,7 @@ def reclaimable_files(repo: str, source: str, snapshot_id: str, limit: int = 200
 
     walk(repo, [troot], db, visitor)
     files.sort(key=lambda f: f["size"], reverse=True)
-    _RECL_FILES_CACHE[ck] = files
+    _recl_cache_put(ck, files)
     return files[:limit]
 
 

@@ -131,7 +131,7 @@ document.addEventListener("alpine:init", () => {
     groupByFolder: false, groupDepth: 3, groupMinGb: 0, groupMinFiles: 0,
     searchTotal: 0, searchPage: 1, searchPageSize: "500", searchSort: "size", searchDir: "desc",
     pageSizes: ["100", "200", "500", "1000", "2000", "5000", "10000", "Infinite"],
-    showFilters: false, minGb: "", maxGb: "", dateFrom: "", dateTo: "", minVersions: "", sharedMin: "",
+    showFilters: false, minGb: "", maxGb: "", dateFrom: "", dateTo: "", minVersions: "", sharedMin: "", recentBackup: "",
     dedupe: false, treeDedupe: false, reclaimMap: {}, reclaimComputing: false,
     showRestore: false, restore: null, showDiff: false, diffText: "", diffBusy: false,
     policyKeys: ["latest", "hourly", "daily", "weekly", "monthly", "annual"],
@@ -191,6 +191,7 @@ document.addEventListener("alpine:init", () => {
         this.searchSort = kl.search_sort || "size";
         this.searchDir = kl.search_dir || "desc";
         this.dedupe = !!kl.search_dedupe;
+        this.recentBackup = kl.recent_backup || "";  // "recently backed up" preset (days; "" = Any)
         this.treeDedupe = !!kl.tree_dedupe;
         this.treeMode = kl.tree_mode || "full";
         this.reindexInterval = Number(kl.reindex_interval || 1800);
@@ -634,9 +635,17 @@ document.addEventListener("alpine:init", () => {
       if (this.dateTo) p.set("date_to", this.dateTo);
       if (this.minVersions !== "" && this.minVersions != null) p.set("min_versions", this.minVersions);
       if (this.sharedMin !== "" && this.sharedMin != null) p.set("shared_min", this.sharedMin);
+      const ff = this.recentBackupCutoff();
+      if (ff) p.set("first_from", ff);
       if (this.dedupe) p.set("dedupe", "1");
       return p;
     },
+    recentBackupCutoff() {  // dropdown days -> YYYY-MM-DD cutoff for first_seen ("recently backed up")
+      const days = parseInt(this.recentBackup, 10);
+      if (!days) return "";
+      return new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+    },
+    changeRecentBackup() { this.searchPage = 1; this.klSet({ recent_backup: this.recentBackup }); this.loadSearch(); },
     searchPages() { return Math.max(1, Math.ceil(this.searchTotal / (parseInt(this.searchPageSize, 10) || 500))); },
     setSearchPage(n) { this.searchPage = Math.min(Math.max(1, n), this.searchPages()); this.loadSearch(true); },
     setSearchSort(field, dir) { this.searchSort = field; this.searchDir = dir; this.searchPage = 1; this.klSet({ search_sort: field, search_dir: dir }); this.loadSearch(); },
@@ -647,6 +656,7 @@ document.addEventListener("alpine:init", () => {
     clearFilters() {
       this.minGb = ""; this.maxGb = ""; this.dateFrom = ""; this.dateTo = ""; this.minVersions = ""; this.sharedMin = "";
       this.searchExt = ""; this.searchExtExclude = ""; this.searchSource = ""; this.deletedOnly = false; this.overOneGb = false;
+      this.recentBackup = ""; this.klSet({ recent_backup: "" });
       this.loadSearch();
     },
 

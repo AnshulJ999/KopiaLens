@@ -307,6 +307,14 @@ def refresh(force: bool = False) -> dict:
             con.commit()
         except Exception as exc:  # noqa: BLE001 - never fail a refresh on housekeeping
             log.warning("incremental_vacuum skipped: %s", exc)
+        # Truncate the WAL back to ~0. A full rebuild + FTS('rebuild') writes GBs into the WAL, and a
+        # PASSIVE auto-checkpoint folds frames back into the DB but never SHRINKS the WAL file - so it
+        # had grown to ~3 GB and stayed there. TRUNCATE reclaims it. (Best-effort: a concurrent reader
+        # makes it a no-op rather than an error.)
+        try:
+            con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception as exc:  # noqa: BLE001 - never fail a refresh on housekeeping
+            log.warning("wal_checkpoint(TRUNCATE) skipped: %s", exc)
       summary = {"ok": True, "changed": changed, "drives": drives, "elapsed": round(time.time() - t0, 1)}
       _STATE["last_summary"] = summary
       _STATE["last_run"] = time.time()

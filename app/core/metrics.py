@@ -33,6 +33,23 @@ _LOCKS_GUARD = threading.Lock()
 # Serializes the content_refs reinsert so concurrent builds can't collide (the DuckDB
 # "Conflict on tuple deletion" we saw).
 _REFCOUNT_WRITE_LOCK = threading.Lock()
+# Time-gate the DuckDB content_refs rewrite. The full-table DELETE+INSERT (~3.5M rows) is grow-only
+# in DuckDB and was the single biggest growth source (snapshots land many x/day, so the distinct-
+# content count changes constantly -> a rewrite nearly every build). The dashboard uses the FRESH
+# in-memory count below; only file_detail / reclaimable read the DuckDB table and tolerate a few-
+# hours-stale refcount, so we rewrite at most once per window. (last write per repo; 0 = never ->
+# the first build after a cold start always populates it.)
+_LAST_REFCOUNT_WRITE: dict[str, float] = {}
+_DEFAULT_REFCOUNT_WRITE_INTERVAL = 21600  # 6h; overridable via settings.kopialens.refcount_write_interval
+
+
+def _refcount_write_interval() -> float:
+    try:
+        from ..settings import load_settings
+        return float(load_settings().get("kopialens", {}).get("refcount_write_interval",
+                                                               _DEFAULT_REFCOUNT_WRITE_INTERVAL))
+    except Exception:  # noqa: BLE001
+        return _DEFAULT_REFCOUNT_WRITE_INTERVAL
 
 
 def _build_lock(repo: str, mode: str) -> threading.Lock:
@@ -148,7 +165,8 @@ def build_global(
     except Exception as exc:  # noqa: BLE001
         log.warning("repo=%s refcount pkl write failed: %s", repo, exc)
 
-    if mode == "all" and not rec:  # persist the canonical full refcount into DuckDB (serialized)
+    # persist the canonical full refcount into DuckDB (serialized + time-gated to cut grow-only churn)
+    if mode == "all" and not rec and (time.time() - _LAST_REFCOUNT_WRITE.get(repo, 0.0) >= _refcount_write_interval()):
         with _REFCOUNT_WRITE_LOCK:
             try:
                 from ..index.physical import materialize_refcount  # lazy: avoids core<-index import cycle
@@ -159,6 +177,7 @@ def build_global(
                     con.commit()
                 finally:
                     con.close()
+                _LAST_REFCOUNT_WRITE[repo] = time.time()
                 log.info("repo=%s content_refs materialized (%d contents)", repo, len(count))
             except Exception as exc:  # noqa: BLE001
                 log.warning("repo=%s content_refs materialize failed: %s", repo, exc)
