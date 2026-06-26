@@ -181,34 +181,72 @@ def restore_command(repo: str, source: str, destination: str, overwrite: bool = 
     return args
 
 
-def snapshot_delete_commands(repo: str, snapshot_ids: list[str]) -> list[list[str]]:
-    """Generate, never execute, repo-destructive delete commands (the ``--delete`` flag is what
-    actually deletes; without it kopia only previews)."""
+# IDs per `kopia snapshot delete` call. A single call with thousands of 32-hex ids would exceed the
+# Windows CreateProcess command-line limit (~32k chars); 200 ids ~= 6.6k chars, comfortably under.
+_SNAP_DELETE_CHUNK = 200
 
-    return [
-        ["kopia"] + REPOS[repo]["args"] + ["snapshot", "delete", sid, "--delete"]
-        for sid in snapshot_ids
-    ]
+
+def maintenance_run_command(repo: str) -> list[str]:
+    """The `kopia [args] maintenance run --full` command for a repo (space is reclaimed by this, not
+    by the snapshot delete itself). Generation only."""
+    return ["kopia"] + REPOS[repo]["args"] + ["maintenance", "run", "--full"]
+
+
+def snapshot_delete_commands(repo: str, snapshot_ids: list[str], batch: bool = False) -> list[list[str]]:
+    """Generate, never execute, repo-destructive delete commands (the ``--delete`` flag is what
+    actually deletes; without it kopia only previews). kopia treats each id as one snapshot manifest
+    (verified: it deletes only that manifest, not other snapshots sharing the same root).
+    ``batch=False`` (default) = one command per id - REQUIRED by callers that align commands 1:1 with
+    a per-snapshot ``items`` list (the purge-plan UI). ``batch=True`` = <=200 ids per command, for a
+    short/directly-runnable bulk-delete script (the snapshot-delete preview)."""
+    prefix = ["kopia"] + REPOS[repo]["args"] + ["snapshot", "delete"]
+    if batch:
+        return [
+            prefix + snapshot_ids[i:i + _SNAP_DELETE_CHUNK] + ["--delete"]
+            for i in range(0, len(snapshot_ids), _SNAP_DELETE_CHUNK)
+        ]
+    return [prefix + [sid, "--delete"] for sid in snapshot_ids]
 
 
 def snapshot_delete_execute(repo: str, snapshot_ids: list[str]) -> dict:
-    """ACTUALLY delete snapshots (one ``kopia snapshot delete <ids...> --delete``). This is the
-    only mutating kopia call in the app; it bypasses the read-only allowlist deliberately and is
-    logged. Space is reclaimed only after a later ``maintenance run --full`` (kopia's own step)."""
+    """ACTUALLY delete snapshots, CHUNKED into <=200-id ``kopia snapshot delete ... --delete`` calls.
+    Chunking is REQUIRED at scale - a single call with thousands of ids overflows the Windows
+    command-line limit and fails. Synchronous, per-chunk; a partial failure still commits the earlier
+    chunks (snapshot manifests are independent), and the aggregate returncode is non-zero if ANY chunk
+    failed. Only mutating kopia call; bypasses the RO allowlist deliberately; logged. Space is reclaimed
+    only after a later ``maintenance run --full``. (For very large bulk deletes the standalone
+    Kopia-Delete.py is preferable - this call blocks for the whole run.)"""
     if not snapshot_ids:
-        return {"deleted": 0, "returncode": 0, "stdout": "", "stderr": "no ids"}
-    full = ["kopia"] + REPOS[repo]["args"] + ["snapshot", "delete", *snapshot_ids, "--delete", "--no-progress"]
-    log.warning("EXECUTING snapshot delete repo=%s count=%d ids=%s", repo, len(snapshot_ids), ",".join(snapshot_ids))
-    res = subprocess.run(
-        full, capture_output=True, text=True, encoding="utf-8", errors="replace",
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    log.warning("snapshot delete repo=%s rc=%d stderr=%s", repo, res.returncode, (res.stderr or "").strip()[:300])
+        return {"deleted": 0, "returncode": 0, "stdout": "", "stderr": "no ids", "command": None, "chunks": 0}
+    prefix = ["kopia"] + REPOS[repo]["args"] + ["snapshot", "delete"]
+    chunks = [snapshot_ids[i:i + _SNAP_DELETE_CHUNK] for i in range(0, len(snapshot_ids), _SNAP_DELETE_CHUNK)]
+    log.warning("EXECUTING snapshot delete repo=%s count=%d chunks=%d", repo, len(snapshot_ids), len(chunks))
+    deleted, rc, outs, errs, first_cmd = 0, 0, [], [], None
+    for ci, chunk in enumerate(chunks, 1):
+        full = prefix + chunk + ["--delete", "--no-progress"]
+        if first_cmd is None:
+            first_cmd = full
+        res = subprocess.run(
+            full, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if res.returncode == 0:
+            deleted += len(chunk)
+        else:
+            rc = res.returncode
+            err = (res.stderr or "").strip()[:300]
+            errs.append(err)
+            log.warning("snapshot delete repo=%s chunk %d/%d rc=%d stderr=%s", repo, ci, len(chunks), res.returncode, err)
+        if res.stdout:
+            outs.append(res.stdout)
+    log.warning("snapshot delete repo=%s done deleted=%d/%d rc=%d", repo, deleted, len(snapshot_ids), rc)
     return {
-        "deleted": len(snapshot_ids) if res.returncode == 0 else 0,
-        "returncode": res.returncode,
-        "stdout": res.stdout, "stderr": res.stderr,
-        "command": full,
+        "deleted": deleted,
+        "returncode": rc,
+        "stdout": "\n".join(outs),
+        "stderr": "\n".join(e for e in errs if e),
+        "command": first_cmd,
+        "chunks": len(chunks),
     }
 
 

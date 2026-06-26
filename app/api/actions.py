@@ -26,6 +26,7 @@ from ..core.kopia import (
     remove_files_command,
     remove_files_execute,
     remove_log_path,
+    maintenance_run_command,
     restore_command,
     restore_command_full,
     restore_execute,
@@ -149,9 +150,11 @@ def snapshot_delete(payload: SnapshotDeleteRequest) -> dict:
     if not payload.snapshot_ids:
         raise HTTPException(status_code=400, detail="snapshot_ids is empty")
     if not payload.confirm:
-        cmds = snapshot_delete_commands(payload.repo, payload.snapshot_ids)
+        cmds = snapshot_delete_commands(payload.repo, payload.snapshot_ids, batch=True)
+        text = "\n".join(" ".join(c) for c in cmds)
+        maint = " ".join(maintenance_run_command(payload.repo))
         return {"executed": False, "count": len(payload.snapshot_ids),
-                "commands": "\n".join(" ".join(c) for c in cmds)}
+                "commands": text + "\n\n# Then reclaim space with:\n" + maint}
     result = snapshot_delete_execute(payload.repo, payload.snapshot_ids)
     if result["returncode"] != 0:
         raise HTTPException(status_code=500, detail=result["stderr"].strip() or "kopia snapshot delete failed")

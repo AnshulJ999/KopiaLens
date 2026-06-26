@@ -17,7 +17,7 @@ import time
 
 import duckdb
 
-from config import DATA_DIR
+from config import DATA_DIR, REPOS
 
 from ..core.applog import get_logger
 
@@ -98,6 +98,12 @@ def db_path(repo: str) -> str:
 
 def get_db(repo: str) -> duckdb.DuckDBPyConnection:
     """The shared read-write connection for a repo, created (and schema-initialised) once."""
+    # Central repo-id guard: reject any value not in the configured set BEFORE it can reach a query
+    # or open a DB file. Blocks the SQL-injection / junk-DB-file class at the chokepoint that every
+    # DuckDB read+write (read_cursor -> get_db) funnels through - defense-in-depth with the
+    # parameterized queries.
+    if repo not in REPOS:
+        raise ValueError(f"unknown repo id: {repo!r}")
     with _MAINT_COND:  # wait out an in-progress compaction swap (connection is being replaced)
         while _maint.get(repo):
             _MAINT_COND.wait()

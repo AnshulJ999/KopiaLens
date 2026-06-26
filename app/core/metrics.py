@@ -173,12 +173,16 @@ def build_global(
                 from ..index.schema import get_db
                 con = get_db(repo).cursor()
                 try:
-                    materialize_refcount(con, repo, dict(count))
+                    wrote = materialize_refcount(con, repo, dict(count))
                     con.commit()
                 finally:
                     con.close()
-                _LAST_REFCOUNT_WRITE[repo] = time.time()
-                log.info("repo=%s content_refs materialized (%d contents)", repo, len(count))
+                # Only advance the throttle on a REAL write. If materialize_refcount no-op'd (row count
+                # unchanged), the table wasn't rewritten, so don't start the 6h window - let the next
+                # build re-check and write as soon as the content set actually changes.
+                if wrote:
+                    _LAST_REFCOUNT_WRITE[repo] = time.time()
+                    log.info("repo=%s content_refs materialized (%d contents)", repo, len(count))
             except Exception as exc:  # noqa: BLE001
                 log.warning("repo=%s content_refs materialize failed: %s", repo, exc)
 

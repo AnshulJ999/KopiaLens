@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import collections
 import json
+import threading
 
 import pyarrow as pa
 
@@ -112,13 +113,15 @@ def materialize_physical(con, repo: str) -> None:
     )
 
 
-def materialize_refcount(con, repo: str, count: dict) -> None:
+def materialize_refcount(con, repo: str, count: dict) -> bool:
     """Persist the global content reference-count map into DuckDB (called from the pre-warm
     pass / dashboard build, which compute it anyway). Powers accurate ``freeable``. Skips the
-    reinsert when the row count already matches (cheap to call every warm cycle)."""
+    reinsert when the row count already matches (cheap to call every warm cycle).
+    Returns True iff the table was actually rewritten, so the caller's write-throttle only
+    advances on a real write (not on this early-return no-op)."""
     existing = con.execute("SELECT count(*) FROM content_refs WHERE repo=?", [repo]).fetchone()[0]
     if existing == len(count):
-        return
+        return False
     # Drop the index around the rewrite: DuckDB's ART index has a fatal bug DELETING rows out of an
     # index ("Failed to delete all rows from index" -> DB invalidated). Deleting from an UN-indexed
     # table is safe; rebuilding the index after the bulk insert is also faster. (Per-repo DB, so the
@@ -132,6 +135,7 @@ def materialize_refcount(con, repo: str, count: dict) -> None:
         {"repo": [repo] * len(cids), "cid": cids, "refs": [int(count[c]) for c in cids]},
     )
     con.execute("CREATE INDEX IF NOT EXISTS content_refs_cid ON content_refs(repo, cid)")
+    return True
 
 
 def _refcount_for(repo: str, cids) -> dict[str, int] | None:
@@ -177,13 +181,24 @@ _SEP = chr(92)
 # set was unbounded - grew with every distinct content viewed via the ∑Reclaim button).
 _RECLAIM_CACHE: collections.OrderedDict[tuple, int] = collections.OrderedDict()
 _RECLAIM_CACHE_MAX = 100_000
+_RECLAIM_LOCK = threading.Lock()  # guards the LRU: sync FastAPI handlers run in a threadpool, so the
+# check->get->move_to_end->popitem sequence can interleave across requests (KeyError / lost entries)
 
 
 def _reclaim_cache_put(ck: tuple, val: int) -> None:
-    _RECLAIM_CACHE[ck] = val
-    _RECLAIM_CACHE.move_to_end(ck)
-    while len(_RECLAIM_CACHE) > _RECLAIM_CACHE_MAX:
-        _RECLAIM_CACHE.popitem(last=False)
+    with _RECLAIM_LOCK:
+        _RECLAIM_CACHE[ck] = val
+        _RECLAIM_CACHE.move_to_end(ck)
+        while len(_RECLAIM_CACHE) > _RECLAIM_CACHE_MAX:
+            _RECLAIM_CACHE.popitem(last=False)
+
+
+def _reclaim_cache_get(ck: tuple) -> int | None:
+    with _RECLAIM_LOCK:
+        val = _RECLAIM_CACHE.get(ck)
+        if val is not None:
+            _RECLAIM_CACHE.move_to_end(ck)
+        return val
 
 
 def reclaim_for(repo: str, content_ids: list[str], cap: int = 500) -> dict[str, int]:
@@ -206,8 +221,9 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500) -> dict[str, 
     try:
         for cid in uniq:
             ck = (repo, cid)
-            if ck in _RECLAIM_CACHE:
-                out[cid] = _RECLAIM_CACHE[ck]
+            cached = _reclaim_cache_get(ck)
+            if cached is not None:
+                out[cid] = cached
                 continue
             dup_paths = cur.execute(
                 "SELECT DISTINCT source, full_path FROM files WHERE repo=? AND content_id=?", [repo, cid]

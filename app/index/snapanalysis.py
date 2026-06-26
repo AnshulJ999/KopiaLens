@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import collections
 import hashlib
+import threading
 
 from ..core.cache import cache_db, get_children
 from ..core.sizemap import load_sizemap
@@ -23,13 +24,24 @@ from .schema import get_db, read_cursor
 # previously never evicted (a slow unbounded leak as snapshots were viewed over a long session).
 _RECL_FILES_CACHE: collections.OrderedDict[tuple, list] = collections.OrderedDict()
 _RECL_FILES_CACHE_MAX = 200
+_RECL_FILES_LOCK = threading.Lock()  # guards the LRU under the sync-handler threadpool (check->get->
+# move_to_end->popitem must not interleave across requests -> KeyError / unexpected eviction)
 
 
 def _recl_cache_put(ck: tuple, val: list) -> None:
-    _RECL_FILES_CACHE[ck] = val
-    _RECL_FILES_CACHE.move_to_end(ck)
-    while len(_RECL_FILES_CACHE) > _RECL_FILES_CACHE_MAX:
-        _RECL_FILES_CACHE.popitem(last=False)
+    with _RECL_FILES_LOCK:
+        _RECL_FILES_CACHE[ck] = val
+        _RECL_FILES_CACHE.move_to_end(ck)
+        while len(_RECL_FILES_CACHE) > _RECL_FILES_CACHE_MAX:
+            _RECL_FILES_CACHE.popitem(last=False)
+
+
+def _recl_cache_get(ck: tuple) -> list | None:
+    with _RECL_FILES_LOCK:
+        val = _RECL_FILES_CACHE.get(ck)
+        if val is not None:
+            _RECL_FILES_CACHE.move_to_end(ck)
+        return val
 
 
 _MAX_HEAVY_PER_CYCLE = 100  # cap heavy (physical+reclaim) source recomputes per cycle (a soft guard;
@@ -43,8 +55,9 @@ def reclaimable_files(repo: str, source: str, snapshot_id: str, limit: int = 200
     set as the reclaimable byte total, then maps it to files via a full tree walk. On-demand +
     cached (expensive: walks the whole source once)."""
     ck = (repo, snapshot_id)
-    if ck in _RECL_FILES_CACHE:
-        return _RECL_FILES_CACHE[ck][:limit]
+    cached = _recl_cache_get(ck)
+    if cached is not None:
+        return cached[:limit]
     key, srcs = resolve_source(repo, source=source)
     snaps = sorted(srcs[key], key=lambda s: s.get("startTime", ""))
     target = next((s for s in snaps if s["id"] == snapshot_id), None)
@@ -138,7 +151,7 @@ def _existing_analysis(repo: str, source: str) -> dict:
 def cached_reclaimable_files(repo: str, snapshot_id: str) -> list | None:
     """Already-computed reclaimable file list for a snapshot, or None (never triggers a walk).
     Used by the all-sources Tree 'reclaimable' view (shows only what's cached, per the cheap option)."""
-    return _RECL_FILES_CACHE.get((repo, snapshot_id))
+    return _recl_cache_get((repo, snapshot_id))
 
 
 def _snaphash(snaps: list[dict]) -> str:

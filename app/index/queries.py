@@ -292,7 +292,9 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "",
     Reclaimable tree mode (what is freed if this snapshot is deleted)."""
     base = prefix.rstrip(_SEP)
     like = base + _SEP + "%" if base else "%"
-    recl = (" AND content_id IN (SELECT cid FROM content_refs WHERE repo='%s' AND refs<=1)" % repo) if reclaimable_only else ""
+    # Parameterized (was a raw `% repo` interpolation = SQL-injection surface). The bound param for the
+    # reclaimable subquery slots in right after the `LIKE ?` placeholder, so insert it there when present.
+    recl = " AND content_id IN (SELECT cid FROM content_refs WHERE repo=? AND refs<=1)" if reclaimable_only else ""
     cur = read_cursor(repo)
     try:
         rows = _rows(
@@ -315,7 +317,9 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "",
             GROUP BY name
             ORDER BY size DESC
             """,
-            [base, base, repo, source, snapshot_id, like, _SEP, _SEP],
+            [base, base, repo, source, snapshot_id, like]
+            + ([repo] if reclaimable_only else [])
+            + [_SEP, _SEP],
         )
     finally:
         cur.close()
