@@ -84,10 +84,19 @@ def memory_snapshot() -> dict:
                     paths = cur.execute("SELECT count(*) FROM paths WHERE repo=?", [repo]).fetchone()[0]
                     crefs = cur.execute("SELECT count(*) FROM content_refs WHERE repo=?", [repo]).fetchone()[0]
                     csizes = cur.execute("SELECT count(*) FROM content_sizes WHERE repo=?", [repo]).fetchone()[0]
+                    try:  # DuckDB's own memory breakdown by internal tag (BASE_TABLE/ART_INDEX/ALLOCATOR/...)
+                        dmem_rows = cur.execute(
+                            "SELECT tag, SUM(memory_usage_bytes) FROM duckdb_memory() GROUP BY tag"
+                        ).fetchall()
+                        duckdb_mb = {tag: round(b / (1024 * 1024), 1) for tag, b in dmem_rows}
+                    except Exception:  # noqa: BLE001 - availability may vary; never block the row counts above
+                        duckdb_mb = None
                 finally:
                     cur.close()
                 snap["repos"][repo] = {
                     "files": files, "paths": paths, "content_refs": crefs, "content_sizes": csizes,
+                    "duckdb_mb": duckdb_mb,
+                    "duckdb_total_mb": round(sum(duckdb_mb.values()), 1) if duckdb_mb else None,
                 }
             except Exception as exc:  # noqa: BLE001
                 snap["repos"][repo] = {"error": str(exc)}
@@ -104,6 +113,9 @@ def log_memory(tag: str = "") -> dict:
     parts = [f"rss={rss}", f"dir_memo={s['dir_memo']}/{s['dir_memo_max']}({dmb})"]
     for repo, r in s.get("repos", {}).items():
         if "error" not in r:
-            parts.append(f"r{repo}[files={r['files']} paths={r['paths']} refs={r['content_refs']}]")
+            dtot = f"{r['duckdb_total_mb']:.0f}MB" if r.get("duckdb_total_mb") is not None else "?"
+            parts.append(
+                f"r{repo}[files={r['files']} paths={r['paths']} refs={r['content_refs']} duckdb={dtot}]"
+            )
     log.info("%s%s", f"{tag} " if tag else "", " ".join(parts))
     return s
