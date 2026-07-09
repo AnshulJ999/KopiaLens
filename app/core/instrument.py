@@ -61,6 +61,32 @@ def _dir_memo_mb() -> float | None:
         return None
 
 
+def _shallow_size(obj, _depth: int = 0) -> int:
+    """Approximate size of an arbitrary cached value, recursing a few levels into dict/list/tuple
+    contents (depth-capped so an unexpected deep structure can't make this slow). Good enough for a
+    RAM estimate, not a precise heap walk - same philosophy as _entry_bytes above."""
+    total = sys.getsizeof(obj)
+    if _depth >= 3:
+        return total
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            total += sys.getsizeof(k) + _shallow_size(v, _depth + 1)
+    elif isinstance(obj, (list, tuple)):
+        for item in obj:
+            total += _shallow_size(item, _depth + 1)
+    return total
+
+
+def _cache_stats(cache_dict) -> tuple[int, float]:
+    """(entry count, estimated MB) for an arbitrary in-process cache dict/OrderedDict."""
+    try:
+        n = len(cache_dict)
+        total = sum(_shallow_size(k) + _shallow_size(v) for k, v in cache_dict.items())
+        return n, total / (1024 * 1024)
+    except Exception:  # noqa: BLE001 - instrumentation must never crash
+        return 0, 0.0
+
+
 def memory_snapshot() -> dict:
     """Process RSS + the in-process caches + per-repo DuckDB table sizes (the real RAM drivers)."""
     from .cache import DIR_MEMO, DIR_MEMO_MAX
@@ -72,6 +98,24 @@ def memory_snapshot() -> dict:
         "dir_memo_mb": _dir_memo_mb(),
         "repos": {},
     }
+    try:  # three other named in-process caches (Pass 12) that were never individually measured
+        from ..index.snapanalysis import _RECL_FILES_CACHE, _RECL_FILES_CACHE_MAX
+        n, mb = _cache_stats(_RECL_FILES_CACHE)
+        snap["recl_files_cache"] = {"entries": n, "max": _RECL_FILES_CACHE_MAX, "mb": round(mb, 1)}
+    except Exception as exc:  # noqa: BLE001
+        snap["recl_files_cache"] = {"error": str(exc)}
+    try:
+        from ..index.physical import _RECLAIM_CACHE, _RECLAIM_CACHE_MAX
+        n, mb = _cache_stats(_RECLAIM_CACHE)
+        snap["reclaim_cache"] = {"entries": n, "max": _RECLAIM_CACHE_MAX, "mb": round(mb, 1)}
+    except Exception as exc:  # noqa: BLE001
+        snap["reclaim_cache"] = {"error": str(exc)}
+    try:  # TTL-based, not count-capped - no "max" field
+        from ..index.excluded import _LIST_CACHE
+        n, mb = _cache_stats(_LIST_CACHE)
+        snap["excluded_list_cache"] = {"entries": n, "mb": round(mb, 1)}
+    except Exception as exc:  # noqa: BLE001
+        snap["excluded_list_cache"] = {"error": str(exc)}
     try:
         from config import kopia_repos
         from ..index.schema import read_cursor
@@ -111,6 +155,13 @@ def log_memory(tag: str = "") -> dict:
     rss = f"{s['rss_mb']:.0f}MB" if s.get("rss_mb") is not None else "?"
     dmb = f"~{s['dir_memo_mb']:.0f}MB" if s.get("dir_memo_mb") is not None else "?"
     parts = [f"rss={rss}", f"dir_memo={s['dir_memo']}/{s['dir_memo_max']}({dmb})"]
+    for key, label in (("recl_files_cache", "recl_files"), ("reclaim_cache", "reclaim")):
+        c = s.get(key, {})
+        if "error" not in c:
+            parts.append(f"{label}={c['entries']}/{c['max']}(~{c['mb']:.0f}MB)")
+    c = s.get("excluded_list_cache", {})
+    if "error" not in c:
+        parts.append(f"excl_list={c['entries']}(~{c['mb']:.0f}MB)")
     for repo, r in s.get("repos", {}).items():
         if "error" not in r:
             dtot = f"{r['duckdb_total_mb']:.0f}MB" if r.get("duckdb_total_mb") is not None else "?"
