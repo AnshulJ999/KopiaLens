@@ -33,6 +33,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "search_sort": "size",     # persisted search sort column
         "search_dir": "desc",      # persisted search sort direction
         "search_dedupe": False,    # persisted dedupe toggle (search)
+        "recent_backup": "30",     # default "Backed up" filter in days ("" = Any); user changes persist
         "tree_dedupe": False,      # persisted dedupe toggle (tree)
         "es_path": r"G:\Apps\CLI Tools\es.exe",  # Everything CLI for the Excluded browser (local disk side)
         "excluded_tolerance": 0.05,  # folder counts as "backed" when excluded fraction is below this (cuts partial noise)

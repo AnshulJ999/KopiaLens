@@ -726,6 +726,7 @@ document.addEventListener("alpine:init", () => {
           { title: "Copies", field: "copies", headerSort: false, width: 75, hozAlign: "right",
             formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:#d97706" title="this exact content is at ${v} paths (filter: Shared ≥ N)">${v}</span>` : "1"; } },
           H("Last seen", "last_seen", { width: 160, formatter: (c) => timeCell(c.getValue()) }),
+          H("First seen", "first_seen", { width: 160, formatter: (c) => timeCell(c.getValue()) }),
           H("On disk", "in_latest", { width: 90, formatter: (c) => c.getValue() ? "yes" : "<span style='color:#dc2626'>deleted</span>" }),
           H("Source", "source", { widthGrow: 2, minWidth: 180, formatter: (c) => sourcePath(c.getValue()) }),
         ];
@@ -1008,7 +1009,10 @@ document.addEventListener("alpine:init", () => {
       this.buildRemovePlan();
     },
     buildRemovePlan() {
-      this.removePlan = { loading: true, label: this._removeLabel, all_versions: false, everywhere: false, by: "object-id", detail: null, detailLoading: false, job: null, batSaved: null };
+      // Folder/file-context deletes (a Tree prefix) default to ALL versions: latest-only would
+      // silently leave every older version's bytes in old snapshots ("deleted" folder still there).
+      const allVers = !!(this._removeBase && this._removeBase.prefix);
+      this.removePlan = { loading: true, label: this._removeLabel, all_versions: allVers, everywhere: false, by: "object-id", detail: null, detailLoading: false, job: null, batSaved: null };
       this.showRemove = true;
       this._fetchRemovePlan();
     },

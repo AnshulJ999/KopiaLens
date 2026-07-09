@@ -44,18 +44,26 @@ _FILE_INDEXES = (
 )
 # Recompute the paths aggregate (1 row per distinct path) for one source. content_id =
 # the latest version's object id; physical is filled later by materialize_physical().
+# first_seen is STICKY: merged with the pre-rewrite values captured in the _old_seen temp
+# table (least of old/new), because min(start_time) over the DELTA-built files table is NOT
+# "first backed up" - an unchanged file only has a latest-snapshot row, so without the merge
+# its first_seen would roll forward to "now" on every rebuild (the broken recently-backed-up
+# filter). _old_seen must exist before this runs (see _capture_old_seen / _refresh_paths).
 _PATHS_SQL = """
 INSERT INTO paths (repo, source, full_path, name, ext, size, versions, first_seen, last_seen, in_latest, content_id, physical, path_lc)
-SELECT repo, source, full_path, name,
-       CASE WHEN contains(name, '.') THEN lower(list_extract(string_split(name, '.'), -1)) ELSE '' END AS ext,
-       size, versions, first_seen, last_seen, in_latest, content_id, 0, lower(full_path)
+SELECT t.repo, t.source, t.full_path, t.name,
+       CASE WHEN contains(t.name, '.') THEN lower(list_extract(string_split(t.name, '.'), -1)) ELSE '' END AS ext,
+       t.size, t.versions,
+       least(coalesce(o.first_seen, t.first_seen), t.first_seen) AS first_seen,
+       t.last_seen, t.in_latest, t.content_id, 0, lower(t.full_path)
 FROM (
   SELECT repo, source, full_path, any_value(name) AS name, max(size) AS size,
          count(DISTINCT snapshot_id) AS versions, min(start_time) AS first_seen,
          max(start_time) AS last_seen, bool_or(snapshot_id = ?) AS in_latest,
          arg_max(content_id, start_time) AS content_id
   FROM files WHERE repo=? AND source=? GROUP BY repo, source, full_path
-)
+) t
+LEFT JOIN _old_seen o ON o.path_lc = lower(t.full_path)
 """
 
 
@@ -105,16 +113,39 @@ def _delete_source(con, repo: str, key: str) -> None:
     con.execute("DELETE FROM paths WHERE repo=? AND source=?", [repo, key])
 
 
-def _refresh_paths(con, repo: str, key: str) -> None:
+def _capture_old_seen(con, repo: str, key: str) -> None:
+    """Snapshot the source's known first-seen dates BEFORE its paths rows are rewritten, so
+    first_seen stays sticky (never moves forward once known). min() also collapses any
+    duplicate rows from the pre-fix append path."""
+    con.execute(
+        "CREATE OR REPLACE TEMPORARY TABLE _old_seen AS "
+        "SELECT path_lc, min(first_seen) AS first_seen FROM paths "
+        "WHERE repo=? AND source=? AND first_seen IS NOT NULL GROUP BY path_lc",
+        [repo, key],
+    )
+
+
+def _refresh_paths(con, repo: str, key: str, captured: bool = False) -> None:
+    """Rewrite the paths aggregate for one source: capture old first_seen (unless the caller
+    already did), DELETE the source's rows, re-INSERT merged with the captured dates.
+    The DELETE here is essential: the append fast-path used to skip it, so every append
+    INSERTed a full extra copy of the source's paths (rows duplicated up to ~18x in the wild).
+    Per-source DELETE against paths' ART indexes is the same pattern _delete_source has always
+    run daily (never hit the DuckDB index-delete bug, unlike the full-table map rewrites)."""
+    if not captured:
+        _capture_old_seen(con, repo, key)
     row = con.execute(
         "SELECT snapshot_id FROM indexed_snapshots WHERE repo=? AND source=? ORDER BY start_time DESC LIMIT 1",
         [repo, key],
     ).fetchone()
     latest_id = row[0] if row else ""
+    con.execute("DELETE FROM paths WHERE repo=? AND source=?", [repo, key])
     con.execute(_PATHS_SQL, [latest_id, repo, key])
+    con.execute("DROP TABLE IF EXISTS _old_seen")
 
 
 def _build_source(con, db, repo: str, key: str, snaps: list[dict], job: dict) -> None:
+    _capture_old_seen(con, repo, key)  # before the delete, so first_seen survives the rebuild
     _delete_source(con, repo, key)
     seen_dirs: set[str] = set()
     snaps_sorted = sorted(snaps, key=lambda s: s.get("startTime", ""), reverse=True)  # newest first
@@ -147,7 +178,7 @@ def _build_source(con, db, repo: str, key: str, snaps: list[dict], job: dict) ->
         )
         job["indexed"] += 1
     _flush(con, rows)
-    _refresh_paths(con, repo, key)
+    _refresh_paths(con, repo, key, captured=True)  # _old_seen captured before _delete_source
 
 
 def _append_set(snaps: list[dict], indexed_ids: set[str]) -> list[dict] | None:
@@ -229,6 +260,65 @@ def _indexed_sets(con, repo: str) -> dict[str, set[str]]:
     return out
 
 
+def _backfill_source_first_seen(con, db, repo: str, key: str, snaps: list[dict]) -> int:
+    """One-time EXACT first_seen for a source: walk its snapshots OLDEST-first with a fresh
+    seen_dirs set, so each unique dir version is attributed to the EARLIEST snapshot containing
+    it - stamping every path with the earliest surviving snapshot that holds it. The delta index
+    alone cannot know this (an unchanged file only has a latest-snapshot row). Cost = one full
+    source walk (reads the warm sqlite dir cache; no kopia calls when warm)."""
+    seen_dirs: set[str] = set()
+    first: dict[str, str] = {}
+    for snap in sorted(snaps, key=lambda s: s.get("startTime", "") or ""):  # OLDEST first
+        root = snap.get("rootEntry", {}).get("obj")
+        start = snap.get("startTime", "") or None
+        if not root or not start:
+            continue
+
+        def visitor(parent: str, entry: dict, _start=start) -> None:
+            rel = (parent + "\\" + entry.get("name", "")).lstrip("\\")
+            plc = _full_path(key, rel).lower()
+            if plc not in first:  # oldest-first walk -> the first emission IS the earliest snapshot
+                first[plc] = _start
+
+        walk_new_visit(repo, db, [root], seen_dirs, visitor)
+    if not first:
+        return 0
+    tbl = pa.table({"path_lc": list(first.keys()), "fs": list(first.values())})
+    con.register("_fs_arrow", tbl)
+    con.execute(
+        "CREATE OR REPLACE TEMPORARY TABLE _fs_backfill AS "
+        "SELECT path_lc, CAST(fs AS TIMESTAMP) AS fs FROM _fs_arrow"
+    )
+    con.unregister("_fs_arrow")
+    con.execute(  # targeted: only rows whose stored date is LATER than the true earliest
+        "UPDATE paths SET first_seen = b.fs FROM _fs_backfill b "
+        "WHERE paths.repo=? AND paths.source=? AND paths.path_lc = b.path_lc AND b.fs < paths.first_seen",
+        [repo, key],
+    )
+    con.execute("DROP TABLE IF EXISTS _fs_backfill")
+    return len(first)
+
+
+def backfill_first_seen(con, db, repo: str, job: dict) -> int:
+    """One-time per-source first-seen backfill + duplicate-row cleanup, tracked in
+    first_seen_meta. Survives normal rebuilds (sticky first_seen in _refresh_paths preserves
+    the backfilled dates) and reruns automatically after a from-scratch DB rebuild. The
+    _refresh_paths call also rewrites the source's paths cleanly = the dedupe migration for
+    the append-path duplicate-rows bug. Returns the number of sources processed."""
+    srcs = sources_index(repo)
+    done = {r[0] for r in con.execute("SELECT source FROM first_seen_meta WHERE repo=?", [repo]).fetchall()}
+    todo = [k for k in sorted(srcs) if k not in done]
+    for key in todo:
+        job["current_source"] = f"(first-seen backfill) {key}"
+        t0 = time.perf_counter()
+        _refresh_paths(con, repo, key)  # dedupe + sticky rewrite
+        n = _backfill_source_first_seen(con, db, repo, key, srcs[key])
+        con.execute("INSERT INTO first_seen_meta VALUES (?, ?, now())", [repo, key])
+        con.commit()
+        log.info("repo=%s source=%s first-seen backfill %d paths %.1fs", repo, key, n, time.perf_counter() - t0)
+    return len(todo)
+
+
 def _run_build(repo: str, source: str | None, full: bool) -> None:
     job = _JOBS[repo]
     con = None
@@ -255,6 +345,7 @@ def _run_build(repo: str, source: str | None, full: bool) -> None:
             _drop_indexes(con)
         for key in stale:
             _delete_source(con, repo, key)
+            con.execute("DELETE FROM first_seen_meta WHERE repo=? AND source=?", [repo, key])
         for key in targets:
             job["current_source"] = key
             t0 = time.perf_counter()
@@ -276,6 +367,13 @@ def _run_build(repo: str, source: str | None, full: bool) -> None:
             job["current_source"] = "(physical maps)"
             materialize_physical(con, repo)
         con.commit()
+        try:  # one-time per source (first_seen_meta); a cheap no-op query once populated
+            if backfill_first_seen(con, db, repo, job):
+                job["current_source"] = "(physical maps)"
+                materialize_physical(con, repo)  # backfill rewrote paths rows with physical=0 -> refill
+                con.commit()
+        except Exception as exc:  # noqa: BLE001 - the backfill must never fail a build
+            log.warning("first-seen backfill repo=%s failed: %s", repo, exc)
         if targets or stale or full:  # only log when real work happened (no spam on no-op passes)
             try:
                 from ..core.instrument import log_memory

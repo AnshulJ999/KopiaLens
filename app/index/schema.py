@@ -336,6 +336,10 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     except Exception:
         pass  # column already present
 
+    # One-time first-seen backfill tracker (builder.backfill_first_seen). No PK/index on
+    # purpose: tiny table, and per-source DELETEs must never hit DuckDB's ART index-delete bug.
+    con.execute("CREATE TABLE IF NOT EXISTS first_seen_meta (repo VARCHAR, source VARCHAR, done_at TIMESTAMP)")
+
     # Materialized physical/dedup maps (populated from the toolkit engine artifacts each build).
     con.execute("CREATE TABLE IF NOT EXISTS content_sizes (repo VARCHAR, cid VARCHAR, packed UBIGINT)")
     con.execute("CREATE TABLE IF NOT EXISTS content_refs (repo VARCHAR, cid VARCHAR, refs BIGINT)")

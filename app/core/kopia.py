@@ -292,6 +292,13 @@ def _quote_arg(a: str) -> str:
     return f'"{a}"' if (not a or " " in a) else a
 
 
+def _bat_line(cmd: list[str]) -> str:
+    """Render a command for a .bat file. Doubles every % - in BATCH context cmd.exe expands
+    %...% even inside double quotes and DROPS an unmatched %, silently mangling filenames like
+    'Backup 100%.txt' into a non-matching string (kopia would then quietly remove nothing)."""
+    return " ".join(_quote_arg(a) for a in cmd).replace("%", "%%")
+
+
 def _source_args(source: str | list[str] | None) -> list[str]:
     return [x for s in (source if isinstance(source, list) else ([source] if source else []))
             for x in ("--source", s)]
@@ -308,6 +315,10 @@ def remove_files_chunked_commands(repo: str, items: list[str], source: str | lis
     src_args = _source_args(source)
     tail = ["--commit"] if commit else []
     fixed_len = sum(len(_quote_arg(a)) + 1 for a in base + src_args + tail) + 16  # safety margin
+    if fixed_len + 2000 > max_chars:  # scope list alone nearly fills the line budget
+        log.warning("remove-files fixed prefix is %d chars (%d sources) vs max_chars=%d - "
+                    "generated commands may exceed the target line length", fixed_len,
+                    len(src_args) // 2, max_chars)
     budget = max(2000, max_chars - fixed_len)
     cmds: list[list[str]] = []
     cur: list[str] = []
@@ -342,7 +353,7 @@ def remove_files_save_bat(commands: list[list[str]], bat_path: str, log_path: st
         "echo.",
     ]
     for i, cmd in enumerate(commands, 1):
-        s = " ".join(_quote_arg(a) for a in cmd)
+        s = _bat_line(cmd)  # %-escaped for batch context (filenames containing % stay intact)
         lines.append(f'echo [batch {i}/{n}] %TIME%')
         lines.append(f'echo === batch {i}/{n} ===>> "%LOG%"')
         lines.append(f'{s}>> "%LOG%" 2>&1')
@@ -364,7 +375,7 @@ def remove_files_bat_text(commands: list[list[str]], log_name: str) -> str:
         'echo Aborting (Ctrl+C) between batches is safe - rewrites are per-snapshot atomic.', "echo.",
     ]
     for i, cmd in enumerate(commands, 1):
-        s = " ".join(_quote_arg(a) for a in cmd)
+        s = _bat_line(cmd)  # %-escaped for batch context (filenames containing % stay intact)
         lines.append(f'echo [batch {i}/{n}] %TIME%')
         lines.append(f'echo === batch {i}/{n} ===>> "%LOG%"')
         lines.append(f'{s}>> "%LOG%" 2>&1')
