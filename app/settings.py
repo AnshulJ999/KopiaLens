@@ -40,6 +40,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "auto_compact": True,        # auto-compact the DuckDB when it bloats (DuckDB has no GC of its own)
         "compact_ratio": 1.8,        # compact when the file grows past this x its last-compacted size
         "compact_min_interval": 86400,  # min seconds between auto-compactions (1 day)
+        "dir_memo_max_mb": 1500,     # RAM budget for the in-process directory-listing LRU (byte-budgeted, not item-count)
     },
     "backblaze": {
         "bzdata_path": r"C:\ProgramData\Backblaze\bzdata",  # read-only source root (never written)

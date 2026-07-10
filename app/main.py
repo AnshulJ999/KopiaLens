@@ -186,12 +186,13 @@ def _bg_worker() -> None:
 async def lifespan(_app: FastAPI):
     setup_logging()
     log.info("KopiaLens starting up")
-    try:  # apply the configurable in-process dir-cache LRU cap (RAM lever; default 50k)
+    try:  # apply the configurable in-process dir-cache RAM budget (default 1.5 GB)
         from .core import cache as _cache
-        _cache.DIR_MEMO_MAX = int(load_settings().get("kopialens", {}).get("dir_memo_max", _cache.DIR_MEMO_MAX))
-        log.info("DIR_MEMO_MAX=%d", _cache.DIR_MEMO_MAX)
+        mb = float(load_settings().get("kopialens", {}).get("dir_memo_max_mb", 1500))
+        _cache.DIR_MEMO_MAX_BYTES = int(mb * 1024 * 1024)
+        log.info("DIR_MEMO_MAX_BYTES=%d (%.0f MB)", _cache.DIR_MEMO_MAX_BYTES, mb)
     except Exception as exc:  # noqa: BLE001 - never block startup on a tuning read
-        log.warning("dir_memo_max setting read failed: %s", exc)
+        log.warning("dir_memo_max_mb setting read failed: %s", exc)
     try:  # point the read-only Backblaze backend at the configured bzdata root
         from .backblaze import paths as bz_paths
         bz_paths.set_bzdata_root(load_settings().get("backblaze", {}).get("bzdata_path")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import collections
 import os
 import sqlite3
+import sys
 import threading
 
 from config import CACHEDIR
@@ -28,12 +29,32 @@ except ImportError:  # pragma: no cover - orjson is a declared dependency
 
 BATCH = 800
 # In-process LRU over directory entries, on TOP of the durable mmap'd SQLite dir cache. The SQLite
-# cache is the source of truth; this memo only avoids SQLite round-trips on the hot walk path, so a
-# smaller cap just means a few more (fast) SQLite hits, never a kopia re-walk. Default lowered from
-# 400k (which pinned multiple GB of RSS that never released) - overridden from settings at startup.
-DIR_MEMO_MAX = 50_000
-DIR_MEMO: collections.OrderedDict[str, list[dict]] = collections.OrderedDict()
+# cache is the source of truth; this memo only avoids SQLite round-trips + JSON re-parsing on the
+# hot walk path, so a smaller budget just means a few more (fast) SQLite hits, never a kopia re-walk.
+# Budgeted by BYTES, not item count - directory sizes here range from ~2 to 50,000+ children, so a
+# fixed item cap is not a RAM budget (measured 200MB-7GB for the same 50k-item cap in production).
+DIR_MEMO_MAX_BYTES = 1_500 * 1024 * 1024  # 1.5 GB default; overridden from settings at startup
+DIR_MEMO: collections.OrderedDict[str, tuple[int, list[dict]]] = collections.OrderedDict()
+_MEMO_BYTES = 0  # running total, kept in lockstep with DIR_MEMO under _MEMO_LOCK
 _MEMO_LOCK = threading.Lock()  # guards the shared LRU across the request threadpool + build thread
+
+
+def _entry_bytes(entries: list[dict]) -> int:
+    """Shallow-ish size of one DIR_MEMO value (a list of child dicts): list + each dict + its
+    str keys/values. Good enough for a RAM budget, not a precise heap walk."""
+    total = sys.getsizeof(entries)
+    for d in entries:
+        total += sys.getsizeof(d)
+        if isinstance(d, dict):
+            for k, v in d.items():
+                total += sys.getsizeof(k) + sys.getsizeof(v)
+    return total
+
+
+def memo_bytes() -> int:
+    """Current exact DIR_MEMO footprint, for logging/diagnostics."""
+    with _MEMO_LOCK:
+        return _MEMO_BYTES
 
 
 def cache_db(repo: str) -> sqlite3.Connection:
@@ -51,11 +72,18 @@ def cache_db(repo: str) -> sqlite3.Connection:
 
 
 def memo_put(oid: str, entries: list[dict]) -> None:
+    global _MEMO_BYTES
+    size = _entry_bytes(entries)
     with _MEMO_LOCK:
-        DIR_MEMO[oid] = entries
+        old = DIR_MEMO.get(oid)
+        if old is not None:
+            _MEMO_BYTES -= old[0]
+        DIR_MEMO[oid] = (size, entries)
         DIR_MEMO.move_to_end(oid)
-        if len(DIR_MEMO) > DIR_MEMO_MAX:
-            DIR_MEMO.popitem(last=False)
+        _MEMO_BYTES += size
+        while _MEMO_BYTES > DIR_MEMO_MAX_BYTES and DIR_MEMO:
+            _, (evicted_size, _) = DIR_MEMO.popitem(last=False)
+            _MEMO_BYTES -= evicted_size
 
 
 def get_children(repo: str, db: sqlite3.Connection, oids: list[str]) -> dict[str, list[dict]]:
@@ -65,10 +93,10 @@ def get_children(repo: str, db: sqlite3.Connection, oids: list[str]) -> dict[str
     misses: list[str] = []
     with _MEMO_LOCK:
         for oid in oids:
-            entries = DIR_MEMO.get(oid)
-            if entries is not None:
+            cached = DIR_MEMO.get(oid)
+            if cached is not None:
                 DIR_MEMO.move_to_end(oid)
-                out[oid] = entries
+                out[oid] = cached[1]
             else:
                 misses.append(oid)
 

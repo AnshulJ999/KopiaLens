@@ -25,38 +25,13 @@ def _rss_mb() -> float | None:
         return None
 
 
-def _entry_bytes(entries) -> int:
-    """Shallow-ish size of one DIR_MEMO value (a list of child dicts): list + each dict + its
-    str keys/values. Good enough to tune DIR_MEMO_MAX from real data (not a precise heap walk)."""
-    total = sys.getsizeof(entries)
-    for d in entries:
-        total += sys.getsizeof(d)
-        if isinstance(d, dict):
-            for k, v in d.items():
-                total += sys.getsizeof(k) + sys.getsizeof(v)
-    return total
-
-
 def _dir_memo_mb() -> float | None:
-    """Estimated RAM held by the DIR_MEMO LRU. STEP-samples evenly across the whole LRU (not just the
-    oldest N entries) with a large sample, so a few very large directories don't skew it - the prior
-    first-200 approach swung ~14x (272 MB vs 3.7 GB) for the same 50k entries. Still a sample (avoids
-    walking every child list each cycle), just a representative one."""
+    """Exact DIR_MEMO footprint, tracked incrementally in cache.py (no sampling needed - the old
+    ~3000-sample estimator is retired now that the byte-budget LRU tracks its own running total)."""
     try:
-        from .cache import DIR_MEMO
+        from .cache import memo_bytes
 
-        n = len(DIR_MEMO)
-        if not n:
-            return 0.0
-        step = max(1, n // 3000)  # ~3000 evenly-spread samples
-        total, taken = 0, 0
-        for i, (key, entries) in enumerate(DIR_MEMO.items()):
-            if i % step:
-                continue
-            total += sys.getsizeof(key) + _entry_bytes(entries)
-            taken += 1
-        avg = total / taken if taken else 0
-        return (avg * n) / (1024 * 1024)
+        return memo_bytes() / (1024 * 1024)
     except Exception:  # noqa: BLE001 - instrumentation must never crash
         return None
 
@@ -89,13 +64,13 @@ def _cache_stats(cache_dict) -> tuple[int, float]:
 
 def memory_snapshot() -> dict:
     """Process RSS + the in-process caches + per-repo DuckDB table sizes (the real RAM drivers)."""
-    from .cache import DIR_MEMO, DIR_MEMO_MAX
+    from .cache import DIR_MEMO, DIR_MEMO_MAX_BYTES
 
     snap: dict = {
         "rss_mb": _rss_mb(),
-        "dir_memo": len(DIR_MEMO),
-        "dir_memo_max": DIR_MEMO_MAX,
+        "dir_memo_items": len(DIR_MEMO),
         "dir_memo_mb": _dir_memo_mb(),
+        "dir_memo_max_mb": round(DIR_MEMO_MAX_BYTES / (1024 * 1024), 1),
         "repos": {},
     }
     try:  # three other named in-process caches (Pass 12) that were never individually measured
@@ -153,8 +128,9 @@ def log_memory(tag: str = "") -> dict:
     """Emit ONE compact line (not spammy) and return the snapshot."""
     s = memory_snapshot()
     rss = f"{s['rss_mb']:.0f}MB" if s.get("rss_mb") is not None else "?"
-    dmb = f"~{s['dir_memo_mb']:.0f}MB" if s.get("dir_memo_mb") is not None else "?"
-    parts = [f"rss={rss}", f"dir_memo={s['dir_memo']}/{s['dir_memo_max']}({dmb})"]
+    dmb = f"{s['dir_memo_mb']:.0f}" if s.get("dir_memo_mb") is not None else "?"
+    dmax = f"{s['dir_memo_max_mb']:.0f}" if s.get("dir_memo_max_mb") is not None else "?"
+    parts = [f"rss={rss}", f"dir_memo={s['dir_memo_items']} items, {dmb}/{dmax}MB"]
     for key, label in (("recl_files_cache", "recl_files"), ("reclaim_cache", "reclaim")):
         c = s.get(key, {})
         if "error" not in c:
