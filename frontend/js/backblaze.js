@@ -112,6 +112,9 @@ window.bzMixin = function () {
           await this.bzRefreshStatus();
           if (!this.bzStatus.building) {
             clearInterval(this._bzPoll); this._bzPoll = null;
+            // Surface a failed refresh (timeout/nonzero-exit/bad-output) before reloading - a
+            // failed refresh was previously silent (log-only); stale data still beats no data.
+            if (this.bzStatus.last_error) this.error = "BZ refresh failed: " + this.bzStatus.last_error;
             await this.bzActivate();
           }
         } catch (e) { /* transient fetch error - ignore and let the next 3s tick retry */ }

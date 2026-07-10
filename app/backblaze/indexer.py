@@ -34,7 +34,7 @@ _CHURN_TAIL_BYTES = 30 * 1024 * 1024  # read ~last 30 MB of bzfileids for "recen
 _ROLLUP_MIN = 20_000  # depth-1 folders with >= this many files also get a depth-2 rollup (the slow ones)
 
 # Lightweight progress/state for the /api/backblaze/status endpoint (no kopia-style start_build).
-_STATE: dict = {"building": False, "last_run": 0.0, "last_summary": None}
+_STATE: dict = {"building": False, "last_run": 0.0, "last_summary": None, "last_error": None}
 # Atomic overlap guard for refresh_via_worker: a plain _STATE["building"] check-then-set is a race
 # between two near-simultaneous triggers (double-clicked refresh POST, or POST + the bg cycle) -
 # both could pass the check before either sets it, launching two worker subprocesses that then
@@ -308,7 +308,11 @@ def _refresh_cache_aggregates(con) -> None:
     ov = queries._overview_live()
     ov["cached_at"] = now
     bbdb.kv_set(con, "cache_overview", json.dumps(ov))
-    ch = queries.churn(top=200, depth=2, collapse=_collapse_prefixes())
+    # Must call the live build path directly, NOT queries.churn() - churn() for these exact params
+    # (depth=2, top<=200, default collapse) PREFERS the kv row this function is about to overwrite,
+    # so calling it here would just re-read-and-re-write the same stale snapshot forever (the kv
+    # value froze at its first-ever computed result - Pass D1 fix).
+    ch = queries._churn_build(200, 2, queries._default_collapse_pairs())
     ch["cached_at"] = now
     bbdb.kv_set(con, "cache_churn_default", json.dumps(ch))
 
@@ -423,17 +427,21 @@ def refresh_via_worker(force: bool = False) -> dict:
             )
         except subprocess.TimeoutExpired:
             log.error("BZ worker timed out after 45 min")
+            _STATE["last_error"] = "timeout after 45 min"
             return {"ok": False, "reason": "timeout"}
         if res.returncode != 0:
             log.error("BZ worker failed (rc=%d): %s", res.returncode, (res.stderr or "")[-2000:])
+            _STATE["last_error"] = f"worker exit {res.returncode}"
             return {"ok": False, "reason": f"worker exit {res.returncode}", "stderr": (res.stderr or "")[-2000:]}
         try:
             summary = json.loads(res.stdout.strip())
         except Exception as exc:  # noqa: BLE001 - malformed worker output should never crash the caller
             log.error("BZ worker produced unparsable output: %s", exc)
+            _STATE["last_error"] = f"bad worker output: {exc}"
             return {"ok": False, "reason": f"bad worker output: {exc}"}
         _STATE["last_summary"] = summary
         _STATE["last_run"] = time.time()
+        _STATE["last_error"] = None
         return summary
     finally:
         _STATE["building"] = False

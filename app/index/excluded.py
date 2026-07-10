@@ -7,6 +7,8 @@ indexed range scan per repo (bounded to that subtree), aggregated by immediate c
 
 from __future__ import annotations
 
+import collections
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -16,8 +18,30 @@ from ..core.everything import es_children, list_drives, recursive_count, recursi
 from .schema import read_cursor
 
 _SEP = chr(92)  # backslash
-_LIST_CACHE: dict[tuple, tuple] = {}  # (folder_lc, tolerance) -> (ts, result); TTL so repeated nav is instant
+# (folder_lc, tolerance) -> (ts, result); TTL so repeated nav is instant. LRU-bounded (matches the
+# _RECLAIM_CACHE/_RECL_FILES_CACHE style) - was TTL-only with no count cap, so a long session
+# browsing many distinct folders grew this unbounded (Pass D6 footgun fix).
+_LIST_CACHE: collections.OrderedDict[tuple, tuple] = collections.OrderedDict()
 _LIST_TTL = 120
+_LIST_CACHE_MAX = 200
+_LIST_LOCK = threading.Lock()  # guards the LRU: sync FastAPI handlers run in a threadpool, so the
+# check->get->move_to_end->popitem sequence can interleave across requests (KeyError / lost entries)
+
+
+def _list_cache_get(ckey: tuple):
+    with _LIST_LOCK:
+        val = _LIST_CACHE.get(ckey)
+        if val is not None:
+            _LIST_CACHE.move_to_end(ckey)
+        return val
+
+
+def _list_cache_put(ckey: tuple, val: tuple) -> None:
+    with _LIST_LOCK:
+        _LIST_CACHE[ckey] = val
+        _LIST_CACHE.move_to_end(ckey)
+        while len(_LIST_CACHE) > _LIST_CACHE_MAX:
+            _LIST_CACHE.popitem(last=False)
 
 
 def _prefix_bounds(folder: str) -> tuple[str, str, int]:
@@ -136,7 +160,7 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
     changed/deleted-file drift; the backed-file COUNT helps tell drift from real exclusion). A
     folder counts as 'backed' when its excluded fraction is below `tolerance` (cuts partial noise)."""
     ckey = (folder.lower(), tolerance)
-    cached = _LIST_CACHE.get(ckey)
+    cached = _list_cache_get(ckey)
     if cached and time.time() - cached[0] < _LIST_TTL:
         return cached[1]  # repeated navigation is instant (within TTL)
     disk = es_children(folder)
@@ -202,7 +226,7 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
         "total_backed": sum(i["backed_bytes"] for i in items),
         "count": len(items),
     }
-    _LIST_CACHE[ckey] = (time.time(), result)
+    _list_cache_put(ckey, (time.time(), result))
     return result
 
 

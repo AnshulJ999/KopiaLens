@@ -53,7 +53,7 @@ def _archive_path() -> str:
 def status() -> dict:
     st = indexer.state()
     out = {"building": bool(st.get("building")), "available": paths.exists(),
-           "last_run": st.get("last_run")}
+           "last_run": st.get("last_run"), "last_error": st.get("last_error")}
     try:
         out.update(bzq.status())
     except Exception as exc:  # noqa: BLE001 - report, don't 500 (lets the UI show "not built yet")

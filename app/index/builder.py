@@ -16,10 +16,14 @@ search. Runs in a background thread.
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
 
 import pyarrow as pa
+
+from config import CACHEDIR
 
 from .physical import materialize_physical
 from .schema import get_db, read_cursor
@@ -419,6 +423,100 @@ def index_status(repo: str) -> dict:
         "last_indexed_at": str(last) if last else None,
         "building": False, "error": job.get("error"),
     }
+
+
+# ---- index_summary serve-stale cache (Pass E) ------------------------------------------
+# Measured (2026-07-10, warm app): /api/index/status took 3.8-4.6s on repo1 (18M-row files table),
+# 2.1s on repo2 - the ONLY slow call in the whole Kopia page-load path (everything else <10ms).
+# The cost is index_summary()'s COUNT(DISTINCT source/snapshot_id/full_path) + SUM(size) over the
+# whole `files` table - DISTINCT aggregation can't use a zonemap shortcut like a plain COUNT(*),
+# so it touches every row. index_status()'s own 3 counts are cheap and stay live/uncached; only the
+# summary is cached here, serve-stale-while-revalidate + disk-persisted (like table_rows), so a
+# page load never blocks on this after the very first one.
+_STATUS_CACHE: dict[str, dict] = {}
+_STATUS_LOCK = threading.Lock()
+_STATUS_BUILD_LOCKS: dict[str, threading.Lock] = {}
+_STATUS_TTL = 300  # 5 min
+
+
+def _status_cache_path(repo: str) -> str:
+    return os.path.join(CACHEDIR, f"index_summary_repo{repo}.json")
+
+
+def _read_status_cache(repo: str) -> dict | None:
+    entry = _STATUS_CACHE.get(repo)
+    if entry is not None:
+        return entry
+    try:
+        with open(_status_cache_path(repo), encoding="utf-8") as fh:
+            entry = json.load(fh)
+    except Exception:
+        return None
+    _STATUS_CACHE[repo] = entry
+    return entry
+
+
+def _write_status_cache(repo: str, summary: dict) -> None:
+    entry = {"summary": summary, "ts": time.time()}
+    _STATUS_CACHE[repo] = entry
+    try:
+        path = _status_cache_path(repo)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(entry, fh)
+        os.replace(tmp, path)
+    except Exception as exc:  # noqa: BLE001 - never fail the request on cache-write housekeeping
+        log.warning("repo=%s index_summary cache write failed: %s", repo, exc)
+
+
+def _status_build_lock(repo: str) -> threading.Lock:
+    with _STATUS_LOCK:
+        lock = _STATUS_BUILD_LOCKS.get(repo)
+        if lock is None:
+            lock = _STATUS_BUILD_LOCKS[repo] = threading.Lock()
+        return lock
+
+
+def _kick_status_recompute(repo: str) -> None:
+    def run() -> None:
+        lock = _status_build_lock(repo)
+        if not lock.acquire(blocking=False):
+            return  # a recompute is already in flight
+        try:
+            from .queries import index_summary
+            _write_status_cache(repo, index_summary(repo))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("bg index_summary recompute repo=%s failed: %s", repo, exc)
+        finally:
+            lock.release()
+    threading.Thread(target=run, daemon=True).start()
+
+
+def index_status_with_summary(repo: str) -> dict:
+    """index_status() (cheap, always live) + a cached index_summary() (expensive - see above).
+    A fresh cache serves instantly; a stale-but-present cache also serves instantly and kicks a
+    background recompute; only a true first-ever call (nothing cached yet, e.g. right after a
+    schema change) blocks. Persisted to disk so a cold app restart also serves instantly instead
+    of every browser tab blocking on its own synchronous recompute."""
+    status = index_status(repo)
+    if status.get("building"):
+        return status  # building already short-circuits before any DB query; summary would be moot
+    cached = _read_status_cache(repo)
+    if cached is not None:
+        status["summary"] = cached["summary"]
+        if time.time() - cached["ts"] >= _STATUS_TTL:
+            _kick_status_recompute(repo)
+        return status
+    lock = _status_build_lock(repo)
+    with lock:
+        cached = _read_status_cache(repo)  # a concurrent caller may have just computed it
+        if cached is None:
+            from .queries import index_summary
+            summary = index_summary(repo)
+            _write_status_cache(repo, summary)
+            cached = _STATUS_CACHE[repo]
+    status["summary"] = cached["summary"]
+    return status
 
 
 def start_build(repo: str, source: str | None = None, full: bool = False) -> dict:

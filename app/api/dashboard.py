@@ -8,8 +8,7 @@ from config import REPOS, repo_kind
 
 from ..core.metrics import table_rows
 from ..core.sources import sources_index
-from ..index.builder import start_build, index_status
-from ..index.queries import index_summary
+from ..index.builder import start_build, index_status_with_summary
 from ..settings import load_settings, mutate_settings
 
 router = APIRouter(tags=["dashboard"])
@@ -49,10 +48,7 @@ def sources(repo: str = "1", force: bool = False) -> dict:
 def get_index_status(repo: str = "1") -> dict:
     _require_kopia(repo)
     try:
-        status = index_status(repo)
-        if not status.get("building"):
-            status["summary"] = index_summary(repo)
-        return status
+        return index_status_with_summary(repo)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

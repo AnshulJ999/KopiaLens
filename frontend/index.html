@@ -137,6 +137,14 @@
           </select>
           <input x-model="searchExt" @input.debounce.300ms="loadSearch()" class="fld w-36 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="ext: vhdx,iso,7z">
           <input x-model="searchExtExclude" @input.debounce.300ms="loadSearch()" class="fld w-36 border border-amber-300 dark:border-amber-700 bg-white dark:bg-stone-800" placeholder="hide ext: mp4,mkv" title="Hide these extensions (focus on the rest)">
+          <label class="flex items-center gap-1 text-xs" title="Files first backed up (first appeared in a snapshot) within the chosen window - new/churning files">Backed up
+            <select x-model="recentBackup" @change="changeRecentBackup()" class="fld h-7 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+              <option value="">Any</option>
+              <option value="1">Last 24h</option>
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+            </select>
+          </label>
           <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="deletedOnly" @change="loadSearch()"> Deleted from disk</label>
           <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="overOneGb" @change="loadSearch()"> &gt;1 GB</label>
           <button @click="showFilters=!showFilters" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="showFilters ? 'bg-stone-200 dark:bg-stone-700' : ''" title="More filters">⛃ Filters</button>
@@ -160,14 +168,6 @@
           <input type="date" x-model="dateTo" @change="loadSearch()" class="fld h-7 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
           <label class="flex items-center gap-1 ml-2">Min versions <input type="number" min="0" x-model="minVersions" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="0"></label>
           <label class="flex items-center gap-1 ml-2" title="Files whose exact content backs at least N distinct paths (exact-duplicate candidates)">Shared ≥ <input type="number" min="0" x-model="sharedMin" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="2"></label>
-          <label class="flex items-center gap-1 ml-2" title="Files first backed up (first appeared in a snapshot) within the chosen window - new/churning files">Backed up
-            <select x-model="recentBackup" @change="changeRecentBackup()" class="fld h-7 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
-              <option value="">Any</option>
-              <option value="1">Last 24h</option>
-              <option value="7">Last 7 days</option>
-              <option value="30">Last 30 days</option>
-            </select>
-          </label>
           <button @click="clearFilters()" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 ml-1">Clear</button>
         </div>
         <div x-show="groupByFolder" class="flex flex-wrap items-center gap-2 text-xs rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-2">

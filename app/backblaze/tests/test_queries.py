@@ -46,7 +46,7 @@ def _db():
     bbdb.rebuild_fts(con)
     con.execute("INSERT INTO queue VALUES('E', 'E:\\Photos\\new.jpg', 123)")
     con.commit()
-    bbdb._CONN = con  # make queries.* use this connection
+    bbdb._local.con = con  # make queries.* (via bbdb.connect()'s thread-local) use this connection
     return con
 
 

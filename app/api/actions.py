@@ -274,6 +274,12 @@ class RemovePlanRequest(BaseModel):
 
 
 def _remove_targets(p: RemovePlanRequest) -> dict:
+    # Footgun guard: with NO constraining filter at all, this would plan a delete over the entire
+    # repo. Require at least one real constraint before enumerating anything.
+    if not any([p.query, p.deleted_only, p.min_gb, p.over_gb, p.max_gb, p.source, p.ext,
+                p.ext_exclude, p.date_from, p.date_to, p.min_versions, p.shared_min, p.prefix]):
+        raise HTTPException(status_code=400,
+                            detail="refusing to plan a delete with no filter - this would match the entire repo")
     min_size = int((p.min_gb or p.over_gb or 0) * 1_000_000_000)
     return remove_targets(
         p.repo, query=p.query, deleted_only=p.deleted_only, min_size=min_size,
