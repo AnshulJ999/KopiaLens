@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 import io
+import threading
 import time
 
 from fastapi import APIRouter, HTTPException, Query
@@ -62,8 +63,14 @@ def status() -> dict:
 
 @router.post("/refresh")
 def refresh(force: bool = False) -> dict:
+    """Non-blocking: starts the refresh in a background thread (which itself hands off to the
+    subprocess worker, see indexer.refresh_via_worker) and returns immediately. The frontend polls
+    GET /status (`building`) and reloads the active tab once it clears."""
     _require_data()
-    return indexer.refresh(force=force)
+    if indexer.state().get("building"):
+        return {"started": False, "reason": "already running"}
+    threading.Thread(target=indexer.refresh_via_worker, kwargs={"force": force}, daemon=True).start()
+    return {"started": True}
 
 
 # ---- Dashboard / overview / stats ------------------------------------------------------

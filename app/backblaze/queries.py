@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 
 from . import bbdb, parsers, paths
@@ -81,6 +82,22 @@ def export_iter(query="", drive=None, ext=None, status="all", min_size=0,
 
 # ---- per-drive overview (vs Backblaze authoritative) ----------------------------------
 def overview() -> dict:
+    """Instant-open reader: serves the kv snapshot written at the end of the last refresh() (the
+    `files` table only changes during a refresh, so the aggregate stays exact between them). Falls
+    back to the live full-table scan when no cache exists yet (first run / pre-Pass-B DB)."""
+    con = bbdb.connect()
+    cached = bbdb.kv_get(con, "cache_overview")
+    if cached:
+        try:
+            return json.loads(cached)
+        except Exception:
+            pass
+    out = _overview_live()
+    out["cached_at"] = None
+    return out
+
+
+def _overview_live() -> dict:
     con = bbdb.connect()
     auth = {}
     raw = bbdb.kv_get(con, "totalbackup")
@@ -362,20 +379,25 @@ def _churn_recompute(depth: int, collapse_lc) -> dict:
     return counts
 
 
-def churn(top: int = 200, depth: int = 2, collapse=None) -> dict:
-    """Top folders by recent fileID additions (bzfileids tail), recomputed on demand at the requested
-    depth (1-8) with the collapse-list applied, then status/size/Delta-enriched. Cached per
-    (top, depth, collapse). The user's #1 lever: catch a new churner before it balloons.
+def _default_collapse_pairs() -> list:
+    """The collapse list `refresh()` used to precompute cache_churn_default, as [(lower, original)]
+    pairs (the shape _apply_collapse/_churn_recompute expect)."""
+    try:
+        from ..settings import load_settings
+        return [(c.lower(), c) for c in (load_settings().get("backblaze", {}).get("collapse_prefixes", []) or [])]
+    except Exception:
+        return []
 
-    status: active (still has backed files) / excluded (still scanned, all excluded) / gone (deleted).
-    delta: backed-files change vs the OLDEST daily snapshot of that folder - auto-fills once >=2 days
-    of folder_snapshots history exist (best at the default depth 2, where snapshots are keyed)."""
-    cl = [(c.lower(), c) for c in (collapse or [])]
-    ckey = (int(top), int(depth), tuple(sorted(c[0] for c in cl)))
-    now = time.time()
-    hit = _CHURN_CACHE.get(ckey)
-    if hit and now - hit[0] < 120:
-        return hit[1]
+
+def _default_collapse_lc() -> list:
+    """Sorted lowercased default collapse list, for matching a request against that default (must
+    match exactly - a different collapse list means a different result)."""
+    return sorted(c[0] for c in _default_collapse_pairs())
+
+
+def _churn_build(top: int, depth: int, cl) -> dict:
+    """The live compute path: roll the bzfileids tail up to folders at `depth`, then status/size/
+    Delta-enrich the top N. Shared by churn()'s live path and the background revalidate thread."""
     raw = _churn_recompute(int(depth), cl)
     total = sum(raw.values()) or 1
     con = bbdb.connect()
@@ -399,7 +421,60 @@ def churn(top: int = 200, depth: int = 2, collapse=None) -> dict:
                 delta = bcnt - (old[0] or 0)
         rows.append({"folder": folder, "count": cnt, "pct": round(100.0 * cnt / total, 1), "drive": drive,
                      "status": status, "backed_now": bcnt, "bytes_now": bbytes, "delta": delta})
-    result = {"total_recent": total, "rows": rows, "depth": int(depth)}
+    return {"total_recent": total, "rows": rows, "depth": int(depth)}
+
+
+_CHURN_REVALIDATE_LOCK = threading.Lock()
+
+
+def _churn_revalidate_default() -> None:
+    """Single-flight background recompute of the default churn key (top=200, depth=2, settings
+    collapse list). Serving the kv snapshot on a cold RAM cache is instant but freezes the Churn tab
+    at refresh-time data for up to 4h; bzfileids.dat changes continuously between refreshes, so this
+    kicks a live recompute in the background and seeds _CHURN_CACHE with the fresh result (kv itself
+    stays refresh-owned - only refresh() writes cache_churn_default)."""
+    if not _CHURN_REVALIDATE_LOCK.acquire(blocking=False):
+        return  # a revalidate is already in flight - this call's kv-served response is fine as-is
+    try:
+        cl = _default_collapse_pairs()
+        result = _churn_build(200, 2, cl)
+        ckey = (200, 2, tuple(sorted(c[0] for c in cl)))
+        _CHURN_CACHE[ckey] = (time.time(), result)
+    except Exception:  # noqa: BLE001 - best-effort background refresh, never raise into the thread
+        pass
+    finally:
+        _CHURN_REVALIDATE_LOCK.release()
+
+
+def churn(top: int = 200, depth: int = 2, collapse=None) -> dict:
+    """Top folders by recent fileID additions (bzfileids tail), recomputed on demand at the requested
+    depth (1-8) with the collapse-list applied, then status/size/Delta-enriched. Cached per
+    (top, depth, collapse) for 120s in RAM. For depth=2 + the settings collapse list + top<=200 (the
+    Dashboard's top=40 call included), a cold RAM cache serves the kv snapshot written at the end of
+    the last refresh() (instant) - but ALSO kicks a single-flight background live recompute of the
+    full default key so a subsequent call within 120s gets fresh RAM data instead of staying pinned
+    to refresh-time data for up to 4h. The user's #1 lever: catch a new churner before it balloons.
+
+    status: active (still has backed files) / excluded (still scanned, all excluded) / gone (deleted).
+    delta: backed-files change vs the OLDEST daily snapshot of that folder - auto-fills once >=2 days
+    of folder_snapshots history exist (best at the default depth 2, where snapshots are keyed)."""
+    cl = [(c.lower(), c) for c in (collapse or [])]
+    ckey = (int(top), int(depth), tuple(sorted(c[0] for c in cl)))
+    now = time.time()
+    hit = _CHURN_CACHE.get(ckey)
+    if hit and now - hit[0] < 120:
+        return hit[1]
+    if int(depth) == 2 and int(top) <= 200 and sorted(c[0] for c in cl) == _default_collapse_lc():
+        cached = bbdb.kv_get(bbdb.connect(), "cache_churn_default")
+        if cached:
+            try:
+                full = json.loads(cached)
+                result = {**full, "rows": full["rows"][:int(top)]}  # fresh dict - never mutate the cached copy
+                threading.Thread(target=_churn_revalidate_default, daemon=True).start()
+                return result
+            except Exception:
+                pass
+    result = _churn_build(int(top), int(depth), cl)
     _CHURN_CACHE[ckey] = (now, result)
     return result
 
@@ -430,6 +505,22 @@ def stats() -> dict:
 
 # ---- index status (built? counts? — the BZ analog of /api/index/status) -----------------
 def status() -> dict:
+    """Instant-open reader: serves the kv snapshot written at the end of the last refresh(). Falls
+    back to a live GROUP BY scan when no cache exists yet (first run / pre-Pass-B DB). Never blocks
+    on a refresh in progress - the heavy work runs in a separate worker process/connection."""
+    con = bbdb.connect()
+    cached = bbdb.kv_get(con, "cache_status")
+    if cached:
+        try:
+            return json.loads(cached)
+        except Exception:
+            pass
+    out = _status_live()
+    out["cached_at"] = None
+    return out
+
+
+def _status_live() -> dict:
     con = bbdb.connect()
     rows = con.execute(
         "SELECT drive, count(*) total, sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END) backed "

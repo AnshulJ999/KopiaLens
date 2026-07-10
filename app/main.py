@@ -144,11 +144,20 @@ def _maintain(repo: str) -> None:
     if repo_kind(repo) == "backblaze":
         try:
             from .backblaze import indexer as bz_indexer
-            summary = bz_indexer.refresh()
+            summary = bz_indexer.refresh_via_worker()  # subprocess - keeps the GIL off the app's own reads
             if summary.get("changed"):
                 log.info("BZ refresh repo=%s: %s", repo, summary)
         except Exception as exc:  # noqa: BLE001
             log.error("BZ refresh repo=%s failed: %s", repo, exc)
+        try:
+            # Opportunistic WAL trim from the app's own connection: the worker's own TRUNCATE (end
+            # of refresh()) can be a no-op while the app holds a read snapshot; retry it here.
+            from .backblaze import bbdb as bz_bbdb
+            row = bz_bbdb.connect().execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if row and row[0] == 0:
+                log.info("BZ wal_checkpoint(TRUNCATE) ok: busy=%s log=%s checkpointed=%s", *row)
+        except Exception as exc:  # noqa: BLE001 - never fail the cycle on housekeeping
+            log.warning("BZ wal_checkpoint(TRUNCATE) skipped: %s", exc)
         return
     try:
         auto_reindex(repo)  # full rebuild if schema migrated, else incremental no-op

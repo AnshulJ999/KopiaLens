@@ -1,22 +1,33 @@
 """Build / incrementally refresh the Backblaze SQLite index from the live bzdata (read-only).
 
-Per-drive incremental: a drive's filelist is re-parsed only when its (mtime,size) changed since
-the last ingest - Backblaze regenerates filelists wholesale per scan, so per-drive rebuild is the
-natural unit and churn stays tiny. The small XML/queue/event sources are cheap and refreshed each
-pass. Designed to be driven by KopiaLens' existing background worker (kind-gated) later, and by the
-standalone bz_verify harness now.
+Per-drive incremental: a quick (mtime,size) pre-check skips genuinely-untouched drives; when those
+differ (Backblaze rewrites the scan-start header on every pass, so they almost always do) a body
+hash (skipping that header line) catches drives whose CONTENT didn't actually change. The small
+XML/queue/event sources are cheap and refreshed each pass. Designed to be driven by KopiaLens'
+existing background worker (kind-gated, via `refresh_via_worker`) and by the standalone bz_verify
+harness (calls `refresh()` in-process).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import subprocess
+import sys
+import threading
 import time
 
-from . import bbdb, parsers, paths, rules
+from . import bbdb, parsers, paths, queries, rules
+from .safety import open_ro
 
 log = logging.getLogger("bz.indexer")
+
+try:
+    from config import HERE as _KL_ROOT  # KopiaLens root, needed as the worker subprocess cwd
+except Exception:  # standalone / tests
+    _KL_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 _BATCH = 50_000
 _CHURN_TAIL_BYTES = 30 * 1024 * 1024  # read ~last 30 MB of bzfileids for "recent additions"
@@ -24,6 +35,11 @@ _ROLLUP_MIN = 20_000  # depth-1 folders with >= this many files also get a depth
 
 # Lightweight progress/state for the /api/backblaze/status endpoint (no kopia-style start_build).
 _STATE: dict = {"building": False, "last_run": 0.0, "last_summary": None}
+# Atomic overlap guard for refresh_via_worker: a plain _STATE["building"] check-then-set is a race
+# between two near-simultaneous triggers (double-clicked refresh POST, or POST + the bg cycle) -
+# both could pass the check before either sets it, launching two worker subprocesses that then
+# contend for the SQLite write lock. try_acquire on this Lock is atomic.
+_WORKER_LOCK = threading.Lock()
 
 
 def state() -> dict:
@@ -258,6 +274,45 @@ def _history_days() -> int:
         return 90
 
 
+def _collapse_prefixes() -> list:
+    try:
+        from ..settings import load_settings
+        return load_settings().get("backblaze", {}).get("collapse_prefixes", []) or []
+    except Exception:
+        return []
+
+
+def _filelist_digest(path: str) -> str:
+    """blake2b over the filelist BODY, skipping the first line (the '# GmtMillisThisListWasStarted...'
+    header, which Backblaze rewrites on every scan even when the file's actual entries didn't change).
+    1 MB chunks so a ~200 MB filelist doesn't need to fit in memory at once."""
+    h = hashlib.blake2b()
+    with open_ro(path, mode="rb") as fh:
+        fh.readline()  # skip header line
+        while True:
+            chunk = fh.read(1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _refresh_cache_aggregates(con) -> None:
+    """Write kv-cached status/overview/default-churn snapshots. Between refreshes the `files` table
+    never changes, so these aggregates stay exact - readers (status()/overview()/churn() for the
+    default params) serve the cache instead of re-scanning ~4M rows on every BZ tab open."""
+    now = time.time()
+    stat = queries._status_live()
+    stat["cached_at"] = now
+    bbdb.kv_set(con, "cache_status", json.dumps(stat))
+    ov = queries._overview_live()
+    ov["cached_at"] = now
+    bbdb.kv_set(con, "cache_overview", json.dumps(ov))
+    ch = queries.churn(top=200, depth=2, collapse=_collapse_prefixes())
+    ch["cached_at"] = now
+    bbdb.kv_set(con, "cache_churn_default", json.dumps(ch))
+
+
 def refresh(force: bool = False) -> dict:
     """Incremental refresh of the whole BZ index. Returns a per-drive summary."""
     if not paths.exists():
@@ -276,11 +331,33 @@ def refresh(force: bool = False) -> dict:
                 st = os.stat(vol.filelist)
             except OSError:
                 continue
-            prev = bbdb.ingest_get(con, src)
+            prev = bbdb.ingest_get(con, src)  # (mtime, size, digest) or None
             have_rows = con.execute("SELECT 1 FROM files WHERE drive=? LIMIT 1", [vol.letter]).fetchone()
-            if force or prev is None or not have_rows or prev[0] != st.st_mtime or prev[1] != st.st_size:
+            reindex = True
+            digest = None
+            if not force and prev is not None and have_rows:
+                if prev[0] == st.st_mtime and prev[1] == st.st_size:
+                    reindex = False  # quick pre-check: stat unchanged, no hash needed
+                else:
+                    # mtime/size changed (Backblaze rewrites the scan-start header on every pass) -
+                    # hash the body (skipping that header line) to check whether the CONTENT
+                    # actually changed, cheap insurance against a full reindex on every cycle.
+                    try:
+                        digest = _filelist_digest(vol.filelist)
+                    except OSError:
+                        digest = None
+                    if digest and digest == prev[2]:
+                        reindex = False
+                        bbdb.ingest_set(con, src, st.st_mtime, st.st_size, digest)
+                        log.info("BZ %s: filelist body unchanged (digest match), skipping reindex", vol.letter)
+            if reindex:
                 total, backed, excluded = _reindex_drive(con, vol, engine)
-                bbdb.ingest_set(con, src, st.st_mtime, st.st_size)
+                if digest is None:
+                    try:
+                        digest = _filelist_digest(vol.filelist)
+                    except OSError:
+                        digest = ""
+                bbdb.ingest_set(con, src, st.st_mtime, st.st_size, digest or "")
                 drives[vol.letter] = {"total": total, "backed": backed, "excluded": excluded, "reindexed": True}
                 changed.append(vol.letter)
                 log.info("BZ reindex %s: %d files (%d backed / %d excluded)", vol.letter, total, backed, excluded)
@@ -299,6 +376,7 @@ def refresh(force: bool = False) -> dict:
         _refresh_folder_snapshots(con, _history_days())
         if force or not bbdb.kv_get(con, "fileids_total"):  # populate once, then only on a forced rebuild
             _refresh_ids_count(con)
+        _refresh_cache_aggregates(con)  # kv-cache status/overview/default-churn for instant open
         con.commit()
         # Release pages freed by the DELETE+INSERT churn so the file stays small (cheap; only does
         # real work when auto_vacuum=INCREMENTAL is active and there are free pages to release).
@@ -321,6 +399,45 @@ def refresh(force: bool = False) -> dict:
       return summary
     finally:
         _STATE["building"] = False
+
+
+def refresh_via_worker(force: bool = False) -> dict:
+    """Run refresh() in a separate subprocess so the app's own request-handling threads never share
+    the GIL / disk contention with the ~4 min reindex (reads stay responsive throughout). The worker
+    is a plain `python -m app.backblaze.worker` invocation; SQLite WAL lets it write concurrently
+    with the app's own read connections. Guards against overlap via _WORKER_LOCK (atomic try-acquire,
+    unlike a plain _STATE["building"] check-then-set - two near-simultaneous callers could otherwise
+    both pass the check and launch two worker subprocesses contending for the SQLite write lock);
+    always releases and clears `building` when the subprocess finishes, success or failure."""
+    if not _WORKER_LOCK.acquire(blocking=False):
+        return {"ok": False, "reason": "already running"}
+    _STATE["building"] = True
+    try:
+        args = [sys.executable, "-m", "app.backblaze.worker"]
+        if force:
+            args.append("--force")
+        try:
+            res = subprocess.run(
+                args, cwd=_KL_ROOT, capture_output=True, text=True, timeout=45 * 60,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash under pythonw
+            )
+        except subprocess.TimeoutExpired:
+            log.error("BZ worker timed out after 45 min")
+            return {"ok": False, "reason": "timeout"}
+        if res.returncode != 0:
+            log.error("BZ worker failed (rc=%d): %s", res.returncode, (res.stderr or "")[-2000:])
+            return {"ok": False, "reason": f"worker exit {res.returncode}", "stderr": (res.stderr or "")[-2000:]}
+        try:
+            summary = json.loads(res.stdout.strip())
+        except Exception as exc:  # noqa: BLE001 - malformed worker output should never crash the caller
+            log.error("BZ worker produced unparsable output: %s", exc)
+            return {"ok": False, "reason": f"bad worker output: {exc}"}
+        _STATE["last_summary"] = summary
+        _STATE["last_run"] = time.time()
+        return summary
+    finally:
+        _STATE["building"] = False
+        _WORKER_LOCK.release()
 
 
 class _LOCKED:

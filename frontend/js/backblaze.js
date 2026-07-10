@@ -56,7 +56,7 @@ window.bzMixin = function () {
     bzExclusions: null, bzNamingQuery: "", bzNamingRows: [],
     bzGen: null, bzShowGen: false,
     bzQueue: null, bzQueueDepth: 1, bzQueueCollapse: true, bzSessions: null, bzHealth: null,
-    bzDetail: null, bzDrives: [],
+    bzDetail: null, bzDrives: [], _bzPoll: null,
 
     // ---- lifecycle ----
     bzApplySettings(kl) {  // restore persisted BZ prefs (called from app.js init with the kopialens settings)
@@ -69,6 +69,7 @@ window.bzMixin = function () {
     async bzInit() {
       await this.wrap(async () => {
         await this.bzRefreshStatus();
+        if (this.bzStatus.building) this.bzPollRefresh();  // a bg-cycle refresh was already in flight
         await this.bzLoadDashboard();
       }, "Loading Backblaze…");
     },
@@ -96,11 +97,25 @@ window.bzMixin = function () {
       return `BZ ${Number(s.backed_files || 0).toLocaleString()} backed / ${Number(s.total_files || 0).toLocaleString()} scanned`;
     },
     async bzRefresh() {
+      // Non-blocking: the refresh runs in a subprocess worker (~4 min), so this only starts it and
+      // returns immediately - bzPollRefresh() watches /status and reloads the active tab when done.
       await this.wrap(async () => {
-        await getJson("/api/backblaze/refresh", { method: "POST" });
+        const r = await getJson("/api/backblaze/refresh", { method: "POST" });
         await this.bzRefreshStatus();
-        await this.bzActivate();
-      }, "Refreshing Backblaze index…");
+        if (r && r.started !== false) this.bzPollRefresh();
+      }, "Starting Backblaze refresh…");
+    },
+    bzPollRefresh() {
+      if (this._bzPoll) clearInterval(this._bzPoll);
+      this._bzPoll = setInterval(async () => {
+        try {
+          await this.bzRefreshStatus();
+          if (!this.bzStatus.building) {
+            clearInterval(this._bzPoll); this._bzPoll = null;
+            await this.bzActivate();
+          }
+        } catch (e) { /* transient fetch error - ignore and let the next 3s tick retry */ }
+      }, 3000);
     },
 
     // ---- Dashboard ----
