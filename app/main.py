@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import json
 import os
 import threading
 import time
@@ -14,7 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import REPOS, repo_kind
+from config import DATA_DIR, REPOS, repo_kind
 
 from .api import actions, backblaze, dashboard, excluded, search, simulate, snapshots, stats, tree
 from .core import kopia as kopia_mod
@@ -36,7 +37,9 @@ FRONTEND = ROOT / "frontend"
 _bg_stop = threading.Event()
 _DEFAULT_REINDEX_INTERVAL = 1800   # fallback seconds between background passes (overridable in settings)
 _DEFAULT_RECLAIM_INTERVAL = 10800  # fallback seconds between reclaimable pre-warm passes (heavy)
+_DEFAULT_STARTUP_DELAY = 300       # fallback quiet period after every process start, before the first bg pass
 _last_reclaim: dict[str, float] = {}
+_LAST_CYCLE_FILE = os.path.join(DATA_DIR, "bg_worker_state.json")
 
 
 def _reindex_interval() -> float:
@@ -46,6 +49,48 @@ def _reindex_interval() -> float:
         return max(60.0, val)  # never tighter than 1 minute
     except Exception:
         return _DEFAULT_REINDEX_INTERVAL
+
+
+def _startup_delay() -> float:
+    """Flat minimum quiet period after every process start (boot or manual restart) before the
+    first background pass - so a boot never triggers the kopia-subprocess + DuckDB burst while
+    Windows/other startup apps are still settling. Read live from settings."""
+    try:
+        val = float(load_settings().get("kopialens", {}).get("startup_delay", _DEFAULT_STARTUP_DELAY))
+        return max(0.0, val)
+    except Exception:
+        return _DEFAULT_STARTUP_DELAY
+
+
+def _read_last_cycle_ts() -> float | None:
+    try:
+        with open(_LAST_CYCLE_FILE, encoding="utf-8") as fh:
+            return float(json.load(fh)["ts"])
+    except Exception:
+        return None
+
+
+def _write_last_cycle_ts() -> None:
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = _LAST_CYCLE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"ts": time.time()}, fh)
+        os.replace(tmp, _LAST_CYCLE_FILE)
+    except Exception as exc:  # noqa: BLE001 - never fail the bg loop on housekeeping
+        log.warning("last_cycle_ts write failed: %s", exc)
+
+
+def _startup_wait() -> float:
+    """Seconds to wait before the FIRST bg pass after this process started: at least
+    startup_delay (flat boot/restart quiet period), and never less than whatever remains of
+    reindex_interval since the last completed cycle - so a restart soon after a real cycle
+    doesn't re-trigger one early just because the process happened to restart."""
+    last = _read_last_cycle_ts()
+    if last is None:
+        return _startup_delay()
+    remaining = _reindex_interval() - (time.time() - last)
+    return max(_startup_delay(), remaining)
 
 
 def _reclaim_interval() -> float:
@@ -170,15 +215,24 @@ def _maintain(repo: str) -> None:
 
 def _bg_worker() -> None:
     """Self-healing background maintenance: keep the index complete + per-snapshot churn +
-    next-snapshot times + dashboard fresh. All work is DuckDB + bounded subprocess bursts."""
+    next-snapshot times + dashboard fresh. All work is DuckDB + bounded subprocess bursts.
+    The first pass is delayed (see _startup_wait) so a boot/restart doesn't immediately trigger
+    a kopia-subprocess + DuckDB burst; every completed cycle persists last_cycle_ts so that
+    delay is computed correctly across restarts, not just within one process's lifetime."""
+    wait = _startup_wait()
+    log.info("bg worker: waiting %.0fs before first pass", wait)
+    if _bg_stop.wait(wait):
+        return  # shutdown requested during the startup delay
     for repo in REPOS:
         _maintain(repo)
     gc.collect()  # return the cycle's transient sizemap/refcount arenas to the OS (pymalloc won't on its own)
+    _write_last_cycle_ts()
     log_memory("startup cycle done")
     while not _bg_stop.wait(_reindex_interval()):
         for repo in REPOS:
             _maintain(repo)
         gc.collect()
+        _write_last_cycle_ts()
         log_memory("cycle done")
 
 
