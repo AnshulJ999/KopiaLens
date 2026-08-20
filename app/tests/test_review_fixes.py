@@ -176,3 +176,41 @@ def test_prefix_lookalikes_are_not_treated_as_parents():
     rows = [{"source": "u@h:C:" + SEP + "AppsData"}]
     classify_folder_sources(prefix, rows, all_src)
     assert rows[0]["overlap"] == 1
+
+
+# ---- one heavy pass at a time, across every repo ----------------------------------------------
+def test_only_one_heavy_pass_can_run_even_under_a_race(monkeypatch):
+    """The gate is a single atomic reservation. Two mechanisms enforcing this (a reserved-repo
+    marker AND a separate lock) was one too many; this proves the remaining one is sufficient."""
+    import threading
+    import time as _t
+    from app.core import nightly
+
+    monkeypatch.setattr(nightly, "_run_kopia", lambda repo, full: (_t.sleep(0.2), {"ok": True})[1])
+    ran = []
+
+    def go(repo):
+        r = nightly.run_index_pass(repo)
+        if not r.get("skipped"):
+            ran.append(repo)
+
+    threads = [threading.Thread(target=go, args=("1" if i % 2 else "2",)) for i in range(16)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(ran) == 1, f"expected exactly one pass, got {ran}"
+    assert nightly.reserved_repo() is None, "the slot was not released"
+
+
+def test_a_second_repo_cannot_start_while_one_is_indexing(monkeypatch):
+    """The manual Index button used to check only its own repo, so clicking it on repo 2 during
+    repo 1's nightly started a second worker."""
+    from app.core import nightly
+
+    assert nightly._reserve("1") is True
+    try:
+        assert nightly.start_index_pass_async("2")["started"] is False
+        assert nightly.run_index_pass("2").get("skipped") is True
+    finally:
+        nightly._release("1")

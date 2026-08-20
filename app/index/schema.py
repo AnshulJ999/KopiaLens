@@ -318,8 +318,19 @@ def compact_in_place(repo: str, drain_timeout: float = 30.0) -> dict:
         blk.release()
 
 
+def _drain_timeout_default() -> float:
+    """Generous by design. Ordinary queries here can run tens of seconds (the search-landing warm
+    pass measured ~19s on the 18M-row repo), and losing a whole nightly run because one routine
+    query was in flight is far worse than waiting a few minutes for it to finish."""
+    try:
+        from ..settings import load_settings
+        return max(30.0, float(load_settings().get("kopialens", {}).get("index_drain_timeout", 300)))
+    except Exception:  # noqa: BLE001
+        return 300.0
+
+
 @contextlib.contextmanager
-def exclusive_offline(repo: str, reason: str = "indexing", drain_timeout: float = 60.0):
+def exclusive_offline(repo: str, reason: str = "indexing", drain_timeout: float | None = None):
     """Hand a repo's DuckDB file over to another PROCESS for the duration of the block.
 
     Same drain-and-close choreography as ``compact_in_place`` (which is proven and concurrency
@@ -333,6 +344,8 @@ def exclusive_offline(repo: str, reason: str = "indexing", drain_timeout: float 
     """
     from ..core.metrics import _build_lock  # serialize vs dashboard build_global (lazy: import cycle)
 
+    if drain_timeout is None:
+        drain_timeout = _drain_timeout_default()
     blk = _build_lock(repo, "all")
     if not blk.acquire(timeout=drain_timeout):
         raise RuntimeError(f"repo {repo}: dashboard build still running, not taking it offline")
@@ -343,13 +356,20 @@ def exclusive_offline(repo: str, reason: str = "indexing", drain_timeout: float 
             _offline[repo] = {"reason": reason, "since": time.time()}
         try:
             deadline = time.time() + drain_timeout
+            waited_from = time.time()
             with _MAINT_COND:
                 # counts every tracked operation, reads and writes alike (see write_cursor)
                 while _active_reads.get(repo, 0) > 0:
                     rem = deadline - time.time()
                     if rem <= 0:
-                        raise TimeoutError(f"repo {repo}: reads did not drain in {drain_timeout:.0f}s")
+                        outstanding = _active_reads.get(repo, 0)
+                        raise TimeoutError(
+                            f"repo {repo}: {outstanding} operation(s) still in flight after "
+                            f"{drain_timeout:.0f}s - a long-running query is holding the database")
                     _MAINT_COND.wait(timeout=rem)
+            waited = time.time() - waited_from
+            if waited > 1:
+                log.info("repo=%s waited %.0fs for in-flight queries before handover", repo, waited)
                 con = _POOL.pop(repo, None)
             if con is not None:
                 try:

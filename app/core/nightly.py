@@ -29,15 +29,15 @@ log = get_logger("nightly")
 
 _DEFAULT_TIMEOUT = 4 * 3600  # a full rebuild of the big repo is tens of minutes; leave real headroom
 
-_HEAVY_LOCK = threading.Lock()   # ONE heavy pass at a time, across every repo
 _LOCKS_GUARD = threading.Lock()
-_RESERVED: str | None = None     # repo whose pass is reserved/running, set before the thread starts
+_RESERVED: str | None = None     # the repo currently allowed to run a heavy pass; None = free
 _STATE: dict[str, dict] = {}  # repo -> {"running": bool, "started": ts, "last": {...}, "error": str|None}
 
 
 def _reserve(repo: str) -> bool:
-    """Claim the single global heavy-pass slot. Reserving before spawning the thread means two
-    near-simultaneous callers cannot both pass an is_running() check and then both start."""
+    """Claim the single global heavy-pass slot. An atomic compare-and-set under the guard, so it
+    is the ONLY gate needed - whoever gets True runs, everyone else is told no. Two workers at
+    once would double the memory and thrash the same disks, which this design exists to avoid."""
     global _RESERVED
     with _LOCKS_GUARD:
         if _RESERVED is not None:
@@ -213,13 +213,10 @@ def run_index_pass(repo: str, full: bool = False) -> dict:
     one is in flight. Safe to call from a request thread as long as the caller does not block on it."""
     if repo not in REPOS:
         return {"ok": False, "reason": f"unknown repo {repo}"}
-    reserved_here = _reserve(repo)          # False when the caller already reserved for us
-    if not reserved_here and reserved_repo() != repo:
-        return {"ok": False, "reason": f"another repo ({reserved_repo()}) is indexing", "repo": repo}
-    if not _HEAVY_LOCK.acquire(blocking=False):
-        if reserved_here:
-            _release(repo)
-        return {"ok": False, "reason": "already running", "repo": repo}
+    if not _reserve(repo):
+        busy = reserved_repo()
+        return {"ok": False, "skipped": True, "repo": repo,
+                "reason": "already indexing" if busy == repo else f"repo {busy} is indexing"}
     _STATE[repo] = {"running": True, "started": time.time(), "error": None,
                     "last": _STATE.get(repo, {}).get("last")}
     started = time.time()
@@ -235,7 +232,6 @@ def run_index_pass(repo: str, full: bool = False) -> dict:
             "error": None if summary.get("ok", True) else summary.get("reason"),
             "last": summary,
         }
-        _HEAVY_LOCK.release()
         _release(repo)
     log.info("repo=%s index pass done in %.0fs: %s", repo, elapsed, summary)
     return summary
@@ -246,15 +242,13 @@ def start_index_pass_async(repo: str, full: bool = False, on_done=None) -> dict:
     Takes the same single global slot the scheduler uses, so a manual Index cannot start a second
     worker alongside a nightly one on another repo."""
     busy = reserved_repo()
-    if busy is not None:
+    if busy is not None:      # fast answer for the UI; run_index_pass is the real gate
         return {"started": False, "repo": repo,
                 "reason": "already indexing" if busy == repo else f"repo {busy} is indexing"}
-    if not _reserve(repo):
-        return {"started": False, "reason": "already indexing", "repo": repo}
 
     def _go() -> None:
         summary = run_index_pass(repo, full)
-        if on_done:
+        if on_done and not summary.get("skipped"):   # a lost race is not a failed pass
             try:
                 on_done(repo, bool(summary.get("ok", False)))
             except Exception:  # noqa: BLE001 - a reporting callback must not break the pass
