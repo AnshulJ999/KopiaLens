@@ -170,8 +170,8 @@ def build_global(
         with _REFCOUNT_WRITE_LOCK:
             try:
                 from ..index.physical import materialize_refcount  # lazy: avoids core<-index import cycle
-                from ..index.schema import get_db
-                con = get_db(repo).cursor()
+                from ..index.schema import write_cursor
+                con = write_cursor(repo)
                 try:
                     wrote = materialize_refcount(con, repo, dict(count))
                     con.commit()

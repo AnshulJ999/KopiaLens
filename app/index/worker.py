@@ -100,40 +100,53 @@ class _Reporter:
 
 
 def run(repo: str, full: bool = False) -> dict:
-    """The nightly pass for one repo. Each stage is independent: a failure is recorded and the
-    remaining stages still run, because a failed churn rollup should never cost us the index."""
+    """The nightly pass for one repo.
+
+    STAGE ORDER MATTERS. The dashboard stage is what rebuilds the global content refcount, and the
+    reclaimable analysis READS that refcount to decide what is safe to delete. Running analysis
+    first would price tonight's reclaimable numbers against yesterday's refcount and then leave
+    them that way - the "always refresh the dashboard before analyzing" rule, in code.
+
+    Stages after the index are otherwise independent: a failed churn rollup should not cost us the
+    index. But if the INDEX itself fails, everything downstream would be computed over a
+    half-updated index, so those are skipped rather than cached wrong."""
     from .builder import auto_reindex_sync
 
     rep = _Reporter(repo)
     rep.start()
-    summary: dict = {"repo": repo, "ok": True, "full": full, "stages": {}, "errors": {}}
+    summary: dict = {"repo": repo, "ok": True, "full": full, "stages": {},
+                     "errors": {}, "skipped": []}
     started = time.time()
 
-    def stage(name: str, fn) -> None:
+    def stage(name: str, fn) -> bool:
         rep.set_stage(name)
         t0 = time.time()
         try:
             fn()
             summary["stages"][name] = round(time.time() - t0, 1)
+            return True
         except Exception as exc:  # noqa: BLE001 - one stage failing must not abort the rest
             summary["ok"] = False
             summary["errors"][name] = str(exc)[:500]
             logging.exception("stage %s failed", name)
+            return False
 
     try:
-        stage("index", lambda: auto_reindex_sync(repo, full=full))
+        def _dashboard() -> None:
+            from ..core.metrics import table_rows
+            table_rows(repo, refresh=True, mode="all")   # rebuilds content_refs
 
         def _analysis() -> None:
             from .snapanalysis import prewarm
-            prewarm(repo, with_reclaim=True)
-
-        def _dashboard() -> None:
-            from ..core.metrics import table_rows
-            table_rows(repo, refresh=True, mode="all")
+            prewarm(repo, with_reclaim=True)             # reads content_refs
 
         def _churn() -> None:
             from .churnview import prewarm as churn_prewarm
             churn_prewarm(repo)
+
+        def _folders() -> None:
+            from .foldercache import prewarm as folder_prewarm
+            folder_prewarm(repo)
 
         def _policies() -> None:
             from ..core.policy import refresh_policies
@@ -143,11 +156,15 @@ def run(repo: str, full: bool = False) -> dict:
             from ..core.schedule import compute_next_snapshots
             compute_next_snapshots(repo)
 
-        stage("analysis", _analysis)
-        stage("dashboard", _dashboard)
-        stage("churn", _churn)
-        stage("policies", _policies)
-        stage("next_snapshots", _next_snaps)
+        if stage("index", lambda: auto_reindex_sync(repo, full=full)):
+            for name, fn in (("dashboard", _dashboard), ("analysis", _analysis), ("churn", _churn),
+                             ("folders", _folders), ("policies", _policies),
+                             ("next_snapshots", _next_snaps)):
+                stage(name, fn)
+        else:
+            summary["skipped"] = ["dashboard", "analysis", "churn", "folders", "policies",
+                                  "next_snapshots"]
+            logging.error("index stage failed - skipping every stage that reads the index")
     finally:
         rep.stop()
         from .schema import close_all

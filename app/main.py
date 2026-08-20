@@ -158,8 +158,9 @@ def _write_last_cycle_ts() -> None:
 
 
 def nightly_ts(repo: str) -> float:
-    """When this repo's heavy pass last STARTED. Seeded from the legacy global ``ts`` the first
-    time round, so upgrading does not look like "never indexed" and fire an immediate catch-up."""
+    """When this repo's heavy pass last STARTED. Used only to decide whether a slot has been
+    attempted - NOT for display. Seeded from the legacy global ``ts`` the first time round, so
+    upgrading does not look like "never indexed" and fire an immediate catch-up."""
     data = _read_state()
     val = (data.get("nightly") or {}).get(repo)
     if val is None:
@@ -170,13 +171,62 @@ def nightly_ts(repo: str) -> float:
         return 0.0
 
 
-def _mark_nightly(repo: str) -> None:
-    """Stamp the attempt at START, not on success: a build that fails should be retried by the
-    user (or tomorrow), not re-launched every 60 seconds for the rest of the night."""
+def nightly_success_ts(repo: str) -> float:
+    """When this repo was last indexed SUCCESSFULLY. This is what "indexed 4h ago" must mean - the
+    attempt timestamp would report a crashed run as a fresh index, which is worse than no number."""
     data = _read_state()
-    data.setdefault("nightly", {})[repo] = time.time()
-    data["ts"] = time.time()
+    val = (data.get("success") or {}).get(repo)
+    if val is None:
+        val = (data.get("nightly") or {}).get(repo, data.get("ts") or 0)
+    try:
+        return float(val)
+    except Exception:
+        return 0.0
+
+
+def _attempt_record(repo: str) -> dict:
+    return (_read_state().get("attempts") or {}).get(repo) or {}
+
+
+def _mark_nightly(repo: str, slot: float) -> None:
+    """Stamp the attempt at START, not on success, so a failing worker is not relaunched every 60
+    seconds for the rest of the night. ``slot`` identifies which scheduled run this is for, so a
+    retry can be told apart from the next day's run."""
+    now = time.time()
+    data = _read_state()
+    prev = (data.get("attempts") or {}).get(repo) or {}
+    retries = int(prev.get("retries", 0)) + 1 if prev.get("slot") == slot else 0
+    data.setdefault("attempts", {})[repo] = {"slot": slot, "at": now, "retries": retries, "ok": None}
+    data.setdefault("nightly", {})[repo] = now
+    data["ts"] = now
     _write_state(data)
+
+
+def mark_nightly_result(repo: str, ok: bool) -> None:
+    """Record the outcome once the pass finishes. Success advances the freshness timestamp;
+    failure leaves it alone and lets the retry window open."""
+    data = _read_state()
+    rec = (data.get("attempts") or {}).get(repo) or {}
+    rec["ok"] = bool(ok)
+    rec["finished"] = time.time()
+    data.setdefault("attempts", {})[repo] = rec
+    if ok:
+        data.setdefault("success", {})[repo] = time.time()
+    _write_state(data)
+
+
+def _retry_delay() -> float:
+    try:
+        return max(60.0, float(_kl().get("index_retry_delay", 900)))
+    except Exception:
+        return 900.0
+
+
+def _max_retries() -> int:
+    try:
+        return max(0, int(_kl().get("index_max_retries", 1)))
+    except Exception:
+        return 1
 
 
 def _startup_wait() -> float:
@@ -263,17 +313,32 @@ def _light_pass() -> None:
             log.error("light pass repo=%s failed: %s", repo, exc)
 
 
-def _index_due(repo: str, now_dt: dt.datetime, now_ts: float) -> bool:
-    """Daily mode: due when the most recent scheduled time has passed and this repo has not run
-    since. That single comparison also GIVES us catch-up for free - if the PC was off at 23:00,
-    the scheduled time is still in the past on the next boot, so the pass runs then."""
-    last = nightly_ts(repo)
+def _current_slot(now_dt: dt.datetime, now_ts: float) -> float:
+    """The scheduled run this moment belongs to. In daily mode that is the most recent occurrence
+    of the configured time - which is also what gives catch-up for free: if the PC was off at
+    23:00, that occurrence is still in the past on the next boot, so the pass runs then."""
     if _index_mode() == "interval":
-        return now_ts - last >= _index_interval()
+        iv = _index_interval()
+        return (now_ts // iv) * iv
     hh, mm = _index_time()
     today = now_dt.replace(hour=hh, minute=mm, second=0, microsecond=0)
     due = today if today <= now_dt else today - dt.timedelta(days=1)
-    return last < due.timestamp()
+    return due.timestamp()
+
+
+def _index_due(repo: str, now_dt: dt.datetime, now_ts: float) -> bool:
+    """Due when this slot has not been attempted yet - or when the attempt FAILED and the retry
+    window has opened. Without the retry arm, a single crashed worker costs a whole day: exactly
+    what would have happened on the first night, when the worker could not start at all."""
+    slot = _current_slot(now_dt, now_ts)
+    if nightly_ts(repo) < slot:
+        return True
+    rec = _attempt_record(repo)
+    if rec.get("slot") != slot or rec.get("ok") is not False:
+        return False       # different slot, still running (ok is None), or it succeeded
+    if int(rec.get("retries", 0)) >= _max_retries():
+        return False
+    return now_ts - float(rec.get("finished") or rec.get("at") or 0) >= _retry_delay()
 
 
 def _tick() -> None:
@@ -286,9 +351,10 @@ def _tick() -> None:
             if _bg_stop.is_set():
                 return
             if _index_due(repo, now_dt, now_ts):
-                log.info("heavy pass due for repo=%s (mode=%s)", repo, _index_mode())
-                _mark_nightly(repo)                 # stamp the attempt before launching, not after
-                nightly.start_index_pass_async(repo)
+                slot = _current_slot(now_dt, now_ts)
+                log.info("heavy pass due for repo=%s (mode=%s, slot=%s)", repo, _index_mode(), int(slot))
+                _mark_nightly(repo, slot)           # stamp the attempt before launching, not after
+                nightly.start_index_pass_async(repo, on_done=mark_nightly_result)
                 break  # strictly sequential - the next repo gets its turn on a later tick
     if now_ts - _last_light >= _light_interval():
         _last_light = now_ts
@@ -341,6 +407,7 @@ async def lifespan(_app: FastAPI):
     yield
     log.info("KopiaLens shutting down")
     _bg_stop.set()
+    nightly.terminate_running()  # a worker outlives us otherwise and keeps the DuckDB locked
     SERVERS.shutdown()
     close_duckdb()
     try:

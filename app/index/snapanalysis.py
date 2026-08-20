@@ -18,7 +18,7 @@ from ..core.sizemap import load_sizemap
 from ..core.sources import resolve_source
 from ..core.walk import walk, walk_new
 from .physical import _chunks_for_obj, _refcount_map
-from .schema import get_db, read_cursor
+from .schema import read_cursor, write_cursor
 
 # (repo, snapshot_id) -> reclaimable files. LRU-bounded: these lists can be large and were
 # previously never evicted (a slow unbounded leak as snapshots were viewed over a long session).
@@ -162,7 +162,7 @@ def _snaphash(snaps: list[dict]) -> str:
 
 
 def _persist(repo: str, source: str, rows: list[dict], snaphash: str) -> None:
-    con = get_db(repo).cursor()
+    con = write_cursor(repo)
     try:
         con.execute("DELETE FROM snapshot_analysis WHERE repo=? AND source=?", [repo, source])
         for r in rows:

@@ -746,9 +746,9 @@ document.addEventListener("alpine:init", () => {
           { title: "Folder", field: "folder", widthGrow: 4, minWidth: 280 },
           bytesCol, verCol, fileCol,
           { title: "Sources", field: "source_count", width: 90, hozAlign: "right", sorter: "number",
-            headerTooltip: "How many backup sources cover this folder. More than one means it is snapshotted more than once.",
+            headerTooltip: "How many backup sources contributed churn in this folder. Several usually means sub-folders with their own policies, not duplication - open the folder to see which actually cover it.",
             formatter: (c) => { const r = c.getRow().getData(); const n = r.source_count || 0;
-              return n > 1 ? `<span title="${(r.sources || []).map(sourcePath).join(", ")}" style="color:#d97706">${n} ⚠</span>` : String(n); } },
+              return n > 1 ? `<span title="${(r.sources || []).map(sourcePath).join(", ")}" >${n}</span>` : String(n); } },
         ];
         menu = [
           { label: "Folder details", action: (_e, row) => this.openFolderPanel(row.getData().folder) },

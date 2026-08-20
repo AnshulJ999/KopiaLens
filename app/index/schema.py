@@ -180,6 +180,20 @@ def read_cursor(repo: str):
     return _PooledCursor(repo, cur)
 
 
+def write_cursor(repo: str):
+    """A cursor for code that WRITES, registered with the same in-flight counter reads use.
+
+    ``read_cursor`` was the only tracked path, but several writers took ``get_db(repo).cursor()``
+    directly - the snapshot analysis persist, the refcount materialize, the in-process single-source
+    build. The offline handover drains the counter and then closes the pooled connection, so an
+    untracked writer could have the connection pulled out from under it mid-write. Given DuckDB's
+    history in this app, that is not a race worth leaving open.
+
+    Same contract as ``read_cursor``: the caller MUST close it.
+    """
+    return read_cursor(repo)
+
+
 def close_all() -> None:
     with _LOCK:
         for con in _POOL.values():
@@ -330,6 +344,7 @@ def exclusive_offline(repo: str, reason: str = "indexing", drain_timeout: float 
         try:
             deadline = time.time() + drain_timeout
             with _MAINT_COND:
+                # counts every tracked operation, reads and writes alike (see write_cursor)
                 while _active_reads.get(repo, 0) > 0:
                     rem = deadline - time.time()
                     if rem <= 0:

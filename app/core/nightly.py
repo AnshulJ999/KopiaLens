@@ -20,24 +20,42 @@ import sys
 import threading
 import time
 
-from config import DATA_DIR, REPOS, repo_kind
+from config import DATA_DIR, HERE as _KL_ROOT, REPOS, repo_kind
 
 from .applog import get_logger
 from ..settings import load_settings
 
 log = get_logger("nightly")
 
-_KL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DEFAULT_TIMEOUT = 4 * 3600  # a full rebuild of the big repo is tens of minutes; leave real headroom
 
-_RUN_LOCKS: dict[str, threading.Lock] = {}
+_HEAVY_LOCK = threading.Lock()   # ONE heavy pass at a time, across every repo
 _LOCKS_GUARD = threading.Lock()
+_RESERVED: str | None = None     # repo whose pass is reserved/running, set before the thread starts
 _STATE: dict[str, dict] = {}  # repo -> {"running": bool, "started": ts, "last": {...}, "error": str|None}
 
 
-def _lock(repo: str) -> threading.Lock:
+def _reserve(repo: str) -> bool:
+    """Claim the single global heavy-pass slot. Reserving before spawning the thread means two
+    near-simultaneous callers cannot both pass an is_running() check and then both start."""
+    global _RESERVED
     with _LOCKS_GUARD:
-        return _RUN_LOCKS.setdefault(repo, threading.Lock())
+        if _RESERVED is not None:
+            return False
+        _RESERVED = repo
+        return True
+
+
+def _release(repo: str) -> None:
+    global _RESERVED
+    with _LOCKS_GUARD:
+        if _RESERVED == repo:
+            _RESERVED = None
+
+
+def reserved_repo() -> str | None:
+    with _LOCKS_GUARD:
+        return _RESERVED
 
 
 def is_running(repo: str) -> bool:
@@ -45,10 +63,9 @@ def is_running(repo: str) -> bool:
 
 
 def any_running() -> bool:
-    """True while ANY repo's heavy pass is in flight. The scheduler uses this to keep passes
-    strictly sequential - two workers at once would double the memory and thrash the same disks,
-    which is the whole thing this design exists to avoid."""
-    return any(s.get("running") for s in _STATE.values())
+    """True while ANY repo's heavy pass is reserved or in flight. Two workers at once would double
+    the memory and thrash the same disks, which is the whole thing this design exists to avoid."""
+    return reserved_repo() is not None or any(s.get("running") for s in _STATE.values())
 
 
 def state(repo: str) -> dict:
@@ -72,27 +89,72 @@ def worker_progress(repo: str) -> dict | None:
         return None
 
 
+_PROC_LOCK = threading.Lock()
+_PROCS: dict[str, subprocess.Popen] = {}   # live worker processes, so shutdown can end them
+
+
+def worker_log_path(repo: str) -> str:
+    return os.path.join(DATA_DIR, "logs", f"index_worker_repo{repo}.log")
+
+
+def terminate_running(grace: float = 10.0) -> None:
+    """End any live worker. Called on app shutdown: a worker outlives its parent otherwise, and
+    since it holds the DuckDB exclusively, the app you just restarted could not open that repo at
+    all. A half-finished index is harmless - the next pass sees the missing snapshots and continues.
+    Waiting for it instead could block shutdown for the better part of an hour."""
+    with _PROC_LOCK:
+        procs = list(_PROCS.items())
+    for repo, proc in procs:
+        if proc.poll() is not None:
+            continue
+        log.warning("repo=%s terminating index worker (pid %s) for shutdown", repo, proc.pid)
+        try:
+            proc.terminate()
+            proc.wait(timeout=grace)
+        except Exception:  # noqa: BLE001
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 def _run_worker(repo: str, full: bool) -> dict:
+    """Run the worker subprocess. Its stderr (all the run's log lines) goes to a file rather than a
+    parent-side buffer: it survives the run for diagnosis, and none of it sits in this process."""
     args = [sys.executable, "-m", "app.index.worker", repo]
     if full:
         args.append("--full")
+    logp = worker_log_path(repo)
+    os.makedirs(os.path.dirname(logp), exist_ok=True)
     try:
-        res = subprocess.run(
-            args, cwd=_KL_ROOT, capture_output=True, text=True, timeout=worker_timeout(),
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash under pythonw
-        )
-    except subprocess.TimeoutExpired:
-        log.error("repo=%s index worker timed out", repo)
-        return {"ok": False, "reason": "timeout"}
-    if res.returncode != 0:
-        tail = (res.stderr or "")[-2000:]
-        log.error("repo=%s index worker exit %d: %s", repo, res.returncode, tail)
-        return {"ok": False, "reason": f"worker exit {res.returncode}", "stderr": tail}
+        with open(logp, "w", encoding="utf-8", errors="replace") as errfh:
+            proc = subprocess.Popen(
+                args, cwd=_KL_ROOT, stdout=subprocess.PIPE, stderr=errfh, text=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash under pythonw
+            )
+            with _PROC_LOCK:
+                _PROCS[repo] = proc
+            try:
+                out, _ = proc.communicate(timeout=worker_timeout())
+            except subprocess.TimeoutExpired:
+                log.error("repo=%s index worker timed out - killing it", repo)
+                proc.kill()
+                proc.communicate()
+                return {"ok": False, "reason": "timeout"}
+            finally:
+                with _PROC_LOCK:
+                    _PROCS.pop(repo, None)
+    except Exception as exc:  # noqa: BLE001 - could not even launch
+        log.error("repo=%s index worker launch failed: %s", repo, exc)
+        return {"ok": False, "reason": f"launch failed: {exc}"}
+    if proc.returncode != 0:
+        log.error("repo=%s index worker exit %d (see %s)", repo, proc.returncode, logp)
+        return {"ok": False, "reason": f"worker exit {proc.returncode}", "log": logp}
     try:
-        return json.loads((res.stdout or "").strip())
+        return json.loads((out or "").strip())
     except Exception as exc:  # noqa: BLE001 - malformed output must not crash the scheduler
-        log.error("repo=%s index worker output unparsable: %s", repo, exc)
-        return {"ok": False, "reason": f"bad worker output: {exc}"}
+        log.error("repo=%s index worker output unparsable: %s (see %s)", repo, exc, logp)
+        return {"ok": False, "reason": f"bad worker output: {exc}", "log": logp}
 
 
 def maybe_compact(repo: str) -> None:
@@ -151,8 +213,12 @@ def run_index_pass(repo: str, full: bool = False) -> dict:
     one is in flight. Safe to call from a request thread as long as the caller does not block on it."""
     if repo not in REPOS:
         return {"ok": False, "reason": f"unknown repo {repo}"}
-    lk = _lock(repo)
-    if not lk.acquire(blocking=False):
+    reserved_here = _reserve(repo)          # False when the caller already reserved for us
+    if not reserved_here and reserved_repo() != repo:
+        return {"ok": False, "reason": f"another repo ({reserved_repo()}) is indexing", "repo": repo}
+    if not _HEAVY_LOCK.acquire(blocking=False):
+        if reserved_here:
+            _release(repo)
         return {"ok": False, "reason": "already running", "repo": repo}
     _STATE[repo] = {"running": True, "started": time.time(), "error": None,
                     "last": _STATE.get(repo, {}).get("last")}
@@ -169,14 +235,30 @@ def run_index_pass(repo: str, full: bool = False) -> dict:
             "error": None if summary.get("ok", True) else summary.get("reason"),
             "last": summary,
         }
-        lk.release()
+        _HEAVY_LOCK.release()
+        _release(repo)
     log.info("repo=%s index pass done in %.0fs: %s", repo, elapsed, summary)
     return summary
 
 
-def start_index_pass_async(repo: str, full: bool = False) -> dict:
-    """Fire-and-forget wrapper for the UI's Index button - the caller polls ``/api/index/status``."""
-    if is_running(repo):
-        return {"started": False, "reason": "already running", "repo": repo}
-    threading.Thread(target=run_index_pass, args=(repo, full), daemon=True).start()
+def start_index_pass_async(repo: str, full: bool = False, on_done=None) -> dict:
+    """Fire-and-forget wrapper for the UI's Index button - the caller polls ``/api/index/status``.
+    Takes the same single global slot the scheduler uses, so a manual Index cannot start a second
+    worker alongside a nightly one on another repo."""
+    busy = reserved_repo()
+    if busy is not None:
+        return {"started": False, "repo": repo,
+                "reason": "already indexing" if busy == repo else f"repo {busy} is indexing"}
+    if not _reserve(repo):
+        return {"started": False, "reason": "already indexing", "repo": repo}
+
+    def _go() -> None:
+        summary = run_index_pass(repo, full)
+        if on_done:
+            try:
+                on_done(repo, bool(summary.get("ok", False)))
+            except Exception:  # noqa: BLE001 - a reporting callback must not break the pass
+                log.exception("repo=%s on_done callback failed", repo)
+
+    threading.Thread(target=_go, daemon=True).start()
     return {"started": True, "repo": repo, "full": full}

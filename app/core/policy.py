@@ -71,17 +71,23 @@ def refresh_policies(repo: str, force: bool = False) -> dict:
     cached = load_policies(repo)
     if not force and cached.get("policies") and time.time() - float(cached.get("ts") or 0) < POLICY_TTL:
         return cached["policies"]
-    policies: dict = {}
+    # Start from what we already know and MERGE. Building a fresh dict would mean one transient
+    # subprocess failure silently erased that source's policy for the next 24 hours - the panel
+    # would then show "policy not loaded" for a source that has a perfectly good policy.
+    policies: dict = dict(cached.get("policies") or {})
+    live = set(sources_index(repo))
     failed = 0
-    for key in sorted(sources_index(repo)):
+    for key in sorted(live):
         try:
             policies[key] = show_policy(repo, key)
         except Exception as exc:  # noqa: BLE001 - one bad source must not lose the rest
             failed += 1
-            log.warning("policy show failed for %s: %s", key, exc)
+            log.warning("policy show failed for %s (keeping previous): %s", key, exc)
+    for gone in [k for k in policies if k not in live]:
+        policies.pop(gone)      # source no longer exists; do not keep its policy forever
     if policies:
         _write_policies(repo, policies)
-    log.info("policies repo=%s: %d read, %d failed", repo, len(policies), failed)
+    log.info("policies repo=%s: %d known, %d failed this pass", repo, len(policies), failed)
     return policies
 
 

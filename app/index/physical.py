@@ -251,31 +251,59 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500) -> dict[str, 
 
 
 def folder_detail(repo: str, source: str | None, prefix: str) -> dict:
-    """Subtree reclaim: logical, deduped physical, and freeable (chunks under this folder whose
-    global refcount is fully attributable to the folder) over the all-snapshots paths under a
-    prefix. On-demand (a subtree walk); expensive for huge folders.
+    """Subtree reclaim over EVERY version, not just the latest.
 
-    ``source=None`` spans EVERY source covering the folder, which is the honest answer for a
-    folder that lives in more than one source: chunk occurrences are counted per source, so a
-    chunk held by two sources only counts as freeable when both copies are inside this folder.
-    Deleting from just one source would not free it, and the number reflects that."""
-    like = prefix.rstrip(_SEP) + _SEP + "%"
+    This used to read the ``paths`` table, which holds one row per path carrying only its LATEST
+    content object. That made the headline "frees if deleted" number wrong in the direction that
+    matters: measured on this repo, the Everything app-data folder has 28 files but 6,786 stored
+    versions, so the latest-only figure counted ~0.4% of what a delete actually reclaims. Since the
+    delete planner runs with all-versions on by default, the panel was understating the payoff of
+    exactly the folders worth cleaning.
+
+    Now it unions the chunks of every version of every path under the prefix - the same counting
+    ``reclaim_for`` already does for a single content - so the number lines up with what the delete
+    will really free.
+
+    ``source=None`` spans EVERY source covering the folder. Chunk occurrences are counted per
+    (source, path, object), so a chunk held by two sources only counts as freeable when both are
+    inside this folder; deleting from one source would not free it, and the number reflects that.
+
+    Matching is case-insensitive: Windows paths are, and ``folder_summary`` already matched that
+    way, so a case-sensitive comparison here could make the two halves of the panel disagree.
+    """
+    base = prefix.rstrip(_SEP)
+    exact_lc, like_lc = base.lower(), (base + _SEP + "%").lower()
     dbsql = cache_db(repo)
     smap = load_sizemap(repo)
-    sql = "SELECT content_id, size FROM paths WHERE repo=? AND full_path LIKE ?"
-    params: list = [repo, like]
+    where = "repo = ? AND (lower(full_path) = ? OR lower(full_path) LIKE ?)"
+    params: list = [repo, exact_lc, like_lc]
     if source:
-        sql = "SELECT content_id, size FROM paths WHERE repo=? AND source=? AND full_path LIKE ?"
-        params = [repo, source, like]
+        where += " AND source = ?"
+        params.append(source)
     cur = read_cursor(repo)
     try:
-        rows = cur.execute(sql, params).fetchall()
+        # Aggregate in DuckDB, not Python: one row per DISTINCT object with how many (source, path)
+        # pairs reference it. Pulling every version row into Python would be tens of millions of
+        # rows on a big folder; this is the same information in a fraction of the memory.
+        objs = cur.execute(
+            f"SELECT content_id, count(*) AS refs FROM ("
+            f"  SELECT DISTINCT source, full_path, content_id FROM files WHERE {where}"
+            f") GROUP BY content_id",
+            params,
+        ).fetchall()
+        agg = cur.execute(
+            f"SELECT count(*), COALESCE(sum(size), 0) FROM ("
+            f"  SELECT DISTINCT source, full_path, max(size) AS size FROM files WHERE {where}"
+            f"  GROUP BY source, full_path"
+            f")",
+            params,
+        ).fetchone() or (0, 0)
     finally:
         cur.close()
-    logical = sum(int(s or 0) for _, s in rows)
+
     this_refs: dict[str, int] = {}
     obj_chunks: dict[str, set] = {}
-    for cid, _ in rows:
+    for cid, n in objs:
         if not cid:
             continue
         chunks = obj_chunks.get(cid)
@@ -283,12 +311,15 @@ def folder_detail(repo: str, source: str | None, prefix: str) -> dict:
             chunks = _chunks_for_obj(repo, dbsql, cid)
             obj_chunks[cid] = chunks
         for c in chunks:
-            this_refs[c] = this_refs.get(c, 0) + 1
+            this_refs[c] = this_refs.get(c, 0) + int(n)
     refs = _refcount_for(repo, this_refs.keys()) or {}
     physical = sum(smap.get(c, 0) for c in this_refs)
     freeable = sum(smap.get(c, 0) for c in this_refs if refs.get(c, 0) <= this_refs[c])
-    return {"logical": logical, "physical": physical, "freeable": freeable, "files": len(rows),
-            "shared": physical - freeable}
+    return {
+        "logical": int(agg[1] or 0), "physical": physical, "freeable": freeable,
+        "files": int(agg[0] or 0), "shared": physical - freeable,
+        "objects": len(objs), "all_versions": True,
+    }
 
 
 def batch_detail(repo: str, files: list[dict]) -> dict:

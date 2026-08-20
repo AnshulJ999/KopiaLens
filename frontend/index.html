@@ -513,6 +513,15 @@
       </section>
 
       <section x-show="active==='bz-sessions'" class="h-full flex flex-col gap-3 overflow-auto">
+        <div class="rounded border border-stone-200 dark:border-stone-700 p-3">
+          <div class="flex items-baseline gap-3 flex-wrap">
+            <div class="text-sm font-medium">Backed up in the last 30 days</div>
+            <div class="text-xl font-medium" x-text="bzSessions &amp;&amp; bzSessions.last_30d ? fmtB(bzSessions.last_30d.bytes) : '&mdash;'"></div>
+            <div class="text-xs text-stone-500" x-text="bzSessions &amp;&amp; bzSessions.last_30d ? (Number(bzSessions.last_30d.files||0).toLocaleString() + ' files') : ''"></div>
+          </div>
+          <p class="text-[11px] text-stone-500 mt-1">Counted from Backblaze's own per-file completion records, so it covers every session &mdash; including the many that never write a closing log line. These are source-file sizes, not network traffic.</p>
+          <div id="bzBackupDaysTable" class="mt-2"></div>
+        </div>
         <div class="flex items-center gap-2">
           <button @click="bzImportArchive()" class="h-8 rounded border border-sky-400 text-sky-700 dark:text-sky-300 px-3 text-sm" title="One-time import of ~1 year of session history from the copied (unlocked) archive">⤓ Import archived history</button>
           <span class="text-xs text-emerald-600" x-text="bzImportMsg"></span>
@@ -680,10 +689,19 @@
 
             <div>
               <div class="text-xs font-medium mb-1">Backed up by</div>
+              <div class="text-[11px] text-stone-500 mb-1">
+                <span x-text="detail.covers || 0"></span> source<span x-show="(detail.covers||0)!==1">s</span> back up this folder itself<span
+                  x-show="detail.sub_policies"><span x-text="', plus ' + detail.sub_policies + ' sub-folder polic' + (detail.sub_policies===1?'y':'ies') + ' inside it'"></span></span>.
+              </div>
               <template x-for="sc in (detail.sources || [])" :key="sc.source">
                 <div class="flex items-center gap-2 rounded border border-stone-200 dark:border-stone-700 px-2 py-1 mb-1">
                   <div class="min-w-0">
-                    <div class="text-xs truncate" x-text="shortSource(sc.source)"></div>
+                    <div class="text-xs truncate">
+                      <span x-text="shortSource(sc.source)"></span>
+                      <span class="text-[10px] rounded px-1 ml-1"
+                            :class="sc.relation==='covers' ? 'bg-stone-200 dark:bg-stone-700' : 'bg-stone-100 dark:bg-stone-800 text-stone-500'"
+                            x-text="sc.relation==='covers' ? 'covers this folder' : 'sub-folder policy'"></span>
+                    </div>
                     <div class="text-[10px] text-stone-500" x-text="sc.policy ? (sc.policy.schedule + ' · keeps ' + sc.policy.retention) : 'policy not loaded'"></div>
                   </div>
                   <div class="ml-auto shrink-0 text-[11px] text-stone-500 text-right">
@@ -693,7 +711,10 @@
                 </div>
               </template>
               <div class="text-[11px] text-amber-600" x-show="detail.multi_source">
-                &#9888; Covered by <span x-text="(detail.sources||[]).length"></span> sources &mdash; deleting from one leaves it in the others.
+                &#9888; <span x-text="detail.covers"></span> sources back up this folder itself &mdash; deleting from one leaves the copies in the others.
+              </div>
+              <div class="text-[11px] text-stone-500" x-show="(detail.max_overlap||0) > 1 && !detail.multi_source">
+                Files here are stored by up to <span x-text="detail.max_overlap"></span> nested sources, so some content is snapshotted more than once.
               </div>
               <div class="text-[11px] text-stone-500 mt-1" x-show="detail.effective_policy && (detail.effective_policy.ignore||[]).length">
                 Ignore rules here: <span class="font-mono" x-text="(detail.effective_policy.ignore||[]).join('  ·  ')"></span>

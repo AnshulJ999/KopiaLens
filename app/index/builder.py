@@ -26,7 +26,7 @@ import pyarrow as pa
 from config import CACHEDIR
 
 from .physical import materialize_physical
-from .schema import get_db, offline_status, read_cursor
+from .schema import offline_status, read_cursor, write_cursor
 from ..core.applog import get_logger
 from ..core.cache import cache_db
 from ..core.sources import sources_index
@@ -328,7 +328,7 @@ def _run_build(repo: str, source: str | None, full: bool) -> None:
     con = None
     try:
         srcs = sources_index(repo)
-        con = get_db(repo).cursor()  # build writes via its own cursor off the shared pool
+        con = write_cursor(repo)  # tracked, so the offline handover waits for an in-flight build
         db = cache_db(repo)
         indexed = _indexed_sets(con, repo)
         have_paths = {r[0] for r in con.execute("SELECT DISTINCT source FROM paths WHERE repo=?", [repo]).fetchall()}

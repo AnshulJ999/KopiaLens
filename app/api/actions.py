@@ -343,11 +343,18 @@ def remove_detail(payload: RemovePlanRequest) -> dict:
     t = _remove_targets(payload)
     if not t["pairs"]:
         return {"found": False}
-    if payload.prefix and len(t["sources"]) == 1:
-        return folder_detail(payload.repo, t["sources"][0], payload.prefix)
+    # The whole-folder shortcut is only valid when the plan really is the whole folder. With a
+    # top-N cap ("Largest 100") the matched set is a slice, and folder_detail would report the
+    # entire folder's freeable/shared - numbers with nothing to do with what is about to be
+    # deleted, in exactly the workflow the cap exists for.
+    if payload.prefix and len(t["sources"]) == 1 and not t.get("capped"):
+        out = folder_detail(payload.repo, t["sources"][0], payload.prefix)
+        out["scope"] = "folder"
+        return out
     files = [{"source": s, "full_path": fp} for s, fp in t["pairs"][:5000]]  # cap the walk
     out = batch_detail(payload.repo, files)
     out["capped"] = len(t["pairs"]) > 5000
+    out["scope"] = "selection"
     return out
 
 

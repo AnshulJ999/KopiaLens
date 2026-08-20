@@ -38,6 +38,7 @@ _LOCK = threading.Lock()
 _BUILD_LOCKS: dict[tuple, threading.Lock] = {}
 
 WINDOWS = (7, 30, 90, 180, 365)
+_MAX_LIMIT = 2000  # rows retained per view in the cache; requests slice this down
 
 # Last path segment, then its extension - built from string_split only, so the SQL text carries no
 # backslash literal (the separator is always bound as a parameter).
@@ -158,6 +159,16 @@ def _cache_put(ck: tuple, payload: dict) -> None:
     _disk_put(ck[0], ck[1], ck[2], payload)
 
 
+def _slice(payload: dict, limit: int) -> dict:
+    """Return the payload with each view cut to `limit`. Kept separate from the cache so one
+    request's row count can never constrain another's."""
+    out = dict(payload)
+    for key in ("by_source", "by_folder", "by_ext"):
+        rows = payload.get(key) or []
+        out[key] = rows[:limit]
+    return out
+
+
 def _build_lock(ck: tuple) -> threading.Lock:
     with _LOCK:
         return _BUILD_LOCKS.setdefault(ck, threading.Lock())
@@ -244,12 +255,12 @@ def churn_rollup(repo: str, days: int = 30, depth: int = 4, limit: int = 400,
     if not refresh:
         hit = _cache_get(ck, stamp)
         if hit is not None:
-            return {**hit, "cached": True}
+            return {**_slice(hit, limit), "cached": True}
     with _build_lock(ck):
         if not refresh:  # another caller may have built it while we waited on the lock
             hit = _cache_get(ck, stamp)
             if hit is not None:
-                return {**hit, "cached": True}
+                return {**_slice(hit, limit), "cached": True}
         start = time.time()
         cutoff = (dt.datetime.now() - dt.timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
         rows, deduped = _compute(repo, depth, cutoff)
@@ -266,12 +277,14 @@ def churn_rollup(repo: str, days: int = 30, depth: int = 4, limit: int = 400,
             "total_files": sum(r["files"] for r in rows),
             "total_versions": sum(r["versions"] for r in rows),
             "group_count": len(rows),
-            **build_views(rows, limit, all_sources=all_sources),
+            # Cache the FULL rollup, never a limited slice: `limit` is not part of the cache key,
+            # so storing a truncated view would serve 10 rows to a later caller asking for 400.
+            **build_views(rows, _MAX_LIMIT, all_sources=all_sources),
         }
         _cache_put(ck, payload)
         log.info("churn repo=%s days=%d depth=%d: %d groups, %.1fs",
                  repo, days, depth, len(rows), payload["elapsed"])
-        return {**payload, "cached": False}
+        return {**_slice(payload, limit), "cached": False}
 
 
 def prewarm(repo: str, depth: int = 4, windows=WINDOWS) -> None:

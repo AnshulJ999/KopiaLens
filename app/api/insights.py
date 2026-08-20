@@ -22,8 +22,43 @@ from config import repo_kind
 
 from ..core.policy import effective_for_path, source_summaries, summarize
 from ..index.churnview import churn_rollup
-from ..index.physical import folder_detail
+from ..index.foldercache import compute as folder_reclaim
 from ..index.queries import folder_sources, folder_summary, folder_top_children
+
+_SEP = chr(92)
+
+
+def _root_of(source_key: str) -> str:
+    """The filesystem path a source is rooted at, lowercased, no trailing separator."""
+    return source_key.split(":", 1)[-1].rstrip(_SEP).lower()
+
+
+def classify_folder_sources(prefix: str, rows: list[dict], all_sources: list[str]) -> None:
+    """Annotate each source row with how it actually relates to this folder.
+
+    "24 sources hold paths under AppData" is true but misleading: only ONE of them (C:) backs up
+    the folder itself - the other 23 are rooted INSIDE it, one per subfolder that has its own
+    policy. Reporting a single count made a normal per-subfolder policy layout look like 24-way
+    duplication. So each row says which it is:
+
+      covers - the source root is at or above this folder, so it backs the whole folder up.
+               More than one of these is the real "deleting from one leaves it in the other" case.
+      inside - the source root is within this folder: a sub-policy covering part of it.
+
+    ``overlap`` is the genuinely useful number: how many sources hold a file sitting at that
+    source's root, counting the nested parents above it. On this repo that runs 2-4, not 24.
+    """
+    roots = {src: _root_of(src) for src in all_sources}
+    base = prefix.rstrip(_SEP).lower()
+    for row in rows:
+        src = row["source"]
+        root = roots.get(src, _root_of(src))
+        row["relation"] = "covers" if (base == root or base.startswith(root + _SEP)) else "inside"
+        row["overlap"] = 1 + sum(
+            1 for other, oroot in roots.items()
+            if other != src and oroot and root.startswith(oroot + _SEP)
+        )
+
 
 router = APIRouter(tags=["insights"])
 
@@ -58,11 +93,24 @@ def folder_summary_route(repo: str = "1", prefix: str = "", source: str | None =
             pol = source_summaries(repo)
         except Exception:  # noqa: BLE001 - a policy read must never fail the whole panel
             pol = {}
+        try:
+            from ..core.sources import sources_index
+            all_sources = list(sources_index(repo))
+        except Exception:  # noqa: BLE001
+            all_sources = [r["source"] for r in srcs]
+        classify_folder_sources(prefix, srcs, all_sources)
         for row in srcs:
             row["policy"] = pol.get(row["source"])
         summary["sources"] = srcs
         summary["children"] = folder_top_children(repo, prefix, source=source)
-        summary["multi_source"] = len(srcs) > 1
+        covers = [r for r in srcs if r["relation"] == "covers"]
+        summary["covers"] = len(covers)
+        summary["sub_policies"] = len(srcs) - len(covers)
+        summary["max_overlap"] = max((r["overlap"] for r in srcs), default=0)
+        # A warning is only honest when the FOLDER ITSELF sits in more than one source. A folder
+        # containing many separately-policied subfolders is not duplicated - it just has children
+        # with their own rules, which is normal and not a delete hazard.
+        summary["multi_source"] = len(covers) > 1
         return summary
     except HTTPException:
         raise
@@ -93,11 +141,15 @@ class FolderDetailRequest(BaseModel):
 
 @router.post("/folder/detail")
 def folder_detail_route(payload: FolderDetailRequest) -> dict:
-    """The expensive half: deduped physical, freeable, and shared for the whole subtree."""
+    """Deduped physical, freeable and shared for the whole subtree, over EVERY version.
+
+    Served from the nightly-prewarmed cache when possible. On a miss this computes synchronously -
+    the frontend already fetches it asynchronously and patches the panel when it lands, so a slow
+    folder shows "computing" rather than blocking anything."""
     _require_kopia(payload.repo)
     if not payload.prefix:
         raise HTTPException(status_code=400, detail="prefix is required")
     try:
-        return folder_detail(payload.repo, payload.source or None, payload.prefix)
+        return folder_reclaim(payload.repo, payload.prefix, payload.source or None)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

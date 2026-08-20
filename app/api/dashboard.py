@@ -75,14 +75,16 @@ def post_index_build(repo: str = "1", source: str | None = None, full: bool = Fa
 def index_freshness() -> dict:
     """How current every repo's data is - one call for the whole header strip, so the UI does not
     need a per-repo round trip just to say "indexed 3h ago"."""
-    from ..main import nightly_ts  # lazy: app.main imports this router at module scope
+    from ..main import nightly_success_ts, nightly_ts  # lazy: app.main imports this router
 
     out = []
     for key, cfg in REPOS.items():
         st = nightly_state(key)
         row = {
             "repo": key, "name": cfg.get("name", key), "kind": cfg.get("kind", "kopia"),
-            "last_index": nightly_ts(key) or None,
+            # last SUCCESS, not last attempt - a crashed run must never read as "indexed just now"
+            "last_index": nightly_success_ts(key) or None,
+            "last_attempt": nightly_ts(key) or None,
             "running": bool(st.get("running")),
             "started": st.get("started"), "elapsed": st.get("elapsed"),
             "error": st.get("error"),

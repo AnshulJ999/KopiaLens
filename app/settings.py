@@ -32,6 +32,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "index_time": "23:00",       # daily mode: local time. A missed run catches up at the next opportunity.
         "index_interval": 86400,     # interval mode only: seconds between heavy passes
         "index_worker_timeout": 14400,  # hard ceiling on one worker run (4h) so a hang can't block tomorrow
+        "index_retry_delay": 900,    # after a FAILED pass, wait this long before the one retry
+        "index_max_retries": 1,      # retries per scheduled slot; 0 = never retry until the next slot
         "light_interval": 1800,      # cheap in-process warm pass: next-snapshot times, stats, search landing
         "dashboard_mode": "nightly",  # "nightly" (rebuild with the heavy pass) | "interval" (also during the day)
         "dashboard_interval": 14400,  # dashboard_mode="interval" only: seconds between rebuilds
