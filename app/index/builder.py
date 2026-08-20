@@ -26,7 +26,7 @@ import pyarrow as pa
 from config import CACHEDIR
 
 from .physical import materialize_physical
-from .schema import get_db, read_cursor
+from .schema import get_db, offline_status, read_cursor
 from ..core.applog import get_logger
 from ..core.cache import cache_db
 from ..core.sources import sources_index
@@ -410,6 +410,20 @@ def index_status(repo: str) -> dict:
             "files": None, "building": True, "error": None,
             "current_source": job.get("current_source"), "targets": job.get("targets"),
         }
+    # The index worker subprocess holds the DuckDB, so no query is possible here - report from its
+    # progress file instead. Must come BEFORE read_cursor(), which would raise RepoOffline.
+    off = offline_status(repo)
+    if off:
+        from ..core.nightly import worker_progress  # lazy: keeps core<->index imports one-directional
+        prog = worker_progress(repo) or {}
+        return {
+            "repo": repo, "snapshots": total,
+            "indexed_snapshots": prog.get("indexed", 0), "files": None,
+            "building": True, "offline": True, "offline_reason": off.get("reason"),
+            "offline_since": off.get("since"), "stage": prog.get("stage"),
+            "current_source": prog.get("current_source"), "targets": prog.get("targets"),
+            "error": prog.get("error"),
+        }
     cur = read_cursor(repo)
     try:
         indexed = cur.execute("SELECT COUNT(*) FROM indexed_snapshots WHERE repo=?", [repo]).fetchone()[0]
@@ -541,3 +555,41 @@ def auto_reindex(repo: str) -> None:
     finally:
         cur.close()
     start_build(repo, full=(nfiles_src - npaths_src > 5 or null_cid > 0))
+
+
+def _needs_full(repo: str) -> bool:
+    """Migration detector shared by the threaded and synchronous reindex entry points: many indexed
+    sources with no paths aggregate, or paths predating the content_id column."""
+    cur = read_cursor(repo)
+    try:
+        nfiles_src = cur.execute("SELECT count(DISTINCT source) FROM files WHERE repo=?", [repo]).fetchone()[0]
+        npaths_src = cur.execute("SELECT count(DISTINCT source) FROM paths WHERE repo=?", [repo]).fetchone()[0]
+        null_cid = cur.execute("SELECT count(*) FROM paths WHERE repo=? AND content_id IS NULL", [repo]).fetchone()[0]
+    finally:
+        cur.close()
+    return bool(nfiles_src - npaths_src > 5 or null_cid > 0)
+
+
+def build_sync(repo: str, source: str | None = None, full: bool = False) -> dict:
+    """Run a build to completion IN THIS THREAD (no background thread, no polling).
+
+    ``start_build`` returns immediately and the caller polls ``index_status``; that is right for the
+    web UI but wrong for the index worker subprocess, which has nothing else to do and must not exit
+    before the build finishes. Same ``_run_build`` underneath, so behaviour is identical - only the
+    threading differs. Raises on a build error rather than parking it in the job dict, so the worker
+    reports a real failure."""
+    _JOBS[repo] = {"building": True, "indexed": 0, "total": 0, "error": None, "current_source": None}
+    try:
+        _run_build(repo, source, full)
+    finally:
+        _JOBS.get(repo, {})["building"] = False
+    job = _JOBS.get(repo, {})
+    if job.get("error"):
+        raise RuntimeError(job["error"])
+    return {"repo": repo, "full": full, "indexed": job.get("indexed", 0), "targets": job.get("targets")}
+
+
+def auto_reindex_sync(repo: str, full: bool = False) -> dict:
+    """Synchronous twin of ``auto_reindex`` for the worker subprocess: same full-vs-incremental
+    decision, but runs to completion instead of spawning a thread."""
+    return build_sync(repo, full=bool(full) or _needs_full(repo))

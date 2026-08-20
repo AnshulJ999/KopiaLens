@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import time
+
 from fastapi import APIRouter, HTTPException, Query
 
 from config import REPOS, repo_kind
 
 from ..core.metrics import table_rows
+from ..core.nightly import start_index_pass_async, state as nightly_state, worker_progress
 from ..core.sources import sources_index
 from ..index.builder import start_build, index_status_with_summary
 from ..settings import load_settings, mutate_settings
@@ -55,11 +58,39 @@ def get_index_status(repo: str = "1") -> dict:
 
 @router.post("/index/build")
 def post_index_build(repo: str = "1", source: str | None = None, full: bool = False) -> dict:
+    """Manual index. With no ``source`` this runs the SAME worker-subprocess pass the nightly
+    scheduler runs, so a hand-triggered index costs this process no memory either. Rebuilding a
+    single source stays in-process: it is small, and the worker's whole-repo handover would be
+    disproportionate for one source."""
     _require_kopia(repo)
     try:
-        return start_build(repo, source=source, full=full)
+        if source:
+            return start_build(repo, source=source, full=full)
+        return start_index_pass_async(repo, full=full)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/index/freshness")
+def index_freshness() -> dict:
+    """How current every repo's data is - one call for the whole header strip, so the UI does not
+    need a per-repo round trip just to say "indexed 3h ago"."""
+    from ..main import nightly_ts  # lazy: app.main imports this router at module scope
+
+    out = []
+    for key, cfg in REPOS.items():
+        st = nightly_state(key)
+        row = {
+            "repo": key, "name": cfg.get("name", key), "kind": cfg.get("kind", "kopia"),
+            "last_index": nightly_ts(key) or None,
+            "running": bool(st.get("running")),
+            "started": st.get("started"), "elapsed": st.get("elapsed"),
+            "error": st.get("error"),
+        }
+        if row["running"]:
+            row["progress"] = worker_progress(key)
+        out.append(row)
+    return {"repos": out, "now": time.time()}
 
 
 @router.post("/settings")

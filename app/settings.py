@@ -25,9 +25,24 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "time_format": "absolute",
         "tables": {},          # per-table Tabulator persistence (columns + sort), keyed by table id
         "page_size": 500,      # search default page size (may be "Infinite")
-        "reindex_interval": 1800,    # seconds between background incremental reindex + dashboard-recompute passes
+        # ---- heavy-pass scheduling -------------------------------------------------------------
+        # Everything expensive (index build, snapshot analysis, reclaimable, churn rollup, dashboard
+        # rebuild, BZ refresh) runs in a worker SUBPROCESS once a day, so this process never grows.
+        "index_mode": "daily",       # "daily" (index_time) | "interval" (index_interval) - both use the worker
+        "index_time": "23:00",       # daily mode: local time. A missed run catches up at the next opportunity.
+        "index_interval": 86400,     # interval mode only: seconds between heavy passes
+        "index_worker_timeout": 14400,  # hard ceiling on one worker run (4h) so a hang can't block tomorrow
+        "light_interval": 1800,      # cheap in-process warm pass: next-snapshot times, stats, search landing
+        "dashboard_mode": "nightly",  # "nightly" (rebuild with the heavy pass) | "interval" (also during the day)
+        "dashboard_interval": 14400,  # dashboard_mode="interval" only: seconds between rebuilds
+        "reindex_interval": 1800,    # legacy interval, still used for the restart-quiet-period calculation
         "reclaim_interval": 10800,   # seconds between background reclaimable pre-warm passes (heavy: refcount + double walk)
+        "startup_delay": 300,        # quiet period after every process start before any background work
         "dashboard_refresh": 900,    # seconds: how often the open Dashboard view re-fetches the cache (0 = off)
+        "churn_days": 30,            # Churn tab: default window (7 / 30 / 90 / 180 / 365)
+        "churn_depth": 4,            # Churn tab: folder-rollup depth
+        "churn_view": "source",      # Churn tab: "source" | "folder" | "ext"
+        "delete_top_n": 0,           # folder delete: 0 = everything matched, else only the N biggest by physical
         "churn_default": False,      # show churn column by default
         "tree_mode": "full",       # default tree view mode
         "search_sort": "size",     # persisted search sort column

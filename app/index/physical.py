@@ -250,19 +250,26 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500) -> dict[str, 
     return out
 
 
-def folder_detail(repo: str, source: str, prefix: str) -> dict:
+def folder_detail(repo: str, source: str | None, prefix: str) -> dict:
     """Subtree reclaim: logical, deduped physical, and freeable (chunks under this folder whose
     global refcount is fully attributable to the folder) over the all-snapshots paths under a
-    prefix. On-demand (a subtree walk); expensive for huge folders."""
+    prefix. On-demand (a subtree walk); expensive for huge folders.
+
+    ``source=None`` spans EVERY source covering the folder, which is the honest answer for a
+    folder that lives in more than one source: chunk occurrences are counted per source, so a
+    chunk held by two sources only counts as freeable when both copies are inside this folder.
+    Deleting from just one source would not free it, and the number reflects that."""
     like = prefix.rstrip(_SEP) + _SEP + "%"
     dbsql = cache_db(repo)
     smap = load_sizemap(repo)
+    sql = "SELECT content_id, size FROM paths WHERE repo=? AND full_path LIKE ?"
+    params: list = [repo, like]
+    if source:
+        sql = "SELECT content_id, size FROM paths WHERE repo=? AND source=? AND full_path LIKE ?"
+        params = [repo, source, like]
     cur = read_cursor(repo)
     try:
-        rows = cur.execute(
-            "SELECT content_id, size FROM paths WHERE repo=? AND source=? AND full_path LIKE ?",
-            [repo, source, like],
-        ).fetchall()
+        rows = cur.execute(sql, params).fetchall()
     finally:
         cur.close()
     logical = sum(int(s or 0) for _, s in rows)

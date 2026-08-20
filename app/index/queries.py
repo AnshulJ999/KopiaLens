@@ -468,6 +468,15 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
     where_sql = " AND ".join(where)
     cur = read_cursor(repo)
     try:
+        # Unbounded totals for the SAME filter, so the UI can say "the 100 biggest files are 8.2 GiB
+        # = 70% of this folder". Cheap (one indexed aggregate) and it is what makes a top-N delete a
+        # judgement call rather than a guess - in a 10k-file folder a hundred files usually hold most
+        # of the bytes.
+        trow = cur.execute(
+            f"SELECT count(*), COALESCE(sum(physical), 0), COALESCE(sum(size), 0) FROM paths WHERE {where_sql}",
+            [repo, *params],
+        ).fetchone() or (0, 0, 0)
+        total_file_count, total_physical, total_logical = int(trow[0]), int(trow[1]), int(trow[2])
         files = _rows(
             cur,
             f"SELECT source, full_path, content_id, size, physical FROM paths WHERE {where_sql} "
@@ -518,6 +527,10 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
         cur.close()
     return {
         "file_count": len(files),
+        "total_file_count": total_file_count,   # the whole matched set, before the top-N cap
+        "total_physical": total_physical,
+        "total_logical": total_logical,
+        "capped": total_file_count > len(files),
         "logical": logical,
         "physical": physical,
         "object_ids": oids,             # deduped, biggest-files-first
@@ -526,6 +539,89 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
         "files": files[:200],           # preview (already physical-desc)
         "sources": sorted({f["source"] for f in files}),
     }
+
+
+def _prefix_params(prefix: str) -> tuple[str, str]:
+    """(exact_lc, like_lc) for matching a folder and everything under it via the path_lc index."""
+    base = prefix.rstrip(_SEP).lower()
+    return base, base + _SEP + "%"
+
+
+def folder_sources(repo: str, prefix: str) -> list[dict]:
+    """Every source that backs up this folder, with what each one holds.
+
+    A folder living inside two sources (e.g. ``G:\\Apps\\X`` covered by both the ``G:\\Apps`` and
+    ``G:\\`` sources) is snapshotted twice, so deleting it from one source leaves it in the other.
+    That is the single most confusing thing about folder deletion, hence surfacing it up front."""
+    exact, like = _prefix_params(prefix)
+    cur = read_cursor(repo)
+    try:
+        return _rows(
+            cur,
+            "SELECT source, count(*) AS files, COALESCE(sum(physical), 0) AS physical, "
+            "  COALESCE(sum(size), 0) AS logical, min(first_seen) AS first_seen, "
+            "  max(last_seen) AS last_seen, "
+            "  count(*) FILTER (WHERE NOT in_latest) AS deleted_files "
+            "FROM paths WHERE repo = ? AND (path_lc = ? OR path_lc LIKE ?) "
+            "GROUP BY source ORDER BY physical DESC",
+            [repo, exact, like],
+        )
+    finally:
+        cur.close()
+
+
+def folder_summary(repo: str, prefix: str, source: str | None = None) -> dict:
+    """Cheap, instantly-available folder facts (no chunk walk): counts, sizes, dates, versions.
+    The expensive freeable/shared numbers come separately from ``physical.folder_detail`` so the
+    panel can render immediately and fill those in afterwards."""
+    exact, like = _prefix_params(prefix)
+    conds = ["repo = ?", "(path_lc = ? OR path_lc LIKE ?)"]
+    params: list = [repo, exact, like]
+    if source:
+        conds.append("source = ?")
+        params.append(source)
+    where = " AND ".join(conds)
+    cur = read_cursor(repo)
+    try:
+        row = cur.execute(
+            f"SELECT count(*), COALESCE(sum(physical), 0), COALESCE(sum(size), 0), "
+            f"  min(first_seen), max(last_seen), count(*) FILTER (WHERE NOT in_latest), "
+            f"  COALESCE(sum(versions), 0), count(DISTINCT source) "
+            f"FROM paths WHERE {where}",
+            params,
+        ).fetchone() or (0, 0, 0, None, None, 0, 0, 0)
+    finally:
+        cur.close()
+    return {
+        "prefix": prefix, "files": int(row[0]), "physical": int(row[1]), "logical": int(row[2]),
+        "first_seen": str(row[3]) if row[3] else None, "last_seen": str(row[4]) if row[4] else None,
+        "deleted_files": int(row[5]), "versions": int(row[6]), "source_count": int(row[7]),
+    }
+
+
+def folder_top_children(repo: str, prefix: str, limit: int = 5, source: str | None = None) -> list[dict]:
+    """The biggest immediate children of a folder, by physical - answers "what is actually big in
+    here" without making the user drill down."""
+    base = prefix.rstrip(_SEP)
+    _, like = _prefix_params(prefix)
+    conds = ["repo = ?", "path_lc LIKE ?"]
+    params: list = [repo, like]
+    if source:
+        conds.append("source = ?")
+        params.append(source)
+    where = " AND ".join(conds)
+    cur = read_cursor(repo)
+    try:
+        return _rows(
+            cur,
+            f"SELECT list_extract(string_split(substr(full_path, ?), ?), 1) AS child, "
+            f"  COALESCE(sum(physical), 0) AS physical, count(*) AS files "
+            f"FROM paths WHERE {where} GROUP BY child "
+            f"ORDER BY physical DESC LIMIT {int(limit)}",
+            [len(base) + 2, _SEP, *params],
+        )
+    finally:
+        cur.close()
 
 
 def flat_files(repo: str, source: str, prefix: str = "", deleted_only: bool = False,

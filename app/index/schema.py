@@ -9,6 +9,7 @@ risked a lock conflict between a query and a running build.
 
 from __future__ import annotations
 
+import contextlib
 import gc
 import json
 import os
@@ -33,6 +34,37 @@ _LOCK = threading.Lock()
 _MAINT_COND = threading.Condition()
 _maint: dict[str, bool] = {}
 _active_reads: dict[str, int] = {}
+
+# ---- Offline windows (nightly worker) -------------------------------------------------------
+# DuckDB takes an EXCLUSIVE OS file lock: while the index worker subprocess holds a repo's .duckdb,
+# this process cannot open it at all - not even read-only (verified). So a worker run takes the repo
+# fully offline here. Unlike a compaction swap (seconds-to-minutes, callers WAIT), a build can run
+# for tens of minutes, so callers must fail fast with a clear message instead of hanging: reads
+# raise RepoOffline, which the API layer turns into a 503. Kept separate from `_maint` so the
+# compaction path's wait-and-retry semantics are completely unchanged.
+_offline: dict[str, dict] = {}
+
+
+class RepoOffline(RuntimeError):
+    """Raised when a repo's DuckDB is held by the index worker. Carries when/why for the UI."""
+
+    def __init__(self, repo: str, info: dict) -> None:
+        self.repo = repo
+        self.info = dict(info)
+        since = info.get("since", 0)
+        super().__init__(f"repo {repo} is {info.get('reason', 'offline')} (since {since})")
+
+
+def offline_status(repo: str) -> dict | None:
+    """``{"reason":..., "since": epoch}`` while a repo is held by the worker, else None."""
+    info = _offline.get(repo)
+    return dict(info) if info else None
+
+
+def _guard_offline(repo: str) -> None:
+    info = _offline.get(repo)
+    if info:
+        raise RepoOffline(repo, info)
 
 
 def _read_done(repo: str) -> None:
@@ -104,6 +136,7 @@ def get_db(repo: str) -> duckdb.DuckDBPyConnection:
     # parameterized queries.
     if repo not in REPOS:
         raise ValueError(f"unknown repo id: {repo!r}")
+    _guard_offline(repo)  # worker holds the file: fail fast, never block for a whole build
     with _MAINT_COND:  # wait out an in-progress compaction swap (connection is being replaced)
         while _maint.get(repo):
             _MAINT_COND.wait()
@@ -132,6 +165,7 @@ def read_cursor(repo: str):
     """A cursor off the shared connection, for concurrent reads. Returns a proxy that MUST be
     ``.close()``d when done (callers already do) - the close decrements the in-flight-read counter
     that compaction waits on before swapping the DB file."""
+    _guard_offline(repo)  # worker holds the file: fail fast, never block for a whole build
     with _MAINT_COND:  # don't start a read during a compaction swap; register this read
         while _maint.get(repo):
             _MAINT_COND.wait()
@@ -266,6 +300,63 @@ def compact_in_place(repo: str, drain_timeout: float = 30.0) -> dict:
                 get_db(repo)  # reopen the pooled connection on the (possibly swapped) file
             except Exception:
                 pass
+    finally:
+        blk.release()
+
+
+@contextlib.contextmanager
+def exclusive_offline(repo: str, reason: str = "indexing", drain_timeout: float = 60.0):
+    """Hand a repo's DuckDB file over to another PROCESS for the duration of the block.
+
+    Same drain-and-close choreography as ``compact_in_place`` (which is proven and concurrency
+    tested), but the file is released to an external owner rather than swapped locally, and the
+    window is long, so in-process readers get ``RepoOffline`` instead of blocking.
+
+    Sequence: take the dashboard build lock -> mark offline (new reads fail fast) -> wait for
+    in-flight reads to drain -> CHECKPOINT + close the pooled connection -> ``gc.collect()`` so
+    Windows actually releases the handle -> yield -> reopen. The connection is ALWAYS reopened,
+    even if the block raises.
+    """
+    from ..core.metrics import _build_lock  # serialize vs dashboard build_global (lazy: import cycle)
+
+    blk = _build_lock(repo, "all")
+    if not blk.acquire(timeout=drain_timeout):
+        raise RuntimeError(f"repo {repo}: dashboard build still running, not taking it offline")
+    try:
+        with _MAINT_COND:
+            if _offline.get(repo):
+                raise RuntimeError(f"repo {repo} is already offline")
+            _offline[repo] = {"reason": reason, "since": time.time()}
+        try:
+            deadline = time.time() + drain_timeout
+            with _MAINT_COND:
+                while _active_reads.get(repo, 0) > 0:
+                    rem = deadline - time.time()
+                    if rem <= 0:
+                        raise TimeoutError(f"repo {repo}: reads did not drain in {drain_timeout:.0f}s")
+                    _MAINT_COND.wait(timeout=rem)
+                con = _POOL.pop(repo, None)
+            if con is not None:
+                try:
+                    con.execute("CHECKPOINT")
+                except Exception:  # noqa: BLE001 - best effort before handing the file over
+                    pass
+                try:
+                    con.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            gc.collect()  # DuckDB lags releasing the Windows file handle without this
+            log.info("repo=%s offline (%s) - DuckDB handed over", repo, reason)
+            yield
+        finally:
+            with _MAINT_COND:
+                _offline.pop(repo, None)
+                _MAINT_COND.notify_all()
+            try:
+                get_db(repo)  # reopen on the (possibly rewritten) file
+                log.info("repo=%s back online", repo)
+            except Exception as exc:  # noqa: BLE001
+                log.error("repo=%s FAILED to reopen after offline window: %s", repo, exc)
     finally:
         blk.release()
 
