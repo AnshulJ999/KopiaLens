@@ -117,6 +117,54 @@ def bz_done_files(dcenter_dir: str) -> list[tuple[str, float, int]]:
     return out
 
 
+# ---- bz_done per-day totals (what was ACTUALLY backed up) ------------------------------
+# The Sessions view used to price uploads from the eventlog's "END_BACKUP: Backed up N FILES /
+# M MB" lines. Backblaze only writes those when a session ends CLEANLY, which it almost never
+# does - measured on real data: 25 end-lines in 10 months, one in the last 30 days, and 19
+# sessions that started and never reported at all. So that number was not "how much was
+# uploaded", it was "how much the one session that bothered to report uploaded".
+#
+# bz_done_*.dat is the real record: one tab-separated line per file Backblaze finished backing
+# up, carrying a timestamp and the file's size in hex. Summing it for the same 30 days gave
+# 237 GB across 60,518 files against the eventlog's 22.6 GB.
+_BZDONE_TS = 3       # field 3: YYYYMMDDHHMMSS
+_BZDONE_SIZE = 6     # field 6: size, hex
+_BZDONE_MIN_FIELDS = 8
+
+
+def parse_bz_done_day_totals(path: str) -> dict[str, dict]:
+    """``{"YYYY-MM-DD": {"files": n, "bytes": n}}`` for one bz_done file.
+
+    Rows whose first field is not ``5`` are skipped: Backblaze pads these files with its own
+    marker rows (first field ``#``, path ``C:\\zzz_bloat_yyy\\...``) whose "size" is the literal
+    ``0123456789abcdef``. Summed naively those add ~4.9e17 bytes and make the day meaningless -
+    which is exactly what happened on the first pass over this data."""
+    out: dict[str, dict] = {}
+    try:
+        with open_ro(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) < _BZDONE_MIN_FIELDS or parts[0] != "5":
+                    continue
+                stamp = parts[_BZDONE_TS]
+                if len(stamp) < 8 or not stamp[:8].isdigit():
+                    continue
+                try:
+                    size = int(parts[_BZDONE_SIZE], 16)
+                except ValueError:
+                    continue
+                day = f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]}"
+                entry = out.get(day)
+                if entry is None:
+                    out[day] = {"files": 1, "bytes": size}
+                else:
+                    entry["files"] += 1
+                    entry["bytes"] += size
+    except Exception:
+        return out
+    return out
+
+
 # ---- eventlog (backup session history) -------------------------------------------------
 _EVT_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s*-\s*(.*)$")
 _END_RE = re.compile(r"END_BACKUP:\s*Backed up\s*(\d+)\s*FILES\s*/\s*(\d+)\s*MB", re.IGNORECASE)

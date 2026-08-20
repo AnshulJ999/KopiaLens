@@ -18,8 +18,12 @@ Not to be confused with the dead ``app/core/churn.py`` (superseded long ago by s
 from __future__ import annotations
 
 import datetime as dt
+import json
+import os
 import threading
 import time
+
+from config import CACHEDIR
 
 from ..core.applog import get_logger
 from .schema import read_cursor
@@ -106,10 +110,44 @@ def _index_hash(repo: str) -> str:
     return f"{row[0]}:{row[1]}" if row else "0"
 
 
+def _disk_path(repo: str, days: int, depth: int) -> str:
+    return os.path.join(CACHEDIR, f"churn_repo{repo}_{days}d_d{depth}.json")
+
+
+def _disk_get(repo: str, days: int, depth: int, stamp: str) -> dict | None:
+    """The rollup is computed by the nightly WORKER, which then exits - so it has to land on disk
+    or the app never sees it. Costs the app nothing to read, and means opening the tab on the
+    default window is free rather than a ~5s, ~700MB aggregation."""
+    try:
+        with open(_disk_path(repo, days, depth), encoding="utf-8") as fh:
+            blob = json.load(fh)
+    except Exception:
+        return None
+    return blob if blob.get("stamp") == stamp else None
+
+
+def _disk_put(repo: str, days: int, depth: int, payload: dict) -> None:
+    path = _disk_path(repo, days, depth)
+    try:
+        os.makedirs(CACHEDIR, exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
+        os.replace(tmp, path)
+    except Exception as exc:  # noqa: BLE001 - a cache write must never fail the request
+        log.warning("churn cache write failed: %s", exc)
+
+
 def _cache_get(ck: tuple, stamp: str) -> dict | None:
     with _LOCK:
         hit = _CACHE.get(ck)
-    return hit if (hit is not None and hit.get("stamp") == stamp) else None
+    if hit is not None and hit.get("stamp") == stamp:
+        return hit
+    disk = _disk_get(ck[0], ck[1], ck[2], stamp)
+    if disk is not None:
+        with _LOCK:
+            _CACHE[ck] = disk
+    return disk
 
 
 def _cache_put(ck: tuple, payload: dict) -> None:
@@ -117,6 +155,7 @@ def _cache_put(ck: tuple, payload: dict) -> None:
         _CACHE[ck] = payload
         while len(_CACHE) > _CACHE_MAX:
             _CACHE.pop(next(iter(_CACHE)))
+    _disk_put(ck[0], ck[1], ck[2], payload)
 
 
 def _build_lock(ck: tuple) -> threading.Lock:
@@ -235,9 +274,12 @@ def churn_rollup(repo: str, days: int = 30, depth: int = 4, limit: int = 400,
         return {**payload, "cached": False}
 
 
-def prewarm(repo: str, days: int = 30, depth: int = 4) -> None:
-    """Nightly: build the default window so the tab opens instantly the next day."""
-    try:
-        churn_rollup(repo, days=days, depth=depth, refresh=True)
-    except Exception as exc:  # noqa: BLE001 - never fail the nightly cycle on a warm pass
-        log.error("churn prewarm repo=%s failed: %s", repo, exc)
+def prewarm(repo: str, depth: int = 4, windows=WINDOWS) -> None:
+    """Nightly: build EVERY standard window and persist it, so switching windows in the tab the
+    next day costs nothing. Each is ~5s, and doing it here means the ~700MB aggregation happens in
+    the worker process (which then exits) rather than in the long-lived app."""
+    for days in windows:
+        try:
+            churn_rollup(repo, days=days, depth=depth, refresh=True)
+        except Exception as exc:  # noqa: BLE001 - never fail the nightly cycle on a warm pass
+            log.error("churn prewarm repo=%s days=%d failed: %s", repo, days, exc)

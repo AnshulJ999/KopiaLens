@@ -312,7 +312,8 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
         return {"file_count": 0, "object_count": 0, "name_count": 0, "item_count": 0, "batches": 0,
                 "commit": "", "dry_run": "", "preview": [], "sources_scope": [], "everywhere": False,
                 "logical": 0, "physical": 0, "all_versions": payload.all_versions, "by": payload.by,
-                "sources_matched": []}
+                "sources_matched": [], "total_file_count": 0, "total_physical": 0,
+                "total_logical": 0, "capped": False}
     scope = _remove_scope(payload.everywhere, t["sources"])
     # 8k per command so the copied lines are pasteable into a terminal (cmd.exe line cap ~8191).
     # The background executor uses larger 32k batches (fewer kopia invocations).
@@ -322,6 +323,10 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
         "file_count": t["file_count"], "object_count": len(t["object_ids"]), "name_count": len(t["names"]),
         "item_count": len(items), "by": payload.by,
         "logical": t["logical"], "physical": t["physical"],
+        # Uncapped totals for the same filter, so a top-N delete can show what share it covers
+        # ("these 100 files are 70% of the folder").
+        "total_file_count": t["total_file_count"], "total_physical": t["total_physical"],
+        "total_logical": t["total_logical"], "capped": t["capped"],
         "sources_scope": scope or [], "everywhere": scope is None,
         "sources_matched": t["sources"], "batches": len(commit_cmds),
         "preview": t["files"], "all_versions": payload.all_versions,

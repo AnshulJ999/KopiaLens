@@ -196,7 +196,18 @@ def sessions(limit=400) -> dict:
         "ORDER BY ts DESC LIMIT ?", [limit])]
     deletions = [dict(r) for r in con.execute(
         "SELECT ts, bytes, detail, src FROM events WHERE kind='bz_done_big' ORDER BY ts DESC")]
-    return {"sessions": ses, "uploads": uploads, "deletion_events": deletions}
+    # Per-day totals from bz_done - the real "how much was uploaded" figure. The session rows above
+    # remain useful for WHEN backups ran, but their byte counts come from END_BACKUP lines that
+    # Backblaze rarely writes (see parsers.parse_bz_done_day_totals).
+    days = [dict(r) for r in con.execute(
+        "SELECT day, sum(files) AS files, sum(bytes) AS bytes FROM backup_days "
+        "GROUP BY day ORDER BY day DESC LIMIT ?", [limit])]
+    total_30 = con.execute(
+        "SELECT COALESCE(sum(files), 0), COALESCE(sum(bytes), 0) FROM backup_days "
+        "WHERE day >= date('now', '-30 day')").fetchone()
+    return {"sessions": ses, "uploads": uploads, "deletion_events": deletions,
+            "backup_days": days,
+            "last_30d": {"files": total_30[0] or 0, "bytes": total_30[1] or 0}}
 
 
 # ---- queue ----------------------------------------------------------------------------

@@ -64,6 +64,15 @@
         <button class="tab" @click="active=t.id; activate()" :class="active===t.id ? 'bg-stone-200 dark:bg-stone-700 font-medium' : 'hover:bg-stone-100 dark:hover:bg-stone-800'" x-text="t.label"></button>
       </template>
       <div class="ml-auto flex items-center gap-2 text-xs pr-2">
+        <template x-for="f in freshness" :key="f.repo">
+          <span class="rounded px-1.5 py-0.5 border"
+                :class="freshStale(f) ? 'border-amber-400 text-amber-700 dark:text-amber-400' : 'border-stone-200 dark:border-stone-700 text-stone-500'"
+                :title="f.name + (f.error ? ' - last run failed: ' + f.error : '')">
+            <span x-text="f.repo === 'bz' ? 'BZ' : 'Repo ' + f.repo"></span>
+            <span x-text="' · ' + freshAge(f)"></span>
+            <span x-show="f.error" class="text-rose-600">!</span>
+          </span>
+        </template>
         <span x-show="busy" class="text-amber-600" x-text="busy"></span>
         <span x-show="error" class="text-red-600 max-w-md truncate" x-text="error"></span>
         <span class="text-stone-400" x-show="selectedSource" x-text="'· ' + shortSource(selectedSource)"></span>
@@ -198,6 +207,32 @@
         </div>
         <div id="searchTable" class="flex-1 min-h-0" x-show="!groupByFolder"></div>
         <div id="groupTable" class="flex-1 min-h-0" x-show="groupByFolder"></div>
+      </section>
+
+      <section x-show="active==='churn'" class="h-full flex flex-col gap-2">
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="inline-flex rounded border border-stone-300 dark:border-stone-700 overflow-hidden">
+            <button @click="setChurnView('source')" class="px-3 h-8 text-xs" :class="churnView==='source' ? 'bg-stone-200 dark:bg-stone-700 font-medium' : ''">By source</button>
+            <button @click="setChurnView('folder')" class="px-3 h-8 text-xs border-l border-stone-300 dark:border-stone-700" :class="churnView==='folder' ? 'bg-stone-200 dark:bg-stone-700 font-medium' : ''">By folder</button>
+            <button @click="setChurnView('ext')" class="px-3 h-8 text-xs border-l border-stone-300 dark:border-stone-700" :class="churnView==='ext' ? 'bg-stone-200 dark:bg-stone-700 font-medium' : ''">By file type</button>
+          </div>
+          <label class="flex items-center gap-1 text-xs">Window
+            <select x-model="churnDays" @change="changeChurn()" class="fld h-8 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="90">Last 90 days</option>
+              <option value="180">Last 6 months</option>
+              <option value="365">Last year</option>
+            </select></label>
+          <label class="flex items-center gap-1 text-xs" title="How many path segments deep to roll folders up">Depth
+            <select x-model.number="churnDepth" @change="changeChurn()" class="fld h-8 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+              <template x-for="d in [2,3,4,5,6,7,8]" :key="d"><option :value="d" x-text="d"></option></template>
+            </select></label>
+          <button @click="loadChurn(true)" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-xs" title="Recompute now instead of using the nightly result">⟳ Recompute</button>
+          <span class="text-xs text-stone-500" x-text="churnMeta"></span>
+        </div>
+        <p class="text-[11px] text-stone-500">New data = content whose first appearance in any snapshot falls inside the window. A high <b>Versions</b> count against few files means the same files are being rewritten over and over — usually the thing worth excluding. Bytes are counted per path, so content shared between two paths is charged to both; the deduped total above is the true repo growth.</p>
+        <div id="churnTable" class="flex-1 min-h-0"></div>
       </section>
 
       <section x-show="active==='simulate'" class="h-full flex flex-col gap-3">
@@ -530,6 +565,27 @@
               <option value="server">Kopia server</option>
             </select></div>
           <p class="text-xs text-stone-500">Subprocess = zero background kopia activity. Server = persistent kopia server (faster refresh, runs in background). Restart required to switch.</p>
+          <div class="flex items-center justify-between gap-2"><span>Heavy pass (indexing)</span>
+            <select x-model="indexMode" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+              <option value="daily">Once a day, at a set time</option>
+              <option value="interval">Every N hours</option>
+            </select></div>
+          <div class="flex items-center justify-between gap-2" x-show="indexMode==='daily'"><span>Run at</span>
+            <input type="time" x-model="indexTime" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800"></div>
+          <div class="flex items-center justify-between gap-2" x-show="indexMode==='interval'"><span>Every</span>
+            <select x-model.number="indexInterval" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+              <option :value="14400">4 hours</option>
+              <option :value="21600">6 hours</option>
+              <option :value="43200">12 hours</option>
+              <option :value="86400">24 hours</option>
+            </select></div>
+          <p class="text-xs text-stone-500">Indexing, snapshot analysis, reclaimable, the dashboard rebuild and the Backblaze rescan all run together in a separate process that exits afterwards, so this app never holds on to the memory. One repo at a time. If the PC was off at the scheduled time, it catches up at the next opportunity. The repo being indexed is briefly unavailable; the others are not.</p>
+          <div class="flex items-center justify-between gap-2"><span>Dashboard numbers</span>
+            <select x-model="dashboardMode" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+              <option value="nightly">Rebuild with the heavy pass</option>
+              <option value="interval">Also rebuild during the day</option>
+            </select></div>
+          <p class="text-xs text-stone-500">The physical / freeable / dedup columns take about 80 seconds to recompute. Nightly keeps that out of your day; the &#8635; Refresh button rebuilds them on demand either way.</p>
           <div class="flex items-center justify-between gap-2"><span>Background refresh interval</span>
             <select x-model.number="reindexInterval" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
               <option :value="300">5 minutes</option>
@@ -604,11 +660,64 @@
           <div class="rounded border border-stone-200 dark:border-stone-700 p-2" x-show="detail && detail.kind==='file'"><div class="text-[10px] uppercase text-stone-500">Shared (won't free)</div><div class="font-medium" x-text="detail && fmtPhys(detail.shared)"></div></div>
         </div>
         <div class="text-[11px] text-stone-500 mt-1" x-show="detail && detail.kind==='file'">Freeable = packed bytes referenced only by this file (freed if you delete every snapshot carrying it). <span x-show="detail && detail.physical_all" x-text="'Across all versions: ' + fmtPhys(detail && detail.physical_all)"></span></div>
-        <div class="mt-1 flex items-center gap-2" x-show="detail && detail.kind==='folder'">
-          <span class="text-[11px] text-stone-500">Folder summary.</span>
-          <button @click="computeFolderReclaim()" :disabled="detail && detail.reclaimLoading" class="h-6 rounded border border-stone-300 dark:border-stone-700 px-2 text-[11px] disabled:opacity-50"><span x-text="(detail && detail.reclaimLoading) ? 'Computing…' : 'Compute folder reclaim'"></span></button>
-          <span class="text-[11px] text-emerald-600" x-show="detail && detail.freeable != null" x-text="detail && ('freeable ' + fmtPhys(detail.freeable))"></span>
-        </div>
+        <template x-if="detail && detail.kind==='folder'">
+          <div class="mt-2 space-y-3">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div class="rounded border border-emerald-300 dark:border-emerald-800 p-2">
+                <div class="text-[10px] uppercase text-emerald-700 dark:text-emerald-400">Frees if deleted</div>
+                <div class="font-medium" x-text="detail.heavyLoading ? 'computing…' : fmtPhys(detail.freeable)"></div></div>
+              <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
+                <div class="text-[10px] uppercase text-stone-500">Shared elsewhere</div>
+                <div class="font-medium" x-text="detail.heavyLoading ? '…' : fmtPhys(detail.shared)"></div></div>
+              <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
+                <div class="text-[10px] uppercase text-stone-500">Versions</div>
+                <div class="font-medium" x-text="Number(detail.versions||0).toLocaleString()"></div></div>
+              <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
+                <div class="text-[10px] uppercase text-stone-500">Deleted from disk</div>
+                <div class="font-medium" x-text="Number(detail.deleted_files||0).toLocaleString() + ' of ' + Number(detail.files||0).toLocaleString()"></div></div>
+            </div>
+            <div class="text-[11px] text-stone-500">Frees if deleted = packed bytes that nothing else keeps alive. Shared bytes stay until every other copy goes too.</div>
+
+            <div>
+              <div class="text-xs font-medium mb-1">Backed up by</div>
+              <template x-for="sc in (detail.sources || [])" :key="sc.source">
+                <div class="flex items-center gap-2 rounded border border-stone-200 dark:border-stone-700 px-2 py-1 mb-1">
+                  <div class="min-w-0">
+                    <div class="text-xs truncate" x-text="shortSource(sc.source)"></div>
+                    <div class="text-[10px] text-stone-500" x-text="sc.policy ? (sc.policy.schedule + ' · keeps ' + sc.policy.retention) : 'policy not loaded'"></div>
+                  </div>
+                  <div class="ml-auto shrink-0 text-[11px] text-stone-500 text-right">
+                    <div x-text="fmtPhys(sc.physical)"></div>
+                    <div x-text="Number(sc.files||0).toLocaleString() + ' files'"></div>
+                  </div>
+                </div>
+              </template>
+              <div class="text-[11px] text-amber-600" x-show="detail.multi_source">
+                &#9888; Covered by <span x-text="(detail.sources||[]).length"></span> sources &mdash; deleting from one leaves it in the others.
+              </div>
+              <div class="text-[11px] text-stone-500 mt-1" x-show="detail.effective_policy && (detail.effective_policy.ignore||[]).length">
+                Ignore rules here: <span class="font-mono" x-text="(detail.effective_policy.ignore||[]).join('  ·  ')"></span>
+              </div>
+            </div>
+
+            <div x-show="(detail.children||[]).length">
+              <div class="text-xs font-medium mb-1">Biggest inside</div>
+              <template x-for="ch in (detail.children || [])" :key="ch.child">
+                <div class="flex items-center gap-2 text-[11px] px-2 py-0.5 border-b border-stone-100 dark:border-stone-800">
+                  <span class="font-mono truncate" x-text="ch.child"></span>
+                  <span class="ml-auto shrink-0 text-stone-500" x-text="fmtPhys(ch.physical) + ' · ' + Number(ch.files||0).toLocaleString() + ' files'"></span>
+                </div>
+              </template>
+            </div>
+
+            <div class="flex flex-wrap gap-2 text-xs">
+              <button @click="folderDeleteFromPanel()" class="h-7 rounded border border-rose-400 text-rose-600 px-2">Delete folder&hellip;</button>
+              <button @click="folderShowFiles()" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2">Show files</button>
+              <button @click="copyText(detail.title)" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2">Copy path</button>
+            </div>
+            <div class="text-[11px] text-stone-500">First backed up <span x-text="(detail.first_seen||'&mdash;').slice(0,10)"></span> &middot; last <span x-text="(detail.last_seen||'&mdash;').replace('T',' ').slice(0,16)"></span></div>
+          </div>
+        </template>
 
         <!-- content chunks / dedup -->
         <template x-if="detail && detail.kind==='file' && detail.chunks && detail.chunks.length">
@@ -835,6 +944,25 @@
               <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500" x-text="removePlan.by==='filename' ? 'Filenames' : 'Content objects'"></div><div class="font-medium" x-text="Number((removePlan.by==='filename'?removePlan.name_count:removePlan.object_count)||0).toLocaleString()"></div></div>
               <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Physical</div><div class="font-medium" x-text="fmtPhys(removePlan.physical)"></div></div>
               <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Batches</div><div class="font-medium" x-text="removePlan.batches"></div></div>
+            </div>
+
+            <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
+              <span class="text-stone-500" title="Kopia removes files one at a time, so deleting the biggest few hundred usually reclaims most of the space for a fraction of the time">Delete:</span>
+              <button @click="setRemoveTopN(0)" :disabled="removePlan.job" class="h-7 rounded border px-2" :class="!removePlan.top_n ? 'border-stone-800 dark:border-stone-300 font-medium' : 'border-stone-300 dark:border-stone-700'">Everything matched</button>
+              <template x-for="n in [100, 500, 1000]" :key="n">
+                <button @click="setRemoveTopN(n)" :disabled="removePlan.job" class="h-7 rounded border px-2" :class="removePlan.top_n===n ? 'border-stone-800 dark:border-stone-300 font-medium' : 'border-stone-300 dark:border-stone-700'" x-text="'Largest ' + n"></button>
+              </template>
+              <input type="number" min="1" placeholder="custom" class="fld h-7 w-24 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800"
+                     :value="([0,100,500,1000].includes(removePlan.top_n) ? '' : removePlan.top_n)"
+                     @change="setRemoveTopN(parseInt($event.target.value, 10) || 0)" :disabled="removePlan.job">
+            </div>
+            <div class="text-[11px] mt-1" x-show="removePlan.total_physical">
+              <span x-show="removePlan.capped" class="text-emerald-700 dark:text-emerald-400">
+                These <span x-text="Number(removePlan.file_count||0).toLocaleString()"></span> files are
+                <b x-text="fmtPhys(removePlan.physical)"></b> = <b x-text="removeCoverage() + '%'"></b>
+                of the match (<span x-text="Number(removePlan.total_file_count||0).toLocaleString()"></span> files, <span x-text="fmtPhys(removePlan.total_physical)"></span> total).
+              </span>
+              <span x-show="!removePlan.capped" class="text-stone-500">Everything matched: <span x-text="Number(removePlan.total_file_count||0).toLocaleString()"></span> files, <span x-text="fmtPhys(removePlan.total_physical)"></span>.</span>
             </div>
 
             <div class="mt-2 flex flex-wrap items-center gap-3 text-xs">

@@ -156,6 +156,35 @@ def _refresh_queue(con) -> int:
     return len(data)
 
 
+def _refresh_backup_days(con) -> int:
+    """Sum bz_done_*.dat into per-day backed-up totals - the honest answer to "how much did
+    Backblaze actually upload", which the eventlog's END_BACKUP lines never were (see the note in
+    parsers.parse_bz_done_day_totals).
+
+    Watermarked by (mtime, size) in `ingest`: a rotated bz_done file never changes again, so after
+    the first pass only the newest one is re-read. Returns the number of files re-parsed."""
+    dcenter = paths.datacenter_dir()
+    parsed = 0
+    for fn, mtime, size in parsers.bz_done_files(dcenter):
+        key = f"bzdone:{fn}"
+        row = con.execute("SELECT mtime, size FROM ingest WHERE source=?", (key,)).fetchone()
+        if row and abs((row[0] or 0) - mtime) < 1e-6 and (row[1] or 0) == size:
+            continue  # unchanged since last time
+        totals = parsers.parse_bz_done_day_totals(os.path.join(dcenter, fn))
+        con.execute("DELETE FROM backup_days WHERE src=?", (fn,))
+        if totals:
+            con.executemany(
+                "INSERT OR REPLACE INTO backup_days (day, src, files, bytes) VALUES(?,?,?,?)",
+                [(day, fn, v["files"], v["bytes"]) for day, v in totals.items()],
+            )
+        con.execute("INSERT OR REPLACE INTO ingest (source, mtime, size, extra) VALUES(?,?,?,?)",
+                    (key, mtime, size, None))
+        parsed += 1
+    if parsed:
+        log.info("backup_days: re-parsed %d bz_done file(s)", parsed)
+    return parsed
+
+
 def _refresh_events(con) -> int:
     """Rebuild the small events timeline (sessions, upload-days, mass-deletion + stub signals)."""
     con.execute("DELETE FROM events")
@@ -376,6 +405,7 @@ def refresh(force: bool = False) -> dict:
             bbdb.rebuild_fts(con)
         _refresh_queue(con)
         _refresh_events(con)
+        _refresh_backup_days(con)
         _refresh_stats_kv(con)
         _refresh_folder_snapshots(con, _history_days())
         if force or not bbdb.kv_get(con, "fileids_total"):  # populate once, then only on a forced rebuild

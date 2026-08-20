@@ -113,8 +113,9 @@ document.addEventListener("alpine:init", () => {
     tabs: [
       { id: "dashboard", label: "Dashboard" }, { id: "snapshots", label: "Snapshots" },
       { id: "tree", label: "Tree" }, { id: "search", label: "Search" },
-      { id: "simulate", label: "Simulate" }, { id: "stats", label: "Stats" },
-      { id: "excluded", label: "Excluded" }, { id: "actions", label: "Actions" },
+      { id: "churn", label: "Churn" }, { id: "simulate", label: "Simulate" },
+      { id: "stats", label: "Stats" }, { id: "excluded", label: "Excluded" },
+      { id: "actions", label: "Actions" },
     ],
     active: "dashboard",
     currentTabs() { return this.repoKind === "backblaze" ? this.bzTabs : this.tabs; },
@@ -129,6 +130,9 @@ document.addEventListener("alpine:init", () => {
     treeDeletedOnly: false, treeOverGb: false, treeExt: "", treeFlat: false,
     query: "", deletedOnly: false, overOneGb: false, searchSource: "", searchExt: "", searchExtExclude: "", omniMeta: "",
     groupByFolder: false, groupDepth: 3, groupMinGb: 0, groupMinFiles: 0,
+    churnDays: "30", churnDepth: 4, churnView: "source", churnData: null, churnMeta: "", _churnSeq: 0,
+    indexMode: "daily", indexTime: "23:00", indexInterval: 86400, dashboardMode: "nightly",
+    freshness: [], _freshTimer: null,
     searchTotal: 0, searchPage: 1, searchPageSize: "500", searchSort: "size", searchDir: "desc",
     pageSizes: ["100", "200", "500", "1000", "2000", "5000", "10000", "Infinite"],
     showFilters: false, minGb: "", maxGb: "", dateFrom: "", dateTo: "", minVersions: "", sharedMin: "", recentBackup: "",
@@ -195,6 +199,13 @@ document.addEventListener("alpine:init", () => {
         this.treeDedupe = !!kl.tree_dedupe;
         this.treeMode = kl.tree_mode || "full";
         this.reindexInterval = Number(kl.reindex_interval || 1800);
+        this.churnDays = String(kl.churn_days || 30);
+        this.churnDepth = Number(kl.churn_depth || 4);
+        this.churnView = kl.churn_view || "source";
+        this.indexMode = kl.index_mode || "daily";
+        this.indexTime = kl.index_time || "23:00";
+        this.indexInterval = Number(kl.index_interval || 86400);
+        this.dashboardMode = kl.dashboard_mode || "nightly";
         this.dashRefresh = Number(kl.dashboard_refresh ?? 900);
         this.reclaimInterval = Number(kl.reclaim_interval || 10800);
         this.excludedTolerance = Number(kl.excluded_tolerance ?? 0.05);
@@ -211,6 +222,15 @@ document.addEventListener("alpine:init", () => {
         }
       });
       this.armAutoRefresh();
+      this.armFreshness();
+    },
+
+    armFreshness() {
+      // One cached call covers all three repos. Skipped while the tab is hidden so a background
+      // window is not polling all night.
+      if (this._freshTimer) { clearInterval(this._freshTimer); this._freshTimer = null; }
+      this.loadFreshness();
+      this._freshTimer = setInterval(() => { if (!document.hidden) this.loadFreshness(); }, 30000);
     },
 
     armAutoRefresh() {
@@ -252,9 +272,28 @@ document.addEventListener("alpine:init", () => {
 
     indexLine() {
       const s = this.indexStatus;
+      // The nightly worker holds the database, so this repo's tabs are briefly unavailable.
+      // Say so plainly rather than letting the tabs just error.
+      if (s.offline) return `Indexing (${s.stage || "working"}) ${s.indexed_snapshots || 0}/${s.snapshots || "?"}`;
       if (s.building) return `Indexing ${s.indexed_snapshots || 0}/${s.snapshots || "?"}...`;
       if (s.snapshots === undefined) return "Index: unknown";
       return `Index ${s.indexed_snapshots}/${s.snapshots}`;
+    },
+
+    // ---- Freshness strip: how current each repo's data is (one call covers all three) ----
+    async loadFreshness() {
+      try { this.freshness = (await getJson("/api/index/freshness")).repos || []; } catch (e) { /* non-critical */ }
+    },
+    freshAge(row) {
+      if (row.running) return "indexing now";
+      if (!row.last_index) return "never";
+      const mins = Math.round((Date.now() / 1000 - row.last_index) / 60);
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.round(mins / 60);
+      return hrs < 36 ? `${hrs}h ago` : `${Math.round(hrs / 24)}d ago`;
+    },
+    freshStale(row) {  // amber past a day and a half - long enough that a missed run is the reason
+      return !row.running && (!row.last_index || (Date.now() / 1000 - row.last_index) > 36 * 3600);
     },
 
     async repoChanged() {
@@ -294,6 +333,7 @@ document.addEventListener("alpine:init", () => {
       if (this.active === "snapshots") return this.loadSnapshots();
       if (this.active === "tree") return this.openTree();
       if (this.active === "search") return this.loadSearch();
+      if (this.active === "churn") return this.loadChurn();
       if (this.active === "simulate") return;  // heavy - user clicks Run
       if (this.active === "stats") return this.statsData ? null : this.loadStats();
       if (this.active === "actions") return this.loadMounts();
@@ -313,6 +353,7 @@ document.addEventListener("alpine:init", () => {
         if (this.active === "snapshots") return this.loadSnapshots(true);
         if (this.active === "tree") return this.loadTree();
         if (this.active === "search") return this.loadSearch();
+        if (this.active === "churn") return this.loadChurn(true);
         if (this.active === "stats") return this.loadStats(true);
         if (this.active === "actions") return this.loadMounts();
       }, "Refreshing...");
@@ -660,9 +701,127 @@ document.addEventListener("alpine:init", () => {
       this.loadSearch();
     },
 
+    // ---- Churn: what added NEW backed-up data in a window (by source / folder / file type) ----
+    // One backend computation feeds all three views, so the numbers can never disagree.
+    async loadChurn(refresh = false) {
+      const seq = ++this._churnSeq;
+      await this.wrap(async () => {
+        const p = new URLSearchParams({ repo: this.repo, days: this.churnDays, depth: this.churnDepth, limit: "400" });
+        if (refresh) p.set("refresh", "1");
+        const d = await getJson(`/api/churn?${p.toString()}`);
+        if (seq !== this._churnSeq) return;   // a faster later request already won
+        this.churnData = d;
+        this.churnMeta = `${fmtPhys(d.total_bytes)} attributed · ${fmtPhys(d.total_bytes_deduped)} after dedup · `
+          + `${Number(d.total_files || 0).toLocaleString()} files · ${Number(d.total_versions || 0).toLocaleString()} versions · `
+          + (d.cached ? "cached" : `computed in ${Number(d.elapsed || 0).toFixed(1)}s`);
+        this.renderChurn();
+      }, "Computing churn…");
+    },
+    changeChurn() { this.klSet({ churn_days: this.churnDays, churn_depth: this.churnDepth, churn_view: this.churnView }); this.loadChurn(); },
+    setChurnView(v) { this.churnView = v; this.klSet({ churn_view: v }); this.renderChurn(); },
+
+    renderChurn() {
+      const d = this.churnData;
+      if (!d) return;
+      const bytesCol = { title: "New data", field: "bytes", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => fmtPhys(c.getValue()) };
+      const verCol = { title: "Versions", field: "versions", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(), headerTooltip: "How many file-versions were written. A big number against few files means the same files are being rewritten." };
+      const fileCol = { title: "Files", field: "files", width: 90, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() };
+      let rows = [], cols = [], menu = [];
+      if (this.churnView === "source") {
+        rows = d.by_source || [];
+        cols = [
+          { title: "Source", field: "source", widthGrow: 3, minWidth: 220, formatter: (c) => {
+              const r = c.getRow().getData();
+              const warn = r.nested_in ? ` <span title="Also covered by ${sourcePath(r.nested_in)}, so this data is snapshotted twice and counted in both rows" style="color:#d97706">⚠ inside ${sourcePath(r.nested_in)}</span>` : "";
+              return sourcePath(c.getValue()) + warn;
+            } },
+          bytesCol, verCol, fileCol,
+          { title: "Mostly from", field: "top_folder", widthGrow: 2, minWidth: 180, headerSort: false,
+            formatter: (c) => { const r = c.getRow().getData(); return r.top_folder ? `${r.top_folder} <span style="opacity:.6">(${fmtPhys(r.top_folder_bytes)})</span>` : ""; } },
+        ];
+        menu = [{ label: "Folder details for the top folder", action: (_e, row) => { const r = row.getData(); if (r.top_folder) this.openFolderPanel(r.top_folder); } }];
+      } else if (this.churnView === "folder") {
+        rows = d.by_folder || [];
+        cols = [
+          { title: "Folder", field: "folder", widthGrow: 4, minWidth: 280 },
+          bytesCol, verCol, fileCol,
+          { title: "Sources", field: "source_count", width: 90, hozAlign: "right", sorter: "number",
+            headerTooltip: "How many backup sources cover this folder. More than one means it is snapshotted more than once.",
+            formatter: (c) => { const r = c.getRow().getData(); const n = r.source_count || 0;
+              return n > 1 ? `<span title="${(r.sources || []).map(sourcePath).join(", ")}" style="color:#d97706">${n} ⚠</span>` : String(n); } },
+        ];
+        menu = [
+          { label: "Folder details", action: (_e, row) => this.openFolderPanel(row.getData().folder) },
+          { label: "Delete folder (chunked)…", action: (_e, row) => this.openRemoveFolderPath(row.getData().folder) },
+        ];
+      } else {
+        rows = (d.by_ext || []).map((r) => ({ ...r, ext: r.ext || "(no extension)" }));
+        cols = [{ title: "File type", field: "ext", widthGrow: 2, minWidth: 160 }, bytesCol, verCol, fileCol];
+      }
+      setTable("#churnTable", rows, cols, {
+        rowMenu: menu.length ? menu : undefined,
+        onRowDblClick: (_e, row) => {
+          const r = row.getData();
+          if (this.churnView === "folder") this.openFolderPanel(r.folder);
+          else if (this.churnView === "source") { this.active = "search"; this.searchSource = r.source; this.query = ""; this.loadSearch(); }
+          else if (r.ext && r.ext !== "(no extension)") { this.active = "search"; this.searchExt = r.ext; this.loadSearch(); }
+        },
+      });
+    },
+
+    // ---- Folder detail panel (reuses the file detail modal shell; folder-specific fields) ----
+    // Renders instantly from indexed lookups, then patches in the expensive freeable/shared numbers
+    // and the effective kopia policy - the same lazy pattern the file panel uses.
+    async openFolderPanel(prefix, source = null) {
+      if (!prefix) return;
+      const seq = ++this._detailSeq;
+      this.detail = { kind: "folder", title: prefix, source, loading: true, heavyLoading: true, sources: [], children: [] };
+      try {
+        const p = new URLSearchParams({ repo: this.repo, prefix });
+        if (source) p.set("source", source);
+        const sum = await getJson(`/api/folder/summary?${p.toString()}`);
+        if (seq !== this._detailSeq) return;
+        Object.assign(this.detail, sum, { loading: false });
+      } catch (e) {
+        if (seq === this._detailSeq) { this.detail.loading = false; this.detail.error = e.message; }
+        return;
+      }
+      // Heavy pass: the chunk walk behind freeable / shared.
+      getJson("/api/folder/detail", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repo: this.repo, prefix, source }) })
+        .then((r) => { if (seq === this._detailSeq && this.detail) Object.assign(this.detail, r, { heavyLoading: false }); })
+        .catch(() => { if (seq === this._detailSeq && this.detail) this.detail.heavyLoading = false; });
+      // Effective policy for this exact folder (kopia resolves inheritance), via its main source.
+      const main = (this.detail.sources || [])[0];
+      if (main) {
+        getJson(`/api/folder/policy?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(main.source)}&prefix=${encodeURIComponent(prefix)}`)
+          .then((r) => { if (seq === this._detailSeq && this.detail) this.detail.effective_policy = r.policy; })
+          .catch(() => {});
+      }
+    },
+    folderDeleteFromPanel() {
+      if (!this.detail || this.detail.kind !== "folder") return;
+      const prefix = this.detail.title;
+      const only = this.detail.source || null;   // panel opened scoped to one source keeps that scope
+      this.detail = null;
+      this.openRemoveFolderPath(prefix, only);
+    },
+    folderShowFiles() {
+      if (!this.detail || this.detail.kind !== "folder") return;
+      const prefix = this.detail.title;
+      this.detail = null;
+      this.groupByFolder = false; this.active = "search"; this.query = prefix; this.searchPage = 1;
+      this.loadSearch();
+    },
+
     // ---- Bloat finder: group backed-up paths by folder, ranked by physical (own #groupTable) ----
     toggleGroupByFolder() { this.groupByFolder = !this.groupByFolder; this.searchPage = 1; this.loadSearch(); },
     drillFolder(row) { this.groupByFolder = false; this.query = row.folder; this.searchPage = 1; this.loadSearch(); },
+    selectedGroupFolder() {  // the By-folder table is a SEPARATE Tabulator instance from #searchTable
+      const el = document.querySelector("#groupTable");
+      const rows = (el && el._tabulator) ? el._tabulator.getSelectedData() : [];
+      return rows.length ? rows[0] : null;
+    },
     async loadGroupByFolder() {
       await this.wrap(async () => {
         const p = new URLSearchParams({ repo: this.repo, depth: this.groupDepth, q: this.query || "", sort: "physical", direction: "desc", limit: 500 });
@@ -686,8 +845,12 @@ document.addEventListener("alpine:init", () => {
           { title: "Last seen", field: "last_seen", width: 155, formatter: (c) => String(c.getValue() || "").replace("T", " ").slice(0, 19) },
         ];
         setTable("#groupTable", rows, cols, {
-          onRowDblClick: (_e, row) => this.drillFolder(row.getData()),
-          rowMenu: [{ label: "Drill into files (then batch-remove)", action: (_e, row) => this.drillFolder(row.getData()) }],
+          onRowDblClick: (_e, row) => this.openFolderPanel(row.getData().folder),
+          rowMenu: [
+            { label: "Folder details", action: (_e, row) => this.openFolderPanel(row.getData().folder) },
+            { label: "Drill into files (then batch-remove)", action: (_e, row) => this.drillFolder(row.getData()) },
+            { label: "Delete folder (chunked)…", action: (_e, row) => this.openRemoveFolderPath(row.getData().folder) },
+          ],
         });
       }, "Grouping folders…");
     },
@@ -916,6 +1079,14 @@ document.addEventListener("alpine:init", () => {
         .filter((f) => f.source && f.full_path);
     },
     async batchRemove(scope) {
+      // In By-folder view the visible table is #groupTable, which _selFiles never looked at - so a
+      // selected folder always reported "select one or more files first". Route it to the chunked
+      // folder plan instead, which is what deleting a folder actually needs.
+      if (scope === "search" && this.groupByFolder) {
+        const row = this.selectedGroupFolder();
+        if (!row) { window.alert("Select a folder first."); return; }
+        return this.openRemoveFolderPath(row.folder);
+      }
       const files = this._selFiles(scope);
       if (!files.length) { window.alert("Select one or more files first."); return; }
       const r = await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, by: "filename", files, confirm: false }) }).catch((e) => { this.error = e.message; return null; });
@@ -1008,11 +1179,18 @@ document.addEventListener("alpine:init", () => {
       this._removeLabel = (row.type === "folder" ? "folder " : "") + (row.path || row.name);
       this.buildRemovePlan();
     },
+    openRemoveFolderPath(prefix, source = null) {
+      // Cross-source folder delete (By-folder view, Churn, the folder panel). No tree filters, and
+      // no source scope unless one is given, so every source holding the folder is covered.
+      this._removeBase = { repo: this.repo, source, prefix, deleted_only: false, over_gb: 0, ext: null };
+      this._removeLabel = "folder " + prefix + (source ? " (in " + sourcePath(source) + ")" : " (all sources)");
+      this.buildRemovePlan();
+    },
     buildRemovePlan() {
       // Folder/file-context deletes (a Tree prefix) default to ALL versions: latest-only would
       // silently leave every older version's bytes in old snapshots ("deleted" folder still there).
       const allVers = !!(this._removeBase && this._removeBase.prefix);
-      this.removePlan = { loading: true, label: this._removeLabel, all_versions: allVers, everywhere: false, by: "object-id", detail: null, detailLoading: false, job: null, batSaved: null };
+      this.removePlan = { loading: true, label: this._removeLabel, all_versions: allVers, everywhere: false, by: "object-id", detail: null, detailLoading: false, job: null, batSaved: null, top_n: 0 };
       this.showRemove = true;
       this._fetchRemovePlan();
     },
@@ -1037,7 +1215,22 @@ document.addEventListener("alpine:init", () => {
       const r = await getJson("/api/actions/remove-detail", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
       if (this.removePlan) { this.removePlan.detail = r; this.removePlan.detailLoading = false; }
     },
-    _removeBody() { return { ...this._removeBase, all_versions: this.removePlan.all_versions, everywhere: this.removePlan.everywhere, by: this.removePlan.by }; },
+    _removeBody() {
+      const body = { ...this._removeBase, all_versions: this.removePlan.all_versions,
+                     everywhere: this.removePlan.everywhere, by: this.removePlan.by };
+      if (this.removePlan.top_n) body.cap = this.removePlan.top_n;  // biggest-physical-first is already the order
+      return body;
+    },
+    setRemoveTopN(n) {
+      if (!this.removePlan || this.removePlan.job) return;
+      this.removePlan.top_n = n || 0;
+      this._fetchRemovePlan();
+    },
+    removeCoverage() {  // "these 100 files are 70% of the folder" - the number that makes top-N a decision
+      const p = this.removePlan;
+      if (!p || !p.total_physical) return null;
+      return Math.round((p.physical / p.total_physical) * 100);
+    },
     async removeSaveBat() {
       const r = await getJson("/api/actions/remove-bat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
       if (!r || !this.removePlan) return;
@@ -1251,17 +1444,6 @@ document.addEventListener("alpine:init", () => {
       finally { this.diffBusy = false; }
     },
 
-    // ---- Folder reclaim (detail panel) ----
-    async computeFolderReclaim() {
-      if (!this.detail || this.detail.kind !== "folder") return;
-      this.detail.reclaimLoading = true;
-      try {
-        const r = await getJson("/api/actions/folder-reclaim", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.selectedSource, prefix: this.detail.title }) });
-        this.detail.physical = r.physical; this.detail.freeable = r.freeable; this.detail.shared = r.shared; this.detail.files = r.files;
-      } catch (e) { this.error = e.message || String(e); }
-      finally { this.detail.reclaimLoading = false; }
-    },
-
     // ---------- Simulate (all sources or one) ----------
     async runSimulate(refresh = false) {
       await this.wrap(async () => {
@@ -1358,6 +1540,13 @@ document.addEventListener("alpine:init", () => {
         const kl = data.settings?.kopialens || {};
         this.backend = data.settings?.listing_backend || "subprocess";
         this.reindexInterval = Number(kl.reindex_interval || 1800);
+        this.churnDays = String(kl.churn_days || 30);
+        this.churnDepth = Number(kl.churn_depth || 4);
+        this.churnView = kl.churn_view || "source";
+        this.indexMode = kl.index_mode || "daily";
+        this.indexTime = kl.index_time || "23:00";
+        this.indexInterval = Number(kl.index_interval || 86400);
+        this.dashboardMode = kl.dashboard_mode || "nightly";
         this.dashRefresh = Number(kl.dashboard_refresh ?? 900);
         this.reclaimInterval = Number(kl.reclaim_interval || 10800);
         this.excludedTolerance = Number(kl.excluded_tolerance ?? 0.05);
@@ -1367,10 +1556,10 @@ document.addEventListener("alpine:init", () => {
     },
     async saveSettings() {
       await this.wrap(async () => {
-        await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listing_backend: this.backend, kopialens: { reindex_interval: Number(this.reindexInterval) || 1800, dashboard_refresh: Number(this.dashRefresh) || 0, reclaim_interval: Number(this.reclaimInterval) || 10800, excluded_tolerance: Number(this.excludedTolerance), es_path: this.esPath || "" } }) });
+        await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listing_backend: this.backend, kopialens: { reindex_interval: Number(this.reindexInterval) || 1800, dashboard_refresh: Number(this.dashRefresh) || 0, reclaim_interval: Number(this.reclaimInterval) || 10800, excluded_tolerance: Number(this.excludedTolerance), es_path: this.esPath || "", index_mode: this.indexMode, index_time: this.indexTime, index_interval: Number(this.indexInterval) || 86400, dashboard_mode: this.dashboardMode } }) });
         this.armAutoRefresh();  // apply the new dashboard auto-refresh interval immediately
         this.showSettings = false;
-        window.alert("Saved. The background interval applies on the next cycle; the listing backend change needs a restart.");
+        window.alert("Saved. Scheduling and interval changes are picked up on the next tick (within a minute); the listing backend change needs a restart.");
       });
     },
     async compactNow() {

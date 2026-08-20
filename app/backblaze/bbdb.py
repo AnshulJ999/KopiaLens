@@ -119,6 +119,15 @@ def _init_schema(con: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS events_archive_ts ON events_archive(ts);
 
+        -- what Backblaze ACTUALLY finished backing up per day, summed from bz_done_*.dat.
+        -- Keyed by (day, src) so re-parsing one bz_done file only replaces its own rows; the
+        -- newest file is still being appended to, older ones are immutable once rotated.
+        CREATE TABLE IF NOT EXISTS backup_days (
+            day TEXT, src TEXT, files INTEGER, bytes INTEGER,
+            PRIMARY KEY (day, src)
+        );
+        CREATE INDEX IF NOT EXISTS backup_days_day ON backup_days(day);
+
         CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
         CREATE TABLE IF NOT EXISTS ingest (source TEXT PRIMARY KEY, mtime REAL, size INTEGER, extra TEXT);
         """
