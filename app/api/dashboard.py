@@ -66,7 +66,10 @@ def post_index_build(repo: str = "1", source: str | None = None, full: bool = Fa
     try:
         if source:
             return start_build(repo, source=source, full=full)
-        return start_index_pass_async(repo, full=full)
+        # Same completion callback the scheduler uses - otherwise a successful MANUAL index would
+        # leave the freshness strip showing the old success time.
+        from ..main import mark_nightly_result  # lazy: app.main imports this router
+        return start_index_pass_async(repo, full=full, on_done=mark_nightly_result)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

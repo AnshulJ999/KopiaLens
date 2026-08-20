@@ -29,8 +29,9 @@ log = get_logger("foldercache")
 
 _SEP = chr(92)
 _MAX_ENTRIES = 4000          # plenty for every folder the UI realistically browses
-_PREWARM_TOP = 150           # biggest folders per depth, by physical
+_PREWARM_TOP = 60            # biggest folders per depth, by physical
 _PREWARM_DEPTHS = (2, 3, 4)
+_PREWARM_BUDGET = 900.0      # seconds; see prewarm() - the pre-compute must not own the night
 
 _LOCK = threading.Lock()
 _MEM: dict[str, dict] = {}   # repo -> {key: payload}
@@ -109,8 +110,11 @@ def compute(repo: str, prefix: str, source: str | None = None) -> dict:
         if hit is not None:
             return {**hit, "cached": True}
         start = time.time()
+        # Stamp taken BEFORE the work: if the index moves while this runs, the result belongs to
+        # the OLD index and must expire, not be filed under the newer stamp as if it were fresh.
+        stamp = _index_hash(repo)
         payload = folder_detail(repo, source, prefix)
-        payload.update({"prefix": prefix, "source": source, "stamp": _index_hash(repo),
+        payload.update({"prefix": prefix, "source": source, "stamp": stamp,
                         "computed_at": time.time(), "elapsed": round(time.time() - start, 2)})
         data = _load(repo)
         with _LOCK:
@@ -122,20 +126,42 @@ def compute(repo: str, prefix: str, source: str | None = None) -> dict:
         return {**payload, "cached": False}
 
 
+def _prewarm_budget() -> float:
+    try:
+        from ..settings import load_settings
+        return max(0.0, float(load_settings().get("kopialens", {}).get("folder_prewarm_budget", _PREWARM_BUDGET)))
+    except Exception:  # noqa: BLE001
+        return _PREWARM_BUDGET
+
+
 def prewarm(repo: str, top: int = _PREWARM_TOP, depths=_PREWARM_DEPTHS) -> None:
     """Nightly: compute the biggest folders at each browsing depth so the panel is instant for the
-    ones actually worth opening. Bounded by ``top`` per depth, and never fatal - a folder that
-    fails just stays uncached and is computed on demand later."""
+    ones actually worth opening.
+
+    Hard wall-clock budget, because this is the one stage whose cost is unbounded by anything else:
+    the biggest folders are also the slowest to compute (an all-versions chunk union over millions
+    of rows), so an unbounded "top N per depth" could run for hours and own the whole night.
+    Whatever it does not reach stays uncached and is computed on demand when the user opens it -
+    a few seconds once, rather than an overnight job that never ends. Biggest-first ordering means
+    the budget is always spent on the folders most worth having ready.
+    """
+    budget = _prewarm_budget()
     seen: set[str] = set()
     done = failed = 0
     start = time.time()
+    stopped_early = False
     for depth in depths:
+        if stopped_early:
+            break
         try:
             rows = group_by_folder(repo, depth=depth, sort="physical", direction="desc", limit=top)["rows"]
         except Exception as exc:  # noqa: BLE001
             log.warning("repo=%s folder prewarm depth=%d listing failed: %s", repo, depth, exc)
             continue
         for row in rows:
+            if budget and time.time() - start > budget:
+                stopped_early = True
+                break
             prefix = row.get("folder")
             if not prefix or prefix.lower() in seen:
                 continue
@@ -146,5 +172,6 @@ def prewarm(repo: str, top: int = _PREWARM_TOP, depths=_PREWARM_DEPTHS) -> None:
             except Exception as exc:  # noqa: BLE001 - one bad folder must not end the pass
                 failed += 1
                 log.warning("repo=%s folder prewarm failed for %s: %s", repo, prefix, exc)
-    log.info("repo=%s folder reclaim prewarm: %d computed, %d failed, %.0fs",
-             repo, done, failed, time.time() - start)
+    log.info("repo=%s folder reclaim prewarm: %d computed, %d failed, %.0fs%s",
+             repo, done, failed, time.time() - start,
+             " (stopped at the time budget)" if stopped_early else "")

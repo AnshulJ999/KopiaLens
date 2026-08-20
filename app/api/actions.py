@@ -348,7 +348,8 @@ def remove_detail(payload: RemovePlanRequest) -> dict:
     # entire folder's freeable/shared - numbers with nothing to do with what is about to be
     # deleted, in exactly the workflow the cap exists for.
     if payload.prefix and len(t["sources"]) == 1 and not t.get("capped"):
-        out = folder_detail(payload.repo, t["sources"][0], payload.prefix)
+        out = folder_detail(payload.repo, t["sources"][0], payload.prefix,
+                            all_versions=payload.all_versions)
         out["scope"] = "folder"
         return out
     files = [{"source": s, "full_path": fp} for s, fp in t["pairs"][:5000]]  # cap the walk

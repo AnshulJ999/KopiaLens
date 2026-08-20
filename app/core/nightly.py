@@ -118,6 +118,16 @@ def terminate_running(grace: float = 10.0) -> None:
                 pass
 
 
+def wait_idle(timeout: float = 20.0) -> bool:
+    """Wait (briefly) for any in-flight pass thread to finish unwinding. terminate_running() ends
+    the CHILD process, but the parent thread still has to reopen and possibly compact the DuckDB;
+    tearing the connection down underneath it is asking for trouble. Returns True if it went idle."""
+    deadline = time.time() + timeout
+    while any_running() and time.time() < deadline:
+        time.sleep(0.2)
+    return not any_running()
+
+
 def _run_worker(repo: str, full: bool) -> dict:
     """Run the worker subprocess. Its stderr (all the run's log lines) goes to a file rather than a
     parent-side buffer: it survives the run for diagnosis, and none of it sits in this process."""
@@ -208,12 +218,16 @@ def _run_backblaze(repo: str) -> dict:
     return summary
 
 
-def run_index_pass(repo: str, full: bool = False) -> dict:
+def run_index_pass(repo: str, full: bool = False, _owned: bool = False) -> dict:
     """Run this repo's heavy pass to completion. Returns immediately with ``already running`` if
-    one is in flight. Safe to call from a request thread as long as the caller does not block on it."""
+    one is in flight. Safe to call from a request thread as long as the caller does not block on it.
+
+    ``_owned`` means the caller already holds the slot for this repo (``start_index_pass_async``
+    reserves synchronously so its return value is truthful) and is handing ownership over; this
+    call then releases it at the end as usual."""
     if repo not in REPOS:
         return {"ok": False, "reason": f"unknown repo {repo}"}
-    if not _reserve(repo):
+    if not _owned and not _reserve(repo):
         busy = reserved_repo()
         return {"ok": False, "skipped": True, "repo": repo,
                 "reason": "already indexing" if busy == repo else f"repo {busy} is indexing"}
@@ -241,14 +255,14 @@ def start_index_pass_async(repo: str, full: bool = False, on_done=None) -> dict:
     """Fire-and-forget wrapper for the UI's Index button - the caller polls ``/api/index/status``.
     Takes the same single global slot the scheduler uses, so a manual Index cannot start a second
     worker alongside a nightly one on another repo."""
-    busy = reserved_repo()
-    if busy is not None:      # fast answer for the UI; run_index_pass is the real gate
+    if not _reserve(repo):    # synchronous, so a "started" answer is never a guess
+        busy = reserved_repo()
         return {"started": False, "repo": repo,
                 "reason": "already indexing" if busy == repo else f"repo {busy} is indexing"}
 
     def _go() -> None:
-        summary = run_index_pass(repo, full)
-        if on_done and not summary.get("skipped"):   # a lost race is not a failed pass
+        summary = run_index_pass(repo, full, _owned=True)
+        if on_done and not summary.get("skipped"):
             try:
                 on_done(repo, bool(summary.get("ok", False)))
             except Exception:  # noqa: BLE001 - a reporting callback must not break the pass

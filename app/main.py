@@ -408,6 +408,7 @@ async def lifespan(_app: FastAPI):
     log.info("KopiaLens shutting down")
     _bg_stop.set()
     nightly.terminate_running()  # a worker outlives us otherwise and keeps the DuckDB locked
+    nightly.wait_idle()          # let the pass thread finish reopening before we close anything
     SERVERS.shutdown()
     close_duckdb()
     try:

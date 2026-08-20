@@ -250,7 +250,7 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500) -> dict[str, 
     return out
 
 
-def folder_detail(repo: str, source: str | None, prefix: str) -> dict:
+def folder_detail(repo: str, source: str | None, prefix: str, all_versions: bool = True) -> dict:
     """Subtree reclaim over EVERY version, not just the latest.
 
     This used to read the ``paths`` table, which holds one row per path carrying only its LATEST
@@ -280,6 +280,10 @@ def folder_detail(repo: str, source: str | None, prefix: str) -> dict:
     if source:
         where += " AND source = ?"
         params.append(source)
+    # `files` carries every version; `paths` carries one row per path at its latest object. The
+    # delete panel can be set to latest-only, and then the reclaim figure must match THAT, not the
+    # all-versions number - a preview that describes a different operation is worse than none.
+    table = "files" if all_versions else "paths"
     cur = read_cursor(repo)
     try:
         # Aggregate in DuckDB, not Python: one row per DISTINCT object with how many (source, path)
@@ -287,13 +291,13 @@ def folder_detail(repo: str, source: str | None, prefix: str) -> dict:
         # rows on a big folder; this is the same information in a fraction of the memory.
         objs = cur.execute(
             f"SELECT content_id, count(*) AS refs FROM ("
-            f"  SELECT DISTINCT source, full_path, content_id FROM files WHERE {where}"
+            f"  SELECT DISTINCT source, full_path, content_id FROM {table} WHERE {where}"
             f") GROUP BY content_id",
             params,
         ).fetchall()
         agg = cur.execute(
             f"SELECT count(*), COALESCE(sum(size), 0) FROM ("
-            f"  SELECT DISTINCT source, full_path, max(size) AS size FROM files WHERE {where}"
+            f"  SELECT DISTINCT source, full_path, max(size) AS size FROM {table} WHERE {where}"
             f"  GROUP BY source, full_path"
             f")",
             params,
@@ -318,7 +322,7 @@ def folder_detail(repo: str, source: str | None, prefix: str) -> dict:
     return {
         "logical": int(agg[1] or 0), "physical": physical, "freeable": freeable,
         "files": int(agg[0] or 0), "shared": physical - freeable,
-        "objects": len(objs), "all_versions": True,
+        "objects": len(objs), "all_versions": all_versions,
     }
 
 

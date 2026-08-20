@@ -367,10 +367,10 @@ def exclusive_offline(repo: str, reason: str = "indexing", drain_timeout: float 
                             f"repo {repo}: {outstanding} operation(s) still in flight after "
                             f"{drain_timeout:.0f}s - a long-running query is holding the database")
                     _MAINT_COND.wait(timeout=rem)
+                con = _POOL.pop(repo, None)   # inside the lock: nothing may re-open it now
             waited = time.time() - waited_from
             if waited > 1:
                 log.info("repo=%s waited %.0fs for in-flight queries before handover", repo, waited)
-                con = _POOL.pop(repo, None)
             if con is not None:
                 try:
                     con.execute("CHECKPOINT")

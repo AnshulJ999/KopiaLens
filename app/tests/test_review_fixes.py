@@ -214,3 +214,57 @@ def test_a_second_repo_cannot_start_while_one_is_indexing(monkeypatch):
         assert nightly.run_index_pass("2").get("skipped") is True
     finally:
         nightly._release("1")
+
+
+# ---- the offline handover itself -------------------------------------------------------------
+# Nothing exercised exclusive_offline, which is how an UnboundLocalError on its FAST path (drain
+# completes immediately - the normal case) survived py_compile and a green suite.
+def test_exclusive_offline_fast_path_hands_over_and_reopens(tmp_path, monkeypatch):
+    import duckdb
+    from app.index import schema
+
+    dbfile = tmp_path / "t.duckdb"
+    con = duckdb.connect(str(dbfile))
+    con.execute("CREATE TABLE t(x INTEGER)")
+    monkeypatch.setitem(schema._POOL, "1", con)
+    monkeypatch.setattr(schema, "get_db", lambda repo: schema._POOL.get(repo))
+    monkeypatch.setattr(schema, "_drain_timeout_default", lambda: 5.0)
+
+    class _NoLock:
+        def acquire(self, *a, **k):
+            return True
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr("app.core.metrics._build_lock", lambda repo, mode: _NoLock())
+
+    inside = {}
+    with schema.exclusive_offline("1", reason="indexing"):
+        inside["offline"] = schema.offline_status("1") is not None
+        inside["pool_empty"] = "1" not in schema._POOL
+    assert inside["offline"] is True, "repo was not marked offline"
+    assert inside["pool_empty"] is True, "the pooled connection was not released to the worker"
+    assert schema.offline_status("1") is None, "repo stayed offline after the block"
+
+
+def test_exclusive_offline_reports_what_is_blocking_on_timeout(monkeypatch):
+    from app.index import schema
+
+    class _NoLock:
+        def acquire(self, *a, **k):
+            return True
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr("app.core.metrics._build_lock", lambda repo, mode: _NoLock())
+    monkeypatch.setitem(schema._active_reads, "9", 3)   # pretend three queries are stuck
+    try:
+        with pytest.raises(TimeoutError) as err:
+            with schema.exclusive_offline("9", drain_timeout=0.2):
+                pass
+        assert "3 operation(s) still in flight" in str(err.value)
+        assert schema.offline_status("9") is None, "a failed drain must not leave the repo offline"
+    finally:
+        schema._active_reads.pop("9", None)
