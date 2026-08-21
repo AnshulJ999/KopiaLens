@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException
 
 from pydantic import BaseModel
 
-from config import repo_kind
+from config import REPOS, repo_kind
 
 from ..core.policy import effective_for_path, source_summaries, summarize
 from ..index.schema import RepoOffline
@@ -65,6 +65,8 @@ router = APIRouter(tags=["insights"])
 
 
 def _require_kopia(repo: str) -> None:
+    if repo not in REPOS:   # repo_kind() answers "kopia" for ids that do not exist
+        raise HTTPException(status_code=400, detail=f"unknown repo {repo!r}")
     if repo_kind(repo) != "kopia":
         raise HTTPException(status_code=400, detail=f"repo {repo!r} is not a kopia repo")
 

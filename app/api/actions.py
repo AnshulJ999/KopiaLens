@@ -35,6 +35,7 @@ from ..core.kopia import (
     unmount,
 )
 from ..core.sources import invalidate as invalidate_sources, sources_index
+from ..index.schema import RepoOffline
 from ..index.builder import start_build
 from ..index.physical import batch_detail, folder_detail
 from ..index.queries import remove_targets, snapshots_for_path, sources_for_content, versions as file_versions
@@ -119,6 +120,8 @@ def mount(payload: MountRequest) -> dict:
     try:
         proc = mount_snapshot(payload.repo, payload.snapshot_id, payload.mountpoint)
         return {"pid": proc.pid, "command": proc.args}
+    except RepoOffline:
+        raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -138,6 +141,8 @@ def mount_open(payload: MountOpenRequest) -> dict:
     try:
         proc = mount_and_browse(payload.repo, payload.snapshot_id, mountpoint, in_mount_target=in_mount_target)
         return {"pid": proc.pid, "command": proc.args, "mountpoint": mountpoint, "opening": in_mount_target}
+    except RepoOffline:
+        raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -431,6 +436,8 @@ def folder_reclaim(payload: FolderReclaimRequest) -> dict:
     """Subtree reclaim (logical / physical / freeable) for a folder - an on-demand walk."""
     try:
         return folder_detail(payload.repo, payload.source, payload.prefix)
+    except RepoOffline:
+        raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

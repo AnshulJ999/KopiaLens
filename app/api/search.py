@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from pydantic import BaseModel
 
+from ..index.schema import RepoOffline
 from ..index.physical import file_detail, reclaim_for
 from ..index.queries import group_by_folder, landing, search_export, search_paths, versions
 
@@ -94,6 +95,8 @@ def search(
                 min_versions=min_versions, shared_min=shared_min, dedupe=dedupe,
             )
         return {"results": res["rows"], "total": res["total"], "offset": res["offset"], "limit": res["limit"]}
+    except RepoOffline:
+        raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -104,6 +107,8 @@ def search_reclaim(payload: ReclaimRequest) -> dict:
     content ids (the visible page, capped). Cached per content id. Frontend sorts by it."""
     try:
         return {"reclaim": reclaim_for(payload.repo, payload.content_ids, cap=payload.cap)}
+    except RepoOffline:
+        raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -158,5 +163,7 @@ def detail(repo: str = "1", source: str | None = None, full_path: str | None = N
         raise HTTPException(status_code=400, detail="source and full_path are required")
     try:
         return file_detail(repo, source, full_path)
+    except RepoOffline:
+        raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

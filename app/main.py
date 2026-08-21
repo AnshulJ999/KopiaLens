@@ -353,8 +353,14 @@ def _tick() -> None:
             if _index_due(repo, now_dt, now_ts):
                 slot = _current_slot(now_dt, now_ts)
                 log.info("heavy pass due for repo=%s (mode=%s, slot=%s)", repo, _index_mode(), int(slot))
-                _mark_nightly(repo, slot)           # stamp the attempt before launching, not after
-                nightly.start_index_pass_async(repo, on_done=mark_nightly_result)
+                # Launch FIRST, record second. Recording before reserving meant a manual Index
+                # winning the race left the slot marked attempted but never completed, so that
+                # night's run was silently lost.
+                started = nightly.start_index_pass_async(repo, on_done=mark_nightly_result)
+                if started.get("started"):
+                    _mark_nightly(repo, slot)
+                else:
+                    log.info("heavy pass for repo=%s deferred: %s", repo, started.get("reason"))
                 break  # strictly sequential - the next repo gets its turn on a later tick
     if now_ts - _last_light >= _light_interval():
         _last_light = now_ts

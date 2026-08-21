@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from ..core.sources import sources_index
+from ..index.schema import RepoOffline
 from ..index.queries import (
     flat_files,
     tree_children,
@@ -155,5 +156,7 @@ def tree(
         return {"children": children, "mode": mode}
     except HTTPException:
         raise
+    except RepoOffline:
+        raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

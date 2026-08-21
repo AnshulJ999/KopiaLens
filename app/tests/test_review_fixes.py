@@ -342,3 +342,44 @@ def test_reaper_handles_an_already_dead_pid(tmp_path, monkeypatch):
     monkeypatch.setattr("psutil.Process", _boom)
     assert nightly.reap_orphan_workers() == []
     assert not f.exists()
+
+
+# ---- an unknown repo id must never strand the global slot -------------------------------------
+# Reproduced live: /api/index/build?repo=bad answered "started: true", the thread bailed at the
+# unknown-repo check ABOVE the try/finally that releases, and every later index request was refused
+# with "repo bad is indexing" until a restart. repo_kind() answering "kopia" for a nonexistent id
+# is why the endpoint guard did not stop it.
+def test_unknown_repo_does_not_jam_the_heavy_pass_slot():
+    from app.core import nightly
+
+    assert nightly.reserved_repo() is None, "slot dirty before the test"
+    r = nightly.start_index_pass_async("definitely-not-a-repo")
+    assert r["started"] is False
+    assert nightly.reserved_repo() is None, "an unknown repo left the slot reserved"
+    # and a valid request must still work afterwards
+    assert nightly._reserve("1") is True
+    nightly._release("1")
+
+
+def test_owned_bail_on_unknown_repo_releases_the_slot():
+    """Defence in depth: even if a caller reserves and then hands over an unknown repo."""
+    from app.core import nightly
+
+    assert nightly._reserve("bogus") is True
+    out = nightly.run_index_pass("bogus", _owned=True)
+    assert out.get("skipped") is True
+    assert nightly.reserved_repo() is None, "the _owned bail path stranded the slot"
+
+
+def test_unknown_repo_is_rejected_by_the_api_guard():
+    """repo_kind() defaults to 'kopia' for ids that do not exist, so membership must be checked."""
+    from fastapi import HTTPException
+    from app.api.dashboard import _require_kopia
+
+    for bad in ("bad", "", "99"):
+        try:
+            _require_kopia(bad)
+        except HTTPException as exc:
+            assert exc.status_code == 400
+        else:
+            raise AssertionError(f"_require_kopia accepted unknown repo {bad!r}")

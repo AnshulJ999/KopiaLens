@@ -167,9 +167,14 @@ def reap_orphan_workers() -> list[str]:
             except psutil.NoSuchProcess:
                 pass
             except Exception as exc:  # noqa: BLE001 - never block startup on cleanup
-                log.warning("could not reap worker pid %s: %s", pid, exc)
+                # Could not inspect it - it may still be alive and holding the DuckDB. KEEP the
+                # progress file: deleting it would destroy the only record of which PID to reap,
+                # so the next startup could not recover either.
+                log.warning("could not inspect worker pid %s (%s) - keeping %s for the next "
+                            "startup to retry", pid, exc, os.path.basename(path))
+                continue
         try:
-            os.remove(path)   # stale either way: the worker that owned it is gone
+            os.remove(path)   # the worker that owned it is confirmed gone
         except Exception:  # noqa: BLE001
             pass
     return reaped
@@ -273,7 +278,9 @@ def run_index_pass(repo: str, full: bool = False, _owned: bool = False) -> dict:
     reserves synchronously so its return value is truthful) and is handing ownership over; this
     call then releases it at the end as usual."""
     if repo not in REPOS:
-        return {"ok": False, "reason": f"unknown repo {repo}"}
+        if _owned:
+            _release(repo)   # the caller reserved for us; bailing must not strand the slot
+        return {"ok": False, "skipped": True, "reason": f"unknown repo {repo}"}
     if not _owned and not _reserve(repo):
         busy = reserved_repo()
         return {"ok": False, "skipped": True, "repo": repo,
@@ -302,6 +309,8 @@ def start_index_pass_async(repo: str, full: bool = False, on_done=None) -> dict:
     """Fire-and-forget wrapper for the UI's Index button - the caller polls ``/api/index/status``.
     Takes the same single global slot the scheduler uses, so a manual Index cannot start a second
     worker alongside a nightly one on another repo."""
+    if repo not in REPOS:     # validate BEFORE taking the slot, never after
+        return {"started": False, "repo": repo, "reason": f"unknown repo {repo}"}
     if not _reserve(repo):    # synchronous, so a "started" answer is never a guess
         busy = reserved_repo()
         return {"started": False, "repo": repo,

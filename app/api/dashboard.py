@@ -11,6 +11,7 @@ from config import REPOS, repo_kind
 from ..core.metrics import table_rows
 from ..core.nightly import start_index_pass_async, state as nightly_state, worker_progress
 from ..core.sources import sources_index
+from ..index.schema import RepoOffline
 from ..index.builder import start_build, index_status_with_summary
 from ..settings import load_settings, mutate_settings
 
@@ -20,6 +21,10 @@ router = APIRouter(tags=["dashboard"])
 def _require_kopia(repo: str) -> None:
     """These endpoints are DuckDB/kopia-only. Reject a non-kopia repo (e.g. backblaze, which
     has its own /api/backblaze/* routes) so it can never open a stray DuckDB file."""
+    # repo_kind() defaults to "kopia" for an id that does not exist at all, so this guard alone let
+    # an unknown repo through to code that assumed it was real.
+    if repo not in REPOS:
+        raise HTTPException(status_code=400, detail=f"unknown repo {repo!r}")
     if repo_kind(repo) != "kopia":
         raise HTTPException(status_code=400, detail=f"repo {repo!r} is not a kopia repo (use /api/backblaze/*)")
 
@@ -36,6 +41,8 @@ def dashboard(repo: str = "1", mode: str = "all", refresh: bool = False) -> dict
     _require_kopia(repo)
     try:
         return table_rows(repo, refresh=refresh, mode=mode)
+    except RepoOffline:
+        raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -52,6 +59,8 @@ def get_index_status(repo: str = "1") -> dict:
     _require_kopia(repo)
     try:
         return index_status_with_summary(repo)
+    except RepoOffline:
+        raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -70,6 +79,8 @@ def post_index_build(repo: str = "1", source: str | None = None, full: bool = Fa
         # leave the freshness strip showing the old success time.
         from ..main import mark_nightly_result  # lazy: app.main imports this router
         return start_index_pass_async(repo, full=full, on_done=mark_nightly_result)
+    except RepoOffline:
+        raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
