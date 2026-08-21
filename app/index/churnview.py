@@ -48,31 +48,71 @@ _EXT = (f"CASE WHEN len(string_split({_BASENAME}, '.')) > 1 "
 _FOLDER = ("array_to_string(list_slice(string_split(full_path, ?), 1, "
            "least(?, len(string_split(full_path, ?)) - 1)), ?)")
 
-_BASE_SQL = f"""
-WITH fs AS (
+# The qualifying set: (path, content) pairs that genuinely entered the repo inside the window.
+#
+# 🚨 `min(files.start_time)` ALONE IS NOT "first appearance" - it was, and the Churn tab read 5.5x
+# high because of it. `files` is a DELTA index: the newest snapshot is walked in full, while older
+# snapshots contribute only what changed (the walk skips directories whose object is unchanged). So
+# a file untouched for two years has exactly ONE row, stamped with the LATEST snapshot's time. Ask
+# it when it first appeared and it answers "today", every day, forever. Measured on repo 1: churn
+# claimed 1,349,520 new files in 30 days against 245,775 by `paths.first_seen`; three folders in the
+# user's top ten (site-packages, PSP Games, GoogleDriveMirror) were 100% artifact.
+#
+# Two things are genuinely new, and they need different evidence:
+#   * a path that did not exist before the window  -> `paths.first_seen`, which Pass A backfilled
+#     oldest-first specifically to be the true first appearance. Authoritative, no inference.
+#   * an existing path REWRITTEN inside the window -> its new content is new data.
+#
+# The discriminator for the second is the number of rows the PATH has in `files`, not the (path,
+# content) group's own count. A rewritten file always has at least two rows, because changing a file
+# changes its containing directory, which forces the indexer to walk and record it. A file rewritten
+# in the very latest snapshot has only one row for its NEW content - so counting per group would
+# throw away real churn - but its path still carries the older content's row. An untouched file has
+# exactly one row for the path, and that is the case being excluded here.
+#
+# This reasons about how the indexer builds `files` rather than reading a stored fact, so it is
+# exact today and could drift if that walk ever changes. The last six tests in `test_churn_sql.py`
+# pin the invariant so a future change fails loudly instead of silently going 5x wrong again. The durable
+# alternative - stamping first-seen per (path, content) at index time - was costed at 400-800 MB per
+# repo and deliberately deferred; see the sub-memory.
+_QUALIFY_CTE = """
+WITH pc AS (
   SELECT source, full_path, content_id, min(start_time) AS first_ts
   FROM files WHERE repo = ? GROUP BY source, full_path, content_id
+), pr AS (
+  SELECT source, full_path, count(*) AS row_count
+  FROM files WHERE repo = ? GROUP BY source, full_path
 ), newc AS (
-  SELECT fs.source, fs.full_path, fs.content_id,
+  SELECT pc.source, pc.full_path, pc.content_id,
          COALESCE(cs.packed, ip.packed, 0) AS packed
-  FROM fs
-  LEFT JOIN content_sizes cs ON cs.repo = ? AND cs.cid = fs.content_id
-  LEFT JOIN indirect_phys  ip ON ip.repo = ? AND ip.oid = fs.content_id
-  WHERE fs.first_ts >= ?
+  FROM pc
+  JOIN pr ON pr.source = pc.source AND pr.full_path = pc.full_path
+  LEFT JOIN paths p ON p.repo = ? AND p.source = pc.source AND p.full_path = pc.full_path
+  LEFT JOIN content_sizes cs ON cs.repo = ? AND cs.cid = pc.content_id
+  LEFT JOIN indirect_phys  ip ON ip.repo = ? AND ip.oid = pc.content_id
+  WHERE pc.first_ts >= ?
+    AND (p.first_seen >= ? OR p.first_seen IS NULL OR pr.row_count > 1)
 )
+"""
+
+
+def _qualify_params(repo: str, cutoff: str) -> list:
+    """Bind values for _QUALIFY_CTE, in the order its placeholders appear."""
+    return [repo, repo, repo, repo, repo, cutoff, cutoff]
+
+
+_BASE_SQL = f"""{_QUALIFY_CTE}
 SELECT source, {_FOLDER} AS folder, {_EXT} AS ext,
        sum(packed) AS bytes, count(*) AS versions, count(DISTINCT full_path) AS files
 FROM newc
 GROUP BY source, folder, ext
 """
 
-_DEDUPED_SQL = """
-WITH fs AS (SELECT content_id, min(start_time) AS first_ts FROM files WHERE repo = ? GROUP BY content_id)
-SELECT COALESCE(sum(COALESCE(cs.packed, ip.packed, 0)), 0)
-FROM fs
-LEFT JOIN content_sizes cs ON cs.repo = ? AND cs.cid = fs.content_id
-LEFT JOIN indirect_phys  ip ON ip.repo = ? AND ip.oid = fs.content_id
-WHERE fs.first_ts >= ?
+# Deduped total = true repo growth, each content counted once however many paths hold it. Reads the
+# SAME qualifying set as the attributed figure, so the two can never disagree (they used to be
+# independent queries over independently-derived sets).
+_DEDUPED_SQL = f"""{_QUALIFY_CTE}
+SELECT COALESCE(sum(packed), 0) FROM (SELECT DISTINCT content_id, packed FROM newc)
 """
 
 
@@ -181,10 +221,12 @@ def _compute(repo: str, depth: int, cutoff: str) -> tuple[list[dict], int]:
             {"source": r[0], "folder": r[1], "ext": r[2],
              "bytes": int(r[3] or 0), "versions": int(r[4] or 0), "files": int(r[5] or 0)}
             for r in cur.execute(
-                _BASE_SQL, [repo, repo, repo, cutoff, _SEP, int(depth), _SEP, _SEP, _SEP, _SEP]
+                _BASE_SQL,
+                _qualify_params(repo, cutoff) + [_SEP, int(depth), _SEP, _SEP, _SEP, _SEP],
             ).fetchall()
         ]
-        deduped = int(cur.execute(_DEDUPED_SQL, [repo, repo, repo, cutoff]).fetchone()[0] or 0)
+        deduped = int(cur.execute(
+            _DEDUPED_SQL, _qualify_params(repo, cutoff)).fetchone()[0] or 0)
     finally:
         cur.close()
     return rows, deduped

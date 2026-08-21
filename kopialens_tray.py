@@ -181,10 +181,24 @@ def _wait_port_free(timeout: float = 15.0) -> bool:
     return False
 
 
-def _do_restart() -> None:
+def _wait_port_up(timeout: float = 60.0) -> bool:
+    """uvicorn takes a second or two to bind after the process starts. Checking the port
+    immediately made /restart answer `server_up: false` for a restart that was working perfectly,
+    and an automated caller reading that as failure would restart again, and again."""
+    end = time.time() + timeout
+    while time.time() < end:
+        if _port_open(GUARD_HOST, PORT):
+            return True
+        time.sleep(0.3)
+    return False
+
+
+def _do_restart() -> bool:
+    """True once the new server is actually accepting connections."""
     stop_server()
     _wait_port_free()
     start_server()
+    return _wait_port_up()
 
 
 def open_ui(_icon=None, _item=None) -> None:
@@ -219,8 +233,8 @@ class _ControlHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's naming
         if self.path == "/restart":
-            _do_restart()
-            self._json(200, {"ok": True, "server_up": _port_open(GUARD_HOST, PORT)})
+            up = _do_restart()   # waits for the new server to bind before answering
+            self._json(200, {"ok": up, "server_up": up})
         elif self.path == "/quit":
             self._json(200, {"ok": True})
             # Answer first, then die - the same reason restart lives in the tray at all.

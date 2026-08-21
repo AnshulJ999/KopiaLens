@@ -161,14 +161,23 @@ def snapshot_delete(payload: SnapshotDeleteRequest) -> dict:
         return {"executed": False, "count": len(payload.snapshot_ids),
                 "commands": text + "\n\n# Then reclaim space with:\n" + maint}
     result = snapshot_delete_execute(payload.repo, payload.snapshot_ids)
+    deleted = int(result.get("deleted") or 0)
+    # The execute chunks at 200 ids per kopia call, so a later chunk can fail after earlier ones
+    # succeeded. Raising first left the index describing snapshots that no longer exist until the
+    # next nightly pass - refresh on ANY progress, then report the failure.
+    if deleted:
+        invalidate_sources(payload.repo)        # the snapshot set changed -> drop the cached listing
+        try:
+            start_build(payload.repo)           # incremental reindex picks up the now-missing snapshots
+        except Exception:  # noqa: BLE001 - reindex is best-effort; UI Refresh also recovers
+            pass
     if result["returncode"] != 0:
-        raise HTTPException(status_code=500, detail=result["stderr"].strip() or "kopia snapshot delete failed")
-    invalidate_sources(payload.repo)            # the snapshot set changed -> drop the cached listing
-    try:
-        start_build(payload.repo)               # incremental reindex picks up the now-missing snapshots
-    except Exception:  # noqa: BLE001 - reindex is best-effort; UI Refresh also recovers
-        pass
-    return {"deleted": result["deleted"], "command": result.get("command")}
+        err = result["stderr"].strip() or "kopia snapshot delete failed"
+        raise HTTPException(
+            status_code=500,
+            detail=(f"deleted {deleted} of {len(payload.snapshot_ids)} snapshots, then failed: {err}"
+                    if deleted else err))
+    return {"deleted": deleted, "command": result.get("command")}
 
 
 def _rf_targets(payload: RemoveFilesRequest) -> list[tuple[str, str]]:
@@ -340,6 +349,17 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
     }
 
 
+# Everything on a remove plan that narrows the match to a SUBSET of the folder. folder_detail knows
+# only about a prefix, so if any of these is set its whole-folder answer describes a different
+# deletion than the one being planned.
+_NARROWING_FILTERS = ("query", "ext", "ext_exclude", "deleted_only", "over_gb", "min_gb", "max_gb",
+                      "min_versions", "shared_min", "date_from", "date_to")
+
+
+def _has_filters(payload: RemovePlanRequest) -> bool:
+    return any(getattr(payload, name, None) for name in _NARROWING_FILTERS)
+
+
 @router.post("/actions/remove-detail")
 def remove_detail(payload: RemovePlanRequest) -> dict:
     """On-demand reclaim/freeable/shared for the matched set (a chunk walk, so it's a button, not
@@ -351,8 +371,10 @@ def remove_detail(payload: RemovePlanRequest) -> dict:
     # The whole-folder shortcut is only valid when the plan really is the whole folder. With a
     # top-N cap ("Largest 100") the matched set is a slice, and folder_detail would report the
     # entire folder's freeable/shared - numbers with nothing to do with what is about to be
-    # deleted, in exactly the workflow the cap exists for.
-    if payload.prefix and len(t["sources"]) == 1 and not t.get("capped"):
+    # deleted, in exactly the workflow the cap exists for. The same applies to ANY active filter:
+    # folder_detail takes a prefix and nothing else, so "delete files over 1 GB in here" was being
+    # priced as "delete this entire folder".
+    if payload.prefix and len(t["sources"]) == 1 and not t.get("capped") and not _has_filters(payload):
         out = folder_detail(payload.repo, t["sources"][0], payload.prefix,
                             all_versions=payload.all_versions)
         out["scope"] = "folder"

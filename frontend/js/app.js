@@ -1590,7 +1590,9 @@ document.addEventListener("alpine:init", () => {
       this.indexDrainTimeout = Number(kl.index_drain_timeout || 300);
       this.indexRetryDelay = Number(kl.index_retry_delay || 900);
       this.indexMaxRetries = Number(kl.index_max_retries ?? 1);
-      this.folderPrewarmBudget = Number(kl.folder_prewarm_budget || 900);
+      // ?? not ||: 0 is a meaningful value here (disables the stage) and || would silently
+      // rewrite it to the default on every read and every save.
+      this.folderPrewarmBudget = Number(kl.folder_prewarm_budget ?? 900);
       this.startupDelay = Number(kl.startup_delay ?? 300);
       this.dirMemoMaxMb = Number(kl.dir_memo_max_mb || 1500);
       this.refcountWriteInterval = Number(kl.refcount_write_interval || 21600);
@@ -1618,7 +1620,8 @@ document.addEventListener("alpine:init", () => {
           index_drain_timeout: Number(this.indexDrainTimeout) || 300,
           index_retry_delay: Number(this.indexRetryDelay) || 900,
           index_max_retries: Math.max(0, Number(this.indexMaxRetries) || 0),
-          folder_prewarm_budget: Number(this.folderPrewarmBudget) || 900,
+          folder_prewarm_budget: Number.isFinite(Number(this.folderPrewarmBudget))
+            ? Math.max(0, Number(this.folderPrewarmBudget)) : 900,   // 0 = disable the stage
           startup_delay: Number(this.startupDelay) || 0,
           dir_memo_max_mb: Number(this.dirMemoMaxMb) || 1500,
           refcount_write_interval: Number(this.refcountWriteInterval) || 21600,

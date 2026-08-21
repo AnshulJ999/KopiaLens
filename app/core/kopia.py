@@ -77,6 +77,12 @@ def check_readonly(args: list[str]) -> None:
 def _base_command(repo: str, args: list[str]) -> list[str]:
     if repo not in REPOS:
         raise ValueError(f"unknown repo: {repo}")
+    # Every kopia subprocess funnels through here, so this is where the kind check belongs rather
+    # than on each of a dozen routes. A non-kopia repo carries NO `args` (the Backblaze one is a
+    # local SQLite index), so `repo=bz` on a kopia route would not error - it would silently run the
+    # command against the DEFAULT kopia repository. On a mutating command that is the wrong repo.
+    if REPOS[repo].get("kind", "kopia") != "kopia":
+        raise ValueError(f"repo {repo!r} is not a kopia repo - refusing to run kopia against it")
     return ["kopia"] + REPOS[repo]["args"] + args + ["--no-progress"]
 
 

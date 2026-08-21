@@ -91,6 +91,11 @@ def memory_snapshot() -> dict:
         snap["excluded_list_cache"] = {"entries": n, "mb": round(mb, 1)}
     except Exception as exc:  # noqa: BLE001
         snap["excluded_list_cache"] = {"error": str(exc)}
+    try:  # how often a freeable calculation had to price a chunk the refcount table did not know
+        from ..index.physical import refcount_miss_stats
+        snap["refcount_misses"] = refcount_miss_stats()
+    except Exception as exc:  # noqa: BLE001
+        snap["refcount_misses"] = {"error": str(exc)}
     try:
         from config import kopia_repos
         from ..index.schema import read_cursor

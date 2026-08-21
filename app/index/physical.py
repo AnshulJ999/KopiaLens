@@ -158,7 +158,37 @@ def _refcount_for(repo: str, cids) -> dict[str, int] | None:
                 out[c] = r
     finally:
         cur.close()
+    _record_refcount_misses(repo, len(cids), len(cids) - len(out))
     return out
+
+
+# MEASUREMENT, not a behaviour change. A chunk absent from content_refs reads as 0 references in
+# every caller, which means "nothing else needs this, deleting frees it". That is CORRECT for new
+# unique content (the common case) and an OVERSTATEMENT for new content that is also duplicated
+# elsewhere. Excluding missing chunks instead would be wrong the other way, and understating what a
+# delete frees is not "safer", it is just a different wrong number. So: count how often it actually
+# happens before changing anything. content_refs is rewritten with the nightly pass and at most
+# every `refcount_write_interval`, so misses should be confined to content backed up since then.
+_REFCOUNT_MISS: dict[str, dict] = {}
+_REFCOUNT_MISS_LOCK = threading.Lock()
+
+
+def _record_refcount_misses(repo: str, asked: int, missing: int) -> None:
+    with _REFCOUNT_MISS_LOCK:
+        st = _REFCOUNT_MISS.setdefault(repo, {"lookups": 0, "asked": 0, "missing": 0,
+                                              "lookups_with_misses": 0, "worst": 0})
+        st["lookups"] += 1
+        st["asked"] += asked
+        st["missing"] += missing
+        if missing:
+            st["lookups_with_misses"] += 1
+            st["worst"] = max(st["worst"], missing)
+
+
+def refcount_miss_stats() -> dict:
+    """{repo: {...}} - surfaced by /debug/memory so the question can be answered from real use."""
+    with _REFCOUNT_MISS_LOCK:
+        return {r: dict(v) for r, v in _REFCOUNT_MISS.items()}
 
 
 def _refcount_map(repo: str) -> dict[str, int]:

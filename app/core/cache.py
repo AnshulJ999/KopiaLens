@@ -132,7 +132,11 @@ def get_children(repo: str, db: sqlite3.Connection, oids: list[str]) -> dict[str
         for oid, line in zip(group, lines):
             try:
                 entries = _loads(line).get("entries") or []
-            except json.JSONDecodeError:
+            # ValueError, NOT json.JSONDecodeError: `json` is imported only in the orjson-missing
+            # branch above, so with orjson installed - the normal case here - this handler raised
+            # NameError on the first piece of malformed kopia output, turning a recoverable parse
+            # failure into a crash. Both libraries' decode errors derive from ValueError.
+            except ValueError:
                 entries = []
             out[oid] = entries
             memo_put(oid, entries)
@@ -143,7 +147,7 @@ def get_children(repo: str, db: sqlite3.Connection, oids: list[str]) -> dict[str
         res = kopia(repo, ["show", oid])
         try:
             entries = _loads(res.stdout).get("entries") or []
-        except json.JSONDecodeError:
+        except ValueError:  # see the note above - `json` is undefined when orjson is installed
             entries = []
         out[oid] = entries
         memo_put(oid, entries)

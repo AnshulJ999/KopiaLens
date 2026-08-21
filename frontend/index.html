@@ -738,7 +738,7 @@
                     <input type="number" min="0" step="60" x-model.number="folderPrewarmBudget" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 w-28">
                     <span class="text-[11px] text-stone-500">seconds</span>
                   </div></div>
-                <p class="text-[11px] text-stone-500 mt-1">Wall-clock cap on the nightly stage that pre-computes folder reclaim, biggest folders first. Anything it does not reach is computed when you open it. The depths it works at follow the Churn tab and bloat-finder depths automatically.</p>
+                <p class="text-[11px] text-stone-500 mt-1">Wall-clock cap on the nightly stage that pre-computes folder reclaim, biggest folders first. Anything it does not reach is computed when you open it. <strong>0 disables the stage</strong> (it never means "no limit"). The depths it works at follow the Churn tab and bloat-finder depths automatically.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Refcount write interval</span>

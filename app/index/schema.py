@@ -146,6 +146,11 @@ def get_db(repo: str) -> duckdb.DuckDBPyConnection:
     # parameterized queries.
     if repo not in REPOS:
         raise ValueError(f"unknown repo id: {repo!r}")
+    # ...and reject a repo that exists but is not DuckDB-backed. The Backblaze repo is a separate
+    # read-only SQLite index; letting `repo=bz` through here would create an empty kopia DuckDB for
+    # it and answer kopia-shaped questions from it.
+    if REPOS[repo].get("kind", "kopia") != "kopia":
+        raise ValueError(f"repo {repo!r} has no DuckDB index (kind={REPOS[repo].get('kind')!r})")
     _guard_offline(repo)  # worker holds the file: fail fast, never block for a whole build
     with _MAINT_COND:  # wait out an in-progress compaction swap (connection is being replaced)
         while _maint.get(repo):

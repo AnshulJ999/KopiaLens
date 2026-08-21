@@ -157,9 +157,22 @@ def run(repo: str, full: bool = False) -> dict:
             compute_next_snapshots(repo)
 
         if stage("index", lambda: auto_reindex_sync(repo, full=full)):
-            for name, fn in (("dashboard", _dashboard), ("analysis", _analysis), ("churn", _churn),
-                             ("folders", _folders), ("policies", _policies),
-                             ("next_snapshots", _next_snaps)):
+            # Ordering alone is not the dependency - the dashboard stage has to SUCCEED. It rebuilds
+            # the global content refcount, and the stages flagged below price delete-safety numbers
+            # against it. Letting them run after a failed rebuild computes tonight's freeable and
+            # reclaimable figures from yesterday's refcount and then persists them as if current,
+            # which is the exact failure the stage order exists to prevent.
+            fresh_refcount = stage("dashboard", _dashboard)
+            for name, fn, needs_refcount in (("analysis", _analysis, True),
+                                             ("churn", _churn, False),
+                                             ("folders", _folders, True),
+                                             ("policies", _policies, False),
+                                             ("next_snapshots", _next_snaps, False)):
+                if needs_refcount and not fresh_refcount:
+                    summary["skipped"].append(name)
+                    logging.error("skipping %s - the dashboard stage failed, so the content "
+                                  "refcount is stale and its numbers would be wrong", name)
+                    continue
                 stage(name, fn)
         else:
             summary["skipped"] = ["dashboard", "analysis", "churn", "folders", "policies",

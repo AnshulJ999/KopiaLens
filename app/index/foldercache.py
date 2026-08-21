@@ -77,14 +77,22 @@ def _save(repo: str) -> None:
         data = dict(keep)
         with _LOCK:
             _MEM[repo] = data
+    # Per-writer temp name. A single fixed `.tmp` was shared by every background refresh thread, so
+    # two folders refreshing at once interleaved their writes into the same file and whichever
+    # finished last renamed the mess into place. Not dangerous - a corrupt cache reads as empty -
+    # but it throws away exactly the expensive work the cache exists to avoid.
+    tmp = f"{_path(repo)}.{os.getpid()}.{threading.get_ident()}.tmp"
     try:
         os.makedirs(CACHEDIR, exist_ok=True)
-        tmp = _path(repo) + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(data, fh)
         os.replace(tmp, _path(repo))
     except Exception as exc:  # noqa: BLE001 - a cache write must never fail the caller
         log.warning("repo=%s folder cache write failed: %s", repo, exc)
+        try:
+            os.remove(tmp)
+        except Exception:  # noqa: BLE001 - best effort; a stray temp file is harmless
+            pass
 
 
 def peek(repo: str, prefix: str, source: str | None = None, allow_stale: bool = False) -> dict | None:
@@ -164,6 +172,11 @@ def _compute_now(repo: str, prefix: str, source: str | None = None) -> dict:
 
 
 def _prewarm_budget() -> float:
+    """Wall-clock seconds this stage may spend. **0 means DISABLED, never unlimited.**
+
+    It used to be read as falsy and so removed the limit entirely - the one setting whose accidental
+    value turned off the guard against a stage that can otherwise run for hours. Unlimited is not
+    reachable by any value; the largest budget is just a large number."""
     try:
         from ..settings import load_settings
         return max(0.0, float(load_settings().get("kopialens", {}).get("folder_prewarm_budget", _PREWARM_BUDGET)))
@@ -204,6 +217,9 @@ def prewarm(repo: str, top: int = _PREWARM_TOP, depths=None) -> None:
     the budget is always spent on the folders most worth having ready.
     """
     budget = _prewarm_budget()
+    if budget <= 0:
+        log.info("repo=%s folder reclaim prewarm is disabled (budget 0)", repo)
+        return
     depths = depths or _prewarm_depths()
     seen: set[str] = set()
     done = failed = skipped = 0
@@ -218,7 +234,7 @@ def prewarm(repo: str, top: int = _PREWARM_TOP, depths=None) -> None:
             log.warning("repo=%s folder prewarm depth=%d listing failed: %s", repo, depth, exc)
             continue
         for row in rows:
-            if budget and time.time() - start > budget:
+            if time.time() - start > budget:   # budget 0 already returned above
                 stopped_early = True
                 break
             prefix = row.get("folder")

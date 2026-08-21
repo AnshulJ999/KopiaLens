@@ -14,6 +14,24 @@ from .schema import read_cursor
 
 _SEP = chr(92)  # backslash path separator (avoids source-literal escaping)
 
+# LIKE wildcard escaping. `_` matches ANY single character and `%` matches anything, so a literal
+# one in a user's query or folder name silently broadens the match: `Backup_2024` also matches
+# `BackupX2024`. Harmless in a listing; not harmless in `remove_targets`, which enumerates what a
+# chunked DELETE will remove. Verified live before this fix: searching for `_` returned all
+# 5,193,822 paths in repo 1 rather than the ones containing an underscore.
+#
+# The escape character is `!`, deliberately NOT backslash - backslash is the path separator here,
+# so using it would mean escaping every separator in every Windows path.
+_LIKE_ESC = "!"
+_ESC = " ESCAPE '" + _LIKE_ESC + "'"
+
+
+def like_literal(value: str) -> str:
+    """Quote a string so LIKE/ILIKE matches it literally (pair with the _ESC clause)."""
+    for ch in (_LIKE_ESC, "%", "_"):
+        value = value.replace(ch, _LIKE_ESC + ch)
+    return value
+
 
 def _rows(cur, sql: str, params: list | None = None) -> list[dict]:
     cur.execute(sql, params or [])
@@ -71,8 +89,8 @@ def _search_where(repo: str, query: str, deleted_only: bool, min_size: int,
     where = ["repo = ?"]
     params: list = []
     if query:
-        where.append("full_path ILIKE ?")
-        params.append(f"%{query}%")
+        where.append("full_path ILIKE ?" + _ESC)
+        params.append(f"%{like_literal(query)}%")
     if min_size:
         where.append("size >= ?")
         params.append(int(min_size))
@@ -291,7 +309,7 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "",
     keeps only files whose content is exclusive to this source (global refcount <= 1) = the
     Reclaimable tree mode (what is freed if this snapshot is deleted)."""
     base = prefix.rstrip(_SEP)
-    like = base + _SEP + "%" if base else "%"
+    like = like_literal(base) + _SEP + "%" if base else "%"
     # Parameterized (was a raw `% repo` interpolation = SQL-injection surface). The bound param for the
     # reclaimable subquery slots in right after the `LIKE ?` placeholder, so insert it there when present.
     recl = " AND content_id IN (SELECT cid FROM content_refs WHERE repo=? AND refs<=1)" if reclaimable_only else ""
@@ -305,7 +323,7 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "",
                        CASE WHEN ? = '' THEN full_path
                             ELSE substr(full_path, length(?) + 2) END AS remainder
                 FROM files
-                WHERE repo = ? AND source = ? AND snapshot_id = ? AND full_path LIKE ?{recl}
+                WHERE repo = ? AND source = ? AND snapshot_id = ? AND full_path LIKE ?{_ESC}{recl}
             )
             SELECT split_part(remainder, ?, 1) AS name,
                    sum(size) AS size,
@@ -383,8 +401,8 @@ def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | No
     if deleted_only:
         conds.append("in_latest=false")
     if query:
-        conds.append("full_path ILIKE ?")
-        params.append(f"%{query}%")
+        conds.append("full_path ILIKE ?" + _ESC)
+        params.append(f"%{like_literal(query)}%")
     where = " AND ".join(conds)
     order = {"physical": "phys", "logical": "logical", "files": "files"}.get(sort, "phys")
     dirn = "ASC" if direction == "asc" else "DESC"
@@ -463,8 +481,8 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
                                   date_from, date_to, min_versions, shared_min, ext_exclude)
     if prefix:
         base = prefix.rstrip(_SEP)
-        where.append("(full_path = ? OR full_path LIKE ?)")
-        params.extend([base, base + _SEP + "%"])
+        where.append("(full_path = ? OR full_path LIKE ?" + _ESC + ")")
+        params.extend([base, like_literal(base) + _SEP + "%"])
     where_sql = " AND ".join(where)
     cur = read_cursor(repo)
     try:
@@ -544,7 +562,7 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
 def _prefix_params(prefix: str) -> tuple[str, str]:
     """(exact_lc, like_lc) for matching a folder and everything under it via the path_lc index."""
     base = prefix.rstrip(_SEP).lower()
-    return base, base + _SEP + "%"
+    return base, like_literal(base) + _SEP + "%"
 
 
 def folder_sources(repo: str, prefix: str) -> list[dict]:
@@ -562,7 +580,7 @@ def folder_sources(repo: str, prefix: str) -> list[dict]:
             "  COALESCE(sum(size), 0) AS logical, min(first_seen) AS first_seen, "
             "  max(last_seen) AS last_seen, "
             "  count(*) FILTER (WHERE NOT in_latest) AS deleted_files "
-            "FROM paths WHERE repo = ? AND (path_lc = ? OR path_lc LIKE ?) "
+            "FROM paths WHERE repo = ? AND (path_lc = ? OR path_lc LIKE ?" + _ESC + ") "
             "GROUP BY source ORDER BY physical DESC",
             [repo, exact, like],
         )
@@ -575,7 +593,7 @@ def folder_summary(repo: str, prefix: str, source: str | None = None) -> dict:
     The expensive freeable/shared numbers come separately from ``physical.folder_detail`` so the
     panel can render immediately and fill those in afterwards."""
     exact, like = _prefix_params(prefix)
-    conds = ["repo = ?", "(path_lc = ? OR path_lc LIKE ?)"]
+    conds = ["repo = ?", "(path_lc = ? OR path_lc LIKE ?" + _ESC + ")"]
     params: list = [repo, exact, like]
     if source:
         conds.append("source = ?")
@@ -604,7 +622,7 @@ def folder_top_children(repo: str, prefix: str, limit: int = 5, source: str | No
     here" without making the user drill down."""
     base = prefix.rstrip(_SEP)
     _, like = _prefix_params(prefix)
-    conds = ["repo = ?", "path_lc LIKE ?"]
+    conds = ["repo = ?", "path_lc LIKE ?" + _ESC]
     params: list = [repo, like]
     if source:
         conds.append("source = ?")
@@ -635,8 +653,8 @@ def flat_files(repo: str, source: str, prefix: str = "", deleted_only: bool = Fa
                                   None, None, 0, 0, ext_exclude)
     base = prefix.rstrip(_SEP)
     if base:
-        where.append("(full_path = ? OR full_path LIKE ?)")
-        params.extend([base, base + _SEP + "%"])
+        where.append("(full_path = ? OR full_path LIKE ?" + _ESC + ")")
+        params.extend([base, like_literal(base) + _SEP + "%"])
     where_sql = " AND ".join(where)
     cur = read_cursor(repo)
     try:
@@ -725,8 +743,8 @@ def tree_children_all(repo: str, prefix: str, latest_only: bool = False, deleted
         where.append("in_latest = true")
     base = prefix.rstrip(_SEP)
     if base:
-        where.append("full_path LIKE ?")
-        params.append(base + _SEP + "%")
+        where.append("full_path LIKE ?" + _ESC)
+        params.append(like_literal(base) + _SEP + "%")
     where_sql = " AND ".join(where)
     cur = read_cursor(repo)
     try:
@@ -768,7 +786,7 @@ def tree_children_snaps(repo: str, snapshot_ids: list[str], prefix: str = "") ->
     if not snapshot_ids:
         return []
     base = prefix.rstrip(_SEP)
-    like = base + _SEP + "%" if base else "%"
+    like = like_literal(base) + _SEP + "%" if base else "%"
     ph = ",".join("?" * len(snapshot_ids))
     cur = read_cursor(repo)
     try:
@@ -777,7 +795,7 @@ def tree_children_snaps(repo: str, snapshot_ids: list[str], prefix: str = "") ->
             f"""
             WITH dp AS (
                 SELECT full_path, max(size) AS size, max(mtime) AS mtime
-                FROM files WHERE repo=? AND snapshot_id IN ({ph}) AND full_path LIKE ?
+                FROM files WHERE repo=? AND snapshot_id IN ({ph}) AND full_path LIKE ?{_ESC}
                 GROUP BY full_path
             ), sub AS (
                 SELECT size, mtime,
@@ -813,8 +831,8 @@ def tree_children_paths(repo: str, source: str, prefix: str, deleted_only: bool 
     filters (deleted-from-disk / >= size / ext include+exclude) keep only matching descendants, so
     folders with no match drop out (e.g. 'folders containing deleted files')."""
     base = prefix.rstrip(_SEP)
-    like = base + _SEP + "%" if base else "%"
-    conds = ["repo = ?", "source = ?", "full_path LIKE ?"]
+    like = like_literal(base) + _SEP + "%" if base else "%"
+    conds = ["repo = ?", "source = ?", "full_path LIKE ?" + _ESC]
     params: list = [repo, source, like]
     if deleted_only:
         conds.append("in_latest = false")
