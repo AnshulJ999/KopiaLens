@@ -268,3 +268,77 @@ def test_exclusive_offline_reports_what_is_blocking_on_timeout(monkeypatch):
         assert schema.offline_status("9") is None, "a failed drain must not leave the repo offline"
     finally:
         schema._active_reads.pop("9", None)
+
+
+# ---- orphaned worker cleanup ------------------------------------------------------------------
+# A worker can outlive the app (tray quit runs no graceful shutdown). Observed live: it kept the
+# repo's DuckDB exclusively and the next app start returned 500 for every request to that repo.
+def _progress(tmp_path, repo, pid):
+    f = tmp_path / f"index_progress_repo{repo}.json"
+    f.write_text(json.dumps({"repo": repo, "pid": pid, "stage": "folders"}), encoding="utf-8")
+    return f
+
+
+def test_reaper_kills_a_real_orphan_and_clears_its_file(tmp_path, monkeypatch):
+    from app.core import nightly
+
+    monkeypatch.setattr(nightly, "DATA_DIR", str(tmp_path))
+    f = _progress(tmp_path, "1", 4242)
+    killed = []
+
+    class _Proc:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def cmdline(self):
+            return ["pythonw.exe", "-m", "app.index.worker", "1"]
+
+        def terminate(self):
+            killed.append(self.pid)
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr("psutil.Process", _Proc)
+    assert nightly.reap_orphan_workers() == ["1"]
+    assert killed == [4242]
+    assert not f.exists(), "the stale progress file must be removed"
+
+
+def test_reaper_never_kills_an_unrelated_process(tmp_path, monkeypatch):
+    """PIDs get recycled. Killing whatever now holds that number would be catastrophic, so the
+    command line must be confirmed first."""
+    from app.core import nightly
+
+    monkeypatch.setattr(nightly, "DATA_DIR", str(tmp_path))
+    _progress(tmp_path, "2", 4243)
+    killed = []
+
+    class _Innocent:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def cmdline(self):
+            return ["chrome.exe", "--type=renderer"]
+
+        def terminate(self):
+            killed.append(self.pid)
+
+    monkeypatch.setattr("psutil.Process", _Innocent)
+    assert nightly.reap_orphan_workers() == []
+    assert killed == [], "reaper killed a process that was not one of our workers"
+
+
+def test_reaper_handles_an_already_dead_pid(tmp_path, monkeypatch):
+    import psutil
+    from app.core import nightly
+
+    monkeypatch.setattr(nightly, "DATA_DIR", str(tmp_path))
+    f = _progress(tmp_path, "1", 999999)
+
+    def _boom(pid):
+        raise psutil.NoSuchProcess(pid)
+
+    monkeypatch.setattr("psutil.Process", _boom)
+    assert nightly.reap_orphan_workers() == []
+    assert not f.exists()

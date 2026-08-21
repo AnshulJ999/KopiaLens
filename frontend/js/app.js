@@ -199,6 +199,7 @@ document.addEventListener("alpine:init", () => {
         this.treeDedupe = !!kl.tree_dedupe;
         this.treeMode = kl.tree_mode || "full";
         this.reindexInterval = Number(kl.reindex_interval || 1800);
+        this.groupDepth = Number(kl.group_depth || 3);
         this.churnDays = String(kl.churn_days || 30);
         this.churnDepth = Number(kl.churn_depth || 4);
         this.churnView = kl.churn_view || "source";
@@ -787,9 +788,21 @@ document.addEventListener("alpine:init", () => {
         return;
       }
       // Heavy pass: the chunk walk behind freeable / shared.
+      // Do NOT blind-assign over the summary: `physical` means two different things. The summary's
+      // is the SUM of each path's latest version (shared storage counted once per file); the
+      // detail's is the DEDUPED chunk union across all versions. Overwriting made the headline
+      // number silently drop - by 57% on a duplicate-heavy folder - with no explanation.
       getJson("/api/folder/detail", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo: this.repo, prefix, source }) })
-        .then((r) => { if (seq === this._detailSeq && this.detail) Object.assign(this.detail, r, { heavyLoading: false }); })
+        .then((r) => {
+          if (seq !== this._detailSeq || !this.detail) return;
+          this.detail.physical_sum = this.detail.physical;   // keep the fast, additive figure
+          Object.assign(this.detail, {
+            physical_dedup: r.physical, freeable: r.freeable, shared: r.shared,
+            objects: r.objects, all_versions: r.all_versions, heavyLoading: false,
+            reclaim_stale: !!r.stale, reclaim_at: r.computed_at,
+          });
+        })
         .catch(() => { if (seq === this._detailSeq && this.detail) this.detail.heavyLoading = false; });
       // Effective policy for this exact folder (kopia resolves inheritance), via its main source.
       const main = (this.detail.sources || [])[0];
@@ -816,6 +829,7 @@ document.addEventListener("alpine:init", () => {
 
     // ---- Bloat finder: group backed-up paths by folder, ranked by physical (own #groupTable) ----
     toggleGroupByFolder() { this.groupByFolder = !this.groupByFolder; this.searchPage = 1; this.loadSearch(); },
+    changeGroupDepth() { this.klSet({ group_depth: Number(this.groupDepth) || 3 }); this.loadSearch(); },
     drillFolder(row) { this.groupByFolder = false; this.query = row.folder; this.searchPage = 1; this.loadSearch(); },
     selectedGroupFolder() {  // the By-folder table is a SEPARATE Tabulator instance from #searchTable
       const el = document.querySelector("#groupTable");
@@ -1540,6 +1554,7 @@ document.addEventListener("alpine:init", () => {
         const kl = data.settings?.kopialens || {};
         this.backend = data.settings?.listing_backend || "subprocess";
         this.reindexInterval = Number(kl.reindex_interval || 1800);
+        this.groupDepth = Number(kl.group_depth || 3);
         this.churnDays = String(kl.churn_days || 30);
         this.churnDepth = Number(kl.churn_depth || 4);
         this.churnView = kl.churn_view || "source";

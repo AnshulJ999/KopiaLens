@@ -51,8 +51,18 @@ class RepoOffline(RuntimeError):
     def __init__(self, repo: str, info: dict) -> None:
         self.repo = repo
         self.info = dict(info)
-        since = info.get("since", 0)
-        super().__init__(f"repo {repo} is {info.get('reason', 'offline')} (since {since})")
+        since = float(info.get("since") or 0)
+        # Human-readable, because this string reaches the UI directly from any route that catches
+        # broad exceptions before the dedicated 503 handler can run. A raw epoch is not a message.
+        if since:
+            mins = max(0, int((time.time() - since) / 60))
+            started = time.strftime("%H:%M", time.localtime(since))
+            when = f"started {started}, {mins} min ago"
+        else:
+            when = "in progress"
+        super().__init__(
+            f"Repo {repo} is being indexed ({when}). It will be back shortly - "
+            f"other repos are unaffected.")
 
 
 def offline_status(repo: str) -> dict | None:

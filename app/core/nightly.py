@@ -128,6 +128,53 @@ def wait_idle(timeout: float = 20.0) -> bool:
     return not any_running()
 
 
+def reap_orphan_workers() -> list[str]:
+    """Kill any index worker left over from a previous app run, before the DuckDB is opened.
+
+    Identified by the PID recorded in its own progress file, and confirmed by checking the process
+    is genuinely one of our workers (name + command line) so a recycled PID can never be mistaken
+    for one. Returns the repos cleaned up.
+    """
+    import glob
+    try:
+        import psutil
+    except ImportError:  # pragma: no cover - psutil is a declared dependency
+        return []
+    reaped: list[str] = []
+    for path in glob.glob(os.path.join(DATA_DIR, "index_progress_repo*.json")):
+        repo = None
+        try:
+            with open(path, encoding="utf-8") as fh:
+                info = json.load(fh)
+            repo, pid = info.get("repo"), int(info.get("pid") or 0)
+        except Exception:  # noqa: BLE001 - unreadable progress file: just remove it
+            pid = 0
+        if pid:
+            try:
+                proc = psutil.Process(pid)
+                cmd = " ".join(proc.cmdline())
+                # Confirm it is OUR worker before killing anything - PIDs get recycled.
+                if "app.index.worker" in cmd:
+                    log.warning("reaping orphaned index worker for repo=%s (pid %s) left by a "
+                                "previous run - it still holds the DuckDB", repo, pid)
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=15)
+                    except Exception:  # noqa: BLE001
+                        proc.kill()
+                    if repo:
+                        reaped.append(repo)
+            except psutil.NoSuchProcess:
+                pass
+            except Exception as exc:  # noqa: BLE001 - never block startup on cleanup
+                log.warning("could not reap worker pid %s: %s", pid, exc)
+        try:
+            os.remove(path)   # stale either way: the worker that owned it is gone
+        except Exception:  # noqa: BLE001
+            pass
+    return reaped
+
+
 def _run_worker(repo: str, full: bool) -> dict:
     """Run the worker subprocess. Its stderr (all the run's log lines) goes to a file rather than a
     parent-side buffer: it survives the run for diagnosis, and none of it sits in this process."""

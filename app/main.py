@@ -388,6 +388,13 @@ def _bg_worker() -> None:
 async def lifespan(_app: FastAPI):
     setup_logging()
     log.info("KopiaLens starting up")
+    try:
+        # Before ANY DuckDB access: a worker from a previous run may still hold a repo exclusively.
+        reaped = nightly.reap_orphan_workers()
+        if reaped:
+            log.warning("cleaned up orphaned index worker(s) for repo(s): %s", ", ".join(reaped))
+    except Exception as exc:  # noqa: BLE001 - cleanup must never block startup
+        log.error("orphan worker cleanup failed: %s", exc)
     try:  # apply the configurable in-process dir-cache RAM budget (default 1.5 GB)
         from .core import cache as _cache
         mb = float(load_settings().get("kopialens", {}).get("dir_memo_max_mb", 1500))

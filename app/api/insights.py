@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from config import repo_kind
 
 from ..core.policy import effective_for_path, source_summaries, summarize
+from ..index.schema import RepoOffline
 from ..index.churnview import churn_rollup
 from ..index.foldercache import compute as folder_reclaim
 from ..index.queries import folder_sources, folder_summary, folder_top_children
@@ -75,6 +76,8 @@ def churn(repo: str = "1", days: int = 30, depth: int = 4, limit: int = 400,
     _require_kopia(repo)
     try:
         return churn_rollup(repo, days=days, depth=depth, limit=limit, refresh=refresh)
+    except RepoOffline:
+        raise                       # the dedicated 503 handler explains this one properly
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -114,6 +117,8 @@ def folder_summary_route(repo: str = "1", prefix: str = "", source: str | None =
         return summary
     except HTTPException:
         raise
+    except RepoOffline:
+        raise                       # the dedicated 503 handler explains this one properly
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -129,6 +134,8 @@ def folder_policy(repo: str = "1", source: str = "", prefix: str = "") -> dict:
     try:
         raw = effective_for_path(repo, source, prefix)
         return {"prefix": prefix, "source": source, "policy": summarize(raw), "found": bool(raw)}
+    except RepoOffline:
+        raise                       # the dedicated 503 handler explains this one properly
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -151,5 +158,7 @@ def folder_detail_route(payload: FolderDetailRequest) -> dict:
         raise HTTPException(status_code=400, detail="prefix is required")
     try:
         return folder_reclaim(payload.repo, payload.prefix, payload.source or None)
+    except RepoOffline:
+        raise                       # the dedicated 503 handler explains this one properly
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

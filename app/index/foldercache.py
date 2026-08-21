@@ -29,9 +29,14 @@ log = get_logger("foldercache")
 
 _SEP = chr(92)
 _MAX_ENTRIES = 4000          # plenty for every folder the UI realistically browses
-_PREWARM_TOP = 60            # biggest folders per depth, by physical
-_PREWARM_DEPTHS = (2, 3, 4)
+_PREWARM_TOP = 40            # biggest folders per depth, by physical
+# Depths are DERIVED from what the user actually browses (see _prewarm_depths), not hardcoded.
+# Hardcoding was wrong twice: depth 2 computed containers nobody would ever delete (a drive-level
+# Users folder measured 165s on its own), while depths 5-7 missed the folders the Churn tab and the
+# bloat finder actually display. Deriving them keeps prewarm and UI in step by construction.
+_PREWARM_DEPTHS = (3, 4, 5)   # fallback only
 _PREWARM_BUDGET = 900.0      # seconds; see prewarm() - the pre-compute must not own the night
+_PREWARM_MAX_FILES = 400_000  # skip folders too big to be a delete target (and slowest to compute)
 
 _LOCK = threading.Lock()
 _MEM: dict[str, dict] = {}   # repo -> {key: payload}
@@ -82,32 +87,64 @@ def _save(repo: str) -> None:
         log.warning("repo=%s folder cache write failed: %s", repo, exc)
 
 
-def peek(repo: str, prefix: str, source: str | None = None) -> dict | None:
-    """A valid cached result, or None. Never computes - lets the API answer instantly and decide
-    for itself whether to kick a background computation."""
+def peek(repo: str, prefix: str, source: str | None = None, allow_stale: bool = False) -> dict | None:
+    """A cached result, or None. Never computes.
+
+    ``allow_stale`` returns an entry computed against an older index, tagged ``stale``. The caller
+    decides what to do with it - the API serves it immediately and refreshes behind it."""
     entry = _load(repo).get(_key(prefix, source))
     if not entry:
         return None
     try:
-        if entry.get("stamp") != _index_hash(repo):
-            return None
-    except Exception:  # noqa: BLE001 - if we cannot check freshness, do not serve a maybe-stale number
-        return None
-    return entry
+        fresh = entry.get("stamp") == _index_hash(repo)
+    except Exception:  # noqa: BLE001 - cannot verify freshness; treat as stale rather than fresh
+        fresh = False
+    if fresh:
+        return {**entry, "stale": False}
+    return {**entry, "stale": True} if allow_stale else None
 
 
-def compute(repo: str, prefix: str, source: str | None = None) -> dict:
-    """Compute (or return an already-valid cached) all-versions reclaim for one folder.
-    Single-flight per folder: two panels opened on the same folder do the work once."""
-    hit = peek(repo, prefix, source)
-    if hit is not None:
+def compute(repo: str, prefix: str, source: str | None = None, allow_stale: bool = True) -> dict:
+    """All-versions reclaim for one folder.
+
+    Fresh cache -> instant. Stale cache -> serve it immediately, tagged, and refresh in the
+    background: a number from last night is far more useful than a three-minute wait for one a few
+    hours newer. Nothing cached at all -> compute now (the caller fetches this asynchronously, so
+    the panel shows "computing" rather than blocking).
+    """
+    hit = peek(repo, prefix, source, allow_stale=allow_stale)
+    if hit is not None and not hit.get("stale"):
         return {**hit, "cached": True}
+    if hit is not None:
+        _kick_refresh(repo, prefix, source)
+        return {**hit, "cached": True}
+    return _compute_now(repo, prefix, source)
+
+
+def _kick_refresh(repo: str, prefix: str, source: str | None) -> None:
+    """Recompute in the background. Non-blocking single-flight - if one is already running for this
+    folder we simply do not start another."""
+    ck = (repo, _key(prefix, source))
+    with _LOCK:
+        lk = _INFLIGHT.setdefault(ck, threading.Lock())
+    if lk.locked():
+        return
+    def _go() -> None:
+        try:
+            _compute_now(repo, prefix, source)
+        except Exception as exc:  # noqa: BLE001 - a background refresh must never surface
+            log.warning("repo=%s background folder refresh failed for %s: %s", repo, prefix, exc)
+    threading.Thread(target=_go, daemon=True).start()
+
+
+def _compute_now(repo: str, prefix: str, source: str | None = None) -> dict:
+    """The actual computation. Single-flight per folder: two panels on the same folder do it once."""
     ck = (repo, _key(prefix, source))
     with _LOCK:
         lk = _INFLIGHT.setdefault(ck, threading.Lock())
     with lk:
         hit = peek(repo, prefix, source)          # someone may have finished while we waited
-        if hit is not None:
+        if hit is not None and not hit.get("stale"):
             return {**hit, "cached": True}
         start = time.time()
         # Stamp taken BEFORE the work: if the index moves while this runs, the result belongs to
@@ -123,7 +160,7 @@ def compute(repo: str, prefix: str, source: str | None = None) -> dict:
         if payload["elapsed"] > 5:
             log.info("repo=%s folder reclaim %s took %.1fs (%d objects)",
                      repo, prefix, payload["elapsed"], payload.get("objects", 0))
-        return {**payload, "cached": False}
+        return {**payload, "cached": False, "stale": False}
 
 
 def _prewarm_budget() -> float:
@@ -134,7 +171,24 @@ def _prewarm_budget() -> float:
         return _PREWARM_BUDGET
 
 
-def prewarm(repo: str, top: int = _PREWARM_TOP, depths=_PREWARM_DEPTHS) -> None:
+def _prewarm_depths() -> tuple:
+    """The depths the UI actually shows folders at, plus one deeper.
+
+    The Churn tab rolls up at ``churn_depth`` and the bloat finder at ``group_depth``; those are the
+    two places a folder gets clicked from. Reading them means the prewarm follows the user instead
+    of me guessing, and it stays correct if they change either setting later."""
+    try:
+        from ..settings import load_settings
+        kl = load_settings().get("kopialens", {})
+        churn = int(kl.get("churn_depth", 4))
+        group = int(kl.get("group_depth", 3))
+    except Exception:  # noqa: BLE001
+        return _PREWARM_DEPTHS
+    depths = sorted({d for d in (group, churn, churn + 1) if 2 < d <= 20})
+    return tuple(depths) or _PREWARM_DEPTHS
+
+
+def prewarm(repo: str, top: int = _PREWARM_TOP, depths=None) -> None:
     """Nightly: compute the biggest folders at each browsing depth so the panel is instant for the
     ones actually worth opening.
 
@@ -146,8 +200,9 @@ def prewarm(repo: str, top: int = _PREWARM_TOP, depths=_PREWARM_DEPTHS) -> None:
     the budget is always spent on the folders most worth having ready.
     """
     budget = _prewarm_budget()
+    depths = depths or _prewarm_depths()
     seen: set[str] = set()
-    done = failed = 0
+    done = failed = skipped = 0
     start = time.time()
     stopped_early = False
     for depth in depths:
@@ -166,12 +221,18 @@ def prewarm(repo: str, top: int = _PREWARM_TOP, depths=_PREWARM_DEPTHS) -> None:
             if not prefix or prefix.lower() in seen:
                 continue
             seen.add(prefix.lower())
+            # Enormous folders are both the slowest to compute and the least likely to be a delete
+            # target - somebody deleting a folder picks a specific one, not a 2-million-file root.
+            if int(row.get("files") or 0) > _PREWARM_MAX_FILES:
+                skipped += 1
+                continue
             try:
                 compute(repo, prefix)
                 done += 1
             except Exception as exc:  # noqa: BLE001 - one bad folder must not end the pass
                 failed += 1
                 log.warning("repo=%s folder prewarm failed for %s: %s", repo, prefix, exc)
-    log.info("repo=%s folder reclaim prewarm: %d computed, %d failed, %.0fs%s",
-             repo, done, failed, time.time() - start,
+    log.debug("repo=%s prewarm depths=%s", repo, depths)
+    log.info("repo=%s folder reclaim prewarm: %d computed, %d skipped (too large), %d failed, %.0fs%s",
+             repo, done, skipped, failed, time.time() - start,
              " (stopped at the time budget)" if stopped_early else "")

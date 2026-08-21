@@ -182,7 +182,7 @@
         </div>
         <div x-show="groupByFolder" class="flex flex-wrap items-center gap-2 text-xs rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-2">
           <span class="font-medium">Group by folder</span>
-          <label class="flex items-center gap-1">Depth <input type="number" min="1" max="20" x-model.number="groupDepth" @change="loadSearch()" class="fld h-7 w-16 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800"></label>
+          <label class="flex items-center gap-1">Depth <input type="number" min="1" max="20" x-model.number="groupDepth" @change="changeGroupDepth()" class="fld h-7 w-16 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800"></label>
           <label class="flex items-center gap-1">Min GB <input type="number" min="0" step="0.1" x-model.number="groupMinGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="0"></label>
           <label class="flex items-center gap-1">Min files <input type="number" min="0" x-model.number="groupMinFiles" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="0"></label>
           <span class="text-stone-500">Double-click a folder → drill into its files → batch-remove.</span>
@@ -664,7 +664,11 @@
         <!-- size cards -->
         <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
           <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Logical</div><div class="font-medium" x-text="detail && fmtB(detail.logical)"></div></div>
-          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Physical (packed)</div><div class="font-medium" x-text="detail && fmtPhys(detail.physical)"></div></div>
+          <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
+            <div class="text-[10px] uppercase text-stone-500" x-text="(detail && detail.kind==='folder') ? ((detail.physical_dedup != null) ? 'Physical (deduped, all versions)' : 'Physical (approx)') : 'Physical (packed)'"></div>
+            <div class="font-medium" x-text="detail && fmtPhys((detail.kind==='folder' && detail.physical_dedup != null) ? detail.physical_dedup : detail.physical)"></div>
+            <div class="text-[10px] text-stone-500" x-show="detail && detail.kind==='folder' && detail.physical_dedup == null">counting duplicates twice until the exact figure lands</div>
+          </div>
           <div class="rounded border border-emerald-300 dark:border-emerald-800 p-2" x-show="detail && detail.kind==='file'"><div class="text-[10px] uppercase text-emerald-700 dark:text-emerald-400">Freeable</div><div class="font-medium" x-text="detail && fmtPhys(detail.freeable)"></div></div>
           <div class="rounded border border-stone-200 dark:border-stone-700 p-2" x-show="detail && detail.kind==='file'"><div class="text-[10px] uppercase text-stone-500">Shared (won't free)</div><div class="font-medium" x-text="detail && fmtPhys(detail.shared)"></div></div>
         </div>
@@ -674,7 +678,8 @@
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
               <div class="rounded border border-emerald-300 dark:border-emerald-800 p-2">
                 <div class="text-[10px] uppercase text-emerald-700 dark:text-emerald-400">Frees if deleted</div>
-                <div class="font-medium" x-text="detail.heavyLoading ? 'computing…' : fmtPhys(detail.freeable)"></div></div>
+                <div class="font-medium" x-text="detail.heavyLoading ? 'computing…' : fmtPhys(detail.freeable)"></div>
+                <div class="text-[10px] text-stone-500" x-show="detail.reclaim_stale" x-text="detail.reclaim_at ? ('as of ' + new Date(detail.reclaim_at*1000).toLocaleString() + ' · refreshing') : 'refreshing'"></div></div>
               <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
                 <div class="text-[10px] uppercase text-stone-500">Shared elsewhere</div>
                 <div class="font-medium" x-text="detail.heavyLoading ? '…' : fmtPhys(detail.shared)"></div></div>
@@ -686,6 +691,11 @@
                 <div class="font-medium" x-text="Number(detail.deleted_files||0).toLocaleString() + ' of ' + Number(detail.files||0).toLocaleString()"></div></div>
             </div>
             <div class="text-[11px] text-stone-500">Frees if deleted = packed bytes that nothing else keeps alive. Shared bytes stay until every other copy goes too.</div>
+            <div class="text-[11px] text-stone-500" x-show="detail.physical_dedup != null &amp;&amp; detail.physical_sum &amp;&amp; detail.physical_sum > detail.physical_dedup * 1.02">
+              Adding up each file separately gives <span x-text="fmtPhys(detail.physical_sum)"></span>, but
+              <span x-text="fmtPhys(detail.physical_sum - detail.physical_dedup)"></span> of that is storage shared
+              between duplicate files in here, counted once on disk.
+            </div>
 
             <div>
               <div class="text-xs font-medium mb-1">Backed up by</div>
