@@ -159,14 +159,20 @@ def _write_last_cycle_ts() -> None:
 
 def nightly_ts(repo: str) -> float:
     """When this repo's heavy pass last STARTED. Used only to decide whether a slot has been
-    attempted - NOT for display. Seeded from the legacy global ``ts`` the first time round, so
-    upgrading does not look like "never indexed" and fire an immediate catch-up."""
+    attempted - NOT for display. NO FALLBACK, deliberately (mirrors nightly_success_ts() below): a
+    repo with no attempt recorded reads as 0 ("never"), which is already the correct "due" answer.
+
+    A shared ``ts`` fallback used to live here to avoid an "upgrade looks like never indexed" catch-up
+    storm. But `_mark_nightly()` bumps that same ``ts`` field on EVERY repo's attempt, not just once -
+    so the moment repo1 started each night, repo2/bz (which have no ``nightly`` entry of their own)
+    read that bumped ``ts`` as "already attempted this slot" and were silently starved forever, since
+    REPOS is iterated in a fixed order and repo1 always claims the slot first. Confirmed live 2026-08-21:
+    repo1 ran; repo2/bz never got a `nightly`/`attempts`/`success` entry at all, that night or any
+    future night, until this fix."""
     data = _read_state()
     val = (data.get("nightly") or {}).get(repo)
-    if val is None:
-        val = data.get("ts") or 0
     try:
-        return float(val)
+        return float(val or 0)
     except Exception:
         return 0.0
 
@@ -181,8 +187,12 @@ def nightly_success_ts(repo: str) -> float:
     restart while the index got older: a repo that had been failing for a week would still read as
     minutes old. That is the one thing a staleness indicator must never do.
 
-    `nightly_ts()` keeps its seeding - that one feeds the due check, where the seed is what stops an
-    upgrade from looking like "never indexed" and firing an immediate catch-up pass.
+    `nightly_ts()` also has no fallback now (2026-08-22 fix): a repo with no attempt on record just
+    reads as due and takes its turn in the queue. That is not the catch-up "storm" the old seeding
+    was guarding against - passes are already serialized one at a time (`_reserve`) - so there is
+    nothing left to seed. The old shared-`ts` fallback there was actively harmful, not just
+    cosmetic: it let repo1 starting first each night falsely mark repo2/bz as "already attempted",
+    so they never ran, every night, permanently. See `nightly_ts()` for the full story.
     """
     data = _read_state()
     val = (data.get("success") or {}).get(repo)

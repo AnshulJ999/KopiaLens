@@ -90,12 +90,15 @@ def test_index_time_parsing_is_forgiving(monkeypatch, raw, expected):
     assert m._index_time() == expected
 
 
-def test_nightly_state_seeds_from_the_legacy_timestamp(monkeypatch, tmp_path):
-    """Upgrading must not look like 'never indexed' and fire an immediate catch-up on restart."""
+def test_nightly_ts_has_no_legacy_fallback(monkeypatch, tmp_path):
+    """The shared `ts` field must NOT seed a repo's due-check (2026-08-22 fix): it used to make
+    repo1 starting first each night falsely mark repo2/bz as 'already attempted', starving them
+    permanently. A repo with no attempt of its own reads as 0 ('never'), which is already the
+    correct 'due' answer - no fallback needed."""
     legacy = tmp_path / "bg_worker_state.json"
     legacy.write_text('{"ts": 1787254084.0}', encoding="utf-8")
     monkeypatch.setattr(m, "_LAST_CYCLE_FILE", str(legacy))
-    assert m.nightly_ts("1") == pytest.approx(1787254084.0)
+    assert m.nightly_ts("1") == 0.0
 
 
 def test_nightly_state_prefers_the_per_repo_timestamp(monkeypatch, tmp_path):
@@ -103,4 +106,4 @@ def test_nightly_state_prefers_the_per_repo_timestamp(monkeypatch, tmp_path):
     f.write_text('{"ts": 100.0, "nightly": {"1": 500.0}}', encoding="utf-8")
     monkeypatch.setattr(m, "_LAST_CYCLE_FILE", str(f))
     assert m.nightly_ts("1") == 500.0
-    assert m.nightly_ts("2") == 100.0  # no per-repo entry yet -> legacy value
+    assert m.nightly_ts("2") == 0.0  # no per-repo entry -> never, NOT the shared ts

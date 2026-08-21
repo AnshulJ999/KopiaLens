@@ -142,11 +142,13 @@ def test_a_repo_that_only_ever_fails_never_looks_fresh(sched):
     assert m.nightly_success_ts("1") == 0.0, "a restart must not refresh the displayed age"
 
 
-def test_the_due_check_keeps_its_seeding(sched):
-    """`nightly_ts` is the DUE check, not the display, and its fallback is load-bearing: without it
-    an upgrade reads as 'never indexed' and fires an immediate catch-up pass."""
+def test_the_due_check_has_no_seeding_fallback(sched):
+    """`nightly_ts` (2026-08-22 fix) ignores the shared `ts` entirely - a repo with no attempt of
+    its own reads as 0 ('never'/due), never the shared cycle timestamp. The old fallback let
+    repo1 starting first each night falsely mark repo2/bz as already attempted, starving them
+    permanently - not just a display quirk, a real scheduling bug."""
     _write(sched, {"ts": 5000.0, "nightly": {}})
-    assert m.nightly_ts("1") == 5000.0
+    assert m.nightly_ts("1") == 0.0
 
 
 def test_mark_result_advances_success_only_on_success(sched):
