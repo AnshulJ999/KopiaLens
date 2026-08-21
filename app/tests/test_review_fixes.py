@@ -118,6 +118,37 @@ def test_freshness_reports_success_not_attempt(sched):
     assert m.nightly_success_ts("1") == 1000.0
 
 
+def test_freshness_is_never_when_no_success_is_recorded(sched):
+    """The strip must not borrow a timestamp from anywhere else.
+
+    It used to fall through to the attempt time and then to the global cycle `ts`, so three repos
+    all displayed the same "8m ago" - the age of the background cycle, not of any index. The
+    existing tests never caught it because they always populated `success`."""
+    _write(sched, {"ts": 9999.0, "nightly": {}})
+    assert m.nightly_success_ts("1") == 0.0
+    _write(sched, {"ts": 9999.0, "nightly": {"1": 5000.0}})
+    assert m.nightly_success_ts("1") == 0.0, "an ATTEMPT is not a success"
+
+
+def test_a_repo_that_only_ever_fails_never_looks_fresh(sched):
+    """The case that actually matters. `ts` is rewritten on every app start, so with the old
+    fallback a repo whose index had been failing for a week read as minutes old, and got YOUNGER
+    each time the app restarted."""
+    _write(sched, {"ts": 1000.0, "nightly": {"1": 1000.0},
+                   "attempts": {"1": {"slot": 0, "at": 1000.0, "retries": 1, "ok": False}}})
+    assert m.nightly_success_ts("1") == 0.0
+    _write(sched, {"ts": 8000.0, "nightly": {"1": 1000.0},          # ...app restarted, ts moved
+                   "attempts": {"1": {"slot": 0, "at": 1000.0, "retries": 1, "ok": False}}})
+    assert m.nightly_success_ts("1") == 0.0, "a restart must not refresh the displayed age"
+
+
+def test_the_due_check_keeps_its_seeding(sched):
+    """`nightly_ts` is the DUE check, not the display, and its fallback is load-bearing: without it
+    an upgrade reads as 'never indexed' and fires an immediate catch-up pass."""
+    _write(sched, {"ts": 5000.0, "nightly": {}})
+    assert m.nightly_ts("1") == 5000.0
+
+
 def test_mark_result_advances_success_only_on_success(sched):
     _write(sched, {"nightly": {"1": 100.0}, "success": {"1": 100.0},
                    "attempts": {"1": {"slot": 0, "at": 100.0, "retries": 0, "ok": None}}})

@@ -172,12 +172,22 @@ def nightly_ts(repo: str) -> float:
 
 
 def nightly_success_ts(repo: str) -> float:
-    """When this repo was last indexed SUCCESSFULLY. This is what "indexed 4h ago" must mean - the
-    attempt timestamp would report a crashed run as a fresh index, which is worse than no number."""
+    """When this repo was last indexed SUCCESSFULLY, or 0 for "never".
+
+    NO FALLBACK, deliberately. This used to fall through to the attempt time and then to the global
+    cycle timestamp, which made the freshness strip read "8m ago" for three repos whose last real
+    index was 18 hours earlier - all three showing the same time, because they were all showing the
+    background cycle. `ts` is rewritten on every app start, so the displayed age got YOUNGER on each
+    restart while the index got older: a repo that had been failing for a week would still read as
+    minutes old. That is the one thing a staleness indicator must never do.
+
+    `nightly_ts()` keeps its seeding - that one feeds the due check, where the seed is what stops an
+    upgrade from looking like "never indexed" and firing an immediate catch-up pass.
+    """
     data = _read_state()
     val = (data.get("success") or {}).get(repo)
     if val is None:
-        val = (data.get("nightly") or {}).get(repo, data.get("ts") or 0)
+        return 0.0   # the UI renders 0 as "never" and treats it as stale; both are correct here
     try:
         return float(val)
     except Exception:
