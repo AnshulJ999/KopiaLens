@@ -194,9 +194,16 @@ def _wait_port_up(timeout: float = 60.0) -> bool:
 
 
 def _do_restart() -> bool:
-    """True once the new server is actually accepting connections."""
+    """True once the NEW server is accepting connections.
+
+    The `_wait_port_free` result is load-bearing, not decoration. If the old server refuses to die,
+    start_server() declines to spawn (the port is taken) and _wait_port_up() then answers True -
+    because the OLD process is still listening. That reports a successful restart for one that
+    never happened, which is the same false-success this API was fixed to stop reporting."""
     stop_server()
-    _wait_port_free()
+    if not _wait_port_free():
+        _log_guard("tray: the old server never released the port - restart aborted")
+        return False
     start_server()
     return _wait_port_up()
 

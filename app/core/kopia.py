@@ -74,16 +74,27 @@ def check_readonly(args: list[str]) -> None:
     raise PermissionError(f"REFUSED non-readonly kopia command: {' '.join(toks[:2])}")
 
 
-def _base_command(repo: str, args: list[str]) -> list[str]:
+def _repo_args(repo: str) -> list[str]:
+    """Validated CLI args for a repo. EVERY kopia command builder must start here.
+
+    A non-kopia repo carries NO args (the Backblaze one is a local SQLite index), so `repo="bz"`
+    does not error on its own - it silently produces a valid command against the DEFAULT kopia
+    repository. On `snapshot delete` or `restore` that is the wrong repository.
+
+    Guarding only `_base_command` was NOT enough and the first attempt at this got it wrong: nine
+    builders concatenate the args themselves, and they include every destructive path (snapshot
+    delete x2, remove-files x2, restore x2, pin, diff, maintenance). Grep for `REPOS[` before
+    assuming a new builder is covered - the type system will not tell you.
+    """
     if repo not in REPOS:
         raise ValueError(f"unknown repo: {repo}")
-    # Every kopia subprocess funnels through here, so this is where the kind check belongs rather
-    # than on each of a dozen routes. A non-kopia repo carries NO `args` (the Backblaze one is a
-    # local SQLite index), so `repo=bz` on a kopia route would not error - it would silently run the
-    # command against the DEFAULT kopia repository. On a mutating command that is the wrong repo.
     if REPOS[repo].get("kind", "kopia") != "kopia":
-        raise ValueError(f"repo {repo!r} is not a kopia repo - refusing to run kopia against it")
-    return ["kopia"] + REPOS[repo]["args"] + args + ["--no-progress"]
+        raise ValueError(f"repo {repo!r} is not a kopia repo - refusing to build a kopia command")
+    return list(REPOS[repo]["args"])
+
+
+def _base_command(repo: str, args: list[str]) -> list[str]:
+    return ["kopia"] + _repo_args(repo) + args + ["--no-progress"]
 
 
 def kopia(repo: str, args: list[str], ro: bool = True) -> KopiaResult:
@@ -181,7 +192,7 @@ def unmount(pid: int) -> bool:
 def restore_command(repo: str, source: str, destination: str, overwrite: bool = False) -> list[str]:
     """Return a restore command preview; v1 does not execute restores."""
 
-    args = ["kopia"] + REPOS[repo]["args"] + ["restore", source, destination]
+    args = ["kopia"] + _repo_args(repo) + ["restore", source, destination]
     if overwrite:
         args.append("--overwrite")
     return args
@@ -195,7 +206,7 @@ _SNAP_DELETE_CHUNK = 200
 def maintenance_run_command(repo: str) -> list[str]:
     """The `kopia [args] maintenance run --full` command for a repo (space is reclaimed by this, not
     by the snapshot delete itself). Generation only."""
-    return ["kopia"] + REPOS[repo]["args"] + ["maintenance", "run", "--full"]
+    return ["kopia"] + _repo_args(repo) + ["maintenance", "run", "--full"]
 
 
 def snapshot_delete_commands(repo: str, snapshot_ids: list[str], batch: bool = False) -> list[list[str]]:
@@ -205,7 +216,7 @@ def snapshot_delete_commands(repo: str, snapshot_ids: list[str], batch: bool = F
     ``batch=False`` (default) = one command per id - REQUIRED by callers that align commands 1:1 with
     a per-snapshot ``items`` list (the purge-plan UI). ``batch=True`` = <=200 ids per command, for a
     short/directly-runnable bulk-delete script (the snapshot-delete preview)."""
-    prefix = ["kopia"] + REPOS[repo]["args"] + ["snapshot", "delete"]
+    prefix = ["kopia"] + _repo_args(repo) + ["snapshot", "delete"]
     if batch:
         return [
             prefix + snapshot_ids[i:i + _SNAP_DELETE_CHUNK] + ["--delete"]
@@ -224,7 +235,7 @@ def snapshot_delete_execute(repo: str, snapshot_ids: list[str]) -> dict:
     Kopia-Delete.py is preferable - this call blocks for the whole run.)"""
     if not snapshot_ids:
         return {"deleted": 0, "returncode": 0, "stdout": "", "stderr": "no ids", "command": None, "chunks": 0}
-    prefix = ["kopia"] + REPOS[repo]["args"] + ["snapshot", "delete"]
+    prefix = ["kopia"] + _repo_args(repo) + ["snapshot", "delete"]
     chunks = [snapshot_ids[i:i + _SNAP_DELETE_CHUNK] for i in range(0, len(snapshot_ids), _SNAP_DELETE_CHUNK)]
     log.warning("EXECUTING snapshot delete repo=%s count=%d chunks=%d", repo, len(snapshot_ids), len(chunks))
     deleted, rc, outs, errs, first_cmd = 0, 0, [], [], None
@@ -264,7 +275,7 @@ def remove_files_command(repo: str, object_ids: list[str] | None = None, filenam
     repeatable: ``source`` may be a single string or a LIST (scope to several sources in ONE
     command - object-ids are content-exact so cross-source mismatches are harmless no-ops, and
     listing only the affected sources avoids the slow whole-repo scan). ``--commit`` applies it."""
-    cmd = ["kopia"] + REPOS[repo]["args"] + ["snapshot", "fix", "remove-files"]
+    cmd = ["kopia"] + _repo_args(repo) + ["snapshot", "fix", "remove-files"]
     for oid in object_ids or []:
         cmd += ["--object-id", oid]
     for fn in filenames or []:
@@ -317,7 +328,7 @@ def remove_files_chunked_commands(repo: str, items: list[str], source: str | lis
     each command line stays under a safe limit (default 8000 - works in a .bat / cmd.exe line too,
     not just CreateProcess's 32k). Biggest-files-first order is preserved (caller pre-sorts). Each
     command is --source-scoped to the folder's own sources; ``source=None`` = whole-repo sweep."""
-    base = ["kopia"] + REPOS[repo]["args"] + ["snapshot", "fix", "remove-files"]
+    base = ["kopia"] + _repo_args(repo) + ["snapshot", "fix", "remove-files"]
     src_args = _source_args(source)
     tail = ["--commit"] if commit else []
     fixed_len = sum(len(_quote_arg(a)) + 1 for a in base + src_args + tail) + 16  # safety margin
@@ -435,11 +446,11 @@ def snapshot_pin_command(repo: str, ids: list[str], remove: bool = False,
                          pin_name: str = "do-not-delete") -> list[str]:
     """Pin (protect from retention deletion) or unpin snapshots. Command-gen only."""
     flag = "--remove" if remove else "--pins"
-    return ["kopia"] + REPOS[repo]["args"] + ["snapshot", "pin", *ids, flag, pin_name]
+    return ["kopia"] + _repo_args(repo) + ["snapshot", "pin", *ids, flag, pin_name]
 
 
 def snapshot_diff_command(repo: str, id1: str, id2: str) -> list[str]:
-    return ["kopia"] + REPOS[repo]["args"] + ["diff", id1, id2]
+    return ["kopia"] + _repo_args(repo) + ["diff", id1, id2]
 
 
 def diff_execute(repo: str, id1: str, id2: str) -> str:
@@ -472,7 +483,7 @@ def restore_command_full(repo: str, source_id: str, target: str, options: dict |
     executed here. ``source_id`` is an object id (file/dir/snapshot root), optionally with a
     sub-path; target is a folder or a .zip/.tar archive."""
     opts = options or {}
-    cmd = ["kopia"] + REPOS[repo]["args"] + ["restore", source_id, target]
+    cmd = ["kopia"] + _repo_args(repo) + ["restore", source_id, target]
     for key, (flag, when) in _RESTORE_FLAG_MAP.items():
         if bool(opts.get(key)) == when:
             cmd.append(flag)

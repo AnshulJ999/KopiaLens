@@ -22,7 +22,7 @@ from ..core.cache import cache_db
 from ..core.kopia import snapshot_delete_commands
 from ..core.sizemap import load_sizemap
 from ..core.walk import expand_indirect
-from .queries import snapshots_for_content
+from .queries import _ESC, like_literal, snapshots_for_content
 from .schema import read_cursor
 
 
@@ -302,10 +302,13 @@ def folder_detail(repo: str, source: str | None, prefix: str, all_versions: bool
     way, so a case-sensitive comparison here could make the two halves of the panel disagree.
     """
     base = prefix.rstrip(_SEP)
-    exact_lc, like_lc = base.lower(), (base + _SEP + "%").lower()
+    # Escaped like every other prefix match: `_` is a single-character wildcard, so an unescaped
+    # `Backup_2024` also selects `BackupX2024`. This one computes the freeable/shared figures the
+    # delete decision is made on, so a wrong subtree here is worse than a wrong listing.
+    exact_lc, like_lc = base.lower(), like_literal(base.lower()) + _SEP + "%"
     dbsql = cache_db(repo)
     smap = load_sizemap(repo)
-    where = "repo = ? AND (lower(full_path) = ? OR lower(full_path) LIKE ?)"
+    where = "repo = ? AND (lower(full_path) = ? OR lower(full_path) LIKE ?" + _ESC + ")"
     params: list = [repo, exact_lc, like_lc]
     if source:
         where += " AND source = ?"

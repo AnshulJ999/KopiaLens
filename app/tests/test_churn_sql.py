@@ -35,22 +35,25 @@ def con():
     c.execute("CREATE TABLE content_sizes(repo VARCHAR, cid VARCHAR, packed UBIGINT)")
     c.execute("CREATE TABLE indirect_phys(repo VARCHAR, oid VARCHAR, packed UBIGINT)")
     # Only the columns the churn query joins on. `first_seen` here is the STICKY, backfilled value,
-    # which is exactly why it can disagree with min(files.start_time).
+    # which is exactly why it can disagree with min(files.start_time); `versions` mirrors the
+    # indexer's own count(DISTINCT snapshot_id) from builder._PATHS_SQL.
     c.execute("CREATE TABLE paths(repo VARCHAR, source VARCHAR, full_path VARCHAR, "
-              "first_seen TIMESTAMP)")
+              "first_seen TIMESTAMP, versions BIGINT)")
     return c
 
 
 def add_file(con, path: str, cid: str, ts: str, source: str = SRC) -> None:
-    """Add a file version, and keep `paths.first_seen` in step with the earliest row - what an
-    ordinary path looks like. Use `set_first_seen` to model a path whose true first appearance is
-    older than anything left in the delta index."""
-    con.execute("INSERT INTO files VALUES('1',?,?,?,0,?,'snap',?,0,NULL)",
-                [source, path, path.rsplit(SEP, 1)[-1], cid, ts])
+    """Add a file version, and rebuild its `paths` row the way the indexer would.
+
+    The snapshot id is the timestamp: each version comes from a different snapshot, and
+    `paths.versions` counts DISTINCT snapshot ids, so a shared constant here would make every path
+    look like it had exactly one version and quietly disarm the test."""
+    con.execute("INSERT INTO files VALUES('1',?,?,?,0,?,?,?,0,NULL)",
+                [source, path, path.rsplit(SEP, 1)[-1], cid, ts, ts])
     con.execute("DELETE FROM paths WHERE repo='1' AND source=? AND full_path=?", [source, path])
     con.execute(
-        "INSERT INTO paths SELECT '1', ?, ?, min(start_time) FROM files "
-        "WHERE repo='1' AND source=? AND full_path=?", [source, path, source, path])
+        "INSERT INTO paths SELECT '1', ?, ?, min(start_time), count(DISTINCT snapshot_id) "
+        "FROM files WHERE repo='1' AND source=? AND full_path=?", [source, path, source, path])
 
 
 def set_first_seen(con, path: str, first_seen: str, source: str = SRC) -> None:

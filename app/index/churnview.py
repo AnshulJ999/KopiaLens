@@ -63,42 +63,42 @@ _FOLDER = ("array_to_string(list_slice(string_split(full_path, ?), 1, "
 #     oldest-first specifically to be the true first appearance. Authoritative, no inference.
 #   * an existing path REWRITTEN inside the window -> its new content is new data.
 #
-# The discriminator for the second is the number of rows the PATH has in `files`, not the (path,
-# content) group's own count. A rewritten file always has at least two rows, because changing a file
-# changes its containing directory, which forces the indexer to walk and record it. A file rewritten
-# in the very latest snapshot has only one row for its NEW content - so counting per group would
-# throw away real churn - but its path still carries the older content's row. An untouched file has
-# exactly one row for the path, and that is the case being excluded here.
+# The discriminator for the second is how many versions the PATH has (`paths.versions`), not the
+# (path, content) group's own row count. A rewritten file always has at least two, because changing
+# a file changes its containing directory, which forces the indexer to walk and record it. A file
+# rewritten in the very latest snapshot has only one row for its NEW content - so counting per group
+# would throw away real churn - but its path still carries the older content's version. An untouched
+# file has exactly one version, and that is the case being excluded here.
 #
 # This reasons about how the indexer builds `files` rather than reading a stored fact, so it is
 # exact today and could drift if that walk ever changes. The last six tests in `test_churn_sql.py`
 # pin the invariant so a future change fails loudly instead of silently going 5x wrong again. The durable
 # alternative - stamping first-seen per (path, content) at index time - was costed at 400-800 MB per
 # repo and deliberately deferred; see the sub-memory.
+# `paths.versions` is the version count the INDEXER already computed for each path
+# (count(DISTINCT snapshot_id) in builder._PATHS_SQL). Deriving it here again cost a second full
+# GROUP BY over all ~18.7M `files` rows - measured at 42.6s against 5.4s before. Reading it off the
+# `paths` join that this query already performs removes that scan outright.
 _QUALIFY_CTE = """
 WITH pc AS (
   SELECT source, full_path, content_id, min(start_time) AS first_ts
   FROM files WHERE repo = ? GROUP BY source, full_path, content_id
-), pr AS (
-  SELECT source, full_path, count(*) AS row_count
-  FROM files WHERE repo = ? GROUP BY source, full_path
 ), newc AS (
   SELECT pc.source, pc.full_path, pc.content_id,
          COALESCE(cs.packed, ip.packed, 0) AS packed
   FROM pc
-  JOIN pr ON pr.source = pc.source AND pr.full_path = pc.full_path
   LEFT JOIN paths p ON p.repo = ? AND p.source = pc.source AND p.full_path = pc.full_path
   LEFT JOIN content_sizes cs ON cs.repo = ? AND cs.cid = pc.content_id
   LEFT JOIN indirect_phys  ip ON ip.repo = ? AND ip.oid = pc.content_id
   WHERE pc.first_ts >= ?
-    AND (p.first_seen >= ? OR p.first_seen IS NULL OR pr.row_count > 1)
+    AND (p.first_seen >= ? OR p.first_seen IS NULL OR COALESCE(p.versions, 2) > 1)
 )
 """
 
 
 def _qualify_params(repo: str, cutoff: str) -> list:
     """Bind values for _QUALIFY_CTE, in the order its placeholders appear."""
-    return [repo, repo, repo, repo, repo, cutoff, cutoff]
+    return [repo, repo, repo, repo, cutoff, cutoff]
 
 
 _BASE_SQL = f"""{_QUALIFY_CTE}

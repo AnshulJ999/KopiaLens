@@ -180,6 +180,18 @@ def run(repo: str, full: bool = False) -> dict:
             logging.error("index stage failed - skipping every stage that reads the index")
     finally:
         rep.stop()
+        # The refcount-miss counters are process-local, and MOST freeable lookups happen right here
+        # in the worker (the folder prewarm), not in the app. Without this line /debug/memory would
+        # report near-zero misses while the measurement's real population went to the grave with
+        # this process. Logged rather than persisted - it is a diagnostic, not state.
+        try:
+            from .physical import refcount_miss_stats
+            stats = refcount_miss_stats().get(repo)
+            if stats:
+                summary["refcount_misses"] = stats
+                logging.info("refcount misses repo=%s: %s", repo, stats)
+        except Exception:  # noqa: BLE001 - a diagnostic must never affect the run
+            pass
         from .schema import close_all
         try:
             close_all()  # release the DuckDB file before we exit so the app can reopen it promptly
