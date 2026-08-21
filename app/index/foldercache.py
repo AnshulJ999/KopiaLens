@@ -172,11 +172,15 @@ def _prewarm_budget() -> float:
 
 
 def _prewarm_depths() -> tuple:
-    """The depths the UI actually shows folders at, plus one deeper.
+    """The depths the UI actually shows folders at - exactly those, nothing extra.
 
     The Churn tab rolls up at ``churn_depth`` and the bloat finder at ``group_depth``; those are the
     two places a folder gets clicked from. Reading them means the prewarm follows the user instead
-    of me guessing, and it stays correct if they change either setting later."""
+    of me guessing, and it stays correct if they change either setting later.
+
+    A third, one-deeper level used to be included and was dropped: the rollup caps at the path's own
+    length, so depth N+1 returns substantially the same folders as depth N and spends a third of the
+    budget recomputing them."""
     try:
         from ..settings import load_settings
         kl = load_settings().get("kopialens", {})
@@ -184,7 +188,7 @@ def _prewarm_depths() -> tuple:
         group = int(kl.get("group_depth", 3))
     except Exception:  # noqa: BLE001
         return _PREWARM_DEPTHS
-    depths = sorted({d for d in (group, churn, churn + 1) if 2 < d <= 20})
+    depths = sorted({d for d in (group, churn) if 2 < d <= 20})
     return tuple(depths) or _PREWARM_DEPTHS
 
 
@@ -227,7 +231,13 @@ def prewarm(repo: str, top: int = _PREWARM_TOP, depths=None) -> None:
                 skipped += 1
                 continue
             try:
-                compute(repo, prefix)
+                # allow_stale=False is LOAD-BEARING, not a tidy-up. The index stamp changes on
+                # every index run, so by the time this stage runs EVERY cached folder is stale -
+                # and the stale path hands the work to a daemon thread and returns immediately.
+                # That would race through the whole list in milliseconds (never touching the
+                # budget), leave ~100 threads querying DuckDB while the worker calls close_all(),
+                # and cache nothing at all, because daemon threads die when the process exits.
+                compute(repo, prefix, allow_stale=False)
                 done += 1
             except Exception as exc:  # noqa: BLE001 - one bad folder must not end the pass
                 failed += 1

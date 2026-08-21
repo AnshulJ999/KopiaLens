@@ -358,7 +358,7 @@ def remove_detail(payload: RemovePlanRequest) -> dict:
         out["scope"] = "folder"
         return out
     files = [{"source": s, "full_path": fp} for s, fp in t["pairs"][:5000]]  # cap the walk
-    out = batch_detail(payload.repo, files)
+    out = batch_detail(payload.repo, files, all_versions=payload.all_versions)
     out["capped"] = len(t["pairs"]) > 5000
     out["scope"] = "selection"
     return out
@@ -445,6 +445,8 @@ def folder_reclaim(payload: FolderReclaimRequest) -> dict:
 class BatchDetailRequest(BaseModel):
     repo: str = "1"
     files: list[dict]  # [{"source":..., "full_path":...}, ...]
+    all_versions: bool = True  # must mirror the caller's delete plan, or the preview prices a
+                               # different deletion than the one about to run
 
 
 @router.post("/actions/batch-detail")
@@ -455,7 +457,9 @@ def batch_detail_route(payload: BatchDetailRequest) -> dict:
     if not payload.files:
         raise HTTPException(status_code=400, detail="no files specified")
     try:
-        return batch_detail(payload.repo, payload.files)
+        return batch_detail(payload.repo, payload.files, all_versions=payload.all_versions)
+    except RepoOffline:
+        raise                       # let the dedicated 503 handler explain it
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

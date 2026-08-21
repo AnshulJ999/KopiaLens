@@ -10,6 +10,11 @@ DATA_DIR = os.path.join(HERE, "data")                                   # duckdb
 HOST, PORT = "0.0.0.0", 7123                                            # bind all interfaces (LAN-reachable for Caddy reverse-proxy at kopia.example.com)
 GUARD_HOST = "127.0.0.1"                                                # single-instance guard probes loopback (the 0.0.0.0 bind includes it; connecting to 0.0.0.0 is unreliable on Windows)
 
+# Tray control API (kopialens_tray.py). Restart/quit live in the TRAY, not the server: a process
+# cannot kill itself and still answer the request that asked it to. Loopback ONLY and unauthenticated
+# - fine for a personal tool on this machine, revisit before any public release.
+TRAY_CONTROL_HOST, TRAY_CONTROL_PORT = "127.0.0.1", 7124
+
 REPO2_CONFIG = r"C:\Users\me\AppData\Roaming\kopia\repository.config"
 # Each repo carries a `kind`: "kopia" (DuckDB-backed, the original) or "backblaze" (read-only
 # SQLite index of the local Backblaze bzdata - never touches kopia/DuckDB code). `args` is the

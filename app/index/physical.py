@@ -326,12 +326,17 @@ def folder_detail(repo: str, source: str | None, prefix: str, all_versions: bool
     }
 
 
-def batch_detail(repo: str, files: list[dict]) -> dict:
+def batch_detail(repo: str, files: list[dict], all_versions: bool = True) -> dict:
     """Union (content-aware / deduped) footprint for a SET of selected files - the multi-file
     equivalent of file_detail. Unions every selected file's content chunks across all its
     versions, then: physical = packed bytes of the union; freeable = packed bytes referenced
     ONLY by the selection (global refcount fully attributable to it -> removing the whole
-    selection frees them); logical = sum of distinct latest-content sizes (deduped)."""
+    selection frees them); logical = sum of distinct latest-content sizes (deduped).
+
+    ``all_versions=False`` unions only each path's LATEST version, matching a latest-only delete
+    plan. It must track whatever the caller is about to delete: pricing an all-versions union for a
+    latest-only deletion overstates the freeable bytes by the churn multiplier, which on a
+    rewrite-heavy path is two orders of magnitude."""
     pairs = [(f.get("source"), f.get("full_path")) for f in files if f.get("source") and f.get("full_path")]
     if not pairs:
         return {"found": False}
@@ -352,7 +357,7 @@ def batch_detail(repo: str, files: list[dict]) -> dict:
             if not rows:
                 continue
             latest[(src, fp)] = (rows[0][0], int(rows[0][1] or 0))
-            for obj, _sz, _st in rows:
+            for obj, _sz, _st in (rows if all_versions else rows[:1]):
                 versions += 1
                 chunks = obj_chunks.get(obj)
                 if chunks is None:
@@ -392,6 +397,7 @@ def batch_detail(repo: str, files: list[dict]) -> dict:
         "physical": physical,
         "freeable": freeable,
         "shared": physical - freeable,
+        "all_versions": all_versions,
     }
 
 

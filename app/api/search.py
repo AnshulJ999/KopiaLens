@@ -30,6 +30,8 @@ def search_group_by_folder(
             deleted_only=deleted_only, min_size=int(min_gb * 1_000_000_000), min_files=min_files,
             sort=sort, direction=direction, limit=limit,
         )
+    except RepoOffline:
+        raise                       # let the dedicated 503 handler explain it
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

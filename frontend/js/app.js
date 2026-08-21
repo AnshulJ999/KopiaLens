@@ -147,8 +147,14 @@ document.addEventListener("alpine:init", () => {
     dashboardMeta: "", busy: "", error: "", detail: null, batch: null, showBatch: false, snapSource: "*ALL*", _poll: null, _searchSeq: 0, _detailSeq: 0,
     showRemove: false, removePlan: null, removeJobPoll: null, _removeBase: null,
     excludedDrives: [], excludedOk: true, excludedPath: "", excludedFilter: "excluded", excludedMeta: "", _excludedItems: [], _excludedSeq: 0, excludedDetail: null, showExcludedDetail: false,
-    showSettings: false, backend: "subprocess", repoPinned: false, reindexInterval: 1800, dashRefresh: 900,
+    showSettings: false, settingsTab: "general", backend: "subprocess", repoPinned: false, reindexInterval: 1800, dashRefresh: 900,
     reclaimInterval: 10800, excludedTolerance: 0.05, esPath: "",
+    // Advanced settings. These existed in settings.json all along and had no UI, so the only way to
+    // change them was to edit the file by hand. Defaults here mirror app/settings.py.
+    lightInterval: 1800, dashboardInterval: 14400,
+    autoCompact: true, compactRatio: 1.6, compactMinInterval: 86400,
+    indexWorkerTimeout: 14400, indexDrainTimeout: 300, indexRetryDelay: 900, indexMaxRetries: 1,
+    folderPrewarmBudget: 900, startupDelay: 300, dirMemoMaxMb: 1500, refcountWriteInterval: 21600,
     analyzingAll: false, showDelete: false, deletePlan: null, deleteConfirm: "", _autoRefresh: null,
 
     fmtB(v) { return fmtBytes(v); },
@@ -211,6 +217,10 @@ document.addEventListener("alpine:init", () => {
         this.reclaimInterval = Number(kl.reclaim_interval || 10800);
         this.excludedTolerance = Number(kl.excluded_tolerance ?? 0.05);
         this.esPath = kl.es_path || "";
+        // Also at startup, not only in openSettings: if that re-fetch ever fails, the advanced
+        // fields would still hold constructor defaults and a Save would write those over the real
+        // values.
+        this._readAdvanced(kl);
         if (kl.time_format) { TIME_FMT = kl.time_format; this.timeFmt = kl.time_format; }
         if (this.bzApplySettings) this.bzApplySettings(kl);  // restore persisted BZ prefs (tree drive, depths, toggles)
         if (this.repoKind === "backblaze") {
@@ -1566,15 +1576,57 @@ document.addEventListener("alpine:init", () => {
         this.reclaimInterval = Number(kl.reclaim_interval || 10800);
         this.excludedTolerance = Number(kl.excluded_tolerance ?? 0.05);
         this.esPath = kl.es_path || "";
+        this._readAdvanced(kl);
       } catch (e) { /* keep last-known state on fetch failure */ }
       this.showSettings = true;
     },
+    _readAdvanced(kl) {
+      this.lightInterval = Number(kl.light_interval || 1800);
+      this.dashboardInterval = Number(kl.dashboard_interval || 14400);
+      this.autoCompact = kl.auto_compact !== false;
+      this.compactRatio = Number(kl.compact_ratio || 1.6);
+      this.compactMinInterval = Number(kl.compact_min_interval || 86400);
+      this.indexWorkerTimeout = Number(kl.index_worker_timeout || 14400);
+      this.indexDrainTimeout = Number(kl.index_drain_timeout || 300);
+      this.indexRetryDelay = Number(kl.index_retry_delay || 900);
+      this.indexMaxRetries = Number(kl.index_max_retries ?? 1);
+      this.folderPrewarmBudget = Number(kl.folder_prewarm_budget || 900);
+      this.startupDelay = Number(kl.startup_delay ?? 300);
+      this.dirMemoMaxMb = Number(kl.dir_memo_max_mb || 1500);
+      this.refcountWriteInterval = Number(kl.refcount_write_interval || 21600);
+    },
     async saveSettings() {
       await this.wrap(async () => {
-        await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listing_backend: this.backend, kopialens: { reindex_interval: Number(this.reindexInterval) || 1800, dashboard_refresh: Number(this.dashRefresh) || 0, reclaim_interval: Number(this.reclaimInterval) || 10800, excluded_tolerance: Number(this.excludedTolerance), es_path: this.esPath || "", index_mode: this.indexMode, index_time: this.indexTime, index_interval: Number(this.indexInterval) || 86400, dashboard_mode: this.dashboardMode } }) });
+        // The backend MERGES this sub-dict rather than replacing it, so sending a subset is safe -
+        // but anything the modal edits must be listed here or the edit is silently dropped.
+        const kopialens = {
+          reindex_interval: Number(this.reindexInterval) || 1800,
+          dashboard_refresh: Number(this.dashRefresh) || 0,
+          reclaim_interval: Number(this.reclaimInterval) || 10800,
+          excluded_tolerance: Number(this.excludedTolerance),
+          es_path: this.esPath || "",
+          index_mode: this.indexMode,
+          index_time: this.indexTime,
+          index_interval: Number(this.indexInterval) || 86400,
+          dashboard_mode: this.dashboardMode,
+          light_interval: Number(this.lightInterval) || 1800,
+          dashboard_interval: Number(this.dashboardInterval) || 14400,
+          auto_compact: !!this.autoCompact,
+          compact_ratio: Number(this.compactRatio) || 1.6,
+          compact_min_interval: Number(this.compactMinInterval) || 86400,
+          index_worker_timeout: Number(this.indexWorkerTimeout) || 14400,
+          index_drain_timeout: Number(this.indexDrainTimeout) || 300,
+          index_retry_delay: Number(this.indexRetryDelay) || 900,
+          index_max_retries: Math.max(0, Number(this.indexMaxRetries) || 0),
+          folder_prewarm_budget: Number(this.folderPrewarmBudget) || 900,
+          startup_delay: Number(this.startupDelay) || 0,
+          dir_memo_max_mb: Number(this.dirMemoMaxMb) || 1500,
+          refcount_write_interval: Number(this.refcountWriteInterval) || 21600,
+        };
+        await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listing_backend: this.backend, kopialens }) });
         this.armAutoRefresh();  // apply the new dashboard auto-refresh interval immediately
         this.showSettings = false;
-        window.alert("Saved. Scheduling and interval changes are picked up on the next tick (within a minute); the listing backend change needs a restart.");
+        window.alert("Saved. Scheduling and interval changes are picked up on the next tick (within a minute). The listing backend, directory-cache budget and startup delay need a restart.");
       });
     },
     async compactNow() {
