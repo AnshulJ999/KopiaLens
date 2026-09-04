@@ -1241,6 +1241,8 @@ document.addEventListener("alpine:init", () => {
       const seq = ++this._removePlanSeq;
       this.removePlan.loading = true;
       this.removePlan.detail = null;  // freeable/shared depends on the matched set
+      ++this._removeDetailSeq;
+      this.removePlan.detailLoading = false;
       const r = await getJson("/api/actions/remove-plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
       if (seq !== this._removePlanSeq || !this.removePlan) return;  // a newer toggle superseded this fetch
       if (r) Object.assign(this.removePlan, r);
