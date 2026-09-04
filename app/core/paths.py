@@ -11,6 +11,8 @@ macOS users override to case-insensitive).
 
 from __future__ import annotations
 
+import threading
+
 WIN_SEP = chr(92)
 POSIX_SEP = "/"
 
@@ -21,29 +23,36 @@ _POSIX = {"sep": POSIX_SEP, "case_sensitive": True}
 # records; a source key identifies the same machine+path in any repo, so one registry is right.
 _OVERRIDES: dict[str, dict] = {}
 _loaded = False
+_LOAD_LOCK = threading.Lock()
 
 
 def configure(overrides: dict | None) -> None:
     """Replace the override registry. Explicit configuration wins over the record store."""
     global _loaded
-    _OVERRIDES.clear()
-    if overrides:
-        _OVERRIDES.update(overrides)
-    _loaded = True
+    with _LOAD_LOCK:
+        _OVERRIDES.clear()
+        if overrides:
+            _OVERRIDES.update(overrides)
+        _loaded = True
 
 
 def _ensure_loaded() -> None:
     """Self-load from the repository records on first use, so neither the app nor the worker
-    subprocess has a wiring step that can be forgotten."""
+    subprocess has a wiring step that can be forgotten. Locked, and `_loaded` is set only AFTER
+    the registry is populated: a concurrent caller must never observe an empty registry and
+    resolve a path identity from detection when an override exists."""
     global _loaded
     if _loaded:
         return
-    _loaded = True
-    try:
-        import config
-        _OVERRIDES.update(config.PATH_OVERRIDES or {})
-    except Exception:  # noqa: BLE001 - overrides are optional; detection alone is valid
-        pass
+    with _LOAD_LOCK:
+        if _loaded:
+            return
+        try:
+            import config
+            _OVERRIDES.update(config.PATH_OVERRIDES or {})
+        except Exception:  # noqa: BLE001 - overrides are optional; detection alone is valid
+            pass
+        _loaded = True
 
 
 def source_root(source_key: str) -> str:

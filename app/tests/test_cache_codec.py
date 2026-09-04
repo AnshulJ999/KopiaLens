@@ -7,10 +7,13 @@ one is never run), so the read path must accept both without being told which it
 from __future__ import annotations
 
 import sqlite3
+import threading
 
+import duckdb
 import pytest
 
 from app.core import cache
+from app.index import physical
 
 ENTRIES = [{"name": "a.txt", "obj": "k1", "type": "f", "size": 10},
            {"name": "sub", "obj": "k2", "type": "d"}]
@@ -70,3 +73,75 @@ def test_an_empty_list_round_trips():
         cache._level = lvl
         assert cache.decode_json(cache.encode_json([])) == []
     cache._level = None
+
+
+# ---- regressions: two P1 bugs shipped 2026-09-05, both found in review -------------------------
+
+def test_materialize_physical_reads_a_compressed_indirect_row(monkeypatch):
+    """Bug 1. `expand_indirect` writes indirect rows THROUGH the codec, and this branch reads them
+    back in the same call - so with compression on, a raw `json.loads` dies on exactly the rows the
+    branch exists to read, aborting the index stage and skipping every downstream nightly stage."""
+    duck = duckdb.connect()
+    duck.execute("CREATE TABLE content_sizes(repo VARCHAR, cid VARCHAR, packed UBIGINT)")
+    duck.execute("CREATE TABLE indirect_phys(repo VARCHAR, oid VARCHAR, packed UBIGINT)")
+    duck.execute("CREATE TABLE paths(repo VARCHAR, source VARCHAR, full_path VARCHAR, "
+                 "content_id VARCHAR, physical UBIGINT)")
+    duck.execute("INSERT INTO paths VALUES ('1','s','big.iso','Iabc',0)")
+
+    sq = sqlite3.connect(":memory:")
+    sq.execute("CREATE TABLE indirect (oid TEXT PRIMARY KEY, parts TEXT)")
+    cache._level = 1  # what the live default writes
+    sq.execute("INSERT INTO indirect VALUES (?,?)", ("Iabc", cache.encode_json(["c1", "c2"])))
+    sq.commit()
+
+    monkeypatch.setattr(physical, "cache_db", lambda repo: sq)
+    monkeypatch.setattr(physical, "expand_indirect", lambda *a, **k: set())  # row already cached
+    monkeypatch.setattr(physical, "load_sizemap", lambda repo: {"abc": 5, "c1": 100, "c2": 200})
+    try:
+        physical.materialize_physical(duck, "1")
+        packed = duck.execute("SELECT packed FROM indirect_phys WHERE oid='Iabc'").fetchone()[0]
+        assert packed == 305  # the index content itself (abc=5) + its two chunks
+    finally:
+        cache._level = None
+
+
+def _hammer(fn, threads: int = 8, loops: int = 200) -> list:
+    errors: list = []
+
+    def run() -> None:
+        try:
+            for _ in range(loops):
+                fn()
+        except Exception as exc:  # noqa: BLE001 - collect, do not raise on a worker thread
+            errors.append(exc)
+
+    ts = [threading.Thread(target=run) for _ in range(threads)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    return errors
+
+
+def test_decode_is_safe_under_concurrency():
+    """Bug 2. python-zstandard contexts are NOT thread safe, and this codec runs on the request
+    threadpool and the build thread at once. A shared context corrupts into an access violation -
+    a process kill, not an exception - so this test passing at all IS the assertion."""
+    cache._level = 1
+    try:
+        blob = cache.encode_json(ENTRIES * 20)
+        assert isinstance(blob, bytes)
+        errors = _hammer(lambda: cache.decode_json(blob))
+        assert not errors, errors
+    finally:
+        cache._level = None
+
+
+def test_encode_is_safe_under_concurrency():
+    """Same contract on the write side - the build thread and a request can both populate the cache."""
+    cache._level = 1
+    try:
+        errors = _hammer(lambda: cache.decode_json(cache.encode_json(ENTRIES)) == ENTRIES)
+        assert not errors, errors
+    finally:
+        cache._level = None

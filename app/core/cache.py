@@ -37,8 +37,13 @@ except ImportError:  # pragma: no cover
 # which is why the higher default costs nothing on the hot read path.
 _LEVELS = {"none": 0, "zstd-1": 1, "zstd-3": 3}
 _level: int | None = None
-_CCTX: dict[int, object] = {}
-_DCTX = _zstd.ZstdDecompressor() if _zstd else None
+_LEVEL_LOCK = threading.Lock()
+
+# 🚨 python-zstandard compressor/decompressor objects are NOT thread safe (documented), and this
+# codec runs on the uvicorn request threadpool AND the in-process build thread at the same time.
+# A shared context used reentrantly corrupts its internal buffers into a process-killing access
+# violation - not an exception. One context per thread, mirroring the thread-local DuckDB cursors.
+_TLS = threading.local()
 
 
 def _zlevel() -> int:
@@ -46,14 +51,32 @@ def _zlevel() -> int:
     behave identically without either needing a wiring step."""
     global _level
     if _level is None:
-        _level = 0
-        try:
-            from ..settings import load_settings
-            name = load_settings().get("kopialens", {}).get("walk_cache_compression", "none")
-            _level = _LEVELS.get(str(name), 0) if _zstd else 0
-        except Exception:  # noqa: BLE001 - a settings read must never break the walk
-            _level = 0
+        with _LEVEL_LOCK:
+            if _level is None:  # another thread may have loaded it while we waited
+                try:
+                    from ..settings import load_settings
+                    name = load_settings().get("kopialens", {}).get("walk_cache_compression", "none")
+                    _level = _LEVELS.get(str(name), 0) if _zstd else 0
+                except Exception:  # noqa: BLE001 - a settings read must never break the walk
+                    _level = 0
     return _level
+
+
+def _cctx(level: int):
+    """This thread's compressor for `level` (level is fixed at construction, so it is part of the key)."""
+    got = getattr(_TLS, "cctx", None)
+    if got is None or got[0] != level:
+        got = (level, _zstd.ZstdCompressor(level=level))
+        _TLS.cctx = got
+    return got[1]
+
+
+def _dctx():
+    """This thread's decompressor."""
+    got = getattr(_TLS, "dctx", None)
+    if got is None:
+        got = _TLS.dctx = _zstd.ZstdDecompressor()
+    return got
 
 
 def encode_json(obj) -> str | bytes:
@@ -63,17 +86,14 @@ def encode_json(obj) -> str | bytes:
     lvl = _zlevel()
     if not lvl:
         return raw
-    cctx = _CCTX.get(lvl)
-    if cctx is None:
-        cctx = _CCTX[lvl] = _zstd.ZstdCompressor(level=lvl)
-    return cctx.compress(raw.encode("utf-8"))
+    return _cctx(lvl).compress(raw.encode("utf-8"))
 
 
 def decode_json(value):
     """Read a value written by ``encode_json`` in EITHER format - a cache is always a mix while a
     transform is pending, and a row written before compression was enabled must still be readable."""
     if isinstance(value, (bytes, bytearray)):
-        return _loads(_DCTX.decompress(bytes(value)))
+        return _loads(_dctx().decompress(bytes(value)))
     return _loads(value)
 
 

@@ -13,12 +13,11 @@ A file's stored ``content_id`` is the object id: a single content for small file
 from __future__ import annotations
 
 import collections
-import json
 import threading
 
 import pyarrow as pa
 
-from ..core.cache import cache_db
+from ..core.cache import cache_db, decode_json
 from ..core.kopia import snapshot_delete_commands
 from ..core.sizemap import load_sizemap
 from ..core.walk import expand_indirect
@@ -83,7 +82,9 @@ def materialize_physical(con, repo: str) -> None:
             parts = {oid[1:]}  # the index content itself
             row = cur.execute("SELECT parts FROM indirect WHERE oid=?", (oid,)).fetchone()
             if row:
-                parts |= set(json.loads(row[0]))
+                # decode_json, never raw json: expand_indirect above may have just written this row
+                # COMPRESSED, so a raw parse fails on the very rows this branch exists to read.
+                parts |= set(decode_json(row[0]))
             oid_list.append(oid)
             packed_list.append(sum(smap.get(p, 0) for p in parts))
         _arrow_insert(
