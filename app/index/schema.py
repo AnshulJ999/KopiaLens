@@ -132,6 +132,33 @@ def record_compact_size(repo: str, size: int) -> None:
 # DuckDB spills above this to the temp directory, so it only costs disk, never correctness.
 MEMORY_LIMIT = os.environ.get("KOPIALENS_DUCKDB_MEMORY", "3GB")
 
+# Bump when a change makes an existing index WRONG rather than merely older. A mismatch triggers a
+# full rebuild from the SQLite walk cache (no kopia re-walk) - there is deliberately no migration
+# framework. A DB with no stamp predates stamping and is treated as current: the per-source path
+# model is forward-only, so existing rows are not contaminated.
+SCHEMA_VERSION = 1
+
+
+def stored_schema_version(con) -> int | None:
+    try:
+        row = con.execute(
+            "SELECT value FROM kl_meta WHERE key='schema_version' ORDER BY set_at DESC LIMIT 1"
+        ).fetchone()
+    except Exception:  # noqa: BLE001 - table absent on a pre-stamp DB
+        return None
+    try:
+        return int(row[0]) if row else None
+    except (TypeError, ValueError):
+        return None
+
+
+def stamp_schema_version(con, version: int = SCHEMA_VERSION) -> None:
+    """Append-only: kl_meta carries no index, so a rewrite can never hit the ART delete bug."""
+    try:
+        con.execute("INSERT INTO kl_meta(key, value) VALUES ('schema_version', ?)", [str(version)])
+    except Exception as exc:  # noqa: BLE001 - never fail a build on the stamp
+        log.warning("schema_version stamp failed: %s", exc)
+
 
 def db_path(repo: str) -> str:
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -519,6 +546,16 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
             log.info("migrated snapshot_analysis -> dropped PRIMARY KEY (index-delete safety)")
     except Exception as exc:  # noqa: BLE001 - never block startup on the migration
         log.warning("snapshot_analysis PK migration skipped: %s", exc)
+
+    # Index-free by design (see stamp_schema_version). Stamped only when ABSENT - an existing
+    # mismatch must survive until the builder has actually rebuilt, or the signal is erased here.
+    con.execute("CREATE TABLE IF NOT EXISTS kl_meta (key VARCHAR, value VARCHAR, set_at TIMESTAMP DEFAULT now())")
+    stored = stored_schema_version(con)
+    if stored is None:
+        stamp_schema_version(con)
+    elif stored != SCHEMA_VERSION:
+        log.warning("index schema_version %s != %s - a full rebuild from the walk cache is due",
+                    stored, SCHEMA_VERSION)
 
     con.execute("CREATE INDEX IF NOT EXISTS files_repo_source_path ON files(repo, source, full_path)")
     con.execute("CREATE INDEX IF NOT EXISTS files_snapshot ON files(repo, snapshot_id)")

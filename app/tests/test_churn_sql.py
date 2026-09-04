@@ -19,7 +19,7 @@ from __future__ import annotations
 import duckdb
 import pytest
 
-from app.index.churnview import _BASE_SQL, _DEDUPED_SQL, _qualify_params
+from app.index.churnview import _MATERIALIZE_SQL, _base_sql, _deduped_sql, _qualify_params
 
 SEP = chr(92)
 CUTOFF = "2026-07-22 00:00:00"
@@ -63,13 +63,23 @@ def set_first_seen(con, path: str, first_seen: str, source: str = SRC) -> None:
                 [first_seen, source, path])
 
 
+TMP = "_t_newc"
+
+
+def _materialize(con) -> str:
+    """The qualifying set is now built ONCE per call and both outputs derive from it.
+    Every assertion below is unchanged, so they also prove the refactor returns identical rows."""
+    con.execute(_MATERIALIZE_SQL.format(tmp=TMP), _qualify_params("1", CUTOFF))
+    return TMP
+
+
 def base_rows(con, depth: int = 4) -> list[tuple]:
     return con.execute(
-        _BASE_SQL, _qualify_params("1", CUTOFF) + [SEP, depth, SEP, SEP, SEP, SEP]).fetchall()
+        _base_sql(_materialize(con)), [SEP, depth, SEP, SEP, SEP, SEP]).fetchall()
 
 
 def deduped(con) -> int:
-    return int(con.execute(_DEDUPED_SQL, _qualify_params("1", CUTOFF)).fetchone()[0])
+    return int(con.execute(_deduped_sql(_materialize(con))).fetchone()[0])
 
 
 def test_only_content_first_seen_in_the_window_counts(con):

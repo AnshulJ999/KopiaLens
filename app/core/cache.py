@@ -27,6 +27,56 @@ except ImportError:  # pragma: no cover - orjson is a declared dependency
     def _dumps(obj) -> str:
         return json.dumps(obj)
 
+try:  # optional: without it the cache simply stays uncompressed
+    import zstandard as _zstd
+except ImportError:  # pragma: no cover
+    _zstd = None
+
+# The walk caches are ~11.5 GB of uncompressed JSON and are written once / read many, so ratio
+# matters and compression speed does not. zstd's DECOMPRESSION speed is near level-independent,
+# which is why the higher default costs nothing on the hot read path.
+_LEVELS = {"none": 0, "zstd-1": 1, "zstd-3": 3}
+_level: int | None = None
+_CCTX: dict[int, object] = {}
+_DCTX = _zstd.ZstdDecompressor() if _zstd else None
+
+
+def _zlevel() -> int:
+    """Compression level from settings, read once. Lazy so the app and the worker subprocess
+    behave identically without either needing a wiring step."""
+    global _level
+    if _level is None:
+        _level = 0
+        try:
+            from ..settings import load_settings
+            name = load_settings().get("kopialens", {}).get("walk_cache_compression", "none")
+            _level = _LEVELS.get(str(name), 0) if _zstd else 0
+        except Exception:  # noqa: BLE001 - a settings read must never break the walk
+            _level = 0
+    return _level
+
+
+def encode_json(obj) -> str | bytes:
+    """JSON text, or a zstd frame when compression is on. Both are valid column values - sqlite is
+    dynamically typed, so TEXT vs BLOB survives the round trip and IS the format discriminator."""
+    raw = _dumps(obj)
+    lvl = _zlevel()
+    if not lvl:
+        return raw
+    cctx = _CCTX.get(lvl)
+    if cctx is None:
+        cctx = _CCTX[lvl] = _zstd.ZstdCompressor(level=lvl)
+    return cctx.compress(raw.encode("utf-8"))
+
+
+def decode_json(value):
+    """Read a value written by ``encode_json`` in EITHER format - a cache is always a mix while a
+    transform is pending, and a row written before compression was enabled must still be readable."""
+    if isinstance(value, (bytes, bytearray)):
+        return _loads(_DCTX.decompress(bytes(value)))
+    return _loads(value)
+
+
 BATCH = 800
 # In-process LRU over directory entries, on TOP of the durable mmap'd SQLite dir cache. The SQLite
 # cache is the source of truth; this memo only avoids SQLite round-trips + JSON re-parsing on the
@@ -117,7 +167,7 @@ def get_children(repo: str, db: sqlite3.Connection, oids: list[str]) -> dict[str
             if row is None:
                 still.append(oid)
                 continue
-            entries = _loads(row)
+            entries = decode_json(row)
             out[oid] = entries
             memo_put(oid, entries)
 
@@ -140,7 +190,7 @@ def get_children(repo: str, db: sqlite3.Connection, oids: list[str]) -> dict[str
                 entries = []
             out[oid] = entries
             memo_put(oid, entries)
-            db.execute("INSERT OR REPLACE INTO dir_children VALUES (?,?)", (oid, _dumps(entries)))
+            db.execute("INSERT OR REPLACE INTO dir_children VALUES (?,?)", (oid, encode_json(entries)))
             wrote = True
 
     for oid in indirect_dirs:
@@ -151,7 +201,7 @@ def get_children(repo: str, db: sqlite3.Connection, oids: list[str]) -> dict[str
             entries = []
         out[oid] = entries
         memo_put(oid, entries)
-        db.execute("INSERT OR REPLACE INTO dir_children VALUES (?,?)", (oid, _dumps(entries)))
+        db.execute("INSERT OR REPLACE INTO dir_children VALUES (?,?)", (oid, encode_json(entries)))
         wrote = True
 
     if wrote:

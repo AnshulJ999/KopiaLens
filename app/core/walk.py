@@ -6,8 +6,9 @@ import json
 import sqlite3
 from typing import Callable
 
-from .cache import BATCH, get_children
+from .cache import BATCH, decode_json, encode_json, get_children
 from .kopia import kopia
+from .paths import WIN_SEP
 
 Visitor = Callable[[str, dict], None]
 
@@ -21,7 +22,7 @@ def expand_indirect(repo: str, db: sqlite3.Connection, indirect_objs: set[str]) 
         parts.add(index_cid)
         row = cur.execute("SELECT parts FROM indirect WHERE oid=?", (obj,)).fetchone()
         if row:
-            parts.update(json.loads(row[0]))
+            parts.update(decode_json(row[0]))
         else:
             misses.append(obj)
 
@@ -39,16 +40,19 @@ def expand_indirect(repo: str, db: sqlite3.Connection, indirect_objs: set[str]) 
             except json.JSONDecodeError:
                 pass
             parts.update(chunk)
-            db.execute("INSERT OR REPLACE INTO indirect VALUES (?,?)", (obj, json.dumps(chunk)))
+            db.execute("INSERT OR REPLACE INTO indirect VALUES (?,?)", (obj, encode_json(chunk)))
     db.commit()
     return parts
 
 
-def walk(repo: str, roots: list[str], db: sqlite3.Connection, visitor: Visitor | None = None) -> tuple[set[str], dict]:
+def walk(repo: str, roots: list[str], db: sqlite3.Connection, visitor: Visitor | None = None,
+         sep: str = WIN_SEP) -> tuple[set[str], dict]:
     """Return all content IDs referenced by roots.
 
     The visitor hook receives every directory entry with its parent path; the
     DuckDB file index uses this without changing the physical-size math.
+
+    ``sep`` is the SOURCE's path separator (see core.paths) - never the host's.
     """
 
     seen: set[str] = set()
@@ -89,7 +93,7 @@ def walk(repo: str, roots: list[str], db: sqlite3.Connection, visitor: Visitor |
                     else:
                         content_ids.add(obj)
                     if obj not in seen:
-                        frontier.append((obj, base + "\\" + name) if track_paths else obj)
+                        frontier.append((obj, base + sep + name) if track_paths else obj)
                 elif entry_type == "f":
                     files += 1
                     if obj.startswith("I"):
@@ -136,7 +140,8 @@ def walk_new(repo: str, db: sqlite3.Connection, roots: list[str], seen_dirs: set
     return found
 
 
-def walk_new_visit(repo: str, db: sqlite3.Connection, roots: list[str], seen_dirs: set[str], visitor: Visitor) -> None:
+def walk_new_visit(repo: str, db: sqlite3.Connection, roots: list[str], seen_dirs: set[str],
+                   visitor: Visitor, sep: str = WIN_SEP) -> None:
     """Delta walk for the file index: descend only directories whose OID is NEW
     (not in seen_dirs), and call visitor(parent_path, entry) for every FILE entry under
     them. Accumulating seen_dirs across a source's snapshots (newest-first) means each
@@ -161,6 +166,6 @@ def walk_new_visit(repo: str, db: sqlite3.Connection, roots: list[str], seen_dir
                 if etype == "d":
                     obj = entry.get("obj", "")
                     if obj and obj not in seen_dirs:
-                        frontier.append((obj, base + "\\" + entry.get("name", "")))
+                        frontier.append((obj, base + sep + entry.get("name", "")))
                 elif etype == "f":
                     visitor(base, entry)

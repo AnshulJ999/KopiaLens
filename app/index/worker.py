@@ -22,6 +22,7 @@ Prints a JSON summary to stdout and exits 0; nonzero on failure.
 
 from __future__ import annotations
 
+import gc
 import json
 import logging
 import os
@@ -141,6 +142,14 @@ def run(repo: str, full: bool = False) -> dict:
             prewarm(repo, with_reclaim=True)             # reads content_refs
 
         def _churn() -> None:
+            # The churn windows are BOUNDED (365d completes in ~12s on a clean pool), but by now
+            # index/dashboard/analysis have filled DuckDB's buffer pool, so whichever window runs
+            # next OOMs nondeterministically. A cursor off the pooled connection shares that pool -
+            # only closing the connection yields an empty one. Safe here: the repo is offline for
+            # the whole worker run and nothing is in flight between stages.
+            from .schema import close_all
+            close_all()
+            gc.collect()
             from .churnview import prewarm as churn_prewarm
             churn_prewarm(repo)
 

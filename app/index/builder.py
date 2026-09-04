@@ -26,7 +26,9 @@ import pyarrow as pa
 from config import CACHEDIR
 
 from .physical import materialize_physical
-from .schema import offline_status, read_cursor, write_cursor
+from .schema import (SCHEMA_VERSION, offline_status, read_cursor, stamp_schema_version,
+                     stored_schema_version, write_cursor)
+from ..core import paths as pathrules
 from ..core.applog import get_logger
 from ..core.cache import cache_db
 from ..core.sources import sources_index
@@ -53,7 +55,13 @@ _FILE_INDEXES = (
 # "first backed up" - an unchanged file only has a latest-snapshot row, so without the merge
 # its first_seen would roll forward to "now" on every rebuild (the broken recently-backed-up
 # filter). _old_seen must exist before this runs (see _capture_old_seen / _refresh_paths).
-_PATHS_SQL = """
+#
+# `size` is the LATEST version's size (arg_max by start_time), matching content_id and the
+# physical figure derived from it; max(size) across versions mis-ranked a file that shrank.
+# The _old_seen join key is the SOURCE's identity expression, not an unconditional lower():
+# on a case-sensitive source two case-distinct files are two paths and must not share a date.
+def _paths_sql(ident: str) -> str:
+    return f"""
 INSERT INTO paths (repo, source, full_path, name, ext, size, versions, first_seen, last_seen, in_latest, content_id, physical, path_lc)
 SELECT t.repo, t.source, t.full_path, t.name,
        CASE WHEN contains(t.name, '.') THEN lower(list_extract(string_split(t.name, '.'), -1)) ELSE '' END AS ext,
@@ -61,28 +69,18 @@ SELECT t.repo, t.source, t.full_path, t.name,
        least(coalesce(o.first_seen, t.first_seen), t.first_seen) AS first_seen,
        t.last_seen, t.in_latest, t.content_id, 0, lower(t.full_path)
 FROM (
-  SELECT repo, source, full_path, any_value(name) AS name, max(size) AS size,
+  SELECT repo, source, full_path, any_value(name) AS name, arg_max(size, start_time) AS size,
          count(DISTINCT snapshot_id) AS versions, min(start_time) AS first_seen,
          max(start_time) AS last_seen, bool_or(snapshot_id = ?) AS in_latest,
          arg_max(content_id, start_time) AS content_id
   FROM files WHERE repo=? AND source=? GROUP BY repo, source, full_path
 ) t
-LEFT JOIN _old_seen o ON o.path_lc = lower(t.full_path)
+LEFT JOIN _old_seen o ON o.ident = {ident}
 """
 
 
-def _source_root(source: str) -> str:
-    return source.split(":", 1)[1] if ":" in source else source
-
-
 def _full_path(source: str, relative: str) -> str:
-    root = _source_root(source)
-    rel = relative.lstrip("\\/")
-    if not rel:
-        return root
-    if root.endswith("\\") or root.endswith("/"):
-        return root + rel
-    return root + "\\" + rel
+    return pathrules.join(source, pathrules.source_root(source), relative)
 
 
 def _flush(con, rows: list[tuple]) -> None:
@@ -120,11 +118,13 @@ def _delete_source(con, repo: str, key: str) -> None:
 def _capture_old_seen(con, repo: str, key: str) -> None:
     """Snapshot the source's known first-seen dates BEFORE its paths rows are rewritten, so
     first_seen stays sticky (never moves forward once known). min() also collapses any
-    duplicate rows from the pre-fix append path."""
+    duplicate rows from the pre-fix append path. Grouped by the source's identity expression -
+    on a case-insensitive source that is lower(full_path), i.e. the old path_lc behaviour."""
+    ident = pathrules.ident_sql(key)
     con.execute(
-        "CREATE OR REPLACE TEMPORARY TABLE _old_seen AS "
-        "SELECT path_lc, min(first_seen) AS first_seen FROM paths "
-        "WHERE repo=? AND source=? AND first_seen IS NOT NULL GROUP BY path_lc",
+        f"CREATE OR REPLACE TEMPORARY TABLE _old_seen AS "
+        f"SELECT {ident} AS ident, min(first_seen) AS first_seen FROM paths "
+        f"WHERE repo=? AND source=? AND first_seen IS NOT NULL GROUP BY {ident}",
         [repo, key],
     )
 
@@ -144,13 +144,14 @@ def _refresh_paths(con, repo: str, key: str, captured: bool = False) -> None:
     ).fetchone()
     latest_id = row[0] if row else ""
     con.execute("DELETE FROM paths WHERE repo=? AND source=?", [repo, key])
-    con.execute(_PATHS_SQL, [latest_id, repo, key])
+    con.execute(_paths_sql(pathrules.ident_sql(key, "t.full_path")), [latest_id, repo, key])
     con.execute("DROP TABLE IF EXISTS _old_seen")
 
 
 def _build_source(con, db, repo: str, key: str, snaps: list[dict], job: dict) -> None:
     _capture_old_seen(con, repo, key)  # before the delete, so first_seen survives the rebuild
     _delete_source(con, repo, key)
+    src_sep = pathrules.sep(key)
     seen_dirs: set[str] = set()
     snaps_sorted = sorted(snaps, key=lambda s: s.get("startTime", ""), reverse=True)  # newest first
     rows: list[tuple] = []
@@ -163,8 +164,9 @@ def _build_source(con, db, repo: str, key: str, snaps: list[dict], job: dict) ->
             continue
         count = [0]
 
-        def visitor(parent: str, entry: dict, _key=key, _sid=snap_id, _start=start) -> None:
-            rel = (parent + "\\" + entry.get("name", "")).lstrip("\\")
+        def visitor(parent: str, entry: dict, _key=key, _sid=snap_id, _start=start,
+                    _sep=src_sep) -> None:
+            rel = (parent + _sep + entry.get("name", "")).lstrip("\\/")
             rows.append((
                 repo, _key, _full_path(_key, rel), entry.get("name", ""),
                 int(entry.get("size", 0) or 0), entry.get("obj", ""), _sid, _start, count[0],
@@ -174,7 +176,7 @@ def _build_source(con, db, repo: str, key: str, snaps: list[dict], job: dict) ->
             if len(rows) >= _FLUSH_ROWS:
                 _flush(con, rows)
 
-        walk_new_visit(repo, db, [root], seen_dirs, visitor)
+        walk_new_visit(repo, db, [root], seen_dirs, visitor, sep=src_sep)
         con.execute(
             "INSERT OR REPLACE INTO indexed_snapshots(repo, snapshot_id, source, start_time, root_obj, file_count) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -212,6 +214,7 @@ def _extend_source(con, db, repo: str, key: str, snaps: list[dict], new_snaps: l
     newest-full / older-delta invariant of a full rebuild: adding newer snapshots on top does not
     change an older snapshot's unique-content set. Returns the number of snapshots actually walked."""
     snaps_sorted = sorted(snaps, key=lambda s: s.get("startTime", "") or "", reverse=True)  # newest first
+    src_sep = pathrules.sep(key)
     new_ids = {s["id"] for s in new_snaps}
     prev_latest = next((s for s in snaps_sorted if s["id"] not in new_ids), None)
     rewalk = [s for s in snaps_sorted if s["id"] in new_ids or (prev_latest and s["id"] == prev_latest["id"])]
@@ -231,8 +234,9 @@ def _extend_source(con, db, repo: str, key: str, snaps: list[dict], new_snaps: l
             continue
         count = [0]
 
-        def visitor(parent: str, entry: dict, _key=key, _sid=snap_id, _start=start) -> None:
-            rel = (parent + "\\" + entry.get("name", "")).lstrip("\\")
+        def visitor(parent: str, entry: dict, _key=key, _sid=snap_id, _start=start,
+                    _sep=src_sep) -> None:
+            rel = (parent + _sep + entry.get("name", "")).lstrip("\\/")
             rows.append((
                 repo, _key, _full_path(_key, rel), entry.get("name", ""),
                 int(entry.get("size", 0) or 0), entry.get("obj", ""), _sid, _start, count[0],
@@ -242,7 +246,7 @@ def _extend_source(con, db, repo: str, key: str, snaps: list[dict], new_snaps: l
             if len(rows) >= _FLUSH_ROWS:
                 _flush(con, rows)
 
-        walk_new_visit(repo, db, [root], seen_dirs, visitor)
+        walk_new_visit(repo, db, [root], seen_dirs, visitor, sep=src_sep)
         con.execute(
             "INSERT OR REPLACE INTO indexed_snapshots(repo, snapshot_id, source, start_time, root_obj, file_count) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -271,6 +275,7 @@ def _backfill_source_first_seen(con, db, repo: str, key: str, snaps: list[dict])
     alone cannot know this (an unchanged file only has a latest-snapshot row). Cost = one full
     source walk (reads the warm sqlite dir cache; no kopia calls when warm)."""
     seen_dirs: set[str] = set()
+    src_sep = pathrules.sep(key)
     first: dict[str, str] = {}
     for snap in sorted(snaps, key=lambda s: s.get("startTime", "") or ""):  # OLDEST first
         root = snap.get("rootEntry", {}).get("obj")
@@ -278,25 +283,28 @@ def _backfill_source_first_seen(con, db, repo: str, key: str, snaps: list[dict])
         if not root or not start:
             continue
 
-        def visitor(parent: str, entry: dict, _start=start) -> None:
-            rel = (parent + "\\" + entry.get("name", "")).lstrip("\\")
-            plc = _full_path(key, rel).lower()
-            if plc not in first:  # oldest-first walk -> the first emission IS the earliest snapshot
-                first[plc] = _start
+        def visitor(parent: str, entry: dict, _start=start, _sep=src_sep) -> None:
+            rel = (parent + _sep + entry.get("name", "")).lstrip("\\/")
+            ident = pathrules.ident(key, _full_path(key, rel))
+            if ident not in first:  # oldest-first walk -> the first emission IS the earliest snapshot
+                first[ident] = _start
 
-        walk_new_visit(repo, db, [root], seen_dirs, visitor)
+        walk_new_visit(repo, db, [root], seen_dirs, visitor, sep=src_sep)
     if not first:
         return 0
-    tbl = pa.table({"path_lc": list(first.keys()), "fs": list(first.values())})
+    tbl = pa.table({"ident": list(first.keys()), "fs": list(first.values())})
     con.register("_fs_arrow", tbl)
     con.execute(
         "CREATE OR REPLACE TEMPORARY TABLE _fs_backfill AS "
-        "SELECT path_lc, CAST(fs AS TIMESTAMP) AS fs FROM _fs_arrow"
+        "SELECT ident, CAST(fs AS TIMESTAMP) AS fs FROM _fs_arrow"
     )
     con.unregister("_fs_arrow")
+    # path_lc IS lower(full_path) and carries an index, so a case-insensitive source joins on the
+    # stored column; a case-sensitive one must compare raw paths.
+    ident_col = "paths.full_path" if pathrules.case_sensitive(key) else "paths.path_lc"
     con.execute(  # targeted: only rows whose stored date is LATER than the true earliest
         "UPDATE paths SET first_seen = b.fs FROM _fs_backfill b "
-        "WHERE paths.repo=? AND paths.source=? AND paths.path_lc = b.path_lc AND b.fs < paths.first_seen",
+        f"WHERE paths.repo=? AND paths.source=? AND {ident_col} = b.ident AND b.fs < paths.first_seen",
         [repo, key],
     )
     con.execute("DROP TABLE IF EXISTS _fs_backfill")
@@ -370,6 +378,8 @@ def _run_build(repo: str, source: str | None, full: bool) -> None:
         if targets or stale or full:
             job["current_source"] = "(physical maps)"
             materialize_physical(con, repo)
+        if full:  # a full rebuild is what brings the index up to the current schema
+            stamp_schema_version(con)
         con.commit()
         try:  # one-time per source (first_seen_meta); a cheap no-op query once populated
             if backfill_first_seen(con, db, repo, job):
@@ -544,30 +554,24 @@ def start_build(repo: str, source: str | None = None, full: bool = False) -> dic
 
 
 def auto_reindex(repo: str) -> None:
-    """Background reindex (self-heal). When many indexed sources lack the paths aggregate, or
-    paths predate the content_id/physical columns (a schema migration), do a full rebuild
-    (drops indexes = faster); otherwise incremental - a no-op-fast pass when nothing changed."""
-    cur = read_cursor(repo)
-    try:
-        nfiles_src = cur.execute("SELECT count(DISTINCT source) FROM files WHERE repo=?", [repo]).fetchone()[0]
-        npaths_src = cur.execute("SELECT count(DISTINCT source) FROM paths WHERE repo=?", [repo]).fetchone()[0]
-        null_cid = cur.execute("SELECT count(*) FROM paths WHERE repo=? AND content_id IS NULL", [repo]).fetchone()[0]
-    finally:
-        cur.close()
-    start_build(repo, full=(nfiles_src - npaths_src > 5 or null_cid > 0))
+    """Background reindex (self-heal). Full rebuild when the migration detector fires (drops
+    indexes = faster); otherwise incremental - a no-op-fast pass when nothing changed."""
+    start_build(repo, full=_needs_full(repo))
 
 
 def _needs_full(repo: str) -> bool:
     """Migration detector shared by the threaded and synchronous reindex entry points: many indexed
-    sources with no paths aggregate, or paths predating the content_id column."""
+    sources with no paths aggregate, paths predating the content_id column, or an index stamped with
+    an older schema version (rebuild-on-mismatch - there is no migration framework)."""
     cur = read_cursor(repo)
     try:
         nfiles_src = cur.execute("SELECT count(DISTINCT source) FROM files WHERE repo=?", [repo]).fetchone()[0]
         npaths_src = cur.execute("SELECT count(DISTINCT source) FROM paths WHERE repo=?", [repo]).fetchone()[0]
         null_cid = cur.execute("SELECT count(*) FROM paths WHERE repo=? AND content_id IS NULL", [repo]).fetchone()[0]
+        stale_schema = stored_schema_version(cur) not in (None, SCHEMA_VERSION)
     finally:
         cur.close()
-    return bool(nfiles_src - npaths_src > 5 or null_cid > 0)
+    return bool(nfiles_src - npaths_src > 5 or null_cid > 0 or stale_schema)
 
 
 def build_sync(repo: str, source: str | None = None, full: bool = False) -> dict:

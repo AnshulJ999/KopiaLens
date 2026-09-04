@@ -22,6 +22,7 @@ import json
 import os
 import threading
 import time
+import uuid
 
 from config import CACHEDIR
 
@@ -101,19 +102,26 @@ def _qualify_params(repo: str, cutoff: str) -> list:
     return [repo, repo, repo, repo, cutoff, cutoff]
 
 
-_BASE_SQL = f"""{_QUALIFY_CTE}
+# The qualifying set is MATERIALIZED once per call and both outputs are derived from it. Embedding
+# _QUALIFY_CTE in each statement made the expensive grouping run twice per window (measured 10.4s
+# per window against 5.4s for the old, wrong query - most of the remaining gap).
+_MATERIALIZE_SQL = f"CREATE OR REPLACE TEMPORARY TABLE {{tmp}} AS {_QUALIFY_CTE} SELECT * FROM newc"
+
+
+def _base_sql(tmp: str) -> str:
+    return f"""
 SELECT source, {_FOLDER} AS folder, {_EXT} AS ext,
        sum(packed) AS bytes, count(*) AS versions, count(DISTINCT full_path) AS files
-FROM newc
+FROM {tmp}
 GROUP BY source, folder, ext
 """
+
 
 # Deduped total = true repo growth, each content counted once however many paths hold it. Reads the
 # SAME qualifying set as the attributed figure, so the two can never disagree (they used to be
 # independent queries over independently-derived sets).
-_DEDUPED_SQL = f"""{_QUALIFY_CTE}
-SELECT COALESCE(sum(packed), 0) FROM (SELECT DISTINCT content_id, packed FROM newc)
-"""
+def _deduped_sql(tmp: str) -> str:
+    return f"SELECT COALESCE(sum(packed), 0) FROM (SELECT DISTINCT content_id, packed FROM {tmp})"
 
 
 def _source_path(source_key: str) -> str:
@@ -215,19 +223,24 @@ def _build_lock(ck: tuple) -> threading.Lock:
 
 
 def _compute(repo: str, depth: int, cutoff: str) -> tuple[list[dict], int]:
+    # Unique table name per call: concurrent builds for different windows must never collide on it.
+    tmp = f"_churn_newc_{uuid.uuid4().hex[:12]}"
     cur = read_cursor(repo)
     try:
+        cur.execute(_MATERIALIZE_SQL.format(tmp=tmp), _qualify_params(repo, cutoff))
         rows = [
             {"source": r[0], "folder": r[1], "ext": r[2],
              "bytes": int(r[3] or 0), "versions": int(r[4] or 0), "files": int(r[5] or 0)}
             for r in cur.execute(
-                _BASE_SQL,
-                _qualify_params(repo, cutoff) + [_SEP, int(depth), _SEP, _SEP, _SEP, _SEP],
+                _base_sql(tmp), [_SEP, int(depth), _SEP, _SEP, _SEP, _SEP],
             ).fetchall()
         ]
-        deduped = int(cur.execute(
-            _DEDUPED_SQL, _qualify_params(repo, cutoff)).fetchone()[0] or 0)
+        deduped = int(cur.execute(_deduped_sql(tmp)).fetchone()[0] or 0)
     finally:
+        try:
+            cur.execute(f"DROP TABLE IF EXISTS {tmp}")
+        except Exception:  # noqa: BLE001 - a temp-table cleanup must never fail the request
+            pass
         cur.close()
     return rows, deduped
 

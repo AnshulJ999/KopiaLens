@@ -8,3 +8,4 @@ pydantic
 pystray
 pillow
 psutil
+zstandard

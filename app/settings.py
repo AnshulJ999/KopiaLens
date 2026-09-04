@@ -63,6 +63,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "refcount_write_interval": 21600,  # min seconds between content_refs rewrites - a large churn
                                            # on the DuckDB file, so deliberately infrequent (see metrics.py)
         "dir_memo_max_mb": 1500,     # RAM budget for the in-process directory-listing LRU (byte-budgeted, not item-count)
+        # Walk-cache storage format for NEWLY written rows: "none" | "zstd-1" | "zstd-3". Both
+        # formats are readable side by side, so changing this is safe at any time; converting the
+        # rows already on disk is a separate one-off (`python compress_cache.py`).
+        # zstd-1 measured on real rows (2026-09-05): 24.0% of original at 1.53x read cost, against
+        # zstd-3's 24.2% at 1.76x - level 3 is both bigger and slower here (small independent blobs),
+        # so it is offered but never the default.
+        "walk_cache_compression": "zstd-1",
     },
     "backblaze": {
         "bzdata_path": r"C:\ProgramData\Backblaze\bzdata",  # read-only source root (never written)

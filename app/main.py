@@ -436,6 +436,15 @@ async def lifespan(_app: FastAPI):
         log.error("BZ bzdata path setup failed: %s", exc)
     if load_settings().get("listing_backend") == "server":
         SERVERS.warmup()  # only when explicitly opted into the persistent-server backend
+
+    def _capture_ids() -> None:  # a couple of kopia calls - off the startup path
+        try:
+            from .core.repos import ensure_unique_ids
+            ensure_unique_ids()
+        except Exception as exc:  # noqa: BLE001 - identity capture never blocks startup
+            log.warning("repository unique-id capture failed: %s", exc)
+
+    threading.Thread(target=_capture_ids, daemon=True).start()
     threading.Thread(target=_bg_worker, daemon=True).start()
     yield
     log.info("KopiaLens shutting down")
