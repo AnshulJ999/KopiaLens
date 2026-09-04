@@ -306,6 +306,10 @@ def _read_cache(repo: str, mode: str, want_hash: str | None) -> dict | None:
     if data is None:
         return None
     data = dict(data)
+    # carry the blob's snaphash so the frontend's change detection can tell a re-render-worthy
+    # change from an unchanged table. The stale-serve path gets the STALE blob's own hash, which is
+    # correct: it describes the data actually being served.
+    data["hash"] = blob.get("hash")
     data["cached"] = True
     return data
 
@@ -400,7 +404,11 @@ def _compute_table_rows(repo: str, recent: int | str | None, mode: str, want_has
                 "files_distinct": (fcounts.get(key) or {}).get("distinct", 0),
             }
         )
-    data = {"rows": ordered, "elapsed": elapsed, "union_total": union_total, "mode": mode, "recent": recent, "cached": False}
+    data = {"rows": ordered, "elapsed": elapsed, "union_total": union_total, "mode": mode,
+            "recent": recent, "cached": False, "hash": want_hash,
+            # computed_at covers same-hash rebuilds (e.g. a nightly rebuild that only moved
+            # next_snapshot times) - the hash alone only flips when snapshot membership changes.
+            "computed_at": time.time()}
     try:
         with open(cache_file, "w", encoding="utf-8") as fh:
             json.dump({"version": TABLE_CACHE_VERSION, "hash": want_hash, "data": data}, fh)

@@ -53,6 +53,7 @@ window.bzMixin = function () {
     bzGroupByFolder: false, bzGroupDepth: 2, bzSearchMeta: "",
     bzTreeDrive: "", bzTreePrefix: "",
     bzExclPath: "", bzExclFilter: "all", bzExclMeta: "", _bzExclItems: [], _bzExclSeq: 0,
+    _bzSearchSeq: 0, _bzTreeSeq: 0,
     bzExclusions: null, bzNamingQuery: "", bzNamingRows: [],
     bzGen: null, bzShowGen: false,
     bzQueue: null, bzQueueDepth: 1, bzQueueCollapse: true, bzSessions: null, bzHealth: null,
@@ -184,11 +185,13 @@ window.bzMixin = function () {
     async bzLoadSearch(keepPage = false) {
       if (this.bzGroupByFolder) return this.bzLoadGroup();
       if (!keepPage) this.bzSearchPage = 1;
+      const seq = ++this._bzSearchSeq;
       await this.wrap(async () => {
         const size = this.bzSearchPageSize === "Infinite" ? 100000 : (parseInt(this.bzSearchPageSize, 10) || 500);
         const offset = this.bzSearchPageSize === "Infinite" ? 0 : (this.bzSearchPage - 1) * size;
         const p = this.bzSearchUrl({ limit: size, offset });
         const data = await getJson(`/api/backblaze/search?${p.toString()}`);
+        if (seq !== this._bzSearchSeq) return;  // a newer search superseded this one
         this.bzSearchTotal = data.total || 0;
         this.bzSearchMeta = `${this.bzSearchTotal.toLocaleString()} results`;
         const arrow = (f) => (this.bzSearchSort === f ? (this.bzSearchDir === "desc" ? " ▼" : " ▲") : "");
@@ -214,9 +217,11 @@ window.bzMixin = function () {
       }, "Searching Backblaze…");
     },
     async bzLoadGroup() {
+      const seq = ++this._bzSearchSeq;  // shared with bzLoadSearch: the two views replace each other
       await this.wrap(async () => {
         const p = this.bzSearchUrl({ depth: this.bzGroupDepth, status: this.bzSearchStatus, top: 500 });
         const data = await getJson(`/api/backblaze/group-by-folder?${p.toString()}`);
+        if (seq !== this._bzSearchSeq) return;  // a newer search/group superseded this one
         const rows = data.rows || [];
         this.bzSearchMeta = `${rows.length} folders · depth ${data.depth}`;
         setTable("#bzGroupTable", rows, [
@@ -251,6 +256,7 @@ window.bzMixin = function () {
     },
     bzTreeUp() { const c = this.bzTreeCrumbs(); if (c.length > 1) this.bzTreeNav(c[c.length - 2].prefix); },
     async bzLoadTree() {
+      const seq = ++this._bzTreeSeq;
       await this.wrap(async () => {
         const atRoot = this.bzTreeDrive === "*ALL*" && !this.bzTreePrefix;
         let kids;
@@ -266,6 +272,7 @@ window.bzMixin = function () {
           const data = await getJson(`/api/backblaze/folder?prefix=${encodeURIComponent(this.bzTreePrefix)}`);
           kids = data.children || [];
         }
+        if (seq !== this._bzTreeSeq) return;  // a newer navigation superseded this one
         const tot = kids.reduce((a, c) => a + ((c.backed_bytes || 0) + (c.excluded_bytes || 0)), 0) || 1;
         kids.forEach((c) => { c.total_bytes = (c.backed_bytes || 0) + (c.excluded_bytes || 0); c.pct = 100 * c.total_bytes / tot; });
         setTable("#bzTreeTable", kids, [

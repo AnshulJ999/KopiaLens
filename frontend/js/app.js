@@ -145,6 +145,7 @@ document.addEventListener("alpine:init", () => {
     statsData: null, blobStats: "", blobLoading: false, _statsLoading: false,
     mountSnapshot: "", mountPoint: "", restoreSource: "", restoreDest: "",
     dashboardMeta: "", busy: "", error: "", detail: null, batch: null, showBatch: false, snapSource: "*ALL*", _poll: null, _searchSeq: 0, _detailSeq: 0,
+    _dashSeq: 0, _snapSeq: 0, _treeSeq: 0, _batchSeq: 0, _batchCmdSeq: 0, _removePlanSeq: 0, _removeDetailSeq: 0,
     showRemove: false, removePlan: null, removeJobPoll: null, _removeBase: null,
     excludedDrives: [], excludedOk: true, excludedPath: "", excludedFilter: "excluded", excludedMeta: "", _excludedItems: [], _excludedSeq: 0, excludedDetail: null, showExcludedDetail: false,
     showSettings: false, settingsTab: "general", backend: "subprocess", repoPinned: false, reindexInterval: 1800, dashRefresh: 900,
@@ -372,13 +373,16 @@ document.addEventListener("alpine:init", () => {
 
     async buildIndex() {
       await this.wrap(async () => {
-        await getJson(`/api/index/build?repo=${encodeURIComponent(this.repo)}`, { method: "POST" });
+        const r = await getJson(`/api/index/build?repo=${encodeURIComponent(this.repo)}`, { method: "POST" });
+        // The backend refuses a 2nd repo while one is indexing: {"started": false, "reason": ...}
+        if (r && r.started === false) throw new Error(r.reason || "Index did not start.");
         this.pollIndex();
       }, "Index update started...");
     },
     async rebuildIndex() {
       await this.wrap(async () => {
-        await getJson(`/api/index/build?repo=${encodeURIComponent(this.repo)}&full=true`, { method: "POST" });
+        const r = await getJson(`/api/index/build?repo=${encodeURIComponent(this.repo)}&full=true`, { method: "POST" });
+        if (r && r.started === false) throw new Error(r.reason || "Rebuild did not start.");
         this.pollIndex();
       }, "Full rebuild started...");
     },
@@ -394,11 +398,17 @@ document.addEventListener("alpine:init", () => {
 
     // ---------- Dashboard ----------
     async loadDashboard(refresh = false) {
+      const seq = ++this._dashSeq;
       await this.wrap(async () => {
         const data = await getJson(`/api/dashboard?repo=${encodeURIComponent(this.repo)}&refresh=${refresh}`);
+        if (seq !== this._dashSeq) return;  // a newer load superseded this one
         this.dashboardMeta = `true physical ${fmtBytes(data.union_total)}` + (data.cached ? "" : ` · computed in ${Number(data.elapsed || 0).toFixed(1)}s`);
         // Skip re-rendering on the periodic auto-refresh when the data is unchanged (avoids flicker).
-        const sig = `${this.repo}|${data.union_total}|${(data.rows || []).length}|${(data.rows && data.rows[0] && data.rows[0].last_time) || ""}`;
+        // hash = the backend snaphash: it flips whenever the index moves, so another source's
+        // physical/freeable changing is no longer hidden by an unchanged first row.
+        // computed_at flips on every cache REBUILD, covering same-hash rebuilds that only moved
+        // e.g. next_snapshot times; polls of an untouched cache keep matching and never re-render.
+        const sig = `${this.repo}|${data.hash || ""}|${data.computed_at || ""}|${data.union_total}|${(data.rows || []).length}|${(data.rows && data.rows[0] && data.rows[0].last_time) || ""}`;
         const dEl = document.querySelector("#dashboardTable");
         if (!refresh && dEl && dEl._tabulator && sig === this._dashSig) return;
         this._dashSig = sig;
@@ -434,8 +444,10 @@ document.addEventListener("alpine:init", () => {
     async loadSnapshots(refresh = false) {
       if (!this.snapSource) this.snapSource = "*ALL*";
       if (this.snapSource !== "*ALL*") this.selectedSource = this.snapSource;  // keep tree-drill/mount in sync
+      const seq = ++this._snapSeq;
       await this.wrap(async () => {
         const data = await getJson(`/api/snapshots?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.snapSource)}`);
+        if (seq !== this._snapSeq) return;  // a newer load superseded this one
         this.snapshots = data.snapshots || [];
         this.analyzing = !!data.analyzing;
         if (!this.snapshots.find((x) => x.id === this.selectedSnapshot)) this.selectedSnapshot = this.snapshots.length ? this.snapshots[this.snapshots.length - 1].id : "";
@@ -619,6 +631,7 @@ document.addEventListener("alpine:init", () => {
     async loadTree() {
       if (!this.selectedSource) return;
       if (this.selectedSource !== "*ALL*" && this.treeMode !== "all" && !this.selectedSnapshot) return;
+      const seq = ++this._treeSeq;
       await this.wrap(async () => {
         const url = `/api/tree?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.selectedSource)}`
           + `&snapshot_id=${encodeURIComponent(this.selectedSnapshot)}&prefix=${encodeURIComponent(this.treePrefix)}&mode=${this.treeMode}`
@@ -627,6 +640,7 @@ document.addEventListener("alpine:init", () => {
           + `&flat=${this.treeFlat ? 1 : 0}`
           + (this.treeExt ? `&ext=${encodeURIComponent(this.treeExt)}` : "");
         const data = await getJson(url);
+        if (seq !== this._treeSeq) return;  // a newer navigation superseded this one
         const children = data.children || [];
         if (!children.length && !(this.indexStatus.indexed_snapshots > 0)) this.error = "Snapshot not indexed yet - click Index (top right).";
         const total = children.reduce((a, c) => a + (c.size || 0), 0) || 1;
@@ -1147,17 +1161,21 @@ document.addEventListener("alpine:init", () => {
     async batchDetail(scope) {
       const files = this._selFiles(scope);
       if (!files.length) { window.alert("Select one or more files first (Shift+Click for a range)."); return; }
+      const seq = ++this._batchSeq;
       this.batch = { loading: true, files, count: files.length, by: "object-id", everywhere: false, stats: null, cmd: null, cmdLoading: false };
       this.showBatch = true;
       const r = await getJson("/api/actions/batch-detail", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, files }) }).catch((e) => { this.error = e.message; return null; });
+      if (seq !== this._batchSeq) return;  // a newer batch was opened meanwhile - drop this result
       if (this.batch) { this.batch.stats = r; this.batch.loading = false; }
       this.buildBatchCmd();
     },
     async buildBatchCmd() {
       if (!this.batch) return;
+      const seq = ++this._batchCmdSeq;
       this.batch.cmd = null; this.batch.cmdLoading = true;
       const body = { repo: this.repo, by: this.batch.by, everywhere: this.batch.everywhere, files: this.batch.files, confirm: false };
       const r = await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch((e) => { this.error = e.message; return null; });
+      if (seq !== this._batchCmdSeq) return;  // a newer by/everywhere toggle superseded this build
       if (this.batch) { if (r) this.batch.cmd = { dry: r.dry_run, commit: r.commit, count: r.count, everywhere: r.everywhere, batches: r.batches, bat: r.bat, bat_name: r.bat_name }; this.batch.cmdLoading = false; }
     },
     batchSaveBat() {
@@ -1220,24 +1238,26 @@ document.addEventListener("alpine:init", () => {
     },
     async _fetchRemovePlan() {
       if (!this.removePlan) return;
+      const seq = ++this._removePlanSeq;
       this.removePlan.loading = true;
       this.removePlan.detail = null;  // freeable/shared depends on the matched set
       const r = await getJson("/api/actions/remove-plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
-      if (this.removePlan) {
-        if (r) Object.assign(this.removePlan, r);
-        this.removePlan.loading = false;
-        // Auto-compute freeable/shared (like the file panel) unless the set is huge (avoid a long walk).
-        if (r && (r.file_count || 0) <= 200000) this.removeComputeReclaim();
-      }
+      if (seq !== this._removePlanSeq || !this.removePlan) return;  // a newer toggle superseded this fetch
+      if (r) Object.assign(this.removePlan, r);
+      this.removePlan.loading = false;
+      // Auto-compute freeable/shared (like the file panel) unless the set is huge (avoid a long walk).
+      if (r && (r.file_count || 0) <= 200000) this.removeComputeReclaim();
     },
     toggleRemoveAllVersions() { if (this.removePlan && !this.removePlan.job) { this.removePlan.all_versions = !this.removePlan.all_versions; this._fetchRemovePlan(); } },
     toggleRemoveEverywhere() { if (this.removePlan && !this.removePlan.job) { this.removePlan.everywhere = !this.removePlan.everywhere; this._fetchRemovePlan(); } },
     setRemoveBy(by) { if (this.removePlan && !this.removePlan.job) { this.removePlan.by = by; this._fetchRemovePlan(); } },
     async removeComputeReclaim() {
       if (!this.removePlan) return;
+      const seq = ++this._removeDetailSeq;
       this.removePlan.detailLoading = true;
       const r = await getJson("/api/actions/remove-detail", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
-      if (this.removePlan) { this.removePlan.detail = r; this.removePlan.detailLoading = false; }
+      if (seq !== this._removeDetailSeq || !this.removePlan) return;  // a newer plan fetch superseded this
+      this.removePlan.detail = r; this.removePlan.detailLoading = false;
     },
     _removeBody() {
       const body = { ...this._removeBase, all_versions: this.removePlan.all_versions,
