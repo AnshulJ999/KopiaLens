@@ -9,6 +9,7 @@ import sys
 
 import uvicorn
 
+from app.core import auth
 from app.core.applog import get_logger, setup_logging
 from config import GUARD_HOST, HOST, PORT
 
@@ -27,5 +28,10 @@ if __name__ == "__main__":
         log.warning("single-instance guard: KopiaLens already listening on %s:%s - this instance is exiting", GUARD_HOST, PORT)
         print(f"KopiaLens already running on {GUARD_HOST}:{PORT} - exiting (single-instance guard).")
         sys.exit(0)
-    log.info("starting KopiaLens on %s:%s", HOST, PORT)
-    uvicorn.run("app.main:app", host=HOST, port=PORT, reload=False)
+    host = auth.bind_host(HOST)
+    if host != "127.0.0.1" and not auth.enabled():
+        log.warning("listening on %s with authentication DISABLED - anything that can reach "
+                    "port %s can browse and delete from the backup repositories", host, PORT)
+    log.info("starting KopiaLens on %s:%s (auth %s)", host, PORT,
+             "on" if auth.enabled() else "off")
+    uvicorn.run("app.main:app", host=host, port=PORT, reload=False)

@@ -39,6 +39,7 @@ from ..index.schema import RepoOffline
 from ..index.builder import start_build
 from ..index.physical import batch_detail, folder_detail
 from ..index.queries import remove_targets, snapshots_for_path, sources_for_content, versions as file_versions
+from ..settings import load_settings
 
 router = APIRouter(tags=["actions"])
 
@@ -284,7 +285,21 @@ class RemovePlanRequest(BaseModel):
     all_versions: bool = False      # B2: every version's object vs latest only
     everywhere: bool = False        # B1: drop --source (whole-repo sweep) vs scope to the folder's sources
     by: str = "object-id"           # "object-id" (exact content) | "filename" (by basename)
-    cap: int = 200000
+    cap: int | None = None          # None = the remove_plan_cap setting (the UI sends top_n here)
+
+
+DEFAULT_REMOVE_PLAN_CAP = 200000
+
+
+def _plan_cap() -> int:
+    """Ceiling on how many files one chunked-delete plan may enumerate. A setting rather than a
+    constant so a large repo can raise it deliberately; the no-filter 400 guard below is the
+    protection that actually matters and is not configurable."""
+    try:
+        return max(1, int(load_settings().get("kopialens", {}).get("remove_plan_cap",
+                                                                   DEFAULT_REMOVE_PLAN_CAP)))
+    except Exception:  # noqa: BLE001
+        return DEFAULT_REMOVE_PLAN_CAP
 
 
 def _remove_targets(p: RemovePlanRequest) -> dict:
@@ -300,7 +315,7 @@ def _remove_targets(p: RemovePlanRequest) -> dict:
         max_size=int((p.max_gb or 0) * 1_000_000_000), source=p.source or None, ext=p.ext or None,
         ext_exclude=p.ext_exclude or None, date_from=p.date_from or None, date_to=p.date_to or None,
         min_versions=p.min_versions, shared_min=p.shared_min, prefix=p.prefix or None,
-        all_versions=p.all_versions, cap=p.cap,
+        all_versions=p.all_versions, cap=p.cap or _plan_cap(),
     )
 
 

@@ -155,10 +155,14 @@ def build_global(
         del cids
 
     union_total = sum(smap.get(cid, 0) for cid in count)
+    # The Counter itself is passed on (pickled, materialized, returned) rather than copied with
+    # dict(count): on a repo with millions of distinct chunks each copy is a full second map, and
+    # the three of them used to be alive at once. Every consumer reads it with .get(), and a
+    # Counter is a dict subclass, so nothing downstream can tell the difference.
     try:
         with open(refcount_path(repo, mode), "wb") as handle:
             pickle.dump(
-                {"hash": snaphash(srcs, membership, recent, mode), "count": dict(count), "union": union_total},
+                {"hash": snaphash(srcs, membership, recent, mode), "count": count, "union": union_total},
                 handle,
                 protocol=4,
             )
@@ -173,7 +177,7 @@ def build_global(
                 from ..index.schema import write_cursor
                 con = write_cursor(repo)
                 try:
-                    wrote = materialize_refcount(con, repo, dict(count))
+                    wrote = materialize_refcount(con, repo, count)
                     con.commit()
                 finally:
                     con.close()
@@ -186,7 +190,7 @@ def build_global(
             except Exception as exc:  # noqa: BLE001
                 log.warning("repo=%s content_refs materialize failed: %s", repo, exc)
 
-    return rows, time.time() - start, dict(count), union_total
+    return rows, time.time() - start, count, union_total
 
 
 def _read_refcount_pkl(repo: str, mode: str, key: str):

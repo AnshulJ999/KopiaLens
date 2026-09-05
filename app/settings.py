@@ -70,6 +70,19 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         # zstd-3's 24.2% at 1.76x - level 3 is both bigger and slower here (small independent blobs),
         # so it is offered but never the default.
         "walk_cache_compression": "zstd-1",
+        # ---- access control ---------------------------------------------------------
+        # Protected by default: a fresh install listens on loopback only, and asks for a password
+        # the first time it is opened. Anyone fronting KopiaLens with their own reverse proxy or
+        # firewall turns auth off and sets bind_host themselves. Choosing this belongs to
+        # first-run onboarding (); these are the mechanism it will drive.
+        "auth_enabled": True,
+        "auth_password_hash": "",      # pbkdf2_sha256$iters$salt$digest - never the password
+        "bind_host": "127.0.0.1",      # "0.0.0.0" to accept connections from other machines
+        "allowed_hosts": [],           # extra Host header names (a reverse proxy's domain).
+                                       # localhost and bare IP addresses are always accepted.
+        # ---- misc ceilings ------------------------------------------------------------------
+        "kopia_timeout": 3600,         # seconds; a hung kopia call fails instead of hanging forever
+        "remove_plan_cap": 200000,     # max files one chunked-delete plan may enumerate
     },
     "backblaze": {
         "bzdata_path": r"C:\ProgramData\Backblaze\bzdata",  # read-only source root (never written)

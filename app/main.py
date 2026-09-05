@@ -9,17 +9,20 @@ import os
 import threading
 import time
 import traceback
+import urllib.parse
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, RedirectResponse,
+                               Response)
 from fastapi.staticfiles import StaticFiles
 
 from config import DATA_DIR, REPOS, repo_kind
 
 from .api import (actions, backblaze, dashboard, excluded, insights, search, simulate,
                   snapshots, stats, tree)
+from .core import auth
 from .core import kopia as kopia_mod
 from .core import nightly
 from .core.applog import get_logger, setup_logging
@@ -222,17 +225,30 @@ def _mark_nightly(repo: str, slot: float) -> None:
     _write_state(data)
 
 
-def mark_nightly_result(repo: str, ok: bool) -> None:
+def mark_nightly_result(repo: str, ok: bool, reason: str | None = None) -> None:
     """Record the outcome once the pass finishes. Success advances the freshness timestamp;
-    failure leaves it alone and lets the retry window open."""
+    failure leaves it alone and lets the retry window open.
+
+    The failure REASON is persisted, not just held in memory: the in-process ``nightly.state()``
+    copy dies with a restart, and a run that failed days ago is exactly when the reason still
+    needs to be on screen."""
     data = _read_state()
     rec = (data.get("attempts") or {}).get(repo) or {}
     rec["ok"] = bool(ok)
     rec["finished"] = time.time()
     data.setdefault("attempts", {})[repo] = rec
+    errors = data.setdefault("errors", {})
     if ok:
         data.setdefault("success", {})[repo] = time.time()
+        errors.pop(repo, None)
+    else:
+        errors[repo] = {"at": time.time(), "reason": (reason or "index pass failed")[:500]}
     _write_state(data)
+
+
+def nightly_error(repo: str) -> dict:
+    """The last recorded failure for this repo ({} once a pass succeeds)."""
+    return (_read_state().get("errors") or {}).get(repo) or {}
 
 
 def _retry_delay() -> float:
@@ -464,6 +480,77 @@ app = FastAPI(title="KopiaLens", version="0.1.0", lifespan=lifespan)
 
 
 @app.middleware("http")
+async def access_middleware(request: Request, call_next):
+    """Host validation + the shared-password gate, in that order.
+
+    Host first: a request whose Host header we do not recognise is rejected before anything else
+    looks at it, because that is the DNS-rebinding case and a valid session cookie would not make
+    it safe. Both checks are no-ops when auth is disabled, which is the state for anyone who
+    fronts KopiaLens with their own reverse proxy."""
+    if not auth.host_allowed(request.headers.get("host", "")):
+        return JSONResponse(status_code=421, content={
+            "detail": f"Host {request.headers.get('host', '')!r} is not allowed. Add it to "
+                      "settings.kopialens.allowed_hosts if you reach KopiaLens by that name."})
+    if not auth.enabled() or auth.exempt(request.url.path):
+        return await call_next(request)
+    if auth.valid_session(request.cookies.get(auth.COOKIE_NAME)):
+        return await call_next(request)
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(status_code=401, content={"detail": "Not signed in.", "login": "/login"})
+    return HTMLResponse(auth.login_page(), status_code=401)
+
+
+@app.get("/login")
+def login_page() -> HTMLResponse:
+    return HTMLResponse(auth.login_page())
+
+
+async def _form(request: Request) -> dict[str, str]:
+    """Parse an urlencoded form body without pulling in python-multipart (not a declared
+    dependency, and the login form has no file uploads)."""
+    raw = (await request.body()).decode("utf-8", "replace")
+    return {k: v[0] for k, v in urllib.parse.parse_qs(raw, keep_blank_values=True).items()}
+
+
+@app.post("/api/auth/login")
+async def auth_login(request: Request):
+    form = await _form(request)
+    if auth.needs_setup():
+        return RedirectResponse("/login", status_code=303)
+    if not auth.verify_password(str(form.get("password") or ""), auth.password_hash()):
+        log.warning("failed login attempt from %s", request.client.host if request.client else "?")
+        return HTMLResponse(auth.login_page("Wrong password."), status_code=401)
+    resp = RedirectResponse("/", status_code=303)
+    resp.set_cookie(auth.COOKIE_NAME, auth.session_token(), **auth.cookie_kwargs())
+    return resp
+
+
+@app.post("/api/auth/setup")
+async def auth_setup(request: Request):
+    """First-password choice. A placeholder for the real onboarding flow () - it exists so
+    that "auth on, no password yet" is a usable state rather than a locked-out one."""
+    if not auth.needs_setup():
+        return RedirectResponse("/login", status_code=303)
+    form = await _form(request)
+    password = str(form.get("password") or "")
+    if len(password) < 8:
+        return HTMLResponse(auth.login_page("Use at least 8 characters."), status_code=400)
+    if password != str(form.get("confirm") or ""):
+        return HTMLResponse(auth.login_page("The two passwords do not match."), status_code=400)
+    auth.set_password(password)
+    resp = RedirectResponse("/", status_code=303)
+    resp.set_cookie(auth.COOKIE_NAME, auth.session_token(), **auth.cookie_kwargs())
+    return resp
+
+
+@app.post("/api/auth/logout")
+def auth_logout() -> JSONResponse:
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.COOKIE_NAME, path="/")
+    return resp
+
+
+@app.middleware("http")
 async def timing_middleware(request: Request, call_next):
     start = time.perf_counter()
     calls0, ktime0 = kopia_mod.KOPIA_CALLS, kopia_mod.KOPIA_TIME
@@ -520,9 +607,25 @@ app.include_router(backblaze.router)  # router already carries prefix="/api/back
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
 
 
+def _asset_version() -> str:
+    """Stamp derived from the app's own JS mtimes. index.html carries ``__ASSET_V__`` on those
+    script tags; substituting it here means an updated app.js is always fetched, without a build
+    step and without touching the version-pinned vendor filenames."""
+    stamp = 0.0
+    for name in ("js/app.js", "js/backblaze.js"):
+        try:
+            stamp = max(stamp, (FRONTEND / name).stat().st_mtime)
+        except OSError:
+            pass
+    return str(int(stamp))
+
+
 @app.get("/")
-def index() -> FileResponse:
-    return FileResponse(FRONTEND / "index.html")
+def index() -> Response:
+    # no-store on the shell itself: a cached index.html would keep pointing at the old asset
+    # stamp, which is exactly how stale JS survived a reload before.
+    html = (FRONTEND / "index.html").read_text(encoding="utf-8").replace("__ASSET_V__", _asset_version())
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/health")

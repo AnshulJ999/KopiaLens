@@ -152,7 +152,7 @@ def _build_source(con, db, repo: str, key: str, snaps: list[dict], job: dict) ->
     _capture_old_seen(con, repo, key)  # before the delete, so first_seen survives the rebuild
     _delete_source(con, repo, key)
     src_sep = pathrules.sep(key)
-    seen_dirs: set[str] = set()
+    seen_dirs: set[tuple[str, str]] = set()
     snaps_sorted = sorted(snaps, key=lambda s: s.get("startTime", ""), reverse=True)  # newest first
     rows: list[tuple] = []
     for snap in snaps_sorted:
@@ -223,7 +223,7 @@ def _extend_source(con, db, repo: str, key: str, snaps: list[dict], new_snaps: l
         placeholders = ",".join("?" * len(ids))
         con.execute(f"DELETE FROM files WHERE repo=? AND source=? AND snapshot_id IN ({placeholders})", [repo, key, *ids])
         con.execute(f"DELETE FROM indexed_snapshots WHERE repo=? AND snapshot_id IN ({placeholders})", [repo, *ids])
-    seen_dirs: set[str] = set()
+    seen_dirs: set[tuple[str, str]] = set()
     rows: list[tuple] = []
     for snap in rewalk:  # newest-first so seen_dirs accumulates correctly (new snaps, then prev_latest)
         root = snap.get("rootEntry", {}).get("obj")
@@ -274,7 +274,7 @@ def _backfill_source_first_seen(con, db, repo: str, key: str, snaps: list[dict])
     it - stamping every path with the earliest surviving snapshot that holds it. The delta index
     alone cannot know this (an unchanged file only has a latest-snapshot row). Cost = one full
     source walk (reads the warm sqlite dir cache; no kopia calls when warm)."""
-    seen_dirs: set[str] = set()
+    seen_dirs: set[tuple[str, str]] = set()
     src_sep = pathrules.sep(key)
     first: dict[str, str] = {}
     for snap in sorted(snaps, key=lambda s: s.get("startTime", "") or ""):  # OLDEST first
@@ -339,6 +339,15 @@ def _run_build(repo: str, source: str | None, full: bool) -> None:
         con = write_cursor(repo)  # tracked, so the offline handover waits for an in-flight build
         db = cache_db(repo)
         indexed = _indexed_sets(con, repo)
+        # Second line of defence behind the checked listing in core.sources: an empty source list
+        # against a populated index means "every source was removed", which would delete the whole
+        # local index. A real repo does not empty itself; a failed listing looks exactly like this.
+        if not srcs and indexed:
+            raise RuntimeError(
+                f"repo {repo}: the snapshot listing came back empty while the index holds "
+                f"{len(indexed)} source(s) - refusing to treat that as a removal. "
+                "The repository is most likely unreachable; the existing index is untouched."
+            )
         have_paths = {r[0] for r in con.execute("SELECT DISTINCT source FROM paths WHERE repo=?", [repo]).fetchall()}
         if source:
             targets = [source] if source in srcs else []

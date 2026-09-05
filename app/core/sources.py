@@ -25,13 +25,36 @@ log = get_logger("sources")
 _CACHE: dict[str, dict] = {}
 _LOCK = threading.Lock()
 _REFRESHING: set[str] = set()
+_LAST_ERROR: dict[str, str] = {}
 _TTL = 45.0  # serve cache up to this age; past it, serve stale + refresh in background
 
 
+class ListingFailed(RuntimeError):
+    """kopia could not list this repo's snapshots. Deliberately NOT an empty list: everything
+    downstream reads "no sources" as "every source was removed" and cleans up accordingly."""
+
+
 def all_snapshots(repo: str) -> list[dict]:
-    """Full-repo snapshot list in CLI (``--json``) shape (includes retentionReason + pins)."""
-    out = kopia(repo, ["snapshot", "list", "--json"]).stdout
+    """Full-repo snapshot list in CLI (``--json``) shape (includes retentionReason + pins).
+
+    Raises ListingFailed when kopia itself failed. An unreachable repo (drive asleep, storage
+    timeout, repo locked) prints nothing and exits non-zero, which is indistinguishable from a
+    genuinely empty repository unless the return code is checked - and the index builder deletes
+    the rows of every source missing from this list."""
+    res = kopia(repo, ["snapshot", "list", "--json"])
+    if res.returncode != 0:
+        raise ListingFailed(
+            f"repo {repo}: kopia snapshot list failed (exit {res.returncode}): "
+            f"{(res.stderr or '').strip()[:300] or 'no error output'}"
+        )
+    out = res.stdout
     return json.loads(out) if out.strip() else []
+
+
+def last_listing_error(repo: str) -> str:
+    """The most recent listing failure for this repo, cleared on the next success."""
+    with _LOCK:
+        return _LAST_ERROR.get(repo, "")
 
 
 def _key_of(src: dict) -> str:
@@ -59,25 +82,51 @@ def _build_from_subprocess(repo: str) -> dict[str, list[dict]]:
 
 
 def _build_now(repo: str) -> dict:
+    """Build the listing, or raise. A failure NEVER caches an empty result and never replaces a
+    previously good one - the old entry keeps being served (stale but true) until a real listing
+    succeeds."""
     backend = load_settings().get("listing_backend", "subprocess")
     meta: dict[str, dict] = {}
     try:
-        if backend == "server":
-            sources = SERVERS.list_sources(repo)
-            srcs = _build_from_server(repo, sources)
-            meta = {_key_of(s.get("source", {})): s for s in sources}
-        else:
+        try:
+            if backend == "server":
+                sources = SERVERS.list_sources(repo)
+                srcs = _build_from_server(repo, sources)
+                meta = {_key_of(s.get("source", {})): s for s in sources}
+            else:
+                srcs = _build_from_subprocess(repo)
+        except ListingFailed:
+            raise                      # kopia itself failed - the fallback would only fail again
+        except Exception as exc:       # noqa: BLE001 - a server-backend error falls back to subprocess
+            log.warning("sources_index repo=%s backend=%s failed (%s); using subprocess", repo, backend, exc)
             srcs = _build_from_subprocess(repo)
-    except Exception as exc:  # noqa: BLE001 - any backend error -> subprocess
-        log.warning("sources_index repo=%s backend=%s failed (%s); using subprocess", repo, backend, exc)
-        srcs = _build_from_subprocess(repo)
-        meta = {}
+            meta = {}
+    except Exception as exc:  # noqa: BLE001 - record it, keep the old entry, let the caller decide
+        with _LOCK:
+            _LAST_ERROR[repo] = str(exc)[:500]
+            _REFRESHING.discard(repo)
+        log.error("sources_index repo=%s listing FAILED, keeping the previous listing: %s", repo, exc)
+        raise
+
     entry = {"srcs": srcs, "meta": meta, "built": time.time()}
     with _LOCK:
         _CACHE[repo] = entry
+        _LAST_ERROR.pop(repo, None)
         _REFRESHING.discard(repo)
     log.info("sources_index repo=%s built (%s): %d sources", repo, backend, len(srcs))
     return entry
+
+
+def _refresh_in_background(repo: str) -> None:
+    """Background refresh: a failure must not kill the thread with the refreshing flag still set,
+    or this repo would never refresh again for the life of the process."""
+    try:
+        _build_now(repo)
+    except Exception:  # noqa: BLE001 - already logged by _build_now; the stale entry stands
+        pass
+    finally:
+        with _LOCK:
+            _REFRESHING.discard(repo)
 
 
 def _ensure(repo: str, force: bool = False) -> dict:
@@ -85,14 +134,19 @@ def _ensure(repo: str, force: bool = False) -> dict:
     with _LOCK:
         entry = _CACHE.get(repo)
         fresh = bool(entry) and (now - entry["built"] < _TTL)
-    if force or entry is None:
-        return _build_now(repo)  # synchronous: forced refresh or first load
+    if entry is None:
+        return _build_now(repo)  # nothing to fall back on: a failure here has to surface
+    if force:
+        try:
+            return _build_now(repo)
+        except Exception:  # noqa: BLE001 - a forced refresh that fails still has a last good answer
+            return entry
     if fresh:
         return entry
     with _LOCK:  # stale: serve stale now, refresh in the background
         if repo not in _REFRESHING:
             _REFRESHING.add(repo)
-            threading.Thread(target=_build_now, args=(repo,), daemon=True).start()
+            threading.Thread(target=_refresh_in_background, args=(repo,), daemon=True).start()
     return entry
 
 

@@ -97,30 +97,110 @@ def _base_command(repo: str, args: list[str]) -> list[str]:
     return ["kopia"] + _repo_args(repo) + args + ["--no-progress"]
 
 
-def kopia(repo: str, args: list[str], ro: bool = True) -> KopiaResult:
+DEFAULT_TIMEOUT = 3600.0  # generous: `content list -l` on a large repo legitimately runs minutes
+TIMEOUT_RC = -9           # distinct from any kopia exit code, so callers can tell a timeout apart
+
+
+def _timeout() -> float:
+    """Ceiling on one kopia call. 0/negative disables it (there is no good reason to, but a
+    user with a genuinely slower repo should not have to patch code)."""
+    try:
+        from ..settings import load_settings
+        return float(load_settings().get("kopialens", {}).get("kopia_timeout", DEFAULT_TIMEOUT))
+    except Exception:  # noqa: BLE001 - a settings read must never break a kopia call
+        return DEFAULT_TIMEOUT
+
+
+def kopia(repo: str, args: list[str], ro: bool = True, timeout: float | None = None) -> KopiaResult:
     """Run kopia via subprocess arg-lists only.
 
     Passing paths as args preserves UNC/backslash strings and avoids the shell
     escaping bug documented in the project memory.
+
+    A hung kopia used to keep the calling request or background job alive forever; the call is
+    now bounded and a timeout comes back as a failed result (rc=TIMEOUT_RC) rather than an
+    exception, so every existing returncode check handles it.
     """
 
     global KOPIA_CALLS, KOPIA_TIME
     if ro:
         check_readonly(args)
     full = _base_command(repo, args)
+    limit = _timeout() if timeout is None else timeout
     start = time.time()
-    res = subprocess.run(
-        full,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash under pythonw
-    )
+    try:
+        res = subprocess.run(
+            full,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=limit if limit and limit > 0 else None,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash under pythonw
+        )
+    except subprocess.TimeoutExpired as exc:  # run() has already killed the child
+        elapsed = time.time() - start
+        KOPIA_CALLS += 1
+        KOPIA_TIME += elapsed
+        log.error("kopia timed out after %.0fs: %s", elapsed, " ".join(full[:4]))
+        return KopiaResult(args=full, returncode=TIMEOUT_RC, stdout=_as_text(exc.stdout),
+                           stderr=f"kopia timed out after {elapsed:.0f}s", elapsed=elapsed)
     elapsed = time.time() - start
     KOPIA_CALLS += 1
     KOPIA_TIME += elapsed
     return KopiaResult(args=full, returncode=res.returncode, stdout=res.stdout, stderr=res.stderr, elapsed=elapsed)
+
+
+def _as_text(value) -> str:
+    if not value:
+        return ""
+    return value if isinstance(value, str) else value.decode("utf-8", "replace")
+
+
+def kopia_lines(repo: str, args: list[str], ro: bool = True, timeout: float | None = None):
+    """Stream a kopia command's stdout one line at a time.
+
+    ``kopia()`` buffers the whole output in memory, which is nothing for `snapshot list` and
+    ~500 MB+ for `content list -l` on a large repo - and the caller then usually holds a second
+    copy from splitlines(). This yields lines as they arrive so neither copy exists.
+
+    Raises RuntimeError if kopia exits non-zero, so a partial read can never be mistaken for a
+    complete one. The child is always waited on / killed.
+    """
+    if ro:
+        check_readonly(args)
+    full = _base_command(repo, args)
+    limit = _timeout() if timeout is None else timeout
+    deadline = (time.time() + limit) if limit and limit > 0 else None
+    start = time.time()
+    proc = subprocess.Popen(
+        full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        encoding="utf-8", errors="replace", bufsize=1,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    try:
+        for line in proc.stdout:
+            if deadline and time.time() > deadline:
+                raise RuntimeError(f"kopia timed out after {time.time() - start:.0f}s: {' '.join(full[:4])}")
+            yield line.rstrip("\n")
+        proc.stdout.close()
+        rc = proc.wait(timeout=60)
+        if rc != 0:
+            err = (proc.stderr.read() or "").strip()[:300]
+            raise RuntimeError(f"kopia exited {rc}: {err or ' '.join(full[:4])}")
+    finally:
+        global KOPIA_CALLS, KOPIA_TIME
+        KOPIA_CALLS += 1
+        KOPIA_TIME += time.time() - start
+        if proc.poll() is None:      # generator closed early, or we raised
+            proc.kill()
+            proc.wait(timeout=30)
+        for stream in (proc.stdout, proc.stderr):
+            try:
+                if stream and not stream.closed:
+                    stream.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def kopia_json(repo: str, args: list[str]) -> object:
@@ -358,46 +438,93 @@ def remove_log_path(name: str) -> str:
     return os.path.join(d, name)
 
 
-def remove_files_save_bat(commands: list[list[str]], bat_path: str, log_path: str) -> str:
-    """Write the chunked commands to a .bat the user can run + watch. Each batch appends kopia's
-    own output to ``log_path`` so the run is fully inspectable."""
+def _remove_bat_lines(commands: list[list[str]], log_setter: str) -> list[str]:
+    """The generated remove-files .bat, shared by the server-file and browser-download variants.
+
+    Design constraints: a downloaded .bat must run on a bare Windows box, so this uses cmd
+    built-ins ONLY - no PowerShell, no Python, no tee. ``remove-files`` writes all its
+    per-snapshot detail to STDERR and nothing to stdout, so every batch is redirected with
+    ``2>&1`` or the console shows nothing at all.
+
+    Each batch goes to a scratch file first, which is then summarised on screen and appended to
+    the full log. Without that, a run looks frozen for minutes at a time: the batches are already
+    small (max_chars=8000 at the callers), but one batch still walks every snapshot in scope.
+
+    ``find`` and ``findstr`` are called by FULL PATH. Bare ``find`` picks up GNU find from Git
+    for Windows / Cygwin / GnuWin32 if any of those is ahead of System32 on the user's PATH, and
+    GNU find with those arguments starts recursively scanning the drive instead of counting lines
+    - the script looks hung. Verified by running a generated .bat on this machine.
+    """
     n = len(commands)
+    find = "%SystemRoot%\\System32\\find.exe"
+    findstr = "%SystemRoot%\\System32\\findstr.exe"
+    problems = '/I /C:"error" /C:"failed" /C:"unable"'
     lines = [
-        "@echo off", "setlocal", f'set "LOG={log_path}"',
+        "@echo off",
+        "setlocal enabledelayedexpansion",
+        log_setter,
+        'set "SLICE=%TEMP%\\kopialens_remove_batch_%RANDOM%.txt"',
+        "set /a KL_FAILED=0",
+        "set /a KL_REMOVED=0",
+        "set /a KL_ERRORS=0",
         'echo KopiaLens chunked remove-files - %DATE% %TIME%> "%LOG%"',
-        f'echo {n} batch(es). kopia output appends to "%LOG%".',
-        'echo Aborting (Ctrl+C) between batches is safe - rewrites are per-snapshot atomic.',
+        f'echo KopiaLens chunked remove-files: {n} batch(es).',
+        'echo Full kopia output is written to "%LOG%".',
+        "echo Aborting (Ctrl+C) between batches is safe - rewrites are per-snapshot atomic.",
         "echo.",
     ]
     for i, cmd in enumerate(commands, 1):
         s = _bat_line(cmd)  # %-escaped for batch context (filenames containing % stay intact)
-        lines.append(f'echo [batch {i}/{n}] %TIME%')
-        lines.append(f'echo === batch {i}/{n} ===>> "%LOG%"')
-        lines.append(f'{s}>> "%LOG%" 2>&1')
-    lines += ["echo.", 'echo Done. Now run:  kopia maintenance run --full   to reclaim the space.',
-              'echo Done.>> "%LOG%"', "pause"]
+        lines += [
+            f"echo [batch {i}/{n}] %TIME% - working (this walks every snapshot in scope)...",
+            f'echo === batch {i}/{n} ===>> "%LOG%"',
+            f'{s}> "%SLICE%" 2>&1',
+            "set KL_RC=!ERRORLEVEL!",
+            'type "%SLICE%" >> "%LOG%"',
+            f'for /f %%C in (\'{find} /c /v "" ^< "%SLICE%"\') do set KL_LINES=%%C',
+            f'for /f %%C in (\'{findstr} /I /C:"removed" /C:"will remove" "%SLICE%" ^| {find} /c /v ""\') do set KL_RM=%%C',
+            f'for /f %%C in (\'{findstr} {problems} "%SLICE%" ^| {find} /c /v ""\') do set KL_ER=%%C',
+            "set /a KL_REMOVED+=KL_RM",
+            "set /a KL_ERRORS+=KL_ER",
+            f'echo     batch {i}/{n} done: !KL_RM! removal line(s), !KL_ER! problem line(s), !KL_LINES! log line(s)',
+            'if not "!KL_ER!"=="0" (',
+            f'  echo     ^> problems reported in batch {i}/{n}:',
+            f'  {findstr} {problems} "%SLICE%"',
+            ")",
+            'if not "!KL_RC!"=="0" (',
+            "  set /a KL_FAILED+=1",
+            f'  echo     ^> WARNING: batch {i}/{n} exited with code !KL_RC!',
+            ")",
+        ]
+    lines += [
+        "echo.",
+        "echo ================ summary ================",
+        f"echo Batches run     : {n}    failed: !KL_FAILED!",
+        "echo Removal lines   : !KL_REMOVED!",
+        "echo Problem lines   : !KL_ERRORS!",
+        'echo Full log        : "%LOG%"',
+        'echo Summary: batches=!KL_FAILED! failed, removal lines=!KL_REMOVED!, problem lines=!KL_ERRORS!>> "%LOG%"',
+        "echo.",
+        "echo Space is NOT reclaimed yet. Now run:  kopia maintenance run --full",
+        'if exist "%SLICE%" del "%SLICE%" >nul 2>&1',
+        "pause",
+    ]
+    return lines
+
+
+def remove_files_save_bat(commands: list[list[str]], bat_path: str, log_path: str) -> str:
+    """Write the chunked commands to a .bat the user can run + watch. Each batch appends kopia's
+    own output to ``log_path`` so the run is fully inspectable."""
+    lines = _remove_bat_lines(commands, f'set "LOG={log_path}"')
     with open(bat_path, "w", encoding="utf-8", newline="\r\n") as f:
         f.write("\n".join(lines))
     return bat_path
 
 
 def remove_files_bat_text(commands: list[list[str]], log_name: str) -> str:
-    """Return the .bat text (for browser download — no server file). It logs kopia output to
+    """Return the .bat text (for browser download - no server file). It logs kopia output to
     ``log_name`` NEXT TO the .bat (`%~dp0`) so the run is self-contained + inspectable."""
-    n = len(commands)
-    lines = [
-        "@echo off", "setlocal", f'set "LOG=%~dp0{log_name}"',
-        'echo KopiaLens chunked remove-files - %DATE% %TIME%> "%LOG%"',
-        f'echo {n} batch(es). kopia output appends to "%LOG%".',
-        'echo Aborting (Ctrl+C) between batches is safe - rewrites are per-snapshot atomic.', "echo.",
-    ]
-    for i, cmd in enumerate(commands, 1):
-        s = _bat_line(cmd)  # %-escaped for batch context (filenames containing % stay intact)
-        lines.append(f'echo [batch {i}/{n}] %TIME%')
-        lines.append(f'echo === batch {i}/{n} ===>> "%LOG%"')
-        lines.append(f'{s}>> "%LOG%" 2>&1')
-    lines += ["echo.", 'echo Done. Now run:  kopia maintenance run --full   to reclaim the space.', "pause"]
-    return "\r\n".join(lines)
+    return "\r\n".join(_remove_bat_lines(commands, f'set "LOG=%~dp0{log_name}"'))
 
 
 _REMOVE_JOBS: dict[str, dict] = {}

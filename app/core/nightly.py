@@ -13,6 +13,7 @@ the memory to Windows - CPython and DuckDB both hold on to large freed heaps oth
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import subprocess
@@ -95,6 +96,35 @@ _PROCS: dict[str, subprocess.Popen] = {}   # live worker processes, so shutdown 
 
 def worker_log_path(repo: str) -> str:
     return os.path.join(DATA_DIR, "logs", f"index_worker_repo{repo}.log")
+
+
+WORKER_LOG_MAX_BYTES = 1_000_000
+WORKER_LOG_KEEP = 10
+
+
+def _roll_worker_log(path: str, max_bytes: int = WORKER_LOG_MAX_BYTES,
+                     keep: int = WORKER_LOG_KEEP) -> None:
+    """Size-based rotation, mirroring the app log's RotatingFileHandler.
+
+    The worker log used to be truncated on every run, so only the most recent nightly existed -
+    which makes any question of the form "has this stage been healthy for a few nights?"
+    unanswerable after the fact. A run writes a few KB, so this holds months."""
+    try:
+        if os.path.getsize(path) < max_bytes:
+            return
+    except OSError:
+        return  # no log yet
+    try:
+        oldest = f"{path}.{keep}"
+        if os.path.exists(oldest):
+            os.remove(oldest)
+        for i in range(keep - 1, 0, -1):
+            src = f"{path}.{i}"
+            if os.path.exists(src):
+                os.replace(src, f"{path}.{i + 1}")
+        os.replace(path, f"{path}.1")
+    except OSError as exc:
+        log.warning("worker log rotation failed for %s: %s", path, exc)
 
 
 def terminate_running(grace: float = 10.0) -> None:
@@ -182,14 +212,21 @@ def reap_orphan_workers() -> list[str]:
 
 def _run_worker(repo: str, full: bool) -> dict:
     """Run the worker subprocess. Its stderr (all the run's log lines) goes to a file rather than a
-    parent-side buffer: it survives the run for diagnosis, and none of it sits in this process."""
+    parent-side buffer: it survives the run for diagnosis, and none of it sits in this process.
+
+    APPEND, never truncate - past runs are the only evidence for questions about whether a stage
+    has been healthy over several nights. ``_roll_worker_log`` bounds the size."""
     args = [sys.executable, "-m", "app.index.worker", repo]
     if full:
         args.append("--full")
     logp = worker_log_path(repo)
     os.makedirs(os.path.dirname(logp), exist_ok=True)
+    _roll_worker_log(logp)
     try:
-        with open(logp, "w", encoding="utf-8", errors="replace") as errfh:
+        with open(logp, "a", encoding="utf-8", errors="replace") as errfh:
+            errfh.write(f"\n===== run started {dt.datetime.now():%Y-%m-%d %H:%M:%S} "
+                        f"repo={repo} full={full} =====\n")
+            errfh.flush()
             proc = subprocess.Popen(
                 args, cwd=_KL_ROOT, stdout=subprocess.PIPE, stderr=errfh, text=True,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash under pythonw
@@ -320,7 +357,7 @@ def start_index_pass_async(repo: str, full: bool = False, on_done=None) -> dict:
         summary = run_index_pass(repo, full, _owned=True)
         if on_done and not summary.get("skipped"):
             try:
-                on_done(repo, bool(summary.get("ok", False)))
+                on_done(repo, bool(summary.get("ok", False)), summary.get("reason"))
             except Exception:  # noqa: BLE001 - a reporting callback must not break the pass
                 log.exception("repo=%s on_done callback failed", repo)
 

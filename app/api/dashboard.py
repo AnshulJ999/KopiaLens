@@ -89,11 +89,13 @@ def post_index_build(repo: str = "1", source: str | None = None, full: bool = Fa
 def index_freshness() -> dict:
     """How current every repo's data is - one call for the whole header strip, so the UI does not
     need a per-repo round trip just to say "indexed 3h ago"."""
-    from ..main import nightly_success_ts, nightly_ts  # lazy: app.main imports this router
+    from ..main import nightly_error, nightly_success_ts, nightly_ts  # lazy: app.main imports this router
+    from ..core.sources import last_listing_error
 
     out = []
     for key, cfg in REPOS.items():
         st = nightly_state(key)
+        stored = nightly_error(key)
         row = {
             "repo": key, "name": cfg.get("name", key), "kind": cfg.get("kind", "kopia"),
             # last SUCCESS, not last attempt - a crashed run must never read as "indexed just now"
@@ -101,7 +103,10 @@ def index_freshness() -> dict:
             "last_attempt": nightly_ts(key) or None,
             "running": bool(st.get("running")),
             "started": st.get("started"), "elapsed": st.get("elapsed"),
-            "error": st.get("error"),
+            # in-memory state first, then the persisted reason (survives a restart), then a
+            # listing failure that has not reached a pass yet
+            "error": st.get("error") or stored.get("reason") or (last_listing_error(key) or None),
+            "error_at": stored.get("at"),
         }
         if row["running"]:
             row["progress"] = worker_progress(key)

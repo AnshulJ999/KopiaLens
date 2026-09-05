@@ -18,8 +18,11 @@ REPOS_FILE = os.environ.get("KOPIALENS_REPOS_FILE") or os.path.join(CONFIG_DIR, 
 _DEFAULT_DATA_DIR = os.path.join(HERE, "data")                          # duckdb + logs (gitignored)
 _DEFAULT_CACHE_DIR = os.path.join(KOPIA_DIR, ".cache")                  # shared, already-warm cache
 
-HOST, PORT = "0.0.0.0", 7123                                            # bind all interfaces (LAN-reachable for Caddy reverse-proxy at kopia.example.com)
-GUARD_HOST = "127.0.0.1"                                                # single-instance guard probes loopback (the 0.0.0.0 bind includes it; connecting to 0.0.0.0 is unreliable on Windows)
+# Loopback by DEFAULT: reaching KopiaLens from another machine is a deliberate choice, not the
+# out-of-the-box state (it browses and can delete from a backup repository). The actual bind comes
+# from settings.kopialens.bind_host - see app.core.auth.bind_host - with this as the fallback.
+HOST, PORT = "127.0.0.1", 7123
+GUARD_HOST = "127.0.0.1"                                                # single-instance guard probes loopback (a 0.0.0.0 bind includes it; connecting to 0.0.0.0 is unreliable on Windows)
 
 # Tray control API (kopialens_tray.py). Restart/quit live in the TRAY, not the server: a process
 # cannot kill itself and still answer the request that asked it to. Loopback ONLY and unauthenticated

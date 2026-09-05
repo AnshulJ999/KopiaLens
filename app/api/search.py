@@ -115,6 +115,31 @@ def search_reclaim(payload: ReclaimRequest) -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+def _csv_rows(cur):
+    """Stream the export, always closing the read cursor.
+
+    try/finally rather than a close() after the loop: a cancelled download (the client goes away,
+    or the user hits stop) abandons this generator part-way, so the final line never runs and the
+    DuckDB cursor stayed open until the generator happened to be garbage collected."""
+    try:
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(_EXPORT_COLS)
+        yield buf.getvalue(); buf.seek(0); buf.truncate(0)
+        while True:
+            batch = cur.fetchmany(5000)
+            if not batch:
+                break
+            for row in batch:
+                writer.writerow(row)
+            yield buf.getvalue(); buf.seek(0); buf.truncate(0)
+    finally:
+        try:
+            cur.close()
+        except Exception:  # noqa: BLE001 - already closed / connection gone
+            pass
+
+
 @router.get("/search/export")
 def export(
     repo: str = "1", q: str = "", deleted_only: bool = False, largest: bool = False,
@@ -131,22 +156,8 @@ def export(
                         first_from=first_from or None,
                         min_versions=min_versions, shared_min=shared_min)
 
-    def rows():
-        buf = io.StringIO()
-        writer = csv.writer(buf)
-        writer.writerow(_EXPORT_COLS)
-        yield buf.getvalue(); buf.seek(0); buf.truncate(0)
-        while True:
-            batch = cur.fetchmany(5000)
-            if not batch:
-                break
-            for row in batch:
-                writer.writerow(row)
-            yield buf.getvalue(); buf.seek(0); buf.truncate(0)
-        cur.close()
-
     return StreamingResponse(
-        rows(), media_type="text/csv",
+        _csv_rows(cur), media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="kopialens_search_repo{repo}.csv"'},
     )
 
