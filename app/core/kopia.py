@@ -166,35 +166,67 @@ def kopia_lines(repo: str, args: list[str], ro: bool = True, timeout: float | No
 
     Raises RuntimeError if kopia exits non-zero, so a partial read can never be mistaken for a
     complete one. The child is always waited on / killed.
+
+    The timeout is a WATCHDOG that kills the child, not a check inside the read loop: iterating
+    ``proc.stdout`` blocks until a line arrives, so a clock check in the loop body never runs
+    against the failure it exists for - a child that goes silent forever. stderr is drained on
+    its own thread for the same reason (an unread pipe fills at ~64 KB and blocks the child).
     """
     if ro:
         check_readonly(args)
     full = _base_command(repo, args)
     limit = _timeout() if timeout is None else timeout
-    deadline = (time.time() + limit) if limit and limit > 0 else None
     start = time.time()
     proc = subprocess.Popen(
         full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         encoding="utf-8", errors="replace", bufsize=1,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
+    timed_out = threading.Event()
+    errbuf: list[str] = []
+
+    def _kill_on_timeout() -> None:
+        timed_out.set()
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001 - already gone
+            pass
+
+    def _drain_stderr() -> None:
+        try:
+            for line in proc.stderr:
+                if len(errbuf) < 200:
+                    errbuf.append(line)
+        except Exception:  # noqa: BLE001 - closed underneath us
+            pass
+
+    watchdog = threading.Timer(limit, _kill_on_timeout) if limit and limit > 0 else None
+    if watchdog:
+        watchdog.daemon = True
+        watchdog.start()
+    drainer = threading.Thread(target=_drain_stderr, daemon=True)
+    drainer.start()
+
     try:
         for line in proc.stdout:
-            if deadline and time.time() > deadline:
-                raise RuntimeError(f"kopia timed out after {time.time() - start:.0f}s: {' '.join(full[:4])}")
             yield line.rstrip("\n")
         proc.stdout.close()
         rc = proc.wait(timeout=60)
+        if timed_out.is_set():
+            raise RuntimeError(f"kopia timed out after {limit:.0f}s: {' '.join(full[:4])}")
         if rc != 0:
-            err = (proc.stderr.read() or "").strip()[:300]
+            err = "".join(errbuf).strip()[:300]
             raise RuntimeError(f"kopia exited {rc}: {err or ' '.join(full[:4])}")
     finally:
         global KOPIA_CALLS, KOPIA_TIME
         KOPIA_CALLS += 1
         KOPIA_TIME += time.time() - start
+        if watchdog:
+            watchdog.cancel()
         if proc.poll() is None:      # generator closed early, or we raised
             proc.kill()
             proc.wait(timeout=30)
+        drainer.join(timeout=5)
         for stream in (proc.stdout, proc.stderr):
             try:
                 if stream and not stream.closed:

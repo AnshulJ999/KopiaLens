@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 
 import duckdb
 import pytest
@@ -185,6 +186,58 @@ def test_a_failure_with_no_reason_still_records_something(state):
     assert m.nightly_error("1")["reason"]
 
 
+class _FakeProc:
+    """Just enough of Popen for _run_worker: it has already exited."""
+
+    def __init__(self, out: str, rc: int):
+        self._out, self.returncode, self.pid = out, rc, 4242
+
+    def communicate(self, timeout=None):
+        return self._out, ""
+
+    def poll(self):
+        return self.returncode
+
+
+def _run_worker_with(monkeypatch, tmp_path, out: str, rc: int) -> dict:
+    monkeypatch.setattr(nightly, "worker_log_path", lambda repo: str(tmp_path / "w.log"))
+    monkeypatch.setattr(nightly, "worker_timeout", lambda: 60)
+    monkeypatch.setattr(nightly.subprocess, "Popen", lambda *a, **k: _FakeProc(out, rc))
+    return nightly._run_worker("1", False)
+
+
+def test_the_workers_own_reason_survives_its_non_zero_exit(monkeypatch, tmp_path):
+    """the worker prints WHY it failed and then exits 1. Reading the exit
+    code first discarded the explanation and reported "worker exit 1" - the exact message the
+    freshness strip exists to replace."""
+    out = json.dumps({"ok": False, "repo": "1", "reason": "repository unavailable"})
+    got = _run_worker_with(monkeypatch, tmp_path, out, rc=1)
+    assert got["ok"] is False
+    assert got["reason"] == "repository unavailable"
+
+
+def test_a_completed_run_that_failed_a_stage_keeps_its_detail(monkeypatch, tmp_path):
+    """The worker's OTHER failure shape: it finishes, reports ok=false with per-stage detail, and
+    still exits 1. That summary must survive too, not just the crash case."""
+    out = json.dumps({"ok": False, "repo": "1", "reason": "index stage failed",
+                      "stages": {"index": "error", "dashboard": "skipped"}})
+    got = _run_worker_with(monkeypatch, tmp_path, out, rc=1)
+    assert got["reason"] == "index stage failed"
+    assert got["stages"]["dashboard"] == "skipped"
+
+
+def test_an_unparsable_failure_still_falls_back_to_the_exit_code(monkeypatch, tmp_path):
+    got = _run_worker_with(monkeypatch, tmp_path, "this is not json", rc=1)
+    assert got["ok"] is False
+    assert "worker exit 1" in got["reason"]
+
+
+def test_a_successful_run_returns_its_summary_unchanged(monkeypatch, tmp_path):
+    out = json.dumps({"ok": True, "repo": "1", "elapsed": 12.5})
+    got = _run_worker_with(monkeypatch, tmp_path, out, rc=0)
+    assert got == {"ok": True, "repo": "1", "elapsed": 12.5}
+
+
 def test_the_worker_passes_its_failure_reason_to_the_callback(monkeypatch):
     """The reason only reaches the state file if the callback is handed it."""
     got: list[tuple] = []
@@ -198,8 +251,7 @@ def test_the_worker_passes_its_failure_reason_to_the_callback(monkeypatch):
     for _ in range(200):
         if got:
             break
-        import time as _t
-        _t.sleep(0.01)
+        time.sleep(0.01)
     assert got and got[0] == ("1", False, "storage timeout")
 
 
@@ -259,6 +311,67 @@ def test_a_timed_out_kopia_call_comes_back_as_a_failed_result(monkeypatch):
     res = kopia_mod.kopia("1", ["snapshot", "list"], timeout=1)
     assert res.returncode == kopia_mod.TIMEOUT_RC
     assert "timed out" in res.stderr
+
+
+def test_the_streaming_reader_kills_a_child_that_goes_silent(monkeypatch):
+    """iterating stdout BLOCKS, so a deadline checked inside the read loop
+    never runs against the failure it exists for. The watchdog has to kill the child instead.
+    Uses a real subprocess that produces no output at all."""
+    import sys as _sys
+    monkeypatch.setattr(kopia_mod, "_base_command",
+                        lambda repo, args: [_sys.executable, "-c", "import time; time.sleep(30)"])
+    monkeypatch.setattr(kopia_mod, "check_readonly", lambda args: None)
+    t0 = time.time()
+    with pytest.raises(RuntimeError) as exc:
+        list(kopia_mod.kopia_lines("1", ["content", "list"], timeout=1.5))
+    elapsed = time.time() - t0
+    assert "timed out" in str(exc.value)
+    assert elapsed < 15, f"the watchdog did not interrupt the silent child (took {elapsed:.0f}s)"
+
+
+def test_the_streaming_reader_still_returns_normal_output(monkeypatch):
+    import sys as _sys
+    monkeypatch.setattr(
+        kopia_mod, "_base_command",
+        lambda repo, args: [_sys.executable, "-c", "print('a'); print('b')"])
+    monkeypatch.setattr(kopia_mod, "check_readonly", lambda args: None)
+    assert list(kopia_mod.kopia_lines("1", ["content", "list"], timeout=30)) == ["a", "b"]
+
+
+def test_the_streaming_reader_raises_on_a_non_zero_exit(monkeypatch):
+    """A partial read must never be mistaken for a complete one - that is the whole reason
+    load_sizemap can trust what it gets."""
+    import sys as _sys
+    monkeypatch.setattr(
+        kopia_mod, "_base_command",
+        lambda repo, args: [_sys.executable, "-c",
+                            "import sys; print('one'); sys.stderr.write('boom'); sys.exit(2)"])
+    monkeypatch.setattr(kopia_mod, "check_readonly", lambda args: None)
+    with pytest.raises(RuntimeError) as exc:
+        list(kopia_mod.kopia_lines("1", ["content", "list"], timeout=30))
+    assert "exited 2" in str(exc.value)
+    assert "boom" in str(exc.value), "stderr must reach the error message"
+
+
+def test_a_partial_sizemap_never_replaces_a_good_one(monkeypatch, tmp_path):
+    """load_sizemap's half of the same rule: a stream that dies part-way would otherwise make
+    every physical/freeable figure read low, silently and permanently."""
+    from app.core import sizemap as sm
+    monkeypatch.setattr(sm, "CACHEDIR", str(tmp_path))
+    good = {"c1": 100, "c2": 200}
+    with open(tmp_path / "sizemap_repo1.pkl", "wb") as fh:
+        import pickle
+        pickle.dump(good, fh)
+
+    def _dies(*_a, **_k):
+        yield "c1 x 10+100"
+        raise RuntimeError("kopia exited 1: storage unavailable")
+
+    monkeypatch.setattr(sm, "kopia_lines", _dies)
+    assert sm.load_sizemap("1", refresh=True) == good
+    with open(tmp_path / "sizemap_repo1.pkl", "rb") as fh:
+        import pickle
+        assert pickle.load(fh) == good, "the partial map overwrote the good one"
 
 
 def test_a_timeout_is_a_listing_failure_not_an_empty_repository(monkeypatch):

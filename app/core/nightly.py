@@ -246,14 +246,34 @@ def _run_worker(repo: str, full: bool) -> dict:
     except Exception as exc:  # noqa: BLE001 - could not even launch
         log.error("repo=%s index worker launch failed: %s", repo, exc)
         return {"ok": False, "reason": f"launch failed: {exc}"}
-    if proc.returncode != 0:
-        log.error("repo=%s index worker exit %d (see %s)", repo, proc.returncode, logp)
-        return {"ok": False, "reason": f"worker exit {proc.returncode}", "log": logp}
+    # Parse FIRST, exit code second. The worker prints a JSON summary carrying the real reason
+    # ("repository unavailable", the failing stage) and THEN exits 1 - on both of its failure
+    # shapes. Reading the exit code first threw that away and surfaced "worker exit 1", which is
+    # exactly the message the freshness strip is not supposed to be showing.
+    summary = None
+    parse_error = None
     try:
-        return json.loads((out or "").strip())
+        parsed = json.loads((out or "").strip())
+        summary = parsed if isinstance(parsed, dict) else None
     except Exception as exc:  # noqa: BLE001 - malformed output must not crash the scheduler
-        log.error("repo=%s index worker output unparsable: %s (see %s)", repo, exc, logp)
-        return {"ok": False, "reason": f"bad worker output: {exc}", "log": logp}
+        parse_error = exc
+
+    if proc.returncode != 0:
+        if summary is not None:
+            summary["ok"] = False
+            summary.setdefault("reason", f"worker exit {proc.returncode}")
+            summary["log"] = logp
+            log.error("repo=%s index worker exit %d: %s (see %s)",
+                      repo, proc.returncode, summary["reason"], logp)
+            return summary
+        log.error("repo=%s index worker exit %d, no usable output (%s) (see %s)",
+                  repo, proc.returncode, parse_error or "empty", logp)
+        return {"ok": False, "reason": f"worker exit {proc.returncode}", "log": logp}
+
+    if summary is None:
+        log.error("repo=%s index worker output unparsable: %s (see %s)", repo, parse_error, logp)
+        return {"ok": False, "reason": f"bad worker output: {parse_error}", "log": logp}
+    return summary
 
 
 def maybe_compact(repo: str) -> None:
