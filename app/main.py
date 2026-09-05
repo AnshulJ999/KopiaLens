@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import DATA_DIR, REPOS, repo_kind
 
-from .api import (actions, backblaze, dashboard, excluded, insights, search, simulate,
+from .api import (actions, audit, backblaze, dashboard, excluded, insights, search, simulate,
                   snapshots, stats, tree)
 from .core import auth
 from .core import kopia as kopia_mod
@@ -430,6 +430,14 @@ def _bg_worker() -> None:
 async def lifespan(_app: FastAPI):
     setup_logging()
     log.info("KopiaLens starting up")
+    try:  # seed a password from the environment ONCE - how a provisioned Docker image gets auth
+        seeded = os.environ.get("KOPIALENS_PASSWORD") or ""
+        if seeded and not auth.password_hash():
+            auth.set_password(seeded)
+            log.warning("auth password seeded from KOPIALENS_PASSWORD (first boot only - a "
+                        "password already chosen later is never overwritten)")
+    except Exception as exc:  # noqa: BLE001 - seeding must never block startup
+        log.error("KOPIALENS_PASSWORD seeding failed: %s", exc)
     try:
         # Before ANY DuckDB access: a worker from a previous run may still hold a repo exclusively.
         reaped = nightly.reap_orphan_workers()
@@ -515,8 +523,6 @@ async def _form(request: Request) -> dict[str, str]:
 @app.post("/api/auth/login")
 async def auth_login(request: Request):
     form = await _form(request)
-    if auth.needs_setup():
-        return RedirectResponse("/login", status_code=303)
     if not auth.verify_password(str(form.get("password") or ""), auth.password_hash()):
         log.warning("failed login attempt from %s", request.client.host if request.client else "?")
         return HTMLResponse(auth.login_page("Wrong password."), status_code=401)
@@ -525,21 +531,32 @@ async def auth_login(request: Request):
     return resp
 
 
-@app.post("/api/auth/setup")
-async def auth_setup(request: Request):
-    """First-password choice. A placeholder for the real onboarding flow () - it exists so
-    that "auth on, no password yet" is a usable state rather than a locked-out one."""
-    if not auth.needs_setup():
-        return RedirectResponse("/login", status_code=303)
-    form = await _form(request)
-    password = str(form.get("password") or "")
+@app.post("/api/auth/set-password")
+async def auth_set_password(request: Request):
+    """Choose or change the shared password. When auth is ON the middleware has already demanded
+    a session, so only someone who knows the current password can replace it; when auth is OFF
+    the app has nothing to protect yet and this is how a password gets added before onboarding
+    () exists."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "detail": "invalid request body"}, status_code=400)
+    password = str(body.get("password") or "")
     if len(password) < 8:
-        return HTMLResponse(auth.login_page("Use at least 8 characters."), status_code=400)
-    if password != str(form.get("confirm") or ""):
-        return HTMLResponse(auth.login_page("The two passwords do not match."), status_code=400)
+        return JSONResponse({"ok": False, "detail": "Use at least 8 characters."}, status_code=400)
     auth.set_password(password)
-    resp = RedirectResponse("/", status_code=303)
+    resp = JSONResponse({"ok": True})
     resp.set_cookie(auth.COOKIE_NAME, auth.session_token(), **auth.cookie_kwargs())
+    return resp
+
+
+@app.post("/api/auth/remove-password")
+async def auth_remove_password():
+    """Turn auth off entirely. Reachable only with a valid session while auth is on (middleware);
+    a no-op when it is already off."""
+    auth.clear_password()
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.COOKIE_NAME, path="/")
     return resp
 
 
@@ -600,6 +617,7 @@ app.include_router(search.router, prefix="/api")
 app.include_router(simulate.router, prefix="/api")
 app.include_router(actions.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
+app.include_router(audit.router, prefix="/api")
 app.include_router(excluded.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")
 app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"

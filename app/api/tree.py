@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import re
+
 from fastapi import APIRouter, HTTPException
 
 from ..core.sources import sources_index
@@ -16,6 +19,34 @@ from ..index.queries import (
 )
 
 router = APIRouter(tags=["tree"])
+
+
+def _parse_start(s: str) -> dt.datetime | None:
+    """kopia's tz-aware ISO startTime; trims >6 fractional digits (fromisoformat caps at 6)."""
+    if not s:
+        return None
+    try:
+        return dt.datetime.fromisoformat(re.sub(r"\.(\d{1,6})\d*", r".\1", s))
+    except ValueError:
+        return None
+
+
+def _week_cutoff(week: str) -> dt.datetime:
+    """``week`` is the ISO date of the chosen week's LAST day; the cutoff is that day's end,
+    in the local timezone (kopia's startTimes carry offsets)."""
+    d = dt.date.fromisoformat(week)
+    return dt.datetime(d.year, d.month, d.day, 23, 59, 59).astimezone()
+
+
+def _snapshot_ids_as_of(repo: str, cutoff: dt.datetime) -> list[str]:
+    """Per source, the id of its latest snapshot STARTED at or before ``cutoff`` (KL13 week view -
+    what the backup looked like THEN; later snapshots are invisible to it)."""
+    ids: list[str] = []
+    for snaps in sources_index(repo).values():
+        older = [(t, s) for s in snaps if (t := _parse_start(str(s.get("startTime") or ""))) and t <= cutoff]
+        if older:
+            ids.append(max(older, key=lambda p: p[0])[1].get("id"))
+    return [i for i in ids if i]
 
 
 def _root_obj(repo: str, source: str, snapshot_id: str) -> str | None:
@@ -78,18 +109,25 @@ def tree(
     ext: str | None = None,
     ext_exclude: str | None = None,
     flat: bool = False,
+    week: str | None = None,
 ) -> dict:
     """mode=full (complete point-in-time tree, default) | changed (only what changed) |
     reclaimable (files freed if this snapshot is deleted) | all (every snapshot, source-wide).
     ``dedupe`` collapses same-content files into one row (content-aware). Filters: deleted_only
     (all mode only) / over_gb / ext / ext_exclude. ``flat`` = recursive flat file list under the
-    prefix (collapse folders) - paths-based, works in any mode."""
+    prefix (collapse folders) - paths-based, works in any mode. ``week`` (All-Sources only) =
+    ISO date of a week's last day; shows each source's latest snapshot from that week."""
     if not source:
         raise HTTPException(status_code=400, detail="source is required")
     try:
         if source == "*ALL*":  # repo-wide aggregate across every source (parity with Snapshots *ALL*)
             min_size = 1_000_000_000 if over_gb else 0
-            if flat:
+            if week and mode != "reclaimable":
+                # point-in-time week view: each source's snapshot AS OF that week, through the
+                # existing snapshot-set query. Flat/reclaimable keep their latest-only semantics.
+                ids = _snapshot_ids_as_of(repo, _week_cutoff(week))
+                children = _post_filter(tree_children_snaps(repo, ids, prefix), over_gb, ext, ext_exclude)
+            elif flat:
                 children = flat_files(repo, None, prefix, deleted_only=deleted_only,
                                       min_size=min_size, ext=ext, ext_exclude=ext_exclude)
             elif mode == "changed":  # union of each source's LATEST-snapshot delta

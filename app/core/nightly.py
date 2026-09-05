@@ -261,7 +261,15 @@ def _run_worker(repo: str, full: bool) -> dict:
     if proc.returncode != 0:
         if summary is not None:
             summary["ok"] = False
-            summary.setdefault("reason", f"worker exit {proc.returncode}")
+            # A stage failure prints the full summary with `errors: {stage: msg}` and NO `reason`
+            # (index/worker.py) - build the reason from those instead of the placeholder, or the
+            # freshness strip shows "worker exit 1" while the real error sits right there.
+            if "reason" not in summary:
+                errs = summary.get("errors") or {}
+                if errs:
+                    summary["reason"] = "; ".join(f"{s}: {m}" for s, m in errs.items())[:500]
+                else:
+                    summary["reason"] = f"worker exit {proc.returncode}"
             summary["log"] = logp
             log.error("repo=%s index worker exit %d: %s (see %s)",
                       repo, proc.returncode, summary["reason"], logp)

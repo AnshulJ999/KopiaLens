@@ -216,14 +216,43 @@ def test_the_workers_own_reason_survives_its_non_zero_exit(monkeypatch, tmp_path
     assert got["reason"] == "repository unavailable"
 
 
-def test_a_completed_run_that_failed_a_stage_keeps_its_detail(monkeypatch, tmp_path):
-    """The worker's OTHER failure shape: it finishes, reports ok=false with per-stage detail, and
-    still exits 1. That summary must survive too, not just the crash case."""
-    out = json.dumps({"ok": False, "repo": "1", "reason": "index stage failed",
-                      "stages": {"index": "error", "dashboard": "skipped"}})
+def test_a_completed_run_that_failed_a_stage_builds_its_reason_from_errors(monkeypatch, tmp_path):
+    """The worker's OTHER failure shape: it finishes, reports ok=false with per-stage `errors`, and
+    still exits 1 - with NO `reason` field at all (a `reason` only exists on a crash). The reason
+    must be built from those errors, not replaced by the "worker exit 1" placeholder. The shape
+    here is the one `worker.run()` actually emits, not an invented one."""
+    out = json.dumps({"ok": False, "repo": "1", "full": False,
+                      "stages": {"index": 12.0, "churn": 3.1},
+                      "errors": {"churn": "OOM in the 365d window"},
+                      "skipped": [], "elapsed": 14.2})
     got = _run_worker_with(monkeypatch, tmp_path, out, rc=1)
-    assert got["reason"] == "index stage failed"
-    assert got["stages"]["dashboard"] == "skipped"
+    assert got["ok"] is False
+    assert got["reason"] == "churn: OOM in the 365d window"
+    assert got["errors"]["churn"] == "OOM in the 365d window"
+
+
+def test_a_parsed_failure_with_neither_reason_nor_errors_falls_back(monkeypatch, tmp_path):
+    out = json.dumps({"ok": False, "repo": "1"})
+    got = _run_worker_with(monkeypatch, tmp_path, out, rc=1)
+    assert got["reason"] == "worker exit 1"
+
+
+def test_the_worker_emits_no_reason_on_a_stage_failure(monkeypatch, tmp_path):
+    """Producer half of the two-shapes rule: a stage failure emits `errors` and NO `reason`. Pinned
+    separately so neither half of the contract can drift - this feature was tested twice against
+    invented shapes before this pair existed."""
+    from app.index import worker
+    monkeypatch.setattr(worker, "progress_path", lambda repo: str(tmp_path / "p.json"))
+    import app.index.builder as builder_mod
+
+    def _boom(repo, full=False):
+        raise RuntimeError("walk failed")
+
+    monkeypatch.setattr(builder_mod, "auto_reindex_sync", _boom)
+    summary = worker.run("1", full=False)
+    assert summary["ok"] is False
+    assert "reason" not in summary
+    assert summary["errors"]["index"] == "walk failed"
 
 
 def test_an_unparsable_failure_still_falls_back_to_the_exit_code(monkeypatch, tmp_path):
@@ -429,19 +458,86 @@ def test_an_unlisted_domain_name_is_rejected(monkeypatch):
     assert not auth.host_allowed("evil.example.com")
 
 
-def test_the_bind_host_defaults_to_loopback(monkeypatch):
-    monkeypatch.setattr(auth, "_kl", lambda: {})
-    assert auth.bind_host("127.0.0.1") == "127.0.0.1"
-    monkeypatch.setattr(auth, "_kl", lambda: {"bind_host": "0.0.0.0"})
-    assert auth.bind_host("127.0.0.1") == "0.0.0.0"
+def test_auth_is_on_because_a_password_exists(monkeypatch):
+    """The REL2 model: a fresh install has no password and must never be locked out; a hash turns
+    auth on; an explicit off stays off even when a hash exists."""
+    monkeypatch.setattr(auth, "_kl", lambda: {"auth_enabled": True, "auth_password_hash": ""})
+    assert auth.enabled() is False
+    monkeypatch.setattr(auth, "_kl",
+                        lambda: {"auth_enabled": True, "auth_password_hash": "pbkdf2_sha256$1$ab$cd"})
+    assert auth.enabled() is True
+    monkeypatch.setattr(auth, "_kl",
+                        lambda: {"auth_enabled": False, "auth_password_hash": "pbkdf2_sha256$1$ab$cd"})
+    assert auth.enabled() is False
+
+
+def test_set_password_stores_a_hash_and_enables_auth(monkeypatch):
+    captured = {}
+
+    def _fake_mutate(fn):
+        s = {"kopialens": {}}
+        fn(s)
+        captured.update(s["kopialens"])
+
+    monkeypatch.setattr(auth, "mutate_settings", _fake_mutate)
+    auth.set_password("correct horse battery")
+    assert captured["auth_enabled"] is True
+    assert captured["auth_password_hash"].startswith("pbkdf2_sha256$")
+    assert "correct horse battery" not in str(captured)
+
+
+def test_removing_the_password_clears_the_hash_and_records_the_choice(monkeypatch):
+    captured = {}
+
+    def _fake_mutate(fn):
+        s = {"kopialens": {"auth_password_hash": "x", "auth_enabled": True}}
+        fn(s)
+        captured.update(s["kopialens"])
+
+    monkeypatch.setattr(auth, "mutate_settings", _fake_mutate)
+    auth.clear_password()
+    assert captured["auth_password_hash"] == ""
+    assert captured["auth_enabled"] is False
+
+
+def test_the_bind_default_follows_the_launch_profile(monkeypatch):
+    """No profile declared = a server start = all interfaces (the container convention: the user's
+    port mapping decides exposure). The tray declares its child desktop, which binds loopback."""
+    monkeypatch.setattr(auth, "_env", lambda name: "")
+    monkeypatch.setattr(auth, "raw_kopialens_settings", lambda: {})
+    assert auth.bind_host() == "0.0.0.0"
+    monkeypatch.setattr(auth, "_env",
+                        lambda name: "desktop" if name == "KOPIALENS_PROFILE" else "")
+    assert auth.bind_host() == "127.0.0.1"
+
+
+def test_env_and_explicit_settings_beat_the_profile(monkeypatch):
+    monkeypatch.setattr(auth, "_env", lambda name: {"KOPIALENS_PROFILE": "desktop",
+                                                    "KOPIALENS_BIND_HOST": "192.168.1.5"}.get(name, ""))
+    assert auth.bind_host() == "192.168.1.5"   # env wins over the profile
+    monkeypatch.setattr(auth, "_env",
+                        lambda name: "desktop" if name == "KOPIALENS_PROFILE" else "")
+    monkeypatch.setattr(auth, "raw_kopialens_settings", lambda: {"bind_host": "0.0.0.0"})
+    assert auth.bind_host() == "0.0.0.0"       # an explicit file value wins over the profile
+
+
+def test_the_allowed_hosts_env_overrides_settings(monkeypatch):
+    monkeypatch.setattr(auth, "_env", lambda name: "a.example.net, b.example.net"
+                        if name == "KOPIALENS_ALLOWED_HOSTS" else "")
+    assert auth.allowed_hosts() == ["a.example.net", "b.example.net"]
 
 
 def test_the_login_page_is_reachable_without_a_session():
     assert auth.exempt("/login")
     assert auth.exempt("/health")
     assert auth.exempt("/api/auth/login")
+    assert auth.exempt("/api/auth/logout")
     assert not auth.exempt("/api/search")
     assert not auth.exempt("/")
+    # EXACT matches only: a prefix rule here would leave password management open to callers
+    # with no session.
+    assert not auth.exempt("/api/auth/set-password")
+    assert not auth.exempt("/api/auth/remove-password")
 
 
 # --------------------------------------------------------------------------------------------
@@ -480,9 +576,41 @@ def test_the_bat_writes_its_log_next_to_itself():
 
 def test_the_bat_reports_a_failing_batch_and_ends_with_a_summary():
     text = _bat()
-    assert "!KL_RC!" in text and "KL_FAILED" in text
+    assert "%KL_RC%" in text and "KL_FAILED" in text
     assert "summary" in text
     assert "maintenance run --full" in text
+
+
+def test_the_bat_never_uses_delayed_expansion():
+    """With enabledelayedexpansion on, cmd.exe treats everything BETWEEN two `!` characters as a
+    variable reference and deletes the whole span - quotes and flags included, not just the `!`.
+    It corrupts filenames, --source paths and the kopia config path alike, and --filename matching
+    by basename means a corrupted name can hit a DIFFERENT real file. Reproduced 2026-09-06."""
+    text = _bat()
+    assert "enabledelayedexpansion" not in text
+    assert "!KL_" not in text
+    assert "!ERRORLEVEL!" not in text
+
+
+def test_the_bat_keeps_bang_filenames_intact_when_run(tmp_path):
+    """End-to-end on the real cmd.exe: the kopia command is swapped for an echo of `!`-bearing
+    names, the generated script is executed verbatim, and the text must survive intact while the
+    counters still work. This is the reproduction of the delayed-expansion corruption."""
+    import subprocess as sp
+
+    from app.core.kopia import remove_files_bat_text
+
+    text = remove_files_bat_text(
+        [["echo", "removed Backup!.txt and Wow!! Two + fake error line"]], "run.log")
+    bat = tmp_path / "t.bat"
+    bat.write_text(text, encoding="ascii", errors="replace", newline="\r\n")
+    res = sp.run(["cmd", "/c", str(bat)], input="\r\n", capture_output=True, text=True,
+                 errors="replace", timeout=60)
+    out = res.stdout
+    assert "Backup!.txt and Wow!! Two" in out           # the !-span survived, quotes included
+    assert "1 removal line(s)" in out                  # counters still resolve
+    assert "1 problem line(s)" in out                  # the error branch ran
+    assert "failed: 0" in out                          # batch exit code read correctly
 
 
 # --------------------------------------------------------------------------------------------

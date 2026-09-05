@@ -143,16 +143,34 @@ def build_global(
         del cids  # release this source's set before loading the next
 
     # Pass 2: per-source physical/freeable, reloading each set (from the pkl cache) then discarding.
-    rows: dict[str, dict] = {}
-    for key in display:
-        cids, _ = source_set(repo, db, smap, key, srcs[key], recent)
-        snaps = srcs[key][-rec:] if rec else srcs[key]
-        st = logical_stats(snaps)
-        total = sum(smap.get(cid, 0) for cid in cids)
-        free = sum(smap.get(cid, 0) for cid in cids if count[cid] == 1)
-        pins = sum(1 for snap in snaps if snap.get("pins"))
-        rows[key] = {"st": st, "total": total, "free": free, "phys_latest": latest.get(key, 0), "pins": pins}
-        del cids
+    def _pass2(smap: dict[str, int]):
+        rows: dict[str, dict] = {}
+        misses = 0
+        for key in display:
+            cids, _ = source_set(repo, db, smap, key, srcs[key], recent)
+            snaps = srcs[key][-rec:] if rec else srcs[key]
+            st = logical_stats(snaps)
+            total = sum(smap.get(cid, 0) for cid in cids)
+            free = sum(smap.get(cid, 0) for cid in cids if count[cid] == 1)
+            pins = sum(1 for snap in snaps if snap.get("pins"))
+            misses += sum(1 for cid in cids if cid not in smap)
+            rows[key] = {"st": st, "total": total, "free": free, "phys_latest": latest.get(key, 0), "pins": pins}
+            del cids
+        return rows, misses
+
+    rows, misses = _pass2(smap)
+    if misses:
+        # New content landed after the cached map was built. Mirror physical_report's missing-ID
+        # recovery: reload the sizemap once and re-price, instead of reporting low totals for up
+        # to the TTL window. (phys_latest stays from pass 1 - the next build re-derives it.)
+        log.info("repo=%s %d content ids missing from the sizemap - refreshing it once", repo, misses)
+        try:
+            fresh = load_sizemap(repo, refresh=True)
+        except Exception as exc:  # noqa: BLE001 - stale numbers beat a failed dashboard build
+            log.warning("repo=%s sizemap refresh failed: %s", repo, exc)
+        else:
+            rows, _ = _pass2(fresh)
+            smap = fresh
 
     union_total = sum(smap.get(cid, 0) for cid in count)
     # The Counter itself is passed on (pickled, materialized, returned) rather than copied with
@@ -173,11 +191,12 @@ def build_global(
     if mode == "all" and not rec and (time.time() - _LAST_REFCOUNT_WRITE.get(repo, 0.0) >= _refcount_write_interval()):
         with _REFCOUNT_WRITE_LOCK:
             try:
-                from ..index.physical import materialize_refcount  # lazy: avoids core<-index import cycle
+                from ..index.physical import materialize_exclusive, materialize_refcount  # lazy: avoids core<-index import cycle
                 from ..index.schema import write_cursor
                 con = write_cursor(repo)
                 try:
                     wrote = materialize_refcount(con, repo, count)
+                    materialize_exclusive(con, repo)  # paths.exclusive rides the same window
                     con.commit()
                 finally:
                     con.close()

@@ -13,6 +13,7 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ..core import audit
 from ..core.kopia import (
     _REMOVE_JOBS,
     list_mounts,
@@ -113,6 +114,8 @@ class UnmountRequest(BaseModel):
 
 @router.post("/actions/restore-preview")
 def restore_preview(payload: RestorePreview) -> dict:
+    audit.audit("generated", "restore-command", repo=payload.repo,
+                summary={"source": payload.source, "destination": payload.destination})
     return {"command": restore_command(payload.repo, payload.source, payload.destination, overwrite=payload.overwrite)}
 
 
@@ -159,6 +162,8 @@ def snapshot_delete(payload: SnapshotDeleteRequest) -> dict:
         cmds = snapshot_delete_commands(payload.repo, payload.snapshot_ids, batch=True)
         text = "\n".join(" ".join(c) for c in cmds)
         maint = " ".join(maintenance_run_command(payload.repo))
+        audit.audit("generated", "snapshot-delete-commands", repo=payload.repo,
+                    summary={"ids": len(payload.snapshot_ids)})
         return {"executed": False, "count": len(payload.snapshot_ids),
                 "commands": text + "\n\n# Then reclaim space with:\n" + maint}
     result = snapshot_delete_execute(payload.repo, payload.snapshot_ids)
@@ -204,6 +209,9 @@ def _rf_preview(repo: str, items: list[str], flag: str, scope, by: str) -> dict:
     commit_cmds = remove_files_chunked_commands(repo, items, source=scope, commit=True, max_chars=8000, flag=flag)
     dry_cmds = remove_files_chunked_commands(repo, items, source=scope, commit=False, max_chars=8000, flag=flag)
     ts = time.strftime("%Y%m%d_%H%M%S")
+    audit.audit("generated", "remove-files-commands", repo=repo,
+                summary={"items": len(items), "by": by, "batches": len(commit_cmds),
+                         "sources": scope or [], "everywhere": scope is None})
     return {
         "executed": False, "by": by, "count": len(items), "everywhere": scope is None,
         "sources": scope or [], "batches": len(commit_cmds),
@@ -348,6 +356,9 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
     # The background executor uses larger 32k batches (fewer kopia invocations).
     commit_cmds = remove_files_chunked_commands(payload.repo, items, source=scope, commit=True, max_chars=8000, flag=flag)
     dry_cmds = remove_files_chunked_commands(payload.repo, items, source=scope, commit=False, max_chars=8000, flag=flag)
+    audit.audit("generated", "remove-plan", repo=payload.repo,
+                summary={"items": len(items), "by": payload.by, "batches": len(commit_cmds),
+                         "sources": scope or [], "everywhere": scope is None})
     return {
         "file_count": t["file_count"], "object_count": len(t["object_ids"]), "name_count": len(t["names"]),
         "item_count": len(items), "by": payload.by,
@@ -414,6 +425,9 @@ def remove_bat(payload: RemovePlanRequest) -> dict:
     ts = time.strftime("%Y%m%d_%H%M%S")
     fname = f"kopialens_remove_repo{payload.repo}_{ts}.bat"
     content = remove_files_bat_text(cmds, f"kopialens_remove_repo{payload.repo}_{ts}.log")
+    audit.audit("generated", "remove-bat", repo=payload.repo,
+                summary={"items": len(items), "batches": len(cmds), "filename": fname,
+                         "sources": scope or [], "everywhere": scope is None})
     return {"filename": fname, "content": content, "batches": len(cmds), "items": len(items)}
 
 
@@ -455,6 +469,8 @@ def restore(payload: RestoreRequest) -> dict:
         raise HTTPException(status_code=400, detail="target is required")
     if not payload.confirm:
         cmd = restore_command_full(payload.repo, payload.source_id, payload.target, payload.options)
+        audit.audit("generated", "restore-command", repo=payload.repo,
+                    summary={"source_id": payload.source_id, "target": payload.target})
         return {"executed": False, "command": _fmt_cmd(cmd)}
     result = restore_execute(payload.repo, payload.source_id, payload.target, payload.options)
     if result["returncode"] != 0:

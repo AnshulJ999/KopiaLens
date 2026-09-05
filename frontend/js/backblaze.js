@@ -55,7 +55,7 @@ window.bzMixin = function () {
     bzExclPath: "", bzExclFilter: "all", bzExclMeta: "", _bzExclItems: [], _bzExclSeq: 0,
     _bzSearchSeq: 0, _bzTreeSeq: 0,
     bzExclusions: null, bzNamingQuery: "", bzNamingRows: [],
-    bzGen: null, bzShowGen: false,
+    bzGen: null, bzShowGen: false, bzRefreshResult: "",
     bzQueue: null, bzQueueDepth: 1, bzQueueCollapse: true, bzSessions: null, bzHealth: null,
     bzDetail: null, bzDrives: [], _bzPoll: null,
 
@@ -113,9 +113,14 @@ window.bzMixin = function () {
           await this.bzRefreshStatus();
           if (!this.bzStatus.building) {
             clearInterval(this._bzPoll); this._bzPoll = null;
-            // Surface a failed refresh (timeout/nonzero-exit/bad-output) before reloading - a
-            // failed refresh was previously silent (log-only); stale data still beats no data.
-            if (this.bzStatus.last_error) this.error = "BZ refresh failed: " + this.bzStatus.last_error;
+            // Own status slot, NOT this.error: wrap() clears this.error on entry, so a failure
+            // message set here was wiped by the very next tab activation. Stale data still beats
+            // no data, but the user must see that it happened.
+            if (this.bzStatus.last_error) {
+              this.bzRefreshResult = "Last BZ refresh FAILED: " + this.bzStatus.last_error;
+            } else {
+              this.bzRefreshResult = "BZ refresh completed " + new Date().toLocaleTimeString();
+            }
             await this.bzActivate();
           }
         } catch (e) { /* transient fetch error - ignore and let the next 3s tick retry */ }

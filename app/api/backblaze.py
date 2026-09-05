@@ -8,6 +8,7 @@ BZ-native coverage with a Kopia cross-coverage column (the unified "who backs th
 
 from __future__ import annotations
 
+import collections
 import csv
 import io
 import threading
@@ -22,9 +23,30 @@ from ..backblaze import queries as bzq
 router = APIRouter(prefix="/api/backblaze", tags=["backblaze"])
 
 # Short TTL cache for the Excluded views: each drill does a folder scan + 2 kopia DuckDB queries
-# (the slow part), so repeated navigation within the window is instant.
-_EXCL_CACHE: dict = {}
+# (the slow part), so repeated navigation within the window is instant. LRU-capped (mirrors
+# index/excluded._LIST_CACHE): the keys are user-driven folder paths, so the cache used to grow
+# unbounded across a long session drilling many folders.
+_EXCL_CACHE: collections.OrderedDict[str, tuple] = collections.OrderedDict()
 _EXCL_TTL = 120
+_EXCL_CACHE_MAX = 200
+_EXCL_LOCK = threading.Lock()  # sync FastAPI handlers run in a threadpool - the get/put
+# check->move_to_end->popitem sequence can interleave across requests otherwise
+
+
+def _excl_cache_get(key: str):
+    with _EXCL_LOCK:
+        hit = _EXCL_CACHE.get(key)
+        if hit is not None:
+            _EXCL_CACHE.move_to_end(key)
+        return hit
+
+
+def _excl_cache_put(key: str, val: tuple) -> None:
+    with _EXCL_LOCK:
+        _EXCL_CACHE[key] = val
+        _EXCL_CACHE.move_to_end(key)
+        while len(_EXCL_CACHE) > _EXCL_CACHE_MAX:
+            _EXCL_CACHE.popitem(last=False)
 
 
 def _require_data() -> None:
@@ -198,7 +220,7 @@ def dupes(min_size: int = 50_000_000, top: int = 200) -> dict:
 def excluded_drives() -> dict:
     """Per-drive BZ backed/excluded coverage (native, exact) + a Kopia cross-coverage column."""
     _require_data()
-    hit = _EXCL_CACHE.get("*drives*")
+    hit = _excl_cache_get("*drives*")
     if hit and time.time() - hit[0] < _EXCL_TTL:
         return hit[1]
     ov = bzq.overview()
@@ -220,7 +242,7 @@ def excluded_drives() -> dict:
             "kopia_backed_files": kf, "kopia_backed_bytes": kb,
         })
     result = {"drives": drives, "grand_files": ov["auth_grand_files"], "grand_bytes": ov["auth_grand_bytes"]}
-    _EXCL_CACHE["*drives*"] = (time.time(), result)
+    _excl_cache_put("*drives*", (time.time(), result))
     return result
 
 
@@ -231,12 +253,12 @@ def excluded_list(prefix: str) -> dict:
     never blocked on the slower DuckDB queries (lazy fill in the frontend)."""
     _require_data()
     key = prefix.lower()
-    hit = _EXCL_CACHE.get(key)
+    hit = _excl_cache_get(key)
     if hit and time.time() - hit[0] < _EXCL_TTL:
         return hit[1]
     items = bzq.folder_children(prefix)
     result = {"prefix": prefix, "items": items, "count": len(items)}
-    _EXCL_CACHE[key] = (time.time(), result)
+    _excl_cache_put(key, (time.time(), result))
     return result
 
 
@@ -245,7 +267,7 @@ def excluded_kopia_coverage(prefix: str) -> dict:
     """Kopia cross-coverage per immediate child under `prefix` (the slow DuckDB part of the Excluded
     view, loaded lazily). Returns {seg_lc: {bytes, files, repos}}."""
     ckey = "kc:" + prefix.lower()
-    hit = _EXCL_CACHE.get(ckey)
+    hit = _excl_cache_get(ckey)
     if hit and time.time() - hit[0] < _EXCL_TTL:
         return hit[1]
     cov: dict = {}
@@ -256,5 +278,5 @@ def excluded_kopia_coverage(prefix: str) -> dict:
     except Exception:  # noqa: BLE001 - cross-coverage is optional
         cov = {}
     result = {"prefix": prefix, "coverage": cov}
-    _EXCL_CACHE[ckey] = (time.time(), result)
+    _excl_cache_put(ckey, (time.time(), result))
     return result

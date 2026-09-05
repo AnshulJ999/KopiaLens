@@ -71,13 +71,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         # so it is offered but never the default.
         "walk_cache_compression": "zstd-1",
         # ---- access control ---------------------------------------------------------
-        # Protected by default: a fresh install listens on loopback only, and asks for a password
-        # the first time it is opened. Anyone fronting KopiaLens with their own reverse proxy or
-        # firewall turns auth off and sets bind_host themselves. Choosing this belongs to
-        # first-run onboarding (); these are the mechanism it will drive.
+        # Auth is on BECAUSE a password exists, not the other way round: enabled() requires a
+        # hash, so a fresh install (no password) is never locked out. The bind default is PER
+        # INSTALL PROFILE (tray = desktop = loopback; anything else = server = all interfaces) -
+        # resolved in core/auth.py, which also honours KOPIALENS_BIND_HOST / _AUTH_ENABLED /
+        # _ALLOWED_HOSTS / _PASSWORD env overrides. Choosing a password belongs to onboarding
+        # (); Settings carries the control until then.
         "auth_enabled": True,
         "auth_password_hash": "",      # pbkdf2_sha256$iters$salt$digest - never the password
-        "bind_host": "127.0.0.1",      # "0.0.0.0" to accept connections from other machines
+        "bind_host": "127.0.0.1",      # desktop-profile default; a server install resolves 0.0.0.0
         "allowed_hosts": [],           # extra Host header names (a reverse proxy's domain).
                                        # localhost and bare IP addresses are always accepted.
         # ---- misc ceilings ------------------------------------------------------------------
@@ -117,6 +119,21 @@ _migrate_settings()
 # table-persistence POSTs fired across several browser tabs at once) can never interleave - the
 # bug that silently reset settings.json to defaults.
 _SETTINGS_LOCK = threading.RLock()
+
+
+def raw_kopialens_settings() -> dict[str, Any]:
+    """The kopialens dict exactly as the FILE carries it - no DEFAULTS filling absent keys. The
+    only way to tell an explicit user choice from an absent one, which the profile-aware bind
+    default needs. Empty dict on a missing or unreadable file."""
+    with _SETTINGS_LOCK:
+        try:
+            if not os.path.exists(SETTINGS_FILE):
+                return {}
+            with open(SETTINGS_FILE, encoding="utf-8") as handle:
+                loaded = json.load(handle)
+            return loaded.get("kopialens", {}) or {}
+        except Exception:
+            return {}
 
 
 def load_settings() -> dict[str, Any]:

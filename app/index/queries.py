@@ -169,6 +169,7 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                 SELECT arg_max(source, last_seen) AS source, arg_max(full_path, last_seen) AS full_path,
                        arg_max(name, last_seen) AS name, arg_max(ext, last_seen) AS ext,
                        max(size) AS size, max(physical) AS physical, max(versions) AS versions,
+                       max(exclusive) AS exclusive,
                        min(first_seen) AS first_seen, max(last_seen) AS last_seen,
                        bool_or(in_latest) AS in_latest, content_id, count(DISTINCT full_path) AS copies
                 FROM paths
@@ -184,7 +185,7 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
             rows = _rows(
                 cur,
                 f"""
-                SELECT source, full_path, name, ext, size, physical, versions, first_seen, last_seen, in_latest, content_id
+                SELECT source, full_path, name, ext, size, physical, exclusive, versions, first_seen, last_seen, in_latest, content_id
                 FROM paths
                 WHERE {where_sql}
                 {_order_clause(sort, direction)}
@@ -192,20 +193,24 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                 """,
                 [repo, *params, limit, offset],
             )
-            # copies = how many distinct paths share each row's exact content (1 = unique). One
+            # copies = how many distinct paths share each row's exact content (1 = unique); sources =
+            # across how many SOURCES (KL10 - within-source copies keep nothing alive elsewhere). One
             # grouped query over just this page's content ids, then mapped back.
             page_cids = list({r["content_id"] for r in rows if r.get("content_id")})
             cp: dict[str, int] = {}
+            cs: dict[str, int] = {}
             for i in range(0, len(page_cids), 900):
                 grp = page_cids[i:i + 900]
                 if not grp:
                     continue
-                q = ("SELECT content_id, count(*) FROM paths WHERE repo=? AND content_id IN (%s) "
-                     "GROUP BY content_id" % ",".join("?" * len(grp)))
-                for c, n in cur.execute(q, [repo, *grp]).fetchall():
+                q = ("SELECT content_id, count(*), count(DISTINCT source) FROM paths WHERE repo=? "
+                     "AND content_id IN (%s) GROUP BY content_id" % ",".join("?" * len(grp)))
+                for c, n, s in cur.execute(q, [repo, *grp]).fetchall():
                     cp[c] = n
+                    cs[c] = s
             for row in rows:
                 row["copies"] = cp.get(row.get("content_id"), 1)
+                row["sources"] = cs.get(row.get("content_id"), 1)
     finally:
         cur.close()
     if confirm_exists:
@@ -247,7 +252,7 @@ def search_export(repo: str, query: str = "", deleted_only: bool = False, min_si
     where_sql = " AND ".join(where)
     cur = read_cursor(repo)
     cur.execute(
-        f"SELECT source, full_path, name, ext, size, physical, versions, first_seen, last_seen, in_latest "
+        f"SELECT source, full_path, name, ext, size, physical, exclusive, versions, first_seen, last_seen, in_latest "
         f"FROM paths WHERE {where_sql} {_order_clause(sort, direction)} LIMIT {int(cap)}",
         [repo, *params],
     )
@@ -416,7 +421,8 @@ def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | No
             f"""
             SELECT array_to_string(list_slice(string_split(full_path, ?), 1,
                        least({d}, len(string_split(full_path, ?)) - 1)), ?) AS folder,
-                   sum(physical) AS phys, sum(size) AS logical, count(*) AS files,
+                   sum(physical) AS phys, sum(coalesce(exclusive, 0)) AS excl,
+                   sum(size) AS logical, count(*) AS files,
                    count(*) FILTER (WHERE NOT in_latest) AS deleted_files,
                    max(last_seen) AS last_seen
             FROM paths WHERE {where}
@@ -759,12 +765,21 @@ def tree_children_all(repo: str, prefix: str, latest_only: bool = False, deleted
                        CASE WHEN ? = '' THEN full_path ELSE substr(full_path, length(?) + 2) END AS remainder
                 FROM dp
             )
-            SELECT split_part(remainder, ?, 1) AS name, sum(size) AS size, sum(physical) AS physical,
+            SELECT CASE
+                     -- UNC root: split_part returns an empty name before the leading separator,
+                     -- which used to lump every UNC source into one blank-named top node. Name it
+                     -- by its first two segments (host + share) instead.
+                     WHEN starts_with(remainder, ?) THEN
+                       ? || split_part(substr(remainder, 3), ?, 1) || ? || split_part(substr(remainder, 3), ?, 2)
+                     ELSE split_part(remainder, ?, 1)
+                   END AS name,
+                   sum(size) AS size, sum(physical) AS physical,
                    count(*) AS files, max(last_seen) AS modified,
                    max(CASE WHEN position(? IN remainder) > 0 THEN 1 ELSE 0 END) AS is_folder
             FROM sub WHERE remainder <> '' GROUP BY name ORDER BY size DESC
             """,
-            [repo, *params, base, base, _SEP, _SEP],
+            [repo, *params, base, base,
+             _SEP * 2, _SEP * 2, _SEP, _SEP, _SEP, _SEP, _SEP],
         )
     finally:
         cur.close()
@@ -802,12 +817,20 @@ def tree_children_snaps(repo: str, snapshot_ids: list[str], prefix: str = "") ->
                        CASE WHEN ? = '' THEN full_path ELSE substr(full_path, length(?) + 2) END AS remainder
                 FROM dp
             )
-            SELECT split_part(remainder, ?, 1) AS name, sum(size) AS size, count(*) AS files,
+            SELECT CASE
+                     -- UNC root: split_part returns an empty name before the leading separator,
+                     -- which used to lump every UNC source into one blank-named node (same fix
+                     -- as tree_children_all). Name it by host + share instead.
+                     WHEN starts_with(remainder, ?) THEN
+                       ? || split_part(substr(remainder, 3), ?, 1) || ? || split_part(substr(remainder, 3), ?, 2)
+                     ELSE split_part(remainder, ?, 1)
+                   END AS name, sum(size) AS size, count(*) AS files,
                    max(mtime) AS modified,
                    max(CASE WHEN position(? IN remainder) > 0 THEN 1 ELSE 0 END) AS is_folder
             FROM sub WHERE remainder <> '' GROUP BY name ORDER BY size DESC
             """,
-            [repo, *snapshot_ids, like, base, base, _SEP, _SEP],
+            [repo, *snapshot_ids, like, base, base,
+             _SEP * 2, _SEP * 2, _SEP, _SEP, _SEP, _SEP, _SEP],
         )
     finally:
         cur.close()
@@ -862,7 +885,12 @@ def tree_children_paths(repo: str, source: str, prefix: str, deleted_only: bool 
                 FROM paths
                 WHERE {where_sql}
             )
-            SELECT split_part(remainder, ?, 1) AS name,
+            SELECT CASE
+                     -- UNC root: name it by host + share (same fix as tree_children_all).
+                     WHEN starts_with(remainder, ?) THEN
+                       ? || split_part(substr(remainder, 3), ?, 1) || ? || split_part(substr(remainder, 3), ?, 2)
+                     ELSE split_part(remainder, ?, 1)
+                   END AS name,
                    sum(size) AS size,
                    sum(physical) AS physical,
                    count(*) AS files,
@@ -873,7 +901,7 @@ def tree_children_paths(repo: str, source: str, prefix: str, deleted_only: bool 
             GROUP BY name
             ORDER BY size DESC
             """,
-            [base, base, *params, _SEP, _SEP],
+            [base, base, *params, _SEP * 2, _SEP * 2, _SEP, _SEP, _SEP, _SEP, _SEP],
         )
     finally:
         cur.close()

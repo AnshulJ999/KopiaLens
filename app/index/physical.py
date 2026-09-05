@@ -114,6 +114,23 @@ def materialize_physical(con, repo: str) -> None:
     )
 
 
+def materialize_exclusive(con, repo: str) -> None:
+    """Fill ``paths.exclusive``: how many packed bytes of each path's content are held ONLY
+    by this source. A path is exclusive iff its content appears in exactly one SOURCE (within-source
+    sharing is ignored, agreed) - shared content prices 0. One grouped UPDATE over paths (UPDATE
+    precedent: the physical backfill above); runs in the worker's dashboard stage right after the
+    refcount rewrite. Rows keep their last value between passes - forward-only, never a rebuild."""
+    con.execute(
+        """
+        UPDATE paths SET exclusive = CASE WHEN srcs.n <= 1 THEN COALESCE(paths.physical, 0) ELSE 0 END
+        FROM (SELECT content_id, count(DISTINCT source) AS n FROM paths
+              WHERE repo=? AND content_id IS NOT NULL GROUP BY content_id) srcs
+        WHERE paths.repo=? AND paths.content_id = srcs.content_id
+        """,
+        [repo, repo],
+    )
+
+
 def materialize_refcount(con, repo: str, count: dict) -> bool:
     """Persist the global content reference-count map into DuckDB (called from the pre-warm
     pass / dashboard build, which compute it anyway). Powers accurate ``freeable``. Skips the

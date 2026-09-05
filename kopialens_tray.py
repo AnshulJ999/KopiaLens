@@ -111,9 +111,15 @@ def start_server() -> None:
         # Quit would silently do nothing to the server that is actually running.
         _log_guard(f"tray: KopiaLens already listening on {GUARD_HOST}:{PORT} - not starting another")
         return
+    # The tray launch IS the desktop profile: the child resolves its bind/auth defaults
+    # from KOPIALENS_PROFILE. Anything started without it (bare python, systemd, Docker) is a
+    # server and binds all interfaces by default instead.
+    child_env = dict(os.environ)
+    child_env["KOPIALENS_PROFILE"] = "desktop"
     proc = subprocess.Popen(
         [sys.executable, str(HERE / "main.py")],
         cwd=str(HERE),
+        env=child_env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=_NO_WINDOW,

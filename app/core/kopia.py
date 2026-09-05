@@ -17,6 +17,7 @@ from typing import Iterable
 
 from config import DATA_DIR, REPOS
 
+from . import audit
 from .applog import get_logger
 
 log = get_logger("kopia")
@@ -270,6 +271,8 @@ def mount_snapshot(repo: str, snapshot_id: str, mountpoint: str) -> KopiaProcess
         "repo": repo, "snapshot_id": snapshot_id, "mountpoint": mountpoint,
         "proc": proc, "started": time.time(),
     }
+    audit.audit("mount", "mount", repo=repo, summary={"snapshot_id": snapshot_id,
+                                                      "mountpoint": mountpoint})
     return KopiaProcess(args=full, pid=proc.pid)
 
 
@@ -298,6 +301,7 @@ def unmount(pid: int) -> bool:
         except subprocess.TimeoutExpired:
             proc.kill()
     _MOUNTS.pop(pid, None)
+    audit.audit("unmount", "unmount", repo=m.get("repo"), summary={"pid": pid})
     return True
 
 
@@ -369,6 +373,9 @@ def snapshot_delete_execute(repo: str, snapshot_ids: list[str]) -> dict:
         if res.stdout:
             outs.append(res.stdout)
     log.warning("snapshot delete repo=%s done deleted=%d/%d rc=%d", repo, deleted, len(snapshot_ids), rc)
+    audit.audit("executed", "snapshot-delete", repo=repo,
+                summary={"ids": len(snapshot_ids), "deleted": deleted, "chunks": len(chunks)},
+                rc=rc)
     return {
         "deleted": deleted,
         "returncode": rc,
@@ -408,11 +415,16 @@ def remove_files_execute(repo: str, object_ids: list[str] | None = None, filenam
     full = remove_files_command(repo, object_ids, filenames, source, commit=True) + ["--no-progress"]
     log.warning("EXECUTING remove-files repo=%s filenames=%d object_ids=%d source=%r",
                 repo, len(filenames or []), len(object_ids or []), source)
+    t0 = time.time()
     res = subprocess.run(
         full, capture_output=True, text=True, encoding="utf-8", errors="replace",
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     log.warning("remove-files repo=%s rc=%d stderr=%s", repo, res.returncode, (res.stderr or "").strip()[:300])
+    audit.audit("executed", "remove-files", repo=repo,
+                summary={"filenames": len(filenames or []), "object_ids": len(object_ids or []),
+                         "source": source},
+                rc=res.returncode, duration_s=time.time() - t0)
     return {"returncode": res.returncode, "stdout": res.stdout, "stderr": res.stderr, "command": full}
 
 
@@ -486,6 +498,14 @@ def _remove_bat_lines(commands: list[list[str]], log_setter: str) -> list[str]:
     for Windows / Cygwin / GnuWin32 if any of those is ahead of System32 on the user's PATH, and
     GNU find with those arguments starts recursively scanning the drive instead of counting lines
     - the script looks hung. Verified by running a generated .bat on this machine.
+
+    NO ``enabledelayedexpansion``. With it on, cmd.exe treats everything BETWEEN two ``!``
+    characters as a variable reference and deletes the whole span - quotes and flags included,
+    not just the ``!`` - corrupting filenames, ``--source`` paths and the kopia config path alike
+    (reproduced: ``echo "Backup!.txt" and "Wow!! Two"`` printed ``"Backup Two"``). Plain ``%VAR%``
+    works for every counter here because each read sits on its own top-level line, parsed fresh.
+    Batch counters are pre-zeroed per batch: an empty slice leaves the ``for /f`` loops unset, and
+    an unset var in ``%VAR%`` expansion stays literal text where ``!VAR!`` printed empty.
     """
     n = len(commands)
     find = "%SystemRoot%\\System32\\find.exe"
@@ -493,7 +513,7 @@ def _remove_bat_lines(commands: list[list[str]], log_setter: str) -> list[str]:
     problems = '/I /C:"error" /C:"failed" /C:"unable"'
     lines = [
         "@echo off",
-        "setlocal enabledelayedexpansion",
+        "setlocal",
         log_setter,
         'set "SLICE=%TEMP%\\kopialens_remove_batch_%RANDOM%.txt"',
         "set /a KL_FAILED=0",
@@ -511,31 +531,34 @@ def _remove_bat_lines(commands: list[list[str]], log_setter: str) -> list[str]:
             f"echo [batch {i}/{n}] %TIME% - working (this walks every snapshot in scope)...",
             f'echo === batch {i}/{n} ===>> "%LOG%"',
             f'{s}> "%SLICE%" 2>&1',
-            "set KL_RC=!ERRORLEVEL!",
+            "set KL_RC=%ERRORLEVEL%",
             'type "%SLICE%" >> "%LOG%"',
+            'set "KL_LINES=0"',
+            'set "KL_RM=0"',
+            'set "KL_ER=0"',
             f'for /f %%C in (\'{find} /c /v "" ^< "%SLICE%"\') do set KL_LINES=%%C',
             f'for /f %%C in (\'{findstr} /I /C:"removed" /C:"will remove" "%SLICE%" ^| {find} /c /v ""\') do set KL_RM=%%C',
             f'for /f %%C in (\'{findstr} {problems} "%SLICE%" ^| {find} /c /v ""\') do set KL_ER=%%C',
             "set /a KL_REMOVED+=KL_RM",
             "set /a KL_ERRORS+=KL_ER",
-            f'echo     batch {i}/{n} done: !KL_RM! removal line(s), !KL_ER! problem line(s), !KL_LINES! log line(s)',
-            'if not "!KL_ER!"=="0" (',
+            f'echo     batch {i}/{n} done: %KL_RM% removal line(s), %KL_ER% problem line(s), %KL_LINES% log line(s)',
+            'if not "%KL_ER%"=="0" (',
             f'  echo     ^> problems reported in batch {i}/{n}:',
             f'  {findstr} {problems} "%SLICE%"',
             ")",
-            'if not "!KL_RC!"=="0" (',
+            'if not "%KL_RC%"=="0" (',
             "  set /a KL_FAILED+=1",
-            f'  echo     ^> WARNING: batch {i}/{n} exited with code !KL_RC!',
+            f'  echo     ^> WARNING: batch {i}/{n} exited with code %KL_RC%',
             ")",
         ]
     lines += [
         "echo.",
         "echo ================ summary ================",
-        f"echo Batches run     : {n}    failed: !KL_FAILED!",
-        "echo Removal lines   : !KL_REMOVED!",
-        "echo Problem lines   : !KL_ERRORS!",
+        f"echo Batches run     : {n}    failed: %KL_FAILED%",
+        "echo Removal lines   : %KL_REMOVED%",
+        "echo Problem lines   : %KL_ERRORS%",
         'echo Full log        : "%LOG%"',
-        'echo Summary: batches=!KL_FAILED! failed, removal lines=!KL_REMOVED!, problem lines=!KL_ERRORS!>> "%LOG%"',
+        'echo Summary: batches=%KL_FAILED% failed, removal lines=%KL_REMOVED%, problem lines=%KL_ERRORS%>> "%LOG%"',
         "echo.",
         "echo Space is NOT reclaimed yet. Now run:  kopia maintenance run --full",
         'if exist "%SLICE%" del "%SLICE%" >nul 2>&1',
@@ -573,6 +596,7 @@ def remove_files_chunked_execute(repo: str, items: list[str], source: str | list
                 "log": log_path, "objects": len(items), "rc": 0})
     log.warning("EXECUTING chunked remove-files repo=%s flag=%s items=%d batches=%d source=%r",
                 repo, flag, len(items), len(cmds), source)
+    t0 = time.time()
     try:
         with open(log_path, "a", encoding="utf-8", errors="replace") as lf:
             lf.write(f"=== chunked remove-files repo={repo} {flag} items={len(items)} batches={len(cmds)} ===\n")
@@ -598,6 +622,10 @@ def remove_files_chunked_execute(repo: str, items: list[str], source: str | list
         log.error("chunked remove-files repo=%s failed: %s", repo, exc)
     finally:
         job["running"] = False
+    audit.audit("executed", "remove-files-chunked", repo=repo,
+                summary={"items": len(items), "batches": len(cmds), "errors": job.get("errors", 0),
+                         "flag": flag, "source": source},
+                rc=job.get("rc", 0), duration_s=time.time() - t0, log_file=log_path)
     return job
 
 
@@ -658,11 +686,18 @@ def restore_execute(repo: str, source_id: str, target: str, options: dict | None
     new folder / archive; can overwrite when the overwrite/delete-extra options are enabled."""
     full = restore_command_full(repo, source_id, target, options) + ["--no-progress"]
     log.warning("EXECUTING restore repo=%s source=%s -> %s", repo, source_id, target)
+    t0 = time.time()
     res = subprocess.run(
         full, capture_output=True, text=True, encoding="utf-8", errors="replace",
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     log.warning("restore repo=%s rc=%d stderr=%s", repo, res.returncode, (res.stderr or "").strip()[:300])
+    opts = options or {}
+    audit.audit("executed", "restore", repo=repo,
+                summary={"source_id": source_id, "target": target,
+                         "overwrite": bool(opts.get("overwrite_files") or opts.get("overwrite_directories")),
+                         "delete_extra": bool(opts.get("delete_extra"))},
+                rc=res.returncode, duration_s=time.time() - t0)
     return {"returncode": res.returncode, "stdout": res.stdout, "stderr": res.stderr, "command": full}
 
 

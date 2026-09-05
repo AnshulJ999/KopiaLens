@@ -51,6 +51,7 @@
         <span x-show="repoKind!=='backblaze'" class="rounded border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 px-2 py-1" x-text="indexLine()"></span>
         <button x-show="repoKind!=='backblaze'" @click="buildIndex()" :disabled="indexStatus.building" class="h-8 rounded bg-stone-800 dark:bg-stone-700 px-3 text-white disabled:opacity-50" title="Update index (incremental)">Index</button>
         <span x-show="repoKind==='backblaze'" class="rounded border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 px-2 py-1" x-text="bzStatusLine()"></span>
+        <span x-show="repoKind==='backblaze' && bzRefreshResult" class="text-xs px-2 py-1 rounded" :class="bzRefreshResult.includes('FAILED') ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'" x-text="bzRefreshResult"></span>
         <button x-show="repoKind==='backblaze'" @click="bzRefresh()" class="h-8 rounded bg-stone-800 dark:bg-stone-700 px-3 text-white" title="Re-scan the read-only Backblaze index">↻ Index BZ</button>
         <button @click="refreshAll()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3" title="Refresh current view + sources">⟳ Refresh</button>
         <button @click="toggleTimeFmt()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2" :title="timeFmt==='relative' ? 'Times: relative (click for absolute 12h)' : 'Times: absolute 12h (click for relative)'" x-text="timeFmt==='relative' ? '⏱ rel' : '🕒 abs'"></button>
@@ -115,6 +116,10 @@
             <option value="changed">Changed in this snapshot</option>
             <option value="reclaimable">Reclaimable (freed if deleted)</option>
             <option value="all">All snapshots</option>
+          </select>
+          <select x-show="selectedSource==='*ALL*'" x-model="treeWeek" @change="treeWeekChanged()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-sm" title="Point-in-time week: each source's latest snapshot from that week">
+            <option value="">Latest</option>
+            <template x-for="w in treeWeekOptions" :key="w.v"><option :value="w.v" x-text="'Week ' + w.label"></option></template>
           </select>
           <button @click="toggleTreeDedupe()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-sm" :class="treeDedupe ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Dedupe: collapse same-content files">⧉ Dedupe</button>
           <label class="flex items-center gap-1.5 text-xs" :class="(treeMode!=='all' && selectedSource!=='*ALL*') ? 'opacity-40' : ''" title="Only folders containing files deleted from disk (All-snapshots or All-sources)"><input type="checkbox" x-model="treeDeletedOnly" :disabled="treeMode!=='all' && selectedSource!=='*ALL*'" @change="treeFilterChanged()"> Deleted</label>
@@ -258,23 +263,111 @@
 
       <section x-show="active==='stats'" class="h-full flex flex-col gap-3 overflow-auto">
         <div class="flex items-center gap-2">
-          <span class="font-medium">Repo-level stats</span>
+          <span class="font-medium">Repository</span>
           <button @click="loadStats(true)" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs">⟳ Refresh</button>
         </div>
         <template x-if="statsData">
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            <template x-for="blk in [['Repository status','repository_status'],['Content stats','content_stats'],['Maintenance','maintenance'],['Cache info','cache_info']]" :key="blk[1]">
-              <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
-                <div class="mb-1 font-medium text-sm" x-text="blk[0]"></div>
-                <pre class="text-[11px] whitespace-pre-wrap overflow-auto max-h-72 bg-stone-50 dark:bg-stone-800 rounded p-2" x-text="statsBlock(statsData[blk[1]])"></pre>
-              </div>
-            </template>
+          <div class="space-y-3">
+            <!-- health checks -->
             <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
-              <div class="mb-1 flex items-center gap-2"><span class="font-medium text-sm">Blob stats</span>
-                <button @click="loadBlobStats()" :disabled="blobLoading" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs disabled:opacity-50" x-text="blobLoading ? 'Running… (slow)' : 'Load blob stats'"></button>
-                <span class="text-[11px] text-stone-500">scans all storage blobs — slow on big repos</span></div>
-              <pre x-show="blobStats" class="text-[11px] whitespace-pre-wrap overflow-auto max-h-72 bg-stone-50 dark:bg-stone-800 rounded p-2" x-text="blobStats"></pre>
+              <div class="mb-2 flex items-center gap-2"><span class="font-medium text-sm">Health</span>
+                <span class="text-[11px] text-stone-500" x-text="(statsData.health||[]).filter(h => h.status==='warn').length ? (statsData.health.filter(h => h.status==='warn').length + ' warning(s)') : 'all clear'"></span></div>
+              <div class="space-y-1.5">
+                <template x-for="h in (statsData.health || [])" :key="h.id">
+                  <div class="flex items-start gap-2 text-xs rounded p-2 border"
+                       :class="h.status==='warn' ? 'border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20' : h.status==='ok' ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-900/20' : 'border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-800'">
+                    <span class="mt-0.5" x-text="h.status==='warn' ? '⚠' : h.status==='ok' ? '✓' : 'ℹ'"></span>
+                    <div class="min-w-0">
+                      <div class="font-medium" x-text="h.title"></div>
+                      <div class="text-stone-600 dark:text-stone-400" x-text="h.detail"></div>
+                    </div>
+                    <button x-show="h.fix_command" @click="copyText(h.fix_command)" class="ml-auto shrink-0 h-6 rounded border border-stone-300 dark:border-stone-700 px-2 text-[10px]" :title="'Copy: ' + h.fix_command">Copy fix</button>
+                  </div>
+                </template>
+                <div x-show="!(statsData.health || []).length" class="text-xs text-emerald-700 dark:text-emerald-400">✓ All checks passed.</div>
+              </div>
             </div>
+
+            <!-- cards -->
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+              <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+                <div class="text-[10px] uppercase text-stone-500 mb-1">Storage</div>
+                <div class="text-sm font-medium break-all" x-text="statsData.parsed?.storage_type || '?'"></div>
+                <div class="text-[11px] text-stone-500 break-all mb-1" x-text="statsData.parsed?.storage_path || ''"></div>
+                <div class="text-xs" x-show="statsData.parsed?.capacity" x-text="fmtBytes(statsData.parsed?.available || 0) + ' free of ' + fmtBytes(statsData.parsed?.capacity || 0)"></div>
+                <div class="text-[10px] text-stone-400" x-show="statsData.parsed?.unique_id" x-text="'id ' + statsData.parsed?.unique_id + '…'"></div>
+              </div>
+              <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+                <div class="text-[10px] uppercase text-stone-500 mb-1">Content</div>
+                <div class="text-sm font-medium" x-text="(statsData.parsed?.content?.count || 0).toLocaleString() + ' contents'"></div>
+                <div class="text-xs text-stone-500" x-text="'logical ' + fmtBytes(statsData.parsed?.content?.total_bytes || 0)"></div>
+                <div class="text-xs" x-text="'packed ' + fmtBytes(statsData.parsed?.content?.packed_bytes || 0) + (statsData.parsed?.content?.compression_pct != null ? ' (' + statsData.parsed.content.compression_pct + '% saved)' : '')"></div>
+                <div class="text-[11px] mt-1" x-show="statsData.parsed?.growth_7d != null" :class="(statsData.parsed?.growth_7d || 0) > 0 ? 'text-stone-500' : 'text-emerald-600 dark:text-emerald-400'" x-text="'7-day change ' + (statsData.parsed?.growth_7d >= 0 ? '+' : '') + fmtBytes(statsData.parsed?.growth_7d || 0)"></div>
+              </div>
+              <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+                <div class="text-[10px] uppercase text-stone-500 mb-1">Maintenance</div>
+                <div class="text-xs flex items-center gap-1">
+                  <span x-show="statsData.parsed?.maintenance?.owner_match === false" class="text-amber-600">⚠</span>
+                  <span class="break-all" x-text="'owner ' + (statsData.parsed?.maintenance?.owner || '?')"></span></div>
+                <div class="text-xs mt-1" x-show="statsData.parsed?.maintenance?.last_run" x-text="'last run ' + (statsData.parsed?.maintenance?.last_run || '?').slice(0, 16).replace('T', ' ') + (statsData.parsed?.maintenance?.last_run_age_days != null ? ' (' + statsData.parsed.maintenance.last_run_age_days + 'd ago)' : '')"></div>
+                <div class="text-[11px] text-stone-500" x-show="statsData.parsed?.maintenance?.next_quick" x-text="'next quick ' + (statsData.parsed?.maintenance?.next_quick || '').slice(0, 16).replace('T', ' ')"></div>
+                <div class="text-[11px] text-stone-500" x-show="statsData.parsed?.maintenance?.next_full" x-text="'next full  ' + (statsData.parsed?.maintenance?.next_full || '').slice(0, 16).replace('T', ' ')"></div>
+              </div>
+              <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+                <div class="text-[10px] uppercase text-stone-500 mb-1">KopiaLens index</div>
+                <template x-for="h in (statsData.health || []).filter(h => h.id.startsWith('duckdb'))" :key="h.id">
+                  <div>
+                    <div class="text-sm font-medium" x-text="h.title.replace('Index database: ', '').replace('Index database ', '')"></div>
+                    <div class="text-[11px] text-stone-500" x-text="h.detail"></div>
+                  </div>
+                </template>
+                <div class="text-[11px] text-stone-500 mt-1">Audit trail: <span x-text="fmtBytes(statsData.audit_size || 0)"></span>, never trimmed</div>
+              </div>
+            </div>
+
+            <!-- audit trail -->
+            <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+              <div class="mb-2 flex items-center gap-2"><span class="font-medium text-sm">Audit trail</span>
+                <span class="text-[11px] text-stone-500">every action KopiaLens executes or hands out · <span x-text="fmtBytes(statsData.audit_size || 0)"></span></span>
+                <button @click="loadAudit()" class="ml-auto h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs">⟳</button></div>
+              <div class="overflow-auto max-h-72 rounded border border-stone-200 dark:border-stone-700">
+                <table class="w-full text-[11px]">
+                  <thead class="bg-stone-50 dark:bg-stone-800 text-left text-stone-500"><tr><th class="p-1.5">When</th><th class="p-1.5">Event</th><th class="p-1.5">Action</th><th class="p-1.5">Repo</th><th class="p-1.5">Summary</th><th class="p-1.5">rc</th></tr></thead>
+                  <tbody>
+                    <template x-for="(r, i) in auditRows" :key="i">
+                      <tr class="border-t border-stone-100 dark:border-stone-800">
+                        <td class="p-1.5 whitespace-nowrap" x-text="r.ts || ''"></td>
+                        <td class="p-1.5" x-text="r.event"></td>
+                        <td class="p-1.5" x-text="r.action"></td>
+                        <td class="p-1.5" x-text="r.repo || ''"></td>
+                        <td class="p-1.5 font-mono break-all max-w-[28rem]" x-text="auditSummary(r)"></td>
+                        <td class="p-1.5" :class="r.rc ? 'text-rose-600' : ''" x-text="r.rc ?? ''"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+                <div x-show="!auditRows.length" class="p-3 text-xs text-stone-500">Nothing recorded yet - every executed or generated command will appear here.</div>
+              </div>
+            </div>
+
+            <!-- raw kopia output, kept for the power-user view -->
+            <details class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+              <summary class="text-sm font-medium cursor-pointer select-none">Raw kopia output</summary>
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
+                <template x-for="blk in [['Repository status','repository_status'],['Content stats','content_stats'],['Maintenance','maintenance'],['Cache info','cache_info']]" :key="blk[1]">
+                  <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
+                    <div class="mb-1 text-xs text-stone-500" x-text="blk[0]"></div>
+                    <pre class="text-[11px] whitespace-pre-wrap overflow-auto max-h-72 bg-stone-50 dark:bg-stone-800 rounded p-2" x-text="statsBlock(statsData[blk[1]])"></pre>
+                  </div>
+                </template>
+                <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
+                  <div class="mb-1 flex items-center gap-2"><span class="text-xs text-stone-500">Blob stats</span>
+                    <button @click="loadBlobStats()" :disabled="blobLoading" class="h-6 rounded border border-stone-300 dark:border-stone-700 px-2 text-[10px] disabled:opacity-50" x-text="blobLoading ? 'Running… (slow)' : 'Load blob stats'"></button>
+                    <span class="text-[10px] text-stone-400">scans all storage blobs — slow on big repos</span></div>
+                  <pre x-show="blobStats" class="text-[11px] whitespace-pre-wrap overflow-auto max-h-72 bg-stone-50 dark:bg-stone-800 rounded p-2" x-text="blobStats"></pre>
+                </div>
+              </div>
+            </details>
           </div>
         </template>
       </section>
@@ -586,6 +679,19 @@
             <section x-show="settingsTab==='general'" class="space-y-4">
               <div class="flex items-center justify-between gap-3"><span>Theme</span>
                 <button @click="toggleDark()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3" x-text="dark ? 'Dark' : 'Light'"></button></div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Password protection</span>
+                  <span class="flex items-center gap-2">
+                    <template x-if="!authProtected">
+                      <span class="flex items-center gap-2">
+                        <input type="password" x-model="newPassword" placeholder="New password (min 8)" class="fld w-48 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+                        <button @click="setPassword()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-xs">Set</button>
+                      </span>
+                    </template>
+                    <button @click="removePassword()" x-show="authProtected" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-xs">Remove password</button>
+                  </span></div>
+                <p class="text-[11px] text-stone-500 mt-1" x-text="authProtected ? 'A single shared password guards this app. Changing it signs every device out.' : 'Not password protected - anyone who can reach this address can browse and act on the repositories.'"></p>
+              </div>
               <div class="flex items-center justify-between gap-3"><span>Time format</span>
                 <button @click="toggleTimeFmt()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3" x-text="timeFmt==='relative' ? 'Relative (3h ago)' : 'Absolute 12h'"></button></div>
               <div>
@@ -1207,7 +1313,10 @@
       </div>
     </div>
 
-    <div x-show="showRestore && restore" @click.self="showRestore=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+    <div x-show="showRestore" @click.self="showRestore=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+      <!-- x-if (not x-show): the bindings below dereference restore.*, which is null until a
+           file is chosen - x-show hides the panel but still evaluates the bindings (console errors). -->
+      <template x-if="restore">
       <div class="w-[44rem] max-w-full max-h-[88vh] overflow-auto rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 text-sm">
         <div class="flex items-center gap-2"><div class="font-medium">Restore</div><button @click="showRestore=false" class="ml-auto text-stone-500 text-lg leading-none">&times;</button></div>
         <div class="text-xs text-stone-500 mt-1 break-all" x-text="restore && ('source: ' + restore.name)"></div>
@@ -1242,8 +1351,9 @@
           <button @click="copyText(restore.command)" x-show="restore && restore.command" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-xs">Copy</button>
           <button @click="restoreExecute()" class="h-8 rounded bg-emerald-700 px-3 text-xs text-white ml-auto">Begin Restore</button>
         </div>
-        <pre x-show="restore && restore.command" class="mt-2 text-[11px] whitespace-pre-wrap break-all bg-stone-50 dark:bg-stone-800 rounded p-2" x-text="restore && restore.command"></pre>
+        <pre x-show="restore.command" class="mt-2 text-[11px] whitespace-pre-wrap break-all bg-stone-50 dark:bg-stone-800 rounded p-2" x-text="restore.command"></pre>
       </div>
+      </template>
     </div>
 
     <!-- snapshot diff -->
@@ -1276,11 +1386,13 @@
     </div>
 
     <!-- Backblaze generate-exclusion (generation only; never writes to bzdata) -->
-    <div x-show="bzShowGen && bzGen" @click.self="bzShowGen=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+    <div x-show="bzShowGen" @click.self="bzShowGen=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+      <!-- x-if (not x-show): the bindings below dereference bzGen.*, which is null until opened. -->
+      <template x-if="bzGen">
       <div class="w-[40rem] max-w-full rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 text-sm">
         <div class="flex items-center gap-2"><div class="font-medium">Generate exclusion</div><button @click="bzShowGen=false" class="ml-auto text-stone-500 text-lg leading-none">&times;</button></div>
         <div class="mt-2 text-[12px] text-stone-600 dark:text-stone-300">KopiaLens never writes to Backblaze (read-only). This generates a paste-ready rule + how to apply it.</div>
-        <div class="mt-3 flex items-center gap-2" x-show="bzGen">
+        <div class="mt-3 flex items-center gap-2">
           <span class="text-[11px] uppercase text-stone-500">Kind</span>
           <select x-model="bzGen.kind" @change="bzDoGen()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-xs">
             <option value="folder">Folder (relative, all drives)</option>
@@ -1289,7 +1401,7 @@
           </select>
           <input x-model="bzGen.value" @input.debounce.300ms="bzDoGen()" class="fld flex-1 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 font-mono text-xs">
         </div>
-        <template x-if="bzGen && bzGen.result">
+        <template x-if="bzGen.result">
           <div class="mt-3 space-y-2">
             <div x-show="bzGen.result.error" class="text-rose-600 text-xs" x-text="bzGen.result.error"></div>
             <template x-if="bzGen.result.snippet">
@@ -1302,6 +1414,7 @@
           </div>
         </template>
       </div>
+      </template>
     </div>
 
   </div>

@@ -4,6 +4,11 @@ Shape, deliberately small: no user accounts, no roles, no session store. One pas
 whole app; a correct login sets a signed cookie derived from the stored password hash, so changing
 the password invalidates every existing session and nothing has to be persisted server-side.
 
+Auth is on BECAUSE a password exists, not the other way round: a fresh install has no password and
+no lockout. The middleware only guards once a hash is stored and auth is not explicitly disabled.
+Choosing the password belongs to onboarding (); until then Settings carries the control, and
+KOPIALENS_PASSWORD can seed one so a headless/Docker image is provisionable without a browser.
+
 Two independent protections live here:
 
 * the password itself, for anyone who can reach the port;
@@ -12,8 +17,10 @@ Two independent protections live here:
   localhost are always accepted (rebinding needs a DOMAIN name to point at a private address);
   any other hostname must be listed in ``allowed_hosts``.
 
-Choosing whether to enable this, and choosing the password, belongs to first-run onboarding
-(). Until that exists, ``needs_setup()`` drives a minimal password-choosing form.
+The bind default is PER INSTALL PROFILE: the tray declares its child "desktop" (loopback);
+anything else - bare python, systemd, Docker - is a server (all interfaces, the container
+convention: the user's port mapping decides exposure, not the app's bind). Env beats an explicit
+settings value, which beats the profile.
 """
 
 from __future__ import annotations
@@ -22,9 +29,10 @@ import base64
 import hashlib
 import hmac
 import ipaddress
+import os
 import secrets
 
-from ..settings import load_settings, mutate_settings
+from ..settings import load_settings, mutate_settings, raw_kopialens_settings
 
 COOKIE_NAME = "kopialens_session"
 _ITERATIONS = 200_000
@@ -38,17 +46,24 @@ def _kl() -> dict:
         return {}
 
 
+def _env(name: str) -> str:
+    return (os.environ.get(name) or "").strip()
+
+
+def profile() -> str:
+    """How this install was launched: the tray declares "desktop" for its child; anything else is
+    a server. A fact about the launch, not a heuristic."""
+    return "desktop" if _env("KOPIALENS_PROFILE").lower() == "desktop" else "server"
+
+
 def enabled() -> bool:
-    return bool(_kl().get("auth_enabled", True))
+    """Auth guards only when a password was actually chosen AND has not been explicitly disabled -
+    a fresh install (no password yet) is never locked out."""
+    return bool(_kl().get("auth_enabled", True)) and bool(password_hash())
 
 
 def password_hash() -> str:
     return str(_kl().get("auth_password_hash") or "")
-
-
-def needs_setup() -> bool:
-    """Auth is on but no password has been chosen yet."""
-    return enabled() and not password_hash()
 
 
 def hash_password(password: str) -> str:
@@ -79,6 +94,17 @@ def set_password(password: str) -> None:
     mutate_settings(_apply)
 
 
+def clear_password() -> None:
+    """Turn auth off entirely: drop the hash and record the explicit choice (the Settings note
+    "not password protected" reads this), so a later hash can flip it back on."""
+
+    def _apply(settings: dict) -> None:
+        settings.setdefault("kopialens", {})["auth_password_hash"] = ""
+        settings["kopialens"]["auth_enabled"] = False
+
+    mutate_settings(_apply)
+
+
 def session_token() -> str:
     """Stateless session value: an HMAC over the current password hash. Restart-safe (nothing is
     held in memory) and self-invalidating when the password changes."""
@@ -102,6 +128,15 @@ def _hostname(host_header: str) -> str:
     return host.rsplit(":", 1)[0].lower() if ":" in host else host.lower()
 
 
+def allowed_hosts() -> list[str]:
+    """Hostnames allowed in the Host header (a reverse proxy's domain). The env override exists so
+    a provisioned image can set it without touching settings."""
+    env = _env("KOPIALENS_ALLOWED_HOSTS")
+    if env:
+        return [h.strip() for h in env.split(",") if h.strip()]
+    return [str(h).strip() for h in (_kl().get("allowed_hosts") or []) if str(h).strip()]
+
+
 def host_allowed(host_header: str) -> bool:
     name = _hostname(host_header)
     if name in _LOCAL_HOSTS:
@@ -111,21 +146,27 @@ def host_allowed(host_header: str) -> bool:
         return True    # an IP literal cannot be the target of DNS rebinding
     except ValueError:
         pass
-    allowed = {str(h).strip().lower() for h in (_kl().get("allowed_hosts") or []) if str(h).strip()}
-    return name in allowed
+    return name in {h.lower() for h in allowed_hosts()}
 
 
-def bind_host(default: str) -> str:
-    """Interface to listen on. Loopback-only by default: reaching the app from another device is
-    a deliberate choice, not the out-of-the-box state."""
-    value = str(_kl().get("bind_host") or "").strip()
-    return value or default
+def bind_host() -> str:
+    """Interface to listen on. Env beats an explicit settings value, which beats the launch
+    profile: desktop = loopback only, server = all interfaces. Only an explicit choice in the
+    settings FILE counts here - the merged default would be indistinguishable from one."""
+    env = _env("KOPIALENS_BIND_HOST")
+    if env:
+        return env
+    raw = raw_kopialens_settings()
+    if str(raw.get("bind_host") or "").strip():
+        return str(raw["bind_host"]).strip()
+    return "127.0.0.1" if profile() == "desktop" else "0.0.0.0"
 
 
 def exempt(path: str) -> bool:
-    """Paths reachable without a session: the login page itself, its POST target, and the
-    health probe (used by supervisors that hold no cookie)."""
-    return path in ("/login", "/health") or path.startswith("/api/auth/")
+    """Paths reachable without a session: the login page itself, its POST target, logout, and the
+    health probe (used by supervisors that hold no cookie). Deliberately EXACT matches - a prefix
+    rule here would leave set/remove-password open to unauthenticated callers."""
+    return path in ("/login", "/health", "/api/auth/login", "/api/auth/logout")
 
 
 LOGIN_PAGE = """<!doctype html>
@@ -143,31 +184,18 @@ LOGIN_PAGE = """<!doctype html>
         font-size:14px;font-weight:600;cursor:pointer}
  .err{color:#fda4af;font-size:12px;margin-bottom:12px}
 </style></head><body>
-<form method="post" action="/api/auth/__ACTION__">
-  <h1>__TITLE__</h1>
-  <p>__BLURB__</p>
+<form method="post" action="/api/auth/login">
+  <h1>KopiaLens</h1>
+  <p>Enter the shared password to continue.</p>
   __ERROR__
   <input type="password" name="password" placeholder="Password" autofocus required>
-  __CONFIRM__
-  <button type="submit">__BUTTON__</button>
+  <button type="submit">Sign in</button>
 </form></body></html>"""
 
 
 def login_page(error: str = "") -> str:
-    setup = needs_setup()
     err = f'<div class="err">{error}</div>' if error else ""
-    return (LOGIN_PAGE
-            .replace("__ACTION__", "setup" if setup else "login")
-            .replace("__TITLE__", "Choose a password" if setup else "KopiaLens")
-            .replace("__BLURB__",
-                     "This KopiaLens is protected by a single shared password. Pick one now - "
-                     "anyone who can reach this address will need it."
-                     if setup else "Enter the shared password to continue.")
-            .replace("__ERROR__", err)
-            .replace("__CONFIRM__",
-                     '<input type="password" name="confirm" placeholder="Confirm password" required>'
-                     if setup else "")
-            .replace("__BUTTON__", "Set password" if setup else "Sign in"))
+    return LOGIN_PAGE.replace("__ERROR__", err)
 
 
 def cookie_kwargs() -> dict:

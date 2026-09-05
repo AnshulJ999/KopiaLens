@@ -41,7 +41,7 @@ class ReclaimRequest(BaseModel):
     content_ids: list[str] = []
     cap: int = 500
 
-_EXPORT_COLS = ["source", "full_path", "name", "ext", "size", "physical", "versions",
+_EXPORT_COLS = ["source", "full_path", "name", "ext", "size", "physical", "exclusive", "versions",
                 "first_seen", "last_seen", "in_latest"]
 
 

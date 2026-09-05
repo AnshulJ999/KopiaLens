@@ -322,6 +322,8 @@ def _do_compact(repo: str, drain_timeout: float) -> dict:
                 pass
         record_compact_size(repo, after)
         log.info("repo=%s compacted %d -> %d bytes", repo, before, after)
+        from ..core import audit  # lazy: core imports pull config-heavy modules
+        audit.audit("executed", "compact", repo=repo, summary={"before": before, "after": after})
         return {"ok": True, "before": before, "after": after, "checks": checks}
     if os.path.exists(new):
         try:
@@ -501,6 +503,11 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
         con.execute("ALTER TABLE paths ADD COLUMN path_lc VARCHAR")
         con.execute("UPDATE paths SET path_lc = lower(full_path)")  # one-time backfill (no kopia re-walk)
         log.info("paths.path_lc added + backfilled")
+    except Exception:
+        pass  # column already present
+    try:  # paths.exclusive: packed bytes held ONLY by this source's content. Forward-only -
+          # NULL until the dashboard stage first fills it (materialize_exclusive); never a rebuild.
+        con.execute("ALTER TABLE paths ADD COLUMN IF NOT EXISTS exclusive UBIGINT")
     except Exception:
         pass  # column already present
 
