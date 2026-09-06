@@ -41,8 +41,11 @@ def published(monkeypatch):
     monkeypatch.setattr(snapanalysis, "read_cursor", lambda repo: _Cur([]))
     import app.index.publish as publish
 
-    monkeypatch.setattr(publish, "replace_artifacts",
-                        lambda repo, tables: calls.append((repo, tables["sanalysis"].num_rows)))
+    def _replace(repo, tables):
+        calls.append((repo, tables["sanalysis"].num_rows))
+        return len(calls)          # a generation number, as the real publisher returns
+
+    monkeypatch.setattr(publish, "replace_artifacts", _replace)
     snapanalysis._BATCH.clear()
     return calls
 
@@ -79,3 +82,35 @@ def test_a_failing_stage_still_publishes_what_it_staged(published):
             snapanalysis._persist("1", "srcA", _rows(2), "h")
             raise RuntimeError("stage blew up")
     assert len(published) == 1 and published[0][1] == 2
+
+
+def test_a_declined_publish_is_reported_not_swallowed(published, monkeypatch):
+    """Batching means ONE publish attempt for the whole pass, so a decline (another writer holds
+    the repo) loses everything the pass computed - the caller must be able to see that."""
+    import app.index.publish as publish_mod
+
+    with snapanalysis.batched("1") as ok:          # the fixture's publisher returns a generation
+        snapanalysis._persist("1", "srcA", _rows(2), "h")
+    assert ok["saved"] is True
+
+    # Never call monkeypatch.undo() here: the fixture patched read_cursor and replace_artifacts on
+    # the SAME monkeypatch instance, so undoing restores the real ones and the next _persist
+    # publishes a generation into the live data directory.
+    monkeypatch.setattr(publish_mod, "replace_artifacts", lambda repo, tables: None)
+    with snapanalysis.batched("1") as declined:
+        snapanalysis._persist("1", "srcB", _rows(2), "h")
+    assert declined["saved"] is False
+
+
+def test_analyze_all_refuses_while_the_repo_is_indexing(monkeypatch):
+    """The index pass holds the writer lock for its whole run, so starting here would compute
+    every source and then have its single publish declined."""
+    from app.api import snapshots
+
+    monkeypatch.setattr(snapshots, "is_running", lambda repo: True)
+    assert snapshots.analyze_all(repo="1")["started"] is False
+    monkeypatch.setattr(snapshots, "is_running", lambda repo: False)
+    monkeypatch.setattr(snapshots.threading, "Thread",
+                        lambda *a, **k: type("T", (), {"start": lambda self: None})())
+    assert snapshots.analyze_all(repo="1")["started"] is True
+    snapshots._ANALYZING_ALL.discard("1")

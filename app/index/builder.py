@@ -430,17 +430,26 @@ def index_status(repo: str) -> dict:
             "files": None, "building": True, "error": None,
             "current_source": job.get("current_source"), "targets": job.get("targets"),
         }
-    # The index worker subprocess holds the DuckDB, so no query is possible here - report from its
-    # progress file instead. Must come BEFORE read_cursor(), which would raise RepoOffline.
-    off = offline_status(repo)
-    if off:
+    # The worker subprocess cannot be queried in-process and, on Parquet, holds no exclusive
+    # lock the app could detect either - so a run in flight is visible only through the nightly
+    # state plus the worker's progress file. Gated on the state saying a pass is actually
+    # running, so a stale progress file from a crashed run cannot fake "building". Must come
+    # BEFORE read_cursor(), which would serve the previous generation as if nothing happened.
+    running = offline_status(repo) is not None
+    if not running:
+        from ..core.nightly import state as _nightly_state  # lazy: keeps core<->index one-way
+        running = bool(_nightly_state(repo).get("running"))
+    if running:
         from ..core.nightly import worker_progress  # lazy: keeps core<->index imports one-directional
         prog = worker_progress(repo) or {}
+        off = offline_status(repo)
         return {
             "repo": repo, "snapshots": total,
             "indexed_snapshots": prog.get("indexed", 0), "files": None,
-            "building": True, "offline": True, "offline_reason": off.get("reason"),
-            "offline_since": off.get("since"), "stage": prog.get("stage"),
+            "building": True, "offline": off is not None,
+            "offline_reason": off.get("reason") if off else None,
+            "offline_since": off.get("since") if off else None,
+            "stage": prog.get("stage"),
             "current_source": prog.get("current_source"), "targets": prog.get("targets"),
             "error": prog.get("error"),
         }

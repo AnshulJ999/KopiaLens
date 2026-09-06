@@ -31,9 +31,12 @@ log = get_logger("store")
 
 MEMORY_LIMIT = os.environ.get("KOPIALENS_DUCKDB_MEMORY", "3GB")
 
-# A request pins one generation for all its queries so a publish mid-request cannot mix
-# generations (the one class of bug that must not ship). Set by middleware, read by read_cursor.
-_PIN: contextvars.ContextVar = contextvars.ContextVar("kopialens_generation", default=None)
+# Per-request pin scope: a dict of repo -> Generation that read_cursor populates lazily on
+# first use and the request middleware releases at the end (begin_pins/end_pins). A request
+# therefore sees ONE generation per repo it touches - including POST routes whose repo arrives
+# in the JSON body - while repos it never touches are never opened. Background threads have no
+# scope (None) and resolve per call.
+_PIN: contextvars.ContextVar = contextvars.ContextVar("kopialens_generation_pins", default=None)
 
 _GENS: dict[str, "Generation"] = {}   # repo -> current generation handle
 # Superseded generations whose readers have not finished. Closing one out from under a live
@@ -164,7 +167,16 @@ def _bind_generation(con, repo: str, artifacts: dict[str, list[str]]) -> None:
 
 
 def open_generation(repo: str) -> Generation:
-    """Open the current generation: read the manifest, bind views, return the handle."""
+    """Open the current generation: read the manifest, bind views, return the handle.
+
+    The manifest's mtime is captured BEFORE the manifest is read. The other order pairs the
+    views of one manifest with the mtime of a newer one (a publication landing between the read
+    and the stat), and ``current()`` would then keep serving the older views as current until
+    the NEXT publish. Stamping the older mtime can only cause one extra reopen."""
+    p = manifest_path(repo)
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"repo {repo!r} has no index (no manifest.json)")
+    mtime = os.stat(p).st_mtime_ns
     manifest = read_manifest(repo)
     if manifest is None:
         raise FileNotFoundError(f"repo {repo!r} has no index (no manifest.json)")
@@ -175,11 +187,10 @@ def open_generation(repo: str) -> Generation:
     con.execute(f"SET temp_directory='{tmp.replace(chr(92), chr(47))}'")
     base = repo_dir(repo)
     artifacts = {
-        name: [p if os.path.isabs(p) else os.path.join(base, p) for p in files]
+        name: [p2 if os.path.isabs(p2) else os.path.join(base, p2) for p2 in files]
         for name, files in manifest.get("artifacts", {}).items()
     }
     _bind_generation(con, repo, artifacts)
-    mtime = os.stat(manifest_path(repo)).st_mtime_ns
     return Generation(repo, manifest.get("generation"), manifest, con, mtime)
 
 
@@ -191,27 +202,36 @@ def _reap_locked() -> None:
 
 
 def current(repo: str) -> Generation:
-    """The live generation for a repo, opened once and reused until the manifest changes.
+    """The live generation for a repo, returned WITH one reference already held.
+
+    Selection and acquisition happen under the same lock: the previous shape returned the
+    generation first and acquired the reference in the caller's next statement, so a publication
+    landing in that gap could retire and reap a zero-reference generation out from under the
+    caller. Callers that do not hand the reference to someone else must release it.
 
     A superseded generation is RETIRED, not closed: a request holding a cursor off it must be
     able to finish. It closes when its last reader releases.
     """
-    mtime = os.stat(manifest_path(repo)).st_mtime_ns if os.path.exists(manifest_path(repo)) else 0
+    p = manifest_path(repo)
+    mtime = os.stat(p).st_mtime_ns if os.path.exists(p) else 0
     with _LOCK:
         gen = _GENS.get(repo)
         if gen is not None and gen._mtime_ns == mtime:
+            gen._refs += 1
             return gen
     fresh = open_generation(repo)
     with _LOCK:
         old = _GENS.get(repo)
         # Another thread may have opened the same generation while we were binding views; keep
         # theirs and discard ours rather than retiring a generation readers just picked up.
-        if old is not None and old._mtime_ns == fresh._mtime_ns:
+        if old is not None and old._mtime_ns >= fresh._mtime_ns:
             fresh.close()
+            old._refs += 1
             return old
         if old is not None:
             _RETIRED.append(old)
         _GENS[repo] = fresh
+        fresh._refs += 1
         _reap_locked()
         return fresh
 
@@ -238,12 +258,22 @@ class _PinnedCursor:
 
 
 def read_cursor(repo: str):
-    """Cursor off the current generation, honoring the request-pinned generation so a request
-    touching several queries all sees one generation (mixed = silent wrong numbers)."""
-    gen = _PIN.get()
-    if gen is None or gen.repo != repo:
-        gen = current(repo)
-    gen.acquire()
+    """Cursor off the current generation, honoring the request's per-repo pin scope so a request
+    touching several queries all sees one generation (mixed = silent wrong numbers).
+
+    Inside a pin scope (middleware, or ``pinned()``), the repo's generation is resolved once,
+    kept in the scope's dict, and reused for every later read - which is how POST routes whose
+    repo arrives in the JSON body get the same guarantee as query-param routes. Outside a scope
+    (background threads) each call resolves the current generation."""
+    pins = _PIN.get()
+    gen = pins.get(repo) if pins is not None else None
+    if gen is not None:
+        gen.acquire()             # the cursor's own reference; released by cursor.close()
+    else:
+        gen = current(repo)       # returned with one reference held ...
+        if pins is not None:
+            pins[repo] = gen      # ... and that reference now belongs to the pin scope
+            gen.acquire()         # the cursor takes its own, on top of the scope's
     try:
         return _PinnedCursor(gen, gen.cursor())
     except Exception:
@@ -251,21 +281,30 @@ def read_cursor(repo: str):
         raise
 
 
+def begin_pins():
+    """Open a request pin scope (see ``read_cursor``). Returns the contextvar token."""
+    return _PIN.set({})
+
+
+def end_pins(token) -> None:
+    """Close a pin scope: release every generation it pinned. Runs even when the request raised."""
+    pins = _PIN.get() or {}
+    _PIN.reset(token)
+    for gen in pins.values():
+        gen.release()
+
+
 @contextlib.contextmanager
 def pinned(repo: str):
-    """Pin one generation for the duration of a request.
-
-    Without this every ``read_cursor`` resolves independently, so a publish landing mid-request
-    can serve pathx from one generation and history from the next - a mixture that produces wrong
-    numbers with no error. Installed as middleware in ``app/main.py``.
-    """
+    """Pin one generation for the duration of a block - the standalone form of the request pin
+    scope (the middleware calls ``begin_pins``/``end_pins`` instead). Reads inside the block via
+    ``read_cursor`` resolve through this generation."""
     try:
-        gen = current(repo)
-    except FileNotFoundError:      # not indexed yet: nothing to pin, let callers raise normally
+        gen = current(repo)       # returned acquired; the scope holds the reference
+    except FileNotFoundError:     # not indexed yet: nothing to pin, let callers raise normally
         yield None
         return
-    gen.acquire()
-    token = _PIN.set(gen)
+    token = _PIN.set({repo: gen})
     try:
         yield gen
     finally:

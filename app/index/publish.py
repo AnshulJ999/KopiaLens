@@ -65,7 +65,10 @@ def write_manifest(root: str, manifest: dict) -> None:
 def _gc(root: str, current: dict[str, list[str]], previous: dict[str, list[str]]) -> None:
     keep: set[str] = set()
     for rels in list(current.values()) + list(previous.values()):
-        keep.update(rels)
+        # Normalize both directions: the writer emits forward slashes, but normalizing the
+        # manifest side too means a path that ever lands in a manifest via os.path.join
+        # (backslashes on Windows) still matches its own protection instead of being GC'd.
+        keep.update(r.replace("\\", "/") for r in rels)
     pool = os.path.join(root, "pool")
     if not os.path.isdir(pool):
         return
@@ -111,9 +114,6 @@ def replace_artifacts(repo: str, tables: dict) -> int | None:
 
     from . import store
 
-    manifest = store.read_manifest(repo)
-    if manifest is None:
-        return None
     root = store.repo_dir(repo)
     try:
         lock = WriterLock(repo)
@@ -122,6 +122,12 @@ def replace_artifacts(repo: str, tables: dict) -> int | None:
         log.info("repo=%s replace_artifacts skipped, another writer holds the repo", repo)
         return None
     try:
+        # Read the manifest while HOLDING the lock. Reading it first would let a publication land
+        # between the read and the lock, and this function would then republish the stale
+        # artifact lists - overwriting a newer index generation wholesale.
+        manifest = store.read_manifest(repo)
+        if manifest is None:
+            return None
         gen = int(manifest.get("generation") or 0) + 1
         staging = os.path.join(root, "_staging")
         os.makedirs(staging, exist_ok=True)

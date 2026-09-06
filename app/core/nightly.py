@@ -284,27 +284,6 @@ def _run_worker(repo: str, full: bool) -> dict:
     return summary
 
 
-def start_index_run(repo: str, full: bool = False) -> dict:
-    """Kick off an on-demand index run in the worker subprocess.
-
-    Replaces the old in-process `builder.start_build`. The worker is the only writer now, so an
-    on-demand rebuild has to go through the same path the nightly does - otherwise the app would
-    be a second publisher racing it for the repo. Reserves the one-repo-at-a-time slot
-    synchronously, before the thread starts, so "started: true" is truthful.
-    """
-    if not _reserve(repo):
-        return {"started": False, "reason": "another repo is indexing", "repo": repo}
-
-    def _go() -> None:
-        try:
-            _run_worker(repo, full)
-        finally:
-            _release(repo)
-
-    threading.Thread(target=_go, daemon=True).start()
-    return {"started": True, "repo": repo, "full": full}
-
-
 def _run_kopia(repo: str, full: bool) -> dict:
     """Run the worker. No handover, no compaction.
 

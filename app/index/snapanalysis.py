@@ -175,16 +175,20 @@ def batched(repo: str):
     repo published 100 generations in one pass, rewriting the manifest 100 times and forcing every
     reader to rebind its views just as often. The work is identical; only the number of publishes
     changes.
+
+    Yields a dict whose ``saved`` is set on exit. Batching means ONE publish attempt for the whole
+    pass, so a declined publish (another writer holds the repo) discards everything the block
+    computed instead of just one source's worth - the caller has to be able to see that.
     """
+    state: dict = {"saved": None}
     with _BATCH_LOCK:
         _BATCH.setdefault(repo, {})
     try:
-        yield
+        yield state
     finally:
         with _BATCH_LOCK:
             pending = _BATCH.pop(repo, {})
-        if pending:
-            _publish_analysis(repo, pending)
+        state["saved"] = True if not pending else _publish_analysis(repo, pending) is not None
 
 
 def _persist(repo: str, source: str, rows: list[dict], snaphash: str) -> None:
@@ -207,8 +211,9 @@ def _persist(repo: str, source: str, rows: list[dict], snaphash: str) -> None:
     _publish_analysis(repo, {source: (rows, snaphash)})
 
 
-def _publish_analysis(repo: str, per_source: dict) -> None:
-    """Union the surviving rows with every staged source's rows and publish one generation."""
+def _publish_analysis(repo: str, per_source: dict) -> int | None:
+    """Union the surviving rows with every staged source's rows and publish one generation.
+    Returns the new generation, or None when another writer holds the repo and nothing was saved."""
     import pyarrow as pa
 
     from . import publish
@@ -236,7 +241,7 @@ def _publish_analysis(repo: str, per_source: dict) -> None:
         cur.unregister("_sa_incoming")
     finally:
         cur.close()
-    publish.replace_artifacts(repo, {"sanalysis": merged})
+    return publish.replace_artifacts(repo, {"sanalysis": merged})
 
 
 def compute_source(repo: str, source: str, with_reclaim: bool = True) -> dict:

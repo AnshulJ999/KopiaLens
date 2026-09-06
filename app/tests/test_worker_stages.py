@@ -115,3 +115,48 @@ def test_one_failing_independent_stage_does_not_stop_the_others(ran, monkeypatch
     assert "folders" in ran and "policies" in ran and "next_snapshots" in ran
     assert summary["ok"] is False
     assert "churn" in summary["errors"]
+
+
+def test_index_status_reports_building_while_a_worker_pass_runs(monkeypatch):
+    """The worker is a subprocess and holds no lock the app can see (immutable Parquet), so
+    /api/index/status must learn about a run from the nightly state + progress file - not
+    report building: false and show the previous generation as if indexing were done."""
+    from app.index import builder
+
+    monkeypatch.setattr(builder, "sources_index", lambda repo: {})
+    monkeypatch.setattr("app.core.nightly.state", lambda repo: {"running": True})
+    monkeypatch.setattr("app.core.nightly.worker_progress",
+                        lambda repo: {"stage": "index", "indexed": 5, "total": 10,
+                                      "targets": 2, "current_source": "src", "error": None})
+
+    status = builder.index_status("1")
+
+    assert status["building"] is True
+    assert status["offline"] is False          # readable while building - no 503
+    assert status["stage"] == "index"
+    assert status["indexed_snapshots"] == 5
+    assert status["targets"] == 2
+
+
+def test_index_status_not_building_when_no_pass_is_running(monkeypatch):
+    """A stale progress file from a crashed run must not fake 'building' - the state gate is
+    what separates a live run from leftovers."""
+    from app.index import builder
+
+    class _FakeCursor:
+        def execute(self, _q, _params=None):
+            return self
+
+        def fetchone(self):
+            return (0,)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(builder, "sources_index", lambda repo: {})
+    monkeypatch.setattr("app.core.nightly.state", lambda repo: {"running": False})
+    monkeypatch.setattr(builder, "read_cursor", lambda repo: _FakeCursor())
+
+    status = builder.index_status("1")
+
+    assert status.get("building") is False

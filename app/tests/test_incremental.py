@@ -205,6 +205,10 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(artifacts, "cache_db", lambda repo: sqlite3.connect(":memory:"))
     monkeypatch.setattr(artifacts, "_refcount", lambda repo, db: (COUNT, 0))
     monkeypatch.setattr(artifacts, "backfill_first_seen", lambda con, db, repo, job: 0)
+    # real-data walk machinery is faked at the walk boundary; the new-source backfill is part
+    # of that boundary here (a dedicated test replaces this with a recorder)
+    monkeypatch.setattr(artifacts, "_backfill_source_first_seen",
+                        lambda con, db, repo, key, snaps: 0)
     monkeypatch.setattr(physical, "cache_db", lambda repo: sqlite3.connect(":memory:"))
     monkeypatch.setattr(physical, "load_sizemap", lambda repo, refresh=False: dict(SMAP))
 
@@ -305,9 +309,11 @@ def test_force_rebuild_is_id_stable(env, monkeypatch):
     assert body["_mode"] == "incremental"
     from app.index import publish
     publish.publish(env, body)
-    # nothing new anywhere: the rebuilt source reproduces its own ids exactly
+    # nothing new anywhere: the rebuilt source reproduces its own ids exactly. cid_id grows
+    # because the sizemap namespace now completes the dictionary (obj_d/obj_e were missing
+    # from the hand-written fixture generation - the map-completeness fix doing its job)
     assert body["counters"] == {"src_id": 2, "dir_id": 4, "path_id": 4,
-                                "cid_id": 5, "snap_id": 4}
+                                "cid_id": 7, "snap_id": 4}
     assert body["artifacts"]["filev"] == ["pool/history/src_id=1/g2.parquet",
                                           "pool/history/src_id=2/g1.parquet"]
     assert body["stats"] == {"paths": 4, "file_versions": 5}
@@ -331,3 +337,66 @@ def test_empty_listing_against_published_generation_refused(env, monkeypatch):
     monkeypatch.setattr(artifacts, "sources_index", lambda repo: {})
     with pytest.raises(RuntimeError, match="refusing to treat that as a removal"):
         artifacts.build_repo("1", env, gen=2, job={})
+
+
+def test_snapshot_expiry_is_purged_and_stops_rebuilding(env, monkeypatch):
+    """S2 loses snap0 to retention: the vanished snapshot must not survive in isnaps (wrong
+    counts) nor in the snap dictionary, and - the expensive part - the NEXT unchanged pass must
+    classify S2 as carried again, not rebuild it every night forever."""
+    listing = _listing_published()
+    listing[S2] = [s for s in listing[S2] if s["id"] != "snap0"]
+    monkeypatch.setattr(artifacts, "sources_index", lambda repo: listing)
+    body = artifacts.build_repo("1", env, gen=1, job={})
+    assert body["_mode"] == "incremental"
+    from app.index import publish
+    publish.publish(env, body)
+    isnaps = {r[1] for r in _rows(env, "pool/small/isnaps/g2.parquet")}
+    assert isnaps == {"snap1", "snap2", "snap3"}      # snap0 gone, nothing phantom
+    snaps = {r[1] for r in _rows(env, "pool/snap/g2.parquet")}
+    assert "snap0" not in snaps
+    # a second pass over the SAME listing: every source carried, nothing rebuilt
+    body2 = artifacts.build_repo("1", env, gen=2, job={})
+    assert S2 not in body2["_checks"]["sources"]
+    assert body2["stats"] == body["stats"]
+
+
+def test_incremental_includes_sizemap_only_chunks(env, monkeypatch):
+    """A split file's underlying chunk ids exist only in the sizemap. The cid dictionary must
+    grow to hold them, and csize must not drop them in its join (a missing chunk reads as zero
+    references = 'safe to delete')."""
+    import app.index.physical as physical
+    smap = {**SMAP, "chunk_z": 42}                    # chunk_z backs obj_d, never a file row
+    monkeypatch.setattr(physical, "load_sizemap", lambda repo, refresh=False: dict(smap))
+    body = artifacts.build_repo("1", env, gen=1, job={})
+    from app.index import publish
+    publish.publish(env, body)
+    cid = {r[1]: r[0] for r in _rows(env, "pool/cid/g2.parquet")}
+    assert "chunk_z" in cid
+    csize = {r[0]: r[1] for r in _rows(env, "pool/maps/csize/g2.parquet")}
+    assert csize[cid["chunk_z"]] == 42
+
+
+def test_new_source_gets_first_seen_backfill(env, monkeypatch):
+    seen: list[str] = []
+    monkeypatch.setattr(artifacts, "_backfill_source_first_seen",
+                        lambda con, db, repo, key, snaps: seen.append(key) or 0)
+    artifacts.build_repo("1", env, gen=1, job={})
+    assert seen == [S3]   # S3 is new; S1 (carried) and S2 (append) keep their carried dates
+
+
+def test_incremental_writes_smallint_src_id(env):
+    """The full build writes src_id as SMALLINT; the incremental must match, or a mixed
+    generation binds two different column types for one artifact kind."""
+    body = artifacts.build_repo("1", env, gen=1, job={})
+    from app.index import publish
+    publish.publish(env, body)
+    con = duckdb.connect()
+    try:
+        p = (env + "/pool/pathx/src_id=2/g2.parquet").replace(chr(92), "/")
+        # hive_partitioning=false: the src_id=N directory auto-detects as a partition column
+        # and would override the file's own column type (the documented DuckDB trap)
+        cols = {r[0]: r[1] for r in con.execute(
+            f"DESCRIBE SELECT * FROM read_parquet('{p}', hive_partitioning=false)").fetchall()}
+    finally:
+        con.close()
+    assert cols["src_id"] == "SMALLINT"

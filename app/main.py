@@ -571,23 +571,21 @@ def auth_logout() -> JSONResponse:
 
 @app.middleware("http")
 async def generation_pin_middleware(request: Request, call_next):
-    """Hold ONE index generation for the whole request.
+    """Give every API request a per-repo generation pin scope.
 
-    Without this each read resolves the current generation independently, so a publish landing
-    mid-request can answer one query from generation N and the next from N+1. That mixture returns
-    wrong numbers with no error, which is the one failure this storage design must not have.
-    Routes carry the repo as a query param and default to "1".
-    """
+    ``store.read_cursor`` resolves a repo's generation once into the scope on first use and
+    reuses it for the rest of the request, so a publish landing mid-request can never answer one
+    query from generation N and the next from N+1. The scope is filled lazily by the reads
+    themselves - which is what keeps POST actions whose repo arrives in the JSON body covered,
+    where reading it out of the query string pinned the wrong repo - and repos a request never
+    touches are never opened at all."""
     if not request.url.path.startswith("/api"):
         return await call_next(request)
-    repo = request.query_params.get("repo", "1")
-    if repo not in REPOS or REPOS[repo].get("kind", "kopia") != "kopia":
-        return await call_next(request)   # Backblaze and unknown ids have no generation
+    token = store.begin_pins()
     try:
-        with store.pinned(repo):
-            return await call_next(request)
-    except FileNotFoundError:             # repo not indexed yet: let the route answer normally
         return await call_next(request)
+    finally:
+        store.end_pins(token)
 
 
 @app.middleware("http")

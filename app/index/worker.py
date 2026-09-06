@@ -13,9 +13,9 @@ Why a subprocess: CPython does not return large freed heaps to Windows, and Duck
 never shrinks, so doing this work in the long-lived app process left several GB resident until
 Windows forced it out. A process that exits gives every byte back, guaranteed.
 
-The app must have released the repo's DuckDB before this starts - DuckDB takes an exclusive OS
-file lock, so the two cannot both hold it (see ``schema.exclusive_offline``). Progress is written
-to ``data/index_progress_repo<N>.json`` so the app can still show a live badge while offline.
+There is no exclusive lock to hand over any more: the index is immutable Parquet published under
+``publish.WriterLock``, and the app keeps serving the previous generation while this runs.
+Progress is written to ``data/index_progress_repo<N>.json`` so the app can show a live badge.
 
 Prints a JSON summary to stdout and exits 0; nonzero on failure.
 """
@@ -169,8 +169,8 @@ def run(repo: str, full: bool = False) -> dict:
             # The churn windows are BOUNDED (365d completes in ~12s on a clean pool), but by now
             # index/dashboard/analysis have filled DuckDB's buffer pool, so whichever window runs
             # next OOMs nondeterministically. A cursor off the pooled connection shares that pool -
-            # only closing the connection yields an empty one. Safe here: the repo is offline for
-            # the whole worker run and nothing is in flight between stages.
+            # only closing the connection yields an empty one. Safe here: this process owns the
+            # repo for the whole run and nothing is in flight between stages.
             from .store import close_all
             close_all()
             gc.collect()

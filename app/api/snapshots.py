@@ -9,10 +9,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..core.kopia import diff_execute, snapshot_diff_command, snapshot_pin_command
+from ..core.nightly import is_running
 from ..core.retention import set_reclaim
 from ..core.sources import resolve_source, sources_index
 from ..index.queries import snapshot_files
-from ..index.snapanalysis import compute_source, read_analysis, reclaimable_files
+from ..index.snapanalysis import batched, compute_source, read_analysis, reclaimable_files
 
 router = APIRouter(tags=["snapshots"])
 
@@ -34,6 +35,7 @@ class SetReclaimRequest(BaseModel):
 
 _ANALYZING: set[str] = set()
 _ANALYZING_ALL: set[str] = set()  # repo-level "analyze everything" in progress
+_LAST_ALL: dict[str, dict] = {}   # repo -> outcome of the last analyze-all, for analyze-status
 
 
 def _snap_row(key: str, snap: dict, a: dict) -> dict:
@@ -106,15 +108,28 @@ def analyze_all(repo: str = "1", reclaim: bool = True) -> dict:
     is a one-shot repo-wide pass. Poll /snapshots/analyze-status for completion."""
     if repo in _ANALYZING_ALL:
         return {"started": False, "reason": "already analyzing repo"}
+    # An index pass holds the repo's writer lock, so the single batched publish at the end would
+    # be declined and the whole pass thrown away. Refuse up front rather than compute for minutes
+    # and discard the result.
+    if is_running(repo):
+        return {"started": False, "reason": "indexing this repo, try again when it finishes"}
 
     def run() -> None:
+        saved = False
         try:
-            for key in sorted(sources_index(repo)):
-                try:
-                    compute_source(repo, key, with_reclaim=reclaim)
-                except Exception:  # noqa: BLE001 - one bad source must not stop the rest
-                    continue
+            # ONE publication at the end, not one per source (repo1 = ~84 manifest swaps
+            # otherwise). batched() flushes whatever completed even when an exception passes
+            # through, so a crash mid-loop still saves the finished sources.
+            with batched(repo) as batch:
+                for key in sorted(sources_index(repo)):
+                    try:
+                        compute_source(repo, key, with_reclaim=reclaim)
+                    except Exception:  # noqa: BLE001 - one bad source must not stop the rest
+                        continue
+            saved = bool(batch["saved"])
         finally:
+            _LAST_ALL[repo] = {"saved": saved, "reason": None if saved else
+                               "another writer held the repo - nothing was saved, run it again"}
             _ANALYZING_ALL.discard(repo)
 
     _ANALYZING_ALL.add(repo)
@@ -124,7 +139,8 @@ def analyze_all(repo: str = "1", reclaim: bool = True) -> dict:
 
 @router.get("/snapshots/analyze-status")
 def analyze_status(repo: str = "1") -> dict:
-    return {"repo": repo, "analyzing_all": repo in _ANALYZING_ALL}
+    return {"repo": repo, "analyzing_all": repo in _ANALYZING_ALL,
+            "last_run": _LAST_ALL.get(repo)}
 
 
 @router.post("/snapshots/set-reclaim")

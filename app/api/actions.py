@@ -37,7 +37,7 @@ from ..core.kopia import (
 )
 from ..core.sources import invalidate as invalidate_sources, sources_index
 from ..index.schema import RepoOffline
-from ..core.nightly import start_index_run as start_build
+from ..core.nightly import start_index_pass_async
 from ..index.physical import batch_detail, folder_detail
 from ..index.queries import remove_targets, snapshots_for_path, sources_for_content, versions as file_versions
 from ..settings import load_settings
@@ -49,6 +49,13 @@ _SEP = chr(92)  # backslash
 
 def _source_root(source: str) -> str:
     return source.split(":", 1)[1] if ":" in source else source
+
+
+def _start_index_run(repo: str) -> dict:
+    """The same worker pass + bookkeeping the Index button and the nightly scheduler use
+    (running flag, freshness callback), so an action-triggered reindex updates those too."""
+    from ..main import mark_nightly_result  # lazy: app.main imports this router
+    return start_index_pass_async(repo, on_done=mark_nightly_result)
 
 
 def _fmt_cmd(cmd: list[str]) -> str:
@@ -174,7 +181,7 @@ def snapshot_delete(payload: SnapshotDeleteRequest) -> dict:
     if deleted:
         invalidate_sources(payload.repo)        # the snapshot set changed -> drop the cached listing
         try:
-            start_build(payload.repo)           # incremental reindex picks up the now-missing snapshots
+            _start_index_run(payload.repo)      # incremental reindex picks up the now-missing snapshots
         except Exception:  # noqa: BLE001 - reindex is best-effort; UI Refresh also recovers
             pass
     if result["returncode"] != 0:
@@ -197,7 +204,7 @@ def _rf_targets(payload: RemoveFilesRequest) -> list[tuple[str, str]]:
 def _post_remove(repo: str) -> None:
     invalidate_sources(repo)
     try:
-        start_build(repo)  # snapshots were rewritten -> reindex so the UI reflects reality
+        _start_index_run(repo)  # snapshots were rewritten -> reindex so the UI reflects reality
     except Exception:  # noqa: BLE001
         pass
 
