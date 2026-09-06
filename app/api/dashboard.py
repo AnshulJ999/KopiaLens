@@ -31,7 +31,14 @@ def _require_kopia(repo: str) -> None:
 
 @router.get("/repos")
 def repos() -> dict:
+    from ..core import auth
+
     settings = load_settings()
+    kl = settings.get("kopialens", {})
+    # The session cookie is SIGNED with the stored password hash, so the hash must never leave the
+    # server - anyone holding it could mint valid sessions. The UI only needs yes/no.
+    kl.pop("auth_password_hash", None)
+    kl["auth_protected"] = auth.enabled()
     return {"repos": [{"id": key, "name": value["name"], "kind": value.get("kind", "kopia")}
                       for key, value in REPOS.items()], "settings": settings}
 

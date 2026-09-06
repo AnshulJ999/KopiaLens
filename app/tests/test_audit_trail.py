@@ -33,8 +33,11 @@ def test_optional_fields_default_to_none_but_exist():
     audit.audit("generated", "remove-plan")
     rec = audit.read_tail(10)[0]
     assert rec["repo"] is None
-    assert rec["actor"] is None
     assert rec["summary"] == {}
+    # The actor defaults to the current identity (multi-user groundwork): every recorded action
+    # says who did it, which is the part that cannot be backfilled later.
+    from app.core import auth
+    assert rec["actor"] == auth.current_actor()
 
 
 def test_read_tail_returns_oldest_first_and_respects_the_limit():

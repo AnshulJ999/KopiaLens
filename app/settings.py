@@ -74,9 +74,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         # Auth is on BECAUSE a password exists, not the other way round: enabled() requires a
         # hash, so a fresh install (no password) is never locked out. The bind default is PER
         # INSTALL PROFILE (tray = desktop = loopback; anything else = server = all interfaces) -
-        # resolved in core/auth.py, which also honours KOPIALENS_BIND_HOST / _AUTH_ENABLED /
-        # _ALLOWED_HOSTS / _PASSWORD env overrides. Choosing a password belongs to onboarding
-        # (); Settings carries the control until then.
+        # resolved in core/auth.py, which also honours KOPIALENS_BIND_HOST / _ALLOWED_HOSTS /
+        # _PASSWORD env overrides (an auth OFF switch does not exist yet - see). Choosing
+        # a password belongs to onboarding (); Settings carries the control until then.
         "auth_enabled": True,
         "auth_password_hash": "",      # pbkdf2_sha256$iters$salt$digest - never the password
         "bind_host": "127.0.0.1",      # desktop-profile default; a server install resolves 0.0.0.0

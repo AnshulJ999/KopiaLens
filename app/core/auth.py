@@ -37,6 +37,10 @@ from ..settings import load_settings, mutate_settings, raw_kopialens_settings
 COOKIE_NAME = "kopialens_session"
 _ITERATIONS = 200_000
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", ""}
+# Multi-user groundwork (2026-09-06): today there is exactly one identity. Everything that will
+# need a user - the session subject, the audit actor - goes through here, so adding a real user
+# store later changes this function and nothing else.
+SUBJECT = "admin"
 
 
 def _kl() -> dict:
@@ -105,13 +109,21 @@ def clear_password() -> None:
     mutate_settings(_apply)
 
 
+def current_actor() -> str:
+    """Who is performing the action, for audit records. Returns SUBJECT for the single shared
+    password; a user store replaces this one function (and the session subject) later."""
+    return SUBJECT
+
+
 def session_token() -> str:
-    """Stateless session value: an HMAC over the current password hash. Restart-safe (nothing is
-    held in memory) and self-invalidating when the password changes."""
+    """Stateless session value: an HMAC over the current password hash AND the subject, so the
+    cookie format already carries an identity and never has to change when users arrive.
+    Restart-safe (nothing is held in memory) and self-invalidating when the password changes."""
     stored = password_hash()
     if not stored:
         return ""
-    mac = hmac.new(stored.encode("utf-8"), b"kopialens-session-v1", hashlib.sha256).digest()
+    mac = hmac.new(stored.encode("utf-8"), f"kopialens-session-v1:{SUBJECT}".encode(),
+                   hashlib.sha256).digest()
     return base64.urlsafe_b64encode(mac).decode().rstrip("=")
 
 

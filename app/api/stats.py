@@ -95,7 +95,19 @@ def _find_line(text: str, prefix: str) -> str:
     return ""
 
 
-def _maintenance_health(maint: dict, status: dict) -> tuple[dict, list[dict]]:
+def _kopia_cmd(repo: str, args: list[str]) -> str:
+    """A pasteable kopia command that targets THIS repo (config args included). A bare
+    `kopia maintenance ...` silently operates on the DEFAULT repository - copying a fix from
+    repo 2 onto repo 1 is exactly the failure this prevents."""
+    from ..core.kopia import _repo_args
+
+    def _q(a) -> str:
+        a = str(a)
+        return f'"{a}"' if " " in a else a
+    return " ".join(["kopia"] + [_q(a) for a in _repo_args(repo)] + [_q(a) for a in args])
+
+
+def _maintenance_health(repo: str, maint: dict, status: dict) -> tuple[dict, list[dict]]:
     """Parse `maintenance info --json` into card fields + the two maintenance health checks."""
     health: list[dict] = []
     card = {"owner": maint.get("owner"), "full_enabled": bool((maint.get("full") or {}).get("enabled", True)),
@@ -124,7 +136,7 @@ def _maintenance_health(maint: dict, status: dict) -> tuple[dict, list[dict]]:
             "title": "Maintenance is owned by another machine",
             "detail": f"Owner is {card['owner']!r}, this machine is {this_host!r}. Garbage collection "
                       "never runs from here - deleted data keeps consuming space until it is fixed.",
-            "fix_command": "kopia maintenance info",
+            "fix_command": _kopia_cmd(repo, ["maintenance", "info"]),
         })
     if not card["full_enabled"]:
         health.append({
@@ -132,7 +144,7 @@ def _maintenance_health(maint: dict, status: dict) -> tuple[dict, list[dict]]:
             "title": "Full maintenance is disabled",
             "detail": "Without a full pass, deleted snapshots and removed files are never actually "
                       "rewritten away - the repository only ever grows.",
-            "fix_command": "kopia maintenance set-params --help",
+            "fix_command": _kopia_cmd(repo, ["maintenance", "set-params", "--help"]),
         })
     age_days = ((dt.datetime.now(dt.timezone.utc) - newest.astimezone(dt.timezone.utc)).total_seconds() / 86400
                 if newest else None)
@@ -142,7 +154,7 @@ def _maintenance_health(maint: dict, status: dict) -> tuple[dict, list[dict]]:
             "id": "maintenance-never", "status": "warn",
             "title": "Maintenance has never run on this repository",
             "detail": "No maintenance runs are recorded. Space from deleted data is not being freed.",
-            "fix_command": "kopia maintenance run --full",
+            "fix_command": _kopia_cmd(repo, ["maintenance", "run", "--full"]),
         })
     elif card["last_run_age_days"] is not None and card["last_run_age_days"] > 7:
         health.append({
@@ -150,13 +162,15 @@ def _maintenance_health(maint: dict, status: dict) -> tuple[dict, list[dict]]:
             "title": f"Last maintenance ran {card['last_run_age_days']} days ago",
             "detail": "Quick maintenance normally runs about hourly. A gap this long usually means "
                       "an owner mismatch, a disabled schedule, or a machine that is rarely on.",
-            "fix_command": "kopia maintenance run --full",
+            "fix_command": _kopia_cmd(repo, ["maintenance", "run", "--full"]),
         })
     return card, health
 
 
 def _duckdb_health(repo: str) -> list[dict]:
-    """KopiaLens's own index bloat: current DuckDB size vs the last compaction baseline."""
+    """KopiaLens's own index bloat: current DuckDB size vs the last compaction baseline. The caller
+    renders ALL entries in the KopiaLens-index card but only WARNs in the Health list (shown twice
+    otherwise - the card filters the same list)."""
     try:
         from ..index.schema import compact_state, db_path
         live = db_path(repo)
@@ -172,7 +186,7 @@ def _duckdb_health(repo: str) -> list[dict]:
             return [{"id": "duckdb-bloat", "status": "warn",
                      "title": f"Index database grew {ratio:.1f}x its compacted size ({cur / 10**9:.2f} GB)",
                      "detail": "DuckDB never reclaims dead space on its own; compaction rewrites the file.",
-                     "fix_command": "python compact.py all"}]
+                     "fix_command": f"python compact.py {repo}"}]
         return [{"id": "duckdb-size", "status": "ok",
                  "title": f"Index database: {cur / 10**9:.2f} GB ({ratio:.2f}x compacted baseline)",
                  "detail": "Healthy - auto-compaction rewrites the file when it grows past its ratio."}]
@@ -181,26 +195,30 @@ def _duckdb_health(repo: str) -> list[dict]:
         return []
 
 
+_HISTORY_LOCK = threading.Lock()  # two repos refreshing at once must not lose samples
+
+
 def _record_growth(repo: str, packed_bytes: int) -> list:
     """Hourly (ts, packed-bytes) samples for the growth trend. Small JSON file, bounded length."""
     try:
-        history: dict = {}
-        try:
-            with open(_HISTORY_FILE, encoding="utf-8") as fh:
-                history = json.load(fh)
-        except Exception:  # noqa: BLE001 - missing/corrupt just means we start fresh
-            history = {}
-        samples = history.get(repo) or []
-        now = time.time()
-        if not samples or now - samples[-1][0] >= _HISTORY_SAMPLE_MIN:
-            samples.append([round(now), packed_bytes])
-            samples = samples[-_HISTORY_KEEP:]
-            history[repo] = samples
-            tmp = _HISTORY_FILE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(history, fh)
-            os.replace(tmp, _HISTORY_FILE)
-        return samples
+        with _HISTORY_LOCK:
+            history: dict = {}
+            try:
+                with open(_HISTORY_FILE, encoding="utf-8") as fh:
+                    history = json.load(fh)
+            except Exception:  # noqa: BLE001 - missing/corrupt just means we start fresh
+                history = {}
+            samples = history.get(repo) or []
+            now = time.time()
+            if not samples or now - samples[-1][0] >= _HISTORY_SAMPLE_MIN:
+                samples.append([round(now), packed_bytes])
+                samples = samples[-_HISTORY_KEEP:]
+                history[repo] = samples
+                tmp = _HISTORY_FILE + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    json.dump(history, fh)
+                os.replace(tmp, _HISTORY_FILE)
+            return samples
     except Exception as exc:  # noqa: BLE001 - a trend sample must never break the panel
         log.warning("growth sample failed: %s", exc)
         return []
@@ -218,7 +236,7 @@ def _compute_stats(repo: str) -> dict:
     }
     # ---- parsed cards + health -----------------------------------------------------
     content = _parse_content_stats(data["content_stats"])
-    maint_card, health = _maintenance_health(maint or {}, status or {})
+    maint_card, health = _maintenance_health(repo, maint or {}, status or {})
     if isinstance(status, dict):
         vol = status.get("volume") or {}
         storage = (status.get("storage") or {})
@@ -239,7 +257,7 @@ def _compute_stats(repo: str) -> dict:
     else:
         data["parsed"] = {}
     data["parsed"]["duckdb_health"] = _duckdb_health(repo)
-    health.extend(data["parsed"]["duckdb_health"])
+    health.extend(h for h in data["parsed"]["duckdb_health"] if h["status"] == "warn")
     if content["packed_bytes"]:
         samples = _record_growth(repo, content["packed_bytes"])
         data["parsed"]["growth"] = samples

@@ -146,7 +146,8 @@ document.addEventListener("alpine:init", () => {
     mounts: [],
     statsData: null, blobStats: "", blobLoading: false, _statsLoading: false,
     auditRows: [], auditSize: 0,
-    groupReclaim: {},  // folder -> freeable bytes, computed on demand per group row
+    groupReclaim: {},  // "repo:folder" -> {v: freeable, capped} - keyed by repo so one repo's
+                       // numbers can never render in another repo's table
     mountSnapshot: "", mountPoint: "", restoreSource: "", restoreDest: "",
     dashboardMeta: "", busy: "", error: "", detail: null, batch: null, showBatch: false, snapSource: "*ALL*", _poll: null, _searchSeq: 0, _detailSeq: 0,
     _dashSeq: 0, _snapSeq: 0, _treeSeq: 0, _batchSeq: 0, _batchCmdSeq: 0, _removePlanSeq: 0, _removeDetailSeq: 0,
@@ -630,8 +631,8 @@ document.addEventListener("alpine:init", () => {
     treeSourceChanged() { this.snapshots = []; this.selectedSnapshot = ""; if (this.selectedSource === "*ALL*") this.snapSource = "*ALL*"; this.treePrefix = this.sourceRoot(); this.openTree(); },
     treeModeChanged() { this.treePrefix = this.sourceRoot(); this.klSet({ tree_mode: this.treeMode }); this.openTree(); },
     treeWeekChanged() { this.treePrefix = this.sourceRoot(); this.loadTree(); },
-    // week picker: the last 12 calendar weeks (Sunday-ended), newest first. Value = the
-    // week's last day, which is what /api/tree?week= expects.
+    // "Changed in week" options: the view lists what each source's snapshot from that week
+    // contains - the delta, not a full point-in-time tree. Value = the week's last-day ISO date.
     get treeWeekOptions() {
       const iso = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
       const lbl = (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
@@ -897,22 +898,21 @@ document.addEventListener("alpine:init", () => {
           { title: "Folder", field: "folder", widthGrow: 5, minWidth: 300 },
           { title: "Physical", field: "phys", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => fmtPhys(c.getValue()) },
           { title: "Logical", field: "logical", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => fmtBytes(c.getValue()) },
-          // folder exclusive share = SUM(exclusive)/SUM(physical); sorts by the exclusive BYTES.
-          { title: "Excl", field: "excl", width: 90, hozAlign: "right", sorter: "number",
-            formatter: (c) => { const d = c.getRow().getData(); const e = Number(d.excl || 0), p = Number(d.phys || 0);
-              return p ? `<span title="${fmtPhys(e)} of ${fmtPhys(p)} held only by this folder's sources">${Math.round((e / p) * 100)}%</span>` : ""; } },
+          // Excl column hidden here too - same reason as the Search table ().
           { title: "Files", field: "files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
           { title: "Deleted #", field: "deleted_files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
           { title: "Deleted %", field: "deleted_pct", width: 90, headerSort: false, hozAlign: "right", formatter: (c) => { const d = c.getRow().getData(); return d.files ? Math.round((d.deleted_files / d.files) * 100) + "%" : ""; } },
           { title: "Avg size", field: "avg_size", width: 95, headerSort: false, hozAlign: "right", formatter: (c) => { const d = c.getRow().getData(); return d.files ? fmtBytes(Math.round(d.phys / d.files)) : ""; } },
           // per-folder freeable, computed on demand (right-click) - a chunk walk per folder.
+          // "≥" marks a partial result: the backend caps the walk at the first 5,000 files.
           { title: "∑ Reclaim", field: "reclaim_val", headerSort: false, width: 105, hozAlign: "right",
             formatter: (c) => {
-              const v = this.groupReclaim[c.getRow().getData().folder];
+              const v = this.groupReclaim[this.repo + ":" + c.getRow().getData().folder];
               if (v === "pending") return "<span style='color:#94a3b8'>…</span>";
               if (v === "error") return "<span style='color:#dc2626'>err</span>";
               if (v == null) return "<span style='color:#94a3b8' title='Right-click > Compute reclaim'>—</span>";
-              return `<span style="color:#059669" title="freeable if this folder's matched content were removed (all versions, all sources)">${fmtPhys(v)}</span>`;
+              const tip = v.capped ? ' title="Partial - first 5,000 files only"' : "";
+              return `<span style="color:#059669"${tip}>${v.capped ? "&ge; " : ""}${fmtPhys(v.v)}</span>`;
             } },
           { title: "Last seen", field: "last_seen", width: 155, formatter: (c) => String(c.getValue() || "").replace("T", " ").slice(0, 19) },
         ];
@@ -929,18 +929,22 @@ document.addEventListener("alpine:init", () => {
     },
     // freeable for one folder row of the By-folder view - the same on-demand walk the
     // remove-detail button uses, scoped to the folder prefix. Heavy, so it only runs when asked.
+    // Keyed by repo: switching repos must never show the previous repo's number.
     async computeGroupReclaim(row) {
       const d = row.getData();
-      const cur = this.groupReclaim[d.folder];
+      const key = this.repo + ":" + d.folder;
+      const cur = this.groupReclaim[key];
       if (cur && cur !== "error") return;
-      this.groupReclaim[d.folder] = "pending";
+      this.groupReclaim[key] = "pending";
       row.reformat();
       try {
         const r = await getJson("/api/actions/remove-detail", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ repo: this.repo, prefix: d.folder, all_versions: true }) });
-        this.groupReclaim[d.folder] = (r.found === false) ? "none" : (r.freeable ?? 0);
+        this.groupReclaim[key] = (r.found === false)
+          ? { v: 0, capped: false }
+          : { v: r.freeable ?? 0, capped: !!r.capped };
       } catch (e) {
-        this.groupReclaim[d.folder] = "error";
+        this.groupReclaim[key] = "error";
       }
       row.reformat();
     },
@@ -972,16 +976,9 @@ document.addEventListener("alpine:init", () => {
           H("Path", "full_path", { widthGrow: 5, minWidth: 320 }),
           H("Size", "size", { width: 100, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" }),
           H("Physical (latest)", "physical", { width: 120, formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" }),
-          // "Excl" = share of the packed bytes held ONLY by this source (exclusive/physical);
-          // amber when mostly shared - deleting such a copy frees (almost) nothing. "—" until the
-          // next dashboard pass fills paths.exclusive after an upgrade.
-          { title: "Excl", field: "exclusive", headerSort: false, width: 85, hozAlign: "right",
-            formatter: (c) => {
-              const d = c.getRow().getData();
-              if (d.exclusive == null || !Number(d.physical)) return "<span style='color:#94a3b8'>—</span>";
-              const pct = Math.round((Number(d.exclusive) / Number(d.physical)) * 100);
-              return `<span ${pct < 50 ? 'style="color:#d97706"' : ""} title="${fmtPhys(d.exclusive)} held only by this source">${pct}%</span>`;
-            } },
+          // Excl column intentionally hidden: paths.exclusive is unfilled (the fill was removed -
+          // wrong semantics for shared indirect content + write amplification) and its per-object
+          // semantics overstated exclusivity. Returns with the proper implementation ().
           { title: "Src", field: "sources", headerSort: false, width: 62, hozAlign: "right",
             formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:#d97706" title="content is held by ${v} sources (within-source copies excluded)">${v}</span>` : "1"; } },
           { title: "Reclaim", field: "reclaim", headerSort: false, width: 110, hozAlign: "right",
@@ -1677,7 +1674,7 @@ document.addEventListener("alpine:init", () => {
         this.reclaimInterval = Number(kl.reclaim_interval || 10800);
         this.excludedTolerance = Number(kl.excluded_tolerance ?? 0.05);
         this.esPath = kl.es_path || "";
-        this.authProtected = !!kl.auth_password_hash;
+        this.authProtected = !!kl.auth_protected;  // the hash itself never reaches the browser
         this.newPassword = "";
         this._readAdvanced(kl);
       } catch (e) { /* keep last-known state on fetch failure */ }

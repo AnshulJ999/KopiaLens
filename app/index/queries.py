@@ -252,7 +252,7 @@ def search_export(repo: str, query: str = "", deleted_only: bool = False, min_si
     where_sql = " AND ".join(where)
     cur = read_cursor(repo)
     cur.execute(
-        f"SELECT source, full_path, name, ext, size, physical, exclusive, versions, first_seen, last_seen, in_latest "
+        f"SELECT source, full_path, name, ext, size, physical, versions, first_seen, last_seen, in_latest "
         f"FROM paths WHERE {where_sql} {_order_clause(sort, direction)} LIMIT {int(cap)}",
         [repo, *params],
     )

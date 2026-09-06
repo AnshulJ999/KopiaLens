@@ -22,13 +22,16 @@ router = APIRouter(tags=["tree"])
 
 
 def _parse_start(s: str) -> dt.datetime | None:
-    """kopia's tz-aware ISO startTime; trims >6 fractional digits (fromisoformat caps at 6)."""
+    """kopia's tz-aware ISO startTime; trims >6 fractional digits (fromisoformat caps at 6). A
+    timestamp WITHOUT an offset would compare against the aware week cutoff and throw, so it is
+    coerced to local time - kopia always includes one today, this is the guard."""
     if not s:
         return None
     try:
-        return dt.datetime.fromisoformat(re.sub(r"\.(\d{1,6})\d*", r".\1", s))
+        t = dt.datetime.fromisoformat(re.sub(r"\.(\d{1,6})\d*", r".\1", s))
     except ValueError:
         return None
+    return t.astimezone()  # naive (no offset) is assumed local; aware converts to local
 
 
 def _week_cutoff(week: str) -> dt.datetime:
@@ -116,15 +119,18 @@ def tree(
     ``dedupe`` collapses same-content files into one row (content-aware). Filters: deleted_only
     (all mode only) / over_gb / ext / ext_exclude. ``flat`` = recursive flat file list under the
     prefix (collapse folders) - paths-based, works in any mode. ``week`` (All-Sources only) =
-    ISO date of a week's last day; shows each source's latest snapshot from that week."""
+    ISO date of a week's last day; lists what each source's snapshot from that week CHANGED
+    (the delta index, not a complete point-in-time tree - see "Changed in week" in the UI)."""
     if not source:
         raise HTTPException(status_code=400, detail="source is required")
     try:
         if source == "*ALL*":  # repo-wide aggregate across every source (parity with Snapshots *ALL*)
             min_size = 1_000_000_000 if over_gb else 0
             if week and mode != "reclaimable":
-                # point-in-time week view: each source's snapshot AS OF that week, through the
-                # existing snapshot-set query. Flat/reclaimable keep their latest-only semantics.
+                # "Changed in week" view: each source's snapshot from that week, through the
+                # existing snapshot-set query. files is a DELTA index - this lists what each
+                # snapshot changed, NOT a full point-in-time tree (that needs a dir-cache
+                # reconstruction). Flat/reclaimable keep their latest-only semantics.
                 ids = _snapshot_ids_as_of(repo, _week_cutoff(week))
                 children = _post_filter(tree_children_snaps(repo, ids, prefix), over_gb, ext, ext_exclude)
             elif flat:

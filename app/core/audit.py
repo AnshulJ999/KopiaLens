@@ -38,7 +38,15 @@ def _path() -> str:
 def audit(event: str, action: str, repo: str | None = None, summary: dict | None = None,
           rc: int | None = None, duration_s: float | None = None,
           log_file: str | None = None, actor: str | None = None) -> None:
-    """Append ONE JSON line. Best-effort: never raises."""
+    """Append ONE JSON line. Best-effort: never raises. ``actor`` defaults to the current identity
+    (auth.current_actor) so every recorded action says who did it - the part that cannot be
+    backfilled once real users exist."""
+    if actor is None:
+        try:
+            from .auth import current_actor  # lazy: keeps this module import-light
+            actor = current_actor()
+        except Exception:  # noqa: BLE001 - an audit gap must not break the action
+            actor = None
     rec = {
         "ts": datetime.datetime.now().isoformat(timespec="seconds"),
         "event": event,          # "executed" | "mount" | "unmount" | "generated"

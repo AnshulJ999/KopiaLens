@@ -191,12 +191,11 @@ def build_global(
     if mode == "all" and not rec and (time.time() - _LAST_REFCOUNT_WRITE.get(repo, 0.0) >= _refcount_write_interval()):
         with _REFCOUNT_WRITE_LOCK:
             try:
-                from ..index.physical import materialize_exclusive, materialize_refcount  # lazy: avoids core<-index import cycle
+                from ..index.physical import materialize_refcount  # lazy: avoids core<-index import cycle
                 from ..index.schema import write_cursor
                 con = write_cursor(repo)
                 try:
                     wrote = materialize_refcount(con, repo, count)
-                    materialize_exclusive(con, repo)  # paths.exclusive rides the same window
                     con.commit()
                 finally:
                     con.close()
@@ -208,6 +207,12 @@ def build_global(
                     log.info("repo=%s content_refs materialized (%d contents)", repo, len(count))
             except Exception as exc:  # noqa: BLE001
                 log.warning("repo=%s content_refs materialize failed: %s", repo, exc)
+
+    # paths.exclusive is NOT filled here anymore: the blanket UPDATE rewrote the whole multi-million-row
+    # paths table on every build (DuckDB update = delete+insert), riding a throttle never meant to gate
+    # it. The column semantics were also wrong for shared indirect content. `materialize_exclusive`
+    # stays in physical.py as the baseline for the proper reference-count + chunk-expansion fix
+    #; the Excl UI columns are hidden until then.
 
     return rows, time.time() - start, count, union_total
 

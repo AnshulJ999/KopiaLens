@@ -117,9 +117,9 @@
             <option value="reclaimable">Reclaimable (freed if deleted)</option>
             <option value="all">All snapshots</option>
           </select>
-          <select x-show="selectedSource==='*ALL*'" x-model="treeWeek" @change="treeWeekChanged()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-sm" title="Point-in-time week: each source's latest snapshot from that week">
+          <select x-show="selectedSource==='*ALL*'" x-model="treeWeek" @change="treeWeekChanged()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-sm" title="Show what each source's backup snapshot from that week contains. Files unchanged in that week's snapshot are not listed.">
             <option value="">Latest</option>
-            <template x-for="w in treeWeekOptions" :key="w.v"><option :value="w.v" x-text="'Week ' + w.label"></option></template>
+            <template x-for="w in treeWeekOptions" :key="w.v"><option :value="w.v" x-text="'Changed ' + w.label"></option></template>
           </select>
           <button @click="toggleTreeDedupe()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-sm" :class="treeDedupe ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Dedupe: collapse same-content files">⧉ Dedupe</button>
           <label class="flex items-center gap-1.5 text-xs" :class="(treeMode!=='all' && selectedSource!=='*ALL*') ? 'opacity-40' : ''" title="Only folders containing files deleted from disk (All-snapshots or All-sources)"><input type="checkbox" x-model="treeDeletedOnly" :disabled="treeMode!=='all' && selectedSource!=='*ALL*'" @change="treeFilterChanged()"> Deleted</label>

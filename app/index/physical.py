@@ -115,11 +115,11 @@ def materialize_physical(con, repo: str) -> None:
 
 
 def materialize_exclusive(con, repo: str) -> None:
-    """Fill ``paths.exclusive``: how many packed bytes of each path's content are held ONLY
-    by this source. A path is exclusive iff its content appears in exactly one SOURCE (within-source
-    sharing is ignored, agreed) - shared content prices 0. One grouped UPDATE over paths (UPDATE
-    precedent: the physical backfill above); runs in the worker's dashboard stage right after the
-    refcount rewrite. Rows keep their last value between passes - forward-only, never a rebuild."""
+    """Fill ``paths.exclusive``: how many packed bytes of each path's content are held ONLY by this
+    source. NOT WIRED - the blanket UPDATE rewrote the whole paths table every dashboard build, and
+    counting sources per content_id is WRONG for shared indirect/split content (two split objects
+    sharing chunks each read as fully exclusive). Callers were removed 2026-09-06; the correct
+    reference-count + chunk-expansion implementation is still to do. Kept as the baseline."""
     con.execute(
         """
         UPDATE paths SET exclusive = CASE WHEN srcs.n <= 1 THEN COALESCE(paths.physical, 0) ELSE 0 END
