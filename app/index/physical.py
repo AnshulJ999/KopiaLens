@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import collections
 import threading
+import uuid
 
 import pyarrow as pa
 
@@ -253,7 +254,13 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500) -> dict[str, 
     """For each content id (a file's latest object), compute the TRUE 'reclaim if purged
     everywhere': the deduped union of chunks across ALL versions of ALL paths sharing that
     content, whose global refcount is fully attributable to those paths. Cached per content id.
-    This is the honest all-versions, content-aware freeable for the search 'Reclaim' column."""
+    This is the honest all-versions, content-aware freeable for the search 'Reclaim' column.
+
+    The two index lookups are batched across the whole request: nothing indexes
+    `files.content_id`, so the per-id loop scanned the full history once per id - up to 500 scans
+    for one Reclaim click. One scan for "which paths hold these ids" plus one for "which objects
+    each of those paths has held" returns byte-identical results, and the chunk-expansion memo is
+    shared across the page so a repeated indirect object is expanded once, not per id."""
     dbsql = cache_db(repo)
     smap = load_sizemap(repo)
     uniq: list[str] = []
@@ -265,33 +272,60 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500) -> dict[str, 
         if len(uniq) >= cap:
             break
     out: dict[str, int] = {}
+    misses: list[str] = []
+    for cid in uniq:
+        cached = _reclaim_cache_get((repo, cid))
+        if cached is not None:
+            out[cid] = cached
+        else:
+            misses.append(cid)
+    if not misses:
+        return out
     cur = read_cursor(repo)
     try:
-        for cid in uniq:
-            ck = (repo, cid)
-            cached = _reclaim_cache_get(ck)
-            if cached is not None:
-                out[cid] = cached
-                continue
-            dup_paths = cur.execute(
-                "SELECT DISTINCT source, full_path FROM files WHERE repo=? AND content_id=?", [repo, cid]
-            ).fetchall()
-            this_refs: dict[str, int] = {}
-            obj_chunks: dict[str, set] = {}
-            for src, fp in dup_paths:
-                for (obj,) in cur.execute(
-                    "SELECT DISTINCT content_id FROM files WHERE repo=? AND source=? AND full_path=?",
-                    [repo, src, fp],
+        # cid -> distinct (source, full_path) pairs holding it. Chunked IN like _refcount_for.
+        shares: dict[str, list[tuple[str, str]]] = {c: [] for c in misses}
+        for i in range(0, len(misses), 900):
+            grp = misses[i:i + 900]
+            q = ("SELECT DISTINCT content_id, source, full_path FROM files "
+                 "WHERE repo=? AND content_id IN (%s)" % ",".join("?" * len(grp)))
+            for cid, src, fp in cur.execute(q, [repo, *grp]).fetchall():
+                shares[cid].append((src, fp))
+
+        # (source, full_path) -> every distinct object the path has held across its versions.
+        handles = {(src, fp) for hs in shares.values() for src, fp in hs}
+        objs_of: dict[tuple[str, str], list[str]] = {h: [] for h in handles}
+        if handles:
+            tmp = f"_reclaim_pp_{uuid.uuid4().hex[:12]}"
+            cur.execute(f"CREATE OR REPLACE TEMPORARY TABLE {tmp} (source VARCHAR, full_path VARCHAR)")
+            cur.executemany(f"INSERT INTO {tmp} VALUES (?, ?)", list(handles))
+            try:
+                for src, fp, obj in cur.execute(
+                    f"SELECT DISTINCT f.source, f.full_path, f.content_id FROM files f "
+                    f"JOIN {tmp} p ON p.source = f.source AND p.full_path = f.full_path "
+                    f"WHERE f.repo = ?", [repo]
                 ).fetchall():
-                    chunks = obj_chunks.get(obj)
+                    objs_of[(src, fp)].append(obj)
+            finally:
+                try:
+                    cur.execute(f"DROP TABLE IF EXISTS {tmp}")
+                except Exception:  # noqa: BLE001 - temp-table cleanup must never fail the request
+                    pass
+
+        chunk_memo: dict[str, set[str]] = {}
+        for cid in misses:
+            this_refs: dict[str, int] = {}
+            for src, fp in shares.get(cid, []):
+                for obj in objs_of.get((src, fp), []):
+                    chunks = chunk_memo.get(obj)
                     if chunks is None:
                         chunks = _chunks_for_obj(repo, dbsql, obj)
-                        obj_chunks[obj] = chunks
+                        chunk_memo[obj] = chunks
                     for c in chunks:
                         this_refs[c] = this_refs.get(c, 0) + 1
             refs = _refcount_for(repo, this_refs.keys()) or {}
             reclaim = sum(smap.get(c, 0) for c in this_refs if refs.get(c, 0) <= this_refs[c])
-            _reclaim_cache_put(ck, reclaim)
+            _reclaim_cache_put((repo, cid), reclaim)
             out[cid] = reclaim
     finally:
         cur.close()
