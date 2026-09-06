@@ -78,6 +78,12 @@ class _FakeCursor:
     def fetchall(self):
         return self._rows
 
+    def register(self, _name, _table):
+        return self
+
+    def unregister(self, _name):
+        return self
+
     def close(self):
         pass
 
@@ -86,9 +92,12 @@ class _FakeCursor:
 def priced(monkeypatch):
     """A single file whose three versions each hold a different 1 KB chunk, plus one chunk shared
     by every version. Latest-only should price 2 chunks; all-versions should price 4."""
-    rows = [("obj_new", 1000, "2026-08-03"),
-            ("obj_mid", 1000, "2026-08-02"),
-            ("obj_old", 1000, "2026-08-01")]
+    # (source, full_path, content_id, size) - batch_detail scans every selected path in one
+    # query now, ordered by start_time DESC within a path, so these are newest first.
+    fp = "C:" + SEP + "f.dat"
+    rows = [("src", fp, "obj_new", 1000),
+            ("src", fp, "obj_mid", 1000),
+            ("src", fp, "obj_old", 1000)]
     chunks = {"obj_new": {"c_common", "c_new"},
               "obj_mid": {"c_common", "c_mid"},
               "obj_old": {"c_common", "c_old"}}
@@ -100,7 +109,7 @@ def priced(monkeypatch):
     monkeypatch.setattr(physical, "_chunks_for_obj", lambda repo, db, obj: set(chunks[obj]))
     # Nothing outside the selection references these chunks, so everything found is freeable.
     monkeypatch.setattr(physical, "_refcount_for", lambda repo, cids: {c: 1 for c in cids})
-    return [{"source": "src", "full_path": "C:" + SEP + "f.dat"}]
+    return [{"source": "src", "full_path": fp}]
 
 
 def test_all_versions_prices_every_version(priced):

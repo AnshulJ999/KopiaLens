@@ -32,7 +32,10 @@ class _ReclaimCursor:
             self._last = []
         return self
 
-    def executemany(self, _sql, _params):
+    def register(self, _name, _table):
+        return self
+
+    def unregister(self, _name):
         return self
 
     def fetchall(self):

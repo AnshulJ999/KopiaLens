@@ -13,6 +13,7 @@ A file's stored ``content_id`` is the object id: a single content for small file
 from __future__ import annotations
 
 import collections
+import contextlib
 import threading
 import uuid
 
@@ -33,6 +34,26 @@ def _chunks_for_obj(repo: str, dbsql, obj: str) -> set[str]:
     if obj.startswith("I"):
         return expand_indirect(repo, dbsql, {obj})
     return {obj}
+
+
+@contextlib.contextmanager
+def _registered_pairs(cur, pairs):
+    """Register (source, full_path) pairs as an Arrow relation to join against.
+
+    Arrow, never executemany: the pair set is one row per (content, path) share and is unbounded
+    on dedup-heavy data. The uuid suffix keeps concurrent requests from colliding on the name.
+    """
+    name = f"_phys_pairs_{uuid.uuid4().hex[:12]}"
+    rows = list(pairs)
+    tbl = pa.table({"source": [s for s, _ in rows], "full_path": [p for _, p in rows]})
+    cur.register(name, tbl)
+    try:
+        yield name
+    finally:
+        try:
+            cur.unregister(name)
+        except Exception:  # noqa: BLE001 - cleanup must never fail the request
+            pass
 
 
 def _arrow_insert(con, sql: str, columns: dict) -> None:
@@ -296,21 +317,13 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500) -> dict[str, 
         handles = {(src, fp) for hs in shares.values() for src, fp in hs}
         objs_of: dict[tuple[str, str], list[str]] = {h: [] for h in handles}
         if handles:
-            tmp = f"_reclaim_pp_{uuid.uuid4().hex[:12]}"
-            cur.execute(f"CREATE OR REPLACE TEMPORARY TABLE {tmp} (source VARCHAR, full_path VARCHAR)")
-            cur.executemany(f"INSERT INTO {tmp} VALUES (?, ?)", list(handles))
-            try:
+            with _registered_pairs(cur, handles) as pairs_rel:
                 for src, fp, obj in cur.execute(
                     f"SELECT DISTINCT f.source, f.full_path, f.content_id FROM files f "
-                    f"JOIN {tmp} p ON p.source = f.source AND p.full_path = f.full_path "
+                    f"JOIN {pairs_rel} p ON p.source = f.source AND p.full_path = f.full_path "
                     f"WHERE f.repo = ?", [repo]
                 ).fetchall():
                     objs_of[(src, fp)].append(obj)
-            finally:
-                try:
-                    cur.execute(f"DROP TABLE IF EXISTS {tmp}")
-                except Exception:  # noqa: BLE001 - temp-table cleanup must never fail the request
-                    pass
 
         chunk_memo: dict[str, set[str]] = {}
         for cid in misses:
@@ -433,16 +446,24 @@ def batch_detail(repo: str, files: list[dict], all_versions: bool = True) -> dic
     versions = 0
     cur = read_cursor(repo)
     try:
-        for src, fp in pairs:
-            rows = cur.execute(
-                "SELECT content_id, size, start_time FROM files WHERE repo=? AND source=? AND full_path=? "
-                "ORDER BY start_time DESC",
-                [repo, src, fp],
-            ).fetchall()
+        # One scan for every selected path, not one per path: the delete preview sends the
+        # whole selection. SQL orders by start_time DESC within a path, so grouping in fetch order
+        # gives each path its versions newest-first exactly as the per-path query did.
+        # Deduped: a repeated selection entry must not join twice (and the per-path loop it
+        # replaces double-counted its chunk references, understating freeable).
+        by_path: dict[tuple, list[tuple]] = {p: [] for p in pairs}
+        with _registered_pairs(cur, by_path.keys()) as pairs_rel:
+            for src, fp, obj, sz in cur.execute(
+                f"SELECT f.source, f.full_path, f.content_id, f.size FROM files f "
+                f"JOIN {pairs_rel} p ON p.source = f.source AND p.full_path = f.full_path "
+                f"WHERE f.repo = ? ORDER BY f.source, f.full_path, f.start_time DESC", [repo]
+            ).fetchall():
+                by_path[(src, fp)].append((obj, sz))
+        for key, rows in by_path.items():
             if not rows:
                 continue
-            latest[(src, fp)] = (rows[0][0], int(rows[0][1] or 0))
-            for obj, _sz, _st in (rows if all_versions else rows[:1]):
+            latest[key] = (rows[0][0], int(rows[0][1] or 0))
+            for obj, _sz in (rows if all_versions else rows[:1]):
                 versions += 1
                 chunks = obj_chunks.get(obj)
                 if chunks is None:
