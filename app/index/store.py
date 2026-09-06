@@ -15,6 +15,7 @@ only ever READS. No directory is ever globbed - the manifest names every file.
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import json
 import os
@@ -35,6 +36,10 @@ MEMORY_LIMIT = os.environ.get("KOPIALENS_DUCKDB_MEMORY", "3GB")
 _PIN: contextvars.ContextVar = contextvars.ContextVar("kopialens_generation", default=None)
 
 _GENS: dict[str, "Generation"] = {}   # repo -> current generation handle
+# Superseded generations whose readers have not finished. Closing one out from under a live
+# cursor is the same class of bug as mixing generations, so a replaced generation is retired
+# here and closed only when its last reader releases it.
+_RETIRED: list["Generation"] = []
 _LOCK = threading.Lock()
 
 # Artifact names that are a list of files (history/pathx are per-source lists) vs single files.
@@ -64,6 +69,7 @@ class Generation:
     def release(self) -> None:
         with _LOCK:
             self._refs -= 1
+            _reap_locked()
 
     @property
     def refs(self) -> int:
@@ -177,19 +183,37 @@ def open_generation(repo: str) -> Generation:
     return Generation(repo, manifest.get("generation"), manifest, con, mtime)
 
 
+def _reap_locked() -> None:
+    """Close retired generations nothing is reading. Caller holds ``_LOCK``."""
+    for gen in [g for g in _RETIRED if g._refs <= 0]:
+        _RETIRED.remove(gen)
+        gen.close()
+
+
 def current(repo: str) -> Generation:
-    """The live generation for a repo, opened once and reused until the manifest changes."""
+    """The live generation for a repo, opened once and reused until the manifest changes.
+
+    A superseded generation is RETIRED, not closed: a request holding a cursor off it must be
+    able to finish. It closes when its last reader releases.
+    """
     mtime = os.stat(manifest_path(repo)).st_mtime_ns if os.path.exists(manifest_path(repo)) else 0
     with _LOCK:
         gen = _GENS.get(repo)
         if gen is not None and gen._mtime_ns == mtime:
             return gen
-        if gen is not None:
-            gen.close()
-    gen = open_generation(repo)
+    fresh = open_generation(repo)
     with _LOCK:
-        _GENS[repo] = gen
-    return gen
+        old = _GENS.get(repo)
+        # Another thread may have opened the same generation while we were binding views; keep
+        # theirs and discard ours rather than retiring a generation readers just picked up.
+        if old is not None and old._mtime_ns == fresh._mtime_ns:
+            fresh.close()
+            return old
+        if old is not None:
+            _RETIRED.append(old)
+        _GENS[repo] = fresh
+        _reap_locked()
+        return fresh
 
 
 class _PinnedCursor:
@@ -227,8 +251,31 @@ def read_cursor(repo: str):
         raise
 
 
+@contextlib.contextmanager
+def pinned(repo: str):
+    """Pin one generation for the duration of a request.
+
+    Without this every ``read_cursor`` resolves independently, so a publish landing mid-request
+    can serve pathx from one generation and history from the next - a mixture that produces wrong
+    numbers with no error. Installed as middleware in ``app/main.py``.
+    """
+    try:
+        gen = current(repo)
+    except FileNotFoundError:      # not indexed yet: nothing to pin, let callers raise normally
+        yield None
+        return
+    gen.acquire()
+    token = _PIN.set(gen)
+    try:
+        yield gen
+    finally:
+        _PIN.reset(token)
+        gen.release()
+
+
 def close_all() -> None:
     with _LOCK:
-        for gen in _GENS.values():
+        for gen in list(_GENS.values()) + list(_RETIRED):
             gen.close()
         _GENS.clear()
+        _RETIRED.clear()

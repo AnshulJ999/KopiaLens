@@ -167,31 +167,29 @@ def _maintenance_health(repo: str, maint: dict, status: dict) -> tuple[dict, lis
     return card, health
 
 
-def _duckdb_health(repo: str) -> list[dict]:
-    """KopiaLens's own index bloat: current DuckDB size vs the last compaction baseline. The caller
-    renders ALL entries in the KopiaLens-index card but only WARNs in the Health list (shown twice
-    otherwise - the card filters the same list)."""
+def _index_health(repo: str) -> list[dict]:
+    """KopiaLens's own index: size and generation of the published Parquet artifacts.
+
+    This used to track DuckDB bloat against a compaction baseline. Artifacts are immutable now, so
+    there is no dead space and nothing to compact - the useful facts are how big the current
+    generation is and whether one exists at all. The caller renders ALL entries in the
+    KopiaLens-index card but only WARNs in the Health list (shown twice otherwise)."""
     try:
-        from ..index.schema import compact_state, db_path
-        live = db_path(repo)
-        if not os.path.exists(live):
-            return []
-        cur = os.path.getsize(live)
-        base = (compact_state().get(repo) or {}).get("size") or 0
-        if not base:
-            return [{"id": "duckdb-size", "status": "info", "title": f"Index database: {cur / 10**9:.2f} GB",
-                     "detail": "No compaction baseline yet; auto-compaction establishes one on the first heavy pass."}]
-        ratio = cur / base
-        if ratio >= 1.5:
-            return [{"id": "duckdb-bloat", "status": "warn",
-                     "title": f"Index database grew {ratio:.1f}x its compacted size ({cur / 10**9:.2f} GB)",
-                     "detail": "DuckDB never reclaims dead space on its own; compaction rewrites the file.",
-                     "fix_command": f"python compact.py {repo}"}]
-        return [{"id": "duckdb-size", "status": "ok",
-                 "title": f"Index database: {cur / 10**9:.2f} GB ({ratio:.2f}x compacted baseline)",
-                 "detail": "Healthy - auto-compaction rewrites the file when it grows past its ratio."}]
+        from ..index import store
+        manifest = store.read_manifest(repo)
+        if manifest is None:
+            return [{"id": "index-missing", "status": "warn", "title": "No index yet",
+                     "detail": "This repo has not been indexed. Run an index to populate it."}]
+        pool = os.path.join(store.repo_dir(repo), "pool")
+        size = sum(os.path.getsize(os.path.join(d, f))
+                   for d, _s, fs in os.walk(pool) for f in fs)
+        stats = manifest.get("stats", {})
+        return [{"id": "index-size", "status": "ok",
+                 "title": f"Index: {size / 10**9:.2f} GB (generation {manifest.get('generation')})",
+                 "detail": f"{stats.get('paths', 0):,} paths, {stats.get('file_versions', 0):,} "
+                           f"file versions. Immutable artifacts - nothing to compact."}]
     except Exception as exc:  # noqa: BLE001 - a health check must never break the panel
-        log.warning("duckdb health check failed: %s", exc)
+        log.warning("index health check failed: %s", exc)
         return []
 
 
@@ -256,7 +254,7 @@ def _compute_stats(repo: str) -> dict:
                            "fix_command": None})
     else:
         data["parsed"] = {}
-    data["parsed"]["duckdb_health"] = _duckdb_health(repo)
+    data["parsed"]["duckdb_health"] = _index_health(repo)
     health.extend(h for h in data["parsed"]["duckdb_health"] if h["status"] == "warn")
     if content["packed_bytes"]:
         samples = _record_growth(repo, content["packed_bytes"])

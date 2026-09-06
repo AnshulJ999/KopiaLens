@@ -96,6 +96,68 @@ def publish(root: str, manifest: dict) -> None:
     log.info("published generation %s -> %s", manifest.get("generation"), root)
 
 
+def replace_artifacts(repo: str, tables: dict) -> int | None:
+    """Publish a new generation with `tables` replaced and every other artifact carried forward.
+
+    For the small, separately-computed artifacts (snapshot analysis, the content refcount) that are
+    produced by a later worker stage rather than by the index build. Carrying the rest forward by
+    reference is what makes this cheap: only the changed file is written.
+
+    ``tables`` maps artifact name -> pyarrow.Table. Returns the new generation number, or None if
+    another writer holds the repo (the caller's value is a cache and can be recomputed).
+    """
+    import duckdb
+    import pyarrow as pa  # noqa: F401 - the caller's tables are pyarrow
+
+    from . import store
+
+    manifest = store.read_manifest(repo)
+    if manifest is None:
+        return None
+    root = store.repo_dir(repo)
+    try:
+        lock = WriterLock(repo)
+        lock.__enter__()
+    except RuntimeError:
+        log.info("repo=%s replace_artifacts skipped, another writer holds the repo", repo)
+        return None
+    try:
+        gen = int(manifest.get("generation") or 0) + 1
+        staging = os.path.join(root, "_staging")
+        os.makedirs(staging, exist_ok=True)
+        con = duckdb.connect()
+        moves, artifacts = [], dict(manifest.get("artifacts", {}))
+        try:
+            for name, table in tables.items():
+                staged = os.path.join(staging, f"{name}_g{gen}.parquet")
+                con.register("_repl", table)
+                con.execute("COPY (SELECT * FROM _repl) TO '%s' (FORMAT parquet, COMPRESSION zstd)"
+                            % staged.replace("\\", "/").replace("'", "''"))
+                con.unregister("_repl")
+                rel = f"pool/{name}/g{gen}.parquet"
+                moves.append((staged, rel))
+                artifacts[name] = [rel]
+        finally:
+            con.close()
+        new = dict(manifest)
+        new["generation"] = gen
+        new["artifacts"] = artifacts
+        new["_moves"] = moves
+        publish(root, new)
+        return gen
+    finally:
+        lock.__exit__(None, None, None)
+
+
+def _owner_stamp() -> str:
+    """``<pid>:<process start time>`` - see WriterLock._stale for why the start time is needed."""
+    try:
+        import psutil
+        return f"{os.getpid()}:{psutil.Process(os.getpid()).create_time()}"
+    except Exception:  # noqa: BLE001 - psutil absent: pid alone, and _stale degrades gracefully
+        return str(os.getpid())
+
+
 class WriterLock:
     """One-process-at-a-time publication via an O_CREAT|O_EXCL lock file (PID inside, stale
     detection by process check - the technique reap_orphan_workers already uses)."""
@@ -117,21 +179,31 @@ class WriterLock:
             else:
                 raise RuntimeError(f"another writer holds {self.path}")
         with os.fdopen(fd, "w") as fh:
-            fh.write(str(os.getpid()))
+            fh.write(_owner_stamp())
 
     def _stale(self) -> bool:
+        """A lock left by a process that is gone.
+
+        PIDs recycle, so `pid_exists` alone eventually reports a dead owner as alive and the repo
+        stays locked forever. The stamp carries the process start time too: same pid AND same start
+        time means it really is the same process. (The orphan-worker reaper hit this same trap and
+        solved it by matching the command line.)
+        """
         try:
             with open(self.path, encoding="utf-8") as fh:
-                pid = int(fh.read().strip() or 0)
-        except Exception:
+                pid_s, _, started_s = fh.read().strip().partition(":")
+            pid = int(pid_s or 0)
+        except Exception:  # noqa: BLE001 - unreadable lock is a stale lock
             return True
         if not pid:
             return True
         try:
             import psutil
-            return not psutil.pid_exists(pid)
-        except Exception:  # noqa: BLE001
-            return False
+            if not started_s:                     # no start time: cannot prove ownership, so stale
+                return True
+            return abs(psutil.Process(pid).create_time() - float(started_s)) > 1.0
+        except Exception:  # noqa: BLE001 - NoSuchProcess, or psutil missing entirely
+            return True
 
     def __exit__(self, *exc):
         try:

@@ -24,7 +24,7 @@ from ..core.kopia import snapshot_delete_commands
 from ..core.sizemap import load_sizemap
 from ..core.walk import expand_indirect
 from .queries import _ESC, like_literal, snapshots_for_content
-from .schema import read_cursor
+from .store import read_cursor
 
 
 def _chunks_for_obj(repo: str, dbsql, obj: str) -> set[str]:

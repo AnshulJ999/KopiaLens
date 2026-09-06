@@ -243,12 +243,11 @@ def test_the_worker_emits_no_reason_on_a_stage_failure(monkeypatch, tmp_path):
     invented shapes before this pair existed."""
     from app.index import worker
     monkeypatch.setattr(worker, "progress_path", lambda repo: str(tmp_path / "p.json"))
-    import app.index.builder as builder_mod
 
     def _boom(repo, full=False):
         raise RuntimeError("walk failed")
 
-    monkeypatch.setattr(builder_mod, "auto_reindex_sync", _boom)
+    monkeypatch.setattr(worker, "index_stage", _boom)
     summary = worker.run("1", full=False)
     assert summary["ok"] is False
     assert "reason" not in summary

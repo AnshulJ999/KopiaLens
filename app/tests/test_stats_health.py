@@ -22,16 +22,29 @@ def test_maintenance_fix_commands_target_their_own_repo():
     assert all(h["fix_command"].startswith("kopia maintenance") for h in health1), health1
 
 
-def test_the_duckdb_bloat_fix_names_its_repo(monkeypatch):
-    import app.index.schema as schema
+def test_index_health_reports_the_published_generation(monkeypatch):
+    """Artifacts are immutable, so the useful facts are which generation is live and how big it
+    is - not bloat against a compaction baseline, which no longer exists."""
+    import app.index.store as store
 
-    monkeypatch.setattr(schema, "db_path", lambda repo: "nowhere.duckdb")
-    monkeypatch.setattr(schema, "compact_state", lambda: {"1": {"size": 10**9}})
-    monkeypatch.setattr("os.path.exists", lambda p: True)
-    monkeypatch.setattr(stats_api.os.path, "getsize", lambda p: 2 * 10**9)
-    entries = stats_api._duckdb_health("1")
+    monkeypatch.setattr(store, "read_manifest", lambda repo: {
+        "generation": 7, "stats": {"paths": 5_333_248, "file_versions": 18_972_487}})
+    monkeypatch.setattr(store, "repo_dir", lambda repo: "nowhere")
+    monkeypatch.setattr(stats_api.os, "walk", lambda p: [("nowhere", [], ["a.parquet"])])
+    monkeypatch.setattr(stats_api.os.path, "getsize", lambda p: 378 * 10**6)
+    entries = stats_api._index_health("1")
+    assert entries[0]["status"] == "ok"
+    assert "generation 7" in entries[0]["title"]
+    assert "5,333,248 paths" in entries[0]["detail"]
+
+
+def test_index_health_warns_when_a_repo_has_never_been_indexed(monkeypatch):
+    import app.index.store as store
+
+    monkeypatch.setattr(store, "read_manifest", lambda repo: None)
+    entries = stats_api._index_health("1")
     assert entries[0]["status"] == "warn"
-    assert entries[0]["fix_command"] == "python compact.py 1"
+    assert "not been indexed" in entries[0]["detail"]
 
 
 def test_the_settings_payload_never_carries_the_password_hash(monkeypatch):

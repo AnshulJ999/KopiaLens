@@ -187,26 +187,10 @@ def build_global(
     except Exception as exc:  # noqa: BLE001
         log.warning("repo=%s refcount pkl write failed: %s", repo, exc)
 
-    # persist the canonical full refcount into DuckDB (serialized + time-gated to cut grow-only churn)
-    if mode == "all" and not rec and (time.time() - _LAST_REFCOUNT_WRITE.get(repo, 0.0) >= _refcount_write_interval()):
-        with _REFCOUNT_WRITE_LOCK:
-            try:
-                from ..index.physical import materialize_refcount  # lazy: avoids core<-index import cycle
-                from ..index.schema import write_cursor
-                con = write_cursor(repo)
-                try:
-                    wrote = materialize_refcount(con, repo, count)
-                    con.commit()
-                finally:
-                    con.close()
-                # Only advance the throttle on a REAL write. If materialize_refcount no-op'd (row count
-                # unchanged), the table wasn't rewritten, so don't start the 6h window - let the next
-                # build re-check and write as soon as the content set actually changes.
-                if wrote:
-                    _LAST_REFCOUNT_WRITE[repo] = time.time()
-                    log.info("repo=%s content_refs materialized (%d contents)", repo, len(count))
-            except Exception as exc:  # noqa: BLE001
-                log.warning("repo=%s content_refs materialize failed: %s", repo, exc)
+    # The refcount is no longer persisted from here. The index is immutable Parquet published by
+    # the worker, and `artifacts.build_repo` materializes `crefs` from this same map as part of the
+    # build, so a second writer in the app process would only race the worker for the repo. The pkl
+    # above is still written and is what every in-process consumer reads.
 
     # paths.exclusive is NOT filled here anymore: the blanket UPDATE rewrote the whole multi-million-row
     # paths table on every build (DuckDB update = delete+insert), riding a throttle never meant to gate
@@ -292,7 +276,7 @@ def _table_snaphash(repo: str, mode: str, recent) -> str:
 def _file_counts(repo: str) -> dict[str, dict[str, int]]:
     """Per-source file counts for the dashboard: ``latest`` = files in the newest snapshot
     (fully walked), ``distinct`` = distinct paths ever seen across all snapshots."""
-    from ..index.schema import read_cursor  # lazy: avoids core<-index import cycle on load
+    from ..index.store import read_cursor  # lazy: avoids core<-index import cycle on load
     out: dict[str, dict[str, int]] = {}
     cur = read_cursor(repo)
     try:

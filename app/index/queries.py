@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from .schema import read_cursor
+from .store import read_cursor
 
 _SEP = chr(92)  # backslash path separator (avoids source-literal escaping)
 

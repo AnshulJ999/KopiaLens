@@ -30,6 +30,7 @@ from .core.instrument import log_memory, memory_snapshot
 from .core.metrics import table_rows
 from .core.schedule import compute_next_snapshots
 from .core.server import SERVERS
+from .index import store
 from .index.schema import RepoOffline, offline_status
 from .index.schema import close_all as close_duckdb
 from .settings import load_settings
@@ -473,10 +474,11 @@ async def lifespan(_app: FastAPI):
     yield
     log.info("KopiaLens shutting down")
     _bg_stop.set()
-    nightly.terminate_running()  # a worker outlives us otherwise and keeps the DuckDB locked
-    nightly.wait_idle()          # let the pass thread finish reopening before we close anything
+    nightly.terminate_running()  # a worker outlives us otherwise and keeps publishing
+    nightly.wait_idle()          # let the pass thread finish before we close anything
     SERVERS.shutdown()
-    close_duckdb()
+    store.close_all()            # the live and retired generations; the index reads come from here
+    close_duckdb()               # the scratch/legacy pool, normally already empty
     try:
         from .backblaze import bbdb as bz_bbdb
         bz_bbdb.close()
@@ -568,6 +570,27 @@ def auth_logout() -> JSONResponse:
 
 
 @app.middleware("http")
+async def generation_pin_middleware(request: Request, call_next):
+    """Hold ONE index generation for the whole request.
+
+    Without this each read resolves the current generation independently, so a publish landing
+    mid-request can answer one query from generation N and the next from N+1. That mixture returns
+    wrong numbers with no error, which is the one failure this storage design must not have.
+    Routes carry the repo as a query param and default to "1".
+    """
+    if not request.url.path.startswith("/api"):
+        return await call_next(request)
+    repo = request.query_params.get("repo", "1")
+    if repo not in REPOS or REPOS[repo].get("kind", "kopia") != "kopia":
+        return await call_next(request)   # Backblaze and unknown ids have no generation
+    try:
+        with store.pinned(repo):
+            return await call_next(request)
+    except FileNotFoundError:             # repo not indexed yet: let the route answer normally
+        return await call_next(request)
+
+
+@app.middleware("http")
 async def timing_middleware(request: Request, call_next):
     start = time.perf_counter()
     calls0, ktime0 = kopia_mod.KOPIA_CALLS, kopia_mod.KOPIA_TIME
@@ -581,6 +604,24 @@ async def timing_middleware(request: Request, call_next):
             request.method, request.url.path, response.status_code, ms, kc, kms,
         )
     return response
+
+
+@app.exception_handler(FileNotFoundError)
+async def _no_generation_handler(_request: Request, exc: FileNotFoundError):
+    """A repo that has never been indexed has no manifest, so the store cannot open a generation.
+
+    That is a normal state (fresh install, or a repo added since the last run), not a server fault.
+    It reuses the offline response shape because the UI already renders that as "back shortly"
+    rather than as an error.
+    """
+    msg = str(exc)
+    if "no index" not in msg:
+        raise exc                     # an unrelated missing file is a real 500, not this
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "This repo has not been indexed yet. Run an index to populate it.",
+                 "offline": True, "reason": "not indexed"},
+    )
 
 
 @app.exception_handler(RepoOffline)

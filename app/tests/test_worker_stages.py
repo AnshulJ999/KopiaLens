@@ -38,8 +38,8 @@ def ran(monkeypatch):
 
     monkeypatch.setattr(worker, "_Reporter", _StubReporter)
     monkeypatch.setattr(worker, "clear_progress", lambda repo: None)
-    monkeypatch.setattr("app.index.schema.close_all", lambda: None)
-    monkeypatch.setattr("app.index.builder.auto_reindex_sync",
+    monkeypatch.setattr("app.index.store.close_all", lambda: None)
+    monkeypatch.setattr("app.index.worker.index_stage",
                         lambda repo, full=False: executed.append("index"))
     monkeypatch.setattr("app.index.snapanalysis.prewarm",
                         lambda repo, with_reclaim=False: executed.append("analysis"))
@@ -96,7 +96,7 @@ def test_a_failed_dashboard_does_not_block_independent_stages(ran, monkeypatch):
 
 def test_a_failed_index_skips_everything_downstream(ran, monkeypatch):
     """A half-updated index makes every downstream number wrong, not just the refcount ones."""
-    _fail("index", monkeypatch, "app.index.builder.auto_reindex_sync")
+    _fail("index", monkeypatch, "app.index.worker.index_stage")
 
     summary = worker.run("1")
 

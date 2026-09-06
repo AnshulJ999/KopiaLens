@@ -10,6 +10,8 @@ older snapshot) AND the backward pass (not in any newer), and not present in any
 from __future__ import annotations
 
 import collections
+import contextlib
+from datetime import datetime
 import hashlib
 import threading
 
@@ -18,7 +20,7 @@ from ..core.sizemap import load_sizemap
 from ..core.sources import resolve_source
 from ..core.walk import walk, walk_new
 from .physical import _chunks_for_obj, _refcount_map
-from .schema import read_cursor, write_cursor
+from .store import read_cursor
 
 # (repo, snapshot_id) -> reclaimable files. LRU-bounded: these lists can be large and were
 # previously never evicted (a slow unbounded leak as snapshots were viewed over a long session).
@@ -161,21 +163,80 @@ def _snaphash(snaps: list[dict]) -> str:
     return digest.hexdigest()
 
 
-def _persist(repo: str, source: str, rows: list[dict], snaphash: str) -> None:
-    con = write_cursor(repo)
+_BATCH: dict[str, dict] = {}      # repo -> {source: (rows, snaphash)} while a batch is open
+_BATCH_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def batched(repo: str):
+    """Collect a whole stage's analysis and publish it as ONE generation.
+
+    Each `_persist` publishes a generation, and the analysis stage runs per source - so a 100-source
+    repo published 100 generations in one pass, rewriting the manifest 100 times and forcing every
+    reader to rebind its views just as often. The work is identical; only the number of publishes
+    changes.
+    """
+    with _BATCH_LOCK:
+        _BATCH.setdefault(repo, {})
     try:
-        con.execute("DELETE FROM snapshot_analysis WHERE repo=? AND source=?", [repo, source])
-        for r in rows:
-            rec = r["reclaimable"]
-            con.execute(
-                "INSERT INTO snapshot_analysis(repo, source, snapshot_id, churn, physical, reclaimable, snaphash) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",  # plain INSERT: _persist DELETEs the source's rows first; no PK now
-                [repo, source, r["id"], int(r["churn"]), int(r.get("physical") or 0),
-                 None if rec is None else int(rec), snaphash],
-            )
-        con.commit()
+        yield
     finally:
-        con.close()
+        with _BATCH_LOCK:
+            pending = _BATCH.pop(repo, {})
+        if pending:
+            _publish_analysis(repo, pending)
+
+
+def _persist(repo: str, source: str, rows: list[dict], snaphash: str) -> None:
+    """Republish the analysis artifact with this source's rows replaced.
+
+    Artifacts are immutable, so there is no row-level DELETE any more: the surviving rows and the
+    new ones are unioned into a fresh `sanalysis` file and published as a new generation with every
+    other artifact carried forward by reference. Column types come from the current view rather
+    than being restated here, so the artifact schema cannot drift between generations.
+
+    Analysis is a cache. If another writer holds the repo, `replace_artifacts` returns None and we
+    keep the computed value in memory - the next pass recomputes it.
+
+    Inside a `batched(repo)` block this only stages the rows; the block publishes once at the end.
+    """
+    with _BATCH_LOCK:
+        if repo in _BATCH:
+            _BATCH[repo][source] = (rows, snaphash)
+            return
+    _publish_analysis(repo, {source: (rows, snaphash)})
+
+
+def _publish_analysis(repo: str, per_source: dict) -> None:
+    """Union the surviving rows with every staged source's rows and publish one generation."""
+    import pyarrow as pa
+
+    from . import publish
+
+    now = datetime.now()
+    new = [(repo, source, r["id"], int(r["churn"]), int(r.get("physical") or 0),
+            None if r["reclaimable"] is None else int(r["reclaimable"]), snaphash, now)
+           for source, (rows, snaphash) in per_source.items()
+           for r in rows]
+    cols = list(zip(*new)) if new else [[]] * 8
+    incoming = pa.table({
+        "repo": list(cols[0]), "source": list(cols[1]), "snapshot_id": list(cols[2]),
+        "churn": list(cols[3]), "physical": list(cols[4]), "reclaimable": list(cols[5]),
+        "snaphash": list(cols[6]), "computed_at": list(cols[7]),
+    })
+    replaced = list(per_source)
+    cur = read_cursor(repo)
+    try:
+        cur.register("_sa_incoming", incoming)
+        placeholders = ",".join("?" * len(replaced))
+        merged = cur.execute(
+            f"SELECT * FROM snapshot_analysis "
+            f"WHERE NOT (repo = ? AND source IN ({placeholders})) "
+            f"UNION ALL BY NAME SELECT * FROM _sa_incoming", [repo, *replaced]).arrow()
+        cur.unregister("_sa_incoming")
+    finally:
+        cur.close()
+    publish.replace_artifacts(repo, {"sanalysis": merged})
 
 
 def compute_source(repo: str, source: str, with_reclaim: bool = True) -> dict:
@@ -274,19 +335,20 @@ def prewarm(repo: str, with_reclaim: bool = False) -> None:
     fields instead of being skipped because churn looks fresh (the old reclaimable-blank bug)."""
     from ..core.sources import sources_index
     heavy = 0
-    for key in sorted(sources_index(repo)):
-        try:
-            info = read_analysis(repo, key)
-            need = (not info["fresh"]) or (with_reclaim and not (info["recl_complete"] and info["phys_complete"]))
-            if not need:
-                continue
-            # Throttle the HEAVY (with_reclaim) recompute to a few sources per cycle so the
-            # first-time populate doesn't burst-DELETE the indexed maps and corrupt DuckDB (the
-            # repo1 fatal-index incident). The rest catch up on subsequent cycles.
-            if with_reclaim:
-                if heavy >= _MAX_HEAVY_PER_CYCLE:
+    with batched(repo):  # ONE published generation per stage, not one per source
+        for key in sorted(sources_index(repo)):
+            try:
+                info = read_analysis(repo, key)
+                need = (not info["fresh"]) or (with_reclaim and not (info["recl_complete"] and info["phys_complete"]))
+                if not need:
                     continue
-                heavy += 1
-            compute_source(repo, key, with_reclaim=with_reclaim)
-        except Exception:
-            continue
+                # Throttle the HEAVY (with_reclaim) recompute to a few sources per cycle so the
+                # first-time populate doesn't burst-DELETE the indexed maps and corrupt DuckDB (the
+                # repo1 fatal-index incident). The rest catch up on subsequent cycles.
+                if with_reclaim:
+                    if heavy >= _MAX_HEAVY_PER_CYCLE:
+                        continue
+                    heavy += 1
+                compute_source(repo, key, with_reclaim=with_reclaim)
+            except Exception:
+                continue

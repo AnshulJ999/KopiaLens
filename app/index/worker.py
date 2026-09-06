@@ -100,6 +100,32 @@ class _Reporter:
         self._stop.set()
 
 
+def index_stage(repo: str, full: bool = False) -> None:
+    """Produce and publish this repo's index generation.
+
+    The worker is the ONLY writer: artifacts are immutable and the manifest swap is the single
+    atomic switch, so a second publisher would just race this one. `build_repo` decides for itself
+    whether a source needs rebuilding by reading the existing manifest, which is why there is no
+    separate incremental entry point.
+
+    The job dict is registered in `builder._JOBS` because that is where `_Reporter` reads progress
+    from - unchanged plumbing, new producer. Module level, not a closure inside `run`, so tests can
+    replace it the same way they replace every other stage.
+    """
+    from . import artifacts, publish, store
+    from .builder import _JOBS
+
+    root = store.repo_dir(repo)
+    manifest = store.read_manifest(repo)
+    gen = int((manifest or {}).get("generation") or 0) + 1
+    job: dict = {}
+    _JOBS[repo] = job
+    with publish.WriterLock(repo):
+        body = artifacts.build_repo(repo, root, gen=gen, job=job, full=full)
+        publish.publish(root, body)
+    logging.info("published generation %s: %s", gen, body.get("stats"))
+
+
 def run(repo: str, full: bool = False) -> dict:
     """The nightly pass for one repo.
 
@@ -111,8 +137,6 @@ def run(repo: str, full: bool = False) -> dict:
     Stages after the index are otherwise independent: a failed churn rollup should not cost us the
     index. But if the INDEX itself fails, everything downstream would be computed over a
     half-updated index, so those are skipped rather than cached wrong."""
-    from .builder import auto_reindex_sync
-
     rep = _Reporter(repo)
     rep.start()
     summary: dict = {"repo": repo, "ok": True, "full": full, "stages": {},
@@ -147,7 +171,7 @@ def run(repo: str, full: bool = False) -> dict:
             # next OOMs nondeterministically. A cursor off the pooled connection shares that pool -
             # only closing the connection yields an empty one. Safe here: the repo is offline for
             # the whole worker run and nothing is in flight between stages.
-            from .schema import close_all
+            from .store import close_all
             close_all()
             gc.collect()
             from .churnview import prewarm as churn_prewarm
@@ -165,7 +189,7 @@ def run(repo: str, full: bool = False) -> dict:
             from ..core.schedule import compute_next_snapshots
             compute_next_snapshots(repo)
 
-        if stage("index", lambda: auto_reindex_sync(repo, full=full)):
+        if stage("index", lambda: index_stage(repo, full)):
             # Ordering alone is not the dependency - the dashboard stage has to SUCCEED. It rebuilds
             # the global content refcount, and the stages flagged below price delete-safety numbers
             # against it. Letting them run after a failed rebuild computes tonight's freeable and
@@ -201,7 +225,7 @@ def run(repo: str, full: bool = False) -> dict:
                 logging.info("refcount misses repo=%s: %s", repo, stats)
         except Exception:  # noqa: BLE001 - a diagnostic must never affect the run
             pass
-        from .schema import close_all
+        from .store import close_all
         try:
             close_all()  # release the DuckDB file before we exit so the app can reopen it promptly
         except Exception:  # noqa: BLE001

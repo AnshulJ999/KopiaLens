@@ -284,42 +284,36 @@ def _run_worker(repo: str, full: bool) -> dict:
     return summary
 
 
-def maybe_compact(repo: str) -> None:
-    """Compact the DuckDB when it has grown past ``compact_ratio`` x its last compacted size and
-    the min interval has elapsed. DuckDB never reclaims dead space on its own, so this is its GC.
-    Runs right after the worker's write burst, which is when the file is at its most bloated."""
-    kl = load_settings().get("kopialens", {})
-    if not kl.get("auto_compact", True):
-        return
-    from ..index.schema import compact_in_place, compact_state, db_path, record_compact_size
+def start_index_run(repo: str, full: bool = False) -> dict:
+    """Kick off an on-demand index run in the worker subprocess.
 
-    live = db_path(repo)
-    if not os.path.exists(live):
-        return
-    cur = os.path.getsize(live)
-    st = compact_state().get(repo, {})
-    base = st.get("size")
-    if not base:
-        record_compact_size(repo, cur)  # establish a baseline; never compact a just-rebuilt DB
-        return
-    ratio = float(kl.get("compact_ratio", 1.8))
-    interval = float(kl.get("compact_min_interval", 86400))
-    if time.time() - st.get("ts", 0) < interval or cur < base * ratio:
-        return
-    log.info("repo=%s auto-compact: size %d >= %.2fx baseline %d", repo, cur, ratio, base)
-    try:
-        compact_in_place(repo)  # records the new baseline on success
-    except Exception as exc:  # noqa: BLE001
-        log.error("repo=%s auto-compact failed: %s", repo, exc)
+    Replaces the old in-process `builder.start_build`. The worker is the only writer now, so an
+    on-demand rebuild has to go through the same path the nightly does - otherwise the app would
+    be a second publisher racing it for the repo. Reserves the one-repo-at-a-time slot
+    synchronously, before the thread starts, so "started: true" is truthful.
+    """
+    if not _reserve(repo):
+        return {"started": False, "reason": "another repo is indexing", "repo": repo}
+
+    def _go() -> None:
+        try:
+            _run_worker(repo, full)
+        finally:
+            _release(repo)
+
+    threading.Thread(target=_go, daemon=True).start()
+    return {"started": True, "repo": repo, "full": full}
 
 
 def _run_kopia(repo: str, full: bool) -> dict:
-    from ..index.schema import exclusive_offline
+    """Run the worker. No handover, no compaction.
 
-    with exclusive_offline(repo, reason="indexing"):
-        summary = _run_worker(repo, full)
-    maybe_compact(repo)  # after the connection is back, while the file is at its most bloated
-    return summary
+    The index is immutable Parquet published under a manifest, so the worker and the app read and
+    write the same directory concurrently: there is no exclusive file lock to hand over, the repo
+    never goes offline, and nothing accumulates dead space to reclaim. The app serves the previous
+    generation for the whole run and picks up the new one when the manifest swaps.
+    """
+    return _run_worker(repo, full)
 
 
 def _run_backblaze(repo: str) -> dict:

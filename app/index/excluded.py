@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from config import kopia_repos
 
 from ..core.everything import es_children, list_drives, recursive_count, recursive_size
-from .schema import read_cursor
+from .store import read_cursor
 
 _SEP = chr(92)  # backslash
 # (folder_lc, tolerance) -> (ts, result); TTL so repeated nav is instant. LRU-bounded (matches the

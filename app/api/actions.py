@@ -37,7 +37,7 @@ from ..core.kopia import (
 )
 from ..core.sources import invalidate as invalidate_sources, sources_index
 from ..index.schema import RepoOffline
-from ..index.builder import start_build
+from ..core.nightly import start_index_run as start_build
 from ..index.physical import batch_detail, folder_detail
 from ..index.queries import remove_targets, snapshots_for_path, sources_for_content, versions as file_versions
 from ..settings import load_settings
@@ -519,10 +519,15 @@ def batch_detail_route(payload: BatchDetailRequest) -> dict:
 
 @router.post("/actions/compact")
 def compact(payload: dict) -> dict:
-    """Compact a repo's DuckDB in place (reclaim dead space, no kopia rewalk). Briefly pauses DB
-    access for the swap; the original is replaced only after row-count verification passes."""
-    from ..index.schema import compact_in_place
-    return compact_in_place(payload.get("repo", "1"))
+    """No longer applicable. Kept so an old client gets an explanation rather than a 404.
+
+    Compaction existed because DuckDB never reclaims space on delete, so the index file only ever
+    grew. The index is now immutable Parquet: a source's artifact is rewritten whole and the space
+    from the old one is returned when the generation that referenced it is collected. There is
+    nothing to compact.
+    """
+    return {"ok": True, "compacted": False, "repo": payload.get("repo", "1"),
+            "reason": "The index no longer needs compaction. Space is reclaimed automatically."}
 
 
 @router.get("/actions/mounts")

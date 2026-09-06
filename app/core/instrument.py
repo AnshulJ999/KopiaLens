@@ -98,7 +98,7 @@ def memory_snapshot() -> dict:
         snap["refcount_misses"] = {"error": str(exc)}
     try:
         from config import kopia_repos
-        from ..index.schema import read_cursor
+        from ..index.store import read_cursor
 
         for repo in kopia_repos():  # DuckDB tables only exist for kopia repos
             try:

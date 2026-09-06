@@ -12,7 +12,7 @@ from ..core.metrics import table_rows
 from ..core.nightly import start_index_pass_async, state as nightly_state, worker_progress
 from ..core.sources import sources_index
 from ..index.schema import RepoOffline
-from ..index.builder import start_build, index_status_with_summary
+from ..index.builder import index_status_with_summary
 from ..settings import load_settings, mutate_settings
 
 router = APIRouter(tags=["dashboard"])
@@ -74,14 +74,15 @@ def get_index_status(repo: str = "1") -> dict:
 
 @router.post("/index/build")
 def post_index_build(repo: str = "1", source: str | None = None, full: bool = False) -> dict:
-    """Manual index. With no ``source`` this runs the SAME worker-subprocess pass the nightly
-    scheduler runs, so a hand-triggered index costs this process no memory either. Rebuilding a
-    single source stays in-process: it is small, and the worker's whole-repo handover would be
-    disproportionate for one source."""
+    """Manual index: the SAME worker-subprocess pass the nightly scheduler runs, so a
+    hand-triggered index costs this process no memory either.
+
+    ``source`` is accepted and ignored. It used to select an in-process single-source rebuild;
+    the builder now carries unchanged sources forward by reference and rebuilds only what actually
+    changed, so a whole-repo run already IS the targeted one. Publishing is also worker-only now,
+    so there is no in-process path left to take."""
     _require_kopia(repo)
     try:
-        if source:
-            return start_build(repo, source=source, full=full)
         # Same completion callback the scheduler uses - otherwise a successful MANUAL index would
         # leave the freshness strip showing the old success time.
         from ..main import mark_nightly_result  # lazy: app.main imports this router

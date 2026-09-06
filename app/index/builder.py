@@ -26,7 +26,8 @@ import pyarrow as pa
 from config import CACHEDIR
 
 from .physical import materialize_physical
-from .schema import (SCHEMA_VERSION, offline_status, read_cursor, stamp_schema_version,
+from .store import read_cursor          # status reads come from the published generation
+from .schema import (SCHEMA_VERSION, offline_status, stamp_schema_version,
                      stored_schema_version, write_cursor)
 from ..core import paths as pathrules
 from ..core.applog import get_logger

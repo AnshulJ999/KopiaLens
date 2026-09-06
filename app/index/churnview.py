@@ -27,7 +27,7 @@ import uuid
 from config import CACHEDIR
 
 from ..core.applog import get_logger
-from .schema import read_cursor
+from .store import read_cursor
 
 log = get_logger("churnview")
 
