@@ -34,21 +34,29 @@ def _parse_start(s: str) -> dt.datetime | None:
     return t.astimezone()  # naive (no offset) is assumed local; aware converts to local
 
 
-def _week_cutoff(week: str) -> dt.datetime:
-    """``week`` is the ISO date of the chosen week's LAST day; the cutoff is that day's end,
-    in the local timezone (kopia's startTimes carry offsets)."""
-    d = dt.date.fromisoformat(week)
-    return dt.datetime(d.year, d.month, d.day, 23, 59, 59).astimezone()
+def _week_bounds(week: str) -> tuple[dt.datetime, dt.datetime]:
+    """``week`` is the ISO date of the chosen week's LAST day. Returns that week's first moment
+    and last moment in the local timezone (kopia's startTimes carry offsets)."""
+    end_d = dt.date.fromisoformat(week)
+    start_d = end_d - dt.timedelta(days=6)
+    return (dt.datetime(start_d.year, start_d.month, start_d.day, 0, 0, 0).astimezone(),
+            dt.datetime(end_d.year, end_d.month, end_d.day, 23, 59, 59).astimezone())
 
 
-def _snapshot_ids_as_of(repo: str, cutoff: dt.datetime) -> list[str]:
-    """Per source, the id of its latest snapshot STARTED at or before ``cutoff`` (KL13 week view -
-    what the backup looked like THEN; later snapshots are invisible to it)."""
-    ids: list[str] = []
-    for snaps in sources_index(repo).values():
-        older = [(t, s) for s in snaps if (t := _parse_start(str(s.get("startTime") or ""))) and t <= cutoff]
-        if older:
-            ids.append(max(older, key=lambda p: p[0])[1].get("id"))
+def _snapshot_ids_in_week(repo: str, week: str) -> list[str]:
+    """Every snapshot, any source, that STARTED inside the chosen week (KL13 "Week" view).
+
+    Bounded at BOTH ends on purpose. Taking the latest snapshot at-or-before the week's end had
+    no lower bound, so a source last backed up in July answered a query about a week in August -
+    the view named a week it was not showing. A source that did not back up that week now
+    contributes nothing, which is the honest answer.
+
+    All of the week's snapshots are included, not just the last: for a source backing up nightly,
+    "what changed this week" is the union of that week's runs. A path changed twice in the week
+    therefore contributes twice to the size totals, the same as the existing All-snapshots mode."""
+    start, end = _week_bounds(week)
+    ids = [s.get("id") for snaps in sources_index(repo).values() for s in snaps
+           if (t := _parse_start(str(s.get("startTime") or ""))) and start <= t <= end]
     return [i for i in ids if i]
 
 
@@ -119,19 +127,19 @@ def tree(
     ``dedupe`` collapses same-content files into one row (content-aware). Filters: deleted_only
     (all mode only) / over_gb / ext / ext_exclude. ``flat`` = recursive flat file list under the
     prefix (collapse folders) - paths-based, works in any mode. ``week`` (All-Sources only) =
-    ISO date of a week's last day; lists what each source's snapshot from that week CHANGED
-    (the delta index, not a complete point-in-time tree - see "Changed in week" in the UI)."""
+    ISO date of a week's last day; lists what the snapshots taken INSIDE that week recorded as
+    changed (the delta index, not a complete point-in-time tree)."""
     if not source:
         raise HTTPException(status_code=400, detail="source is required")
     try:
         if source == "*ALL*":  # repo-wide aggregate across every source (parity with Snapshots *ALL*)
             min_size = 1_000_000_000 if over_gb else 0
             if week and mode != "reclaimable":
-                # "Changed in week" view: each source's snapshot from that week, through the
-                # existing snapshot-set query. files is a DELTA index - this lists what each
-                # snapshot changed, NOT a full point-in-time tree (that needs a dir-cache
+                # Week view: the snapshots taken inside that week, through the existing
+                # snapshot-set query. files is a DELTA index - this lists what those snapshots
+                # recorded as changed, NOT a full point-in-time tree (that needs a dir-cache
                 # reconstruction). Flat/reclaimable keep their latest-only semantics.
-                ids = _snapshot_ids_as_of(repo, _week_cutoff(week))
+                ids = _snapshot_ids_in_week(repo, week)
                 children = _post_filter(tree_children_snaps(repo, ids, prefix), over_gb, ext, ext_exclude)
             elif flat:
                 children = flat_files(repo, None, prefix, deleted_only=deleted_only,

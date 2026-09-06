@@ -631,8 +631,8 @@ document.addEventListener("alpine:init", () => {
     treeSourceChanged() { this.snapshots = []; this.selectedSnapshot = ""; if (this.selectedSource === "*ALL*") this.snapSource = "*ALL*"; this.treePrefix = this.sourceRoot(); this.openTree(); },
     treeModeChanged() { this.treePrefix = this.sourceRoot(); this.klSet({ tree_mode: this.treeMode }); this.openTree(); },
     treeWeekChanged() { this.treePrefix = this.sourceRoot(); this.loadTree(); },
-    // "Changed in week" options: the view lists what each source's snapshot from that week
-    // contains - the delta, not a full point-in-time tree. Value = the week's last-day ISO date.
+    // Week options: the view lists what the snapshots taken INSIDE that week recorded as
+    // changed - the delta, not a full point-in-time tree. Value = the week's last-day ISO date.
     get treeWeekOptions() {
       const iso = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
       const lbl = (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });

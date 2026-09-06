@@ -323,7 +323,10 @@ def _do_compact(repo: str, drain_timeout: float) -> dict:
         record_compact_size(repo, after)
         log.info("repo=%s compacted %d -> %d bytes", repo, before, after)
         from ..core import audit  # lazy: core imports pull config-heavy modules
-        audit.audit("executed", "compact", repo=repo, summary={"before": before, "after": after})
+        # actor=SYSTEM: auto-compaction fires from the background loop, not from a click. It is the
+        # only audited action that does, so an "admin" stamp here would make the field meaningless.
+        audit.audit("executed", "compact", repo=repo, summary={"before": before, "after": after},
+                    actor=audit.SYSTEM)
         return {"ok": True, "before": before, "after": after, "checks": checks}
     if os.path.exists(new):
         try:

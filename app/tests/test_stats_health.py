@@ -56,3 +56,40 @@ def test_a_timestamp_without_an_offset_still_parses():
 
 def test_the_default_actor_is_the_single_user():
     assert auth.current_actor() == auth.SUBJECT == "admin"
+
+
+def test_the_week_view_only_takes_snapshots_from_inside_that_week(monkeypatch):
+    """The selection used to be "latest snapshot at or before the week's end" - unbounded below, so
+    a source last backed up in July answered a query about a week in August. Both ends now bound it,
+    and a source with no snapshot that week contributes nothing."""
+    from app.api import tree as tree_api
+
+    snaps = {
+        "nightly": [{"id": "n1", "startTime": "2026-08-25T02:00:00+05:30"},
+                    {"id": "n2", "startTime": "2026-08-28T02:00:00+05:30"},
+                    {"id": "n3", "startTime": "2026-09-03T02:00:00+05:30"}],   # a later week
+        "stale": [{"id": "s1", "startTime": "2026-07-04T02:00:00+05:30"}],     # months earlier
+    }
+    monkeypatch.setattr(tree_api, "sources_index", lambda repo: snaps)
+    ids = tree_api._snapshot_ids_in_week("1", "2026-08-30")  # week of Aug 24 - Aug 30
+    assert sorted(ids) == ["n1", "n2"], ids
+    assert "s1" not in ids, "a source that did not back up that week must contribute nothing"
+    assert "n3" not in ids, "a later week's snapshot must not leak in"
+
+
+def test_week_bounds_span_the_whole_seven_days():
+    from app.api.tree import _week_bounds
+
+    start, end = _week_bounds("2026-08-30")
+    assert start.date().isoformat() == "2026-08-24"
+    assert end.date().isoformat() == "2026-08-30"
+    assert (end - start).days == 6
+
+
+def test_automatic_compaction_is_audited_as_system_not_as_the_user():
+    """One column with one value carries no information. Auto-compaction is the only audited action
+    that is not a click, so it is the one that must not say "admin"."""
+    from app.core import audit, auth
+
+    assert audit.SYSTEM == "system"
+    assert auth.current_actor() != audit.SYSTEM

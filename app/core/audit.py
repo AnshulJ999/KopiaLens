@@ -30,6 +30,11 @@ log = get_logger("audit")
 _PATH = os.path.join(DATA_DIR, "audit.jsonl")
 _LOCK = threading.Lock()
 
+# The actor for anything the app does on its own rather than because someone clicked. Auto-
+# compaction is the only such action audited today; everything else is request-driven and gets
+# auth.current_actor(). Two real values beat a column that always says the same thing.
+SYSTEM = "system"
+
 
 def _path() -> str:
     return _PATH
