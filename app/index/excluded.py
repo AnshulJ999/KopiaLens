@@ -1,8 +1,8 @@
 """Excluded browser: which on-disk paths are NOT backed up by EITHER kopia repo.
 
-"Backed up" = the path is present in `paths(in_latest=true)` of repo1 OR repo2 (case-insensitive,
-via the `path_lc` index). Disk side = Everything (`es.exe`). For each folder you open we do ONE
-indexed range scan per repo (bounded to that subtree), aggregated by immediate child segment.
+"Backed up" = the path is present in `pathx(in_latest=true)` of repo1 OR repo2 (case-insensitive,
+via inline `lower(full_path)`). Disk side = Everything (`es.exe`). For each folder you open we do
+ONE indexed range scan per repo (bounded to that subtree), aggregated by immediate child segment.
 """
 
 from __future__ import annotations
@@ -68,17 +68,17 @@ def kopia_backed_children(folder: str) -> dict[str, dict]:
                 SELECT seg, bool_or(is_file) AS has_file, sum(sz) AS logical, count(*) AS cnt,
                        max(ls) AS last_seen
                 FROM (
-                    SELECT path_lc,
-                           any_value(split_part(substr(path_lc, ?), ?, 1)) AS seg,
-                           any_value(instr(substr(path_lc, ?), ?) = 0) AS is_file,
-                           max(size) AS sz, max(last_seen) AS ls
-                    FROM paths
-                    WHERE repo = ? AND in_latest AND path_lc >= ? AND path_lc < ?
-                    GROUP BY path_lc
+                    SELECT lower(p.full_path) AS path_lc,
+                           any_value(split_part(substr(lower(p.full_path), ?), ?, 1)) AS seg,
+                           any_value(instr(substr(lower(p.full_path), ?), ?) = 0) AS is_file,
+                           max(p.size) AS sz, max(p.last_seen) AS ls
+                    FROM pathx p
+                    WHERE p.in_latest AND lower(p.full_path) >= ? AND lower(p.full_path) < ?
+                    GROUP BY lower(p.full_path)
                 )
                 GROUP BY seg
                 """,
-                [plen + 1, _SEP, plen + 1, _SEP, repo, lo, hi],
+                [plen + 1, _SEP, plen + 1, _SEP, lo, hi],
             ).fetchall()
         finally:
             cur.close()
@@ -126,9 +126,10 @@ def kopia_drive_backed() -> dict[str, tuple]:
         try:
             rows = cur.execute(
                 "SELECT upper(substr(path_lc, 1, 1)) AS drive, sum(sz) AS b, count(*) AS c FROM ("
-                "  SELECT path_lc, max(size) AS sz FROM paths"
-                "  WHERE repo = ? AND in_latest AND substr(path_lc, 2, 1) = ':' GROUP BY path_lc"
-                ") GROUP BY drive", [repo]).fetchall()
+                "  SELECT lower(p.full_path) AS path_lc, max(p.size) AS sz FROM pathx p"
+                "  WHERE p.in_latest AND substr(lower(p.full_path), 2, 1) = ':' "
+                "  GROUP BY lower(p.full_path)"
+                ") GROUP BY drive").fetchall()
         finally:
             cur.close()
         for drive, b, c in rows:
@@ -144,7 +145,7 @@ def _newest_snapshot() -> str:
     for repo in kopia_repos():
         cur = read_cursor(repo)
         try:
-            row = cur.execute("SELECT max(start_time) FROM indexed_snapshots WHERE repo=?", [repo]).fetchone()
+            row = cur.execute("SELECT max(start_time) FROM isnaps").fetchone()
         finally:
             cur.close()
         if row and row[0]:
@@ -253,9 +254,10 @@ def drive_stats() -> list[dict]:
             cur = read_cursor(repo)
             try:
                 row = cur.execute(
-                    "SELECT sum(sz), count(*) FROM (SELECT max(size) AS sz FROM paths "
-                    "WHERE repo=? AND in_latest AND path_lc >= ? AND path_lc < ? GROUP BY path_lc)",
-                    [repo, lo, hi],
+                    "SELECT sum(sz), count(*) FROM (SELECT max(p.size) AS sz FROM pathx p "
+                    "WHERE p.in_latest AND lower(p.full_path) >= ? AND lower(p.full_path) < ? "
+                    "GROUP BY lower(p.full_path))",
+                    [lo, hi],
                 ).fetchone()
             finally:
                 cur.close()
