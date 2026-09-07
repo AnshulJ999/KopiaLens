@@ -138,10 +138,13 @@ def _search_where(repo: str, query: str, deleted_only: bool, min_size: int,
     return where, params
 
 
-def _order_clause(sort: str, direction: str) -> str:
+# Every ordered query ends on a column that is unique in its own output, so tied sort keys resolve
+# the same way on every run. Without it a top-N list silently changes membership between identical
+# calls. Row-level queries use (source, full_path); grouped queries use their group key.
+def _order_clause(sort: str, direction: str, tiebreak: str = "source, full_path") -> str:
     col = _SEARCH_SORT.get(sort, "size")
     dirn = "ASC" if str(direction).lower() == "asc" else "DESC"
-    return f"ORDER BY {col} {dirn}, last_seen DESC"
+    return f"ORDER BY {col} {dirn}, last_seen DESC, {tiebreak}"
 
 
 def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_size: int = 0,
@@ -175,7 +178,7 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                 FROM paths
                 WHERE {where_sql} AND content_id IS NOT NULL
                 GROUP BY content_id
-                {_order_clause(sort, direction)}
+                {_order_clause(sort, direction, "content_id")}
                 LIMIT ? OFFSET ?
                 """,
                 [repo, *params, limit, offset],
@@ -268,7 +271,7 @@ def versions(repo: str, source: str, full_path: str) -> list[dict]:
             SELECT snapshot_id, start_time, size, content_id
             FROM files
             WHERE repo=? AND source=? AND full_path=?
-            ORDER BY start_time DESC
+            ORDER BY start_time DESC, snapshot_id DESC
             """,
             [repo, source, full_path],
         )
@@ -300,7 +303,7 @@ def snapshot_files(repo: str, snapshot_ids: list[str], limit: int = 40,
             f"""
             SELECT full_path, any_value(source) AS source, max(size) AS size
             FROM files WHERE repo=? AND snapshot_id IN ({ph}){extra}
-            GROUP BY full_path ORDER BY size DESC LIMIT ?
+            GROUP BY full_path ORDER BY size DESC, full_path LIMIT ?
             """,
             [*params, limit],
         )
@@ -338,7 +341,7 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "",
             FROM sub
             WHERE remainder <> ''
             GROUP BY name
-            ORDER BY size DESC
+            ORDER BY size DESC, name
             """,
             [base, base, repo, source, snapshot_id, like]
             + ([repo] if reclaimable_only else [])
@@ -428,7 +431,7 @@ def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | No
             FROM paths WHERE {where}
             GROUP BY folder
             HAVING sum(physical) >= {int(min_size)} AND count(*) >= {int(min_files)}
-            ORDER BY {order} {dirn} LIMIT {int(limit)}
+            ORDER BY {order} {dirn}, folder LIMIT {int(limit)}
             """,
             [_SEP, _SEP, _SEP, *params],
         )
@@ -506,7 +509,7 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
         files = _rows(
             cur,
             f"SELECT source, full_path, content_id, size, physical FROM paths WHERE {where_sql} "
-            f"ORDER BY physical DESC NULLS LAST, size DESC LIMIT {int(cap)}",
+            f"ORDER BY physical DESC NULLS LAST, size DESC, source, full_path LIMIT {int(cap)}",
             [repo, *params],
         )
         logical = sum(int(f["size"] or 0) for f in files)
@@ -589,7 +592,7 @@ def folder_sources(repo: str, prefix: str) -> list[dict]:
             "  max(last_seen) AS last_seen, "
             "  count(*) FILTER (WHERE NOT in_latest) AS deleted_files "
             "FROM paths WHERE repo = ? AND (path_lc = ? OR path_lc LIKE ?" + _ESC + ") "
-            "GROUP BY source ORDER BY physical DESC",
+            "GROUP BY source ORDER BY physical DESC, source",
             [repo, exact, like],
         )
     finally:
@@ -643,7 +646,7 @@ def folder_top_children(repo: str, prefix: str, limit: int = 5, source: str | No
             f"SELECT list_extract(string_split(substr(full_path, ?), ?), 1) AS child, "
             f"  COALESCE(sum(physical), 0) AS physical, count(*) AS files "
             f"FROM paths WHERE {where} GROUP BY child "
-            f"ORDER BY physical DESC LIMIT {int(limit)}",
+            f"ORDER BY physical DESC, child LIMIT {int(limit)}",
             [len(base) + 2, _SEP, *params],
         )
     finally:
@@ -670,7 +673,7 @@ def flat_files(repo: str, source: str, prefix: str = "", deleted_only: bool = Fa
             cur,
             f"SELECT source, full_path AS path, full_path AS name, size, physical, "
             f"last_seen AS modified, content_id FROM paths WHERE {where_sql} "
-            f"ORDER BY physical DESC NULLS LAST, size DESC LIMIT {int(limit)}",
+            f"ORDER BY physical DESC NULLS LAST, size DESC, source, full_path LIMIT {int(limit)}",
             [repo, *params],
         )
     finally:
@@ -778,7 +781,7 @@ def tree_children_all(repo: str, prefix: str, latest_only: bool = False, deleted
                    sum(size) AS size, sum(physical) AS physical,
                    count(*) AS files, max(last_seen) AS modified,
                    max(CASE WHEN position(? IN remainder) > 0 THEN 1 ELSE 0 END) AS is_folder
-            FROM sub WHERE remainder <> '' GROUP BY name ORDER BY size DESC
+            FROM sub WHERE remainder <> '' GROUP BY name ORDER BY size DESC, name
             """,
             [repo, *params, base, base,
              _SEP * 2, _SEP * 2, _SEP, _SEP, _SEP, _SEP, _SEP],
@@ -829,7 +832,7 @@ def tree_children_snaps(repo: str, snapshot_ids: list[str], prefix: str = "") ->
                    END AS name, sum(size) AS size, count(*) AS files,
                    max(mtime) AS modified,
                    max(CASE WHEN position(? IN remainder) > 0 THEN 1 ELSE 0 END) AS is_folder
-            FROM sub WHERE remainder <> '' GROUP BY name ORDER BY size DESC
+            FROM sub WHERE remainder <> '' GROUP BY name ORDER BY size DESC, name
             """,
             [repo, *snapshot_ids, like, base, base,
              _SEP * 2, _SEP * 2, _SEP, _SEP, _SEP, _SEP, _SEP],
@@ -901,7 +904,7 @@ def tree_children_paths(repo: str, source: str, prefix: str, deleted_only: bool 
             FROM sub
             WHERE remainder <> ''
             GROUP BY name
-            ORDER BY size DESC
+            ORDER BY size DESC, name
             """,
             [base, base, *params, _SEP * 2, _SEP * 2, _SEP, _SEP, _SEP, _SEP, _SEP],
         )

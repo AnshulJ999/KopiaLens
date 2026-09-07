@@ -456,7 +456,8 @@ def batch_detail(repo: str, files: list[dict], all_versions: bool = True) -> dic
             for src, fp, obj, sz in cur.execute(
                 f"SELECT f.source, f.full_path, f.content_id, f.size FROM files f "
                 f"JOIN {pairs_rel} p ON p.source = f.source AND p.full_path = f.full_path "
-                f"WHERE f.repo = ? ORDER BY f.source, f.full_path, f.start_time DESC", [repo]
+                f"WHERE f.repo = ? ORDER BY f.source, f.full_path, f.start_time DESC, "
+                f"f.snapshot_id DESC", [repo]
             ).fetchall():
                 by_path[(src, fp)].append((obj, sz))
         for key, rows in by_path.items():
@@ -514,7 +515,7 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
     try:
         versions = cur.execute(
             "SELECT snapshot_id, start_time, size, content_id FROM files "
-            "WHERE repo=? AND source=? AND full_path=? ORDER BY start_time DESC",
+            "WHERE repo=? AND source=? AND full_path=? ORDER BY start_time DESC, snapshot_id DESC",
             [repo, source, full_path],
         ).fetchall()
     finally:
