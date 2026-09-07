@@ -1,16 +1,14 @@
-"""The store reader's compatibility views - portable, synthesized fixture.
+"""The store reader's raw artifact binding - portable, synthesized fixture.
 
-Proves the Parquet artifacts, through ``store._bind_generation``, reassemble today's
-``files``/``paths``/``content_sizes``/``content_refs``/``indirect_phys``/``snapshot_analysis``/
-``indexed_snapshots`` shapes exactly: full_path, source, content_id and snapshot_id all map
-through the integer id joins, ``path_lc`` is ``lower(full_path)``, and the repo id is a literal.
-The real-data parity (16 benchmark questions + app functions on both repos) is the throwaway
-smoke check and, later, the parity runner; this test pins the view SQL without the lab data.
+Proves ``store._bind_generation`` opens a generation from explicit parquet file lists: every
+raw artifact (``src``/``cid``/``snap``/``pathx``/``filev``/``csize``/``crefs``/``iphys`` plus
+the passthrough ``sanalysis``/``isnaps``) is bound and cross-readable, and the builder-only
+stubs answer empty. M2 deleted the compatibility views this file used to pin; the rewritten
+query modules are pinned by their own tests and by the parity runner on real data.
 """
 
 from __future__ import annotations
 
-import datetime as dt
 import os
 
 import duckdb
@@ -78,44 +76,30 @@ def _bind(artifacts):
     return con
 
 
-def test_paths_reassembles_every_join(artifacts):
+def test_raw_artifacts_bind_and_cross_read(artifacts):
     con = _bind(artifacts)
+    assert con.execute("SELECT count(*) FROM pathx").fetchone()[0] == 3
     rows = con.execute(
-        "SELECT full_path, source, content_id, path_lc, versions, in_latest FROM paths "
-        "ORDER BY full_path").fetchall()
+        "SELECT p.full_path, sn.snapshot_id, c.content_id FROM filev f "
+        "JOIN pathx p ON p.path_id = f.path_id "
+        "JOIN snap sn ON sn.snap_id = f.snap_id "
+        "JOIN cid c ON c.cid_id = f.cid_id "
+        "ORDER BY p.full_path, sn.snapshot_id").fetchall()
     assert rows == [
-        (f"C:{SEP}A{SEP}b.txt", f"s1:C:{SEP}A", "obj_b", f"c:{SEP}a{SEP}b.txt", 1, True),
-        (f"C:{SEP}A{SEP}sub{SEP}a.txt", f"s1:C:{SEP}A", "obj_a",
-         f"c:{SEP}a{SEP}sub{SEP}a.txt", 2, True),
-        (f"C:{SEP}B{SEP}c.txt", f"s2:C:{SEP}B", "obj_c", f"c:{SEP}b{SEP}c.txt", 1, True),
+        (f"C:{SEP}A{SEP}b.txt", "snap2", "obj_b"),
+        (f"C:{SEP}A{SEP}sub{SEP}a.txt", "snap1", "obj_a"),
+        (f"C:{SEP}A{SEP}sub{SEP}a.txt", "snap2", "obj_a"),
+        (f"C:{SEP}B{SEP}c.txt", "snap2", "obj_c"),
     ]
-
-
-def test_files_maps_snapshot_and_content(artifacts):
-    con = _bind(artifacts)
-    rows = con.execute(
-        "SELECT full_path, snapshot_id, start_time, content_id, ordinal FROM files "
-        "ORDER BY full_path, snapshot_id").fetchall()
-    assert rows == [
-        (f"C:{SEP}A{SEP}b.txt", "snap2", dt.datetime(2025, 1, 2), "obj_b", 0),
-        (f"C:{SEP}A{SEP}sub{SEP}a.txt", "snap1", dt.datetime(2025, 1, 1), "obj_a", 0),
-        (f"C:{SEP}A{SEP}sub{SEP}a.txt", "snap2", dt.datetime(2025, 1, 2), "obj_a", 1),
-        (f"C:{SEP}B{SEP}c.txt", "snap2", dt.datetime(2025, 1, 2), "obj_c", 0),
-    ]
-
-
-def test_maps_translate_cid_id_to_content_string(artifacts):
-    con = _bind(artifacts)
-    assert con.execute("SELECT repo, cid, packed FROM content_sizes ORDER BY cid").fetchall() == [
-        ("1", "obj_a", 100), ("1", "obj_c", 300)]
-    assert con.execute("SELECT repo, cid, refs FROM content_refs ORDER BY cid").fetchall() == [
-        ("1", "obj_a", 2), ("1", "obj_b", 1)]
-    assert con.execute("SELECT repo, oid, packed FROM indirect_phys").fetchall() == [("1", "obj_c", 300)]
+    assert con.execute("SELECT cid_id, refs FROM crefs ORDER BY cid_id").fetchall() == [
+        (10, 2), (20, 1)]
+    assert con.execute("SELECT cid_id, packed FROM csize ORDER BY cid_id").fetchall() == [
+        (10, 100), (30, 300)]
 
 
 def test_small_tables_and_readonly_stubs(artifacts):
     con = _bind(artifacts)
-    assert con.execute("SELECT count(*) FROM snapshot_analysis").fetchone()[0] == 0
-    assert con.execute("SELECT count(*) FROM indexed_snapshots").fetchone()[0] == 0
+    assert con.execute("SELECT count(*) FROM sanalysis").fetchone()[0] == 0
+    assert con.execute("SELECT count(*) FROM isnaps").fetchone()[0] == 0
     assert con.execute("SELECT count(*) FROM first_seen_meta").fetchone()[0] == 0
     assert con.execute("SELECT count(*) FROM kl_meta").fetchone()[0] == 0

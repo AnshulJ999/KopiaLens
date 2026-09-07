@@ -2,12 +2,11 @@
 
 Replaces the mutable per-repo ``.duckdb`` file with immutable Parquet artifacts published as
 numbered generations. This module is the READER: it opens an in-memory DuckDB and binds the
-manifest's explicit file lists as views, exposing (a) the raw artifact tables (``filev``,
+manifest's explicit file lists as views, exposing the raw artifact tables (``filev``,
 ``pathx``, ``dir``, ``anc``, ``src``, ``cid``, ``snap``, ``csize``, ``crefs``, ``iphys``,
-``sanalysis``, ``isnaps``) for M2, and (b) compatibility views (``files``, ``paths``,
-``content_sizes``, ``content_refs``, ``indirect_phys``, ``snapshot_analysis``,
-``indexed_snapshots``, ``first_seen_meta``, ``kl_meta``) that make the new data look like
-today's tables so the existing queries run unchanged.
+``sanalysis``, ``isnaps``). M2 deleted the compatibility views that used to reassemble the
+old table shapes here - every read path resolves integer ids directly through
+``resolve.py`` and the rewritten query modules.
 
 The writer (``publish.py``, ``artifacts.py``, ``ids.py``) lands in the same pass; this module
 only ever READS. No directory is ever globbed - the manifest names every file.
@@ -113,49 +112,17 @@ def _one_table(con, name: str, files: list[str]) -> None:
 
 
 def _bind_generation(con, repo: str, artifacts: dict[str, list[str]]) -> None:
-    """Bind the raw artifact views and the compatibility views over them.
+    """Bind the raw artifact views over an explicit file list (never a glob).
 
-    ``artifacts`` maps artifact name -> list of absolute file paths. The ``repo`` id is baked
-    into the compatibility views as a literal (the per-repo data dir makes the column redundant);
-    the ``WHERE repo = ?`` predicates keep working and are deleted in M2, not here.
+    M2 deleted the compatibility views that used to reassemble the old ``files``/``paths``/
+    ``content_sizes``/... shapes here - the rewritten query modules read the raw artifacts and
+    resolve integer ids via ``resolve.py``. ``first_seen_meta``/``kl_meta`` stay as typed empty
+    stubs: builder-only tables, so an accidental read returns nothing instead of raising.
     """
     for name in _ARTIFACT_TABLES:
         if name in artifacts:
             _one_table(con, name, artifacts[name])
 
-    repo_lit = str(repo)
-    con.execute(f"""
-        CREATE VIEW paths AS
-        SELECT '{repo_lit}' AS repo, s.source, p.full_path, p.name, p.ext, p.size,
-               p.versions, p.first_seen, p.last_seen, p.in_latest, c.content_id,
-               p.physical, lower(p.full_path) AS path_lc, p.exclusive
-        FROM pathx p
-        JOIN src s ON s.src_id = p.src_id
-        LEFT JOIN cid c ON c.cid_id = p.cid_id
-    """)
-    con.execute(f"""
-        CREATE VIEW files AS
-        SELECT '{repo_lit}' AS repo, s.source, p.full_path, p.name, f.size, c.content_id,
-               sn.snapshot_id, sn.start_time, f.ordinal, f.mtime
-        FROM filev f
-        JOIN pathx p ON p.path_id = f.path_id
-        JOIN src s ON s.src_id = p.src_id
-        JOIN snap sn ON sn.snap_id = f.snap_id
-        LEFT JOIN cid c ON c.cid_id = f.cid_id
-    """)
-    con.execute(f"CREATE VIEW content_sizes AS "
-                f"SELECT '{repo_lit}' AS repo, c.content_id AS cid, m.packed FROM csize m "
-                f"JOIN cid c USING (cid_id)")
-    con.execute(f"CREATE VIEW content_refs AS "
-                f"SELECT '{repo_lit}' AS repo, c.content_id AS cid, m.refs::BIGINT AS refs "
-                f"FROM crefs m JOIN cid c USING (cid_id)")
-    con.execute(f"CREATE VIEW indirect_phys AS "
-                f"SELECT '{repo_lit}' AS repo, c.content_id AS oid, m.packed FROM iphys m "
-                f"JOIN cid c USING (cid_id)")
-    # The small tables were copied whole into their artifacts, so they already match the old
-    # schema (repo included) and need no column surgery.
-    con.execute("CREATE VIEW snapshot_analysis AS SELECT * FROM sanalysis")
-    con.execute("CREATE VIEW indexed_snapshots AS SELECT * FROM isnaps")
     # Read-only stubs: these are builder-only tables (rewrite/backfill tracking). Empty but
     # correctly typed so any accidental read returns nothing instead of raising.
     con.execute(f"CREATE VIEW first_seen_meta AS "

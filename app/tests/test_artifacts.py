@@ -140,9 +140,9 @@ def test_empty_repo_publishes_an_openable_generation(tmp_path, monkeypatch):
     con = duckdb.connect()
     try:
         store._bind_generation(con, "1", arts)
-        assert con.execute("SELECT count(*) FROM paths").fetchone()[0] == 0
-        assert con.execute("SELECT count(*) FROM files").fetchone()[0] == 0
-        assert con.execute("SELECT count(*) FROM indexed_snapshots").fetchone()[0] == 0
+        assert con.execute("SELECT count(*) FROM pathx").fetchone()[0] == 0
+        assert con.execute("SELECT count(*) FROM filev").fetchone()[0] == 0
+        assert con.execute("SELECT count(*) FROM isnaps").fetchone()[0] == 0
     finally:
         con.close()
 

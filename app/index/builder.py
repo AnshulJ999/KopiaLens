@@ -466,9 +466,9 @@ def index_status(repo: str) -> dict:
         }
     cur = read_cursor(repo)
     try:
-        indexed = cur.execute("SELECT COUNT(*) FROM indexed_snapshots WHERE repo=?", [repo]).fetchone()[0]
-        files = cur.execute("SELECT COUNT(*) FROM files WHERE repo=?", [repo]).fetchone()[0]
-        last = cur.execute("SELECT max(indexed_at) FROM indexed_snapshots WHERE repo=?", [repo]).fetchone()[0]
+        indexed = cur.execute("SELECT COUNT(*) FROM isnaps").fetchone()[0]
+        files = cur.execute("SELECT COUNT(*) FROM filev").fetchone()[0]
+        last = cur.execute("SELECT max(indexed_at) FROM isnaps").fetchone()[0]
     finally:
         cur.close()
     return {
@@ -595,9 +595,9 @@ def _needs_full(repo: str) -> bool:
     an older schema version (rebuild-on-mismatch - there is no migration framework)."""
     cur = read_cursor(repo)
     try:
-        nfiles_src = cur.execute("SELECT count(DISTINCT source) FROM files WHERE repo=?", [repo]).fetchone()[0]
-        npaths_src = cur.execute("SELECT count(DISTINCT source) FROM paths WHERE repo=?", [repo]).fetchone()[0]
-        null_cid = cur.execute("SELECT count(*) FROM paths WHERE repo=? AND content_id IS NULL", [repo]).fetchone()[0]
+        nfiles_src = cur.execute("SELECT count(DISTINCT src_id) FROM filev").fetchone()[0]
+        npaths_src = cur.execute("SELECT count(DISTINCT src_id) FROM pathx").fetchone()[0]
+        null_cid = cur.execute("SELECT count(*) FROM pathx WHERE cid_id IS NULL").fetchone()[0]
         stale_schema = stored_schema_version(cur) not in (None, SCHEMA_VERSION)
     finally:
         cur.close()

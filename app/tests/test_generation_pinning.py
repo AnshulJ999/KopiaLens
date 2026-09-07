@@ -141,7 +141,7 @@ def test_pinned_scope_survives_a_publication(gen_repo):
         c2 = store.read_cursor("1")
         try:
             assert c2._gen is g                 # still the pinned generation, not the new one
-            assert c2.execute("SELECT count(*) FROM paths").fetchone()[0] == 1
+            assert c2.execute("SELECT count(*) FROM pathx").fetchone()[0] == 1
         finally:
             c1.close()
             c2.close()
