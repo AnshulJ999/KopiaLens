@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from config import REPOS
+from config import REPOS, repo_kind
 
 from ..core.everything import available
+from ..core.kopia import _repo_args
 from ..index.excluded import drive_stats, folder_listing
 from ..settings import load_settings
 
@@ -22,13 +23,15 @@ def drives() -> dict:
 
 @router.get("/excluded/include-cmds")
 def include_cmds(path: str = "") -> dict:
-    """Commands to ADD this path to Kopia (one per repo). KopiaLens stays read-only on config; you
-    copy/run. Adding it as a source means the global policy + schedule then apply."""
+    """Commands to ADD this path to Kopia (one per kopia repo). KopiaLens stays read-only on
+    config; you copy/run. Adding it as a source means the global policy + schedule then apply."""
     if not path:
         raise HTTPException(status_code=400, detail="path is required")
     cmds = []
     for repo, cfg in REPOS.items():
-        parts = ["kopia"] + cfg["args"] + ["snapshot", "create", path]
+        if repo_kind(repo) != "kopia":
+            continue  # a non-kopia repo has no args: the bare command would target the DEFAULT repo
+        parts = ["kopia"] + _repo_args(repo) + ["snapshot", "create", path]
         cmds.append({"repo": repo, "name": cfg["name"],
                      "command": " ".join(f'"{a}"' if (" " in a or not a) else a for a in parts)})
     return {"path": path, "commands": cmds}

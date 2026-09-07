@@ -14,15 +14,39 @@ actual failure mode. Testing only the nine known ones would have passed on the b
 from __future__ import annotations
 
 import inspect
+import pathlib
 import re
 
 import pytest
 
 from app.core import kopia
 
+_APP = pathlib.Path(kopia.__file__).resolve().parents[1]
+# Any subscript access to an "args" key, so the loop form (`for repo, cfg in REPOS.items(): cfg["args"]`)
+# is caught as well as the direct one. The old pattern only matched `REPOS[repo]["args"]`, and only
+# inside core/kopia.py - api/excluded.py built a bare Backblaze command in the loop form and was
+# invisible to both (found 2026-09-07).
+_ARGS_READ = re.compile(r"""\[\s*['"]args['"]\s*\]""")
+
+
+def test_no_module_reads_raw_repo_args():
+    """THE test, package-wide. Only _repo_args may touch a repo record's raw CLI args."""
+    offenders = []
+    for path in sorted(_APP.rglob("*.py")):
+        rel = path.relative_to(_APP).as_posix()
+        if rel.startswith("tests/") or rel == "core/kopia.py":
+            continue
+        for num, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            if _ARGS_READ.search(line):
+                offenders.append(f"{rel}:{num}")
+    assert not offenders, (
+        f"these read a repo record's raw args directly: {offenders}. "
+        "Route them through core.kopia._repo_args(repo), which rejects a non-kopia repo."
+    )
+
 
 def test_no_builder_bypasses_the_guard():
-    """THE test. Any new command builder that reaches for the raw args fails here."""
+    """The same invariant inside core/kopia.py, where the one permitted use lives."""
     src = inspect.getsource(kopia)
     uses = [m for m in re.finditer(r'REPOS\[[^\]]+\]\["args"\]', src)]
     # Exactly one legitimate use: inside _repo_args itself, after validation.

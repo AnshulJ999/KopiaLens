@@ -35,6 +35,7 @@ from config import REPOS, kopia_repos
 
 from ..settings import load_settings, save_settings
 from .applog import LOG_DIR, get_logger
+from .kopia import _repo_args
 
 log = get_logger("server")
 
@@ -106,7 +107,7 @@ class KopiaServers:
         port = self.port(repo)
         args = (
             ["kopia"]
-            + REPOS[repo]["args"]
+            + _repo_args(repo)   # never the raw args: a non-kopia repo would launch against the default
             + [
                 "server", "start",
                 "--insecure", "--disable-csrf-token-checks", "--no-grpc",
