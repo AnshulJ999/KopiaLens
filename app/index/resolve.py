@@ -25,7 +25,6 @@ import weakref
 import pyarrow as pa
 
 from ..core.applog import get_logger
-from ..core.paths import ident, ident_sql
 
 log = get_logger("resolve")
 
@@ -115,9 +114,12 @@ def snap_id(cur, snapshot_id: str) -> int | None:
 # ---- path / folder ----
 
 def path_id(cur, src_id: int, full_path: str) -> int | None:
-    """A path's row id inside one source, matched under the source's own case rules.
-    ONE caller at a time. At Arrow-join volumes (a set of pairs, not one path) use
-    ``path_ids`` - a single lookup scans 5.3M rows, so a per-pair loop re-scans per pair."""
+    """A path's row id inside one source, matched on the RAW string exactly - the way every
+    pre-M2 query matched it. Case-folding here made two distinct files differing only by case
+    resolve to an arbitrary one of them (325 colliding keys on repo1; batch_detail feeds
+    reclaim, which deletes). ONE caller at a time. At Arrow-join volumes (a set of pairs, not
+    one path) use ``path_ids`` - a single lookup scans 5.3M rows, so a per-pair loop re-scans
+    per pair."""
     return _path_lookup(cur, src_id, full_path)
 
 
@@ -126,10 +128,10 @@ def path_ids(cur, pairs) -> dict[tuple, int]:
 
     ``physical.batch_detail`` passes hundreds of (source, path) pairs; per-pair lookups there
     re-scanned pathx hundreds of times (the KL47 regression shape - correct answers, minutes
-    of wall time, invisible to a value-based gate). Identity rules are per source, so unlike
-    ``cid_ids`` this is one registered-join per source group rather than a single IN list.
-    Unresolvable pairs are absent from the result, never errors. ``dir_id`` carries the same
-    caution: batch, never loop, if a volume caller ever appears."""
+    of wall time, invisible to a value-based gate). Matching is RAW-EXACT within each source
+    group - one registered-join per group rather than a single IN list. Unresolvable pairs are
+    absent from the result, never errors. ``dir_id`` carries the same caution: batch, never
+    loop, if a volume caller ever appears."""
     out: dict[tuple, int] = {}
     groups: dict[int, list[str]] = {}
     for sid, fp in pairs or []:
@@ -137,13 +139,12 @@ def path_ids(cur, pairs) -> dict[tuple, int]:
             groups.setdefault(sid, []).append(fp)
     st = _state(cur)
     for sid, fps in groups.items():
-        source = source_of(cur, sid)
-        if source is None:
+        if source_of(cur, sid) is None:
             log.warning("resolve: src_id %r not in src", sid)
             continue
         wanted: list[str] = []
         for fp in fps:
-            key = (sid, ident(source, fp))
+            key = (sid, fp)
             hit = st["path"].get(key) if st is not None else None
             if hit is not None:
                 out[(sid, fp)] = hit
@@ -153,32 +154,28 @@ def path_ids(cur, pairs) -> dict[tuple, int]:
         if not uniq:
             continue
         name = f"_resolve_paths_{uuid.uuid4().hex[:12]}"
-        cur.register(name, pa.table({"p": [ident(source, x) for x in uniq]}))
+        cur.register(name, pa.table({"p": uniq}))
         try:
             rows = cur.execute(
                 f"SELECT r.p, px.path_id FROM pathx px JOIN {name} r "
-                f"ON {ident_sql(source, 'px.full_path')} = r.p WHERE px.src_id = ?",
+                f"ON px.full_path = r.p WHERE px.src_id = ?",
                 [sid]).fetchall()
         finally:
             cur.unregister(name)
         found = dict(rows)
         for fp in uniq:
-            pid = found.get(ident(source, fp))
+            pid = found.get(fp)
             if pid is None:
                 log.debug("resolve: path %r not in src_id %s", fp, sid)
                 continue
             out[(sid, fp)] = pid
             if st is not None:
-                _lru_put(st["path"], (sid, ident(source, fp)), pid, _PATH_LRU_MAX)
+                _lru_put(st["path"], (sid, fp), pid, _PATH_LRU_MAX)
     return out
 
 
 def _path_lookup(cur, src_id: int, full_path: str) -> int | None:
-    source = source_of(cur, src_id)
-    if source is None:
-        log.warning("resolve: src_id %r not in src", src_id)
-        return None
-    key = (src_id, ident(source, full_path))
+    key = (src_id, full_path)
     st = _state(cur)
     if st is not None:
         hit = st["path"].get(key)
@@ -187,8 +184,8 @@ def _path_lookup(cur, src_id: int, full_path: str) -> int | None:
                 st["path"].move_to_end(key)
             return hit
     row = cur.execute(
-        f"SELECT path_id FROM pathx WHERE src_id = ? AND {ident_sql(source, 'full_path')} = ?",
-        [src_id, key[1]]).fetchone()
+        "SELECT path_id FROM pathx WHERE src_id = ? AND full_path = ?",
+        [src_id, full_path]).fetchone()
     pid = row[0] if row else None
     if pid is None:
         log.debug("resolve: path %r not in src_id %s", full_path, src_id)
@@ -198,12 +195,9 @@ def _path_lookup(cur, src_id: int, full_path: str) -> int | None:
 
 
 def dir_id(cur, src_id: int, dir_path: str) -> int | None:
-    """A folder's row id inside one source, matched under the source's own case rules."""
-    source = source_of(cur, src_id)
-    if source is None:
-        log.warning("resolve: src_id %r not in src", src_id)
-        return None
-    key = (src_id, ident(source, dir_path))
+    """A folder's row id inside one source, matched on the RAW string exactly - same rule as
+    ``path_id``; folding case-variants would merge distinct directories."""
+    key = (src_id, dir_path)
     st = _state(cur)
     if st is not None:
         hit = st["dir"].get(key)
@@ -212,8 +206,8 @@ def dir_id(cur, src_id: int, dir_path: str) -> int | None:
                 st["dir"].move_to_end(key)
             return hit
     row = cur.execute(
-        f"SELECT dir_id FROM dir WHERE src_id = ? AND {ident_sql(source, 'dir_path')} = ?",
-        [src_id, key[1]]).fetchone()
+        "SELECT dir_id FROM dir WHERE src_id = ? AND dir_path = ?",
+        [src_id, dir_path]).fetchone()
     did = row[0] if row else None
     if did is None:
         log.debug("resolve: dir %r not in src_id %s", dir_path, src_id)

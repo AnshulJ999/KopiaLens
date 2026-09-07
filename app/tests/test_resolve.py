@@ -1,9 +1,10 @@
-"""The natural-key resolver - id lookups, per-source identity rules, generation-scoped caches.
+"""The natural-key resolver - id lookups, generation-scoped caches.
 
-`src`/`snap` load whole per generation; `pathx`/`dir` match under the source's own case rules
-(via core.paths.ident); `cid` resolves batched both ways. The cache proof deletes a dictionary
-row behind a live cursor: within the generation the answer survives (cache), on a fresh
-generation it re-resolves (scoping) - a cache that crossed a publish would return stale ids.
+`src`/`snap` load whole per generation; `pathx`/`dir` match the RAW string exactly (case-folded
+lookup once merged distinct files that differ only by case - batch_detail feeds reclaim, which
+deletes); `cid` resolves batched both ways. The cache proof deletes a dictionary row behind a
+live cursor: within the generation the answer survives (cache), on a fresh generation it
+re-resolves (scoping) - a cache that crossed a publish would return stale ids.
 """
 
 from __future__ import annotations
@@ -20,7 +21,8 @@ SEP = chr(92)
 @pytest.fixture
 def cur():
     """Raw dictionary tables - the resolver only runs SELECTs against them, views vs base
-    tables is irrelevant, and base tables let the cache test DELETE a row."""
+    tables is irrelevant, and base tables let the cache test DELETE a row. Paths 5/6 are a
+    colliding pair: distinct raw paths differing only by case."""
     con = duckdb.connect()
     con.execute(f"CREATE TABLE src AS SELECT * FROM (VALUES "
                 f"(1::SMALLINT, 's1:C:{SEP}A'), (3::SMALLINT, 'u@h:/srv')) t(src_id, source)")
@@ -35,7 +37,13 @@ def cur():
                 f"100::UBIGINT, NULL::UBIGINT, 'C:{SEP}A{SEP}sub{SEP}a.txt'), "
                 f"(2, 3, 4, 'x.txt', 'txt', 5::UBIGINT, 1::INTEGER, "
                 f"TIMESTAMP '2025-01-01', TIMESTAMP '2025-01-01', true, 20::INTEGER, "
-                f"5::UBIGINT, NULL::UBIGINT, '/srv/x.txt')) "
+                f"5::UBIGINT, NULL::UBIGINT, '/srv/x.txt'), "
+                f"(5, 1, 2, 'Mail.1.gz', 'gz', 7::UBIGINT, 1::INTEGER, "
+                f"TIMESTAMP '2025-01-01', TIMESTAMP '2025-01-01', true, 10::INTEGER, "
+                f"7::UBIGINT, NULL::UBIGINT, 'C:{SEP}A{SEP}sub{SEP}MaIl.1.gz'), "
+                f"(6, 1, 2, 'mail.1.gz', 'gz', 8::UBIGINT, 1::INTEGER, "
+                f"TIMESTAMP '2025-01-01', TIMESTAMP '2025-01-01', true, 10::INTEGER, "
+                f"8::UBIGINT, NULL::UBIGINT, 'C:{SEP}A{SEP}sub{SEP}mail.1.gz')) "
                 f"t(path_id, src_id, dir_id, name, ext, size, versions, first_seen, last_seen, "
                 f"in_latest, cid_id, physical, exclusive, full_path)")
     con.execute(f"CREATE TABLE dir AS SELECT * FROM (VALUES "
@@ -52,14 +60,27 @@ def test_source_and_snapshot_resolve(cur):
     assert resolve.snap_id(cur, "nope") is None
 
 
-def test_path_and_dir_follow_source_case_rules(cur):
-    assert resolve.path_id(cur, 1, f"C:{SEP}A{SEP}SUB{SEP}a.txt") == 1
-    assert resolve.dir_id(cur, 1, f"c:{SEP}a{SEP}sub") == 2
+def test_path_and_dir_match_raw_exactly(cur):
+    """Lookup identity is the RAW string, exactly as every pre-M2 query matched it. Folding
+    case-variants made file_detail/versions/batch_detail describe an arbitrary one of two
+    distinct files."""
+    assert resolve.path_id(cur, 1, f"C:{SEP}A{SEP}sub{SEP}a.txt") == 1
+    assert resolve.path_id(cur, 1, f"C:{SEP}A{SEP}SUB{SEP}a.txt") is None  # no such raw row
+    assert resolve.dir_id(cur, 1, f"C:{SEP}A{SEP}sub") == 2
+    assert resolve.dir_id(cur, 1, f"c:{SEP}a{SEP}sub") is None
     assert resolve.path_id(cur, 999, "whatever") is None
-    # POSIX source: identity is case-sensitive
+    # POSIX source: exact means case-sensitive, as before
     assert resolve.path_id(cur, 3, "/srv/X.txt") is None
     assert resolve.path_id(cur, 3, "/srv/x.txt") == 2
     assert resolve.dir_id(cur, 3, "/srv") == 4
+
+
+def test_colliding_case_variants_stay_distinct(cur):
+    """The Luna-review regression pin: two raw paths differing only by case are two files. Each
+    spelling resolves to its own row; a third spelling that exists nowhere resolves to nothing."""
+    assert resolve.path_id(cur, 1, f"C:{SEP}A{SEP}sub{SEP}MaIl.1.gz") == 5
+    assert resolve.path_id(cur, 1, f"C:{SEP}A{SEP}sub{SEP}mail.1.gz") == 6
+    assert resolve.path_id(cur, 1, f"C:{SEP}A{SEP}sub{SEP}MAIL.1.gz") is None
 
 
 def test_content_ids_batch_and_reverse(cur):
@@ -70,13 +91,15 @@ def test_content_ids_batch_and_reverse(cur):
 
 
 def test_path_ids_batched(cur):
-    """One scan per source group; case variants of the same path share one answer; unresolvable
-    and invalid pairs are absent, never errors."""
-    pairs = [(1, f"C:{SEP}A{SEP}SUB{SEP}a.txt"), (1, f"c:{SEP}a{SEP}sub{SEP}A.TXT"),
+    """One scan per source group; colliding case-variants stay distinct; unresolvable and
+    invalid pairs are absent, never errors."""
+    pairs = [(1, f"C:{SEP}A{SEP}sub{SEP}a.txt"),
+             (1, f"C:{SEP}A{SEP}sub{SEP}MaIl.1.gz"), (1, f"C:{SEP}A{SEP}sub{SEP}mail.1.gz"),
              (3, "/srv/x.txt"), (3, "/srv/missing.txt"), (999, "junk"), (1, "")]
     assert resolve.path_ids(cur, pairs) == {
-        (1, f"C:{SEP}A{SEP}SUB{SEP}a.txt"): 1,
-        (1, f"c:{SEP}a{SEP}sub{SEP}A.TXT"): 1,
+        (1, f"C:{SEP}A{SEP}sub{SEP}a.txt"): 1,
+        (1, f"C:{SEP}A{SEP}sub{SEP}MaIl.1.gz"): 5,
+        (1, f"C:{SEP}A{SEP}sub{SEP}mail.1.gz"): 6,
         (3, "/srv/x.txt"): 2,
     }
 
