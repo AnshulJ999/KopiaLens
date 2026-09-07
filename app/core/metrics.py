@@ -281,17 +281,16 @@ def _file_counts(repo: str) -> dict[str, dict[str, int]]:
     cur = read_cursor(repo)
     try:
         for src, n in cur.execute(
-            "SELECT source, count(*) FROM paths WHERE repo=? GROUP BY source", [repo]
+            "SELECT s.source, count(*) FROM pathx p JOIN src s ON s.src_id = p.src_id "
+            "GROUP BY s.source"
         ).fetchall():
             out.setdefault(src, {})["distinct"] = int(n or 0)
         for src, fc in cur.execute(
             """
-            SELECT source, file_count FROM indexed_snapshots i
-            WHERE repo=? AND start_time = (
-                SELECT max(start_time) FROM indexed_snapshots i2
-                WHERE i2.repo = i.repo AND i2.source = i.source)
+            SELECT source, file_count FROM isnaps i
+            WHERE start_time = (
+                SELECT max(start_time) FROM isnaps i2 WHERE i2.source = i.source)
             """,
-            [repo],
         ).fetchall():
             out.setdefault(src, {})["latest"] = int(fc or 0)
     except Exception as exc:  # noqa: BLE001 - counts are decorative; never fail the dashboard

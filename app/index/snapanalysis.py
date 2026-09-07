@@ -144,9 +144,11 @@ def _existing_analysis(repo: str, source: str) -> dict:
     churn WITHOUT wiping the heavy fields (physical/reclaimable) the slow pass computed."""
     cur = read_cursor(repo)
     try:
+        # `sanalysis` is the raw artifact (the old view was a pure passthrough of it), and the
+        # repo predicate is gone: a generation only ever holds its own repo's rows.
         rows = cur.execute(
-            "SELECT snapshot_id, physical, reclaimable FROM snapshot_analysis WHERE repo=? AND source=?",
-            [repo, source],
+            "SELECT snapshot_id, physical, reclaimable FROM sanalysis WHERE source=?",
+            [source],
         ).fetchall()
     finally:
         cur.close()
@@ -246,9 +248,9 @@ def _publish_analysis(repo: str, per_source: dict) -> int | None:
         # unregister below then removes the very table it reads from, so the publisher writes an
         # empty artifact with no error. Every analysis generation was 0 rows until 2026-09-07.
         merged = cur.execute(
-            f"SELECT * FROM snapshot_analysis "
-            f"WHERE NOT (repo = ? AND source IN ({placeholders})) "
-            f"UNION ALL BY NAME SELECT * FROM _sa_incoming", [repo, *replaced]).to_arrow_table()
+            f"SELECT * FROM sanalysis "
+            f"WHERE NOT (source IN ({placeholders})) "
+            f"UNION ALL BY NAME SELECT * FROM _sa_incoming", [*replaced]).to_arrow_table()
         cur.unregister("_sa_incoming")
     finally:
         cur.close()
@@ -331,8 +333,8 @@ def read_analysis(repo: str, source: str, compute_if_stale: bool = False, with_r
     cur = read_cursor(repo)
     try:
         rows = cur.execute(
-            "SELECT snapshot_id, churn, physical, reclaimable, snaphash FROM snapshot_analysis WHERE repo=? AND source=?",
-            [repo, key],
+            "SELECT snapshot_id, churn, physical, reclaimable, snaphash FROM sanalysis WHERE source=?",
+            [key],
         ).fetchall()
     finally:
         cur.close()

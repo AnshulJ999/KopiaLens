@@ -13,9 +13,7 @@ A file's stored ``content_id`` is the object id: a single content for small file
 from __future__ import annotations
 
 import collections
-import contextlib
 import threading
-import uuid
 
 import pyarrow as pa
 
@@ -23,6 +21,7 @@ from ..core.cache import cache_db, decode_json
 from ..core.kopia import snapshot_delete_commands
 from ..core.sizemap import load_sizemap
 from ..core.walk import expand_indirect
+from . import resolve
 from .queries import _ESC, like_literal, snapshots_for_content
 from .store import read_cursor
 
@@ -34,26 +33,6 @@ def _chunks_for_obj(repo: str, dbsql, obj: str) -> set[str]:
     if obj.startswith("I"):
         return expand_indirect(repo, dbsql, {obj})
     return {obj}
-
-
-@contextlib.contextmanager
-def _registered_pairs(cur, pairs):
-    """Register (source, full_path) pairs as an Arrow relation to join against.
-
-    Arrow, never executemany: the pair set is one row per (content, path) share and is unbounded
-    on dedup-heavy data. The uuid suffix keeps concurrent requests from colliding on the name.
-    """
-    name = f"_phys_pairs_{uuid.uuid4().hex[:12]}"
-    rows = list(pairs)
-    tbl = pa.table({"source": [s for s, _ in rows], "full_path": [p for _, p in rows]})
-    cur.register(name, tbl)
-    try:
-        yield name
-    finally:
-        try:
-            cur.unregister(name)
-        except Exception:  # noqa: BLE001 - cleanup must never fail the request
-            pass
 
 
 def _arrow_insert(con, sql: str, columns: dict) -> None:
@@ -180,22 +159,27 @@ def materialize_refcount(con, repo: str, count: dict) -> bool:
 
 def _refcount_for(repo: str, cids) -> dict[str, int] | None:
     """Targeted refcount for just these content chunks (one file's chunks), via batched IN
-    queries - far faster + lighter than loading the whole 4M-row content_refs table into a dict
-    on every file-detail open. Returns None when content_refs isn't built yet (cold start), so
+    queries - far faster + lighter than loading the whole 4M-row crefs table into a dict
+    on every file-detail open. Returns None when crefs isn't built yet (cold start), so
     the caller can fall back to the full map."""
     cids = list(cids)
     cur = read_cursor(repo)
     out: dict[str, int] = {}
     try:
-        if not cur.execute("SELECT count(*) FROM content_refs WHERE repo=?", [repo]).fetchone()[0]:
+        if not cur.execute("SELECT count(*) FROM crefs").fetchone()[0]:
             return None
-        for i in range(0, len(cids), 900):
-            grp = cids[i:i + 900]
+        id_of = resolve.cid_ids(cur, cids)
+        rev = {v: k for k, v in id_of.items()}
+        ids = sorted(set(id_of.values()))
+        refs: dict[int, int] = {}
+        for i in range(0, len(ids), 900):
+            grp = ids[i:i + 900]
             if not grp:
                 continue
-            q = "SELECT cid, refs FROM content_refs WHERE repo=? AND cid IN (%s)" % ",".join("?" * len(grp))
-            for c, r in cur.execute(q, [repo, *grp]).fetchall():
-                out[c] = r
+            q = "SELECT cid_id, refs FROM crefs WHERE cid_id IN (%s)" % ",".join("?" * len(grp))
+            for c, r in cur.execute(q, grp).fetchall():
+                refs[c] = r
+        out = {rev[c]: r for c, r in refs.items() if c in rev}
     finally:
         cur.close()
     _record_refcount_misses(repo, len(cids), len(cids) - len(out))
@@ -232,11 +216,14 @@ def refcount_miss_stats() -> dict:
 
 
 def _refcount_map(repo: str) -> dict[str, int]:
-    """Global content refcount: prefer the materialized DuckDB table; fall back to the engine
-    pkl (rebuilds once if absent)."""
+    """Global content refcount: prefer the materialized crefs artifact; fall back to the engine
+    pkl (rebuilds once if absent). The cid join is the OUTPUT side - the whole map is being
+    named, which is inherently the full dictionary."""
     cur = read_cursor(repo)
     try:
-        rows = cur.execute("SELECT cid, refs FROM content_refs WHERE repo=?", [repo]).fetchall()
+        rows = cur.execute(
+            "SELECT c.content_id, m.refs FROM crefs m JOIN cid c ON c.cid_id = m.cid_id"
+        ).fetchall()
     finally:
         cur.close()
     if rows:
@@ -304,26 +291,55 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500) -> dict[str, 
         return out
     cur = read_cursor(repo)
     try:
-        # cid -> distinct (source, full_path) pairs holding it. Chunked IN like _refcount_for.
+        # cid -> distinct (source, full_path) pairs holding it. Input ids resolve batched, then
+        # one chunked scan; the cid name comes back from the result set (output side).
+        id_of = resolve.cid_ids(cur, misses)
+        rev = {v: k for k, v in id_of.items()}
         shares: dict[str, list[tuple[str, str]]] = {c: [] for c in misses}
-        for i in range(0, len(misses), 900):
-            grp = misses[i:i + 900]
-            q = ("SELECT DISTINCT content_id, source, full_path FROM files "
-                 "WHERE repo=? AND content_id IN (%s)" % ",".join("?" * len(grp)))
-            for cid, src, fp in cur.execute(q, [repo, *grp]).fetchall():
-                shares[cid].append((src, fp))
+        ids = sorted(set(id_of.values()))
+        for i in range(0, len(ids), 900):
+            grp = ids[i:i + 900]
+            if not grp:
+                continue
+            q = ("SELECT DISTINCT f.cid_id, s.source, p.full_path FROM filev f "
+                 "JOIN pathx p ON p.path_id = f.path_id "
+                 "JOIN src s ON s.src_id = p.src_id "
+                 "WHERE f.cid_id IN (%s)" % ",".join("?" * len(grp)))
+            for c, src, fp in cur.execute(q, grp).fetchall():
+                name = rev.get(c)
+                if name:
+                    shares[name].append((src, fp))
 
         # (source, full_path) -> every distinct object the path has held across its versions.
+        # Batched path resolution (KL47's shape - never a per-path lookup), then one chunked
+        # filev scan; objects come back named via the result-set join.
         handles = {(src, fp) for hs in shares.values() for src, fp in hs}
         objs_of: dict[tuple[str, str], list[str]] = {h: [] for h in handles}
         if handles:
-            with _registered_pairs(cur, handles) as pairs_rel:
-                for src, fp, obj in cur.execute(
-                    f"SELECT DISTINCT f.source, f.full_path, f.content_id FROM files f "
-                    f"JOIN {pairs_rel} p ON p.source = f.source AND p.full_path = f.full_path "
-                    f"WHERE f.repo = ?", [repo]
-                ).fetchall():
-                    objs_of[(src, fp)].append(obj)
+            sid_of = resolve.src_map(cur)
+            rev_sid = {v: k for k, v in sid_of.items()}
+            pid_of = resolve.path_ids(cur, [(sid_of[s], fp) for s, fp in handles if s in sid_of])
+            key_of = {pid: (rev_sid[sid], fp) for (sid, fp), pid in pid_of.items()}
+            rows_by_pid: dict[int, list[int]] = {}
+            all_c: set[int] = set()
+            pids = sorted(set(pid_of.values()))
+            for i in range(0, len(pids), 900):
+                grp = pids[i:i + 900]
+                if not grp:
+                    continue
+                q = ("SELECT path_id, cid_id FROM filev WHERE path_id IN (%s)"
+                     % ",".join("?" * len(grp)))
+                for pid, c in cur.execute(q, grp).fetchall():
+                    if c is not None and pid in key_of:
+                        rows_by_pid.setdefault(pid, []).append(c)
+                        all_c.add(c)
+            cstr = resolve.content_ids(cur, sorted(all_c))
+            for pid, cs in rows_by_pid.items():
+                objs = objs_of[key_of[pid]]
+                for c in cs:
+                    obj = cstr.get(c)
+                    if obj and obj not in objs:  # DISTINCT: one object per path, however many versions
+                        objs.append(obj)
 
         chunk_memo: dict[str, set[str]] = {}
         for cid in misses:
@@ -373,41 +389,55 @@ def folder_detail(repo: str, source: str | None, prefix: str, all_versions: bool
     exact_lc, like_lc = base.lower(), like_literal(base.lower()) + _SEP + "%"
     dbsql = cache_db(repo)
     smap = load_sizemap(repo)
-    where = "repo = ? AND (lower(full_path) = ? OR lower(full_path) LIKE ?" + _ESC + ")"
-    params: list = [repo, exact_lc, like_lc]
-    if source:
-        where += " AND source = ?"
-        params.append(source)
-    # `files` carries every version; `paths` carries one row per path at its latest object. The
-    # delete panel can be set to latest-only, and then the reclaim figure must match THAT, not the
-    # all-versions number - a preview that describes a different operation is worse than none.
-    table = "files" if all_versions else "paths"
     cur = read_cursor(repo)
     try:
-        # Aggregate in DuckDB, not Python: one row per DISTINCT object with how many (source, path)
-        # pairs reference it. Pulling every version row into Python would be tens of millions of
-        # rows on a big folder; this is the same information in a fraction of the memory.
-        objs = cur.execute(
-            f"SELECT content_id, count(*) AS refs FROM ("
-            f"  SELECT DISTINCT source, full_path, content_id FROM {table} WHERE {where}"
-            f") GROUP BY content_id",
-            params,
-        ).fetchall()
-        agg = cur.execute(
-            f"SELECT count(*), COALESCE(sum(size), 0) FROM ("
-            f"  SELECT DISTINCT source, full_path, max(size) AS size FROM {table} WHERE {where}"
-            f"  GROUP BY source, full_path"
-            f")",
-            params,
-        ).fetchone() or (0, 0)
+        where = "(lower(p.full_path) = ? OR lower(p.full_path) LIKE ?" + _ESC + ")"
+        params: list = [exact_lc, like_lc]
+        run = True
+        if source:
+            sid = resolve.src_id(cur, source)
+            if sid is None:  # an unknown source matched no rows before; keep that
+                run = False
+            else:
+                where += " AND p.src_id = ?"
+                params.append(sid)
+        objs: list = []
+        agg = (0, 0)
+        cstr: dict[int, str] = {}
+        if run:
+            # `filev` carries every version; `pathx` carries one row per path at its latest object. The
+            # delete panel can be set to latest-only, and then the reclaim figure must match THAT, not the
+            # all-versions number - a preview that describes a different operation is worse than none.
+            if all_versions:
+                sel = ("SELECT DISTINCT p.src_id, p.full_path, f.cid_id, f.size "
+                       "FROM filev f JOIN pathx p ON p.path_id = f.path_id WHERE " + where)
+            else:
+                sel = ("SELECT DISTINCT p.src_id, p.full_path, p.cid_id, p.size "
+                       "FROM pathx p WHERE " + where)
+            # Aggregate in DuckDB, not Python: one row per DISTINCT object with how many (source, path)
+            # pairs reference it. Pulling every version row into Python would be tens of millions of
+            # rows on a big folder; this is the same information in a fraction of the memory.
+            objs = cur.execute(
+                f"SELECT cid_id, count(*) AS refs FROM ({sel}) GROUP BY cid_id", params
+            ).fetchall()
+            agg = cur.execute(
+                f"SELECT count(*), COALESCE(sum(size), 0) FROM ("
+                f"  SELECT DISTINCT src_id, full_path, max(size) AS size FROM ({sel})"
+                f"  GROUP BY src_id, full_path"
+                f")",
+                params,
+            ).fetchone() or (0, 0)
+            # Object names come back from the result set (output side), never a whole-table join.
+            cstr = resolve.content_ids(cur, sorted({c for c, _ in objs if c is not None}))
     finally:
         cur.close()
 
     this_refs: dict[str, int] = {}
     obj_chunks: dict[str, set] = {}
-    for cid, n in objs:
-        if not cid:
+    for cid_id, n in objs:
+        if not cid_id:
             continue
+        cid = cstr[cid_id]
         chunks = obj_chunks.get(cid)
         if chunks is None:
             chunks = _chunks_for_obj(repo, dbsql, cid)
@@ -446,20 +476,29 @@ def batch_detail(repo: str, files: list[dict], all_versions: bool = True) -> dic
     versions = 0
     cur = read_cursor(repo)
     try:
-        # One scan for every selected path, not one per path: the delete preview sends the
-        # whole selection. SQL orders by start_time DESC within a path, so grouping in fetch order
-        # gives each path its versions newest-first exactly as the per-path query did.
+        # One batched path resolution for the whole selection, then one filev scan per 900
+        # paths. SQL orders newest-version-first within a path, so grouping in fetch order gives
+        # each path its versions newest-first exactly as the per-path query did.
         # Deduped: a repeated selection entry must not join twice (and the per-path loop it
         # replaces double-counted its chunk references, understating freeable).
+        sid_of = resolve.src_map(cur)
+        rev_sid = {v: k for k, v in sid_of.items()}
+        pid_of = resolve.path_ids(cur, [(sid_of[s], fp) for s, fp in pairs if s in sid_of])
+        key_of = {pid: (rev_sid[sid], fp) for (sid, fp), pid in pid_of.items()}
         by_path: dict[tuple, list[tuple]] = {p: [] for p in pairs}
-        with _registered_pairs(cur, by_path.keys()) as pairs_rel:
-            for src, fp, obj, sz in cur.execute(
-                f"SELECT f.source, f.full_path, f.content_id, f.size FROM files f "
-                f"JOIN {pairs_rel} p ON p.source = f.source AND p.full_path = f.full_path "
-                f"WHERE f.repo = ? ORDER BY f.source, f.full_path, f.start_time DESC, "
-                f"f.snapshot_id DESC", [repo]
-            ).fetchall():
-                by_path[(src, fp)].append((obj, sz))
+        pids = sorted(set(pid_of.values()))
+        for i in range(0, len(pids), 900):
+            grp = pids[i:i + 900]
+            if not grp:
+                continue
+            q = ("SELECT f.path_id, c.content_id, f.size FROM filev f "
+                 "JOIN snap sn ON sn.snap_id = f.snap_id "
+                 "LEFT JOIN cid c ON c.cid_id = f.cid_id "
+                 "WHERE f.path_id IN (%s) "
+                 "ORDER BY f.path_id, sn.start_time DESC, sn.snapshot_id DESC"
+                 % ",".join("?" * len(grp)))
+            for pid, obj, sz in cur.execute(q, grp).fetchall():
+                by_path[key_of[pid]].append((obj, sz))
         for key, rows in by_path.items():
             if not rows:
                 continue
@@ -513,10 +552,16 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
     other paths sharing the same content object."""
     cur = read_cursor(repo)
     try:
+        sid = resolve.src_id(cur, source)
+        pid = resolve.path_id(cur, sid, full_path) if sid is not None else None
+        if pid is None:  # unknown source or path: nothing was found before, none now
+            return {"found": False}
         versions = cur.execute(
-            "SELECT snapshot_id, start_time, size, content_id FROM files "
-            "WHERE repo=? AND source=? AND full_path=? ORDER BY start_time DESC, snapshot_id DESC",
-            [repo, source, full_path],
+            "SELECT sn.snapshot_id, sn.start_time, f.size, c.content_id FROM filev f "
+            "JOIN snap sn ON sn.snap_id = f.snap_id "
+            "LEFT JOIN cid c ON c.cid_id = f.cid_id "
+            "WHERE f.path_id = ? ORDER BY sn.start_time DESC, sn.snapshot_id DESC",
+            [pid],
         ).fetchall()
     finally:
         cur.close()
@@ -560,11 +605,16 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
     # Other paths sharing this exact content object (the dominant dedup case = identical files).
     cur = read_cursor(repo)
     try:
-        others = cur.execute(
-            "SELECT DISTINCT source, full_path FROM files "
-            "WHERE repo=? AND content_id=? AND NOT (source=? AND full_path=?) LIMIT 500",
-            [repo, latest_obj, source, full_path],
-        ).fetchall()
+        latest_cid = resolve.cid_id(cur, latest_obj) if latest_obj else None
+        others: list = []
+        if latest_cid is not None:
+            others = cur.execute(
+                "SELECT DISTINCT s.source, p.full_path FROM filev f "
+                "JOIN pathx p ON p.path_id = f.path_id "
+                "JOIN src s ON s.src_id = p.src_id "
+                "WHERE f.cid_id=? AND NOT (p.src_id=? AND p.full_path=?) LIMIT 500",
+                [latest_cid, sid, full_path],
+            ).fetchall()
     finally:
         cur.close()
 

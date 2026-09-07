@@ -82,24 +82,28 @@ _FOLDER = ("array_to_string(list_slice(string_split(full_path, ?), 1, "
 # `paths` join that this query already performs removes that scan outright.
 _QUALIFY_CTE = """
 WITH pc AS (
-  SELECT source, full_path, content_id, min(start_time) AS first_ts
-  FROM files WHERE repo = ? GROUP BY source, full_path, content_id
+  SELECT f.path_id, f.cid_id, min(sn.start_time) AS first_ts
+  FROM filev f
+  JOIN snap sn ON sn.snap_id = f.snap_id
+  GROUP BY f.path_id, f.cid_id
 ), newc AS (
-  SELECT pc.source, pc.full_path, pc.content_id,
+  SELECT s.source, p.full_path, pc.cid_id,
          COALESCE(cs.packed, ip.packed, 0) AS packed
   FROM pc
-  LEFT JOIN paths p ON p.repo = ? AND p.source = pc.source AND p.full_path = pc.full_path
-  LEFT JOIN content_sizes cs ON cs.repo = ? AND cs.cid = pc.content_id
-  LEFT JOIN indirect_phys  ip ON ip.repo = ? AND ip.oid = pc.content_id
+  LEFT JOIN pathx p ON p.path_id = pc.path_id
+  JOIN src s ON s.src_id = p.src_id
+  LEFT JOIN csize cs ON cs.cid_id = pc.cid_id
+  LEFT JOIN iphys ip ON ip.cid_id = pc.cid_id
   WHERE pc.first_ts >= ?
     AND (p.first_seen >= ? OR p.first_seen IS NULL OR COALESCE(p.versions, 2) > 1)
 )
 """
 
 
-def _qualify_params(repo: str, cutoff: str) -> list:
-    """Bind values for _QUALIFY_CTE, in the order its placeholders appear."""
-    return [repo, repo, repo, repo, cutoff, cutoff]
+def _qualify_params(cutoff: str) -> list:
+    """Bind values for _QUALIFY_CTE, in the order its placeholders appear. No repo param: a
+    generation only ever holds its own repo's rows."""
+    return [cutoff, cutoff]
 
 
 # The qualifying set is MATERIALIZED once per call and both outputs are derived from it. Embedding
@@ -121,7 +125,7 @@ GROUP BY source, folder, ext
 # SAME qualifying set as the attributed figure, so the two can never disagree (they used to be
 # independent queries over independently-derived sets).
 def _deduped_sql(tmp: str) -> str:
-    return f"SELECT COALESCE(sum(packed), 0) FROM (SELECT DISTINCT content_id, packed FROM {tmp})"
+    return f"SELECT COALESCE(sum(packed), 0) FROM (SELECT DISTINCT cid_id, packed FROM {tmp})"
 
 
 def _source_path(source_key: str) -> str:
@@ -151,9 +155,7 @@ def _index_hash(repo: str) -> str:
     """Cheap stamp that changes whenever the index gained snapshots - used to expire the cache."""
     cur = read_cursor(repo)
     try:
-        row = cur.execute(
-            "SELECT count(*), max(indexed_at) FROM indexed_snapshots WHERE repo=?", [repo]
-        ).fetchone()
+        row = cur.execute("SELECT count(*), max(indexed_at) FROM isnaps").fetchone()
     finally:
         cur.close()
     return f"{row[0]}:{row[1]}" if row else "0"
@@ -227,7 +229,7 @@ def _compute(repo: str, depth: int, cutoff: str) -> tuple[list[dict], int]:
     tmp = f"_churn_newc_{uuid.uuid4().hex[:12]}"
     cur = read_cursor(repo)
     try:
-        cur.execute(_MATERIALIZE_SQL.format(tmp=tmp), _qualify_params(repo, cutoff))
+        cur.execute(_MATERIALIZE_SQL.format(tmp=tmp), _qualify_params(cutoff))
         rows = [
             {"source": r[0], "folder": r[1], "ext": r[2],
              "bytes": int(r[3] or 0), "versions": int(r[4] or 0), "files": int(r[5] or 0)}
@@ -269,11 +271,14 @@ def build_views(rows: list[dict], limit: int, all_sources=None) -> dict:
     by_folder = _roll(rows, "folder")
     by_ext = _roll(rows, "ext")
 
-    # Per source: its single biggest-churning folder ("C: is churning, mostly Chrome").
+    # Per source: its single biggest-churning folder ("C: is churning, mostly Chrome"). Ties break
+    # lexicographically: DuckDB's GROUP BY emission order varies between runs, and a first-seen
+    # tie here flapped the parity fingerprint (top_folder differs while rows and sums stay equal).
     top: dict[str, tuple[str, int]] = {}
     for r in rows:
         cur_top = top.get(r["source"])
-        if cur_top is None or r["bytes"] > cur_top[1]:
+        if cur_top is None or r["bytes"] > cur_top[1] or (
+                r["bytes"] == cur_top[1] and r["folder"] < cur_top[0]):
             top[r["source"]] = (r["folder"], r["bytes"])
     nested = nested_map(set(all_sources or ()) | set(by_source))
     for key, row in by_source.items():

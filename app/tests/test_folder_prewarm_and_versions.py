@@ -65,51 +65,37 @@ def test_prewarm_depths_reject_nonsense_and_fall_back(monkeypatch):
 
 
 # ---- latest-only vs all-versions pricing -------------------------------------------------------
-class _FakeCursor:
-    """Stands in for the DuckDB cursor: one path with three versions, newest first (the real query
-    is ORDER BY start_time DESC)."""
-
-    def __init__(self, rows):
-        self._rows = rows
-
-    def execute(self, _sql, _params):
-        return self
-
-    def fetchall(self):
-        return self._rows
-
-    def register(self, _name, _table):
-        return self
-
-    def unregister(self, _name):
-        return self
-
-    def close(self):
-        pass
-
-
 @pytest.fixture
 def priced(monkeypatch):
     """A single file whose three versions each hold a different 1 KB chunk, plus one chunk shared
     by every version. Latest-only should price 2 chunks; all-versions should price 4."""
-    # (source, full_path, content_id, size) - batch_detail scans every selected path in one
-    # query now, ordered by start_time DESC within a path, so these are newest first.
-    fp = "C:" + SEP + "f.dat"
-    rows = [("src", fp, "obj_new", 1000),
-            ("src", fp, "obj_mid", 1000),
-            ("src", fp, "obj_old", 1000)]
+    import duckdb
+
+    con = duckdb.connect()
+    con.execute("CREATE TABLE src(src_id INTEGER, source VARCHAR)")
+    con.execute("INSERT INTO src VALUES (1, 'src')")
+    con.execute("CREATE TABLE cid(cid_id INTEGER, content_id VARCHAR)")
+    con.execute("INSERT INTO cid VALUES (1,'obj_new'),(2,'obj_mid'),(3,'obj_old')")
+    con.execute("CREATE TABLE pathx(path_id INTEGER, src_id INTEGER, full_path VARCHAR)")
+    con.execute("INSERT INTO pathx VALUES (1, 1, ?)", ["C:" + SEP + "f.dat"])
+    con.execute("CREATE TABLE snap(snap_id INTEGER, snapshot_id VARCHAR, start_time TIMESTAMP)")
+    # Newest version has the latest start_time: the per-path DESC ordering must pick obj_new.
+    con.execute("INSERT INTO snap VALUES (1, 's-old', '2026-01-01 00:00:00'), "
+                "(2, 's-mid', '2026-02-01 00:00:00'), (3, 's-new', '2026-03-01 00:00:00')")
+    con.execute("CREATE TABLE filev(path_id INTEGER, snap_id INTEGER, cid_id INTEGER, size BIGINT)")
+    con.execute("INSERT INTO filev VALUES (1, 3, 1, 1000), (1, 2, 2, 1000), (1, 1, 3, 1000)")
     chunks = {"obj_new": {"c_common", "c_new"},
               "obj_mid": {"c_common", "c_mid"},
               "obj_old": {"c_common", "c_old"}}
     sizes = {"c_common": 100, "c_new": 100, "c_mid": 100, "c_old": 100}
 
-    monkeypatch.setattr(physical, "read_cursor", lambda repo: _FakeCursor(rows))
+    monkeypatch.setattr(physical, "read_cursor", lambda repo: con.cursor())
     monkeypatch.setattr(physical, "cache_db", lambda repo: None)
     monkeypatch.setattr(physical, "load_sizemap", lambda repo: sizes)
     monkeypatch.setattr(physical, "_chunks_for_obj", lambda repo, db, obj: set(chunks[obj]))
     # Nothing outside the selection references these chunks, so everything found is freeable.
     monkeypatch.setattr(physical, "_refcount_for", lambda repo, cids: {c: 1 for c in cids})
-    return [{"source": "src", "full_path": fp}]
+    return [{"source": "src", "full_path": "C:" + SEP + "f.dat"}]
 
 
 def test_all_versions_prices_every_version(priced):

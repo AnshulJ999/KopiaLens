@@ -244,6 +244,11 @@ class _PinnedCursor:
         self._cur = cur
         self._closed = False
 
+    @property
+    def generation(self) -> Generation:
+        """The handle this cursor reads from - resolve.py scopes its lookup caches to it."""
+        return self._gen
+
     def __getattr__(self, name):
         return getattr(self._cur, name)
 

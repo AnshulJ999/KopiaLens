@@ -12,10 +12,11 @@ SEP = chr(92)
 
 def _tree_children_all(repo: str, rows: list[tuple], prefix: str = "") -> list[dict]:
     con = duckdb.connect()
-    con.execute("CREATE TABLE paths(repo VARCHAR, source VARCHAR, full_path VARCHAR, size BIGINT, "
+    # New-schema pathx: source lives on the row as src_id, irrelevant to this unfiltered
+    # aggregate (grouping is by full_path alone), so the fixture keeps only the path columns.
+    con.execute("CREATE TABLE pathx(full_path VARCHAR, size BIGINT, "
                 "physical BIGINT, last_seen TIMESTAMP, in_latest BOOLEAN)")
-    con.executemany("INSERT INTO paths VALUES (?,?,?,?,?,?,?)", rows)
-    con.execute("CREATE TABLE content_refs(repo VARCHAR, cid VARCHAR, refs BIGINT)")  # _search_where refs queries
+    con.executemany("INSERT INTO pathx VALUES (?,?,?,?,?)", [r[2:] for r in rows])
     orig = queries.read_cursor
     monkey_cursor = con
     queries.read_cursor = lambda _repo: monkey_cursor
