@@ -108,10 +108,14 @@ def _transform(con: duckdb.DuckDBPyConnection) -> None:
             SELECT u.dir_id, d.parent_id FROM up u JOIN dir d ON d.dir_id = u.anc_id
             WHERE d.parent_id IS NOT NULL)
         SELECT u.dir_id, a.depth, u.anc_id FROM up u JOIN dir a ON a.dir_id = u.anc_id""")
+    # content_refs is in here for the same reason the incremental path unions `_rc`: the refcount
+    # map can carry content the sizemap does not, and a chunk missing from the dictionary is
+    # dropped from crefs, where it then reads as zero references, i.e. "safe to delete".
     con.execute("""CREATE TABLE cid AS
         SELECT row_number() OVER (ORDER BY c)::INTEGER AS cid_id, c AS content_id FROM (
             SELECT content_id AS c FROM files WHERE content_id IS NOT NULL
             UNION SELECT cid FROM content_sizes
+            UNION SELECT cid FROM content_refs
             UNION SELECT oid FROM indirect_phys)""")
     con.execute("""CREATE TABLE snap AS
         SELECT row_number() OVER (ORDER BY start_time, snapshot_id)::INTEGER AS snap_id,
@@ -405,6 +409,7 @@ def _build_full(repo: str, root: str, gen: int, job: dict) -> dict:
         job["current_source"] = "(physical + refcount)"
         materialize_physical(con, repo)
         count, _union = _refcount(repo, db)
+        materialize_physical(con, repo)  # second pass - see the incremental path's note
         materialize_refcount(con, repo, count)
         job["current_source"] = "(transform)"
         _transform(con)
@@ -573,17 +578,26 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
         job["current_source"] = "(physical + refcount)"
         materialize_physical(con, repo)
         count, _union = _refcount(repo, db)
+        # SECOND pass, and the order matters: _refcount rebuilds the sizemap when its walk finds
+        # content the cached map lacks, so content_sizes filled above is a version behind whenever
+        # that happens. Re-running is cheap (the bulk insert is skipped when the map is unchanged).
+        materialize_physical(con, repo)
 
         # The cid namespace must cover everything the maps will join against - the full
-        # transform's definition (files/paths contents + the whole sizemap + indirect objects).
-        # Sizing the dictionary from file rows alone drops split files' underlying chunk ids,
-        # and a chunk missing from crefs reads as zero references, i.e. "safe to delete".
+        # transform's definition (files/paths contents + the whole sizemap + indirect objects)
+        # AND the refcount map itself. Sizing the dictionary from file rows alone drops split
+        # files' underlying chunk ids, and a chunk missing from crefs reads as zero references,
+        # i.e. "safe to delete". `_rc` is registered here rather than at crefs_final so the
+        # dictionary and the map are built from one set of keys.
+        con.register("_rc", pa.table({"content_id": list(count.keys()),
+                                      "refs": list(count.values())}))
         ids.anti_join(con, "_cid_new",
                       "SELECT DISTINCT content_id FROM ("
                       "SELECT content_id FROM files WHERE content_id IS NOT NULL "
                       "UNION SELECT content_id FROM paths WHERE content_id IS NOT NULL "
                       "UNION SELECT cid FROM content_sizes "
-                      "UNION SELECT oid FROM indirect_phys)",
+                      "UNION SELECT oid FROM indirect_phys "
+                      "UNION SELECT content_id FROM _rc)",
                       "SELECT content_id FROM cid", ["content_id"])
         alloc.assign(con, "_cid_alloc", "SELECT content_id FROM _cid_new", "content_id",
                      "cid_id", id_col="cid_id")
@@ -769,12 +783,14 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
                       file_count FROM indexed_snapshots""")
         con.execute("CREATE TABLE csize_final AS SELECT c.cid_id, cs.packed "
                     "FROM content_sizes cs JOIN cid c ON c.content_id = cs.cid")
-        tbl = pa.table({"content_id": list(count.keys()), "refs": list(count.values())})
-        con.register("_rc", tbl)
         con.execute("CREATE TABLE crefs_final AS SELECT c.cid_id, CAST(r.refs AS INTEGER) AS refs "
                     "FROM _rc r JOIN cid c ON c.content_id = r.content_id")
         # Both maps inner-join the dictionary: a content id the join drops would silently lose
-        # its packed size (physical reads 0) or its refcount (reads as "safe to delete").
+        # its packed size (physical reads 0) or its refcount (reads as "safe to delete"). The
+        # dictionary is now built from these same maps, so this should never be non-zero - it is
+        # an assertion, not an expected state. WARN, never abort: dropping a handful of chunks out
+        # of millions is a small optimistic error in numbers that are estimates anyway, and losing
+        # the whole night's index over it is far worse.
         dropped = con.execute(
             "SELECT (SELECT count(*) FROM content_sizes cs WHERE NOT EXISTS "
             "           (SELECT 1 FROM cid c WHERE c.content_id = cs.cid)) + "
@@ -782,9 +798,9 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
             "           (SELECT 1 FROM cid c WHERE c.content_id = r.content_id))").fetchone()[0]
         con.unregister("_rc")
         if dropped:
-            raise RuntimeError(f"repo {repo}: {dropped} content id(s) present in the size/refcount "
-                               "maps are missing from the cid dictionary - csize/crefs would "
-                               "silently drop them. Run a full rebuild.")
+            log.warning("repo=%s %d content id(s) in the size/refcount maps are missing from the "
+                        "cid dictionary and were dropped from csize/crefs - they read as zero "
+                        "references (i.e. freeable) until the next build picks them up", repo, dropped)
         _read_prev_art("iphys", "prev_iphys")
         con.execute("CREATE TABLE iphys_final AS SELECT cid_id, packed FROM prev_iphys "
                     "UNION ALL SELECT c.cid_id, np.packed FROM indirect_phys np "
