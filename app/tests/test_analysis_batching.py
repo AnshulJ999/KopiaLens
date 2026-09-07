@@ -28,7 +28,9 @@ class _Cur:
     def execute(self, _sql, _params=None):
         return self
 
-    def arrow(self):
+    def to_arrow_table(self):
+        # Deliberately NOT `arrow()`: that returns a lazy reader in real DuckDB and the publisher
+        # then writes an empty artifact. Going back to it must fail here, not in production.
         return self._incoming
 
     def close(self):
@@ -82,6 +84,22 @@ def test_a_failing_stage_still_publishes_what_it_staged(published):
             snapanalysis._persist("1", "srcA", _rows(2), "h")
             raise RuntimeError("stage blew up")
     assert len(published) == 1 and published[0][1] == 2
+
+
+def test_the_published_table_is_materialised_not_a_lazy_stream():
+    """`_publish_analysis` unregisters `_sa_incoming` before the publisher consumes the result.
+    With a lazy `.arrow()` reader the scan then finds nothing and the artifact publishes EMPTY,
+    with no error - which is what happened to every analysis generation until 2026-09-07."""
+    import duckdb
+    import pyarrow as pa
+
+    con = duckdb.connect()
+    con.register("_inc", pa.table({"a": [1, 2, 3]}))
+    lazy = con.execute("SELECT * FROM _inc").arrow()
+    eager = con.execute("SELECT * FROM _inc").to_arrow_table()
+    con.unregister("_inc")
+    assert lazy.read_all().num_rows == 0, "a lazy reader is empty once its source is unregistered"
+    assert eager.num_rows == 3, "a materialised table survives the unregister - use this one"
 
 
 def test_a_declined_publish_is_reported_not_swallowed(published, monkeypatch):

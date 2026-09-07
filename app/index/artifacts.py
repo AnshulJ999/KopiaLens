@@ -831,7 +831,10 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
         staged = os.path.join(staging, "isnaps.parquet")
         con.execute(f"COPY (SELECT * FROM isnaps_final ORDER BY snapshot_id) "
                     f"TO '{_fwd(staged)}' ({_ZSTD})")
-        artifacts_out["isnaps"] = [os.path.join("pool", "small", "isnaps", f"g{gen}.parquet")]
+        # Forward slashes like every other artifact: manifest paths are the portable relative form,
+        # not host paths. os.path.join here emitted backslashes on Windows, which GC then failed to
+        # match against its own keep-set (it normalizes now, but the manifest is the source).
+        artifacts_out["isnaps"] = [f"pool/small/isnaps/g{gen}.parquet"]
         moves.append((staged, artifacts_out["isnaps"][0]))
         artifacts_out["sanalysis"] = list(prev_art["sanalysis"])  # carried by reference
 

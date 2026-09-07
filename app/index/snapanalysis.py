@@ -234,10 +234,13 @@ def _publish_analysis(repo: str, per_source: dict) -> int | None:
     try:
         cur.register("_sa_incoming", incoming)
         placeholders = ",".join("?" * len(replaced))
+        # to_arrow_table(), never .arrow(): the latter returns a LAZY RecordBatchReader, and the
+        # unregister below then removes the very table it reads from, so the publisher writes an
+        # empty artifact with no error. Every analysis generation was 0 rows until 2026-09-07.
         merged = cur.execute(
             f"SELECT * FROM snapshot_analysis "
             f"WHERE NOT (repo = ? AND source IN ({placeholders})) "
-            f"UNION ALL BY NAME SELECT * FROM _sa_incoming", [repo, *replaced]).arrow()
+            f"UNION ALL BY NAME SELECT * FROM _sa_incoming", [repo, *replaced]).to_arrow_table()
         cur.unregister("_sa_incoming")
     finally:
         cur.close()
