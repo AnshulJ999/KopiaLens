@@ -10,7 +10,10 @@ import threading
 
 from config import CACHEDIR
 
+from .applog import get_logger
 from .kopia import kopia
+
+log = get_logger("cache")
 
 try:  # orjson is ~3x faster at parsing the children JSON (the warm-walk hot path)
     import orjson
@@ -127,6 +130,39 @@ def memo_bytes() -> int:
         return _MEMO_BYTES
 
 
+# Failed/unparseable kopia directory reads. A failed read is NEVER written to the cache (below) -
+# the walk simply comes up short for that subtree, the next build retries, and this counter is what
+# makes a RECURRING failure visible instead of silently missing rows forever (the KL5 class of bug).
+_FAILED_READS: dict[str, int] = {}      # repo -> count
+_FAILED_SAMPLE: dict[str, list[str]] = {}  # repo -> bounded sample of missed oids
+_FAILED_LOCK = threading.Lock()
+_FAILED_SAMPLE_MAX = 20
+
+
+def _note_failed_read(repo: str, oids: list[str], detail: str) -> None:
+    """Record + loudly log failed directory reads. Warnings stay per-call so a one-off is visible
+    in the log stream; the counter is what the build result surfaces."""
+    with _FAILED_LOCK:
+        _FAILED_READS[repo] = _FAILED_READS.get(repo, 0) + len(oids)
+        sample = _FAILED_SAMPLE.setdefault(repo, [])
+        for oid in oids:
+            if len(sample) < _FAILED_SAMPLE_MAX and oid not in sample:
+                sample.append(oid)
+    log.warning("kopia dir read FAILED (not cached, subtree skipped) repo=%s oids=%s: %s",
+                repo, oids if len(oids) <= 5 else oids[:5] + ["..."], detail)
+
+
+def read_failure_stats(repo: str) -> dict | None:
+    """Drain this process's failed-read counters for one repo (used by the build/worker summary).
+    Returns None when nothing failed, so callers can stay quiet on the happy path."""
+    with _FAILED_LOCK:
+        n = _FAILED_READS.pop(repo, 0)
+        sample = _FAILED_SAMPLE.pop(repo, [])
+    if not n:
+        return None
+    return {"count": n, "sample": sample}
+
+
 def cache_db(repo: str) -> sqlite3.Connection:
     os.makedirs(CACHEDIR, exist_ok=True)
     db = sqlite3.connect(os.path.join(CACHEDIR, f"repo{repo}.db"), timeout=60)
@@ -199,6 +235,11 @@ def get_children(repo: str, db: sqlite3.Connection, oids: list[str]) -> dict[str
         group = normal[i : i + BATCH]
         res = kopia(repo, ["content", "show"] + group)
         lines = [line for line in res.stdout.splitlines() if line.strip()]
+        if res.returncode != 0:
+            # kopia aborts a batch at the first unreadable content: the printed prefix is still
+            # positionally paired (valid answers, cacheable), the unanswered tail is missing.
+            _note_failed_read(repo, group[len(lines):],
+                              f"rc={res.returncode} {(res.stderr or '').strip()[:200]}")
         for oid, line in zip(group, lines):
             try:
                 entries = _loads(line).get("entries") or []
@@ -207,7 +248,8 @@ def get_children(repo: str, db: sqlite3.Connection, oids: list[str]) -> dict[str
             # NameError on the first piece of malformed kopia output, turning a recoverable parse
             # failure into a crash. Both libraries' decode errors derive from ValueError.
             except ValueError:
-                entries = []
+                _note_failed_read(repo, [oid], "unparseable content show output")
+                continue  # never cache or memoize a failed read
             out[oid] = entries
             memo_put(oid, entries)
             db.execute("INSERT OR REPLACE INTO dir_children VALUES (?,?)", (oid, encode_json(entries)))
@@ -215,10 +257,18 @@ def get_children(repo: str, db: sqlite3.Connection, oids: list[str]) -> dict[str
 
     for oid in indirect_dirs:
         res = kopia(repo, ["show", oid])
-        try:
-            entries = _loads(res.stdout).get("entries") or []
-        except ValueError:  # see the note above - `json` is undefined when orjson is installed
-            entries = []
+        entries = None
+        if res.returncode != 0:
+            # a failed command is not an answer: empty stdout would parse as an error and then
+            # read as an "empty folder" - the exact poisoning this module must never write down
+            _note_failed_read(repo, [oid], f"rc={res.returncode} {(res.stderr or '').strip()[:200]}")
+        else:
+            try:
+                entries = _loads(res.stdout).get("entries") or []
+            except ValueError:  # see the note above - `json` is undefined when orjson is installed
+                _note_failed_read(repo, [oid], "unparseable kopia show output")
+        if entries is None:
+            continue  # failed read: leave uncached and out of the answer, the next build retries
         out[oid] = entries
         memo_put(oid, entries)
         db.execute("INSERT OR REPLACE INTO dir_children VALUES (?,?)", (oid, encode_json(entries)))

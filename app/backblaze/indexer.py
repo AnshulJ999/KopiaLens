@@ -354,6 +354,14 @@ def refresh(force: bool = False) -> dict:
     _STATE["building"] = True
     con = bbdb.connect()
     engine = rules.load_engine()
+    # Reclassify trigger: the exclusion rules the engine parsed (all four layers), hashed. The
+    # filelist is a raw volume scan that includes files the rules exclude, so a rule change does
+    # NOT change the filelist body - without this hash, "Index BZ" would skip every drive and the
+    # Excluded/coverage views would keep the old classification until Backblaze's next scan cycle.
+    # A digest change is why a reindex fires, never which rows get written.
+    rules_hash = rules.engine_digest(engine)
+    prev_rules_hash = bbdb.kv_get(con, "rules_digest")
+    rules_changed = prev_rules_hash is not None and prev_rules_hash != rules_hash
     changed: list[str] = []
     drives: dict[str, dict] = {}
     try:
@@ -367,22 +375,38 @@ def refresh(force: bool = False) -> dict:
             prev = bbdb.ingest_get(con, src)  # (mtime, size, digest) or None
             have_rows = con.execute("SELECT 1 FROM files WHERE drive=? LIMIT 1", [vol.letter]).fetchone()
             reindex = True
+            trigger = "file list"
             digest = None
-            if not force and prev is not None and have_rows:
-                if prev[0] == st.st_mtime and prev[1] == st.st_size:
-                    reindex = False  # quick pre-check: stat unchanged, no hash needed
-                else:
-                    # mtime/size changed (Backblaze rewrites the scan-start header on every pass) -
-                    # hash the body (skipping that header line) to check whether the CONTENT
-                    # actually changed, cheap insurance against a full reindex on every cycle.
-                    try:
-                        digest = _filelist_digest(vol.filelist)
-                    except OSError:
-                        digest = None
-                    if digest and digest == prev[2]:
-                        reindex = False
-                        bbdb.ingest_set(con, src, st.st_mtime, st.st_size, digest)
-                        log.info("BZ %s: filelist body unchanged (digest match), skipping reindex", vol.letter)
+            # A stub filelist is an aborted scan (header only, the recurring F:-signature).
+            # Reindexing would DELETE the drive's good rows and read back nothing. Keep the last
+            # good index instead (the scan_stub event records the signature); checked FIRST, so
+            # neither the filelist body nor a rules change can force a reindex against a
+            # half-written list.
+            if parsers.is_stub_filelist(vol.filelist):
+                if have_rows:
+                    log.warning("BZ %s: filelist is a stub (aborted scan) - keeping the existing index", vol.letter)
+                reindex = False
+            else:
+                body_same = False
+                if not force and prev is not None and have_rows:
+                    if prev[0] == st.st_mtime and prev[1] == st.st_size:
+                        body_same = True  # quick pre-check: stat unchanged, no hash needed
+                    else:
+                        # mtime/size changed (Backblaze rewrites the scan-start header on every pass) -
+                        # hash the body (skipping that header line) to check whether the CONTENT
+                        # actually changed, cheap insurance against a full reindex on every cycle.
+                        try:
+                            digest = _filelist_digest(vol.filelist)
+                        except OSError:
+                            digest = None
+                        if digest and digest == prev[2]:
+                            body_same = True
+                            bbdb.ingest_set(con, src, st.st_mtime, st.st_size, digest)
+                            log.info("BZ %s: filelist body unchanged (digest match), skipping reindex", vol.letter)
+                if body_same:
+                    reindex = rules_changed  # unchanged body still reclassifies when the rules moved
+                    if reindex:
+                        trigger = "rules changed"
             if reindex:
                 total, backed, excluded = _reindex_drive(con, vol, engine)
                 if digest is None:
@@ -393,7 +417,8 @@ def refresh(force: bool = False) -> dict:
                 bbdb.ingest_set(con, src, st.st_mtime, st.st_size, digest or "")
                 drives[vol.letter] = {"total": total, "backed": backed, "excluded": excluded, "reindexed": True}
                 changed.append(vol.letter)
-                log.info("BZ reindex %s: %d files (%d backed / %d excluded)", vol.letter, total, backed, excluded)
+                log.info("BZ reindex %s (%s): %d files (%d backed / %d excluded)",
+                         vol.letter, trigger, total, backed, excluded)
             else:
                 row = con.execute(
                     "SELECT count(*), sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END), "
@@ -403,6 +428,8 @@ def refresh(force: bool = False) -> dict:
                                       "excluded": row[2] or 0, "reindexed": False}
         if changed:
             bbdb.rebuild_fts(con)
+        if rules_hash != prev_rules_hash:
+            bbdb.kv_set(con, "rules_digest", rules_hash)
         _refresh_queue(con)
         _refresh_events(con)
         _refresh_backup_days(con)

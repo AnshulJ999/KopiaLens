@@ -296,6 +296,7 @@ class RemovePlanRequest(BaseModel):
     shared_min: int = 0
     date_from: str | None = None
     date_to: str | None = None
+    first_from: str | None = None   # "recently backed up" cutoff (first_seen >= date), like Search
     prefix: str | None = None       # folder scope (Tree/Bloat); None = the whole filter
     all_versions: bool = False      # B2: every version's object vs latest only
     everywhere: bool = False        # B1: drop --source (whole-repo sweep) vs scope to the folder's sources
@@ -321,7 +322,8 @@ def _remove_targets(p: RemovePlanRequest) -> dict:
     # Footgun guard: with NO constraining filter at all, this would plan a delete over the entire
     # repo. Require at least one real constraint before enumerating anything.
     if not any([p.query, p.deleted_only, p.min_gb, p.over_gb, p.max_gb, p.source, p.ext,
-                p.ext_exclude, p.date_from, p.date_to, p.min_versions, p.shared_min, p.prefix]):
+                p.ext_exclude, p.date_from, p.date_to, p.first_from, p.min_versions,
+                p.shared_min, p.prefix]):
         raise HTTPException(status_code=400,
                             detail="refusing to plan a delete with no filter - this would match the entire repo")
     min_size = int((p.min_gb or p.over_gb or 0) * 1_000_000_000)
@@ -329,7 +331,8 @@ def _remove_targets(p: RemovePlanRequest) -> dict:
         p.repo, query=p.query, deleted_only=p.deleted_only, min_size=min_size,
         max_size=int((p.max_gb or 0) * 1_000_000_000), source=p.source or None, ext=p.ext or None,
         ext_exclude=p.ext_exclude or None, date_from=p.date_from or None, date_to=p.date_to or None,
-        min_versions=p.min_versions, shared_min=p.shared_min, prefix=p.prefix or None,
+        min_versions=p.min_versions, shared_min=p.shared_min, first_from=p.first_from or None,
+        prefix=p.prefix or None,
         all_versions=p.all_versions, cap=p.cap or _plan_cap(),
     )
 
@@ -365,7 +368,8 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
     dry_cmds = remove_files_chunked_commands(payload.repo, items, source=scope, commit=False, max_chars=8000, flag=flag)
     audit.audit("generated", "remove-plan", repo=payload.repo,
                 summary={"items": len(items), "by": payload.by, "batches": len(commit_cmds),
-                         "sources": scope or [], "everywhere": scope is None})
+                         "sources": scope or [], "everywhere": scope is None,
+                         "query": payload.query, "first_from": payload.first_from})
     return {
         "file_count": t["file_count"], "object_count": len(t["object_ids"]), "name_count": len(t["names"]),
         "item_count": len(items), "by": payload.by,
@@ -386,7 +390,7 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
 # only about a prefix, so if any of these is set its whole-folder answer describes a different
 # deletion than the one being planned.
 _NARROWING_FILTERS = ("query", "ext", "ext_exclude", "deleted_only", "over_gb", "min_gb", "max_gb",
-                      "min_versions", "shared_min", "date_from", "date_to")
+                      "min_versions", "shared_min", "date_from", "date_to", "first_from")
 
 
 def _has_filters(payload: RemovePlanRequest) -> bool:

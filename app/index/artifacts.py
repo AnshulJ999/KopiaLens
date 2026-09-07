@@ -607,18 +607,19 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
         con.execute("DELETE FROM snap WHERE snapshot_id NOT IN (SELECT snapshot_id FROM _cur_snaps)")
         con.execute("DELETE FROM snap_rev WHERE snapshot_id NOT IN (SELECT snapshot_id FROM _cur_snaps)")
 
-        # Per-source mapping: carry path ids by (identity, name), sticky first_seen from the
+        # Per-source mapping: carry path ids by raw full_path, sticky first_seen from the
         # immutable prev artifact, allocate the residue, rewrite the source's two artifacts.
-        # (ident, name) rather than ident alone: a case-only rename on a case-insensitive
-        # source leaves TWO display rows sharing one identity while both spellings' file rows
-        # exist, and each keeps its own id.
+        # Raw full_path rather than (identity, name): a case-only FOLDER rename leaves two
+        # display rows sharing one identity AND one name, and grouping by identity hands both
+        # rows the same id - the dup check then aborts the whole build. The old spelling keeps
+        # its id, the new spelling allocates a fresh one; the sticky first_seen still carries
+        # across the rename via _old_seen, which stays keyed on the folded identity.
         new_entries: dict[int, tuple[str, str]] = {}
         per_source: dict[str, dict] = {}
         for key, mode, ap in targets:
             S = int(src_of[key])
             sep = pathrules.sep(key)
             ident_raw = pathrules.ident_sql(key)
-            ident_px = pathrules.ident_sql(key, "px.full_path")
             job["current_source"] = key
 
             con.execute(
@@ -670,12 +671,12 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
 
             con.execute(
                 f"CREATE OR REPLACE TEMPORARY TABLE _px_carry AS "
-                f"SELECT {ident_raw} AS ident, name, min(path_id) AS path_id FROM prev_pathx "
-                f"WHERE src_id = ? GROUP BY 1, 2", [S])
+                f"SELECT full_path, min(path_id) AS path_id FROM prev_pathx "
+                f"WHERE src_id = ? GROUP BY 1", [S])
             ids.anti_join(con, "_px_new",
-                          f"SELECT {ident_raw} AS ident, name FROM _px",
-                          "SELECT ident, name FROM _px_carry", ["ident", "name"])
-            alloc.assign(con, "_px_alloc", "SELECT ident, name FROM _px_new", "ident, name",
+                          "SELECT full_path FROM _px",
+                          "SELECT full_path FROM _px_carry", ["full_path"])
+            alloc.assign(con, "_px_alloc", "SELECT full_path FROM _px_new", "full_path",
                          "path_id", id_col="path_id")
             con.execute(
                 f"""CREATE OR REPLACE TEMPORARY TABLE _px_final AS
@@ -685,8 +686,8 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
                            px.in_latest, cr.cid_id, px.physical,
                            CAST(NULL AS UBIGINT) AS exclusive, px.full_path
                     FROM _px px
-                    LEFT JOIN _px_carry ca ON ca.ident = {ident_px} AND ca.name = px.name
-                    LEFT JOIN _px_alloc al ON al.ident = {ident_px} AND al.name = px.name
+                    LEFT JOIN _px_carry ca ON ca.full_path = px.full_path
+                    LEFT JOIN _px_alloc al ON al.full_path = px.full_path
                     JOIN dir d ON d.src_id = ? AND d.dir_path = array_to_string(
                          string_split(px.full_path, '{sep}')
                              [1:len(string_split(px.full_path, '{sep}')) - 1], '{sep}')

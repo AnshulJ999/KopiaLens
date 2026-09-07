@@ -407,7 +407,7 @@
             <div class="mb-2 font-medium">Restore (preview command only)</div>
             <input x-model="restoreSource" class="mb-2 fld w-full border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="Snapshot/path">
             <input x-model="restoreDest" class="mb-2 fld w-full border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="Destination">
-            <button @click="restorePreview()" class="h-8 rounded bg-stone-800 dark:bg-stone-700 px-3 text-sm text-white">Preview</button>
+            <button @click="restorePreviewLegacy()" class="h-8 rounded bg-stone-800 dark:bg-stone-700 px-3 text-sm text-white">Preview</button>
           </div>
         </div>
         <div class="max-w-5xl rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">

@@ -26,6 +26,7 @@ counts ran high). Validate the result per-drive against bzstat_totalbackup.xml.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from dataclasses import dataclass
@@ -162,6 +163,20 @@ class RuleEngine:
                 continue
             return True, r.label
         return False, None
+
+
+def engine_digest(engine: RuleEngine) -> str:
+    """blake2b over the PARSED exclusion state classify() actually uses (all four layers).
+
+    Hashing the parsed rules - not the raw XML files - keeps unrelated bzinfo.xml edits from
+    forcing a spurious reclassify, while any real rule change always moves it. Field order is
+    fixed and dir_prefixes/ext_set are sorted, so the digest is stable across loads."""
+    h = hashlib.blake2b()
+    h.update("\n".join(engine.dir_prefixes).encode("utf-8"))
+    h.update("\n".join(sorted(engine.ext_set)).encode("utf-8"))
+    for r in engine.pattern_rules:  # document order - stable across loads
+        h.update("\n".join((r.skip, r.c1, r.c2, "|".join(r.dnc), r.ends, r.ext)).encode("utf-8"))
+    return h.hexdigest()
 
 
 def load_engine() -> RuleEngine:

@@ -478,13 +478,15 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
                    max_size: int = 0, source: str | None = None, ext: str | None = None,
                    ext_exclude: str | None = None, date_from: str | None = None,
                    date_to: str | None = None, min_versions: int = 0, shared_min: int = 0,
+                   first_from: str | None = None,
                    prefix: str | None = None, all_versions: bool = False, cap: int = 200000) -> dict:
     """Files matching the CURRENT view/filter (optionally scoped to a folder ``prefix``), ordered
     by physical size DESC, plus the object-ids to feed ``remove-files`` - biggest files first so a
     chunked run reclaims the most space soonest. ``all_versions`` expands each path to EVERY
     version's object; otherwise just the latest content. Used by the chunked folder/filter delete."""
     where, params = _search_where(repo, query, deleted_only, min_size, source, ext, max_size,
-                                  date_from, date_to, min_versions, shared_min, ext_exclude)
+                                  date_from, date_to, min_versions, shared_min, ext_exclude,
+                                  first_from=first_from)
     if prefix:
         base = prefix.rstrip(_SEP)
         where.append("(full_path = ? OR full_path LIKE ?" + _ESC + ")")

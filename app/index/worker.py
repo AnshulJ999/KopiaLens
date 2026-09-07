@@ -163,7 +163,13 @@ def run(repo: str, full: bool = False) -> dict:
 
         def _analysis() -> None:
             from .snapanalysis import prewarm
-            prewarm(repo, with_reclaim=True)             # reads content_refs
+            out = prewarm(repo, with_reclaim=True)       # reads content_refs
+            if out and out.get("failed_sources"):
+                # the stage still SUCCEEDS - partial results are published; the failures ride
+                # the summary so a nightly that silently lost sources becomes visible
+                summary["analysis_failed_sources"] = out["failed_sources"]
+                logging.warning("repo=%s analysis failed for %d source(s): %s", repo,
+                                len(out["failed_sources"]), ", ".join(out["failed_sources"][:10]))
 
         def _churn() -> None:
             # The churn windows are BOUNDED (365d completes in ~12s on a clean pool), but by now
@@ -223,6 +229,15 @@ def run(repo: str, full: bool = False) -> dict:
             if stats:
                 summary["refcount_misses"] = stats
                 logging.info("refcount misses repo=%s: %s", repo, stats)
+        except Exception:  # noqa: BLE001 - a diagnostic must never affect the run
+            pass
+        try:
+            from ..core.cache import read_failure_stats
+            fails = read_failure_stats(repo)
+            if fails:
+                summary["unreadable_dirs"] = fails
+                logging.warning("repo=%s: %d unreadable director(y/ies) skipped (NOT cached, "
+                                "retried next build): e.g. %s", repo, fails["count"], fails["sample"])
         except Exception:  # noqa: BLE001 - a diagnostic must never affect the run
             pass
         from .store import close_all

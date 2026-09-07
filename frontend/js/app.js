@@ -545,7 +545,9 @@ document.addEventListener("alpine:init", () => {
       this.deletePlan = {
         ids: rows.map((r) => r.id),
         count: rows.length,
-        reclaim: reclaimVals.reduce((a, b) => a + b, 0),
+        // Number(): the API can hand these over as strings (a Decimal column serializes quoted),
+        // and bare + would concatenate instead of add
+        reclaim: reclaimVals.reduce((a, b) => a + Number(b), 0),
         reclaimKnown: reclaimVals.length === rows.length,
         pinned: rows.filter((r) => r.pins && r.pins.length).length,
         retained: rows.filter((r) => r.retention && r.retention.length).length,
@@ -1270,6 +1272,9 @@ document.addEventListener("alpine:init", () => {
         min_versions: this.minVersions ? Number(this.minVersions) : 0,
         shared_min: this.sharedMin ? Number(this.sharedMin) : 0,
         date_from: this.dateFrom || null, date_to: this.dateTo || null, prefix: null,
+        // the same cutoff Search is filtered by - without it, "delete all matching" would sweep
+        // files the user narrowed OUT of the view
+        first_from: this.recentBackupCutoff() || null,
       };
       this._removeLabel = "current Search filter" + (this.query ? ` · “${this.query}”` : "");
       this.buildRemovePlan();
@@ -1647,7 +1652,7 @@ document.addEventListener("alpine:init", () => {
         this.loadMounts();
       }, "Unmounting...");
     },
-    async restorePreview() {
+    async restorePreviewLegacy() {  // Actions-tab command preview (the restore dialog has its own restorePreview above)
       await this.wrap(async () => {
         const r = await getJson("/api/actions/restore-preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.restoreSource, destination: this.restoreDest }) });
         this.actionText = `Restore command (preview - run it yourself):\n${(r.command || []).join(" ")}`;

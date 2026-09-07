@@ -17,6 +17,22 @@ from ..settings import load_settings, mutate_settings
 
 router = APIRouter(tags=["dashboard"])
 
+# /api/repos serves the whole settings file to the UI (the Settings modal reads it). Nothing in it
+# may ever carry a credential - the known case is kopialens.server.password (the loopback token
+# KopiaLens generates for the optional server listing backend). Scrubbed recursively so a secret
+# added under a future block cannot leak by accident. Safe to strip: saveSettings() merges a
+# hand-picked subset back, so removing a key from the response can never erase the stored value.
+_SECRET_KEY_NAMES = {"password", "password_hash", "secret", "token", "api_key", "api_key_hash"}
+
+
+def _scrub_secrets(value):
+    if isinstance(value, dict):
+        return {k: _scrub_secrets(v) for k, v in value.items()
+                if str(k).lower() not in _SECRET_KEY_NAMES}
+    if isinstance(value, list):
+        return [_scrub_secrets(v) for v in value]
+    return value
+
 
 def _require_kopia(repo: str) -> None:
     """These endpoints are DuckDB/kopia-only. Reject a non-kopia repo (e.g. backblaze, which
@@ -40,7 +56,7 @@ def repos() -> dict:
     kl.pop("auth_password_hash", None)
     kl["auth_protected"] = auth.enabled()
     return {"repos": [{"id": key, "name": value["name"], "kind": value.get("kind", "kopia")}
-                      for key, value in REPOS.items()], "settings": settings}
+                      for key, value in REPOS.items()], "settings": _scrub_secrets(settings)}
 
 
 @router.get("/dashboard")

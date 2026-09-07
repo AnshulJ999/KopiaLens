@@ -294,7 +294,8 @@ window.bzMixin = function () {
           onRowDblClick: (_e, row) => { const d = row.getData(); if (d._root) return this.bzTreeNav(d._root); if (d.is_dir) this.bzTreeNav(this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); },
           rowMenu: [
             { label: "Open / drill in", action: (_e, row) => { const d = row.getData(); if (d._root) return this.bzTreeNav(d._root); if (d.is_dir) this.bzTreeNav(this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); } },
-            { label: "Generate exclusion (this folder)", action: (_e, row) => this.bzOpenGen("folder", "\\" + row.getData().name + "\\") },
+            { label: "Generate exclusion (this folder)", action: (_e, row) => { const d = row.getData(); const full = d._root || (this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); const rel = full.length > 2 && full[1] === ":" ? full.slice(2) : full; this.bzOpenGen("folder", rel.replace(/\\+$/, "") + "\\"); } },
+            { label: "Generate exclusion (any folder with this name)", action: (_e, row) => this.bzOpenGen("folder", "\\" + row.getData().name + "\\") },
             { label: "Find in search", action: (_e, row) => { this.query = row.getData().name; this.active = "bz-search"; this.bzLoadSearch(); } },
             { label: "Copy path", action: (_e, row) => this.copyText(row.getData()._root || (this.bzTreePrefix.replace(/\\+$/, "") + "\\" + row.getData().name)) },
           ],
@@ -392,7 +393,8 @@ window.bzMixin = function () {
         onRowDblClick: (_e, row) => this.bzExclRowOpen(row.getData()),
         rowMenu: [
           { label: "Open", action: (_e, row) => this.bzExclRowOpen(row.getData()) },
-          { label: "Generate exclusion (this folder)", action: (_e, row) => this.bzOpenGen("folder", "\\" + row.getData().name + "\\") },
+          { label: "Generate exclusion (this folder)", action: (_e, row) => { const d = row.getData(); const full = d.status === "drive" ? d.path : (this.bzExclPath.replace(/\\+$/, "") + "\\" + d.name); const rel = full.length > 2 && full[1] === ":" ? full.slice(2) : full; this.bzOpenGen("folder", rel.replace(/\\+$/, "") + "\\"); } },
+          { label: "Generate exclusion (any folder with this name)", action: (_e, row) => this.bzOpenGen("folder", "\\" + row.getData().name + "\\") },
           { label: "Copy path", action: (_e, row) => this.copyText(row.getData().status === "drive" ? row.getData().path : this.bzExclPath.replace(/\\+$/, "") + "\\" + row.getData().name) },
         ],
       });

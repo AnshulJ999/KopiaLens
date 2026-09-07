@@ -384,6 +384,39 @@ def test_new_source_gets_first_seen_backfill(env, monkeypatch):
     assert seen == [S3]   # S3 is new; S1 (carried) and S2 (append) keep their carried dates
 
 
+def test_case_only_folder_rename_gets_distinct_ids(env, monkeypatch):
+    """A case-only FOLDER rename leaves the old spelling's rows in old snapshots and the new
+    spelling's in the new one - two display rows sharing one folded identity AND one name.
+    Keying the id carry on the raw full path is what keeps two ids: grouping by identity handed
+    both rows the same id, the dup_path_id check caught it, and the whole build aborted."""
+    import app.index.physical as physical
+    count = {**COUNT, "obj_f": 1, "obj_f2": 1}
+    monkeypatch.setattr(artifacts, "_refcount", lambda repo, db: (count, 0))
+    monkeypatch.setattr(physical, "load_sizemap", lambda repo, refresh=False:
+                        {**SMAP, "obj_f": 180, "obj_f2": 210})
+    listing = _listing_update()
+    listing[S1] = listing[S1] + [{"id": "snap3", "startTime": TS["snap3"]}]
+    monkeypatch.setattr(artifacts, "sources_index", lambda repo: listing)
+    # old spelling lives in snap2 (re-walked as the previous latest), new spelling in snap3
+    monkeypatch.setitem(WALK, (S1, "snap2"), WALK[(S1, "snap2")] + [
+        (f"C:{SEP}A{SEP}NVIDIA app{SEP}f.txt", "f.txt", 180, "obj_f", TS["snap2"], 2)])
+    monkeypatch.setitem(WALK, (S1, "snap3"), [
+        (f"C:{SEP}A{SEP}NVIDIA App{SEP}f.txt", "f.txt", 210, "obj_f2", TS["snap3"], 0)])
+
+    body = artifacts.build_repo("1", env, gen=1, job={})
+    from app.index import publish
+    publish.publish(env, body)
+
+    px = _rows(env, "pool/pathx/src_id=1/g2.parquet")
+    frows = [r for r in px if r[3] == "f.txt"]
+    assert len(frows) == 2
+    assert len({r[0] for r in frows}) == 2  # the old failure mode was one shared id for both
+    assert {r[13] for r in frows} == {f"C:{SEP}A{SEP}NVIDIA app{SEP}f.txt",
+                                      f"C:{SEP}A{SEP}NVIDIA App{SEP}f.txt"}
+    dirs = _rows(env, "pool/dir/g2.parquet")
+    assert {r[2] for r in dirs} >= {f"C:{SEP}A{SEP}NVIDIA app", f"C:{SEP}A{SEP}NVIDIA App"}
+
+
 def test_incremental_writes_smallint_src_id(env):
     """The full build writes src_id as SMALLINT; the incremental must match, or a mixed
     generation binds two different column types for one artifact kind."""

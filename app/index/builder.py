@@ -31,7 +31,7 @@ from .schema import (SCHEMA_VERSION, offline_status, stamp_schema_version,
                      stored_schema_version, write_cursor)
 from ..core import paths as pathrules
 from ..core.applog import get_logger
-from ..core.cache import cache_db
+from ..core.cache import cache_db, read_failure_stats
 from ..core.sources import sources_index
 from ..core.walk import walk_new_visit
 
@@ -415,6 +415,13 @@ def _run_build(repo: str, source: str | None, full: bool) -> None:
             except Exception:
                 pass
             con.close()
+        # A failed kopia dir read is skipped loudly (cache.py), never cached - the count is
+        # drained here either way so it can never leak into the next build's report.
+        fails = read_failure_stats(repo)
+        if fails:
+            job["unreadable_dirs"] = fails
+            log.warning("repo=%s index ran with %d unreadable director(y/ies) (skipped, NOT cached, "
+                        "retried next build): e.g. %s", repo, fails["count"], fails["sample"])
         job["building"] = False
         job["finished_at"] = time.time()
 
@@ -425,7 +432,11 @@ def index_status(repo: str) -> dict:
     job = _JOBS.get(repo, {})
     if job.get("building"):
         return {
-            "repo": repo, "snapshots": total,
+            "repo": repo,
+            # the RUNNING job's own total (changed targets), not the repo-wide snapshot count -
+            # the counter only advances over targets, so the repo total made every incremental
+            # pass look stuck at a fraction of the bar
+            "snapshots": job.get("total") or total,
             "indexed_snapshots": job.get("indexed", 0),
             "files": None, "building": True, "error": None,
             "current_source": job.get("current_source"), "targets": job.get("targets"),
@@ -444,7 +455,7 @@ def index_status(repo: str) -> dict:
         prog = worker_progress(repo) or {}
         off = offline_status(repo)
         return {
-            "repo": repo, "snapshots": total,
+            "repo": repo, "snapshots": prog.get("total") or total,
             "indexed_snapshots": prog.get("indexed", 0), "files": None,
             "building": True, "offline": off is not None,
             "offline_reason": off.get("reason") if off else None,

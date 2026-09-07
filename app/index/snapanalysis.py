@@ -15,12 +15,15 @@ from datetime import datetime
 import hashlib
 import threading
 
+from ..core.applog import get_logger
 from ..core.cache import cache_db, get_children
 from ..core.sizemap import load_sizemap
 from ..core.sources import resolve_source
 from ..core.walk import walk, walk_new
 from .physical import _chunks_for_obj, _refcount_map
 from .store import read_cursor
+
+log = get_logger("analysis")
 
 # (repo, snapshot_id) -> reclaimable files. LRU-bounded: these lists can be large and were
 # previously never evicted (a slow unbounded leak as snapshots were viewed over a long session).
@@ -224,9 +227,14 @@ def _publish_analysis(repo: str, per_source: dict) -> int | None:
            for source, (rows, snaphash) in per_source.items()
            for r in rows]
     cols = list(zip(*new)) if new else [[]] * 8
+    # Explicit uint64: plain signed ints unioned with the artifact's UBIGINT columns widen the
+    # whole union to DECIMAL, and a Decimal then reaches the API as a STRING
+    # ("reclaimable":"284114983") - breaking every numeric sort/add on these fields.
+    u64 = pa.uint64()
     incoming = pa.table({
         "repo": list(cols[0]), "source": list(cols[1]), "snapshot_id": list(cols[2]),
-        "churn": list(cols[3]), "physical": list(cols[4]), "reclaimable": list(cols[5]),
+        "churn": pa.array(cols[3], type=u64), "physical": pa.array(cols[4], type=u64),
+        "reclaimable": pa.array(cols[5], type=u64),
         "snaphash": list(cols[6]), "computed_at": list(cols[7]),
     })
     replaced = list(per_source)
@@ -244,6 +252,12 @@ def _publish_analysis(repo: str, per_source: dict) -> int | None:
         cur.unregister("_sa_incoming")
     finally:
         cur.close()
+    # Heal generations published before the uint64 fix: the surviving side still carries the old
+    # DECIMAL type, so recasting the merged result here is what makes the published artifact UBIGINT.
+    for name in ("churn", "physical", "reclaimable"):
+        idx = merged.schema.get_field_index(name)
+        if idx >= 0 and merged.schema.field(idx).type != u64:
+            merged = merged.set_column(idx, name, merged.column(idx).cast(u64))
     return publish.replace_artifacts(repo, {"sanalysis": merged})
 
 
@@ -336,13 +350,18 @@ def read_analysis(repo: str, source: str, compute_if_stale: bool = False, with_r
     }
 
 
-def prewarm(repo: str, with_reclaim: bool = False) -> None:
+def prewarm(repo: str, with_reclaim: bool = False) -> dict | None:
     """Background: keep per-snapshot analysis warm. churn-only (``with_reclaim=False``) recomputes
     only when the snapshot set changed; the heavy pass (``with_reclaim=True``) ALSO recomputes when
     physical/reclaimable are missing for any snapshot - so the slow pass actually refills the heavy
-    fields instead of being skipped because churn looks fresh (the old reclaimable-blank bug)."""
+    fields instead of being skipped because churn looks fresh (the old reclaimable-blank bug).
+
+    A source that fails is skipped and counted, never fatal: partial results are published and the
+    stage succeeds. Returns ``{"failed_sources": [...]}`` when anything failed, else None - the
+    caller surfaces the list so a nightly cannot report a clean pass that lost sources."""
     from ..core.sources import sources_index
     heavy = 0
+    failed: list[str] = []
     with batched(repo):  # ONE published generation per stage, not one per source
         for key in sorted(sources_index(repo)):
             try:
@@ -358,5 +377,12 @@ def prewarm(repo: str, with_reclaim: bool = False) -> None:
                         continue
                     heavy += 1
                 compute_source(repo, key, with_reclaim=with_reclaim)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - one source failing must not abort the stage
+                failed.append(key)
+                log.warning("repo=%s analysis failed for %s: %s", repo, key, exc)
                 continue
+    if failed:
+        log.warning("repo=%s analysis stage: %d source(s) failed (partial results published): %s",
+                    repo, len(failed), ", ".join(failed[:10]))
+        return {"failed_sources": failed}
+    return None
