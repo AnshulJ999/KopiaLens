@@ -62,6 +62,16 @@ def test_comma_in_a_source_name_still_matches(cur):
     assert queries.group_by_folder("1", depth=2, source=COMMA_SRC)["rows"], "no folder rows"
 
 
+def test_copies_column_counts_locations_not_source_rows(cur):
+    """The Copies column promises "this content is at N paths" and pairs with shared_min. A file
+    covered by two overlapping sources is at ONE path; how many sources hold it is the Src column."""
+    by_path = {r["full_path"]: r for r in queries.search_paths("1")["rows"]}
+    over = by_path["C:" + SEP + "Users" + SEP + "over.txt"]
+    assert over["copies"] == 1, "one location covered by two sources is not two copies"
+    assert over["sources"] == 2, "Src still reports both sources"
+    assert by_path["C:" + SEP + "a" + SEP + "dup.txt"]["copies"] == 2, "a real duplicate pair"
+
+
 def test_search_still_accepts_a_comma_separated_source_list(cur):
     """The multi-source interface keeps its splitting - only the single-source callers changed."""
     got = queries.search_paths("1", source="u@h:C:,u@h:C:" + SEP + "Users")["total"]

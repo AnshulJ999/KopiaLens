@@ -249,8 +249,11 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                 grp = page_cids[i:i + 900]
                 if not grp:
                     continue
-                q = ("SELECT c.content_id, count(*), count(DISTINCT p.src_id) FROM pathx p "
-                     "JOIN cid c ON c.cid_id = p.cid_id WHERE c.content_id IN (%s) "
+                # DISTINCT full_path, matching the Copies column's own promise ("at N paths") and
+                # the shared_min filter. count(*) counted pathx ROWS, so one file covered by two
+                # overlapping sources read as 2 copies. How many SOURCES hold it is the Src column.
+                q = ("SELECT c.content_id, count(DISTINCT p.full_path), count(DISTINCT p.src_id) "
+                     "FROM pathx p JOIN cid c ON c.cid_id = p.cid_id WHERE c.content_id IN (%s) "
                      "GROUP BY c.content_id" % ",".join("?" * len(grp)))
                 for c, n, s in cur.execute(q, grp).fetchall():
                     cp[c] = n
