@@ -97,11 +97,23 @@ def _src_ids(cur, source: str) -> list[int]:
 
 def _src_cond(cur, source: str, alias: str = "p") -> tuple[str, list]:
     """(condition, params) restricting one query to the given sources. Empty resolution yields
-    a never-true condition so the result stays empty instead of erroring."""
+    a never-true condition so the result stays empty instead of erroring.
+
+    Comma-splitting belongs ONLY to interfaces that document a multi-source filter (search).
+    Callers taking a single source use ``_src_cond_exact`` - a source path may itself contain
+    a comma."""
     ids = _src_ids(cur, source)
     if not ids:
         return "1 = 0", []
     return f"{alias}.src_id IN (%s)" % ",".join("?" * len(ids)), ids
+
+
+def _src_cond_exact(cur, source: str, alias: str = "p") -> tuple[str, list]:
+    """One source, matched exactly - never split on commas (`C:\\A, docs` is one valid source)."""
+    sid = resolve.src_id(cur, source)
+    if sid is None:
+        return "1 = 0", []
+    return f"{alias}.src_id = ?", [sid]
 
 
 def _search_where(cur, query: str, deleted_only: bool, min_size: int,
@@ -153,8 +165,11 @@ def _search_where(cur, query: str, deleted_only: bool, min_size: int,
         params.append(int(min_versions))
     if shared_min and shared_min > 1:  # content backing >= N distinct paths (exact-duplicate candidates)
         where.append(
+            # DISTINCT full_path, not path_id: pathx holds one row per (source, path), so a file
+            # covered by two overlapping sources is two rows but ONE location. Counting rows made
+            # a third of repo1's paths look like duplicates, and this filter feeds the delete plan.
             "p.cid_id IN (SELECT p2.cid_id FROM pathx p2 WHERE p2.cid_id IS NOT NULL "
-            "GROUP BY p2.cid_id HAVING count(DISTINCT p2.path_id) >= ?)"
+            "GROUP BY p2.cid_id HAVING count(DISTINCT p2.full_path) >= ?)"
         )
         params.append(int(shared_min))
     return where, params
@@ -443,7 +458,7 @@ def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | No
         conds: list[str] = []
         params: list = []
         if source:
-            cond, sp = _src_cond(cur, source)
+            cond, sp = _src_cond_exact(cur, source)
             conds.append(cond)
             params.extend(sp)
         if ext:
@@ -677,7 +692,7 @@ def folder_summary(repo: str, prefix: str, source: str | None = None) -> dict:
         conds = ["(lower(p.full_path) = ? OR lower(p.full_path) LIKE ?" + _ESC + ")"]
         params: list = [exact, like]
         if source:
-            cond, sp = _src_cond(cur, source)
+            cond, sp = _src_cond_exact(cur, source)
             conds.append(cond)
             params.extend(sp)
         where = _where(conds)
@@ -707,7 +722,7 @@ def folder_top_children(repo: str, prefix: str, limit: int = 5, source: str | No
         conds = ["lower(p.full_path) LIKE ?" + _ESC]
         params: list = [like]
         if source:
-            cond, sp = _src_cond(cur, source)
+            cond, sp = _src_cond_exact(cur, source)
             conds.append(cond)
             params.extend(sp)
         where = _where(conds)
