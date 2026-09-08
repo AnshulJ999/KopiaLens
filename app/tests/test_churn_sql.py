@@ -6,12 +6,15 @@ These are the invariants the ranking depends on:
   - large/split files priced from iphys, small ones from csize
   - the deduped total counts each content once, however many paths hold it
   - an UNTOUCHED file is never reported as new, however recent its only delta row is
+  - neither side of a rewrite dates from a delta re-stamp: a content enters on the first
+    snapshot after the previous content's last snapshot, however old that is
 
-That last one is the expensive one. See the block comment above ``_QUALIFY_CTE`` in churnview.py:
-`min(start_time)` alone read 5.5x high on real data because the delta index re-stamps untouched
-files with the newest snapshot's timestamp. These tests pin the fix, because the correction
-reasons about how the indexer builds ``filev`` - if that walk ever changes, this file must fail
-loudly rather than let the tab go quietly wrong again.
+The last two are the expensive ones. See the block comment above ``_QUALIFY_CTE`` in
+churnview.py: `min(start_time)` alone read 5.5x high on real data, and a versions>1 guard
+still re-qualified every rewrite older than the window nightly (measured 2026-09-08: repo 1's
+24h view held 48,299 file versions of which ~39k were re-stamp artifacts). These tests pin the
+correction, because it reasons about how the indexer builds ``filev`` - if that walk ever
+changes, this file must fail loudly rather than let the tab go quietly wrong again.
 
 The fixture builds the RAW artifacts (src/snap/pathx/filev/csize/iphys), which is what the
 rewritten SQL reads; the helper mirrors the indexer's own pathx maintenance (first_seen =
@@ -246,8 +249,9 @@ def test_a_genuinely_new_file_counts_even_with_one_row(con):
 
 
 def test_a_rewrite_older_than_the_window_is_excluded(con):
-    """An old path rewritten before the window has >1 row, so it passes the path test - the content
-    group's own min(start_time) is what correctly excludes it. Both halves have to hold."""
+    """An old path rewritten before the window: the new content's re-stamp is inside the window,
+    but its true entry - the first snapshot after the previous content's last - is not, and no
+    snapshot sits in between that could move it forward."""
     p = "C:" + SEP + "docs" + SEP + "notes.md"
     add_file(con, p, "v1", "2025-01-01")
     add_file(con, p, "v2", "2026-05-01")             # rewritten, but before the cutoff
@@ -258,9 +262,43 @@ def test_a_rewrite_older_than_the_window_is_excluded(con):
     assert base_rows(con) == []
 
 
+def test_the_old_side_of_a_rewrite_is_not_new_data(con):
+    """The double-count. The previous content's only row is stamped with its LAST snapshot, so a
+    rewrite landed inside the window qualified BOTH contents under the old rule - the replacement
+    and the thing it replaced. Only the replacement is new data."""
+    p = "C:" + SEP + "Chrome" + SEP + "profile.dat"
+    add_file(con, p, "old", "2026-08-19")            # last held the day before the rewrite
+    add_file(con, p, "new", "2026-08-20")            # the rewrite, inside the window
+    set_first_seen(con, p, "2025-01-01")
+    set_packed(con, "old", 400)
+    set_packed(con, "new", 100)
+    rows = base_rows(con)
+    assert len(rows) == 1
+    assert rows[0][3] == 100
+    assert rows[0][4] == 1
+
+
+def test_a_rewrite_dates_from_the_first_snapshot_after_a_gap(con):
+    """A sparse source: the rewrite only becomes visible at the FIRST snapshot taken after the
+    previous content's last one. The window boundary applies to that snapshot, not to when the
+    previous content left."""
+    p = "C:" + SEP + "monthly" + SEP + "dump.db"
+    add_file(con, p, "old", "2026-07-01")            # previous content, before the cutoff
+    add_file(con, p, "new", "2026-08-01")            # first snapshot after it - inside the window
+    set_first_seen(con, p, "2025-01-01")
+    set_packed(con, "old", 10)
+    set_packed(con, "new", 200)
+    rows = base_rows(con)
+    assert len(rows) == 1
+    assert rows[0][3] == 200
+
+
 def test_untouched_and_churning_files_together(con):
-    """The realistic mix: the ranking must show the churner and drop the noise around it."""
+    """The realistic mix: the ranking must show the churner and drop the noise around it. The d0
+    row is the pre-rewrite content every rewrite leaves behind in the index - without it the
+    oldest in-window version would look like retained-history residue, which the rule excludes."""
     churner = "C:" + SEP + "app" + SEP + "index.db"
+    add_file(con, churner, "d0", "2026-08-10")
     add_file(con, churner, "d1", "2026-08-18")
     add_file(con, churner, "d2", "2026-08-19")
     add_file(con, churner, "d3", "2026-08-20")
@@ -269,6 +307,7 @@ def test_untouched_and_churning_files_together(con):
         stable = "C:" + SEP + "app" + SEP + f"lib{i}.dll"
         add_file(con, stable, f"s{i}", "2026-08-20")
         set_first_seen(con, stable, "2024-01-01")
+    set_packed(con, "d0", 50)
     set_packed(con, "d1", 100)
     set_packed(con, "d2", 100)
     set_packed(con, "d3", 100)

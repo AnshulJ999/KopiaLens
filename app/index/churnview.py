@@ -38,8 +38,12 @@ _CACHE_MAX = 12
 _LOCK = threading.Lock()
 _BUILD_LOCKS: dict[tuple, threading.Lock] = {}
 
-WINDOWS = (7, 30, 90, 180, 365)
+WINDOWS = (1, 3, 7, 30, 90, 180, 365)
 _MAX_LIMIT = 2000  # rows retained per view in the cache; requests slice this down
+
+# Bumped whenever the qualifying rule changes semantics, so on-disk rollups built by the old
+# rule cannot be served as current (the index stamp alone does not change on a code fix).
+_CACHE_VERSION = 2
 
 # Last path segment, then its extension - built from string_split only, so the SQL text carries no
 # backslash literal (the separator is always bound as a parameter).
@@ -51,51 +55,54 @@ _FOLDER = ("array_to_string(list_slice(string_split(full_path, ?), 1, "
 
 # The qualifying set: (path, content) pairs that genuinely entered the repo inside the window.
 #
-# 🚨 `min(files.start_time)` ALONE IS NOT "first appearance" - it was, and the Churn tab read 5.5x
-# high because of it. `files` is a DELTA index: the newest snapshot is walked in full, while older
-# snapshots contribute only what changed (the walk skips directories whose object is unchanged). So
-# a file untouched for two years has exactly ONE row, stamped with the LATEST snapshot's time. Ask
-# it when it first appeared and it answers "today", every day, forever. Measured on repo 1: churn
-# claimed 1,349,520 new files in 30 days against 245,775 by `paths.first_seen`; three folders in the
-# user's top ten (site-packages, PSP Games, GoogleDriveMirror) were 100% artifact.
+# A file row's stamp is NOT its first appearance: the delta walk emits each distinct
+# directory-object version stamped with the NEWEST snapshot where it was current, so a quiet
+# directory re-stamps its files with every nightly full walk. Reading min(start_time) naively
+# once read churn 5.5x high on repo 1; a versions>1 guard fixed the untouched half, but every
+# rewrite older than the window still re-qualified nightly (measured 2026-09-08: repo 1's 24h
+# view fell from 48,299 file versions to ~9.3k under the rule below).
 #
-# Two things are genuinely new, and they need different evidence:
-#   * a path that did not exist before the window  -> `paths.first_seen`, which Pass A backfilled
-#     oldest-first specifically to be the true first appearance. Authoritative, no inference.
-#   * an existing path REWRITTEN inside the window -> its new content is new data.
+# What the index knows exactly: one path holds one content per snapshot, so a path's content
+# groups ordered by max(start_time) are its content history, and each group's max stamp is the
+# LAST snapshot holding it. A group therefore first appeared in the first snapshot after the
+# previous group's last stamp - nothing can hide between consecutive snapshots. The oldest
+# group dates from paths.first_seen (the oldest-first backfill).
 #
-# The discriminator for the second is how many versions the PATH has (`paths.versions`), not the
-# (path, content) group's own row count. A rewritten file always has at least two, because changing
-# a file changes its containing directory, which forces the indexer to walk and record it. A file
-# rewritten in the very latest snapshot has only one row for its NEW content - so counting per group
-# would throw away real churn - but its path still carries the older content's version. An untouched
-# file has exactly one version, and that is the case being excluded here.
-#
-# This reasons about how the indexer builds `files` rather than reading a stored fact, so it is
-# exact today and could drift if that walk ever changes. The last six tests in `test_churn_sql.py`
-# pin the invariant so a future change fails loudly instead of silently going 5x wrong again. The durable
-# alternative - stamping first-seen per (path, content) at index time - was costed at 400-800 MB per
-# repo and deliberately deferred; see the sub-memory.
-# `paths.versions` is the version count the INDEXER already computed for each path
-# (count(DISTINCT snapshot_id) in builder._PATHS_SQL). Deriving it here again cost a second full
-# GROUP BY over all ~18.7M `files` rows - measured at 42.6s against 5.4s before. Reading it off the
-# `paths` join that this query already performs removes that scan outright.
+# A pair qualifies when:
+#   - the path is new (first_seen inside the window) - everything on it is new; or
+#   - first_seen IS NULL (backfill not yet run) - legacy conservative fallback; or
+#   - the group has a predecessor on the same path and NO snapshot exists between that
+#     predecessor's last stamp and the cutoff, i.e. this content entered inside the window.
+# An old path whose surviving groups have no predecessor is NOT new data (its earlier history
+# expired from retention; counting the nightly re-stamp would re-report old files forever).
+# Tests: test_churn_sql.py pins each branch against an in-memory DuckDB.
 _QUALIFY_CTE = """
 WITH pc AS (
-  SELECT f.path_id, f.cid_id, min(sn.start_time) AS first_ts
+  SELECT f.path_id, f.cid_id, min(sn.start_time) AS first_ts, max(sn.start_time) AS last_ts
   FROM filev f
   JOIN snap sn ON sn.snap_id = f.snap_id
   GROUP BY f.path_id, f.cid_id
-), newc AS (
-  SELECT s.source, p.full_path, pc.cid_id,
-         COALESCE(cs.packed, ip.packed, 0) AS packed
+), hist AS (
+  SELECT path_id, cid_id, first_ts, last_ts,
+         row_number() OVER (PARTITION BY path_id ORDER BY last_ts, cid_id) AS rn,
+         lag(last_ts) OVER (PARTITION BY path_id ORDER BY last_ts, cid_id) AS prev_last
   FROM pc
-  LEFT JOIN pathx p ON p.path_id = pc.path_id
+), newc AS (
+  SELECT s.source, p.full_path, hist.cid_id,
+         COALESCE(cs.packed, ip.packed, 0) AS packed
+  FROM hist
+  LEFT JOIN pathx p ON p.path_id = hist.path_id
   JOIN src s ON s.src_id = p.src_id
-  LEFT JOIN csize cs ON cs.cid_id = pc.cid_id
-  LEFT JOIN iphys ip ON ip.cid_id = pc.cid_id
-  WHERE pc.first_ts >= ?
-    AND (p.first_seen >= ? OR p.first_seen IS NULL OR COALESCE(p.versions, 2) > 1)
+  LEFT JOIN csize cs ON cs.cid_id = hist.cid_id
+  LEFT JOIN iphys ip ON ip.cid_id = hist.cid_id
+  WHERE p.first_seen >= ?
+     OR (p.first_seen IS NULL AND hist.first_ts >= ?)
+     OR (hist.rn > 1 AND NOT EXISTS (
+          SELECT 1 FROM snap s2
+          WHERE s2.src_id = p.src_id
+            AND s2.start_time > hist.prev_last
+            AND s2.start_time < ?
+        ))
 )
 """
 
@@ -103,7 +110,7 @@ WITH pc AS (
 def _qualify_params(cutoff: str) -> list:
     """Bind values for _QUALIFY_CTE, in the order its placeholders appear. No repo param: a
     generation only ever holds its own repo's rows."""
-    return [cutoff, cutoff]
+    return [cutoff, cutoff, cutoff]
 
 
 # The qualifying set is MATERIALIZED once per call and both outputs are derived from it. Embedding
@@ -174,7 +181,7 @@ def _disk_get(repo: str, days: int, depth: int, stamp: str) -> dict | None:
             blob = json.load(fh)
     except Exception:
         return None
-    return blob if blob.get("stamp") == stamp else None
+    return blob if blob.get("v") == _CACHE_VERSION and blob.get("stamp") == stamp else None
 
 
 def _disk_put(repo: str, days: int, depth: int, payload: dict) -> None:
@@ -331,6 +338,7 @@ def churn_rollup(repo: str, days: int = 30, depth: int = 4, limit: int = 400,
             all_sources = []
         payload = {
             "repo": repo, "days": days, "depth": depth, "cutoff": cutoff, "stamp": stamp,
+            "v": _CACHE_VERSION,
             "computed_at": time.time(), "elapsed": time.time() - start,
             "total_bytes": sum(r["bytes"] for r in rows),
             "total_bytes_deduped": deduped,

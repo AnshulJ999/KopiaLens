@@ -43,7 +43,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "reclaim_interval": 10800,   # seconds between background reclaimable pre-warm passes (heavy: refcount + double walk)
         "startup_delay": 300,        # quiet period after every process start before any background work
         "dashboard_refresh": 900,    # seconds: how often the open Dashboard view re-fetches the cache (0 = off)
-        "churn_days": 30,            # Churn tab: default window (7 / 30 / 90 / 180 / 365)
+        "churn_days": 30,            # Churn tab: default window (1 / 3 / 7 / 30 / 90 / 180 / 365)
         "churn_depth": 4,            # Churn tab: folder-rollup depth
         "churn_view": "source",      # Churn tab: "source" | "folder" | "ext"
         "group_depth": 3,            # Search "By folder" rollup depth; folder prewarm follows it
