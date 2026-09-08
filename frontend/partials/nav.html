@@ -1,0 +1,45 @@
+
+    <header class="h-14 shrink-0 border-b border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 flex items-center gap-3 px-4">
+      <button @click="active='dashboard'; loadDashboard()" class="font-semibold text-lg shrink-0">Kopia<span class="text-emerald-600">Lens</span></button>
+      <select x-model="repo" @change="repoChanged()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 shrink-0">
+        <template x-for="item in repos" :key="item.id"><option :value="item.id" x-text="item.name"></option></template>
+      </select>
+      <div class="relative flex-1 max-w-xl">
+        <input x-model="query" @input.debounce.300ms="headerSearch()" @focus="active = repoKind==='backblaze' ? 'bz-search' : 'search'"
+          class="fld w-full border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 pl-9"
+          :placeholder="repoKind==='backblaze' ? 'Search Backblaze files…' : 'Search files across all snapshots...'">
+        <svg class="absolute left-3 top-2.5 h-4 w-4 text-stone-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      </div>
+      <div class="ml-auto flex items-center gap-2 text-xs shrink-0">
+        <span x-show="repoKind!=='backblaze'" class="rounded border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 px-2 py-1" x-text="indexLine()"></span>
+        <button x-show="repoKind!=='backblaze'" @click="buildIndex()" :disabled="indexStatus.building" class="h-8 rounded bg-stone-800 dark:bg-stone-700 px-3 text-white disabled:opacity-50" title="Update index (incremental)">Index</button>
+        <span x-show="repoKind==='backblaze'" class="rounded border border-stone-300 dark:border-stone-700 bg-stone-50 dark:bg-stone-800 px-2 py-1" x-text="bzStatusLine()"></span>
+        <span x-show="repoKind==='backblaze' && bzRefreshResult" class="text-xs px-2 py-1 rounded" :class="bzRefreshResult.includes('FAILED') ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'" x-text="bzRefreshResult"></span>
+        <button x-show="repoKind==='backblaze'" @click="bzRefresh()" class="h-8 rounded bg-stone-800 dark:bg-stone-700 px-3 text-white" title="Re-scan the read-only Backblaze index">↻ Index BZ</button>
+        <button @click="refreshAll()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3" title="Refresh current view + sources">⟳ Refresh</button>
+        <button @click="toggleTimeFmt()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2" :title="timeFmt==='relative' ? 'Times: relative (click for absolute 12h)' : 'Times: absolute 12h (click for relative)'" x-text="timeFmt==='relative' ? '⏱ rel' : '🕒 abs'"></button>
+        <button @click="toggleDark()" class="h-8 w-8 rounded border border-stone-300 dark:border-stone-700" x-text="dark ? '☀' : '☽'"></button>
+        <button @click="openSettings()" class="h-8 w-8 rounded border border-stone-300 dark:border-stone-700" title="Settings">⚙</button>
+      </div>
+    </header>
+
+    <nav class="shrink-0 border-b border-stone-200 dark:border-stone-800 bg-white dark:bg-stone-900 px-3 py-1.5 flex items-center gap-1">
+      <template x-for="t in currentTabs()" :key="t.id">
+        <button class="tab" @click="active=t.id; activate()" :class="active===t.id ? 'bg-stone-200 dark:bg-stone-700 font-medium' : 'hover:bg-stone-100 dark:hover:bg-stone-800'" x-text="t.label"></button>
+      </template>
+      <div class="ml-auto flex items-center gap-2 text-xs pr-2">
+        <template x-for="f in freshness" :key="f.repo">
+          <span class="rounded px-1.5 py-0.5 border"
+                :class="freshStale(f) ? 'border-amber-400 text-amber-700 dark:text-amber-400' : 'border-stone-200 dark:border-stone-700 text-stone-500'"
+                :title="f.name + (f.error ? ' - last run failed: ' + f.error : '')">
+            <span x-text="f.repo === 'bz' ? 'BZ' : 'Repo ' + f.repo"></span>
+            <span x-text="' · ' + freshAge(f)"></span>
+            <span x-show="f.error" class="text-rose-600">!</span>
+          </span>
+        </template>
+        <span x-show="busy" class="text-amber-600" x-text="busy"></span>
+        <span x-show="error" class="text-red-600 max-w-md truncate" x-text="error"></span>
+        <span class="text-stone-400" x-show="selectedSource" x-text="'· ' + shortSource(selectedSource)"></span>
+      </div>
+    </nav>
+

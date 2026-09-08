@@ -1,0 +1,224 @@
+
+    <div x-show="detail" @click.self="detail=null" x-cloak class="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-6">
+      <div class="w-[52rem] max-w-full max-h-[85vh] overflow-auto rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 text-sm" x-show="detail">
+        <div class="flex items-start gap-2">
+          <div class="font-medium break-all" x-text="detail && detail.title"></div>
+          <button x-show="detail && detail.kind==='file'" @click="mountFileOpen({source: detail.source, full_path: detail.title})" class="ml-auto shrink-0 h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Mount the latest snapshot carrying this file and open it in Explorer">⤓ Mount &amp; open</button>
+          <button x-show="detail && detail.kind==='file'" @click="restoreFromDetail()" class="shrink-0 h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Restore this file">⤴ Restore</button>
+          <button @click="detail=null" class="shrink-0 text-stone-500 text-lg leading-none">&times;</button>
+        </div>
+        <div class="text-xs text-stone-500 mt-1 break-all" x-show="detail && detail.source" x-text="detail && ('source: ' + shortSource(detail.source))"></div>
+        <div class="text-[11px] text-amber-600 mt-1" x-show="detail && detail.loading">Loading physical / dedup / purge details…</div>
+        <div class="text-[11px] text-rose-700 dark:text-rose-300 mt-1 rounded border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950 px-2 py-1" x-show="detail && detail.error" x-text="detail && ('Could not load the details: ' + detail.error)"></div>
+
+        <!-- size cards -->
+        <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Logical</div><div class="font-medium" x-text="detail && fmtB(detail.logical)"></div></div>
+          <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
+            <div class="text-[10px] uppercase text-stone-500" x-text="(detail && detail.kind==='folder') ? ((detail.physical_dedup != null) ? 'Physical (deduped, all versions)' : 'Physical (approx)') : 'Physical (packed)'"></div>
+            <div class="font-medium" x-text="detail && fmtPhys((detail.kind==='folder' && detail.physical_dedup != null) ? detail.physical_dedup : detail.physical)"></div>
+            <div class="text-[10px] text-stone-500" x-show="detail && detail.kind==='folder' && detail.physical_dedup == null">counting duplicates twice until the exact figure lands</div>
+          </div>
+          <div class="rounded border border-emerald-300 dark:border-emerald-800 p-2" x-show="detail && detail.kind==='file'"><div class="text-[10px] uppercase text-emerald-700 dark:text-emerald-400">Freeable</div><div class="font-medium" x-text="detail && fmtPhys(detail.freeable)"></div></div>
+          <div class="rounded border border-stone-200 dark:border-stone-700 p-2" x-show="detail && detail.kind==='file'"><div class="text-[10px] uppercase text-stone-500">Shared (won't free)</div><div class="font-medium" x-text="detail && fmtPhys(detail.shared)"></div></div>
+        </div>
+        <div class="text-[11px] text-stone-500 mt-1" x-show="detail && detail.kind==='file'">Freeable = packed bytes referenced only by this file (freed if you delete every snapshot carrying it). <span x-show="detail && detail.physical_all" x-text="'Across all versions: ' + fmtPhys(detail && detail.physical_all)"></span></div>
+        <template x-if="detail && detail.kind==='folder'">
+          <div class="mt-2 space-y-3">
+            <!-- The whole heavy payload is one cached result: physical, shared and freeable are all
+                 as-of the same moment. Tagging only "Frees if deleted" read as though the others
+                 were current. -->
+            <div class="text-[11px] rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-2 py-1"
+                 x-show="detail.reclaim_stale">
+              Physical, shared and freeable below are from
+              <span x-text="detail.reclaim_at ? new Date(detail.reclaim_at*1000).toLocaleString() : 'an earlier index'"></span>,
+              shown straight away while a fresh figure is computed in the background. Reopen this folder in a few minutes for the current number.
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div class="rounded border border-emerald-300 dark:border-emerald-800 p-2">
+                <div class="text-[10px] uppercase text-emerald-700 dark:text-emerald-400">Frees if deleted</div>
+                <div class="font-medium" x-text="detail.heavyLoading ? 'computing…' : fmtPhys(detail.freeable)"></div></div>
+              <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
+                <div class="text-[10px] uppercase text-stone-500">Shared elsewhere</div>
+                <div class="font-medium" x-text="detail.heavyLoading ? '…' : fmtPhys(detail.shared)"></div></div>
+              <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
+                <div class="text-[10px] uppercase text-stone-500">Versions</div>
+                <div class="font-medium" x-text="Number(detail.versions||0).toLocaleString()"></div></div>
+              <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
+                <div class="text-[10px] uppercase text-stone-500">Deleted from disk</div>
+                <div class="font-medium" x-text="Number(detail.deleted_files||0).toLocaleString() + ' of ' + Number(detail.files||0).toLocaleString()"></div></div>
+            </div>
+            <div class="text-[11px] text-stone-500">Frees if deleted = packed bytes that nothing else keeps alive. Shared bytes stay until every other copy goes too.</div>
+            <div class="text-[11px] text-stone-500" x-show="detail.physical_dedup != null &amp;&amp; detail.physical_sum &amp;&amp; detail.physical_sum > detail.physical_dedup * 1.02">
+              Adding up each file separately gives <span x-text="fmtPhys(detail.physical_sum)"></span>, but
+              <span x-text="fmtPhys(detail.physical_sum - detail.physical_dedup)"></span> of that is storage shared
+              between duplicate files in here, counted once on disk.
+            </div>
+
+            <div>
+              <div class="text-xs font-medium mb-1">Backed up by</div>
+              <div class="text-[11px] text-stone-500 mb-1">
+                <span x-text="detail.covers || 0"></span> source<span x-show="(detail.covers||0)!==1">s</span> back up this folder itself<span
+                  x-show="detail.sub_policies"><span x-text="', plus ' + detail.sub_policies + ' sub-folder polic' + (detail.sub_policies===1?'y':'ies') + ' inside it'"></span></span>.
+              </div>
+              <template x-for="sc in (detail.sources || [])" :key="sc.source">
+                <div class="flex items-center gap-2 rounded border border-stone-200 dark:border-stone-700 px-2 py-1 mb-1">
+                  <div class="min-w-0">
+                    <div class="text-xs truncate">
+                      <span x-text="shortSource(sc.source)"></span>
+                      <span class="text-[10px] rounded px-1 ml-1"
+                            :class="sc.relation==='covers' ? 'bg-stone-200 dark:bg-stone-700' : 'bg-stone-100 dark:bg-stone-800 text-stone-500'"
+                            x-text="sc.relation==='covers' ? 'covers this folder' : 'sub-folder policy'"></span>
+                    </div>
+                    <div class="text-[10px] text-stone-500" x-text="sc.policy ? (sc.policy.schedule + ' · keeps ' + sc.policy.retention) : 'policy not loaded'"></div>
+                  </div>
+                  <div class="ml-auto shrink-0 text-[11px] text-stone-500 text-right">
+                    <div x-text="fmtPhys(sc.physical)"></div>
+                    <div x-text="Number(sc.files||0).toLocaleString() + ' files'"></div>
+                  </div>
+                </div>
+              </template>
+              <div class="text-[11px] text-amber-600" x-show="detail.multi_source">
+                &#9888; <span x-text="detail.covers"></span> sources back up this folder itself &mdash; deleting from one leaves the copies in the others.
+              </div>
+              <div class="text-[11px] text-stone-500" x-show="(detail.max_overlap||0) > 1 && !detail.multi_source">
+                Files here are stored by up to <span x-text="detail.max_overlap"></span> nested sources, so some content is snapshotted more than once.
+              </div>
+              <div class="text-[11px] text-stone-500 mt-1" x-show="detail.effective_policy && (detail.effective_policy.ignore||[]).length">
+                Ignore rules here: <span class="font-mono" x-text="(detail.effective_policy.ignore||[]).join('  ·  ')"></span>
+              </div>
+            </div>
+
+            <div x-show="(detail.children||[]).length">
+              <div class="text-xs font-medium mb-1">Biggest inside</div>
+              <template x-for="ch in (detail.children || [])" :key="ch.child">
+                <div class="flex items-center gap-2 text-[11px] px-2 py-0.5 border-b border-stone-100 dark:border-stone-800">
+                  <span class="font-mono truncate" x-text="ch.child"></span>
+                  <span class="ml-auto shrink-0 text-stone-500" x-text="fmtPhys(ch.physical) + ' · ' + Number(ch.files||0).toLocaleString() + ' files'"></span>
+                </div>
+              </template>
+            </div>
+
+            <div class="flex flex-wrap gap-2 text-xs">
+              <button @click="folderDeleteFromPanel()" class="h-7 rounded border border-rose-400 text-rose-600 px-2">Delete folder&hellip;</button>
+              <button @click="folderShowFiles()" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2">Show files</button>
+              <button @click="copyText(detail.title)" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2">Copy path</button>
+            </div>
+            <div class="text-[11px] text-stone-500">First backed up <span x-text="(detail.first_seen||'&mdash;').slice(0,10)"></span> &middot; last <span x-text="(detail.last_seen||'&mdash;').replace('T',' ').slice(0,16)"></span></div>
+          </div>
+        </template>
+
+        <!-- content chunks / dedup -->
+        <template x-if="detail && detail.kind==='file' && detail.chunks && detail.chunks.length">
+          <div class="mt-3">
+            <div class="font-medium text-xs mb-1">Content chunks (<span x-text="detail.chunk_count"></span> total · dedup)</div>
+            <div class="rounded border border-stone-200 dark:border-stone-700 max-h-40 overflow-auto">
+              <template x-for="ck in detail.chunks" :key="ck.cid">
+                <div class="flex items-center gap-2 px-2 py-0.5 text-[11px] border-b border-stone-100 dark:border-stone-800">
+                  <span class="font-mono text-stone-500" x-text="ck.cid.slice(0,16)"></span>
+                  <span x-text="fmtB(ck.packed)"></span>
+                  <span class="ml-auto" :class="ck.exclusive ? 'text-emerald-600' : 'text-amber-600'" x-text="ck.exclusive ? 'exclusive' : ('shared by ' + ck.refs)"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- other paths sharing this content -->
+        <template x-if="detail && detail.others && detail.others.length">
+          <div class="mt-3">
+            <div class="font-medium text-xs mb-1">Other files deduped against this one (<span x-text="detail.others.length"></span>)</div>
+            <div class="rounded border border-stone-200 dark:border-stone-700 max-h-32 overflow-auto text-[11px]">
+              <template x-for="(o,i) in detail.others" :key="i">
+                <div class="px-2 py-0.5 break-all border-b border-stone-100 dark:border-stone-800" x-text="shortSource(o.source) + '  ·  ' + o.full_path"></div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- content-centric: reclaim if purged everywhere -->
+        <template x-if="detail && detail.kind==='file' && detail.instances > 1">
+          <div class="mt-3 rounded border border-amber-300 dark:border-amber-800 p-2">
+            <div class="font-medium text-xs mb-1">Exact duplicate · <span x-text="detail.instances"></span> paths across <span x-text="detail.locations"></span> sources</div>
+            <div class="text-[11px] text-stone-600 dark:text-stone-300">Per-file "Freeable" reads ~0 here because the other copies keep the content alive. To actually free it you must delete EVERY snapshot that references it across ALL locations.</div>
+            <div class="mt-1.5 flex items-center gap-3 text-xs flex-wrap">
+              <span>Reclaim if purged everywhere: <span class="font-medium text-emerald-600" x-text="fmtPhys(detail.reclaim_everywhere)"></span></span>
+              <span>Snapshots to delete: <span class="font-medium" x-text="detail.purge_everywhere_count"></span></span>
+              <button @click="copyText(detail.purgeEverywhereCmds)" class="ml-auto rounded border border-stone-300 dark:border-stone-700 px-2 py-0.5">Copy delete-everywhere commands</button>
+            </div>
+          </div>
+        </template>
+
+        <!-- versions -->
+        <template x-if="detail && detail.versions && detail.versions.length">
+          <div class="mt-3">
+            <div class="font-medium text-xs mb-1">Versions (newest first)</div>
+            <div class="rounded border border-stone-200 dark:border-stone-700 max-h-40 overflow-auto text-[11px]">
+              <template x-for="(v,i) in detail.versions" :key="i">
+                <div class="flex items-center gap-2 px-2 py-0.5 border-b border-stone-100 dark:border-stone-800">
+                  <span x-text="v.time"></span><span class="text-stone-500" x-text="fmtB(v.size)"></span>
+                  <span class="ml-auto font-mono text-stone-400" x-text="'snap ' + v.snapshot_id.slice(0,16)"></span>
+                  <button @click="mountVersionOpen(v)" class="text-sky-600" title="Mount this version's snapshot and open it in Explorer">mount</button>
+                  <button @click="copyText('kopia restore ' + v.content_id + ' <destination>')" class="text-emerald-600" title="Copy restore command">copy restore</button>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- purge plan -->
+        <template x-if="detail && detail.purge && detail.purge.length">
+          <div class="mt-3">
+            <div class="flex items-center gap-2 mb-1"><span class="font-medium text-xs">Purge plan (deletes whole snapshots - run yourself)</span>
+              <button @click="copyText(detail.purgeCmds)" class="text-xs rounded border border-stone-300 dark:border-stone-700 px-2">Copy purge commands</button></div>
+            <div class="rounded border border-stone-200 dark:border-stone-700 max-h-40 overflow-auto text-[11px]">
+              <template x-for="(p,i) in detail.purge" :key="i">
+                <div class="flex items-center gap-2 px-2 py-0.5 border-b border-stone-100 dark:border-stone-800">
+                  <span class="font-mono break-all" x-text="p.cmd"></span>
+                  <span class="ml-auto text-amber-600" x-show="p.tag" x-text="'⚠ ' + p.tag"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- remove file from ALL snapshots (keeps the snapshots) -->
+        <template x-if="detail && detail.kind==='file'">
+          <div class="mt-3 rounded border border-rose-300 dark:border-rose-800 p-2">
+            <div class="font-medium text-xs mb-1">Remove this file from ALL snapshots (keeps the snapshots)</div>
+            <div class="text-[11px] text-stone-600 dark:text-stone-300">Strips the file from every snapshot manifest (snapshots keep all their other files); GC frees its space on the next <span class="font-mono">maintenance run --full</span>. Better than deleting snapshots.</div>
+            <div class="mt-1.5 flex items-center gap-2 flex-wrap">
+              <button @click="loadRemoveFiles('object-id')" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Precise: every distinct content object across versions">Build (by exact content)</button>
+              <button @click="loadRemoveFiles('filename')" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Easy: --filename + --source">Build (by filename)</button>
+              <label class="flex items-center gap-1 text-[11px]" title="Drop --source: removes from EVERY source that has this exact content (sweeps the whole repo)"><input type="checkbox" x-model="detail.rfEverywhere"> all sources</label>
+              <span class="text-[11px] text-stone-500" x-show="detail.removeFiles" x-text="detail.removeFiles && (detail.removeFiles.count + (detail.removeFiles.by==='object-id' ? ' object-id(s)' : ' filename(s)'))"></span>
+            </div>
+            <template x-if="detail.removeFiles">
+              <div class="mt-1.5 space-y-1">
+                <div class="text-[10px] uppercase text-stone-500">Dry run (safe preview — run this first)</div>
+                <div class="flex items-center gap-2"><span class="font-mono break-all text-[11px] flex-1" x-text="detail.removeFiles.dry"></span><button @click="copyText(detail.removeFiles.dry)" class="text-xs text-emerald-600 shrink-0">copy</button></div>
+                <div class="text-[10px] uppercase text-stone-500">Commit (applies the removal)</div>
+                <div class="flex items-center gap-2"><span class="font-mono break-all text-[11px] flex-1" x-text="detail.removeFiles.commit"></span><button @click="copyText(detail.removeFiles.commit)" class="text-xs text-emerald-600 shrink-0">copy</button></div>
+                <div class="pt-1"><button @click="executeRemoveFiles()" class="h-7 rounded bg-rose-600 px-3 text-xs text-white">Execute now (type REMOVE)</button></div>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <!-- exclusion-pattern suggestions -->
+        <template x-if="detail && detail.kind==='file'">
+          <div class="mt-3">
+            <div class="font-medium text-xs mb-1">Exclude patterns (copy → paste into the KopiaUI policy)</div>
+            <div class="rounded border border-stone-200 dark:border-stone-700 max-h-44 overflow-auto text-[11px]">
+              <template x-for="(p,i) in excludePatterns()" :key="i">
+                <div class="flex items-center gap-2 px-2 py-0.5 border-b border-stone-100 dark:border-stone-800">
+                  <span class="text-stone-500 w-44 shrink-0" x-text="p.label"></span>
+                  <span class="font-mono break-all flex-1" x-text="p.pat"></span>
+                  <button @click="copyText(p.pat)" class="text-emerald-600 shrink-0">copy</button>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>

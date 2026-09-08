@@ -1,8 +1,9 @@
 """Frontend sequence-guard invariants, pinned at source level.
 
-There is no JS test runner here, so these read `app.js` the way `test_repo_kind_guard.py` reads
-`core/kopia.py`: the point is to catch the NEXT loader that forgets a guard, not to re-test the
-ones already fixed.
+There is no JS test runner here, so these read `detail.js` the way `test_repo_kind_guard.py`
+reads `core/kopia.py`: the point is to catch the NEXT loader that forgets a guard, not to
+re-test the ones already fixed. The pinned methods moved here from app.js in the
+frontend split - update the path if they move again.
 
 The bug these exist for: starting a new remove plan bumped its own counter but not the
 reclaim-detail counter, so an in-flight reclaim calc still matched its guard and wrote figures for
@@ -20,7 +21,7 @@ import pytest
 
 import config
 
-APP_JS = os.path.join(config.HERE, "frontend", "js", "app.js")
+APP_JS = os.path.join(config.HERE, "frontend", "js", "detail.js")
 
 
 def _body(name: str) -> str:

@@ -1,0 +1,8 @@
+      <section x-show="active==='dashboard'" class="h-full flex flex-col gap-2">
+        <div class="flex items-center gap-2 text-sm">
+          <span class="text-stone-500 text-xs" x-text="dashboardMeta"></span>
+          <button @click="csv('#dashboardTable','dashboard')" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs ml-auto" title="Export CSV">⬇ CSV</button>
+          <span class="text-stone-400 text-xs">double-click a row to drill · right-click for actions / column show-hide</span>
+        </div>
+        <div id="dashboardTable" class="flex-1 min-h-0"></div>
+      </section>

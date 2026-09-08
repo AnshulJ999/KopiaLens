@@ -6,6 +6,7 @@ import datetime as dt
 import gc
 import json
 import os
+import re
 import threading
 import time
 import traceback
@@ -665,23 +666,38 @@ app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
 
 
 def _asset_version() -> str:
-    """Stamp derived from the app's own JS mtimes. index.html carries ``__ASSET_V__`` on those
-    script tags; substituting it here means an updated app.js is always fetched, without a build
-    step and without touching the version-pinned vendor filenames."""
+    """Stamp derived from the app's own JS mtimes. Every script tag in index.html carries
+    ``__ASSET_V__``; substituting it here means an updated file is always fetched, without a
+    build step and without touching the version-pinned vendor filenames."""
     stamp = 0.0
-    for name in ("js/app.js", "js/backblaze.js"):
+    for path in (FRONTEND / "js").rglob("*.js"):
         try:
-            stamp = max(stamp, (FRONTEND / name).stat().st_mtime)
+            stamp = max(stamp, path.stat().st_mtime)
         except OSError:
             pass
     return str(int(stamp))
+
+
+_INCLUDE_RE = re.compile(r"^[ \t]*<!--\s*include:\s*(\S+)\s*-->[ \t]*(?:\r\n|\r|\n)?", re.M)
+
+
+def _compose_html() -> str:
+    """Expand ``<!-- include: partials/... -->`` markers in index.html (paths relative to
+    frontend/). Loops so a partial may itself carry includes; the depth cap turns a cyclic
+    include into a loud error instead of a hang."""
+    html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+    for _ in range(10):
+        if "<!-- include:" not in html:
+            return html
+        html = _INCLUDE_RE.sub(lambda m: (FRONTEND / m.group(1)).read_text(encoding="utf-8"), html)
+    raise RuntimeError("index.html: include depth exceeded (cyclic partial?)")
 
 
 @app.get("/")
 def index() -> Response:
     # no-store on the shell itself: a cached index.html would keep pointing at the old asset
     # stamp, which is exactly how stale JS survived a reload before.
-    html = (FRONTEND / "index.html").read_text(encoding="utf-8").replace("__ASSET_V__", _asset_version())
+    html = _compose_html().replace("__ASSET_V__", _asset_version())
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
