@@ -10,10 +10,12 @@ from app import main as m
 
 def test_compose_resolves_every_marker():
     html = m._compose_html()
-    assert "<!-- include:" not in html, "a partial include was not expanded"
+    assert "{%" not in html and "{{" not in html, "a template tag survived rendering"
     assert 'x-data="kopiaLens()"' in html
     assert '<script src="/static/js/util.js' in html
     assert '<script src="/static/js/app.js' in html
+    assert '/static/css/tokens.css?v=' in html
+    assert '/static/css/app.css?v=' in html
 
 
 def test_asset_version_is_an_epoch_stamp():

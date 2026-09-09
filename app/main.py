@@ -6,7 +6,6 @@ import datetime as dt
 import gc
 import json
 import os
-import re
 import threading
 import time
 import traceback
@@ -14,6 +13,7 @@ import urllib.parse
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import jinja2
 from fastapi import FastAPI, Request
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, RedirectResponse,
                                Response)
@@ -666,39 +666,38 @@ app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
 
 
 def _asset_version() -> str:
-    """Stamp derived from the app's own JS mtimes. Every script tag in index.html carries
-    ``__ASSET_V__``; substituting it here means an updated file is always fetched, without a
-    build step and without touching the version-pinned vendor filenames."""
+    """Stamp derived from the app's own JS and CSS mtimes. Every script and stylesheet tag in
+    index.html carries it, so an updated file is always fetched, without a build step and
+    without touching the version-pinned vendor filenames."""
     stamp = 0.0
-    for path in (FRONTEND / "js").rglob("*.js"):
-        try:
-            stamp = max(stamp, path.stat().st_mtime)
-        except OSError:
-            pass
+    for sub, ext in (("js", "*.js"), ("css", "*.css")):
+        for path in (FRONTEND / sub).rglob(ext):
+            try:
+                stamp = max(stamp, path.stat().st_mtime)
+            except OSError:
+                pass
     return str(int(stamp))
 
 
-_INCLUDE_RE = re.compile(r"^[ \t]*<!--\s*include:\s*(\S+)\s*-->[ \t]*(?:\r\n|\r|\n)?", re.M)
+# Templates are read from disk per request (auto_reload): the frontend is static, so an edit
+# must show up on a page reload without restarting the server.
+_JINJA = jinja2.Environment(
+    loader=jinja2.FileSystemLoader(str(FRONTEND)),
+    auto_reload=True,
+    autoescape=False,          # the partials ARE the markup; nothing here is user data
+)
 
 
 def _compose_html() -> str:
-    """Expand ``<!-- include: partials/... -->`` markers in index.html (paths relative to
-    frontend/). Loops so a partial may itself carry includes; the depth cap turns a cyclic
-    include into a loud error instead of a hang."""
-    html = (FRONTEND / "index.html").read_text(encoding="utf-8")
-    for _ in range(10):
-        if "<!-- include:" not in html:
-            return html
-        html = _INCLUDE_RE.sub(lambda m: (FRONTEND / m.group(1)).read_text(encoding="utf-8"), html)
-    raise RuntimeError("index.html: include depth exceeded (cyclic partial?)")
+    """Render index.html with its ``{% include %}`` partials resolved."""
+    return _JINJA.get_template("index.html").render(asset_v=_asset_version())
 
 
 @app.get("/")
 def index() -> Response:
     # no-store on the shell itself: a cached index.html would keep pointing at the old asset
     # stamp, which is exactly how stale JS survived a reload before.
-    html = _compose_html().replace("__ASSET_V__", _asset_version())
-    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+    return HTMLResponse(_compose_html(), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/health")

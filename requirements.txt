@@ -9,3 +9,4 @@ pystray
 pillow
 psutil
 zstandard
+jinja2

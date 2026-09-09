@@ -1,0 +1,76 @@
+/* KopiaLens design tokens.
+
+   Colour, spacing, radius and control sizes live here; app.css and the markup consume them.
+   A theme is a redefinition of this block and nothing else, so anything that hardcodes a
+   colour in the markup is invisible to theming. New markup uses tokens.
+
+   Dark mode is the `.dark` class on <html> (tailwind darkMode: 'class'). */
+
+:root {
+  /* surfaces and text */
+  --surface: #fff;
+  --surface2: #fafaf9;
+  --head: #f5f5f4;
+  --bd: #e7e5e4;
+  --fg: #1c1917;
+  --muted: #78716c;
+  --hover: #f5f5f4;
+  --sel: #e7e5e4;
+
+  /* semantic: state, not brand. Separate from any future accent. */
+  --ok: #047857;
+  --ok-bd: #6ee7b7;
+  --ok-bg: #ecfdf5;
+  --danger: #be123c;
+  --danger-bd: #fda4af;
+  --danger-bg: #fff1f2;
+  --warn: #b45309;
+  --warn-bd: #fcd34d;
+  --warn-bg: #fffbeb;
+  --link: #0369a1;
+
+  /* live command output */
+  --term-bg: #f7f6f4;
+  --term-fg: #3f3a36;
+  --term-dim: #9a938b;
+
+  /* density: one axis, independent of colour */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --ctl-h: 28px;
+}
+
+.dark {
+  --surface: #1c1917;
+  --surface2: #242120;
+  --head: #292524;
+  --bd: #44403c;
+  --fg: #e7e5e4;
+  --muted: #a8a29e;
+  --hover: #332f2c;
+  --sel: #3f3a36;
+
+  --ok: #34d399;
+  --ok-bd: #065f46;
+  --ok-bg: #052e26;
+  --danger: #fb7185;
+  --danger-bd: #881337;
+  --danger-bg: #2a0d14;
+  --warn: #fbbf24;
+  --warn-bd: #78350f;
+  --warn-bg: #2a1c05;
+  --link: #38bdf8;
+
+  --term-bg: #141210;
+  --term-fg: #d6d0c8;
+  --term-dim: #7b746b;
+}
