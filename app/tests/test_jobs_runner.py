@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import re
 import threading
 import time
@@ -9,7 +10,8 @@ import time
 import pytest
 
 from app.core import jobs, nightly
-from app.core.kopia import maintenance_run_command
+from app.core import kopia as kopia_mod
+from app.core.kopia import maintenance_run_command, _repo_args
 
 
 @pytest.fixture(autouse=True)
@@ -205,6 +207,7 @@ def test_stop_terminates_a_running_command_and_the_job_ends_stopped(monkeypatch,
 
 def test_stop_between_chunks_runs_no_further_chunk(monkeypatch, isolated):
     job = jobs._new_job("remove_files", "1", "t", {"dry": False},
+                        [["kopia", "a"], ["kopia", "b"], ["kopia", "c"]],
                         [["kopia", "a"], ["kopia", "b"], ["kopia", "c"]], None)
     jobs._JOBS[job["job_id"]] = job
     seen = []
@@ -259,8 +262,9 @@ def test_list_jobs_returns_every_job_newest_first(monkeypatch, isolated):
 
 def test_commands_come_from_the_real_builders():
     full = maintenance_run_command("1")
+    prefix_len = 1 + len(_repo_args("1"))
     cmds, _ = jobs._build_commands("maintenance", "1", {"full": True})
-    assert cmds[0] == full[1:] and cmds[0][-3:] == ["maintenance", "run", "--full"]
+    assert cmds[0] == full[prefix_len:] and cmds[0][-3:] == ["maintenance", "run", "--full"]
     cmds, _ = jobs._build_commands("maintenance", "1", {"full": False})
     assert cmds[0][-2:] == ["maintenance", "run"]
     ids = ["a" * 64, "b" * 64]
@@ -272,6 +276,70 @@ def test_commands_come_from_the_real_builders():
     assert all("--commit" not in c for c in dryrf)
     commitrf, _ = jobs._build_commands("remove_files", "1", {"items": ["x", "y"]})
     assert all("--commit" in c for c in commitrf)
+
+
+def test_builder_output_is_bare_args_even_when_the_repo_carries_args(monkeypatch, isolated):
+    """Repo 2's pasteable commands embed --config-file; the streamer re-adds repo args itself.
+    Stripping only the leading "kopia" made repo 2 pass --config-file twice - repo 1's empty
+    args list hid it, so this pin runs against a repo WITH args."""
+    monkeypatch.setattr(kopia_mod, "REPOS", {
+        "2": {"kind": "kopia", "name": "Big",
+              "args": ["--config-file", "I:/Kopia Big Backup/kopia.config"]},
+    })
+    cmds, _ = jobs._build_commands("maintenance", "2", {"full": True})
+    assert "--config-file" not in cmds[0]
+    assert cmds[0][-3:] == ["maintenance", "run", "--full"]
+    dry, _ = jobs._build_commands("snapshot_delete", "2", {"snapshot_ids": ["a" * 64], "dry": True})
+    assert "--config-file" not in dry[0] and "--delete" not in dry[0]
+
+
+def test_the_pasteable_command_text_carries_the_repo_args_once(monkeypatch, isolated):
+    """Copy command / the audit-visible text must be runnable: kopia + repo args + command,
+    with the repo args exactly once (they were missing entirely right after the strip fix)."""
+    monkeypatch.setattr(kopia_mod, "REPOS", {
+        "2": {"kind": "kopia", "name": "Big",
+              "args": ["--config-file", "I:/Kopia Big Backup/kopia.config"]},
+    })
+    monkeypatch.setattr(jobs, "kopia_job_stream", _fake_stream(["would delete"]))
+    job = jobs.start_job("snapshot_delete", "2", {"snapshot_ids": ["a" * 64], "dry": True})
+    _wait_state(job, "done")
+    text = job["commands_text"]
+    assert text.startswith("kopia --config-file ")
+    assert text.count("--config-file") == 1
+    assert "--delete" not in text and text.endswith("a" * 64)
+
+
+def test_the_streamed_command_carries_repo_args_once_and_progress(monkeypatch):
+    """Pin for both seam bugs at the assembly point: repo args exactly once (repo 2 has real
+    ones) and NO --no-progress - the runner exists to stream kopia's live output."""
+    captured = {}
+
+    class _FakePopen:
+        def __init__(self, cmd, **kwargs):
+            captured["cmd"] = cmd
+            self.stdout = io.StringIO("out line\n")
+            self.stderr = io.StringIO("err line\rprogress 42%\r\n")
+
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return 0
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(kopia_mod.subprocess, "Popen", _FakePopen)
+    result: dict = {}
+    lines = list(kopia_mod.kopia_job_stream("2", ["maintenance", "run", "--full"], result))
+    full = captured["cmd"]
+    assert full[0] == "kopia"
+    assert full.count("--config-file") == 1  # once - not zero, not the doubled two
+    assert "--no-progress" not in full
+    assert full[-3:] == ["maintenance", "run", "--full"]
+    assert ("stderr", "err line") in lines
+    assert ("stderr", "progress 42%") in lines  # the \r progress update became its own line
+    assert result["returncode"] == 0
 
 
 def test_the_streamer_never_receives_a_doubled_kopia_prefix(monkeypatch, isolated):

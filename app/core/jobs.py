@@ -38,6 +38,7 @@ from . import audit
 from .applog import get_logger
 from .kopia import (
     _quote_arg,
+    _repo_args,
     kopia_job_stream,
     maintenance_run_command,
     remove_files_chunked_commands,
@@ -102,11 +103,18 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
         cmds, meta = [cmd], {"source_id": params["source_id"], "target": params["target"], "dry": False}
     else:
         raise JobRefused(f"unknown job kind: {kind}")
-    # The builders return PASTEABLE commands starting with "kopia" (that is their contract - the
-    # same text is shown/copied in the UI), but the streamer consumes bare args via
-    # _base_command, which prepends "kopia" itself. Skipping the strip yields "kopia kopia ..."
-    # (caught live: kopia exits instantly with "expected command but got kopia").
-    stripped = [c[1:] if c and c[0] == "kopia" else c for c in cmds]
+    # The builders return PASTEABLE commands: ["kopia"] + _repo_args(repo) + subcommand. The
+    # streamer consumes BARE args via _base_command, which re-adds "kopia" AND the repo args.
+    # Stripping only "kopia" left the repo args in, and _base_command added them a second time -
+    # invisible on repo 1 (empty args list), but repo 2 ran with its --config-file twice. Strip
+    # the exact prefix; a mismatch means a builder changed shape and would double args, so it
+    # fails loudly instead of silently corrupting the command.
+    prefix = ["kopia"] + _repo_args(repo)
+    stripped = []
+    for c in cmds:
+        if c[:len(prefix)] != prefix:
+            raise RuntimeError(f"job builder output lacks the kopia+repo-args prefix: {c[:4]}")
+        stripped.append(c[len(prefix):])
     return stripped, meta
 
 
@@ -127,7 +135,7 @@ def _default_label(kind: str, params: dict, meta: dict) -> str:
 
 
 def _new_job(kind: str, repo: str, label: str, meta: dict, cmds: list[list[str]],
-             on_done) -> dict:
+             pasteable: list[list[str]], on_done) -> dict:
     job_id = uuid.uuid4().hex[:12]
     ts = time.strftime("%Y%m%d_%H%M%S")
     log_dir = os.path.join(DATA_DIR, "logs")
@@ -141,7 +149,9 @@ def _new_job(kind: str, repo: str, label: str, meta: dict, cmds: list[list[str]]
         "total": len(cmds), "done": 0, "errors": 0,
         "line_count": 0, "buffer": deque(maxlen=BUFFER_LINES),
         "log_path": os.path.join(log_dir, f"job_{kind}_repo{repo}_{ts}_{job_id}.log"),
-        "commands_text": "\n".join(" ".join(_quote_arg(a) for a in c) for c in cmds),
+        # Pasteable form (kopia + repo args + the command): what the runner executes, and what
+        # Copy command must hand the user - the bare `cmds` would not be runnable.
+        "commands_text": "\n".join(" ".join(_quote_arg(a) for a in c) for c in pasteable),
         "stop_requested": False, "_stream": None, "on_done": on_done,
     }
 
@@ -163,7 +173,9 @@ def start_job(kind: str, repo: str, params: dict, label: str | None = None,
         if nightly.is_running(repo):
             raise JobRefused(
                 f"Repo {repo} is being indexed right now - start after the index pass finishes.")
-    job = _new_job(kind, repo, label or _default_label(kind, params, meta), meta, cmds, on_done)
+    pasteable = [["kopia"] + _repo_args(repo) + c for c in cmds]
+    job = _new_job(kind, repo, label or _default_label(kind, params, meta), meta, cmds,
+                   pasteable, on_done)
     with _JOBS_LOCK:
         # The write-at-a-time check and the registration are one atomic step: two rapid starts
         # must not both pass the check and register.

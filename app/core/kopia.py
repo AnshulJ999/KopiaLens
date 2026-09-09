@@ -95,8 +95,10 @@ def _repo_args(repo: str) -> list[str]:
     return list(REPOS[repo]["args"])
 
 
-def _base_command(repo: str, args: list[str]) -> list[str]:
-    return ["kopia"] + _repo_args(repo) + args + ["--no-progress"]
+def _base_command(repo: str, args: list[str], progress: bool = False) -> list[str]:
+    """``progress=True`` omits --no-progress: the job streamer exists to show kopia's live
+    output, so it must not ask kopia to be quiet. Every other caller keeps the flag."""
+    return ["kopia"] + _repo_args(repo) + args + ([] if progress else ["--no-progress"])
 
 
 DEFAULT_TIMEOUT = 3600.0  # generous: `content list -l` on a large repo legitimately runs minutes
@@ -251,7 +253,9 @@ def kopia_job_stream(repo: str, args: list[str], result: dict):
     is set once the exit code is known, and the finally always waits/closes so no child or
     handle leaks. Mutating by design - job commands are deliberately outside the RO allowlist.
     """
-    full = _base_command(repo, args)
+    # progress=True: a job exists to stream kopia's live output (per-snapshot detail, progress
+    # updates); --no-progress would ask kopia to be quiet.
+    full = _base_command(repo, args, progress=True)
     # CREATE_NEW_PROCESS_GROUP so a console event, if one ever becomes deliverable, can be
     # addressed to the child; CREATE_NO_WINDOW is the standing pythonw rule.
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -266,7 +270,12 @@ def kopia_job_stream(repo: str, args: list[str], result: dict):
     def _pump(name: str, stream) -> None:
         try:
             for line in stream:
-                lines.put((name, line.rstrip("\r\n")))
+                # Pipe iteration splits on \n only; kopia's progress bar updates arrive \r-
+                # separated, so split those too - each update becomes its own line instead of
+                # an embedded control char in the stream.
+                for part in line.rstrip("\r\n").split("\r"):
+                    if part:
+                        lines.put((name, part))
         except Exception:  # noqa: BLE001 - pipe closed underneath us (stop path)
             pass
         finally:
