@@ -8,6 +8,7 @@ does not mutate the repository. Restore is command-preview only in v1.
 from __future__ import annotations
 
 import os
+import queue
 import string
 import subprocess
 import threading
@@ -228,6 +229,80 @@ def kopia_lines(repo: str, args: list[str], ro: bool = True, timeout: float | No
             proc.kill()
             proc.wait(timeout=30)
         drainer.join(timeout=5)
+        for stream in (proc.stdout, proc.stderr):
+            try:
+                if stream and not stream.closed:
+                    stream.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def kopia_job_stream(repo: str, args: list[str], result: dict):
+    """Stream BOTH pipes of one long kopia command for the job runner (core/jobs.py).
+
+    Yields ``(stream, line)`` tuples where stream is "stdout" or "stderr" and lines are raw
+    (no timestamps - the job layer stamps them). remove-files writes everything to stderr, so
+    a stdout-only stream would make a working job look hung (the silence trap).
+
+    No timeout on purpose: a full maintenance run legitimately takes hours and ``kopia_timeout``
+    would kill it mid-run. Ending a job early is the caller's Stop, which terminates
+    ``result["proc"]``; the stream then ends at EOF like any other exit. Both pipes are pumped
+    on threads (an unread pipe fills at ~64 KB and blocks the child), ``result["returncode"]``
+    is set once the exit code is known, and the finally always waits/closes so no child or
+    handle leaks. Mutating by design - job commands are deliberately outside the RO allowlist.
+    """
+    full = _base_command(repo, args)
+    # CREATE_NEW_PROCESS_GROUP so a console event, if one ever becomes deliverable, can be
+    # addressed to the child; CREATE_NO_WINDOW is the standing pythonw rule.
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    proc = subprocess.Popen(
+        full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        encoding="utf-8", errors="replace", bufsize=1, creationflags=flags,
+    )
+    result["proc"] = proc
+    lines: queue.Queue = queue.Queue()
+    start = time.time()
+
+    def _pump(name: str, stream) -> None:
+        try:
+            for line in stream:
+                lines.put((name, line.rstrip("\r\n")))
+        except Exception:  # noqa: BLE001 - pipe closed underneath us (stop path)
+            pass
+        finally:
+            lines.put(None)
+
+    pumps = [threading.Thread(target=_pump, args=(n, s), daemon=True)
+             for n, s in (("stdout", proc.stdout), ("stderr", proc.stderr))]
+    for t in pumps:
+        t.start()
+    try:
+        ended = 0
+        while ended < len(pumps):
+            item = lines.get()
+            if item is None:
+                ended += 1
+                continue
+            yield item
+        try:
+            rc = proc.wait(timeout=60)
+        except subprocess.TimeoutExpired:  # pipes closed but the child lingers - force it
+            proc.kill()
+            rc = proc.wait(timeout=30)
+        result["returncode"] = rc
+    finally:
+        global KOPIA_CALLS, KOPIA_TIME
+        KOPIA_CALLS += 1
+        KOPIA_TIME += time.time() - start
+        if proc.poll() is None:  # generator abandoned early - do not orphan the child
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001 - already gone
+                pass
+        try:
+            proc.wait(timeout=30)
+        except Exception:  # noqa: BLE001
+            pass
         for stream in (proc.stdout, proc.stderr):
             try:
                 if stream and not stream.closed:
