@@ -33,7 +33,7 @@ const churnPart = {
       const rewriteCol = { title: "Rewrite", field: "rewrite", width: 90, hozAlign: "right", sorter: "number",
         headerTooltip: "Versions divided by files - how many times the average file here was rewritten.",
         formatter: (c) => { const v = Number(c.getValue() || 0);
-          return v >= 5 ? `<span style="color:#d97706" title="Heavily rewritten">${v.toFixed(1)}×</span>` : `${v.toFixed(1)}×`; } };
+          return v >= 5 ? `<span style="color:var(--warn)" title="Heavily rewritten">${v.toFixed(1)}×</span>` : `${v.toFixed(1)}×`; } };
       const fileCol = { title: "Files", field: "files", width: 90, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() };
       let rows = [], cols = [], menu = [];
       if (this.churnView === "source") {
@@ -41,7 +41,7 @@ const churnPart = {
         cols = [
           { title: "Source", field: "source", widthGrow: 3, minWidth: 220, formatter: (c) => {
               const r = c.getRow().getData();
-              const warn = r.nested_in ? ` <span title="Also covered by ${sourcePath(r.nested_in)}, so this data is snapshotted twice and counted in both rows" style="color:#d97706">⚠ inside ${sourcePath(r.nested_in)}</span>` : "";
+              const warn = r.nested_in ? ` <span title="Also covered by ${sourcePath(r.nested_in)}, so this data is snapshotted twice and counted in both rows" style="color:var(--warn)">⚠ inside ${sourcePath(r.nested_in)}</span>` : "";
               return sourcePath(c.getValue()) + warn;
             } },
           bytesCol, rateCol, verCol, rewriteCol, fileCol,

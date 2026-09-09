@@ -73,11 +73,11 @@ const searchPart = {
           { title: "∑ Reclaim", field: "reclaim_val", headerSort: false, width: 105, hozAlign: "right",
             formatter: (c) => {
               const v = this.groupReclaim[this.repo + ":" + c.getRow().getData().folder];
-              if (v === "pending") return "<span style='color:#94a3b8'>…</span>";
-              if (v === "error") return "<span style='color:#dc2626'>err</span>";
-              if (v == null) return "<span style='color:#94a3b8' title='Right-click > Compute reclaim'>—</span>";
+              if (v === "pending") return "<span style='color:var(--faint)'>…</span>";
+              if (v === "error") return "<span style='color:var(--danger)'>err</span>";
+              if (v == null) return "<span style='color:var(--faint)' title='Right-click > Compute reclaim'>—</span>";
               const tip = v.capped ? ' title="Partial - first 5,000 files only"' : "";
-              return `<span style="color:#059669"${tip}>${v.capped ? "&ge; " : ""}${fmtPhys(v.v)}</span>`;
+              return `<span style="color:var(--ok)"${tip}>${v.capped ? "&ge; " : ""}${fmtPhys(v.v)}</span>`;
             } },
           { title: "Last seen", field: "last_seen", width: 155, formatter: (c) => String(c.getValue() || "").replace("T", " ").slice(0, 19) },
         ];
@@ -146,16 +146,16 @@ const searchPart = {
           // wrong semantics for shared indirect content + write amplification) and its per-object
           // semantics overstated exclusivity. Returns with the proper implementation ().
           { title: "Src", field: "sources", headerSort: false, width: 62, hozAlign: "right",
-            formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:#d97706" title="content is held by ${v} sources (within-source copies excluded)">${v}</span>` : "1"; } },
+            formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="content is held by ${v} sources (within-source copies excluded)">${v}</span>` : "1"; } },
           { title: "Reclaim", field: "reclaim", headerSort: false, width: 110, hozAlign: "right",
-            formatter: (c) => { const v = c.getValue(); return (v == null) ? "<span style='color:#94a3b8'>—</span>" : fmtBytes(v); } },
+            formatter: (c) => { const v = c.getValue(); return (v == null) ? "<span style='color:var(--faint)'>—</span>" : fmtBytes(v); } },
           H("Ext", "ext", { width: 70 }),
           H("Versions", "versions", { width: 80, hozAlign: "right" }),
           { title: "Copies", field: "copies", headerSort: false, width: 75, hozAlign: "right",
-            formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:#d97706" title="this exact content is at ${v} paths (filter: Shared ≥ N)">${v}</span>` : "1"; } },
+            formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="this exact content is at ${v} paths (filter: Shared ≥ N)">${v}</span>` : "1"; } },
           H("Last seen", "last_seen", { width: 160, formatter: (c) => timeCell(c.getValue()) }),
           H("First seen", "first_seen", { width: 160, formatter: (c) => timeCell(c.getValue()) }),
-          H("On disk", "in_latest", { width: 90, formatter: (c) => c.getValue() ? "yes" : "<span style='color:#dc2626'>deleted</span>" }),
+          H("On disk", "in_latest", { width: 90, formatter: (c) => c.getValue() ? "yes" : "<span style='color:var(--danger)'>deleted</span>" }),
           H("Source", "source", { widthGrow: 2, minWidth: 180, formatter: (c) => sourcePath(c.getValue()) }),
         ];
         // Reuse the existing Tabulator (replaceData + header-title update) rather than

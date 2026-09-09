@@ -97,6 +97,10 @@ const setTable = (id, data, columns, opts = {}) => {
     ...rest,
   });
   if (onRowDblClick) table.on("rowDblClick", onRowDblClick);
+  // A table built while its tab is hidden measures a zero-height container and lays out no
+  // rows - it holds the data and shows nothing, with no error. One redraw once building
+  // finishes re-measures against the real container.
+  table.on("tableBuilt", () => table.redraw(true));
   el._tabulator = table;
   return table;
 };

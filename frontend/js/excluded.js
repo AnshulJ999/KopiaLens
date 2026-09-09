@@ -68,8 +68,8 @@ const excludedPart = {
         return it.status !== "backed";  // "Not backed up" view = excluded / partial / new
       });
       const pill = (s) => {
-        const m = { backed: ["#dcfce7", "#166534", "backed up"], excluded: ["#fee2e2", "#991b1b", "NOT backed up"], partial: ["#fef9c3", "#854d0e", "partial"], new: ["#dbeafe", "#1e40af", "new (not yet)"], drive: ["#e2e8f0", "#334155", "drive"] };
-        const [bg, fg, label] = m[s] || ["#e2e8f0", "#334155", s];
+        const m = { backed: ["var(--ok-bg)", "var(--ok)", "backed up"], excluded: ["var(--danger-bg)", "var(--danger)", "NOT backed up"], partial: ["var(--warn-bg)", "var(--warn)", "partial"], new: ["var(--accent-bg)", "var(--accent)", "new (not yet)"], drive: ["var(--surface2)", "var(--muted)", "drive"] };
+        const [bg, fg, label] = m[s] || ["var(--surface2)", "var(--muted)", s];
         return `<span class="pill" style="background:${bg};color:${fg}">${label}</span>`;
       };
       const bytes = (c) => c.getValue() ? fmtBytes(c.getValue()) : "";
@@ -86,7 +86,7 @@ const excludedPart = {
         { title: "Excl #", field: "excluded_files", width: 75, hozAlign: "right", sorter: "number", formatter: num },
         { title: "Last backed", field: "last_backed", width: 145, formatter: (c) => c.getValue() || "" },
         { title: "Repo", field: "repo", width: 80 },
-        { title: "Also in BZ", field: "bz_backed_bytes", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? fmtBytes(c.getValue()) : "<span style='color:#94a3b8'>—</span>" },
+        { title: "Also in BZ", field: "bz_backed_bytes", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? fmtBytes(c.getValue()) : "<span style='color:var(--faint)'>—</span>" },
         { title: "Modified", field: "mtime", width: 145, formatter: (c) => (c.getValue() || "").replace("T", " ") },
       ];
       const isDrives = this.excludedPath === "";
