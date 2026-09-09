@@ -4,18 +4,18 @@
            no max height and no overflow, so on anything but a very large screen the Save button sat
            below the bottom of the viewport and could not be reached at all. Header, section nav and
            footer stay put; only the middle pane scrolls. -->
-      <div class="w-[54rem] max-w-full max-h-[88vh] flex flex-col rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 shadow-xl">
+      <div class="w-[54rem] max-w-full max-h-[88vh] flex flex-col rounded-lg border border-bd bg-surface shadow-xl">
 
-        <div class="flex items-center gap-2 shrink-0 border-b border-stone-200 dark:border-stone-700 px-4 py-3">
+        <div class="flex items-center gap-2 shrink-0 border-b border-bd px-4 py-3">
           <div class="font-medium">Settings</div>
-          <button @click="showSettings=false" class="ml-auto text-stone-500 text-lg leading-none">&times;</button>
+          <button @click="showSettings=false" class="ml-auto text-muted text-lg leading-none">&times;</button>
         </div>
 
         <div class="flex min-h-0 flex-1">
-          <nav class="w-36 sm:w-40 shrink-0 overflow-y-auto border-r border-stone-200 dark:border-stone-700 p-2 space-y-1 text-sm">
-            <template x-for="s in [['general','General'],['indexing','Indexing'],['refresh','Refresh'],['storage','Storage'],['advanced','Advanced']]" :key="s[0]">
+          <nav class="w-36 sm:w-40 shrink-0 overflow-y-auto border-r border-bd p-2 space-y-1 text-sm">
+            <template x-for="s in [['general','General'],['appearance','Appearance'],['indexing','Indexing'],['refresh','Refresh'],['storage','Storage'],['advanced','Advanced']]" :key="s[0]">
               <button @click="settingsTab=s[0]"
-                      :class="settingsTab===s[0] ? 'w-full text-left rounded px-2 py-1.5 bg-emerald-700 text-white' : 'w-full text-left rounded px-2 py-1.5 hover:bg-stone-100 dark:hover:bg-stone-800'"
+                      :class="settingsTab===s[0] ? 'w-full text-left rounded px-2 py-1.5 bg-sel text-fg font-medium' : 'w-full text-left rounded px-2 py-1.5 hover:bg-head'"
                       x-text="s[1]"></button>
             </template>
           </nav>
@@ -24,85 +24,96 @@
 
             <section x-show="settingsTab==='general'" class="space-y-4">
               <div class="flex items-center justify-between gap-3"><span>Theme</span>
-                <button @click="toggleDark()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3" x-text="dark ? 'Dark' : 'Light'"></button></div>
+                <button @click="toggleDark()" class="h-8 rounded border border-bd px-3" x-text="dark ? 'Dark' : 'Light'"></button></div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Password protection</span>
                   <span class="flex items-center gap-2">
                     <template x-if="!authProtected">
                       <span class="flex items-center gap-2">
-                        <input type="password" x-model="newPassword" placeholder="New password (min 8)" class="fld w-48 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
-                        <button @click="setPassword()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-xs">Set</button>
+                        <input type="password" x-model="newPassword" placeholder="New password (min 8)" class="fld w-48 border border-bd bg-surface2">
+                        <button @click="setPassword()" class="h-8 rounded border border-bd px-3 text-xs">Set</button>
                       </span>
                     </template>
-                    <button @click="removePassword()" x-show="authProtected" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-xs">Remove password</button>
+                    <button @click="removePassword()" x-show="authProtected" class="h-8 rounded border border-bd px-3 text-xs">Remove password</button>
                   </span></div>
-                <p class="text-[11px] text-stone-500 mt-1" x-text="authProtected ? 'A single shared password guards this app. Changing it signs every device out.' : 'Not password protected - anyone who can reach this address can browse and act on the repositories.'"></p>
+                <p class="text-[11px] text-muted mt-1" x-text="authProtected ? 'A single shared password guards this app. Changing it signs every device out.' : 'Not password protected - anyone who can reach this address can browse and act on the repositories.'"></p>
               </div>
               <div class="flex items-center justify-between gap-3"><span>Time format</span>
-                <button @click="toggleTimeFmt()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3" x-text="timeFmt==='relative' ? 'Relative (3h ago)' : 'Absolute 12h'"></button></div>
+                <button @click="toggleTimeFmt()" class="h-8 rounded border border-bd px-3" x-text="timeFmt==='relative' ? 'Relative (3h ago)' : 'Absolute 12h'"></button></div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Listing backend</span>
-                  <select x-model="backend" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+                  <select x-model="backend" class="fld border border-bd bg-surface2">
                     <option value="subprocess">Subprocess (default)</option>
                     <option value="server">Kopia server</option>
                   </select></div>
-                <p class="text-[11px] text-stone-500 mt-1">Subprocess means zero background kopia activity. Server runs a persistent kopia server in the background. Needs a restart to switch.</p>
+                <p class="text-[11px] text-muted mt-1">Subprocess means zero background kopia activity. Server runs a persistent kopia server in the background. Needs a restart to switch.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Everything (es.exe) path</span>
-                  <input x-model="esPath" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[18rem]" placeholder="es.exe path"></div>
-                <p class="text-[11px] text-stone-500 mt-1">The CLI the Excluded browser uses to list what is on disk. Needs a restart after changing.</p>
+                  <input x-model="esPath" class="fld border border-bd bg-surface2 min-w-[18rem]" placeholder="es.exe path"></div>
+                <p class="text-[11px] text-muted mt-1">The CLI the Excluded browser uses to list what is on disk. Needs a restart after changing.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Excluded-folder tolerance</span>
-                  <select x-model.number="excludedTolerance" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+                  <select x-model.number="excludedTolerance" class="fld border border-bd bg-surface2">
                     <option :value="0">0% (strict)</option>
                     <option :value="0.02">2%</option>
                     <option :value="0.05">5%</option>
                     <option :value="0.1">10%</option>
                     <option :value="0.15">15%</option>
                   </select></div>
-                <p class="text-[11px] text-stone-500 mt-1">In the Excluded browser a folder counts as backed up when less than this fraction of it is excluded. Cuts "partial" noise.</p>
+                <p class="text-[11px] text-muted mt-1">In the Excluded browser a folder counts as backed up when less than this fraction of it is excluded. Cuts "partial" noise.</p>
+              </div>
+            </section>
+
+            <section x-show="settingsTab==='appearance'" class="space-y-4">
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Detail panel layout</span>
+                  <select x-model="panelLayout" @change="klSet({ panel_layout: panelLayout })" class="fld border border-bd bg-surface2">
+                    <option value="classic">Classic - everything on one scroll</option>
+                    <option value="tabbed">Tabbed - grouped, summary always visible</option>
+                  </select></div>
+                <p class="text-[11px] text-muted mt-1">Applies to the file and folder detail panels. Classic shows every section in order; Tabbed keeps the summary cards on screen and groups the rest under Overview / Storage / Versions / Actions.</p>
               </div>
             </section>
 
             <section x-show="settingsTab==='indexing'" class="space-y-4">
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Heavy pass</span>
-                  <select x-model="indexMode" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+                  <select x-model="indexMode" class="fld border border-bd bg-surface2">
                     <option value="daily">Once a day, at a set time</option>
                     <option value="interval">Every N hours</option>
                   </select></div>
                 <div class="flex items-center justify-between gap-3 mt-2" x-show="indexMode==='daily'"><span>Run at</span>
-                  <input type="time" x-model="indexTime" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800"></div>
+                  <input type="time" x-model="indexTime" class="fld border border-bd bg-surface2"></div>
                 <div class="flex items-center justify-between gap-3 mt-2" x-show="indexMode==='interval'"><span>Every</span>
-                  <select x-model.number="indexInterval" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+                  <select x-model.number="indexInterval" class="fld border border-bd bg-surface2">
                     <option :value="14400">4 hours</option>
                     <option :value="21600">6 hours</option>
                     <option :value="43200">12 hours</option>
                     <option :value="86400">24 hours</option>
                   </select></div>
-                <p class="text-[11px] text-stone-500 mt-1">Indexing, snapshot analysis, reclaimable, the dashboard rebuild, folder pre-compute and the Backblaze rescan all run together in a separate process that exits afterwards, so this app never holds on to the memory. One repo at a time. If the PC was off at the scheduled time it catches up at the next opportunity. The repo being indexed is briefly unavailable; the others are not.</p>
+                <p class="text-[11px] text-muted mt-1">Indexing, snapshot analysis, reclaimable, the dashboard rebuild, folder pre-compute and the Backblaze rescan all run together in a separate process that exits afterwards, so this app never holds on to the memory. One repo at a time. If the PC was off at the scheduled time it catches up at the next opportunity. The app stays usable while a repo indexes; a heavy pass just isn't included in that repo's numbers until it finishes.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Dashboard numbers</span>
-                  <select x-model="dashboardMode" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+                  <select x-model="dashboardMode" class="fld border border-bd bg-surface2">
                     <option value="nightly">Rebuild with the heavy pass</option>
                     <option value="interval">Also rebuild during the day</option>
                   </select></div>
-                <p class="text-[11px] text-stone-500 mt-1">The physical / freeable / dedup columns take about 80 seconds to recompute. Nightly keeps that out of your day; the &#8635; Refresh button rebuilds them on demand either way.</p>
+                <p class="text-[11px] text-muted mt-1">The physical / freeable / dedup columns take about 80 seconds to recompute. Nightly keeps that out of your day; the &#8635; Refresh button rebuilds them on demand either way.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Full rebuild</span>
-                  <button @click="rebuildIndex()" :disabled="indexStatus.building" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 disabled:opacity-50">Rebuild full index</button></div>
-                <p class="text-[11px] text-stone-500 mt-1">Re-walks every snapshot in this repo from scratch instead of only what changed. Rarely needed; takes far longer than a normal pass.</p>
+                  <button @click="rebuildIndex()" :disabled="indexStatus.building" class="h-8 rounded border border-bd px-3 disabled:opacity-50">Rebuild full index</button></div>
+                <p class="text-[11px] text-muted mt-1">Re-walks every snapshot in this repo from scratch instead of only what changed. Rarely needed; takes far longer than a normal pass.</p>
               </div>
             </section>
 
             <section x-show="settingsTab==='refresh'" class="space-y-4">
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Background warm pass</span>
-                  <select x-model.number="lightInterval" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+                  <select x-model.number="lightInterval" class="fld border border-bd bg-surface2">
                     <option :value="300">5 minutes</option>
                     <option :value="600">10 minutes</option>
                     <option :value="900">15 minutes</option>
@@ -110,129 +121,129 @@
                     <option :value="3600">1 hour</option>
                     <option :value="7200">2 hours</option>
                   </select></div>
-                <p class="text-[11px] text-stone-500 mt-1">The cheap in-process pass: next-snapshot times, repository stats and the search landing page. Everything expensive now rides with the heavy pass instead.</p>
+                <p class="text-[11px] text-muted mt-1">The cheap in-process pass: next-snapshot times, repository stats and the search landing page. Everything expensive now rides with the heavy pass instead.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Dashboard auto-refresh</span>
-                  <select x-model.number="dashRefresh" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+                  <select x-model.number="dashRefresh" class="fld border border-bd bg-surface2">
                     <option :value="0">Off</option>
                     <option :value="300">5 minutes</option>
                     <option :value="900">15 minutes</option>
                     <option :value="1800">30 minutes</option>
                     <option :value="3600">1 hour</option>
                   </select></div>
-                <p class="text-[11px] text-stone-500 mt-1">How often an open Dashboard re-fetches the cached numbers. Cheap: just a re-render when something changed.</p>
+                <p class="text-[11px] text-muted mt-1">How often an open Dashboard re-fetches the cached numbers. Cheap: just a re-render when something changed.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Dashboard rebuild interval</span>
-                  <select x-model.number="dashboardInterval" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+                  <select x-model.number="dashboardInterval" class="fld border border-bd bg-surface2">
                     <option :value="3600">1 hour</option>
                     <option :value="7200">2 hours</option>
                     <option :value="14400">4 hours</option>
                     <option :value="28800">8 hours</option>
                   </select></div>
-                <p class="text-[11px] text-stone-500 mt-1">Only used when Dashboard numbers is set to "Also rebuild during the day". Ignored otherwise.</p>
+                <p class="text-[11px] text-muted mt-1">Only used when Dashboard numbers is set to "Also rebuild during the day". Ignored otherwise.</p>
               </div>
             </section>
 
             <section x-show="settingsTab==='storage'" class="space-y-4">
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Auto-compact DuckDB</span>
-                  <button @click="autoCompact = !autoCompact" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3" x-text="autoCompact ? 'On' : 'Off'"></button></div>
-                <p class="text-[11px] text-stone-500 mt-1">DuckDB never reclaims space on its own, so the file grows until it is rewritten. Compaction rewrites it; no kopia re-walk is involved.</p>
+                  <button @click="autoCompact = !autoCompact" class="h-8 rounded border border-bd px-3" x-text="autoCompact ? 'On' : 'Off'"></button></div>
+                <p class="text-[11px] text-muted mt-1">DuckDB never reclaims space on its own, so the file grows until it is rewritten. Compaction rewrites it; no kopia re-walk is involved.</p>
               </div>
               <div class="flex items-center justify-between gap-3"><span>Compact when the file grows past</span>
                 <div class="flex items-center gap-2">
-                  <input type="number" step="0.1" min="1.1" x-model.number="compactRatio" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 w-24">
-                  <span class="text-[11px] text-stone-500">&times; its last compacted size</span>
+                  <input type="number" step="0.1" min="1.1" x-model.number="compactRatio" class="fld border border-bd bg-surface2 w-24">
+                  <span class="text-[11px] text-muted">&times; its last compacted size</span>
                 </div></div>
               <div class="flex items-center justify-between gap-3"><span>Minimum gap between compactions</span>
                 <div class="flex items-center gap-2">
-                  <input type="number" min="3600" step="3600" x-model.number="compactMinInterval" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 w-28">
-                  <span class="text-[11px] text-stone-500">seconds</span>
+                  <input type="number" min="3600" step="3600" x-model.number="compactMinInterval" class="fld border border-bd bg-surface2 w-28">
+                  <span class="text-[11px] text-muted">seconds</span>
                 </div></div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>DuckDB (repo <span x-text="repo"></span>)</span>
-                  <button @click="compactNow()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3">&#128669; Compact now</button></div>
-                <p class="text-[11px] text-stone-500 mt-1">Runs a compaction on this repo right now. Briefly pauses database access for the swap.</p>
+                  <button @click="compactNow()" class="h-8 rounded border border-bd px-3">&#128669; Compact now</button></div>
+                <p class="text-[11px] text-muted mt-1">Runs a compaction on this repo right now. Briefly pauses database access for the swap.</p>
               </div>
             </section>
 
             <section x-show="settingsTab==='advanced'" class="space-y-4">
-              <p class="text-[11px] text-stone-500">These used to live only in <code>settings.json</code>. The defaults are sensible; change them when you have a reason.</p>
+              <p class="text-[11px] text-muted">These used to live only in <code>settings.json</code>. The defaults are sensible; change them when you have a reason.</p>
 
               <div class="flex items-center justify-between gap-3"><span>Heavy-pass hard timeout</span>
                 <div class="flex items-center gap-2">
-                  <input type="number" min="600" step="600" x-model.number="indexWorkerTimeout" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 w-28">
-                  <span class="text-[11px] text-stone-500">seconds</span>
+                  <input type="number" min="600" step="600" x-model.number="indexWorkerTimeout" class="fld border border-bd bg-surface2 w-28">
+                  <span class="text-[11px] text-muted">seconds</span>
                 </div></div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Handover drain timeout</span>
                   <div class="flex items-center gap-2">
-                    <input type="number" min="30" step="30" x-model.number="indexDrainTimeout" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 w-28">
-                    <span class="text-[11px] text-stone-500">seconds</span>
+                    <input type="number" min="30" step="30" x-model.number="indexDrainTimeout" class="fld border border-bd bg-surface2 w-28">
+                    <span class="text-[11px] text-muted">seconds</span>
                   </div></div>
-                <p class="text-[11px] text-stone-500 mt-1">How long the handover waits for queries already in flight before it takes the database offline. Ordinary queries here can run tens of seconds, so do not set this low.</p>
+                <p class="text-[11px] text-muted mt-1">How long the handover waits for queries already in flight before it takes the database offline. Ordinary queries here can run tens of seconds, so do not set this low.</p>
               </div>
               <div class="flex items-center justify-between gap-3"><span>Retry delay after a failed pass</span>
                 <div class="flex items-center gap-2">
-                  <input type="number" min="60" step="60" x-model.number="indexRetryDelay" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 w-28">
-                  <span class="text-[11px] text-stone-500">seconds</span>
+                  <input type="number" min="60" step="60" x-model.number="indexRetryDelay" class="fld border border-bd bg-surface2 w-28">
+                  <span class="text-[11px] text-muted">seconds</span>
                 </div></div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Retries per scheduled slot</span>
-                  <input type="number" min="0" max="5" x-model.number="indexMaxRetries" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 w-24"></div>
-                <p class="text-[11px] text-stone-500 mt-1">0 means a failed pass waits for tomorrow's slot.</p>
+                  <input type="number" min="0" max="5" x-model.number="indexMaxRetries" class="fld border border-bd bg-surface2 w-24"></div>
+                <p class="text-[11px] text-muted mt-1">0 means a failed pass waits for tomorrow's slot.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Folder pre-compute budget</span>
                   <div class="flex items-center gap-2">
-                    <input type="number" min="0" step="60" x-model.number="folderPrewarmBudget" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 w-28">
-                    <span class="text-[11px] text-stone-500">seconds</span>
+                    <input type="number" min="0" step="60" x-model.number="folderPrewarmBudget" class="fld border border-bd bg-surface2 w-28">
+                    <span class="text-[11px] text-muted">seconds</span>
                   </div></div>
-                <p class="text-[11px] text-stone-500 mt-1">Wall-clock cap on the nightly stage that pre-computes folder reclaim, biggest folders first. Anything it does not reach is computed when you open it. <strong>0 disables the stage</strong> (it never means "no limit"). The depths it works at follow the Churn tab and bloat-finder depths automatically.</p>
+                <p class="text-[11px] text-muted mt-1">Wall-clock cap on the nightly stage that pre-computes folder reclaim, biggest folders first. Anything it does not reach is computed when you open it. <strong>0 disables the stage</strong> (it never means "no limit"). The depths it works at follow the Churn tab and bloat-finder depths automatically.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Refcount write interval</span>
                   <div class="flex items-center gap-2">
-                    <input type="number" min="3600" step="3600" x-model.number="refcountWriteInterval" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 w-28">
-                    <span class="text-[11px] text-stone-500">seconds</span>
+                    <input type="number" min="3600" step="3600" x-model.number="refcountWriteInterval" class="fld border border-bd bg-surface2 w-28">
+                    <span class="text-[11px] text-muted">seconds</span>
                   </div></div>
-                <p class="text-[11px] text-stone-500 mt-1">How often the global content refcount table is rewritten to disk. Rewriting it is a large churn on the database file, so it is deliberately infrequent.</p>
+                <p class="text-[11px] text-muted mt-1">How often the global content refcount table is rewritten to disk. Rewriting it is a large churn on the database file, so it is deliberately infrequent.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Minimum gap between background cycles</span>
                   <div class="flex items-center gap-2">
-                    <input type="number" min="300" step="300" x-model.number="reindexInterval" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 w-28">
-                    <span class="text-[11px] text-stone-500">seconds</span>
+                    <input type="number" min="300" step="300" x-model.number="reindexInterval" class="fld border border-bd bg-surface2 w-28">
+                    <span class="text-[11px] text-muted">seconds</span>
                   </div></div>
-                <p class="text-[11px] text-stone-500 mt-1">Used to size the quiet period after a restart, so restarting soon after a completed cycle does not immediately run another one.</p>
+                <p class="text-[11px] text-muted mt-1">Used to size the quiet period after a restart, so restarting soon after a completed cycle does not immediately run another one.</p>
               </div>
               <div>
-                <div class="flex items-center justify-between gap-3"><span>Quiet period after startup <span class="text-[10px] text-amber-600">restart</span></span>
+                <div class="flex items-center justify-between gap-3"><span>Quiet period after startup <span class="text-[10px] text-warn">restart</span></span>
                   <div class="flex items-center gap-2">
-                    <input type="number" min="0" step="30" x-model.number="startupDelay" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 w-28">
-                    <span class="text-[11px] text-stone-500">seconds</span>
+                    <input type="number" min="0" step="30" x-model.number="startupDelay" class="fld border border-bd bg-surface2 w-28">
+                    <span class="text-[11px] text-muted">seconds</span>
                   </div></div>
-                <p class="text-[11px] text-stone-500 mt-1">How long after launch before any background work starts, so booting the PC is not immediately followed by a burst of disk and CPU.</p>
+                <p class="text-[11px] text-muted mt-1">How long after launch before any background work starts, so booting the PC is not immediately followed by a burst of disk and CPU.</p>
               </div>
               <div>
-                <div class="flex items-center justify-between gap-3"><span>Directory cache budget <span class="text-[10px] text-amber-600">restart</span></span>
+                <div class="flex items-center justify-between gap-3"><span>Directory cache budget <span class="text-[10px] text-warn">restart</span></span>
                   <div class="flex items-center gap-2">
-                    <input type="number" min="128" step="128" x-model.number="dirMemoMaxMb" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 w-28">
-                    <span class="text-[11px] text-stone-500">MB</span>
+                    <input type="number" min="128" step="128" x-model.number="dirMemoMaxMb" class="fld border border-bd bg-surface2 w-28">
+                    <span class="text-[11px] text-muted">MB</span>
                   </div></div>
-                <p class="text-[11px] text-stone-500 mt-1">Memory ceiling for the in-process directory cache, the single largest resident cost in this app. Anything evicted falls back to the on-disk cache, never to kopia.</p>
+                <p class="text-[11px] text-muted mt-1">Memory ceiling for the in-process directory cache, the single largest resident cost in this app. Anything evicted falls back to the on-disk cache, never to kopia.</p>
               </div>
             </section>
 
           </div>
         </div>
 
-        <div class="flex items-center gap-2 shrink-0 border-t border-stone-200 dark:border-stone-700 px-4 py-3">
-          <div class="text-[11px] text-stone-500">Scheduling and interval changes apply within a minute. Items marked <span class="text-amber-600">restart</span> need one.</div>
-          <button @click="showSettings=false" class="ml-auto h-8 rounded border border-stone-300 dark:border-stone-700 px-3">Close</button>
-          <button @click="saveSettings()" class="h-8 rounded bg-emerald-700 px-3 text-white">Save</button>
+        <div class="flex items-center gap-2 shrink-0 border-t border-bd px-4 py-3">
+          <div class="text-[11px] text-muted">Scheduling and interval changes apply within a minute. Items marked <span class="text-warn">restart</span> need one.</div>
+          <button @click="showSettings=false" class="ml-auto h-8 rounded border border-bd px-3">Close</button>
+          <button @click="saveSettings()" class="h-8 rounded bg-fg px-3 text-surface">Save</button>
         </div>
 
       </div>

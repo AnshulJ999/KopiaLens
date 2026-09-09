@@ -21,6 +21,7 @@ const settingsPart = {
         this.esPath = kl.es_path || "";
         this.authProtected = !!kl.auth_protected;  // the hash itself never reaches the browser
         this.newPassword = "";
+        this.panelLayout = kl.panel_layout === "tabbed" ? "tabbed" : "classic";  //
         this._readAdvanced(kl);
       } catch (e) { /* keep last-known state on fetch failure */ }
       this.showSettings = true;
@@ -52,6 +53,7 @@ const settingsPart = {
           reclaim_interval: Number(this.reclaimInterval) || 10800,
           excluded_tolerance: Number(this.excludedTolerance),
           es_path: this.esPath || "",
+          panel_layout: this.panelLayout === "tabbed" ? "tabbed" : "classic",
           index_mode: this.indexMode,
           index_time: this.indexTime,
           index_interval: Number(this.indexInterval) || 86400,

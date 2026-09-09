@@ -1,7 +1,7 @@
 """Operational actions.
 
-Restore and purge are command previews only. Mount is allowed to execute because
-it is repo-read-only, but it is explicit and returns the spawned process id.
+Destructive actions are preview-then-execute: a dry run (or, where kopia has none, a
+preview) runs first and the execute path is confirmed in-app before anything mutates.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from ..core import audit
 from ..core.kopia import (
     _REMOVE_JOBS,
     list_mounts,
+    maintenance_run_command,
     mount_and_browse,
     mount_snapshot,
     next_free_drive,
@@ -25,13 +26,14 @@ from ..core.kopia import (
     remove_files_chunked_commands,
     remove_files_chunked_execute,
     remove_files_command,
+    remove_files_dry_run,
     remove_files_execute,
     remove_log_path,
-    maintenance_run_command,
     restore_command,
     restore_command_full,
     restore_execute,
     snapshot_delete_commands,
+    snapshot_delete_dry_run,
     snapshot_delete_execute,
     unmount,
 )
@@ -229,21 +231,17 @@ def _rf_preview(repo: str, items: list[str], flag: str, scope, by: str) -> dict:
     }
 
 
-@router.post("/actions/remove-files")
-def remove_files(payload: RemoveFilesRequest) -> dict:
-    """Remove file(s) from ALL snapshots (without deleting the snapshots), via
-    `kopia snapshot fix remove-files`. Supports single or batch. by="object-id" removes the exact
-    content everywhere (no --source); by="filename" is scoped per source. confirm=false returns
-    dry-run + commit commands; confirm=true executes with --commit then reindexes."""
+def _rf_resolve(payload: RemoveFilesRequest) -> tuple[list[str], list[str], list[str] | None]:
+    """Content objects + basenames + --source scope for a remove-files request.
+
+    Distinct content objects across all targets' versions. Used both as the object-id set AND to
+    find EVERY source that references this content - because a deduped copy left in another source
+    keeps the content alive (GC won't free it). So we scope --source to all referencing sources:
+    complete (frees everywhere it lives) AND bounded (not the slow whole-repo scan). everywhere=true
+    drops --source for a full-repo sweep (the paranoid fallback for old-snapshot-only references)."""
     targets = _rf_targets(payload)
     if not targets:
         raise HTTPException(status_code=400, detail="no files specified")
-
-    # Distinct content objects across all targets' versions. Used both as the object-id set AND to
-    # find EVERY source that references this content - because a deduped copy left in another source
-    # keeps the content alive (GC won't free it). So we scope --source to all referencing sources:
-    # complete (frees everywhere it lives) AND bounded (not the slow whole-repo scan). everywhere=true
-    # drops --source for a full-repo sweep (the paranoid fallback for old-snapshot-only references).
     seen: set[str] = set()
     oids: list[str] = []
     for src, fp in targets:
@@ -253,13 +251,23 @@ def remove_files(payload: RemoveFilesRequest) -> dict:
                 seen.add(oid)
                 oids.append(oid)
     scope = None if payload.everywhere else (sources_for_content(payload.repo, oids) or sorted({s for s, _ in targets}))
+    names: list[str] = []
+    for _src, fp in targets:
+        name = fp.rsplit(_SEP, 1)[-1].rsplit("/", 1)[-1]
+        if name not in names:
+            names.append(name)
+    return oids, names, scope
+
+
+@router.post("/actions/remove-files")
+def remove_files(payload: RemoveFilesRequest) -> dict:
+    """Remove file(s) from ALL snapshots (without deleting the snapshots), via
+    `kopia snapshot fix remove-files`. Supports single or batch. by="object-id" removes the exact
+    content everywhere (no --source); by="filename" is scoped per source. confirm=false returns
+    dry-run + commit commands; confirm=true executes with --commit then reindexes."""
+    oids, names, scope = _rf_resolve(payload)
 
     if payload.by == "filename":
-        names: list[str] = []
-        for _src, fp in targets:
-            name = fp.rsplit(_SEP, 1)[-1].rsplit("/", 1)[-1]
-            if name not in names:
-                names.append(name)
         if not payload.confirm:
             return _rf_preview(payload.repo, names, "--filename", scope, "filename")
         r = remove_files_execute(payload.repo, filenames=names, source=scope)
@@ -278,6 +286,29 @@ def remove_files(payload: RemoveFilesRequest) -> dict:
         raise HTTPException(status_code=500, detail=r["stderr"].strip() or "remove-files failed")
     _post_remove(payload.repo)
     return {"executed": True}
+
+
+def _dry_response(r: dict) -> dict:
+    """Uniform dry-run response: the run's own verdict rides in `ok`, never raised - the
+    output IS the answer the user asked to see, errors included."""
+    r["ok"] = r.get("returncode") == 0
+    return r
+
+
+@router.post("/actions/remove-files-dry-run")
+def remove_files_dry_run_route(payload: RemoveFilesRequest) -> dict:
+    """RUN remove-files without --commit: kopia walks every snapshot in scope and reports what it
+    would rewrite, changing nothing. Synchronous (spinner); the shared job runner streams it later."""
+    oids, names, scope = _rf_resolve(payload)
+    if payload.by == "filename":
+        if not names:
+            raise HTTPException(status_code=404, detail="no matching files")
+        r = remove_files_dry_run(payload.repo, filenames=names, source=scope)
+    else:
+        if not oids:
+            raise HTTPException(status_code=404, detail="no content objects found")
+        r = remove_files_dry_run(payload.repo, object_ids=oids, source=scope)
+    return _dry_response(r)
 
 
 class RemovePlanRequest(BaseModel):
@@ -442,6 +473,22 @@ def remove_bat(payload: RemovePlanRequest) -> dict:
     return {"filename": fname, "content": content, "batches": len(cmds), "items": len(items)}
 
 
+@router.post("/actions/remove-plan-dry-run")
+def remove_plan_dry_run(payload: RemovePlanRequest) -> dict:
+    """RUN the chunked plan's dry run (remove-files without --commit) over the matched set.
+    Synchronous; output capped, full text logged to data/logs."""
+    t = _remove_targets(payload)
+    items, flag = _remove_items(t, payload.by)
+    if not items:
+        raise HTTPException(status_code=404, detail="no matching files")
+    scope = _remove_scope(payload.everywhere, t["sources"])
+    if flag == "--filename":
+        r = remove_files_dry_run(payload.repo, filenames=items, source=scope)
+    else:
+        r = remove_files_dry_run(payload.repo, object_ids=items, source=scope)
+    return _dry_response(r)
+
+
 @router.post("/actions/remove-execute")
 def remove_execute(payload: RemovePlanRequest) -> dict:
     """Run the chunked delete in the background (sequential --commit batches). Returns a job_id;
@@ -470,6 +517,15 @@ def remove_execute(payload: RemovePlanRequest) -> dict:
 @router.get("/actions/remove-status")
 def remove_status(job_id: str) -> dict:
     return _REMOVE_JOBS.get(job_id, {"running": False, "total": 0, "done": 0, "unknown": True})
+
+
+@router.post("/actions/snapshot-delete-dry-run")
+def snapshot_delete_dry_run_route(payload: SnapshotDeleteRequest) -> dict:
+    """RUN snapshot delete without --delete: kopia lists exactly what it would delete.
+    Synchronous (spinner); the shared job runner streams it later."""
+    if not payload.snapshot_ids:
+        raise HTTPException(status_code=400, detail="snapshot_ids is empty")
+    return _dry_response(snapshot_delete_dry_run(payload.repo, payload.snapshot_ids))
 
 
 @router.post("/actions/restore")

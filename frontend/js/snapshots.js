@@ -11,6 +11,8 @@ const snapshotsPart = {
         if (seq !== this._snapSeq) return;  // a newer load superseded this one
         this.snapshots = data.snapshots || [];
         this.analyzing = !!data.analyzing;
+        // the churn/reclaim numbers can belong to the previous index run - say so
+        this.snapStaleAnalysis = !!data.analyzed && data.analysis_fresh === false;
         if (!this.snapshots.find((x) => x.id === this.selectedSnapshot)) this.selectedSnapshot = this.snapshots.length ? this.snapshots[this.snapshots.length - 1].id : "";
         const allSrc = this.snapSource === "*ALL*";
         const cols = [
@@ -114,6 +116,7 @@ const snapshotsPart = {
       this.deletePlan.combinedReclaim = null;     // accurate union(deleted)-union(kept), filled async
       this.deletePlan.combinedExact = true;
       this.deletePlan.combinedComputing = true;
+      this.deletePlan.dry = this.klDryState();
       this.showDelete = true;
       // fetch the exact commands (handles repo2's --config-file) for the copy button
       getJson("/api/actions/snapshot-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_ids: this.deletePlan.ids, confirm: false }) })
@@ -131,11 +134,35 @@ const snapshotsPart = {
       const r = await getJson(`/api/snapshots/delete-preview?repo=${encodeURIComponent(this.repo)}&ids=${encodeURIComponent(ids)}&precise=${precise ? 1 : 0}&limit=40`).catch(() => null);
       if (r && this.deletePlan) { this.deletePlan.preview = r.files || []; this.deletePlan.precise = precise; }
     },
+    deleteDry() {  // run kopia's real snapshot-delete dry run (no --delete) for this selection
+      if (!this.deletePlan) return;
+      const st = this.deletePlan.dry = (this.deletePlan.dry || this.klDryState());
+      return this.klDry("/api/actions/snapshot-delete-dry-run", { repo: this.repo, snapshot_ids: this.deletePlan.ids }, st);
+    },
+    deleteDryChecked() {
+      const st = this.deletePlan && this.deletePlan.dry;
+      return !!(st && st.done && st.ok && !st.running);
+    },
     async executeDelete() {
       if (!this.deletePlan) return;
-      if (this.deleteConfirm.trim().toUpperCase() !== "DELETE") { window.alert('Type DELETE to confirm.'); return; }
+      const p = this.deletePlan;
+      const warnN = (p.pinned || 0) + (p.retained || 0);
+      const ok = await this.klConfirm({
+        title: `Delete ${p.count} snapshot(s)?`,
+        facts: [
+          ["What", "The selected snapshot manifests - those restore points stop existing"],
+          ["How many", `${p.count} snapshot(s) · combined reclaim ${fmtPhys(p.combinedReclaim != null ? p.combinedReclaim : p.reclaim)}`],
+          ["Where", this.snapSource === "*ALL*" ? "across all sources" : sourcePath(this.snapSource)],
+          ["How", `kopia snapshot delete --delete${p.ids.length > 200 ? `, ${Math.ceil(p.ids.length / 200)} call(s)` : ""}`],
+        ],
+        callout: warnN ? `${p.pinned} pinned and ${p.retained} retained in this selection - deleting removes those restore points (and any pins).` : "",
+        note: (this.deleteDryChecked() ? "" : "No dry run has been done for this selection. ")
+          + "Space is reclaimed only after maintenance run --full. Files that also exist in other retained snapshots are not affected.",
+        command: p.commands, confirmLabel: `Delete ${p.count} snapshot(s)`, danger: true,
+      });
+      if (!ok) return;
       await this.wrap(async () => {
-        const r = await getJson("/api/actions/snapshot-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_ids: this.deletePlan.ids, confirm: true }) });
+        const r = await getJson("/api/actions/snapshot-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_ids: p.ids, confirm: true }) });
         this.showDelete = false; this.deletePlan = null; this.deleteConfirm = "";
         this.actionText = `Deleted ${r.deleted} snapshot(s). Run 'kopia maintenance run --full' to reclaim the space.`;
         await this.loadSnapshots(true);

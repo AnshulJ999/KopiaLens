@@ -24,6 +24,7 @@ document.addEventListener("alpine:init", () => {
     snapshots: [], selectedSnapshot: "",
     showChurn: localStorage.getItem("kl-churn") === "1",
     analyzing: false,
+    snapStaleAnalysis: false,  // analysis rows exist but belong to the previous index run
     treeMode: "full",
     treeWeek: "",
     treeDeletedOnly: false, treeOverGb: false, treeExt: "", treeFlat: false,
@@ -60,6 +61,9 @@ document.addEventListener("alpine:init", () => {
     indexWorkerTimeout: 14400, indexDrainTimeout: 300, indexRetryDelay: 900, indexMaxRetries: 1,
     folderPrewarmBudget: 900, startupDelay: 300, dirMemoMaxMb: 1500, refcountWriteInterval: 21600,
     analyzingAll: false, showDelete: false, deletePlan: null, deleteConfirm: "", _autoRefresh: null,
+    // detail-panel layout ("classic" | "tabbed"), persisted server-side, default Classic.
+    panelLayout: "classic",
+    confirmBox: null,  // the shared confirm dialog; truthy while it is open
 
     fmtB(v) { return fmtBytes(v); },
     fmtPhys(v) { return fmtPhys(v); },
@@ -86,6 +90,7 @@ document.addEventListener("alpine:init", () => {
         const _ps = String(kl.page_size || 500);  // snap to a valid <option> so the select can't visually revert to 100
         this.searchPageSize = this.pageSizes.includes(_ps) ? _ps : "500";
         this.snapSource = kl.snap_source || "*ALL*";  // snapshots-view scope (persisted, default All sources)
+        this.panelLayout = kl.panel_layout === "tabbed" ? "tabbed" : "classic";  //
         this.searchSort = kl.search_sort || "size";
         this.searchDir = kl.search_dir || "desc";
         this.dedupe = !!kl.search_dedupe;
@@ -324,13 +329,13 @@ document.addEventListener("alpine:init", () => {
     csv(id, name) { downloadTable(id, name); },
     };
     // Duplicate-key guard: two parts declaring the same key would compose silently last-wins.
-    const parts = [["core", core], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["detailPart", detailPart], ["settingsPart", settingsPart]];
+    const parts = [["core", core], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["settingsPart", settingsPart]];
     const seen = new Map();
     for (const [owner, part] of parts)
       for (const k of Object.keys(part)) {
         if (seen.has(k)) console.error(`kopiaLens: duplicate key "${k}" declared in both ${seen.get(k)} and ${owner}`);
         else seen.set(k, owner);
       }
-    return Object.assign(core, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, excludedPart, actionsPart, detailPart, settingsPart);
+    return Object.assign(core, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, settingsPart);
   });
 });

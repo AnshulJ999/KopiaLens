@@ -1,224 +1,454 @@
 
-    <div x-show="detail" @click.self="detail=null" x-cloak class="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-6">
-      <div class="w-[52rem] max-w-full max-h-[85vh] overflow-auto rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-4 text-sm" x-show="detail">
-        <div class="flex items-start gap-2">
-          <div class="font-medium break-all" x-text="detail && detail.title"></div>
-          <button x-show="detail && detail.kind==='file'" @click="mountFileOpen({source: detail.source, full_path: detail.title})" class="ml-auto shrink-0 h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Mount the latest snapshot carrying this file and open it in Explorer">⤓ Mount &amp; open</button>
-          <button x-show="detail && detail.kind==='file'" @click="restoreFromDetail()" class="shrink-0 h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Restore this file">⤴ Restore</button>
-          <button @click="detail=null" class="shrink-0 text-stone-500 text-lg leading-none">&times;</button>
-        </div>
-        <div class="text-xs text-stone-500 mt-1 break-all" x-show="detail && detail.source" x-text="detail && ('source: ' + shortSource(detail.source))"></div>
-        <div class="text-[11px] text-amber-600 mt-1" x-show="detail && detail.loading">Loading physical / dedup / purge details…</div>
-        <div class="text-[11px] text-rose-700 dark:text-rose-300 mt-1 rounded border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950 px-2 py-1" x-show="detail && detail.error" x-text="detail && ('Could not load the details: ' + detail.error)"></div>
+{% from "partials/_macros.html" import dryresult %}
 
-        <!-- size cards -->
-        <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Logical</div><div class="font-medium" x-text="detail && fmtB(detail.logical)"></div></div>
-          <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
-            <div class="text-[10px] uppercase text-stone-500" x-text="(detail && detail.kind==='folder') ? ((detail.physical_dedup != null) ? 'Physical (deduped, all versions)' : 'Physical (approx)') : 'Physical (packed)'"></div>
-            <div class="font-medium" x-text="detail && fmtPhys((detail.kind==='folder' && detail.physical_dedup != null) ? detail.physical_dedup : detail.physical)"></div>
-            <div class="text-[10px] text-stone-500" x-show="detail && detail.kind==='folder' && detail.physical_dedup == null">counting duplicates twice until the exact figure lands</div>
-          </div>
-          <div class="rounded border border-emerald-300 dark:border-emerald-800 p-2" x-show="detail && detail.kind==='file'"><div class="text-[10px] uppercase text-emerald-700 dark:text-emerald-400">Freeable</div><div class="font-medium" x-text="detail && fmtPhys(detail.freeable)"></div></div>
-          <div class="rounded border border-stone-200 dark:border-stone-700 p-2" x-show="detail && detail.kind==='file'"><div class="text-[10px] uppercase text-stone-500">Shared (won't free)</div><div class="font-medium" x-text="detail && fmtPhys(detail.shared)"></div></div>
-        </div>
-        <div class="text-[11px] text-stone-500 mt-1" x-show="detail && detail.kind==='file'">Freeable = packed bytes referenced only by this file (freed if you delete every snapshot carrying it). <span x-show="detail && detail.physical_all" x-text="'Across all versions: ' + fmtPhys(detail && detail.physical_all)"></span></div>
-        <template x-if="detail && detail.kind==='folder'">
-          <div class="mt-2 space-y-3">
-            <!-- The whole heavy payload is one cached result: physical, shared and freeable are all
-                 as-of the same moment. Tagging only "Frees if deleted" read as though the others
-                 were current. -->
-            <div class="text-[11px] rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-2 py-1"
-                 x-show="detail.reclaim_stale">
-              Physical, shared and freeable below are from
-              <span x-text="detail.reclaim_at ? new Date(detail.reclaim_at*1000).toLocaleString() : 'an earlier index'"></span>,
-              shown straight away while a fresh figure is computed in the background. Reopen this folder in a few minutes for the current number.
-            </div>
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <div class="rounded border border-emerald-300 dark:border-emerald-800 p-2">
-                <div class="text-[10px] uppercase text-emerald-700 dark:text-emerald-400">Frees if deleted</div>
-                <div class="font-medium" x-text="detail.heavyLoading ? 'computing…' : fmtPhys(detail.freeable)"></div></div>
-              <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
-                <div class="text-[10px] uppercase text-stone-500">Shared elsewhere</div>
-                <div class="font-medium" x-text="detail.heavyLoading ? '…' : fmtPhys(detail.shared)"></div></div>
-              <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
-                <div class="text-[10px] uppercase text-stone-500">Versions</div>
-                <div class="font-medium" x-text="Number(detail.versions||0).toLocaleString()"></div></div>
-              <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
-                <div class="text-[10px] uppercase text-stone-500">Deleted from disk</div>
-                <div class="font-medium" x-text="Number(detail.deleted_files||0).toLocaleString() + ' of ' + Number(detail.files||0).toLocaleString()"></div></div>
-            </div>
-            <div class="text-[11px] text-stone-500">Frees if deleted = packed bytes that nothing else keeps alive. Shared bytes stay until every other copy goes too.</div>
-            <div class="text-[11px] text-stone-500" x-show="detail.physical_dedup != null &amp;&amp; detail.physical_sum &amp;&amp; detail.physical_sum > detail.physical_dedup * 1.02">
-              Adding up each file separately gives <span x-text="fmtPhys(detail.physical_sum)"></span>, but
-              <span x-text="fmtPhys(detail.physical_sum - detail.physical_dedup)"></span> of that is storage shared
-              between duplicate files in here, counted once on disk.
-            </div>
+{# The detail panel: file + folder, in two layouts - Classic (one scroll) and Tabbed.
+   Both layouts are composed from the same section macros below, so a new data point is one
+   new macro: call it in Classic, call it in its tab in Tabbed. x-if everywhere - only the
+   active layout/tab exists in the DOM (the panel holds no Tabulator tables, so rebuilds
+   are safe). Dry states are initialised with their object, so x-show can deref freely. #}
 
-            <div>
-              <div class="text-xs font-medium mb-1">Backed up by</div>
-              <div class="text-[11px] text-stone-500 mb-1">
-                <span x-text="detail.covers || 0"></span> source<span x-show="(detail.covers||0)!==1">s</span> back up this folder itself<span
-                  x-show="detail.sub_policies"><span x-text="', plus ' + detail.sub_policies + ' sub-folder polic' + (detail.sub_policies===1?'y':'ies') + ' inside it'"></span></span>.
-              </div>
-              <template x-for="sc in (detail.sources || [])" :key="sc.source">
-                <div class="flex items-center gap-2 rounded border border-stone-200 dark:border-stone-700 px-2 py-1 mb-1">
-                  <div class="min-w-0">
-                    <div class="text-xs truncate">
-                      <span x-text="shortSource(sc.source)"></span>
-                      <span class="text-[10px] rounded px-1 ml-1"
-                            :class="sc.relation==='covers' ? 'bg-stone-200 dark:bg-stone-700' : 'bg-stone-100 dark:bg-stone-800 text-stone-500'"
-                            x-text="sc.relation==='covers' ? 'covers this folder' : 'sub-folder policy'"></span>
-                    </div>
-                    <div class="text-[10px] text-stone-500" x-text="sc.policy ? (sc.policy.schedule + ' · keeps ' + sc.policy.retention) : 'policy not loaded'"></div>
-                  </div>
-                  <div class="ml-auto shrink-0 text-[11px] text-stone-500 text-right">
-                    <div x-text="fmtPhys(sc.physical)"></div>
-                    <div x-text="Number(sc.files||0).toLocaleString() + ' files'"></div>
-                  </div>
-                </div>
-              </template>
-              <div class="text-[11px] text-amber-600" x-show="detail.multi_source">
-                &#9888; <span x-text="detail.covers"></span> sources back up this folder itself &mdash; deleting from one leaves the copies in the others.
-              </div>
-              <div class="text-[11px] text-stone-500" x-show="(detail.max_overlap||0) > 1 && !detail.multi_source">
-                Files here are stored by up to <span x-text="detail.max_overlap"></span> nested sources, so some content is snapshotted more than once.
-              </div>
-              <div class="text-[11px] text-stone-500 mt-1" x-show="detail.effective_policy && (detail.effective_policy.ignore||[]).length">
-                Ignore rules here: <span class="font-mono" x-text="(detail.effective_policy.ignore||[]).join('  ·  ')"></span>
-              </div>
-            </div>
+{%- macro file_cards() -%}
+<div class="space-y-2">
+<div class="kl-cards">
+  <div class="kl-card"><div class="k">Logical</div><div class="v" x-text="detail.loading ? '…' : fmtB(detail.logical)"></div></div>
+  <div class="kl-card"><div class="k">Physical (packed)</div><div class="v" x-text="detail.loading ? '…' : fmtPhys(detail.physical)"></div></div>
+  <div class="kl-card"><div class="k">Frees on its own</div><div class="v" x-text="detail.loading ? '…' : fmtPhys(detail.freeable)"></div></div>
+  <div class="kl-card good"><div class="k">All versions</div><div class="v" x-text="detail.loading ? '…' : fmtPhys(detail.physical_all)"></div></div>
+</div>
+<div class="kl-note" x-show="detail.instances > 1">
+  This content sits at <span x-text="detail.instances"></span> path(s) across <span x-text="detail.locations"></span> source(s) - the copies keep it alive, so this path alone frees ~0.
+  Purging it everywhere frees <b style="color:var(--ok)" x-text="fmtPhys(detail.reclaim_everywhere)"></b>.
+</div>
+<div class="kl-note" x-show="detail.instances <= 1">Frees if you delete every snapshot carrying it<span x-show="detail.physical_all" x-text="' · across all versions: ' + fmtPhys(detail.physical_all)"></span>.</div>
+</div>
+{%- endmacro -%}
 
-            <div x-show="(detail.children||[]).length">
-              <div class="text-xs font-medium mb-1">Biggest inside</div>
-              <template x-for="ch in (detail.children || [])" :key="ch.child">
-                <div class="flex items-center gap-2 text-[11px] px-2 py-0.5 border-b border-stone-100 dark:border-stone-800">
-                  <span class="font-mono truncate" x-text="ch.child"></span>
-                  <span class="ml-auto shrink-0 text-stone-500" x-text="fmtPhys(ch.physical) + ' · ' + Number(ch.files||0).toLocaleString() + ' files'"></span>
-                </div>
-              </template>
-            </div>
-
-            <div class="flex flex-wrap gap-2 text-xs">
-              <button @click="folderDeleteFromPanel()" class="h-7 rounded border border-rose-400 text-rose-600 px-2">Delete folder&hellip;</button>
-              <button @click="folderShowFiles()" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2">Show files</button>
-              <button @click="copyText(detail.title)" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2">Copy path</button>
-            </div>
-            <div class="text-[11px] text-stone-500">First backed up <span x-text="(detail.first_seen||'&mdash;').slice(0,10)"></span> &middot; last <span x-text="(detail.last_seen||'&mdash;').replace('T',' ').slice(0,16)"></span></div>
-          </div>
-        </template>
-
-        <!-- content chunks / dedup -->
-        <template x-if="detail && detail.kind==='file' && detail.chunks && detail.chunks.length">
-          <div class="mt-3">
-            <div class="font-medium text-xs mb-1">Content chunks (<span x-text="detail.chunk_count"></span> total · dedup)</div>
-            <div class="rounded border border-stone-200 dark:border-stone-700 max-h-40 overflow-auto">
-              <template x-for="ck in detail.chunks" :key="ck.cid">
-                <div class="flex items-center gap-2 px-2 py-0.5 text-[11px] border-b border-stone-100 dark:border-stone-800">
-                  <span class="font-mono text-stone-500" x-text="ck.cid.slice(0,16)"></span>
-                  <span x-text="fmtB(ck.packed)"></span>
-                  <span class="ml-auto" :class="ck.exclusive ? 'text-emerald-600' : 'text-amber-600'" x-text="ck.exclusive ? 'exclusive' : ('shared by ' + ck.refs)"></span>
-                </div>
-              </template>
-            </div>
-          </div>
-        </template>
-
-        <!-- other paths sharing this content -->
-        <template x-if="detail && detail.others && detail.others.length">
-          <div class="mt-3">
-            <div class="font-medium text-xs mb-1">Other files deduped against this one (<span x-text="detail.others.length"></span>)</div>
-            <div class="rounded border border-stone-200 dark:border-stone-700 max-h-32 overflow-auto text-[11px]">
-              <template x-for="(o,i) in detail.others" :key="i">
-                <div class="px-2 py-0.5 break-all border-b border-stone-100 dark:border-stone-800" x-text="shortSource(o.source) + '  ·  ' + o.full_path"></div>
-              </template>
-            </div>
-          </div>
-        </template>
-
-        <!-- content-centric: reclaim if purged everywhere -->
-        <template x-if="detail && detail.kind==='file' && detail.instances > 1">
-          <div class="mt-3 rounded border border-amber-300 dark:border-amber-800 p-2">
-            <div class="font-medium text-xs mb-1">Exact duplicate · <span x-text="detail.instances"></span> paths across <span x-text="detail.locations"></span> sources</div>
-            <div class="text-[11px] text-stone-600 dark:text-stone-300">Per-file "Freeable" reads ~0 here because the other copies keep the content alive. To actually free it you must delete EVERY snapshot that references it across ALL locations.</div>
-            <div class="mt-1.5 flex items-center gap-3 text-xs flex-wrap">
-              <span>Reclaim if purged everywhere: <span class="font-medium text-emerald-600" x-text="fmtPhys(detail.reclaim_everywhere)"></span></span>
-              <span>Snapshots to delete: <span class="font-medium" x-text="detail.purge_everywhere_count"></span></span>
-              <button @click="copyText(detail.purgeEverywhereCmds)" class="ml-auto rounded border border-stone-300 dark:border-stone-700 px-2 py-0.5">Copy delete-everywhere commands</button>
-            </div>
-          </div>
-        </template>
-
-        <!-- versions -->
-        <template x-if="detail && detail.versions && detail.versions.length">
-          <div class="mt-3">
-            <div class="font-medium text-xs mb-1">Versions (newest first)</div>
-            <div class="rounded border border-stone-200 dark:border-stone-700 max-h-40 overflow-auto text-[11px]">
-              <template x-for="(v,i) in detail.versions" :key="i">
-                <div class="flex items-center gap-2 px-2 py-0.5 border-b border-stone-100 dark:border-stone-800">
-                  <span x-text="v.time"></span><span class="text-stone-500" x-text="fmtB(v.size)"></span>
-                  <span class="ml-auto font-mono text-stone-400" x-text="'snap ' + v.snapshot_id.slice(0,16)"></span>
-                  <button @click="mountVersionOpen(v)" class="text-sky-600" title="Mount this version's snapshot and open it in Explorer">mount</button>
-                  <button @click="copyText('kopia restore ' + v.content_id + ' <destination>')" class="text-emerald-600" title="Copy restore command">copy restore</button>
-                </div>
-              </template>
-            </div>
-          </div>
-        </template>
-
-        <!-- purge plan -->
-        <template x-if="detail && detail.purge && detail.purge.length">
-          <div class="mt-3">
-            <div class="flex items-center gap-2 mb-1"><span class="font-medium text-xs">Purge plan (deletes whole snapshots - run yourself)</span>
-              <button @click="copyText(detail.purgeCmds)" class="text-xs rounded border border-stone-300 dark:border-stone-700 px-2">Copy purge commands</button></div>
-            <div class="rounded border border-stone-200 dark:border-stone-700 max-h-40 overflow-auto text-[11px]">
-              <template x-for="(p,i) in detail.purge" :key="i">
-                <div class="flex items-center gap-2 px-2 py-0.5 border-b border-stone-100 dark:border-stone-800">
-                  <span class="font-mono break-all" x-text="p.cmd"></span>
-                  <span class="ml-auto text-amber-600" x-show="p.tag" x-text="'⚠ ' + p.tag"></span>
-                </div>
-              </template>
-            </div>
-          </div>
-        </template>
-
-        <!-- remove file from ALL snapshots (keeps the snapshots) -->
-        <template x-if="detail && detail.kind==='file'">
-          <div class="mt-3 rounded border border-rose-300 dark:border-rose-800 p-2">
-            <div class="font-medium text-xs mb-1">Remove this file from ALL snapshots (keeps the snapshots)</div>
-            <div class="text-[11px] text-stone-600 dark:text-stone-300">Strips the file from every snapshot manifest (snapshots keep all their other files); GC frees its space on the next <span class="font-mono">maintenance run --full</span>. Better than deleting snapshots.</div>
-            <div class="mt-1.5 flex items-center gap-2 flex-wrap">
-              <button @click="loadRemoveFiles('object-id')" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Precise: every distinct content object across versions">Build (by exact content)</button>
-              <button @click="loadRemoveFiles('filename')" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Easy: --filename + --source">Build (by filename)</button>
-              <label class="flex items-center gap-1 text-[11px]" title="Drop --source: removes from EVERY source that has this exact content (sweeps the whole repo)"><input type="checkbox" x-model="detail.rfEverywhere"> all sources</label>
-              <span class="text-[11px] text-stone-500" x-show="detail.removeFiles" x-text="detail.removeFiles && (detail.removeFiles.count + (detail.removeFiles.by==='object-id' ? ' object-id(s)' : ' filename(s)'))"></span>
-            </div>
-            <template x-if="detail.removeFiles">
-              <div class="mt-1.5 space-y-1">
-                <div class="text-[10px] uppercase text-stone-500">Dry run (safe preview — run this first)</div>
-                <div class="flex items-center gap-2"><span class="font-mono break-all text-[11px] flex-1" x-text="detail.removeFiles.dry"></span><button @click="copyText(detail.removeFiles.dry)" class="text-xs text-emerald-600 shrink-0">copy</button></div>
-                <div class="text-[10px] uppercase text-stone-500">Commit (applies the removal)</div>
-                <div class="flex items-center gap-2"><span class="font-mono break-all text-[11px] flex-1" x-text="detail.removeFiles.commit"></span><button @click="copyText(detail.removeFiles.commit)" class="text-xs text-emerald-600 shrink-0">copy</button></div>
-                <div class="pt-1"><button @click="executeRemoveFiles()" class="h-7 rounded bg-rose-600 px-3 text-xs text-white">Execute now (type REMOVE)</button></div>
-              </div>
-            </template>
-          </div>
-        </template>
-
-        <!-- exclusion-pattern suggestions -->
-        <template x-if="detail && detail.kind==='file'">
-          <div class="mt-3">
-            <div class="font-medium text-xs mb-1">Exclude patterns (copy → paste into the KopiaUI policy)</div>
-            <div class="rounded border border-stone-200 dark:border-stone-700 max-h-44 overflow-auto text-[11px]">
-              <template x-for="(p,i) in excludePatterns()" :key="i">
-                <div class="flex items-center gap-2 px-2 py-0.5 border-b border-stone-100 dark:border-stone-800">
-                  <span class="text-stone-500 w-44 shrink-0" x-text="p.label"></span>
-                  <span class="font-mono break-all flex-1" x-text="p.pat"></span>
-                  <button @click="copyText(p.pat)" class="text-emerald-600 shrink-0">copy</button>
-                </div>
-              </template>
-            </div>
-          </div>
-        </template>
+{%- macro file_chunks() -%}
+<div class="kl-sec" x-show="detail.chunks && detail.chunks.length">
+  <div class="h">Content chunks <span class="count" x-text="detail.chunk_count + ' total'"></span></div>
+  <div class="kl-list">
+    <template x-for="ck in detail.chunks" :key="ck.cid">
+      <div class="li">
+        <span class="font-mono" style="color:var(--muted)" x-text="ck.cid.slice(0,16)"></span>
+        <span class="num" x-text="fmtB(ck.packed)"></span>
+        <span class="grow"></span>
+        <span class="pill" :class="ck.exclusive ? 'ok' : ''" x-text="ck.exclusive ? 'exclusive' : ('shared by ' + ck.refs)"></span>
       </div>
+    </template>
+  </div>
+</div>
+{%- endmacro -%}
+
+{%- macro file_others() -%}
+<div class="kl-sec" x-show="detail.others && detail.others.length">
+  <div class="h">Deduped against this one <span class="count" x-text="detail.others.length + ' path(s)'"></span></div>
+  <div class="kl-list">
+    <template x-for="(o, i) in detail.others" :key="i">
+      <div class="li"><span class="break-all" x-text="shortSource(o.source) + '  ·  ' + o.full_path"></span></div>
+    </template>
+  </div>
+</div>
+{%- endmacro -%}
+
+{%- macro file_dup() -%}
+<div class="kl-sec" x-show="detail.instances > 1">
+  <div class="h">Exact duplicate <span class="count" x-text="detail.instances + ' paths across ' + detail.locations + ' sources'"></span></div>
+  <div class="kl-list">
+    <template x-for="(o, i) in detail.others" :key="i">
+      <div class="li"><span class="font-mono trunc grow" x-text="o.full_path"></span></div>
+    </template>
+  </div>
+  <div class="flex items-center gap-2">
+    <span class="kl-note">Removing every copy frees <b style="color:var(--ok)" x-text="fmtPhys(detail.reclaim_everywhere)"></b> · <span x-text="detail.purge_everywhere_count"></span> snapshot(s) to delete</span>
+    <span class="grow"></span>
+    <button class="kl-btn" @click="detail.showDup = !detail.showDup" x-text="detail.showDup ? 'Close' : 'Remove everywhere…'"></button>
+  </div>
+  <template x-if="detail.showDup">
+    <div class="space-y-2">
+      <div class="kl-runbar">
+        <button class="kl-btn" @click="dupDry()" :disabled="detail.dupDry.running">
+          <span x-text="detail.dupDry.done ? 'Dry run again' : 'Dry run'"></span>
+        </button>
+        <button class="kl-btn danger" @click="executeDupEverywhere()" :disabled="detail.dupDry.running" x-text="'Delete ' + (detail.snapsEverywhere.length) + ' snapshot(s)'"></button>
+        <span x-show="dupDryChecked()" class="pill ok">dry run checked</span>
+        <span class="grow"></span>
+        <button class="kl-btn quiet" @click="copyText(detail.purgeEverywhereCmds)">Copy command</button>
+      </div>
+      {{ dryresult('detail.dupDry') }}
+    </div>
+  </template>
+</div>
+{%- endmacro -%}
+
+{%- macro file_versions() -%}
+<div class="kl-sec" x-show="detail.versions && detail.versions.length">
+  <div class="h">Versions <span class="count" x-text="detail.versions.length + ', newest first'"></span></div>
+  <div class="kl-list">
+    <template x-for="(v, i) in detail.versions" :key="i">
+      <div class="li">
+        <span class="num" style="width:120px" x-text="v.time"></span>
+        <span class="num" style="color:var(--muted);width:64px" x-text="fmtB(v.size)"></span>
+        <span class="grow"></span>
+        <button class="kl-btn quiet" style="height:22px" @click="mountVersionOpen(v)" title="Mount this version's snapshot and open it in Explorer">Mount</button>
+        <button class="kl-btn quiet" style="height:22px" @click="openRestore(v.content_id || v.snapshot_id, detail.title)" title="Restore this version">Restore</button>
+      </div>
+    </template>
+  </div>
+</div>
+{%- endmacro -%}
+
+{%- macro file_purge() -%}
+<div class="kl-sec" x-show="detail.purge && detail.purge.length">
+  <div class="h">Purge plan <span class="count" x-text="detail.purge.length + ' snapshot(s) carrying this path'"></span></div>
+  <div class="kl-note">Deletes those whole snapshots - the file's history in them goes with them. Space frees on the next maintenance run.</div>
+  <div class="kl-list">
+    <template x-for="(p, i) in detail.purge" :key="i">
+      <div class="li">
+        <span class="font-mono break-all grow" x-text="p.cmd"></span>
+        <span class="pill warn" x-show="p.tag" x-text="p.tag"></span>
+      </div>
+    </template>
+  </div>
+  <div class="kl-runbar">
+    <button class="kl-btn" @click="purgeDry()" :disabled="detail.purgeDry.running">
+      <span x-text="detail.purgeDry.done ? 'Dry run again' : 'Dry run'"></span>
+    </button>
+    <button class="kl-btn danger" @click="executePurge()" :disabled="detail.purgeDry.running" x-text="'Delete ' + purgeIds().length + ' snapshot(s)'"></button>
+    <span x-show="purgeDryChecked()" class="pill ok">dry run checked</span>
+    <span class="grow"></span>
+    <button class="kl-btn quiet" @click="copyText(detail.purgeCmds)">Copy command</button>
+  </div>
+  {{ dryresult('detail.purgeDry') }}
+</div>
+{%- endmacro -%}
+
+{%- macro file_remove() -%}
+<div class="kl-sec">
+  <div class="h">Remove from all snapshots <span class="count">keeps the snapshots</span></div>
+  <div class="kl-note">Strips this file from every snapshot that carries it. Everything else in those snapshots is untouched.</div>
+  <div class="flex flex-wrap items-center gap-2">
+    <span class="kl-seg">
+      <span :class="(detail.rfBy || 'object-id') !== 'filename' ? 'on' : ''" @click="rfSetBy('object-id')">By exact content</span>
+      <span :class="detail.rfBy === 'filename' ? 'on' : ''" @click="rfSetBy('filename')">By filename</span>
+    </span>
+    <label class="kl-note flex items-center gap-1" title="Drop --source: removes from every source that has this exact content (sweeps the whole repo)">
+      <input type="checkbox" :checked="detail.rfEverywhere" @change="rfToggleEverywhere()"> every source
+    </label>
+  </div>
+  <div class="kl-runbar">
+    <button class="kl-btn" @click="rfDry()" :disabled="detail.rfDry.running">
+      <span x-text="detail.rfDry.done ? 'Dry run again' : 'Dry run'"></span>
+    </button>
+    <button class="kl-btn danger" @click="executeRemoveFiles()" :disabled="detail.rfDry.running"
+            x-text="detail.removeFiles ? ('Remove ' + detail.removeFiles.count + (detail.removeFiles.by === 'object-id' ? ' object(s)' : ' name(s)')) : 'Remove from snapshots'"></button>
+    <span x-show="rfDryChecked()" class="pill ok">dry run checked</span>
+    <span class="grow"></span>
+    <button class="kl-btn quiet" x-show="detail.removeFiles" @click="detail.showCmd = !detail.showCmd" x-text="detail.showCmd ? 'Hide command' : 'Show command'"></button>
+  </div>
+  <template x-if="detail.showCmd && detail.removeFiles">
+    <div class="kl-term" style="max-height:96px">
+      <div class="t">dry run</div><div class="break-all" x-text="detail.removeFiles.dry"></div>
+      <div class="t" style="margin-top:6px">commit</div><div class="break-all" x-text="detail.removeFiles.commit"></div>
+    </div>
+  </template>
+  {{ dryresult('detail.rfDry') }}
+</div>
+{%- endmacro -%}
+
+{%- macro file_exclude() -%}
+<div class="kl-sec">
+  <div class="h">Stop backing this up <span class="count" x-text="excludePatterns().length + ' patterns'"></span></div>
+  <div class="kl-list">
+    <template x-for="(p, i) in excludePatterns()" :key="i">
+      <div class="li">
+        <span style="color:var(--muted);width:150px;flex:none" x-text="p.label"></span>
+        <span class="font-mono break-all grow" x-text="p.pat"></span>
+        <button class="kl-btn quiet" style="height:22px" @click="copyText(p.pat)">Copy</button>
+      </div>
+    </template>
+  </div>
+  <div class="kl-note">Copy a pattern and add it to the source's policy to stop backing these files up.</div>
+</div>
+{%- endmacro -%}
+
+{%- macro folder_cards() -%}
+<div class="space-y-2">
+<div class="kl-callout" x-show="detail.reclaim_stale">
+  These figures are from <span x-text="detail.reclaim_at ? new Date(detail.reclaim_at*1000).toLocaleString() : 'an earlier index'"></span>. A fresh number is being computed in the background.
+</div>
+<div class="kl-cards">
+  <div class="kl-card"><div class="k" x-text="detail.physical_dedup != null ? 'Physical (deduped, all versions)' : 'Physical (approx)'"></div><div class="v" x-text="detail.heavyLoading ? '…' : fmtPhys((detail.physical_dedup != null) ? detail.physical_dedup : detail.physical)"></div></div>
+  <div class="kl-card good"><div class="k">Frees if deleted</div><div class="v" x-text="detail.heavyLoading ? 'computing…' : fmtPhys(detail.freeable)"></div></div>
+  <div class="kl-card"><div class="k">Shared elsewhere</div><div class="v" x-text="detail.heavyLoading ? '…' : fmtPhys(detail.shared)"></div></div>
+  <div class="kl-card"><div class="k">Versions</div><div class="v" x-text="Number(detail.versions || 0).toLocaleString()"></div></div>
+</div>
+<div class="kl-note" x-show="detail.physical_dedup == null">counting duplicates twice until the exact figure lands</div>
+<div class="kl-note">Frees if deleted = packed bytes that nothing else keeps alive. Shared bytes stay until every other copy goes too.</div>
+<div class="kl-note" x-show="detail.physical_dedup != null && detail.physical_sum && detail.physical_sum > detail.physical_dedup * 1.02">
+  Adding up each file separately gives <span x-text="fmtPhys(detail.physical_sum)"></span>, but
+  <span x-text="fmtPhys(detail.physical_sum - detail.physical_dedup)"></span> of that is storage shared
+  between duplicate files in here, counted once on disk.
+</div>
+</div>
+{%- endmacro -%}
+
+{%- macro folder_backedby() -%}
+<div class="kl-sec">
+  <div class="h">Backed up by <span class="count" x-text="(detail.covers || 0) + ' source(s)'"></span></div>
+  <div class="kl-note">
+    <span x-text="detail.covers || 0"></span> source<span x-show="(detail.covers || 0) !== 1">s</span> back up this folder itself<span
+      x-show="detail.sub_policies" x-text="', plus ' + detail.sub_policies + ' sub-folder polic' + (detail.sub_policies === 1 ? 'y' : 'ies') + ' inside it'"></span>.
+  </div>
+  <div class="space-y-1">
+    <template x-for="sc in (detail.sources || [])" :key="sc.source">
+      <div class="flex items-center gap-2 rounded border p-1.5" style="border-color:var(--bd)">
+        <div class="min-w-0">
+          <div class="text-xs truncate">
+            <span x-text="shortSource(sc.source)"></span>
+            <span class="pill" :class="sc.relation === 'covers' ? 'ok' : ''" x-text="sc.relation === 'covers' ? 'covers this folder' : 'sub-folder policy'"></span>
+          </div>
+          <div class="kl-note" x-text="sc.policy ? (sc.policy.schedule + ' · keeps ' + sc.policy.retention) : 'policy not loaded'"></div>
+        </div>
+        <div class="ml-auto shrink-0 kl-note" style="text-align:right">
+          <div x-text="fmtPhys(sc.physical)"></div>
+          <div x-text="Number(sc.files || 0).toLocaleString() + ' files'"></div>
+        </div>
+      </div>
+    </template>
+  </div>
+  <div class="kl-callout" x-show="detail.multi_source">
+    <span x-text="detail.covers"></span> sources back up this folder itself - deleting from one leaves the copies in the others.
+  </div>
+  <div class="kl-note" x-show="(detail.max_overlap || 0) > 1 && !detail.multi_source">
+    Files here are stored by up to <span x-text="detail.max_overlap"></span> nested sources, so some content is snapshotted more than once.
+  </div>
+  <div class="kl-note" x-show="detail.effective_policy && (detail.effective_policy.ignore || []).length">
+    Ignore rules here: <span class="font-mono" x-text="(detail.effective_policy.ignore || []).join('  ·  ')"></span>
+  </div>
+</div>
+{%- endmacro -%}
+
+{%- macro folder_children() -%}
+<div class="kl-sec" x-show="(detail.children || []).length">
+  <div class="h">Biggest inside</div>
+  <div class="kl-list">
+    <template x-for="ch in (detail.children || [])" :key="ch.child">
+      <div class="li">
+        <span class="font-mono trunc grow" x-text="ch.child"></span>
+        <span class="num" style="color:var(--muted)" x-text="fmtPhys(ch.physical) + ' · ' + Number(ch.files || 0).toLocaleString() + ' files'"></span>
+      </div>
+    </template>
+  </div>
+</div>
+{%- endmacro -%}
+
+{%- macro folder_contents() -%}
+<div class="kl-sec">
+  <div class="h">Contents</div>
+  <div class="kl-note">
+    <span class="num" x-text="Number(detail.files || 0).toLocaleString()"></span> files ·
+    <span class="num" x-text="Number(detail.deleted_files || 0).toLocaleString()"></span> deleted from disk ·
+    <span class="num" x-text="Number(detail.versions || 0).toLocaleString()"></span> versions
+  </div>
+  <div class="kl-note">First backed up <span x-text="(detail.first_seen || '—').slice(0, 10)"></span> · last <span x-text="(detail.last_seen || '—').replace('T', ' ').slice(0, 16)"></span></div>
+</div>
+{%- endmacro -%}
+
+{%- macro folder_overview_note() -%}
+<div class="kl-note" style="font-size:12.5px;color:var(--fg)" x-show="detail.files">
+  Rewritten constantly - <span class="num" x-text="Number(detail.versions || 0).toLocaleString()"></span> versions across
+  <span class="num" x-text="Number(detail.files || 0).toLocaleString()"></span> files<span
+  x-show="detail.files" x-text="', which is ' + (Number(detail.versions || 0) / Number(detail.files || 1)).toFixed(1) + ' rewrites per file'"></span>. Most of what it costs is churn, not size.
+</div>
+{%- endmacro -%}
+
+{%- macro file_overview() -%}
+<div class="space-y-4">
+<div class="kl-note" style="font-size:12.5px;color:var(--fg)" x-show="detail.instances > 1">
+  This file frees nothing on its own - <span x-text="(detail.instances - 1)"></span> other cop<span x-text="(detail.instances - 1) === 1 ? 'y' : 'ies'"></span> share every chunk, so removing this path alone reclaims ~0.
+  Purging all <span x-text="detail.instances"></span> copies, across every version, frees <b style="color:var(--ok)" x-text="fmtPhys(detail.reclaim_everywhere)"></b>.
+</div>
+<div class="kl-note" style="font-size:12.5px;color:var(--fg)" x-show="detail.instances <= 1">
+  Removing every snapshot carrying this file frees <b style="color:var(--ok)" x-text="fmtPhys(detail.freeable)"></b>; the packed footprint across all versions is <span x-text="fmtPhys(detail.physical_all)"></span>.
+</div>
+<div class="kl-sec">
+  <div class="h">What you can do</div>
+  <div class="kl-list" style="max-height:none">
+    <div class="li"><span class="grow">Remove this file from all snapshots</span><span class="num" style="color:var(--muted)">frees ~<span x-text="fmtPhys(detail.freeable)"></span></span><button class="kl-btn quiet" style="height:22px" @click="detail.panelTab = 'actions'">Actions ›</button></div>
+    <div class="li" x-show="detail.instances > 1"><span class="grow">Purge all <span x-text="detail.instances"></span> copies, every version</span><span class="num" style="color:var(--ok)" x-text="'frees ' + fmtPhys(detail.reclaim_everywhere)"></span><button class="kl-btn quiet" style="height:22px" @click="detail.panelTab = 'storage'">Storage ›</button></div>
+    <div class="li"><span class="grow">Stop backing this file up</span><span class="num" style="color:var(--muted)" x-text="excludePatterns().length + ' patterns'"></span><button class="kl-btn quiet" style="height:22px" @click="detail.panelTab = 'actions'">Actions ›</button></div>
+  </div>
+</div>
+<div class="kl-sec">
+  <div class="h">Backed up by <span class="count">1 source</span></div>
+  <div class="kl-list" style="max-height:66px">
+    <div class="li"><span class="font-mono trunc grow" x-text="shortSource(detail.source)"></span></div>
+  </div>
+</div>
+</div>
+{%- endmacro -%}
+
+    <div x-show="detail" @click.self="detail=null" x-cloak class="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-3 sm:p-6">
+      <template x-if="detail">
+        <div class="w-[62rem] max-w-[94vw] max-h-[92vh] overflow-hidden rounded-lg border text-sm flex flex-col"
+             style="border-color:var(--bd);background:var(--surface);color:var(--fg)">
+          <div class="shrink-0 px-4 pt-3 pb-2 border-b" style="border-color:var(--bd)">
+            <div class="flex items-start gap-2">
+              <div class="font-medium break-all flex-1" x-text="detail.title"></div>
+              <button @click="detail=null" class="kl-btn quiet" title="Close">&times;</button>
+            </div>
+            <div class="kl-note mt-0.5 break-all">
+              <template x-if="detail.kind === 'file'">
+                <span>
+                  <span class="font-mono" x-text="shortSource(detail.source)"></span>
+                  <span x-show="detail.versions.length"> · first backed up <span x-text="detail.versions.length ? detail.versions[detail.versions.length - 1].time.slice(0, 10) : ''"></span> · <span class="num" x-text="detail.versions.length + ' versions'"></span></span>
+                  <span x-show="detail.instances > 1"> · <span class="num" x-text="(detail.instances - 1) + ' copies elsewhere'"></span></span>
+                </span>
+              </template>
+              <template x-if="detail.kind === 'folder'">
+                <span>
+                  <span class="num" x-text="Number(detail.files || 0).toLocaleString()"></span> files ·
+                  <span class="num" x-text="Number(detail.deleted_files || 0).toLocaleString()"></span> deleted from disk
+                  <span x-show="detail.first_seen"> · first backed up <span x-text="(detail.first_seen || '').slice(0, 10)"></span></span>
+                </span>
+              </template>
+            </div>
+            <div class="kl-note mt-1" x-show="detail.loading">Loading details…</div>
+            <div class="kl-callout mt-1" x-show="detail.error" x-text="'Could not load the details: ' + detail.error"></div>
+          </div>
+
+          <!-- ============ CLASSIC ============ -->
+          <template x-if="panelLayout === 'classic'">
+            <div class="flex flex-col min-h-0 flex-1">
+              <div class="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+                <template x-if="detail.kind === 'file'">
+                  <div class="space-y-4">
+                    {{ file_cards() }}
+                    {{ file_chunks() }}
+                    {{ file_others() }}
+                    {{ file_dup() }}
+                    {{ file_versions() }}
+                    {{ file_purge() }}
+                    {{ file_remove() }}
+                    {{ file_exclude() }}
+                  </div>
+                </template>
+                <template x-if="detail.kind === 'folder'">
+                  <div class="space-y-4">
+                    {{ folder_cards() }}
+                    {{ folder_backedby() }}
+                    {{ folder_children() }}
+                    {{ folder_contents() }}
+                  </div>
+                </template>
+              </div>
+              <div class="kl-footer">
+                <template x-if="detail.kind === 'file'">
+                  <span class="flex items-center gap-2">
+                    <button class="kl-btn" @click="mountFileOpen({source: detail.source, full_path: detail.title})" title="Mount the latest snapshot carrying this file and open it in Explorer">Mount &amp; open</button>
+                    <button class="kl-btn" @click="restoreFromDetail()">Restore</button>
+                    <button class="kl-btn quiet" @click="copyText(detail.title)">Copy path</button>
+                  </span>
+                </template>
+                <template x-if="detail.kind === 'folder'">
+                  <span class="flex items-center gap-2">
+                    <button class="kl-btn" @click="folderShowFiles()">Show files</button>
+                    <button class="kl-btn quiet" @click="copyText(detail.title)">Copy path</button>
+                  </span>
+                </template>
+                <span class="spacer"></span>
+                <button x-show="detail.kind === 'folder'" class="kl-btn danger" @click="folderDeleteFromPanel()">Delete folder…</button>
+                <button class="kl-btn" @click="detail=null">Close</button>
+              </div>
+            </div>
+          </template>
+
+          <!-- ============ TABBED ============ -->
+          <template x-if="panelLayout === 'tabbed'">
+            <div class="flex flex-col min-h-0 flex-1">
+              <!-- Summary cards stay on screen in every tab: what it is AND what it costs. -->
+              <div class="shrink-0 px-4 pt-3 pb-2 space-y-2">
+                <template x-if="detail.kind === 'file'">{{ file_cards() }}</template>
+                <template x-if="detail.kind === 'folder'">{{ folder_cards() }}</template>
+              </div>
+              <template x-if="detail.kind === 'file'">
+                <div class="kl-tabs">
+                  <div class="t" :class="detail.panelTab === 'overview' ? 'on' : ''" @click="detail.panelTab = 'overview'">Overview</div>
+                  <div class="t" :class="detail.panelTab === 'storage' ? 'on' : ''" @click="detail.panelTab = 'storage'">Storage</div>
+                  <div class="t" :class="detail.panelTab === 'versions' ? 'on' : ''" @click="detail.panelTab = 'versions'">Versions</div>
+                  <div class="t" :class="detail.panelTab === 'actions' ? 'on' : ''" @click="detail.panelTab = 'actions'">Actions</div>
+                </div>
+              </template>
+              <template x-if="detail.kind === 'folder'">
+                <div class="kl-tabs">
+                  <div class="t" :class="detail.panelTab === 'overview' ? 'on' : ''" @click="detail.panelTab = 'overview'">Overview</div>
+                  <div class="t" :class="detail.panelTab === 'backedby' ? 'on' : ''" @click="detail.panelTab = 'backedby'">Backed up by</div>
+                  <div class="t" :class="detail.panelTab === 'contents' ? 'on' : ''" @click="detail.panelTab = 'contents'">Contents</div>
+                  <div class="t" :class="detail.panelTab === 'actions' ? 'on' : ''" @click="detail.panelTab = 'actions'">Actions</div>
+                </div>
+              </template>
+              <div class="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+                <!-- file tabs -->
+                <template x-if="detail.kind === 'file' && detail.panelTab === 'overview'">{{ file_overview() }}</template>
+                <template x-if="detail.kind === 'file' && detail.panelTab === 'storage'">
+                  <div class="space-y-4">
+                    {{ file_chunks() }}
+                    {{ file_others() }}
+                    {{ file_dup() }}
+                  </div>
+                </template>
+                <template x-if="detail.kind === 'file' && detail.panelTab === 'versions'">{{ file_versions() }}</template>
+                <template x-if="detail.kind === 'file' && detail.panelTab === 'actions'">
+                  <div class="space-y-4">
+                    {{ file_remove() }}
+                    {{ file_purge() }}
+                    {{ file_exclude() }}
+                  </div>
+                </template>
+                <!-- folder tabs -->
+                <template x-if="detail.kind === 'folder' && detail.panelTab === 'overview'">
+                  <div class="space-y-4">
+                    {{ folder_overview_note() }}
+                    {{ folder_children() }}
+                  </div>
+                </template>
+                <template x-if="detail.kind === 'folder' && detail.panelTab === 'backedby'">{{ folder_backedby() }}</template>
+                <template x-if="detail.kind === 'folder' && detail.panelTab === 'contents'">
+                  <div class="space-y-4">
+                    {{ folder_contents() }}
+                    {{ folder_children() }}
+                  </div>
+                </template>
+                <template x-if="detail.kind === 'folder' && detail.panelTab === 'actions'">
+                  <div class="space-y-4">
+                    <div class="kl-sec">
+                      <div class="h">Delete this folder</div>
+                      <div class="kl-note">Opens the chunked delete plan for everything under this folder, with a dry run before anything happens.</div>
+                      <div><button class="kl-btn danger" @click="folderDeleteFromPanel()">Delete folder…</button></div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <div class="kl-footer">
+                <template x-if="detail.kind === 'file'">
+                  <span class="flex items-center gap-2">
+                    <button class="kl-btn" @click="mountFileOpen({source: detail.source, full_path: detail.title})" title="Mount the latest snapshot carrying this file and open it in Explorer">Mount &amp; open</button>
+                    <button class="kl-btn" @click="restoreFromDetail()">Restore</button>
+                    <button class="kl-btn quiet" @click="copyText(detail.title)">Copy path</button>
+                  </span>
+                </template>
+                <template x-if="detail.kind === 'folder'">
+                  <span class="flex items-center gap-2">
+                    <button class="kl-btn" @click="folderShowFiles()">Show files</button>
+                    <button class="kl-btn quiet" @click="copyText(detail.title)">Copy path</button>
+                  </span>
+                </template>
+                <span class="spacer"></span>
+                <button x-show="detail.kind === 'folder'" class="kl-btn danger" @click="folderDeleteFromPanel()">Delete folder…</button>
+                <button class="kl-btn" @click="detail=null">Close</button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
     </div>

@@ -59,24 +59,35 @@ def _snap_row(key: str, snap: dict, a: dict) -> dict:
 def snapshots(repo: str = "1", source: str | None = None, source_index: int | None = None) -> dict:
     """Snapshots for a source, merged with persisted per-snapshot churn + reclaimable (when
     available; computed by the background pre-warm or the analyze endpoint). source="*ALL*"
-    returns every snapshot across all sources (for the repo-wide by-reclaimable view)."""
+    returns every snapshot across all sources (for the repo-wide by-reclaimable view).
+    ``analysis_fresh`` is false when the numbers on screen belong to the previous index run
+    () - rows exist but their snaphash predates the current snapshot set."""
     if source == "*ALL*":
-        rows, any_analysis = [], False
+        rows, analyzed_sources = [], 0
+        all_fresh = True
         for key in sorted(sources_index(repo)):
-            analysis = read_analysis(repo, key).get("by_id", {})
-            any_analysis = any_analysis or bool(analysis)
+            info = read_analysis(repo, key)
+            analysis = info.get("by_id", {})
+            if analysis:
+                analyzed_sources += 1
+                all_fresh = all_fresh and bool(info.get("fresh"))
             for snap in sources_index(repo)[key]:
                 rows.append(_snap_row(key, snap, analysis.get(snap["id"], {})))
-        return {"source": "*ALL*", "snapshots": rows, "analyzed": any_analysis,
+        analyzed = analyzed_sources > 0
+        return {"source": "*ALL*", "snapshots": rows, "analyzed": analyzed,
+                "analysis_fresh": (all_fresh if analyzed else True),
                 "analyzing": False, "all_sources": True}
     try:
         key, srcs = resolve_source(repo, source=source, index=source_index)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    analysis = read_analysis(repo, key).get("by_id", {})
+    info = read_analysis(repo, key)
+    analysis = info.get("by_id", {})
     rows = [_snap_row(key, snap, analysis.get(snap["id"], {})) for snap in srcs[key]]
-    return {"source": key, "snapshots": rows, "analyzed": bool(analysis), "analyzing": f"{repo}|{key}" in _ANALYZING}
+    return {"source": key, "snapshots": rows, "analyzed": bool(analysis),
+            "analysis_fresh": bool(info.get("fresh")),
+            "analyzing": f"{repo}|{key}" in _ANALYZING}
 
 
 @router.post("/snapshots/analyze")

@@ -1,0 +1,27 @@
+{# Shared Jinja macros for the partials. Imported, not included - a macro emits only when called. #}
+
+{#- The run bar's results area (dry run / preview output). `st` is the state expression,
+    e.g. 'detail.rfDry' - the object carries {running, done, ok, output, truncated, log,
+    elapsed, snapshots, final_line, mode, error} and is initialised with its owner. -#}
+{% macro dryresult(st) -%}
+<div class="kl-sec" x-show="{{ st }} && ({{ st }}.running || {{ st }}.done || {{ st }}.error)">
+  <div class="h">
+    <span x-text="{{ st }}.running ? 'Running…' : 'Result'"></span>
+    <span class="count" x-show="{{ st }}.done && {{ st }}.elapsed"
+          x-text="({{ st }}.snapshots != null ? {{ st }}.snapshots + ' snapshots · ' : '') + {{ st }}.elapsed + 's'"></span>
+    <span class="acts" x-show="{{ st }}.done">
+      <span class="kl-seg">
+        <span :class="{{ st }}.mode==='clean' ? 'on' : ''" @click="{{ st }}.mode='clean'">Clean</span>
+        <span :class="{{ st }}.mode==='raw' ? 'on' : ''" @click="{{ st }}.mode='raw'">Raw</span>
+      </span>
+    </span>
+  </div>
+  <div class="kl-term" style="max-height:132px">
+    <template x-for="(ln, i) in klDryLines({{ st }})" :key="i"><div class="break-all" x-text="ln"></div></template>
+    <div x-show="{{ st }} && !{{ st }}.output && {{ st }}.running" class="t">waiting for kopia…</div>
+  </div>
+  <div class="kl-note" x-show="{{ st }}.done" x-text="klDrySummary({{ st }})"></div>
+  <div class="kl-note" x-show="{{ st }}.truncated">Output truncated - the full text is in <span class="font-mono break-all" x-text="{{ st }}.log"></span></div>
+  <div class="kl-note" x-show="{{ st }}.error" x-text="{{ st }}.error"></div>
+</div>
+{%- endmacro %}

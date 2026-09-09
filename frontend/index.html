@@ -6,7 +6,22 @@
   <title>KopiaLens</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <script src="/static/vendor/tailwindcdn-3.4.17.js"></script>
-  <script>tailwind.config = { darkMode: 'class' };</script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: { extend: { colors: {
+        canvas: 'var(--canvas)', surface: 'var(--surface)', surface2: 'var(--surface2)', head: 'var(--head)',
+        sel: 'var(--sel)',
+        bd: 'var(--bd)', 'bd-soft': 'var(--bd-soft)',
+        fg: 'var(--fg)', muted: 'var(--muted)', faint: 'var(--faint)',
+        ok: 'var(--ok)', 'ok-bd': 'var(--ok-bd)', 'ok-bg': 'var(--ok-bg)', 'ok-solid': 'var(--ok-solid)',
+        danger: 'var(--danger)', 'danger-bd': 'var(--danger-bd)', 'danger-bg': 'var(--danger-bg)',
+        warn: 'var(--warn)', 'warn-bd': 'var(--warn-bd)', 'warn-bg': 'var(--warn-bg)',
+        link: 'var(--link)',
+        accent: 'var(--accent)', 'accent-bd': 'var(--accent-bd)', 'accent-bg': 'var(--accent-bg)', 'accent-solid': 'var(--accent-solid)',
+      } } }
+    };
+  </script>
   <script defer src="/static/vendor/alpine-3.17.1.min.js"></script>
   <link href="/static/vendor/tabulator-6.3.1.simple.min.css" rel="stylesheet">
   <script src="/static/vendor/tabulator-6.3.1.min.js"></script>
@@ -39,6 +54,7 @@
 {% include "partials/settings.html" %}
 {% include "partials/detail.html" %}
 {% include "partials/modals.html" %}
+{% include "partials/confirm.html" %}
   </div>
   <script src="/static/js/util.js?v={{ asset_v }}"></script>
   <script src="/static/js/bz/index.js?v={{ asset_v }}"></script>
@@ -58,6 +74,8 @@
   <script src="/static/js/stats.js?v={{ asset_v }}"></script>
   <script src="/static/js/excluded.js?v={{ asset_v }}"></script>
   <script src="/static/js/actions.js?v={{ asset_v }}"></script>
+  <script src="/static/js/confirm.js?v={{ asset_v }}"></script>
+  <script src="/static/js/runbar.js?v={{ asset_v }}"></script>
   <script src="/static/js/settings.js?v={{ asset_v }}"></script>
   <script src="/static/js/detail.js?v={{ asset_v }}"></script>
   <script src="/static/js/app.js?v={{ asset_v }}"></script>

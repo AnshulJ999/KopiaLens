@@ -6,6 +6,7 @@
           </select>
           <button @click="analyzeSnapshots()" :disabled="analyzing" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm disabled:opacity-50" title="Compute churn + reclaimable for this source (cached after)"><span x-text="analyzing ? 'Analyzing…' : 'Analyze this source'"></span></button>
           <button @click="analyzeAll()" :disabled="analyzingAll" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm disabled:opacity-50" title="Compute churn + reclaimable for EVERY source in the repo (cached)"><span x-text="analyzingAll ? 'Analyzing repo…' : 'Analyze entire repo'"></span></button>
+          <span x-show="snapStaleAnalysis" class="kl-callout">Churn and reclaimable numbers are from the previous index run - Analyze refreshes them.</span>
           <button @click="planDelete()" class="h-8 rounded border border-red-300 text-red-600 px-3 text-sm" title="Delete the selected snapshots (select rows first)">🗑 Delete selected</button>
           <button @click="csv('#snapshotsTable','snapshots')" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Export CSV">⬇ CSV</button>
           <span class="text-xs text-stone-500">Select rows to delete · Churn = new data · Reclaimable = freed if deleted</span>

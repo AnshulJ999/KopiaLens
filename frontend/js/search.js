@@ -99,7 +99,8 @@ const searchPart = {
       const d = row.getData();
       const key = this.repo + ":" + d.folder;
       const cur = this.groupReclaim[key];
-      if (cur && cur !== "error") return;
+      if (cur === "pending") return;  // block repeats only while in flight; a deliberate
+                                      // second pick recomputes - that pick IS the manual refresh
       this.groupReclaim[key] = "pending";
       row.reformat();
       try {

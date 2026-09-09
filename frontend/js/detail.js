@@ -15,7 +15,7 @@ const detailPart = {
     async openFolderPanel(prefix, source = null) {
       if (!prefix) return;
       const seq = ++this._detailSeq;
-      this.detail = { kind: "folder", title: prefix, source, loading: true, heavyLoading: true, sources: [], children: [] };
+      this.detail = { kind: "folder", title: prefix, source, loading: true, heavyLoading: true, sources: [], children: [], panelTab: "overview" };
       try {
         const p = new URLSearchParams({ repo: this.repo, prefix });
         if (source) p.set("source", source);
@@ -76,6 +76,10 @@ const detailPart = {
         kind: "file", loading: true, title: item.full_path, source: item.source,
         on_disk: item.in_latest, logical: item.size, physical: item.physical,
         freeable: null, shared: null, chunks: [], others: [], versions: [], purge: [],
+        panelTab: "overview",
+        // run-bar states, initialised so the markup can deref them freely
+        rfBy: "object-id", rfEverywhere: false, rfDry: this.klDryState(),
+        purgeDry: this.klDryState(), dupDry: this.klDryState(),
       };
       const base = `repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(item.source)}&full_path=${encodeURIComponent(item.full_path)}`;
       try {
@@ -88,7 +92,7 @@ const detailPart = {
         const items = purge.items || [];
         const purgeRows = (purge.commands || []).map((c, i) => {
           const it = items[i] || {};
-          return { cmd: Array.isArray(c) ? c.join(" ") : c, tag: it.pinned ? "PINNED" : ((it.retention && it.retention.length) ? `retained: ${it.retention.join(",")}` : "") };
+          return { cmd: Array.isArray(c) ? c.join(" ") : c, tag: it.pinned ? "PINNED" : ((it.retention && it.retention.length) ? `retained: ${it.retention.join(",")}` : ""), id: it.id };
         });
         Object.assign(this.detail, {   // merge (not replace) so a command built meanwhile (removeFiles) survives
           kind: "file", loading: false,
@@ -103,6 +107,7 @@ const detailPart = {
           locations: detail.locations, instances: detail.instances,
           reclaim_everywhere: detail.reclaim_everywhere, purge_everywhere_count: detail.purge_everywhere_count,
           purgeEverywhereCmds: detail.purge_everywhere_cmds || "",
+          snapsEverywhere: detail.snapshots_everywhere || [],   // the content's full delete-set (ids)
           versions: (vres.versions || []).map((x) => ({ time: humanTime(x.start_time), size: x.size, snapshot_id: x.snapshot_id, content_id: x.content_id })),
           purge: purgeRows,
           purgeCmds: purgeRows.map((r) => r.cmd).join("\n"),
@@ -113,22 +118,134 @@ const detailPart = {
     },
 
     // ---- Remove file from ALL snapshots (kopia snapshot fix remove-files) ----
-    async loadRemoveFiles(by) {  // by = 'object-id' (precise) | 'filename' (basename + source)
+    // The run bar drives this section: params (mechanism + scope) rebuild the plan, Dry run
+    // runs kopia's real dry run, Execute confirms in-app then commits. Any param change
+    // clears the dry-run result - it no longer describes the selection.
+    rfSetBy(by) {
       if (!this.detail) return;
+      this.detail.rfBy = by;
+      this.klDryClear(this.detail.rfDry);
+      this.rfEnsurePlan();
+    },
+    rfToggleEverywhere() {
+      if (!this.detail) return;
+      this.detail.rfEverywhere = !this.detail.rfEverywhere;
+      this.klDryClear(this.detail.rfDry);
+      this.rfEnsurePlan();
+    },
+    async rfEnsurePlan() {  // counts + chunked command text for the current params (index-only, fast)
+      if (!this.detail) return null;
       try {
-        const r = await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.detail.source, full_path: this.detail.title, by, everywhere: !!this.detail.rfEverywhere, confirm: false }) });
-        this.detail.removeFiles = { by, dry: r.dry_run, commit: r.commit, count: r.count, everywhere: r.everywhere };
-      } catch (err) { this.error = err.message || String(err); }
+        const r = await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.detail.source, full_path: this.detail.title, by: this.detail.rfBy || "object-id", everywhere: !!this.detail.rfEverywhere, confirm: false }) });
+        if (!this.detail) return null;
+        this.detail.removeFiles = { by: this.detail.rfBy || "object-id", count: r.count, everywhere: r.everywhere, dry: r.dry_run, commit: r.commit, batches: r.batches };
+        return this.detail.removeFiles;
+      } catch (err) { this.error = err.message || String(err); return null; }
+    },
+    rfDry() {  // RUN remove-files without --commit; kopia reports what it would rewrite
+      if (!this.detail) return;
+      const st = this.detail.rfDry = (this.detail.rfDry || this.klDryState());
+      return this.klDry("/api/actions/remove-files-dry-run",
+        { repo: this.repo, source: this.detail.source, full_path: this.detail.title, by: this.detail.rfBy || "object-id", everywhere: !!this.detail.rfEverywhere }, st);
+    },
+    rfDryChecked() {  // the "dry run checked" pill state
+      const st = this.detail && this.detail.rfDry;
+      return !!(st && st.done && st.ok && !st.running);
     },
     async executeRemoveFiles() {
-      const rf = this.detail && this.detail.removeFiles;
-      if (!rf) return;
-      if ((window.prompt("Remove this file from ALL snapshots (rewrites manifests, keeps the snapshots)?\nType REMOVE to confirm:") || "").trim().toUpperCase() !== "REMOVE") return;
+      const plan = (this.detail && this.detail.removeFiles) || await this.rfEnsurePlan();
+      if (!plan || !this.detail) return;
+      const unit = plan.by === "object-id" ? "content object(s)" : "name(s)";
+      const ok = await this.klConfirm({
+        title: "Remove this file from all snapshots?",
+        facts: [
+          ["What", plan.by === "object-id" ? "Every version of this file, matched by exact content" : "Every version of this file, matched by filename"],
+          ["How many", `${plan.count} ${unit}`],
+          ["Where", plan.everywhere ? "Every source in the repo" : "The sources holding this content"],
+          ["How", "kopia snapshot fix remove-files" + (plan.everywhere ? " (no source scope)" : " --source ...")],
+        ],
+        callout: "Snapshots keep every other file. Space frees on the next maintenance run, not now.",
+        note: this.rfDryChecked() ? "" : "No dry run has been done for this selection.",
+        command: plan.commit, confirmLabel: "Remove from snapshots", danger: true,
+      });
+      if (!ok) return;
       await this.wrap(async () => {
-        await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.detail.source, full_path: this.detail.title, by: rf.by, everywhere: !!this.detail.rfEverywhere, confirm: true }) });
+        await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.detail.source, full_path: this.detail.title, by: plan.by, everywhere: !!this.detail.rfEverywhere, confirm: true }) });
         this.actionText = "Removed from snapshots. Run 'kopia maintenance run --full' to reclaim the space.";
         this.detail = null;
       }, "Removing file from all snapshots…");
+    },
+
+    // ---- Purge plan (path-scoped): delete the whole snapshots carrying this path ----
+    purgeIds() { return ((this.detail && this.detail.purge) || []).map((r) => r.id).filter(Boolean); },
+    purgeDry() {
+      if (!this.detail) return;
+      const ids = this.purgeIds();
+      if (!ids.length) { this.error = "No snapshots to purge."; return; }
+      const st = this.detail.purgeDry = (this.detail.purgeDry || this.klDryState());
+      return this.klDry("/api/actions/snapshot-delete-dry-run", { repo: this.repo, snapshot_ids: ids }, st);
+    },
+    purgeDryChecked() {
+      const st = this.detail && this.detail.purgeDry;
+      return !!(st && st.done && st.ok && !st.running);
+    },
+    async executePurge() {
+      const ids = this.purgeIds();
+      if (!ids.length || !this.detail) return;
+      const warns = (this.detail.purge || []).filter((r) => r.tag).length;
+      const ok = await this.klConfirm({
+        title: `Delete ${ids.length} snapshot(s) to purge this file?`,
+        facts: [
+          ["What", "Whole snapshots that carry this path - the snapshot itself is deleted, not just the file reference"],
+          ["How many", `${ids.length} snapshot(s)`],
+          ["Where", sourcePath(this.detail.source || "") || "across sources"],
+          ["How", "kopia snapshot delete --delete"],
+        ],
+        callout: warns ? `${warns} of them are pinned or kept by a retention rule - deleting removes those restore points.` : "",
+        note: (this.purgeDryChecked() ? "" : "No dry run has been done for this selection. ")
+          + "Space is reclaimed only after maintenance run --full.",
+        command: this.detail.purgeCmds, confirmLabel: `Delete ${ids.length} snapshot(s)`, danger: true,
+      });
+      if (!ok) return;
+      await this._deleteSnapsFromPanel(ids);
+    },
+    async _deleteSnapsFromPanel(ids) {
+      await this.wrap(async () => {
+        const r = await getJson("/api/actions/snapshot-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_ids: ids, confirm: true }) });
+        this.actionText = `Deleted ${r.deleted} snapshot(s). Run 'kopia maintenance run --full' to reclaim the space.`;
+        this.detail = null;
+      }, "Deleting snapshots…");
+    },
+
+    // ---- Exact duplicate: delete the snapshots carrying this content EVERYWHERE ----
+    dupDry() {
+      if (!this.detail) return;
+      const ids = this.detail.snapsEverywhere || [];
+      if (!ids.length) { this.error = "No snapshots to delete."; return; }
+      const st = this.detail.dupDry = (this.detail.dupDry || this.klDryState());
+      return this.klDry("/api/actions/snapshot-delete-dry-run", { repo: this.repo, snapshot_ids: ids }, st);
+    },
+    dupDryChecked() {
+      const st = this.detail && this.detail.dupDry;
+      return !!(st && st.done && st.ok && !st.running);
+    },
+    async executeDupEverywhere() {
+      const ids = (this.detail && this.detail.snapsEverywhere) || [];
+      if (!ids.length) return;
+      const ok = await this.klConfirm({
+        title: `Delete ${ids.length} snapshot(s) to purge this content everywhere?`,
+        facts: [
+          ["What", "Whole snapshots that carry this exact content, in every location"],
+          ["How many", `${ids.length} snapshot(s) · frees ${fmtPhys(this.detail.reclaim_everywhere)}`],
+          ["Where", `${this.detail.locations || "?"} source(s) hold this content`],
+          ["How", "kopia snapshot delete --delete"],
+        ],
+        note: (this.dupDryChecked() ? "" : "No dry run has been done for this selection. ")
+          + "Space is reclaimed only after maintenance run --full.",
+        command: this.detail.purgeEverywhereCmds, confirmLabel: `Delete ${ids.length} snapshot(s)`, danger: true,
+      });
+      if (!ok) return;
+      await this._deleteSnapsFromPanel(ids);
     },
 
     // ---- Exclusion-pattern suggestions (paste into the KopiaUI policy) ----
@@ -153,28 +270,6 @@ const detailPart = {
       if (dot > 0) out.push({ label: "By extension", pat: "*" + name.slice(dot) });
       return out;
     },
-    async batchRemove(scope) {
-      // In By-folder view the visible table is #groupTable, which _selFiles never looked at - so a
-      // selected folder always reported "select one or more files first". Route it to the chunked
-      // folder plan instead, which is what deleting a folder actually needs.
-      if (scope === "search" && this.groupByFolder) {
-        const row = this.selectedGroupFolder();
-        if (!row) { window.alert("Select a folder first."); return; }
-        return this.openRemoveFolderPath(row.folder);
-      }
-      const files = this._selFiles(scope);
-      if (!files.length) { window.alert("Select one or more files first."); return; }
-      const r = await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, by: "filename", files, confirm: false }) }).catch((e) => { this.error = e.message; return null; });
-      if (!r) return;
-      const ans = window.prompt(`Remove ${files.length} file(s) from ALL snapshots (keeps the snapshots).\n\nDRY-RUN:\n${r.dry_run}\n\nType REMOVE to execute now, or Cancel to just copy the commit commands:`);
-      if (ans === null) { this.copyText(r.commit); this.actionText = "Remove commands copied:\n" + r.commit; return; }
-      if (ans.trim().toUpperCase() !== "REMOVE") return;
-      await this.wrap(async () => {
-        await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, by: "filename", files, confirm: true }) });
-        this.actionText = "Removed from snapshots. Run 'kopia maintenance run --full' to reclaim.";
-        this.loadSearch();
-      }, "Removing files…");
-    },
     batchExclude(scope) {
       const names = [...new Set(this._selFiles(scope).map((f) => f.full_path.split("\\").pop().split("/").pop()))].filter(Boolean);
       if (!names.length) { window.alert("Select one or more files first."); return; }
@@ -187,7 +282,7 @@ const detailPart = {
       const files = this._selFiles(scope);
       if (!files.length) { window.alert("Select one or more files first (Shift+Click for a range)."); return; }
       const seq = ++this._batchSeq;
-      this.batch = { loading: true, files, count: files.length, by: "object-id", everywhere: false, stats: null, cmd: null, cmdLoading: false };
+      this.batch = { loading: true, files, count: files.length, by: "object-id", everywhere: false, stats: null, cmd: null, cmdLoading: false, dry: this.klDryState() };
       this.showBatch = true;
       const r = await getJson("/api/actions/batch-detail", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, files }) }).catch((e) => { this.error = e.message; return null; });
       if (seq !== this._batchSeq) return;  // a newer batch was opened meanwhile - drop this result
@@ -209,12 +304,34 @@ const detailPart = {
       this._downloadText(c.bat_name || "kopialens_remove.bat", c.bat);
       this.actionText = `Downloaded ${c.bat_name} (${c.batches} batch(es)).`;
     },
-    setBatchBy(by) { if (this.batch) { this.batch.by = by; this.buildBatchCmd(); } },
-    toggleBatchEverywhere() { if (this.batch) { this.batch.everywhere = !this.batch.everywhere; this.buildBatchCmd(); } },
+    setBatchBy(by) { if (this.batch) { this.batch.by = by; this.klDryClear(this.batch.dry); this.buildBatchCmd(); } },
+    toggleBatchEverywhere() { if (this.batch) { this.batch.everywhere = !this.batch.everywhere; this.klDryClear(this.batch.dry); this.buildBatchCmd(); } },
+    batchDry() {  // run the batch selection's real kopia dry run
+      if (!this.batch) return;
+      const st = this.batch.dry = (this.batch.dry || this.klDryState());
+      return this.klDry("/api/actions/remove-files-dry-run",
+        { repo: this.repo, by: this.batch.by, everywhere: this.batch.everywhere, files: this.batch.files }, st);
+    },
+    batchDryChecked() {
+      const st = this.batch && this.batch.dry;
+      return !!(st && st.done && st.ok && !st.running);
+    },
     async executeBatchRemove() {
       if (!this.batch) return;
       if (this.batch.cmd && this.batch.cmd.batches > 1) { window.alert(`Too many for one command (${this.batch.cmd.batches} batches). Use Copy or Save .bat to run it in chunks.`); return; }
-      if ((window.prompt(`Remove ${this.batch.count} file(s) from snapshots (keeps the snapshots).\nType REMOVE to confirm:`) || "").trim().toUpperCase() !== "REMOVE") return;
+      const ok = await this.klConfirm({
+        title: `Remove ${this.batch.count} file(s) from all snapshots?`,
+        facts: [
+          ["What", this.batch.by === "object-id" ? "Every version of each selected file, matched by exact content" : "Every version of each selected file, matched by filename"],
+          ["How many", this.batch.cmd ? `${this.batch.cmd.count} ${this.batch.by === "object-id" ? "content object(s)" : "name(s)"} · ${this.batch.cmd.batches} batch(es)` : `${this.batch.count} file(s)`],
+          ["Where", this.batch.everywhere ? "Every source in the repo" : "The sources holding this content"],
+          ["How", "kopia snapshot fix remove-files"],
+        ],
+        callout: "Snapshots keep every other file. Space frees on the next maintenance run, not now.",
+        note: this.batchDryChecked() ? "" : "No dry run has been done for this selection.",
+        command: this.batch.cmd ? this.batch.cmd.commit : "", confirmLabel: `Remove ${this.batch.count} file(s)`, danger: true,
+      });
+      if (!ok) return;
       const b = this.batch;
       await this.wrap(async () => {
         await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, by: b.by, everywhere: b.everywhere, files: b.files, confirm: true }) });
@@ -260,7 +377,7 @@ const detailPart = {
       // Folder/file-context deletes (a Tree prefix) default to ALL versions: latest-only would
       // silently leave every older version's bytes in old snapshots ("deleted" folder still there).
       const allVers = !!(this._removeBase && this._removeBase.prefix);
-      this.removePlan = { loading: true, label: this._removeLabel, all_versions: allVers, everywhere: false, by: "object-id", detail: null, detailLoading: false, job: null, batSaved: null, top_n: 0 };
+      this.removePlan = { loading: true, label: this._removeLabel, all_versions: allVers, everywhere: false, by: "object-id", detail: null, detailLoading: false, job: null, batSaved: null, top_n: 0, dry: this.klDryState() };
       this.showRemove = true;
       this._fetchRemovePlan();
     },
@@ -278,9 +395,9 @@ const detailPart = {
       // Auto-compute freeable/shared (like the file panel) unless the set is huge (avoid a long walk).
       if (r && (r.file_count || 0) <= 200000) this.removeComputeReclaim();
     },
-    toggleRemoveAllVersions() { if (this.removePlan && !this.removePlan.job) { this.removePlan.all_versions = !this.removePlan.all_versions; this._fetchRemovePlan(); } },
-    toggleRemoveEverywhere() { if (this.removePlan && !this.removePlan.job) { this.removePlan.everywhere = !this.removePlan.everywhere; this._fetchRemovePlan(); } },
-    setRemoveBy(by) { if (this.removePlan && !this.removePlan.job) { this.removePlan.by = by; this._fetchRemovePlan(); } },
+    toggleRemoveAllVersions() { if (this.removePlan && !this.removePlan.job) { this.removePlan.all_versions = !this.removePlan.all_versions; this.klDryClear(this.removePlan.dry); this._fetchRemovePlan(); } },
+    toggleRemoveEverywhere() { if (this.removePlan && !this.removePlan.job) { this.removePlan.everywhere = !this.removePlan.everywhere; this.klDryClear(this.removePlan.dry); this._fetchRemovePlan(); } },
+    setRemoveBy(by) { if (this.removePlan && !this.removePlan.job) { this.removePlan.by = by; this.klDryClear(this.removePlan.dry); this._fetchRemovePlan(); } },
     async removeComputeReclaim() {
       if (!this.removePlan) return;
       const seq = ++this._removeDetailSeq;
@@ -298,7 +415,17 @@ const detailPart = {
     setRemoveTopN(n) {
       if (!this.removePlan || this.removePlan.job) return;
       this.removePlan.top_n = n || 0;
+      this.klDryClear(this.removePlan.dry);
       this._fetchRemovePlan();
+    },
+    removePlanDry() {  // run the whole matched plan's real kopia dry run
+      if (!this.removePlan || this.removePlan.job) return;
+      const st = this.removePlan.dry = (this.removePlan.dry || this.klDryState());
+      return this.klDry("/api/actions/remove-plan-dry-run", this._removeBody(), st);
+    },
+    removePlanDryChecked() {
+      const st = this.removePlan && this.removePlan.dry;
+      return !!(st && st.done && st.ok && !st.running);
     },
     removeCoverage() {  // "these 100 files are 70% of the folder" - the number that makes top-N a decision
       const p = this.removePlan;
@@ -314,10 +441,24 @@ const detailPart = {
     },
     async removeRun() {
       if (!this.removePlan) return;
-      const msg = `Run the chunked delete NOW?\n${this.removePlan.object_count} content objects · ${this.removePlan.batches} batch(es)` +
-        (this.removePlan.everywhere ? "\n\n⚠ EVERYWHERE: not source-scoped (whole-repo sweep)." : "") +
-        "\n\nType DELETE to confirm:";
-      if ((window.prompt(msg) || "").trim().toUpperCase() !== "DELETE") return;
+      const p = this.removePlan;
+      const scopeRows = p.everywhere
+        ? "Every source in the repo (whole-repo sweep)"
+        : `Scoped to ${((p.sources_scope || []).length)} source(s): ${(p.sources_scope || []).map((s) => sourcePath(s)).join(", ")}`;
+      const ok = await this.klConfirm({
+        title: "Run the chunked delete now?",
+        facts: [
+          ["What", (p.all_versions ? "Every version" : "The latest version") + " of the matched files, biggest first"],
+          ["How many", `${Number(p.object_count || 0).toLocaleString()} content objects · ${p.batches} batch(es)`],
+          ["Where", scopeRows],
+          ["How", "Chunked kopia snapshot fix remove-files --commit, run in the background with progress below"],
+        ],
+        callout: p.everywhere ? "NOT source-scoped: this sweeps the whole repo." : "",
+        note: (this.removePlanDryChecked() ? "" : "No dry run has been done for this selection. ")
+          + "Space frees on the next maintenance run.",
+        command: p.commit, confirmLabel: "Delete now", danger: true,
+      });
+      if (!ok) return;
       const r = await getJson("/api/actions/remove-execute", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
       if (!r || !this.removePlan) return;
       this.removePlan.job = { job_id: r.job_id, total: this.removePlan.batches, done: 0, running: true, errors: 0, log: r.log };

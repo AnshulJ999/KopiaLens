@@ -2,12 +2,15 @@
 
 Most calls are read-only and protected by the same allowlist as
 ``kopiatoolkit.py``. Mount is allowed as an explicit operational action because it
-does not mutate the repository. Restore is command-preview only in v1.
+does not mutate the repository. Destructive verbs (remove-files, snapshot delete,
+restore) execute through dedicated functions that log + audit every run; their
+dry-run counterparts run the same commands without the mutating flag.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import string
 import subprocess
 import threading
@@ -627,6 +630,127 @@ def remove_files_chunked_execute(repo: str, items: list[str], source: str | list
                          "flag": flag, "source": source},
                 rc=job.get("rc", 0), duration_s=time.time() - t0, log_file=log_path)
     return job
+
+
+_DRY_OUTPUT_CAP = 256 * 1024  # bytes of kopia output carried in an API response
+
+
+def _run_dry_commands(repo: str, cmds: list[list[str]], kind: str, expect_flag: str) -> dict:
+    """Run preview-only kopia commands sequentially and capture their output.
+
+    The commands MUST have been built without the mutating flag (``--commit`` for
+    remove-files, ``--delete`` for snapshot delete); ``expect_flag`` is asserted absent
+    so a builder change can never turn the dry-run button into a real deletion.
+    Full output also lands in a log file under data/logs (the job runner will own the
+    streaming version; until then a dry run is a bounded synchronous call).
+    """
+    for c in cmds:
+        if expect_flag in c:
+            raise PermissionError(f"dry-run command carries the mutating flag {expect_flag}")
+    limit = _timeout()
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    log_path = remove_log_path(f"dry_run_{kind}_repo{repo}_{ts}.log")
+    rc, elapsed = 0, 0.0
+    out: list[str] = []
+    truncated = False
+    t0 = time.time()
+    try:
+        with open(log_path, "a", encoding="utf-8", errors="replace") as lf:
+            lf.write(f"=== kopia {kind} dry run repo={repo} batches={len(cmds)} ===\n")
+            lf.flush()
+            for i, cmd in enumerate(cmds, 1):
+                lf.write(f"\n--- batch {i}/{len(cmds)} ---\n")
+                lf.flush()
+                try:
+                    res = subprocess.run(
+                        cmd + ["--no-progress"], capture_output=True, text=True,
+                        encoding="utf-8", errors="replace", timeout=limit,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    rc = TIMEOUT_RC
+                    out.append(f"kopia timed out after {limit:.0f}s")
+                    lf.write(_as_text(exc.stdout))
+                    break
+                lf.write(res.stdout or "")
+                if res.stderr:
+                    lf.write("\n[stderr]\n" + res.stderr)
+                lf.flush()
+                out.append(res.stdout or "")
+                if res.stderr.strip():
+                    out.append(res.stderr)
+                if res.returncode != 0:
+                    rc = res.returncode
+                if sum(len(s) for s in out) > _DRY_OUTPUT_CAP:
+                    truncated = True
+                    break
+    except Exception as exc:  # noqa: BLE001 - a log-write failure must not kill the dry run
+        log.warning("dry run %s repo=%s log write failed: %s", kind, repo, exc)
+    elapsed = time.time() - t0
+    text = "\n".join(out)
+    return {"returncode": rc, "output": text[:_DRY_OUTPUT_CAP], "truncated": truncated,
+            "log": log_path, "elapsed": round(elapsed, 1), "commands": len(cmds)}
+
+
+def _parse_remove_dry(text: str) -> dict:
+    """Summarise a remove-files dry run from kopia's real output (verified against 0.23.1:
+    ``will remove file <path>`` per entry, ``Fixed N snapshots, but snapshot manifests
+    were not updated.`` as the final line)."""
+    entries = sum(1 for ln in text.splitlines() if "will remove file" in ln)
+    m = re.search(r"Fixed (\d+) snapshots, but snapshot manifests were not updated", text)
+    snapshots = int(m.group(1)) if m else 0
+    final = ""
+    for ln in text.splitlines():
+        if "snapshot manifests were not updated" in ln or "Fixed and committed" in ln:
+            final = ln.strip()
+    return {"entries": entries, "snapshots": snapshots, "final_line": final}
+
+
+def _parse_delete_dry(text: str) -> dict:
+    """Summarise a snapshot-delete dry run (kopia prints ``Would delete <desc> (pass
+    --delete to confirm)`` per snapshot)."""
+    snaps = sum(1 for ln in text.splitlines() if "Would delete" in ln)
+    return {"snapshots": snaps, "final_line": (f"Would delete {snaps} snapshot(s)" if snaps else "")}
+
+
+def remove_files_dry_run(repo: str, object_ids: list[str] | None = None,
+                         filenames: list[str] | None = None,
+                         source: str | list[str] | None = None) -> dict:
+    """RUN remove-files without --commit: kopia walks every snapshot in scope and reports
+    exactly what it would rewrite, changing nothing. Chunked at 32k like the executor so
+    large sets work. Preview-only; logged."""
+    if not object_ids and not filenames:
+        return {"returncode": 1, "output": "", "error": "nothing specified (object_ids or filenames required)"}
+    cmds = remove_files_chunked_commands(repo, object_ids or filenames or [],
+                                         source=source, commit=False, max_chars=32000,
+                                         flag="--filename" if filenames else "--object-id")
+    log.info("DRY RUN remove-files repo=%s filenames=%d object_ids=%d source=%r batches=%d",
+             repo, len(filenames or []), len(object_ids or []), source, len(cmds))
+    r = _run_dry_commands(repo, cmds, "remove-files", "--commit")
+    r.update(_parse_remove_dry(r["output"]))
+    audit.audit("dry-run", "remove-files", repo=repo,
+                summary={"filenames": len(filenames or []), "object_ids": len(object_ids or []),
+                         "source": source, "entries": r.get("entries"),
+                         "snapshots": r.get("snapshots")},
+                rc=r["returncode"], duration_s=r["elapsed"], log_file=r["log"])
+    return r
+
+
+def snapshot_delete_dry_run(repo: str, snapshot_ids: list[str]) -> dict:
+    """RUN snapshot delete without --delete: kopia lists exactly what it would delete.
+    Chunked like the executor (200 ids per call). Preview-only; logged."""
+    if not snapshot_ids:
+        return {"returncode": 1, "output": "", "error": "snapshot_ids is empty"}
+    prefix = ["kopia"] + _repo_args(repo) + ["snapshot", "delete"]
+    cmds = [prefix + snapshot_ids[i:i + _SNAP_DELETE_CHUNK]
+            for i in range(0, len(snapshot_ids), _SNAP_DELETE_CHUNK)]
+    log.info("DRY RUN snapshot delete repo=%s count=%d batches=%d", repo, len(snapshot_ids), len(cmds))
+    r = _run_dry_commands(repo, cmds, "snapshot-delete", "--delete")
+    r.update(_parse_delete_dry(r["output"]))
+    audit.audit("dry-run", "snapshot-delete", repo=repo,
+                summary={"ids": len(snapshot_ids), "would_delete": r.get("snapshots")},
+                rc=r["returncode"], duration_s=r["elapsed"], log_file=r["log"])
+    return r
 
 
 def snapshot_pin_command(repo: str, ids: list[str], remove: bool = False,

@@ -55,6 +55,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "search_dedupe": False,    # persisted dedupe toggle (search)
         "recent_backup": "30",     # default "Backed up" filter in days ("" = Any); user changes persist
         "tree_dedupe": False,      # persisted dedupe toggle (tree)
+        "panel_layout": "classic",  # detail-panel layout (): "classic" | "tabbed"
         "es_path": r"G:\Apps\CLI Tools\es.exe",  # Everything CLI for the Excluded browser (local disk side)
         "excluded_tolerance": 0.05,  # folder counts as "backed" when excluded fraction is below this (cuts partial noise)
         "auto_compact": True,        # auto-compact the DuckDB when it bloats (DuckDB has no GC of its own)

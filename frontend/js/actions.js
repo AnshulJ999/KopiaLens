@@ -49,7 +49,18 @@ const actionsPart = {
       if (!this.restore || !this.restore.target) { window.alert("Enter a destination."); return; }
       const o = this.restore.options;
       if (o.overwrite_files || o.overwrite_directories || o.delete_extra) {
-        if ((window.prompt("This restore can OVERWRITE or DELETE files at the destination. Type RESTORE to confirm:") || "").trim().toUpperCase() !== "RESTORE") return;
+        const flags = [o.overwrite_files && "overwrite files", o.overwrite_directories && "overwrite directories", o.delete_extra && "delete extra files"].filter(Boolean).join(", ");
+        const ok = await this.klConfirm({
+          title: "Restore over existing files?",
+          facts: [
+            ["What", `Restore to ${this.restore.target}`],
+            ["What it can do", flags],
+            ["How", "kopia restore (writes to the destination)"],
+          ],
+          callout: "This restore can overwrite or remove files at the destination.",
+          command: this.restore.command, confirmLabel: "Restore", danger: true,
+        });
+        if (!ok) return;
       }
       await this.wrap(async () => {
         const r = await getJson("/api/actions/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source_id: this.restore.source_id, target: this.restore.target, options: o, confirm: true }) });
