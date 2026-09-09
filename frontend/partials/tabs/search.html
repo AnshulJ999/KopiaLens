@@ -1,14 +1,14 @@
       <section x-show="active==='search'" class="h-full flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
-          <input x-model="query" @input.debounce.300ms="loadSearch()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[22rem]" placeholder="Search paths (matches the full path)">
-          <select x-model="searchSource" @change="loadSearch()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 max-w-[18rem]">
+          <input x-model="query" @input.debounce.300ms="loadSearch()" class="fld border border-bd bg-surface min-w-[22rem]" placeholder="Search paths (matches the full path)">
+          <select x-model="searchSource" @change="loadSearch()" class="fld border border-bd bg-surface max-w-[18rem]">
             <option value="">All sources</option>
             <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
           </select>
-          <input x-model="searchExt" @input.debounce.300ms="loadSearch()" class="fld w-36 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="ext: vhdx,iso,7z">
-          <input x-model="searchExtExclude" @input.debounce.300ms="loadSearch()" class="fld w-36 border border-amber-300 dark:border-amber-700 bg-white dark:bg-stone-800" placeholder="hide ext: mp4,mkv" title="Hide these extensions (focus on the rest)">
+          <input x-model="searchExt" @input.debounce.300ms="loadSearch()" class="fld w-36 border border-bd bg-surface" placeholder="ext: vhdx,iso,7z">
+          <input x-model="searchExtExclude" @input.debounce.300ms="loadSearch()" class="fld w-36 border border-warn-bd bg-surface" placeholder="hide ext: mp4,mkv" title="Hide these extensions (focus on the rest)">
           <label class="flex items-center gap-1 text-xs" title="Files first backed up (first appeared in a snapshot) within the chosen window - new/churning files">Backed up
-            <select x-model="recentBackup" @change="changeRecentBackup()" class="fld h-7 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+            <select x-model="recentBackup" @change="changeRecentBackup()" class="fld h-7 border border-bd bg-surface">
               <option value="">Any</option>
               <option value="1">Last 24h</option>
               <option value="7">Last 7 days</option>
@@ -17,50 +17,50 @@
           </label>
           <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="deletedOnly" @change="loadSearch()"> Deleted from disk</label>
           <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="overOneGb" @change="loadSearch()"> &gt;1 GB</label>
-          <button @click="showFilters=!showFilters" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="showFilters ? 'bg-stone-200 dark:bg-stone-700' : ''" title="More filters">⛃ Filters</button>
-          <button @click="toggleDedupe()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="dedupe ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Dedupe: collapse path/source copies of the same content into one row">⧉ Dedupe</button>
-          <button @click="computeReclaim()" :disabled="reclaimComputing" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs disabled:opacity-50" title="Compute true reclaim (all versions, everywhere) for the visible rows, then sort by it"><span x-text="reclaimComputing ? 'Computing…' : '∑ Reclaim'"></span></button>
-          <button @click="toggleGroupByFolder()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="groupByFolder ? 'bg-amber-200 dark:bg-amber-800' : ''" title="Group results by folder (find bloated folders), ranked by physical size">⊞ By folder</button>
-          <button @click="exportSearch()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Export the FULL filtered set to CSV">⬇ CSV (all)</button>
-          <button x-show="!groupByFolder" @click="openRemoveFromSearch()" class="h-8 rounded border border-rose-400 text-rose-600 dark:text-rose-400 px-2 text-xs font-medium" title="Delete EVERY file matching this filter (chunked remove-files, biggest first) — copy / .bat / run">🗑 Delete matching…</button>
+          <button @click="showFilters=!showFilters" class="h-8 rounded border border-bd px-2 text-xs" :class="showFilters ? 'bg-sel' : ''" title="More filters">⛃ Filters</button>
+          <button @click="toggleDedupe()" class="h-8 rounded border border-bd px-2 text-xs" :class="dedupe ? 'bg-sel' : ''" title="Dedupe: collapse path/source copies of the same content into one row">⧉ Dedupe</button>
+          <button @click="computeReclaim()" :disabled="reclaimComputing" class="h-8 rounded border border-bd px-2 text-xs disabled:opacity-50" title="Compute true reclaim (all versions, everywhere) for the visible rows, then sort by it"><span x-text="reclaimComputing ? 'Computing…' : '∑ Reclaim'"></span></button>
+          <button @click="toggleGroupByFolder()" class="h-8 rounded border border-bd px-2 text-xs" :class="groupByFolder ? 'bg-sel' : ''" title="Group results by folder (find bloated folders), ranked by physical size">⊞ By folder</button>
+          <button @click="exportSearch()" class="h-8 rounded border border-bd px-2 text-xs" title="Export the FULL filtered set to CSV">⬇ CSV (all)</button>
+          <button x-show="!groupByFolder" @click="openRemoveFromSearch()" class="h-8 rounded border border-danger text-danger px-2 text-xs font-medium" title="Delete EVERY file matching this filter (chunked remove-files, biggest first) — copy / .bat / run">🗑 Delete matching…</button>
           <span class="ml-2 flex items-center gap-1">
-            <span class="text-[11px] text-stone-400">selected:</span>
-            <button @click="batchDetail('search')" class="h-8 rounded border border-rose-300 text-rose-600 px-2 text-xs" title="Open batch detail: union size/freeable + remove selected files">🗑 Remove…</button>
-            <button @click="batchExclude('search')" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Copy exclude patterns for selected files">⊘ Exclude</button>
+            <span class="text-[11px] text-faint">selected:</span>
+            <button @click="batchDetail('search')" class="h-8 rounded border border-danger-bd text-danger px-2 text-xs" title="Open batch detail: union size/freeable + remove selected files">🗑 Remove…</button>
+            <button @click="batchExclude('search')" class="h-8 rounded border border-bd px-2 text-xs" title="Copy exclude patterns for selected files">⊘ Exclude</button>
           </span>
         </div>
-        <div x-show="showFilters" class="flex flex-wrap items-center gap-2 text-xs rounded border border-stone-200 dark:border-stone-700 bg-stone-50 dark:bg-stone-800/40 p-2">
-          <label class="flex items-center gap-1">Size GB <input type="number" min="0" step="0.1" x-model="minGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="min"></label>
+        <div x-show="showFilters" class="flex flex-wrap items-center gap-2 text-xs rounded border border-bd-soft bg-surface2/40 p-2">
+          <label class="flex items-center gap-1">Size GB <input type="number" min="0" step="0.1" x-model="minGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="min"></label>
           <span>–</span>
-          <input type="number" min="0" step="0.1" x-model="maxGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="max">
-          <label class="flex items-center gap-1 ml-2">Last seen <input type="date" x-model="dateFrom" @change="loadSearch()" class="fld h-7 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800"></label>
+          <input type="number" min="0" step="0.1" x-model="maxGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="max">
+          <label class="flex items-center gap-1 ml-2">Last seen <input type="date" x-model="dateFrom" @change="loadSearch()" class="fld h-7 border border-bd bg-surface"></label>
           <span>–</span>
-          <input type="date" x-model="dateTo" @change="loadSearch()" class="fld h-7 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
-          <label class="flex items-center gap-1 ml-2">Min versions <input type="number" min="0" x-model="minVersions" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="0"></label>
-          <label class="flex items-center gap-1 ml-2" title="Files whose exact content backs at least N distinct paths (exact-duplicate candidates)">Shared ≥ <input type="number" min="0" x-model="sharedMin" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="2"></label>
-          <button @click="clearFilters()" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 ml-1">Clear</button>
+          <input type="date" x-model="dateTo" @change="loadSearch()" class="fld h-7 border border-bd bg-surface">
+          <label class="flex items-center gap-1 ml-2">Min versions <input type="number" min="0" x-model="minVersions" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-bd bg-surface" placeholder="0"></label>
+          <label class="flex items-center gap-1 ml-2" title="Files whose exact content backs at least N distinct paths (exact-duplicate candidates)">Shared ≥ <input type="number" min="0" x-model="sharedMin" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-bd bg-surface" placeholder="2"></label>
+          <button @click="clearFilters()" class="h-7 rounded border border-bd px-2 ml-1">Clear</button>
         </div>
-        <div x-show="groupByFolder" class="flex flex-wrap items-center gap-2 text-xs rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-2">
+        <div x-show="groupByFolder" class="flex flex-wrap items-center gap-2 text-xs rounded border border-warn-bd bg-warn-bg/20 p-2">
           <span class="font-medium">Group by folder</span>
-          <label class="flex items-center gap-1">Depth <input type="number" min="1" max="20" x-model.number="groupDepth" @change="changeGroupDepth()" class="fld h-7 w-16 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800"></label>
-          <label class="flex items-center gap-1">Min GB <input type="number" min="0" step="0.1" x-model.number="groupMinGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="0"></label>
-          <label class="flex items-center gap-1">Min files <input type="number" min="0" x-model.number="groupMinFiles" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="0"></label>
-          <span class="text-stone-500">Double-click a folder → drill into its files → batch-remove.</span>
+          <label class="flex items-center gap-1">Depth <input type="number" min="1" max="20" x-model.number="groupDepth" @change="changeGroupDepth()" class="fld h-7 w-16 border border-bd bg-surface"></label>
+          <label class="flex items-center gap-1">Min GB <input type="number" min="0" step="0.1" x-model.number="groupMinGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>
+          <label class="flex items-center gap-1">Min files <input type="number" min="0" x-model.number="groupMinFiles" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>
+          <span class="text-muted">Double-click a folder → drill into its files → batch-remove.</span>
         </div>
         <div class="flex flex-wrap items-center gap-2 text-xs">
-          <span class="text-stone-600 dark:text-stone-300 font-medium" x-text="omniMeta"></span>
+          <span class="text-muted font-medium" x-text="omniMeta"></span>
           <span class="ml-auto flex items-center gap-1.5" x-show="!groupByFolder">
-            <span class="text-stone-500">Per page</span>
-            <select x-model="searchPageSize" @change="changePageSize()" class="fld h-7 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-xs">
+            <span class="text-muted">Per page</span>
+            <select x-model="searchPageSize" @change="changePageSize()" class="fld h-7 border border-bd bg-surface text-xs">
               <template x-for="n in pageSizes" :key="n"><option :value="n" x-text="n"></option></template>
             </select>
             <template x-if="searchPageSize!=='Infinite'">
               <span class="flex items-center gap-1">
-                <button @click="setSearchPage(1)" :disabled="searchPage<=1" class="h-7 px-2 rounded border border-stone-300 dark:border-stone-700 disabled:opacity-40">«</button>
-                <button @click="setSearchPage(searchPage-1)" :disabled="searchPage<=1" class="h-7 px-2 rounded border border-stone-300 dark:border-stone-700 disabled:opacity-40">‹</button>
+                <button @click="setSearchPage(1)" :disabled="searchPage<=1" class="h-7 px-2 rounded border border-bd disabled:opacity-40">«</button>
+                <button @click="setSearchPage(searchPage-1)" :disabled="searchPage<=1" class="h-7 px-2 rounded border border-bd disabled:opacity-40">‹</button>
                 <span class="px-1">Page <span x-text="searchPage"></span> / <span x-text="searchPages()"></span></span>
-                <button @click="setSearchPage(searchPage+1)" :disabled="searchPage>=searchPages()" class="h-7 px-2 rounded border border-stone-300 dark:border-stone-700 disabled:opacity-40">›</button>
-                <button @click="setSearchPage(searchPages())" :disabled="searchPage>=searchPages()" class="h-7 px-2 rounded border border-stone-300 dark:border-stone-700 disabled:opacity-40">»</button>
+                <button @click="setSearchPage(searchPage+1)" :disabled="searchPage>=searchPages()" class="h-7 px-2 rounded border border-bd disabled:opacity-40">›</button>
+                <button @click="setSearchPage(searchPages())" :disabled="searchPage>=searchPages()" class="h-7 px-2 rounded border border-bd disabled:opacity-40">»</button>
               </span>
             </template>
           </span>

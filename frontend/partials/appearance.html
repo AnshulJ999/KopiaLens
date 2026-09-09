@@ -1,0 +1,31 @@
+<!-- Appearance: theme picker + density. Included from settings.html; own section so it
+     composes independently of the other settings sections. -->
+<section x-show="settingsTab==='appearance'" class="space-y-4">
+  <div>
+    <div class="text-sm font-medium mb-2">Theme</div>
+    <div class="flex flex-wrap gap-1.5">
+      <template x-for="t in THEMES" :key="t.id">
+        <button @click="setTheme(t.id)" class="flex items-center gap-2 h-8 rounded border px-2 text-xs"
+                :class="theme===t.id ? 'border-fg font-medium' : 'border-bd'"
+                :title="t.dark ? 'Dark theme' : 'Light theme'">
+          <span class="inline-block w-4 h-4 rounded border border-bd" :style="'background:'+t.swatch"></span>
+          <span x-text="t.label"></span>
+        </button>
+      </template>
+      <button @click="setTheme('system')" class="flex items-center gap-2 h-8 rounded border px-2 text-xs"
+              :class="theme==='system' ? 'border-fg font-medium' : 'border-bd'"
+              title="Follow the OS light or dark preference">System</button>
+    </div>
+    <p class="text-[11px] text-muted mt-1">System follows your OS light or dark preference. Saved on the server, so it follows you between browsers.</p>
+  </div>
+  <div>
+    <div class="text-sm font-medium mb-2">Density</div>
+    <div class="flex flex-wrap gap-1.5">
+      <template x-for="d in DENSITIES" :key="d">
+        <button @click="setDensity(d)" class="h-8 rounded border px-3 text-xs capitalize"
+                :class="density===d ? 'border-fg bg-sel font-medium' : 'border-bd'" x-text="d"></button>
+      </template>
+    </div>
+    <p class="text-[11px] text-muted mt-1">Row height and text size. Independent of theme.</p>
+  </div>
+</section>

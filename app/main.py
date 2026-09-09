@@ -689,8 +689,16 @@ _JINJA = jinja2.Environment(
 
 
 def _compose_html() -> str:
-    """Render index.html with its ``{% include %}`` partials resolved."""
-    return _JINJA.get_template("index.html").render(asset_v=_asset_version())
+    """Render index.html with its ``{% include %}`` partials resolved. The appearance values
+    are stamped onto <html> so the page paints in the saved theme before any JS runs."""
+    kl = load_settings().get("kopialens", {})
+    _THEMES = ("daylight", "parchment", "slate", "lilac", "ember", "midnight", "pine", "obsidian")
+    _DENSITY = ("compact", "normal", "comfortable")
+    return _JINJA.get_template("index.html").render(
+        asset_v=_asset_version(),
+        theme=kl.get("theme") if kl.get("theme") in _THEMES else "system",
+        density=kl.get("density") if kl.get("density") in _DENSITY else "normal",
+    )
 
 
 @app.get("/")

@@ -2,35 +2,35 @@
       <!-- ===================== BACKBLAZE (kind=backblaze) ===================== -->
       <section x-show="active==='bz-dashboard'" class="h-full flex flex-col gap-3 overflow-auto">
         <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2" x-show="bzStats">
-          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Selected files</div><div class="font-medium" x-text="bzStats && Number(bzStats.grand_files||0).toLocaleString()"></div></div>
-          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Selected size</div><div class="font-medium" x-text="bzStats && fmtB(bzStats.grand_bytes)"></div></div>
-          <div class="rounded border border-amber-300 dark:border-amber-800 p-2"><div class="text-[10px] uppercase text-stone-500">Remaining to upload</div><div class="font-medium" x-text="bzStats && bzStats.remaining ? Number(bzStats.remaining.remaining_files||0).toLocaleString() : '—'"></div></div>
-          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Cumulative IDs</div><div class="font-medium" x-text="bzStats && bzStats.fileids_total != null ? Number(bzStats.fileids_total).toLocaleString() : '—'"></div></div>
-          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Recent churn (IDs)</div><div class="font-medium" x-text="Number(bzChurnTotal||0).toLocaleString()"></div></div>
+          <div class="rounded border border-bd-soft p-2"><div class="text-[10px] uppercase text-muted">Selected files</div><div class="font-medium" x-text="bzStats && Number(bzStats.grand_files||0).toLocaleString()"></div></div>
+          <div class="rounded border border-bd-soft p-2"><div class="text-[10px] uppercase text-muted">Selected size</div><div class="font-medium" x-text="bzStats && fmtB(bzStats.grand_bytes)"></div></div>
+          <div class="rounded border border-warn-bd p-2"><div class="text-[10px] uppercase text-muted">Remaining to upload</div><div class="font-medium" x-text="bzStats && bzStats.remaining ? Number(bzStats.remaining.remaining_files||0).toLocaleString() : '—'"></div></div>
+          <div class="rounded border border-bd-soft p-2"><div class="text-[10px] uppercase text-muted">Cumulative IDs</div><div class="font-medium" x-text="bzStats && bzStats.fileids_total != null ? Number(bzStats.fileids_total).toLocaleString() : '—'"></div></div>
+          <div class="rounded border border-bd-soft p-2"><div class="text-[10px] uppercase text-muted">Recent churn (IDs)</div><div class="font-medium" x-text="Number(bzChurnTotal||0).toLocaleString()"></div></div>
         </div>
         <div class="flex items-center gap-2 text-sm">
           <span class="font-medium">Per-drive coverage</span>
-          <span class="text-stone-400 text-xs">double-click a drive to browse · diff vs Backblaze's own count should be +0</span>
+          <span class="text-faint text-xs">double-click a drive to browse · diff vs Backblaze's own count should be +0</span>
         </div>
         <div id="bzDashTable" class="min-h-[16rem]"></div>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
-            <div class="mb-1 flex items-center gap-2"><span class="font-medium text-sm">Top recently-added folders (churn)</span><button @click="active='bz-churn'; bzLoadChurn()" class="text-xs text-sky-600 ml-auto">full churn →</button></div>
+          <div class="rounded border border-bd bg-surface p-3">
+            <div class="mb-1 flex items-center gap-2"><span class="font-medium text-sm">Top recently-added folders (churn)</span><button @click="active='bz-churn'; bzLoadChurn()" class="text-xs text-link ml-auto">full churn →</button></div>
             <template x-for="(r,i) in bzChurnRows" :key="i">
-              <div class="flex items-center gap-2 py-0.5 text-[12px] border-t border-stone-100 dark:border-stone-800">
-                <span class="text-stone-500 w-16 text-right" x-text="Number(r.count).toLocaleString()"></span>
-                <span class="text-amber-600 w-12 text-right" x-text="r.pct + '%'"></span>
+              <div class="flex items-center gap-2 py-0.5 text-[12px] border-t border-bd-soft">
+                <span class="text-muted w-16 text-right" x-text="Number(r.count).toLocaleString()"></span>
+                <span class="text-warn w-12 text-right" x-text="r.pct + '%'"></span>
                 <span class="break-all flex-1" x-text="r.folder"></span>
-                <span class="text-[10px] shrink-0" :class="r.status==='active' ? 'text-emerald-600' : 'text-stone-400'" x-text="r.status"></span>
+                <span class="text-[10px] shrink-0" :class="r.status==='active' ? 'text-ok' : 'text-faint'" x-text="r.status"></span>
               </div>
             </template>
           </div>
-          <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+          <div class="rounded border border-bd bg-surface p-3">
             <div class="mb-1 font-medium text-sm">Category breakdown</div>
             <template x-for="(c,i) in bzCategories()" :key="i">
-              <div @click="bzCatSearch(c.name)" class="flex items-center gap-2 py-0.5 text-[12px] border-t border-stone-100 dark:border-stone-800 cursor-pointer hover:bg-stone-100 dark:hover:bg-stone-800 rounded px-1" title="Search files in this category">
-                <span class="w-28 capitalize text-sky-600" x-text="c.name"></span>
-                <span class="text-stone-500 w-20 text-right" x-text="Number(c.num).toLocaleString()"></span>
+              <div @click="bzCatSearch(c.name)" class="flex items-center gap-2 py-0.5 text-[12px] border-t border-bd-soft cursor-pointer hover:bg-head rounded px-1" title="Search files in this category">
+                <span class="w-28 capitalize text-link" x-text="c.name"></span>
+                <span class="text-muted w-20 text-right" x-text="Number(c.num).toLocaleString()"></span>
                 <span class="ml-auto" x-text="fmtB(c.bytes)"></span>
               </div>
             </template>
@@ -40,33 +40,33 @@
 
       <section x-show="active==='bz-search'" class="h-full flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
-          <input x-model="query" @input.debounce.300ms="bzLoadSearch()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[22rem]" placeholder="Search Backblaze paths (substring)">
-          <select x-model="bzSearchDrive" @change="bzLoadSearch()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+          <input x-model="query" @input.debounce.300ms="bzLoadSearch()" class="fld border border-bd bg-surface min-w-[22rem]" placeholder="Search Backblaze paths (substring)">
+          <select x-model="bzSearchDrive" @change="bzLoadSearch()" class="fld border border-bd bg-surface">
             <option value="">All drives</option>
             <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" x-text="d.drive + ':'"></option></template>
           </select>
-          <select x-model="bzSearchStatus" @change="bzLoadSearch()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+          <select x-model="bzSearchStatus" @change="bzLoadSearch()" class="fld border border-bd bg-surface">
             <option value="all">Backed + excluded</option>
             <option value="backed">Backed up only</option>
             <option value="excluded">Excluded only</option>
           </select>
-          <input x-model="bzSearchExt" @input.debounce.300ms="bzLoadSearch()" class="fld w-36 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="ext: mp4,iso">
-          <input x-model="bzSearchExtExclude" @input.debounce.300ms="bzLoadSearch()" class="fld w-36 border border-amber-300 dark:border-amber-700 bg-white dark:bg-stone-800" placeholder="hide ext: mp4,mkv" title="Hide these extensions">
-          <button @click="bzToggleGroup()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="bzGroupByFolder ? 'bg-amber-200 dark:bg-amber-800' : ''" title="Group results by folder">⊞ By folder</button>
-          <button @click="bzExportSearch()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" title="Export the full filtered set to CSV">⬇ CSV</button>
-          <span class="ml-2 text-xs text-stone-600 dark:text-stone-300 font-medium" x-text="bzSearchMeta"></span>
+          <input x-model="bzSearchExt" @input.debounce.300ms="bzLoadSearch()" class="fld w-36 border border-bd bg-surface" placeholder="ext: mp4,iso">
+          <input x-model="bzSearchExtExclude" @input.debounce.300ms="bzLoadSearch()" class="fld w-36 border border-warn-bd bg-surface" placeholder="hide ext: mp4,mkv" title="Hide these extensions">
+          <button @click="bzToggleGroup()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzGroupByFolder ? 'bg-sel' : ''" title="Group results by folder">⊞ By folder</button>
+          <button @click="bzExportSearch()" class="h-8 rounded border border-bd px-2 text-xs" title="Export the full filtered set to CSV">⬇ CSV</button>
+          <span class="ml-2 text-xs text-muted font-medium" x-text="bzSearchMeta"></span>
           <span class="ml-auto flex items-center gap-1.5" x-show="!bzGroupByFolder">
-            <span class="text-stone-500 text-xs">Per page</span>
-            <select x-model="bzSearchPageSize" @change="bzSearchPage=1; bzLoadSearch()" class="fld h-7 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-xs">
+            <span class="text-muted text-xs">Per page</span>
+            <select x-model="bzSearchPageSize" @change="bzSearchPage=1; bzLoadSearch()" class="fld h-7 border border-bd bg-surface text-xs">
               <template x-for="n in pageSizes" :key="n"><option :value="n" x-text="n"></option></template>
             </select>
             <template x-if="bzSearchPageSize!=='Infinite'">
               <span class="flex items-center gap-1">
-                <button @click="bzSetSearchPage(1)" :disabled="bzSearchPage<=1" class="h-7 px-2 rounded border border-stone-300 dark:border-stone-700 disabled:opacity-40">«</button>
-                <button @click="bzSetSearchPage(bzSearchPage-1)" :disabled="bzSearchPage<=1" class="h-7 px-2 rounded border border-stone-300 dark:border-stone-700 disabled:opacity-40">‹</button>
+                <button @click="bzSetSearchPage(1)" :disabled="bzSearchPage<=1" class="h-7 px-2 rounded border border-bd disabled:opacity-40">«</button>
+                <button @click="bzSetSearchPage(bzSearchPage-1)" :disabled="bzSearchPage<=1" class="h-7 px-2 rounded border border-bd disabled:opacity-40">‹</button>
                 <span class="px-1 text-xs">Page <span x-text="bzSearchPage"></span> / <span x-text="bzSearchPages()"></span></span>
-                <button @click="bzSetSearchPage(bzSearchPage+1)" :disabled="bzSearchPage>=bzSearchPages()" class="h-7 px-2 rounded border border-stone-300 dark:border-stone-700 disabled:opacity-40">›</button>
-                <button @click="bzSetSearchPage(bzSearchPages())" :disabled="bzSearchPage>=bzSearchPages()" class="h-7 px-2 rounded border border-stone-300 dark:border-stone-700 disabled:opacity-40">»</button>
+                <button @click="bzSetSearchPage(bzSearchPage+1)" :disabled="bzSearchPage>=bzSearchPages()" class="h-7 px-2 rounded border border-bd disabled:opacity-40">›</button>
+                <button @click="bzSetSearchPage(bzSearchPages())" :disabled="bzSearchPage>=bzSearchPages()" class="h-7 px-2 rounded border border-bd disabled:opacity-40">»</button>
               </span>
             </template>
           </span>
@@ -77,16 +77,16 @@
 
       <section x-show="active==='bz-tree'" class="h-full flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
-          <select x-model="bzTreeDrive" @change="bzTreeChanged()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+          <select x-model="bzTreeDrive" @change="bzTreeChanged()" class="fld border border-bd bg-surface">
             <option value="*ALL*">★ All drives</option>
             <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" x-text="d.drive + ':\\'"></option></template>
           </select>
-          <button @click="bzTreeUp()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Up one level">⬆ Up</button>
-          <span class="text-xs text-stone-500">📁 = folder · status shows backed / excluded / mixed</span>
+          <button @click="bzTreeUp()" class="h-8 rounded border border-bd px-3 text-sm" title="Up one level">⬆ Up</button>
+          <span class="text-xs text-muted">📁 = folder · status shows backed / excluded / mixed</span>
         </div>
         <div class="flex items-center gap-1 text-sm flex-wrap px-1">
           <template x-for="(c, i) in bzTreeCrumbs()" :key="i">
-            <span><span class="crumb" @click="bzTreeNav(c.prefix)" x-text="c.label"></span><span class="text-stone-400" x-show="i < bzTreeCrumbs().length - 1"> › </span></span>
+            <span><span class="crumb" @click="bzTreeNav(c.prefix)" x-text="c.label"></span><span class="text-faint" x-show="i < bzTreeCrumbs().length - 1"> › </span></span>
           </template>
         </div>
         <div id="bzTreeTable" class="flex-1 min-h-0"></div>
@@ -94,123 +94,123 @@
 
       <section x-show="active==='bz-excluded'" class="h-full flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
-          <button @click="bzExclNav('')" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="All drives">🖥 All drives</button>
-          <button @click="bzExclUp()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Up one level">⬆ Up</button>
-          <div class="inline-flex rounded border border-stone-300 dark:border-stone-700 overflow-hidden text-sm">
-            <button @click="bzSetExclFilter('excluded')" :class="bzExclFilter==='excluded' ? 'bg-rose-200 dark:bg-rose-800' : ''" class="px-2 h-8">Not backed up</button>
-            <button @click="bzSetExclFilter('backed')" :class="bzExclFilter==='backed' ? 'bg-emerald-200 dark:bg-emerald-800' : ''" class="px-2 h-8 border-l border-stone-300 dark:border-stone-700">Backed up</button>
-            <button @click="bzSetExclFilter('all')" :class="bzExclFilter==='all' ? 'bg-stone-200 dark:bg-stone-700' : ''" class="px-2 h-8 border-l border-stone-300 dark:border-stone-700">All</button>
+          <button @click="bzExclNav('')" class="h-8 rounded border border-bd px-3 text-sm" title="All drives">🖥 All drives</button>
+          <button @click="bzExclUp()" class="h-8 rounded border border-bd px-3 text-sm" title="Up one level">⬆ Up</button>
+          <div class="inline-flex rounded border border-bd overflow-hidden text-sm">
+            <button @click="bzSetExclFilter('excluded')" :class="bzExclFilter==='excluded' ? 'bg-sel' : ''" class="px-2 h-8">Not backed up</button>
+            <button @click="bzSetExclFilter('backed')" :class="bzExclFilter==='backed' ? 'bg-sel' : ''" class="px-2 h-8 border-l border-bd">Backed up</button>
+            <button @click="bzSetExclFilter('all')" :class="bzExclFilter==='all' ? 'bg-sel' : ''" class="px-2 h-8 border-l border-bd">All</button>
           </div>
-          <span class="text-sm text-stone-500" x-text="bzExclMeta"></span>
+          <span class="text-sm text-muted" x-text="bzExclMeta"></span>
         </div>
         <div class="flex items-center gap-1 text-sm flex-wrap px-1">
           <template x-for="(c, i) in bzExclCrumbs()" :key="i">
-            <span><span class="crumb" @click="bzExclNav(c.path)" x-text="c.label"></span><span class="text-stone-400" x-show="i < bzExclCrumbs().length - 1"> › </span></span>
+            <span><span class="crumb" @click="bzExclNav(c.path)" x-text="c.label"></span><span class="text-faint" x-show="i < bzExclCrumbs().length - 1"> › </span></span>
           </template>
         </div>
-        <div class="text-[11px] text-stone-500 px-1">Backblaze's own scan + 4-layer exclusion rules (exact, no Everything needed). "Also in Kopia" = this folder is ALSO backed by a Kopia repo.</div>
+        <div class="text-[11px] text-muted px-1">Backblaze's own scan + 4-layer exclusion rules (exact, no Everything needed). "Also in Kopia" = this folder is ALSO backed by a Kopia repo.</div>
         <div id="bzExcludedTable" class="flex-1 min-h-0"></div>
       </section>
 
       <section x-show="active==='bz-exclusions'" class="h-full flex flex-col gap-3 overflow-auto">
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-2" x-show="bzExclusions">
-          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Folder rules (user)</div><div class="font-medium" x-text="bzExclusions && bzExclusions.layers.folders.length"></div></div>
-          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Excluded extensions</div><div class="font-medium" x-text="bzExclusions && bzExclusions.layers.extensions.length"></div></div>
-          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Editable pattern rules</div><div class="font-medium" x-text="bzExclusions && bzExclusions.layers.editable_count"></div></div>
-          <div class="rounded border border-stone-200 dark:border-stone-700 p-2"><div class="text-[10px] uppercase text-stone-500">Mandatory pattern rules</div><div class="font-medium" x-text="bzExclusions && bzExclusions.layers.mandatory_count"></div></div>
+          <div class="rounded border border-bd-soft p-2"><div class="text-[10px] uppercase text-muted">Folder rules (user)</div><div class="font-medium" x-text="bzExclusions && bzExclusions.layers.folders.length"></div></div>
+          <div class="rounded border border-bd-soft p-2"><div class="text-[10px] uppercase text-muted">Excluded extensions</div><div class="font-medium" x-text="bzExclusions && bzExclusions.layers.extensions.length"></div></div>
+          <div class="rounded border border-bd-soft p-2"><div class="text-[10px] uppercase text-muted">Editable pattern rules</div><div class="font-medium" x-text="bzExclusions && bzExclusions.layers.editable_count"></div></div>
+          <div class="rounded border border-bd-soft p-2"><div class="text-[10px] uppercase text-muted">Mandatory pattern rules</div><div class="font-medium" x-text="bzExclusions && bzExclusions.layers.mandatory_count"></div></div>
         </div>
-        <div class="rounded border border-indigo-300 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-900/20 p-3">
+        <div class="rounded border border-accent-bd bg-accent-bg p-3">
           <div class="font-medium text-sm mb-1">Naming-gap hunter</div>
-          <div class="text-[11px] text-stone-600 dark:text-stone-300 mb-2">Rules match exact paths, so the same data can be excluded in one place and backed up in another. Type a name (e.g. <span class="font-mono">takeout</span>, <span class="font-mono">aeroinsta</span>) to find every folder with that name and its backed-vs-excluded state.</div>
+          <div class="text-[11px] text-muted mb-2">Rules match exact paths, so the same data can be excluded in one place and backed up in another. Type a name (e.g. <span class="font-mono">takeout</span>, <span class="font-mono">aeroinsta</span>) to find every folder with that name and its backed-vs-excluded state.</div>
           <div class="flex items-center gap-2">
-            <input x-model="bzNamingQuery" @keydown.enter="bzNamingGap()" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[18rem]" placeholder="folder name fragment">
-            <button @click="bzNamingGap()" class="h-8 rounded bg-indigo-700 px-3 text-sm text-white">Find gaps</button>
+            <input x-model="bzNamingQuery" @keydown.enter="bzNamingGap()" class="fld border border-bd bg-surface min-w-[18rem]" placeholder="folder name fragment">
+            <button @click="bzNamingGap()" class="h-8 rounded bg-accent-solid px-3 text-sm text-white">Find gaps</button>
           </div>
           <div id="bzNamingTable" class="mt-2" x-show="bzNamingRows.length"></div>
         </div>
-        <div class="flex items-center gap-2 text-sm"><span class="font-medium">Exclusion impact</span><span class="text-stone-400 text-xs">files + size each rule keeps out of backup · right-click a folder to generate a rule</span></div>
+        <div class="flex items-center gap-2 text-sm"><span class="font-medium">Exclusion impact</span><span class="text-faint text-xs">files + size each rule keeps out of backup · right-click a folder to generate a rule</span></div>
         <div id="bzImpactTable" class="min-h-[14rem]"></div>
-        <div class="rounded border border-stone-200 dark:border-stone-700 p-2" x-show="bzExclusions && bzExclusions.dormant_folders.length">
+        <div class="rounded border border-bd-soft p-2" x-show="bzExclusions && bzExclusions.dormant_folders.length">
           <div class="text-xs font-medium mb-1">Dormant folder rules (<span x-text="bzExclusions && bzExclusions.dormant_folders.length"></span>) — match nothing on disk now</div>
-          <div class="text-[11px] text-stone-500 font-mono break-all"><template x-for="(d,i) in (bzExclusions ? bzExclusions.dormant_folders : [])" :key="i"><span x-text="d + '   '"></span></template></div>
+          <div class="text-[11px] text-muted font-mono break-all"><template x-for="(d,i) in (bzExclusions ? bzExclusions.dormant_folders : [])" :key="i"><span x-text="d + '   '"></span></template></div>
         </div>
       </section>
 
       <section x-show="active==='bz-churn'" class="h-full flex flex-col gap-2">
-        <div class="rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-2" x-show="bzChurnAlerts().length">
-          <div class="text-xs font-medium text-amber-700 dark:text-amber-300">⚠ Watch these — high recent churn, not an intentional Kopia repo:</div>
+        <div class="rounded border border-warn-bd bg-warn-bg/20 p-2" x-show="bzChurnAlerts().length">
+          <div class="text-xs font-medium text-warn">⚠ Watch these — high recent churn, not an intentional Kopia repo:</div>
           <template x-for="(a,i) in bzChurnAlerts()" :key="i">
-            <div class="text-[12px] flex items-center gap-2"><span class="text-amber-700 w-12 text-right" x-text="a.pct + '%'"></span><span class="break-all" x-text="a.folder"></span></div>
+            <div class="text-[12px] flex items-center gap-2"><span class="text-warn w-12 text-right" x-text="a.pct + '%'"></span><span class="break-all" x-text="a.folder"></span></div>
           </template>
         </div>
         <div class="flex flex-wrap items-center gap-2 text-sm">
           <span class="font-medium">Recently added, by folder</span>
-          <label class="text-xs text-stone-500">Depth</label>
-          <select x-model.number="bzChurnDepth" @change="bzChurnChanged()" class="fld h-8 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-xs">
+          <label class="text-xs text-muted">Depth</label>
+          <select x-model.number="bzChurnDepth" @change="bzChurnChanged()" class="fld h-8 border border-bd bg-surface text-xs">
             <template x-for="n in [1,2,3,4,5,6,7,8]" :key="n"><option :value="n" x-text="n"></option></template>
           </select>
-          <button @click="bzChurnCollapse=!bzChurnCollapse; bzChurnChanged()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="bzChurnCollapse ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Roll the Kopia repos up to one row each">⧉ Collapse Kopia</button>
-          <button @click="bzToggleChurnActive()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="bzChurnActiveOnly ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Show only folders that still have backed files (hide excluded / deleted)"><span x-text="bzChurnActiveOnly ? '● Active only' : 'Showing all'"></span></button>
-          <select x-model="bzChurnDrive" @change="_bzDrawChurn()" class="fld h-8 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-xs">
+          <button @click="bzChurnCollapse=!bzChurnCollapse; bzChurnChanged()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzChurnCollapse ? 'bg-sel' : ''" title="Roll the Kopia repos up to one row each">⧉ Collapse Kopia</button>
+          <button @click="bzToggleChurnActive()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzChurnActiveOnly ? 'bg-sel' : ''" title="Show only folders that still have backed files (hide excluded / deleted)"><span x-text="bzChurnActiveOnly ? '● Active only' : 'Showing all'"></span></button>
+          <select x-model="bzChurnDrive" @change="_bzDrawChurn()" class="fld h-8 border border-bd bg-surface text-xs">
             <option value="">All drives</option>
             <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" x-text="d.drive + ':'"></option></template>
           </select>
-          <span class="text-stone-400 text-xs">total recent IDs: <span x-text="Number(bzChurnTotal||0).toLocaleString()"></span></span>
+          <span class="text-faint text-xs">total recent IDs: <span x-text="Number(bzChurnTotal||0).toLocaleString()"></span></span>
         </div>
         <div id="bzChurnTable" class="flex-1 min-h-0"></div>
       </section>
 
       <section x-show="active==='bz-queue'" class="h-full flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
-          <label class="text-xs text-stone-500">Folder depth</label>
-          <select x-model.number="bzQueueDepth" @change="bzQueueChanged()" class="fld h-8 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 text-xs">
+          <label class="text-xs text-muted">Folder depth</label>
+          <select x-model.number="bzQueueDepth" @change="bzQueueChanged()" class="fld h-8 border border-bd bg-surface text-xs">
             <template x-for="n in [1,2,3,4,5,6,7,8]" :key="n"><option :value="n" x-text="n"></option></template>
           </select>
-          <button @click="bzQueueCollapse=!bzQueueCollapse; bzQueueChanged()" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs" :class="bzQueueCollapse ? 'bg-emerald-200 dark:bg-emerald-800' : ''" title="Roll the Kopia repos up to one row each">⧉ Collapse Kopia</button>
+          <button @click="bzQueueCollapse=!bzQueueCollapse; bzQueueChanged()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzQueueCollapse ? 'bg-sel' : ''" title="Roll the Kopia repos up to one row each">⧉ Collapse Kopia</button>
         </div>
         <div class="flex flex-wrap items-center gap-3 text-sm" x-show="bzQueue">
           <span class="font-medium">Upload queue (scheduled for backup)</span>
           <span x-text="bzQueue && (Number(bzQueue.total_files||0).toLocaleString() + ' files · ' + fmtB(bzQueue.total_bytes))"></span>
-          <span class="text-stone-400 text-xs">Backblaze scans ~once/twice a day, so this changes roughly daily.</span>
+          <span class="text-faint text-xs">Backblaze scans ~once/twice a day, so this changes roughly daily.</span>
         </div>
         <div class="flex flex-wrap gap-2 text-xs" x-show="bzQueue">
           <template x-for="(d,i) in (bzQueue ? bzQueue.by_drive : [])" :key="i">
-            <span class="rounded border border-stone-200 dark:border-stone-700 px-2 py-1" x-text="d.drive + ': ' + Number(d.files||0).toLocaleString() + ' · ' + fmtB(d.bytes)"></span>
+            <span class="rounded border border-bd-soft px-2 py-1" x-text="d.drive + ': ' + Number(d.files||0).toLocaleString() + ' · ' + fmtB(d.bytes)"></span>
           </template>
         </div>
         <div id="bzQueueTable" class="flex-1 min-h-0"></div>
       </section>
 
       <section x-show="active==='bz-sessions'" class="h-full flex flex-col gap-3 overflow-auto">
-        <div class="rounded border border-stone-200 dark:border-stone-700 p-3">
+        <div class="rounded border border-bd-soft p-3">
           <div class="flex items-baseline gap-3 flex-wrap">
             <div class="text-sm font-medium">Backed up in the last 30 days</div>
             <div class="text-xl font-medium" x-text="bzSessions &amp;&amp; bzSessions.last_30d ? fmtB(bzSessions.last_30d.bytes) : '&mdash;'"></div>
-            <div class="text-xs text-stone-500" x-text="bzSessions &amp;&amp; bzSessions.last_30d ? (Number(bzSessions.last_30d.files||0).toLocaleString() + ' files') : ''"></div>
+            <div class="text-xs text-muted" x-text="bzSessions &amp;&amp; bzSessions.last_30d ? (Number(bzSessions.last_30d.files||0).toLocaleString() + ' files') : ''"></div>
           </div>
-          <p class="text-[11px] text-stone-500 mt-1">Counted from Backblaze's own per-file completion records, so it covers every session &mdash; including the many that never write a closing log line. These are source-file sizes, not network traffic.</p>
+          <p class="text-[11px] text-muted mt-1">Counted from Backblaze's own per-file completion records, so it covers every session &mdash; including the many that never write a closing log line. These are source-file sizes, not network traffic.</p>
           <div id="bzBackupDaysTable" class="mt-2"></div>
         </div>
         <div class="flex items-center gap-2">
-          <button @click="bzImportArchive()" class="h-8 rounded border border-sky-400 text-sky-700 dark:text-sky-300 px-3 text-sm" title="One-time import of ~1 year of session history from the copied (unlocked) archive">⤓ Import archived history</button>
-          <span class="text-xs text-emerald-600" x-text="bzImportMsg"></span>
+          <button @click="bzImportArchive()" class="h-8 rounded border border-link text-link px-3 text-sm" title="One-time import of ~1 year of session history from the copied (unlocked) archive">⤓ Import archived history</button>
+          <span class="text-xs text-ok" x-text="bzImportMsg"></span>
         </div>
         <div>
-          <div class="text-sm font-medium mb-1">Recent backup sessions <span class="text-stone-400 text-xs font-normal">(live log + imported archive = ~1 year)</span></div>
+          <div class="text-sm font-medium mb-1">Recent backup sessions <span class="text-faint text-xs font-normal">(live log + imported archive = ~1 year)</span></div>
           <div id="bzSessionsTable"></div>
         </div>
         <div>
-          <div class="text-sm font-medium mb-1">Daily upload history <span class="text-stone-400 text-xs font-normal">(per-day successful-upload counts)</span></div>
+          <div class="text-sm font-medium mb-1">Daily upload history <span class="text-faint text-xs font-normal">(per-day successful-upload counts)</span></div>
           <div id="bzUploadsTable" class="min-h-[12rem]"></div>
         </div>
         <div x-show="bzSessions && bzSessions.deletion_events && bzSessions.deletion_events.length">
-          <div class="text-sm font-medium mb-1 text-rose-600">Mass-deletion events <span class="text-stone-400 text-xs font-normal">(big bz_done files = the F: filelist-bug signature)</span></div>
-          <div class="rounded border border-rose-200 dark:border-rose-800">
+          <div class="text-sm font-medium mb-1 text-danger">Mass-deletion events <span class="text-faint text-xs font-normal">(big bz_done files = the F: filelist-bug signature)</span></div>
+          <div class="rounded border border-danger-bd">
             <template x-for="(d,i) in (bzSessions ? bzSessions.deletion_events : [])" :key="i">
-              <div class="text-[12px] flex items-center gap-2 border-b border-stone-100 dark:border-stone-800 px-2 py-0.5">
-                <span class="text-stone-500 w-44 shrink-0" x-text="d.ts"></span>
+              <div class="text-[12px] flex items-center gap-2 border-b border-bd-soft px-2 py-0.5">
+                <span class="text-muted w-44 shrink-0" x-text="d.ts"></span>
                 <span class="shrink-0" x-text="fmtB(d.bytes)"></span>
-                <span class="text-rose-600 break-all" x-text="d.detail"></span>
+                <span class="text-danger break-all" x-text="d.detail"></span>
               </div>
             </template>
           </div>
@@ -218,12 +218,12 @@
       </section>
 
       <section x-show="active==='bz-health'" class="h-full flex flex-col gap-3 overflow-auto">
-        <div class="rounded p-3" :class="bzHealth && bzHealth.ok ? 'border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20' : 'border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-900/20'" x-show="bzHealth">
+        <div class="rounded p-3" :class="bzHealth && bzHealth.ok ? 'border border-ok-bd bg-ok-bg/20' : 'border border-danger-bd bg-danger-bg/20'" x-show="bzHealth">
           <div class="font-medium text-sm" x-text="bzHealth && (bzHealth.ok ? '✓ No anomalies detected — backup state looks healthy.' : (bzHealth.issues.length + ' potential issue(s) detected:'))"></div>
           <template x-for="(iss,i) in (bzHealth ? bzHealth.issues : [])" :key="i">
-            <div class="text-[12px] text-rose-700 dark:text-rose-300">• <span x-text="iss"></span></div>
+            <div class="text-[12px] text-danger">• <span x-text="iss"></span></div>
           </template>
         </div>
-        <div class="text-[11px] text-stone-500 px-1">The F: filelist bug signature: a drive showing 0 backed files, a stub filelist, or a recent &gt;100 MB bz_done (mass-deletion event). <span x-show="bzHealth && bzHealth.remaining && bzHealth.remaining.remaining_files">Files remaining to upload: <span class="font-medium" x-text="bzHealth && Number(bzHealth.remaining.remaining_files||0).toLocaleString()"></span>.</span></div>
+        <div class="text-[11px] text-muted px-1">The F: filelist bug signature: a drive showing 0 backed files, a stub filelist, or a recent &gt;100 MB bz_done (mass-deletion event). <span x-show="bzHealth && bzHealth.remaining && bzHealth.remaining.remaining_files">Files remaining to upload: <span class="font-medium" x-text="bzHealth && Number(bzHealth.remaining.remaining_files||0).toLocaleString()"></span>.</span></div>
         <div id="bzHealthTable" class="min-h-[14rem]"></div>
       </section>
