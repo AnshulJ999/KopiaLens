@@ -21,9 +21,10 @@ from fastapi.staticfiles import StaticFiles
 
 from config import DATA_DIR, REPOS, repo_kind
 
-from .api import (actions, audit, backblaze, dashboard, excluded, insights, search, simulate,
-                  snapshots, stats, tree)
+from .api import (actions, audit, backblaze, dashboard, excluded, insights, jobs, search,
+                  simulate, snapshots, stats, tree)
 from .core import auth
+from .core import jobs as jobrunner
 from .core import kopia as kopia_mod
 from .core import nightly
 from .core.applog import get_logger, setup_logging
@@ -384,7 +385,9 @@ def _tick() -> None:
     global _last_light
     now_ts = time.time()
     now_dt = dt.datetime.now()
-    if not nightly.any_running():
+    # User actions outrank indexing: while a user-started maintenance runs (hours, exclusive
+    # kopia lock), the nightly waits for a later tick instead of contending with it.
+    if not nightly.any_running() and not jobrunner.maintenance_running():
         for repo in REPOS:
             if _bg_stop.is_set():
                 return
@@ -656,6 +659,7 @@ app.include_router(tree.router, prefix="/api")
 app.include_router(search.router, prefix="/api")
 app.include_router(simulate.router, prefix="/api")
 app.include_router(actions.router, prefix="/api")
+app.include_router(jobs.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
 app.include_router(excluded.router, prefix="/api")

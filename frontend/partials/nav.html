@@ -11,6 +11,13 @@
         <svg class="absolute left-3 top-2.5 h-4 w-4 text-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
       </div>
       <div class="ml-auto flex items-center gap-2 text-xs shrink-0">
+        <template x-for="j in runningJobs" :key="j.job_id">
+          <button @click="openJobPanel(j.job_id)" class="h-8 rounded border border-danger-bd px-3 text-danger flex items-center gap-1.5" :title="j.kind_label + ' - click to open'">
+            <span class="w-1.5 h-1.5 rounded-full bg-danger animate-pulse"></span>
+            <span class="truncate max-w-[180px]" x-text="j.label"></span>
+            <span x-text="j.total ? Math.round((j.done / j.total) * 100) + '%' : ''"></span>
+          </button>
+        </template>
         <span x-show="repoKind!=='backblaze'" class="rounded border border-bd bg-surface2 px-2 py-1" x-text="indexLine()"></span>
         <button x-show="repoKind!=='backblaze'" @click="buildIndex()" :disabled="indexStatus.building" class="h-8 rounded bg-fg px-3 text-surface disabled:opacity-50" title="Update index (incremental)">Index</button>
         <span x-show="repoKind==='backblaze'" class="rounded border border-bd bg-surface2 px-2 py-1" x-text="bzStatusLine()"></span>
