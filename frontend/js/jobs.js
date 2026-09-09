@@ -181,9 +181,52 @@ const jobsPart = {
     async _jobChipTick() {
       const r = await getJson("/api/jobs/list").catch(() => null);
       if (!r) return;
+      // Terminal-state transitions drive the post-action view refreshes: jobs already
+      // terminal at page load are primed as handled so history cannot fire them.
+      if (!this._handledJobs) {
+        this._handledJobs = new Set((r.jobs || []).filter((j) => j.state !== "running").map((j) => j.job_id));
+      }
+      for (const j of (r.jobs || [])) {
+        if (j.state !== "running" && !this._handledJobs.has(j.job_id)) {
+          this._handledJobs.add(j.job_id);
+          this._jobCompleted(j);
+        }
+      }
       const seen = this._seenJobs();
       this.runningJobs = (r.jobs || []).filter((j) => j.state === "running"
         || ((j.state === "failed" || (j.state === "done" && j.errors > 0)) && !seen.includes(j.job_id)));
+    },
+
+    _jobCompleted(j) {
+      // A finished mutating job means this repo's data is changing. The snapshots list reads
+      // kopia's own listing - invalidated by the job's on_done - so it can reload right away.
+      // Everything index-backed (Search, dashboard, tree) cannot: those rows change only when
+      // the reindex publishes a new generation, so they wait for that moment instead.
+      if (j.dry || j.repo !== this.repo) return;
+      if (j.kind === "snapshot_delete" && this.active === "snapshots") this.loadSnapshots(true);
+      if (j.kind === "remove_files" || j.kind === "snapshot_delete") this._armReindexReload(j.repo);
+    },
+
+    _armReindexReload(repo) {
+      // Watch /api/index/status until the reindex this job triggered has published, then
+      // reload the active view - the moment the rows actually change. The reindex may never
+      // start (another repo mid-pass): give up after 90s and let the freshness strip tell it.
+      if (this._reindexPoll) { this._reindexPoll.repo = repo; return; }
+      const w = this._reindexPoll = { repo, observed: false, ticks: 0, timer: null };
+      w.timer = setInterval(async () => {
+        w.ticks++;
+        const s = await getJson(`/api/index/status?repo=${encodeURIComponent(w.repo)}`).catch(() => null);
+        if (!s) return;
+        if (s.building || s.offline) w.observed = true;
+        if (w.observed && !s.building && !s.offline) {
+          clearInterval(w.timer);
+          this._reindexPoll = null;
+          if (this.repo === w.repo) this.activate();  // the generation landed - catch the view up
+        } else if ((!w.observed && w.ticks > 90) || w.ticks > 1800) {
+          clearInterval(w.timer);
+          this._reindexPoll = null;
+        }
+      }, 1000);
     },
 };
 
