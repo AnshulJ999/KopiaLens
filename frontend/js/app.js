@@ -17,7 +17,10 @@ document.addEventListener("alpine:init", () => {
     ],
     active: "dashboard",
     currentTabs() { return this.repoKind === "backblaze" ? this.bzTabs : this.tabs; },
-    dark: false,
+    get dark() {  // live: theme/dark-mode state lives in themePart; "system" defers to the OS
+      if (this.theme === "system") return window.matchMedia("(prefers-color-scheme: dark)").matches;
+      return this.themeIsDark();
+    },
     timeFmt: localStorage.getItem("kl-timefmt") || "absolute",
     indexStatus: {},
     sources: [], selectedSource: "",
@@ -73,8 +76,6 @@ document.addEventListener("alpine:init", () => {
     treePrefix: "",
 
     async init() {
-      this.dark = localStorage.getItem("kl-dark") === "1";
-      document.documentElement.classList.toggle("dark", this.dark);
       await this.wrap(async () => {
         TABLE_PREFS = await getJson("/api/settings/tables").catch(() => ({})) || {};
         const data = await getJson("/api/repos");
@@ -114,6 +115,7 @@ document.addEventListener("alpine:init", () => {
         // fields would still hold constructor defaults and a Save would write those over the real
         // values.
         this._readAdvanced(kl);
+        this.initTheme(kl);  // sync theme/density state (server stamp already painted)
         if (kl.time_format) { TIME_FMT = kl.time_format; this.timeFmt = kl.time_format; }
         if (this.bzApplySettings) this.bzApplySettings(kl);  // restore persisted BZ prefs (tree drive, depths, toggles)
         if (this.repoKind === "backblaze") {
@@ -154,11 +156,6 @@ document.addEventListener("alpine:init", () => {
       try { return await fn(); } catch (err) { this.error = err.message || String(err); } finally { this.busy = ""; }
     },
 
-    toggleDark() {
-      this.dark = !this.dark;
-      document.documentElement.classList.toggle("dark", this.dark);
-      localStorage.setItem("kl-dark", this.dark ? "1" : "0");
-    },
     toggleTimeFmt() {
       TIME_FMT = TIME_FMT === "relative" ? "absolute" : "relative";
       this.timeFmt = TIME_FMT;
@@ -329,13 +326,13 @@ document.addEventListener("alpine:init", () => {
     csv(id, name) { downloadTable(id, name); },
     };
     // Duplicate-key guard: two parts declaring the same key would compose silently last-wins.
-    const parts = [["core", core], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["settingsPart", settingsPart]];
+    const parts = [["core", core], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["settingsPart", settingsPart], ["themePart", themePart]];
     const seen = new Map();
     for (const [owner, part] of parts)
       for (const k of Object.keys(part)) {
         if (seen.has(k)) console.error(`kopiaLens: duplicate key "${k}" declared in both ${seen.get(k)} and ${owner}`);
         else seen.set(k, owner);
       }
-    return Object.assign(core, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, settingsPart);
+    return Object.assign(core, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, settingsPart, themePart);
   });
 });

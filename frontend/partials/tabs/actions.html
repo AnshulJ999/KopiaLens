@@ -1,29 +1,29 @@
       <section x-show="active==='actions'" class="h-full flex flex-col gap-3 overflow-auto">
         <div class="grid max-w-5xl grid-cols-1 gap-3 lg:grid-cols-2">
-          <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+          <div class="rounded border border-bd bg-surface p-3">
             <div class="mb-2 font-medium">Mount snapshot (read-only)</div>
-            <input x-model="mountSnapshot" class="mb-2 fld w-full border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="Snapshot ID">
-            <input x-model="mountPoint" class="mb-2 fld w-full border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="Mount folder / drive">
-            <button @click="mount()" class="h-8 rounded bg-emerald-700 px-3 text-sm text-white">Mount</button>
+            <input x-model="mountSnapshot" class="mb-2 fld w-full border border-bd bg-surface" placeholder="Snapshot ID">
+            <input x-model="mountPoint" class="mb-2 fld w-full border border-bd bg-surface" placeholder="Mount folder / drive">
+            <button @click="mount()" class="h-8 rounded bg-ok-solid px-3 text-sm text-white">Mount</button>
           </div>
-          <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+          <div class="rounded border border-bd bg-surface p-3">
             <div class="mb-2 font-medium">Restore (preview command only)</div>
-            <input x-model="restoreSource" class="mb-2 fld w-full border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="Snapshot/path">
-            <input x-model="restoreDest" class="mb-2 fld w-full border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800" placeholder="Destination">
-            <button @click="restorePreviewLegacy()" class="h-8 rounded bg-stone-800 dark:bg-stone-700 px-3 text-sm text-white">Preview</button>
+            <input x-model="restoreSource" class="mb-2 fld w-full border border-bd bg-surface" placeholder="Snapshot/path">
+            <input x-model="restoreDest" class="mb-2 fld w-full border border-bd bg-surface" placeholder="Destination">
+            <button @click="restorePreviewLegacy()" class="h-8 rounded bg-fg px-3 text-sm text-surface">Preview</button>
           </div>
         </div>
-        <div class="max-w-5xl rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+        <div class="max-w-5xl rounded border border-bd bg-surface p-3">
           <div class="mb-2 flex items-center gap-2"><span class="font-medium">Active mounts</span>
-            <button @click="loadMounts()" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs">⟳</button></div>
-          <div x-show="!mounts.length" class="text-xs text-stone-500">No active mounts started by KopiaLens.</div>
+            <button @click="loadMounts()" class="h-7 rounded border border-bd px-2 text-xs">⟳</button></div>
+          <div x-show="!mounts.length" class="text-xs text-muted">No active mounts started by KopiaLens.</div>
           <template x-for="m in mounts" :key="m.pid">
-            <div class="flex items-center gap-3 py-1 text-sm border-t border-stone-200 dark:border-stone-700">
+            <div class="flex items-center gap-3 py-1 text-sm border-t border-bd-soft">
               <span class="font-mono" x-text="m.mountpoint"></span>
-              <span class="text-stone-500 text-xs" x-text="'snap ' + m.snapshot_id.slice(0,16) + ' · pid ' + m.pid + ' · repo ' + m.repo"></span>
-              <button @click="unmount(m.pid)" class="ml-auto h-7 rounded border border-red-300 text-red-600 px-2 text-xs">Unmount</button>
+              <span class="text-muted text-xs" x-text="'snap ' + m.snapshot_id.slice(0,16) + ' · pid ' + m.pid + ' · repo ' + m.repo"></span>
+              <button @click="unmount(m.pid)" class="ml-auto h-7 rounded border border-danger-bd text-danger px-2 text-xs">Unmount</button>
             </div>
           </template>
         </div>
-        <pre class="min-h-0 overflow-auto rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3 text-sm" x-text="actionText"></pre>
+        <pre class="min-h-0 overflow-auto rounded border border-bd bg-surface p-3 text-sm" x-text="actionText"></pre>
       </section>

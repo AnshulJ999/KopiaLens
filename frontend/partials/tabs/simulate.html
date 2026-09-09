@@ -1,20 +1,20 @@
       <section x-show="active==='simulate'" class="h-full flex flex-col gap-3">
         <div class="flex flex-wrap items-end gap-3">
-          <label class="text-[11px] uppercase text-stone-500">Scope<br>
-            <select x-model="simMode" class="mt-0.5 fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800">
+          <label class="text-[11px] uppercase text-muted">Scope<br>
+            <select x-model="simMode" class="mt-0.5 fld border border-bd bg-surface">
               <option value="all">All sources (combined)</option>
               <option value="one">This source</option>
             </select></label>
-          <select x-show="simMode==='one'" x-model="selectedSource" class="fld border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800 min-w-[26rem]">
+          <select x-show="simMode==='one'" x-model="selectedSource" class="fld border border-bd bg-surface min-w-[26rem]">
             <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
           </select>
           <template x-for="k in policyKeys" :key="k">
-            <label class="text-[11px] uppercase text-stone-500"><span x-text="k"></span><br><input type="number" min="0" x-model.number="policy[k]" class="mt-0.5 fld w-20 border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-800"></label>
+            <label class="text-[11px] uppercase text-muted"><span x-text="k"></span><br><input type="number" min="0" x-model.number="policy[k]" class="mt-0.5 fld w-20 border border-bd bg-surface"></label>
           </template>
-          <button @click="runSimulate()" class="h-8 rounded bg-emerald-700 px-3 text-sm text-white">Run</button>
-          <button @click="runSimulate(true)" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm" title="Recompute (ignore cache)">↻ Recompute</button>
-          <button @click="csv('#simulateTable','simulate')" class="h-8 rounded border border-stone-300 dark:border-stone-700 px-3 text-sm">⬇ CSV</button>
+          <button @click="runSimulate()" class="h-8 rounded bg-ok-solid px-3 text-sm text-white">Run</button>
+          <button @click="runSimulate(true)" class="h-8 rounded border border-bd px-3 text-sm" title="Recompute (ignore cache)">↻ Recompute</button>
+          <button @click="csv('#simulateTable','simulate')" class="h-8 rounded border border-bd px-3 text-sm">⬇ CSV</button>
         </div>
-        <div class="text-sm text-stone-600 dark:text-stone-300" x-text="simMeta"></div>
+        <div class="text-sm text-muted" x-text="simMeta"></div>
         <div id="simulateTable" class="flex-1 min-h-0"></div>
       </section>

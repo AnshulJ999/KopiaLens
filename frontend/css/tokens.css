@@ -1,26 +1,32 @@
 /* KopiaLens design tokens.
 
-   Colour, spacing, radius and control sizes live here; app.css and the markup consume them.
-   A theme is a redefinition of this block and nothing else, so anything that hardcodes a
-   colour in the markup is invisible to theming. New markup uses tokens.
+   A theme is one block of variable definitions, selected by data-theme on <html>.
+   "system" (or no attribute) follows the OS preference between Daylight and Ember.
+   Density is a separate axis: data-density scales the root font-size, so every
+   rem-based token and Tailwind utility follows; colour never changes with it.
 
-   Dark mode is the `.dark` class on <html> (tailwind darkMode: 'class'). */
+   A theme redefines this file and nothing else, so any colour hardcoded in the
+   markup is invisible to theming. New markup uses tokens or the semantic Tailwind
+   colours declared in index.html (bg-surface, text-muted, border-bd, ...). */
 
+/* ---- Daylight (default light) ---- */
 :root {
-  /* surfaces and text */
-  --surface: #fff;
+  --canvas: #f5f5f4;
+  --surface: #ffffff;
   --surface2: #fafaf9;
   --head: #f5f5f4;
-  --bd: #e7e5e4;
-  --fg: #1c1917;
-  --muted: #78716c;
   --hover: #f5f5f4;
   --sel: #e7e5e4;
+  --bd: #d6d3d1;
+  --bd-soft: #e7e5e4;
+  --fg: #1c1917;
+  --muted: #78716c;
+  --faint: #a8a29e;
 
-  /* semantic: state, not brand. Separate from any future accent. */
   --ok: #047857;
   --ok-bd: #6ee7b7;
   --ok-bg: #ecfdf5;
+  --ok-solid: #047857;
   --danger: #be123c;
   --danger-bd: #fda4af;
   --danger-bg: #fff1f2;
@@ -28,40 +34,139 @@
   --warn-bd: #fcd34d;
   --warn-bg: #fffbeb;
   --link: #0369a1;
+  --accent: #4f46e5;
+  --accent-bd: #a5b4fc;
+  --accent-bg: #eef2ff;
+  --accent-solid: #4338ca;
 
-  /* live command output */
   --term-bg: #f7f6f4;
   --term-fg: #3f3a36;
   --term-dim: #9a938b;
-
-  /* density: one axis, independent of colour */
-  --sp-1: 4px;
-  --sp-2: 8px;
-  --sp-3: 12px;
-  --sp-4: 16px;
-  --r-sm: 4px;
-  --r-md: 6px;
-  --r-lg: 8px;
-  --fs-xs: 11px;
-  --fs-sm: 12px;
-  --fs-md: 13px;
-  --fs-lg: 15px;
-  --ctl-h: 28px;
 }
 
-.dark {
+/* ---- Parchment (warm light) ---- */
+:root[data-theme="parchment"] {
+  --canvas: #efe9de;
+  --surface: #faf8f4;
+  --surface2: #f4f0e7;
+  --head: #eee8db;
+  --hover: #ece5d7;
+  --sel: #e2d9c6;
+  --bd: #cfc4ad;
+  --bd-soft: #e0d8c5;
+  --fg: #29241c;
+  --muted: #7d7462;
+  --faint: #a89e88;
+
+  --ok: #3d6b4f;
+  --ok-bd: #86c9a2;
+  --ok-bg: #edf5ea;
+  --ok-solid: #3d6b4f;
+  --danger: #a63d4e;
+  --danger-bd: #e8a3ac;
+  --danger-bg: #f9eef0;
+  --warn: #96650f;
+  --warn-bd: #d9b95c;
+  --warn-bg: #f8f1de;
+  --link: #22607e;
+  --accent: #5b4fa8;
+  --accent-bd: #b0a7dd;
+  --accent-bg: #efecf9;
+  --accent-solid: #4a3f96;
+
+  --term-bg: #f3eee4;
+  --term-fg: #433d31;
+  --term-dim: #9a9182;
+}
+
+/* ---- Slate (cool light) ---- */
+:root[data-theme="slate"] {
+  --canvas: #e9edf2;
+  --surface: #ffffff;
+  --surface2: #f5f7fa;
+  --head: #edf0f4;
+  --hover: #e9edf2;
+  --sel: #dbe1e8;
+  --bd: #c3ccd6;
+  --bd-soft: #dde3e9;
+  --fg: #101826;
+  --muted: #5f6b7a;
+  --faint: #8e9aa8;
+
+  --ok: #0b7059;
+  --ok-bd: #6fdcbe;
+  --ok-bg: #eafaf4;
+  --ok-solid: #0b7059;
+  --danger: #bb2d4c;
+  --danger-bd: #f2a2b4;
+  --danger-bg: #fdf0f3;
+  --warn: #a05c0d;
+  --warn-bd: #e8b95c;
+  --warn-bg: #fdf5e5;
+  --link: #0561a5;
+  --accent: #3757c9;
+  --accent-bd: #9db1ec;
+  --accent-bg: #ebf0fc;
+  --accent-solid: #2e49b0;
+
+  --term-bg: #f2f4f7;
+  --term-fg: #37404d;
+  --term-dim: #939ea9;
+}
+
+/* ---- Lilac (violet-tinted light) ---- */
+:root[data-theme="lilac"] {
+  --canvas: #f1eef6;
+  --surface: #ffffff;
+  --surface2: #f9f7fc;
+  --head: #f0ecf7;
+  --hover: #ece7f4;
+  --sel: #e2dbef;
+  --bd: #cfc5e0;
+  --bd-soft: #e2dbef;
+  --fg: #241d36;
+  --muted: #6f6688;
+  --faint: #a095b8;
+
+  --ok: #0c6e58;
+  --ok-bd: #7dd0ba;
+  --ok-bg: #ebfaf5;
+  --ok-solid: #0c6e58;
+  --danger: #b33058;
+  --danger-bd: #efa4bd;
+  --danger-bg: #fceff4;
+  --warn: #9a5b12;
+  --warn-bd: #e2b45f;
+  --warn-bg: #fbf3e3;
+  --link: #5b3fb8;
+  --accent: #6d28d9;
+  --accent-bd: #c4b5fd;
+  --accent-bg: #f3effd;
+  --accent-solid: #5b21b6;
+
+  --term-bg: #f4f1f9;
+  --term-fg: #3f3a4d;
+  --term-dim: #9992ab;
+}
+
+/* ---- Ember (default dark) ---- */
+:root[data-theme="ember"] {
+  --canvas: #0c0a09;
   --surface: #1c1917;
   --surface2: #242120;
   --head: #292524;
-  --bd: #44403c;
-  --fg: #e7e5e4;
-  --muted: #a8a29e;
   --hover: #332f2c;
   --sel: #3f3a36;
+  --bd: #44403c;
+  --bd-soft: #292524;
+  --fg: #e7e5e4;
+  --muted: #a8a29e;
+  --faint: #78716c;
 
   --ok: #34d399;
   --ok-bd: #065f46;
   --ok-bg: #052e26;
+  --ok-solid: #059669;
   --danger: #fb7185;
   --danger-bd: #881337;
   --danger-bg: #2a0d14;
@@ -69,8 +174,174 @@
   --warn-bd: #78350f;
   --warn-bg: #2a1c05;
   --link: #38bdf8;
+  --accent: #a5b4fc;
+  --accent-bd: #3730a3;
+  --accent-bg: #26244a;
+  --accent-solid: #4f46e5;
 
   --term-bg: #141210;
   --term-fg: #d6d0c8;
   --term-dim: #7b746b;
 }
+
+/* ---- Midnight (navy dark) ---- */
+:root[data-theme="midnight"] {
+  --canvas: #0a0f1a;
+  --surface: #111827;
+  --surface2: #182236;
+  --head: #1d2941;
+  --hover: #223052;
+  --sel: #2a3a5c;
+  --bd: #3b4a66;
+  --bd-soft: #1d2941;
+  --fg: #e2e8f0;
+  --muted: #94a3b8;
+  --faint: #64748b;
+
+  --ok: #4ade80;
+  --ok-bd: #166534;
+  --ok-bg: #0c2a1a;
+  --ok-solid: #059669;
+  --danger: #fb7185;
+  --danger-bd: #9f1239;
+  --danger-bg: #2e0d18;
+  --warn: #fbbf24;
+  --warn-bd: #92400e;
+  --warn-bg: #2b1d05;
+  --link: #38bdf8;
+  --accent: #93c5fd;
+  --accent-bd: #1e40af;
+  --accent-bg: #16233f;
+  --accent-solid: #3b82f6;
+
+  --term-bg: #0d1421;
+  --term-fg: #cdd6e4;
+  --term-dim: #6d7a8c;
+}
+
+/* ---- Pine (deep green dark) ---- */
+:root[data-theme="pine"] {
+  --canvas: #0a100e;
+  --surface: #0f1a17;
+  --surface2: #14231e;
+  --head: #182a24;
+  --hover: #1d332b;
+  --sel: #244036;
+  --bd: #35544a;
+  --bd-soft: #182a24;
+  --fg: #e3ece7;
+  --muted: #9ab5a9;
+  --faint: #6d8a7c;
+
+  --ok: #4ade80;
+  --ok-bd: #166534;
+  --ok-bg: #0d2b1c;
+  --ok-solid: #059669;
+  --danger: #fb7185;
+  --danger-bd: #9f1239;
+  --danger-bg: #2e0d15;
+  --warn: #fbbf24;
+  --warn-bd: #92400e;
+  --warn-bg: #2b1d05;
+  --link: #38bdf8;
+  --accent: #a5b4fc;
+  --accent-bd: #3730a3;
+  --accent-bg: #1c2b3e;
+  --accent-solid: #4f46e5;
+
+  --term-bg: #0c1512;
+  --term-fg: #cfe0d8;
+  --term-dim: #68827a;
+}
+
+/* ---- Obsidian (true black) ---- */
+:root[data-theme="obsidian"] {
+  --canvas: #000000;
+  --surface: #0d0d0d;
+  --surface2: #151515;
+  --head: #191919;
+  --hover: #202020;
+  --sel: #2a2a2a;
+  --bd: #383838;
+  --bd-soft: #191919;
+  --fg: #e8e8e8;
+  --muted: #9c9c9c;
+  --faint: #6e6e6e;
+
+  --ok: #34d399;
+  --ok-bd: #065f46;
+  --ok-bg: #06251b;
+  --ok-solid: #059669;
+  --danger: #fb7185;
+  --danger-bd: #881337;
+  --danger-bg: #26090f;
+  --warn: #fbbf24;
+  --warn-bd: #78350f;
+  --warn-bg: #271a04;
+  --link: #38bdf8;
+  --accent: #a5b4fc;
+  --accent-bd: #3730a3;
+  --accent-bg: #1d1d33;
+  --accent-solid: #4f46e5;
+
+  --term-bg: #0a0a0a;
+  --term-fg: #d4d4d4;
+  --term-dim: #6f6f6f;
+}
+
+/* System follows the OS between the two defaults. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]),
+  :root[data-theme="system"] {
+    --canvas: #0c0a09;
+    --surface: #1c1917;
+    --surface2: #242120;
+    --head: #292524;
+    --hover: #332f2c;
+    --sel: #3f3a36;
+    --bd: #44403c;
+    --bd-soft: #292524;
+    --fg: #e7e5e4;
+    --muted: #a8a29e;
+    --faint: #78716c;
+
+    --ok: #34d399;
+    --ok-bd: #065f46;
+    --ok-bg: #052e26;
+    --ok-solid: #059669;
+    --danger: #fb7185;
+    --danger-bd: #881337;
+    --danger-bg: #2a0d14;
+    --warn: #fbbf24;
+    --warn-bd: #78350f;
+    --warn-bg: #2a1c05;
+    --link: #38bdf8;
+    --accent: #a5b4fc;
+    --accent-bd: #3730a3;
+    --accent-bg: #26244a;
+    --accent-solid: #4f46e5;
+
+    --term-bg: #141210;
+    --term-fg: #d6d0c8;
+    --term-dim: #7b746b;
+  }
+}
+
+/* ---- Density (independent of colour) ----
+   Tokens are rem so they ride the root font-size with every Tailwind utility. */
+:root {
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --r-sm: 0.25rem;
+  --r-md: 0.375rem;
+  --r-lg: 0.5rem;
+  --fs-xs: 0.6875rem;
+  --fs-sm: 0.75rem;
+  --fs-md: 0.8125rem;
+  --fs-lg: 0.9375rem;
+  --ctl-h: 1.75rem;
+}
+html[data-density="compact"] { font-size: 93.75%; }
+html[data-density="comfortable"] { font-size: 106.25%; }

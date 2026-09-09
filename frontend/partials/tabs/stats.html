@@ -1,109 +1,109 @@
       <section x-show="active==='stats'" class="h-full flex flex-col gap-3 overflow-auto">
         <div class="flex items-center gap-2">
           <span class="font-medium">Repository</span>
-          <button @click="loadStats(true)" class="h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs">⟳ Refresh</button>
+          <button @click="loadStats(true)" class="h-7 rounded border border-bd px-2 text-xs">⟳ Refresh</button>
         </div>
         <template x-if="statsData">
           <div class="space-y-3">
             <!-- health checks -->
-            <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+            <div class="rounded border border-bd bg-surface p-3">
               <div class="mb-2 flex items-center gap-2"><span class="font-medium text-sm">Health</span>
-                <span class="text-[11px] text-stone-500" x-text="(statsData.health||[]).filter(h => h.status==='warn').length ? (statsData.health.filter(h => h.status==='warn').length + ' warning(s)') : 'all clear'"></span></div>
+                <span class="text-[11px] text-muted" x-text="(statsData.health||[]).filter(h => h.status==='warn').length ? (statsData.health.filter(h => h.status==='warn').length + ' warning(s)') : 'all clear'"></span></div>
               <div class="space-y-1.5">
                 <template x-for="h in (statsData.health || [])" :key="h.id">
                   <div class="flex items-start gap-2 text-xs rounded p-2 border"
-                       :class="h.status==='warn' ? 'border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20' : h.status==='ok' ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-900/20' : 'border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-800'">
+                       :class="h.status==='warn' ? 'bg-warn-bg border-warn-bd' : h.status==='ok' ? 'bg-ok-bg border-ok-bd' : 'bg-surface2 border-bd-soft'">
                     <span class="mt-0.5" x-text="h.status==='warn' ? '⚠' : h.status==='ok' ? '✓' : 'ℹ'"></span>
                     <div class="min-w-0">
                       <div class="font-medium" x-text="h.title"></div>
-                      <div class="text-stone-600 dark:text-stone-400" x-text="h.detail"></div>
+                      <div class="text-muted" x-text="h.detail"></div>
                     </div>
-                    <button x-show="h.fix_command" @click="copyText(h.fix_command)" class="ml-auto shrink-0 h-6 rounded border border-stone-300 dark:border-stone-700 px-2 text-[10px]" :title="'Copy: ' + h.fix_command">Copy fix</button>
+                    <button x-show="h.fix_command" @click="copyText(h.fix_command)" class="ml-auto shrink-0 h-6 rounded border border-bd px-2 text-[10px]" :title="'Copy: ' + h.fix_command">Copy fix</button>
                   </div>
                 </template>
-                <div x-show="!(statsData.health || []).length" class="text-xs text-emerald-700 dark:text-emerald-400">✓ All checks passed.</div>
+                <div x-show="!(statsData.health || []).length" class="text-xs text-ok">✓ All checks passed.</div>
               </div>
             </div>
 
             <!-- cards -->
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-              <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
-                <div class="text-[10px] uppercase text-stone-500 mb-1">Storage</div>
+              <div class="rounded border border-bd bg-surface p-3">
+                <div class="text-[10px] uppercase text-muted mb-1">Storage</div>
                 <div class="text-sm font-medium break-all" x-text="statsData.parsed?.storage_type || '?'"></div>
-                <div class="text-[11px] text-stone-500 break-all mb-1" x-text="statsData.parsed?.storage_path || ''"></div>
+                <div class="text-[11px] text-muted break-all mb-1" x-text="statsData.parsed?.storage_path || ''"></div>
                 <div class="text-xs" x-show="statsData.parsed?.capacity" x-text="fmtBytes(statsData.parsed?.available || 0) + ' free of ' + fmtBytes(statsData.parsed?.capacity || 0)"></div>
-                <div class="text-[10px] text-stone-400" x-show="statsData.parsed?.unique_id" x-text="'id ' + statsData.parsed?.unique_id + '…'"></div>
+                <div class="text-[10px] text-faint" x-show="statsData.parsed?.unique_id" x-text="'id ' + statsData.parsed?.unique_id + '…'"></div>
               </div>
-              <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
-                <div class="text-[10px] uppercase text-stone-500 mb-1">Content</div>
+              <div class="rounded border border-bd bg-surface p-3">
+                <div class="text-[10px] uppercase text-muted mb-1">Content</div>
                 <div class="text-sm font-medium" x-text="(statsData.parsed?.content?.count || 0).toLocaleString() + ' contents'"></div>
-                <div class="text-xs text-stone-500" x-text="'logical ' + fmtBytes(statsData.parsed?.content?.total_bytes || 0)"></div>
+                <div class="text-xs text-muted" x-text="'logical ' + fmtBytes(statsData.parsed?.content?.total_bytes || 0)"></div>
                 <div class="text-xs" x-text="'packed ' + fmtBytes(statsData.parsed?.content?.packed_bytes || 0) + (statsData.parsed?.content?.compression_pct != null ? ' (' + statsData.parsed.content.compression_pct + '% saved)' : '')"></div>
-                <div class="text-[11px] mt-1" x-show="statsData.parsed?.growth_7d != null" :class="(statsData.parsed?.growth_7d || 0) > 0 ? 'text-stone-500' : 'text-emerald-600 dark:text-emerald-400'" x-text="'7-day change ' + (statsData.parsed?.growth_7d >= 0 ? '+' : '') + fmtBytes(statsData.parsed?.growth_7d || 0)"></div>
+                <div class="text-[11px] mt-1" x-show="statsData.parsed?.growth_7d != null" :class="(statsData.parsed?.growth_7d || 0) > 0 ? 'text-muted' : 'text-ok'" x-text="'7-day change ' + (statsData.parsed?.growth_7d >= 0 ? '+' : '') + fmtBytes(statsData.parsed?.growth_7d || 0)"></div>
               </div>
-              <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
-                <div class="text-[10px] uppercase text-stone-500 mb-1">Maintenance</div>
+              <div class="rounded border border-bd bg-surface p-3">
+                <div class="text-[10px] uppercase text-muted mb-1">Maintenance</div>
                 <div class="text-xs flex items-center gap-1">
-                  <span x-show="statsData.parsed?.maintenance?.owner_match === false" class="text-amber-600">⚠</span>
+                  <span x-show="statsData.parsed?.maintenance?.owner_match === false" class="text-warn">⚠</span>
                   <span class="break-all" x-text="'owner ' + (statsData.parsed?.maintenance?.owner || '?')"></span></div>
                 <div class="text-xs mt-1" x-show="statsData.parsed?.maintenance?.last_run" x-text="'last run ' + (statsData.parsed?.maintenance?.last_run || '?').slice(0, 16).replace('T', ' ') + (statsData.parsed?.maintenance?.last_run_age_days != null ? ' (' + statsData.parsed.maintenance.last_run_age_days + 'd ago)' : '')"></div>
-                <div class="text-[11px] text-stone-500" x-show="statsData.parsed?.maintenance?.next_quick" x-text="'next quick ' + (statsData.parsed?.maintenance?.next_quick || '').slice(0, 16).replace('T', ' ')"></div>
-                <div class="text-[11px] text-stone-500" x-show="statsData.parsed?.maintenance?.next_full" x-text="'next full  ' + (statsData.parsed?.maintenance?.next_full || '').slice(0, 16).replace('T', ' ')"></div>
+                <div class="text-[11px] text-muted" x-show="statsData.parsed?.maintenance?.next_quick" x-text="'next quick ' + (statsData.parsed?.maintenance?.next_quick || '').slice(0, 16).replace('T', ' ')"></div>
+                <div class="text-[11px] text-muted" x-show="statsData.parsed?.maintenance?.next_full" x-text="'next full  ' + (statsData.parsed?.maintenance?.next_full || '').slice(0, 16).replace('T', ' ')"></div>
               </div>
-              <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
-                <div class="text-[10px] uppercase text-stone-500 mb-1">KopiaLens index</div>
+              <div class="rounded border border-bd bg-surface p-3">
+                <div class="text-[10px] uppercase text-muted mb-1">KopiaLens index</div>
                 <!-- reads parsed.duckdb_health, NOT health: the health list carries only WARNINGS
                      (an entry in both renders twice), so a healthy index would leave this blank. -->
                 <template x-for="h in (statsData.parsed?.duckdb_health || [])" :key="h.id">
                   <div>
                     <div class="text-sm font-medium" x-text="h.title.replace('Index database: ', '').replace('Index database ', '')"></div>
-                    <div class="text-[11px] text-stone-500" x-text="h.detail"></div>
+                    <div class="text-[11px] text-muted" x-text="h.detail"></div>
                   </div>
                 </template>
-                <div class="text-[11px] text-stone-500 mt-1">Audit trail: <span x-text="fmtBytes(statsData.audit_size || 0)"></span>, never trimmed</div>
+                <div class="text-[11px] text-muted mt-1">Audit trail: <span x-text="fmtBytes(statsData.audit_size || 0)"></span>, never trimmed</div>
               </div>
             </div>
 
             <!-- audit trail -->
-            <div class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+            <div class="rounded border border-bd bg-surface p-3">
               <div class="mb-2 flex items-center gap-2"><span class="font-medium text-sm">Audit trail</span>
-                <span class="text-[11px] text-stone-500">every action KopiaLens executes or hands out · <span x-text="fmtBytes(statsData.audit_size || 0)"></span></span>
-                <button @click="loadAudit()" class="ml-auto h-7 rounded border border-stone-300 dark:border-stone-700 px-2 text-xs">⟳</button></div>
-              <div class="overflow-auto max-h-72 rounded border border-stone-200 dark:border-stone-700">
+                <span class="text-[11px] text-muted">every action KopiaLens executes or hands out · <span x-text="fmtBytes(statsData.audit_size || 0)"></span></span>
+                <button @click="loadAudit()" class="ml-auto h-7 rounded border border-bd px-2 text-xs">⟳</button></div>
+              <div class="overflow-auto max-h-72 rounded border border-bd-soft">
                 <table class="w-full text-[11px]">
-                  <thead class="bg-stone-50 dark:bg-stone-800 text-left text-stone-500"><tr><th class="p-1.5">When</th><th class="p-1.5">Event</th><th class="p-1.5">Action</th><th class="p-1.5">Repo</th><th class="p-1.5">Summary</th><th class="p-1.5">rc</th></tr></thead>
+                  <thead class="bg-surface2 text-left text-muted"><tr><th class="p-1.5">When</th><th class="p-1.5">Event</th><th class="p-1.5">Action</th><th class="p-1.5">Repo</th><th class="p-1.5">Summary</th><th class="p-1.5">rc</th></tr></thead>
                   <tbody>
                     <template x-for="(r, i) in auditRows" :key="i">
-                      <tr class="border-t border-stone-100 dark:border-stone-800">
+                      <tr class="border-t border-bd-soft">
                         <td class="p-1.5 whitespace-nowrap" x-text="r.ts || ''"></td>
                         <td class="p-1.5" x-text="r.event"></td>
                         <td class="p-1.5" x-text="r.action"></td>
                         <td class="p-1.5" x-text="r.repo || ''"></td>
                         <td class="p-1.5 font-mono break-all max-w-[28rem]" x-text="auditSummary(r)"></td>
-                        <td class="p-1.5" :class="r.rc ? 'text-rose-600' : ''" x-text="r.rc ?? ''"></td>
+                        <td class="p-1.5" :class="r.rc ? 'text-danger' : ''" x-text="r.rc ?? ''"></td>
                       </tr>
                     </template>
                   </tbody>
                 </table>
-                <div x-show="!auditRows.length" class="p-3 text-xs text-stone-500">Nothing recorded yet - every executed or generated command will appear here.</div>
+                <div x-show="!auditRows.length" class="p-3 text-xs text-muted">Nothing recorded yet - every executed or generated command will appear here.</div>
               </div>
             </div>
 
             <!-- raw kopia output, kept for the power-user view -->
-            <details class="rounded border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 p-3">
+            <details class="rounded border border-bd bg-surface p-3">
               <summary class="text-sm font-medium cursor-pointer select-none">Raw kopia output</summary>
               <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 mt-3">
                 <template x-for="blk in [['Repository status','repository_status'],['Content stats','content_stats'],['Maintenance','maintenance'],['Cache info','cache_info']]" :key="blk[1]">
-                  <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
-                    <div class="mb-1 text-xs text-stone-500" x-text="blk[0]"></div>
-                    <pre class="text-[11px] whitespace-pre-wrap overflow-auto max-h-72 bg-stone-50 dark:bg-stone-800 rounded p-2" x-text="statsBlock(statsData[blk[1]])"></pre>
+                  <div class="rounded border border-bd-soft p-2">
+                    <div class="mb-1 text-xs text-muted" x-text="blk[0]"></div>
+                    <pre class="text-[11px] whitespace-pre-wrap overflow-auto max-h-72 bg-surface2 rounded p-2" x-text="statsBlock(statsData[blk[1]])"></pre>
                   </div>
                 </template>
-                <div class="rounded border border-stone-200 dark:border-stone-700 p-2">
-                  <div class="mb-1 flex items-center gap-2"><span class="text-xs text-stone-500">Blob stats</span>
-                    <button @click="loadBlobStats()" :disabled="blobLoading" class="h-6 rounded border border-stone-300 dark:border-stone-700 px-2 text-[10px] disabled:opacity-50" x-text="blobLoading ? 'Running… (slow)' : 'Load blob stats'"></button>
-                    <span class="text-[10px] text-stone-400">scans all storage blobs — slow on big repos</span></div>
-                  <pre x-show="blobStats" class="text-[11px] whitespace-pre-wrap overflow-auto max-h-72 bg-stone-50 dark:bg-stone-800 rounded p-2" x-text="blobStats"></pre>
+                <div class="rounded border border-bd-soft p-2">
+                  <div class="mb-1 flex items-center gap-2"><span class="text-xs text-muted">Blob stats</span>
+                    <button @click="loadBlobStats()" :disabled="blobLoading" class="h-6 rounded border border-bd px-2 text-[10px] disabled:opacity-50" x-text="blobLoading ? 'Running… (slow)' : 'Load blob stats'"></button>
+                    <span class="text-[10px] text-faint">scans all storage blobs — slow on big repos</span></div>
+                  <pre x-show="blobStats" class="text-[11px] whitespace-pre-wrap overflow-auto max-h-72 bg-surface2 rounded p-2" x-text="blobStats"></pre>
                 </div>
               </div>
             </details>

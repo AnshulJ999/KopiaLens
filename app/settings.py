@@ -23,6 +23,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "last_panel": "dashboard",
         "window": {},
         "time_format": "absolute",
+        # ---- appearance (themes + density) ---------------------------------------------------
+        # data-theme/data-density are stamped into the rendered page so it paints correctly
+        # before any JS runs. light_theme/dark_theme are the two slots the nav quick switch
+        # flips between. Values are validated against the known lists before use.
+        "theme": "system",           # daylight|parchment|slate|lilac|ember|midnight|pine|obsidian|system
+        "density": "normal",         # compact|normal|comfortable
+        "light_theme": "daylight",   # remembered light slot for the quick switch
+        "dark_theme": "ember",       # remembered dark slot for the quick switch
         "tables": {},          # per-table Tabulator persistence (columns + sort), keyed by table id
         "page_size": 500,      # search default page size (may be "Infinite")
         # ---- heavy-pass scheduling -------------------------------------------------------------

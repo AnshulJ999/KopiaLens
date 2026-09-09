@@ -8,7 +8,7 @@ html, body { height: 100%; }
 body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
 [x-cloak] { display: none !important; }
 
-.tabulator { border: 1px solid var(--bd); border-radius: 8px; font-size: 12.5px; background: var(--surface); }
+.tabulator { border: 1px solid var(--bd); border-radius: var(--r-lg); font-size: 0.78125rem; background: var(--surface); }
 .tabulator .tabulator-header, .tabulator .tabulator-header .tabulator-col { background: var(--head); border-color: var(--bd); color: var(--fg); }
 .tabulator .tabulator-row { background: var(--surface); color: var(--fg); }
 .tabulator .tabulator-row.tabulator-row-even { background: var(--surface2); }
@@ -21,12 +21,12 @@ body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", 
 .tabulator .tabulator-menu { background: var(--surface); color: var(--fg); border: 1px solid var(--bd); }
 .tabulator .tabulator-menu .tabulator-menu-item:hover { background: var(--hover); }
 
-.pill { display: inline-block; font-size: 10.5px; padding: 1px 6px; border-radius: 9px; margin: 1px; border: 1px solid var(--bd); background: var(--surface2); color: var(--muted); }
+.pill { display: inline-block; font-size: 0.65625rem; padding: 1px 6px; border-radius: 9px; margin: 1px; border: 1px solid var(--bd); background: var(--surface2); color: var(--muted); }
 .pill.ok { color: var(--ok); border-color: var(--ok-bd); background: var(--ok-bg); }
 .pill.warn { color: var(--warn); border-color: var(--warn-bd); background: var(--warn-bg); }
 .pill.bad { color: var(--danger); border-color: var(--danger-bd); background: var(--danger-bg); }
-.tab { padding: 6px 14px; font-size: 13px; border-radius: 7px; cursor: pointer; }
-.fld { height: 34px; border-radius: 6px; padding: 0 8px; font-size: 13px; }
+.tab { padding: 0.375rem 0.875rem; font-size: var(--fs-md); border-radius: 0.4375rem; cursor: pointer; }
+.fld { height: 2.125rem; border-radius: var(--r-md); padding: 0 0.5rem; font-size: var(--fs-md); }
 
 /* ------------------------------------------------------------------ Primitives */
 
