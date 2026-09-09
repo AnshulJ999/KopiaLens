@@ -15,6 +15,7 @@ const jobsPart = {
       const seq = ++this._jobOpenSeq;
       const s = await getJson(`/api/jobs/status?job_id=${encodeURIComponent(jobId)}&after=0`).catch((e) => { this.error = e.message; return null; });
       if (!s || seq !== this._jobOpenSeq) return;
+      this._markJobSeen(jobId);  // opening the panel acknowledges a finished failure
       this.jobEarly = 0;
       this.jobLines = [];
       this.jobCursor = 0;
@@ -156,6 +157,21 @@ const jobsPart = {
     },
 
     // ---- Header chip (the way back into a backgrounded job) ----
+    // The chip carries jobs worth coming back to: running ones, plus UNSEEN bad endings -
+    // a failed delete that vanishes the moment it fails is worse than no chip. Opening the
+    // panel acknowledges a finished job; the seen list survives reloads (last 100 kept).
+    _seenJobs() {
+      try { return JSON.parse(localStorage.getItem("kl-jobseen") || "[]"); } catch (e) { return []; }
+    },
+
+    _markJobSeen(jobId) {
+      try {
+        const seen = this._seenJobs().filter((id) => id !== jobId);
+        seen.push(jobId);
+        localStorage.setItem("kl-jobseen", JSON.stringify(seen.slice(-100)));
+      } catch (e) { /* storage unavailable - the chip just re-shows after a reload */ }
+    },
+
     armJobChip() {
       if (this._jobChipPoll) clearInterval(this._jobChipPoll);
       this._jobChipPoll = setInterval(() => { if (!document.hidden) this._jobChipTick(); }, 5000);
@@ -164,7 +180,10 @@ const jobsPart = {
 
     async _jobChipTick() {
       const r = await getJson("/api/jobs/list").catch(() => null);
-      if (r) this.runningJobs = (r.jobs || []).filter((j) => j.state === "running");
+      if (!r) return;
+      const seen = this._seenJobs();
+      this.runningJobs = (r.jobs || []).filter((j) => j.state === "running"
+        || ((j.state === "failed" || (j.state === "done" && j.errors > 0)) && !seen.includes(j.job_id)));
     },
 };
 

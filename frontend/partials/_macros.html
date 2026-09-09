@@ -18,10 +18,12 @@
   </div>
   <div class="kl-term" style="max-height:132px">
     <template x-for="(ln, i) in klDryLines({{ st }})" :key="i"><div class="break-all" x-text="ln"></div></template>
-    <div x-show="{{ st }} && !{{ st }}.output && {{ st }}.running" class="t">waiting for kopia…</div>
+    <div x-show="{{ st }} && !({{ st }}.lines && {{ st }}.lines.length) && {{ st }}.running" class="t">waiting for kopia…</div>
   </div>
   <div class="kl-note" x-show="{{ st }}.done" x-text="klDrySummary({{ st }})"></div>
-  <div class="kl-note" x-show="{{ st }}.truncated">Output truncated - the full text is in <span class="font-mono break-all" x-text="{{ st }}.log"></span></div>
+  <div class="kl-note" x-show="{{ st }}.truncated || klDryCut({{ st }}) > 0">
+    Not every line is shown<span x-show="{{ st }}.log"> - the full text is in <span class="font-mono break-all" x-text="{{ st }}.log"></span></span>.
+  </div>
   <div class="kl-note" x-show="{{ st }}.error" x-text="{{ st }}.error"></div>
 </div>
 {%- endmacro %}

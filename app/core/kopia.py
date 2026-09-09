@@ -719,14 +719,22 @@ def remove_files_chunked_execute(repo: str, items: list[str], source: str | list
 _DRY_OUTPUT_CAP = 256 * 1024  # bytes of kopia output carried in an API response
 
 
-def _run_dry_commands(repo: str, cmds: list[list[str]], kind: str, expect_flag: str) -> dict:
+def _run_dry_commands(repo: str, cmds: list[list[str]], kind: str, expect_flag: str,
+                      parse_line=None) -> dict:
     """Run preview-only kopia commands sequentially and capture their output.
 
     The commands MUST have been built without the mutating flag (``--commit`` for
     remove-files, ``--delete`` for snapshot delete); ``expect_flag`` is asserted absent
     so a builder change can never turn the dry-run button into a real deletion.
-    Full output also lands in a log file under data/logs (the job runner will own the
-    streaming version; until then a dry run is a bounded synchronous call).
+    Full output also lands in a log file under data/logs.
+
+    Two reviewed traps live here (2026-09-09): the output cap only trims what the RESPONSE
+    carries - every command still runs, or later batches would silently never execute and
+    the summary would undercount while rc stays 0. And subprocess failures are NOT covered
+    by the log-write guard: a missing kopia must fail the run, not return a clean empty
+    success the UI would read as "dry run checked". ``parse_line(line, acc)`` builds the
+    summary (entries / snapshots / final_line) incrementally, so the job runner reuses the
+    same parser per streamed line.
     """
     for c in cmds:
         if expect_flag in c:
@@ -734,67 +742,110 @@ def _run_dry_commands(repo: str, cmds: list[list[str]], kind: str, expect_flag: 
     limit = _timeout()
     ts = time.strftime("%Y%m%d_%H%M%S")
     log_path = remove_log_path(f"dry_run_{kind}_repo{repo}_{ts}.log")
-    rc, elapsed = 0, 0.0
+    rc, truncated, error = 0, False, ""
     out: list[str] = []
-    truncated = False
+    acc: dict = {}
     t0 = time.time()
     try:
-        with open(log_path, "a", encoding="utf-8", errors="replace") as lf:
-            lf.write(f"=== kopia {kind} dry run repo={repo} batches={len(cmds)} ===\n")
-            lf.flush()
-            for i, cmd in enumerate(cmds, 1):
-                lf.write(f"\n--- batch {i}/{len(cmds)} ---\n")
-                lf.flush()
-                try:
-                    res = subprocess.run(
-                        cmd + ["--no-progress"], capture_output=True, text=True,
-                        encoding="utf-8", errors="replace", timeout=limit,
-                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                    )
-                except subprocess.TimeoutExpired as exc:
-                    rc = TIMEOUT_RC
-                    out.append(f"kopia timed out after {limit:.0f}s")
-                    lf.write(_as_text(exc.stdout))
-                    break
-                lf.write(res.stdout or "")
-                if res.stderr:
-                    lf.write("\n[stderr]\n" + res.stderr)
-                lf.flush()
-                out.append(res.stdout or "")
-                if res.stderr.strip():
-                    out.append(res.stderr)
-                if res.returncode != 0:
-                    rc = res.returncode
-                if sum(len(s) for s in out) > _DRY_OUTPUT_CAP:
-                    truncated = True
-                    break
+        lf = open(log_path, "a", encoding="utf-8", errors="replace")
+        lf.write(f"=== kopia {kind} dry run repo={repo} batches={len(cmds)} ===\n")
+        lf.flush()
     except Exception as exc:  # noqa: BLE001 - a log-write failure must not kill the dry run
-        log.warning("dry run %s repo=%s log write failed: %s", kind, repo, exc)
+        log.warning("dry run %s repo=%s log open failed: %s", kind, repo, exc)
+        lf = None
+
+    def _log(text: str) -> None:
+        if lf is None:
+            return
+        try:
+            lf.write(text)
+            lf.flush()
+        except Exception as exc:  # noqa: BLE001 - the run itself matters more than its log
+            log.warning("dry run %s repo=%s log write failed: %s", kind, repo, exc)
+
+    for i, cmd in enumerate(cmds, 1):
+        _log(f"\n--- batch {i}/{len(cmds)} ---\n")
+        try:
+            res = subprocess.run(
+                cmd + ["--no-progress"], capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=limit,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except subprocess.TimeoutExpired as exc:
+            rc = TIMEOUT_RC
+            error = f"kopia timed out after {limit:.0f}s"
+            _log(_as_text(exc.stdout))
+            out.append(error)
+            break
+        except OSError as exc:  # FileNotFoundError lives here: kopia missing from PATH
+            rc = 1
+            error = f"kopia could not be started: {exc}"
+            _log(error + "\n")
+            out.append(error)
+            break  # every remaining batch would fail identically
+        batch = res.stdout or ""
+        if res.stderr.strip():
+            batch += "\n[stderr]\n" + res.stderr
+        _log(batch)
+        if not truncated:
+            out.append(batch)
+            if sum(len(s) for s in out) > _DRY_OUTPUT_CAP:
+                truncated = True  # the response trims; the remaining batches still run
+        if parse_line is not None:
+            for ln in batch.splitlines():
+                parse_line(ln, acc)
+        if res.returncode != 0:
+            rc = res.returncode
+    if lf is not None:
+        try:
+            lf.close()
+        except Exception:  # noqa: BLE001
+            pass
     elapsed = time.time() - t0
-    text = "\n".join(out)
-    return {"returncode": rc, "output": text[:_DRY_OUTPUT_CAP], "truncated": truncated,
-            "log": log_path, "elapsed": round(elapsed, 1), "commands": len(cmds)}
+    r = {"returncode": rc, "output": "\n".join(out)[:_DRY_OUTPUT_CAP], "truncated": truncated,
+         "log": log_path, "elapsed": round(elapsed, 1), "commands": len(cmds)}
+    if error:
+        r["error"] = error
+    r.update(acc)  # entries / snapshots / final_line when a parser was given
+    return r
+
+
+def _parse_remove_line(line: str, acc: dict) -> dict:
+    """Incremental remove-files dry-run summary - one kopia output line at a time, so the
+    same parser serves the synchronous dry run (per batch) and the streaming job (per line)."""
+    for ln in line.splitlines():
+        if "will remove file" in ln:
+            acc["entries"] = acc.get("entries", 0) + 1
+        if "snapshot manifests were not updated" in ln or "Fixed and committed" in ln:
+            acc["final_line"] = ln.strip()
+        m = re.search(r"Fixed (\d+) snapshots", ln)
+        if m:
+            acc["snapshots"] = int(m.group(1))
+    return acc
+
+
+def _parse_delete_line(line: str, acc: dict) -> dict:
+    for ln in line.splitlines():
+        if "Would delete" in ln:
+            acc["snapshots"] = acc.get("snapshots", 0) + 1
+            acc["final_line"] = f"Would delete {acc['snapshots']} snapshot(s)"
+    return acc
 
 
 def _parse_remove_dry(text: str) -> dict:
-    """Summarise a remove-files dry run from kopia's real output (verified against 0.23.1:
-    ``will remove file <path>`` per entry, ``Fixed N snapshots, but snapshot manifests
-    were not updated.`` as the final line)."""
-    entries = sum(1 for ln in text.splitlines() if "will remove file" in ln)
-    m = re.search(r"Fixed (\d+) snapshots, but snapshot manifests were not updated", text)
-    snapshots = int(m.group(1)) if m else 0
-    final = ""
+    """Whole-text form of the remove-files summary (tests + one-off callers)."""
+    acc: dict = {"entries": 0, "snapshots": 0, "final_line": ""}
     for ln in text.splitlines():
-        if "snapshot manifests were not updated" in ln or "Fixed and committed" in ln:
-            final = ln.strip()
-    return {"entries": entries, "snapshots": snapshots, "final_line": final}
+        _parse_remove_line(ln, acc)
+    return acc
 
 
 def _parse_delete_dry(text: str) -> dict:
-    """Summarise a snapshot-delete dry run (kopia prints ``Would delete <desc> (pass
-    --delete to confirm)`` per snapshot)."""
-    snaps = sum(1 for ln in text.splitlines() if "Would delete" in ln)
-    return {"snapshots": snaps, "final_line": (f"Would delete {snaps} snapshot(s)" if snaps else "")}
+    """Whole-text form of the snapshot-delete summary (tests + one-off callers)."""
+    acc: dict = {"snapshots": 0, "final_line": ""}
+    for ln in text.splitlines():
+        _parse_delete_line(ln, acc)
+    return acc
 
 
 def remove_files_dry_run(repo: str, object_ids: list[str] | None = None,
@@ -810,8 +861,7 @@ def remove_files_dry_run(repo: str, object_ids: list[str] | None = None,
                                          flag="--filename" if filenames else "--object-id")
     log.info("DRY RUN remove-files repo=%s filenames=%d object_ids=%d source=%r batches=%d",
              repo, len(filenames or []), len(object_ids or []), source, len(cmds))
-    r = _run_dry_commands(repo, cmds, "remove-files", "--commit")
-    r.update(_parse_remove_dry(r["output"]))
+    r = _run_dry_commands(repo, cmds, "remove-files", "--commit", parse_line=_parse_remove_line)
     audit.audit("dry-run", "remove-files", repo=repo,
                 summary={"filenames": len(filenames or []), "object_ids": len(object_ids or []),
                          "source": source, "entries": r.get("entries"),
@@ -829,8 +879,7 @@ def snapshot_delete_dry_run(repo: str, snapshot_ids: list[str]) -> dict:
     cmds = [prefix + snapshot_ids[i:i + _SNAP_DELETE_CHUNK]
             for i in range(0, len(snapshot_ids), _SNAP_DELETE_CHUNK)]
     log.info("DRY RUN snapshot delete repo=%s count=%d batches=%d", repo, len(snapshot_ids), len(cmds))
-    r = _run_dry_commands(repo, cmds, "snapshot-delete", "--delete")
-    r.update(_parse_delete_dry(r["output"]))
+    r = _run_dry_commands(repo, cmds, "snapshot-delete", "--delete", parse_line=_parse_delete_line)
     audit.audit("dry-run", "snapshot-delete", repo=repo,
                 summary={"ids": len(snapshot_ids), "would_delete": r.get("snapshots")},
                 rc=r["returncode"], duration_s=r["elapsed"], log_file=r["log"])

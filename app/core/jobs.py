@@ -37,6 +37,8 @@ from config import DATA_DIR
 from . import audit
 from .applog import get_logger
 from .kopia import (
+    _parse_delete_line,
+    _parse_remove_line,
     _quote_arg,
     _repo_args,
     kopia_job_stream,
@@ -64,6 +66,13 @@ AUDIT_ACTION = {
     "snapshot_delete": "snapshot-delete",
     "maintenance": "maintenance",
     "restore": "restore",
+}
+
+# Dry-run jobs build the same summary the synchronous dry-run endpoints report; the parsers
+# are shared with them (one home in kopia.py, fed per streamed line here).
+DRY_PARSERS = {
+    "remove_files": _parse_remove_line,
+    "snapshot_delete": _parse_delete_line,
 }
 
 _JOBS: dict[str, dict] = {}
@@ -152,6 +161,7 @@ def _new_job(kind: str, repo: str, label: str, meta: dict, cmds: list[list[str]]
         # Pasteable form (kopia + repo args + the command): what the runner executes, and what
         # Copy command must hand the user - the bare `cmds` would not be runnable.
         "commands_text": "\n".join(" ".join(_quote_arg(a) for a in c) for c in pasteable),
+        "dry_summary": {},  # incremental dry-run summary (entries/snapshots/final_line)
         "stop_requested": False, "_stream": None, "on_done": on_done,
     }
 
@@ -198,12 +208,15 @@ def _stream_one(job: dict, cmd: list[str], lf) -> tuple[int, str]:
     result: dict = {}
     job["_stream"] = result  # Stop reaches the live child the moment it exists - a command
     last_err = ""            # that goes quiet before its first line must still be stoppable
+    parser = DRY_PARSERS.get(job["kind"]) if job["dry"] else None
     for stream, line in kopia_job_stream(job["repo"], cmd, result):
         if not line:
             continue
         job["buffer"].append(time.strftime("%H:%M:%S ") + line)
         job["line_count"] += 1
         lf.write(line + "\n")
+        if parser is not None:
+            parser(line, job["dry_summary"])
         if stream == "stderr" and line.strip():
             last_err = line
     lf.flush()
@@ -338,6 +351,20 @@ def _terminate(proc) -> None:
         pass
 
 
+def terminate_all() -> None:
+    """App shutdown: end every running job's kopia child. A restart must not orphan a
+    running action the registry no longer knows about - same terminate semantics as Stop
+    (the child dies; the log keeps whatever it wrote)."""
+    with _JOBS_LOCK:
+        running = [j for j in _JOBS.values() if j["state"] == "running"]
+    for job in running:
+        job["stop_requested"] = True
+        proc = (job.get("_stream") or {}).get("proc")
+        if proc is not None and proc.poll() is None:
+            _terminate(proc)
+        log.warning("JOB SHUTDOWN %s %s repo=%s terminated", job["job_id"], job["kind"], job["repo"])
+
+
 def maintenance_running(repo: str | None = None) -> bool:
     """True while a maintenance job runs (optionally scoped to one repo). The nightly scheduler
     checks this before starting a heavy pass: user actions outrank indexing."""
@@ -350,6 +377,8 @@ def _serialize(job: dict) -> dict:
     out = {k: v for k, v in job.items()
            if k not in ("buffer", "_stream", "on_done", "detail")}
     out["elapsed"] = round(max(0.0, (job["finished"] or time.time()) - (job["started"] or job["created"])), 1)
+    if job["dry_summary"]:
+        out["summary"] = dict(job["dry_summary"])
     return out
 
 

@@ -63,9 +63,11 @@ const actionsPart = {
         if (!ok) return;
       }
       await this.wrap(async () => {
-        const r = await getJson("/api/actions/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source_id: this.restore.source_id, target: this.restore.target, options: o, confirm: true }) });
-        this.actionText = "Restore complete:\n" + (r.command || []).join(" ");
-        this.showRestore = false;
+        const started = await this.startJob("restore", { source_id: this.restore.source_id, target: this.restore.target, options: o });
+        if (started) {
+          this.actionText = "Restore running - progress and live output in the job panel.";
+          this.showRestore = false;
+        }
       }, "Restoring (large restores can take a while)…");
     },
     async browseFolder() {
