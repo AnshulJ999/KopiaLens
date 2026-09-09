@@ -52,12 +52,12 @@ document.addEventListener("alpine:init", () => {
                        // numbers can never render in another repo's table
     mountSnapshot: "", mountPoint: "", restoreSource: "", restoreDest: "",
     dashboardMeta: "", busy: "", error: "", detail: null, batch: null, showBatch: false, snapSource: "*ALL*", _poll: null, _searchSeq: 0, _detailSeq: 0,
-    _dashSeq: 0, _snapSeq: 0, _treeSeq: 0, _batchSeq: 0, _batchCmdSeq: 0, _removePlanSeq: 0, _removeDetailSeq: 0,
+    _dashSeq: 0, _snapSeq: 0, _treeSeq: 0, _batchSeq: 0, _batchCmdSeq: 0, _removePlanSeq: 0, _removeDetailSeq: 0, _rfPlanSeq: 0,
     showRemove: false, removePlan: null, removeJobPoll: null, _removeBase: null,
     // Job runner (shared for every long kopia action): panel + follow state + header chip
     showJob: false, jobPanel: null, jobLines: [], jobEarly: 0, jobCursor: 0, jobFollow: true,
     jobMode: localStorage.getItem("kl-jobmode") || "clean", jobExpanded: false, runningJobs: [],
-    _jobPoll: null, _jobChipPoll: null, _jobOpenSeq: 0,
+    _jobPoll: null, _jobChipPoll: null, _jobOpenSeq: 0, _handledJobs: null, _reindexPoll: null,
     excludedDrives: [], excludedOk: true, excludedPath: "", excludedFilter: "excluded", excludedMeta: "", _excludedItems: [], _excludedSeq: 0, excludedDetail: null, showExcludedDetail: false,
     showSettings: false, settingsTab: "general", backend: "subprocess", repoPinned: false, reindexInterval: 1800, dashRefresh: 900,
     reclaimInterval: 10800, excludedTolerance: 0.05, esPath: "",

@@ -381,6 +381,60 @@ def test_the_job_routes_are_registered():
     assert {"/api/jobs/start", "/api/jobs/status", "/api/jobs/stop", "/api/jobs/list"} <= paths
 
 
+def test_a_dry_job_builds_the_summary_the_runbar_shows(monkeypatch, isolated):
+    monkeypatch.setattr(jobs, "kopia_job_stream", _fake_stream(
+        ["will remove file a.txt", "Fixed 2 snapshots, but snapshot manifests were not updated."]))
+    job = jobs.start_job("remove_files", "1", {"items": ["x"], "flag": "--object-id", "dry": True})
+    _wait_state(job, "done")
+    s = jobs.job_status(job["job_id"], after=0)
+    assert s["summary"]["entries"] == 1
+    assert s["summary"]["snapshots"] == 2
+    assert "manifests were not updated" in s["summary"]["final_line"]
+
+
+def test_shutdown_terminates_running_job_children(monkeypatch, isolated):
+    release = threading.Event()
+    proc = FakeProc(release)
+    monkeypatch.setattr(jobs, "kopia_job_stream", _fake_stream(["working"], release=release, proc=proc))
+    job = jobs.start_job("remove_files", "1", {"items": ["a"], "flag": "--object-id"})
+    _wait_running(job)
+    jobs.terminate_all()
+    assert proc.terminated
+    _wait_state(job, "stopped")
+
+
+# ---- the UI wiring's server half: request-shaped params resolve like the legacy endpoints ----
+
+def test_a_plan_form_start_resolves_like_remove_execute(monkeypatch, isolated):
+    from app.api import actions, jobs as api_jobs
+    monkeypatch.setattr(actions, "_remove_targets",
+                        lambda p: {"object_ids": ["o1"], "names": ["n1"], "sources": ["s1"],
+                                   "pairs": [], "files": []})
+    params = api_jobs._resolve_params("remove_files", "1",
+                                      {"form": "plan", "query": "x", "source": "s1", "dry": False})
+    assert params["items"] == ["o1"] and params["flag"] == "--object-id"
+    assert params["source"] == ["s1"] and params["dry"] is False
+
+
+def test_a_files_form_start_resolves_like_the_detail_panel(monkeypatch, isolated):
+    from app.api import actions, jobs as api_jobs
+    monkeypatch.setattr(actions, "_rf_resolve", lambda p: (["oid1"], ["name.txt"], ["srcA"]))
+    params = api_jobs._resolve_params("remove_files", "1",
+                                      {"form": "files", "source": "s", "full_path": "p", "by": "object-id"})
+    assert params == {"items": ["oid1"], "flag": "--object-id", "source": ["srcA"], "dry": False}
+    params = api_jobs._resolve_params("remove_files", "1",
+                                      {"form": "files", "source": "s", "full_path": "p", "by": "filename"})
+    assert params["items"] == ["name.txt"] and params["flag"] == "--filename"
+
+
+def test_start_refuses_an_empty_delete_and_a_bare_restore():
+    from app.api import jobs as api_jobs
+    with pytest.raises(jobs.JobRefused):
+        api_jobs._resolve_params("snapshot_delete", "1", {"snapshot_ids": []})
+    with pytest.raises(jobs.JobRefused):
+        api_jobs._resolve_params("restore", "1", {"source_id": "abc"})
+
+
 def test_the_nightly_waits_while_a_maintenance_job_runs(monkeypatch):
     from app import main as m
     started = []

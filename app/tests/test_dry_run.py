@@ -7,12 +7,16 @@ Invariants pinned here:
 - empty input refuses without spawning anything.
 """
 
+import subprocess
+
 import pytest
 
 from app.core.kopia import (
     TIMEOUT_RC,
     _parse_delete_dry,
+    _parse_delete_line,
     _parse_remove_dry,
+    _parse_remove_line,
     _run_dry_commands,
     remove_files_dry_run,
     snapshot_delete_dry_run,
@@ -66,11 +70,58 @@ def test_delete_dry_summary_parses_real_output():
 
 
 def test_run_dry_commands_reports_timeout_distinctly(monkeypatch):
-    import subprocess
-
     def fake_run(*_a, **_k):
         raise subprocess.TimeoutExpired(cmd="kopia", timeout=1)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     r = _run_dry_commands("1", [["kopia", "diff", "x"]], "remove-files", "--commit")
     assert r["returncode"] == TIMEOUT_RC
+
+
+def test_a_missing_kopia_fails_the_run_instead_of_reporting_success(monkeypatch):
+    """The reviewed trap: the log-write guard used to swallow the subprocess failure too, so a
+    missing kopia came back as rc 0 with empty output and the UI showed 'dry run checked'."""
+    def fake_run(*_a, **_k):
+        raise FileNotFoundError("kopia: not found")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    r = _run_dry_commands("1", [["kopia", "snapshot", "fix", "remove-files", "x"]],
+                          "remove-files", "--commit")
+    assert r["returncode"] != 0
+    assert "error" in r and "kopia" in r["error"].lower()
+
+
+def test_the_output_cap_does_not_stop_execution(monkeypatch):
+    """The second reviewed trap: the 256 KB cap used to break the COMMAND loop, so later
+    batches never ran while rc stayed 0 and the summary undercounted."""
+    calls = []
+
+    def fake_run(cmd, **_k):
+        calls.append(cmd)
+
+        class _R:
+            returncode = 0
+            stdout = "x" * (300 * 1024)  # one batch alone exceeds the cap
+            stderr = ""
+
+        return _R()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    r = _run_dry_commands("1", [["kopia", "a"], ["kopia", "b"]], "remove-files", "--commit",
+                          parse_line=_parse_remove_line)
+    assert len(calls) == 2          # both batches ran despite the cap
+    assert r["truncated"] is True   # the response trims, the run does not stop
+    assert r["returncode"] == 0
+
+
+def test_the_line_parsers_accumulate_across_batches():
+    acc: dict = {}
+    for text in (["will remove file a.txt", "will remove file b.txt"],
+                 ["Fixed 2 snapshots, but snapshot manifests were not updated."]):
+        for ln in text:
+            _parse_remove_line(ln, acc)
+    assert acc["entries"] == 2 and acc["snapshots"] == 2
+    acc = {}
+    _parse_delete_line("Would delete snapshot g1 of g:\\x (pass --delete to confirm)", acc)
+    _parse_delete_line("Would delete snapshot g2 of g:\\x (pass --delete to confirm)", acc)
+    assert acc["snapshots"] == 2 and "2 snapshot(s)" in acc["final_line"]

@@ -162,11 +162,11 @@ const snapshotsPart = {
       });
       if (!ok) return;
       await this.wrap(async () => {
-        const r = await getJson("/api/actions/snapshot-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_ids: p.ids, confirm: true }) });
-        this.showDelete = false; this.deletePlan = null; this.deleteConfirm = "";
-        this.actionText = `Deleted ${r.deleted} snapshot(s). Run 'kopia maintenance run --full' to reclaim the space.`;
-        await this.loadSnapshots(true);
-        this.loadDashboard(true);
+        const started = await this.startJob("snapshot_delete", { snapshot_ids: p.ids });
+        if (started) {
+          this.showDelete = false; this.deletePlan = null; this.deleteConfirm = "";
+          this.actionText = `Delete running (${p.count} snapshot(s)) - progress and live output in the job panel. Space is reclaimed on maintenance run --full.`;
+        }
       }, "Deleting snapshots…");
     },
 

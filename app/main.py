@@ -478,6 +478,7 @@ async def lifespan(_app: FastAPI):
     yield
     log.info("KopiaLens shutting down")
     _bg_stop.set()
+    jobrunner.terminate_all()    # a running action must not outlive the registry as an orphan
     nightly.terminate_running()  # a worker outlives us otherwise and keeps publishing
     nightly.wait_idle()          # let the pass thread finish before we close anything
     SERVERS.shutdown()

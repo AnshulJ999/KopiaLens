@@ -12,8 +12,10 @@
       </div>
       <div class="ml-auto flex items-center gap-2 text-xs shrink-0">
         <template x-for="j in runningJobs" :key="j.job_id">
-          <button @click="openJobPanel(j.job_id)" class="h-8 rounded border border-danger-bd px-3 text-danger flex items-center gap-1.5" :title="j.kind_label + ' - click to open'">
-            <span class="w-1.5 h-1.5 rounded-full bg-danger animate-pulse"></span>
+          <button @click="openJobPanel(j.job_id)" class="h-8 rounded border px-3 flex items-center gap-1.5"
+            :class="j.state === 'running' ? 'border-rose-300 dark:border-rose-800 text-rose-600 dark:text-rose-400' : 'border-danger bg-danger-bg text-danger'"
+            :title="(j.state === 'running' ? 'Running: ' : (j.state === 'failed' ? 'FAILED: ' : 'Finished with errors: ')) + j.kind_label + ' - click to open'">
+            <span class="w-1.5 h-1.5 rounded-full" :class="j.state === 'running' ? 'bg-rose-500 animate-pulse' : 'bg-danger'"></span>
             <span class="truncate max-w-[180px]" x-text="j.label"></span>
             <span x-text="j.total ? Math.round((j.done / j.total) * 100) + '%' : ''"></span>
           </button>

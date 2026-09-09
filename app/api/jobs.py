@@ -1,8 +1,11 @@
 """Job runner routes: start, follow (cursor-poll), stop, list.
 
 The header chip reads /jobs/list; the job panel polls /jobs/status with a line cursor so
-each poll only carries what is new. Legacy /actions/remove-execute + _REMOVE_JOBS stay
-untouched - the old remove panel keeps working; new callers point here.
+each poll only carries what is new. Destructive UI actions start their jobs HERE: the
+remove kinds accept the same request bodies the legacy endpoints take (``form`` selects
+"plan" = the chunked filter plan, "files" = the detail/batch file list) and resolution
+reuses the legacy helpers verbatim, so a job deletes exactly the set the old synchronous
+path would have. Legacy /actions/* endpoints stay - only the UI's call sites moved.
 """
 
 from __future__ import annotations
@@ -19,12 +22,52 @@ router = APIRouter(tags=["jobs"])
 class JobStartRequest(BaseModel):
     kind: str                       # remove_files | snapshot_delete | maintenance | restore
     repo: str = "1"
-    params: dict = {}               # kind-specific; see core.jobs._build_commands
+    params: dict = {}               # kind-specific; resolved below into core.jobs' shapes
     label: str | None = None        # overrides the default one-line description
 
 
 class JobStopRequest(BaseModel):
     job_id: str
+
+
+def _resolve_params(kind: str, repo: str, params: dict) -> dict:
+    """Turn a caller's request-shaped params into the runner's resolved items/flag/source.
+    Resolution mirrors the legacy endpoints exactly (same models + helpers), and runs in the
+    request thread exactly where /actions/remove-execute resolves today - no new semantics."""
+    from .actions import (RemoveFilesRequest, RemovePlanRequest, _remove_items,
+                          _remove_scope, _remove_targets, _rf_resolve)
+    if kind == "remove_files":
+        dry = bool(params.get("dry"))
+        form = params.get("form")
+        if form == "plan":
+            known = {k: v for k, v in params.items() if k not in ("form", "dry")}
+            rp = RemovePlanRequest(**{**known, "repo": repo})
+            t = _remove_targets(rp)
+            items, flag = _remove_items(t, rp.by)
+            if not items:
+                raise jobs.JobRefused("no matching files")
+            return {"items": items, "flag": flag, "dry": dry,
+                    "source": _remove_scope(rp.everywhere, t["sources"])}
+        known = {k: v for k, v in params.items() if k not in ("form", "dry")}
+        rf = RemoveFilesRequest(**{**known, "repo": repo})
+        oids, names, scope = _rf_resolve(rf)
+        if rf.by == "filename":
+            if not names:
+                raise jobs.JobRefused("no matching files")
+            return {"items": names, "flag": "--filename", "source": scope, "dry": dry}
+        if not oids:
+            raise jobs.JobRefused("no content objects found")
+        return {"items": oids, "flag": "--object-id", "source": scope, "dry": dry}
+    if kind == "snapshot_delete":
+        ids = params.get("snapshot_ids") or []
+        if not ids:
+            raise jobs.JobRefused("snapshot_ids is empty")
+        return {"snapshot_ids": ids, "dry": bool(params.get("dry"))}
+    if kind == "restore":
+        if not params.get("source_id") or not params.get("target"):
+            raise jobs.JobRefused("restore needs source_id and target")
+        return params
+    return params  # maintenance and future kinds: the runner validates its own params
 
 
 def _on_done(job: dict) -> None:
@@ -44,8 +87,11 @@ def _on_done(job: dict) -> None:
 
 @router.post("/jobs/start")
 def start(payload: JobStartRequest) -> dict:
+    if payload.kind not in jobs.KINDS:
+        raise HTTPException(status_code=409, detail=f"unknown job kind: {payload.kind}")
     try:
-        job = jobs.start_job(payload.kind, payload.repo, payload.params, payload.label,
+        params = _resolve_params(payload.kind, payload.repo, payload.params)
+        job = jobs.start_job(payload.kind, payload.repo, params, payload.label,
                              on_done=_on_done)
     except jobs.JobRefused as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

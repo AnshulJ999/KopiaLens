@@ -124,23 +124,29 @@ const detailPart = {
     rfSetBy(by) {
       if (!this.detail) return;
       this.detail.rfBy = by;
+      this.detail.removeFiles = null;  // the old plan describes the OLD mode - execute must never reuse it
       this.klDryClear(this.detail.rfDry);
       this.rfEnsurePlan();
     },
     rfToggleEverywhere() {
       if (!this.detail) return;
       this.detail.rfEverywhere = !this.detail.rfEverywhere;
+      this.detail.removeFiles = null;  // same staleness: scope changed, plan is void
       this.klDryClear(this.detail.rfDry);
       this.rfEnsurePlan();
     },
     async rfEnsurePlan() {  // counts + chunked command text for the current params (index-only, fast)
       if (!this.detail) return null;
+      const seq = ++this._rfPlanSeq;  // two rapid switches: the slower stale response must not win
       try {
         const r = await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.detail.source, full_path: this.detail.title, by: this.detail.rfBy || "object-id", everywhere: !!this.detail.rfEverywhere, confirm: false }) });
-        if (!this.detail) return null;
+        if (seq !== this._rfPlanSeq || !this.detail) return null;
         this.detail.removeFiles = { by: this.detail.rfBy || "object-id", count: r.count, everywhere: r.everywhere, dry: r.dry_run, commit: r.commit, batches: r.batches };
         return this.detail.removeFiles;
-      } catch (err) { this.error = err.message || String(err); return null; }
+      } catch (err) {
+        if (seq === this._rfPlanSeq) this.error = err.message || String(err);
+        return null;
+      }
     },
     rfDry() {  // RUN remove-files without --commit; kopia reports what it would rewrite
       if (!this.detail) return;
@@ -170,9 +176,11 @@ const detailPart = {
       });
       if (!ok) return;
       await this.wrap(async () => {
-        await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.detail.source, full_path: this.detail.title, by: plan.by, everywhere: !!this.detail.rfEverywhere, confirm: true }) });
-        this.actionText = "Removed from snapshots. Run 'kopia maintenance run --full' to reclaim the space.";
-        this.detail = null;
+        const started = await this.startJob("remove_files", { form: "files", source: this.detail.source, full_path: this.detail.title, by: plan.by, everywhere: !!this.detail.rfEverywhere });
+        if (started) {
+          this.actionText = "Remove running - progress and live output in the job panel. Space frees on the next maintenance run.";
+          this.detail = null;
+        }
       }, "Removing file from all snapshots…");
     },
 
@@ -211,9 +219,11 @@ const detailPart = {
     },
     async _deleteSnapsFromPanel(ids) {
       await this.wrap(async () => {
-        const r = await getJson("/api/actions/snapshot-delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_ids: ids, confirm: true }) });
-        this.actionText = `Deleted ${r.deleted} snapshot(s). Run 'kopia maintenance run --full' to reclaim the space.`;
-        this.detail = null;
+        const started = await this.startJob("snapshot_delete", { snapshot_ids: ids });
+        if (started) {
+          this.actionText = "Delete running - progress and live output in the job panel. Space is reclaimed on maintenance run --full.";
+          this.detail = null;
+        }
       }, "Deleting snapshots…");
     },
 
@@ -318,14 +328,13 @@ const detailPart = {
     },
     async executeBatchRemove() {
       if (!this.batch) return;
-      if (this.batch.cmd && this.batch.cmd.batches > 1) { window.alert(`Too many for one command (${this.batch.cmd.batches} batches). Use Copy or Save .bat to run it in chunks.`); return; }
       const ok = await this.klConfirm({
         title: `Remove ${this.batch.count} file(s) from all snapshots?`,
         facts: [
           ["What", this.batch.by === "object-id" ? "Every version of each selected file, matched by exact content" : "Every version of each selected file, matched by filename"],
           ["How many", this.batch.cmd ? `${this.batch.cmd.count} ${this.batch.by === "object-id" ? "content object(s)" : "name(s)"} · ${this.batch.cmd.batches} batch(es)` : `${this.batch.count} file(s)`],
           ["Where", this.batch.everywhere ? "Every source in the repo" : "The sources holding this content"],
-          ["How", "kopia snapshot fix remove-files"],
+          ["How", "Chunked kopia snapshot fix remove-files --commit, run in the job panel"],
         ],
         callout: "Snapshots keep every other file. Space frees on the next maintenance run, not now.",
         note: this.batchDryChecked() ? "" : "No dry run has been done for this selection.",
@@ -334,10 +343,11 @@ const detailPart = {
       if (!ok) return;
       const b = this.batch;
       await this.wrap(async () => {
-        await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, by: b.by, everywhere: b.everywhere, files: b.files, confirm: true }) });
-        this.actionText = "Removed from snapshots. Run 'kopia maintenance run --full' to reclaim.";
-        this.showBatch = false; this.batch = null;
-        this.loadSearch(true);
+        const started = await this.startJob("remove_files", { form: "files", by: b.by, everywhere: b.everywhere, files: b.files });
+        if (started) {
+          this.actionText = "Remove running - progress and live output in the job panel. Space frees on the next maintenance run.";
+          this.showBatch = false; this.batch = null;
+        }
       }, "Removing files…");
     },
 
@@ -459,21 +469,13 @@ const detailPart = {
         command: p.commit, confirmLabel: "Delete now", danger: true,
       });
       if (!ok) return;
-      const r = await getJson("/api/actions/remove-execute", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
-      if (!r || !this.removePlan) return;
-      this.removePlan.job = { job_id: r.job_id, total: this.removePlan.batches, done: 0, running: true, errors: 0, log: r.log };
-      this._pollRemove(r.job_id);
-    },
-    _pollRemove(jobId) {
-      if (this.removeJobPoll) clearInterval(this.removeJobPoll);
-      this.removeJobPoll = setInterval(async () => {
-        const s = await getJson(`/api/actions/remove-status?job_id=${encodeURIComponent(jobId)}`).catch(() => null);
-        if (s && this.removePlan) this.removePlan.job = { ...this.removePlan.job, ...s };
-        if (s && !s.running) {
-          clearInterval(this.removeJobPoll); this.removeJobPoll = null;
-          this.actionText = `Remove finished: ${s.done}/${s.total} batches, ${s.errors || 0} error(s).\nRun 'kopia maintenance run --full' to reclaim the space.\nLog: ${s.log}`;
+      await this.wrap(async () => {
+        const started = await this.startJob("remove_files", { ...this._removeBody(), form: "plan" }, this._removeLabel);
+        if (started) {
+          this.actionText = "Delete running - progress and live output in the job panel. Space frees on the next maintenance run.";
+          this.closeRemove();
         }
-      }, 1500);
+      }, "Starting the chunked delete…");
     },
     closeRemove() { if (this.removeJobPoll) { clearInterval(this.removeJobPoll); this.removeJobPoll = null; } this.showRemove = false; this.removePlan = null; },
 };
