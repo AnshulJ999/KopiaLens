@@ -1,14 +1,6 @@
-<!-- Appearance: theme picker + density. Included from settings.html; own section so it
+<!-- Appearance: theme, density, panel layout. Included from settings.html; own section so it
      composes independently of the other settings sections. -->
 <section x-show="settingsTab==='appearance'" class="space-y-4">
-  <div>
-    <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Detail panel layout</span>
-      <select x-model="panelLayout" @change="klSet({ panel_layout: panelLayout })" class="fld border border-bd bg-surface2">
-        <option value="classic">Classic - everything on one scroll</option>
-        <option value="tabbed">Tabbed - grouped, summary always visible</option>
-      </select></div>
-    <p class="text-[11px] text-muted mt-1">Applies to the file and folder detail panels. Classic shows every section in order; Tabbed keeps the summary cards on screen and groups the rest under Overview / Storage / Versions / Actions.</p>
-  </div>
   <div>
     <div class="text-sm font-medium mb-2">Theme</div>
     <div class="flex flex-wrap gap-1.5">
@@ -35,5 +27,13 @@
       </template>
     </div>
     <p class="text-[11px] text-muted mt-1">Row height and text size. Independent of theme.</p>
+  </div>
+  <div>
+    <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Detail panel layout</span>
+      <select x-model="panelLayout" @change="klSet({ panel_layout: panelLayout })" class="fld border border-bd bg-surface2">
+        <option value="classic">Classic - everything on one scroll</option>
+        <option value="tabbed">Tabbed - grouped, summary always visible</option>
+      </select></div>
+    <p class="text-[11px] text-muted mt-1">Applies to the file and folder detail panels. Classic shows every section in order; Tabbed keeps the summary cards on screen and groups the rest under Overview / Storage / Versions / Actions.</p>
   </div>
 </section>
