@@ -1,0 +1,251 @@
+      <section x-show="active==='policies'" class="h-full flex flex-col gap-3 min-h-0">
+        <!-- toolbar -->
+        <div class="flex items-center gap-2 shrink-0 flex-wrap">
+          <span class="font-medium">Policies</span>
+          <span class="text-[11px] text-muted" x-show="polData"
+                x-text="((polData && polData.policies ? polData.policies.length : 0) + ' source policies' + ((polData && polData.global) ? ' + Global' : ''))"></span>
+          <span class="grow"></span>
+          <input x-model="polFilter" class="fld w-52 border border-bd bg-surface text-xs" placeholder="Filter sources…">
+          <button @click="loadPolicies(true)" class="h-7 rounded border border-bd px-2 text-xs">⟳ Refresh</button>
+          <button @click="polOpenBackups()" class="h-7 rounded border border-bd px-2 text-xs">Backups…</button>
+          <button x-show="polStageCount()" @click="polDiscard()" class="h-7 rounded border border-bd px-2 text-xs">Discard</button>
+          <button x-show="polStageCount()" @click="polOpenDiff()" class="h-7 rounded bg-fg px-3 text-xs text-surface font-medium"
+                  x-text="'Review ' + polStageCount() + ' change(s)…'"></button>
+        </div>
+
+        <div class="flex-1 min-h-0 flex gap-3">
+          <!-- left rail -->
+          <div class="w-72 shrink-0 rounded border border-bd bg-surface overflow-auto py-1">
+            <template x-for="t in polRail()" :key="t.isGlobal ? 'global' : t.target">
+              <button @click="polSelect(t.target)"
+                      class="w-full text-left px-2 py-1.5 flex items-center gap-1.5 text-xs border-b border-bd-soft last:border-b-0"
+                      :class="polSel === t.target ? 'bg-sel' : 'hover:bg-head'">
+                <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="polHasStaged(t.target) ? 'bg-warn' : 'bg-transparent'"></span>
+                <span class="truncate flex-1" :style="'padding-left:' + (t.depth * 12) + 'px'"
+                      :class="t.isGlobal ? 'font-medium' : ''"
+                      :title="t.isGlobal ? 'The repo-wide policy every source inherits from' : t.target">
+                  <span x-text="polRailLabel(t)"></span>
+                </span>
+                <span class="pill shrink-0" x-show="t.rules" x-text="(t.rules ? t.rules.length : 0) + ' rules'"></span>
+              </button>
+            </template>
+            <div x-show="!polData" class="p-3 text-xs text-muted">Loading…</div>
+            <div x-show="polData && !polRail().length" class="p-3 text-xs text-muted">No policies match.</div>
+          </div>
+
+          <!-- right pane -->
+          <div class="flex-1 min-w-0 overflow-auto">
+            <template x-if="polSelected()">
+              <div class="space-y-4">
+                <!-- header -->
+                <div class="rounded border border-bd bg-surface p-3">
+                  <div class="flex items-start gap-2">
+                    <div class="min-w-0">
+                      <div class="font-medium break-all" x-text="polSelected().isGlobal ? 'Global policy' : shortSource(polSelected().target)"></div>
+                      <div class="kl-note break-all" x-show="!polSelected().isGlobal" x-text="polSelected().target"></div>
+                    </div>
+                    <span class="ml-auto shrink-0 flex gap-1.5">
+                      <span class="pill warn" x-show="polNoParentIgnore()">ignores parent rules</span>
+                      <span class="pill" x-show="polSelected().summary && polSelected().summary.compression"
+                            x-text="'compress: ' + polSelected().summary.compression"></span>
+                    </span>
+                  </div>
+                  <div class="kl-note mt-1" x-show="polSelected().summary"
+                       x-text="(polSelected().summary ? polSelected().summary.schedule : '') + ' · keeps ' + (polSelected().summary ? polSelected().summary.retention : '')"></div>
+                </div>
+
+                <!-- Excluded files (first, per the policy-surfaces design) -->
+                <div class="rounded border border-bd bg-surface p-3">
+                  <div class="mb-2 flex items-center gap-2">
+                    <span class="font-medium text-sm">Excluded files</span>
+                    <span class="text-[11px] text-muted" x-text="polRuleRows().length + ' own rule(s)'"></span>
+                    <span class="text-[11px] text-ok" x-show="polKeepout().priced"
+                          x-text="'keeping out ' + polKeepout().files.toLocaleString() + ' files · ' + fmtB(polKeepout().bytes)"></span>
+                    <span class="grow"></span>
+                    <button x-show="polKeepout().priced < polKeepout().total"
+                            @click="polPriceRow()" class="h-6 rounded border border-bd px-2 text-[10px]">Price rules</button>
+                  </div>
+                  <div class="kl-note mb-2" x-text="polTargetNote()"></div>
+
+                  <!-- own rules -->
+                  <div class="kl-list" style="max-height:280px" x-show="polRuleRows().length">
+                    <template x-for="r in polRuleRows()" :key="r.state + '|' + r.pattern">
+                      <div class="li">
+                        <span class="font-mono break-all grow" :class="r.state === 'staged-remove' ? 'line-through opacity-50' : ''" x-text="r.pattern"></span>
+                        <span class="num shrink-0" style="color:var(--muted);font-size:10.5px"
+                              x-text="(r.files != null ? r.files.toLocaleString() + ' files' : '—') + ' · ' + (r.bytes != null ? fmtB(r.bytes) : 'unpriced')"></span>
+                        <span class="pill warn shrink-0" x-show="r.state === 'staged-add'">staged add</span>
+                        <button x-show="r.state === 'own'" class="kl-btn quiet shrink-0" style="height:22px" @click="polStageRemove(r.pattern)">Remove</button>
+                        <button x-show="r.state !== 'own'" class="kl-btn quiet shrink-0" style="height:22px"
+                                @click="r.state === 'staged-add' ? polUndo(polSelected().target, 'add', r.pattern) : polUndo(polSelected().target, 'remove', r.pattern)">Undo</button>
+                      </div>
+                    </template>
+                  </div>
+                  <div class="kl-note" x-show="!polRuleRows().length">No exclusion rules defined here.</div>
+
+                  <!-- staged remove of the whole policy -->
+                  <div class="kl-callout mt-2" x-show="!polSelected().isGlobal && polHasStaged(polSelected().target) && polStaged[polSelected().target].removePolicy">
+                    <span class="flex items-center gap-2">
+                      <span>This whole policy is staged for removal.</span>
+                      <span class="grow"></span>
+                      <button class="kl-btn quiet" style="height:22px" @click="polUndo(polSelected().target, 'policy')">Undo</button>
+                    </span>
+                  </div>
+
+                  <!-- add a rule -->
+                  <div class="mt-2 flex items-center gap-2">
+                    <input x-model="polAddText" @input="polAddInput()" @keydown.enter="polStageAdd()"
+                           class="fld flex-1 border border-bd bg-surface2 font-mono text-xs" placeholder="Add a pattern (kopia ignore syntax)…">
+                    <button class="kl-btn" @click="polStageAdd()" :disabled="!polAddText.trim()">Stage add</button>
+                  </div>
+                  <div class="kl-note mt-1" x-show="polAddPreviewText()" x-text="polAddPreviewText()"></div>
+                  <div class="kl-note font-mono" x-show="polAddExamplesText()" x-text="polAddExamplesText()"></div>
+                  <div class="kl-note mt-1" x-show="polAddPrice && polAddPrice.files === 0">Matches nothing in the current index - dead rule?</div>
+
+                  <!-- inherited rules -->
+                  <template x-if="polInheritedRules().length">
+                    <div class="mt-3">
+                      <div class="text-xs font-medium mb-1">Inherited rules <span class="count" style="color:var(--muted);font-weight:400" x-text="polInheritedRules().length + ', read-only'"></span></div>
+                      <div class="kl-list" style="max-height:160px">
+                        <template x-for="(r, i) in polInheritedRules()" :key="i">
+                          <div class="li opacity-70">
+                            <span class="font-mono break-all grow" x-text="r.pattern"></span>
+                            <span class="kl-note shrink-0">from <span class="font-mono" x-text="r.owner === 'global' ? 'Global' : sourcePath(r.owner)"></span></span>
+                            <button class="kl-btn quiet shrink-0" style="height:22px" @click="polSelect(r.owner)">Jump</button>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+
+                  <div class="kl-note mt-2" x-show="polAlsoLine()" x-text="polAlsoLine()"></div>
+                </div>
+
+                <!-- other sections, read-only -->
+                <div class="rounded border border-bd bg-surface p-3">
+                  <div class="font-medium text-sm mb-2">Policy details</div>
+                  <div class="kl-facts">
+                    <div class="r"><span class="k">Retention</span><span x-text="polSelected().summary ? polSelected().summary.retention : '—'"></span></div>
+                    <div class="r"><span class="k">Schedule</span><span x-text="polSelected().summary ? polSelected().summary.schedule : '—'"></span></div>
+                    <div class="r"><span class="k">Compression</span><span x-text="polSelected().summary ? polSelected().summary.compression : '—'"></span></div>
+                    <div class="r" x-show="polSelected().summary && polSelected().summary.ignore_identical"><span class="k">Snapshots</span><span>identical snapshots are skipped</span></div>
+                    <div class="r" x-show="polSelected().raw && polSelected().raw.metadataCompression"><span class="k">Metadata</span><span x-text="'compressed with ' + ((polSelected().raw.metadataCompression || {}).compressorName || 'none')"></span></div>
+                  </div>
+                </div>
+
+                <!-- removal + raw -->
+                <div class="rounded border border-bd bg-surface p-3" x-show="!polSelected().isGlobal">
+                  <div class="flex items-center gap-2">
+                    <span class="kl-note grow">Removal deletes this policy; the source falls back to its parent's.</span>
+                    <button class="kl-btn danger" @click="polStageRemovePolicy()"
+                            x-show="!(polStaged[polSelected().target] && polStaged[polSelected().target].removePolicy)">Remove policy…</button>
+                  </div>
+                </div>
+                <details class="rounded border border-bd bg-surface p-3">
+                  <summary class="text-sm font-medium cursor-pointer select-none">Raw kopia policy</summary>
+                  <pre class="text-[11px] whitespace-pre-wrap overflow-auto max-h-72 bg-surface2 rounded p-2 mt-2" x-text="JSON.stringify(polSelected().raw, null, 2)"></pre>
+                </details>
+              </div>
+            </template>
+            <div x-show="polData && !polSelected()" class="p-4 text-xs text-muted">Select a policy on the left.</div>
+          </div>
+        </div>
+      </section>
+
+    <!-- Policy diff: reviews staged edits before save, and a backup before restore.
+         One component, two jobs - polDiffMode picks the footer. -->
+    <div x-show="showPolDiff" @click.self="showPolDiff=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+      <div class="w-[56rem] max-w-full max-h-[88vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
+        <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd flex items-center gap-2">
+          <div class="font-medium" x-text="polDiffMode === 'restore' ? 'Restore review' : 'Review policy changes'"></div>
+          <span class="text-xs text-warn" x-show="polDiffBusy">working…</span>
+          <button @click="showPolDiff=false" class="ml-auto kl-btn quiet">&times;</button>
+        </div>
+        <div class="flex-1 min-h-0 overflow-auto p-4 space-y-3">
+          <div class="kl-note" x-text="polDiffMode === 'restore'
+            ? 'Comparing the backup against the current policies. Only differences are shown.'
+            : 'Only the listed changes are written. Every other field and rule stays as it is.'"></div>
+          <div class="kl-callout" x-show="polDiff && polDiff.error" x-text="polDiff ? polDiff.error : ''"></div>
+          <template x-if="polDiff">
+            <div class="space-y-3">
+              <template x-for="g in (polDiff.groups || [])" :key="g.target">
+                <div class="rounded border border-bd bg-surface2 p-3">
+                  <div class="text-xs font-medium break-all mb-1.5" x-text="g.target === 'global' ? 'Global policy' : shortSource(g.target)"></div>
+                  <div class="space-y-1">
+                    <template x-for="(it, i) in (g.items || [])" :key="i">
+                      <div class="flex items-center gap-2 text-[12px] rounded border border-bd-soft bg-surface px-2 py-1.5">
+                        <span class="pill shrink-0" :class="it.kind === 'rule_add' ? 'ok' : (it.kind === 'policy_remove' ? 'bad' : 'warn')"
+                              x-text="it.kind === 'rule_add' ? '+ rule' : (it.kind === 'rule_remove' ? '- rule' : 'policy')"></span>
+                        <span class="font-mono break-all grow" x-text="it.pattern || it.label || ''"></span>
+                        <span class="shrink-0" style="color:var(--muted);font-size:10.5px"
+                              x-show="polRangeText(it)" x-text="polRangeText(it)"></span>
+                        <span class="num shrink-0" style="color:var(--muted);font-size:10.5px"
+                              x-show="polImpactText(it)" x-text="polImpactText(it)"></span>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+              <div x-show="!(polDiff.groups || []).length && !polDiff.error" class="text-xs text-muted">No differences found.</div>
+            </div>
+          </template>
+        </div>
+        <div class="kl-footer shrink-0">
+          <span class="kl-note" x-show="polDiffMode === 'save'">A backup is taken before the write; it refuses to run if the backup fails.</span>
+          <span class="kl-note" x-show="polDiffMode === 'restore'">KopiaLens restores only backups it made itself.</span>
+          <span class="spacer"></span>
+          <button class="kl-btn" @click="showPolDiff=false">Cancel</button>
+          <button x-show="polDiffMode === 'save'" class="kl-btn primary" @click="polSave()" :disabled="polDiffBusy || !polDiff">Save changes</button>
+          <template x-if="polDiffMode === 'restore'">
+            <span class="flex gap-2">
+              <button class="kl-btn primary" @click="polRestoreExecute(false)" :disabled="polDiffBusy || !polDiff">Restore (merge)</button>
+              <button class="kl-btn danger" @click="polRestoreExecute(true)" :disabled="polDiffBusy || !polDiff">Mirror-restore</button>
+            </span>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <!-- Policy backups: the list data/policy-backups holds for this repo. -->
+    <div x-show="showPolBackups" @click.self="showPolBackups=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+      <div class="w-[48rem] max-w-full max-h-[85vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
+        <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd flex items-center gap-2">
+          <div class="font-medium">Policy backups</div>
+          <span class="kl-note">taken before every write, nightly when changed</span>
+          <button @click="showPolBackups=false" class="ml-auto kl-btn quiet">&times;</button>
+        </div>
+        <div class="flex-1 min-h-0 overflow-auto p-4">
+          <div x-show="!polBackups" class="text-xs text-muted">Loading…</div>
+          <template x-if="polBackups">
+            <div class="space-y-2">
+              <div class="kl-callout" x-show="polBackups.error" x-text="polBackups.error"></div>
+              <div class="overflow-auto max-h-[55vh] rounded border border-bd-soft">
+                <table class="w-full text-[11px]">
+                  <thead class="bg-surface2 text-left text-muted"><tr><th class="p-1.5">When</th><th class="p-1.5">Why</th><th class="p-1.5">Size</th><th class="p-1.5">File</th><th class="p-1.5"></th></tr></thead>
+                  <tbody>
+                    <template x-for="b in (polBackups.backups || [])" :key="b.file">
+                      <tr class="border-t border-bd-soft">
+                        <td class="p-1.5 whitespace-nowrap" x-text="b.ts ? new Date(b.ts * 1000).toLocaleString() : ''"></td>
+                        <td class="p-1.5" x-text="b.reason || ''"></td>
+                        <td class="p-1.5 whitespace-nowrap" x-text="fmtB(b.size || 0)"></td>
+                        <td class="p-1.5 font-mono break-all max-w-[20rem]" x-text="b.file"></td>
+                        <td class="p-1.5 whitespace-nowrap">
+                          <button class="kl-btn quiet" style="height:22px" @click="polRestoreDiff(b.file)">Review restore…</button>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+                <div x-show="!(polBackups.backups || []).length" class="p-3 text-xs text-muted">No backups yet - one is written before the first policy change is saved.</div>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div class="kl-footer shrink-0">
+          <span class="kl-note">Backups live in data/policy-backups and travel with the install.</span>
+          <span class="spacer"></span>
+          <button class="kl-btn" @click="polBackupNow()">Back up now</button>
+          <button class="kl-btn" @click="showPolBackups=false">Close</button>
+        </div>
+      </div>
+    </div>

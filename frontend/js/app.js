@@ -13,7 +13,7 @@ document.addEventListener("alpine:init", () => {
       { id: "tree", label: "Tree" }, { id: "search", label: "Search" },
       { id: "churn", label: "Churn" }, { id: "simulate", label: "Simulate" },
       { id: "stats", label: "Stats" }, { id: "excluded", label: "Excluded" },
-      { id: "actions", label: "Actions" },
+      { id: "policies", label: "Policies" }, { id: "actions", label: "Actions" },
     ],
     active: "dashboard",
     currentTabs() { return this.repoKind === "backblaze" ? this.bzTabs : this.tabs; },
@@ -71,6 +71,15 @@ document.addEventListener("alpine:init", () => {
     // detail-panel layout ("classic" | "tabbed"), persisted server-side, default Classic.
     panelLayout: "classic",
     confirmBox: null,  // the shared confirm dialog; truthy while it is open
+    // Policies tab: one fetch per repo holds every policy; edits stage in polStaged and
+    // reach kopia only through Review + save (a policy_write job). polAddPrices / polRowPrices
+    // cache per-pattern "keeping out" pricing so rows render without re-fetching.
+    polData: null, polSel: "global", polFilter: "", polStaged: {}, polAddText: "", polAddPrice: null,
+    polAddPrices: {}, polRowPrices: {}, _polAddTimer: null, _polSeq: 0, _polRowPriceSeq: 0, _polAddPriceSeq: 0,
+    showPolDiff: false, polDiff: null, polDiffBusy: false, polDiffMode: "save", polRestoreFile: "",
+    showPolBackups: false, polBackups: null, _polBackupSeq: 0,
+    // exclusion dialog: priced-before-commit pattern adder over the file/folder panels.
+    exDialog: null, showExclude: false, _exPriceSeq: 0, _exCustomTimer: null, _exPriceTimer: null,
 
     fmtB(v) { return fmtBytes(v); },
     fmtPhys(v) { return fmtPhys(v); },
@@ -205,6 +214,7 @@ document.addEventListener("alpine:init", () => {
     async repoChanged() {
       this.selectedSnapshot = ""; this.snapshots = [];
       this.statsData = null; this.blobStats = "";  // stats are per-repo; force reload
+      this.polData = null; this.polBackups = null; this.polDiscard();  // policies are per-repo too
       this.repoKind = (this.repos.find((r) => r.id === this.repo) || {}).kind || "kopia";
       if (this.repoPinned) {  // pinned tab: keep the choice in the URL, don't touch shared last_repo
         const u = new URL(location.href); u.searchParams.set("repo", this.repo); history.replaceState(null, "", u);
@@ -244,6 +254,7 @@ document.addEventListener("alpine:init", () => {
       if (this.active === "stats") return this.statsData ? null : this.loadStats();
       if (this.active === "actions") return this.loadMounts();
       if (this.active === "excluded") return this.loadExcluded();
+      if (this.active === "policies") return this.loadPolicies();
     },
 
     headerSearch() {  // top search box (Option B): drives BZ search when a Backblaze repo is active
@@ -262,6 +273,7 @@ document.addEventListener("alpine:init", () => {
         if (this.active === "churn") return this.loadChurn(true);
         if (this.active === "stats") return this.loadStats(true);
         if (this.active === "actions") return this.loadMounts();
+        if (this.active === "policies") return this.loadPolicies(true);
       }, "Refreshing...");
     },
 
@@ -331,13 +343,13 @@ document.addEventListener("alpine:init", () => {
     csv(id, name) { downloadTable(id, name); },
     };
     // Duplicate-key guard: two parts declaring the same key would compose silently last-wins.
-    const parts = [["core", core], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["jobsPart", jobsPart], ["settingsPart", settingsPart], ["themePart", themePart]];
+    const parts = [["core", core], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["jobsPart", jobsPart], ["settingsPart", settingsPart], ["themePart", themePart], ["policiesPart", policiesPart]];
     const seen = new Map();
     for (const [owner, part] of parts)
       for (const k of Object.keys(part)) {
         if (seen.has(k)) console.error(`kopiaLens: duplicate key "${k}" declared in both ${seen.get(k)} and ${owner}`);
         else seen.set(k, owner);
       }
-    return Object.assign(core, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, jobsPart, settingsPart, themePart);
+    return Object.assign(core, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, jobsPart, settingsPart, themePart, policiesPart);
   });
 });
