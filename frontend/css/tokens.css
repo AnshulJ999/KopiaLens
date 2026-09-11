@@ -289,7 +289,8 @@
   --term-dim: #6f6f6f;
 }
 
-/* System follows the OS between the two defaults. */
+/* System: the paint before JS runs. theme.js resolves "system" to the user's remembered
+   light or dark theme immediately on load, so these values only cover first paint. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]),
   :root[data-theme="system"] {

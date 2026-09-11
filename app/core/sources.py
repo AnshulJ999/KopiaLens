@@ -27,6 +27,18 @@ _LOCK = threading.Lock()
 _REFRESHING: set[str] = set()
 _LAST_ERROR: dict[str, str] = {}
 _TTL = 45.0  # serve cache up to this age; past it, serve stale + refresh in background
+_PINNED = False  # worker-run pin: the first listing is held for the process lifetime
+
+
+def pin_for_run() -> None:
+    """Hold the first listing for the life of the process (the nightly worker only).
+
+    The worker's stages are minutes apart, so the 45s TTL expired between every stage and
+    ``kopia snapshot list`` ran once per stage - 8x per nightly for the same data. The worker
+    process exits when the run ends, so a process-lifetime cache is exactly one run.
+    ``force=True`` still rebuilds."""
+    global _PINNED
+    _PINNED = True
 
 
 class ListingFailed(RuntimeError):
@@ -133,7 +145,7 @@ def _ensure(repo: str, force: bool = False) -> dict:
     now = time.time()
     with _LOCK:
         entry = _CACHE.get(repo)
-        fresh = bool(entry) and (now - entry["built"] < _TTL)
+        fresh = bool(entry) and (_PINNED or now - entry["built"] < _TTL)
     if entry is None:
         return _build_now(repo)  # nothing to fall back on: a failure here has to surface
     if force:

@@ -820,7 +820,9 @@ def _parse_remove_line(line: str, acc: dict) -> dict:
             acc["final_line"] = ln.strip()
         m = re.search(r"Fixed (\d+) snapshots", ln)
         if m:
-            acc["snapshots"] = int(m.group(1))
+            # kopia prints one "Fixed N snapshots" line per batch; a later batch's 0 used to
+            # overwrite the count and read the whole run as 0.
+            acc["snapshots"] = acc.get("snapshots", 0) + int(m.group(1))
     return acc
 
 

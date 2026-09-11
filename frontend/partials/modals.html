@@ -97,7 +97,7 @@
             <button class="kl-btn" @click="batchDry()" :disabled="batch.dry.running">
               <span x-text="batch.dry.done ? 'Dry run again' : 'Dry run'"></span>
             </button>
-            <button class="kl-btn danger" x-show="batch.cmd && batch.cmd.batches <= 1" @click="executeBatchRemove()" :disabled="batch.dry.running">
+            <button class="kl-btn danger" x-show="batch.cmd" @click="executeBatchRemove()" :disabled="batch.dry.running">
               Remove <span x-text="batch.count"></span> file(s)
             </button>
             <span x-show="batchDryChecked()" class="pill ok">dry run checked</span>
@@ -107,7 +107,7 @@
             <button class="kl-btn quiet" x-show="batch.cmd" @click="batch.showCmd = !batch.showCmd" x-text="batch.showCmd ? 'Hide command' : 'Show command'"></button>
           </div>
           <div class="kl-note mt-1" x-show="batch.cmd && batch.cmd.batches > 1" style="color:var(--warn)">
-            Too many for one command (<span x-text="batch.cmd && batch.cmd.batches"></span> batches) - use Copy or Save .bat to run it in chunks.
+            Runs as <span x-text="batch.cmd && batch.cmd.batches"></span> batch(es) through the job panel. Copy and Save .bat also work.
           </div>
           <template x-if="batch.showCmd && batch.cmd">
             <div class="kl-term mt-2" style="max-height:96px"><div class="break-all" x-text="batch.cmd.commit"></div></div>

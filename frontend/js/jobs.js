@@ -15,7 +15,7 @@ const jobsPart = {
       const seq = ++this._jobOpenSeq;
       const s = await getJson(`/api/jobs/status?job_id=${encodeURIComponent(jobId)}&after=0`).catch((e) => { this.error = e.message; return null; });
       if (!s || seq !== this._jobOpenSeq) return;
-      this._markJobSeen(jobId);  // opening the panel acknowledges a finished failure
+      if (s.state !== "running") this._markJobSeen(jobId);  // opening the panel acknowledges a finished job
       this.jobEarly = 0;
       this.jobLines = [];
       this.jobCursor = 0;
@@ -51,6 +51,7 @@ const jobsPart = {
 
     _jobApply(s) {
       if (!this.jobPanel) return;
+      const wasRunning = this.jobPanel.state === "running";
       Object.assign(this.jobPanel, { state: s.state, rc: s.rc, error: s.error, total: s.total,
         done: s.done, errors: s.errors, line_count: s.line_count, elapsed: s.elapsed, skipped: s.skipped || 0 });
       if (s.lines && s.lines.length) {
@@ -62,6 +63,7 @@ const jobsPart = {
         this.jobCursor = s.cursor;
         if (this.jobFollow) this.$nextTick(() => this._jobScrollBottom());
       }
+      if (wasRunning && s.state !== "running") this._markJobSeen(s.job_id);  // the user watched it finish
     },
 
     jobView() {  // Clean collapses per-file spam; the render window is the tail so 100k-line runs stay cheap

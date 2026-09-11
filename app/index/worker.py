@@ -253,6 +253,8 @@ def run(repo: str, full: bool = False) -> dict:
 
 def main(argv: list) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
+    from ..core.sources import pin_for_run
+    pin_for_run()  # one snapshot listing per run; the stages are minutes apart, the TTL is 45s
     args = [a for a in argv if not a.startswith("--")]
     if not args:
         print(json.dumps({"ok": False, "reason": "usage: worker <repo> [--full]"}))

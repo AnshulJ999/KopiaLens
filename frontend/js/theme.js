@@ -11,6 +11,8 @@ const themePart = {
     { id: "midnight", label: "Midnight", dark: true, swatch: "#111827" },
     { id: "pine", label: "Pine", dark: true, swatch: "#0f1a17" },
     { id: "obsidian", label: "Obsidian", dark: true, swatch: "#000000" },
+    { id: "system", label: "System", dark: false, swatch: "linear-gradient(90deg, #ffffff 50%, #1c1917 50%)",
+      title: "Follow the OS between your light and dark themes" },
   ],
   DENSITIES: ["compact", "normal", "comfortable"],
   theme: "system", density: "normal", lightTheme: "daylight", darkTheme: "ember",
@@ -19,12 +21,22 @@ const themePart = {
     const t = this.THEMES.find((x) => x.id === id);
     return t ? t.dark : false;
   },
-  themeIsDark(id) { return this._themeIsDark(id || this.theme); },
+  themeIsDark(id) {
+    const t = id || this.theme;
+    if (t === "system") return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    return this._themeIsDark(t);
+  },
 
   applyTheme(id) {
     this.theme = id;
-    document.documentElement.dataset.theme = id;
-    document.documentElement.classList.toggle("dark", this.themeIsDark(id));
+    // "system" means the user's remembered light/dark pair following the OS. Stamping the
+    // resolved theme (not "system") is what makes those slots take effect - the CSS
+    // prefers-color-scheme block only covers the paint before JS runs.
+    const effective = id === "system"
+      ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? this.darkTheme : this.lightTheme)
+      : id;
+    document.documentElement.dataset.theme = effective;
+    document.documentElement.classList.toggle("dark", this._themeIsDark(effective));
     localStorage.setItem("kl-theme", id);
   },
 
@@ -33,12 +45,14 @@ const themePart = {
   setTheme(id) {
     this.applyTheme(id);
     const patch = { theme: id };
-    if (id !== "system") patch[this.themeIsDark(id) ? "dark_theme" : "light_theme"] = id;
+    if (id !== "system") {
+      if (this.themeIsDark(id)) { this.darkTheme = id; patch.dark_theme = id; }
+      else { this.lightTheme = id; patch.light_theme = id; }
+    }
     this.klSet(patch);
   },
 
   quickTheme() { this.setTheme(this.themeIsDark() ? this.lightTheme : this.darkTheme); },
-  toggleDark() { this.quickTheme(); },  // legacy name; the settings dark button calls this
 
   setDensity(d) {
     this.density = d;
@@ -55,9 +69,13 @@ const themePart = {
       : valid(stored) ? stored
       : localStorage.getItem("kl-dark") === "1" ? "ember"   // one-time kl-dark migration
       : "system";
-    this.applyTheme(id);
     this.lightTheme = valid(kl.light_theme) ? kl.light_theme : "daylight";
     this.darkTheme = valid(kl.dark_theme) ? kl.dark_theme : "ember";
+    this.applyTheme(id);
+    // While on System, an OS light/dark flip re-resolves immediately.
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+      if (this.theme === "system") this.applyTheme("system");
+    });
     this.density = this.DENSITIES.includes(kl.density) ? kl.density
       : this.DENSITIES.includes(localStorage.getItem("kl-density")) ? localStorage.getItem("kl-density")
       : "normal";

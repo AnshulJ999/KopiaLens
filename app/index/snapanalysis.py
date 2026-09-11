@@ -14,6 +14,7 @@ import contextlib
 from datetime import datetime
 import hashlib
 import threading
+import time
 
 from ..core.applog import get_logger
 from ..core.cache import cache_db, get_children
@@ -364,8 +365,12 @@ def prewarm(repo: str, with_reclaim: bool = False) -> dict | None:
     from ..core.sources import sources_index
     heavy = 0
     failed: list[str] = []
+    recomputed = 0
+    compute_secs = 0.0
+    t_stage = time.perf_counter()
     with batched(repo):  # ONE published generation per stage, not one per source
-        for key in sorted(sources_index(repo)):
+        srcs = sources_index(repo)
+        for key in sorted(srcs):
             try:
                 info = read_analysis(repo, key)
                 need = (not info["fresh"]) or (with_reclaim and not (info["recl_complete"] and info["phys_complete"]))
@@ -378,11 +383,22 @@ def prewarm(repo: str, with_reclaim: bool = False) -> dict | None:
                     if heavy >= _MAX_HEAVY_PER_CYCLE:
                         continue
                     heavy += 1
+                # Per-source timing: the three whole-history passes in compute_source are the
+                # analysis stage's cost ( - the dominant one), and only these lines show
+                # which source ate the time.
+                t_src = time.perf_counter()
                 compute_source(repo, key, with_reclaim=with_reclaim)
+                dt = time.perf_counter() - t_src
+                recomputed += 1
+                compute_secs += dt
+                log.info("repo=%s analysis recomputed %s (%d snapshots, %s) in %.1fs",
+                         repo, key, len(srcs[key]), "heavy" if with_reclaim else "churn-only", dt)
             except Exception as exc:  # noqa: BLE001 - one source failing must not abort the stage
                 failed.append(key)
                 log.warning("repo=%s analysis failed for %s: %s", repo, key, exc)
                 continue
+    log.info("repo=%s analysis stage: %d of %d source(s) recomputed in %.1fs of %.1fs total",
+             repo, recomputed, len(srcs), compute_secs, time.perf_counter() - t_stage)
     if failed:
         log.warning("repo=%s analysis stage: %d source(s) failed (partial results published): %s",
                     repo, len(failed), ", ".join(failed[:10]))

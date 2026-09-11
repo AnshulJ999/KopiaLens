@@ -7,16 +7,13 @@
       <template x-for="t in THEMES" :key="t.id">
         <button @click="setTheme(t.id)" class="flex items-center gap-2 h-8 rounded border px-2 text-xs"
                 :class="theme===t.id ? 'border-fg font-medium' : 'border-bd'"
-                :title="t.dark ? 'Dark theme' : 'Light theme'">
+                :title="t.title || (t.dark ? 'Dark theme' : 'Light theme')">
           <span class="inline-block w-4 h-4 rounded border border-bd" :style="'background:'+t.swatch"></span>
           <span x-text="t.label"></span>
         </button>
       </template>
-      <button @click="setTheme('system')" class="flex items-center gap-2 h-8 rounded border px-2 text-xs"
-              :class="theme==='system' ? 'border-fg font-medium' : 'border-bd'"
-              title="Follow the OS light or dark preference">System</button>
     </div>
-    <p class="text-[11px] text-muted mt-1">System follows your OS light or dark preference. Saved on the server, so it follows you between browsers.</p>
+    <p class="text-[11px] text-muted mt-1">System follows your OS light or dark preference, using the themes you picked for each. Saved on the server, so it follows you between browsers.</p>
   </div>
   <div>
     <div class="text-sm font-medium mb-2">Density</div>

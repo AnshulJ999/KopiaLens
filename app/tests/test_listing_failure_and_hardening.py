@@ -104,6 +104,28 @@ def test_a_background_refresh_failure_does_not_strand_the_refreshing_flag(monkey
     assert "1" not in sources._REFRESHING
 
 
+def test_the_worker_run_pin_holds_one_listing_for_the_whole_run(monkeypatch):
+    """The nightly stages are minutes apart and the TTL is 45s, so `kopia snapshot list` ran
+    once per stage - 8x per nightly for the same data. The worker pins the first listing for
+    the process lifetime (the worker exits when the run ends); force=True still rebuilds."""
+    calls = {"n": 0}
+
+    def fake(*_a, **_k):
+        calls["n"] += 1
+        return _Result(stdout=json.dumps([_snap("E:\\data", "s1")]), returncode=0)
+
+    monkeypatch.setattr(sources, "kopia", fake)
+    monkeypatch.setattr(sources, "load_settings", lambda: {"listing_backend": "subprocess"})
+    monkeypatch.setattr(sources, "_PINNED", True)
+
+    sources.sources_index("1")
+    sources._CACHE["1"]["built"] = time.time() - 3600  # far past the 45s TTL
+    sources.sources_index("1")
+    assert calls["n"] == 1, "a pinned run must not re-list between stages"
+    sources.sources_index("1", force=True)
+    assert calls["n"] == 2, "an explicit force still rebuilds under the pin"
+
+
 # --------------------------------------------------------------------------------------------
 # The builder's own guard
 # --------------------------------------------------------------------------------------------

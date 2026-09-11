@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 
 import duckdb
 import pyarrow as pa
@@ -449,6 +450,7 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
     (accepted, ~40 MB); ``sanalysis`` is carried by reference unchanged."""
     staging = os.path.join(root, "_staging")
     os.makedirs(staging, exist_ok=True)
+    t0 = time.perf_counter()
     srcs = sources_index(repo)
     prev_sources = set(prev.get("sources") or ())
     if not srcs and prev_sources:
@@ -496,6 +498,11 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
             targets.append((key, "append" if ap else "rebuild", ap))
         job.update({"total": sum(len(srcs[k]) for k, _m, _a in targets), "indexed": 0,
                     "targets": len(targets), "current_source": None, "error": None})
+        log.info("repo=%s index classified %d source(s) in %.1fs: %d carried, %d to walk "
+                 "(%d append, %d rebuild)", repo, len(srcs), time.perf_counter() - t0,
+                 len(srcs) - len(targets), len(targets),
+                 sum(1 for _k, m, _a in targets if m == "append"),
+                 sum(1 for _k, m, _a in targets if m == "rebuild"))
 
         # Snapshot ids that still exist in the CURRENT listing, and the sources being purged -
         # both as tables so the carry filters below never build huge IN-lists in SQL text.
@@ -543,13 +550,19 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
 
         # Walk what changed. Append preloads the retained rows first so the paths aggregate
         # sees the source's full version set; a rebuild starts from an empty scratch.
+        t_walk = time.perf_counter()
         for key, mode, ap in targets:
+            t_src = time.perf_counter()
             job["current_source"] = key
             if mode == "append":
                 _preload_retained(con, repo, key, int(src_of[key]), _rewalk_ids(srcs[key], ap))
                 _extend_source(con, db, repo, key, srcs[key], ap, job)
             else:
                 _build_source(con, db, repo, key, srcs[key], job)
+            # Per-source timing: the stage logs nothing otherwise, and this is where the
+            # nightly's index minutes actually go ( - profile before optimising).
+            log.info("repo=%s index walked %s (%s, %d snapshots) in %.1fs",
+                     repo, key, mode, len(srcs[key]), time.perf_counter() - t_src)
 
         # Sources NEW to the index have no previous artifact to carry sticky first_seen from,
         # and the delta-built history alone dates every untouched file at its newest snapshot.
@@ -557,9 +570,12 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
         # mapping below reads the paths aggregate. Existing sources keep their carried dates.
         new_keys = [key for key, _m, _a in targets if key not in prev_sources]
         if new_keys:
+            t_bf = time.perf_counter()
             job["current_source"] = "(first-seen backfill)"
             for key in new_keys:
                 _backfill_source_first_seen(con, db, repo, key, srcs[key])
+            log.info("repo=%s index first-seen backfill (%d source(s)) in %.1fs",
+                     repo, len(new_keys), time.perf_counter() - t_bf)
 
         # Sources new to the dictionary, then the physical fill and the global refcount.
         tbl = pa.table({"source": sorted(srcs)})
@@ -576,12 +592,14 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
         src_of = dict(con.execute("SELECT source, src_id FROM src_rev").fetchall())
 
         job["current_source"] = "(physical + refcount)"
+        t_phys = time.perf_counter()
         materialize_physical(con, repo)
         count, _union = _refcount(repo, db)
         # SECOND pass, and the order matters: _refcount rebuilds the sizemap when its walk finds
         # content the cached map lacks, so content_sizes filled above is a version behind whenever
         # that happens. Re-running is cheap (the bulk insert is skipped when the map is unchanged).
         materialize_physical(con, repo)
+        log.info("repo=%s index physical + refcount in %.1fs", repo, time.perf_counter() - t_phys)
 
         # The cid namespace must cover everything the maps will join against - the full
         # transform's definition (files/paths contents + the whole sizemap + indirect objects)
@@ -630,6 +648,7 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
         # across the rename via _old_seen, which stays keyed on the folded identity.
         new_entries: dict[int, tuple[str, str]] = {}
         per_source: dict[str, dict] = {}
+        t_map = time.perf_counter()
         for key, mode, ap in targets:
             S = int(src_of[key])
             sep = pathrules.sep(key)
@@ -766,6 +785,9 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
             new_entries[S] = (hrel, prel)
             moves.append((staged_h, hrel))
             moves.append((staged_p, prel))
+        log.info("repo=%s index per-source mapping (%d source(s)) in %.1fs",
+                 repo, len(targets), time.perf_counter() - t_map)
+        t_tail = time.perf_counter()
 
         # Small tables and maps. isnaps: a previous row survives only while its snapshot still
         # exists in the current listing (retention expiry / manual delete must not leave
@@ -877,6 +899,8 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
 
         sources = {k: {"key": k, "snapshots": len(v), "updated_gen": gen}
                    for k, v in srcs.items()}
+        log.info("repo=%s index tail (maps + copy + verify) in %.1fs; build total %.1fs",
+                 repo, time.perf_counter() - t_tail, time.perf_counter() - t0)
         return {"generation": gen, "repo": repo, "schema_version": _MANIFEST_VERSION,
                 "counters": alloc.counters(), "artifacts": artifacts_out,
                 "sources": sources, "stats": stats, "_checks": checks, "_moves": moves,
@@ -889,7 +913,6 @@ def _refcount(repo: str, db):
     """The global content refcount Counter, from the persisted pkl when it matches the current
     snapshot set, else a fresh streaming build. The live-DB persist inside build_global is
     suppressed - this build owns a scratch index, not the live one."""
-    import time
     from ..core import metrics
     srcs = sources_index(repo)
     membership, _ = metrics.split_sources(srcs, "all")

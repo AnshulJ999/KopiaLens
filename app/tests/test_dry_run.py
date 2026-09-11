@@ -125,3 +125,13 @@ def test_the_line_parsers_accumulate_across_batches():
     _parse_delete_line("Would delete snapshot g1 of g:\\x (pass --delete to confirm)", acc)
     _parse_delete_line("Would delete snapshot g2 of g:\\x (pass --delete to confirm)", acc)
     assert acc["snapshots"] == 2 and "2 snapshot(s)" in acc["final_line"]
+
+
+def test_a_multi_batch_remove_summary_does_not_lose_the_fixed_count():
+    """every batch prints its own 'Fixed N snapshots' line, so a later batch's 0 used to
+    overwrite the total and read the whole multi-batch run as 0."""
+    acc: dict = {}
+    _parse_remove_line("Fixed 12 snapshots, but snapshot manifests were not updated.", acc)
+    _parse_remove_line("Fixed 0 snapshots, but snapshot manifests were not updated.", acc)
+    _parse_remove_line("will remove file late.txt", acc)
+    assert acc["snapshots"] == 12 and acc["entries"] == 1
