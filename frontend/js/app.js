@@ -91,6 +91,11 @@ document.addEventListener("alpine:init", () => {
     treePrefix: "",
 
     async init() {
+      // Alpine fires the data object's init() AND x-init="init()" re-calls it. A second run
+      // re-picks the already-resolved data-theme and loses "system", and doubles every
+      // startup fetch.
+      if (this._inited) return;
+      this._inited = true;
       await this.wrap(async () => {
         TABLE_PREFS = await getJson("/api/settings/tables").catch(() => ({})) || {};
         const data = await getJson("/api/repos");
