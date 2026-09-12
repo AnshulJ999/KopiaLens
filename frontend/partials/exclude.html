@@ -1,0 +1,109 @@
+
+    <!-- exclusion dialog: stacks over the detail modal (z-50 above its z-40), under the
+         shared confirm (z-60). Target and pattern always shown together; every pattern is
+         priced against the index before anything is written. -->
+    <div x-show="showExclude" @click.self="showExclude=false" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+      <template x-if="exDialog">
+        <div class="w-[46rem] max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
+          <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
+            <div class="flex items-center gap-2">
+              <div class="font-medium">Stop backing this up</div>
+              <button @click="showExclude=false" class="ml-auto kl-btn quiet" title="Close">&times;</button>
+            </div>
+            <div class="kl-note mt-0.5 break-all font-mono" x-text="exDialog.path"></div>
+          </div>
+
+          <div class="flex-1 min-h-0 overflow-auto p-4 space-y-3">
+            <!-- target -->
+            <div class="flex items-start gap-2">
+              <span class="kl-note shrink-0" style="padding-top:6px">Rule written into</span>
+              <select :disabled="exDialog.targets.length < 2" @change="exSetTarget($event.target.value)"
+                      class="fld flex-1 border border-bd bg-surface2 text-xs min-w-0">
+                <template x-for="t in exDialog.targets" :key="t">
+                  <option :value="t" :selected="exDialog.target === t"
+                          x-text="t === 'global' ? 'Global policy (every source)' : shortSource(t)"></option>
+                </template>
+              </select>
+            </div>
+            <div class="kl-callout" x-show="exDialog.target === 'global'">
+              A rule at Global applies to EVERY source in this repo. Bare patterns match at any depth; anchored ones (leading /) anchor to each source's own root.
+            </div>
+
+            <!-- pattern shapes -->
+            <div>
+              <div class="text-xs font-medium mb-1">What should the rule match?</div>
+              <div class="kl-note mb-1" x-show="exDialog.loading">finding the sources that cover this path…</div>
+              <div class="space-y-1">
+                <template x-for="s in exShapes()" :key="s.id">
+                  <button @click="exSelectShape(s.id)"
+                          class="w-full text-left rounded border px-2 py-1.5 flex items-center gap-2"
+                          :class="exDialog.shapeId === s.id ? 'border-fg bg-sel' : 'border-bd-soft hover:bg-head'">
+                    <span class="kl-note shrink-0" style="width:11rem" x-text="s.label"></span>
+                    <span class="font-mono text-[11px] break-all flex-1" x-text="s.id === 'custom' ? '(your pattern below)' : s.pattern"></span>
+                  </button>
+                </template>
+              </div>
+              <template x-if="exDialog.shapeId === 'custom'">
+                <div class="mt-2">
+                  <input x-model="exDialog.custom" @input="exCustomInput()" @keydown.enter="exConfirm()"
+                         class="fld w-full border border-bd bg-surface2 font-mono text-xs" placeholder="kopia ignore pattern, e.g. /Users/*/Cache/**">
+                  <div class="kl-note mt-1" x-show="exDialog.target !== 'global'" x-text="'Anchored patterns are relative to ' + (exDialog.target === 'global' ? '' : sourcePath(exDialog.target))"></div>
+                </div>
+              </template>
+            </div>
+
+            <!-- price -->
+            <div class="rounded border border-bd bg-surface2 p-2">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-medium">Keeps out</span>
+                <span class="text-xs" x-show="exDialog.pricing" style="color:var(--muted)">checking the index…</span>
+                <span class="text-xs font-medium" x-show="!exDialog.pricing && exKeepoutText()" x-text="exKeepoutText()"></span>
+                <span class="text-xs" style="color:var(--muted)"
+                      x-show="!exDialog.pricing && !exKeepoutText() && !exPriceNote()">no matches found yet</span>
+                <span class="grow"></span>
+                <button class="kl-btn quiet" style="height:22px" @click="exPriceNow()" :disabled="exDialog.pricing">Re-check</button>
+              </div>
+              <div class="kl-note mt-1" x-show="!exDialog.pricing && exPriceNote()" x-text="exPriceNote()"></div>
+              <div class="kl-note mt-1" x-show="exDialog.price && exDialog.price.capped">
+                The preview is capped - open the full set in Search before deciding if it looks wrong.
+              </div>
+            </div>
+
+            <!-- preview: the matched set, biggest first -->
+            <template x-if="exMatches().length">
+              <div>
+                <div class="text-xs font-medium mb-1">Matched files <span style="color:var(--muted);font-weight:400" x-text="'(biggest first)'"></span></div>
+                <div class="kl-list" style="max-height:180px">
+                  <template x-for="(m, i) in exMatches()" :key="i">
+                    <div class="li">
+                      <span class="font-mono break-all grow" x-text="m.path"></span>
+                      <span class="num shrink-0" style="color:var(--muted)" x-text="m.size != null ? fmtB(m.size) : ''"></span>
+                    </div>
+                  </template>
+                </div>
+                <div class="kl-listfoot" x-show="exPreviewCap()">
+                  <span x-text="exPreviewCap()"></span> ·
+                  <button class="underline" style="color:var(--link)" @click="exToSearch()">see the full set in Search</button>
+                </div>
+              </div>
+            </template>
+
+            <!-- the plan, numbered; step 3 greyed so nobody expects space back immediately -->
+            <div class="kl-note" x-show="exDialog.mode === 'delete'">
+              <div class="text-xs font-medium mb-1" style="color:var(--fg)">The plan</div>
+              <div>1. Exclude the pattern (written into the policy, backup taken first)</div>
+              <div>2. Remove the existing copies - the standard delete flow opens with its dry run</div>
+              <div style="color:var(--faint)">3. Space frees on the next full maintenance run</div>
+            </div>
+          </div>
+
+          <div class="kl-footer shrink-0">
+            <span class="kl-note">Priced against the index before anything is written.</span>
+            <span class="spacer"></span>
+            <button class="kl-btn" @click="showExclude=false">Cancel</button>
+            <button class="kl-btn" x-show="exDialog.mode === 'exclude'" @click="exConfirm()" :disabled="exDialog.pricing">Exclude…</button>
+            <button class="kl-btn danger" x-show="exDialog.mode === 'delete'" @click="exConfirm()" :disabled="exDialog.pricing">Exclude and delete…</button>
+          </div>
+        </div>
+      </template>
+    </div>

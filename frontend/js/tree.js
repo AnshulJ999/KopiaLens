@@ -79,6 +79,7 @@ const treePart = {
             { label: "Restore…", action: (_e, row) => { const d = row.getData(); this.openRestore(d.content_id || d.path, d.name); } },
             { label: "Mount + open in Explorer", action: (_e, row) => this.mountOpen(this.selectedSnapshot, this.selectedSource, row.getData().path) },
             { label: "Find in search", action: (_e, row) => { this.query = row.getData().name; this.searchSource = ""; this.active = "search"; this.loadSearch(); } },
+            { label: "Exclude & delete…", action: (_e, row) => { const d = row.getData(); this.openExclude({ kind: d.type === "folder" ? "folder" : "file", path: d.path, source: this.selectedSource }, "delete"); } },
             { label: "Delete (chunked, respects filters)…", action: (_e, row) => this.openRemoveFolder(row.getData()) },
             { label: "Copy path", action: (_e, row) => this.copyText(row.getData().path) },
           ],

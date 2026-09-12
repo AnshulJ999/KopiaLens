@@ -157,17 +157,35 @@
 
 {%- macro file_exclude() -%}
 <div class="kl-sec">
-  <div class="h">Stop backing this up <span class="count" x-text="excludePatterns().length + ' patterns'"></span></div>
+  <div class="h">Stop backing this up <span class="count" x-text="excludePatterns().length + ' patterns'"></span>
+    <span class="acts"><button class="kl-btn" style="height:24px" @click="openExclude({kind: 'file', path: detail.title, source: detail.source}, 'delete')">Exclude and delete…</button></span>
+  </div>
   <div class="kl-list">
     <template x-for="(p, i) in excludePatterns()" :key="i">
       <div class="li">
         <span style="color:var(--muted);width:150px;flex:none" x-text="p.label"></span>
         <span class="font-mono break-all grow" x-text="p.pat"></span>
+        <button class="kl-btn quiet" style="height:22px" @click="openExclude({kind: 'file', path: detail.title, source: detail.source, preset: p.pat}, 'exclude')">Exclude…</button>
         <button class="kl-btn quiet" style="height:22px" @click="copyText(p.pat)">Copy</button>
       </div>
     </template>
   </div>
-  <div class="kl-note">Copy a pattern and add it to the source's policy to stop backing these files up.</div>
+  <div class="kl-note">Exclude writes the rule into the source's policy and prices it against the index first - no more copy-paste into KopiaUI.</div>
+</div>
+{%- endmacro -%}
+
+{%- macro folder_exclude() -%}
+<div class="kl-sec">
+  <div class="h">Stop backing this up
+    <span class="acts">
+      <button class="kl-btn" style="height:24px" @click="openExclude({kind: 'folder', path: detail.title, source: detail.source}, 'delete')">Exclude and delete…</button>
+      <button class="kl-btn quiet" style="height:24px" @click="openExclude({kind: 'folder', path: detail.title, source: detail.source}, 'exclude')">Exclude…</button>
+    </span>
+  </div>
+  <div class="kl-note">Writes an exclusion rule into the covering source's policy (or Global), priced against the index first. "Exclude and delete" also opens the delete flow for what is already backed up.</div>
+  <div class="kl-note" x-show="detail.effective_policy && (detail.effective_policy.ignore || []).length">
+    Rules already applying here: <span class="font-mono" x-text="(detail.effective_policy.ignore || []).slice(0, 8).join('  ·  ')"></span><span x-show="(detail.effective_policy.ignore || []).length > 8"> …</span>
+  </div>
 </div>
 {%- endmacro -%}
 
@@ -339,6 +357,7 @@
                     {{ folder_backedby() }}
                     {{ folder_children() }}
                     {{ folder_contents() }}
+                    {{ folder_exclude() }}
                   </div>
                 </template>
               </div>
@@ -421,6 +440,7 @@
                 </template>
                 <template x-if="detail.kind === 'folder' && detail.panelTab === 'actions'">
                   <div class="space-y-4">
+                    {{ folder_exclude() }}
                     <div class="kl-sec">
                       <div class="h">Delete this folder</div>
                       <div class="kl-note">Opens the chunked delete plan for everything under this folder, with a dry run before anything happens.</div>
