@@ -64,10 +64,31 @@ def test_new_builders_reject_a_non_kopia_repo():
         lambda: kopia.policy_set_command("bz", target=SRC, add_ignore=["x"]),
         lambda: kopia.policy_delete_command("bz", target=SRC),
         lambda: kopia.policy_import_command("bz", "b.json"),
-        lambda: kopia.policy_export_command("bz", "e.json"),
     ):
         with pytest.raises(ValueError):
             call()
+
+
+def test_read_export_args_pass_the_readonly_gate(tmp_path, monkeypatch):
+    """_read_export used to pass a FULL command (with the
+    'kopia' binary prefix) into kopia(), which re-prefixes it and then the RO gate refuses its
+    own doubled command - so every backup, and therefore every fail-closed save, failed. The
+    args _read_export sends must pass the REAL gate untouched."""
+    seen = {}
+
+    def gate_and_fake(repo, args, **kw):
+        kopia.check_readonly(args)  # the real boundary check; raises on a doubled command
+        seen["args"] = args
+        to_file = args[args.index("--to-file") + 1]
+        with open(to_file, "w", encoding="utf-8") as fh:
+            json.dump(GLOBAL_EXPORT, fh)
+        return kopia.KopiaResult(args=args, returncode=0, stdout="", stderr="", elapsed=0.0)
+
+    monkeypatch.setattr(policybackup, "kopia", gate_and_fake)
+    monkeypatch.setattr(policybackup, "DATA_DIR", str(tmp_path))
+    text = policybackup._read_export("1")
+    assert json.loads(text)[SRC]["files"]["ignore"] == ["/Temp/**"]
+    assert seen["args"][0] == "policy" and "--overwrite" in seen["args"]
 
 
 # ---- backups ---------------------------------------------------------------------------
@@ -192,3 +213,89 @@ def test_effective_ignore_origin_walks_ancestors_then_global():
     # no rules anywhere -> none
     defined["(global)"] = {}
     assert effective_ignore_origin("1", child, defined) == ("none", None)
+
+
+def test_drive_root_policies_are_found_not_read_as_global():
+    """the ancestor walk used to yield 'G:' while kopia spells the
+    drive-root target 'G:\\' - drive-root-owned sources read as global-inherited (7 of 85 on
+    repo 1). The walk must produce the drive root in kopia's own spelling."""
+    uh = "Anshul@anshul-desktop"
+    drive_root = f"{uh}:G:{SEP}"
+    defined = {"(global)": {"files": {"ignore": ["g1"]}},
+               drive_root: {"files": {"ignore": ["driveroot-rule"]}}}
+    src = f"{uh}:G:{SEP}GitHub{SEP}Example-Repo"
+    assert effective_ignore_origin("1", src, defined) == ("inherited", drive_root)
+    # the bare-drive spelling is never a candidate: only the real target matches
+    defined_bare = {"(global)": {"files": {"ignore": ["g1"]}}, f"{uh}:G:": {"files": {"ignore": ["x"]}}}
+    assert effective_ignore_origin("1", src, defined_bare) == ("global", "(global)")
+
+
+def test_posix_root_policy_is_found():
+    defined = {"(global)": {"files": {"ignore": ["g1"]}},
+               "root@nas:/": {"files": {"ignore": ["root-rule"]}}}
+    assert effective_ignore_origin("1", "root@nas:/var/log", defined) == ("inherited", "root@nas:/")
+    defined_mid = {"(global)": {"files": {"ignore": ["g1"]}},
+                   "root@nas:/etc": {"files": {"ignore": ["etc-rule"]}}}
+    assert effective_ignore_origin("1", "root@nas:/etc/nginx", defined_mid) == \
+        ("inherited", "root@nas:/etc")
+
+
+# ---- invalidate_after_write reaches every source the write touches ---------------------
+
+def _patch_refresh(monkeypatch, defined):
+    import app.core.sources as sources_mod
+    import app.core.policy as pol
+    import app.index.policypricing as pp
+    calls = {"one": [], "full": 0, "defined": 0, "price": 0}
+    monkeypatch.setattr(pol, "refresh_defined_policies",
+                        lambda repo, force=False: calls.__setitem__("defined", calls["defined"] + 1))
+    monkeypatch.setattr(pol, "load_defined_policies", lambda repo: {"policies": defined})
+    monkeypatch.setattr(pol, "refresh_one_policy",
+                        lambda repo, key: calls["one"].append(key))
+    monkeypatch.setattr(pol, "refresh_policies",
+                        lambda repo, force=False: calls.__setitem__("full", calls["full"] + 1))
+    monkeypatch.setattr(pp, "invalidate", lambda repo=None: calls.__setitem__("price", calls["price"] + 1))
+    return calls
+
+
+def test_invalidate_after_write_reaches_every_source_the_write_touches(monkeypatch):
+    """a write reaches the source itself, every source
+    whose rules are owned by the written target, and - for a Global write - every source that
+    inherits global. A Global-only write used to refresh NOTHING (the effective view then mixed
+    fresh defined rules with up-to-24h-stale effective ones)."""
+    import app.core.sources as sources_mod
+    import app.core.policy as pol
+    uh = "u@h"
+    written_target = f"{uh}:G:{SEP}GitHub"
+    defined = {"(global)": {"files": {"ignore": ["g1"]}},
+               written_target: {"files": {"ignore": ["gh"]}}}
+    # three sources: the written one, one inheriting from it, one with its own list elsewhere
+    monkeypatch.setattr(sources_mod, "sources_index", lambda repo: {
+        written_target: [], f"{written_target}{SEP}PS": [], f"{uh}:C:{SEP}": []})
+    calls = _patch_refresh(monkeypatch, defined)
+    pol.invalidate_after_write("1", targets=[written_target])
+    assert calls["one"] == [written_target, f"{written_target}{SEP}PS"]
+
+
+def test_invalidate_after_global_write_refreshes_global_inheritors(monkeypatch):
+    import app.core.sources as sources_mod
+    import app.core.policy as pol
+    uh = "u@h"
+    defined = {"(global)": {"files": {"ignore": ["g1"]}},
+               f"{uh}:C:{SEP}": {"files": {"ignore": ["own"]}}}
+    # D:\ defines nothing -> inherits global -> must refresh; C:\ owns its list -> must not
+    monkeypatch.setattr(sources_mod, "sources_index", lambda repo: {
+        f"{uh}:C:{SEP}": [], f"{uh}:D:{SEP}": []})
+    calls = _patch_refresh(monkeypatch, defined)
+    pol.invalidate_after_write("1", targets=["(global)"])
+    assert calls["one"] == [f"{uh}:D:{SEP}"]
+    assert calls["defined"] == 1
+
+
+def test_invalidate_without_targets_is_the_full_mirror_refresh(monkeypatch):
+    import app.core.sources as sources_mod
+    import app.core.policy as pol
+    monkeypatch.setattr(sources_mod, "sources_index", lambda repo: {"u@h:C:\\".replace(chr(92), SEP): []})
+    calls = _patch_refresh(monkeypatch, {"(global)": {}})
+    pol.invalidate_after_write("1", targets=None)
+    assert calls["full"] == 1 and calls["one"] == []

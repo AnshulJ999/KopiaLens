@@ -21,6 +21,10 @@ const excludePart = {
     // ctx: {kind: "file"|"folder", path, source?, preset?}; mode: "exclude"|"delete".
     async openExclude(ctx, mode = "exclude") {
       this.showExclude = true;
+      // Superseded-open guard. Alpine wraps state in reactive proxies, so the naive
+      // `this.exDialog === d` identity check was ALWAYS false and the covering-sources
+      // fetch below was discarded on every open (the dialog offered Global only).
+      const seq = ++this._exOpenSeq;
       const d = this.exDialog = {
         kind: ctx.kind, path: ctx.path, mode,
         src: ctx.source || "",              // the original source, used to route the delete half
@@ -36,10 +40,11 @@ const excludePart = {
         d.loading = true;
         try {
           const s = await getJson(`/api/folder/summary?repo=${encodeURIComponent(this.repo)}&prefix=${encodeURIComponent(ctx.path)}`);
-          if (this.exDialog === d) d.targets = (s.sources || []).filter((x) => x.relation === "covers").map((x) => x.source);
+          if (seq === this._exOpenSeq) d.targets = (s.sources || []).filter((x) => x.relation === "covers").map((x) => x.source);
         } catch (e) { /* targets stay empty; the dialog still offers Global */ }
         d.loading = false;
       }
+      if (seq !== this._exOpenSeq) return;  // a newer openExclude owns the dialog now
       d.targets = [...d.targets, "global"];
       d.target = d.targets[0] || "global";
       this.exAfterTargetChange();
@@ -163,7 +168,9 @@ const excludePart = {
     exKeepoutText() {
       const p = this.exDialog && this.exDialog.price;
       if (!p || p.error || p.files == null) return "";
-      return `${Number(p.files).toLocaleString()} files · ${fmtB(p.bytes || 0)}`;
+      // this.fmtB: bare fmtB only resolves in Alpine templates, not from a method call -
+      // the bare form made the Exclude confirm die on a ReferenceError before opening.
+      return `${Number(p.files).toLocaleString()} files · ${this.fmtB(p.bytes || 0)}`;
     },
     exPriceNote() {
       const p = this.exDialog && this.exDialog.price;

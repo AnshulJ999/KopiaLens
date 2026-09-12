@@ -81,7 +81,7 @@ document.addEventListener("alpine:init", () => {
     polRestoreName: "", polRestoreMode: "merge", polRestoreCmd: null, polRestoreParsed: null,
     showPolBackups: false, polBackups: null, _polBackupSeq: 0,
     // exclusion dialog: priced-before-commit pattern adder over the file/folder panels.
-    exDialog: null, showExclude: false, _exPriceSeq: 0, _exCustomTimer: null, _exPriceTimer: null,
+    exDialog: null, showExclude: false, _exOpenSeq: 0, _exPriceSeq: 0, _exCustomTimer: null, _exPriceTimer: null,
 
     fmtB(v) { return fmtBytes(v); },
     fmtPhys(v) { return fmtPhys(v); },

@@ -901,14 +901,6 @@ def snapshot_pin_command(repo: str, ids: list[str], remove: bool = False,
 # up first by the caller (core.policybackup, FAIL-CLOSED: no verified backup, no write); these
 # functions only build the command, run it, log it loudly and audit it.
 
-def policy_export_command(repo: str, file_path: str) -> list[str]:
-    """`kopia policy export --to-file <file>` exports EVERY defined policy of the repo (global
-    included) as one JSON object {target: policy}. Read-only on the repo - allowlisted."""
-    if not file_path:
-        raise ValueError("policy export needs a file path")
-    return ["kopia"] + _repo_args(repo) + ["policy", "export", "--to-file", file_path, "--overwrite"]
-
-
 def _policy_target_args(target: str | None, global_: bool) -> list[str]:
     if global_:
         if target:

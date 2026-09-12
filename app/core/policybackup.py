@@ -27,7 +27,7 @@ from config import DATA_DIR
 
 from . import audit
 from .applog import get_logger
-from .kopia import kopia, policy_export_command, policy_import_execute
+from .kopia import kopia, policy_import_execute
 from .policy import invalidate_after_write
 
 log = get_logger("policybackup")
@@ -70,7 +70,10 @@ def _read_export(repo: str) -> str:
     fd, tmp = tempfile.mkstemp(suffix=".json", dir=d)
     os.close(fd)
     try:
-        res = kopia(repo, policy_export_command(repo, tmp))
+        # kopia() takes ONLY the subcommand args - it adds the binary + repo args itself.
+        # Passing a full command here double-prefixes it and the RO gate refuses it, which
+        # fail-closed turned into "every policy save fails".
+        res = kopia(repo, ["policy", "export", "--to-file", tmp, "--overwrite"])
         if res.returncode != 0:
             raise BackupError(f"kopia policy export failed rc={res.returncode}: "
                               f"{(res.stderr or '').strip()[:300]}")

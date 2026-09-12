@@ -278,17 +278,30 @@ def refresh_one_policy(repo: str, target: str) -> None:
 
 
 def invalidate_after_write(repo: str, targets: list[str] | None = None) -> None:
-    """Post-write cache refresh: one source (a set/save) or everything (a mirror restore), plus
-    the defined-policies export and the pricing cache."""
-    from . import policypricing  # local import: index layer, keeps policy import-light
+    """Post-write cache refresh: the effective policies of every source the write actually
+    reaches, plus the defined-policies export and the pricing cache.
 
-    if targets:
-        for target in targets:
-            if target != _GLOBAL_TARGET:
-                refresh_one_policy(repo, target)
-    else:
+    ``targets`` = the policy targets the write touched. A write reaches a source when the source
+    IS a written target, or its rules are owned by one (an ancestor policy), or the global
+    policy was written and the source inherits it. Origins are resolved against the NEW export -
+    the write may have changed who owns whom (a Global write turns a no-rules source into a
+    global-inheriting one). With no targets (a mirror restore) everything is refreshed.
+    """
+    from ..index import policypricing  # local import: index layer, keeps policy import-light
+    from .sources import sources_index
+
+    refresh_defined_policies(repo, force=True)  # FIRST: ownership is resolved from the new state
+    if targets is None:
         refresh_policies(repo, force=True)
-    refresh_defined_policies(repo, force=True)
+    else:
+        written = set(targets)
+        defined = load_defined_policies(repo).get("policies") or {}
+        for key in sources_index(repo):
+            origin, owner = effective_ignore_origin(repo, key, defined)
+            # reached when the source IS a written target, or the written target owns its rules
+            # (an ancestor policy or - via owner == (global) - the global policy)
+            if key in written or (owner is not None and owner in written):
+                refresh_one_policy(repo, key)
     policypricing.invalidate(repo)
 
 
@@ -318,17 +331,28 @@ def effective_ignore_origin(repo: str, source_key: str, defined: dict | None = N
         return "own", source_key
     # Walk the path ancestors (same user@host), longest first - kopia's path-chain inheritance.
     # A source key's path part carries the SOURCE machine's separator; detect it from the text.
+    # The TOP of the walk must be spelled the way kopia spells policy targets: a Windows drive
+    # root is "G:\" (never bare "G:" - that key matches nothing and made drive-root-owned
+    # sources read as global-inherited), and the POSIX root is "/".
     user_host, sep, path = source_key.partition(":")
     if sep and path:
         sep_char = "\\" if "\\" in path else "/"
         prefixes: list[str] = []
         cur = path.rstrip(sep_char)
-        while True:
-            parent = cur.rsplit(sep_char, 1)[0] if sep_char in cur else ""
-            if not parent:
-                break
-            prefixes.append(f"{user_host}:{parent}")
-            cur = parent
+        if sep_char in cur:
+            while True:
+                parent = cur.rsplit(sep_char, 1)[0] if sep_char in cur else ""
+                if not parent or parent == sep_char:
+                    break
+                if not (len(parent) == 2 and parent[1] == ":"):  # bare "G:" is never a target
+                    prefixes.append(f"{user_host}:{parent}")
+                cur = parent
+            if sep_char == "\\":
+                body = path.rstrip(sep_char)
+                if len(body) >= 2 and body[1] == ":":
+                    prefixes.append(f"{user_host}:{body[:2]}{sep_char}")
+            else:
+                prefixes.append(f"{user_host}:/")
         for prefix in sorted(set(prefixes), key=len, reverse=True):
             got = _rules(prefix)
             if got:
