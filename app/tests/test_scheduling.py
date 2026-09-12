@@ -8,6 +8,7 @@ machine was off at 23:00, the scheduled time is still in the past when it next b
 from __future__ import annotations
 
 import datetime as dt
+import time
 
 import pytest
 
@@ -107,3 +108,76 @@ def test_nightly_state_prefers_the_per_repo_timestamp(monkeypatch, tmp_path):
     monkeypatch.setattr(m, "_LAST_CYCLE_FILE", str(f))
     assert m.nightly_ts("1") == 500.0
     assert m.nightly_ts("2") == 0.0  # no per-repo entry -> never, NOT the shared ts
+
+
+# ----: BZ's own detect-driven due check --------------------------------------------
+
+def _bz_due(monkeypatch, *, pending, anchor, gap=21600.0, last_attempt=0.0, now=1_000_000.0):
+    kv = {"reindex_pending": 1.0 if pending else 0.0, "last_reindex_ts": anchor}
+    monkeypatch.setattr(m, "_bz_kv_float", lambda key: kv[key])
+    monkeypatch.setattr(m, "_bz_min_gap", lambda: gap)
+    monkeypatch.setattr(m, "_retry_delay", lambda: 900.0)
+    monkeypatch.setattr(m, "_BZ_LAST_ATTEMPT", last_attempt)
+    return m._bz_reindex_due(now)
+
+
+def test_bz_not_due_without_a_detected_change(monkeypatch):
+    assert _bz_due(monkeypatch, pending=False, anchor=0.0) is False
+
+
+def test_bz_not_due_while_the_min_gap_is_open(monkeypatch):
+    assert _bz_due(monkeypatch, pending=True, anchor=1_000_000.0 - 3600) is False
+
+
+def test_bz_due_when_the_gap_has_opened(monkeypatch):
+    assert _bz_due(monkeypatch, pending=True, anchor=1_000_000.0 - 30000) is True
+
+
+def test_bz_waits_out_a_recent_failed_attempt(monkeypatch):
+    assert _bz_due(monkeypatch, pending=True, anchor=0.0, last_attempt=1_000_000.0 - 60) is False
+
+
+def test_bz_retries_after_the_retry_window(monkeypatch):
+    assert _bz_due(monkeypatch, pending=True, anchor=0.0, last_attempt=1_000_000.0 - 1000) is True
+
+
+def test_bz_min_gap_never_collapses_to_zero(monkeypatch):
+    """A junk setting must fall back to the default, and the floor (300s) always holds."""
+    monkeypatch.setattr(m, "_DEFAULT_BZ_REINDEX_GAP", 21600)
+    monkeypatch.setattr(m, "load_settings", lambda: {"backblaze": {"bz_reindex_min_gap": "nonsense"}})
+    assert m._bz_min_gap() == 21600.0
+    monkeypatch.setattr(m, "load_settings", lambda: {"backblaze": {"bz_reindex_min_gap": 5}})
+    assert m._bz_min_gap() == 300.0
+
+
+def _tick_with(monkeypatch, *, bz_due):
+    """Run one _tick with everything idle; record what the scheduler tried to start."""
+    started = []
+    monkeypatch.setattr(m.nightly, "any_running", lambda: False)
+    monkeypatch.setattr(m.jobrunner, "maintenance_running", lambda: False)
+    monkeypatch.setattr(m, "_index_due", lambda repo, nd, ts: False)
+    monkeypatch.setattr(m, "_bz_reindex_due", lambda ts: bz_due)
+    monkeypatch.setattr(m.nightly, "start_index_pass_async",
+                        lambda repo, on_done=None, full=False: started.append(repo) or {"started": True})
+    monkeypatch.setattr(m, "_last_light", time.time())
+    m._tick()
+    return started
+
+
+def test_tick_never_gives_bz_the_daily_slot(monkeypatch):
+    seen = []
+    monkeypatch.setattr(m.nightly, "any_running", lambda: False)
+    monkeypatch.setattr(m.jobrunner, "maintenance_running", lambda: False)
+    monkeypatch.setattr(m, "_index_due", lambda repo, nd, ts: seen.append(repo) or False)
+    monkeypatch.setattr(m, "_bz_reindex_due", lambda ts: False)
+    monkeypatch.setattr(m, "_last_light", time.time())
+    m._tick()
+    assert "bz" not in seen  # BZ left the daily slot () - detect drives it instead
+
+
+def test_tick_starts_the_bz_reindex_through_the_global_slot(monkeypatch):
+    assert _tick_with(monkeypatch, bz_due=True) == ["bz"]
+
+
+def test_tick_skips_bz_when_not_due(monkeypatch):
+    assert _tick_with(monkeypatch, bz_due=False) == []

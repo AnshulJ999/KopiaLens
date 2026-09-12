@@ -23,6 +23,7 @@ const settingsPart = {
         this.newPassword = "";
         this.panelLayout = kl.panel_layout === "tabbed" ? "tabbed" : "classic";  //
         this._readAdvanced(kl);
+        this._readBackblaze(data.settings?.backblaze || {});
       } catch (e) { /* keep last-known state on fetch failure */ }
       this.showSettings = true;
     },
@@ -42,6 +43,13 @@ const settingsPart = {
       this.startupDelay = Number(kl.startup_delay ?? 300);
       this.dirMemoMaxMb = Number(kl.dir_memo_max_mb || 1500);
       this.refcountWriteInterval = Number(kl.refcount_write_interval || 21600);
+    },
+    _readBackblaze(bz) {
+      this.bzDataPath = bz.bzdata_path || "C:\\ProgramData\\Backblaze\\bzdata";
+      this.bzReindexMinGap = Number(bz.bz_reindex_min_gap || 21600);
+      this.bzHistoryDays = Number(bz.history_days || 90);
+      this.bzCollapsePrefixes = (bz.collapse_prefixes || []).join(", ");
+      this.bzEventlogArchive = bz.eventlog_archive_path || "";
     },
     async saveSettings() {
       await this.wrap(async () => {
@@ -73,10 +81,17 @@ const settingsPart = {
           dir_memo_max_mb: Number(this.dirMemoMaxMb) || 1500,
           refcount_write_interval: Number(this.refcountWriteInterval) || 21600,
         };
-        await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listing_backend: this.backend, kopialens }) });
+        const backblaze = {
+          bzdata_path: this.bzDataPath || "",
+          bz_reindex_min_gap: Number(this.bzReindexMinGap) || 21600,
+          history_days: Math.max(1, Number(this.bzHistoryDays) || 90),
+          collapse_prefixes: this.bzCollapsePrefixes.split(",").map((p) => p.trim()).filter(Boolean),
+          eventlog_archive_path: this.bzEventlogArchive || "",
+        };
+        await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listing_backend: this.backend, kopialens, backblaze }) });
         this.armAutoRefresh();  // apply the new dashboard auto-refresh interval immediately
         this.showSettings = false;
-        window.alert("Saved. Scheduling and interval changes are picked up on the next tick (within a minute). The listing backend, directory-cache budget and startup delay need a restart.");
+        window.alert("Saved. Scheduling and interval changes are picked up on the next tick (within a minute). The listing backend, directory-cache budget, startup delay and Backblaze data folder need a restart.");
       });
     },
     // Auth is on BECAUSE a password exists - set/remove through the dedicated routes,

@@ -67,6 +67,10 @@ document.addEventListener("alpine:init", () => {
     autoCompact: true, compactRatio: 1.6, compactMinInterval: 86400,
     indexWorkerTimeout: 14400, indexDrainTimeout: 300, indexRetryDelay: 900, indexMaxRetries: 1,
     folderPrewarmBudget: 900, startupDelay: 300, dirMemoMaxMb: 1500, refcountWriteInterval: 21600,
+    // Backblaze settings. Defaults mirror app/settings.py; the Save payload carries them as the
+    // nested "backblaze" dict the settings endpoint already merges.
+    bzDataPath: "C:\\ProgramData\\Backblaze\\bzdata", bzReindexMinGap: 21600, bzHistoryDays: 90,
+    bzCollapsePrefixes: "E:\\Kopia, I:\\Kopia Big Backup", bzEventlogArchive: "",
     analyzingAll: false, showDelete: false, deletePlan: null, deleteConfirm: "", _autoRefresh: null,
     // detail-panel layout ("classic" | "tabbed"), persisted server-side, default Classic.
     panelLayout: "classic",
@@ -135,6 +139,7 @@ document.addEventListener("alpine:init", () => {
         // fields would still hold constructor defaults and a Save would write those over the real
         // values.
         this._readAdvanced(kl);
+        this._readBackblaze(data.settings?.backblaze || {});
         this.initTheme(kl);  // sync theme/density state (server stamp already painted)
         if (kl.time_format) { TIME_FMT = kl.time_format; this.timeFmt = kl.time_format; }
         if (this.bzApplySettings) this.bzApplySettings(kl);  // restore persisted BZ prefs (tree drive, depths, toggles)
