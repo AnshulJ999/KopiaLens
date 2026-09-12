@@ -21,8 +21,8 @@ from fastapi.staticfiles import StaticFiles
 
 from config import DATA_DIR, REPOS, repo_kind
 
-from .api import (actions, audit, backblaze, dashboard, excluded, insights, jobs, search,
-                  simulate, snapshots, stats, tree)
+from .api import (actions, audit, backblaze, dashboard, excluded, insights, jobs, policies,
+                  search, simulate, snapshots, stats, tree)
 from .core import auth
 from .core import jobs as jobrunner
 from .core import kopia as kopia_mod
@@ -664,6 +664,7 @@ app.include_router(jobs.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
 app.include_router(excluded.router, prefix="/api")
+app.include_router(policies.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")
 app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
 
