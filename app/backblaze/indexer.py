@@ -346,6 +346,80 @@ def _refresh_cache_aggregates(con) -> None:
     bbdb.kv_set(con, "cache_churn_default", json.dumps(ch))
 
 
+def detect_changes() -> dict:
+    """Cheap freshness detect for the scheduler's light pass (). Stat every filelist; hash the
+    body only where the (mtime,size) watermark moved; skip stubs. NEVER touches the files tables -
+    the only writes are the ingest watermark update on a digest match (mirroring refresh()'s own
+    no-reindex bookkeeping, so consecutive detects are pure stat) and the kv flags the due check
+    reads. A real change sets kv "reindex_pending"; refresh() clears it on success.
+
+    Callers must not run this while a refresh is in flight (the worker owns the same SQLite file)."""
+    if not paths.exists():
+        return {"ok": False, "reason": f"bzdata not found at {paths.bzdata_root()}"}
+    t0 = time.time()
+    con = bbdb.connect()
+    engine = rules.load_engine()
+    rules_hash = rules.engine_digest(engine)
+    prev_rules_hash = bbdb.kv_get(con, "rules_digest")
+    # Same bootstrap rule as refresh(): no digest on record yet is NOT a rules change
+    rules_changed = prev_rules_hash is not None and prev_rules_hash != rules_hash
+    changed = False
+    drives: dict[str, dict] = {}
+    for vol in paths.volumes():
+        src = f"filelist:{vol.letter}"
+        try:
+            st = os.stat(vol.filelist)
+        except OSError:
+            continue
+        entry = {"watermark_moved": False, "changed": False}
+        drives[vol.letter] = entry
+        if parsers.is_stub_filelist(vol.filelist):
+            continue  # aborted scan: flag nothing, watermark nothing (mirrors refresh())
+        prev = bbdb.ingest_get(con, src)  # (mtime, size, digest) or None
+        have_rows = con.execute("SELECT 1 FROM files WHERE drive=? LIMIT 1", [vol.letter]).fetchone()
+        if prev is not None and have_rows and prev[0] == st.st_mtime and prev[1] == st.st_size:
+            continue  # untouched since the last check - pure stat
+        entry["watermark_moved"] = True
+        try:
+            digest = _filelist_digest(vol.filelist)
+        except OSError as exc:
+            # Cannot verify -> flag nothing. A transient read error must not trigger a doomed
+            # reindex; the next detect retries the hash and a warning that repeats is the signal.
+            log.warning("BZ %s: filelist unreadable during detect (%s) - skipping", vol.letter, exc)
+            continue
+        if prev is not None and have_rows and digest and digest == prev[2]:
+            bbdb.ingest_set(con, src, st.st_mtime, st.st_size, digest)  # header-only rewrite
+        else:
+            entry["changed"] = True
+            changed = True  # watermark left alone: refresh() re-derives it when it reindexes
+    if rules_changed:
+        changed = True
+    if changed:
+        bbdb.kv_set(con, "reindex_pending", "1")
+    bbdb.kv_set(con, "last_check_ts", str(time.time()))
+    con.commit()
+    return {"ok": True, "changed": changed, "rules_changed": rules_changed,
+            "drives": drives, "elapsed": round(time.time() - t0, 1)}
+
+
+def freshness() -> dict:
+    """The kv freshness triple (): when the data was last verified (detect or refresh), when
+    it was last actually rebuilt, and whether a detected change is still waiting. Reads the bz
+    SQLite kv table, so it survives restarts; a missing/unbuilt DB reads as never."""
+    out = {"last_check_ts": None, "last_reindex_ts": None, "pending": False}
+    try:
+        con = bbdb.connect()
+        for key in ("last_check_ts", "last_reindex_ts"):
+            try:
+                out[key] = float(bbdb.kv_get(con, key) or 0.0) or None
+            except (TypeError, ValueError):
+                pass
+        out["pending"] = bbdb.kv_get(con, "reindex_pending") == "1"
+    except Exception:  # noqa: BLE001 - a freshness read must never break its caller
+        pass
+    return out
+
+
 def refresh(force: bool = False) -> dict:
     """Incremental refresh of the whole BZ index. Returns a per-drive summary."""
     if not paths.exists():
@@ -438,6 +512,13 @@ def refresh(force: bool = False) -> dict:
         if force or not bbdb.kv_get(con, "fileids_total"):  # populate once, then only on a forced rebuild
             _refresh_ids_count(con)
         _refresh_cache_aggregates(con)  # kv-cache status/overview/default-churn for instant open
+        # handshake with the scheduler's detect: a completed refresh has absorbed whatever
+        # the detect flagged, and (when it actually reindexed) becomes the new throttle anchor.
+        # Same transaction as the data, so a crash cannot clear pending without the fresh rows.
+        if changed or force:
+            bbdb.kv_set(con, "last_reindex_ts", str(time.time()))
+        bbdb.kv_set(con, "last_check_ts", str(time.time()))
+        bbdb.kv_set(con, "reindex_pending", "0")
         con.commit()
         # Release pages freed by the DELETE+INSERT churn so the file stays small (cheap; only does
         # real work when auto_vacuum=INCREMENTAL is active and there are free pages to release).

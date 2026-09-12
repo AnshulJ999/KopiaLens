@@ -98,6 +98,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "backblaze": {
         "bzdata_path": r"C:\ProgramData\Backblaze\bzdata",  # read-only source root (never written)
         "history_days": 90,          # how many days of the daily per-folder rollup to retain (growth/churn trend)
+        # minimum seconds between real BZ reindexes (): the cheap detect runs on the light
+        # interval, but a change it finds waits for this gap before the expensive reindex starts
+        "bz_reindex_min_gap": 21600,
         # folder-rollup views (Queue/Churn/by-folder) roll these prefixes up to a single row instead
         # of splitting their (chunk-named) subfolders. Toggle per-request from the UI.
         "collapse_prefixes": [r"E:\Kopia", r"I:\Kopia Big Backup"],

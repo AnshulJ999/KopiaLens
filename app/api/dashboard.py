@@ -132,6 +132,22 @@ def index_freshness() -> dict:
             "error": st.get("error") or stored.get("reason") or (last_listing_error(key) or None),
             "error_at": stored.get("at"),
         }
+        if cfg.get("kind") == "backblaze":
+            #: the 30-min detect verifies the data without rebuilding it, so a quiet BZ
+            # reads as fresh instead of drifting amber toward "3d ago". A change detected but
+            # still waiting (min-gap / heavy-pass slot) means the data genuinely dates from the
+            # last reindex, and the strip says so.
+            try:
+                from ..backblaze import indexer as bz_indexer
+                info = bz_indexer.freshness()
+                row["pending"] = info["pending"]
+                if info["pending"]:
+                    row["last_index"] = info["last_reindex_ts"]
+                else:
+                    verified = [t for t in (nightly_success_ts(key), info["last_check_ts"]) if t]
+                    row["last_index"] = max(verified) if verified else None
+            except Exception:  # noqa: BLE001 - the strip degrades to the nightly timestamps
+                pass
         if row["running"]:
             row["progress"] = worker_progress(key)
         out.append(row)

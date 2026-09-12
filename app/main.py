@@ -341,7 +341,7 @@ def _light_pass() -> None:
         if _bg_stop.is_set():
             return
         if repo_kind(repo) == "backblaze":
-            continue  # BZ has no cheap warm step - its refresh is heavy and rides with the nightly pass
+            continue  # BZ has no cheap warm step - its detect has its own pass below
         if nightly.is_running(repo) or offline_status(repo):
             continue  # the worker owns the DuckDB right now
         try:
@@ -350,6 +350,55 @@ def _light_pass() -> None:
             continue  # raced with the start of a nightly pass; nothing to do
         except Exception as exc:  # noqa: BLE001
             log.error("light pass repo=%s failed: %s", repo, exc)
+
+
+_DEFAULT_BZ_REINDEX_GAP = 21600   #: min seconds between real BZ reindexes (detect runs far more often)
+_BZ_LAST_ATTEMPT = 0.0            # in-memory on purpose: after a restart an immediate retry is correct
+
+
+def _bz_min_gap() -> float:
+    try:
+        return max(300.0, float(load_settings().get("backblaze", {}).get("bz_reindex_min_gap",
+                                                                         _DEFAULT_BZ_REINDEX_GAP)))
+    except Exception:
+        return float(_DEFAULT_BZ_REINDEX_GAP)
+
+
+def _bz_kv_float(key: str) -> float:
+    try:
+        from .backblaze import bbdb as bz_bbdb
+        return float(bz_bbdb.kv_get(bz_bbdb.connect(), key) or 0.0)
+    except Exception:  # noqa: BLE001 - a missing/unbuilt BZ DB simply reads as "never"
+        return 0.0
+
+
+def _bz_reindex_due(now_ts: float) -> bool:
+    """BZ's own due check () - the daily slot never applies to it. Due when the 30-min detect
+    has flagged a change no successful refresh has absorbed yet, the min-gap since the last real
+    reindex has opened, and a FAILED attempt has had its retry window (a failing worker must not
+    be relaunched every tick)."""
+    if _bz_kv_float("reindex_pending") != 1.0:
+        return False
+    if now_ts - _bz_kv_float("last_reindex_ts") < _bz_min_gap():
+        return False
+    return now_ts - _BZ_LAST_ATTEMPT >= _retry_delay()
+
+
+def _bz_detect_pass() -> None:
+    """Cheap BZ freshness detect on the light interval (): stat + body-hash in this process
+    (chunked I/O, GIL released) - never the ~4 min reindex, which stays a worker subprocess behind
+    the global heavy-pass slot. Skipped while a BZ refresh runs: the worker owns the same SQLite
+    file right now and its success re-derives everything the detect would have learned."""
+    try:
+        from .backblaze import indexer as bz_indexer
+        if bz_indexer.state().get("building"):
+            return
+        out = bz_indexer.detect_changes()
+        if out.get("changed"):
+            log.info("BZ detect: data changed (%.1fs) - reindex wanted, gated by bz_reindex_min_gap",
+                     float(out.get("elapsed") or 0.0))
+    except Exception as exc:  # noqa: BLE001 - the detect must never kill the tick
+        log.error("BZ detect failed: %s", exc)
 
 
 def _current_slot(now_dt: dt.datetime, now_ts: float) -> float:
@@ -382,7 +431,7 @@ def _index_due(repo: str, now_dt: dt.datetime, now_ts: float) -> bool:
 
 def _tick() -> None:
     """One scheduler heartbeat: start at most ONE heavy pass, then do the light work when due."""
-    global _last_light
+    global _last_light, _BZ_LAST_ATTEMPT
     now_ts = time.time()
     now_dt = dt.datetime.now()
     # User actions outrank indexing: while a user-started maintenance runs (hours, exclusive
@@ -391,6 +440,8 @@ def _tick() -> None:
         for repo in REPOS:
             if _bg_stop.is_set():
                 return
+            if repo_kind(repo) == "backblaze":
+                continue  # BZ left the daily slot () - its detect-driven check runs below
             if _index_due(repo, now_dt, now_ts):
                 slot = _current_slot(now_dt, now_ts)
                 log.info("heavy pass due for repo=%s (mode=%s, slot=%s)", repo, _index_mode(), int(slot))
@@ -403,9 +454,19 @@ def _tick() -> None:
                 else:
                     log.info("heavy pass for repo=%s deferred: %s", repo, started.get("reason"))
                 break  # strictly sequential - the next repo gets its turn on a later tick
+        if _bz_reindex_due(now_ts):
+            # Same single global slot as every heavy pass: a kopia run defers this to a later
+            # tick, and a failed refresh retries after index_retry_delay, not every minute.
+            started = nightly.start_index_pass_async("bz", on_done=mark_nightly_result)
+            if started.get("started"):
+                _BZ_LAST_ATTEMPT = now_ts
+                log.info("BZ reindex started (detect flagged a change, min-gap opened)")
+            else:
+                log.info("BZ reindex deferred: %s", started.get("reason"))
     if now_ts - _last_light >= _light_interval():
         _last_light = now_ts
         _light_pass()
+        _bz_detect_pass()
         gc.collect()  # return the pass's transient arenas (pymalloc will not on its own)
         log_memory("light pass done")
 
@@ -421,6 +482,7 @@ def _bg_worker() -> None:
         return  # shutdown requested during the startup delay
     _last_light = time.time()
     _light_pass()
+    _bz_detect_pass()  # BZ catch-up: after the PC was off, the first detect flags any missed change
     gc.collect()
     _write_last_cycle_ts()
     log_memory("startup light pass done")

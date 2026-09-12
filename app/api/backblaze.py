@@ -80,6 +80,7 @@ def status() -> dict:
         out.update(bzq.status())
     except Exception as exc:  # noqa: BLE001 - report, don't 500 (lets the UI show "not built yet")
         out["error"] = str(exc)
+    out.update(indexer.freshness())  #: pending / last_check_ts / last_reindex_ts
     return out
 
 
