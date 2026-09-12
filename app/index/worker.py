@@ -198,6 +198,16 @@ def run(repo: str, full: bool = False) -> dict:
             except Exception as exc:  # noqa: BLE001 - a backup hiccup must not fail the stage
                 logging.error("policy backup repo=%s failed: %s", repo, exc)
 
+        def _policy_prices() -> None:
+            #: whole-policy "keeping out" pricing as a STORED stage - the tab reads the
+            # numbers instantly instead of fanning out per-source scans per request. Same
+            # buffer-pool rationale as churn: everything before this filled the pool.
+            from .store import close_all
+            close_all()
+            gc.collect()
+            from ..index import policypricing
+            policypricing.precompute(repo)
+
         def _next_snaps() -> None:
             from ..core.schedule import compute_next_snapshots
             compute_next_snapshots(repo)
@@ -213,6 +223,7 @@ def run(repo: str, full: bool = False) -> dict:
                                              ("churn", _churn, False),
                                              ("folders", _folders, True),
                                              ("policies", _policies, False),
+                                             ("policy_prices", _policy_prices, False),
                                              ("next_snapshots", _next_snaps, False)):
                 if needs_refcount and not fresh_refcount:
                     summary["skipped"].append(name)
@@ -222,7 +233,7 @@ def run(repo: str, full: bool = False) -> dict:
                 stage(name, fn)
         else:
             summary["skipped"] = ["dashboard", "analysis", "churn", "folders", "policies",
-                                  "next_snapshots"]
+                                  "policy_prices", "next_snapshots"]
             logging.error("index stage failed - skipping every stage that reads the index")
     finally:
         rep.stop()

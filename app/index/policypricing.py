@@ -22,8 +22,12 @@ flagged as ``slow_path``.
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
+
+from config import DATA_DIR
 
 from ..core import paths as pathrules
 from ..core.applog import get_logger
@@ -39,6 +43,20 @@ _CACHE_TTL = 1800.0           # numbers move only when the index or the policy m
 _CACHE_MAX = 4096
 _CACHE: dict[tuple, tuple[float, list[dict]]] = {}
 _CACHE_LOCK = threading.Lock()
+
+_BATCH = 40                   # patterns per FILTER-batched scan (one pathx + one dir scan each)
+_LIVE_PRICE_CAP = 32          # above this, live pricing is refused - read the nightly numbers
+
+# Single-flight for expensive multi-source rollups (metrics.py's build-lock shape): concurrent
+# identical callers block on the same lock and then hit the price cache the leader populated.
+_ROLLUP_LOCKS: dict[tuple, threading.Lock] = {}
+_ROLLUP_LOCKS_LOCK = threading.Lock()
+
+
+def rollup_lock(key: tuple) -> threading.Lock:
+    with _ROLLUP_LOCKS_LOCK:
+        return _ROLLUP_LOCKS.setdefault(key, threading.Lock())
+
 
 _META = "*?[]!\\"             # pattern metacharacters that end a literal run
 _MIN_LITERAL = 3              # shorter fragments are poor prefilters
@@ -333,7 +351,7 @@ def _compute(repo: str, source_key: str, patterns: list[str]) -> dict:
         for start in range(0, len(entries), _BATCH):
             _price_batch_with_regex(cur, src, entries[start:start + _BATCH], len(root), sep)
         for i, (pat, compiled), entry in zip(valid_idx, valid_pats, entries):
-            files, total, dirs, _ = entry[3]
+            files, total, dirs = entry[3]
             examples: list = []
             if files and _EXAMPLE_CAP:  # examples only where the rule actually matches
                 cond, cparams = _cond_for_inner(_rel_expr(), entry[1], entry[2], len(root), sep)
@@ -345,3 +363,117 @@ def _compute(repo: str, source_key: str, patterns: list[str]) -> dict:
         return {"results": results, "slow_path": False}
     finally:
         cur.close()
+
+
+# ---- nightly-stored pricing ( half 2) -------------------------------------------
+# Whole-policy pricing runs in the worker as a stored stage; the tab reads the numbers
+# instantly (the serve-stale-recompute-in-background rule). A stored number ages gracefully:
+# after a policy save the file keeps serving with its old ts until the next nightly recomputes.
+# LIVE pricing remains for the one case no cache can cover - a rule the user is about to add
+# (and small rule sets generally, capped at _LIVE_PRICE_CAP per request).
+
+_STORE_VERSION = 1
+
+
+def stored_path(repo: str) -> str:
+    return os.path.join(DATA_DIR, f"policy_prices_repo{repo}.json")
+
+
+def stored(repo: str) -> dict | None:
+    """The parsed stored-prices file, or None when the worker has not produced one yet."""
+    try:
+        with open(stored_path(repo), encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) and data.get("version") == _STORE_VERSION else None
+    except Exception:  # noqa: BLE001 - absent/corrupt store = "not priced yet", never an error
+        return None
+
+
+def _atomic_write_json(path: str, payload: dict) -> None:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh)
+    os.replace(tmp, path)
+
+
+def precompute(repo: str) -> dict:
+    """ worker stage: price EVERY policy's own rules plus the global rollup and store
+    the result for instant tab reads. Per source it is one batched scan set (the FILTER batch);
+    the global rollup prices global's rules against each inheriting source and sums.
+    Returns the stored payload."""
+    from ..core.policy import (
+        _GLOBAL_TARGET,
+        effective_ignore_origin,
+        load_defined_policies,
+        load_policies,
+        refresh_defined_policies,
+    )
+
+    t0 = time.time()
+    refresh_defined_policies(repo, force=True)   # one export; ownership must reflect now
+    defined = load_defined_policies(repo).get("policies") or {}
+    effective = load_policies(repo).get("policies") or {}
+
+    rules_out: dict[str, dict] = {}
+    global_scope: list[str] = []
+    for key in sorted(effective):
+        origin, _owner = effective_ignore_origin(repo, key, defined)
+        if origin == "global":
+            global_scope.append(key)
+            continue
+        own = ((defined.get(key) or {}).get("files") or {}).get("ignore") or []
+        if not own:
+            continue
+        out = price_patterns(repo, key, own, limit=0)
+        rules_out[key] = {
+            r["pattern"]: {"files": r["files"], "bytes": r["bytes"], "dirs": r["dirs"],
+                           "negated": r["negated"]}
+            for r in out["results"] if not r["error"]}
+        log.info("policy prices repo=%s source=%s rules=%d", repo, key, len(rules_out[key]))
+
+    glob = ((defined.get(_GLOBAL_TARGET) or {}).get("files") or {}).get("ignore") or []
+    if glob and global_scope:
+        merged: dict[str, list[int]] = {p: [0, 0, 0] for p in glob}
+        negated = {p: compile_pattern(p).negated for p in glob}
+        for key in global_scope:
+            out = price_patterns(repo, key, glob, limit=0)
+            for r in out["results"]:
+                if r["error"]:
+                    continue
+                m = merged[r["pattern"]]
+                m[0] += r["files"]
+                m[1] += r["bytes"]
+                m[2] += r["dirs"]
+        rules_out["global"] = {
+            p: {"files": m[0], "bytes": m[1], "dirs": m[2], "negated": negated[p]}
+            for p, m in merged.items()}
+        log.info("policy prices repo=%s global rollup: %d rules x %d sources",
+                 repo, len(glob), len(global_scope))
+
+    payload = {"version": _STORE_VERSION, "ts": time.time(), "rules": rules_out}
+    try:
+        _atomic_write_json(stored_path(repo), payload)
+    except Exception as exc:  # noqa: BLE001 - a store write must never fail the worker stage
+        log.error("policy prices repo=%s store write failed: %s", repo, exc)
+        return payload
+    log.info("policy prices repo=%s stored (%d targets, %.1fs)", repo, len(rules_out),
+             time.time() - t0)
+    return payload
+
+
+def stored_for_target(repo: str, target: str) -> dict | None:
+    """Stored numbers for one target, shaped like the live price endpoint's response so the UI
+    renders both with one path. None = nothing stored yet (fresh install / first nightly)."""
+    data = stored(repo)
+    if data is None:
+        return None
+    key = "global" if target == "global" else target
+    rules = (data.get("rules") or {}).get(key)
+    if rules is None:
+        return {"target": target, "stored": True, "ts": data.get("ts"), "results": []}
+    results = [{
+        "pattern": p, "files": v.get("files", 0), "bytes": v.get("bytes", 0),
+        "dirs": v.get("dirs", 0), "examples": [], "total_examples": v.get("files", 0),
+        "capped": False, "error": None, "negated": bool(v.get("negated")),
+    } for p, v in rules.items()]
+    return {"target": target, "stored": True, "ts": data.get("ts"), "results": results}

@@ -68,7 +68,7 @@ def test_anchored_exact_does_not_claim_the_inheriting_source(wired):
     """The re-anchoring semantic: '/Example-Repo/...' written at G:\\GitHub matches the
     file in G:\\GitHub's walk but NOT in Example-Repo's (where it would mean
     ...\\Example-Repo\\Example-Repo\\...)."""
-    t = _targets(resolve_targets("1", FILE, source=GITHUB, shape="exact"))
+    t = _targets(resolve_targets("1", FILE, source=GITHUB, shape="exact", price=True))
     gh = t[GITHUB]
     assert gh["pattern"] == "/Example-Repo/Stash/model.safetensors"
     covers = {c["source"]: c["matches"] for c in gh["covers"]}
@@ -78,13 +78,21 @@ def test_anchored_exact_does_not_claim_the_inheriting_source(wired):
 
 
 def test_unanchored_name_shape_covers_every_inheritor(wired):
-    t = _targets(resolve_targets("1", FILE, source=GITHUB, shape="name"))
+    t = _targets(resolve_targets("1", FILE, source=GITHUB, shape="name", price=True))
     gh = t[GITHUB]
     assert gh["pattern"] == "model.safetensors"
     assert gh["pattern_anchored"] is False
     covers = {c["source"]: c["matches"] for c in gh["covers"]}
     assert covers == {GITHUB: True, PS: True}
     assert gh["impact"]["bytes"] == 900_010  # both covers priced
+
+
+def test_targets_are_not_priced_by_default(wired):
+    """the dialog ranks by covers count - the default call must stay a pure
+    resolution with zero index scans."""
+    out = resolve_targets("1", FILE, source=GITHUB, shape="exact")
+    assert all(t["impact"] is None for t in out["targets"])
+    assert out["ranked_by"] == "sources-covered"
 
 
 def test_drive_root_target_prices_its_own_scope(wired):
@@ -95,10 +103,11 @@ def test_drive_root_target_prices_its_own_scope(wired):
     assert root["covers"][0]["matches"] is True
 
 
-def test_ranking_by_impact_bytes(wired):
+def test_ranking_by_matched_reach(wired):
+    """rank by sources covered (free), matched covers first. G:\\GitHub
+    reaches two sources (one matching) vs G:\\'s one."""
     out = resolve_targets("1", FILE, source=GITHUB, shape="name")
     ranked = [t["target"] for t in out["targets"]]
-    # G:\GitHub's write covers two sources (900_010 bytes) vs G:\'s one (40_000)
     assert ranked[0] == GITHUB and ranked[1] == G
 
 

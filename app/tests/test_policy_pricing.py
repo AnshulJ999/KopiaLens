@@ -221,3 +221,55 @@ def test_invalidate_clears_the_cache(priced, monkeypatch):
     policypricing.invalidate("1")
     policypricing.price_patterns("1", SRC, ["*.tmp"], limit=5)
     assert calls["n"] == 2
+
+
+# ---- FILTER-batched fast path + the nightly stored stage ------------------------
+
+def test_filter_batch_matches_known_counts_across_a_batch_boundary(priced):
+    """One scan per _BATCH patterns: 45 patterns forces two batches, and the known-count
+    patterns must stay exact across the boundary."""
+    known = {"*.tmp": (4, 950), "/Temp/**": (4, 950), "node_modules": (1, 500),
+             "*.TMP": (0, 0), "other/": (1, 500)}
+    filler = [f"zzz_nonexistent_{i}.bin" for i in range(39)]
+    pats = list(known) + filler           # 44 patterns -> crosses the 40-pattern batch edge
+    out = policypricing.price_patterns("1", SRC, pats, limit=0, use_cache=False)
+    by = {r["pattern"]: r for r in out["results"]}
+    for pat, (files, byts) in known.items():
+        assert by[pat]["files"] == files and by[pat]["bytes"] == byts, pat
+    for pat in filler:
+        assert by[pat]["files"] == 0, pat
+    assert out["slow_path"] is False
+
+
+def test_precompute_stores_per_source_and_global_rollup(priced, tmp_path, monkeypatch):
+    import app.core.policy as pol
+
+    glob_rules = ["gtmp1", "gtmp2"]
+    defined = {"(global)": {"files": {"ignore": list(glob_rules)}},
+               SRC: {"files": {"ignore": ["*.tmp"]}}}
+    effective = {SRC: {"files": {"ignore": ["*.tmp"]}},
+                 f"x@y:D:{SEP}": {"files": {"ignore": glob_rules}}}
+    monkeypatch.setattr(pol, "load_defined_policies", lambda repo: {"policies": defined})
+    monkeypatch.setattr(pol, "load_policies", lambda repo: {"policies": effective})
+    monkeypatch.setattr(pol, "refresh_defined_policies",
+                        lambda repo, force=False: ({"policies": defined}, True))
+    monkeypatch.setattr(policypricing, "DATA_DIR", str(tmp_path))
+
+    payload = policypricing.precompute("1")
+    assert policypricing.stored("1") is not None
+    assert payload["rules"][SRC]["*.tmp"]["files"] == 4
+
+    mine = policypricing.stored_for_target("1", SRC)
+    assert mine["stored"] is True and mine["results"][0]["pattern"] == "*.tmp"
+    assert mine["results"][0]["files"] == 4
+
+    # D:\ has no index rows -> the global rollup sums to zeros but the shape is right
+    roll = policypricing.stored_for_target("1", "global")
+    assert {r["pattern"] for r in roll["results"]} == set(glob_rules)
+    assert all(r["files"] == 0 for r in roll["results"])
+
+
+def test_stored_for_target_returns_none_before_the_first_nightly(priced, tmp_path, monkeypatch):
+    monkeypatch.setattr(policypricing, "DATA_DIR", str(tmp_path))
+    assert policypricing.stored("1") is None
+    assert policypricing.stored_for_target("1", "global") is None

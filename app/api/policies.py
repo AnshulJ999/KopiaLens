@@ -85,13 +85,20 @@ def _global_pricing_scope(repo: str) -> list[str]:
 
 def _price_for_target(repo: str, target: str, patterns: list[str], limit: int = 10) -> dict:
     """Price patterns against a source, or - for the global target - aggregated over the
-    sources that inherit global rules (per-source breakdown included)."""
+    sources that inherit global rules (per-source breakdown included). The global rollup is
+    single-flighted: concurrent identical requests block on one lock and then hit the price
+    cache the leader populated."""
     if _is_global(target):
         scope = _global_pricing_scope(repo)
         merged: dict[str, dict] = {}
         breakdown = []
+        lock = policypricing.rollup_lock((repo, tuple(sorted(patterns))))
+        with lock:
+            per_source = {key: policypricing.price_patterns(repo, key, patterns,
+                                                            limit=_EXAMPLES_MAX)
+                          for key in scope}
         for key in scope:
-            out = policypricing.price_patterns(repo, key, patterns, limit=_EXAMPLES_MAX)
+            out = per_source[key]
             totals = {}
             for res in out["results"]:
                 item = merged.setdefault(res["pattern"], {
@@ -165,6 +172,7 @@ class TargetsBody(BaseModel):
     source: str | None = None     # the panel the dialog opened from: disambiguates user@host
     is_folder: bool = False
     shape: str = "exact"          # exact | name | extension | parent
+    price: bool = False           # opt-in impact pricing; the dialog ranks by covers count
 
 
 # ---- read half -------------------------------------------------------------------------
@@ -263,13 +271,21 @@ def detail(repo: str = "1", target: str = "") -> dict:
 
 @router.post("/policies/price")
 def price(body: PriceBody) -> dict:
-    """"Keeping out" pricing for each pattern (dialog preview + the tab's per-rule column)."""
+    """"Keeping out" pricing for each pattern - LIVE, for small rule sets only (the dialog's
+    rule-about-to-be-added case). Large rule sets read the nightly-stored numbers instead:
+    GET /policies/stored-prices."""
     _kopia_repo(body.repo)
     if not body.target:
         raise HTTPException(status_code=400, detail="target is required")
     if not body.patterns:
         return {"target": body.target, "scope": {"sources": [], "inheriting_global": 0},
                 "results": []}
+    if len(body.patterns) > policypricing._LIVE_PRICE_CAP:
+        raise HTTPException(
+            status_code=400,
+            detail=f"live pricing is capped at {policypricing._LIVE_PRICE_CAP} patterns per "
+                   f"request ({len(body.patterns)} given) - read GET /api/policies/stored-prices"
+                   "?repo=" + body.repo + "&target=... for whole-policy numbers")
     try:
         return _price_for_target(body.repo, body.target, body.patterns,
                                  limit=min(max(body.limit, 0), _EXAMPLES_MAX))
@@ -277,17 +293,34 @@ def price(body: PriceBody) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.get("/policies/stored-prices")
+def stored_prices(repo: str = "1", target: str = "") -> dict:
+    """Nightly-stored "keeping out" numbers for one target (whole policies - the Global
+    rollup's 250 rules cost nothing to read here). Shape matches POST /policies/price's
+    results so the UI renders both with one path; `stored: false` = not priced yet (first
+    nightly has not run)."""
+    _kopia_repo(repo)
+    if not target:
+        raise HTTPException(status_code=400, detail="target is required ('global' or a source key)")
+    out = policypricing.stored_for_target(repo, "global" if target == "global" else target)
+    if out is None:
+        return {"repo": repo, "target": target, "stored": False, "ts": None, "results": [],
+                "detail": "no nightly pricing stored yet - available after the next index run"}
+    out["repo"] = repo
+    return out
+
+
 @router.post("/policies/exclusion-targets")
 def exclusion_targets(body: TargetsBody) -> dict:
     """Owning policies that can receive an exclusion for ``path`` (Option A: a source whose
-    rules are inherited is never offered - its owner is), deduped, each with the sources the
-    write covers (matched per source - anchored patterns re-anchor per walk root) and the
-    impact of the shape's pattern, ranked biggest-impact first."""
+    rules are inherited is never offered - its owner is), deduped, ranked by reach (matched
+    covers first). ``price: false`` (default) keeps this a pure resolution call - zero index
+    scans; impact pricing is opt-in and small-scope."""
     _kopia_repo(body.repo)
     try:
         return policytargets.resolve_targets(
             body.repo, body.path, source=body.source,
-            is_folder=body.is_folder, shape=body.shape)
+            is_folder=body.is_folder, shape=body.shape, price=body.price)
     except TargetError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

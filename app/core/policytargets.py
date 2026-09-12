@@ -136,7 +136,8 @@ def resolve_targets(repo: str, path: str, source: str | None = None,
     covering = _covering_sources(repo, path, host)
     if not covering:
         return {"repo": repo, "path": path, "shape": shape, "sources": [], "targets": [],
-                "note": "no configured source contains this path", "ranked_by": "impact"}
+                "note": "no configured source contains this path",
+                "ranked_by": "sources-covered"}
 
     # Resolve every covering source to the policy that OWNS its ignore rules.
     owners: dict[str, list[str]] = {}   # owner target -> covering sources it speaks for

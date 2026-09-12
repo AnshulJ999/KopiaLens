@@ -193,3 +193,40 @@ def test_restore_cmd_carries_the_mirror_flag(wired, monkeypatch):
                         lambda repo, name: rf"C:{SEP}backup{SEP}{name}")
     out = api.restore_cmd(repo="1", name="20260912_040404_manual.json", mode="mirror")
     assert "--delete-other-policies" in out["command"]
+
+
+# ----: live-price cap, opt-in target pricing, stored numbers ---------------------
+
+def test_live_pricing_caps_large_rule_sets(wired):
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as e:
+        api.price(api.PriceBody(repo="1", target=SRC,
+                                patterns=[f"p{i}" for i in range(33)]))
+    assert e.value.status_code == 400
+    assert "stored-prices" in e.value.detail
+    # at the cap exactly, it still prices
+    out = api.price(api.PriceBody(repo="1", target=SRC, patterns=[f"p{i}" for i in range(32)]))
+    assert len(out["results"]) == 32
+
+
+def test_targets_default_to_no_pricing(wired):
+    out = api.exclusion_targets(api.TargetsBody(repo="1", path=SRC + SEP + "x" + SEP + "a.tmp", source=SRC))
+    assert all(t["impact"] is None for t in out["targets"])
+    assert out["ranked_by"] == "sources-covered"
+
+
+def test_stored_prices_route_serves_the_nightly_file(wired, monkeypatch):
+    monkeypatch.setattr(api.policypricing, "stored_for_target", lambda repo, target: {
+        "target": target, "stored": True, "ts": 123.0,
+        "results": [{"pattern": "*.tmp", "files": 4, "bytes": 950, "dirs": 0,
+                     "examples": [], "total_examples": 4, "capped": False,
+                     "error": None, "negated": False}]})
+    out = api.stored_prices(repo="1", target="global")
+    assert out["stored"] is True and out["results"][0]["files"] == 4
+    assert out["repo"] == "1"
+
+
+def test_stored_prices_route_reports_absence(wired, monkeypatch):
+    monkeypatch.setattr(api.policypricing, "stored_for_target", lambda repo, target: None)
+    out = api.stored_prices(repo="1", target="global")
+    assert out["stored"] is False and out["results"] == []
