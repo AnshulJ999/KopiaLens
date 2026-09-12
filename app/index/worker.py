@@ -188,8 +188,15 @@ def run(repo: str, full: bool = False) -> dict:
             folder_prewarm(repo)
 
         def _policies() -> None:
+            from ..core import policybackup
             from ..core.policy import refresh_policies
             refresh_policies(repo, force=True)
+            # Fail-closed is not the nightly's job: a failed export here is logged loudly and the
+            # next nightly retries, while a pre-WRITE backup (the API path) refuses the write.
+            try:
+                policybackup.nightly_backup(repo)
+            except Exception as exc:  # noqa: BLE001 - a backup hiccup must not fail the stage
+                logging.error("policy backup repo=%s failed: %s", repo, exc)
 
         def _next_snaps() -> None:
             from ..core.schedule import compute_next_snapshots

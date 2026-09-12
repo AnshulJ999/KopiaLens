@@ -191,3 +191,148 @@ def source_summaries(repo: str) -> dict[str, dict]:
     if not policies or time.time() - float(cached.get("ts") or 0) >= POLICY_TTL:
         policies = refresh_policies(repo) or policies
     return {key: summarize(pol) for key, pol in policies.items()}
+
+
+# ---- defined policies (the export view) ------------------------------------------------
+# The per-source cache above holds EFFECTIVE policies (`policy show` - what kopia applies,
+# inherited values filled in). The Policies tab also needs the DEFINED policies - which target
+# sets which field itself. One `policy export` returns all of them (global included) as
+# {target: policy}; a target that defines nothing at all is absent from it.
+
+_GLOBAL_TARGET = "(global)"
+_DEFINED_TTL = 24 * 3600
+
+
+def _defined_cache_path(repo: str) -> str:
+    return os.path.join(CACHEDIR, f"policies_defined_repo{repo}.json")
+
+
+def load_defined_policies(repo: str) -> dict:
+    """Cached ``{"ts": float, "policies": {target: raw_policy}}`` from the last successful
+    export; empty dict when never built. Targets are source keys or ``(global)``."""
+    try:
+        with open(_defined_cache_path(repo), encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def refresh_defined_policies(repo: str, force: bool = False) -> tuple[dict, bool]:
+    """(defined policies, fresh) - re-exports every defined policy when the cache is older than
+    ``_DEFINED_TTL``. A FAILED export keeps serving the previous cache and reports ``fresh=False``
+    - stale definitions beat no definitions (the tab marks itself stale instead of going blank)."""
+    import tempfile
+
+    cached = load_defined_policies(repo)
+    if not force and cached.get("policies") and \
+            time.time() - float(cached.get("ts") or 0) < _DEFINED_TTL:
+        return cached, True
+    os.makedirs(CACHEDIR, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(suffix=".json", dir=CACHEDIR)
+    os.close(fd)
+    try:
+        res = kopia(repo, ["policy", "export", "--to-file", tmp, "--overwrite"])
+        if res.returncode != 0:
+            log.warning("policy export failed repo=%s rc=%d: %s", repo, res.returncode,
+                        (res.stderr or "").strip()[:300])
+            return cached, False
+        with open(tmp, encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            raise ValueError("policy export produced %s, expected an object" % type(data).__name__)
+        _write_defined(repo, data)
+        return {"ts": time.time(), "policies": data}, True
+    except Exception as exc:  # noqa: BLE001 - a failed export must not blank the tab
+        log.warning("policy export/verify failed repo=%s (keeping previous): %s", repo, exc)
+        return cached, False
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _write_defined(repo: str, policies: dict) -> None:
+    os.makedirs(CACHEDIR, exist_ok=True)
+    tmp = _defined_cache_path(repo) + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"ts": time.time(), "policies": policies}, fh)
+        os.replace(tmp, _defined_cache_path(repo))
+    except Exception as exc:  # noqa: BLE001 - a cache write must never fail the caller
+        log.warning("repo=%s defined-policy cache write failed: %s", repo, exc)
+
+
+def refresh_one_policy(repo: str, target: str) -> None:
+    """Re-read ONE source's effective policy into the cache after a write (a full
+    refresh_policies would spend one subprocess per source for a one-target change)."""
+    cached = load_policies(repo)
+    policies = dict(cached.get("policies") or {})
+    try:
+        policies[target] = show_policy(repo, target)
+    except Exception as exc:  # noqa: BLE001 - keep the old value, the next nightly fixes it
+        log.warning("policy refresh failed for %s (keeping previous): %s", target, exc)
+        return
+    _write_policies(repo, policies)
+
+
+def invalidate_after_write(repo: str, targets: list[str] | None = None) -> None:
+    """Post-write cache refresh: one source (a set/save) or everything (a mirror restore), plus
+    the defined-policies export and the pricing cache."""
+    from . import policypricing  # local import: index layer, keeps policy import-light
+
+    if targets:
+        for target in targets:
+            if target != _GLOBAL_TARGET:
+                refresh_one_policy(repo, target)
+    else:
+        refresh_policies(repo, force=True)
+    refresh_defined_policies(repo, force=True)
+    policypricing.invalidate(repo)
+
+
+def global_ignores(repo: str, defined: dict | None = None) -> list[str]:
+    """The global policy's own ignore rules ([] when the global policy defines none)."""
+    defined = defined if defined is not None else load_defined_policies(repo).get("policies") or {}
+    pol = defined.get(_GLOBAL_TARGET) or {}
+    return list((pol.get("files") or {}).get("ignore") or [])
+
+
+def effective_ignore_origin(repo: str, source_key: str, defined: dict | None = None) -> tuple[str, str | None]:
+    """Which policy's ignore rules actually apply to ``source_key``: (origin, owner_target).
+    kopia resolves per-field from the nearest policy on the path chain that DEFINES rules -
+    a source's own list REPLACES the global one, it never concatenates (verified in kopia's
+    policy_merge.go mergeStringList and against this install's data)."""
+    defined = defined if defined is not None else load_defined_policies(repo).get("policies") or {}
+
+    def _rules(target: str) -> list[str] | None:
+        pol = defined.get(target)
+        if pol is None:
+            return None
+        val = (pol.get("files") or {}).get("ignore")
+        return list(val) if val else None
+
+    own = _rules(source_key)
+    if own:
+        return "own", source_key
+    # Walk the path ancestors (same user@host), longest first - kopia's path-chain inheritance.
+    # A source key's path part carries the SOURCE machine's separator; detect it from the text.
+    user_host, sep, path = source_key.partition(":")
+    if sep and path:
+        sep_char = "\\" if "\\" in path else "/"
+        prefixes: list[str] = []
+        cur = path.rstrip(sep_char)
+        while True:
+            parent = cur.rsplit(sep_char, 1)[0] if sep_char in cur else ""
+            if not parent:
+                break
+            prefixes.append(f"{user_host}:{parent}")
+            cur = parent
+        for prefix in sorted(set(prefixes), key=len, reverse=True):
+            got = _rules(prefix)
+            if got:
+                return "inherited", prefix
+    if global_ignores(repo, defined):
+        return "global", _GLOBAL_TARGET
+    return "none", None

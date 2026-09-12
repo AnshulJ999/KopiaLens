@@ -37,6 +37,7 @@ ALLOWED = {
     ("list",),
     ("policy", "list"),
     ("policy", "show"),
+    ("policy", "export"),  # read-only on the repo (--to-file writes a local file we control)
     ("blob", "stats"),
     ("manifest", "list"),
     ("manifest", "show"),
@@ -891,6 +892,107 @@ def snapshot_pin_command(repo: str, ids: list[str], remove: bool = False,
     """Pin (protect from retention deletion) or unpin snapshots. Command-gen only."""
     flag = "--remove" if remove else "--pins"
     return ["kopia"] + _repo_args(repo) + ["snapshot", "pin", *ids, flag, pin_name]
+
+
+# ---- policy editing (/) ----------------------------------------------------
+# Policy writes are fast kopia calls (seconds - not job-runner material). Every write is backed
+# up first by the caller (core.policybackup, FAIL-CLOSED: no verified backup, no write); these
+# functions only build the command, run it, log it loudly and audit it.
+
+def policy_export_command(repo: str, file_path: str) -> list[str]:
+    """`kopia policy export --to-file <file>` exports EVERY defined policy of the repo (global
+    included) as one JSON object {target: policy}. Read-only on the repo - allowlisted."""
+    if not file_path:
+        raise ValueError("policy export needs a file path")
+    return ["kopia"] + _repo_args(repo) + ["policy", "export", "--to-file", file_path, "--overwrite"]
+
+
+def _policy_target_args(target: str | None, global_: bool) -> list[str]:
+    if global_:
+        if target:
+            raise ValueError("target and global_ are mutually exclusive")
+        return ["--global"]
+    if not target:
+        raise ValueError("need a target (source key) or global_=True")
+    if "\n" in target or "\r" in target:
+        raise ValueError("invalid target")
+    return [target]
+
+
+def policy_set_command(repo: str, target: str | None = None, global_: bool = False,
+                       add_ignore: list[str] | None = None,
+                       remove_ignore: list[str] | None = None) -> list[str]:
+    """Build `kopia policy set` for ignore-rule changes. On a target without a defined policy,
+    kopia CREATES one - callers surface that via the diff (`will_create_policy`)."""
+    if not add_ignore and not remove_ignore:
+        raise ValueError("policy set needs at least one change (add_ignore or remove_ignore)")
+    cmd = ["kopia"] + _repo_args(repo) + ["policy", "set"] + _policy_target_args(target, global_)
+    for p in remove_ignore or []:
+        cmd += ["--remove-ignore", p]
+    for p in add_ignore or []:
+        cmd += ["--add-ignore", p]
+    return cmd
+
+
+def _run_policy_write(repo: str, cmd: list[str], action: str, summary: dict) -> dict:
+    """Run one mutating policy command synchronously. Logged + audited; the kopia timeout
+    applies. Returns the raw result - the caller decides ok/fail from the returncode."""
+    log.warning("EXECUTING %s repo=%s cmd=%s", action, repo, " ".join(cmd[:8]))
+    t0 = time.time()
+    try:
+        res = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=_timeout(), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        rc, out, err = res.returncode, res.stdout, res.stderr
+    except subprocess.TimeoutExpired:
+        rc, out, err = TIMEOUT_RC, "", f"kopia timed out after {_timeout():.0f}s"
+        log.error("%s repo=%s timed out", action, repo)
+    except OSError as exc:  # kopia missing from PATH etc.
+        rc, out, err = 1, "", f"kopia could not be started: {exc}"
+        log.error("%s repo=%s could not start: %s", action, repo, exc)
+    audit.audit("executed", action, repo=repo, summary=summary, rc=rc,
+                duration_s=time.time() - t0)
+    return {"returncode": rc, "stdout": out, "stderr": err, "command": cmd}
+
+
+def policy_set_execute(repo: str, target: str | None = None, global_: bool = False,
+                       add_ignore: list[str] | None = None,
+                       remove_ignore: list[str] | None = None) -> dict:
+    """ACTUALLY change a policy's ignore rules. Mutating; requires a verified pre-write backup
+    (the save endpoint's fail-closed step - do not call directly from new code paths)."""
+    cmd = policy_set_command(repo, target, global_, add_ignore, remove_ignore) + ["--no-progress"]
+    summary = {"target": "global" if global_ else target,
+               "add": len(add_ignore or []), "remove": len(remove_ignore or [])}
+    return _run_policy_write(repo, cmd, "policy-set", summary)
+
+
+def policy_delete_command(repo: str, target: str | None = None, global_: bool = False) -> list[str]:
+    """Build `kopia policy delete` - removes the whole policy DEFINITION (never snapshots)."""
+    return ["kopia"] + _repo_args(repo) + ["policy", "delete"] + _policy_target_args(target, global_)
+
+
+def policy_delete_execute(repo: str, target: str | None = None, global_: bool = False) -> dict:
+    cmd = policy_delete_command(repo, target, global_) + ["--no-progress"]
+    summary = {"target": "global" if global_ else target, "delete": True}
+    return _run_policy_write(repo, cmd, "policy-delete", summary)
+
+
+def policy_import_command(repo: str, file_path: str, mirror: bool = False) -> list[str]:
+    """Build `kopia policy import --from-file <file>`. Merges into the policies the file
+    defines, leaving other policies alone; `mirror=True` adds --delete-other-policies (the repo
+    ends up with EXACTLY the backup's policies)."""
+    if not file_path:
+        raise ValueError("policy import needs a file path")
+    cmd = ["kopia"] + _repo_args(repo) + ["policy", "import", "--from-file", file_path]
+    if mirror:
+        cmd.append("--delete-other-policies")
+    return cmd
+
+
+def policy_import_execute(repo: str, file_path: str, mirror: bool = False) -> dict:
+    cmd = policy_import_command(repo, file_path, mirror) + ["--no-progress"]
+    summary = {"from_file": os.path.basename(file_path), "mirror": bool(mirror)}
+    return _run_policy_write(repo, cmd, "policy-import", summary)
 
 
 def snapshot_diff_command(repo: str, id1: str, id2: str) -> list[str]:

@@ -1,0 +1,223 @@
+"""Policy pricing against the index - synthetic artifacts, the real SQL + matcher paths.
+
+Pins the "keeping out" numbers end to end on a fabricated generation: a pattern's file/byte
+counts come from the source's CURRENT (in_latest) files, a matched directory prunes its whole
+subtree, matching is case-sensitive, and negated rules go through kopia's ignorefs state machine
+in rule order (the slow path).
+"""
+
+from __future__ import annotations
+
+import os
+
+import duckdb
+import pytest
+
+from app.index import policypricing, store
+
+SEP = chr(92)
+SRC = f"Anshul@anshul-desktop:C:{SEP}Src"
+
+# in_latest files under C:\Src (+ one in_latest=False row that pricing must ignore)
+_FILES = [
+    ("keep.txt", 100, True, f"C:{SEP}Src{SEP}keep.txt"),
+    ("a.tmp", 200, True, f"C:{SEP}Src{SEP}Temp{SEP}a.tmp"),
+    ("b.tmp", 300, True, f"C:{SEP}Src{SEP}Temp{SEP}b.tmp"),
+    ("c.tmp", 400, True, f"C:{SEP}Src{SEP}Temp{SEP}nested{SEP}c.tmp"),
+    ("keep.tmp", 50, True, f"C:{SEP}Src{SEP}Temp{SEP}keep.tmp"),
+    ("x.js", 500, True, f"C:{SEP}Src{SEP}other{SEP}node_modules{SEP}x.js"),
+    ("old.tmp", 999, False, f"C:{SEP}Src{SEP}old.tmp"),
+]
+_DIRS = [
+    (f"C:", 1), (f"C:{SEP}Src", 2), (f"C:{SEP}Src{SEP}Temp", 3),
+    (f"C:{SEP}Src{SEP}Temp{SEP}nested", 4), (f"C:{SEP}Src{SEP}other", 3),
+    (f"C:{SEP}Src{SEP}other{SEP}node_modules", 4),
+]
+
+
+def _build(tmp_path: str):
+    con = duckdb.connect()
+    con.execute("CREATE TABLE src AS SELECT * FROM (VALUES "
+                f"(1::SMALLINT, '{SRC}')) t(src_id, source)")
+    con.execute("CREATE TABLE cid AS SELECT 1::INTEGER AS cid_id, 'o' AS content_id WHERE false")
+    con.execute("CREATE TABLE snap AS SELECT 1::INTEGER AS snap_id, 's' AS snapshot_id, "
+                "TIMESTAMP '2025-01-01' AS start_time, 1::SMALLINT AS src_id WHERE false")
+    rows = ", ".join(
+        f"({i + 1}::INTEGER, 1::BIGINT, {i + 1}::INTEGER, '{name.rsplit('.', 1)[0]}', "
+        f"'{name.rsplit('.', 1)[1]}', {size}::UBIGINT, 1::INTEGER, "
+        f"TIMESTAMP '2025-01-01', TIMESTAMP '2025-01-01', {str(in_latest).lower()}, "
+        f"NULL::INTEGER, 0::UBIGINT, NULL::UBIGINT, '{fp}')"
+        for i, (name, size, in_latest, fp) in enumerate(_FILES))
+    con.execute(f"CREATE TABLE pathx AS SELECT * FROM (VALUES {rows}) t("
+                "path_id, src_id, dir_id, name, ext, size, versions, first_seen, last_seen, "
+                "in_latest, cid_id, physical, exclusive, full_path)")
+    drows = ", ".join(
+        f"({i + 1}::INTEGER, 1::SMALLINT, '{p}', {d}::SMALLINT, "
+        f"'{p.split(SEP)[-1]}', NULL)" for i, (p, d) in enumerate(_DIRS))
+    con.execute(f"CREATE TABLE dir AS SELECT * FROM (VALUES {drows}) t("
+                "dir_id, src_id, dir_path, depth, name, parent_path)")
+    con.execute("CREATE TABLE filev AS SELECT 1::BIGINT AS src_id, 1::INTEGER AS path_id, "
+                "1::INTEGER AS snap_id, 1::INTEGER AS cid_id, 1::UBIGINT AS size, "
+                "TIMESTAMP '2025-01-01' AS mtime, 0::BIGINT AS ordinal WHERE false")
+    con.execute("CREATE TABLE anc AS SELECT 1::INTEGER AS dir_id, 1::INTEGER AS ancestor_dir_id "
+                "WHERE false")
+    con.execute("CREATE TABLE csize AS SELECT 'o' AS content_id, 1::UBIGINT AS packed WHERE false")
+    con.execute("CREATE TABLE crefs AS SELECT 'o' AS content_id, 1::INTEGER AS refs WHERE false")
+    con.execute("CREATE TABLE iphys AS SELECT 'o' AS oid, 1::UBIGINT AS packed WHERE false")
+    con.execute("CREATE TABLE sanalysis(repo VARCHAR, source VARCHAR, snapshot_id VARCHAR, "
+                "churn UBIGINT, physical UBIGINT, reclaimable UBIGINT, snaphash VARCHAR, "
+                "computed_at TIMESTAMP)")
+    con.execute("CREATE TABLE isnaps(repo VARCHAR, snapshot_id VARCHAR, source VARCHAR, "
+                "start_time TIMESTAMP, root_obj VARCHAR, indexed_at TIMESTAMP, file_count BIGINT)")
+    d = str(tmp_path)
+    artifacts = {}
+    for name in ("src", "cid", "snap", "pathx", "dir", "filev", "anc", "csize", "crefs",
+                 "iphys", "sanalysis", "isnaps"):
+        p = os.path.join(d, name + ".parquet")
+        con.execute(f"COPY {name} TO '{p.replace(SEP, chr(47))}' (FORMAT parquet)")
+        artifacts[name] = [p]
+    con.close()
+    return artifacts
+
+
+@pytest.fixture
+def priced(tmp_path, monkeypatch):
+    """Bind the synthetic generation and route policypricing's reads at it."""
+    artifacts = _build(str(tmp_path))
+
+    class _FakeGen:
+        pass
+
+    class _Cursor:
+        """DuckDB connections reject attribute assignment; resolve.py wants a .generation."""
+
+        def __init__(self, con):
+            self._con = con
+            self.generation = _FakeGen()
+
+        def execute(self, *a, **kw):
+            return self._con.execute(*a, **kw)
+
+        def close(self):
+            pass  # a no-op: the real read_cursor hands out per-call cursors, this shares one con
+
+    con = duckdb.connect()
+    store._bind_generation(con, "1", artifacts)
+
+    monkeypatch.setattr(policypricing, "read_cursor", lambda repo: _Cursor(con))
+    monkeypatch.setattr(policypricing, "_CACHE", {})
+    return con
+
+
+def _by_pattern(out: dict) -> dict:
+    return {r["pattern"]: r for r in out["results"]}
+
+
+def test_suffix_pattern_counts_current_files_only(priced):
+    out = policypricing.price_patterns("1", SRC, ["*.tmp"], limit=10, use_cache=False)
+    r = _by_pattern(out)["*.tmp"]
+    assert not out["slow_path"]
+    assert r["error"] is None
+    assert r["files"] == 4          # a, b, c, keep - NOT the in_latest=False old.tmp
+    assert r["bytes"] == 200 + 300 + 400 + 50
+    assert r["dirs"] == 0
+    assert r["total_examples"] == 4
+    biggest = r["examples"][0]
+    assert biggest["path"] == f"C:{SEP}Src{SEP}Temp{SEP}nested{SEP}c.tmp" and biggest["size"] == 400
+
+
+def test_anchored_doublestar_prunes_the_subtree(priced):
+    out = policypricing.price_patterns("1", SRC, ["/Temp/**"], limit=10, use_cache=False)
+    r = _by_pattern(out)["/Temp/**"]
+    assert r["files"] == 4
+    assert r["bytes"] == 950
+    assert r["dirs"] == 1           # /Temp/nested matches; /Temp itself does not (a/** != a)
+
+
+def test_bare_name_matches_the_directory_anywhere(priced):
+    out = policypricing.price_patterns("1", SRC, ["node_modules"], limit=10, use_cache=False)
+    r = _by_pattern(out)["node_modules"]
+    assert r["files"] == 1
+    assert r["bytes"] == 500
+    assert r["dirs"] == 1
+
+
+def test_matching_is_case_sensitive_like_kopia(priced):
+    out = policypricing.price_patterns("1", SRC, ["*.TMP", "*.tmp"], limit=0, use_cache=False)
+    r = _by_pattern(out)
+    assert r["*.TMP"]["files"] == 0
+    assert r["*.tmp"]["files"] == 4
+
+
+def test_dir_only_pattern_keeps_out_through_the_ancestor(priced):
+    out = policypricing.price_patterns("1", SRC, ["other/"], limit=10, use_cache=False)
+    r = _by_pattern(out)["other/"]
+    assert r["files"] == 1
+    assert r["bytes"] == 500
+    assert r["dirs"] == 1
+
+
+def test_examples_cap_is_honest(priced):
+    out = policypricing.price_patterns("1", SRC, ["*.tmp"], limit=2, use_cache=False)
+    r = _by_pattern(out)["*.tmp"]
+    assert len(r["examples"]) == 2
+    assert r["total_examples"] == 4
+    assert r["capped"] is True
+
+
+def test_negated_rules_take_the_slow_path_and_reinclude(priced):
+    """The machine in rule order: *.tmp ignores the file, then !/Temp/keep.tmp re-includes it -
+    so in sequence context the *.tmp rule honestly keeps out only the files it still excludes
+    (keep.tmp was re-included by the later negated rule)."""
+    out = policypricing.price_patterns(
+        "1", SRC, ["*.tmp", "!/Temp/keep.tmp"], limit=10, use_cache=False)
+    assert out["slow_path"] is True
+    r = _by_pattern(out)
+    assert r["*.tmp"]["files"] == 3
+    assert r["*.tmp"]["bytes"] == 900
+    assert r["!/Temp/keep.tmp"]["files"] == 0   # it re-includes; it keeps nothing out
+    assert r["!/Temp/keep.tmp"]["negated"] is True
+
+
+def test_unknown_source_prices_at_zero(priced):
+    out = policypricing.price_patterns("1", f"nobody@elsewhere:X:{SEP}Nope", ["*.tmp"],
+                                       limit=5, use_cache=False)
+    assert out["src_found"] is True
+    assert _by_pattern(out)["*.tmp"]["files"] == 0
+
+
+def test_invalid_pattern_reports_an_error(priced):
+    out = policypricing.price_patterns("1", SRC, ["bad\\"], limit=5, use_cache=False)
+    r = _by_pattern(out)["bad\\"]
+    assert r["error"]
+    assert r["files"] == 0
+
+
+def test_cache_serves_repeat_calls(priced, monkeypatch):
+    calls = {"n": 0}
+    real = policypricing._compute
+
+    def counting(*a, **kw):
+        calls["n"] += 1
+        return real(*a, **kw)
+
+    monkeypatch.setattr(policypricing, "_compute", counting)
+    first = policypricing.price_patterns("1", SRC, ["*.tmp"], limit=5)
+    second = policypricing.price_patterns("1", SRC, ["*.tmp"], limit=5)
+    assert calls["n"] == 1
+    assert first["results"][0]["files"] == second["results"][0]["files"] == 4
+
+
+def test_invalidate_clears_the_cache(priced, monkeypatch):
+    calls = {"n": 0}
+    real = policypricing._compute
+
+    def counting(*a, **kw):
+        calls["n"] += 1
+        return real(*a, **kw)
+
+    monkeypatch.setattr(policypricing, "_compute", counting)
+    policypricing.price_patterns("1", SRC, ["*.tmp"], limit=5)
+    policypricing.invalidate("1")
+    policypricing.price_patterns("1", SRC, ["*.tmp"], limit=5)
+    assert calls["n"] == 2

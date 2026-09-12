@@ -83,6 +83,10 @@ DESTRUCTIVE = [
     ("maintenance_run_command", lambda: kopia.maintenance_run_command("bz")),
     ("snapshot_pin_command", lambda: kopia.snapshot_pin_command("bz", ["abc"])),
     ("snapshot_diff_command", lambda: kopia.snapshot_diff_command("bz", "a", "b")),
+    ("policy_set_command", lambda: kopia.policy_set_command("bz", target="u@h:p", add_ignore=["x"])),
+    ("policy_delete_command", lambda: kopia.policy_delete_command("bz", target="u@h:p")),
+    ("policy_import_command", lambda: kopia.policy_import_command("bz", "b.json")),
+    ("policy_export_command", lambda: kopia.policy_export_command("bz", "e.json")),
 ]
 
 
