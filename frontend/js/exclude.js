@@ -258,6 +258,14 @@ const excludePart = {
       if (!d) return;
       const pat = this.exPattern();
       if (!pat) { this.error = "Enter a pattern first."; return; }
+      // Same gate the footer buttons hold (review round-2 #4): Enter must not commit while
+      // the price is pending, failed, or belongs to a different pattern/target.
+      if (!this.exPriceReady()) {
+        this.error = d.pricing ? "Pricing is still running - wait a moment, then try again."
+          : d.price && d.price.error ? "The price failed - fix the pattern or pick another shape first."
+          : "Not priced for this pattern and target yet.";
+        return;
+      }
       const where = d.target === "global" ? "the Global policy" : d.target;
       const keepout = this.exKeepoutText();
       // The delete half sweeps exactly what the rule protects: a write to one source's policy
