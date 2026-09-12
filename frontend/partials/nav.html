@@ -22,7 +22,7 @@
         </template>
         <span x-show="repoKind!=='backblaze'" class="rounded border border-bd bg-surface2 px-2 py-1" x-text="indexLine()"></span>
         <button x-show="repoKind!=='backblaze'" @click="buildIndex()" :disabled="indexStatus.building" class="h-8 rounded bg-fg px-3 text-surface disabled:opacity-50" title="Update index (incremental)">Index</button>
-        <span x-show="repoKind==='backblaze'" class="rounded border border-bd bg-surface2 px-2 py-1" x-text="bzStatusLine()"></span>
+        <span x-show="repoKind==='backblaze'" class="rounded border border-bd bg-surface2 px-2 py-1" x-text="bzStatusLine()" :title="bzStatusTitle()"></span>
         <span x-show="repoKind==='backblaze' && bzRefreshResult" class="text-xs px-2 py-1 rounded" :class="bzRefreshResult.includes('FAILED') ? 'bg-danger-bg text-danger' : 'bg-ok-bg text-ok'" x-text="bzRefreshResult"></span>
         <button x-show="repoKind==='backblaze'" @click="bzRefresh()" class="h-8 rounded bg-fg px-3 text-surface" title="Re-scan the read-only Backblaze index">↻ Index BZ</button>
         <button @click="refreshAll()" class="h-8 rounded border border-bd px-3" title="Refresh current view + sources">⟳ Refresh</button>
@@ -40,7 +40,7 @@
         <template x-for="f in freshness" :key="f.repo">
           <span class="rounded px-1.5 py-0.5 border"
                 :class="freshStale(f) ? 'border-warn-bd text-warn' : 'border-bd-soft text-muted'"
-                :title="f.name + (f.error ? ' - last run failed: ' + f.error : '')">
+                :title="freshTitle(f)">
             <span x-text="f.repo === 'bz' ? 'BZ' : 'Repo ' + f.repo"></span>
             <span x-text="' · ' + freshAge(f)"></span>
             <span x-show="f.error" class="text-danger">!</span>

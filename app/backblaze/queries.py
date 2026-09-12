@@ -518,15 +518,26 @@ def stats() -> dict:
 def status() -> dict:
     """Instant-open reader: serves the kv snapshot written at the end of the last refresh(). Falls
     back to a live GROUP BY scan when no cache exists yet (first run / pre-Pass-B DB). Never blocks
-    on a refresh in progress - the heavy work runs in a separate worker process/connection."""
+    on a refresh in progress - the heavy work runs in a separate worker process/connection.
+    Carries the cached `remaining` stat alongside (the header pill reads it from here)."""
     con = bbdb.connect()
+
+    def _remaining():
+        try:
+            return json.loads(bbdb.kv_get(con, "remaining") or "{}")
+        except Exception:  # noqa: BLE001 - a junk stat must not break the status payload
+            return {}
+
     cached = bbdb.kv_get(con, "cache_status")
     if cached:
         try:
-            return json.loads(cached)
+            out = json.loads(cached)
+            out["remaining"] = _remaining()
+            return out
         except Exception:
             pass
     out = _status_live()
+    out["remaining"] = _remaining()
     out["cached_at"] = None
     return out
 

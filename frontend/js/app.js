@@ -223,6 +223,19 @@ document.addEventListener("alpine:init", () => {
     freshStale(row) {  // amber past a day and a half - long enough that a missed run is the reason
       return !row.running && (!row.last_index || (Date.now() / 1000 - row.last_index) > 36 * 3600);
     },
+    // Tooltip per strip row. BZ: verification age ("checked Xm ago") + queued/failed states -
+    // the badge itself carries the rebuild age, so the two facts stay separate (2026-09-13).
+    freshTitle(row) {
+      if (row.kind !== "backblaze") return row.name + (row.error ? " - last run failed: " + row.error : "");
+      const parts = [];
+      if (row.last_check_ts) {
+        const mins = Math.max(0, Math.round((Date.now() / 1000 - row.last_check_ts) / 60));
+        parts.push("checked " + (mins < 60 ? mins + "m ago" : mins < 1440 ? Math.round(mins / 60) + "h ago" : Math.round(mins / 1440) + "d ago"));
+      }
+      if (row.pending) parts.push("new data queued");
+      if (row.error) parts.push("last run failed: " + row.error);
+      return parts.join(" · ");
+    },
 
     async repoChanged() {
       this.selectedSnapshot = ""; this.snapshots = [];

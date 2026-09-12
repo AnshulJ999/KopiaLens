@@ -93,7 +93,26 @@ const bzIndexPart = {
       const s = this.bzStatus;
       if (s.building) return "Indexing Backblaze…";
       if (!s.built) return "BZ: not indexed";
-      return `BZ ${Number(s.backed_files || 0).toLocaleString()} backed / ${Number(s.total_files || 0).toLocaleString()} scanned`;
+      // Remaining to upload - the "is my backup done" number (2026-09-13). The backed/on-disk
+      // counts live in the tooltip (bzStatusTitle); they are identity stats, not actions.
+      const r = s.remaining || {};
+      if (r.remaining_files == null && r.remaining_bytes == null) return "BZ";
+      if (!Number(r.remaining_files) && !Number(r.remaining_bytes)) return "⬆ nothing pending";
+      return `⬆ ${fmtBytes(Number(r.remaining_bytes || 0))} · ${Number(r.remaining_files || 0).toLocaleString()} files left`;
+    },
+    bzStatusTitle() {
+      const s = this.bzStatus;
+      const parts = [];
+      if (s.built) {
+        parts.push(`${Number(s.backed_files || 0).toLocaleString()} backed`);
+        parts.push(`${Number(s.total_files || 0).toLocaleString()} on disk`);
+      }
+      const ts = Number(s.last_check_ts || 0);
+      if (ts) {
+        const mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
+        parts.push("checked " + (mins < 60 ? mins + "m ago" : mins < 1440 ? Math.round(mins / 60) + "h ago" : Math.round(mins / 1440) + "d ago"));
+      }
+      return parts.join(" · ");
     },
     async bzRefresh() {
       // Non-blocking: the refresh runs in a subprocess worker (~4 min), so this only starts it and
