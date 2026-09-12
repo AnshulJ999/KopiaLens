@@ -10,10 +10,12 @@
 // there anchors to every source's own root, which is never what "this exact path" means).
 // Target and pattern are always shown together.
 //
-// Assumed API (one adapter method below):
-//   POST /api/policies/price {repo, target, patterns: [..]}
-//     -> {"priced": [{"pattern", "files", "bytes", "examples": [..],
-//                     "matches": [{"path", "size"}], "capped": bool}]}
+// Assumed API (the backend, verified against app/api/policies.py):
+//   POST /api/policies/price {repo, target, patterns, limit}
+//     -> {"results": [{"pattern", "error", "files", "bytes", "dirs", "negated",
+//                      "examples": [{"path", "size"}], "total_examples", "capped"}]}
+//   POST /api/policies/save {repo, target, changes: {add, remove, delete_policy}, confirmed: true}
+//     -> {ok, returncode, output_tail, command, backup}   // synchronous, fail-closed backup inside
 const excludePart = {
 
     // ctx: {kind: "file"|"folder", path, source?, preset?}; mode: "exclude"|"delete".
@@ -129,41 +131,47 @@ const excludePart = {
       const seq = ++this._exPriceSeq;
       d.pricing = true;
       this._exPriceTimer = setTimeout(async () => {
-        const priced = await this.exPricePatterns(d.target, [pat]);
+        const results = await this.exPricePatterns(d.target, [pat], 120);
         if (!this.exDialog || seq !== this._exPriceSeq) return;
-        d.price = priced && priced[0] ? priced[0] : { pattern: pat, files: null, bytes: null };
+        d.price = results && results[0] ? results[0] : { pattern: pat, files: null, error: null };
         d.pricing = false;
       }, 250);
     },
 
-    // The one place that talks to the pricing endpoint; shapes adapt here.
-    async exPricePatterns(target, patterns) {
+    // The one place that talks to the pricing endpoint.
+    async exPricePatterns(target, patterns, limit = 10) {
       try {
         const r = await getJson("/api/policies/price", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo: this.repo, target, patterns }) });
-        return r.priced || [];
+          body: JSON.stringify({ repo: this.repo, target, patterns, limit }) });
+        return r.results || [];
       } catch (e) { return []; }
     },
 
-    // Preview rows, normalised: the endpoint returns sized matches; string examples are the
-    // fallback so the preview still shows something honest.
+    // Preview rows: examples are {path, size} objects, biggest first.
     exMatches() {
       const p = this.exDialog && this.exDialog.price;
       if (!p) return [];
-      if (p.matches && p.matches.length) return p.matches.map((m) => (typeof m === "string" ? { path: m, size: null } : m));
-      return (p.examples || []).map((s) => ({ path: s, size: null }));
+      return (p.examples || []).map((m) => (typeof m === "string" ? { path: m, size: null } : m));
     },
     exPreviewCap() {
       const p = this.exDialog && this.exDialog.price;
-      if (!p || !p.files) return "";
-      const shown = this.exMatches().length;
-      if (!shown || (shown >= p.files && !p.capped)) return "";
-      return `showing ${shown} of ${Number(p.files).toLocaleString()} matched files - biggest first`;
+      if (!p || p.error || p.files == null) return "";
+      const shown = (p.examples || []).length;
+      if (!p.capped && shown >= p.files) return "";
+      return `showing ${shown} of ${Number(p.total_examples != null ? p.total_examples : p.files).toLocaleString()} matched files - biggest first`;
     },
     exKeepoutText() {
       const p = this.exDialog && this.exDialog.price;
-      if (!p || p.files == null) return "";
+      if (!p || p.error || p.files == null) return "";
       return `${Number(p.files).toLocaleString()} files · ${fmtB(p.bytes || 0)}`;
+    },
+    exPriceNote() {
+      const p = this.exDialog && this.exDialog.price;
+      if (!p) return "";
+      if (p.error) return "That pattern could not be used: " + p.error;
+      if (p.negated) return "A leading ! makes this a re-include rule - it cancels matching exclusion rules.";
+      if (p.files === 0) return "Matches nothing in the current index - it may simply not match anything on disk today.";
+      return "";
     },
 
     exToSearch() {
@@ -176,6 +184,23 @@ const excludePart = {
       this.query = pat; this.searchSource = ""; this.searchPage = 1;
       this.active = "search";
       this.loadSearch();
+    },
+
+    // The policy write itself: synchronous /api/policies/save with confirmed=true (the
+    // confirm dialog above is that flag's source). The server takes the fail-closed
+    // pre-write backup before the write and refuses if the backup cannot be verified.
+    async exWriteRule(target, pat) {
+      await this.wrap(async () => {
+        const r = await getJson("/api/policies/save", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo: this.repo, target, changes: { add: [pat], remove: [], delete_policy: false }, confirmed: true }) });
+        if (r.ok) {
+          this.actionText = `Rule written into ${target === "global" ? "the Global policy" : target}` +
+            (r.backup && r.backup.name ? ` - backup ${r.backup.name}` : "");
+        } else {
+          this.error = `kopia exited ${r.returncode} - ${(r.output_tail || "").slice(-300)}`;
+        }
+        if (this.polData) this.loadPolicies(true);  // the write changed policies - catch the tab up
+      }, "Writing exclusion rule...");
     },
 
     async exConfirm() {
@@ -198,13 +223,13 @@ const excludePart = {
         });
         if (!ok) return;
         this.showExclude = false; this.exDialog = null;
-        await this.startJob("policy_write", { changes: [{ target: d.target, add: [pat], remove: [], remove_policy: false }] }, "Exclude " + pat);
+        await this.exWriteRule(d.target, pat);
         return;
       }
       const ok = await this.klConfirm({
         title: "Exclude, then delete the existing copies?",
         facts: [
-          ["Step 1", `Write the rule into ${where}, a backup taken first`],
+          ["Step 1", `Write the rule into ${where}, a verified backup taken first`],
           ["What it keeps out", keepout || "not priced yet"],
           ["Step 2", "The standard delete flow opens for the matched files, with its own dry run before anything is removed"],
           ["Step 3", "Space frees on the next full maintenance run (not immediately)"],
@@ -216,8 +241,7 @@ const excludePart = {
       if (!ok) return;
       const route = { kind: d.kind, path: d.path, source: d.src };
       this.showExclude = false; this.exDialog = null;
-      const started = await this.startJob("policy_write", { changes: [{ target: d.target, add: [pat], remove: [], remove_policy: false }] }, "Exclude " + pat);
-      if (!started) return;
+      await this.exWriteRule(d.target, pat);
       this.exRouteDelete(route);
     },
 

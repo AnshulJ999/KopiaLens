@@ -58,12 +58,14 @@
                 <span class="text-xs font-medium">Keeps out</span>
                 <span class="text-xs" x-show="exDialog.pricing" style="color:var(--muted)">checking the index…</span>
                 <span class="text-xs font-medium" x-show="!exDialog.pricing && exKeepoutText()" x-text="exKeepoutText()"></span>
-                <span class="text-xs" style="color:var(--muted)" x-show="!exDialog.pricing && !exKeepoutText()">pattern matches nothing in the index</span>
+                <span class="text-xs" style="color:var(--muted)"
+                      x-show="!exDialog.pricing && !exKeepoutText() && !exPriceNote()">no matches found yet</span>
                 <span class="grow"></span>
                 <button class="kl-btn quiet" style="height:22px" @click="exPriceNow()" :disabled="exDialog.pricing">Re-check</button>
               </div>
+              <div class="kl-note mt-1" x-show="!exDialog.pricing && exPriceNote()" x-text="exPriceNote()"></div>
               <div class="kl-note mt-1" x-show="exDialog.price && exDialog.price.capped">
-                The match count is capped - open the full set in Search before deciding if it looks wrong.
+                The preview is capped - open the full set in Search before deciding if it looks wrong.
               </div>
             </div>
 

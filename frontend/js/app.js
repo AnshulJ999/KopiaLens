@@ -71,12 +71,14 @@ document.addEventListener("alpine:init", () => {
     // detail-panel layout ("classic" | "tabbed"), persisted server-side, default Classic.
     panelLayout: "classic",
     confirmBox: null,  // the shared confirm dialog; truthy while it is open
-    // Policies tab: one fetch per repo holds every policy; edits stage in polStaged and
-    // reach kopia only through Review + save (a policy_write job). polAddPrices / polRowPrices
-    // cache per-pattern "keeping out" pricing so rows render without re-fetching.
+    // Policies tab: overview + per-target detail from /api/policies/*; edits stage in
+    // polStaged and reach kopia only through Review + save (sync POST, fail-closed backup
+    // server-side). polAddPrices / polRowPrices cache "keeping out" pricing per pattern.
     polData: null, polSel: "global", polFilter: "", polStaged: {}, polAddText: "", polAddPrice: null,
     polAddPrices: {}, polRowPrices: {}, _polAddTimer: null, _polSeq: 0, _polRowPriceSeq: 0, _polAddPriceSeq: 0,
-    showPolDiff: false, polDiff: null, polDiffBusy: false, polDiffMode: "save", polRestoreFile: "",
+    polDetail: null, polDetailCache: {}, _polDetailSeq: 0,
+    showPolDiff: false, polDiff: null, polDiffBusy: false, polDiffMode: "save",
+    polRestoreName: "", polRestoreMode: "merge", polRestoreCmd: null, polRestoreParsed: null,
     showPolBackups: false, polBackups: null, _polBackupSeq: 0,
     // exclusion dialog: priced-before-commit pattern adder over the file/folder panels.
     exDialog: null, showExclude: false, _exPriceSeq: 0, _exCustomTimer: null, _exPriceTimer: null,

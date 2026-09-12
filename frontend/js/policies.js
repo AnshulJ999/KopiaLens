@@ -1,26 +1,35 @@
 // Policies tab: every kopia policy for the repo in one view. Left rail = Global +
 // every source, indented along parent-path chains; right pane = the selected policy with
 // Excluded files first. Edits stage locally (`polStaged`) and reach kopia only through
-// Review (the diff) + Save (a policy_write job through the shared runner - a backup is
-// taken before the write, fail-closed, on the backend).
+// Review (the diff) + Save (POST /api/policies/save, which takes the fail-closed pre-write
+// backup before the write and refuses if the backup fails).
 //
-// Assumed API (every call below is wrapped in one small method,
-// so adapting to the real shapes is a single-site edit):
-//   GET  /api/policies?repo=<id>
-//        -> {"global": <raw policy|null>, "ts": <epoch>,
-//            "policies": [{"target": "user@host:path"|"global", "raw": {...},
-//                          "summary": {...},                       // core.policy.summarize()
-//                          "rules": [{"pattern", "files", "bytes"}],   // own rules, priced (nullable)
-//                          "inherited": [{"pattern", "owner"}],        // effective rules owned elsewhere
-//                          "parent": "target|null"}]}
-//   POST /api/policies/price   {repo, target, patterns: [..]}
-//        -> {"priced": [{"pattern", "files", "bytes", "examples": [..], "capped": bool}]}
-//   POST /api/policies/diff    {repo, changes: [..]} | {repo, backup: "<file>"}
-//        -> {"groups": [{"target", "items": [{"kind", "pattern"?, "from"?, "to"?,
-//                                             "impact_files"?, "impact_bytes"?}]}]}
-//   GET  /api/policies/backups?repo=<id> -> {"backups": [{"file", "ts", "reason", "size", "changed"}]}
-//   POST /api/policies/backup  {repo} -> {"ok": bool}
-//   Job kinds through the shared runner: "policy_write" {changes}, "policy_restore" {file, mirror}.
+// Kopia inheritance facts the backend verified (policies API doc): a source's own ignore list
+// REPLACES the global list entirely (never concatenates) - `global_shadowed`; inherited rules
+// are removed at the policy that owns them, never on the inheritor. Zero-match priced rules are
+// worded neutrally: they may simply not match anything on disk today.
+//
+// Backend shapes (the /api/policies/*, verified against app/api/policies.py):
+//   GET  /api/policies/overview?repo=  -> {stale, global: {rule_count, no_parent_ignore, summarized},
+//        sources: [{source, root, defined, has_own_rules, rule_count, effective_origin,
+//                   effective_origin_target, effective_rule_count, global_shadowed,
+//                   no_parent_ignore, no_parent_dot_files, summarized}]}
+//   GET  /api/policies/detail?repo=&target= -> {is_global, defined, effective,
+//        rules: {own: [..], inherited: [..], inherited_origin, inherited_active}, summarized, stale}
+//   POST /api/policies/price   {repo, target, patterns, limit}
+//        -> {results: [{pattern, error, files, bytes, dirs, examples: [{path, size}],
+//                       total_examples, capped, negated}]}
+//   POST /api/policies/diff    {repo, target, changes: {add, remove, delete_policy}}
+//        -> {current_rules, resulting_rules, added, removed, impact: {added, removed},
+//            will_create_policy, command, backup_dir}
+//   POST /api/policies/save    {repo, target, changes, confirmed: true}
+//        -> {ok, returncode, output_tail, command, backup, diff}
+//   GET  /api/policies/backups?repo= -> {dir, backups: [{name, ts, trigger, size}]}
+//   POST /api/policies/backup  {repo} -> {name, verified, size}
+//   GET  /api/policies/backup-file?repo=&name= -> {name, content}   // {target: policy} JSON
+//   GET  /api/policies/restore-cmd?repo=&name=&mode= -> {command}
+//   POST /api/policies/restore {repo, name, mode: "merge"|"mirror", confirmed: true}
+//        -> {ok, returncode, output_tail, command, pre_restore_backup}
 const policiesPart = {
 
     // ---------- load ----------
@@ -28,12 +37,31 @@ const policiesPart = {
       const seq = ++this._polSeq;
       try {
         const data = await this.wrap(async () =>
-          getJson(`/api/policies?repo=${encodeURIComponent(this.repo)}`), "Loading policies...");
+          getJson(`/api/policies/overview?repo=${encodeURIComponent(this.repo)}`), "Loading policies...");
         if (seq !== this._polSeq || !data) return;
         this.polData = data;
-        const live = new Set(this.polTargets().map((t) => t.target));
+        this.polDetailCache = {};  // detail payloads are invalidated with the overview
+        this.polDetail = null;
+        const live = new Set((data.sources || []).map((s) => s.source));
         if (!live.has(this.polSel)) this.polSel = "global";
+        this.loadPolDetail(this.polSel);
       } catch (e) { /* wrap() already surfaced the error */ }
+    },
+
+    // ---------- per-target detail (right pane) ----------
+    async loadPolDetail(target) {
+      if (!target) { this.polDetail = null; return; }
+      const cached = this.polDetailCache[target];
+      if (cached) { this.polDetail = cached; return; }
+      const seq = ++this._polDetailSeq;
+      this.polDetail = null;
+      try {
+        const d = await getJson(`/api/policies/detail?repo=${encodeURIComponent(this.repo)}&target=${encodeURIComponent(target)}`);
+        if (seq !== this._polDetailSeq) return;
+        this.polDetailCache[target] = d;
+        this.polDetail = d;
+        this.polAutoPrice();
+      } catch (e) { if (seq === this._polDetailSeq) this.error = e.message || String(e); }
     },
 
     // ---------- left rail ----------
@@ -41,11 +69,11 @@ const policiesPart = {
     // hop along same-host path prefixes. Two sources from different hosts never nest.
     polTargets() {
       if (!this.polData) return [];
-      const pols = this.polData.policies || [];
+      const pols = (this.polData.sources || []).map((s) => ({ ...s, target: s.source }));
       const host = (t) => (t.includes(":") ? t.slice(0, t.indexOf(":")) : "");
       const path = (t) => (t.includes(":") ? t.slice(t.indexOf(":") + 1) : "");
       const norm = (p) => p.replace(/[\\/]+$/, "").toLowerCase();
-      const sorted = [...pols].sort((a, b) => srcSortKey(a.target).localeCompare(srcSortKey(b.target)));
+      const sorted = pols.sort((a, b) => srcSortKey(a.target).localeCompare(srcSortKey(b.target)));
       const depth = {};
       for (const p of sorted) {
         const pp = norm(path(p.target));
@@ -66,7 +94,8 @@ const policiesPart = {
       if (!this.polData) return [];
       const g = this.polData.global;
       const rows = [{ target: "global", isGlobal: true, depth: 0,
-                      rules: g ? (g.summary ? g.summary.ignore : (g.files ? g.files.ignore : [])) || [] : null }];
+                      rule_count: g ? g.rule_count : null,
+                      has_own_rules: !!(g && g.rule_count) }];
       for (const t of this.polTargets()) rows.push({ ...t, isGlobal: false });
       const f = this.polFilter.trim().toLowerCase();
       return f ? rows.filter((r) => r.isGlobal || sourcePath(r.target).toLowerCase().includes(f)) : rows;
@@ -78,56 +107,65 @@ const policiesPart = {
       return p || t.target;
     },
 
-    polSelect(target) { this.polSel = target; this.polAddText = ""; this.polAddPrice = null; },
+    polSelect(target) {
+      this.polSel = target;
+      this.polAddText = ""; this.polAddPrice = null;
+      this.loadPolDetail(target);
+    },
 
+    // The overview row for the selection (header facts live there; rule data in polDetail).
     polSelected() {
       if (!this.polData) return null;
       if (this.polSel === "global") {
         return this.polData.global ? { target: "global", isGlobal: true, ...this.polData.global } : null;
       }
-      return (this.polData.policies || []).find((p) => p.target === this.polSel) || null;
+      const row = (this.polData.sources || []).find((s) => s.source === this.polSel);
+      return row ? { ...row, target: row.source, isGlobal: false } : null;
     },
 
-    polOwnPatterns(row) {
-      return row.summary ? (row.summary.ignore || [])
-        : (row.raw && row.raw.files ? row.raw.files.ignore || [] : []);
+    // Own rules come from the detail payload (the DEFINED policy); empty until it lands.
+    polOwnPatterns() {
+      return this.polDetail ? (this.polDetail.rules.own || []) : [];
     },
 
     // ---------- rules ----------
-    // Own rules + staged adds/removes merged into display rows. Pricing rides the row when
-    // the backend supplied it (rules[]), else from a per-policy "Price rules" call.
-    polPriceFor(row, pat) {
-      for (const r of row.rules || []) if (r.pattern === pat) return r;
-      const m = (this.polRowPrices || {})[row.target];
+    // Own rules + staged adds/removes merged into display rows. Pricing comes from the price
+    // endpoint (polRowPrices cache per target) - the overview/detail payloads do not price.
+    polPriceFor(pat) {
+      const m = (this.polRowPrices || {})[this.polSel];
       return m ? m[pat] || null : null;
     },
     polRuleRows() {
-      const row = this.polSelected();
-      if (!row) return [];
-      const st = this.polStaged[row.target] || { add: [], remove: [] };
-      const own = this.polOwnPatterns(row).map((pat) => {
-        const p = this.polPriceFor(row, pat);
+      if (!this.polDetail) return [];
+      const st = this.polStaged[this.polSel] || { add: [], remove: [] };
+      const own = this.polOwnPatterns().map((pat) => {
+        const p = this.polPriceFor(pat);
         return {
           pattern: pat,
           files: p ? p.files : null,
           bytes: p ? p.bytes : null,
+          dirs: p ? p.dirs : null,
+          error: p ? p.error : null,
           state: st.remove.includes(pat) ? "staged-remove" : "own",
         };
       });
       const adds = st.add.map((pat) => {
-        const p = (this.polAddPrices || {})[row.target + "|" + pat];
-        return { pattern: pat, files: p ? p.files : null, bytes: p ? p.bytes : null, state: "staged-add" };
+        const p = (this.polAddPrices || {})[this.polSel + "|" + pat];
+        return { pattern: pat, files: p ? p.files : null, bytes: p ? p.bytes : null, dirs: p ? p.dirs : null, error: p ? p.error : null, state: "staged-add" };
       });
       return [...adds, ...own];
     },
 
     polInheritedRules() {
-      const row = this.polSelected();
-      return row ? (row.inherited || []) : [];
+      return this.polDetail ? (this.polDetail.rules.inherited || []) : [];
+    },
+    polInheritedOrigin() {
+      if (!this.polDetail || !this.polDetail.rules.inherited_active) return "";
+      return this.polDetail.rules.inherited_origin || "";
     },
 
     // Keeping-out totals over the displayed own rules (staged removes excluded). Priced may
-    // be below total until "Price rules" runs or the backend ships pricing in the payload.
+    // be below total until the price call lands.
     polKeepout() {
       let files = 0, bytes = 0, priced = 0;
       const rows = this.polRuleRows();
@@ -140,42 +178,56 @@ const policiesPart = {
     },
 
     async polPriceRow() {
-      const row = this.polSelected();
-      if (!row) return;
-      const pats = this.polOwnPatterns(row);
+      const pats = this.polOwnPatterns();
       if (!pats.length) return;
       const seq = ++this._polRowPriceSeq;
-      const priced = await this.polPricePatterns(row.target, pats);
-      if (seq !== this._polRowPriceSeq || !priced) return;
-      const m = (this.polRowPrices = this.polRowPrices || {})[row.target] = (this.polRowPrices[row.target] || {});
-      for (const p of priced) m[p.pattern] = p;
+      const results = await this.polPricePatterns(this.polSel, pats, 2);
+      if (seq !== this._polRowPriceSeq || !results) return;
+      const m = (this.polRowPrices = this.polRowPrices || {})[this.polSel] = (this.polRowPrices[this.polSel] || {});
+      for (const p of results) m[p.pattern] = p;
     },
 
-    // The one place that talks to the pricing endpoint; shapes adapt here.
-    async polPricePatterns(target, patterns) {
+    // Price the selected policy's own rules as soon as its detail lands, so the "keeping out"
+    // column fills without a click. One index scan per call; the backend caches briefly.
+    polAutoPrice() {
+      if (this.polDetail && this.polOwnPatterns().length) this.polPriceRow();
+    },
+
+    // The one place that talks to the pricing endpoint.
+    async polPricePatterns(target, patterns, limit = 10) {
       try {
         const r = await getJson("/api/policies/price", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo: this.repo, target, patterns }) });
-        return r.priced || [];
+          body: JSON.stringify({ repo: this.repo, target, patterns, limit }) });
+        return r.results || [];
       } catch (e) { return []; }
     },
 
     polNoParentIgnore() {
+      if (this.polDetail && this.polDetail.defined) {
+        return !!((this.polDetail.defined.files || {}).noParentIgnore);
+      }
       const row = this.polSelected();
-      return !!(row && row.raw && row.raw.files && row.raw.files.noParentIgnore);
+      return !!(row && row.no_parent_ignore);
+    },
+    polNoParentDotFiles() {
+      const row = this.polSelected();
+      return !!(row && row.no_parent_dot_files);
+    },
+    polGlobalShadowed() {
+      const row = this.polSelected();
+      return !!(row && !row.isGlobal && row.global_shadowed && this.polData && this.polData.global && this.polData.global.rule_count);
     },
 
     polTargetNote() {
-      const row = this.polSelected();
-      if (!row) return "";
-      if (row.isGlobal) return "Bare patterns at Global match at any depth, in every source.";
-      return "Anchored patterns (leading /) are relative to this policy's root: " + sourcePath(row.target);
+      if (!this.polDetail) return "";
+      if (this.polDetail.is_global) return "Bare patterns at Global match at any depth, in every source.";
+      return "Anchored patterns (leading /) are relative to this policy's root: " + sourcePath(this.polSel);
     },
 
     // Render helpers: x-show does not stop x-text from evaluating, so anything derefing an
     // optional field lives here and returns "" instead of throwing.
     polAlsoLine() {
-      const s = this.polSelected() && this.polSelected().summary;
+      const s = this.polDetail && this.polDetail.summarized;
       if (!s) return "";
       const bits = [];
       if ((s.ignore_dot_files || []).length) bits.push("dot-files: " + s.ignore_dot_files.join(", "));
@@ -183,23 +235,32 @@ const policiesPart = {
       if (s.max_file_size) bits.push("files over " + fmtB(s.max_file_size));
       return bits.join(" · ");
     },
+    polSummaryLine() {
+      const s = this.polDetail && this.polDetail.summarized;
+      if (!s) return "";
+      return (s.schedule || "") + " · keeps " + (s.retention || "");
+    },
+    polPriceCell(r) {
+      if (r.error) return "error: " + r.error;
+      if (r.files == null) return "unpriced";
+      const dirs = r.dirs ? ` · ${r.dirs} dir${r.dirs === 1 ? "" : "s"}` : "";
+      return `${Number(r.files).toLocaleString()} files · ${fmtB(r.bytes || 0)}${dirs}`;
+    },
     polAddPreviewText() {
       const p = this.polAddPrice;
       if (!p || p.files == null) return "";
-      return "Would exclude " + Number(p.files).toLocaleString() + " files · " + fmtB(p.bytes);
+      return "Would exclude " + Number(p.files).toLocaleString() + " files · " + fmtB(p.bytes || 0);
     },
     polAddExamplesText() {
       const p = this.polAddPrice;
       if (!p || !p.examples || !p.examples.length) return "";
-      return "  e.g. " + p.examples.slice(0, 2).join(", ");
+      return "  e.g. " + p.examples.slice(0, 2).map((e) => (typeof e === "string" ? e : e.path)).join(", ");
     },
     polImpactText(it) {
-      if (!it || it.impact_files == null) return "";
-      return Number(it.impact_files).toLocaleString() + " files · " + fmtB(it.impact_bytes || 0);
-    },
-    polRangeText(it) {
-      if (!it) return "";
-      return (it.from != null ? it.from + " → " : "") + (it.to != null ? it.to : "");
+      if (!it || it.error) return it && it.error ? "error: " + it.error : "";
+      if (it.files == null) return "";
+      const dirs = it.dirs ? ` · ${it.dirs} dir${it.dirs === 1 ? "" : "s"}` : "";
+      return Number(it.files).toLocaleString() + " files · " + fmtB(it.bytes || 0) + dirs;
     },
 
     // ---------- staging ----------
@@ -208,27 +269,28 @@ const policiesPart = {
       return this.polStaged[target];
     },
     polStageAdd() {
-      const row = this.polSelected();
+      if (!this.polDetail) return;
       const pat = (this.polAddText || "").trim();
-      if (!row || !pat) return;
-      const st = this.polStagedFor(row.target);
+      if (!pat) return;
+      const st = this.polStagedFor(this.polSel);
       // Blocks duplicates AND patterns the policy already defines (even ones staged for
       // removal - staging add+remove of the same pattern is a contradiction).
-      if (st.add.includes(pat) || this.polOwnPatterns(row).includes(pat)) return;
+      if (st.add.includes(pat) || this.polOwnPatterns().includes(pat)) return;
       st.add.push(pat);
       this.polAddText = ""; this.polAddPrice = null;
-      this.polPriceStaged(row.target, pat);
+      this.polPriceStaged(this.polSel, pat);
     },
     polStageRemove(pat) {
-      const row = this.polSelected();
-      if (!row) return;
-      const st = this.polStagedFor(row.target);
+      if (!this.polDetail) return;
+      // Inherited rules are removed at the policy that owns them (kopia never unsets them on
+      // the inheritor) - the UI only stages removals of this policy's own rules.
+      if (!this.polOwnPatterns().includes(pat)) return;
+      const st = this.polStagedFor(this.polSel);
       st.remove.push(pat);
     },
     polStageRemovePolicy() {
-      const row = this.polSelected();
-      if (!row || row.isGlobal) return;
-      this.polStagedFor(row.target).removePolicy = true;
+      if (!this.polDetail || this.polDetail.is_global) return;
+      this.polStagedFor(this.polSel).removePolicy = true;
     },
     polUndo(target, kind, pat) {
       const st = this.polStaged[target];
@@ -263,15 +325,16 @@ const policiesPart = {
       // Seq at call time: a slow answer for an older keystroke must never overwrite the
       // preview of the pattern now in the box (polSelect clears it, this guards races).
       const seq = ++this._polAddPriceSeq;
-      const priced = await this.polPricePatterns(row.target, [pat]);
+      const results = await this.polPricePatterns(this.polSel, [pat], 2);
       if (seq !== this._polAddPriceSeq) return;
-      this.polAddPrice = priced && priced[0] ? priced[0] : null;
+      this.polAddPrice = results && results[0] ? results[0] : null;
     },
     async polPriceStaged(target, pat) {
-      const priced = await this.polPricePatterns(target, [pat]);
-      if (priced && priced[0]) {
+      const results = await this.polPricePatterns(target, [pat], 2);
+      const p = results && results[0];
+      if (p) {
         if (!this.polAddPrices) this.polAddPrices = {};
-        this.polAddPrices[target + "|" + pat] = priced[0];
+        this.polAddPrices[target + "|" + pat] = p;
       }
     },
 
@@ -280,11 +343,12 @@ const policiesPart = {
       const out = [];
       for (const [target, st] of Object.entries(this.polStaged)) {
         if (st.add.length || st.remove.length || st.removePolicy) {
-          out.push({ target, add: st.add, remove: st.remove, remove_policy: st.removePolicy });
+          out.push({ target, add: st.add, remove: st.remove, delete_policy: st.removePolicy });
         }
       }
       return out;
     },
+    // One diff request per staged target, rendered as one group each.
     async polOpenDiff() {
       const changes = this.polChanges();
       if (!changes.length) return;
@@ -292,38 +356,52 @@ const policiesPart = {
       this.polDiffBusy = true;
       this.polDiff = null;
       this.polDiffMode = "save";
-      try {
-        const r = await getJson("/api/policies/diff", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo: this.repo, changes }) });
-        this.polDiff = r;
-      } catch (e) {
-        this.polDiff = { groups: [], error: e.message || String(e) };
-      } finally {
-        this.polDiffBusy = false;
-      }
+      const groups = await Promise.all(changes.map(async (c) => {
+        try {
+          const r = await getJson("/api/policies/diff", { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ repo: this.repo, target: c.target, changes: { add: c.add, remove: c.remove, delete_policy: c.delete_policy } }) });
+          return { ...r, staged: c };
+        } catch (e) {
+          return { target: c.target, error: e.message || String(e), staged: c };
+        }
+      }));
+      this.polDiff = { groups };
+      this.polDiffBusy = false;
     },
     async polSave() {
       const changes = this.polChanges();
       if (!changes.length) { this.showPolDiff = false; return; }
-      const nPols = changes.length;
-      const nRules = changes.reduce((n, c) => n + c.add.length + c.remove.length + (c.remove_policy ? 1 : 0), 0);
+      const nRules = changes.reduce((n, c) => n + c.add.length + c.remove.length + (c.delete_policy ? 1 : 0), 0);
       const ok = await this.klConfirm({
-        title: `Save policy changes?`,
+        title: "Save policy changes?",
         facts: [
-          ["What", `${nRules} change(s) across ${nPols} polic${nPols === 1 ? "y" : "ies"}`],
+          ["What", `${nRules} change(s) across ${changes.length} polic${changes.length === 1 ? "y" : "ies"}`],
           ["Where", changes.map((c) => (c.target === "global" ? "Global" : sourcePath(c.target))).join(", ")],
           ["How", "kopia policy set / delete, one write per policy"],
-          ["Safety", "A backup is taken before the write; if the backup fails, nothing is written"],
+          ["Safety", "A verified backup is taken before each write; if it fails, that write is refused"],
         ],
-        note: "Kopia merges policy writes: fields you set take effect, fields you do not mention stay as they are.",
+        note: "Kopia merges policy writes: the ignore rules you set take effect, everything else stays as it is.",
         command: "", confirmLabel: "Save changes", danger: false,
       });
       if (!ok) return;
       this.showPolDiff = false;
-      const started = await this.startJob("policy_write", { changes }, "Policy write");
-      if (started) {
-        this.polDiscard();
-        this.actionText = "Policy write running - live output in the job panel.";
+      const results = [];
+      for (const c of changes) {
+        try {
+          const r = await getJson("/api/policies/save", { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ repo: this.repo, target: c.target, changes: { add: c.add, remove: c.remove, delete_policy: c.delete_policy }, confirmed: true }) });
+          results.push({ target: c.target, r });
+        } catch (e) {
+          results.push({ target: c.target, r: { ok: false, error: e.message || String(e) } });
+        }
+      }
+      this.polDiscard();
+      await this.loadPolicies(true);
+      const bad = results.filter((x) => !x.r.ok);
+      if (bad.length) {
+        this.error = bad.map((x) => `${x.target === "global" ? "Global" : sourcePath(x.target)}: ${x.r.error || ("kopia exit " + x.r.returncode + " - " + (x.r.output_tail || "").slice(-200))}`).join(" | ");
+      } else {
+        this.actionText = `Saved ${changes.length} polic${changes.length === 1 ? "y" : "ies"} - pre-write backups are in data/policy-backups.`;
       }
     },
 
@@ -341,45 +419,86 @@ const policiesPart = {
     },
     async polBackupNow() {
       await this.wrap(async () => {
-        await getJson("/api/policies/backup", { method: "POST", headers: { "Content-Type": "application/json" },
+        const r = await getJson("/api/policies/backup", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ repo: this.repo }) });
-        this.actionText = "Policy backup written.";
+        this.actionText = `Policy backup written: ${r.name}`;
         this.polOpenBackups();
       }, "Backing up policies...");
     },
-    async polRestoreDiff(file) {
+
+    // Restore review: the backup's own export (a {target: policy} JSON object) summarised
+    // client-side, the exact kopia command for the chosen mode, then the confirm dialog.
+    async polRestoreReview(name) {
       this.showPolDiff = true;
       this.polDiffBusy = true;
       this.polDiff = null;
       this.polDiffMode = "restore";
-      this.polRestoreFile = file;
+      this.polRestoreName = name;
+      this.polRestoreMode = "merge";
+      this.polRestoreCmd = null;
+      this.polRestoreParsed = null;
       try {
-        const r = await getJson("/api/policies/diff", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo: this.repo, backup: file }) });
-        this.polDiff = r;
+        const [file, cmd] = await Promise.all([
+          getJson(`/api/policies/backup-file?repo=${encodeURIComponent(this.repo)}&name=${encodeURIComponent(name)}`),
+          getJson(`/api/policies/restore-cmd?repo=${encodeURIComponent(this.repo)}&name=${encodeURIComponent(name)}&mode=merge`),
+        ]);
+        this.polRestoreParsed = this.polParseExport(file && file.content);
+        this.polRestoreCmd = cmd;
       } catch (e) {
-        this.polDiff = { groups: [], error: e.message || String(e) };
+        this.polRestoreParsed = null;
+        this.polRestoreCmd = { error: e.message || String(e) };
       } finally {
         this.polDiffBusy = false;
       }
     },
-    async polRestoreExecute(mirror) {
-      const file = this.polRestoreFile;
-      if (!file) return;
+    polParseExport(content) {
+      // kopia policy export = one JSON object {target: policy}. Anything else renders as raw.
+      try {
+        const data = JSON.parse(content);
+        if (data && typeof data === "object" && !Array.isArray(data)) {
+          return Object.entries(data).map(([target, pol]) => ({
+            target,
+            rules: (((pol || {}).files || {}).ignore) || [],
+          }));
+        }
+      } catch (e) { /* fall through */ }
+      return null;
+    },
+    async polRestoreModeChange(mode) {
+      this.polRestoreMode = mode;
+      const name = this.polRestoreName;
+      if (!name) return;
+      const cmd = await getJson(`/api/policies/restore-cmd?repo=${encodeURIComponent(this.repo)}&name=${encodeURIComponent(name)}&mode=${encodeURIComponent(mode)}`).catch(() => null);
+      this.polRestoreCmd = cmd;
+    },
+    async polRestoreExecute() {
+      const name = this.polRestoreName;
+      if (!name) return;
+      const mirror = this.polRestoreMode === "mirror";
       const ok = await this.klConfirm({
         title: "Restore this policy backup?",
         facts: [
-          ["What", mirror ? "Full mirror-restore: policies not in the backup are deleted" : "Merge-restore: policies in the backup overwrite their targets; others stay"],
-          ["From", file],
+          ["What", mirror ? "Full mirror-restore: this repo ends up with EXACTLY the backup's policies - everything else is deleted" : "Merge-restore: policies in the backup overwrite their targets; other policies stay"],
+          ["From", name],
           ["How", "kopia policy import" + (mirror ? " --delete-other-policies" : " (merge)")],
+          ["Safety", "The current policies are backed up first (pre-restore, fail-closed)"],
         ],
         callout: mirror ? "Mirror-restore replaces the whole policy set for this repo." : "",
         note: "KopiaLens restores only backups it made itself (data/policy-backups).",
-        command: "", confirmLabel: mirror ? "Mirror-restore" : "Restore (merge)", danger: mirror,
+        command: this.polRestoreCmd && this.polRestoreCmd.command ? this.polRestoreCmd.command : "",
+        confirmLabel: mirror ? "Mirror-restore" : "Restore (merge)", danger: mirror,
       });
       if (!ok) return;
-      this.showPolDiff = false;
-      const started = await this.startJob("policy_restore", { file, mirror }, "Policy restore");
-      if (started) this.actionText = "Policy restore running - live output in the job panel.";
+      await this.wrap(async () => {
+        const r = await getJson("/api/policies/restore", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo: this.repo, name, mode: this.polRestoreMode, confirmed: true }) });
+        if (r.ok) {
+          this.actionText = `Policies restored from ${name}.`;
+        } else {
+          this.error = `kopia exited ${r.returncode} - ${(r.output_tail || "").slice(-300)}`;
+        }
+        this.showPolDiff = false;
+        await this.loadPolicies(true);
+      }, "Restoring policies...");
     },
 };
