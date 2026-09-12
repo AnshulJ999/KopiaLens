@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from config import kopia_repos, repo_kind
 
-from ..core import policybackup
+from ..core import policybackup, policytargets
 from ..core.kopia import (
     _quote_arg,
     policy_delete_command,
@@ -33,6 +33,7 @@ from ..core.policy import (
     summarize,
 )
 from ..core.policybackup import BackupError
+from ..core.policytargets import TargetError
 from ..index import policypricing
 
 router = APIRouter(tags=["policies"])
@@ -158,6 +159,14 @@ class RestoreBody(BaseModel):
     confirmed: bool = False
 
 
+class TargetsBody(BaseModel):
+    repo: str = "1"
+    path: str
+    source: str | None = None     # the panel the dialog opened from: disambiguates user@host
+    is_folder: bool = False
+    shape: str = "exact"          # exact | name | extension | parent
+
+
 # ---- read half -------------------------------------------------------------------------
 
 @router.get("/policies/overview")
@@ -265,6 +274,21 @@ def price(body: PriceBody) -> dict:
         return _price_for_target(body.repo, body.target, body.patterns,
                                  limit=min(max(body.limit, 0), _EXAMPLES_MAX))
     except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/policies/exclusion-targets")
+def exclusion_targets(body: TargetsBody) -> dict:
+    """Owning policies that can receive an exclusion for ``path`` (Option A: a source whose
+    rules are inherited is never offered - its owner is), deduped, each with the sources the
+    write covers (matched per source - anchored patterns re-anchor per walk root) and the
+    impact of the shape's pattern, ranked biggest-impact first."""
+    _kopia_repo(body.repo)
+    try:
+        return policytargets.resolve_targets(
+            body.repo, body.path, source=body.source,
+            is_folder=body.is_folder, shape=body.shape)
+    except TargetError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
