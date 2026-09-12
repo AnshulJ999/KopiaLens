@@ -79,7 +79,8 @@ document.addEventListener("alpine:init", () => {
     // polStaged and reach kopia only through Review + save (sync POST, fail-closed backup
     // server-side). polAddPrices / polRowPrices cache "keeping out" pricing per pattern.
     polData: null, polSel: "global", polFilter: "", polStaged: {}, polAddText: "", polAddPrice: null,
-    polAddPrices: {}, polRowPrices: {}, polPriceError: {}, _polAddTimer: null, _polSeq: 0, _polRowPriceSeq: 0, _polAddPriceSeq: 0,
+    polAddPrices: {}, polRowPrices: {}, polPriceError: {}, polStoredTs: {},
+    _polAddTimer: null, _polSeq: 0, _polRowPriceSeq: 0, _polAddPriceSeq: 0, _polStoredSeq: 0,
     polDetail: null, polDetailCache: {}, _polDetailSeq: 0,
     showPolDiff: false, polDiff: null, polDiffBusy: false, polDiffMode: "save",
     polRestoreName: "", polRestoreMode: "merge", polRestoreCmd: null, polRestoreParsed: null,

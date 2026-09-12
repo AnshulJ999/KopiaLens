@@ -19,6 +19,11 @@
 //   POST /api/policies/price   {repo, target, patterns, limit}
 //        -> {results: [{pattern, error, files, bytes, dirs, examples: [{path, size}],
 //                       total_examples, capped, negated}]}
+//        Capped at 32 patterns per request; a larger ask 400s with a detail pointing at
+//        stored-prices (surfaced in the UI, never swallowed).
+//   GET  /api/policies/stored-prices?repo=&target=   ( nightly precompute)
+//        -> {stored: true, ts, results: <same shape as price>}, or
+//           {stored: false, ts: null, results: [], detail} when the nightly has not priced yet.
 //   POST /api/policies/diff    {repo, target, changes: {add, remove, delete_policy}}
 //        -> {current_rules, resulting_rules, added, removed, impact: {added, removed},
 //            will_create_policy, command, backup_dir}
@@ -60,7 +65,7 @@ const policiesPart = {
         if (seq !== this._polDetailSeq) return;
         this.polDetailCache[target] = d;
         this.polDetail = d;
-        this.polAutoPrice();
+        this.polAutoPrice(target);
       } catch (e) { if (seq === this._polDetailSeq) this.error = e.message || String(e); }
     },
 
@@ -188,25 +193,69 @@ const policiesPart = {
       if (this.polPriceError) delete this.polPriceError[this.polSel];
     },
 
-    // Price the selected policy's own rules as soon as its detail lands - EXCEPT Global.
-    // Pricing Global fans out to every inheriting source (: minutes, silently), so it
-    // waits for an explicit "Price rules" click until the backend fix lands.
-    polAutoPrice() {
-      if (this.polDetail && !this.polDetail.is_global && this.polOwnPatterns().length) this.polPriceRow();
+    // Whole-policy numbers: read the nightly precompute (stored-prices) - instant, any size,
+    // Global's 250 rules included. Live pricing stays for the add-box and staged adds only.
+    async polPriceStored(target) {
+      const seq = ++this._polStoredSeq;
+      try {
+        const r = await getJson(`/api/policies/stored-prices?repo=${encodeURIComponent(this.repo)}&target=${encodeURIComponent(target)}`);
+        if (seq !== this._polStoredSeq) return;
+        if (r && r.stored) {
+          const m = (this.polRowPrices = this.polRowPrices || {})[target] = (this.polRowPrices[target] || {});
+          for (const p of (r.results || [])) m[p.pattern] = p;
+          (this.polStoredTs = this.polStoredTs || {})[target] = r.ts || null;
+          if (this.polPriceError) delete this.polPriceError[target];
+        } else {
+          (this.polStoredTs = this.polStoredTs || {})[target] = null;  // nightly has not priced yet
+        }
+      } catch (e) { /* stored read failing must not break the tab; the live fallback still runs */ }
     },
 
-    // The one place that talks to the pricing endpoint. Null on failure - an empty array
-    // would leave the table silently unpriced (swallowed errors).
+    // Price the selected policy's own rules when its detail lands: stored numbers first
+    // (); a small non-global policy with nothing stored yet falls back to live so the
+    // table is not empty on a fresh install. Global never live-prices automatically - one
+    // ask fans out to every inheriting source, and the nightly covers it.
+    async polAutoPrice(target) {
+      target = target || this.polSel;
+      await this.polPriceStored(target);
+      if (target === "global") return;
+      const priced = (this.polRowPrices || {})[target] || {};
+      const own = this.polOwnPatterns();
+      if (own.length && own.some((pat) => !priced[pat] || priced[pat].files == null)) this.polPriceRow();
+    },
+
+    // The one place that talks to the live pricing endpoint. Null on failure - an empty array
+    // would leave the table silently unpriced (swallowed errors). The HTTP 400
+    // over the 32-pattern cap carries a detail pointing at stored-prices; it lands in
+    // polPriceError so the header shows it instead of eating it.
     async polPricePatterns(target, patterns, limit = 10) {
       try {
         const r = await getJson("/api/policies/price", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ repo: this.repo, target, patterns, limit }) });
+        if (this.polPriceError) delete this.polPriceError[target];
         return r.results || [];
-      } catch (e) { return null; }
+      } catch (e) {
+        if (!this.polPriceError) this.polPriceError = {};
+        this.polPriceError[target] = e.message || String(e);
+        return null;
+      }
     },
 
     polPriceFailText() {
       return (this.polPriceError || {})[this.polSel] || "";
+    },
+
+    // Where the on-screen numbers came from. Stored prices predate any policy save until the
+    // next nightly re-prices, so the ts is always shown ( contract).
+    polPricingNote() {
+      const ts = (this.polStoredTs || {})[this.polSel];
+      if (ts) {
+        const mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
+        const age = mins < 60 ? mins + " min" : mins < 1440 ? Math.round(mins / 60) + " h" : Math.round(mins / 1440) + " d";
+        return "Priced " + age + " ago by the nightly run - a save re-prices at the next nightly.";
+      }
+      if (this.polSel === "global") return "Whole-policy pricing runs in the nightly worker; numbers appear after the next index run.";
+      return "";
     },
 
     polNoParentIgnore() {
@@ -406,6 +455,12 @@ const policiesPart = {
         }
       }
       this.polDiscard();
+      // The stored numbers predate these writes now; drop the caches so the reload re-reads
+      // stored-prices and the pricing note shows the pre-save timestamp honestly.
+      for (const c of changes) {
+        if (this.polRowPrices) delete this.polRowPrices[c.target];
+        if (this.polStoredTs) delete this.polStoredTs[c.target];
+      }
       await this.loadPolicies(true);
       const bad = results.filter((x) => !x.r.ok);
       if (bad.length) {

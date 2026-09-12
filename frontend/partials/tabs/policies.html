@@ -67,8 +67,8 @@
                           x-text="'keeping out ' + polKeepout().files.toLocaleString() + ' files · ' + fmtB(polKeepout().bytes)"></span>
                     <span class="grow"></span>
                     <span class="text-[10px] text-danger" x-show="polPriceFailText()" x-text="polPriceFailText()"></span>
-                    <span class="text-[10px]" style="color:var(--muted)" x-show="polSel === 'global'">Pricing Global checks every inheriting source and can take minutes.</span>
-                    <button x-show="polKeepout().priced < polKeepout().total"
+                    <span class="text-[10px]" style="color:var(--muted)" x-show="polPricingNote()" x-text="polPricingNote()"></span>
+                    <button x-show="polSel !== 'global' && polKeepout().priced < polKeepout().total"
                             @click="polPriceRow()" class="h-6 rounded border border-bd px-2 text-[10px]">Price rules</button>
                   </div>
                   <div class="kl-note mb-2" x-text="polTargetNote()"></div>
