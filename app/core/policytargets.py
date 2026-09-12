@@ -116,10 +116,16 @@ def _matches(pattern: str, rel: str, is_folder: bool) -> bool:
 
 
 def resolve_targets(repo: str, path: str, source: str | None = None,
-                    is_folder: bool = False, shape: str = "exact") -> dict:
-    """Owning policies for this path, deduped, with the sources each write covers and the
-    impact of the shape's pattern, ranked biggest-impact first. See the module docstring for
-    the two reasons this is not "the sources that contain the file"."""
+                    is_folder: bool = False, shape: str = "exact",
+                    price: bool = False) -> dict:
+    """Owning policies for this path, deduped, with the sources each write covers, ranked
+    biggest-reach first. See the module docstring for the two reasons this is not "the sources
+    that contain the file".
+
+    ``price=False`` (default) keeps this a pure resolution call - zero index scans; the dialog
+    ranks by matched-covers count, which the inheritance/matcher walk yields for free. Impact
+    pricing is opt-in (small scopes only - the global target prices one pattern per covering
+    source)."""
     from ..index import policypricing  # local import: keeps the index layer out of import time
     from .policy import global_ignores, load_defined_policies
 
@@ -183,7 +189,7 @@ def resolve_targets(repo: str, path: str, source: str | None = None,
                            "matches": matches})
 
         impact = None
-        if pattern:
+        if price and pattern:
             by_source = []
             files_total = bytes_total = 0
             for cover in covers:
@@ -220,10 +226,15 @@ def resolve_targets(repo: str, path: str, source: str | None = None,
             "note": note,
         })
 
-    targets.sort(key=lambda t: (
-        -(t["impact"]["bytes"] if t["impact"] else -1),
-        -(t["impact"]["files"] if t["impact"] else -1),
-        t["target"],
-    ))
+    # Ranked by REACH: matched covers first (a pattern that genuinely keeps the file out of more
+    # sources), then total covers, then the target key. When impact pricing is on, bytes break
+    # ties within the same reach.
+    def _rank(t: dict) -> tuple:
+        covers = t["covers"]
+        matched = sum(1 for c in covers if c["matches"])
+        byts = t["impact"]["bytes"] if t["impact"] else 0
+        return (-matched, -len(covers), -byts, t["target"])
+
+    targets.sort(key=_rank)
     return {"repo": repo, "path": path, "shape": shape, "sources": source_info,
-            "targets": targets, "ranked_by": "impact"}
+            "targets": targets, "ranked_by": "sources-covered"}

@@ -103,31 +103,46 @@ def _dir_rel_expr() -> str:
     return "'/' || ltrim(replace(substr(dir_path, ?), ?, '/'), ?)"
 
 
-def _price_with_regex(cur, src: int, rx: str, fragments: list[str], sep: str,
-                      root_len: int, limit: int) -> tuple[int, int, int, list[tuple]]:
-    """One pattern via DuckDB regex. Returns (files, bytes, dirs, example rows)."""
-    rel = _rel_expr()
-    where = ["src_id = ?", "in_latest", f"regexp_full_match({rel}, ?)"]
-    params: list = [src, root_len + 1, sep, '/', rx]
+def _cond_for_inner(rel: str, rx: str, fragments: list[str], root_len: int, sep: str) -> tuple[str, list]:
+    conds = [f"regexp_full_match({rel}, ?)"]
+    params: list = [root_len + 1, sep, '/', rx]
     for frag in fragments:
-        where.append("full_path LIKE ? ESCAPE '!'")
+        conds.append("full_path LIKE ? ESCAPE '!'")
         params.append("%" + like_literal(frag.replace("/", sep)) + "%")
-    cond = " AND ".join(where)
-    row = cur.execute(
-        f"SELECT count(*), coalesce(sum(size), 0) FROM pathx WHERE {cond}", params).fetchone()
-    files, total = int(row[0] or 0), int(row[1] or 0)
-    examples = cur.execute(
-        f"SELECT full_path, size FROM pathx WHERE {cond} "
-        f"ORDER BY size DESC LIMIT ?", params + [limit]).fetchall() if limit else []
-    dirs = 0
-    if limit or files:
-        drel = _dir_rel_expr()
-        # the rel expression is inlined twice (length + regexp) -> its params repeat
-        dirs = int(cur.execute(
-            f"SELECT count(*) FROM dir WHERE src_id = ? AND length({drel}) > 1 "
-            f"AND regexp_full_match({drel}, ?)",
-            [src, root_len + 1, sep, '/', root_len + 1, sep, '/', rx]).fetchone()[0] or 0)
-    return files, total, dirs, examples
+    return " AND ".join(f"({c})" for c in conds), params
+
+
+def _price_batch_with_regex(cur, src: int, entries: list[list],
+                            root_len: int, sep: str) -> None:
+    """Price a batch of patterns in ONE pathx scan + ONE dir scan, writing files/bytes/dirs
+    into ``entries`` ([pattern, rx, fragments, [files, bytes, dirs]]) in place.
+
+    Each pattern's condition appears TWICE in the pathx SELECT (count + sum FILTER pairs) and
+    the FILTER aggregates come BEFORE the WHERE clause in the SQL text - so per-pattern params
+    are passed twice and ``src_id``'s param lands LAST. Both orderings are pinned by
+    test_filter_batch_matches_per_pattern."""
+    rel = _rel_expr()
+    drel = _dir_rel_expr()
+    conds, pparams, dparams = [], [], []
+    for _pat, rx, frags, _acc in entries:
+        c, p = _cond_for_inner(rel, rx, frags, root_len, sep)
+        conds.append(c)
+        pparams.extend(p)
+        pparams.extend(p)                      # count + sum aggregates repeat the condition
+        dparams.extend([root_len + 1, sep, '/', root_len + 1, sep, '/', rx])
+    sel = ", ".join(
+        f"count(*) FILTER (WHERE {c}) AS f{i}, coalesce(sum(size) FILTER (WHERE {c}), 0) AS b{i}"
+        for i, c in enumerate(conds))
+    row = cur.execute(f"SELECT {sel} FROM pathx WHERE src_id = ? AND in_latest",
+                      pparams + [src]).fetchone()
+    dsel = ", ".join(
+        f"count(*) FILTER (WHERE length({drel}) > 1 AND regexp_full_match({drel}, ?)) AS d{i}"
+        for i in range(len(entries)))
+    drow = cur.execute(f"SELECT {dsel} FROM dir WHERE src_id = ?", dparams + [src]).fetchone()
+    for i, entry in enumerate(entries):
+        entry[3][0] = int(row[i * 2] or 0)
+        entry[3][1] = int(row[i * 2 + 1] or 0)
+        entry[3][2] = int(drow[i] or 0)
 
 
 def _machine(rules: list, text: str, is_dir: bool) -> tuple[bool, int | None]:
@@ -270,11 +285,13 @@ def price_patterns(repo: str, source_key: str, patterns: list[str], limit: int =
 def _compute(repo: str, source_key: str, patterns: list[str]) -> dict:
     """Uncached computation, always at the internal example cap (responses slice down).
 
-    The fast/slow decision is all-or-nothing per batch: if ANY valid pattern needs the ported
-    matcher (negation, POSIX classes), the whole batch goes through the sequence simulation -
-    per-rule numbers must stay comparable across one rule list, because negated rules change
-    what the positive rules around them mean. Invalid patterns get error results and never
-    enter either path."""
+    The fast path prices patterns in BATCHES - one pathx scan + one dir scan per ``_BATCH``
+    patterns instead of one scan per pattern (the per-pattern rescan was the dominant live-path
+    cost, ~432s extrapolated on the Global rollup). The fast/slow decision stays all-or-nothing
+    per batch: if ANY valid pattern needs the ported matcher (negation, POSIX classes), the
+    whole batch goes through the sequence simulation - per-rule numbers must stay comparable
+    across one rule list, because negated rules change what the positive rules around them
+    mean. Invalid patterns get error results and never enter either path."""
     results: list = [None] * len(patterns)
     valid_idx: list[int] = []
     valid_pats: list[str] = []
@@ -291,12 +308,9 @@ def _compute(repo: str, source_key: str, patterns: list[str]) -> dict:
     if not valid_pats:
         return {"results": results, "slow_path": False}
 
-    try:
-        fast = all(file_match_regex(p) is not None for p, _ in valid_pats)
-    except ValueError:  # pragma: no cover - compile already validated the same text
-        fast = False
-
-    if not fast:
+    entries = [[pat, file_match_regex(pat), _literal_fragments(pat), [0, 0, 0]]
+               for pat, _c in valid_pats]
+    if not all(e[1] is not None for e in entries):
         got = _price_with_matcher(repo, source_key, [p for p, _ in valid_pats], _EXAMPLE_CAP)
         for pos, i in enumerate(valid_idx):
             item = dict(got[pos])
@@ -316,16 +330,18 @@ def _compute(repo: str, source_key: str, patterns: list[str]) -> dict:
                 results[i] = {"pattern": pat, "files": 0, "bytes": 0, "dirs": 0, "examples": [],
                               "error": None, "negated": compiled.negated}
             return {"results": results, "slow_path": False}
-        for i, (pat, compiled) in zip(valid_idx, valid_pats):
-            rx = file_match_regex(pat)
-            if rx is None:  # pragma: no cover - the all() above already checked this
-                results[i] = {"pattern": pat, "files": 0, "bytes": 0, "dirs": 0, "examples": [],
-                              "error": "pattern needs the slow matcher", "negated": compiled.negated}
-                continue
-            files, total, dirs, rows = _price_with_regex(
-                cur, src, rx, _literal_fragments(pat), sep, len(root), _EXAMPLE_CAP)
+        for start in range(0, len(entries), _BATCH):
+            _price_batch_with_regex(cur, src, entries[start:start + _BATCH], len(root), sep)
+        for i, (pat, compiled), entry in zip(valid_idx, valid_pats, entries):
+            files, total, dirs, _ = entry[3]
+            examples: list = []
+            if files and _EXAMPLE_CAP:  # examples only where the rule actually matches
+                cond, cparams = _cond_for_inner(_rel_expr(), entry[1], entry[2], len(root), sep)
+                examples = cur.execute(
+                    f"SELECT full_path, size FROM pathx WHERE src_id = ? AND in_latest AND {cond} "
+                    f"ORDER BY size DESC LIMIT ?", [src] + cparams + [_EXAMPLE_CAP]).fetchall()
             results[i] = {"pattern": pat, "files": files, "bytes": total, "dirs": dirs,
-                          "examples": rows, "error": None, "negated": compiled.negated}
+                          "examples": examples, "error": None, "negated": compiled.negated}
         return {"results": results, "slow_path": False}
     finally:
         cur.close()

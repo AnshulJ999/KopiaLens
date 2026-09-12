@@ -185,21 +185,28 @@ const policiesPart = {
       if (seq !== this._polRowPriceSeq || !results) return;
       const m = (this.polRowPrices = this.polRowPrices || {})[this.polSel] = (this.polRowPrices[this.polSel] || {});
       for (const p of results) m[p.pattern] = p;
+      if (this.polPriceError) delete this.polPriceError[this.polSel];
     },
 
-    // Price the selected policy's own rules as soon as its detail lands, so the "keeping out"
-    // column fills without a click. One index scan per call; the backend caches briefly.
+    // Price the selected policy's own rules as soon as its detail lands - EXCEPT Global.
+    // Pricing Global fans out to every inheriting source (: minutes, silently), so it
+    // waits for an explicit "Price rules" click until the backend fix lands.
     polAutoPrice() {
-      if (this.polDetail && this.polOwnPatterns().length) this.polPriceRow();
+      if (this.polDetail && !this.polDetail.is_global && this.polOwnPatterns().length) this.polPriceRow();
     },
 
-    // The one place that talks to the pricing endpoint.
+    // The one place that talks to the pricing endpoint. Null on failure - an empty array
+    // would leave the table silently unpriced (swallowed errors).
     async polPricePatterns(target, patterns, limit = 10) {
       try {
         const r = await getJson("/api/policies/price", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ repo: this.repo, target, patterns, limit }) });
         return r.results || [];
-      } catch (e) { return []; }
+      } catch (e) { return null; }
+    },
+
+    polPriceFailText() {
+      return (this.polPriceError || {})[this.polSel] || "";
     },
 
     polNoParentIgnore() {
@@ -322,6 +329,9 @@ const policiesPart = {
       const row = this.polSelected();
       const pat = (this.polAddText || "").trim();
       if (!row || !pat) { this.polAddPrice = null; return; }
+      // Global is skipped: one pattern there still fans out to every inheriting source
+      // (); the impact surfaces in the review diff instead of a live preview.
+      if (row.isGlobal) { this.polAddPrice = null; return; }
       // Seq at call time: a slow answer for an older keystroke must never overwrite the
       // preview of the pattern now in the box (polSelect clears it, this guards races).
       const seq = ++this._polAddPriceSeq;

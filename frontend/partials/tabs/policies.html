@@ -66,6 +66,8 @@
                     <span class="text-[11px] text-ok" x-show="polKeepout().priced"
                           x-text="'keeping out ' + polKeepout().files.toLocaleString() + ' files · ' + fmtB(polKeepout().bytes)"></span>
                     <span class="grow"></span>
+                    <span class="text-[10px] text-danger" x-show="polPriceFailText()" x-text="polPriceFailText()"></span>
+                    <span class="text-[10px]" style="color:var(--muted)" x-show="polSel === 'global'">Pricing Global checks every inheriting source and can take minutes.</span>
                     <button x-show="polKeepout().priced < polKeepout().total"
                             @click="polPriceRow()" class="h-6 rounded border border-bd px-2 text-[10px]">Price rules</button>
                   </div>
@@ -104,7 +106,8 @@
                   </div>
                   <div class="kl-note mt-1" x-show="polAddPreviewText()" x-text="polAddPreviewText()"></div>
                   <div class="kl-note font-mono" x-show="polAddExamplesText()" x-text="polAddExamplesText()"></div>
-                  <div class="kl-note mt-1" x-show="polAddPrice && polAddPrice.files === 0">Matches nothing in the current index - dead rule?</div>
+                  <div class="kl-note mt-1" x-show="polAddPrice && polAddPrice.files === 0">Matches nothing in the current index - it may simply not match anything on disk today.</div>
+                  <div class="kl-note mt-1" x-show="polSelected() && polSelected().isGlobal && polAddText.trim()">Pricing at Global is slow - the change's impact shows in the review diff.</div>
 
                   <!-- inherited rules: strings with ONE origin (the owner), read-only -->
                   <template x-if="polInheritedRules().length">

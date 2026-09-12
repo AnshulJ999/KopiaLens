@@ -1,16 +1,20 @@
 // exclusion dialog: the adder that lives in the file/folder panels (and the Churn/Tree
 // right-clicks). Picks a pattern shape, prices it against the index BEFORE anything is written,
 // previews the matched set biggest-first, then confirms. The exclude half writes a policy rule
-// through the job runner; the delete half routes to the standard delete flow afterwards, which
-// keeps its own dry run + confirm (nothing is ever removed straight from this dialog).
+// synchronously (/api/policies/save, fail-closed backup server-side); the delete half routes to
+// the standard delete flow afterwards, which keeps its own dry run + confirm (nothing is ever
+// removed straight from this dialog).
 //
-// The anchor trap (from the policy-surfaces design): an anchored pattern is relative to the
-// POLICY it lives in, not to the source. Patterns here are recomputed whenever the target
-// changes, and anchored shapes are dropped entirely for the Global target (a leading /
-// there anchors to every source's own root, which is never what "this exact path" means).
-// Target and pattern are always shown together.
+// Targets come from POST /api/policies/exclusion-targets (Option A): only
+// policies that OWN an ignore rule list are offered - a source that merely inherits is never a
+// write target, because kopia replaces (never stacks) the inherited list. The response carries
+// each target's pattern ALREADY RECOMPUTED for that target (the anchor trap: inherited rules
+// re-anchor to each covered source's walk root) - the frontend never rebuilds that text.
+// Ranking is by SOURCES COVERED: free from the inheritance/matcher resolution,
+// and it answers the targeting question. Bytes are left out - makes global pricing
+// slow, and the endpoint still prices impact server-side per call (flagged to the orchestrator).
 //
-// Assumed API (the backend, verified against app/api/policies.py):
+// Other endpoints (verified against app/api/policies.py):
 //   POST /api/policies/price {repo, target, patterns, limit}
 //     -> {"results": [{"pattern", "error", "files", "bytes", "dirs", "negated",
 //                      "examples": [{"path", "size"}], "total_examples", "capped"}]}
@@ -21,103 +25,112 @@ const excludePart = {
     // ctx: {kind: "file"|"folder", path, source?, preset?}; mode: "exclude"|"delete".
     async openExclude(ctx, mode = "exclude") {
       this.showExclude = true;
-      // Superseded-open guard. Alpine wraps state in reactive proxies, so the naive
-      // `this.exDialog === d` identity check was ALWAYS false and the covering-sources
-      // fetch below was discarded on every open (the dialog offered Global only).
       const seq = ++this._exOpenSeq;
       const d = this.exDialog = {
         kind: ctx.kind, path: ctx.path, mode,
-        src: ctx.source || "",              // the original source, used to route the delete half
+        src: ctx.source || "",              // the panel's source: disambiguates user@host + routes the delete half
         preset: ctx.preset || "",
-        targets: [], target: "", shapeId: "", custom: "",
-        price: null, pricing: false, loading: false,
+        shape: "exact",                     // exact | name | extension | parent | custom
+        custom: "",
+        targetData: null,                   // /api/policies/exclusion-targets response
+        target: "",                         // the selected target key
+        price: null, priceFor: "", priceTarget: "",   // the price, and the pattern+target it describes
+        pricing: false, loading: false,
       };
-      if (ctx.source) d.targets = [ctx.source];
-      else if (ctx.sources && ctx.sources.length) d.targets = [...ctx.sources];
-      else {
-        // No source given (Churn right-click): ask the folder panel's fast summary which
-        // sources cover this folder, so the target list is real policies, not a guess.
-        d.loading = true;
-        try {
-          const s = await getJson(`/api/folder/summary?repo=${encodeURIComponent(this.repo)}&prefix=${encodeURIComponent(ctx.path)}`);
-          if (seq === this._exOpenSeq) d.targets = (s.sources || []).filter((x) => x.relation === "covers").map((x) => x.source);
-        } catch (e) { /* targets stay empty; the dialog still offers Global */ }
-        d.loading = false;
+      // A preset (the panel's suggestion rows) maps onto a backend shape so the endpoint
+      // recomputes the pattern properly. Anything globby or otherwise not exactly one of the
+      // four shapes stays custom text - mapping it onto a shape would let the endpoint
+      // silently REWRITE the intended pattern (e.g. "/a/*/[ab].txt" -> the literal path).
+      if (d.preset) {
+        const p = d.preset;
+        if (p.startsWith("*.")) d.shape = "extension";
+        else if (p.startsWith("/") && p.endsWith("/**")) d.shape = d.kind === "folder" ? "exact" : "parent";
+        else if (/[*?[]/.test(p)) d.shape = "custom";
+        else if (p.startsWith("/")) d.shape = "exact";
+        else if (p.includes("/")) d.shape = "custom";
+        else d.shape = "name";
+        if (d.shape === "custom") d.custom = p;
       }
       if (seq !== this._exOpenSeq) return;  // a newer openExclude owns the dialog now
-      d.targets = [...d.targets, "global"];
-      d.target = d.targets[0] || "global";
-      this.exAfterTargetChange();
+      this.exLoadTargets();
     },
 
-    exAfterTargetChange() {
+    // Owning policies for this path, ranked by sources covered. Re-called on every shape
+    // change: the shape decides each target's pattern, and the pattern decides the matches.
+    async exLoadTargets() {
       const d = this.exDialog;
       if (!d) return;
-      const shapes = this.exShapes();
-      const hit = d.preset ? shapes.find((s) => s.pattern === d.preset) : null;
-      if (hit) { d.shapeId = hit.id; }
-      else if (d.preset) { d.shapeId = "custom"; d.custom = d.preset; }
-      else {
-        const def = shapes.find((s) => s.id !== "custom" && s.pattern);
-        d.shapeId = def ? def.id : "custom";
+      const seq = ++this._exTargetsSeq;
+      this._exClearPrice();
+      d.loading = true;
+      try {
+        const r = await getJson("/api/policies/exclusion-targets", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo: this.repo, path: d.path, source: d.src || null,
+                                 is_folder: d.kind === "folder", shape: d.shape }) });
+        if (!this.exDialog || seq !== this._exTargetsSeq) return;
+        d.targetData = r;
+        d.loading = false;
+        const ts = this.exTargets();
+        d.target = (ts[0] && ts[0].target) || "";
+        this.exPriceNow();
+      } catch (e) {
+        if (!this.exDialog || seq !== this._exTargetsSeq) return;
+        d.loading = false;
+        d.targetData = { targets: [], sources: [], error: e.message || String(e) };
       }
-      this.exPriceNow();
     },
 
-    // Shape list for the current target. Anchored shapes exist only for a per-source target;
-    // at Global the same text would anchor to a different root, so they are not offered.
-    // No target yet (the covering-source fetch is in flight) -> no shapes at all, so a
-    // half-resolved root can never show a wrong pattern.
-    exShapes() {
+    // Ranked by SOURCES COVERED (matched covers first - an anchored pattern genuinely reaches
+    // fewer covered sources than the owner speaks for; that count is free from the matcher).
+    exTargets() {
       const d = this.exDialog;
-      if (!d || !d.target) return [];
-      const isG = d.target === "global";
-      const full = (d.path || "").replace(/[\\/]+$/, "");
-      const name = full.split("\\").pop().split("/").pop();
-      const root = isG ? "" : sourcePath(d.target).replace(/[\\/]+$/, "");
-      const rel = root && full.toLowerCase().startsWith(root.toLowerCase())
-        ? full.slice(root.length).replace(/^[\\/]+/, "") : full;
-      const relFwd = rel.replace(/\\/g, "/");
-      const parentRel = relFwd.includes("/") ? relFwd.slice(0, relFwd.lastIndexOf("/")) : "";
-      const parentName = parentRel ? parentRel.split("/").pop() : "";
-      const dot = name.lastIndexOf(".");
-      const out = [];
-      if (d.kind === "folder") {
-        if (!isG) out.push({ id: "exact", label: "This folder", pattern: "/" + relFwd + "/**" });
-        out.push({ id: "name", label: "Any folder of this name", pattern: name });
-        if (!isG && parentRel) out.push({ id: "up", label: "Its parent folder", pattern: "/" + parentRel + "/**" });
-        if (parentName && parentName !== name) out.push({ id: "upname", label: "Any folder of the parent's name", pattern: parentName });
-      } else {
-        if (!isG) out.push({ id: "exact", label: "This exact file", pattern: "/" + relFwd });
-        out.push({ id: "name", label: "Files with this name, any depth", pattern: name });
-        if (!isG && parentRel) out.push({ id: "up", label: "Its containing folder", pattern: "/" + parentRel + "/**" });
-        if (parentName && parentName !== name) out.push({ id: "upname", label: "Any folder of that name", pattern: parentName });
-        if (dot > 0) out.push({ id: "ext", label: "By extension", pattern: "*" + name.slice(dot) });
-      }
-      out.push({ id: "custom", label: "Custom pattern", pattern: "" });
-      return out;
+      if (!d || !d.targetData) return [];
+      const ts = [...(d.targetData.targets || [])];
+      const matched = (t) => (t.covers || []).filter((c) => c.matches).length;
+      ts.sort((a, b) => matched(b) - matched(a)
+        || (b.covers || []).length - (a.covers || []).length
+        || String(a.target).localeCompare(String(b.target)));
+      return ts;
     },
 
+    exSelectedTarget() {
+      const d = this.exDialog;
+      if (!d || !d.targetData) return null;
+      return (d.targetData.targets || []).find((t) => t.target === d.target) || null;
+    },
+
+    exCoversText(t) {
+      const covers = t.covers || [];
+      const n = covers.length;
+      const matched = covers.filter((c) => c.matches).length;
+      const base = n === 1 ? "covers 1 source" : `covers ${n} sources`;
+      if (!n || matched === n) return base;
+      return `${base} · ${matched} match this shape`;
+    },
+
+    // The pattern that will be written: the backend's recomputed text for the selected target,
+    // or the user's custom text. Never derived frontend-side for the built-in shapes.
     exPattern() {
       const d = this.exDialog;
       if (!d) return "";
-      if (d.shapeId === "custom") return (d.custom || "").trim();
-      const s = this.exShapes().find((x) => x.id === d.shapeId);
-      return s ? s.pattern : "";
+      if (d.shape === "custom") return (d.custom || "").trim();
+      const t = this.exSelectedTarget();
+      return t ? (t.pattern || "") : "";
     },
 
-    exSelectShape(id) {
+    exSelectShape(shape) {
       const d = this.exDialog;
-      if (!d) return;
-      d.shapeId = id;
-      this.exPriceNow();
+      if (!d || d.shape === shape) return;
+      d.shape = shape;
+      if (shape === "custom") { this._exClearPrice(); this.exPriceNow(); return; }
+      this.exLoadTargets();  // re-rank + recompute each target's pattern for the new shape
     },
 
     exSetTarget(t) {
       const d = this.exDialog;
       if (!d) return;
       d.target = t;
-      this.exAfterTargetChange();  // the anchor trap: the pattern text follows the target
+      this.exPriceNow();  // the price must follow the target: patterns differ per target
     },
 
     exCustomInput() {
@@ -125,31 +138,50 @@ const excludePart = {
       this._exCustomTimer = setTimeout(() => this.exPriceNow(), 400);
     },
 
+    _exClearPrice() {
+      const d = this.exDialog;
+      if (!d) return;
+      // The old price describes the OLD pattern/target - it must never sit beside a new
+      // selection while the debounce runs (stale pricing with Commit enabled).
+      d.price = null; d.priceFor = ""; d.priceTarget = ""; d.pricing = false;
+      if (this._exPriceTimer) { clearTimeout(this._exPriceTimer); this._exPriceTimer = null; }
+    },
+
     exPriceNow() {
       const d = this.exDialog;
       if (!d) return;
       const pat = this.exPattern();
-      if (!pat) { d.price = null; d.pricing = false; return; }
-      if (this._exPriceTimer) clearTimeout(this._exPriceTimer);
-      // Seq is bumped at SCHEDULE time: a shape change inside the debounce window invalidates
-      // the pending call, so a stale price can never land on a new selection.
+      this._exClearPrice();
+      if (!pat) return;
       const seq = ++this._exPriceSeq;
       d.pricing = true;
       this._exPriceTimer = setTimeout(async () => {
         const results = await this.exPricePatterns(d.target, [pat], 120);
         if (!this.exDialog || seq !== this._exPriceSeq) return;
-        d.price = results && results[0] ? results[0] : { pattern: pat, files: null, error: null };
+        d.price = results && results[0] ? results[0]
+          : { pattern: pat, files: null, error: "could not check the index" };
+        d.priceFor = pat; d.priceTarget = d.target;
         d.pricing = false;
       }, 250);
     },
 
-    // The one place that talks to the pricing endpoint.
+    // The one place that talks to the pricing endpoint. Null on failure - an empty array
+    // would read as "matches nothing", which is a lie the Commit button must not trust.
     async exPricePatterns(target, patterns, limit = 10) {
       try {
         const r = await getJson("/api/policies/price", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ repo: this.repo, target, patterns, limit }) });
         return r.results || [];
-      } catch (e) { return []; }
+      } catch (e) { return null; }
+    },
+
+    // True only when a CURRENT, successful price exists for exactly the pattern + target on
+    // screen. The footer buttons hold on this: pricing-before-commit is the guard against a
+    // too-broad exclusion silently un-protecting files.
+    exPriceReady() {
+      const d = this.exDialog;
+      return !!(d && d.price && !d.pricing && !d.price.error
+        && d.priceFor === this.exPattern() && d.priceTarget === d.target);
     },
 
     // Preview rows: examples are {path, size} objects, biggest first.
@@ -180,6 +212,12 @@ const excludePart = {
       if (p.files === 0) return "Matches nothing in the current index - it may simply not match anything on disk today.";
       return "";
     },
+    exEmptyText() {
+      const d = this.exDialog;
+      if (!d || this.exPattern()) return "";
+      return d.shape === "custom" ? "Write a pattern above."
+        : "This shape does not apply to this selection - pick another.";
+    },
 
     exToSearch() {
       const d = this.exDialog;
@@ -196,11 +234,15 @@ const excludePart = {
     // The policy write itself: synchronous /api/policies/save with confirmed=true (the
     // confirm dialog above is that flag's source). The server takes the fail-closed
     // pre-write backup before the write and refuses if the backup cannot be verified.
+    // Returns TRUE only when kopia accepted the write - the delete half must never run
+    // otherwise (exclude-then-delete used to proceed past a failed write).
     async exWriteRule(target, pat) {
+      let wrote = false;
       await this.wrap(async () => {
         const r = await getJson("/api/policies/save", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ repo: this.repo, target, changes: { add: [pat], remove: [], delete_policy: false }, confirmed: true }) });
         if (r.ok) {
+          wrote = true;
           this.actionText = `Rule written into ${target === "global" ? "the Global policy" : target}` +
             (r.backup && r.backup.name ? ` - backup ${r.backup.name}` : "");
         } else {
@@ -208,6 +250,7 @@ const excludePart = {
         }
         if (this.polData) this.loadPolicies(true);  // the write changed policies - catch the tab up
       }, "Writing exclusion rule...");
+      return wrote;
     },
 
     async exConfirm() {
@@ -217,6 +260,10 @@ const excludePart = {
       if (!pat) { this.error = "Enter a pattern first."; return; }
       const where = d.target === "global" ? "the Global policy" : d.target;
       const keepout = this.exKeepoutText();
+      // The delete half sweeps exactly what the rule protects: a write to one source's policy
+      // scopes the delete to that source; only a Global write justifies the wider sweep
+      // (the rule went to one policy while the delete swept every source).
+      const deleteScope = d.target !== "global" ? d.target : d.src;
       if (d.mode === "exclude") {
         const ok = await this.klConfirm({
           title: "Exclude this pattern?",
@@ -238,18 +285,19 @@ const excludePart = {
         facts: [
           ["Step 1", `Write the rule into ${where}, a verified backup taken first`],
           ["What it keeps out", keepout || "not priced yet"],
+          ["Delete scope", deleteScope ? sourcePath(deleteScope) : "every source holding this path"],
           ["Step 2", "The standard delete flow opens for the matched files, with its own dry run before anything is removed"],
           ["Step 3", "Space frees on the next full maintenance run (not immediately)"],
         ],
-        callout: d.target === "global" ? "A rule at Global applies to EVERY source in this repo." : "",
+        callout: d.target === "global" ? "A rule at Global applies to every source that inherits it - sources with their own rule lists are NOT covered." : "",
         note: "The exclusion goes first on purpose: without it, the next snapshot re-ingests what you delete.",
         command: "", confirmLabel: "Exclude and delete…", danger: true,
       });
       if (!ok) return;
-      const route = { kind: d.kind, path: d.path, source: d.src };
+      const route = { kind: d.kind, path: d.path, source: deleteScope };
       this.showExclude = false; this.exDialog = null;
-      await this.exWriteRule(d.target, pat);
-      this.exRouteDelete(route);
+      const wrote = await this.exWriteRule(d.target, pat);
+      if (wrote) this.exRouteDelete(route);
     },
 
     // Step 2 of the delete half: the flows that already exist, with their guards. Folder ->

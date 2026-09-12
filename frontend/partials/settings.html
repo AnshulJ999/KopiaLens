@@ -55,11 +55,11 @@
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Excluded-folder tolerance</span>
                   <select x-model.number="excludedTolerance" class="fld border border-bd bg-surface2">
-                    <option :value="0">0% (strict)</option>
-                    <option :value="0.02">2%</option>
-                    <option :value="0.05">5%</option>
-                    <option :value="0.1">10%</option>
-                    <option :value="0.15">15%</option>
+                    <option value="0">0% (strict)</option>
+                    <option value="0.02">2%</option>
+                    <option value="0.05">5%</option>
+                    <option value="0.1">10%</option>
+                    <option value="0.15">15%</option>
                   </select></div>
                 <p class="text-[11px] text-muted mt-1">In the Excluded browser a folder counts as backed up when less than this fraction of it is excluded. Cuts "partial" noise.</p>
               </div>
@@ -78,10 +78,10 @@
                   <input type="time" x-model="indexTime" class="fld border border-bd bg-surface2"></div>
                 <div class="flex items-center justify-between gap-3 mt-2" x-show="indexMode==='interval'"><span>Every</span>
                   <select x-model.number="indexInterval" class="fld border border-bd bg-surface2">
-                    <option :value="14400">4 hours</option>
-                    <option :value="21600">6 hours</option>
-                    <option :value="43200">12 hours</option>
-                    <option :value="86400">24 hours</option>
+                    <option value="14400">4 hours</option>
+                    <option value="21600">6 hours</option>
+                    <option value="43200">12 hours</option>
+                    <option value="86400">24 hours</option>
                   </select></div>
                 <p class="text-[11px] text-muted mt-1">Indexing, snapshot analysis, reclaimable, the dashboard rebuild, folder pre-compute and the Backblaze rescan all run together in a separate process that exits afterwards, so this app never holds on to the memory. One repo at a time. If the PC was off at the scheduled time it catches up at the next opportunity. The app stays usable while a repo indexes; a heavy pass just isn't included in that repo's numbers until it finishes.</p>
               </div>
@@ -104,33 +104,33 @@
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Background warm pass</span>
                   <select x-model.number="lightInterval" class="fld border border-bd bg-surface2">
-                    <option :value="300">5 minutes</option>
-                    <option :value="600">10 minutes</option>
-                    <option :value="900">15 minutes</option>
-                    <option :value="1800">30 minutes</option>
-                    <option :value="3600">1 hour</option>
-                    <option :value="7200">2 hours</option>
+                    <option value="300">5 minutes</option>
+                    <option value="600">10 minutes</option>
+                    <option value="900">15 minutes</option>
+                    <option value="1800">30 minutes</option>
+                    <option value="3600">1 hour</option>
+                    <option value="7200">2 hours</option>
                   </select></div>
                 <p class="text-[11px] text-muted mt-1">The cheap in-process pass: next-snapshot times, repository stats and the search landing page. Everything expensive now rides with the heavy pass instead.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Dashboard auto-refresh</span>
                   <select x-model.number="dashRefresh" class="fld border border-bd bg-surface2">
-                    <option :value="0">Off</option>
-                    <option :value="300">5 minutes</option>
-                    <option :value="900">15 minutes</option>
-                    <option :value="1800">30 minutes</option>
-                    <option :value="3600">1 hour</option>
+                    <option value="0">Off</option>
+                    <option value="300">5 minutes</option>
+                    <option value="900">15 minutes</option>
+                    <option value="1800">30 minutes</option>
+                    <option value="3600">1 hour</option>
                   </select></div>
                 <p class="text-[11px] text-muted mt-1">How often an open Dashboard re-fetches the cached numbers. Cheap: just a re-render when something changed.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Dashboard rebuild interval</span>
                   <select x-model.number="dashboardInterval" class="fld border border-bd bg-surface2">
-                    <option :value="3600">1 hour</option>
-                    <option :value="7200">2 hours</option>
-                    <option :value="14400">4 hours</option>
-                    <option :value="28800">8 hours</option>
+                    <option value="3600">1 hour</option>
+                    <option value="7200">2 hours</option>
+                    <option value="14400">4 hours</option>
+                    <option value="28800">8 hours</option>
                   </select></div>
                 <p class="text-[11px] text-muted mt-1">Only used when Dashboard numbers is set to "Also rebuild during the day". Ignored otherwise.</p>
               </div>
@@ -236,12 +236,12 @@
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Reindex minimum gap</span>
                   <select x-model.number="bzReindexMinGap" class="fld border border-bd bg-surface2">
-                    <option :value="3600">1 hour</option>
-                    <option :value="7200">2 hours</option>
-                    <option :value="10800">3 hours</option>
-                    <option :value="21600">6 hours</option>
-                    <option :value="43200">12 hours</option>
-                    <option :value="86400">24 hours</option>
+                    <option value="3600">1 hour</option>
+                    <option value="7200">2 hours</option>
+                    <option value="10800">3 hours</option>
+                    <option value="21600">6 hours</option>
+                    <option value="43200">12 hours</option>
+                    <option value="86400">24 hours</option>
                   </select></div>
                 <p class="text-[11px] text-muted mt-1">Changes in Backblaze's own scans are detected within half an hour; this gap sets how long the reindex then waits. Smaller means fresher numbers and more reindexing.</p>
               </div>

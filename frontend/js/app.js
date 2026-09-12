@@ -79,13 +79,13 @@ document.addEventListener("alpine:init", () => {
     // polStaged and reach kopia only through Review + save (sync POST, fail-closed backup
     // server-side). polAddPrices / polRowPrices cache "keeping out" pricing per pattern.
     polData: null, polSel: "global", polFilter: "", polStaged: {}, polAddText: "", polAddPrice: null,
-    polAddPrices: {}, polRowPrices: {}, _polAddTimer: null, _polSeq: 0, _polRowPriceSeq: 0, _polAddPriceSeq: 0,
+    polAddPrices: {}, polRowPrices: {}, polPriceError: {}, _polAddTimer: null, _polSeq: 0, _polRowPriceSeq: 0, _polAddPriceSeq: 0,
     polDetail: null, polDetailCache: {}, _polDetailSeq: 0,
     showPolDiff: false, polDiff: null, polDiffBusy: false, polDiffMode: "save",
     polRestoreName: "", polRestoreMode: "merge", polRestoreCmd: null, polRestoreParsed: null,
     showPolBackups: false, polBackups: null, _polBackupSeq: 0,
     // exclusion dialog: priced-before-commit pattern adder over the file/folder panels.
-    exDialog: null, showExclude: false, _exOpenSeq: 0, _exPriceSeq: 0, _exCustomTimer: null, _exPriceTimer: null,
+    exDialog: null, showExclude: false, _exOpenSeq: 0, _exTargetsSeq: 0, _exPriceSeq: 0, _exCustomTimer: null, _exPriceTimer: null,
 
     fmtB(v) { return fmtBytes(v); },
     fmtPhys(v) { return fmtPhys(v); },
