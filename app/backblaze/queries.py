@@ -1,16 +1,86 @@
-"""Read queries over the Backblaze SQLite index. Pure reads; safe to call concurrently (WAL)."""
+"""Read queries over the Backblaze index. Pure reads; safe to call concurrently.
+
+The `files` table reads from the ACTIVE store (): the SQLite `files` table (default) or the
+Parquet generation store (`pq.py`) chosen by the `backblaze.store` setting. Everything else
+(kv, folder_snapshots, events_archive, backup_days, queue, events, churn, folder_rollup) always
+reads the slim SQLite via bbdb.
+"""
 
 from __future__ import annotations
 
+import contextlib
 import json
 import threading
 import time
 
-from . import bbdb, parsers, paths
+from . import bbdb, parsers, paths, pq
 
 _SEP = "\\"
 _CHURN_TAIL = 30 * 1024 * 1024  # bytes of the bzfileids tail scanned for "recently added"
 _CHURN_CACHE: dict = {}         # (top, depth, collapse_key) -> (ts, result)
+
+
+# ---- active store for the `files` table (: "sqlite" | "parquet") -------------------
+_STORE_OVERRIDE: str | None = None  # test hook - beats the setting
+
+
+def _store() -> str:
+    if _STORE_OVERRIDE:
+        return _STORE_OVERRIDE
+    try:
+        from ..settings import load_settings
+        return load_settings().get("backblaze", {}).get("store", "sqlite")
+    except Exception:  # noqa: BLE001 - a settings problem must not break reads
+        return "sqlite"
+
+
+class _EmptyFiles:
+    """Stands in for the Parquet `files` view before the first parquet build (the sqlite store's
+    empty-table behavior): every read answers zero rows, count answers 0."""
+
+    _DESCR = [("drive",), ("full_path",), ("path_lc",), ("name",), ("ext",),
+              ("size",), ("mtime_hex",), ("excluded",), ("excl_rule",)]
+
+    def __init__(self):
+        self.description = self._DESCR
+
+    def execute(self, _sql, _params=None):
+        return self
+
+    def fetchone(self):
+        return (0,)
+
+    def fetchall(self):
+        return []
+
+    def fetchmany(self, _n):
+        return []
+
+
+@contextlib.contextmanager
+def _files_cursor(store: str | None = None):
+    """Cursor over the `files` rows in the active store. sqlite: the thread-local bbdb connection
+    (never closed here). parquet: a DuckDB cursor over the current generation (released on exit);
+    an empty stand-in until the first parquet build lands."""
+    store = store or _store()
+    if store == "parquet":
+        if not pq.available():
+            yield _EmptyFiles()
+            return
+        with pq.files_cursor() as cur:
+            yield cur
+    else:
+        yield bbdb.connect()
+
+
+def _dict_rows(cur, rows) -> list[dict]:
+    """sqlite Rows and DuckDB tuples -> dicts (callers and the API index columns by name)."""
+    if not rows:
+        return []
+    if hasattr(rows[0], "keys"):
+        return [dict(r) for r in rows]
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, r)) for r in rows]
 
 
 def _apply_collapse(path: str, depth: int, collapse_lc):
@@ -31,9 +101,10 @@ def _ext_list(raw):
     return [e for e in (x.strip().lower().lstrip(".") for x in str(raw).split(",")) if e] if raw else []
 
 
-def _where(query, drive, ext, status, min_size, ext_exclude=None):
+def _where(query, drive, ext, status, min_size, ext_exclude=None, store=None):
+    store = store or _store()
     sql, params = [], []
-    if query and len(query) >= 3 and bbdb.fts_available():
+    if query and len(query) >= 3 and store == "sqlite" and bbdb.fts_available():
         sql.append("rowid IN (SELECT rowid FROM files_fts WHERE files_fts MATCH ?)")
         params.append('"' + query.replace('"', '""') + '"')
     elif query:
@@ -58,26 +129,45 @@ def _where(query, drive, ext, status, min_size, ext_exclude=None):
 
 def search(query="", drive=None, ext=None, status="all", min_size=0,
            sort="size", direction="desc", limit=500, offset=0, ext_exclude=None) -> dict:
-    con = bbdb.connect()
-    where, params = _where(query, drive, ext, status, min_size, ext_exclude)
-    total = con.execute(f"SELECT count(*) FROM files{where}", params).fetchone()[0]
+    store = _store()
+    where, params = _where(query, drive, ext, status, min_size, ext_exclude, store)
     col = _SORT_COLS.get(sort, "size")
     dir_ = "DESC" if str(direction).lower() != "asc" else "ASC"
-    rows = con.execute(
-        f"SELECT drive, full_path, name, ext, size, excluded, excl_rule FROM files{where} "
-        f"ORDER BY {col} {dir_} LIMIT ? OFFSET ?", params + [int(limit), int(offset)]).fetchall()
-    return {"total": total, "rows": [dict(r) for r in rows]}
+    with _files_cursor(store) as fc:
+        total = fc.execute(f"SELECT count(*) FROM files{where}", params).fetchone()[0]
+        cur = fc.execute(
+            f"SELECT drive, full_path, name, ext, size, excluded, excl_rule FROM files{where} "
+            f"ORDER BY {col} {dir_} LIMIT ? OFFSET ?", params + [int(limit), int(offset)])
+        rows = _dict_rows(cur, cur.fetchall())
+    return {"total": total, "rows": rows}
 
 
 def export_iter(query="", drive=None, ext=None, status="all", min_size=0,
                 sort="size", direction="desc", ext_exclude=None):
-    con = bbdb.connect()
-    where, params = _where(query, drive, ext, status, min_size, ext_exclude)
+    """Lazily streamed rows for the CSV export. sqlite: the cursor (Row objects). parquet: a
+    generator of dicts over the current generation (held open for the stream's lifetime)."""
+    store = _store()
+    where, params = _where(query, drive, ext, status, min_size, ext_exclude, store)
     col = _SORT_COLS.get(sort, "size")
     dir_ = "DESC" if str(direction).lower() != "asc" else "ASC"
-    return con.execute(
-        f"SELECT drive, full_path, name, ext, size, excluded, excl_rule FROM files{where} "
-        f"ORDER BY {col} {dir_}", params)
+    sql = (f"SELECT drive, full_path, name, ext, size, excluded, excl_rule FROM files{where} "
+           f"ORDER BY {col} {dir_}")
+    if store == "parquet":
+        if not pq.available():
+            return iter(())
+
+        def gen():
+            with pq.files_cursor() as fc:
+                cur = fc.execute(sql, params)
+                cols = [d[0] for d in cur.description]
+                while True:
+                    batch = cur.fetchmany(50_000)
+                    if not batch:
+                        return
+                    for t in batch:
+                        yield dict(zip(cols, t))
+        return gen()
+    return bbdb.connect().execute(sql, params)
 
 
 # ---- per-drive overview (vs Backblaze authoritative) ----------------------------------
@@ -109,14 +199,17 @@ def _overview_live() -> dict:
             L = guid_letter.get(guid)
             if L:
                 auth[L] = (nf, nb)
+    with _files_cursor() as fc:
+        cur = fc.execute(
+            "SELECT drive, count(*) total, "
+            "sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END) backed_files, "
+            "sum(CASE WHEN excluded=0 THEN size ELSE 0 END) backed_bytes, "
+            "sum(CASE WHEN excluded=1 THEN 1 ELSE 0 END) excluded_files, "
+            "sum(CASE WHEN excluded=1 THEN size ELSE 0 END) excluded_bytes "
+            "FROM files GROUP BY drive ORDER BY drive")
+        agg = _dict_rows(cur, cur.fetchall())
     rows = []
-    for r in con.execute(
-        "SELECT drive, count(*) total, "
-        "sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END) backed_files, "
-        "sum(CASE WHEN excluded=0 THEN size ELSE 0 END) backed_bytes, "
-        "sum(CASE WHEN excluded=1 THEN 1 ELSE 0 END) excluded_files, "
-        "sum(CASE WHEN excluded=1 THEN size ELSE 0 END) excluded_bytes "
-        "FROM files GROUP BY drive ORDER BY drive").fetchall():
+    for r in agg:
         a = auth.get(r["drive"])
         rows.append({
             "drive": r["drive"], "total": r["total"],
@@ -131,17 +224,22 @@ def _overview_live() -> dict:
 
 # ---- folder rollup (bloat finder) -----------------------------------------------------
 def group_by_folder(drive=None, depth=2, status="backed", min_files=1, top=300, collapse=None) -> list[dict]:
-    con = bbdb.connect()
     where, params = _where("", drive, None, status, 0)
     cl = [(c.lower(), c) for c in (collapse or [])]
     counts: dict[str, list] = {}
-    for full_path, size in con.execute(f"SELECT full_path, size FROM files{where}", params):
-        key = _apply_collapse(full_path, depth, cl)
-        e = counts.get(key)
-        if e:
-            e[0] += 1; e[1] += size
-        else:
-            counts[key] = [1, size]
+    with _files_cursor() as fc:
+        cur = fc.execute(f"SELECT full_path, size FROM files{where}", params)
+        while True:
+            batch = cur.fetchmany(200_000)
+            if not batch:
+                break
+            for full_path, size in batch:
+                key = _apply_collapse(full_path, depth, cl)
+                e = counts.get(key)
+                if e:
+                    e[0] += 1; e[1] += size
+                else:
+                    counts[key] = [1, size]
     rows = [{"folder": k, "files": v[0], "bytes": v[1]} for k, v in counts.items() if v[0] >= min_files]
     rows.sort(key=lambda x: x["bytes"], reverse=True)
     return rows[:top]
@@ -152,9 +250,12 @@ def exclusions() -> dict:
     from . import rules
     con = bbdb.connect()
     layers = rules.list_layers()
-    impact = [{"rule": r["excl_rule"], "files": r["c"], "bytes": r["b"]} for r in con.execute(
-        "SELECT excl_rule, count(*) c, sum(size) b FROM files WHERE excluded=1 AND excl_rule IS NOT NULL "
-        "GROUP BY excl_rule ORDER BY b DESC")]
+    with _files_cursor() as fc:
+        cur = fc.execute(
+            "SELECT excl_rule, count(*) c, sum(size) b FROM files WHERE excluded=1 AND excl_rule IS NOT NULL "
+            "GROUP BY excl_rule ORDER BY b DESC")
+        impact = [{"rule": r["excl_rule"], "files": r["c"], "bytes": r["b"]}
+                  for r in _dict_rows(cur, cur.fetchall())]
     matched = {i["rule"] for i in impact}
     dormant = [d for d in layers["folders"] if f"folder:{d}" not in matched]
     return {"layers": layers, "impact": impact, "dormant_folders": dormant}
@@ -248,30 +349,33 @@ def health() -> dict:
 
 # ---- duplicate candidates (heuristic, NOT BZ's real server-side dedup) -----------------
 def dupes(min_size=50 * 1_000_000, top=200) -> list[dict]:
-    con = bbdb.connect()
-    return [dict(r) for r in con.execute(
-        "SELECT name, size, count(*) copies, size*count(*) wasted FROM files "
-        "WHERE excluded=0 AND size>=? GROUP BY name, size HAVING copies>1 "
-        "ORDER BY wasted DESC LIMIT ?", [int(min_size), int(top)])]
+    with _files_cursor() as fc:
+        cur = fc.execute(
+            "SELECT name, size, count(*) copies, size*count(*) wasted FROM files "
+            "WHERE excluded=0 AND size>=? GROUP BY name, size HAVING copies>1 "
+            "ORDER BY wasted DESC LIMIT ?", [int(min_size), int(top)])
+        return _dict_rows(cur, cur.fetchall())
 
 
 # ---- coverage for the Excluded browser merge (called by index/excluded.py BZ branch) ---
 def coverage_children(folder: str) -> dict[str, dict]:
     """Per immediate child segment under `folder`: backed (excluded=0) coverage from the BZ index.
     Shape mirrors index/excluded.py's backed_children: {seg_lc: {logical, files, has_file}}."""
-    con = bbdb.connect()
     lo = folder.lower().rstrip(_SEP) + _SEP
     hi = lo + "￿"
     plen = len(lo)
     agg: dict[str, dict] = {}
-    for r in con.execute(
-        "SELECT seg, max(has_file) has_file, sum(size) logical, count(*) cnt FROM ("
-        "  SELECT substr(rem,1,CASE WHEN instr(rem,?)>0 THEN instr(rem,?)-1 ELSE length(rem) END) seg,"
-        "         (instr(rem,?)=0) has_file, size FROM ("
-        "    SELECT substr(path_lc, ?) rem, size FROM files"
-        "    WHERE excluded=0 AND path_lc>=? AND path_lc<?))"
-        " WHERE seg<>'' GROUP BY seg",
-        [_SEP, _SEP, _SEP, plen + 1, lo, hi]).fetchall():
+    with _files_cursor() as fc:
+        cur = fc.execute(
+            "SELECT seg, max(has_file) has_file, sum(size) logical, count(*) cnt FROM ("
+            "  SELECT substr(rem,1,CASE WHEN instr(rem,?)>0 THEN instr(rem,?)-1 ELSE length(rem) END) seg,"
+            "         (instr(rem,?)=0) has_file, size FROM ("
+            "    SELECT substr(path_lc, ?) rem, size FROM files"
+            "    WHERE excluded=0 AND path_lc>=? AND path_lc<?))"
+            " WHERE seg<>'' GROUP BY seg",
+            [_SEP, _SEP, _SEP, plen + 1, lo, hi])
+        cov_rows = _dict_rows(cur, cur.fetchall())
+    for r in cov_rows:
         agg[r["seg"]] = {"logical": int(r["logical"] or 0), "files": int(r["cnt"] or 0),
                          "has_file": bool(r["has_file"])}
     return agg
@@ -307,20 +411,22 @@ def folder_children(prefix: str) -> list[dict]:
         return _rollup_to_children(rr)
     hi = lo + "￿"
     plen = len(lo)
-    rows = con.execute(
-        "SELECT seg_lc, min(full_path) fp, max(is_file) is_file, "
-        "sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END) backed_files, "
-        "sum(CASE WHEN excluded=0 THEN size ELSE 0 END) backed_bytes, "
-        "sum(CASE WHEN excluded=1 THEN 1 ELSE 0 END) excluded_files, "
-        "sum(CASE WHEN excluded=1 THEN size ELSE 0 END) excluded_bytes, "
-        "max(excl_rule) sample_rule FROM ("
-        "  SELECT CASE WHEN p>0 THEN substr(remlc,1,p-1) ELSE remlc END seg_lc, (p=0) is_file, "
-        "         full_path, excluded, size, excl_rule FROM ("
-        "    SELECT remlc, instr(remlc, ?) p, full_path, excluded, size, excl_rule FROM ("
-        "      SELECT substr(path_lc, ?) remlc, full_path, excluded, size, excl_rule "
-        "      FROM files WHERE path_lc>=? AND path_lc<?)))"
-        " WHERE seg_lc<>'' GROUP BY seg_lc",
-        [_SEP, plen + 1, lo, hi]).fetchall()
+    with _files_cursor() as fc:
+        cur = fc.execute(
+            "SELECT seg_lc, min(full_path) fp, max(is_file) is_file, "
+            "sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END) backed_files, "
+            "sum(CASE WHEN excluded=0 THEN size ELSE 0 END) backed_bytes, "
+            "sum(CASE WHEN excluded=1 THEN 1 ELSE 0 END) excluded_files, "
+            "sum(CASE WHEN excluded=1 THEN size ELSE 0 END) excluded_bytes, "
+            "max(excl_rule) sample_rule FROM ("
+            "  SELECT CASE WHEN p>0 THEN substr(remlc,1,p-1) ELSE remlc END seg_lc, (p=0) is_file, "
+            "         full_path, excluded, size, excl_rule FROM ("
+            "    SELECT remlc, instr(remlc, ?) p, full_path, excluded, size, excl_rule FROM ("
+            "      SELECT substr(path_lc, ?) remlc, full_path, excluded, size, excl_rule "
+            "      FROM files WHERE path_lc>=? AND path_lc<?)))"
+            " WHERE seg_lc<>'' GROUP BY seg_lc",
+            [_SEP, plen + 1, lo, hi])
+        rows = _dict_rows(cur, cur.fetchall())
     out = []
     for r in rows:
         bf, ef = r["backed_files"] or 0, r["excluded_files"] or 0
@@ -344,16 +450,18 @@ def naming_gap(query: str, depth: int = 2, top: int = 300) -> list[dict]:
     Surfaces 'you excluded \\google takeout\\ but F:\\GoogleTakeout is still backed up' gaps."""
     if not query or not query.strip():
         return []
-    con = bbdb.connect()
     q = query.strip().lower()
-    if len(q) >= 3 and bbdb.fts_available():
-        rows = con.execute(
-            "SELECT full_path, size, excluded FROM files WHERE rowid IN "
-            "(SELECT rowid FROM files_fts WHERE files_fts MATCH ?)",
-            ['"' + q.replace('"', '""') + '"']).fetchall()
+    store = _store()
+    if len(q) >= 3 and store == "sqlite" and bbdb.fts_available():
+        with _files_cursor(store) as fc:
+            rows = fc.execute(
+                "SELECT full_path, size, excluded FROM files WHERE rowid IN "
+                "(SELECT rowid FROM files_fts WHERE files_fts MATCH ?)",
+                ['"' + q.replace('"', '""') + '"']).fetchall()
     else:
-        rows = con.execute(
-            "SELECT full_path, size, excluded FROM files WHERE path_lc LIKE ?", ["%" + q + "%"]).fetchall()
+        with _files_cursor(store) as fc:
+            rows = fc.execute(
+                "SELECT full_path, size, excluded FROM files WHERE path_lc LIKE ?", ["%" + q + "%"]).fetchall()
     agg: dict[str, dict] = {}
     for full_path, size, excluded in rows:
         comps = full_path.split(_SEP)
@@ -406,6 +514,38 @@ def _default_collapse_lc() -> list:
     return sorted(c[0] for c in _default_collapse_pairs())
 
 
+def _churn_folder_stats(folders: list[tuple[str, str, str]]) -> dict[str, tuple]:
+    """Per-folder (total, backed, bytes) for churn enrichment; folders = [(folder, lo, hi)].
+    sqlite: the per-folder indexed range query. parquet: one grouped range-join - a per-folder
+    loop over the unindexed Parquet view would pay the scan floor once per folder."""
+    if _store() == "parquet":
+        if not folders:
+            return {}
+        if not pq.available():
+            return {f: (0, 0, 0) for f, _lo, _hi in folders}
+        vals = ", ".join("(?, ?, ?)" for _ in folders)
+        params = [x for trip in folders for x in trip]
+        with pq.files_cursor() as fc:
+            rows = fc.execute(
+                f"WITH r(folder, lo, hi) AS (VALUES {vals}) "
+                "SELECT r.folder, count(f.path_lc) t, "
+                "sum(CASE WHEN f.excluded=0 THEN 1 ELSE 0 END) b, "
+                "sum(CASE WHEN f.excluded=0 THEN f.size ELSE 0 END) bb "
+                "FROM r LEFT JOIN files f ON f.path_lc >= r.lo AND f.path_lc < r.hi "
+                "GROUP BY r.folder", params).fetchall()
+        got = {r[0]: (r[1] or 0, r[2] or 0, r[3] or 0) for r in rows}
+        return {f: got.get(f, (0, 0, 0)) for f, _lo, _hi in folders}
+    con = bbdb.connect()
+    out = {}
+    for folder, lo, hi in folders:
+        st = con.execute(
+            "SELECT count(*) t, sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END) b, "
+            "sum(CASE WHEN excluded=0 THEN size ELSE 0 END) bb FROM files WHERE path_lc>=? AND path_lc<?",
+            [lo, hi]).fetchone()
+        out[folder] = (st["t"] or 0, st["b"] or 0, st["bb"] or 0)
+    return out
+
+
 def _churn_build(top: int, depth: int, cl) -> dict:
     """The live compute path: roll the bzfileids tail up to folders at `depth`, then status/size/
     Delta-enrich the top N. Shared by churn()'s live path and the background revalidate thread."""
@@ -413,16 +553,14 @@ def _churn_build(top: int, depth: int, cl) -> dict:
     total = sum(raw.values()) or 1
     con = bbdb.connect()
     has_hist = (con.execute("SELECT count(DISTINCT day) FROM folder_snapshots").fetchone()[0] or 0) >= 2
+    top_folders = sorted(raw.items(), key=lambda x: x[1], reverse=True)[:int(top)]
+    folders = [(folder, folder.lower().rstrip(_SEP) + _SEP, folder.lower().rstrip(_SEP) + _SEP + "￿")
+               for folder, _cnt in top_folders]
+    stats = _churn_folder_stats(folders)
     rows = []
-    for folder, cnt in sorted(raw.items(), key=lambda x: x[1], reverse=True)[:int(top)]:
+    for folder, cnt in top_folders:
         drive = folder[0].upper() if len(folder) > 1 and folder[1] == ":" else ""
-        lo = folder.lower().rstrip(_SEP) + _SEP
-        hi = lo + "￿"
-        st = con.execute(
-            "SELECT count(*) t, sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END) b, "
-            "sum(CASE WHEN excluded=0 THEN size ELSE 0 END) bb FROM files WHERE path_lc>=? AND path_lc<?",
-            [lo, hi]).fetchone()
-        tcnt, bcnt, bbytes = st["t"] or 0, st["b"] or 0, st["bb"] or 0
+        tcnt, bcnt, bbytes = stats[folder]
         status = "gone" if tcnt == 0 else ("active" if bcnt > 0 else "excluded")
         delta = None
         if has_hist:
@@ -543,10 +681,11 @@ def status() -> dict:
 
 
 def _status_live() -> dict:
-    con = bbdb.connect()
-    rows = con.execute(
-        "SELECT drive, count(*) total, sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END) backed "
-        "FROM files GROUP BY drive ORDER BY drive").fetchall()
+    with _files_cursor() as fc:
+        cur = fc.execute(
+            "SELECT drive, count(*) total, sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END) backed "
+            "FROM files GROUP BY drive ORDER BY drive")
+        rows = _dict_rows(cur, cur.fetchall())
     drives = [{"drive": r["drive"], "total": r["total"], "backed": r["backed"] or 0} for r in rows]
     return {"built": bool(drives), "drives": drives,
             "total_files": sum(d["total"] for d in drives),

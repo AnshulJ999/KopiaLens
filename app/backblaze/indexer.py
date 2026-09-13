@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 
-from . import bbdb, parsers, paths, queries, rules
+from . import bbdb, parsers, paths, pq, queries, rules
 from .safety import open_ro
 
 log = logging.getLogger("bz.indexer")
@@ -75,15 +75,16 @@ def _write_rollup(con, root_lc: str, roll1: dict, roll2: dict) -> None:
         con.executemany("INSERT INTO folder_rollup VALUES(?,?,?,?,?,?,?,?,?)", rows)
 
 
-def _reindex_drive(con, vol, engine) -> tuple[int, int, int]:
-    """Replace all rows for one drive from its filelist. Returns (total, backed, excluded) counts.
+def _walk_drive(vol, engine, emit) -> tuple[int, int, int, dict, dict]:
+    """Parse + classify one drive's filelist, dedupe by path, emit rows in batches of _BATCH
+    (tuple order = pq.SCHEMA column order), and accumulate the shallow folder rollups.
+    Returns (total, backed, excluded, roll1, roll2) - the store-specific sink (SQLite insert or
+    Parquet writer) is the caller's `emit`, and the caller persists the rollups.
 
     Dedupes by path: a Backblaze per-volume filelist can list each entry TWICE (the committed
     .dat sometimes contains the whole body duplicated - e.g. E: had 1.19M lines / 595k unique).
     Backblaze's own bzstat count dedupes, so we must too, else backed counts come out ~2x.
-    Deduping before classify also halves the rule work. Also accumulates the shallow folder_rollup
-    (depth-1/2 child aggregates) so the Tree/Excluded views render the slow shallow levels instantly."""
-    con.execute("DELETE FROM files WHERE drive=?", [vol.letter])
+    Deduping before classify also halves the rule work."""
     total = backed = excluded = 0
     seen: set[str] = set()
     batch: list[tuple] = []
@@ -113,12 +114,39 @@ def _reindex_drive(con, vol, engine) -> tuple[int, int, int]:
             if len(comps) >= 3:
                 _acc_roll(roll2, (comps[0] + "\\" + comps[1] + "\\").lower(), comps[2], len(comps) > 3, is_excl, size, rule)
         if len(batch) >= _BATCH:
-            con.executemany("INSERT INTO files VALUES(?,?,?,?,?,?,?,?,?)", batch)
+            emit(batch)
             batch.clear()
     if batch:
+        emit(batch)
+    return total, backed, excluded, roll1, roll2
+
+
+def _reindex_drive(con, vol, engine) -> tuple[int, int, int]:
+    """Replace one drive's `files` rows in the SQLite store from its filelist. Returns
+    (total, backed, excluded) counts."""
+    con.execute("DELETE FROM files WHERE drive=?", [vol.letter])
+
+    def emit(batch):
         con.executemany("INSERT INTO files VALUES(?,?,?,?,?,?,?,?,?)", batch)
-    _write_rollup(con, root_lc, roll1, roll2)
+
+    total, backed, excluded, roll1, roll2 = _walk_drive(vol, engine, emit)
+    _write_rollup(con, vol.letter.lower() + ":\\", roll1, roll2)
     return total, backed, excluded
+
+
+def _reindex_drive_pq(vol, engine, staged: str) -> tuple[int, int, int, dict, dict]:
+    """Build one drive's rows into a staged Parquet file (); the SQLite `files` table is
+    untouched. Returns (total, backed, excluded, roll1, roll2) - the caller writes the rollups
+    to the slim SQLite and publishes the staged file into the new generation."""
+    writer = pq.open_writer(staged)
+    try:
+        def emit(batch):
+            writer.write_table(pq.table_from_rows(batch))
+
+        total, backed, excluded, roll1, roll2 = _walk_drive(vol, engine, emit)
+    finally:
+        writer.close()
+    return total, backed, excluded, roll1, roll2
 
 
 def import_eventlog_archive(eventlog_dir: str) -> dict:
@@ -258,17 +286,21 @@ def _refresh_folder_snapshots(con, history_days: int = 90) -> None:
     day = time.strftime("%Y-%m-%d")
     if con.execute("SELECT 1 FROM folder_snapshots WHERE day=? LIMIT 1", [day]).fetchone():
         return  # already captured today's rollup
-    rows = con.execute(
-        "SELECT drive, full_path, size FROM files WHERE excluded=0").fetchall()
     agg: dict[tuple, list] = {}
-    for drive, full_path, size in rows:
-        comps = full_path.split("\\")
-        folder = "\\".join(comps[:3]) if len(comps) > 2 else full_path
-        e = agg.get((drive, folder))
-        if e:
-            e[0] += 1; e[1] += size
-        else:
-            agg[(drive, folder)] = [1, size]
+    with queries._files_cursor() as fc:
+        cur = fc.execute("SELECT drive, full_path, size FROM files WHERE excluded=0")
+        while True:
+            batch = cur.fetchmany(200_000)
+            if not batch:
+                break
+            for drive, full_path, size in batch:
+                comps = full_path.split("\\")
+                folder = "\\".join(comps[:3]) if len(comps) > 2 else full_path
+                e = agg.get((drive, folder))
+                if e:
+                    e[0] += 1; e[1] += size
+                else:
+                    agg[(drive, folder)] = [1, size]
     if agg:
         con.executemany(
             "INSERT INTO folder_snapshots(day, drive, folder, files, bytes) VALUES(?,?,?,?,?)",
@@ -376,7 +408,8 @@ def detect_changes() -> dict:
         if parsers.is_stub_filelist(vol.filelist):
             continue  # aborted scan: flag nothing, watermark nothing (mirrors refresh())
         prev = bbdb.ingest_get(con, src)  # (mtime, size, digest) or None
-        have_rows = con.execute("SELECT 1 FROM files WHERE drive=? LIMIT 1", [vol.letter]).fetchone()
+        have_rows = (pq.has_drive(vol.letter) if queries._store() == "parquet" else
+                     con.execute("SELECT 1 FROM files WHERE drive=? LIMIT 1", [vol.letter]).fetchone())
         if prev is not None and have_rows and prev[0] == st.st_mtime and prev[1] == st.st_size:
             continue  # untouched since the last check - pure stat
         entry["watermark_moved"] = True
@@ -440,101 +473,140 @@ def refresh(force: bool = False) -> dict:
     drives: dict[str, dict] = {}
     try:
       with _LOCKED(con):
-        for vol in paths.volumes():
-            src = f"filelist:{vol.letter}"
-            try:
-                st = os.stat(vol.filelist)
-            except OSError:
-                continue
-            prev = bbdb.ingest_get(con, src)  # (mtime, size, digest) or None
-            have_rows = con.execute("SELECT 1 FROM files WHERE drive=? LIMIT 1", [vol.letter]).fetchone()
-            reindex = True
-            trigger = "file list"
-            digest = None
-            # A stub filelist is an aborted scan (header only, the recurring F:-signature).
-            # Reindexing would DELETE the drive's good rows and read back nothing. Keep the last
-            # good index instead (the scan_stub event records the signature); checked FIRST, so
-            # neither the filelist body nor a rules change can force a reindex against a
-            # half-written list.
-            if parsers.is_stub_filelist(vol.filelist):
-                if have_rows:
-                    log.warning("BZ %s: filelist is a stub (aborted scan) - keeping the existing index", vol.letter)
-                reindex = False
-            else:
-                body_same = False
-                if not force and prev is not None and have_rows:
-                    if prev[0] == st.st_mtime and prev[1] == st.st_size:
-                        body_same = True  # quick pre-check: stat unchanged, no hash needed
+        parquet = queries._store() == "parquet"
+        pq_lock = None
+        pq_gen = 0
+        pq_moves: list[tuple[str, str]] = []
+        pq_rels: dict[str, str] = {}
+        try:
+            if parquet:
+                # One WriterLock for the whole write phase (staging + publish). The manifest is
+                # read while HOLDING it - mirror of index/publish.replace_artifacts.
+                pq_lock = pq.WriterLock()
+                pq_lock.__enter__()
+                manifest = pq.read_manifest()
+                pq_gen = int((manifest or {}).get("generation") or 0) + 1
+                pq_rels = dict((manifest or {}).get("drives", {}))
+            for vol in paths.volumes():
+                src = f"filelist:{vol.letter}"
+                try:
+                    st = os.stat(vol.filelist)
+                except OSError:
+                    continue
+                prev = bbdb.ingest_get(con, src)  # (mtime, size, digest) or None
+                have_rows = (pq.has_drive(vol.letter) if parquet else
+                             con.execute("SELECT 1 FROM files WHERE drive=? LIMIT 1", [vol.letter]).fetchone())
+                reindex = True
+                trigger = "file list"
+                digest = None
+                # A stub filelist is an aborted scan (header only, the recurring F:-signature).
+                # Reindexing would DELETE the drive's good rows and read back nothing. Keep the last
+                # good index instead (the scan_stub event records the signature); checked FIRST, so
+                # neither the filelist body nor a rules change can force a reindex against a
+                # half-written list.
+                if parsers.is_stub_filelist(vol.filelist):
+                    if have_rows:
+                        log.warning("BZ %s: filelist is a stub (aborted scan) - keeping the existing index", vol.letter)
+                    reindex = False
+                else:
+                    body_same = False
+                    if not force and prev is not None and have_rows:
+                        if prev[0] == st.st_mtime and prev[1] == st.st_size:
+                            body_same = True  # quick pre-check: stat unchanged, no hash needed
+                        else:
+                            # mtime/size changed (Backblaze rewrites the scan-start header on every pass) -
+                            # hash the body (skipping that header line) to check whether the CONTENT
+                            # actually changed, cheap insurance against a full reindex on every cycle.
+                            try:
+                                digest = _filelist_digest(vol.filelist)
+                            except OSError:
+                                digest = None
+                            if digest and digest == prev[2]:
+                                body_same = True
+                                bbdb.ingest_set(con, src, st.st_mtime, st.st_size, digest)
+                                log.info("BZ %s: filelist body unchanged (digest match), skipping reindex", vol.letter)
+                    if body_same:
+                        reindex = rules_changed  # unchanged body still reclassifies when the rules moved
+                        if reindex:
+                            trigger = "rules changed"
+                # bootstrap: a drive with no Parquet file (freshly switched store) rebuilds
+                # regardless of the digest watermarks - the watermarks describe the OTHER store.
+                if parquet and vol.letter not in pq_rels and not parsers.is_stub_filelist(vol.filelist):
+                    reindex = True
+                    trigger = "missing in parquet store"
+                if reindex:
+                    if parquet:
+                        staged = pq.staged_path(vol.letter, pq_gen)
+                        total, backed, excluded, roll1, roll2 = _reindex_drive_pq(vol, engine, staged)
+                        _write_rollup(con, vol.letter.lower() + ":\\", roll1, roll2)
+                        rel = pq.pool_rel(vol.letter, pq_gen)
+                        pq_moves.append((staged, rel))
+                        pq_rels[vol.letter] = rel
                     else:
-                        # mtime/size changed (Backblaze rewrites the scan-start header on every pass) -
-                        # hash the body (skipping that header line) to check whether the CONTENT
-                        # actually changed, cheap insurance against a full reindex on every cycle.
+                        total, backed, excluded = _reindex_drive(con, vol, engine)
+                    if digest is None:
                         try:
                             digest = _filelist_digest(vol.filelist)
                         except OSError:
-                            digest = None
-                        if digest and digest == prev[2]:
-                            body_same = True
-                            bbdb.ingest_set(con, src, st.st_mtime, st.st_size, digest)
-                            log.info("BZ %s: filelist body unchanged (digest match), skipping reindex", vol.letter)
-                if body_same:
-                    reindex = rules_changed  # unchanged body still reclassifies when the rules moved
-                    if reindex:
-                        trigger = "rules changed"
-            if reindex:
-                total, backed, excluded = _reindex_drive(con, vol, engine)
-                if digest is None:
-                    try:
-                        digest = _filelist_digest(vol.filelist)
-                    except OSError:
-                        digest = ""
-                bbdb.ingest_set(con, src, st.st_mtime, st.st_size, digest or "")
-                drives[vol.letter] = {"total": total, "backed": backed, "excluded": excluded, "reindexed": True}
-                changed.append(vol.letter)
-                log.info("BZ reindex %s (%s): %d files (%d backed / %d excluded)",
-                         vol.letter, trigger, total, backed, excluded)
-            else:
-                row = con.execute(
-                    "SELECT count(*), sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END), "
-                    "sum(CASE WHEN excluded=1 THEN 1 ELSE 0 END) FROM files WHERE drive=?",
-                    [vol.letter]).fetchone()
-                drives[vol.letter] = {"total": row[0] or 0, "backed": row[1] or 0,
-                                      "excluded": row[2] or 0, "reindexed": False}
-        if changed:
-            bbdb.rebuild_fts(con)
-        if rules_hash != prev_rules_hash:
-            bbdb.kv_set(con, "rules_digest", rules_hash)
-        _refresh_queue(con)
-        _refresh_events(con)
-        _refresh_backup_days(con)
-        _refresh_stats_kv(con)
-        _refresh_folder_snapshots(con, _history_days())
-        if force or not bbdb.kv_get(con, "fileids_total"):  # populate once, then only on a forced rebuild
-            _refresh_ids_count(con)
-        _refresh_cache_aggregates(con)  # kv-cache status/overview/default-churn for instant open
-        # handshake with the scheduler's detect: a completed refresh has absorbed whatever
-        # the detect flagged, and (when it actually reindexed) becomes the new throttle anchor.
-        # Same transaction as the data, so a crash cannot clear pending without the fresh rows.
-        if changed or force:
-            bbdb.kv_set(con, "last_reindex_ts", str(time.time()))
-        bbdb.kv_set(con, "last_check_ts", str(time.time()))
-        bbdb.kv_set(con, "reindex_pending", "0")
-        con.commit()
-        # Release pages freed by the DELETE+INSERT churn so the file stays small (cheap; only does
-        # real work when auto_vacuum=INCREMENTAL is active and there are free pages to release).
-        try:
-            con.execute("PRAGMA incremental_vacuum")
+                            digest = ""
+                    bbdb.ingest_set(con, src, st.st_mtime, st.st_size, digest or "")
+                    drives[vol.letter] = {"total": total, "backed": backed, "excluded": excluded, "reindexed": True}
+                    changed.append(vol.letter)
+                    log.info("BZ reindex %s (%s): %d files (%d backed / %d excluded)",
+                             vol.letter, trigger, total, backed, excluded)
+                else:
+                    if parquet:
+                        t, b, e = pq.drive_counts(vol.letter)
+                        drives[vol.letter] = {"total": t, "backed": b, "excluded": e, "reindexed": False}
+                    else:
+                        row = con.execute(
+                            "SELECT count(*), sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END), "
+                            "sum(CASE WHEN excluded=1 THEN 1 ELSE 0 END) FROM files WHERE drive=?",
+                            [vol.letter]).fetchone()
+                        drives[vol.letter] = {"total": row[0] or 0, "backed": row[1] or 0,
+                                              "excluded": row[2] or 0, "reindexed": False}
+            if changed or force:
+                if parquet:
+                    if pq_rels:
+                        pq.publish(pq_gen, pq_rels, pq_moves)
+                else:
+                    bbdb.rebuild_fts(con)
+            if rules_hash != prev_rules_hash:
+                bbdb.kv_set(con, "rules_digest", rules_hash)
+            _refresh_queue(con)
+            _refresh_events(con)
+            _refresh_backup_days(con)
+            _refresh_stats_kv(con)
+            _refresh_folder_snapshots(con, _history_days())
+            if force or not bbdb.kv_get(con, "fileids_total"):  # populate once, then only on a forced rebuild
+                _refresh_ids_count(con)
+            _refresh_cache_aggregates(con)  # kv-cache status/overview/default-churn for instant open
+            # handshake with the scheduler's detect: a completed refresh has absorbed whatever
+            # the detect flagged, and (when it actually reindexed) becomes the new throttle anchor.
+            # Same transaction as the data, so a crash cannot clear pending without the fresh rows.
+            if changed or force:
+                bbdb.kv_set(con, "last_reindex_ts", str(time.time()))
+            bbdb.kv_set(con, "last_check_ts", str(time.time()))
+            bbdb.kv_set(con, "reindex_pending", "0")
             con.commit()
-        except Exception as exc:  # noqa: BLE001 - never fail a refresh on housekeeping
-            log.warning("incremental_vacuum skipped: %s", exc)
-        # Truncate the WAL back to ~0. A full rebuild + FTS('rebuild') writes GBs into the WAL, and a
-        # PASSIVE auto-checkpoint folds frames back into the DB but never SHRINKS the WAL file - so it
-        # had grown to ~3 GB and stayed there. TRUNCATE reclaims it. (Best-effort: a concurrent reader
-        # makes it a no-op rather than an error.)
-        try:
-            con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        except Exception as exc:  # noqa: BLE001 - never fail a refresh on housekeeping
-            log.warning("wal_checkpoint(TRUNCATE) skipped: %s", exc)
+            # Release pages freed by the DELETE+INSERT churn so the file stays small (cheap; only does
+            # real work when auto_vacuum=INCREMENTAL is active and there are free pages to release).
+            try:
+                con.execute("PRAGMA incremental_vacuum")
+                con.commit()
+            except Exception as exc:  # noqa: BLE001 - never fail a refresh on housekeeping
+                log.warning("incremental_vacuum skipped: %s", exc)
+            # Truncate the WAL back to ~0. A full rebuild + FTS('rebuild') writes GBs into the WAL, and a
+            # PASSIVE auto-checkpoint folds frames back into the DB but never SHRINKS the WAL file - so it
+            # had grown to ~3 GB and stayed there. TRUNCATE reclaims it. (Best-effort: a concurrent reader
+            # makes it a no-op rather than an error.)
+            try:
+                con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception as exc:  # noqa: BLE001 - never fail a refresh on housekeeping
+                log.warning("wal_checkpoint(TRUNCATE) skipped: %s", exc)
+        finally:
+            if pq_lock is not None:
+                pq_lock.__exit__(None, None, None)
       summary = {"ok": True, "changed": changed, "drives": drives, "elapsed": round(time.time() - t0, 1)}
       _STATE["last_summary"] = summary
       _STATE["last_run"] = time.time()
