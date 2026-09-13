@@ -64,30 +64,7 @@
               </div>
             </div>
 
-            <!-- audit trail -->
-            <div class="rounded border border-bd bg-surface p-3">
-              <div class="mb-2 flex items-center gap-2"><span class="font-medium text-sm">Audit trail</span>
-                <span class="text-[11px] text-muted">every action KopiaLens executes or hands out · <span x-text="fmtBytes(statsData.audit_size || 0)"></span></span>
-                <button @click="loadAudit()" class="ml-auto h-7 rounded border border-bd px-2 text-xs">⟳</button></div>
-              <div class="overflow-auto max-h-72 rounded border border-bd-soft">
-                <table class="w-full text-[11px]">
-                  <thead class="bg-surface2 text-left text-muted"><tr><th class="p-1.5">When</th><th class="p-1.5">Event</th><th class="p-1.5">Action</th><th class="p-1.5">Repo</th><th class="p-1.5">Summary</th><th class="p-1.5">rc</th></tr></thead>
-                  <tbody>
-                    <template x-for="(r, i) in auditRows" :key="i">
-                      <tr class="border-t border-bd-soft">
-                        <td class="p-1.5 whitespace-nowrap" x-text="r.ts || ''"></td>
-                        <td class="p-1.5" x-text="r.event"></td>
-                        <td class="p-1.5" x-text="r.action"></td>
-                        <td class="p-1.5" x-text="r.repo || ''"></td>
-                        <td class="p-1.5 font-mono break-all max-w-[28rem]" x-text="auditSummary(r)"></td>
-                        <td class="p-1.5" :class="r.rc ? 'text-danger' : ''" x-text="r.rc ?? ''"></td>
-                      </tr>
-                    </template>
-                  </tbody>
-                </table>
-                <div x-show="!auditRows.length" class="p-3 text-xs text-muted">Nothing recorded yet - every executed or generated command will appear here.</div>
-              </div>
-            </div>
+            <!-- the audit trail moved to the Logs tab (); its size stays a repository fact -->
 
             <!-- raw kopia output, kept for the power-user view -->
             <details class="rounded border border-bd bg-surface p-3">

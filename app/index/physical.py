@@ -615,6 +615,14 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
                 "WHERE f.cid_id=? AND NOT (p.src_id=? AND p.full_path=?) LIMIT 500",
                 [latest_cid, sid, full_path],
             ).fetchall()
+        # the SOURCES holding this exact PATH (raw-exact identity) - what the file panel's
+        # "Backed up by" list renders. Distinct from `others` (other PATHS with the same bytes)
+        # and from `instances` (distinct paths): one concept per field, never conflated.
+        holders = [source] + [r[0] for r in cur.execute(
+            "SELECT DISTINCT s.source FROM pathx p JOIN src s ON s.src_id = p.src_id "
+            "WHERE p.full_path = ? AND s.source <> ? ORDER BY s.source",
+            [full_path, source],
+        ).fetchall()]
     finally:
         cur.close()
 
@@ -646,6 +654,7 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
         "chunks": chunk_rows,
         "chunk_count": len(latest_chunks),
         "other_paths": [{"source": s, "full_path": p} for s, p in others],
+        "holders": holders,                       # every source backing up this exact path
         # content-centric / purge-everywhere
         "locations": n_dup,                       # distinct sources holding this exact content
         "instances": len(others) + 1,             # distinct paths holding it (this one + others)

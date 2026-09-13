@@ -298,9 +298,16 @@
   </div>
 </div>
 <div class="kl-sec">
-  <div class="h">Backed up by <span class="count">1 source</span></div>
-  <div class="kl-list" style="max-height:66px">
-    <div class="li"><span class="font-mono trunc grow" x-text="shortSource(detail.source)"></span></div>
+  <div class="h">Backed up by <span class="count" x-text="(detail.holders ? detail.holders.length : 1) + (detail.holders && detail.holders.length === 1 ? ' source' : ' sources')"></span></div>
+  <!-- every source holding THIS exact path (was hardcoded to "1 source"). Click a row
+       to open the same file from that source's point of view. -->
+  <div class="kl-list" style="max-height:96px">
+    <template x-for="h in (detail.holders && detail.holders.length ? detail.holders : [detail.source])" :key="h">
+      <div class="li cursor-pointer hover:bg-head" @click="h !== detail.source && openFileDetail({ source: h, full_path: detail.full_path })">
+        <span class="font-mono trunc grow" x-text="shortSource(h)"></span>
+        <span class="pill ok shrink-0" x-show="h === detail.source">this view</span>
+      </div>
+    </template>
   </div>
 </div>
 </div>

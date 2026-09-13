@@ -149,12 +149,14 @@ def test_save_runs_backup_write_then_invalidation(wired, monkeypatch):
                             "returncode": 0, "stdout": "done", "stderr": "",
                             "command": ["kopia", "policy", "set"]})
     monkeypatch.setattr(api, "invalidate_after_write",
-                        lambda repo, targets=None: order.append(f"invalidate:{targets}"))
+                        lambda repo, targets=None, ignore_only=False:
+                        order.append(f"invalidate:{targets}:{ignore_only}"))
     out = api.save(api.SaveBody(repo="1", target=SRC, changes=api.Changes(add=["/saves/**"]),
                                 confirmed=True))
     assert order[0] == "backup:pre-write"
     assert order[1] == "write"
-    assert order[2] == f"invalidate:{[SRC]}"  # exactly the saved target, nothing else
+    # exactly the saved target, nothing else; an add-ignore write is ignore-only ()
+    assert order[2] == f"invalidate:{[SRC]}:True"
     assert out["ok"] is True and out["returncode"] == 0
     assert out["backup"]["verified"] is True
     assert out["diff"]["resulting_rules"] == ["/Temp/**", "/saves/**"]

@@ -91,7 +91,10 @@ def _pattern_for_shape(shape: str, rel: str, is_folder: bool, path: str) -> str 
         base = rel.rsplit("/", 1)[-1] if rel else ""
         if not base:
             return None
-        return base + ("/**" if is_folder else "")
+        #: a folder NAME rule is directory-only ("Name/"). That matches the directory at
+        # ANY depth and prunes its whole subtree; "Name/**" would be rooted and silently miss a
+        # nested folder of the same name.
+        return base + "/" if is_folder else base
     if shape == "extension":
         if is_folder:
             return None
@@ -108,9 +111,13 @@ def _pattern_for_shape(shape: str, rel: str, is_folder: bool, path: str) -> str 
 
 def _matches(pattern: str, rel: str, is_folder: bool) -> bool:
     """Does the rule (anchored at the COVERED source's root) keep this selection out there?
-    Folders are probed with a synthetic child: ``x/**`` never matches ``x`` itself but prunes
-    everything under it."""
+    A directory-only rule (trailing '/') matches the directory itself - the walk prunes it and
+    never descends - so it is probed with is_dir=True on the folder's own path. Every other
+    folder rule is probed through a synthetic child: ``x/**`` never matches ``x`` itself but
+    keeps everything under it out."""
     pat = compile_pattern(pattern)
+    if pat.dir_only:
+        return is_folder and pat.match("/" + (rel or ""), is_dir=True)
     probe = "/" + rel if not is_folder else "/" + (rel or "") + "/__kl_probe__"
     return pat.match(probe, is_dir=False)
 
@@ -174,10 +181,10 @@ def resolve_targets(repo: str, path: str, source: str | None = None,
             rel_t = _rel(path, target_root, sep, fold)
         pattern = _pattern_for_shape(shape, rel_t, is_folder, path.replace(sep, "/"))
         if is_global:
-            existing = len(global_ignores(repo, defined))
+            existing = global_ignores(repo, defined)
         else:
             dp = defined.get(owner) or {}
-            existing = len((dp.get("files") or {}).get("ignore") or [])
+            existing = list((dp.get("files") or {}).get("ignore") or [])
 
         covers = []
         for key in sorted(keys):
@@ -186,8 +193,11 @@ def resolve_targets(repo: str, path: str, source: str | None = None,
             sfold = not pathrules.case_sensitive(key)
             rel_s = _rel(path, sroot, ssep, sfold)
             matches = bool(pattern) and _matches(pattern, rel_s, is_folder)
+            #: the write is pointless where one of the owner's EXISTING rules already
+            # keeps this selection out - the dialog must not tick such a target by default.
+            already = any(_matches(r, rel_s, is_folder) for r in existing)
             covers.append({"source": key, "root": sroot, "rel_path": rel_s.replace(ssep, "/"),
-                           "matches": matches})
+                           "matches": matches, "already_excluded": already})
 
         impact = None
         if price and pattern:
@@ -212,20 +222,53 @@ def resolve_targets(repo: str, path: str, source: str | None = None,
                     "creates its first rule list, which shadows nothing")
         elif is_global:
             note = (f"the global policy owns the rules of {len(keys)} covering source(s); "
-                    "sources with their own lists are NOT affected by this write")
+                    "sources with their own lists are NOT affected by this write. A global rule "
+                    "reaches every source that inherits it - at the same relative path it also "
+                    "keeps out files you did not select, so check the price before writing.")
 
         targets.append({
             "target": "global" if is_global else owner,
             "is_global": is_global,
             "target_root": target_root,
-            "existing_rule_count": existing,
+            "existing_rule_count": len(existing),
             "will_create_policy": owner in none_sources,
             "pattern": pattern,
             "pattern_anchored": bool(pattern) and pattern.startswith("/"),
             "covers": covers,
+            # how many covers this write would NEWLY protect (matched and not already excluded)
+            "protects": sum(1 for c in covers if c["matches"] and not c["already_excluded"]),
             "impact": impact,
             "note": note,
         })
+
+    # escape hatches: covering sources that INHERIT their rules are never normal targets,
+    # but the dialog may still offer them (collapsed, warned) - writing there starts the source's
+    # own list, which REPLACES everything it inherits. Each entry carries the rules that would be
+    # shadowed so the frontend can offer to copy them down with the new rule.
+    escape_hatches: list[dict] = []
+    for info in source_info:
+        if info["origin"] not in ("inherited", "global"):
+            continue
+        key = info["source"]
+        sroot = pathrules.source_root(key)
+        ssep = pathrules.sep(key)
+        sfold = not pathrules.case_sensitive(key)
+        rel_s = _rel(path, sroot, ssep, sfold)
+        pattern_s = _pattern_for_shape(shape, rel_s, is_folder, path.replace(ssep, "/"))
+        shadowed = (global_ignores(repo, defined) if info["origin"] == "global"
+                    else list(((defined.get(info["owner"]) or {}).get("files") or {}).get("ignore") or []))
+        escape_hatches.append({
+            "target": key,
+            "root": sroot,
+            "pattern": pattern_s,
+            "pattern_anchored": bool(pattern_s) and pattern_s.startswith("/"),
+            "inherits_from": info["owner"],
+            "inherited_rules": shadowed,
+            "note": (f"writing here starts this source's own rule list and REPLACES the "
+                     f"{len(shadowed)} rule(s) it inherits from "
+                     f"{'the global policy' if info['origin'] == 'global' else info['owner']}"),
+        })
+    escape_hatches.sort(key=lambda h: h["target"])
 
     # Ranked by REACH: matched covers first (a pattern that genuinely keeps the file out of more
     # sources), then total covers, then the target key. When impact pricing is on, bytes break
@@ -238,4 +281,5 @@ def resolve_targets(repo: str, path: str, source: str | None = None,
 
     targets.sort(key=_rank)
     return {"repo": repo, "path": path, "shape": shape, "sources": source_info,
-            "targets": targets, "ranked_by": "sources-covered"}
+            "targets": targets, "escape_hatches": escape_hatches,
+            "ranked_by": "sources-covered"}

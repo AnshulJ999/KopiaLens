@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import DATA_DIR, REPOS, repo_kind
 
-from .api import (actions, audit, backblaze, dashboard, excluded, insights, jobs, policies,
+from .api import (actions, audit, backblaze, dashboard, excluded, insights, jobs, logs, policies,
                   search, simulate, snapshots, stats, tree)
 from .core import auth
 from .core import jobs as jobrunner
@@ -448,7 +448,8 @@ def _tick() -> None:
                 # Launch FIRST, record second. Recording before reserving meant a manual Index
                 # winning the race left the slot marked attempted but never completed, so that
                 # night's run was silently lost.
-                started = nightly.start_index_pass_async(repo, on_done=mark_nightly_result)
+                started = nightly.start_index_pass_async(repo, on_done=mark_nightly_result,
+                                                         trigger="nightly")
                 if started.get("started"):
                     _mark_nightly(repo, slot)
                 else:
@@ -725,6 +726,7 @@ app.include_router(actions.router, prefix="/api")
 app.include_router(jobs.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
+app.include_router(logs.router, prefix="/api")
 app.include_router(excluded.router, prefix="/api")
 app.include_router(policies.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")

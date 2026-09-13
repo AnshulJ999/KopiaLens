@@ -12,7 +12,8 @@ document.addEventListener("alpine:init", () => {
       { id: "dashboard", label: "Dashboard" }, { id: "snapshots", label: "Snapshots" },
       { id: "tree", label: "Tree" }, { id: "search", label: "Search" },
       { id: "churn", label: "Churn" }, { id: "simulate", label: "Simulate" },
-      { id: "stats", label: "Stats" }, { id: "excluded", label: "Excluded" },
+      { id: "stats", label: "Stats" }, { id: "logs", label: "Logs" },
+      { id: "excluded", label: "Excluded" },
       { id: "policies", label: "Policies" }, { id: "actions", label: "Actions" },
     ],
     active: "dashboard",
@@ -48,6 +49,10 @@ document.addEventListener("alpine:init", () => {
     mounts: [],
     statsData: null, blobStats: "", blobLoading: false, _statsLoading: false,
     auditRows: [], auditSize: 0,
+    // Logs tab (): four sections (audit/activity/indexing/app log), all repos in one
+    // view with a client-side repo filter; the app log is app-wide by nature.
+    logsTab: "audit", logsRepo: "all", jobHistory: [], indexRuns: [],
+    appLogLines: "", appLogTruncated: false, _logsSeq: 0,
     groupReclaim: {},  // "repo:folder" -> {v: freeable, capped} - keyed by repo so one repo's
                        // numbers can never render in another repo's table
     mountSnapshot: "", mountPoint: "", restoreSource: "", restoreDest: "",
@@ -150,7 +155,7 @@ document.addEventListener("alpine:init", () => {
         } else {
           await this.refreshBase();
           if (this.indexStatus.building) this.pollIndex();  // show progress for the auto-triggered (migration) rebuild
-          await this.loadDashboard();
+          if (!this._neverIndexed()) await this.loadDashboard();
         }
       });
       this.armAutoRefresh();
@@ -204,8 +209,17 @@ document.addEventListener("alpine:init", () => {
       // Say so plainly rather than letting the tabs just error.
       if (s.offline) return `Indexing (${s.stage || "working"}) ${s.indexed_snapshots || 0}/${s.snapshots || "?"}`;
       if (s.building) return `Indexing ${s.indexed_snapshots || 0}/${s.snapshots || "?"}...`;
+      if (s.never_indexed) return "Not indexed yet";
       if (s.snapshots === undefined) return "Index: unknown";
       return `Index ${s.indexed_snapshots}/${s.snapshots}`;
+    },
+
+    // A repo that has never been indexed has no data for the index-backed views; a friendly
+    // one-liner beats the raw 500 they would otherwise each raise (observed on a fresh repo).
+    _neverIndexed() {
+      if (!this.indexStatus || !this.indexStatus.never_indexed) return false;
+      this.error = "This repo has not been indexed yet - click Index (top right) to build the first index.";
+      return true;
     },
 
     // ---- Freshness strip: how current each repo's data is (one call covers all three) ----
@@ -271,6 +285,8 @@ document.addEventListener("alpine:init", () => {
 
     activate() {
       if (this.repoKind === "backblaze") return this.bzActivate();
+      if (["dashboard", "snapshots", "tree", "search", "churn", "stats"].includes(this.active)
+          && this._neverIndexed()) return;
       if (this.active === "dashboard") return this.loadDashboard();
       if (this.active === "snapshots") return this.loadSnapshots();
       if (this.active === "tree") return this.openTree();
@@ -278,6 +294,7 @@ document.addEventListener("alpine:init", () => {
       if (this.active === "churn") return this.loadChurn();
       if (this.active === "simulate") return;  // heavy - user clicks Run
       if (this.active === "stats") return this.statsData ? null : this.loadStats();
+      if (this.active === "logs") return this.loadLogs();
       if (this.active === "actions") return this.loadMounts();
       if (this.active === "excluded") return this.loadExcluded();
       if (this.active === "policies") return this.loadPolicies();
@@ -298,6 +315,7 @@ document.addEventListener("alpine:init", () => {
         if (this.active === "search") return this.loadSearch();
         if (this.active === "churn") return this.loadChurn(true);
         if (this.active === "stats") return this.loadStats(true);
+        if (this.active === "logs") return this.loadLogs();
         if (this.active === "actions") return this.loadMounts();
         if (this.active === "policies") return this.loadPolicies(true);
       }, "Refreshing...");
@@ -369,13 +387,13 @@ document.addEventListener("alpine:init", () => {
     csv(id, name) { downloadTable(id, name); },
     };
     // Duplicate-key guard: two parts declaring the same key would compose silently last-wins.
-    const parts = [["core", core], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["jobsPart", jobsPart], ["settingsPart", settingsPart], ["themePart", themePart], ["policiesPart", policiesPart]];
+    const parts = [["core", core], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["jobsPart", jobsPart], ["settingsPart", settingsPart], ["themePart", themePart], ["policiesPart", policiesPart]];
     const seen = new Map();
     for (const [owner, part] of parts)
       for (const k of Object.keys(part)) {
         if (seen.has(k)) console.error(`kopiaLens: duplicate key "${k}" declared in both ${seen.get(k)} and ${owner}`);
         else seen.set(k, owner);
       }
-    return Object.assign(core, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, jobsPart, settingsPart, themePart, policiesPart);
+    return Object.assign(core, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, jobsPart, settingsPart, themePart, policiesPart);
   });
 });

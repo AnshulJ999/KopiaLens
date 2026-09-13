@@ -72,24 +72,31 @@ def _own_rules(defined_policies: dict, target: str) -> list[str]:
     return list((pol.get("files") or {}).get("ignore") or [])
 
 
-def _global_pricing_scope(repo: str) -> list[str]:
-    """Sources whose ignore rules come from the GLOBAL policy (no own rules shadow it)."""
+def _pricing_scope(repo: str, target: str) -> list[str]:
+    """Sources whose effective ignore rules a write to ``target`` actually changes, and therefore
+    what pricing must cover: the global policy prices over every source that inherits global
+    rules; a source target prices over ITSELF plus every source inheriting FROM it ( - a
+    rule at an ancestor policy re-anchors to each inheritor's walk root, so the per-target price
+    must cover the target's full reach, not just its own source)."""
     defined = load_defined_policies(repo).get("policies") or {}
-    out = []
+    if _is_global(target):
+        return [key for key in _source_keys(repo)
+                if effective_ignore_origin(repo, key, defined)[0] == "global"]
+    out = [target]
     for key in _source_keys(repo):
-        origin, _owner = effective_ignore_origin(repo, key, defined)
-        if origin == "global":
+        origin, owner = effective_ignore_origin(repo, key, defined)
+        if origin == "inherited" and owner == target:
             out.append(key)
     return out
 
 
 def _price_for_target(repo: str, target: str, patterns: list[str], limit: int = 10) -> dict:
-    """Price patterns against a source, or - for the global target - aggregated over the
-    sources that inherit global rules (per-source breakdown included). The global rollup is
+    """Price patterns against a source, or - for a target whose rules other sources inherit -
+    aggregated over that full reach (per-source breakdown included). The rollup is
     single-flighted: concurrent identical requests block on one lock and then hit the price
     cache the leader populated."""
-    if _is_global(target):
-        scope = _global_pricing_scope(repo)
+    scope = _pricing_scope(repo, target)
+    if len(scope) > 1:
         merged: dict[str, dict] = {}
         breakdown = []
         lock = policypricing.rollup_lock((repo, tuple(sorted(patterns))))
@@ -429,7 +436,8 @@ def save(body: SaveBody) -> dict:
                                  global_=_is_global(body.target),
                                  add_ignore=list(dict.fromkeys(body.changes.add)) or None,
                                  remove_ignore=list(dict.fromkeys(body.changes.remove)) or None)
-    invalidate_after_write(repo, targets=[_GLOBAL_TARGET] if _is_global(body.target) else [body.target])
+    invalidate_after_write(repo, targets=[_GLOBAL_TARGET] if _is_global(body.target) else [body.target],
+                           ignore_only=not body.changes.delete_policy)
     output = ((res.get("stdout") or "") + "\n" + (res.get("stderr") or "")).strip()
     return {
         "ok": res.get("returncode") == 0,

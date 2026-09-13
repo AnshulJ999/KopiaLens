@@ -88,6 +88,15 @@ def get_index_status(repo: str = "1") -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get("/index/runs")
+def index_runs(limit: int = 100) -> dict:
+    """ Per-run index history, ALL repos in one list (newest first) - the Logs tab's
+    Indexing section. Records cover every outcome: the worker's stage timings, a timeout, or a
+    launch failure (the app writes the record, so a killed run is still on the list)."""
+    from ..core import runhistory
+    return {"runs": runhistory.read_tail(limit=min(max(limit, 1), 500))}
+
+
 @router.post("/index/build")
 def post_index_build(repo: str = "1", source: str | None = None, full: bool = False) -> dict:
     """Manual index: the SAME worker-subprocess pass the nightly scheduler runs, so a

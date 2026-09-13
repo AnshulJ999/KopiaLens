@@ -308,13 +308,15 @@ def _run_backblaze(repo: str) -> dict:
     return summary
 
 
-def run_index_pass(repo: str, full: bool = False, _owned: bool = False) -> dict:
+def run_index_pass(repo: str, full: bool = False, _owned: bool = False,
+                   trigger: str = "manual") -> dict:
     """Run this repo's heavy pass to completion. Returns immediately with ``already running`` if
     one is in flight. Safe to call from a request thread as long as the caller does not block on it.
 
     ``_owned`` means the caller already holds the slot for this repo (``start_index_pass_async``
     reserves synchronously so its return value is truthful) and is handing ownership over; this
-    call then releases it at the end as usual."""
+    call then releases it at the end as usual. ``trigger`` labels the run history record
+    (): "nightly" (the scheduler) or "manual" (the Index button)."""
     if repo not in REPOS:
         if _owned:
             _release(repo)   # the caller reserved for us; bailing must not strand the slot
@@ -339,11 +341,17 @@ def run_index_pass(repo: str, full: bool = False, _owned: bool = False) -> dict:
             "last": summary,
         }
         _release(repo)
+        #: every outcome (worker summary, timeout, launch failure) is visible right here,
+        # so the run history is written by the app - including for runs the worker never
+        # survived to report.
+        from . import runhistory  # lazy: keeps nightly import-light
+        runhistory.record(repo, summary, trigger, full, elapsed)
     log.info("repo=%s index pass done in %.0fs: %s", repo, elapsed, summary)
     return summary
 
 
-def start_index_pass_async(repo: str, full: bool = False, on_done=None) -> dict:
+def start_index_pass_async(repo: str, full: bool = False, on_done=None,
+                           trigger: str = "manual") -> dict:
     """Fire-and-forget wrapper for the UI's Index button - the caller polls ``/api/index/status``.
     Takes the same single global slot the scheduler uses, so a manual Index cannot start a second
     worker alongside a nightly one on another repo."""
@@ -355,7 +363,7 @@ def start_index_pass_async(repo: str, full: bool = False, on_done=None) -> dict:
                 "reason": "already indexing" if busy == repo else f"repo {busy} is indexing"}
 
     def _go() -> None:
-        summary = run_index_pass(repo, full, _owned=True)
+        summary = run_index_pass(repo, full, _owned=True, trigger=trigger)
         if on_done and not summary.get("skipped"):
             try:
                 on_done(repo, bool(summary.get("ok", False)), summary.get("reason"))

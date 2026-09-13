@@ -277,7 +277,8 @@ def refresh_one_policy(repo: str, target: str) -> None:
     _write_policies(repo, policies)
 
 
-def invalidate_after_write(repo: str, targets: list[str] | None = None) -> None:
+def invalidate_after_write(repo: str, targets: list[str] | None = None,
+                           ignore_only: bool = False) -> None:
     """Post-write cache refresh: the effective policies of every source the write actually
     reaches, plus the defined-policies export and the pricing cache.
 
@@ -286,23 +287,71 @@ def invalidate_after_write(repo: str, targets: list[str] | None = None) -> None:
     policy was written and the source inherits it. Origins are resolved against the NEW export -
     the write may have changed who owns whom (a Global write turns a no-rules source into a
     global-inheriting one). With no targets (a mirror restore) everything is refreshed.
+
+    ``ignore_only`` (, add/remove-ignore writes only): the effective policies of reached
+    sources change in exactly one field - ``files.ignore`` - and the NEW export already carries
+    every defined rule, so the cache is patched from the export with ZERO extra subprocesses.
+    A Global write that used to fire dozens of ``policy show`` calls inside one save request now
+    fires one export. Anything else (whole-policy deletion, export failure, a source with no
+    cached effective policy) falls back to the per-source refresh: correctness first, and kopia's
+    other ten field groups are never re-merged here on purpose.
     """
     from ..index import policypricing  # local import: index layer, keeps policy import-light
     from .sources import sources_index
 
-    refresh_defined_policies(repo, force=True)  # FIRST: ownership is resolved from the new state
+    defined, export_fresh = refresh_defined_policies(repo, force=True)  # FIRST: ownership from the new state
     if targets is None:
         refresh_policies(repo, force=True)
-    else:
+    elif not (ignore_only and export_fresh) or not _patch_ignore_only(repo, targets, defined):
         written = set(targets)
-        defined = load_defined_policies(repo).get("policies") or {}
+        defined_policies = load_defined_policies(repo).get("policies") or {}
         for key in sources_index(repo):
-            origin, owner = effective_ignore_origin(repo, key, defined)
+            origin, owner = effective_ignore_origin(repo, key, defined_policies)
             # reached when the source IS a written target, or the written target owns its rules
             # (an ancestor policy or - via owner == (global) - the global policy)
             if key in written or (owner is not None and owner in written):
                 refresh_one_policy(repo, key)
     policypricing.invalidate(repo)
+
+
+def _patch_ignore_only(repo: str, targets: list[str], defined: dict) -> bool:
+    """ Fast path: rewrite ``files.ignore`` on the cached EFFECTIVE policies of every
+    source the write reached, computed from the fresh export with the same ownership walk the
+    per-source fallback uses. Returns False (caller falls back) when the cache is missing an
+    entry or the patch fails - a silently half-updated cache would feed pricing and targeting
+    the wrong rules."""
+    from .sources import sources_index
+
+    try:
+        cached = load_policies(repo)
+        policies = dict(cached.get("policies") or {})
+        pols = defined.get("policies") or {}   # the cache wrapper -> the bare {target: policy} dict
+        global_rules = list(((pols.get(_GLOBAL_TARGET) or {}).get("files") or {}).get("ignore") or [])
+        for key in sources_index(repo):
+            origin, owner = effective_ignore_origin(repo, key, pols)
+            if key not in targets and not (owner is not None and owner in targets):
+                continue
+            if origin == "own":
+                rules = list(((pols.get(key) or {}).get("files") or {}).get("ignore") or [])
+            elif origin == "inherited":
+                rules = list(((pols.get(owner or "") or {}).get("files") or {}).get("ignore") or [])
+            elif origin == "global":
+                rules = global_rules
+            else:
+                rules = []
+            pol = policies.get(key)
+            if pol is None:
+                return False  # never cached - let the per-source refresh fetch it properly
+            files = dict(pol.get("files") or {})
+            if files.get("ignore") != rules:
+                files["ignore"] = rules
+                pol = {**pol, "files": files}
+                policies[key] = pol
+        _write_policies(repo, policies)
+        return True
+    except Exception as exc:  # noqa: BLE001 - fall back, never fail the save
+        log.warning("repo=%s ignore-only cache patch failed (falling back): %s", repo, exc)
+        return False
 
 
 def global_ignores(repo: str, defined: dict | None = None) -> list[str]:

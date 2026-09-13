@@ -553,6 +553,22 @@ def sources_for_content(repo: str, object_ids: list[str]) -> list[str]:
     return sorted(out)
 
 
+def _remove_where(cur, *, query: str, deleted_only: bool, min_size: int, source: str | None,
+                  ext: str | None, max_size: int, date_from: str | None, date_to: str | None,
+                  min_versions: int, shared_min: int, ext_exclude: str | None,
+                  first_from: str | None, prefix: str | None) -> tuple[str, list]:
+    """Shared WHERE for remove_targets / remove_targets_summary - one home so the two can
+    never disagree about what the plan matches."""
+    where, params = _search_where(cur, query, deleted_only, min_size, source, ext, max_size,
+                                  date_from, date_to, min_versions, shared_min, ext_exclude,
+                                  first_from=first_from)
+    if prefix:
+        base = prefix.rstrip(_SEP)
+        where.append("(p.full_path = ? OR p.full_path LIKE ?" + _ESC + ")")
+        params.extend([base, like_literal(base) + _SEP + "%"])
+    return _where(where), params
+
+
 def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, min_size: int = 0,
                    max_size: int = 0, source: str | None = None, ext: str | None = None,
                    ext_exclude: str | None = None, date_from: str | None = None,
@@ -565,14 +581,11 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
     version's object; otherwise just the latest content. Used by the chunked folder/filter delete."""
     cur = read_cursor(repo)
     try:
-        where, params = _search_where(cur, query, deleted_only, min_size, source, ext, max_size,
-                                      date_from, date_to, min_versions, shared_min, ext_exclude,
-                                      first_from=first_from)
-        if prefix:
-            base = prefix.rstrip(_SEP)
-            where.append("(p.full_path = ? OR p.full_path LIKE ?" + _ESC + ")")
-            params.extend([base, like_literal(base) + _SEP + "%"])
-        where_sql = _where(where)
+        where_sql, params = _remove_where(
+            cur, query=query, deleted_only=deleted_only, min_size=min_size, source=source,
+            ext=ext, max_size=max_size, date_from=date_from, date_to=date_to,
+            min_versions=min_versions, shared_min=shared_min, ext_exclude=ext_exclude,
+            first_from=first_from, prefix=prefix)
         # Unbounded totals for the SAME filter, so the UI can say "the 100 biggest files are 8.2 GiB
         # = 70% of this folder". Cheap (one indexed aggregate) and it is what makes a top-N delete a
         # judgement call rather than a guess - in a 10k-file folder a hundred files usually hold most
@@ -652,6 +665,55 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
         "pairs": pairs,                 # all (source, full_path) - server-side only (detail/batch)
         "files": files[:200],           # preview (already physical-desc)
         "sources": sorted({f["source"] for f in files}),
+    }
+
+
+def remove_targets_summary(repo: str, *, query: str = "", deleted_only: bool = False,
+                           min_size: int = 0, max_size: int = 0, source: str | None = None,
+                           ext: str | None = None, ext_exclude: str | None = None,
+                           date_from: str | None = None, date_to: str | None = None,
+                           min_versions: int = 0, shared_min: int = 0, first_from: str | None = None,
+                           prefix: str | None = None, cap: int = 200000,
+                           detail_limit: int = 5000) -> dict:
+    """ The cheap pre-read /actions/remove-detail needs: uncapped totals, the distinct
+    sources of the WHOLE match (the folder-vs-selection decision) and only the top
+    ``detail_limit`` (source, full_path) pairs the detail walk actually uses. Never builds the
+    full top-``cap`` row set, never expands versions or names - the 200k-row materialization that
+    blew DuckDB's memory ceiling on a broad folder (observed 2026-09-09) is gone from this path."""
+    cur = read_cursor(repo)
+    try:
+        where_sql, params = _remove_where(
+            cur, query=query, deleted_only=deleted_only, min_size=min_size, source=source,
+            ext=ext, max_size=max_size, date_from=date_from, date_to=date_to,
+            min_versions=min_versions, shared_min=shared_min, ext_exclude=ext_exclude,
+            first_from=first_from, prefix=prefix)
+        trow = cur.execute(
+            f"SELECT count(*), COALESCE(sum(p.physical), 0), COALESCE(sum(p.size), 0) "
+            f"FROM pathx p WHERE {where_sql}",
+            params,
+        ).fetchone() or (0, 0, 0)
+        total_file_count, total_physical, total_logical = int(trow[0]), int(trow[1]), int(trow[2])
+        sources = [r[0] for r in cur.execute(
+            f"SELECT DISTINCT s.source FROM pathx p JOIN src s ON s.src_id = p.src_id "
+            f"WHERE {where_sql} ORDER BY s.source",
+            params,
+        ).fetchall()]
+        pairs = [(r[0], r[1]) for r in cur.execute(
+            f"SELECT s.source, p.full_path FROM pathx p JOIN src s ON s.src_id = p.src_id "
+            f"WHERE {where_sql} "
+            f"ORDER BY p.physical DESC NULLS LAST, p.size DESC, s.source, p.full_path "
+            f"LIMIT {int(detail_limit)}",
+            params,
+        ).fetchall()]
+    finally:
+        cur.close()
+    return {
+        "total_file_count": total_file_count,
+        "total_physical": total_physical,
+        "total_logical": total_logical,
+        "capped": total_file_count > cap,
+        "sources": sources,
+        "pairs": pairs,
     }
 
 

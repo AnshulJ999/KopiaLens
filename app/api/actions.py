@@ -41,7 +41,7 @@ from ..core.sources import invalidate as invalidate_sources, sources_index
 from ..index.schema import RepoOffline
 from ..core.nightly import start_index_pass_async
 from ..index.physical import batch_detail, folder_detail
-from ..index.queries import remove_targets, snapshots_for_path, sources_for_content, versions as file_versions
+from ..index.queries import remove_targets, remove_targets_summary, snapshots_for_path, sources_for_content, versions as file_versions
 from ..settings import load_settings
 
 router = APIRouter(tags=["actions"])
@@ -432,8 +432,23 @@ def _has_filters(payload: RemovePlanRequest) -> bool:
 def remove_detail(payload: RemovePlanRequest) -> dict:
     """On-demand reclaim/freeable/shared for the matched set (a chunk walk, so it's a button, not
     auto). Folder under one source -> folder_detail (subtree walk); otherwise -> batch_detail over
-    the matched files (capped)."""
-    t = _remove_targets(payload)
+    the matched files (capped). reads the cheap summary - totals + distinct sources + the
+    top 5,000 pairs - never the full top-200k materialization."""
+    if not any([payload.query, payload.deleted_only, payload.min_gb, payload.over_gb, payload.max_gb,
+                payload.source, payload.ext, payload.ext_exclude, payload.date_from, payload.date_to,
+                payload.first_from, payload.min_versions, payload.shared_min, payload.prefix]):
+        raise HTTPException(status_code=400,
+                            detail="refusing to plan a delete with no filter - this would match the entire repo")
+    t = remove_targets_summary(
+        payload.repo, query=payload.query, deleted_only=payload.deleted_only,
+        min_size=int((payload.min_gb or payload.over_gb or 0) * 1_000_000_000),
+        max_size=int((payload.max_gb or 0) * 1_000_000_000), source=payload.source or None,
+        ext=payload.ext or None, ext_exclude=payload.ext_exclude or None,
+        date_from=payload.date_from or None, date_to=payload.date_to or None,
+        min_versions=payload.min_versions, shared_min=payload.shared_min,
+        first_from=payload.first_from or None, prefix=payload.prefix or None,
+        cap=payload.cap or _plan_cap(),
+    )
     if not t["pairs"]:
         return {"found": False}
     # The whole-folder shortcut is only valid when the plan really is the whole folder. With a
@@ -447,9 +462,9 @@ def remove_detail(payload: RemovePlanRequest) -> dict:
                             all_versions=payload.all_versions)
         out["scope"] = "folder"
         return out
-    files = [{"source": s, "full_path": fp} for s, fp in t["pairs"][:5000]]  # cap the walk
-    out = batch_detail(payload.repo, files, all_versions=payload.all_versions)
-    out["capped"] = len(t["pairs"]) > 5000
+    out = batch_detail(payload.repo, [{"source": s, "full_path": fp} for s, fp in t["pairs"]],
+                       all_versions=payload.all_versions)
+    out["capped"] = t["total_file_count"] > len(t["pairs"])
     out["scope"] = "selection"
     return out
 

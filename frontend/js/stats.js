@@ -1,4 +1,5 @@
-// Stats tab: parsed kopia cards, health checks, audit trail, blob stats.
+// Stats tab: parsed kopia cards, health checks, blob stats. The audit trail moved to the
+// Logs tab () - Stats stays repository facts + space/dedup + health.
 const statsPart = {
 
     // ---------- Stats ----------
@@ -7,24 +8,9 @@ const statsPart = {
       this._statsLoading = true;
       try {
         await this.wrap(async () => {
-          const [stats, aud] = await Promise.all([
-            getJson(`/api/stats?repo=${encodeURIComponent(this.repo)}`),
-            getJson(`/api/audit?limit=200`).catch(() => ({ records: [], size: 0 })),
-          ]);
-          this.statsData = stats;
-          this.auditRows = aud.records || [];
-          this.auditSize = aud.size || 0;
+          this.statsData = await getJson(`/api/stats?repo=${encodeURIComponent(this.repo)}`);
         }, "Loading stats...");
       } finally { this._statsLoading = false; }
-    },
-    async loadAudit() {
-      const aud = await getJson(`/api/audit?limit=200`).catch(() => ({ records: [], size: 0 }));
-      this.auditRows = aud.records || [];
-      this.auditSize = aud.size || 0;
-    },
-    auditSummary(r) {
-      const s = r.summary || {};
-      return Object.entries(s).map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`).join("  ");
     },
     async loadBlobStats() {
       if (this.blobLoading) return;

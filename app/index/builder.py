@@ -426,6 +426,13 @@ def _run_build(repo: str, source: str | None, full: bool) -> None:
         job["finished_at"] = time.time()
 
 
+def _has_index(repo: str) -> bool:
+    """False while the repo has no published generation (never indexed) - read_cursor would
+    raise FileNotFoundError, which used to turn /api/index/status into a 500."""
+    from . import store  # lazy: keeps the builder's import graph unchanged
+    return store.read_manifest(repo) is not None
+
+
 def index_status(repo: str) -> dict:
     srcs = sources_index(repo)
     total = sum(len(snaps) for snaps in srcs.values())
@@ -464,7 +471,16 @@ def index_status(repo: str) -> dict:
             "current_source": prog.get("current_source"), "targets": prog.get("targets"),
             "error": prog.get("error"),
         }
-    cur = read_cursor(repo)
+    cur = read_cursor(repo) if _has_index(repo) else None
+    if cur is None:
+        # A repo that has never been indexed is a normal state, not an error: the manifest is
+        # simply absent. Report zeros with never_indexed=True so the UI can offer the Index
+        # button instead of erroring every page (observed live on a fresh repo 3, 2026-09-13).
+        return {
+            "repo": repo, "snapshots": total, "indexed_snapshots": 0,
+            "missing_snapshots": total, "files": 0, "last_indexed_at": None,
+            "never_indexed": True, "building": False, "error": job.get("error"),
+        }
     try:
         indexed = cur.execute("SELECT COUNT(*) FROM isnaps").fetchone()[0]
         files = cur.execute("SELECT COUNT(*) FROM filev").fetchone()[0]
@@ -475,7 +491,7 @@ def index_status(repo: str) -> dict:
         "repo": repo, "snapshots": total, "indexed_snapshots": indexed,
         "missing_snapshots": total - indexed, "files": files,
         "last_indexed_at": str(last) if last else None,
-        "building": False, "error": job.get("error"),
+        "never_indexed": False, "building": False, "error": job.get("error"),
     }
 
 

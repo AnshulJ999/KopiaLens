@@ -247,8 +247,12 @@ def _patch_refresh(monkeypatch, defined):
     import app.core.policy as pol
     import app.index.policypricing as pp
     calls = {"one": [], "full": 0, "defined": 0, "price": 0}
-    monkeypatch.setattr(pol, "refresh_defined_policies",
-                        lambda repo, force=False: calls.__setitem__("defined", calls["defined"] + 1))
+
+    def _fake_refresh_defined(repo, force=False):
+        calls["defined"] += 1
+        return {"ts": 0.0, "policies": defined}, True
+
+    monkeypatch.setattr(pol, "refresh_defined_policies", _fake_refresh_defined)
     monkeypatch.setattr(pol, "load_defined_policies", lambda repo: {"policies": defined})
     monkeypatch.setattr(pol, "refresh_one_policy",
                         lambda repo, key: calls["one"].append(key))
@@ -299,3 +303,100 @@ def test_invalidate_without_targets_is_the_full_mirror_refresh(monkeypatch):
     calls = _patch_refresh(monkeypatch, {"(global)": {}})
     pol.invalidate_after_write("1", targets=None)
     assert calls["full"] == 1 and calls["one"] == []
+
+
+# ---- the ignore-only fast path ----------------------------------------------------
+
+def _patch_fastpath(monkeypatch, defined, cached_policies):
+    """Patch the module for fast-path tests: the export is 'fresh', the effective-policy cache
+    is in memory, and show_policy COUNTS (the fast path must never call it)."""
+    import app.core.sources as sources_mod
+    import app.core.policy as pol
+    import app.index.policypricing as pp
+    calls = {"show": 0, "one": 0, "price": 0}
+    monkeypatch.setattr(sources_mod, "sources_index",
+                        lambda repo: {k: [] for k in cached_policies})
+    monkeypatch.setattr(pol, "refresh_defined_policies",
+                        lambda repo, force=False: ({"ts": 0.0, "policies": defined}, True))
+    monkeypatch.setattr(pol, "load_defined_policies", lambda repo: {"policies": defined})
+    monkeypatch.setattr(pol, "load_policies", lambda repo: {"ts": 0.0, "policies": dict(cached_policies)})
+    written = {}
+    monkeypatch.setattr(pol, "_write_policies", lambda repo, pols: written.update(pols))
+    monkeypatch.setattr(pol, "show_policy", lambda repo, target: calls.__setitem__("show", calls["show"] + 1) or {})
+    monkeypatch.setattr(pol, "refresh_one_policy", lambda repo, key: calls.__setitem__("one", calls["one"] + 1))
+    monkeypatch.setattr(pp, "invalidate", lambda repo=None: calls.__setitem__("price", calls["price"] + 1))
+    return calls, written
+
+
+def test_ignore_only_write_patches_the_cache_with_zero_subprocesses(monkeypatch):
+    """a Global add-ignore write used to fire one `policy show` per inheriting source
+    inside the save request. The fast path patches files.ignore from the export it already took."""
+    import app.core.policy as pol
+    uh = "u@h"
+    defined = {"(global)": {"files": {"ignore": ["g1", "NEW"]}},
+               f"{uh}:C:{SEP}": {"files": {"ignore": ["own"]}}}
+    cached = {
+        f"{uh}:D:{SEP}": {"files": {"ignore": ["g1"]}, "retention": {"keepLatest": 7}},
+        f"{uh}:C:{SEP}": {"files": {"ignore": ["own"]}},
+    }
+    calls, written = _patch_fastpath(monkeypatch, defined, cached)
+    pol.invalidate_after_write("1", targets=["(global)"], ignore_only=True)
+    assert calls["show"] == 0 and calls["one"] == 0
+    # D:\ inherits global -> ignore patched to the new global list, other fields untouched
+    assert written[f"{uh}:D:{SEP}"]["files"]["ignore"] == ["g1", "NEW"]
+    assert written[f"{uh}:D:{SEP}"]["retention"] == {"keepLatest": 7}
+    # C:\ owns its list -> untouched (its origin is not the written target)
+    assert written[f"{uh}:C:{SEP}"]["files"]["ignore"] == ["own"]
+
+
+def test_ignore_only_fast_path_matches_a_full_refresh(monkeypatch):
+    """The fast path's answer must equal what the per-source refresh would have fetched."""
+    import app.core.policy as pol
+    uh = "u@h"
+    owner = f"{uh}:G:{SEP}GitHub"
+    inheritor = f"{owner}{SEP}PS"
+    defined = {owner: {"files": {"ignore": ["gh", "NEW"]}}, "(global)": {}}
+    cached = {owner: {"files": {"ignore": ["gh"]}}, inheritor: {"files": {"ignore": ["gh"]}}}
+    calls, written = _patch_fastpath(monkeypatch, defined, cached)
+    pol.invalidate_after_write("1", targets=[owner], ignore_only=True)
+    assert calls["show"] == 0
+    # the written target itself: own rules from the export; the inheritor: the owner's rules
+    assert written[owner]["files"]["ignore"] == ["gh", "NEW"]
+    assert written[inheritor]["files"]["ignore"] == ["gh", "NEW"]
+
+
+def test_ignore_only_falls_back_when_a_source_is_not_cached(monkeypatch):
+    """A source the cache never saw must be fetched properly, not patched from nothing."""
+    import app.core.policy as pol
+    uh = "u@h"
+    defined = {"(global)": {"files": {"ignore": ["g1"]}}}
+    cached = {f"{uh}:D:{SEP}": {"files": {"ignore": ["g1"]}}}
+    calls, _written = _patch_fastpath(monkeypatch, defined, cached)
+    monkeypatch.setattr("app.core.sources.sources_index",
+                        lambda repo: {f"{uh}:D:{SEP}": [], f"{uh}:E:{SEP}": []})
+    pol.invalidate_after_write("1", targets=["(global)"], ignore_only=True)
+    assert calls["one"] >= 1  # the fallback refreshed the uncached source
+
+
+def test_ignore_only_falls_back_on_delete_policy(monkeypatch):
+    """delete_policy changes every field for inheritors - never eligible for the fast path."""
+    import app.core.policy as pol
+    uh = "u@h"
+    defined = {"(global)": {"files": {"ignore": ["g1"]}}}
+    calls, _written = _patch_fastpath(monkeypatch, defined, {f"{uh}:D:{SEP}": {}})
+    pol.invalidate_after_write("1", targets=["(global)"], ignore_only=False)
+    assert calls["one"] == 1 and calls["show"] == 0  # refresh_one_policy, not the patch
+
+
+def test_ignore_only_falls_back_when_the_export_fails(monkeypatch):
+    """A failed export keeps serving stale definitions; the fast path must not trust it."""
+    import app.core.policy as pol
+    import app.index.policypricing as pp
+    calls = {"one": 0}
+    monkeypatch.setattr("app.core.sources.sources_index", lambda repo: {})
+    monkeypatch.setattr(pol, "refresh_defined_policies",
+                        lambda repo, force=False: ({"ts": 0.0, "policies": {}}, False))
+    monkeypatch.setattr(pol, "refresh_one_policy", lambda repo, key: calls.__setitem__("one", calls["one"] + 1))
+    monkeypatch.setattr(pp, "invalidate", lambda repo=None: None)
+    pol.invalidate_after_write("1", targets=["(global)"], ignore_only=True)
+    assert calls["one"] == 0  # nothing was reached; the stale export was not patched from

@@ -26,6 +26,7 @@ nothing else changes.
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -52,6 +53,7 @@ log = get_logger("jobs")
 
 BUFFER_LINES = 2000        # in-memory ring; the full raw output always lands in the log file
 HISTORY_JOBS = 50          # finished jobs kept in memory (their log files persist regardless)
+HISTORY_FILE_LINES = 1000  # on-disk history cap: a restart must not blank the Activity view
 EVENT_FORCE_AFTER = 300.0  # seconds a delivered Ctrl+Break gets before Stop forces the issue
 
 KINDS = {
@@ -77,6 +79,66 @@ DRY_PARSERS = {
 
 _JOBS: dict[str, dict] = {}
 _JOBS_LOCK = threading.Lock()
+_HISTORY_LOCK = threading.Lock()
+
+
+def _history_path() -> str:
+    return os.path.join(DATA_DIR, "jobs_history.jsonl")
+
+
+def _record_history(job: dict) -> None:
+    """ Append the finished job to the on-disk history so Activity survives a restart
+    (the in-memory registry is lost every exit; the log files alone are not a list). Capped by a
+    rewrite at HISTORY_FILE_LINES - old records fall off the end. Best-effort."""
+    rec = {
+        "job_id": job["job_id"], "kind": job["kind"], "kind_label": job["kind_label"],
+        "repo": job["repo"], "label": job["label"], "dry": job["dry"],
+        "mutating": job["mutating"], "state": job["state"], "rc": job["rc"],
+        "error": job["error"], "detail": job.get("detail") or {},
+        "created": job["created"], "started": job["started"], "finished": job["finished"],
+        "elapsed": round(max(0.0, (job["finished"] or job["created"])
+                             - (job["started"] or job["created"])), 1),
+        "total": job["total"], "done": job["done"], "errors": job["errors"],
+        "log_path": job["log_path"],
+    }
+    try:
+        line = json.dumps(rec, ensure_ascii=False)
+        with _HISTORY_LOCK:
+            os.makedirs(os.path.dirname(_history_path()), exist_ok=True)
+            with open(_history_path(), "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+            if os.path.getsize(_history_path()) > HISTORY_FILE_LINES * 140:  # heuristic lines cap
+                with open(_history_path(), encoding="utf-8") as fh:
+                    lines = fh.readlines()
+                if len(lines) > HISTORY_FILE_LINES:
+                    tmp = _history_path() + ".tmp"
+                    with open(tmp, "w", encoding="utf-8") as fh:
+                        fh.writelines(lines[-HISTORY_FILE_LINES:])
+                    os.replace(tmp, _history_path())
+    except Exception as exc:  # noqa: BLE001 - history is best-effort, the job already ran
+        log.warning("job history write failed: %s", exc)
+
+
+def read_job_history(limit: int = 200) -> list[dict]:
+    """The last ``limit`` finished jobs from disk, newest first - the part of Activity that
+    survives restarts."""
+    try:
+        with _HISTORY_LOCK:
+            with open(_history_path(), encoding="utf-8") as fh:
+                lines = fh.readlines()
+    except OSError:
+        return []
+    out: list[dict] = []
+    for line in lines[-max(1, limit):]:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except Exception:  # noqa: BLE001 - one damaged line must not hide the rest
+            pass
+    out.sort(key=lambda j: j.get("created") or 0, reverse=True)
+    return out
 
 
 class JobRefused(Exception):
@@ -262,6 +324,7 @@ def _run(job: dict, cmds: list[list[str]]) -> None:
         job["finished"] = time.time()
         job["_stream"] = None
         _prune_history()
+        _record_history(job)
         audit.audit("generated" if job["dry"] else "executed", AUDIT_ACTION.get(job["kind"], job["kind"]),
                     repo=job["repo"],
                     summary={**job["detail"], "batches": job["total"], "errors": job["errors"],

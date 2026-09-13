@@ -95,7 +95,7 @@
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Full rebuild</span>
-                  <button @click="rebuildIndex()" :disabled="indexStatus.building" class="h-8 rounded border border-bd px-3 disabled:opacity-50">Rebuild full index</button></div>
+                  <button @click="rebuildIndex()" :disabled="!!indexStatus.building" class="h-8 rounded border border-bd px-3 disabled:opacity-50">Rebuild full index</button></div>
                 <p class="text-[11px] text-muted mt-1">Re-walks every snapshot in this repo from scratch instead of only what changed. Rarely needed; takes far longer than a normal pass.</p>
               </div>
             </section>

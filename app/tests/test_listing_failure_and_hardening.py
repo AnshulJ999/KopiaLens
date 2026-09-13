@@ -293,7 +293,7 @@ def test_the_worker_passes_its_failure_reason_to_the_callback(monkeypatch):
     got: list[tuple] = []
     monkeypatch.setattr(nightly, "_reserve", lambda repo: True)
     monkeypatch.setattr(nightly, "run_index_pass",
-                        lambda repo, full, _owned: {"ok": False, "reason": "storage timeout"})
+                        lambda repo, full, _owned, trigger="manual": {"ok": False, "reason": "storage timeout"})
     monkeypatch.setattr(nightly, "REPOS", {"1": {"kind": "kopia"}})
 
     started = nightly.start_index_pass_async("1", on_done=lambda *a: got.append(a))

@@ -133,7 +133,7 @@ def test_global_target_for_global_inheritors(monkeypatch):
     g = t["global"]
     assert g["pattern"] == "/report.txt"          # relative to D:\, the dialog's source
     assert g["covers"] == [{"source": dsrc, "root": "D:\\", "rel_path": "report.txt",
-                            "matches": True}]
+                            "matches": True, "already_excluded": False}]
     assert g["existing_rule_count"] == 1
     assert "own lists are NOT affected" in g["note"]
 
@@ -173,6 +173,62 @@ def test_folder_exact_shape_uses_the_doublestar(wired):
     t = _targets(resolve_targets("1", f"G:{SEP}GitHub{SEP}Example-Repo{SEP}Stash",
                                  source=GITHUB, is_folder=True, shape="exact"))
     assert t[GITHUB]["pattern"] == "/Example-Repo/Stash/**"
+
+
+# ---- the folder-NAME shape is directory-only --------------------------------------
+
+def test_folder_name_shape_is_the_trailing_slash(wired):
+    """'any folder of this name' must generate 'Name/' (matches at ANY depth and
+    prunes the subtree), never 'Name/**' (rooted - a nested folder was silently not excluded)."""
+    t = _targets(resolve_targets("1", f"G:{SEP}GitHub{SEP}Example-Repo{SEP}Stash",
+                                 source=GITHUB, is_folder=True, shape="name"))
+    assert t[GITHUB]["pattern"] == "Stash/"
+    assert t[GITHUB]["pattern_anchored"] is False
+    # file selections keep the bare-name shape
+    t2 = _targets(resolve_targets("1", FILE, source=GITHUB, shape="name"))
+    assert t2[GITHUB]["pattern"] == "model.safetensors"
+
+
+def test_folder_name_shape_covers_a_nested_folder_at_any_depth(wired):
+    """The live bug: a Stash folder nested under the source root must MATCH the rule."""
+    t = _targets(resolve_targets("1", f"G:{SEP}GitHub{SEP}Example-Repo{SEP}Stash",
+                                 source=GITHUB, is_folder=True, shape="name"))
+    covers = {c["source"]: c["matches"] for c in t[GITHUB]["covers"]}
+    assert covers == {GITHUB: True, PS: True}
+
+
+def test_dir_only_pattern_matching_rules():
+    from app.core.policytargets import _matches
+    assert _matches("Stash/", "a/Stash", True) is True            # the folder itself, any depth
+    assert _matches("Stash/", "a/b/deep/Stash", True) is True     # nested deeper still
+    assert _matches("Stash/", "a/Stash", False) is False          # a file is not a dir
+    assert _matches("Stash/**", "Stash", True) is True            # old shape: root-level only (child probe)
+    assert _matches("Stash/**", "a/Stash", True) is False         # ...a nested one never matched (the old bug)
+
+
+def test_already_excluded_flagged_when_an_existing_rule_covers_it(wired):
+    """a target whose existing rules already keep this selection out must say so,
+    so the dialog does not tick it (the write would add nothing)."""
+    t = _targets(resolve_targets("1", FILE, source=GITHUB, shape="extension"))
+    gh = t[GITHUB]
+    assert gh["pattern"] == "*.safetensors"
+    assert gh["existing_rule_count"] == 1         # GITHUB already owns "*.safetensors"
+    assert all(c["already_excluded"] for c in gh["covers"])
+    assert gh["protects"] == 0                    # nothing NEW would be protected
+
+
+def test_escape_hatches_offered_for_inheriting_sources(wired):
+    """PS inherits its rules from GITHUB - never a normal target, but offered as a
+    collapsed escape hatch with the rules that would be shadowed."""
+    out = resolve_targets("1", FILE, source=GITHUB, shape="exact")
+    hatches = {h["target"]: h for h in out["escape_hatches"]}
+    assert set(hatches) == {PS}
+    h = hatches[PS]
+    assert h["inherits_from"] == GITHUB
+    assert h["inherited_rules"] == ["*.safetensors"]
+    assert "REPLACES" in h["note"]
+    # the pattern is recomputed for PS's own root, not GITHUB's
+    assert h["pattern"] == "/Stash/model.safetensors"
 
 
 def test_extension_shape_and_folder_not_applicable(wired):

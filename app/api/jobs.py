@@ -116,4 +116,10 @@ def stop(payload: JobStopRequest) -> dict:
 
 @router.get("/jobs/list")
 def list_all() -> dict:
-    return {"jobs": jobs.list_jobs()}
+    """In-memory registry (running + the last 50 finished) merged with the on-disk history
+    () so Activity survives a restart. Memory wins per job_id; newest first."""
+    jobs_by_id = {j["job_id"]: j for j in jobs.list_jobs()}
+    for rec in jobs.read_job_history(limit=300):
+        jobs_by_id.setdefault(rec.get("job_id"), rec)
+    merged = sorted(jobs_by_id.values(), key=lambda j: j.get("created") or 0, reverse=True)
+    return {"jobs": merged[:300]}
