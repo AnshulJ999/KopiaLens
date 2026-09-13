@@ -60,12 +60,13 @@ const excludePart = {
         if (d.shape === "custom") d.custom = p;
       }
       if (seq !== this._exOpenSeq) return;  // a newer openExclude owns the dialog now
-      this.exLoadTargets();
+      this.exLoadTargets(true);
     },
 
     // Owning policies for this path, ranked by sources covered. Re-called on every shape
     // change: the shape decides each target's pattern, and the pattern decides the matches.
-    async exLoadTargets() {
+    // `refresh` re-reads policies from kopia; only the dialog's first load asks for it.
+    async exLoadTargets(refresh = false) {
       const d = this.exDialog;
       if (!d) return;
       const seq = ++this._exTargetsSeq;
@@ -76,7 +77,7 @@ const excludePart = {
         // with a neutral one and write the custom text to every selected target.
         const r = await getJson("/api/policies/exclusion-targets", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ repo: this.repo, path: d.path, source: d.src || null,
-                                 is_folder: d.kind === "folder", shape: d.shape === "custom" ? "exact" : d.shape }) });
+                                 is_folder: d.kind === "folder", shape: d.shape === "custom" ? "exact" : d.shape, refresh }) });
         if (!this.exDialog || seq !== this._exTargetsSeq) return;
         d.targetData = r;
         d.loading = false;

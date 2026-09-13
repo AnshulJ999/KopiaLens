@@ -59,6 +59,36 @@ def test_policy_delete_and_import_commands():
         kopia.policy_import_command("1", "")
 
 
+def test_import_limited_to_one_target():
+    one = kopia.policy_import_command("1", "p.json", target=SRC)
+    assert one[1:] == ["policy", "import", "--from-file", "p.json", SRC]
+    assert kopia.policy_import_command("1", "p.json", global_=True)[-1] == "--global"
+    with pytest.raises(ValueError):
+        kopia.policy_import_command("1", "p.json", mirror=True, target=SRC)
+
+
+def test_policy_write_rules_imports_one_policy_file(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_run(repo, cmd, action, summary):
+        path = cmd[cmd.index("--from-file") + 1]
+        with open(path, encoding="utf-8") as fh:
+            seen["file"] = json.load(fh)
+        seen.update(cmd=cmd, action=action, summary=summary, path=path)
+        return {"returncode": 0, "stdout": "", "stderr": "", "command": cmd}
+
+    monkeypatch.setattr(kopia, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(kopia, "_run_policy_write", fake_run)
+    pol = {"files": {"ignore": ["z", "a"]}}
+    kopia.policy_write_rules_execute("1", SRC, False, pol, add=1)
+    assert seen["file"] == {SRC: pol}
+    assert seen["cmd"][-2:] == [SRC, "--no-progress"]
+    assert seen["action"] == "policy-set" and seen["summary"]["add"] == 1
+    assert not os.path.exists(seen["path"])  # temp file removed
+    kopia.policy_write_rules_execute("1", None, True, pol)
+    assert "(global)" in seen["file"] and "--global" in seen["cmd"]
+
+
 def test_new_builders_reject_a_non_kopia_repo():
     for call in (
         lambda: kopia.policy_set_command("bz", target=SRC, add_ignore=["x"]),

@@ -292,3 +292,17 @@ def test_route_wiring_and_validation(wired, monkeypatch):
     with pytest.raises(HTTPException) as e:
         api.exclusion_targets(api.TargetsBody(repo="bz", path=FILE))
     assert e.value.status_code == 400
+
+
+def test_route_refresh_re_exports_policies_only_when_asked(wired, monkeypatch):
+    """A policy created outside KopiaLens must be visible when the dialog opens; shape changes
+    reuse that export."""
+    monkeypatch.setattr(api, "kopia_repos", lambda: ["1"])
+    monkeypatch.setattr(api, "repo_kind", lambda r: "kopia")
+    calls = []
+    monkeypatch.setattr(api, "refresh_defined_policies",
+                        lambda repo, force=False: calls.append((repo, force)) or ({"policies": DEFINED}, True))
+    api.exclusion_targets(api.TargetsBody(repo="1", path=FILE, source=GITHUB, refresh=True))
+    assert calls == [("1", True)]
+    api.exclusion_targets(api.TargetsBody(repo="1", path=FILE, source=GITHUB, shape="name"))
+    assert calls == [("1", True)]

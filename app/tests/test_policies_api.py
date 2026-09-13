@@ -129,7 +129,7 @@ def test_save_is_fail_closed_on_a_backup_failure(wired, monkeypatch):
         raise AssertionError("the write must not run")
 
     monkeypatch.setattr(api.policybackup, "create_backup", boom)
-    monkeypatch.setattr(api, "policy_set_execute", fail_execute)
+    monkeypatch.setattr(api, "policy_write_rules_execute", fail_execute)
     with pytest.raises(HTTPException) as e:
         api.save(api.SaveBody(repo="1", target=SRC, changes=api.Changes(add=["/x"]),
                               confirmed=True))
@@ -143,11 +143,10 @@ def test_save_runs_backup_write_then_invalidation(wired, monkeypatch):
     monkeypatch.setattr(api.policybackup, "create_backup",
                         lambda repo, trigger: order.append(f"backup:{trigger}") or {
                             "name": "x_pre-write.json", "path": "p", "verified": True})
-    monkeypatch.setattr(api, "policy_set_execute",
-                        lambda repo, target=None, global_=False, add_ignore=None,
-                        remove_ignore=None: order.append("write") or {
+    monkeypatch.setattr(api, "policy_write_rules_execute",
+                        lambda repo, target, global_, policy, add=0, remove=0: order.append("write") or {
                             "returncode": 0, "stdout": "done", "stderr": "",
-                            "command": ["kopia", "policy", "set"]})
+                            "command": ["kopia", "policy", "import"]})
     monkeypatch.setattr(api, "invalidate_after_write",
                         lambda repo, targets=None, ignore_only=False:
                         order.append(f"invalidate:{targets}:{ignore_only}"))
@@ -160,6 +159,56 @@ def test_save_runs_backup_write_then_invalidation(wired, monkeypatch):
     assert out["ok"] is True and out["returncode"] == 0
     assert out["backup"]["verified"] is True
     assert out["diff"]["resulting_rules"] == ["/Temp/**", "/saves/**"]
+
+
+def _capture_write(monkeypatch, store):
+    """Fake write that records the policy and updates the fake export like kopia would."""
+    seen = {}
+
+    def fake_write(repo, target, global_, policy, add=0, remove=0):
+        key = "(global)" if global_ else target
+        seen.update(target=target, global_=global_, policy=policy)
+        store[key] = policy
+        return {"returncode": 0, "stdout": "", "stderr": "", "command": ["kopia"]}
+
+    monkeypatch.setattr(api, "policy_write_rules_execute", fake_write)
+    monkeypatch.setattr(api.policybackup, "create_backup",
+                        lambda repo, trigger: {"name": "b.json", "path": "p", "verified": True})
+    monkeypatch.setattr(api, "invalidate_after_write", lambda repo, targets=None, ignore_only=False: None)
+    return seen
+
+
+def test_save_keeps_rule_order_appends_and_removes_in_place(wired, monkeypatch):
+    """kopia's `policy set` re-sorts the list; the save writes the whole policy with the
+    rules in their real order and leaves every other field alone."""
+    store = {"(global)": DEFINED["(global)"],
+             SRC: {"files": {"ignore": ["zeta", "/Temp/**", "alpha"], "noParentIgnore": False},
+                   "retention": {"keepLatest": 5}}}
+    monkeypatch.setattr(api, "load_defined_policies", lambda repo: {"policies": store})
+    monkeypatch.setattr(api, "refresh_defined_policies", lambda repo, force=False: ({"policies": store}, True))
+    seen = _capture_write(monkeypatch, store)
+    out = api.save(api.SaveBody(repo="1", target=SRC,
+                                changes=api.Changes(add=["mid"], remove=["/Temp/**"]), confirmed=True))
+    assert seen["policy"]["files"]["ignore"] == ["zeta", "alpha", "mid"]
+    assert seen["policy"]["files"]["noParentIgnore"] is False
+    assert seen["policy"]["retention"] == {"keepLatest": 5}
+    assert out["stored_rules"] == ["zeta", "alpha", "mid"] and out["stored_matches"] is True
+
+
+def test_save_global_and_new_policy_and_last_rule_removed(wired, monkeypatch):
+    store = {"(global)": {"files": {"ignore": ["b", "a"]}, "retention": {"keepDaily": 7}}}
+    monkeypatch.setattr(api, "load_defined_policies", lambda repo: {"policies": store})
+    monkeypatch.setattr(api, "refresh_defined_policies", lambda repo, force=False: ({"policies": store}, True))
+    seen = _capture_write(monkeypatch, store)
+    api.save(api.SaveBody(repo="1", target="global", changes=api.Changes(add=["c"]), confirmed=True))
+    assert seen["global_"] is True and seen["target"] is None
+    assert seen["policy"] == {"files": {"ignore": ["b", "a", "c"]}, "retention": {"keepDaily": 7}}
+    # a target with no policy yet gets a minimal one
+    api.save(api.SaveBody(repo="1", target=OTHER, changes=api.Changes(add=["x"]), confirmed=True))
+    assert seen["policy"] == {"files": {"ignore": ["x"]}}
+    # removing the last own rule drops the list (the source inherits again)
+    api.save(api.SaveBody(repo="1", target=OTHER, changes=api.Changes(remove=["x"]), confirmed=True))
+    assert seen["policy"] == {"files": {}}
 
 
 def test_restore_endpoint_flows_through_the_backup_module(wired, monkeypatch):

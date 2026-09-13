@@ -971,13 +971,19 @@ def policy_delete_execute(repo: str, target: str | None = None, global_: bool = 
     return _run_policy_write(repo, cmd, "policy-delete", summary)
 
 
-def policy_import_command(repo: str, file_path: str, mirror: bool = False) -> list[str]:
+def policy_import_command(repo: str, file_path: str, mirror: bool = False,
+                          target: str | None = None, global_: bool = False) -> list[str]:
     """Build `kopia policy import --from-file <file>`. Merges into the policies the file
     defines, leaving other policies alone; `mirror=True` adds --delete-other-policies (the repo
-    ends up with EXACTLY the backup's policies)."""
+    ends up with EXACTLY the backup's policies). A target (or `global_`) limits the import to
+    that one policy."""
     if not file_path:
         raise ValueError("policy import needs a file path")
     cmd = ["kopia"] + _repo_args(repo) + ["policy", "import", "--from-file", file_path]
+    if target or global_:
+        if mirror:
+            raise ValueError("a mirror import cannot be limited to one target")
+        cmd += _policy_target_args(target, global_)
     if mirror:
         cmd.append("--delete-other-policies")
     return cmd
@@ -987,6 +993,31 @@ def policy_import_execute(repo: str, file_path: str, mirror: bool = False) -> di
     cmd = policy_import_command(repo, file_path, mirror) + ["--no-progress"]
     summary = {"from_file": os.path.basename(file_path), "mirror": bool(mirror)}
     return _run_policy_write(repo, cmd, "policy-import", summary)
+
+
+def policy_write_rules_execute(repo: str, target: str | None, global_: bool, policy: dict,
+                               add: int = 0, remove: int = 0) -> dict:
+    """Write one whole policy (ignore list already in its final order) via a target-limited
+    `policy import`. `policy set --add-ignore` re-sorts the list alphabetically; import stores it
+    as given. Mutating; the save endpoint takes the pre-write backup first."""
+    import json
+    import tempfile
+
+    key = "(global)" if global_ else target
+    tmp_dir = os.path.join(DATA_DIR, "tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
+    fd, path = tempfile.mkstemp(prefix="policy_write_", suffix=".json", dir=tmp_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({key: policy}, fh)
+        cmd = policy_import_command(repo, path, target=target, global_=global_) + ["--no-progress"]
+        summary = {"target": "global" if global_ else target, "add": add, "remove": remove}
+        return _run_policy_write(repo, cmd, "policy-set", summary)
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def snapshot_diff_command(repo: str, id1: str, id2: str) -> list[str]:

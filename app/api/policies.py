@@ -7,6 +7,8 @@ set/delete` -> cache invalidation; backups list/read/manual/restore.
 
 from __future__ import annotations
 
+import copy
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -19,7 +21,7 @@ from ..core.kopia import (
     policy_delete_execute,
     policy_import_command,
     policy_set_command,
-    policy_set_execute,
+    policy_write_rules_execute,
 )
 from ..core.policy import (
     _GLOBAL_TARGET,
@@ -180,6 +182,7 @@ class TargetsBody(BaseModel):
     is_folder: bool = False
     shape: str = "exact"          # exact | name | extension | parent
     price: bool = False           # opt-in impact pricing; the dialog ranks by covers count
+    refresh: bool = False         # re-export policies first (the dialog's first load)
 
 
 # ---- read half -------------------------------------------------------------------------
@@ -324,6 +327,9 @@ def exclusion_targets(body: TargetsBody) -> dict:
     covers first). ``price: false`` (default) keeps this a pure resolution call - zero index
     scans; impact pricing is opt-in and small-scope."""
     _kopia_repo(body.repo)
+    if body.refresh:
+        # Policies changed outside KopiaLens are invisible to a cached export.
+        refresh_defined_policies(body.repo, force=True)
     try:
         return policytargets.resolve_targets(
             body.repo, body.path, source=body.source,
@@ -334,9 +340,11 @@ def exclusion_targets(body: TargetsBody) -> dict:
 
 # ---- write half ------------------------------------------------------------------------
 
-def _validate_changes(repo: str, target: str, changes: Changes) -> tuple[list[str], list[str], dict]:
-    """Shared diff/save validation. Returns (current_rules, resulting_rules, defined_policies)."""
-    defined, _fresh = refresh_defined_policies(repo)
+def _validate_changes(repo: str, target: str, changes: Changes,
+                      force: bool = False) -> tuple[list[str], list[str], dict]:
+    """Shared diff/save validation. Returns (current_rules, resulting_rules, defined_policies).
+    Resulting order: current rules with removals taken out in place, additions appended."""
+    defined, _fresh = refresh_defined_policies(repo, force=force)
     defined_policies = defined.get("policies") or {}
     current = _own_rules(defined_policies, _GLOBAL_TARGET if _is_global(target) else target)
     add = list(dict.fromkeys(changes.add))
@@ -370,8 +378,8 @@ def _validate_changes(repo: str, target: str, changes: Changes) -> tuple[list[st
     return current, resulting, defined_policies
 
 
-def _build_diff(repo: str, target: str, changes: Changes) -> dict:
-    current, resulting, defined_policies = _validate_changes(repo, target, changes)
+def _build_diff(repo: str, target: str, changes: Changes, force: bool = False) -> dict:
+    current, resulting, defined_policies = _validate_changes(repo, target, changes, force=force)
     add = list(dict.fromkeys(changes.add))
     remove = list(dict.fromkeys(changes.remove))
     priced = []
@@ -420,7 +428,11 @@ def save(body: SaveBody) -> dict:
         raise HTTPException(status_code=422, detail="confirmed=false - the confirm dialog must run first")
     if not body.target:
         raise HTTPException(status_code=400, detail="target is required")
-    diff_payload = _build_diff(repo, body.target, body.changes)
+    is_global = _is_global(body.target)
+    target_key = _GLOBAL_TARGET if is_global else body.target
+    # The written policy is built from a fresh export, so fields and rules changed elsewhere survive.
+    diff_payload = _build_diff(repo, body.target, body.changes, force=True)
+    defined_policies = load_defined_policies(repo).get("policies") or {}
 
     try:
         backup = policybackup.create_backup(repo, "pre-write")
@@ -429,23 +441,32 @@ def save(body: SaveBody) -> dict:
                             detail=f"pre-write policy backup failed; write refused (fail-closed): {exc}") from exc
 
     if body.changes.delete_policy:
-        res = policy_delete_execute(repo, None if _is_global(body.target) else body.target,
-                                    global_=_is_global(body.target))
+        res = policy_delete_execute(repo, None if is_global else body.target, global_=is_global)
     else:
-        res = policy_set_execute(repo, None if _is_global(body.target) else body.target,
-                                 global_=_is_global(body.target),
-                                 add_ignore=list(dict.fromkeys(body.changes.add)) or None,
-                                 remove_ignore=list(dict.fromkeys(body.changes.remove)) or None)
-    invalidate_after_write(repo, targets=[_GLOBAL_TARGET] if _is_global(body.target) else [body.target],
-                           ignore_only=not body.changes.delete_policy)
+        policy = copy.deepcopy(defined_policies.get(target_key) or {})
+        files = dict(policy.get("files") or {})
+        if diff_payload["resulting_rules"]:
+            files["ignore"] = diff_payload["resulting_rules"]
+        else:
+            files.pop("ignore", None)
+        policy["files"] = files
+        res = policy_write_rules_execute(repo, None if is_global else body.target, is_global, policy,
+                                         add=len(diff_payload["added"]),
+                                         remove=len(diff_payload["removed"]))
+    invalidate_after_write(repo, targets=[target_key], ignore_only=not body.changes.delete_policy)
+    ok = res.get("returncode") == 0
+    stored = _own_rules(load_defined_policies(repo).get("policies") or {}, target_key)
     output = ((res.get("stdout") or "") + "\n" + (res.get("stderr") or "")).strip()
     return {
-        "ok": res.get("returncode") == 0,
+        "ok": ok,
         "returncode": res.get("returncode"),
         "output_tail": output[-_BACKUP_OUTPUT_TAIL:],
         "command": _cmd_text(res.get("command") or []),
         "backup": backup,
         "diff": diff_payload,
+        # what kopia stored, re-read after the write
+        "stored_rules": stored,
+        "stored_matches": ok and stored == diff_payload["resulting_rules"],
     }
 
 
