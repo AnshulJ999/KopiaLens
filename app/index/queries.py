@@ -803,6 +803,67 @@ def folder_top_children(repo: str, prefix: str, limit: int = 5, source: str | No
         cur.close()
 
 
+def _folder_scope(cur, prefix: str, source: str | None) -> tuple[str, list]:
+    _, like = _prefix_params(prefix)
+    conds = ["lower(p.full_path) LIKE ?" + _ESC]
+    params: list = [like]
+    if source:
+        cond, sp = _src_cond_exact(cur, source)
+        conds.append(cond)
+        params.extend(sp)
+    return _where(conds), params
+
+
+def folder_file_types(repo: str, prefix: str, source: str | None = None, limit: int = 8) -> list[dict]:
+    """Files under a folder grouped by extension, biggest first; the rest rolled into ``other``."""
+    cur = read_cursor(repo)
+    try:
+        where, params = _folder_scope(cur, prefix, source)
+        base = f"list_extract(string_split(p.full_path, ?), -1)"
+        rows = _rows(
+            cur,
+            f"SELECT ext, count(*) AS files, COALESCE(sum(physical), 0) AS physical, "
+            f"  COALESCE(sum(size), 0) AS logical "
+            f"FROM (SELECT CASE WHEN len(string_split({base}, '.')) > 1 "
+            f"        THEN lower(list_extract(string_split({base}, '.'), -1)) ELSE '' END AS ext, "
+            f"        p.physical, p.size FROM pathx p WHERE {where}) "
+            f"GROUP BY ext ORDER BY physical DESC, ext",
+            [_SEP, _SEP, *params],
+        )
+    finally:
+        cur.close()
+    if len(rows) <= limit:
+        return rows
+    head, tail = rows[:limit - 1], rows[limit - 1:]
+    head.append({"ext": None, "files": sum(r["files"] for r in tail),
+                 "physical": sum(r["physical"] for r in tail), "logical": sum(r["logical"] for r in tail)})
+    return head
+
+
+def folder_contents(repo: str, prefix: str, source: str | None = None, limit: int = 500) -> list[dict]:
+    """Everything directly inside a folder: one row per child folder or file, folders first,
+    each with size, file count, versions, last backup and a source to open it from."""
+    base = prefix.rstrip(_SEP)
+    cur = read_cursor(repo)
+    try:
+        where, params = _folder_scope(cur, prefix, source)
+        return _rows(
+            cur,
+            f"SELECT child, bool_or(strpos(rest, ?) > 0) AS is_folder, count(*) AS files, "
+            f"  COALESCE(sum(physical), 0) AS physical, COALESCE(sum(size), 0) AS logical, "
+            f"  COALESCE(sum(versions), 0) AS versions, max(last_seen) AS last_seen, "
+            f"  count(*) FILTER (WHERE NOT in_latest) AS deleted_files, min(source) AS source "
+            f"FROM (SELECT substr(p.full_path, ?) AS rest, "
+            f"        list_extract(string_split(substr(p.full_path, ?), ?), 1) AS child, "
+            f"        p.physical, p.size, p.versions, p.last_seen, p.in_latest, s.source "
+            f"      FROM pathx p JOIN src s ON s.src_id = p.src_id WHERE {where}) "
+            f"GROUP BY child ORDER BY is_folder DESC, physical DESC, child LIMIT {int(limit)}",
+            [_SEP, len(base) + 2, len(base) + 2, _SEP, *params],
+        )
+    finally:
+        cur.close()
+
+
 def flat_files(repo: str, source: str, prefix: str = "", deleted_only: bool = False,
                min_size: int = 0, ext: str | None = None, ext_exclude: str | None = None,
                limit: int = 20000) -> list[dict]:

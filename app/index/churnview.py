@@ -355,6 +355,28 @@ def churn_rollup(repo: str, days: int = 30, depth: int = 4, limit: int = 400,
         return {**_slice(payload, limit), "cached": False}
 
 
+def cached_folder_window(repo: str, folder: str, days: int = 30, depth: int = 4) -> dict | None:
+    """New data under one folder (its whole subtree) from an already-built rollup. None when the
+    rollup is not cached or the folder is deeper than the rollup's ``depth``. Never computes."""
+    want = folder.rstrip("\\/")
+    sep = "\\" if "\\" in want or "/" not in want else "/"
+    if len([s for s in want.split(sep) if s]) > depth:
+        return None
+    hit = _cache_get((repo, days, depth), _index_hash(repo))
+    if hit is None:
+        return None
+    want = want.lower()
+    total = {"bytes": 0, "files": 0, "versions": 0, "days": days}
+    found = False
+    for row in hit.get("by_folder") or []:
+        key = str(row.get("folder", "")).rstrip("\\/").lower()
+        if key == want or key.startswith(want + sep):
+            found = True
+            for k in ("bytes", "files", "versions"):
+                total[k] += row.get(k) or 0
+    return total if found else None
+
+
 def prewarm(repo: str, depth: int = 4, windows=WINDOWS) -> None:
     """Nightly: build EVERY standard window and persist it, so switching windows in the tab the
     next day costs nothing. Each is ~5s, and doing it here means the ~700MB aggregation happens in

@@ -1,33 +1,26 @@
-"""Exclusion-target resolution for the exclusion dialog (, Option A).
+"""Exclusion targets for the exclusion dialog: which policies can receive a rule for a path, what
+each write would change, and which ones the Smart default picks.
 
-Given a path, answer: WHICH policies can receive this exclusion rule? The naive answer - "the
-sources that contain the file" - is wrong twice over:
+Kopia applies ignore rules in two layers (kopia ``GetPolicyHierarchy`` + ``ignorefs``):
 
-1. A source whose ignore rules are INHERITED is never a write target. Kopia does not stack
-   exclusion lists: the moment a policy defines any rule of its own, the inherited list is
-   replaced entirely (kopia ``policy_merge.go mergeStringList``). Writing to the inheriting
-   source would silently switch off everything it inherits. The rule belongs at the policy that
-   OWNS the list - resolved by ``policy.effective_ignore_origin``.
+1. A source's root list comes from ONE policy: its own, else the nearest parent path policy, else
+   ``user@host``, else ``@host``, else Global. Lists replace, never merge.
+2. While a snapshot walks into a subfolder that has its own policy, that policy's rules are added
+   for that subtree, anchored at that folder.
 
-2. A write to an owning policy does not automatically "cover" every source that inherits from
-   it. Inherited rules RE-ANCHOR to each source's walk root (kopia puts the effective policy at
-   the root with no base dir), so an ANCHORED pattern written at ``G:\\GitHub`` matches the file
-   in source ``G:\\GitHub`` but NOT in source ``G:\\GitHub\\Example-Repo`` (where the same text
-   would mean ``...\\Example-Repo\\Example-Repo\\...``). Unanchored shapes (a bare name, an
-   extension) match at any depth and cover every inheriting source. Covers are therefore computed
-   by MATCHING the pattern against each covered source, never by inheritance alone.
-
-Option A: non-owning sources are not offered as targets at all. A source
-with NO rules anywhere (origin "none") is the one exception - creating its list shadows nothing,
-so the source itself is offered with ``will_create_policy`` set.
+Every target is evaluated by simulation: for each source holding the path, is the path excluded
+with today's policies, and with the write applied? Smart picks the policies the sources already
+get their rules from; child sources are offered too, with the inherited rules copied in.
 """
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from . import paths as pathrules
 from .applog import get_logger
 from .ignorematch import compile_pattern
-from .policy import _GLOBAL_TARGET, effective_ignore_origin
+from .policy import _GLOBAL_TARGET, effective_ignore_origin, global_ignores
 from .sources import sources_index
 
 log = get_logger("policytargets")
@@ -52,24 +45,27 @@ def _source_roots(repo: str, host_filter: str | None) -> list[str]:
     return keys
 
 
+def _under(path: str, root: str, sep: str, fold: bool, strict: bool = False) -> bool:
+    npath, nroot = _norm(path, sep, fold), _norm(root, sep, fold)
+    if npath == nroot:
+        return not strict
+    return npath.startswith(nroot + "/") if nroot else True
+
+
 def _covering_sources(repo: str, path: str, host_filter: str | None) -> list[str]:
-    """Sources whose root contains ``path`` (same user@host when given, per-source separator and
-    case rules - never the host's)."""
+    """Sources whose root contains ``path`` (per-source separator and case rules)."""
     out = []
     for key in _source_roots(repo, host_filter):
-        root = pathrules.source_root(key)
-        sep = pathrules.sep(key)
-        fold = not pathrules.case_sensitive(key)
-        npath, nroot = _norm(path, sep, fold), _norm(root, sep, fold)
-        if npath == nroot or npath.startswith(nroot + "/"):
+        if _under(path, pathrules.source_root(key), pathrules.sep(key),
+                  not pathrules.case_sensitive(key)):
             out.append(key)
     return out
 
 
 def _rel(path: str, root: str, sep: str, fold: bool) -> str:
     """Path relative to ``root``, '/'-separated ('' when equal). Case is PRESERVED in the result
-    - the pattern text must match kopia's case-sensitive matcher against real paths - while the
-    prefix match honours the source's case rules. _norm keeps length, so positions align."""
+    - kopia's matcher is case-sensitive against real paths - while the prefix match honours the
+    source's case rules. _norm keeps length, so positions align."""
     npath, nroot = _norm(path, sep, fold), _norm(root, sep, fold)
     if npath == nroot:
         return ""
@@ -91,16 +87,15 @@ def _pattern_for_shape(shape: str, rel: str, is_folder: bool, path: str) -> str 
         base = rel.rsplit("/", 1)[-1] if rel else ""
         if not base:
             return None
-        #: a folder NAME rule is directory-only ("Name/"). That matches the directory at
-        # ANY depth and prunes its whole subtree; "Name/**" would be rooted and silently miss a
-        # nested folder of the same name.
+        # A folder name rule is directory-only ("Name/"): it matches at any depth and prunes the
+        # subtree. "Name/**" would be rooted and miss nested folders.
         return base + "/" if is_folder else base
     if shape == "extension":
         if is_folder:
             return None
         base = rel.rsplit("/", 1)[-1] if rel else path.rsplit("/", 1)[-1]
         if "." not in base.lstrip("."):
-            return None  # no extension to key on
+            return None
         return "*." + base.rsplit(".", 1)[-1]
     if shape == "parent":
         if not rel or "/" not in rel:
@@ -110,11 +105,8 @@ def _pattern_for_shape(shape: str, rel: str, is_folder: bool, path: str) -> str 
 
 
 def _matches(pattern: str, rel: str, is_folder: bool) -> bool:
-    """Does the rule (anchored at the COVERED source's root) keep this selection out there?
-    A directory-only rule (trailing '/') matches the directory itself - the walk prunes it and
-    never descends - so it is probed with is_dir=True on the folder's own path. Every other
-    folder rule is probed through a synthetic child: ``x/**`` never matches ``x`` itself but
-    keeps everything under it out."""
+    """Does one rule, anchored at a source root, keep this selection out? A directory-only rule
+    matches the folder itself; other folder rules are probed through a synthetic child."""
     pat = compile_pattern(pattern)
     if pat.dir_only:
         return is_folder and pat.match("/" + (rel or ""), is_dir=True)
@@ -122,186 +114,244 @@ def _matches(pattern: str, rel: str, is_folder: bool) -> bool:
     return pat.match(probe, is_dir=False)
 
 
-def _already_kept_out(rules: list[str], rel: str, is_folder: bool) -> bool:
-    """Would the walk ALREADY keep this selection out there, given the owner's existing rules?
+@lru_cache(maxsize=20000)
+def _compiled(rule: str, base: str):
+    return compile_pattern(rule, base_dir=base)
 
-    Evaluated as an ORDERED list with kopia's ignorefs state machine (policypricing._machine:
-    rules apply in order, last match wins - a negated ``!x`` on its own matches nothing), never
-    rule-by-rule: an any() over compiled rules reads a lone negation as matching every other
-    file. A FILE is also kept out when an ancestor directory is pruned by a dir-only rule (a
-    file under ``node_modules/`` is excluded even though the rule never names the file)."""
-    if not rules or not rel:
+
+def _own_rules(defined: dict, key: str) -> list[str]:
+    return list(((defined.get(key) or {}).get("files") or {}).get("ignore") or [])
+
+
+def _root_rules(repo: str, source_key: str, defined: dict) -> tuple[str, str | None, list[str]]:
+    origin, owner = effective_ignore_origin(repo, source_key, defined)
+    if origin == "global":
+        return origin, owner, global_ignores(repo, defined)
+    if owner is None:
+        return origin, owner, []
+    return origin, owner, _own_rules(defined, owner)
+
+
+def _excluded_in(repo: str, source_key: str, rel: str, is_folder: bool, defined: dict) -> bool:
+    """Is ``rel`` (relative to the source root) kept out of this source's snapshots? The root
+    list, plus the rules of every path policy on a folder the walk passes through, evaluated in
+    kopia's order (parent context first, last match wins). A folder equal to the source root counts
+    as left out when its root rules leave out everything inside it."""
+    if not rel and not is_folder:
         return False
-    from ..index.policypricing import _machine  # lazy: index layer, same direction as resolve_targets
+    root = pathrules.source_root(source_key)
+    sep = pathrules.sep(source_key)
+    fold = not pathrules.case_sensitive(source_key)
+    user_host = source_key.split(":", 1)[0]
+    _origin, _owner, root_list = _root_rules(repo, source_key, defined)
 
-    compiled = [compile_pattern(r) for r in rules]
-    segs = rel.strip("/").split("/")
-    for i in range(1, len(segs)):  # proper ancestors only: the walk root itself is never matched
-        ignored, _who = _machine(compiled, "/" + "/".join(segs[:i]), is_dir=True)
-        if ignored:
+    segs = [s for s in rel.strip("/").split("/") if s]
+    nested: list[tuple[str, list]] = []   # (base "/a/b" in the path's own casing, compiled rules)
+    for key, pol in defined.items():
+        if ":" not in key or key.split(":", 1)[0] != user_host:
+            continue
+        rules = list(((pol or {}).get("files") or {}).get("ignore") or [])
+        if not rules:
+            continue
+        ppath = key.split(":", 1)[1]
+        if not _under(ppath, root, sep, fold, strict=True):
+            continue
+        prel = _rel(ppath, root, sep, fold)
+        depth = prel.count("/") + 1
+        # only policies on folders this path actually passes through
+        if _norm("/".join(segs[:depth]), "/", fold) != _norm(prel, "/", fold) or \
+                depth > len(segs) - (0 if is_folder else 1):
+            continue
+        base = "/" + "/".join(segs[:depth])
+        nested.append((base, [_compiled(r, base) for r in rules]))
+    nested.sort(key=lambda n: n[0].count("/"))
+    root_c = [_compiled(r, "") for r in root_list]
+
+    from ..index.policypricing import _machine  # lazy: index layer
+
+    def rules_in(dir_path: str) -> list:
+        out = list(root_c)
+        for base, comp in nested:
+            if dir_path == base or dir_path.startswith(base + "/"):
+                out.extend(comp)
+        return out
+
+    for i in range(1, len(segs)):  # proper ancestors: a pruned folder prunes everything under it
+        parent = "/" + "/".join(segs[:i - 1]) if i > 1 else ""
+        if _machine(rules_in(parent), "/" + "/".join(segs[:i]), True)[0]:
             return True
-    ignored, _who = _machine(compiled, "/" + rel, is_dir=is_folder)
-    return ignored
+    if not segs:  # the source root itself (a folder selection)
+        return _machine(rules_in(""), "/__kl_probe__", False)[0]
+    parent = "/" + "/".join(segs[:-1]) if len(segs) > 1 else ""
+    full = "/" + "/".join(segs)
+    if is_folder:
+        if _machine(rules_in(parent), full, True)[0]:
+            return True
+        return _machine(rules_in(full), full + "/__kl_probe__", False)[0]
+    return _machine(rules_in(parent), full, False)[0]
+
+
+def _target_label_kind(key: str) -> str:
+    if key == _GLOBAL_TARGET:
+        return "global"
+    if ":" not in key:
+        return "userhost"   # user@host or @host
+    return "path"
+
+
+def _evaluate(repo: str, path: str, covering: list[str], source: str | None, is_folder: bool,
+              shape: str, defined: dict) -> dict:
+    """Every target for one shape, with before/after coverage per covering source."""
+    info = []
+    for key in covering:
+        origin, owner, rules = _root_rules(repo, key, defined)
+        root = pathrules.source_root(key)
+        rel = _rel(path, root, pathrules.sep(key), not pathrules.case_sensitive(key))
+        info.append({"source": key, "root": root, "rel": rel, "origin": origin, "owner": owner,
+                     "rules": rules, "before": _excluded_in(repo, key, rel, is_folder, defined)})
+    anchor = next((i for i in info if i["source"] == source), info[0])
+
+    # candidates: owners (Smart), each covering source itself, and Global
+    cands: dict[str, dict] = {}
+    for i in info:
+        if i["origin"] == "none":
+            cands.setdefault(i["source"], {"role": "start"})
+        else:
+            owner = _GLOBAL_TARGET if i["origin"] == "global" else i["owner"]
+            cands.setdefault(owner, {"role": "owner"})
+    for i in info:
+        if i["source"] not in cands:
+            cands[i["source"]] = {"role": "child", "inherits_from": (
+                "global" if i["origin"] == "global" else i["owner"]), "inherited_rules": i["rules"]}
+    cands.setdefault(_GLOBAL_TARGET, {"role": "global"})
+
+    targets = []
+    for key, meta in cands.items():
+        kind = _target_label_kind(key)
+        if kind == "path":
+            troot = pathrules.source_root(key)
+            rel_t = _rel(path, troot, pathrules.sep(key), not pathrules.case_sensitive(key))
+            text_path = path.replace(pathrules.sep(key), "/")
+        else:   # global and host-level rules anchor at each inheriting source's root
+            rel_t = anchor["rel"]
+            text_path = path.replace(pathrules.sep(anchor["source"]), "/")
+        pattern = _pattern_for_shape(shape, rel_t, is_folder, text_path)
+        own = global_ignores(repo, defined) if key == _GLOBAL_TARGET else _own_rules(defined, key)
+        copied = list(meta.get("inherited_rules") or [])
+        covers = []
+        for i in info:
+            after = i["before"]
+            if pattern and not i["before"]:
+                new_list = (copied if meta["role"] == "child" else own) + [pattern]
+                after_defined = dict(defined)
+                after_defined[key] = {**(defined.get(key) or {}),
+                                      "files": {**((defined.get(key) or {}).get("files") or {}),
+                                                "ignore": new_list}}
+                after = _excluded_in(repo, i["source"], i["rel"], is_folder, after_defined)
+            covers.append({"source": i["source"], "root": i["root"], "rel_path": i["rel"],
+                           "matches": bool(pattern) and after, "already_excluded": i["before"]})
+        protects = sum(1 for c in covers if c["matches"] and not c["already_excluded"])
+        targets.append({
+            "target": "global" if key == _GLOBAL_TARGET else key,
+            "role": meta["role"],
+            "is_global": key == _GLOBAL_TARGET,
+            "existing_rule_count": len(own),
+            "will_create_policy": meta["role"] in ("start", "child") or (kind == "path" and key not in defined),
+            "inherits_from": meta.get("inherits_from"),
+            "inherited_rules": copied,
+            "uses_count": sum(1 for i in info if (_GLOBAL_TARGET if i["origin"] == "global" else i["owner"]) == key),
+            "pattern": pattern,
+            "pattern_anchored": bool(pattern) and pattern.startswith("/"),
+            "covers": covers,
+            "protects": protects,
+            "smart": meta["role"] in ("owner", "start") and protects > 0,
+            "impact": None,
+        })
+    return {"sources": info, "targets": targets}
+
+
+def _coverage(ev: dict) -> tuple[int, int]:
+    """(sources left out with the Smart picks applied, sources holding the path)."""
+    total = len(ev["sources"])
+    covered = 0
+    for idx, i in enumerate(ev["sources"]):
+        if i["before"] or any(t["smart"] and t["covers"][idx]["matches"] for t in ev["targets"]):
+            covered += 1
+    return covered, total
+
+
+_ROLE_ORDER = {"owner": 0, "start": 0, "global": 1, "child": 2}
+
+
+def path_status(repo: str, source: str, path: str, is_folder: bool = False) -> dict:
+    """Which rule list a source uses for ``path`` and whether any rule already leaves it out."""
+    from .policy import load_defined_policies
+
+    defined = load_defined_policies(repo).get("policies") or {}
+    origin, owner, rules = _root_rules(repo, source, defined)
+    root = pathrules.source_root(source)
+    sep, fold = pathrules.sep(source), not pathrules.case_sensitive(source)
+    if not _under(path, root, sep, fold):
+        raise TargetError(f"path {path!r} is not under source {source!r}")
+    rel = _rel(path, root, sep, fold)
+    return {"source": source, "origin": origin,
+            "owner": "global" if origin == "global" else owner,
+            "rule_count": len(rules), "excluded": _excluded_in(repo, source, rel, is_folder, defined)}
 
 
 def resolve_targets(repo: str, path: str, source: str | None = None,
                     is_folder: bool = False, shape: str = "exact",
-                    price: bool = False) -> dict:
-    """Owning policies for this path, deduped, with the sources each write covers, ranked
-    biggest-reach first. See the module docstring for the two reasons this is not "the sources
-    that contain the file".
-
-    ``price=False`` (default) keeps this a pure resolution call - zero index scans; the dialog
-    ranks by matched-covers count, which the inheritance/matcher walk yields for free. Impact
-    pricing is opt-in (small scopes only - the global target prices one pattern per covering
-    source)."""
+                    price: bool = False, suggest: bool = False) -> dict:
+    """Targets for this path, Smart picks first. ``suggest`` also returns ``smart_shape``: the
+    shape whose Smart picks keep the path out of the most sources (exact on a tie). ``price`` adds
+    per-target impact for the matching covers (small scopes only)."""
     from ..index import policypricing  # local import: keeps the index layer out of import time
-    from .policy import global_ignores, load_defined_policies
+    from .policy import load_defined_policies
 
     if not path or not path.strip():
         raise TargetError("path is required")
+    if shape not in _SHAPES:
+        raise TargetError(f"unknown shape {shape!r} (expected one of {_SHAPES})")
     defined = load_defined_policies(repo).get("policies") or {}
     host = source.split(":", 1)[0] if source else None
     covering = _covering_sources(repo, path, host)
     if not covering:
         return {"repo": repo, "path": path, "shape": shape, "sources": [], "targets": [],
-                "note": "no configured source contains this path",
-                "ranked_by": "sources-covered"}
+                "note": "no configured source contains this path", "smart_shape": None}
 
-    # Resolve every covering source to the policy that OWNS its ignore rules.
-    owners: dict[str, list[str]] = {}   # owner target -> covering sources it speaks for
-    none_sources: list[str] = []
-    source_info: list[dict] = []
-    for key in covering:
-        origin, owner = effective_ignore_origin(repo, key, defined)
-        source_info.append({"source": key, "root": pathrules.source_root(key),
-                            "origin": origin, "owner": owner})
-        if origin == "none":
-            none_sources.append(key)      # nothing to shadow: the source itself is the target
-        else:
-            owners.setdefault(owner, []).append(key)
+    ev = _evaluate(repo, path, covering, source, is_folder, shape, defined)
 
-    # A "none" source owns nothing yet - its own (to-be-created) list is its target.
-    for key in none_sources:
-        owners.setdefault(key, []).append(key)
+    smart_shape = None
+    if suggest:
+        best = (_coverage(ev)[0], shape)
+        for alt in ("exact", "name"):
+            if alt == shape:
+                continue
+            alt_ev = _evaluate(repo, path, covering, source, is_folder, alt, defined)
+            got = _coverage(alt_ev)[0]
+            if got > best[0] or (got == best[0] and alt == "exact" and best[1] != "exact"):
+                best = (got, alt)
+        smart_shape = best[1]
 
-    targets: list[dict] = []
-    for owner, keys in owners.items():
-        is_global = owner == _GLOBAL_TARGET
-        target_root = None if is_global else pathrules.source_root(owner)
-        fold = False if is_global else not pathrules.case_sensitive(owner)
-        sep = "\\" if is_global else pathrules.sep(owner)
-        if is_global:
-            # A global anchored rule re-anchors to EVERY covered source's root, so the pattern
-            # text is framed relative to one covered source - the one the dialog opened from
-            # when it is among the covers, else the first. It then matches wherever that same
-            # relative path exists under any global-inheriting source.
-            anchor = source if source in keys else sorted(keys)[0]
-            rel_t = _rel(path, pathrules.source_root(anchor), pathrules.sep(anchor),
-                         not pathrules.case_sensitive(anchor))
-        else:
-            rel_t = _rel(path, target_root, sep, fold)
-        pattern = _pattern_for_shape(shape, rel_t, is_folder, path.replace(sep, "/"))
-        if is_global:
-            existing = global_ignores(repo, defined)
-        else:
-            dp = defined.get(owner) or {}
-            existing = list((dp.get("files") or {}).get("ignore") or [])
-
-        covers = []
-        for key in sorted(keys):
-            sroot = pathrules.source_root(key)
-            ssep = pathrules.sep(key)
-            sfold = not pathrules.case_sensitive(key)
-            rel_s = _rel(path, sroot, ssep, sfold)
-            matches = bool(pattern) and _matches(pattern, rel_s, is_folder)
-            #: the write is pointless where the owner's EXISTING rules already keep this
-            # selection out there (ordered-list evaluation - see _already_kept_out).
-            already = _already_kept_out(existing, rel_s, is_folder)
-            covers.append({"source": key, "root": sroot, "rel_path": rel_s.replace(ssep, "/"),
-                           "matches": matches, "already_excluded": already})
-
-        impact = None
-        if price and pattern:
-            by_source = []
-            files_total = bytes_total = 0
-            for cover in covers:
-                if not cover["matches"]:
+    if price:
+        for t in ev["targets"]:
+            if not t["pattern"]:
+                continue
+            by_source, files_total, bytes_total = [], 0, 0
+            for cover in t["covers"]:
+                if not cover["matches"] or cover["already_excluded"]:
                     continue
-                out = policypricing.price_patterns(repo, cover["source"], [pattern], limit=0)
-                res = out["results"][0]
+                res = policypricing.price_patterns(repo, cover["source"], [t["pattern"]], limit=0)["results"][0]
                 if res["error"]:
                     continue
-                by_source.append({"source": cover["source"], "files": res["files"],
-                                  "bytes": res["bytes"]})
+                by_source.append({"source": cover["source"], "files": res["files"], "bytes": res["bytes"]})
                 files_total += res["files"]
                 bytes_total += res["bytes"]
-            impact = {"files": files_total, "bytes": bytes_total, "by_source": by_source}
+            t["impact"] = {"files": files_total, "bytes": bytes_total, "by_source": by_source}
 
-        note = None
-        if owner in none_sources:
-            note = ("this source has no ignore rules of its own and inherits none - saving here "
-                    "creates its first rule list, which shadows nothing")
-        elif is_global:
-            note = (f"the global policy owns the rules of {len(keys)} covering source(s); "
-                    "sources with their own lists are NOT affected by this write. A global rule "
-                    "reaches every source that inherits it - at the same relative path it also "
-                    "keeps out files you did not select, so check the price before writing.")
-
-        targets.append({
-            "target": "global" if is_global else owner,
-            "is_global": is_global,
-            "target_root": target_root,
-            "existing_rule_count": len(existing),
-            "will_create_policy": owner in none_sources,
-            "pattern": pattern,
-            "pattern_anchored": bool(pattern) and pattern.startswith("/"),
-            "covers": covers,
-            # how many covers this write would NEWLY protect (matched and not already excluded)
-            "protects": sum(1 for c in covers if c["matches"] and not c["already_excluded"]),
-            "impact": impact,
-            "note": note,
-        })
-
-    # escape hatches: covering sources that INHERIT their rules are never normal targets,
-    # but the dialog may still offer them (collapsed, warned) - writing there starts the source's
-    # own list, which REPLACES everything it inherits. Each entry carries the rules that would be
-    # shadowed so the frontend can offer to copy them down with the new rule.
-    escape_hatches: list[dict] = []
-    for info in source_info:
-        if info["origin"] not in ("inherited", "global"):
-            continue
-        key = info["source"]
-        sroot = pathrules.source_root(key)
-        ssep = pathrules.sep(key)
-        sfold = not pathrules.case_sensitive(key)
-        rel_s = _rel(path, sroot, ssep, sfold)
-        pattern_s = _pattern_for_shape(shape, rel_s, is_folder, path.replace(ssep, "/"))
-        shadowed = (global_ignores(repo, defined) if info["origin"] == "global"
-                    else list(((defined.get(info["owner"]) or {}).get("files") or {}).get("ignore") or []))
-        escape_hatches.append({
-            "target": key,
-            "root": sroot,
-            "pattern": pattern_s,
-            "pattern_anchored": bool(pattern_s) and pattern_s.startswith("/"),
-            "inherits_from": info["owner"],
-            "inherited_rules": shadowed,
-            "note": (f"writing here starts this source's own rule list and REPLACES the "
-                     f"{len(shadowed)} rule(s) it inherits from "
-                     f"{'the global policy' if info['origin'] == 'global' else info['owner']}"),
-        })
-    escape_hatches.sort(key=lambda h: h["target"])
-
-    # Ranked by REACH: matched covers first (a pattern that genuinely keeps the file out of more
-    # sources), then total covers, then the target key. When impact pricing is on, bytes break
-    # ties within the same reach.
-    def _rank(t: dict) -> tuple:
-        covers = t["covers"]
-        matched = sum(1 for c in covers if c["matches"])
-        byts = t["impact"]["bytes"] if t["impact"] else 0
-        return (-matched, -len(covers), -byts, t["target"])
-
-    targets.sort(key=_rank)
-    return {"repo": repo, "path": path, "shape": shape, "sources": source_info,
-            "targets": targets, "escape_hatches": escape_hatches,
-            "ranked_by": "sources-covered"}
+    ev["targets"].sort(key=lambda t: (not t["smart"], _ROLE_ORDER[t["role"]], -t["protects"],
+                                      -len(t["covers"]), t["target"]))
+    sources = [{"source": i["source"], "root": i["root"], "origin": i["origin"], "owner": i["owner"],
+                "already_excluded": i["before"]} for i in ev["sources"]]
+    return {"repo": repo, "path": path, "shape": shape, "sources": sources,
+            "targets": ev["targets"], "smart_shape": smart_shape}

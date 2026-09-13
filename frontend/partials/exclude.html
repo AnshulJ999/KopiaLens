@@ -1,122 +1,103 @@
 
-    <!-- exclusion dialog: stacks over the detail modal (z-50 above its z-40), under the
-         shared confirm (z-60). Target and pattern always shown together; every write is priced
-         against the index before anything is committed. -->
+    <!-- Exclusion dialog: stacks over the detail modal (z-50 above its z-40), under the shared
+         confirm (z-60). Every write is priced against the index before Exclude is enabled. -->
     <div x-show="showExclude" @click.self="showExclude=false" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
       <template x-if="exDialog">
         <div class="w-[46rem] max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
           <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
             <div class="flex items-center gap-2">
-              <div class="font-medium">Stop backing this up</div>
+              <div class="font-medium" x-text="exDialog.mode === 'delete' ? 'Exclude & delete' : 'Exclude'"></div>
               <button @click="showExclude=false" class="ml-auto kl-btn quiet" title="Close">&times;</button>
             </div>
             <div class="kl-note mt-0.5 break-all font-mono" x-text="exDialog.path"></div>
           </div>
 
-          <div class="flex-1 min-h-0 overflow-auto p-4 space-y-3">
-            <!-- scope: the smart default derived from ownership, not a blind tick-all -->
+          <div class="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+            <!-- match type -->
             <div>
-              <div class="flex items-center gap-2 mb-1">
-                <div class="text-xs font-medium">Where should the rule go?</div>
-                <span class="kl-seg" style="height:22px">
-                  <span :class="exDialog.reach === 'everywhere' ? 'on' : ''" @click="exSetReach('everywhere')" title="Tick every policy that would newly protect a source holding this path">Everywhere</span>
-                  <span :class="exDialog.reach === 'max' ? 'on' : ''" @click="exSetReach('max')" title="Tick only the single widest-reaching policy">Top policy only</span>
-                </span>
-                <span class="kl-note" style="font-weight:400">only policies that own their rules - an inheriting policy is never written</span>
-              </div>
-              <div class="kl-note mb-1" x-show="exDialog.loading">resolving owning policies…</div>
-              <div class="kl-callout mb-1" x-show="exDialog.targetData && exDialog.targetData.error" x-text="exDialog.targetData ? exDialog.targetData.error : ''"></div>
-              <div class="kl-note mb-1" x-show="!exDialog.loading && exDialog.targetData && !exTargets().length && !exDialog.targetData.error"
-                   x-text="(exDialog.targetData && exDialog.targetData.note) || 'No owning policy can receive a rule for this path.'"></div>
-              <div class="space-y-1">
-                <template x-for="t in exTargets()" :key="t.target">
-                  <div class="w-full rounded border px-2 py-1.5 flex items-center gap-2 cursor-pointer"
-                       :class="exDialog.ticked[t.target] ? 'border-fg bg-sel' : 'border-bd-soft hover:bg-head'"
-                       @click="exToggleTarget(t)">
-                    <input type="checkbox" :checked="!!exDialog.ticked[t.target]" class="shrink-0" tabindex="-1">
-                    <span class="kl-note shrink-0" style="width:9rem" x-text="t.is_global ? 'Global policy' : shortSource(t.target)"></span>
-                    <span class="text-[11px] shrink-0" style="color:var(--muted)" x-text="exCoversText(t)"></span>
-                    <span class="font-mono text-[11px] break-all grow" x-text="exPatternOf(t) || (exDialog.shape === 'custom' ? '(write a pattern below)' : '(no pattern for this shape)')"></span>
-                    <span class="pill warn shrink-0" x-show="t.will_create_policy">creates list</span>
-                    <span class="pill shrink-0" x-show="exDialog.shape !== 'custom' && t.pattern && !(t.protects > 0)" style="color:var(--muted)">already excluded</span>
-                    <span class="pill ok shrink-0" x-show="t.is_global">wide reach</span>
-                  </div>
-                </template>
-              </div>
-              <div class="kl-note mt-1" x-show="exSelectedTarget() && exSelectedTarget().note" x-text="exSelectedTarget() ? exSelectedTarget().note : ''"></div>
-              <div class="kl-callout mt-1" x-show="exHasHatches()">
-                A Global rule reaches every source that inherits it - at the same relative path it also keeps out files you did not select. The price above is the honest number.
-              </div>
-            </div>
-
-            <!-- escape hatch: inheritors, collapsed and warned - never a default -->
-            <details class="rounded border border-bd-soft p-2" x-show="exHasHatches()">
-              <summary class="text-xs font-medium cursor-pointer select-none" style="color:var(--muted)">Advanced: write into a policy that currently inherits its rules</summary>
-              <div class="space-y-1 mt-2">
-                <template x-for="h in exHatches()" :key="h.target">
-                  <div x-show="exPatternOf(h)">
-                    <div class="rounded border px-2 py-1.5 flex items-center gap-2 cursor-pointer"
-                         :class="exDialog.hatched[h.target] ? 'border-fg bg-sel' : 'border-bd-soft hover:bg-head'"
-                         @click="exToggleHatch(h)">
-                      <input type="checkbox" :checked="!!exDialog.hatched[h.target]" class="shrink-0" tabindex="-1">
-                      <span class="kl-note shrink-0" style="width:9rem" x-text="shortSource(h.target)"></span>
-                      <span class="font-mono text-[11px] break-all grow" x-text="exPatternOf(h)"></span>
-                      <span class="pill warn shrink-0">replaces inherited rules</span>
-                    </div>
-                    <div class="kl-note mt-0.5 ml-6" x-show="exDialog.hatched[h.target]" x-text="h.note"></div>
-                    <label class="kl-note mt-0.5 ml-6 flex items-center gap-1" x-show="exDialog.hatched[h.target] && (h.inherited_rules || []).length">
-                      <input type="checkbox" :checked="exDialog.copyDown[h.target]" @click.stop.prevent="exToggleCopyDown(h)">
-                      copy the inherited rules down first (recommended - nothing is lost)
-                    </label>
-                  </div>
-                </template>
-              </div>
-            </details>
-
-            <!-- pattern shape: the endpoint recomputes each target's pattern per shape -->
-            <div>
-              <div class="text-xs font-medium mb-1">What should it match?</div>
+              <div class="text-xs font-medium mb-1">Match by</div>
               <span class="kl-seg">
                 <span :class="exDialog.shape === 'exact' ? 'on' : ''" @click="exSelectShape('exact')">Exact path</span>
                 <span :class="exDialog.shape === 'name' ? 'on' : ''" @click="exSelectShape('name')">Name</span>
                 <span x-show="exDialog.kind === 'file'" :class="exDialog.shape === 'extension' ? 'on' : ''" @click="exSelectShape('extension')">Extension</span>
-                <span :class="exDialog.shape === 'parent' ? 'on' : ''" @click="exSelectShape('parent')">Parent</span>
+                <span :class="exDialog.shape === 'parent' ? 'on' : ''" @click="exSelectShape('parent')">Parent folder</span>
                 <span :class="exDialog.shape === 'custom' ? 'on' : ''" @click="exSelectShape('custom')">Custom</span>
               </span>
+              <div class="kl-note mt-1" x-show="exShapeLabel()" x-text="exShapeLabel()"></div>
               <template x-if="exDialog.shape === 'custom'">
                 <div class="mt-2">
                   <input x-model="exDialog.custom" @input="exCustomInput()" @keydown.enter="exConfirm()"
                          class="fld w-full border border-bd bg-surface2 font-mono text-xs" placeholder="kopia ignore pattern, e.g. /Users/*/Cache/**">
-                  <div class="kl-note mt-1">The same text is written to every selected policy. An anchored pattern (leading /) starts from each policy's own root.</div>
+                  <div class="kl-note mt-1">Written as-is to every ticked policy. A leading / starts from each backup's own folder.</div>
                 </div>
               </template>
             </div>
-            <div class="kl-callout" x-show="exDialog.target === 'global'">
-              A rule at Global reaches every source that inherits it. Bare patterns match at any depth; anchored ones (leading /) re-anchor to each source's own root.
+
+            <!-- where the rule goes -->
+            <div>
+              <div class="flex items-center gap-2 mb-1">
+                <div class="text-xs font-medium">Where the rule goes</div>
+                <span class="kl-seg ml-auto" style="height:22px">
+                  <span :class="exDialog.reach === 'smart' ? 'on' : ''" @click="exSetReach('smart')">Smart</span>
+                  <span :class="exDialog.reach === 'manual' ? 'on' : ''" @click="exSetReach('manual')">Choose myself</span>
+                </span>
+              </div>
+              <div class="kl-note mb-1" x-show="exDialog.loading">Reading policies…</div>
+              <div class="kl-callout mb-1" x-show="exDialog.targetData && exDialog.targetData.error" x-text="exDialog.targetData ? exDialog.targetData.error : ''"></div>
+              <div class="kl-note mb-1" x-show="!exDialog.loading && exDialog.targetData && !exTargets().length && !exDialog.targetData.error">No backup holds this path.</div>
+              <div class="space-y-1">
+                <template x-for="t in exTargets()" :key="t.target">
+                  <div class="rounded border px-2 py-1.5"
+                       :class="exDialog.ticked[t.target] ? 'border-fg bg-sel' : 'border-bd-soft'">
+                    <div class="flex items-start gap-2 cursor-pointer" @click="exToggleTarget(t)"
+                         :class="exPatternOf(t) ? '' : 'opacity-50 cursor-default'">
+                      <input type="checkbox" :checked="!!exDialog.ticked[t.target]" class="shrink-0 mt-0.5" tabindex="-1">
+                      <div class="min-w-0 grow">
+                        <div class="flex items-center gap-2">
+                          <span class="font-medium text-xs break-all" x-text="exLabel(t.target)"></span>
+                          <span class="pill ok shrink-0" x-show="t.smart">Smart pick</span>
+                          <span class="pill shrink-0" x-show="exPatternOf(t) && exDialog.shape !== 'custom' && exAlreadyOut(t)">already excluded</span>
+                        </div>
+                        <div class="kl-note" x-text="exWhy(t)"></div>
+                        <div class="font-mono text-[11px] break-all" style="color:var(--muted)" x-show="exPatternOf(t)" x-text="exPatternOf(t)"></div>
+                      </div>
+                    </div>
+                    <template x-if="t.role === 'child' && exDialog.ticked[t.target]">
+                      <div class="ml-6 mt-1.5 pt-1.5 border-t border-dashed border-bd space-y-1">
+                        <label class="flex items-start gap-2 text-xs cursor-pointer">
+                          <input type="checkbox" class="mt-0.5" :checked="exCopies(t)" @change="exToggleCopyDown(t)">
+                          <span>
+                            <span class="font-medium" x-text="'Keep the ' + exRuleWord((t.inherited_rules || []).length) + ' it gets from ' + exLabel(t.inherits_from || 'global')"></span>
+                            <span class="kl-note block">They're copied into this policy with the new rule. Later changes there won't reach it.</span>
+                          </span>
+                        </label>
+                        <div class="kl-callout" x-show="!exCopies(t)"
+                             x-text="exLabel(t.target) + ' stops using ' + exRuleWord((t.inherited_rules || []).length) + ' from ' + exLabel(t.inherits_from || 'global') + '. Files those rules leave out start being backed up again.'"></div>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+              <div class="kl-note mt-2 font-medium" style="color:var(--fg)" x-show="exCoverageText()" x-text="exCoverageText()"></div>
             </div>
 
             <!-- price -->
             <div class="rounded border border-bd bg-surface2 p-2">
               <div class="flex items-center gap-2">
-                <span class="text-xs font-medium">Keeps out</span>
+                <span class="text-xs font-medium">Leaves out</span>
                 <span class="text-xs" x-show="exDialog.pricing" style="color:var(--muted)">checking the index…</span>
                 <span class="text-xs font-medium" x-show="!exDialog.pricing && exKeepoutText()" x-text="exKeepoutText()"></span>
                 <span class="text-xs" style="color:var(--muted)"
-                      x-show="!exDialog.pricing && !exKeepoutText() && !exPriceNote()" x-text="exEmptyText() || 'checking once the pattern is set'"></span>
+                      x-show="!exDialog.pricing && !exKeepoutText() && !exPriceNote()" x-text="exEmptyText()"></span>
                 <span class="grow"></span>
-                <button class="kl-btn quiet" style="height:22px" @click="exPriceAll()" :disabled="exDialog.pricing">Re-check</button>
+                <button class="kl-btn quiet" style="height:22px" @click="exPriceAll()" :disabled="exDialog.pricing">Check again</button>
               </div>
               <div class="kl-note mt-1" x-show="!exDialog.pricing && exPriceNote()" x-text="exPriceNote()"></div>
-              <div class="kl-note mt-1" x-show="exDialog.price && exDialog.price.capped">
-                The preview is capped - open the full set in Search before deciding if it looks wrong.
-              </div>
-              <div class="kl-note mt-1 font-medium" x-show="exCoverageText()" x-text="exCoverageText()"></div>
             </div>
 
-            <!-- preview: the matched set, biggest first -->
             <template x-if="exMatches().length">
               <div>
-                <div class="text-xs font-medium mb-1">Matched files <span style="color:var(--muted);font-weight:400" x-text="'(biggest first)'"></span></div>
+                <div class="text-xs font-medium mb-1">Matched files</div>
                 <div class="kl-list" style="max-height:180px">
                   <template x-for="(m, i) in exMatches()" :key="i">
                     <div class="li">
@@ -127,25 +108,19 @@
                 </div>
                 <div class="kl-listfoot" x-show="exPreviewCap()">
                   <span x-text="exPreviewCap()"></span> ·
-                  <button class="underline" style="color:var(--link)" @click="exToSearch()">see the full set in Search</button>
+                  <button class="underline" style="color:var(--link)" @click="exToSearch()">Open in Search</button>
                 </div>
               </div>
             </template>
 
-            <!-- the plan, numbered; step 3 greyed so nobody expects space back immediately -->
-            <div class="kl-note" x-show="exDialog.mode === 'delete'">
-              <div class="text-xs font-medium mb-1" style="color:var(--fg)">The plan</div>
-              <div>1. Exclude the pattern (written into every selected policy, backup taken first)</div>
-              <div>2. Remove the existing copies everywhere they live - the standard delete flow opens with its dry run</div>
-              <div style="color:var(--faint)">3. Space frees on the next full maintenance run</div>
-            </div>
+            <div class="kl-note" x-show="exDialog.mode === 'delete'">After the rule is added, the delete flow opens for what's already backed up.</div>
           </div>
 
           <div class="kl-footer shrink-0">
-            <span class="kl-note">Priced against the index before anything is written.</span>
+            <span class="kl-note">A policy backup is taken first.</span>
             <span class="spacer"></span>
             <button class="kl-btn" @click="showExclude=false">Cancel</button>
-            <button class="kl-btn" x-show="exDialog.mode === 'exclude'" @click="exConfirm()"
+            <button class="kl-btn primary" x-show="exDialog.mode === 'exclude'" @click="exConfirm()"
                     :disabled="exDialog.pricing || !exPriceReady()">Exclude…</button>
             <button class="kl-btn danger" x-show="exDialog.mode === 'delete'" @click="exConfirm()"
                     :disabled="exDialog.pricing || !exPriceReady()">Exclude and delete…</button>

@@ -92,3 +92,17 @@ def test_limit_truncates_each_view():
     v = build_views(rows, limit=5)
     assert len(v["by_source"]) == 5
     assert v["by_source"][0]["bytes"] == 19  # biggest first
+
+
+def test_cached_folder_window_sums_the_subtree_and_never_computes(monkeypatch):
+    import app.index.churnview as cv
+    rows = [{"folder": f"H:{SEP}Claude-Code", "bytes": 10, "files": 1, "versions": 1},
+            {"folder": f"H:{SEP}Claude-Code{SEP}Archive", "bytes": 500, "files": 5, "versions": 6},
+            {"folder": f"H:{SEP}Claude-Code-Other", "bytes": 999, "files": 9, "versions": 9}]
+    monkeypatch.setattr(cv, "_index_hash", lambda repo: "s")
+    monkeypatch.setattr(cv, "_cache_get", lambda ck, stamp: {"by_folder": rows})
+    assert cv.cached_folder_window("1", f"H:{SEP}Claude-Code") == {"bytes": 510, "files": 6, "versions": 7, "days": 30}
+    assert cv.cached_folder_window("1", f"H:{SEP}Nope") is None
+    assert cv.cached_folder_window("1", SEP.join(["H:", "a", "b", "c", "d"])) is None   # deeper than the rollup
+    monkeypatch.setattr(cv, "_cache_get", lambda ck, stamp: None)
+    assert cv.cached_folder_window("1", f"H:{SEP}Claude-Code") is None

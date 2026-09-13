@@ -84,7 +84,7 @@ def _pricing_scope(repo: str, target: str) -> list[str]:
     if _is_global(target):
         return [key for key in _source_keys(repo)
                 if effective_ignore_origin(repo, key, defined)[0] == "global"]
-    out = [target]
+    out = [target] if ":" in target else []   # a user@host or @host policy is not a source
     for key in _source_keys(repo):
         origin, owner = effective_ignore_origin(repo, key, defined)
         if origin == "inherited" and owner == target:
@@ -183,6 +183,7 @@ class TargetsBody(BaseModel):
     shape: str = "exact"          # exact | name | extension | parent
     price: bool = False           # opt-in impact pricing; the dialog ranks by covers count
     refresh: bool = False         # re-export policies first (the dialog's first load)
+    suggest: bool = False         # also return smart_shape
 
 
 # ---- read half -------------------------------------------------------------------------
@@ -320,12 +321,23 @@ def stored_prices(repo: str = "1", target: str = "") -> dict:
     return out
 
 
+@router.get("/policies/path-status")
+def path_status(repo: str = "1", source: str = "", path: str = "", is_folder: bool = False) -> dict:
+    """The rule list a source uses for one path, and whether a rule already leaves it out."""
+    _kopia_repo(repo)
+    if not source or not path:
+        raise HTTPException(status_code=400, detail="source and path are required")
+    try:
+        return policytargets.path_status(repo, source, path, is_folder=is_folder)
+    except TargetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/policies/exclusion-targets")
 def exclusion_targets(body: TargetsBody) -> dict:
-    """Owning policies that can receive an exclusion for ``path`` (Option A: a source whose
-    rules are inherited is never offered - its owner is), deduped, ranked by reach (matched
-    covers first). ``price: false`` (default) keeps this a pure resolution call - zero index
-    scans; impact pricing is opt-in and small-scope."""
+    """Policies that can receive an exclusion for ``path``, Smart picks first, each with its
+    before/after coverage per source. ``price: false`` (default) keeps this a pure resolution
+    call - zero index scans; impact pricing is opt-in and small-scope."""
     _kopia_repo(body.repo)
     if body.refresh:
         # Policies changed outside KopiaLens are invisible to a cached export.
@@ -333,7 +345,7 @@ def exclusion_targets(body: TargetsBody) -> dict:
     try:
         return policytargets.resolve_targets(
             body.repo, body.path, source=body.source,
-            is_folder=body.is_folder, shape=body.shape, price=body.price)
+            is_folder=body.is_folder, shape=body.shape, price=body.price, suggest=body.suggest)
     except TargetError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

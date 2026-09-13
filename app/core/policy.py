@@ -407,6 +407,12 @@ def effective_ignore_origin(repo: str, source_key: str, defined: dict | None = N
             got = _rules(prefix)
             if got:
                 return "inherited", prefix
+    # kopia's chain continues with the user@host policy, then the host policy, then global.
+    if sep:
+        host = user_host.partition("@")[2]
+        for level in (user_host, f"@{host}" if host else ""):
+            if level and _rules(level):
+                return "inherited", level
     if global_ignores(repo, defined):
         return "global", _GLOBAL_TARGET
     return "none", None

@@ -7,13 +7,105 @@
    active layout/tab exists in the DOM (the panel holds no Tabulator tables, so rebuilds
    are safe). Dry states are initialised with their object, so x-show can deref freely. #}
 
+{%- macro history_rows(fn) -%}
+<div class="kl-sec">
+  <div class="h">Backup history</div>
+  <div class="kl-list" style="max-height:none">
+    <template x-for="(row, i) in {{ fn }}" :key="i">
+      <div class="li"><span style="color:var(--muted);width:128px;flex:none" x-text="row[0]"></span><span class="grow break-all" x-text="row[1]"></span></div>
+    </template>
+  </div>
+</div>
+{%- endmacro -%}
+
+{%- macro version_strip() -%}
+<div class="kl-sec" x-show="(detail.versions || []).length > 1">
+  <div class="h">Size per version <span class="count" x-text="(detail.versions.length > 200 ? 'newest 200' : detail.versions.length + ' versions') + ', oldest to newest'"></span></div>
+  <div class="flex items-end gap-px overflow-hidden" style="height:44px;border-bottom:1px solid var(--bd)">
+    <template x-for="(b, i) in versionBars()" :key="i">
+      <div class="flex-1" style="min-width:2px" :style="'height:' + b.h + '%;background:' + (b.last ? 'var(--accent)' : 'var(--faint)')" :title="b.tip"></div>
+    </template>
+  </div>
+</div>
+{%- endmacro -%}
+
+{%- macro folder_types() -%}
+<div class="kl-sec" x-show="(detail.file_types || []).length">
+  <div class="h">File types</div>
+  <div class="kl-list">
+    <template x-for="(ft, i) in (detail.file_types || [])" :key="i">
+      <div class="li">
+        <span class="font-mono trunc grow" x-text="ft.ext === null ? 'other' : (ft.ext ? '.' + ft.ext : 'no extension')"></span>
+        <span class="num" style="color:var(--muted)" x-text="fmtPhys(ft.physical) + ' · ' + Number(ft.files || 0).toLocaleString() + ' files'"></span>
+      </div>
+    </template>
+  </div>
+</div>
+{%- endmacro -%}
+
+{%- macro folder_listing() -%}
+<div class="kl-sec">
+  <div class="h">Inside this folder
+    <span class="count" x-show="detail.contents" x-text="(detail.contents || []).filter((r) => r.is_folder).length + ' folders · ' + (detail.contents || []).filter((r) => !r.is_folder).length + ' files'"></span>
+    <span class="acts">
+      <span class="kl-seg">
+        <span :class="detail.contentsSort !== 'largest' ? 'on' : ''" @click="detail.contentsSort = 'folders'">Folders first</span>
+        <span :class="detail.contentsSort === 'largest' ? 'on' : ''" @click="detail.contentsSort = 'largest'">Largest first</span>
+      </span>
+    </span>
+  </div>
+  <div class="kl-note" x-show="detail.contentsLoading">Loading…</div>
+  <div class="kl-callout" x-show="detail.contentsError" x-text="detail.contentsError"></div>
+  <div class="overflow-x-auto rounded border" style="border-color:var(--bd-soft)" x-show="detail.contents">
+    <table class="w-full text-xs">
+      <thead>
+        <tr style="color:var(--muted)">
+          <th class="text-left font-medium px-2 py-1">Name</th>
+          <th class="text-right font-medium px-2 py-1">Size</th>
+          <th class="text-right font-medium px-2 py-1">Files</th>
+          <th class="text-right font-medium px-2 py-1">Versions</th>
+          <th class="text-left font-medium px-2 py-1">Last backed up</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="r in folderContentRows()" :key="r.child">
+          <tr class="cursor-pointer hover:bg-head border-t" style="border-color:var(--bd-soft)" @click="folderOpenChild(r)">
+            <td class="px-2 py-1 font-mono break-all">
+              <span x-text="r.child + (r.is_folder ? '\\' : '')"></span>
+              <span class="pill" x-show="!r.is_folder && r.deleted_files">deleted from disk</span>
+            </td>
+            <td class="px-2 py-1 text-right num" x-text="fmtPhys(r.physical)"></td>
+            <td class="px-2 py-1 text-right num" x-text="Number(r.files || 0).toLocaleString()"></td>
+            <td class="px-2 py-1 text-right num" x-text="Number(r.versions || 0).toLocaleString()"></td>
+            <td class="px-2 py-1 whitespace-nowrap" x-text="r.last_seen ? humanTime(r.last_seen) : '—'"></td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+  <div class="kl-note" x-show="detail.contents && detail.contents.length >= 500">Showing the first 500.</div>
+</div>
+{%- endmacro -%}
+
+{%- macro panel_actions(kind) -%}
+{%- if kind == 'file' -%}
+<button class="kl-btn" @click="openExclude({kind: 'file', path: detail.title, source: detail.source}, 'exclude')">Exclude…</button>
+<button class="kl-btn danger" @click="panelDeleteFile()">Delete…</button>
+<button class="kl-btn danger" @click="openExclude({kind: 'file', path: detail.title, source: detail.source}, 'delete')">Exclude &amp; delete…</button>
+{%- else -%}
+<button class="kl-btn" @click="openExclude({kind: 'folder', path: detail.title, source: detail.source}, 'exclude')">Exclude…</button>
+<button class="kl-btn danger" @click="folderDeleteFromPanel()">Delete folder…</button>
+<button class="kl-btn danger" @click="openExclude({kind: 'folder', path: detail.title, source: detail.source}, 'delete')">Exclude &amp; delete…</button>
+{%- endif -%}
+{%- endmacro -%}
+
 {%- macro file_cards() -%}
 <div class="space-y-2">
 <div class="kl-cards">
   <div class="kl-card"><div class="k">Logical</div><div class="v" x-text="detail.loading ? '…' : fmtB(detail.logical)"></div></div>
   <div class="kl-card"><div class="k">Physical (packed)</div><div class="v" x-text="detail.loading ? '…' : fmtPhys(detail.physical)"></div></div>
   <div class="kl-card"><div class="k">Frees on its own</div><div class="v" x-text="detail.loading ? '…' : fmtPhys(detail.freeable)"></div></div>
-  <div class="kl-card good"><div class="k">All versions</div><div class="v" x-text="detail.loading ? '…' : fmtPhys(detail.physical_all)"></div></div>
+  <div class="kl-card good"><div class="k" x-text="'All versions (' + (detail.versions || []).length + ')'"></div><div class="v" x-text="detail.loading ? '…' : fmtPhys(detail.physical_all)"></div></div>
 </div>
 <div class="kl-note" x-show="detail.instances > 1">
   This content sits at <span x-text="detail.instances"></span> path(s) across <span x-text="detail.locations"></span> source(s) - the copies keep it alive, so this path alone frees ~0.
@@ -123,7 +215,7 @@
 {%- endmacro -%}
 
 {%- macro file_remove() -%}
-<div class="kl-sec">
+<div class="kl-sec" id="kl-file-remove">
   <div class="h">Remove from all snapshots <span class="count">keeps the snapshots</span></div>
   <div class="kl-note">Strips this file from every snapshot that carries it. Everything else in those snapshots is untouched.</div>
   <div class="flex flex-wrap items-center gap-2">
@@ -289,14 +381,7 @@
 <div class="kl-note" style="font-size:12.5px;color:var(--fg)" x-show="detail.instances <= 1">
   Removing every snapshot carrying this file frees <b style="color:var(--ok)" x-text="fmtPhys(detail.freeable)"></b>; the packed footprint across all versions is <span x-text="fmtPhys(detail.physical_all)"></span>.
 </div>
-<div class="kl-sec">
-  <div class="h">What you can do</div>
-  <div class="kl-list" style="max-height:none">
-    <div class="li"><span class="grow">Remove this file from all snapshots</span><span class="num" style="color:var(--muted)">frees ~<span x-text="fmtPhys(detail.freeable)"></span></span><button class="kl-btn quiet" style="height:22px" @click="detail.panelTab = 'actions'">Actions ›</button></div>
-    <div class="li" x-show="detail.instances > 1"><span class="grow">Purge all <span x-text="detail.instances"></span> copies, every version</span><span class="num" style="color:var(--ok)" x-text="'frees ' + fmtPhys(detail.reclaim_everywhere)"></span><button class="kl-btn quiet" style="height:22px" @click="detail.panelTab = 'storage'">Storage ›</button></div>
-    <div class="li"><span class="grow">Stop backing this file up</span><span class="num" style="color:var(--muted)" x-text="excludePatterns().length + ' patterns'"></span><button class="kl-btn quiet" style="height:22px" @click="detail.panelTab = 'actions'">Actions ›</button></div>
-  </div>
-</div>
+{{ history_rows('fileHistoryRows()') }}
 <div class="kl-sec">
   <div class="h">Backed up by <span class="count" x-text="(detail.holders ? detail.holders.length : 1) + (detail.holders && detail.holders.length === 1 ? ' source' : ' sources')"></span></div>
   <!-- every source holding THIS exact path (was hardcoded to "1 source"). Click a row
@@ -383,7 +468,8 @@
                   </span>
                 </template>
                 <span class="spacer"></span>
-                <button x-show="detail.kind === 'folder'" class="kl-btn danger" @click="folderDeleteFromPanel()">Delete folder…</button>
+                <template x-if="detail.kind === 'file'"><span class="flex items-center gap-2">{{ panel_actions('file') }}</span></template>
+                <template x-if="detail.kind === 'folder'"><span class="flex items-center gap-2">{{ panel_actions('folder') }}</span></template>
                 <button class="kl-btn" @click="detail=null">Close</button>
               </div>
             </div>
@@ -409,7 +495,7 @@
                 <div class="kl-tabs">
                   <div class="t" :class="detail.panelTab === 'overview' ? 'on' : ''" @click="detail.panelTab = 'overview'">Overview</div>
                   <div class="t" :class="detail.panelTab === 'backedby' ? 'on' : ''" @click="detail.panelTab = 'backedby'">Backed up by</div>
-                  <div class="t" :class="detail.panelTab === 'contents' ? 'on' : ''" @click="detail.panelTab = 'contents'">Contents</div>
+                  <div class="t" :class="detail.panelTab === 'contents' ? 'on' : ''" @click="detail.panelTab = 'contents'; folderLoadContents()">Contents</div>
                   <div class="t" :class="detail.panelTab === 'actions' ? 'on' : ''" @click="detail.panelTab = 'actions'">Actions</div>
                 </div>
               </template>
@@ -423,7 +509,12 @@
                     {{ file_dup() }}
                   </div>
                 </template>
-                <template x-if="detail.kind === 'file' && detail.panelTab === 'versions'">{{ file_versions() }}</template>
+                <template x-if="detail.kind === 'file' && detail.panelTab === 'versions'">
+                  <div class="space-y-4">
+                    {{ version_strip() }}
+                    {{ file_versions() }}
+                  </div>
+                </template>
                 <template x-if="detail.kind === 'file' && detail.panelTab === 'actions'">
                   <div class="space-y-4">
                     {{ file_remove() }}
@@ -435,16 +526,15 @@
                 <template x-if="detail.kind === 'folder' && detail.panelTab === 'overview'">
                   <div class="space-y-4">
                     {{ folder_overview_note() }}
-                    {{ folder_children() }}
+                    {{ history_rows('folderHistoryRows()') }}
+                    <div class="grid gap-4 sm:grid-cols-2">
+                      {{ folder_children() }}
+                      {{ folder_types() }}
+                    </div>
                   </div>
                 </template>
                 <template x-if="detail.kind === 'folder' && detail.panelTab === 'backedby'">{{ folder_backedby() }}</template>
-                <template x-if="detail.kind === 'folder' && detail.panelTab === 'contents'">
-                  <div class="space-y-4">
-                    {{ folder_contents() }}
-                    {{ folder_children() }}
-                  </div>
-                </template>
+                <template x-if="detail.kind === 'folder' && detail.panelTab === 'contents'">{{ folder_listing() }}</template>
                 <template x-if="detail.kind === 'folder' && detail.panelTab === 'actions'">
                   <div class="space-y-4">
                     {{ folder_exclude() }}
@@ -471,7 +561,8 @@
                   </span>
                 </template>
                 <span class="spacer"></span>
-                <button x-show="detail.kind === 'folder'" class="kl-btn danger" @click="folderDeleteFromPanel()">Delete folder…</button>
+                <template x-if="detail.kind === 'file'"><span class="flex items-center gap-2">{{ panel_actions('file') }}</span></template>
+                <template x-if="detail.kind === 'folder'"><span class="flex items-center gap-2">{{ panel_actions('folder') }}</span></template>
                 <button class="kl-btn" @click="detail=null">Close</button>
               </div>
             </div>

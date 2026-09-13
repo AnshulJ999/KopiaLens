@@ -263,7 +263,7 @@ def test_live_pricing_caps_large_rule_sets(wired):
 def test_targets_default_to_no_pricing(wired):
     out = api.exclusion_targets(api.TargetsBody(repo="1", path=SRC + SEP + "x" + SEP + "a.tmp", source=SRC))
     assert all(t["impact"] is None for t in out["targets"])
-    assert out["ranked_by"] == "sources-covered"
+    assert out["smart_shape"] is None
 
 
 def test_stored_prices_route_serves_the_nightly_file(wired, monkeypatch):

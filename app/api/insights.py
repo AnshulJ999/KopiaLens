@@ -22,9 +22,15 @@ from config import REPOS, repo_kind
 
 from ..core.policy import effective_for_path, source_summaries, summarize
 from ..index.schema import RepoOffline
-from ..index.churnview import churn_rollup
+from ..index.churnview import cached_folder_window, churn_rollup
 from ..index.foldercache import compute as folder_reclaim
-from ..index.queries import folder_sources, folder_summary, folder_top_children
+from ..index.queries import (
+    folder_contents,
+    folder_file_types,
+    folder_sources,
+    folder_summary,
+    folder_top_children,
+)
 
 _SEP = chr(92)
 
@@ -108,6 +114,11 @@ def folder_summary_route(repo: str = "1", prefix: str = "", source: str | None =
             row["policy"] = pol.get(row["source"])
         summary["sources"] = srcs
         summary["children"] = folder_top_children(repo, prefix, source=source)
+        summary["file_types"] = folder_file_types(repo, prefix, source=source)
+        try:
+            summary["last_30_days"] = cached_folder_window(repo, prefix, days=30)
+        except Exception:  # noqa: BLE001 - an optional row must never fail the panel
+            summary["last_30_days"] = None
         covers = [r for r in srcs if r["relation"] == "covers"]
         summary["covers"] = len(covers)
         summary["sub_policies"] = len(srcs) - len(covers)
@@ -121,6 +132,24 @@ def folder_summary_route(repo: str = "1", prefix: str = "", source: str | None =
         raise
     except RepoOffline:
         raise                       # the dedicated 503 handler explains this one properly
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/folder/contents")
+def folder_contents_route(repo: str = "1", prefix: str = "", source: str | None = None,
+                          limit: int = 500) -> dict:
+    """Everything directly inside a folder (the folder panel's Contents tab)."""
+    _require_kopia(repo)
+    if not prefix:
+        raise HTTPException(status_code=400, detail="prefix is required")
+    try:
+        rows = folder_contents(repo, prefix, source=source, limit=max(1, min(limit, 2000)))
+        for r in rows:
+            r["last_seen"] = str(r["last_seen"]) if r.get("last_seen") else None
+        return {"prefix": prefix, "rows": rows}
+    except RepoOffline:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

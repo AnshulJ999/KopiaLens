@@ -44,12 +44,114 @@ const detailPart = {
         })
         .catch(() => { if (seq === this._detailSeq && this.detail) this.detail.heavyLoading = false; });
       // Effective policy for this exact folder (kopia resolves inheritance), via its main source.
-      const main = (this.detail.sources || [])[0];
+      const main = (this.detail.sources || []).find((s) => s.relation === "covers") || (this.detail.sources || [])[0];
       if (main) {
         getJson(`/api/folder/policy?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(main.source)}&prefix=${encodeURIComponent(prefix)}`)
           .then((r) => { if (seq === this._detailSeq && this.detail) this.detail.effective_policy = r.policy; })
           .catch(() => {});
+        this._loadPathStatus(seq, main.source, prefix, true);
       }
+    },
+
+    _loadPathStatus(seq, source, path, isFolder) {
+      const p = new URLSearchParams({ repo: this.repo, source, path, is_folder: isFolder ? "true" : "false" });
+      getJson(`/api/policies/path-status?${p.toString()}`)
+        .then((r) => { if (seq === this._detailSeq && this.detail) this.detail.pathStatus = r; })
+        .catch(() => { if (seq === this._detailSeq && this.detail) this.detail.pathStatus = { error: true }; });
+    },
+
+    // ---- Overview "Backup history" rows ----
+    _rulesRow() {
+      const s = this.detail && this.detail.pathStatus;
+      if (!s) return "…";
+      if (s.error) return "Couldn't read the policies";
+      const from = s.owner === "global" ? "Global" : sourcePath(s.owner || "") || s.owner;
+      const list = s.origin === "none" ? "No rules apply"
+        : s.origin === "own" ? `Own list of ${s.rule_count} rule${s.rule_count === 1 ? "" : "s"}`
+        : `Inherits ${s.rule_count} rule${s.rule_count === 1 ? "" : "s"} from ${from}`;
+      if (s.origin === "none") return list;
+      return list + (s.excluded ? " · a rule leaves this out" : " · none match");
+    },
+    fileHistoryRows() {
+      const d = this.detail;
+      if (!d || d.kind !== "file" || !(d.versions || []).length) return [];
+      const vs = d.versions;
+      const first = toDate(vs[vs.length - 1].start), last = toDate(vs[0].start);
+      const changes = new Set(vs.map((v) => v.content_id)).size;
+      const days = Math.max(1, Math.round((last - first) / 86400000));
+      const copies = (d.instances || 1) - 1;
+      return [
+        ["First backed up", fmtDate(vs[vs.length - 1].start)],
+        ["Last changed", humanTime(vs[0].start)],
+        ["Changes", changes <= 1 ? "Unchanged since the first backup" : `Changed ${changes - 1} time${changes === 2 ? "" : "s"} in ${days} day${days === 1 ? "" : "s"}`],
+        ["Copies", copies > 0 ? `${copies} identical cop${copies === 1 ? "y" : "ies"} elsewhere` : "None elsewhere"],
+        ["Rules", this._rulesRow()],
+      ];
+    },
+    folderHistoryRows() {
+      const d = this.detail;
+      if (!d || d.kind !== "folder") return [];
+      const rows = [
+        ["First backed up", d.first_seen ? fmtDate(d.first_seen) : "—"],
+        ["Last backed up", d.last_seen ? humanTime(d.last_seen) : "—"],
+        ["Files", `${Number(d.files || 0).toLocaleString()} · ${Number(d.deleted_files || 0).toLocaleString()} deleted from disk`],
+        ["Versions", Number(d.versions || 0).toLocaleString()],
+      ];
+      const w = d.last_30_days;
+      if (w) rows.push(["Last 30 days", `+${fmtBytes(w.bytes)} new data · ${fmtBytes(w.bytes / 30)} a day`]);
+      rows.push(["Rules", this._rulesRow()]);
+      return rows;
+    },
+
+    // Size of each version, oldest to newest (the newest 200).
+    versionBars() {
+      const vs = ((this.detail && this.detail.versions) || []).slice(0, 200).reverse();
+      const max = Math.max(1, ...vs.map((v) => Number(v.size || 0)));
+      return vs.map((v, i) => ({ h: Math.max(3, Math.round((Number(v.size || 0) / max) * 100)),
+        last: i === vs.length - 1, tip: `${fmtBytes(v.size || 0)} · ${v.time}` }));
+    },
+
+    // ---- Folder Contents tab ----
+    async folderLoadContents() {
+      const d = this.detail;
+      if (!d || d.kind !== "folder" || d.contents) return;
+      const seq = ++this._contentsSeq;
+      const title = d.title;
+      d.contentsLoading = true;
+      d.contentsSort = d.contentsSort || "folders";
+      const p = new URLSearchParams({ repo: this.repo, prefix: title });
+      if (d.source) p.set("source", d.source);
+      try {
+        const r = await getJson(`/api/folder/contents?${p.toString()}`);
+        if (seq !== this._contentsSeq || !this.detail || this.detail.title !== title) return;
+        this.detail.contents = r.rows || [];
+      } catch (e) {
+        if (seq === this._contentsSeq && this.detail) this.detail.contentsError = e.message || String(e);
+      } finally {
+        if (seq === this._contentsSeq && this.detail) this.detail.contentsLoading = false;
+      }
+    },
+    folderContentRows() {
+      const d = this.detail;
+      const rows = [...((d && d.contents) || [])];
+      if (d && d.contentsSort === "largest") rows.sort((a, b) => b.physical - a.physical);
+      return rows;
+    },
+    folderOpenChild(r) {
+      const d = this.detail;
+      if (!d) return;
+      const sep = d.title.includes("\\") || !d.title.includes("/") ? "\\" : "/";
+      const path = d.title.replace(/[\\/]+$/, "") + sep + r.child;
+      if (r.is_folder) this.openFolderPanel(path, d.source || null);
+      else this.openFileDetail({ source: r.source, full_path: path });
+    },
+
+    // Footer "Delete…" for a file, until the Delete panel exists: the Actions tab, or the
+    // remove section in the Classic layout.
+    panelDeleteFile() {
+      if (!this.detail) return;
+      if (this.panelLayout === "tabbed") { this.detail.panelTab = "actions"; return; }
+      this.$nextTick(() => { const el = document.getElementById("kl-file-remove"); if (el) el.scrollIntoView({ behavior: "smooth" }); });
     },
     folderDeleteFromPanel() {
       if (!this.detail || this.detail.kind !== "folder") return;
@@ -112,6 +214,7 @@ const detailPart = {
           purge: purgeRows,
           purgeCmds: purgeRows.map((r) => r.cmd).join("\n"),
         });
+        this._loadPathStatus(seq, this.detail.source, item.full_path, false);
       } catch (err) {
         if (seq === this._detailSeq) this.error = err.message || String(err);
       }
