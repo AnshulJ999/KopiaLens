@@ -104,7 +104,7 @@ const detailPart = {
           shared: detail.shared, physical_all: detail.physical_all_versions, chunk_count: detail.chunk_count,
           chunks: detail.chunks || [],
           others: detail.other_paths || [],
-          locations: detail.locations, instances: detail.instances,
+          locations: detail.locations, instances: detail.instances, holders: detail.holders || [],
           reclaim_everywhere: detail.reclaim_everywhere, purge_everywhere_count: detail.purge_everywhere_count,
           purgeEverywhereCmds: detail.purge_everywhere_cmds || "",
           snapsEverywhere: detail.snapshots_everywhere || [],   // the content's full delete-set (ids)
