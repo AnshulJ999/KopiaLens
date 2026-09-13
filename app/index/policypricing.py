@@ -22,6 +22,7 @@ flagged as ``slow_path``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
@@ -372,7 +373,10 @@ def _compute(repo: str, source_key: str, patterns: list[str]) -> dict:
 # LIVE pricing remains for the one case no cache can cover - a rule the user is about to add
 # (and small rule sets generally, capped at _LIVE_PRICE_CAP per request).
 
-_STORE_VERSION = 1
+# v2: the fingerprint skip landed as KL70/KL71 changed pricing semantics - a v1 file (or any
+# file written by older pricing code) must read as absent so the first post-merge nightly
+# reprices everything once instead of fingerprint-reusing old-code prices.
+_STORE_VERSION = 2
 
 
 def stored_path(repo: str) -> str:
@@ -396,10 +400,38 @@ def _atomic_write_json(path: str, payload: dict) -> None:
     os.replace(tmp, path)
 
 
+def _rules_hash(rules: list) -> str:
+    return hashlib.md5(json.dumps(rules).encode()).hexdigest()
+
+
+def _snapset_hashes(repo: str) -> dict[str, str]:
+    """Per-source hash of the INDEXED snapshot-id set (isnaps). A price's inputs - the source's
+    in_latest paths+sizes and its dir set - are a function of (rule list, indexed snapshot set):
+    the builder carries an unchanged source verbatim, so if neither the rules nor the snapshot
+    set changed, last night's numbers are still exact. This is the skip fingerprint."""
+    cur = read_cursor(repo)
+    try:
+        rows = cur.execute(
+            "SELECT source, snapshot_id FROM isnaps ORDER BY source, snapshot_id").fetchall()
+    finally:
+        cur.close()
+    digests: dict[str, "hashlib._Hash"] = {}
+    for source, sid in rows:
+        d = digests.setdefault(source, hashlib.md5())
+        d.update((sid or "").encode())
+    return {k: d.hexdigest() for k, d in digests.items()}
+
+
 def precompute(repo: str) -> dict:
     """ worker stage: price EVERY policy's own rules plus the global rollup and store
     the result for instant tab reads. Per source it is one batched scan set (the FILTER batch);
     the global rollup prices global's rules against each inheriting source and sums.
+
+    Skip-when-unchanged (): a (rule list, source) price is reused from the previous
+    night when the rule list's hash and that source's indexed snapshot-set hash are both
+    unchanged - on a quiet night this skips most of the stage (the Global rollup was ~7 of the
+    8.7 minutes on repo 1). Repriced results and reused contributions land in the payload's
+    ``fp`` block so the next night can do the same.
     Returns the stored payload."""
     from ..core.policy import (
         _GLOBAL_TARGET,
@@ -414,8 +446,17 @@ def precompute(repo: str) -> dict:
     defined = load_defined_policies(repo).get("policies") or {}
     effective = load_policies(repo).get("policies") or {}
 
+    prev = stored(repo) or {}
+    prev_fp: dict = prev.get("fp") or {}
+    prev_rules: dict = prev.get("rules") or {}
+    snapsets = _snapset_hashes(repo)
+
     rules_out: dict[str, dict] = {}
+    fp_src: dict[str, dict] = {}
+    fp_gc: dict[str, dict] = {}
     global_scope: list[str] = []
+    reused = 0
+    priced = 0
     for key in sorted(effective):
         origin, _owner = effective_ignore_origin(repo, key, defined)
         if origin == "global":
@@ -424,40 +465,65 @@ def precompute(repo: str) -> dict:
         own = ((defined.get(key) or {}).get("files") or {}).get("ignore") or []
         if not own:
             continue
-        out = price_patterns(repo, key, own, limit=0)
-        rules_out[key] = {
-            r["pattern"]: {"files": r["files"], "bytes": r["bytes"], "dirs": r["dirs"],
-                           "negated": r["negated"]}
-            for r in out["results"] if not r["error"]}
-        log.info("policy prices repo=%s source=%s rules=%d", repo, key, len(rules_out[key]))
+        own_h = _rules_hash(own)
+        snaps_h = snapsets.get(key, "")
+        prior = (prev_fp.get("src") or {}).get(key) or {}
+        if (prior.get("own") == own_h and prior.get("snaps") == snaps_h
+                and key in prev_rules):
+            rules_out[key] = prev_rules[key]
+            reused += 1
+        else:
+            out = price_patterns(repo, key, own, limit=0)
+            priced += 1
+            rules_out[key] = {
+                r["pattern"]: {"files": r["files"], "bytes": r["bytes"], "dirs": r["dirs"],
+                               "negated": r["negated"]}
+                for r in out["results"] if not r["error"]}
+            log.info("policy prices repo=%s source=%s rules=%d", repo, key, len(rules_out[key]))
+        fp_src[key] = {"own": own_h, "snaps": snaps_h}
 
     glob = ((defined.get(_GLOBAL_TARGET) or {}).get("files") or {}).get("ignore") or []
     if glob and global_scope:
+        glob_h = _rules_hash(glob)
+        glob_ok = prev_fp.get("global") == glob_h
         merged: dict[str, list[int]] = {p: [0, 0, 0] for p in glob}
         negated = {p: compile_pattern(p).negated for p in glob}
+        prev_gc: dict = prev_fp.get("gc") or {}
         for key in global_scope:
-            out = price_patterns(repo, key, glob, limit=0)
-            for r in out["results"]:
-                if r["error"]:
-                    continue
-                m = merged[r["pattern"]]
-                m[0] += r["files"]
-                m[1] += r["bytes"]
-                m[2] += r["dirs"]
+            snaps_h = snapsets.get(key, "")
+            prior = (prev_fp.get("src") or {}).get(key) or {}
+            contrib = prev_gc.get(key) if (glob_ok and prior.get("snaps") == snaps_h) else None
+            if contrib is not None:
+                reused += 1
+            else:
+                out = price_patterns(repo, key, glob, limit=0)
+                priced += 1
+                contrib = {r["pattern"]: [r["files"], r["bytes"], r["dirs"]]
+                           for r in out["results"] if not r["error"]}
+                log.info("policy prices repo=%s global rollup priced %s", repo, key)
+            fp_gc[key] = contrib
+            fp_src[key] = {"own": "", "snaps": snaps_h}
+            for p, triplet in contrib.items():
+                m = merged.get(p)
+                if m is not None:
+                    m[0] += triplet[0]
+                    m[1] += triplet[1]
+                    m[2] += triplet[2]
         rules_out["global"] = {
             p: {"files": m[0], "bytes": m[1], "dirs": m[2], "negated": negated[p]}
             for p, m in merged.items()}
         log.info("policy prices repo=%s global rollup: %d rules x %d sources",
                  repo, len(glob), len(global_scope))
 
-    payload = {"version": _STORE_VERSION, "ts": time.time(), "rules": rules_out}
+    payload = {"version": _STORE_VERSION, "ts": time.time(), "rules": rules_out,
+               "fp": {"global": _rules_hash(glob) if glob else "", "src": fp_src, "gc": fp_gc}}
     try:
         _atomic_write_json(stored_path(repo), payload)
     except Exception as exc:  # noqa: BLE001 - a store write must never fail the worker stage
         log.error("policy prices repo=%s store write failed: %s", repo, exc)
         return payload
-    log.info("policy prices repo=%s stored (%d targets, %.1fs)", repo, len(rules_out),
-             time.time() - t0)
+    log.info("policy prices repo=%s stored (%d targets, %.1fs, %d fingerprint reuse, %d priced)",
+             repo, len(rules_out), time.time() - t0, reused, priced)
     return payload
 
 

@@ -273,3 +273,118 @@ def test_stored_for_target_returns_none_before_the_first_nightly(priced, tmp_pat
     monkeypatch.setattr(policypricing, "DATA_DIR", str(tmp_path))
     assert policypricing.stored("1") is None
     assert policypricing.stored_for_target("1", "global") is None
+
+
+# ---- precompute skip-when-unchanged (fingerprints) ------------------------------
+
+SRC2 = f"x@y:D:{SEP}"
+
+
+def _skip_env(priced, tmp_path, monkeypatch, glob_rules, snapsets):
+    """The stored-stage environment: two policies (SRC own rules, SRC2 global-inheriting),
+    redirect the store at tmp_path, pin the snapshot-set fingerprints, reset the TTL cache."""
+    import app.core.policy as pol
+
+    defined = {"(global)": {"files": {"ignore": list(glob_rules)}},
+               SRC: {"files": {"ignore": ["*.tmp"]}}}
+    effective = {SRC: {"files": {"ignore": ["*.tmp"]}},
+                 SRC2: {"files": {"ignore": glob_rules}}}
+    monkeypatch.setattr(pol, "load_defined_policies", lambda repo: {"policies": defined})
+    monkeypatch.setattr(pol, "load_policies", lambda repo: {"policies": effective})
+    monkeypatch.setattr(pol, "refresh_defined_policies",
+                        lambda repo, force=False: ({"policies": defined}, True))
+    monkeypatch.setattr(policypricing, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(policypricing, "_snapset_hashes", lambda repo: dict(snapsets))
+    monkeypatch.setattr(policypricing, "_CACHE", {})
+    return defined, effective
+
+
+def _count_fresh_prices(monkeypatch) -> dict:
+    calls = {"n": 0}
+    real = policypricing._compute
+
+    def counting(*a, **kw):
+        calls["n"] += 1
+        return real(*a, **kw)
+
+    monkeypatch.setattr(policypricing, "_compute", counting)
+    return calls
+
+
+def test_precompute_skips_everything_unchanged_on_the_second_run(priced, tmp_path, monkeypatch):
+    snaps = {SRC: "aa", SRC2: "bb"}
+    _skip_env(priced, tmp_path, monkeypatch, ["gtmp1", "gtmp2"], snaps)
+    calls = _count_fresh_prices(monkeypatch)
+
+    first = policypricing.precompute("1")
+    assert calls["n"] == 2                      # own rules + one global-scope contribution
+
+    monkeypatch.setattr(policypricing, "_CACHE", {})   # the TTL cache must not mask the skip
+    second = policypricing.precompute("1")
+    assert calls["n"] == 2                      # nothing repriced
+    assert second["rules"] == first["rules"]    # and the numbers are byte-identical
+
+
+def test_precompute_reprices_only_the_changed_source(priced, tmp_path, monkeypatch):
+    snaps = {SRC: "aa", SRC2: "bb"}
+    _skip_env(priced, tmp_path, monkeypatch, ["gtmp1", "gtmp2"], snaps)
+    calls = _count_fresh_prices(monkeypatch)
+    first = policypricing.precompute("1")
+
+    monkeypatch.setattr(policypricing, "_CACHE", {})
+    monkeypatch.setattr(policypricing, "_snapset_hashes",
+                        lambda repo: {SRC: "CHANGED", SRC2: "bb"})
+    second = policypricing.precompute("1")
+    assert calls["n"] == 3                      # only SRC's own rules repriced
+    assert second["rules"][SRC] == first["rules"][SRC]
+    assert second["rules"]["global"] == first["rules"]["global"]   # its contribution was reused
+    assert second["fp"]["src"][SRC]["snaps"] == "CHANGED"
+
+
+def test_precompute_global_rule_change_reprices_contributions_but_keeps_own(priced, tmp_path,
+                                                                           monkeypatch):
+    snaps = {SRC: "aa", SRC2: "bb"}
+    defined, effective = _skip_env(priced, tmp_path, monkeypatch, ["gtmp1", "gtmp2"], snaps)
+    calls = _count_fresh_prices(monkeypatch)
+    first = policypricing.precompute("1")
+
+    defined["(global)"]["files"]["ignore"] = ["gtmp9"]
+    effective[SRC2]["files"]["ignore"] = ["gtmp9"]
+    monkeypatch.setattr(policypricing, "_CACHE", {})
+    second = policypricing.precompute("1")
+    assert calls["n"] == 3                      # only the global contribution repriced
+    assert second["rules"][SRC] == first["rules"][SRC]             # own rules still reused
+    assert set(second["rules"]["global"]) == {"gtmp9"}
+
+
+def test_precompute_without_a_fingerprint_block_prices_fresh(priced, tmp_path, monkeypatch):
+    """A stored file from BEFORE the fingerprint era (current version, no fp block) is still
+    readable; everything prices once and the new file carries the fp block for the next night."""
+    import json
+    snaps = {SRC: "aa", SRC2: "bb"}
+    _skip_env(priced, tmp_path, monkeypatch, ["gtmp1", "gtmp2"], snaps)
+    calls = _count_fresh_prices(monkeypatch)
+    with open(policypricing.stored_path("1"), "w", encoding="utf-8") as fh:
+        json.dump({"version": policypricing._STORE_VERSION, "ts": 0.0, "rules": {}}, fh)
+
+    payload = policypricing.precompute("1")
+    assert calls["n"] == 2
+    assert payload["fp"]["src"][SRC]["own"] == policypricing._rules_hash(["*.tmp"])
+
+
+def test_stored_file_from_an_older_code_version_reads_as_absent(priced, tmp_path, monkeypatch):
+    """The version bump is the guard against fingerprint-reusing prices written by older pricing
+    code (KL70/KL71 changed the semantics): a v1 file must be ignored entirely, forcing the
+    first nightly after the merge into one full reprice."""
+    import json
+    snaps = {SRC: "aa", SRC2: "bb"}
+    _skip_env(priced, tmp_path, monkeypatch, ["gtmp1", "gtmp2"], snaps)
+    calls = _count_fresh_prices(monkeypatch)
+    with open(policypricing.stored_path("1"), "w", encoding="utf-8") as fh:
+        json.dump({"version": 1, "ts": 0.0, "rules": {"stale": True}, "fp": {"stale": True}}, fh)
+
+    assert policypricing.stored("1") is None
+    payload = policypricing.precompute("1")
+    assert calls["n"] == 2
+    assert "stale" not in payload["rules"]
+    assert payload["fp"]["src"][SRC]["snaps"] == "aa"

@@ -424,6 +424,34 @@ def test_a_partial_sizemap_never_replaces_a_good_one(monkeypatch, tmp_path):
         assert pickle.load(fh) == good, "the partial map overwrote the good one"
 
 
+def test_a_refresh_overrides_the_worker_run_memo(monkeypatch, tmp_path):
+    """The run-scoped memo must not mask refresh=True: metrics.py's mid-run recovery reloads the
+    sizemap once when content ids are missing, and the memo answering first would silently keep
+    the old map (every physical figure for the new content reads low) - the exact bug the memo
+    review caught."""
+    from app.core import sizemap as sm
+    monkeypatch.setattr(sm, "CACHEDIR", str(tmp_path))
+    monkeypatch.setattr(sm, "MEMO_ENABLED", True)
+    monkeypatch.setattr(sm, "_MEMO", {})   # isolate the module-level memo from any earlier test
+    old = {"c1": 100}
+    with open(tmp_path / "sizemap_repo1.pkl", "wb") as fh:
+        import pickle
+        pickle.dump(old, fh)
+
+    assert sm.load_sizemap("1") == old            # memo populated with the old map
+    assert sm._MEMO["1"] == old
+
+    def _fresh(*_a, **_k):
+        yield "c1 x 10+100"
+        yield "c2 x 20+200"
+
+    monkeypatch.setattr(sm, "kopia_lines", _fresh)
+    new = {"c1": 100, "c2": 200}
+    assert sm.load_sizemap("1", refresh=True) == new   # refresh bypasses the memo entirely
+    assert sm._MEMO["1"] == new                        # and re-sets it for the rest of the run
+    assert sm.load_sizemap("1") == new                 # later calls see the refreshed map
+
+
 def test_a_timeout_is_a_listing_failure_not_an_empty_repository(monkeypatch):
     """The two fixes have to compose: a hung kopia must not become "no snapshots" either."""
     monkeypatch.setattr(sources, "kopia",
