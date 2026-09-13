@@ -18,8 +18,9 @@ SIZEMAP_TTL = 6 * 3600
 # Run-scoped in-process memo (the nightly worker enables it in worker.main): the 3.5M-entry
 # unpickle cost ~1s per call and was paid by every analysis source and every folder detail.
 # Scoped to the worker process on purpose - the long-lived app must not pin the map in RAM.
-# Every path that produces a map flows through load_sizemap, so the memo can never serve a map
-# older than the last refresh (the builder's mid-run refresh re-sets it in the same call).
+# refresh=True ALWAYS bypasses (and re-sets) the memo: it is the mid-run recovery path
+# (metrics.py reloads once when content ids are missing from the map), and the memo returning
+# first would silently serve the old map and skip the reload entirely.
 MEMO_ENABLED = False
 _MEMO: dict[str, dict[str, int]] = {}
 
@@ -39,7 +40,7 @@ def _read_pkl(path: str) -> dict[str, int] | None:
 
 
 def load_sizemap(repo: str, refresh: bool = False) -> dict[str, int]:
-    if MEMO_ENABLED and repo in _MEMO:
+    if not refresh and MEMO_ENABLED and repo in _MEMO:
         return _MEMO[repo]
     pf = os.path.join(CACHEDIR, f"sizemap_repo{repo}.pkl")
     if not refresh and os.path.exists(pf) and time.time() - os.path.getmtime(pf) < SIZEMAP_TTL:

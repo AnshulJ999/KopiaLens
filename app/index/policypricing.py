@@ -373,7 +373,10 @@ def _compute(repo: str, source_key: str, patterns: list[str]) -> dict:
 # LIVE pricing remains for the one case no cache can cover - a rule the user is about to add
 # (and small rule sets generally, capped at _LIVE_PRICE_CAP per request).
 
-_STORE_VERSION = 1
+# v2: the fingerprint skip landed as KL70/KL71 changed pricing semantics - a v1 file (or any
+# file written by older pricing code) must read as absent so the first post-merge nightly
+# reprices everything once instead of fingerprint-reusing old-code prices.
+_STORE_VERSION = 2
 
 
 def stored_path(repo: str) -> str:

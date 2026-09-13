@@ -358,15 +358,33 @@ def test_precompute_global_rule_change_reprices_contributions_but_keeps_own(pric
 
 
 def test_precompute_without_a_fingerprint_block_prices_fresh(priced, tmp_path, monkeypatch):
-    """A pre-fingerprint stored file (version 1 shape) is still readable; everything prices
-    once and the new file carries the fp block for the next night."""
+    """A stored file from BEFORE the fingerprint era (current version, no fp block) is still
+    readable; everything prices once and the new file carries the fp block for the next night."""
     import json
     snaps = {SRC: "aa", SRC2: "bb"}
     _skip_env(priced, tmp_path, monkeypatch, ["gtmp1", "gtmp2"], snaps)
     calls = _count_fresh_prices(monkeypatch)
     with open(policypricing.stored_path("1"), "w", encoding="utf-8") as fh:
-        json.dump({"version": 1, "ts": 0.0, "rules": {}}, fh)
+        json.dump({"version": policypricing._STORE_VERSION, "ts": 0.0, "rules": {}}, fh)
 
     payload = policypricing.precompute("1")
     assert calls["n"] == 2
     assert payload["fp"]["src"][SRC]["own"] == policypricing._rules_hash(["*.tmp"])
+
+
+def test_stored_file_from_an_older_code_version_reads_as_absent(priced, tmp_path, monkeypatch):
+    """The version bump is the guard against fingerprint-reusing prices written by older pricing
+    code (KL70/KL71 changed the semantics): a v1 file must be ignored entirely, forcing the
+    first nightly after the merge into one full reprice."""
+    import json
+    snaps = {SRC: "aa", SRC2: "bb"}
+    _skip_env(priced, tmp_path, monkeypatch, ["gtmp1", "gtmp2"], snaps)
+    calls = _count_fresh_prices(monkeypatch)
+    with open(policypricing.stored_path("1"), "w", encoding="utf-8") as fh:
+        json.dump({"version": 1, "ts": 0.0, "rules": {"stale": True}, "fp": {"stale": True}}, fh)
+
+    assert policypricing.stored("1") is None
+    payload = policypricing.precompute("1")
+    assert calls["n"] == 2
+    assert "stale" not in payload["rules"]
+    assert payload["fp"]["src"][SRC]["snaps"] == "aa"
