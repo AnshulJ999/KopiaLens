@@ -239,7 +239,7 @@
                     <option value="parquet">Parquet (default)</option>
                     <option value="sqlite">SQLite (legacy)</option>
                   </select></div>
-                <p class="text-[11px] text-muted mt-1">Where the scanned file list is stored. Parquet is about 20x smaller and faster to query. SQLite is the legacy format, kept for rollback. Switching rebuilds the new store on the next Backblaze rescan; the old file is kept until you delete it.</p>
+                <p class="text-[11px] text-muted mt-1">Where the scanned file list is stored. Parquet is about 20x smaller and faster to query. SQLite is the legacy format, kept for rollback. Switching rebuilds the new store on the next Backblaze rescan; once the Parquet build succeeds, the space the old copy occupied is reclaimed automatically.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Reindex minimum gap</span>

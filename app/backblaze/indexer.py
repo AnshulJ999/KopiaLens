@@ -602,6 +602,9 @@ def refresh(force: bool = False) -> dict:
                 if parquet:
                     if pq_rels:
                         pq.publish(pq_gen, pq_rels, pq_moves)
+                        # the parquet store is now authoritative: hand back the
+                        # ~3.4 GB the stale legacy files rows occupy inside the slim SQLite.
+                        _reclaim_legacy_files(con)
                 else:
                     bbdb.rebuild_fts(con)
             if rules_hash != prev_rules_hash:
@@ -647,6 +650,40 @@ def refresh(force: bool = False) -> dict:
     finally:
         _clear_progress()
         _STATE["building"] = False
+
+
+def _reclaim_legacy_files(con) -> None:
+    """ After a successful Parquet publish, the legacy sqlite `files` table (+ its
+    FTS5 index) is dead weight - ~3.4 GB of stale rows inside the SAME file that holds the small
+    history/state tables (which must never be dropped). Drop the legacy structures, recreate them
+    EMPTY (so switching back to the sqlite store rebuilds instead of erroring), and VACUUM once to
+    hand the space back. A no-op when the table is already empty."""
+    have = [r[0] for r in con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts')")]
+    if "files" not in have:
+        return
+    if con.execute("SELECT 1 FROM files LIMIT 1").fetchone() is None:
+        return  # already reclaimed (or never built) - nothing to hand back
+    log.info("BZ legacy reclamation: dropping the stale sqlite files table (+FTS) - the parquet store is authoritative")
+    con.commit()
+    con.execute("DROP TABLE IF EXISTS files_fts")
+    con.execute("DROP TABLE IF EXISTS files")
+    bbdb._init_schema(con)  # recreate EMPTY files + indexes + FTS shell; the small tables are untouched
+    con.commit()
+    t0 = time.time()
+    try:
+        import config
+        before = os.path.getsize(bbdb.db_path())
+    except Exception:  # noqa: BLE001 - size logging is best-effort (an in-memory test DB has none)
+        before = None
+    con.execute("VACUUM")
+    try:
+        import config
+        after = os.path.getsize(bbdb.db_path())
+        log.info("BZ legacy reclamation: VACUUM %.1fs, db %.2f GB -> %.2f GB",
+                 time.time() - t0, before / 1e9, after / 1e9)
+    except Exception:  # noqa: BLE001
+        log.info("BZ legacy reclamation: VACUUM done in %.1fs", time.time() - t0)
 
 
 def refresh_transmit_side() -> dict:

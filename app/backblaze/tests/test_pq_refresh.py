@@ -189,6 +189,43 @@ def test_transmit_refresh_missing_bzdata_is_soft(transmit_env, monkeypatch):
     assert not out["ok"] and "bzdata not found" in out["reason"]
 
 
+# ---- legacy files-table reclamation ---------------------------------------------
+
+def test_parquet_publish_reclaims_legacy_files(pq_env):
+    """After the first parquet publish, the legacy sqlite files table + FTS are dropped and
+    recreated EMPTY (never deleted-with-the-file): the small history/state tables and their rows
+    must survive, and a switch back to sqlite finds an empty-but-valid schema to rebuild."""
+    con, root, bzroot = pq_env
+    _write_filelist(root, "C", "aaa")
+    con.executemany("INSERT INTO files VALUES(?,?,?,?,?,?,?,?,?)", [
+        ("C", r"C:\old\a.txt", r"c:\old\a.txt", "a.txt", "txt", 1, "0", 0, None),
+        ("C", r"C:\old\b.bin", r"c:\old\b.bin", "b.bin", "bin", 2, "0", 1, "folder:\\old\\"),
+    ])
+    bbdb.rebuild_fts(con)
+    con.execute("INSERT INTO folder_snapshots VALUES('2026-09-13', 'C', 'C:\\old', 2, 3)")
+    con.commit()
+    assert indexer.refresh(force=True)["ok"]
+    # legacy rows gone, schema present and empty (switch-back rebuilds instead of erroring)
+    assert con.execute("SELECT count(*) FROM files").fetchone()[0] == 0
+    assert con.execute("SELECT count(*) FROM files_fts").fetchone()[0] == 0
+    # the small history/state tables are untouched
+    assert con.execute("SELECT count(*) FROM folder_snapshots").fetchone()[0] == 1
+    assert con.execute("SELECT count(*) FROM queue").fetchone()[0] == 0
+    # parquet side is authoritative and intact
+    with pq.files_cursor() as cur:
+        assert cur.execute("SELECT count(*) FROM files").fetchone()[0] == 1
+
+
+def test_reclamation_is_a_noop_when_already_empty(pq_env):
+    con, root, bzroot = pq_env
+    _write_filelist(root, "C", "aaa")
+    assert indexer.refresh(force=True)["ok"]          # first publish reclaims (files was empty here)
+    assert con.execute("SELECT count(*) FROM files").fetchone()[0] == 0
+    summary = indexer.refresh(force=True)             # second publish: reclamation is a no-op
+    assert summary["ok"]
+    assert con.execute("SELECT count(*) FROM files").fetchone()[0] == 0
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
