@@ -236,10 +236,10 @@
               <div>
                 <div class="flex items-center justify-between gap-3"><span>File index format</span>
                   <select x-model="bzStore" class="fld border border-bd bg-surface2">
-                    <option value="sqlite">SQLite (classic)</option>
-                    <option value="parquet">Parquet (compact)</option>
+                    <option value="parquet">Parquet (default)</option>
+                    <option value="sqlite">SQLite (legacy)</option>
                   </select></div>
-                <p class="text-[11px] text-muted mt-1">Where the scanned file list is stored. Parquet is about 20x smaller and faster to query. Switching rebuilds the new store on the next Backblaze rescan; the old file is kept until you delete it.</p>
+                <p class="text-[11px] text-muted mt-1">Where the scanned file list is stored. Parquet is about 20x smaller and faster to query. SQLite is the legacy format, kept for rollback. Switching rebuilds the new store on the next Backblaze rescan; the old file is kept until you delete it.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Reindex minimum gap</span>

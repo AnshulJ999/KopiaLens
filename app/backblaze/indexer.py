@@ -35,6 +35,35 @@ _ROLLUP_MIN = 20_000  # depth-1 folders with >= this many files also get a depth
 
 # Lightweight progress/state for the /api/backblaze/status endpoint (no kopia-style start_build).
 _STATE: dict = {"building": False, "last_run": 0.0, "last_summary": None, "last_error": None}
+
+
+# ---- worker progress file () ------------------------------------------------------
+def _progress_path() -> str:
+    import config
+    return os.path.join(config.DATA_DIR, "index_progress_repobz.json")
+
+
+def _write_progress(stage: str) -> None:
+    """Same protocol as the kopia worker's progress file (app/index/worker.py): the tray guard's
+    `indexing` list and the orphan reaper glob data/index_progress_repo*.json, and this filename
+    matches that glob. Atomic write; a failure never affects the refresh itself."""
+    try:
+        payload = {"repo": "bz", "stage": stage, "pid": os.getpid(), "updated": time.time()}
+        import config
+        os.makedirs(config.DATA_DIR, exist_ok=True)
+        tmp = _progress_path() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
+        os.replace(tmp, _progress_path())
+    except Exception:  # noqa: BLE001 - progress reporting must never affect the real work
+        pass
+
+
+def _clear_progress() -> None:
+    try:
+        os.remove(_progress_path())
+    except Exception:  # noqa: BLE001
+        pass
 # Atomic overlap guard for refresh_via_worker: a plain _STATE["building"] check-then-set is a race
 # between two near-simultaneous triggers (double-clicked refresh POST, or POST + the bg cycle) -
 # both could pass the check before either sets it, launching two worker subprocesses that then
@@ -459,6 +488,7 @@ def refresh(force: bool = False) -> dict:
         return {"ok": False, "reason": f"bzdata not found at {paths.bzdata_root()}"}
     t0 = time.time()
     _STATE["building"] = True
+    _write_progress("starting")
     con = bbdb.connect()
     engine = rules.load_engine()
     # Reclassify trigger: the exclusion rules the engine parsed (all four layers), hashed. The
@@ -536,6 +566,7 @@ def refresh(force: bool = False) -> dict:
                     trigger = "missing in parquet store"
                 if reindex:
                     if parquet:
+                        _write_progress(f"reindexing {vol.letter}")
                         staged = pq.staged_path(vol.letter, pq_gen)
                         total, backed, excluded, roll1, roll2 = _reindex_drive_pq(vol, engine, staged)
                         _write_rollup(con, vol.letter.lower() + ":\\", roll1, roll2)
@@ -544,6 +575,7 @@ def refresh(force: bool = False) -> dict:
                         pq_rels[vol.letter] = rel
                     else:
                         total, backed, excluded = _reindex_drive(con, vol, engine)
+                    _write_progress(f"indexing {vol.letter}")
                     if digest is None:
                         try:
                             digest = _filelist_digest(vol.filelist)
@@ -566,6 +598,7 @@ def refresh(force: bool = False) -> dict:
                         drives[vol.letter] = {"total": row[0] or 0, "backed": row[1] or 0,
                                               "excluded": row[2] or 0, "reindexed": False}
             if changed or force:
+                _write_progress("publishing")
                 if parquet:
                     if pq_rels:
                         pq.publish(pq_gen, pq_rels, pq_moves)
@@ -612,7 +645,33 @@ def refresh(force: bool = False) -> dict:
       _STATE["last_run"] = time.time()
       return summary
     finally:
+        _clear_progress()
         _STATE["building"] = False
+
+
+def refresh_transmit_side() -> dict:
+    """ Light in-process refresh of the TRANSMIT-side data only: the upload-queue table
+    (bz_todo_*.dat) and the stats-kv (remaining / totalbackup / last_completed / filestats /
+    overview). Backblaze rewrites these every ~10 minutes, independent of the scan-side filelists
+    the detect+throttle cycle watches - so they ride the 30-min light loop (main._bz_transmit_pass)
+    instead of waiting for a reindex. refresh() keeps
+    doing both (idempotent); queue + kv live in the slim SQLite in BOTH store modes, so this is
+    identical under parquet and the legacy sqlite path. Well under a second."""
+    if _STATE["building"]:
+        return {"ok": False, "reason": "refresh in flight"}
+    if not paths.exists():
+        return {"ok": False, "reason": f"bzdata not found at {paths.bzdata_root()}"}
+    t0 = time.time()
+    try:
+        con = bbdb.connect()
+        with _LOCKED(con):
+            queue_rows = _refresh_queue(con)
+            _refresh_stats_kv(con)
+            con.commit()
+        return {"ok": True, "queue_rows": queue_rows, "elapsed": round(time.time() - t0, 2)}
+    except Exception as exc:  # noqa: BLE001 - a failed transmit refresh must never break the light pass
+        log.warning("BZ transmit-side refresh failed: %s", exc)
+        return {"ok": False, "reason": str(exc)}
 
 
 def refresh_via_worker(force: bool = False) -> dict:

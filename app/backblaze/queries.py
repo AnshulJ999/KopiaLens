@@ -1,9 +1,9 @@
 """Read queries over the Backblaze index. Pure reads; safe to call concurrently.
 
-The `files` table reads from the ACTIVE store (): the SQLite `files` table (default) or the
-Parquet generation store (`pq.py`) chosen by the `backblaze.store` setting. Everything else
-(kv, folder_snapshots, events_archive, backup_days, queue, events, churn, folder_rollup) always
-reads the slim SQLite via bbdb.
+The `files` table reads from the ACTIVE store (): Parquet generations (`pq.py`, the default,
+`backblaze.store` = "parquet") or the legacy SQLite `files` table + FTS5 ("sqlite", kept for
+rollback). Everything else (kv, folder_snapshots, events_archive, backup_days, queue, events,
+churn, folder_rollup) always reads the slim SQLite via bbdb.
 """
 
 from __future__ import annotations
@@ -29,9 +29,9 @@ def _store() -> str:
         return _STORE_OVERRIDE
     try:
         from ..settings import load_settings
-        return load_settings().get("backblaze", {}).get("store", "sqlite")
+        return load_settings().get("backblaze", {}).get("store", "parquet")
     except Exception:  # noqa: BLE001 - a settings problem must not break reads
-        return "sqlite"
+        return "parquet"
 
 
 class _EmptyFiles:

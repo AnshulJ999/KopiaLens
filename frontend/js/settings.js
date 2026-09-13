@@ -50,7 +50,7 @@ const settingsPart = {
       this.bzHistoryDays = Number(bz.history_days || 90);
       this.bzCollapsePrefixes = (bz.collapse_prefixes || []).join(", ");
       this.bzEventlogArchive = bz.eventlog_archive_path || "";
-      this.bzStore = bz.store === "parquet" ? "parquet" : "sqlite";
+      this.bzStore = bz.store === "sqlite" ? "sqlite" : "parquet";
     },
     async saveSettings() {
       await this.wrap(async () => {

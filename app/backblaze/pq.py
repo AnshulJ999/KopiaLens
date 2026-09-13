@@ -7,9 +7,10 @@ directory - the manifest names every file - and a superseded generation is RETIR
 until its last reader releases. The small history/state tables (folder_snapshots, events_archive,
 backup_days, kv, ingest, queue, events, churn, folder_rollup) stay in the slim SQLite (bbdb.py).
 
-The active store is chosen per call by the ``backblaze.store`` setting ("sqlite" | "parquet").
-Switching to parquet bootstraps a full reindex from the read-only filelists: an empty store has
-no drives, so every non-stub drive fails its have_rows check regardless of the ingest watermarks.
+The active store is chosen per call by the ``backblaze.store`` setting ("parquet" | "sqlite" -
+parquet is the DEFAULT, sqlite is the legacy path kept for rollback). Switching to parquet
+bootstraps a full reindex from the read-only filelists: an empty store has no drives, so every
+non-stub drive fails its have_rows check regardless of the ingest watermarks.
 """
 
 from __future__ import annotations
