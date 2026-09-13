@@ -508,6 +508,7 @@ def refresh(force: bool = False) -> dict:
         pq_gen = 0
         pq_moves: list[tuple[str, str]] = []
         pq_rels: dict[str, str] = {}
+        reclaim_ran = False
         try:
             if parquet:
                 # One WriterLock for the whole write phase (staging + publish). The manifest is
@@ -604,7 +605,7 @@ def refresh(force: bool = False) -> dict:
                         pq.publish(pq_gen, pq_rels, pq_moves)
                         # the parquet store is now authoritative: hand back the
                         # ~3.4 GB the stale legacy files rows occupy inside the slim SQLite.
-                        _reclaim_legacy_files(con)
+                        reclaim_ran = bool(_reclaim_legacy_files(con))
                 else:
                     bbdb.rebuild_fts(con)
             if rules_hash != prev_rules_hash:
@@ -640,6 +641,10 @@ def refresh(force: bool = False) -> dict:
                 con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             except Exception as exc:  # noqa: BLE001 - never fail a refresh on housekeeping
                 log.warning("wal_checkpoint(TRUNCATE) skipped: %s", exc)
+            # a pending legacy VACUUM retries on every refresh until it succeeds
+            # (skipped when the reclamation already attempted it in this run).
+            if parquet and not reclaim_ran and bbdb.kv_get(con, "legacy_vacuum_pending") == "1":
+                _vacuum_legacy(con)
         finally:
             if pq_lock is not None:
                 pq_lock.__exit__(None, None, None)
@@ -652,18 +657,45 @@ def refresh(force: bool = False) -> dict:
         _STATE["building"] = False
 
 
-def _reclaim_legacy_files(con) -> None:
+def _db_size_bytes():
+    """Best-effort on-disk size of the slim SQLite (None for an in-memory test DB)."""
+    try:
+        return os.path.getsize(bbdb.db_path())
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _vacuum_legacy(con) -> bool:
+    """VACUUM the slim SQLite. VACUUM needs exclusive access and the app's WAL readers can hold
+    it, so a failure ('database is locked') is EXPECTED under load: flag kv legacy_vacuum_pending
+    and return False - the housekeeping zone of every later parquet refresh retries until it
+    succeeds. Never raises."""
+    try:
+        con.execute("VACUUM")
+    except Exception as exc:  # noqa: BLE001 - a locked VACUUM must not fail the refresh
+        bbdb.kv_set(con, "legacy_vacuum_pending", "1")
+        con.commit()
+        log.warning("BZ legacy reclamation: VACUUM failed (%s) - flagged for retry on a later refresh", exc)
+        return False
+    if bbdb.kv_get(con, "legacy_vacuum_pending") == "1":
+        bbdb.kv_set(con, "legacy_vacuum_pending", "0")
+        con.commit()
+    return True
+
+
+def _reclaim_legacy_files(con) -> bool:
     """ After a successful Parquet publish, the legacy sqlite `files` table (+ its
     FTS5 index) is dead weight - ~3.4 GB of stale rows inside the SAME file that holds the small
     history/state tables (which must never be dropped). Drop the legacy structures, recreate them
-    EMPTY (so switching back to the sqlite store rebuilds instead of erroring), and VACUUM once to
-    hand the space back. A no-op when the table is already empty."""
+    EMPTY (so switching back to the sqlite store rebuilds instead of erroring), and VACUUM to hand
+    the space back. Returns True iff a VACUUM was attempted (so the caller does not immediately
+    retry); a locked VACUUM retries on later refreshes via kv legacy_vacuum_pending."""
     have = [r[0] for r in con.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('files','files_fts')")]
     if "files" not in have:
-        return
+        return False
     if con.execute("SELECT 1 FROM files LIMIT 1").fetchone() is None:
-        return  # already reclaimed (or never built) - nothing to hand back
+        return False  # already reclaimed (or never built) - nothing to hand back
     log.info("BZ legacy reclamation: dropping the stale sqlite files table (+FTS) - the parquet store is authoritative")
     con.commit()
     con.execute("DROP TABLE IF EXISTS files_fts")
@@ -671,19 +703,16 @@ def _reclaim_legacy_files(con) -> None:
     bbdb._init_schema(con)  # recreate EMPTY files + indexes + FTS shell; the small tables are untouched
     con.commit()
     t0 = time.time()
-    try:
-        import config
-        before = os.path.getsize(bbdb.db_path())
-    except Exception:  # noqa: BLE001 - size logging is best-effort (an in-memory test DB has none)
-        before = None
-    con.execute("VACUUM")
-    try:
-        import config
-        after = os.path.getsize(bbdb.db_path())
+    before = _db_size_bytes()
+    if not _vacuum_legacy(con):
+        return True
+    after = _db_size_bytes()
+    if before is not None and after is not None:
         log.info("BZ legacy reclamation: VACUUM %.1fs, db %.2f GB -> %.2f GB",
                  time.time() - t0, before / 1e9, after / 1e9)
-    except Exception:  # noqa: BLE001
+    else:
         log.info("BZ legacy reclamation: VACUUM done in %.1fs", time.time() - t0)
+    return True
 
 
 def refresh_transmit_side() -> dict:

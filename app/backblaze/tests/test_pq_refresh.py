@@ -226,6 +226,52 @@ def test_reclamation_is_a_noop_when_already_empty(pq_env):
     assert con.execute("SELECT count(*) FROM files").fetchone()[0] == 0
 
 
+class _VacuumLocked:
+    """Delegates to the real con but raises on VACUUM - simulating the app's WAL readers holding
+    the exclusive access a VACUUM needs."""
+
+    def __init__(self, real):
+        self._real = real
+
+    def execute(self, sql, *a):
+        if "VACUUM" in sql:
+            raise sqlite3.OperationalError("database is locked")
+        return self._real.execute(sql, *a)
+
+    def commit(self):
+        return self._real.commit()
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+def test_locked_vacuum_flags_pending_and_never_raises(pq_env):
+    con, root, bzroot = pq_env
+    _write_filelist(root, "C", "aaa")
+    con.executemany("INSERT INTO files VALUES(?,?,?,?,?,?,?,?,?)", [
+        ("C", r"C:\old\a.txt", r"c:\old\a.txt", "a.txt", "txt", 1, "0", 0, None),
+    ])
+    con.commit()
+    # the whole reclamation runs against the locked-connection wrapper: drops succeed (committed),
+    # the VACUUM fails, the flag is set, and nothing raises out of the refresh
+    locked = _VacuumLocked(con)
+    assert indexer._reclaim_legacy_files(locked) is True  # True = a VACUUM was attempted
+    assert bbdb.kv_get(con, "legacy_vacuum_pending") == "1"
+    assert con.execute("SELECT count(*) FROM files").fetchone()[0] == 0  # drops still committed
+    assert con.execute("SELECT count(*) FROM queue").fetchone()[0] == 0  # small tables intact
+
+
+def test_pending_vacuum_retries_on_a_later_refresh(pq_env):
+    con, root, bzroot = pq_env
+    _write_filelist(root, "C", "aaa")
+    bbdb.kv_set(con, "legacy_vacuum_pending", "1")
+    con.commit()
+    assert indexer.refresh(force=True)["ok"]
+    # the housekeeping zone retried the pending VACUUM (no contention in the test) and cleared it
+    assert bbdb.kv_get(con, "legacy_vacuum_pending") == "0"
+    assert con.execute("SELECT count(*) FROM files").fetchone()[0] == 0
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
