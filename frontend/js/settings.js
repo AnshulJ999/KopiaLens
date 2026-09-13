@@ -43,6 +43,7 @@ const settingsPart = {
       this.startupDelay = Number(kl.startup_delay ?? 300);
       this.dirMemoMaxMb = Number(kl.dir_memo_max_mb || 1500);
       this.refcountWriteInterval = Number(kl.refcount_write_interval || 21600);
+      this.debugLog = kl.debug_log === true;
     },
     _readBackblaze(bz) {
       this.bzDataPath = bz.bzdata_path || "C:\\ProgramData\\Backblaze\\bzdata";
@@ -81,6 +82,7 @@ const settingsPart = {
           startup_delay: Number(this.startupDelay) || 0,
           dir_memo_max_mb: Number(this.dirMemoMaxMb) || 1500,
           refcount_write_interval: Number(this.refcountWriteInterval) || 21600,
+          debug_log: !!this.debugLog,
         };
         const backblaze = {
           bzdata_path: this.bzDataPath || "",

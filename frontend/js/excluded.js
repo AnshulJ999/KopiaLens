@@ -84,10 +84,10 @@ const excludedPart = {
         { title: "Files", field: "total_files", width: 80, hozAlign: "right", sorter: "number", formatter: num },
         { title: "Bkd #", field: "backed_files", width: 75, hozAlign: "right", sorter: "number", formatter: num },
         { title: "Excl #", field: "excluded_files", width: 75, hozAlign: "right", sorter: "number", formatter: num },
-        { title: "Last backed", field: "last_backed", width: 145, formatter: (c) => c.getValue() || "" },
+        { title: "Last backed", field: "last_backed", width: 145, formatter: (c) => (c.getValue() ? timeCell(c.getValue()) : "") },
         { title: "Repo", field: "repo", width: 80 },
         { title: "Also in BZ", field: "bz_backed_bytes", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? fmtBytes(c.getValue()) : "<span style='color:var(--faint)'>—</span>" },
-        { title: "Modified", field: "mtime", width: 145, formatter: (c) => (c.getValue() || "").replace("T", " ") },
+        { title: "Modified", field: "mtime", width: 145, formatter: (c) => (c.getValue() ? timeCell(c.getValue()) : "") },
       ];
       const isDrives = this.excludedPath === "";
       setTable("#excludedTable", items, cols, {

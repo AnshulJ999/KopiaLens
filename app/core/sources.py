@@ -125,7 +125,7 @@ def _build_now(repo: str) -> dict:
         _CACHE[repo] = entry
         _LAST_ERROR.pop(repo, None)
         _REFRESHING.discard(repo)
-    log.info("sources_index repo=%s built (%s): %d sources", repo, backend, len(srcs))
+    log.debug("sources_index repo=%s built (%s): %d sources", repo, backend, len(srcs))
     return entry
 
 

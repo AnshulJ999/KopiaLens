@@ -136,7 +136,7 @@ const bzIndexPart = {
             if (this.bzStatus.last_error) {
               this.bzRefreshResult = "Last BZ refresh FAILED: " + this.bzStatus.last_error;
             } else {
-              this.bzRefreshResult = "BZ refresh completed " + new Date().toLocaleTimeString();
+              this.bzRefreshResult = "BZ refresh completed " + humanTime(Date.now());
             }
             await this.bzActivate();
           }

@@ -87,7 +87,8 @@ def refresh_policies(repo: str, force: bool = False) -> dict:
         policies.pop(gone)      # source no longer exists; do not keep its policy forever
     if policies:
         _write_policies(repo, policies)
-    log.info("policies repo=%s: %d known, %d failed this pass", repo, len(policies), failed)
+    (log.warning if failed else log.debug)("policies repo=%s: %d known, %d failed this pass",
+                                           repo, len(policies), failed)
     return policies
 
 

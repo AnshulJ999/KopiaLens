@@ -22,7 +22,7 @@ import time
 from . import bbdb, parsers, paths, pq, queries, rules
 from .safety import open_ro
 
-log = logging.getLogger("bz.indexer")
+log = logging.getLogger("kopialens.bz.indexer")  # under the app's logger so in-process calls reach the log files
 
 try:
     from config import HERE as _KL_ROOT  # KopiaLens root, needed as the worker subprocess cwd
@@ -555,7 +555,7 @@ def refresh(force: bool = False) -> dict:
                             if digest and digest == prev[2]:
                                 body_same = True
                                 bbdb.ingest_set(con, src, st.st_mtime, st.st_size, digest)
-                                log.info("BZ %s: filelist body unchanged (digest match), skipping reindex", vol.letter)
+                                log.debug("BZ %s: filelist body unchanged (digest match), skipping reindex", vol.letter)
                     if body_same:
                         reindex = rules_changed  # unchanged body still reclassifies when the rules moved
                         if reindex:

@@ -129,8 +129,8 @@ def memory_snapshot() -> dict:
     return snap
 
 
-def log_memory(tag: str = "") -> dict:
-    """Emit ONE compact line (not spammy) and return the snapshot."""
+def log_memory(tag: str = "", debug: bool = False) -> dict:
+    """Emit ONE compact line and return the snapshot. ``debug`` for the recurring light-pass line."""
     s = memory_snapshot()
     rss = f"{s['rss_mb']:.0f}MB" if s.get("rss_mb") is not None else "?"
     dmb = f"{s['dir_memo_mb']:.0f}" if s.get("dir_memo_mb") is not None else "?"
@@ -149,5 +149,5 @@ def log_memory(tag: str = "") -> dict:
             parts.append(
                 f"r{repo}[files={r['files']} paths={r['paths']} refs={r['content_refs']} duckdb={dtot}]"
             )
-    log.info("%s%s", f"{tag} " if tag else "", " ".join(parts))
+    (log.debug if debug else log.info)("%s%s", f"{tag} " if tag else "", " ".join(parts))
     return s

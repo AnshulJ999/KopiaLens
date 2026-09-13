@@ -52,7 +52,8 @@ document.addEventListener("alpine:init", () => {
     // Logs tab (): four sections (audit/activity/indexing/app log), all repos in one
     // view with a client-side repo filter; the app log is app-wide by nature.
     logsTab: "audit", logsRepo: "all", jobHistory: [], indexRuns: [],
-    appLogLines: "", appLogTruncated: false, _logsSeq: 0,
+    appLogRecords: [], appLogLoaded: false, appLogFile: "app", appLogLevel: "info",
+    appLogDebugAvailable: false, appLogTruncated: false, _logsSeq: 0,
     groupReclaim: {},  // "repo:folder" -> {v: freeable, capped} - keyed by repo so one repo's
                        // numbers can never render in another repo's table
     mountSnapshot: "", mountPoint: "", restoreSource: "", restoreDest: "",
@@ -69,7 +70,7 @@ document.addEventListener("alpine:init", () => {
     // Advanced settings. These existed in settings.json all along and had no UI, so the only way to
     // change them was to edit the file by hand. Defaults here mirror app/settings.py.
     lightInterval: 1800, dashboardInterval: 14400,
-    autoCompact: true, compactRatio: 1.6, compactMinInterval: 86400,
+    autoCompact: true, compactRatio: 1.6, compactMinInterval: 86400, debugLog: false,
     indexWorkerTimeout: 14400, indexDrainTimeout: 300, indexRetryDelay: 900, indexMaxRetries: 1,
     folderPrewarmBudget: 900, startupDelay: 300, dirMemoMaxMb: 1500, refcountWriteInterval: 21600,
     // Backblaze settings. Defaults mirror app/settings.py; the Save payload carries them as the
@@ -96,6 +97,8 @@ document.addEventListener("alpine:init", () => {
     fmtB(v) { return fmtBytes(v); },
     fmtPhys(v) { return fmtPhys(v); },
     humanTime(s) { return humanTime(s); },
+    fmtDate(s) { return fmtDate(s); },
+    fmtDur(s) { return fmtDur(s); },
     shortSource(s) { return sourcePath(s); },
     sourceRoot() { return this.selectedSource === "*ALL*" ? "" : sourcePath(this.selectedSource); },
     treePrefix: "",
@@ -338,10 +341,20 @@ document.addEventListener("alpine:init", () => {
     },
     pollIndex() {
       if (this._poll) clearInterval(this._poll);
+      const firstIndex = !!(this.indexStatus && this.indexStatus.never_indexed);
       this._poll = setInterval(async () => {
         try {
           this.indexStatus = await getJson(`/api/index/status?repo=${encodeURIComponent(this.repo)}`);
-          if (!this.indexStatus.building) { clearInterval(this._poll); this._poll = null; }
+          if (!this.indexStatus.building) {
+            clearInterval(this._poll); this._poll = null;
+            // A repo's FIRST index: the views still show "not indexed yet" - clear it and load the
+            // active tab now that data exists. Later runs keep the view as it is.
+            if (firstIndex && !this.indexStatus.never_indexed) {
+              this.error = "";
+              await this.refreshBase(true);
+              this.activate();
+            }
+          }
         } catch (e) { clearInterval(this._poll); this._poll = null; }
       }, 3000);
     },

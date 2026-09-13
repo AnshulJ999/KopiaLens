@@ -26,7 +26,7 @@ const bzHealthPart = {
           { title: "Uploaded", field: "bytes", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? bzFmt(c.getValue()) : "" },
         ], { initialSort: [{ column: "ts", dir: "desc" }], height: "15rem" });
         setTable("#bzBackupDaysTable", r.backup_days || [], [
-          { title: "Day", field: "day", width: 150 },
+          { title: "Day", field: "day", width: 150, formatter: (c) => fmtDate(c.getValue()) },
           { title: "Files backed up", field: "files", width: 150, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
           { title: "Uploaded", field: "bytes", width: 140, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
         ], { initialSort: [{ column: "day", dir: "desc" }], height: "17rem" });

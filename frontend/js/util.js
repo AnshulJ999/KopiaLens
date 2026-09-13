@@ -8,15 +8,34 @@ const fmtBytes = (value) => {
 };
 const fmtPhys = (v) => (v === null || v === undefined ? "—" : fmtBytes(v));
 
+// Accepts an ISO / "YYYY-MM-DD HH:MM:SS" string, a Date, or an epoch number. Epoch SECONDS (the
+// backend's time.time()) are told apart from milliseconds by magnitude.
+const toDate = (s) => (typeof s === "number" ? new Date(s < 1e12 ? s * 1000 : s) : new Date(s));
 const fmtAbs = (s) => {
   if (!s) return "";
-  const d = new Date(s);
+  const d = toDate(s);
   return isNaN(d.getTime()) ? String(s).slice(0, 19)
     : d.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
 };
+// Date only ("20 Jul 2024") - for day-granularity values and "first backed up" style labels.
+const fmtDate = (s) => {
+  if (!s) return "";
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(String(s)) ? new Date(`${s}T00:00:00`) : toDate(s);
+  return isNaN(d.getTime()) ? String(s).slice(0, 10)
+    : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+};
+// A DURATION in seconds ("0.4 s", "42 s", "6 m 12 s", "1 h 05 m") - never pass one to humanTime.
+const fmtDur = (sec) => {
+  const n = Number(sec);
+  if (!isFinite(n) || n < 0) return "";
+  if (n < 10) return `${n.toFixed(1)} s`;
+  if (n < 60) return `${Math.round(n)} s`;
+  if (n < 3600) return `${Math.floor(n / 60)} m ${String(Math.floor(n % 60)).padStart(2, "0")} s`;
+  return `${Math.floor(n / 3600)} h ${String(Math.floor((n % 3600) / 60)).padStart(2, "0")} m`;
+};
 const fmtRel = (s) => {
   if (!s) return "";
-  const d = new Date(s);
+  const d = toDate(s);
   if (isNaN(d.getTime())) return String(s).slice(0, 19);
   let sec = (Date.now() - d.getTime()) / 1000;
   const future = sec < 0; sec = Math.abs(sec);

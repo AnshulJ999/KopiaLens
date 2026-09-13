@@ -208,7 +208,7 @@
           <div class="rounded border border-danger-bd">
             <template x-for="(d,i) in (bzSessions ? bzSessions.deletion_events : [])" :key="i">
               <div class="text-[12px] flex items-center gap-2 border-b border-bd-soft px-2 py-0.5">
-                <span class="text-muted w-44 shrink-0" x-text="d.ts"></span>
+                <span class="text-muted w-44 shrink-0" x-text="humanTime(d.ts)"></span>
                 <span class="shrink-0" x-text="fmtB(d.bytes)"></span>
                 <span class="text-danger break-all" x-text="d.detail"></span>
               </div>

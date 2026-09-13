@@ -192,7 +192,7 @@
 {%- macro folder_cards() -%}
 <div class="space-y-2">
 <div class="kl-callout" x-show="detail.reclaim_stale">
-  These figures are from <span x-text="detail.reclaim_at ? new Date(detail.reclaim_at*1000).toLocaleString() : 'an earlier index'"></span>. A fresh number is being computed in the background.
+  These figures are from <span x-text="detail.reclaim_at ? humanTime(detail.reclaim_at) : 'an earlier index'"></span>. A fresh number is being computed in the background.
 </div>
 <div class="kl-cards">
   <div class="kl-card"><div class="k" x-text="detail.physical_dedup != null ? 'Physical (deduped, all versions)' : 'Physical (approx)'"></div><div class="v" x-text="detail.heavyLoading ? '…' : fmtPhys((detail.physical_dedup != null) ? detail.physical_dedup : detail.physical)"></div></div>
@@ -268,7 +268,7 @@
     <span class="num" x-text="Number(detail.deleted_files || 0).toLocaleString()"></span> deleted from disk ·
     <span class="num" x-text="Number(detail.versions || 0).toLocaleString()"></span> versions
   </div>
-  <div class="kl-note">First backed up <span x-text="(detail.first_seen || '—').slice(0, 10)"></span> · last <span x-text="(detail.last_seen || '—').replace('T', ' ').slice(0, 16)"></span></div>
+  <div class="kl-note">First backed up <span x-text="detail.first_seen ? fmtDate(detail.first_seen) : '—'"></span> · last <span x-text="detail.last_seen ? humanTime(detail.last_seen) : '—'"></span></div>
 </div>
 {%- endmacro -%}
 
@@ -326,7 +326,7 @@
               <template x-if="detail.kind === 'file'">
                 <span>
                   <span class="font-mono" x-text="shortSource(detail.source)"></span>
-                  <span x-show="detail.versions.length"> · first backed up <span x-text="detail.versions.length ? detail.versions[detail.versions.length - 1].time.slice(0, 10) : ''"></span> · <span class="num" x-text="detail.versions.length + ' versions'"></span></span>
+                  <span x-show="detail.versions.length"> · first backed up <span x-text="detail.versions.length ? fmtDate(detail.versions[detail.versions.length - 1].start) : ''"></span> · <span class="num" x-text="detail.versions.length + ' versions'"></span></span>
                   <span x-show="detail.instances > 1"> · <span class="num" x-text="(detail.instances - 1) + ' copies elsewhere'"></span></span>
                 </span>
               </template>
@@ -334,7 +334,7 @@
                 <span>
                   <span class="num" x-text="Number(detail.files || 0).toLocaleString()"></span> files ·
                   <span class="num" x-text="Number(detail.deleted_files || 0).toLocaleString()"></span> deleted from disk
-                  <span x-show="detail.first_seen"> · first backed up <span x-text="(detail.first_seen || '').slice(0, 10)"></span></span>
+                  <span x-show="detail.first_seen"> · first backed up <span x-text="fmtDate(detail.first_seen)"></span></span>
                 </span>
               </template>
             </div>

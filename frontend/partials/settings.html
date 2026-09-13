@@ -225,6 +225,11 @@
                   </div></div>
                 <p class="text-[11px] text-muted mt-1">Memory ceiling for the in-process directory cache, the single largest resident cost in this app. Anything evicted falls back to the on-disk cache, never to kopia.</p>
               </div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Debug log</span>
+                  <button @click="debugLog = !debugLog" class="h-8 rounded border border-bd px-3" x-text="debugLog ? 'On' : 'Off'"></button></div>
+                <p class="text-[11px] text-muted mt-1">Writes detailed diagnostics to <code>data/logs/kopialens-debug.log</code>, alongside the normal app log. Useful when troubleshooting; leave it off otherwise. Applies as soon as you save.</p>
+              </div>
             </section>
 
             <section x-show="settingsTab==='backblaze'" class="space-y-4">

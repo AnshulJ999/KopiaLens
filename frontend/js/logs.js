@@ -34,7 +34,8 @@ const logsPart = {
       return Object.entries(s).map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`).join("  ");
     },
     logsAudit() {
-      return this.auditRows.filter((r) => this.logsRepo === "all" || (r.repo || "") === this.logsRepo);
+      // The API returns oldest first (the file's order); the tab shows newest first.
+      return this.auditRows.filter((r) => this.logsRepo === "all" || (r.repo || "") === this.logsRepo).reverse();
     },
 
     // ---- Activity: job history, merged memory + disk by the backend ----
@@ -65,7 +66,7 @@ const logsPart = {
     },
     runStageText(r) {
       const stages = r.stages || {};
-      const parts = Object.entries(stages).map(([k, v]) => `${k} ${v}s`);
+      const parts = Object.entries(stages).map(([k, v]) => `${k} ${fmtDur(v)}`);
       if ((r.skipped || []).length) parts.push(`skipped: ${r.skipped.join(", ")}`);
       return parts.join(" · ");
     },
@@ -81,11 +82,26 @@ const logsPart = {
     },
 
     // ---- App log: the whole app writes here; no repo split exists or is wanted ----
+    // Parsed records, newest first, filtered server-side by level. "debug" reads the separate
+    // debug log file (only present while the debug log setting is on).
     async loadAppLog() {
       const seq = ++this._logsSeq;
-      const r = await getJson(`/api/logs/app?limit=500`).catch(() => ({ lines: [], error: true }));
+      const q = `limit=500&file=${encodeURIComponent(this.appLogFile)}&level=${encodeURIComponent(this.appLogLevel)}`;
+      const r = await getJson(`/api/logs/app?${q}`).catch(() => ({ records: [] }));
       if (seq !== this._logsSeq || this.logsTab !== "app") return;
-      this.appLogLines = (r.lines || []).join("\n");
+      this.appLogRecords = r.records || [];
       this.appLogTruncated = !!r.truncated;
+      this.appLogDebugAvailable = !!r.debug_available;
+      this.appLogLoaded = true;
+    },
+    logLevelClass(rec) {
+      if (rec.level === "ERROR" || rec.level === "CRITICAL") return "text-danger";
+      if (rec.level === "WARNING" || rec.level === "WARN") return "text-warn";
+      if (rec.level === "DEBUG") return "text-faint";
+      return "text-muted";
+    },
+    logStamp(ts) {
+      if (!ts) return "";
+      return new Date(ts * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true });
     },
 };

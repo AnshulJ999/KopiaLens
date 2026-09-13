@@ -72,9 +72,11 @@ const excludePart = {
       this._exClearPrice();
       d.loading = true;
       try {
+        // Custom text has no backend shape; owners do not depend on the shape, so resolve them
+        // with a neutral one and write the custom text to every selected target.
         const r = await getJson("/api/policies/exclusion-targets", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ repo: this.repo, path: d.path, source: d.src || null,
-                                 is_folder: d.kind === "folder", shape: d.shape }) });
+                                 is_folder: d.kind === "folder", shape: d.shape === "custom" ? "exact" : d.shape }) });
         if (!this.exDialog || seq !== this._exTargetsSeq) return;
         d.targetData = r;
         d.loading = false;
@@ -110,9 +112,11 @@ const excludePart = {
       const d = this.exDialog;
       if (!d) return;
       d.ticked = {}; d.hatched = {};
-      if (d.reach === "max") {
+      // Custom text: reach and already-excluded are computed for the backend shapes only, so
+      // default to the top-ranked target and let the user tick more.
+      if (d.reach === "max" || d.shape === "custom") {
         const first = this.exTargets()[0];
-        if (first && first.pattern) d.ticked[first.target] = true;
+        if (first && this.exPatternOf(first)) d.ticked[first.target] = true;
         this._exClearPrice();
         return;
       }
@@ -134,7 +138,7 @@ const excludePart = {
       const d = this.exDialog;
       if (!d) return;
       if (d.ticked[t.target]) delete d.ticked[t.target];
-      else if (t.pattern) d.ticked[t.target] = true;
+      else if (this.exPatternOf(t)) d.ticked[t.target] = true;
       this._exClearPrice();
       this.exPriceAll();
     },
@@ -145,7 +149,7 @@ const excludePart = {
       const d = this.exDialog;
       if (!d) return;
       if (d.hatched[h.target]) delete d.hatched[h.target];
-      else if (h.pattern) {
+      else if (this.exPatternOf(h)) {
         d.hatched[h.target] = true;
         if (d.copyDown[h.target] === undefined) d.copyDown[h.target] = true;
       }
@@ -171,7 +175,15 @@ const excludePart = {
     // Targets with the hatch source's own pattern text for display (the backend recomputes it -
     // the frontend never rebuilds anchored text itself).
     exHatchPattern(h) {
-      return h.pattern || "";
+      return this.exPatternOf(h);
+    },
+
+    // The pattern a target or hatch would receive: the user's text in Custom mode (the same for
+    // every destination), otherwise the backend's per-target recomputed pattern.
+    exPatternOf(t) {
+      const d = this.exDialog;
+      if (d && d.shape === "custom") return (d.custom || "").trim();
+      return (t && t.pattern) || "";
     },
 
     // Every key the commit will write: ticked owning targets first, then escape hatches.
@@ -182,15 +194,15 @@ const excludePart = {
       const d = this.exDialog;
       if (!d) return [];
       const depth = (target) => (target === "global" ? -1 : (target.split(":", 1)[0] === target ? 0 : (target.split(":").slice(1).join(":").split(/[/\\]/).length)));
-      const owners = this.exTargets().filter((t) => d.ticked[t.target] && t.pattern);
+      const owners = this.exTargets().filter((t) => d.ticked[t.target] && this.exPatternOf(t));
       owners.sort((a, b) => {
         if (a.will_create_policy !== b.will_create_policy) return a.will_create_policy ? -1 : 1;
         if (a.is_global !== b.is_global) return a.is_global ? 1 : -1;
         return depth(b.target) - depth(a.target);
       });
-      const hatches = this.exHatches().filter((h) => d.hatched[h.target] && h.pattern)
-        .map((h) => ({ target: h.target, pattern: h.pattern, is_hatch: true, h }));
-      return [...owners.map((t) => ({ target: t.target, pattern: t.pattern, t })), ...hatches];
+      const hatches = this.exHatches().filter((h) => d.hatched[h.target] && this.exPatternOf(h))
+        .map((h) => ({ target: h.target, pattern: this.exPatternOf(h), is_hatch: true, h }));
+      return [...owners.map((t) => ({ target: t.target, pattern: this.exPatternOf(t), t })), ...hatches];
     },
 
     exSelectedTarget() {
@@ -204,7 +216,7 @@ const excludePart = {
       const n = covers.length;
       const matched = covers.filter((c) => c.matches).length;
       const base = n === 1 ? "covers 1 source" : `covers ${n} sources`;
-      if (!n || matched === n) return base;
+      if (!n || matched === n || (this.exDialog && this.exDialog.shape === "custom")) return base;
       return `${base} · ${matched} match this shape`;
     },
 
@@ -222,13 +234,18 @@ const excludePart = {
       const d = this.exDialog;
       if (!d || d.shape === shape) return;
       d.shape = shape;
-      if (shape === "custom") { this._exClearPrice(); this.exPriceNow(); return; }
       this.exLoadTargets();  // re-rank + recompute each target's pattern for the new shape
     },
 
     exCustomInput() {
       if (this._exCustomTimer) clearTimeout(this._exCustomTimer);
-      this._exCustomTimer = setTimeout(() => this.exPriceNow(), 400);
+      this._exCustomTimer = setTimeout(() => {
+        const d = this.exDialog;
+        if (!d) return;
+        // Typing into an empty selection ticks the top-ranked target, as opening Custom would.
+        if (!Object.keys(d.ticked).length) this.exApplyDefaultTicks();
+        this.exPriceAll();
+      }, 400);
     },
 
     _exClearPrice() {
@@ -241,32 +258,12 @@ const excludePart = {
       if (this._exPriceTimer) { clearTimeout(this._exPriceTimer); this._exPriceTimer = null; }
     },
 
-    // Custom shape: price the single custom pattern against the ranked-first target (the
-    // per-target recompute does not apply to free text).
-    exPriceNow() {
-      const d = this.exDialog;
-      if (!d) return;
-      const pat = this.exPattern();
-      this._exClearPrice();
-      if (!pat) return;
-      const seq = ++this._exPriceSeq;
-      d.pricing = true;
-      this._exPriceTimer = setTimeout(async () => {
-        const results = await this.exPricePatterns(d.target, [pat], 120);
-        if (!this.exDialog || seq !== this._exPriceSeq) return;
-        d.price = results && results[0] ? results[0]
-          : { pattern: pat, files: null, error: "could not check the index" };
-        d.priceFor = pat; d.priceTarget = d.target;
-        d.pricing = false;
-      }, 250);
-    },
-
     // price EVERY write the commit would make - the Commit gate needs a current,
-    // successful price per ticked target, since patterns differ per target.
+    // successful price per ticked target, since patterns (and, for custom text, anchoring) differ
+    // per target.
     exPriceAll() {
       const d = this.exDialog;
       if (!d) return;
-      if (d.shape === "custom") return this.exPriceNow();
       this._exClearPrice();
       const plan = this.exWritePlan();
       if (!plan.length) return;
@@ -314,10 +311,6 @@ const excludePart = {
     exPriceReady() {
       const d = this.exDialog;
       if (!d) return false;
-      if (d.shape === "custom") {
-        return !!(d.price && !d.pricing && !d.price.error
-          && d.priceFor === this.exPattern() && d.priceTarget === d.target);
-      }
       if (d.pricing) return false;
       const plan = this.exWritePlan();
       if (!plan.length) return false;
@@ -333,7 +326,8 @@ const excludePart = {
     // hatched, where its own new rule protects it).
     exCoverage() {
       const d = this.exDialog;
-      if (!d || !d.targetData) return null;
+      // Per-source matching is computed for the backend shapes only - not for custom text.
+      if (!d || !d.targetData || d.shape === "custom") return null;
       const sources = d.targetData.sources || [];
       let covered = 0;
       const uncovered = [];
@@ -365,11 +359,6 @@ const excludePart = {
     exKeepoutText() {
       const d = this.exDialog;
       if (!d) return "";
-      if (d.shape === "custom") {
-        const p = d.price;
-        if (!p || p.error || p.files == null) return "";
-        return `${Number(p.files).toLocaleString()} files · ${this.fmtB(p.bytes || 0)}`;
-      }
       let files = 0, byts = 0, any = false, bad = false;
       for (const key of Object.keys(d.prices)) {
         const rec = d.prices[key];

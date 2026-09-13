@@ -11,12 +11,26 @@
             <option value="all">All repos</option>
             <template x-for="r in repos" :key="r.id"><option :value="r.id" x-text="r.name"></option></template>
           </select>
+          <template x-if="logsTab === 'app'">
+            <span class="flex items-center gap-2">
+              <select x-model="appLogLevel" @change="loadAppLog()" class="fld h-7 border border-bd bg-surface text-xs shrink-0" style="width:auto">
+                <option value="debug" :selected="appLogLevel === 'debug'">Everything</option>
+                <option value="info" :selected="appLogLevel === 'info'">Info and above</option>
+                <option value="warning" :selected="appLogLevel === 'warning'">Warnings and errors</option>
+                <option value="error" :selected="appLogLevel === 'error'">Errors only</option>
+              </select>
+              <select x-model="appLogFile" @change="loadAppLog()" x-show="appLogDebugAvailable || appLogFile === 'debug'" class="fld h-7 border border-bd bg-surface text-xs shrink-0" style="width:auto">
+                <option value="app" :selected="appLogFile === 'app'">App log</option>
+                <option value="debug" :selected="appLogFile === 'debug'">Debug log</option>
+              </select>
+            </span>
+          </template>
           <button @click="loadLogs()" class="ml-auto h-7 rounded border border-bd px-2 text-xs">⟳ Refresh</button>
         </div>
         <span class="kl-note -mt-1" x-show="logsTab === 'audit'">Every action KopiaLens executes or hands out, across all repos. Never trimmed.</span>
         <span class="kl-note -mt-1" x-show="logsTab === 'activity'">Past jobs - deletes, restores, dry runs. Kept on disk, so history survives a restart.</span>
         <span class="kl-note -mt-1" x-show="logsTab === 'indexing'">Every index run: how long each stage took, what failed or was skipped. Written by the app, so timed-out and killed runs appear too.</span>
-        <span class="kl-note -mt-1" x-show="logsTab === 'app'">The application log, shared by everything - the last few hundred lines.</span>
+        <span class="kl-note -mt-1" x-show="logsTab === 'app'">What the app did and what went wrong, newest first. The debug log (Settings, Advanced) adds detailed diagnostics.</span>
 
         <!-- AUDIT -->
         <div x-show="logsTab === 'audit'" class="rounded border border-bd bg-surface p-3">
@@ -26,7 +40,7 @@
               <tbody>
                 <template x-for="(r, i) in logsAudit()" :key="i">
                   <tr class="border-t border-bd-soft">
-                    <td class="p-1.5 whitespace-nowrap" x-text="r.ts || ''"></td>
+                    <td class="p-1.5 whitespace-nowrap" x-text="humanTime(r.ts)"></td>
                     <td class="p-1.5" x-text="r.event"></td>
                     <td class="p-1.5" x-text="r.action"></td>
                     <td class="p-1.5" x-text="r.repo || ''"></td>
@@ -48,13 +62,13 @@
               <tbody>
                 <template x-for="(j, i) in logsJobs()" :key="j.job_id || i">
                   <tr class="border-t border-bd-soft">
-                    <td class="p-1.5 whitespace-nowrap" x-text="j.started ? new Date(j.started * 1000).toLocaleString() : ''"></td>
+                    <td class="p-1.5 whitespace-nowrap" x-text="humanTime(j.started || j.created)"></td>
                     <td class="p-1.5" x-text="(j.kind_label || j.kind || '') + (j.dry ? ' (dry run)' : '')"></td>
                     <td class="p-1.5" x-text="j.repo || ''"></td>
                     <td class="p-1.5 break-all max-w-[24rem]" x-text="j.label || ''"></td>
                     <td class="p-1.5 font-medium" :class="jobStateClass(j)" :title="j.error || ''" x-text="j.state || ''"></td>
                     <td class="p-1.5" x-text="j.total ? j.done + '/' + j.total : ''"></td>
-                    <td class="p-1.5 whitespace-nowrap" x-text="j.elapsed != null ? humanTime(j.elapsed) : ''"></td>
+                    <td class="p-1.5 whitespace-nowrap" x-text="j.elapsed != null ? fmtDur(j.elapsed) : ''"></td>
                   </tr>
                 </template>
               </tbody>
@@ -71,11 +85,11 @@
               <tbody>
                 <template x-for="(r, i) in logsRuns()" :key="i">
                   <tr class="border-t border-bd-soft">
-                    <td class="p-1.5 whitespace-nowrap" x-text="r.ts || ''"></td>
+                    <td class="p-1.5 whitespace-nowrap" x-text="humanTime(r.ts_epoch || r.ts)"></td>
                     <td class="p-1.5" x-text="r.repo || ''"></td>
                     <td class="p-1.5" x-text="r.trigger || ''"></td>
                     <td class="p-1.5 font-medium" :class="r.ok ? 'text-ok' : 'text-danger'" x-text="r.ok ? 'ok' : 'failed'"></td>
-                    <td class="p-1.5 whitespace-nowrap" x-text="humanTime(r.elapsed || 0)"></td>
+                    <td class="p-1.5 whitespace-nowrap" x-text="fmtDur(r.elapsed || 0)"></td>
                     <td class="p-1.5 break-all max-w-[30rem]" x-text="runStageText(r)"></td>
                     <td class="p-1.5 break-all max-w-[24rem]" :class="r.ok ? 'text-warn' : 'text-danger'" x-text="runErrorText(r)"></td>
                   </tr>
@@ -88,7 +102,18 @@
 
         <!-- APP LOG -->
         <div x-show="logsTab === 'app'" class="rounded border border-bd bg-surface p-3">
-          <pre class="text-[11px] whitespace-pre-wrap overflow-auto max-h-[70vh] bg-surface2 rounded p-2 font-mono" x-text="appLogLines || 'Loading…'"></pre>
-          <div class="kl-note mt-1" x-show="appLogTruncated">Showing the tail of the current log file - older rotations stay on disk under data/logs.</div>
+          <div class="overflow-auto max-h-[70vh] rounded border border-bd-soft bg-surface2 font-mono text-[11px]">
+            <template x-for="(rec, i) in appLogRecords" :key="i">
+              <div class="flex gap-2 px-2 py-0.5 border-b border-bd-soft">
+                <span class="shrink-0 whitespace-nowrap text-muted" style="width:9.5rem" x-text="logStamp(rec.ts)"></span>
+                <span class="shrink-0 font-medium" style="width:4.5rem" :class="logLevelClass(rec)" x-text="rec.level"></span>
+                <span class="shrink-0 text-muted" style="width:9rem" x-text="rec.logger.replace(/^kopialens\./, '')"></span>
+                <span class="whitespace-pre-wrap break-all grow" :class="logLevelClass(rec) === 'text-danger' ? 'text-danger' : ''" x-text="rec.message"></span>
+              </div>
+            </template>
+            <div x-show="appLogLoaded && !appLogRecords.length" class="p-3 text-xs text-muted">Nothing at this level in the current log file.</div>
+            <div x-show="!appLogLoaded" class="p-3 text-xs text-muted">Loading…</div>
+          </div>
+          <div class="kl-note mt-1" x-show="appLogTruncated">Showing the newest part of the current log file - older rotations stay on disk under data/logs.</div>
         </div>
       </section>

@@ -36,9 +36,9 @@
                     <input type="checkbox" :checked="!!exDialog.ticked[t.target]" class="shrink-0" tabindex="-1">
                     <span class="kl-note shrink-0" style="width:9rem" x-text="t.is_global ? 'Global policy' : shortSource(t.target)"></span>
                     <span class="text-[11px] shrink-0" style="color:var(--muted)" x-text="exCoversText(t)"></span>
-                    <span class="font-mono text-[11px] break-all grow" x-text="t.pattern || '(no pattern for this shape)'"></span>
+                    <span class="font-mono text-[11px] break-all grow" x-text="exPatternOf(t) || (exDialog.shape === 'custom' ? '(write a pattern below)' : '(no pattern for this shape)')"></span>
                     <span class="pill warn shrink-0" x-show="t.will_create_policy">creates list</span>
-                    <span class="pill shrink-0" x-show="t.pattern && !(t.protects > 0)" style="color:var(--muted)">already excluded</span>
+                    <span class="pill shrink-0" x-show="exDialog.shape !== 'custom' && t.pattern && !(t.protects > 0)" style="color:var(--muted)">already excluded</span>
                     <span class="pill ok shrink-0" x-show="t.is_global">wide reach</span>
                   </div>
                 </template>
@@ -54,13 +54,13 @@
               <summary class="text-xs font-medium cursor-pointer select-none" style="color:var(--muted)">Advanced: write into a policy that currently inherits its rules</summary>
               <div class="space-y-1 mt-2">
                 <template x-for="h in exHatches()" :key="h.target">
-                  <div x-show="h.pattern">
+                  <div x-show="exPatternOf(h)">
                     <div class="rounded border px-2 py-1.5 flex items-center gap-2 cursor-pointer"
                          :class="exDialog.hatched[h.target] ? 'border-fg bg-sel' : 'border-bd-soft hover:bg-head'"
                          @click="exToggleHatch(h)">
                       <input type="checkbox" :checked="!!exDialog.hatched[h.target]" class="shrink-0" tabindex="-1">
                       <span class="kl-note shrink-0" style="width:9rem" x-text="shortSource(h.target)"></span>
-                      <span class="font-mono text-[11px] break-all grow" x-text="h.pattern"></span>
+                      <span class="font-mono text-[11px] break-all grow" x-text="exPatternOf(h)"></span>
                       <span class="pill warn shrink-0">replaces inherited rules</span>
                     </div>
                     <div class="kl-note mt-0.5 ml-6" x-show="exDialog.hatched[h.target]" x-text="h.note"></div>
@@ -87,7 +87,7 @@
                 <div class="mt-2">
                   <input x-model="exDialog.custom" @input="exCustomInput()" @keydown.enter="exConfirm()"
                          class="fld w-full border border-bd bg-surface2 font-mono text-xs" placeholder="kopia ignore pattern, e.g. /Users/*/Cache/**">
-                  <div class="kl-note mt-1" x-show="exDialog.target !== 'global'" x-text="'Anchored patterns are relative to ' + (exDialog.target === 'global' ? '' : sourcePath(exDialog.target))"></div>
+                  <div class="kl-note mt-1">The same text is written to every selected policy. An anchored pattern (leading /) starts from each policy's own root.</div>
                 </div>
               </template>
             </div>

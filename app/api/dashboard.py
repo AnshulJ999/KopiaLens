@@ -171,7 +171,13 @@ def post_settings(payload: dict) -> dict:
         if isinstance(bz, dict):
             settings["backblaze"] = {**settings.get("backblaze", {}), **bz}
 
-    return mutate_settings(_apply)
+    saved = mutate_settings(_apply)
+    try:  # the debug log toggle applies immediately, no restart
+        from ..core.applog import apply_logging_settings
+        apply_logging_settings(saved)
+    except Exception:  # noqa: BLE001 - a logging toggle must never fail a settings save
+        pass
+    return saved
 
 
 @router.get("/settings/tables")

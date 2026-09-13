@@ -279,7 +279,7 @@
                   <tbody>
                     <template x-for="b in (polBackups.backups || [])" :key="b.name">
                       <tr class="border-t border-bd-soft">
-                        <td class="p-1.5 whitespace-nowrap" x-text="b.ts || ''"></td>
+                        <td class="p-1.5 whitespace-nowrap" x-text="humanTime(b.ts)"></td>
                         <td class="p-1.5"><span class="pill" x-text="b.trigger || ''"></span></td>
                         <td class="p-1.5 whitespace-nowrap" x-text="fmtB(b.size || 0)"></td>
                         <td class="p-1.5 font-mono break-all max-w-[20rem]" x-text="b.name"></td>

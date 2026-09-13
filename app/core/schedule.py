@@ -139,5 +139,5 @@ def compute_next_snapshots(repo: str, force: bool = False) -> dict[str, str]:
             json.dump(out, fh)
     except Exception:
         pass
-    log.info("next_snapshots repo=%s: %d sources (%d recomputed via policy show)", repo, len(out), spawned)
+    log.debug("next_snapshots repo=%s: %d sources (%d recomputed via policy show)", repo, len(out), spawned)
     return out

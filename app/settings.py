@@ -72,6 +72,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "refcount_write_interval": 21600,  # min seconds between content_refs rewrites - a large churn
                                            # on the DuckDB file, so deliberately infrequent (see metrics.py)
         "dir_memo_max_mb": 1500,     # RAM budget for the in-process directory-listing LRU (byte-budgeted, not item-count)
+        "debug_log": False,          # also write data/logs/kopialens-debug.log at DEBUG (env KOPIALENS_DEBUG_LOG overrides)
         # Walk-cache storage format for NEWLY written rows: "none" | "zstd-1" | "zstd-3". Both
         # formats are readable side by side, so changing this is safe at any time; converting the
         # rows already on disk is a separate one-off (`python compress_cache.py`).

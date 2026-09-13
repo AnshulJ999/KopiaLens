@@ -108,7 +108,7 @@ const detailPart = {
           reclaim_everywhere: detail.reclaim_everywhere, purge_everywhere_count: detail.purge_everywhere_count,
           purgeEverywhereCmds: detail.purge_everywhere_cmds || "",
           snapsEverywhere: detail.snapshots_everywhere || [],   // the content's full delete-set (ids)
-          versions: (vres.versions || []).map((x) => ({ time: humanTime(x.start_time), size: x.size, snapshot_id: x.snapshot_id, content_id: x.content_id })),
+          versions: (vres.versions || []).map((x) => ({ time: humanTime(x.start_time), start: x.start_time, size: x.size, snapshot_id: x.snapshot_id, content_id: x.content_id })),
           purge: purgeRows,
           purgeCmds: purgeRows.map((r) => r.cmd).join("\n"),
         });

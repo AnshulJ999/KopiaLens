@@ -49,14 +49,14 @@ def _is_first_instance() -> bool:
         return True
 
 
-def _log_guard(msg: str) -> None:
+def _log_guard(msg: str, level: str = "WARNING") -> None:
     """Append one line to the shared log file so a duplicate-launch is identifiable. Plain append
     (NOT a RotatingFileHandler) so it can't clash with the server process's log rotation."""
     try:
         from app.core.applog import LOG_FILE
         os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
         with open(LOG_FILE, "a", encoding="utf-8") as fh:
-            fh.write(f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S} WARNING kopialens.tray | {msg}\n")
+            fh.write(f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S} {level:<5} kopialens.tray | {msg}\n")
     except Exception:  # noqa: BLE001
         pass
 
@@ -276,7 +276,10 @@ class _ControlHandler(BaseHTTPRequestHandler):
             _icon.stop()
 
     def log_message(self, fmt, *args) -> None:  # keep the control API out of stderr
-        _log_guard("tray control: " + (fmt % args))
+        line = fmt % args
+        if '"GET /status' in line:
+            return  # polled constantly - not worth a log line
+        _log_guard("tray control: " + line, level="INFO")
 
 
 def _start_control_server() -> None:

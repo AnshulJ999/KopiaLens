@@ -79,7 +79,7 @@ const searchPart = {
               const tip = v.capped ? ' title="Partial - first 5,000 files only"' : "";
               return `<span style="color:var(--ok)"${tip}>${v.capped ? "&ge; " : ""}${fmtPhys(v.v)}</span>`;
             } },
-          { title: "Last seen", field: "last_seen", width: 155, formatter: (c) => String(c.getValue() || "").replace("T", " ").slice(0, 19) },
+          { title: "Last seen", field: "last_seen", width: 155, formatter: (c) => timeCell(c.getValue()) },
         ];
         setTable("#groupTable", rows, cols, {
           onRowDblClick: (_e, row) => this.openFolderPanel(row.getData().folder),

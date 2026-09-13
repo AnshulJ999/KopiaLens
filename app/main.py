@@ -27,7 +27,7 @@ from .core import auth
 from .core import jobs as jobrunner
 from .core import kopia as kopia_mod
 from .core import nightly
-from .core.applog import get_logger, setup_logging
+from .core.applog import RequestStats, apply_logging_settings, get_logger, setup_logging
 from .core.instrument import log_memory, memory_snapshot
 from .core.metrics import table_rows
 from .core.schedule import compute_next_snapshots
@@ -484,7 +484,7 @@ def _tick() -> None:
         _bz_detect_pass()
         _bz_transmit_pass()
         gc.collect()  # return the pass's transient arenas (pymalloc will not on its own)
-        log_memory("light pass done")
+        log_memory("light pass done", debug=True)
 
 
 def _bg_worker() -> None:
@@ -493,7 +493,7 @@ def _bg_worker() -> None:
     subprocess), plus a cheap warm pass on its own interval."""
     global _last_light
     wait = _startup_wait()
-    log.info("bg worker: waiting %.0fs before the first pass", wait)
+    log.debug("bg worker: waiting %.0fs before the first pass", wait)
     if _bg_stop.wait(wait):
         return  # shutdown requested during the startup delay
     _last_light = time.time()
@@ -513,6 +513,10 @@ def _bg_worker() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     setup_logging()
+    try:
+        apply_logging_settings(load_settings())
+    except Exception as exc:  # noqa: BLE001 - a settings problem must not block startup
+        log.warning("debug log setting could not be applied: %s", exc)
     log.info("KopiaLens starting up")
     try:  # seed a password from the environment ONCE - how a provisioned Docker image gets auth
         seeded = os.environ.get("KOPIALENS_PASSWORD") or ""
@@ -533,7 +537,7 @@ async def lifespan(_app: FastAPI):
         from .core import cache as _cache
         mb = float(load_settings().get("kopialens", {}).get("dir_memo_max_mb", 1500))
         _cache.DIR_MEMO_MAX_BYTES = int(mb * 1024 * 1024)
-        log.info("DIR_MEMO_MAX_BYTES=%d (%.0f MB)", _cache.DIR_MEMO_MAX_BYTES, mb)
+        log.debug("DIR_MEMO_MAX_BYTES=%d (%.0f MB)", _cache.DIR_MEMO_MAX_BYTES, mb)
     except Exception as exc:  # noqa: BLE001 - never block startup on a tuning read
         log.warning("dir_memo_max_mb setting read failed: %s", exc)
     try:  # point the read-only Backblaze backend at the configured bzdata root
@@ -672,19 +676,37 @@ async def generation_pin_middleware(request: Request, call_next):
         store.end_pins(token)
 
 
+# Endpoints the UI polls every few seconds: one summary line per interval, not one line each.
+_POLL_PATHS = frozenset({
+    "/api/jobs/list", "/api/jobs/status", "/api/index/freshness", "/api/index/status",
+    "/api/backblaze/status", "/api/settings/table", "/api/settings/tables", "/api/repos",
+    "/api/index/runs", "/api/logs/app", "/api/audit",
+})
+_SLOW_REQUEST_MS = 3000.0
+_request_stats = RequestStats()
+
+
 @app.middleware("http")
 async def timing_middleware(request: Request, call_next):
     start = time.perf_counter()
     calls0, ktime0 = kopia_mod.KOPIA_CALLS, kopia_mod.KOPIA_TIME
     response = await call_next(request)
-    if request.url.path.startswith("/api"):
+    path = request.url.path
+    if path.startswith("/api"):
         ms = (time.perf_counter() - start) * 1000
         kc = kopia_mod.KOPIA_CALLS - calls0
         kms = (kopia_mod.KOPIA_TIME - ktime0) * 1000
-        log.info(
-            "%s %s -> %s  %.0fms  kopia_subproc=%d/%.0fms",
-            request.method, request.url.path, response.status_code, ms, kc, kms,
-        )
+        args = (request.method, path, response.status_code, ms, kc, kms)
+        if response.status_code >= 500:
+            log.warning("%s %s -> %s  %.0fms  kopia_subproc=%d/%.0fms", *args)
+        elif ms >= _SLOW_REQUEST_MS:
+            log.info("slow request: %s %s -> %s  %.0fms  kopia_subproc=%d/%.0fms", *args)
+        elif path in _POLL_PATHS:
+            summary = _request_stats.add(path, ms)
+            if summary:
+                log.debug(summary)
+        else:
+            log.debug("%s %s -> %s  %.0fms  kopia_subproc=%d/%.0fms", *args)
     return response
 
 
