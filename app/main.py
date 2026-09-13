@@ -401,6 +401,20 @@ def _bz_detect_pass() -> None:
         log.error("BZ detect failed: %s", exc)
 
 
+def _bz_transmit_pass() -> None:
+    """ Transmit-side refresh on the light interval: the upload-queue table + the
+    remaining/totalbackup kv - the Backblaze files that move every ~10 min independent of the
+    filelists, so the pill/Queue/dashboard cards cannot go stale for a whole reindex gap.
+    refresh_transmit_side() carries its own building guard and never raises."""
+    try:
+        from .backblaze import indexer as bz_indexer
+        out = bz_indexer.refresh_transmit_side()
+        if not out.get("ok") and out.get("reason") != "refresh in flight":
+            log.warning("BZ transmit refresh failed: %s", out.get("reason"))
+    except Exception as exc:  # noqa: BLE001 - must never kill the tick
+        log.error("BZ transmit refresh failed: %s", exc)
+
+
 def _current_slot(now_dt: dt.datetime, now_ts: float) -> float:
     """The scheduled run this moment belongs to. In daily mode that is the most recent occurrence
     of the configured time - which is also what gives catch-up for free: if the PC was off at
@@ -468,6 +482,7 @@ def _tick() -> None:
         _last_light = now_ts
         _light_pass()
         _bz_detect_pass()
+        _bz_transmit_pass()
         gc.collect()  # return the pass's transient arenas (pymalloc will not on its own)
         log_memory("light pass done")
 
@@ -484,6 +499,7 @@ def _bg_worker() -> None:
     _last_light = time.time()
     _light_pass()
     _bz_detect_pass()  # BZ catch-up: after the PC was off, the first detect flags any missed change
+    _bz_transmit_pass()  #: the pill/queue/dashboard cards are fresh from the first tick
     gc.collect()
     _write_last_cycle_ts()
     log_memory("startup light pass done")

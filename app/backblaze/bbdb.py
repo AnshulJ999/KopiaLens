@@ -1,9 +1,15 @@
 """SQLite store for the Backblaze index (read-only on bzdata; this DB lives under KopiaLens/data).
 
-Chosen over DuckDB deliberately: BZ is a read-only source rebuilt-on-change, so SQLite avoids
-every DuckDB pain (grow-only file, ART index-delete crash, compaction machinery). Substring
-("Everything-style") search uses an FTS5 **trigram** index over the lowercased path, which is the
-right tool for arbitrary substring matching (falls back to a LIKE scan if trigram is unavailable).
+Since the big `files` table + FTS5 here are the LEGACY store (``backblaze.store`` = "sqlite",
+kept for rollback) - the default store is the Parquet generations in pq.py. This file remains the
+authoritative home of the small tables that never moved: queue, events, events_archive, churn,
+folder_snapshots, folder_rollup, backup_days, kv, ingest. Detect writes its kv handshake here in
+both modes.
+
+Chosen over DuckDB originally: BZ is a read-only source rebuilt-on-change, so SQLite avoids every
+DuckDB pain (grow-only file, ART index-delete crash, compaction machinery). Substring
+("Everything-style") search uses an FTS5 **trigram** index over the lowercased path (legacy mode
+only; the parquet store LIKE-scans instead).
 """
 
 from __future__ import annotations

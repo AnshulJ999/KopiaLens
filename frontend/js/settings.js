@@ -50,6 +50,7 @@ const settingsPart = {
       this.bzHistoryDays = Number(bz.history_days || 90);
       this.bzCollapsePrefixes = (bz.collapse_prefixes || []).join(", ");
       this.bzEventlogArchive = bz.eventlog_archive_path || "";
+      this.bzStore = bz.store === "sqlite" ? "sqlite" : "parquet";
     },
     async saveSettings() {
       await this.wrap(async () => {
@@ -87,6 +88,7 @@ const settingsPart = {
           history_days: Math.max(1, Number(this.bzHistoryDays) || 90),
           collapse_prefixes: this.bzCollapsePrefixes.split(",").map((p) => p.trim()).filter(Boolean),
           eventlog_archive_path: this.bzEventlogArchive || "",
+          store: this.bzStore === "parquet" ? "parquet" : "sqlite",
         };
         await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listing_backend: this.backend, kopialens, backblaze }) });
         this.armAutoRefresh();  // apply the new dashboard auto-refresh interval immediately

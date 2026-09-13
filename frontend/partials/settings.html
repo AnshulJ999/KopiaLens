@@ -234,6 +234,14 @@
                 <p class="text-[11px] text-muted mt-1">Where the Backblaze client keeps its file lists. Read-only - KopiaLens never writes here. Needs a restart after changing.</p>
               </div>
               <div>
+                <div class="flex items-center justify-between gap-3"><span>File index format</span>
+                  <select x-model="bzStore" class="fld border border-bd bg-surface2">
+                    <option value="parquet">Parquet (default)</option>
+                    <option value="sqlite">SQLite (legacy)</option>
+                  </select></div>
+                <p class="text-[11px] text-muted mt-1">Where the scanned file list is stored. Parquet is about 20x smaller and faster to query. SQLite is the legacy format, kept for rollback. Switching rebuilds the new store on the next Backblaze rescan; once the Parquet build succeeds, the space the old copy occupied is reclaimed automatically.</p>
+              </div>
+              <div>
                 <div class="flex items-center justify-between gap-3"><span>Reindex minimum gap</span>
                   <select x-model.number="bzReindexMinGap" class="fld border border-bd bg-surface2">
                     <option :value="3600">1 hour</option>

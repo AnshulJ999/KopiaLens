@@ -184,7 +184,8 @@ def reap_orphan_workers() -> list[str]:
                 proc = psutil.Process(pid)
                 cmd = " ".join(proc.cmdline())
                 # Confirm it is OUR worker before killing anything - PIDs get recycled.
-                if "app.index.worker" in cmd:
+                #: the BZ worker writes the same progress-file protocol, so it is reaped too.
+                if "app.index.worker" in cmd or "app.backblaze.worker" in cmd:
                     log.warning("reaping orphaned index worker for repo=%s (pid %s) left by a "
                                 "previous run - it still holds the DuckDB", repo, pid)
                     proc.terminate()

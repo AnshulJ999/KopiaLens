@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirna
 
 import pytest  # noqa: E402
 
-from app.backblaze import bbdb, indexer, paths, rules  # noqa: E402
+from app.backblaze import bbdb, indexer, paths, queries, rules  # noqa: E402
 
 HEADER = "# GmtMillisThisListWasStarted 1234567890"
 
@@ -49,7 +49,10 @@ def _seed_watermark(con, fp: str) -> None:
 
 @pytest.fixture
 def bz_env(tmp_path, monkeypatch):
-    """Fake bzdata with one drive + an in-memory bz DB on this thread."""
+    """Fake bzdata with one drive + an in-memory bz DB on this thread.
+
+    Pins the LEGACY sqlite store: these tests exercise the detect/handshake and the sqlite
+    refresh path. The parquet refresh path has its own tests (test_pq_refresh.py)."""
     root = str(tmp_path / "bzdata")
     os.makedirs(os.path.join(root, "bzfilelists"))
     monkeypatch.setattr(paths, "_bzdata_root", root)
@@ -59,7 +62,9 @@ def bz_env(tmp_path, monkeypatch):
     bbdb._local.con = con
     # The fake tree carries no rules XML; a fixed empty engine keeps the rules digest stable.
     monkeypatch.setattr(rules, "load_engine", lambda: rules.RuleEngine([], [], []))
+    queries._STORE_OVERRIDE = "sqlite"
     yield con, root
+    queries._STORE_OVERRIDE = None
     bbdb._local.con = None
 
 

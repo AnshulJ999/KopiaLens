@@ -97,6 +97,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "backblaze": {
         "bzdata_path": r"C:\ProgramData\Backblaze\bzdata",  # read-only source root (never written)
+        # where the `files` index lives: "parquet" (data/bz/ per-drive Parquet generations
+        # read via DuckDB - the DEFAULT) or "sqlite" (kopialens_bz.sqlite + FTS5, the LEGACY path
+        # kept for rollback). Switching stores triggers a full rebuild of the missing store on the
+        # next refresh; the small history/state tables always stay in the SQLite file.
+        "store": "parquet",
         "history_days": 90,          # how many days of the daily per-folder rollup to retain (growth/churn trend)
         # minimum seconds between real BZ reindexes (): the cheap detect runs on the light
         # interval, but a change it finds waits for this gap before the expensive reindex starts

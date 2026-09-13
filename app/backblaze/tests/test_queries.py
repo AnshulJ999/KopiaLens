@@ -1,7 +1,9 @@
-"""Query-layer tests against a synthetic in-memory SQLite (no live bzdata needed).
+"""Query-layer tests against a synthetic store (no live bzdata needed).
 
 Covers the query functions that the live harness only smoke-tested: search filters/sort/paging,
 overview, group_by_folder, dupes, exclusions impact, and (critically for Phase 3) coverage_children.
+Every test runs against BOTH `files` stores (): the SQLite table and the Parquet generation
+store - the small-table (queue etc.) reads always go through the injected SQLite connection.
 
 Run with pytest or directly (`python app/backblaze/tests/test_queries.py`).
 """
@@ -14,7 +16,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from app.backblaze import bbdb, queries  # noqa: E402
+import pytest  # noqa: E402
+
+from app.backblaze import bbdb, pq, queries  # noqa: E402
+
+STORES = ["sqlite", "parquet"]
 
 
 def _row(drive, full_path, size, excluded, rule=None):
@@ -38,21 +44,58 @@ FILES = [
 ]
 
 
-def _db():
+def _pq_publish_initial(tmp_path):
+    """Build generation 1 of the Parquet store from FILES (grouped per drive)."""
+    by_drive: dict = {}
+    for row in FILES:
+        by_drive.setdefault(row[0], []).append(row)
+    m = pq.read_manifest()
+    gen = int((m or {}).get("generation") or 0) + 1
+    rels, moves = {}, []
+    for drive, rows in by_drive.items():
+        staged = pq.staged_path(drive, gen)
+        writer = pq.open_writer(staged)
+        try:
+            writer.write_table(pq.table_from_rows(rows))
+        finally:
+            writer.close()
+        rel = pq.pool_rel(drive, gen)
+        moves.append((staged, rel))
+        rels[drive] = rel
+    with pq.WriterLock():
+        pq.publish(gen, rels, moves)
+
+
+@pytest.fixture(autouse=True)
+def _reset_store_overrides():
+    yield
+    queries._STORE_OVERRIDE = None
+    pq.ROOT = None
+
+
+def _db(store, tmp_path=None):
+    """In-memory SQLite for the small tables (always the bbdb side) + the `files` rows in the
+    requested store."""
     con = sqlite3.connect(":memory:")
     con.row_factory = sqlite3.Row
     bbdb._init_schema(con)
-    con.executemany("INSERT INTO files VALUES(?,?,?,?,?,?,?,?,?)", FILES)
-    bbdb.rebuild_fts(con)
+    if store == "sqlite":
+        con.executemany("INSERT INTO files VALUES(?,?,?,?,?,?,?,?,?)", FILES)
+        bbdb.rebuild_fts(con)
+    else:
+        pq.ROOT = str(tmp_path / "bz")
+        _pq_publish_initial(tmp_path)
     con.execute("INSERT INTO queue VALUES('E', 'E:\\Photos\\new.jpg', 123)")
     con.commit()
-    bbdb._local.con = con  # make queries.* (via bbdb.connect()'s thread-local) use this connection
+    bbdb._local.con = con  # queries.* small-table reads (and the sqlite files store) use this
+    queries._STORE_OVERRIDE = store
     return con
 
 
-def test_search_substring_and_filters():
-    _db()
-    # substring (FTS trigram or LIKE fallback) - 'movie' matches both dir1/dir2
+@pytest.mark.parametrize("store", STORES)
+def test_search_substring_and_filters(store, tmp_path):
+    _db(store, tmp_path)
+    # substring (FTS trigram, or the LIKE scan on parquet) - 'movie' matches both dir1/dir2
     assert queries.search(query="movie")["total"] == 2
     # drive filter
     assert queries.search(drive="C")["total"] == 4
@@ -65,8 +108,9 @@ def test_search_substring_and_filters():
     assert queries.search(min_size=1000)["total"] == 3  # big.mp4 + 2x movie.mkv
 
 
-def test_search_sort_and_paging():
-    _db()
+@pytest.mark.parametrize("store", STORES)
+def test_search_sort_and_paging(store, tmp_path):
+    _db(store, tmp_path)
     res = queries.search(sort="size", direction="desc", limit=2, offset=0)
     sizes = [r["size"] for r in res["rows"]]
     assert sizes == [5000, 5000]               # two biggest first
@@ -75,16 +119,18 @@ def test_search_sort_and_paging():
     assert res2["rows"][0]["size"] == 50        # smallest first
 
 
-def test_search_short_query_like_fallback():
-    _db()
-    # 2-char query falls back to LIKE scan (below trigram's 3-char minimum).
+@pytest.mark.parametrize("store", STORES)
+def test_search_short_query_like_fallback(store, tmp_path):
+    _db(store, tmp_path)
+    # 2-char query falls back to a LIKE scan (below trigram's 3-char minimum).
     # "sy" only matches C:\Windows\sys.dll (unambiguous - not inside any other path).
     res = queries.search(query="sy")
     assert res["total"] == 1 and res["rows"][0]["name"] == "sys.dll"
 
 
-def test_overview_counts():
-    _db()
+@pytest.mark.parametrize("store", STORES)
+def test_overview_counts(store, tmp_path):
+    _db(store, tmp_path)
     rows = {r["drive"]: r for r in queries.overview()["rows"]}
     assert rows["C"]["total"] == 4
     assert rows["C"]["backed_files"] == 2
@@ -93,8 +139,9 @@ def test_overview_counts():
     assert rows["E"]["backed_bytes"] == 100 + 1000 + 5000 + 5000
 
 
-def test_group_by_folder():
-    _db()
+@pytest.mark.parametrize("store", STORES)
+def test_group_by_folder(store, tmp_path):
+    _db(store, tmp_path)
     rows = queries.group_by_folder(drive="E", depth=1, status="backed")
     folders = {r["folder"]: r for r in rows}
     assert folders[r"E:\Photos"]["files"] == 2
@@ -102,22 +149,25 @@ def test_group_by_folder():
     assert folders[r"E:\dir1"]["files"] == 1
 
 
-def test_dupes_heuristic():
-    _db()
+@pytest.mark.parametrize("store", STORES)
+def test_dupes_heuristic(store, tmp_path):
+    _db(store, tmp_path)
     d = queries.dupes(min_size=1000)
     hit = [x for x in d if x["name"] == "movie.mkv"]
     assert hit and hit[0]["copies"] == 2 and hit[0]["wasted"] == 10000
 
 
-def test_exclusions_impact():
-    _db()
+@pytest.mark.parametrize("store", STORES)
+def test_exclusions_impact(store, tmp_path):
+    _db(store, tmp_path)
     imp = {i["rule"]: i for i in queries.exclusions()["impact"]}
     assert imp["mandatory:\\windows\\"]["bytes"] == 200
     assert imp["folder:\\games\\"]["files"] == 1
 
 
-def test_coverage_children():
-    _db()
+@pytest.mark.parametrize("store", STORES)
+def test_coverage_children(store, tmp_path):
+    _db(store, tmp_path)
     # under C:\Users\me -> two backed files
     cov = queries.coverage_children(r"C:\Users\me")
     assert set(cov) == {"photo.jpg", "doc.txt"}
@@ -130,19 +180,35 @@ def test_coverage_children():
     assert top["users"]["files"] == 2 and top["users"]["logical"] == 150
 
 
-def test_queue():
-    _db()
+@pytest.mark.parametrize("store", STORES)
+def test_queue(store, tmp_path):
+    _db(store, tmp_path)
     q = queries.queue()
     assert q["total_files"] == 1 and q["total_bytes"] == 123
     assert q["by_drive"][0]["drive"] == "E"
 
 
+@pytest.mark.parametrize("store", STORES)
+def test_folder_children_live_scan(store, tmp_path):
+    _db(store, tmp_path)
+    # no folder_rollup rows -> the live range-scan path runs (store-dependent)
+    children = queries.folder_children(r"C:\Users\me")
+    by_name = {c["name"]: c for c in children}
+    assert set(by_name) == {"photo.jpg", "doc.txt"}
+    assert by_name["photo.jpg"]["backed_bytes"] == 100
+    assert by_name["photo.jpg"]["is_dir"] is False
+
+
 def _run_all():
+    import pathlib
+    import tempfile
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
-    for fn in fns:
-        fn()
-        print(f"ok  {fn.__name__}")
-    print(f"\n{len(fns)} query tests passed.")
+    for store in STORES:
+        tmp_path = pathlib.Path(tempfile.mkdtemp(prefix="bz3_q_"))
+        for fn in fns:
+            fn(store, tmp_path)
+            print(f"ok  {fn.__name__} [{store}]")
+    print(f"\n{len(fns) * len(STORES)} query tests passed.")
 
 
 if __name__ == "__main__":
