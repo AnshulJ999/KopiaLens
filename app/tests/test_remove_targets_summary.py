@@ -75,9 +75,13 @@ def test_summary_never_materializes_more_than_detail_limit(scratch):
 
 
 def test_summary_capped_flag_tracks_the_plan_cap(scratch):
-    summary = queries.remove_targets_summary("1", prefix=FOLDER, cap=5)
+    summary = queries.remove_targets_summary("1", prefix=FOLDER, cap=5, detail_limit=5)
     assert summary["capped"] is True   # 7 matched, the plan would take 5
     assert summary["total_file_count"] == 7  # uncapped totals still come through
+    # the detail set IS the plan's set: the cap, not the 5000 detail ceiling, bounds the pairs
+    assert len(summary["pairs"]) == 5
+    full = queries.remove_targets("1", prefix=FOLDER, cap=5)
+    assert summary["pairs"] == [(f["source"], f["full_path"]) for f in full["files"][:5]]
 
 
 def _detail_payload(**over):
@@ -127,6 +131,35 @@ def test_remove_detail_folder_shortcut_needs_one_source_and_no_filters(monkeypat
     monkeypatch.setattr(actions, "remove_targets_summary", capped_summary)
     out = actions.remove_detail(_detail_payload())
     assert out["scope"] == "selection"
+
+
+def test_remove_detail_cap_bounds_the_detail_set(monkeypatch):
+    """a "Largest 100" plan must be detailed over those 100
+    files, not the top 5,000 of the whole match - the summary's limit is min(cap, 5000)."""
+    seen = {}
+
+    def fake_summary(repo, **kw):
+        seen["detail_limit"] = kw.get("detail_limit")
+        seen["cap"] = kw.get("cap")
+        n = kw.get("detail_limit") or 0
+        return {"total_file_count": 70000, "capped": True,
+                "sources": ["s1"], "pairs": [("s1", f"f{i}") for i in range(n)]}
+
+    def fake_batch(repo, files, all_versions=False):
+        seen["batch_len"] = len(files)
+        return {"found": True}
+
+    monkeypatch.setattr(actions, "remove_targets_summary", fake_summary)
+    monkeypatch.setattr(actions, "folder_detail", lambda *a, **k: {})
+    monkeypatch.setattr(actions, "batch_detail", fake_batch)
+
+    # the UI's "Largest 100": cap bounds the detail, not 5000
+    actions.remove_detail(_detail_payload(prefix=FOLDER, cap=100))
+    assert seen["detail_limit"] == 100 and seen["batch_len"] == 100
+
+    # default: no explicit cap -> the 200k plan ceiling, detail still capped at 5000
+    actions.remove_detail(_detail_payload(prefix=FOLDER))
+    assert seen["detail_limit"] == 5000 and seen["batch_len"] == 5000
 
 
 def test_remove_detail_no_filter_is_refused():

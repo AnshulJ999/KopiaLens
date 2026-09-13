@@ -433,12 +433,15 @@ def remove_detail(payload: RemovePlanRequest) -> dict:
     """On-demand reclaim/freeable/shared for the matched set (a chunk walk, so it's a button, not
     auto). Folder under one source -> folder_detail (subtree walk); otherwise -> batch_detail over
     the matched files (capped). reads the cheap summary - totals + distinct sources + the
-    top 5,000 pairs - never the full top-200k materialization."""
+    top rows - never the full top-200k materialization. The detail walk describes the PLAN's set:
+    its limit is min(cap, 5000), so a "Largest 100" plan is detailed over those 100 files, not the
+    top 5,000 of the whole match."""
     if not any([payload.query, payload.deleted_only, payload.min_gb, payload.over_gb, payload.max_gb,
                 payload.source, payload.ext, payload.ext_exclude, payload.date_from, payload.date_to,
                 payload.first_from, payload.min_versions, payload.shared_min, payload.prefix]):
         raise HTTPException(status_code=400,
                             detail="refusing to plan a delete with no filter - this would match the entire repo")
+    cap = payload.cap or _plan_cap()
     t = remove_targets_summary(
         payload.repo, query=payload.query, deleted_only=payload.deleted_only,
         min_size=int((payload.min_gb or payload.over_gb or 0) * 1_000_000_000),
@@ -447,7 +450,7 @@ def remove_detail(payload: RemovePlanRequest) -> dict:
         date_from=payload.date_from or None, date_to=payload.date_to or None,
         min_versions=payload.min_versions, shared_min=payload.shared_min,
         first_from=payload.first_from or None, prefix=payload.prefix or None,
-        cap=payload.cap or _plan_cap(),
+        cap=cap, detail_limit=min(cap, 5000),
     )
     if not t["pairs"]:
         return {"found": False}

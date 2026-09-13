@@ -217,6 +217,40 @@ def test_already_excluded_flagged_when_an_existing_rule_covers_it(wired):
     assert gh["protects"] == 0                    # nothing NEW would be protected
 
 
+def test_already_excluded_evaluates_rules_as_an_ordered_list(wired, monkeypatch):
+    """per-rule any() reads a negated '!x' as matching every
+    OTHER file (the compiled matcher inverts), marking everything already-excluded. kopia
+    applies the list in ORDER with last-match-wins (policypricing._machine)."""
+    import app.core.policy as pol
+    file_ok = FILE                                    # model.safetensors - matches *.safetensors
+    # negation re-includes this file: rule 1 ignores it, rule 2 flips it back -> NOT excluded
+    monkeypatch.setattr(pol, "load_defined_policies",
+                        lambda repo: {"policies": {**DEFINED,
+                                     GITHUB: {"files": {"ignore": ["*.safetensors", "!model.safetensors"]}}}})
+    t = _targets(resolve_targets("1", file_ok, source=GITHUB, shape="extension"))
+    assert all(not c["already_excluded"] for c in t[GITHUB]["covers"])
+    assert t[GITHUB]["protects"] == 2              # both covers (GITHUB + inheriting PS) newly protected
+    # a lone negation never excludes anything on its own
+    monkeypatch.setattr(pol, "load_defined_policies",
+                        lambda repo: {"policies": {**DEFINED,
+                                     GITHUB: {"files": {"ignore": ["!other.dll"]}}}})
+    t = _targets(resolve_targets("1", file_ok, source=GITHUB, shape="extension"))
+    assert all(not c["already_excluded"] for c in t[GITHUB]["covers"])
+
+
+def test_already_excluded_catches_a_file_under_a_dir_only_rule(wired, monkeypatch):
+    """a FILE under `Stash/` is excluded by the dir-only
+    rule (the walk prunes the directory) even though the rule never names the file."""
+    import app.core.policy as pol
+    monkeypatch.setattr(pol, "load_defined_policies",
+                        lambda repo: {"policies": {**DEFINED,
+                                     GITHUB: {"files": {"ignore": ["Stash/"]}}}})
+    t = _targets(resolve_targets("1", FILE, source=GITHUB, shape="exact"))
+    gh = t[GITHUB]
+    assert gh["covers"][0]["already_excluded"] is True
+    assert gh["protects"] == 0
+
+
 def test_escape_hatches_offered_for_inheriting_sources(wired):
     """PS inherits its rules from GITHUB - never a normal target, but offered as a
     collapsed escape hatch with the rules that would be shadowed."""

@@ -122,6 +122,28 @@ def _matches(pattern: str, rel: str, is_folder: bool) -> bool:
     return pat.match(probe, is_dir=False)
 
 
+def _already_kept_out(rules: list[str], rel: str, is_folder: bool) -> bool:
+    """Would the walk ALREADY keep this selection out there, given the owner's existing rules?
+
+    Evaluated as an ORDERED list with kopia's ignorefs state machine (policypricing._machine:
+    rules apply in order, last match wins - a negated ``!x`` on its own matches nothing), never
+    rule-by-rule: an any() over compiled rules reads a lone negation as matching every other
+    file. A FILE is also kept out when an ancestor directory is pruned by a dir-only rule (a
+    file under ``node_modules/`` is excluded even though the rule never names the file)."""
+    if not rules or not rel:
+        return False
+    from ..index.policypricing import _machine  # lazy: index layer, same direction as resolve_targets
+
+    compiled = [compile_pattern(r) for r in rules]
+    segs = rel.strip("/").split("/")
+    for i in range(1, len(segs)):  # proper ancestors only: the walk root itself is never matched
+        ignored, _who = _machine(compiled, "/" + "/".join(segs[:i]), is_dir=True)
+        if ignored:
+            return True
+    ignored, _who = _machine(compiled, "/" + rel, is_dir=is_folder)
+    return ignored
+
+
 def resolve_targets(repo: str, path: str, source: str | None = None,
                     is_folder: bool = False, shape: str = "exact",
                     price: bool = False) -> dict:
@@ -193,9 +215,9 @@ def resolve_targets(repo: str, path: str, source: str | None = None,
             sfold = not pathrules.case_sensitive(key)
             rel_s = _rel(path, sroot, ssep, sfold)
             matches = bool(pattern) and _matches(pattern, rel_s, is_folder)
-            #: the write is pointless where one of the owner's EXISTING rules already
-            # keeps this selection out - the dialog must not tick such a target by default.
-            already = any(_matches(r, rel_s, is_folder) for r in existing)
+            #: the write is pointless where the owner's EXISTING rules already keep this
+            # selection out there (ordered-list evaluation - see _already_kept_out).
+            already = _already_kept_out(existing, rel_s, is_folder)
             covers.append({"source": key, "root": sroot, "rel_path": rel_s.replace(ssep, "/"),
                            "matches": matches, "already_excluded": already})
 
