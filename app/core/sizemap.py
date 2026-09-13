@@ -15,6 +15,20 @@ log = get_logger("sizemap")
 
 SIZEMAP_TTL = 6 * 3600
 
+# Run-scoped in-process memo (the nightly worker enables it in worker.main): the 3.5M-entry
+# unpickle cost ~1s per call and was paid by every analysis source and every folder detail.
+# Scoped to the worker process on purpose - the long-lived app must not pin the map in RAM.
+# Every path that produces a map flows through load_sizemap, so the memo can never serve a map
+# older than the last refresh (the builder's mid-run refresh re-sets it in the same call).
+MEMO_ENABLED = False
+_MEMO: dict[str, dict[str, int]] = {}
+
+
+def _memo_put(repo: str, sizes: dict[str, int]) -> dict[str, int]:
+    if MEMO_ENABLED:
+        _MEMO[repo] = sizes
+    return sizes
+
 
 def _read_pkl(path: str) -> dict[str, int] | None:
     try:
@@ -25,11 +39,13 @@ def _read_pkl(path: str) -> dict[str, int] | None:
 
 
 def load_sizemap(repo: str, refresh: bool = False) -> dict[str, int]:
+    if MEMO_ENABLED and repo in _MEMO:
+        return _MEMO[repo]
     pf = os.path.join(CACHEDIR, f"sizemap_repo{repo}.pkl")
     if not refresh and os.path.exists(pf) and time.time() - os.path.getmtime(pf) < SIZEMAP_TTL:
         cached = _read_pkl(pf)
         if cached is not None:
-            return cached
+            return _memo_put(repo, cached)
 
     # STREAMED, not captured. `content list -l` is the single biggest output kopia produces
     # (one line per distinct chunk - hundreds of MB on a large repo), and buffering it whole
@@ -57,7 +73,7 @@ def load_sizemap(repo: str, refresh: bool = False) -> dict[str, int]:
         if stale is not None:
             log.error("repo=%s sizemap rebuild failed (%s); serving the previous map (%d contents)",
                       repo, exc, len(stale))
-            return stale
+            return _memo_put(repo, stale)
         raise
 
     os.makedirs(CACHEDIR, exist_ok=True)
@@ -66,4 +82,4 @@ def load_sizemap(repo: str, refresh: bool = False) -> dict[str, int]:
             pickle.dump(sizes, handle, protocol=4)
     except Exception:
         pass
-    return sizes
+    return _memo_put(repo, sizes)

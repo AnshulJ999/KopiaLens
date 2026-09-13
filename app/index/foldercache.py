@@ -7,12 +7,14 @@ panel must not make the user press a button for a number they always want, so:
   * the nightly worker pre-computes the biggest folders at the depths the UI browses, and
   * anything not pre-computed is computed on demand in the background and cached from then on.
 
-Cached results are keyed to the index state, so they expire automatically when new snapshots land
-rather than going quietly stale.
+Cached results are stamped per folder with the snapshot-set hashes of the sources covering that
+folder, so they expire exactly when the data behind them changed rather than whenever anything
+anywhere in the repo moved.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
@@ -21,9 +23,9 @@ import time
 from config import CACHEDIR
 
 from ..core.applog import get_logger
-from .churnview import _index_hash
 from .physical import folder_detail
-from .queries import group_by_folder
+from .queries import _ESC, group_by_folder, like_literal
+from .store import read_cursor
 
 log = get_logger("foldercache")
 
@@ -37,6 +39,50 @@ _PREWARM_TOP = 40            # biggest folders per depth, by physical
 _PREWARM_DEPTHS = (3, 4, 5)   # fallback only
 _PREWARM_BUDGET = 900.0      # seconds; see prewarm() - the pre-compute must not own the night
 _PREWARM_MAX_FILES = 400_000  # skip folders too big to be a delete target (and slowest to compute)
+_FULL_REFRESH_DAYS = 3.0     # recompute even when unchanged, bounding freeable/shared drift
+
+
+def _snap_hashes(repo: str) -> dict[str, str]:
+    """Per-source hash of the indexed snapshot-id set (isnaps). ~7k rows - one query."""
+    cur = read_cursor(repo)
+    try:
+        rows = cur.execute(
+            "SELECT source, snapshot_id FROM isnaps ORDER BY source, snapshot_id").fetchall()
+    finally:
+        cur.close()
+    digests: dict[str, "hashlib._Hash"] = {}
+    for source, sid in rows:
+        d = digests.setdefault(source, hashlib.md5())
+        d.update((sid or "").encode())
+    return {k: d.hexdigest() for k, d in digests.items()}
+
+
+def folder_stamp(repo: str, prefix: str, source: str | None = None) -> str:
+    """Freshness stamp for ONE folder: a hash over only the sources holding anything under the
+    prefix, each hashed with its snapshot-id set. A folder's numbers change only when one of
+    those sources' index content changes - the old repo-wide ``_index_hash`` stamp made every
+    cached folder stale whenever any source anywhere changed, so the nightly recomputed all of
+    them. Matching mirrors folder_detail: case-insensitive, the exact folder or under it."""
+    base = prefix.rstrip(_SEP).lower()
+    cur = read_cursor(repo)
+    try:
+        sql = ("SELECT DISTINCT s.source FROM dir d JOIN src s ON s.src_id = d.src_id "
+               "WHERE lower(d.dir_path) = ? OR lower(d.dir_path) LIKE ?" + _ESC)
+        params: list = [base, like_literal(base) + _SEP + "%"]
+        if source:
+            sql += " AND s.source = ?"
+            params.append(source)
+        covers = [r[0] for r in cur.execute(sql, params).fetchall()]
+    finally:
+        cur.close()
+    if not covers:
+        return "0"
+    hashes = _snap_hashes(repo)
+    digest = hashlib.md5()
+    for s in sorted(covers):
+        digest.update(s.encode())
+        digest.update(hashes.get(s, "").encode())
+    return digest.hexdigest()
 
 _LOCK = threading.Lock()
 _MEM: dict[str, dict] = {}   # repo -> {key: payload}
@@ -104,7 +150,7 @@ def peek(repo: str, prefix: str, source: str | None = None, allow_stale: bool = 
     if not entry:
         return None
     try:
-        fresh = entry.get("stamp") == _index_hash(repo)
+        fresh = entry.get("stamp") == folder_stamp(repo, prefix, source)
     except Exception:  # noqa: BLE001 - cannot verify freshness; treat as stale rather than fresh
         fresh = False
     if fresh:
@@ -157,7 +203,7 @@ def _compute_now(repo: str, prefix: str, source: str | None = None) -> dict:
         start = time.time()
         # Stamp taken BEFORE the work: if the index moves while this runs, the result belongs to
         # the OLD index and must expire, not be filed under the newer stamp as if it were fresh.
-        stamp = _index_hash(repo)
+        stamp = folder_stamp(repo, prefix, source)
         payload = folder_detail(repo, source, prefix)
         payload.update({"prefix": prefix, "source": source, "stamp": stamp,
                         "computed_at": time.time(), "elapsed": round(time.time() - start, 2)})
@@ -222,7 +268,7 @@ def prewarm(repo: str, top: int = _PREWARM_TOP, depths=None) -> None:
         return
     depths = depths or _prewarm_depths()
     seen: set[str] = set()
-    done = failed = skipped = 0
+    done = failed = skipped = skipped_unchanged = 0
     start = time.time()
     stopped_early = False
     for depth in depths:
@@ -246,19 +292,33 @@ def prewarm(repo: str, top: int = _PREWARM_TOP, depths=None) -> None:
             if int(row.get("files") or 0) > _PREWARM_MAX_FILES:
                 skipped += 1
                 continue
+            # Skip-when-unchanged: a folder whose covering sources' snapshot sets did not change
+            # re-verifies its numbers against the same index - pure waste (
+            # unchanged folders may serve slightly stale freeable/shared; opening the
+            # panel refreshes in the background, and _FULL_REFRESH_DAYS bounds the drift).
+            entry = _load(repo).get(_key(prefix, None))
+            if entry:
+                try:
+                    unchanged = entry.get("stamp") == folder_stamp(repo, prefix)
+                except Exception:  # noqa: BLE001 - cannot verify -> treat as changed
+                    unchanged = False
+                age_days = (time.time() - entry.get("computed_at", 0)) / 86400.0
+                if unchanged and age_days < _FULL_REFRESH_DAYS:
+                    skipped_unchanged += 1
+                    continue
             try:
-                # allow_stale=False is LOAD-BEARING, not a tidy-up. The index stamp changes on
-                # every index run, so by the time this stage runs EVERY cached folder is stale -
-                # and the stale path hands the work to a daemon thread and returns immediately.
-                # That would race through the whole list in milliseconds (never touching the
-                # budget), leave ~100 threads querying DuckDB while the worker calls close_all(),
-                # and cache nothing at all, because daemon threads die when the process exits.
+                # allow_stale=False is LOAD-BEARING, not a tidy-up. A stale entry hands the work
+                # to a daemon thread and returns immediately - that would race through the whole
+                # list in milliseconds (never touching the budget), leave ~100 threads querying
+                # DuckDB while the worker calls close_all(), and cache nothing at all, because
+                # daemon threads die when the process exits.
                 compute(repo, prefix, allow_stale=False)
                 done += 1
             except Exception as exc:  # noqa: BLE001 - one bad folder must not end the pass
                 failed += 1
                 log.warning("repo=%s folder prewarm failed for %s: %s", repo, prefix, exc)
     log.debug("repo=%s prewarm depths=%s", repo, depths)
-    log.info("repo=%s folder reclaim prewarm: %d computed, %d skipped (too large), %d failed, %.0fs%s",
-             repo, done, skipped, failed, time.time() - start,
+    log.info("repo=%s folder reclaim prewarm: %d computed, %d skipped (unchanged), "
+             "%d skipped (too large), %d failed, %.0fs%s",
+             repo, done, skipped_unchanged, skipped, failed, time.time() - start,
              " (stopped at the time budget)" if stopped_early else "")

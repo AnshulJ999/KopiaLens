@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import collections
 import threading
+import weakref
 
 import pyarrow as pa
 
@@ -218,19 +219,37 @@ def refcount_miss_stats() -> dict:
 def _refcount_map(repo: str) -> dict[str, int]:
     """Global content refcount: prefer the materialized crefs artifact; fall back to the engine
     pkl (rebuilds once if absent). The cid join is the OUTPUT side - the whole map is being
-    named, which is inherently the full dictionary."""
+    named, which is inherently the full dictionary.
+
+    REFCOUNT_MEMO_ENABLED (the nightly worker turns it on in worker.main) memoizes the built
+    dict per generation: the 3.5M-row join + dict cost ~1.8s and was paid by every analysis
+    source. The WeakKeyDictionary key is the Generation handle, so an entry lives exactly as
+    long as the crefs artifact it describes and dies with the next publish. Scoped to the
+    worker on purpose - the long-lived app must not pin the map in RAM."""
     cur = read_cursor(repo)
+    gen = getattr(cur, "generation", None)
     try:
+        if REFCOUNT_MEMO_ENABLED and gen is not None:
+            hit = _REFCOUNT_MEMO.get(gen)
+            if hit is not None:
+                return hit
         rows = cur.execute(
             "SELECT c.content_id, m.refs FROM crefs m JOIN cid c ON c.cid_id = m.cid_id"
         ).fetchall()
     finally:
         cur.close()
     if rows:
-        return {cid: refs for cid, refs in rows}
+        count: dict[str, int] = {cid: refs for cid, refs in rows}
+        if REFCOUNT_MEMO_ENABLED and gen is not None:
+            _REFCOUNT_MEMO[gen] = count
+        return count
     from ..core.metrics import cached_refcount  # lazy: avoids a heavy import on hot paths
     count, _ = cached_refcount(repo, cache_db(repo), load_sizemap(repo), mode="all")
     return count
+
+
+_REFCOUNT_MEMO: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+REFCOUNT_MEMO_ENABLED = False
 
 
 _SEP = chr(92)

@@ -273,6 +273,13 @@ def main(argv: list) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
     from ..core.sources import pin_for_run
     pin_for_run()  # one snapshot listing per run; the stages are minutes apart, the TTL is 45s
+    # Run-scoped memos (analysis/folder floors: ~1s sizemap unpickle + ~1.8s refcount join per
+    # call). This process exits after the run, so holding one map per repo costs nothing here;
+    # the long-lived app keeps loading per call so its RAM never pins them.
+    from ..core import sizemap as _sizemap
+    from . import physical as _physical
+    _sizemap.MEMO_ENABLED = True
+    _physical.REFCOUNT_MEMO_ENABLED = True
     args = [a for a in argv if not a.startswith("--")]
     if not args:
         print(json.dumps({"ok": False, "reason": "usage: worker <repo> [--full]"}))
