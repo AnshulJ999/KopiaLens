@@ -333,64 +333,57 @@ def kopia_json(repo: str, args: list[str]) -> object:
     return json.loads(res.stdout) if res.stdout.strip() else None
 
 
-_MOUNTS: dict[int, dict] = {}  # pid -> {repo, snapshot_id, mountpoint, proc, started}
+class MountError(RuntimeError):
+    """kopia mount exited before the mount came up."""
 
 
-def mount_snapshot(repo: str, snapshot_id: str, mountpoint: str) -> KopiaProcess:
-    """Start a Kopia mount process and return the immediate command result.
+def mount_snapshot(repo: str, snapshot_id: str, mountpoint: str, info: dict | None = None,
+                   wait: float = 8.0) -> KopiaProcess:
+    """Start a kopia mount process, registered in ``core.mounts``.
 
     Kopia mount is repo-read-only, but it is intentionally outside the general
-    RO allowlist so destructive verbs never creep in through this boundary.
+    RO allowlist so destructive verbs never creep in through this boundary. Waits up to ``wait``
+    seconds for the mountpoint to appear; a process that exits first raises MountError with
+    kopia's own message.
     """
+    from . import mounts
 
     args = ["mount", snapshot_id, mountpoint]
     full = _base_command(repo, args)
+    log_dir = os.path.join(DATA_DIR, "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f"mount_{time.strftime('%Y%m%d_%H%M%S')}.log")
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    proc = subprocess.Popen(
-        full,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        creationflags=creationflags,
-    )
-    _MOUNTS[proc.pid] = {
-        "repo": repo, "snapshot_id": snapshot_id, "mountpoint": mountpoint,
-        "proc": proc, "started": time.time(),
-    }
+    with open(log_path, "w", encoding="utf-8", errors="replace") as lf:
+        proc = subprocess.Popen(full, stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                creationflags=creationflags)
+    deadline = time.time() + wait
+    while time.time() < deadline and proc.poll() is None and not os.path.exists(mountpoint):
+        time.sleep(0.25)
+    if proc.poll() is not None:
+        try:
+            with open(log_path, encoding="utf-8", errors="replace") as fh:
+                tail = [ln.strip() for ln in fh if ln.strip()][-3:]
+        except OSError:
+            tail = []
+        raise MountError(" ".join(tail) or f"kopia mount exited with {proc.returncode}")
+    mounts.add(proc, {"repo": repo, "snapshot_id": snapshot_id, "mountpoint": mountpoint,
+                      "log": log_path, **(info or {})})
     audit.audit("mount", "mount", repo=repo, summary={"snapshot_id": snapshot_id,
                                                       "mountpoint": mountpoint})
     return KopiaProcess(args=full, pid=proc.pid)
 
 
 def list_mounts() -> list[dict]:
-    """Active mounts started by this process (drops any whose process has exited)."""
-    out = []
-    for pid, m in list(_MOUNTS.items()):
-        if m["proc"].poll() is not None:  # process exited -> unmounted
-            _MOUNTS.pop(pid, None)
-            continue
-        out.append({"pid": pid, "repo": m["repo"], "snapshot_id": m["snapshot_id"],
-                    "mountpoint": m["mountpoint"], "started": m["started"]})
-    return out
+    """Mounts started by KopiaLens that are still running (survives app restarts)."""
+    from . import mounts
+    return mounts.active()
 
 
 def unmount(pid: int) -> bool:
-    """Unmount by terminating the foreground mount process that holds it."""
-    m = _MOUNTS.get(pid)
-    if not m:
-        return False
-    proc = m["proc"]
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-    _MOUNTS.pop(pid, None)
-    audit.audit("unmount", "unmount", repo=m.get("repo"), summary={"pid": pid})
-    return True
+    """Stop the mount process and remove the drive mapping it leaves behind."""
+    from . import mounts
+    return mounts.unmount(pid)
 
 
 def restore_command(repo: str, source: str, destination: str, overwrite: bool = False) -> list[str]:
@@ -1109,11 +1102,24 @@ def pick_folder(initial: str | None = None) -> str | None:
 
 def next_free_drive() -> str | None:
     """First free Windows drive letter (Z: down to E:) for an auto-assigned mountpoint."""
+    taken = _mapped_letters()
     for letter in reversed(string.ascii_uppercase[4:]):  # Z..E (skip A-D)
         root = f"{letter}:\\"
-        if not os.path.exists(root):
+        if not os.path.exists(root) and f"{letter}:" not in taken:
             return f"{letter}:"
     return None
+
+
+def _mapped_letters() -> set[str]:
+    """Letters held by any `net use` mapping, including remembered ones that are disconnected."""
+    if os.name != "nt":
+        return set()
+    try:
+        out = subprocess.run(["net", "use"], capture_output=True, text=True, timeout=15,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except Exception:  # noqa: BLE001
+        return set()
+    return set(re.findall(r"(?<![\w\/])([A-Z]:)\s", out))
 
 
 def open_in_explorer(target: str) -> None:
@@ -1129,10 +1135,10 @@ def open_in_explorer(target: str) -> None:
 
 
 def mount_and_browse(repo: str, snapshot_id: str, mountpoint: str, in_mount_target: str | None = None,
-                     browse: bool = True) -> KopiaProcess:
+                     browse: bool = True, info: dict | None = None) -> KopiaProcess:
     """Mount a snapshot, then (in the background) wait for the filesystem to become ready and open
-    Explorer at the requested in-mount path. Returns immediately with the mount process."""
-    proc = mount_snapshot(repo, snapshot_id, mountpoint)
+    Explorer at the requested in-mount path."""
+    proc = mount_snapshot(repo, snapshot_id, mountpoint, info={**(info or {}), "open": in_mount_target})
     if browse:
         target = in_mount_target or mountpoint
 

@@ -24,6 +24,12 @@
               <span x-text="'elapsed ' + jobElapsed()"></span>
             </div>
             <div x-show="jobPanel.error && jobPanel.state === 'failed'" class="text-xs text-danger break-all" x-text="jobPanel.error"></div>
+            <div x-show="jobPanel.freed" class="text-xs font-medium" style="color:var(--ok)"
+                 x-text="jobPanel.freed ? 'Freed ' + fmtB(jobPanel.freed.freed) + ' · repository now ' + fmtB(jobPanel.freed.after) : ''"></div>
+            <div x-show="jobFreesLater()" class="flex items-center gap-2 text-xs">
+              <span class="text-muted">Space comes back after maintenance.</span>
+              <button class="kl-btn quiet" style="height:22px" @click="openMaint(jobPanel.repo)">Run maintenance…</button>
+            </div>
           </div>
           <template x-if="(jobPanel.results || []).length || jobPanel.held">
             <div class="px-4 py-3 border-b border-bd space-y-2 overflow-auto" style="max-height:40vh">
@@ -73,6 +79,7 @@
           <div class="kl-footer">
             <span class="kl-note" x-text="jobFooterNote()"></span>
             <span class="spacer"></span>
+            <button class="kl-btn quiet" x-show="jobPanel.kind === 'restore' && jobPanel.state === 'done' && jobPanel.target" @click="openRestoredPath(jobPanel.target)">Open folder</button>
             <button class="kl-btn quiet" x-show="jobPanel.commands_text" @click="jobCopyCommand()">Copy command</button>
           </div>
         </div>

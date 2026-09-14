@@ -8,6 +8,7 @@ set/delete` -> cache invalidation; backups list/read/manual/restore.
 from __future__ import annotations
 
 import copy
+import threading
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -445,8 +446,21 @@ def save(body: SaveBody) -> dict:
     return write_rules(repo, body.target, body.changes)
 
 
+_WRITE_LOCKS: dict[str, threading.Lock] = {}
+_WRITE_LOCKS_GUARD = threading.Lock()
+
+
 def write_rules(repo: str, target: str, changes: Changes, log=None) -> dict:
-    """Backup, write, re-read. ``log`` receives one line per step (the job runner's output)."""
+    """Backup, write, re-read. ``log`` receives one line per step (the job runner's output).
+    One write per repo at a time: each write replaces the whole policy from a fresh export, so two
+    overlapping writes to one policy would drop the first one's rules."""
+    with _WRITE_LOCKS_GUARD:
+        lock = _WRITE_LOCKS.setdefault(repo, threading.Lock())
+    with lock:
+        return _write_rules(repo, target, changes, log)
+
+
+def _write_rules(repo: str, target: str, changes: Changes, log=None) -> dict:
     say = log or (lambda _line: None)
     is_global = _is_global(target)
     target_key = _GLOBAL_TARGET if is_global else target

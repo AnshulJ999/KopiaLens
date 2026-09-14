@@ -84,7 +84,14 @@
               <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted">Backups</div><div class="font-medium" x-text="removePlan.everywhere ? 'All' : (removePlan.sources_scope || []).length"></div></div>
             </div>
 
-            <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            <template x-if="removePlan.parts">
+              <div class="kl-list mt-3" style="max-height:110px">
+                <template x-for="(pt, i) in removePlan.parts" :key="i">
+                  <div class="li"><span class="font-mono break-all grow" x-text="pt.prefix"></span><span class="kl-note shrink-0" x-text="pt.source ? shortSource(pt.source) : 'all backups holding it'"></span></div>
+                </template>
+              </div>
+            </template>
+            <div class="mt-2 flex flex-wrap items-center gap-2 text-xs" x-show="!removePlan.parts">
               <span class="text-muted" title="The biggest few hundred files usually hold most of the space">Delete:</span>
               <button @click="setRemoveTopN(0)" :disabled="removePlan.job" class="h-7 rounded border px-2" :class="!removePlan.top_n ? 'border-fg font-medium' : 'border-bd'">Everything matched</button>
               <template x-for="n in [100, 500, 1000]" :key="n">
@@ -184,48 +191,128 @@
       </div>
     </div>
 
-    <div x-show="showRestore" @click.self="showRestore=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
-      <!-- x-if (not x-show): the bindings below dereference restore.*, which is null until a
-           file is chosen - x-show hides the panel but still evaluates the bindings (console errors). -->
+    <div x-show="showRestore" @click.self="closeRestore()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
       <template x-if="restore">
-      <div class="w-[44rem] max-w-full max-h-[88vh] overflow-auto rounded-lg border border-bd bg-surface p-4 text-sm">
-        <div class="flex items-center gap-2"><div class="font-medium">Restore</div><button @click="showRestore=false" class="ml-auto text-muted text-lg leading-none">&times;</button></div>
-        <div class="text-xs text-muted mt-1 break-all" x-text="restore && ('source: ' + restore.name)"></div>
-        <div class="mt-3">
-          <label class="text-[11px] uppercase text-muted">Destination (folder, or a .zip / .tar path)</label>
-          <div class="flex items-center gap-2 mt-0.5">
-            <input x-model="restore.target" class="fld flex-1 border border-bd bg-surface2" placeholder="D:\Restored   or   D:\out.zip">
-            <button @click="browseFolder()" class="h-8 rounded border border-bd px-3 text-xs">Browse…</button>
+        <div class="w-[50rem] max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
+          <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
+            <div class="flex items-center gap-2">
+              <div class="font-medium" x-text="'Restore ' + restore.label"></div>
+              <button @click="closeRestore()" class="ml-auto kl-btn quiet" title="Close">&times;</button>
+            </div>
+            <template x-if="restore.plan && restore.plan.items.length === 1">
+              <div class="kl-note mt-0.5 break-all">
+                <span class="font-mono" x-text="restore.plan.items[0].full_path"></span>
+                <span x-text="' · ' + (restore.plan.items[0].type === 'd' ? Number(restore.plan.items[0].files).toLocaleString() + ' files · ' : '') + fmtB(restore.plan.items[0].size)"></span>
+                <span x-show="restore.plan.items[0].snap_time" x-text="' · snapshot ' + humanTime(restore.plan.items[0].snap_time)"></span>
+              </div>
+            </template>
+          </div>
+
+          <div class="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+            <div class="kl-list" style="max-height:110px" x-show="restore.items.length > 1">
+              <template x-for="(it, i) in (restore.plan ? restore.plan.items : restore.items)" :key="i">
+                <div class="li">
+                  <span class="font-mono break-all grow" x-text="it.full_path"></span>
+                  <span class="num shrink-0" style="color:var(--muted)" x-show="it.size !== undefined" x-text="fmtB(it.size)"></span>
+                </div>
+              </template>
+            </div>
+
+            <div>
+              <div class="text-xs font-medium mb-1">Restore to</div>
+              <span class="kl-seg">
+                <span :class="restore.mode === 'folder' ? 'on' : ''" @click="restoreSetMode('folder')">A folder</span>
+                <span :class="restore.mode === 'original' ? 'on' : ''" @click="restoreSetMode('original')" title="Write back to the path it was backed up from">Where it came from</span>
+                <span :class="restore.mode === 'beside' ? 'on' : ''" x-show="!restoreHasDirs()" @click="restoreSetMode('beside')" title="A dated copy next to the original, e.g. notes (2026-09-01).txt">Next to the original</span>
+              </span>
+              <div class="flex items-center gap-2 mt-2" x-show="restore.mode === 'folder'">
+                <input x-model="restore.target" @input="restoreTargetInput()" class="fld flex-1 border border-bd bg-surface2 font-mono" placeholder="D:\Restored   or   D:\out.zip">
+                <button @click="browseFolder()" class="kl-btn" title="Opens the folder picker on the computer running KopiaLens">Browse…</button>
+              </div>
+              <div class="kl-note mt-1" x-show="restore.mode === 'folder' && restore.items.length > 1">Files go straight into this folder. Same names get a number.</div>
+              <div class="kl-note mt-1 break-all" x-show="restore.mode !== 'folder' && restore.plan && restore.plan.items.length === 1 && restore.plan.items[0].target"
+                   x-text="'Writes to ' + (restore.plan && restore.plan.items[0] ? restore.plan.items[0].target : '')"></div>
+            </div>
+
+            <div>
+              <div class="text-xs font-medium mb-1">Existing files</div>
+              <span class="kl-seg">
+                <span :class="restore.preset === 'safe' ? 'on' : ''" @click="restoreSetPreset('safe')" title="Only add what is missing. Nothing is overwritten.">Keep existing</span>
+                <span :class="restore.preset === 'replace' ? 'on' : ''" @click="restoreSetPreset('replace')" title="Replace files that differ from the snapshot. Extra files stay.">Replace different</span>
+                <span :class="restore.preset === 'exact' ? 'on' : ''" @click="restoreSetPreset('exact')" title="Replace files that differ and delete files the snapshot does not have">Match snapshot</span>
+                <span :class="restore.preset === 'custom' ? 'on' : ''" style="cursor:default" title="Set by the options below">Custom</span>
+              </span>
+            </div>
+
+            <details class="kl-sec">
+              <summary class="h cursor-pointer select-none">Options</summary>
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs mt-2">
+                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.restore_owners"> Restore ownership</label>
+                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.restore_permissions"> Restore permissions</label>
+                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.restore_times"> Restore modified time</label>
+                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.skip_existing" @change="restoreChanged()"> Skip existing</label>
+                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.ignore_errors"> Continue on errors</label>
+                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.write_files_atomically"> Write atomically</label>
+                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.write_sparse_files"> Sparse files</label>
+                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.ignore_permission_errors"> Ignore permission errors</label>
+                <label class="flex items-center gap-1.5 text-warn"><input type="checkbox" x-model="restore.options.overwrite_files" @change="restoreChanged()"> Overwrite files</label>
+                <label class="flex items-center gap-1.5 text-warn"><input type="checkbox" x-model="restore.options.overwrite_directories" @change="restoreChanged()"> Overwrite folders</label>
+                <label class="flex items-center gap-1.5 text-warn"><input type="checkbox" x-model="restore.options.overwrite_symlinks" @change="restoreChanged()"> Overwrite symlinks</label>
+                <label class="flex items-center gap-1.5 text-danger"><input type="checkbox" x-model="restore.options.delete_extra" @change="restoreChanged()"> Delete extra files</label>
+              </div>
+              <div class="mt-2 flex items-center gap-3 text-xs">
+                <label class="flex items-center gap-1">Parallel <input type="number" min="1" x-model.number="restore.options.parallel" class="fld h-7 w-16 border border-bd bg-surface2"></label>
+                <label class="flex items-center gap-1" title="Folders this deep become placeholder files">Shallow depth <input type="number" min="0" x-model="restore.options.shallow" class="fld h-7 w-20 border border-bd bg-surface2" placeholder="full"></label>
+              </div>
+            </details>
+
+            <div class="kl-note" x-show="restore.loading">Checking…</div>
+            <div class="kl-callout" x-show="restore.error" x-text="restore.error"></div>
+
+            <template x-if="restore.plan && restore.plan.previewed && !restore.loading">
+              <div class="space-y-3">
+                <div class="kl-cards">
+                  <div class="kl-card"><div class="k">Files</div><div class="v" x-text="Number(restore.plan.totals.files).toLocaleString()"></div></div>
+                  <div class="kl-card good"><div class="k">New</div><div class="v" x-text="Number(restore.plan.totals.new).toLocaleString()"></div></div>
+                  <div class="kl-card"><div class="k" title="Same size and modified time">Identical</div><div class="v" x-text="Number(restore.plan.totals.identical).toLocaleString()"></div></div>
+                  <div class="kl-card" :class="restore.plan.totals.different ? 'warn' : ''"><div class="k" x-text="restore.options.overwrite_files ? 'Replaced' : 'Different, kept'"></div><div class="v" x-text="Number(restore.plan.totals.different).toLocaleString()"></div></div>
+                  <div class="kl-card" :class="restore.plan.totals.extra ? 'warn' : ''" x-show="restore.options.delete_extra"><div class="k">Deleted</div><div class="v" x-text="Number(restore.plan.totals.extra).toLocaleString()"></div></div>
+                </div>
+                <div class="kl-note" x-show="restore.plan.items.some((i) => i.archive)">Archive target: nothing on disk to compare.</div>
+                <div class="kl-note" x-show="restore.plan.items.some((i) => i.capped)">Compared the first 100,000 files.</div>
+                <template x-if="restore.plan.items.some((i) => (i.different_paths || []).length)">
+                  <div class="kl-sec">
+                    <div class="h" x-text="restore.options.overwrite_files ? 'Replaced' : 'Different on disk (kept)'"></div>
+                    <div class="kl-list" style="max-height:150px">
+                      <template x-for="(p, i) in restore.plan.items.flatMap((it) => it.different_paths || [])" :key="'d' + i">
+                        <div class="li"><span class="font-mono break-all" x-text="p"></span></div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+                <template x-if="restore.options.delete_extra && restore.plan.items.some((i) => (i.extra_paths || []).length)">
+                  <div class="kl-sec">
+                    <div class="h">Deleted from the destination</div>
+                    <div class="kl-list" style="max-height:150px">
+                      <template x-for="(p, i) in restore.plan.items.flatMap((it) => it.extra_paths || [])" :key="'x' + i">
+                        <div class="li"><span class="font-mono break-all" x-text="p"></span></div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+
+          <div class="kl-footer shrink-0">
+            <span class="kl-note">Kopia has no restore dry run. Preview compares the snapshot with the destination.</span>
+            <span class="spacer"></span>
+            <button class="kl-btn quiet" x-show="restore.plan && restore.plan.items.length === 1"
+                    @click="downloadItem(restore.items[0])" x-text="restore.plan && restore.plan.items[0] && restore.plan.items[0].type === 'd' ? 'Download .zip' : 'Download'"></button>
+            <button class="kl-btn" @click="restoreLoad(true)" :disabled="restore.loading">Preview</button>
+            <button class="kl-btn" :class="restoreDanger() ? 'danger' : 'primary'" @click="restoreExecute()" :disabled="restore.loading">Restore…</button>
           </div>
         </div>
-        <div class="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs">
-          <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.restore_owners"> Restore ownership</label>
-          <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.restore_permissions"> Restore permissions</label>
-          <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.restore_times"> Restore mtime</label>
-          <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.skip_existing"> Skip existing</label>
-          <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.ignore_errors"> Continue on errors</label>
-          <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.write_files_atomically"> Write atomically</label>
-          <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.write_sparse_files"> Sparse files</label>
-          <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.ignore_permission_errors"> Ignore perm errors</label>
-          <label class="flex items-center gap-1.5 text-warn"><input type="checkbox" x-model="restore.options.overwrite_files"> Overwrite files</label>
-          <label class="flex items-center gap-1.5 text-warn"><input type="checkbox" x-model="restore.options.overwrite_directories"> Overwrite dirs</label>
-          <label class="flex items-center gap-1.5 text-warn"><input type="checkbox" x-model="restore.options.overwrite_symlinks"> Overwrite symlinks</label>
-          <label class="flex items-center gap-1.5 text-danger"><input type="checkbox" x-model="restore.options.delete_extra"> Delete extra (sync)</label>
-        </div>
-        <div class="mt-2 flex items-center gap-3 text-xs">
-          <label class="flex items-center gap-1">Parallel <input type="number" min="1" x-model.number="restore.options.parallel" class="fld h-7 w-16 border border-bd bg-surface2"></label>
-          <label class="flex items-center gap-1">Shallow depth <input type="number" min="0" x-model="restore.options.shallow" class="fld h-7 w-20 border border-bd bg-surface2" placeholder="(deep)"></label>
-        </div>
-        <div class="mt-2 text-[11px]" style="color:var(--warn)" x-show="restore && (restore.options.overwrite_files || restore.options.overwrite_directories || restore.options.delete_extra)">Overwrite / Delete-extra can modify or remove files at the destination.</div>
-        <div class="mt-3 kl-runbar">
-          <button class="kl-btn" @click="restorePreview()">Preview</button>
-          <button @click="restoreExecute()" :class="(restore.options.overwrite_files || restore.options.overwrite_directories || restore.options.delete_extra) ? 'kl-btn danger' : 'kl-btn primary'">Restore</button>
-          <span class="grow"></span>
-          <button class="kl-btn quiet" x-show="restore.command" @click="copyText(restore.command)">Copy command</button>
-        </div>
-        <div class="kl-note mt-1">Preview shows the exact command - kopia has no restore dry run.</div>
-        <pre x-show="restore.command" class="mt-2 text-[11px] whitespace-pre-wrap break-all rounded p-2 kl-term" style="max-height:120px" x-text="restore.command"></pre>
-      </div>
       </template>
     </div>
 

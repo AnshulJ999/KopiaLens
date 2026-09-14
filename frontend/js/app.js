@@ -56,7 +56,6 @@ document.addEventListener("alpine:init", () => {
     appLogDebugAvailable: false, appLogTruncated: false, _logsSeq: 0,
     groupReclaim: {},  // "repo:folder" -> {v: freeable, capped} - keyed by repo so one repo's
                        // numbers can never render in another repo's table
-    mountSnapshot: "", mountPoint: "", restoreSource: "", restoreDest: "",
     dashboardMeta: "", busy: "", error: "", detail: null, snapSource: "*ALL*", _poll: null, _searchSeq: 0, _detailSeq: 0,
     _dashSeq: 0, _snapSeq: 0, _treeSeq: 0, _removePlanSeq: 0, _removeDetailSeq: 0, _rfPlanSeq: 0, _contentsSeq: 0,
     showRemove: false, removePlan: null, removeJobPoll: null, _removeBase: null,
@@ -98,6 +97,8 @@ document.addEventListener("alpine:init", () => {
     showDel: false, delPanel: null, _delSeq: 0, _delStatsSeq: 0, showReview: false, flow: null,
     diffMode: localStorage.getItem("kl-diffmode") || "changes", _jobThen: {},
     indexPending: [], indexUpdated: null,
+    showMaint: false, maint: null, _maintSeq: 0,
+    _restoreSeq: 0, _restoreTimer: null, _restoreTargets: {},
 
     fmtB(v) { return fmtBytes(v); },
     fmtPhys(v) { return fmtPhys(v); },
@@ -400,13 +401,13 @@ document.addEventListener("alpine:init", () => {
     csv(id, name) { downloadTable(id, name); },
     };
     // Duplicate-key guard: two parts declaring the same key would compose silently last-wins.
-    const parts = [["core", core], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["settingsPart", settingsPart], ["themePart", themePart], ["policiesPart", policiesPart]];
+    const parts = [["core", core], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["themePart", themePart], ["policiesPart", policiesPart]];
     const seen = new Map();
     for (const [owner, part] of parts)
       for (const k of Object.keys(part)) {
         if (seen.has(k)) console.error(`kopiaLens: duplicate key "${k}" declared in both ${seen.get(k)} and ${owner}`);
         else seen.set(k, owner);
       }
-    return Object.assign(core, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, diffviewPart, jobsPart, settingsPart, themePart, policiesPart);
+    return Object.assign(core, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, diffviewPart, jobsPart, maintenancePart, settingsPart, themePart, policiesPart);
   });
 });

@@ -1,111 +1,259 @@
-// Actions tab + shared ops: mounts registry, restore dialog, mount-and-open helpers.
+// Actions tab + shared ops: mounts, the restore panel, downloads.
+const RESTORE_PRESETS = {
+  safe: { skip_existing: true, overwrite_files: false, overwrite_directories: false, overwrite_symlinks: false, delete_extra: false },
+  replace: { skip_existing: false, overwrite_files: true, overwrite_directories: true, overwrite_symlinks: true, delete_extra: false },
+  exact: { skip_existing: false, overwrite_files: true, overwrite_directories: true, overwrite_symlinks: true, delete_extra: true },
+};
+const DOWNLOAD_WARN_BYTES = 5 * 1024 ** 3;
+
 const actionsPart = {
 
-    async mountLatestFor(item) {
-      const v = await getJson(`/api/search/versions?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(item.source)}&full_path=${encodeURIComponent(item.full_path)}`).catch(() => null);
-      const snap = v && v.versions && v.versions[0] && v.versions[0].snapshot_id;
-      if (snap) this.mountRow(snap); else window.alert("No snapshot found for this file.");
-    },
-
-    // ---- Mount + open in Explorer (auto drive letter, registered in the mount manager) ----
-    async mountFileOpen(item) {  // mount the latest snapshot carrying a file and open its folder
-      const v = await getJson(`/api/search/versions?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(item.source)}&full_path=${encodeURIComponent(item.full_path)}`).catch(() => null);
-      const snap = v && v.versions && v.versions[0] && v.versions[0].snapshot_id;
-      if (!snap) { window.alert("No snapshot found for this file."); return; }
-      this.mountOpen(snap, item.source, item.full_path);
+    // ---- Mount + open in Explorer (auto drive letter) ----
+    mountFileOpen(item) {  // the newest snapshot holding the path
+      this.mountOpen(null, item.source, item.full_path);
     },
     mountOpen(snapshotId, source, fullPath) {
       this.wrap(async () => {
-        const r = await getJson("/api/actions/mount-open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_id: snapshotId, source, full_path: fullPath || null }) });
-        this.actionText = `Mounted at ${r.mountpoint} (pid ${r.pid}); opening Explorer…\n${(r.command || []).join(" ")}`;
+        const r = await getJson("/api/actions/mount-open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_id: snapshotId || null, source, full_path: fullPath || null }) });
+        this.actionText = `Mounted at ${r.mountpoint}. Opening Explorer.`;
         this.loadMounts();
-      }, "Mounting + opening…");
+      }, "Mounting…");
     },
     mountVersionOpen(v) { if (this.detail) this.mountOpen(v.snapshot_id, this.detail.source, this.detail.title); },
     mountTreeSnapshot() {  // tree control-bar: mount the selected snapshot + open the current folder
-      if (!this.selectedSnapshot) { window.alert("Pick a snapshot first."); return; }
+      if (!this.selectedSnapshot) { this.error = "Pick a snapshot first."; return; }
       this.mountOpen(this.selectedSnapshot, this.selectedSource, this.treePrefix || this.sourceRoot());
     },
 
-    // ---- Restore (accessible everywhere) ----
-    openRestore(sourceId, name) {
-      this.restore = {
-        source_id: sourceId, name: name || sourceId, target: "", command: "",
-        options: {
-          restore_owners: true, restore_permissions: true, restore_times: true, skip_existing: true,
-          overwrite_files: false, overwrite_directories: false, overwrite_symlinks: false,
-          ignore_errors: false, write_files_atomically: false, write_sparse_files: false,
-          ignore_permission_errors: false, delete_extra: false, parallel: 8, shallow: "",
-        },
-      };
-      this.showRestore = true;
-    },
-    async restorePreview() {
-      if (!this.restore || !this.restore.target) { window.alert("Enter a destination (folder, or a .zip/.tar path)."); return; }
-      const r = await getJson("/api/actions/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source_id: this.restore.source_id, target: this.restore.target, options: this.restore.options, confirm: false }) }).catch((e) => { this.error = e.message; return null; });
-      if (r) this.restore.command = r.command;
-    },
-    async restoreExecute() {
-      if (!this.restore || !this.restore.target) { window.alert("Enter a destination."); return; }
-      const o = this.restore.options;
-      if (o.overwrite_files || o.overwrite_directories || o.delete_extra) {
-        const flags = [o.overwrite_files && "overwrite files", o.overwrite_directories && "overwrite directories", o.delete_extra && "delete extra files"].filter(Boolean).join(", ");
-        const ok = await this.klConfirm({
-          title: "Restore over existing files?",
-          facts: [
-            ["Restore", this.restore.name],
-            ["To", this.restore.target],
-            ["Allowed", flags],
-          ],
-          callout: "Files at the destination can be overwritten or removed.",
-          command: this.restore.command, confirmLabel: "Restore", danger: true,
-        });
-        if (!ok) return;
-      }
-      await this.wrap(async () => {
-        const started = await this.startJob("restore", { source_id: this.restore.source_id, target: this.restore.target, options: o });
-        if (started) {
-          this.showRestore = false;
-        }
-      }, "Restoring (large restores can take a while)…");
-    },
-    async browseFolder() {
-      const r = await getJson("/api/actions/browse-folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial: this.restore && this.restore.target || null }) }).catch(() => null);
-      if (r && r.path) this.restore.target = r.path;
-    },
-    restoreFromDetail() { if (this.detail) this.openRestore(this.detail.content_id || this.detail.title, this.detail.title); },
-
-    // ---------- Mounts / actions ----------
     async loadMounts() {
       const r = await getJson(`/api/actions/mounts`).catch(() => ({ mounts: [] }));
       this.mounts = r.mounts || [];
     },
-    mountRow(snapId) {
-      const mp = window.prompt("Mount snapshot (read-only) to drive/folder:", "Z:");
-      if (!mp) return;
-      this.wrap(async () => {
-        const r = await getJson("/api/actions/mount", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_id: snapId, mountpoint: mp }) });
-        this.actionText = `Mount started (pid ${r.pid}):\n${(r.command || []).join(" ")}`;
-        this.loadMounts();
-      }, "Starting mount...");
-    },
-    async mount() {
-      await this.wrap(async () => {
-        const r = await getJson("/api/actions/mount", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_id: this.mountSnapshot, mountpoint: this.mountPoint }) });
-        this.actionText = `Mount started (pid ${r.pid}):\n${(r.command || []).join(" ")}`;
-        this.loadMounts();
-      }, "Starting mount...");
+    mountLabel(m) {
+      return sourcePath(m.source || "") || `snapshot ${String(m.snapshot_id).slice(0, 8)}`;
     },
     async unmount(pid) {
       await this.wrap(async () => {
         await getJson("/api/actions/unmount", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pid }) });
         this.loadMounts();
-      }, "Unmounting...");
+      }, "Unmounting…");
     },
-    async restorePreviewLegacy() {  // Actions-tab command preview (the restore dialog has its own restorePreview above)
-      await this.wrap(async () => {
-        const r = await getJson("/api/actions/restore-preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.restoreSource, destination: this.restoreDest }) });
-        this.actionText = `Restore command (preview - run it yourself):\n${(r.command || []).join(" ")}`;
+    async unmountAll() {
+      const n = this.mounts.length;
+      if (!n) return;
+      const ok = await this.klConfirm({
+        title: `Unmount ${n} snapshot${n === 1 ? "" : "s"}?`,
+        facts: this.mounts.map((m) => [m.mountpoint, this.mountLabel(m) + (m.snap_time ? " · " + this.humanTime(m.snap_time) : "")]),
+        confirmLabel: `Unmount ${n}`,
       });
+      if (!ok) return;
+      await this.wrap(async () => {
+        await getJson("/api/actions/unmount-all", { method: "POST" });
+        this.loadMounts();
+      }, "Unmounting…");
+    },
+    async mountBrowse(pid) {
+      await getJson("/api/actions/mount-browse", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pid }) })
+        .catch((e) => { this.error = e.message; this.loadMounts(); });
+    },
+
+    // ---- Restore ----
+    // items: [{source, full_path, snapshot_id?, content_id?}]; several items restore flat into one folder.
+    openRestore(items, opts = {}) {
+      const list = (Array.isArray(items) ? items : [items]).filter((i) => i && i.source && i.full_path);
+      if (!list.length) { this.error = "Nothing to restore."; return; }
+      this.restore = {
+        items: list, mode: "folder", target: "", preset: "safe", plan: null, loading: false, error: "",
+        label: opts.label || (list.length === 1 ? list[0].full_path.split(/[\\/]/).pop() : `${list.length} items`),
+        options: {
+          restore_owners: true, restore_permissions: true, restore_times: true, ignore_errors: false,
+          write_files_atomically: false, write_sparse_files: false, ignore_permission_errors: false,
+          parallel: 8, shallow: "", ...RESTORE_PRESETS.safe,
+        },
+      };
+      this.showRestore = true;
+      this.restoreLoad(false);
+    },
+    closeRestore() { this.showRestore = false; this.restore = null; },
+
+    restorePresetOf(o) {
+      for (const [name, p] of Object.entries(RESTORE_PRESETS)) {
+        if (Object.entries(p).every(([k, v]) => !!o[k] === v)) return name;
+      }
+      return "custom";
+    },
+    restoreSetPreset(name) {
+      const r = this.restore;
+      if (!r || !RESTORE_PRESETS[name]) return;
+      Object.assign(r.options, RESTORE_PRESETS[name]);
+      this.restoreChanged();
+    },
+    restoreSetMode(mode) {
+      const r = this.restore;
+      if (!r || r.mode === mode) return;
+      r.mode = mode;
+      this.restoreChanged();
+    },
+    restoreChanged() {  // any option change invalidates the preview
+      const r = this.restore;
+      if (!r) return;
+      r.preset = this.restorePresetOf(r.options);
+      if (r.plan && r.plan.previewed) this.restoreLoad(false);
+    },
+    restoreHasDirs() {
+      const p = this.restore && this.restore.plan;
+      return !!(p && p.items.some((i) => i.type === "d"));
+    },
+
+    // preview=false: resolve items and targets only (cheap); true: also compare with the destination.
+    async restoreLoad(preview) {
+      const r = this.restore;
+      if (!r) return;
+      if (r.mode === "folder" && !r.target.trim()) {
+        if (!preview) return this.restoreResolveOnly();
+        r.error = "Pick a destination folder."; return;
+      }
+      const seq = ++this._restoreSeq;
+      r.loading = true; r.error = "";
+      try {
+        const plan = await getJson("/api/restore/plan", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo: this.repo, items: r.items, target_mode: r.mode, target: r.target, options: r.options, preview }) });
+        if (seq !== this._restoreSeq || !this.restore) return;
+        plan.previewed = preview;
+        r.plan = plan;
+      } catch (e) {
+        if (seq === this._restoreSeq && this.restore) { r.error = e.message || String(e); r.plan = null; }
+      } finally {
+        if (seq === this._restoreSeq && this.restore) r.loading = false;
+      }
+    },
+    async restoreResolveOnly() {  // item facts before a destination is chosen
+      const r = this.restore;
+      const seq = ++this._restoreSeq;
+      r.loading = true; r.error = "";
+      try {
+        const plan = await getJson("/api/restore/plan", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo: this.repo, items: r.items, target_mode: "folder", target: "_", options: r.options, preview: false }) });
+        if (seq !== this._restoreSeq || !this.restore) return;
+        plan.previewed = false;
+        plan.items.forEach((i) => { i.target = ""; });
+        r.plan = plan;
+      } catch (e) {
+        if (seq === this._restoreSeq && this.restore) r.error = e.message || String(e);
+      } finally {
+        if (seq === this._restoreSeq && this.restore) r.loading = false;
+      }
+    },
+    restoreTargetInput() {
+      const r = this.restore;
+      if (!r) return;
+      clearTimeout(this._restoreTimer);
+      this._restoreTimer = setTimeout(() => this.restoreLoad(false), 400);
+    },
+
+    restoreDanger() {
+      const r = this.restore, p = r && r.plan;
+      if (!r) return false;
+      return r.mode === "original" || !!r.options.delete_extra
+        || !!(p && p.previewed && r.options.overwrite_files && p.totals.different);
+    },
+
+    restoreFacts() {
+      const r = this.restore, p = r.plan, t = p.totals;
+      const facts = [];
+      if (p.items.length === 1) {
+        const i = p.items[0];
+        facts.push(["Restore", i.full_path]);
+        if (i.snap_time) facts.push(["Snapshot", this.humanTime(i.snap_time)]);
+        facts.push(["To", i.target]);
+      } else {
+        facts.push(["Restore", `${p.items.length} items`]);
+        facts.push(["To", r.mode === "folder" ? r.target : r.mode === "original" ? "Where each came from" : "Next to each original"]);
+      }
+      facts.push(["Files", `${Number(t.files).toLocaleString()} · ${fmtBytes(t.size)}`]);
+      facts.push(["Existing files", { safe: "Skipped", replace: "Replaced when different", exact: "Replaced when different", custom: "Custom options" }[r.preset]]);
+      if (p.previewed) {
+        facts.push(["On disk now", `${t.new.toLocaleString()} new · ${t.identical.toLocaleString()} identical · ${t.different.toLocaleString()} different`]);
+        if (r.options.delete_extra) facts.push(["Deleted", `${t.extra.toLocaleString()} files not in the snapshot`]);
+      }
+      return facts;
+    },
+
+    async restoreExecute() {
+      const r = this.restore;
+      if (!r || r.loading) return;
+      if (!r.plan || (r.mode === "folder" && !r.target.trim())) { r.error = "Pick a destination folder."; return; }
+      if (!r.plan.previewed) await this.restoreLoad(true);
+      if (!this.restore || !r.plan || r.error) return;
+      const t = r.plan.totals;
+      let callout = "";
+      if (r.options.delete_extra && t.extra) callout = `${t.extra.toLocaleString()} files at the destination are not in the snapshot and will be deleted.`;
+      else if (r.options.overwrite_files && t.different) callout = `${t.different.toLocaleString()} existing files will be replaced.`;
+      else if (r.mode === "original") callout = "Restores over the original location.";
+      const ok = await this.klConfirm({
+        title: `Restore ${r.label}?`, facts: this.restoreFacts(), callout,
+        confirmLabel: "Restore", danger: this.restoreDanger(),
+      });
+      if (!ok || !this.restore) return;
+      const items = r.plan.items.map((i) => ({ source_id: i.source_id, target: i.target }));
+      const labelTarget = r.mode === "folder" ? r.target : items[0].target;
+      const started = await this.startJob("restore", { items, options: r.options, label_target: labelTarget }, `${r.label} to ${labelTarget}`);
+      if (started) {
+        this._restoreTargets[started] = labelTarget;
+        this.closeRestore();
+      }
+    },
+
+    async browseFolder() {
+      const r = await getJson("/api/actions/browse-folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial: this.restore && this.restore.target || null }) }).catch(() => null);
+      if (r && r.path && this.restore) { this.restore.target = r.path; this.restoreLoad(false); }
+    },
+    restoreFromDetail() { if (this.detail) this.openRestore([{ source: this.detail.source, full_path: this.detail.title }]); },
+    restoreVersion(v) {
+      if (this.detail) this.openRestore([{ source: this.detail.source, full_path: this.detail.title, content_id: v.content_id || null, snapshot_id: v.snapshot_id }]);
+    },
+    async openRestoredPath(path) {
+      await getJson("/api/restore/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) })
+        .catch((e) => { this.error = e.message; });
+    },
+
+    // Search / Tree selections: files restore flat into one folder.
+    selRestore(scope) {
+      const items = this._selItems(scope).filter((i) => i.source).map((i) => ({ source: i.source, full_path: i.path }));
+      if (!items.length) { this.error = "Select one or more rows first."; return; }
+      this.openRestore(items);
+    },
+
+    // ---- Download through the browser ----
+    // item: {source, full_path, snapshot_id?, content_id?}; size/kind known from a plan when available.
+    async downloadItem(item) {
+      let info = null;
+      try {
+        const plan = await getJson("/api/restore/plan", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo: this.repo, items: [item], target_mode: "folder", target: "_", preview: false }) });
+        info = plan.items[0];
+      } catch (e) { this.error = e.message || String(e); return; }
+      if (info.size > DOWNLOAD_WARN_BYTES) {
+        const ok = await this.klConfirm({
+          title: `Download ${info.name}?`,
+          facts: [["Size", fmtBytes(info.size)], ["Files", Number(info.files).toLocaleString()], ["Snapshot", this.humanTime(info.snap_time)]],
+          callout: info.type === "d" ? "The .zip is built on the server first, which needs this much free space." : "",
+          confirmLabel: "Download",
+        });
+        if (!ok) return;
+      }
+      const q = new URLSearchParams({ repo: this.repo, source: item.source, full_path: item.full_path });
+      if (item.snapshot_id) q.set("snapshot_id", item.snapshot_id);
+      if (item.content_id) q.set("content_id", item.content_id);
+      const a = document.createElement("a");
+      a.href = `/api/restore/download?${q}`;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      if (info.type === "d") this.actionText = `Building ${info.name}.zip. The download starts when it is ready.`;
+    },
+    downloadVersion(v) {
+      if (this.detail) this.downloadItem({ source: this.detail.source, full_path: this.detail.title, content_id: v.content_id || null, snapshot_id: v.snapshot_id });
     },
 };

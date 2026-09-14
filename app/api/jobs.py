@@ -10,6 +10,8 @@ path would have. Legacy /actions/* endpoints stay - only the UI's call sites mov
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -64,9 +66,29 @@ def _resolve_params(kind: str, repo: str, params: dict) -> dict:
             raise jobs.JobRefused("snapshot_ids is empty")
         return {"snapshot_ids": ids, "dry": bool(params.get("dry"))}
     if kind == "restore":
-        if not params.get("source_id") or not params.get("target"):
+        items = params.get("items")
+        if items is not None:
+            if not items or not all(i.get("source_id") and i.get("target") for i in items):
+                raise jobs.JobRefused("restore needs a source and a target for every item")
+        elif not params.get("source_id") or not params.get("target"):
             raise jobs.JobRefused("restore needs source_id and target")
+        # kopia creates a missing folder target, but not the parent folder of a single file
+        for it in items or [{"target": params["target"]}]:
+            parent = os.path.dirname(it["target"].rstrip("\\/"))
+            if parent and not os.path.isdir(parent):
+                try:
+                    os.makedirs(parent, exist_ok=True)
+                except OSError as exc:
+                    raise jobs.JobRefused(f"cannot create {parent}: {exc}") from exc
         return params
+    if kind == "maintenance":
+        out = {"full": bool(params.get("full", True)),
+               "safety": "none" if params.get("safety") == "none" else "full"}
+        path = _local_storage_path(repo)
+        size = jobs.folder_size(path) if path else None
+        if size is not None:
+            out.update(measure_path=path, size_before=size)
+        return out
     if kind == "policy_write":
         writes = [w for w in (params.get("writes") or []) if w.get("target")]
         if not writes:
@@ -114,9 +136,26 @@ def _write_step(repo: str, w: dict):
     return run
 
 
+def _local_storage_path(repo: str) -> str | None:
+    """The repository folder, for a filesystem repo only."""
+    from .stats import _json
+    status = _json(repo, ["repository", "status", "--json"]) or {}
+    storage = status.get("storage") or {}
+    if storage.get("type") != "filesystem":
+        return None
+    return (storage.get("config") or {}).get("path") or None
+
+
 def _on_done(job: dict) -> None:
     """A completed remove/delete refreshes the source listing and queues the incremental
-    reindex so the UI reflects reality."""
+    reindex so the UI reflects reality. A maintenance run refreshes the Stats figures."""
+    if job.get("kind") == "maintenance" and not job.get("dry"):
+        try:
+            from .stats import refresh_stats
+            refresh_stats(job["repo"])
+        except Exception:  # noqa: BLE001
+            pass
+        return
     if job.get("dry") or not job.get("mutating") or job.get("held"):
         return
     kind = job.get("kind")

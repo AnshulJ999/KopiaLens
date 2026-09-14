@@ -3,9 +3,9 @@
 // startJob(kind, params, label) to launch + open a job, openJobPanel(jobId) to open one.
 const jobsPart = {
 
-    async startJob(kind, params, label) {
+    async startJob(kind, params, label, repo) {
       const r = await getJson("/api/jobs/start", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, repo: this.repo, params, label }) }).catch((e) => { this.error = e.message; return null; });
+        body: JSON.stringify({ kind, repo: repo || this.repo, params, label }) }).catch((e) => { this.error = e.message; return null; });
       if (!r) return null;
       this.openJobPanel(r.job_id);
       return r.job_id;
@@ -22,7 +22,7 @@ const jobsPart = {
       this.jobFollow = true;
       this.jobExpanded = false;
       this.jobPanel = { job_id: s.job_id, kind: s.kind, kind_label: s.kind_label, repo: s.repo,
-        label: s.label, dry: s.dry, mutating: s.mutating, log_path: s.log_path, commands_text: s.commands_text };
+        label: s.label, dry: s.dry, mutating: s.mutating, log_path: s.log_path, commands_text: s.commands_text, target: s.target || "" };
       this.showJob = true;
       this._jobApply(s);
       this._armJobPoll();
@@ -54,7 +54,7 @@ const jobsPart = {
       const wasRunning = this.jobPanel.state === "running";
       Object.assign(this.jobPanel, { state: s.state, rc: s.rc, error: s.error, total: s.total,
         done: s.done, errors: s.errors, line_count: s.line_count, elapsed: s.elapsed, skipped: s.skipped || 0,
-        results: s.results || [], held: !!s.held });
+        results: s.results || [], held: !!s.held, freed: s.freed || null });
       if (s.lines && s.lines.length) {
         this.jobLines.push(...s.lines);
         if (this.jobLines.length > 5000) {  // render buffer cap; the log file always has everything
@@ -141,11 +141,19 @@ const jobsPart = {
       return "Finished";
     },
 
+    // A finished real delete: offer the maintenance run that frees its space.
+    jobFreesLater() {
+      const p = this.jobPanel;
+      if (!p || p.dry || p.state !== "done" || p.held) return false;
+      return p.kind === "remove_files" || p.kind === "snapshot_delete"
+        || (p.kind === "policy_write" && p.kind_label === "Excluding and deleting");
+    },
+
     jobFooterNote() {
       const p = this.jobPanel;
       if (!p) return "";
       if (p.kind === "maintenance") return "Kopia reclaims space during this run.";
-      if (p.kind === "restore") return `Writes to ${p.label.replace(/^to /, "")}.`;
+      if (p.kind === "restore") return p.target ? `Writes to ${p.target}` : "";
       if (p.kind === "policy_write" && p.kind_label !== "Excluding and deleting") return "Takes effect from each backup's next snapshot.";
       return "Space frees after the next full maintenance.";
     },
@@ -182,6 +190,15 @@ const jobsPart = {
 
     async jobStop() {
       if (!this.jobPanel || this.jobPanel.state !== "running") return;
+      if (this.jobPanel.kind === "maintenance") {
+        const ok = await this.klConfirm({
+          title: "Stop maintenance?",
+          facts: [["Repo", this.jobPanel.repo], ["Running", this.jobElapsed()]],
+          callout: "Kopia stops at once. Work done so far is kept; the rest runs next time.",
+          confirmLabel: "Stop maintenance", danger: true,
+        });
+        if (!ok || !this.jobPanel || this.jobPanel.state !== "running") return;
+      }
       await getJson("/api/jobs/stop", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ job_id: this.jobPanel.job_id }) }).catch((e) => { this.error = e.message; });
     },

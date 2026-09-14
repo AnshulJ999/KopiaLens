@@ -636,11 +636,12 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
         # the SOURCES holding this exact PATH (raw-exact identity) - what the file panel's
         # "Backed up by" list renders. Distinct from `others` (other PATHS with the same bytes)
         # and from `instances` (distinct paths): one concept per field, never conflated.
+        machine = source.split(":", 1)[0]   # another machine's identical path is a different file
         holders = [source] + [r[0] for r in cur.execute(
             "SELECT DISTINCT s.source FROM pathx p JOIN src s ON s.src_id = p.src_id "
             "WHERE p.full_path = ? AND s.source <> ? ORDER BY s.source",
             [full_path, source],
-        ).fetchall()]
+        ).fetchall() if r[0].split(":", 1)[0] == machine]
     finally:
         cur.close()
 

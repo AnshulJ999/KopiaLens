@@ -97,6 +97,7 @@
                       <div class="kl-card" :class="delPanel.plan.retained_count ? 'warn' : ''"><div class="k" title="Kept by a retention rule">Kept by retention</div><div class="v" x-text="delPanel.plan.retained_count"></div></div>
                     </div>
                     <div class="kl-callout" x-text="delCallout()"></div>
+                    <div class="kl-callout" x-show="delPanel.plan.capped">Too many identical copies to list every snapshot. Untick backups, or remove the file from snapshots instead.</div>
                     <div class="kl-sec">
                       <div class="h">Snapshots deleted <span class="count" x-text="(delPanel.plan.snapshots || []).length + ', newest first'"></span></div>
                       <div class="kl-list" style="max-height:220px">

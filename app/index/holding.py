@@ -68,11 +68,14 @@ def holding_snapshots(repo: str, source: str, full_paths: list[str],
                 continue
             if depth == len(parts) - 1:
                 snap = snaps[i]
+                summ = entry.get("summ") or {}
                 out[p].append({
                     "snapshot_id": snap.get("id"),
                     "start_time": snap.get("startTime", ""),
                     "obj": entry.get("obj", ""),
-                    "size": int(entry.get("size", 0) or 0),
+                    "size": int(entry.get("size", 0) or summ.get("size", 0) or 0),
+                    "files": int(summ.get("files", 0) or 0),
+                    "mtime": entry.get("mtime", ""),
                     "type": entry.get("type", ""),
                     "pinned": bool(snap.get("pins")),
                     "retention": snap.get("retention") or snap.get("retentionReason") or [],

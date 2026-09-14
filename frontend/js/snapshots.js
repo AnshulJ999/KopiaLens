@@ -32,12 +32,11 @@ const snapshotsPart = {
         const stbl = setTable("#snapshotsTable", this.snapshots, cols, {
           selectableRows: true,  // multi-select for bulk delete / pin / diff
           initialSort: allSrc ? [{ column: "reclaimable", dir: "desc" }] : [{ column: "start_time", dir: "desc" }],
-          onRowDblClick: (_e, row) => { const d = row.getData(); this.selectedSource = d.source; this.selectedSnapshot = d.id; this.mountSnapshot = this.selectedSnapshot; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); },
+          onRowDblClick: (_e, row) => { const d = row.getData(); this.selectedSource = d.source; this.selectedSnapshot = d.id; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); },
           rowMenu: [
             { label: "Browse files", action: (_e, row) => { const d = row.getData(); this.selectedSource = d.source; this.selectedSnapshot = d.id; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); } },
-            { label: "Restore this snapshot…", action: (_e, row) => this.openRestore(row.getData().root || row.getData().id, "snapshot " + row.getData().id.slice(0, 12)) },
-            { label: "Mount snapshot (read-only)", action: (_e, row) => this.mountRow(row.getData().id) },
-            { label: "Mount + open in Explorer", action: (_e, row) => this.mountOpen(row.getData().id, this.selectedSource, this.sourceRoot()) },
+            { label: "Restore this snapshot…", action: (_e, row) => { const d = row.getData(); this.openRestore([{ source: d.source, full_path: sourcePath(d.source), snapshot_id: d.id }], { label: "snapshot " + this.humanTime(d.start_time) }); } },
+            { label: "Mount + open in Explorer", action: (_e, row) => { const d = row.getData(); this.mountOpen(d.id, d.source, sourcePath(d.source)); } },
             { label: "Select all unretained (no retention/pin)", action: () => this.selectUnretained() },
             { label: "Select identical duplicates (keep oldest+newest per content)", action: () => this.selectIdenticalDuplicates() },
             { label: "Delete selected…", action: () => this.planDelete() },

@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from config import DATA_DIR, REPOS, repo_kind
 
 from .api import (actions, audit, backblaze, dashboard, deleteplan, excluded, insights, jobs, logs,
-                  policies, search, simulate, snapshots, stats, tree)
+                  policies, restore, search, simulate, snapshots, stats, tree)
 from .core import auth
 from .core import jobs as jobrunner
 from .core import kopia as kopia_mod
@@ -510,6 +510,12 @@ def _bg_worker() -> None:
             log.error("bg tick failed: %s", exc)
 
 
+def _mount_cleanup() -> None:
+    """Forget mounts that died while the app was down and remove the drive letters they left."""
+    from .core import mounts
+    mounts.startup_cleanup()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     setup_logging()
@@ -542,6 +548,7 @@ async def lifespan(_app: FastAPI):
         reindexq.load()
     except Exception as exc:  # noqa: BLE001 - never block startup
         log.warning("index update queue could not be resumed: %s", exc)
+    threading.Thread(target=_mount_cleanup, name="mount-cleanup", daemon=True).start()
     try:  # apply the configurable in-process dir-cache RAM budget (default 1.5 GB)
         from .core import cache as _cache
         mb = float(load_settings().get("kopialens", {}).get("dir_memo_max_mb", 1500))
@@ -771,6 +778,7 @@ app.include_router(search.router, prefix="/api")
 app.include_router(simulate.router, prefix="/api")
 app.include_router(actions.router, prefix="/api")
 app.include_router(deleteplan.router, prefix="/api")
+app.include_router(restore.router, prefix="/api")
 app.include_router(jobs.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")

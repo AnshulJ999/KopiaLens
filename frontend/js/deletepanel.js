@@ -25,7 +25,8 @@ const deletePart = {
       const p = this.delPanel;
       if (!p) return;
       const seq = ++this._delSeq;
-      p.loading = true; p.error = ""; p.stats = null;
+      ++this._delStatsSeq;   // a Frees figure still loading belongs to the old options
+      p.loading = true; p.error = ""; p.stats = null; p.statsLoading = false;
       this.klDryClear(p.dry);
       try {
         const r = await getJson("/api/delete/plan", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -70,7 +71,7 @@ const deletePart = {
     delToggleCopies() {
       const p = this.delPanel;
       if (!p) return;
-      p.copies = !p.copies;
+      p.copies = !p.copies; p.sources = null;
       this.delLoad();
     },
     delTicked(src) {
@@ -90,8 +91,7 @@ const deletePart = {
     delCandidates() {
       const plan = this.delPanel && this.delPanel.plan;
       if (!plan) return [];
-      const list = this.delPanel.method === "remove" ? plan.candidates : plan.holders;
-      return (list || []).map((s) => ({
+      return (plan.candidates || []).map((s) => ({
         source: s, holds: (plan.holders || []).includes(s),
       }));
     },
@@ -124,7 +124,8 @@ const deletePart = {
 
     delReady() {
       const p = this.delPanel;
-      return !!(p && p.plan && !p.loading && this.delCount() > 0);
+      return !!(p && p.plan && !p.loading && this.delCount() > 0
+        && !(p.method === "snapshots" && p.plan.capped));
     },
 
     delDry() {
@@ -223,11 +224,6 @@ const deletePart = {
     selExclude(scope, mode = "exclude") {
       const items = this._selItems(scope);
       if (!items.length) { this.error = "Select one or more rows first."; return; }
-      const folders = items.filter((i) => i.kind === "folder").length;
-      if (mode === "delete" && folders && (folders > 1 || items.length > 1)) {
-        this.error = "Exclude & delete takes one folder, or files only.";
-        return;
-      }
       this.openExclude({ items }, mode);
     },
 
@@ -237,10 +233,23 @@ const deletePart = {
       if (!items.length) { this.error = "Select one or more rows first."; return; }
       const folders = rows.filter((r) => r.type === "folder");
       if (folders.length === 1 && rows.length === 1) return this.openRemoveFolder(folders[0]);
-      if (folders.length) { this.error = "Delete one folder at a time, or files only."; return; }
+      if (folders.length) {
+        const filters = scope === "tree" ? { deleted_only: this.treeDeletedOnly, over_gb: this.treeOverGb ? 1 : 0, ext: this.treeExt } : {};
+        return this.openRemoveParts(this._partsOf(items), this._partsLabel(items), filters);
+      }
       const files = items.filter((i) => i.source).map((i) => ({ source: i.source, full_path: i.path }));
       if (files.length < items.length) { this.error = "Pick a source first to delete from Tree."; return; }
       this.openDeletePanel(files);
+    },
+
+    _partsOf(items) {
+      return items.map((i) => ({ source: i.source || null, prefix: i.path }));
+    },
+    _partsLabel(items) {
+      const folders = items.filter((i) => i.kind === "folder").length;
+      const files = items.length - folders;
+      return [folders && `${folders} folder${folders === 1 ? "" : "s"}`, files && `${files} file${files === 1 ? "" : "s"}`]
+        .filter(Boolean).join(" and ");
     },
 
     // ---- Exclude & delete flow ----
@@ -251,15 +260,12 @@ const deletePart = {
       if (!d) return;
       const items = d.multi ? d.items.filter((i) => i.on) : [{ kind: d.kind, path: d.path, src: d.src }];
       const folders = items.filter((i) => i.kind === "folder");
-      if (folders.length && (folders.length > 1 || items.length > 1)) {
-        this.error = "Exclude & delete takes one folder, or files only.";
-        return;
-      }
       this.flow = { step: 2, kind: folders.length ? "folder" : "files", diffs: [] };
       this.showExclude = false;
       if (this.flow.kind === "folder") {
         if (this.removePlan && this.removePlan.flow) { this.showRemove = true; return; }
-        this.openRemoveFolderPath(folders[0].path, null);
+        if (items.length === 1) this.openRemoveFolderPath(folders[0].path, null);
+        else this.openRemoveParts(items.map((i) => ({ source: i.kind === "folder" ? null : (i.src || this._exSourceFor(i) || null), prefix: i.path })), this._partsLabel(items));
         if (this.removePlan) this.removePlan.flow = true;
         return;
       }

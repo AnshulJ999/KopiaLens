@@ -26,6 +26,7 @@ from .actions import _fmt_cmd
 router = APIRouter(tags=["delete"])
 
 LIST_CAP = 500
+COPIES_CAP = 20000   # copy paths resolved for a snapshot delete; beyond this the plan refuses to run
 
 
 class PlanFile(BaseModel):
@@ -46,14 +47,26 @@ def _basename(source: str, full_path: str) -> str:
     return full_path.rstrip("\\/").rsplit(pathrules.sep(source), 1)[-1]
 
 
+def _machine(source: str) -> str:
+    """The ``user@host`` part of a source key."""
+    return source.split(":", 1)[0]
+
+
 def selection_facts(repo: str, files: list[tuple[str, str]]) -> dict:
-    """Holders, every version's content id, and names for a selection."""
-    holders = holders_for_paths(repo, [fp for _, fp in files])
+    """Holders, every version's content id, and names for a selection.
+
+    Holders are the sources on the selected file's own machine that hold the same path: another
+    machine's file at an identical path is a different file."""
+    by_path = holders_for_paths(repo, [fp for _, fp in files])
+    holders: list[list[str]] = []
+    for src, fp in files:
+        same = [h for h in by_path.get(fp) or [] if _machine(h) == _machine(src)]
+        holders.append(same or [src])
     oids: list[str] = []
     seen: set[str] = set()
     versions = 0
-    for src, fp in files:
-        for h in holders.get(fp) or [src]:
+    for (src, fp), hs in zip(files, holders):
+        for h in hs:
             for v in file_versions(repo, h, fp):
                 versions += 1
                 oid = v.get("content_id")
@@ -61,7 +74,7 @@ def selection_facts(repo: str, files: list[tuple[str, str]]) -> dict:
                     seen.add(oid)
                     oids.append(oid)
     names = list(dict.fromkeys(_basename(s, fp) for s, fp in files))
-    holder_union = sorted({h for hs in holders.values() for h in hs} | {s for s, _ in files})
+    holder_union = sorted({h for hs in holders for h in hs} | {s for s, _ in files})
     return {"holders": holders, "holder_union": holder_union, "oids": oids,
             "names": names, "versions": versions}
 
@@ -91,11 +104,14 @@ def delete_plan(body: PlanBody) -> dict:
     content_sources = sources_for_content(repo, facts["oids"])
     out: dict = {
         "repo": repo, "method": body.method, "by": body.by,
-        "files": [{"source": s, "full_path": fp, "holders": facts["holders"].get(fp) or [s]}
-                  for s, fp in files],
+        "files": [{"source": s, "full_path": fp, "holders": hs}
+                  for (s, fp), hs in zip(files, facts["holders"])],
         "holders": facts["holder_union"],
         "content_sources": content_sources,
-        "candidates": sorted(set(facts["holder_union"]) | set(content_sources)),
+        # backups the user can tick: remove mode reaches every content holder; snapshot mode the
+        # path's holders, plus content holders when identical copies are included
+        "candidates": (sorted(set(facts["holder_union"]) | set(content_sources))
+                       if body.method == "remove" or body.copies else facts["holder_union"]),
         "versions": facts["versions"], "object_count": len(facts["oids"]), "names": facts["names"],
     }
 
@@ -120,14 +136,17 @@ def delete_plan(body: PlanBody) -> dict:
         return out
 
     # method == "snapshots"
-    scope = sorted(set(body.sources)) if body.sources is not None else facts["holder_union"]
+    scope = sorted(set(body.sources)) if body.sources is not None else out["candidates"]
     pairs: dict[str, set[str]] = {}
-    for s, fp in files:
-        for h in facts["holders"].get(fp) or [s]:
+    for (s, fp), hs in zip(files, facts["holders"]):
+        for h in hs:
             if h in scope:
                 pairs.setdefault(h, set()).add(fp)
+    copies_capped = False
     if body.copies and facts["oids"]:
-        for r in paths_for_contents(repo, facts["oids"], cap=LIST_CAP)["rows"]:
+        found = paths_for_contents(repo, facts["oids"], sources=scope, cap=COPIES_CAP)
+        copies_capped = found["total"] > len(found["rows"])
+        for r in found["rows"]:
             pairs.setdefault(r["source"], set()).add(r["full_path"])
     index = sources_index(repo)
     by_id: dict[str, dict] = {}
@@ -150,6 +169,7 @@ def delete_plan(body: PlanBody) -> dict:
         "snapshots": snaps,
         "pinned_count": sum(1 for s in snaps if s["pinned"]),
         "retained_count": sum(1 for s in snaps if s["retention"]),
+        "capped": copies_capped,
         "command": "\n".join(" ".join(c) for c in cmds),
     })
     return out

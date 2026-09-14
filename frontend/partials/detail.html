@@ -169,7 +169,8 @@
         <span class="num" style="color:var(--muted);width:64px" x-text="fmtB(v.size)"></span>
         <span class="grow"></span>
         <button class="kl-btn quiet" style="height:22px" @click="mountVersionOpen(v)" title="Mount this version's snapshot and open it in Explorer">Mount</button>
-        <button class="kl-btn quiet" style="height:22px" @click="openRestore(v.content_id || v.snapshot_id, detail.title)" title="Restore this version">Restore</button>
+        <button class="kl-btn quiet" style="height:22px" @click="downloadVersion(v)" title="Download this version">Download</button>
+        <button class="kl-btn quiet" style="height:22px" @click="restoreVersion(v)" title="Restore this version">Restore</button>
       </div>
     </template>
   </div>
@@ -439,6 +440,7 @@
                   <span class="flex items-center gap-2">
                     <button class="kl-btn" @click="mountFileOpen({source: detail.source, full_path: detail.title})" title="Mount the latest snapshot carrying this file and open it in Explorer">Mount &amp; open</button>
                     <button class="kl-btn" @click="restoreFromDetail()">Restore</button>
+                    <button class="kl-btn" @click="downloadItem({source: detail.source, full_path: detail.title})" title="Download the latest backed-up copy">Download</button>
                     <button class="kl-btn quiet" @click="copyText(detail.title)">Copy path</button>
                   </span>
                 </template>
@@ -531,6 +533,7 @@
                   <span class="flex items-center gap-2">
                     <button class="kl-btn" @click="mountFileOpen({source: detail.source, full_path: detail.title})" title="Mount the latest snapshot carrying this file and open it in Explorer">Mount &amp; open</button>
                     <button class="kl-btn" @click="restoreFromDetail()">Restore</button>
+                    <button class="kl-btn" @click="downloadItem({source: detail.source, full_path: detail.title})" title="Download the latest backed-up copy">Download</button>
                     <button class="kl-btn quiet" @click="copyText(detail.title)">Copy path</button>
                   </span>
                 </template>

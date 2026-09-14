@@ -16,11 +16,13 @@ from pydantic import BaseModel
 from ..core import audit, reindexq
 from ..core.kopia import (
     _REMOVE_JOBS,
+    MountError,
     list_mounts,
     maintenance_run_command,
     mount_and_browse,
     mount_snapshot,
     next_free_drive,
+    open_in_explorer,
     pick_folder,
     remove_files_bat_text,
     remove_files_chunked_commands,
@@ -82,7 +84,7 @@ class MountRequest(BaseModel):
 
 class MountOpenRequest(BaseModel):
     repo: str = "1"
-    snapshot_id: str
+    snapshot_id: str | None = None  # None = the newest current snapshot holding full_path
     source: str
     full_path: str | None = None  # a file/folder inside the source; None = mount root only
     mountpoint: str | None = None  # auto-assigned free drive letter when omitted
@@ -130,13 +132,31 @@ def restore_preview(payload: RestorePreview) -> dict:
     return {"command": restore_command(payload.repo, payload.source, payload.destination, overwrite=payload.overwrite)}
 
 
+def _snapshot_info(repo: str, snapshot_id: str, source: str | None) -> dict:
+    """Source and start time for the mount list."""
+    try:
+        from ..core.sources import sources_index
+        for src, snaps in sources_index(repo).items():
+            if source and src != source:
+                continue
+            for sn in snaps:
+                if sn.get("id") == snapshot_id:
+                    return {"source": src, "snap_time": sn.get("startTime", "")}
+    except Exception:  # noqa: BLE001 - labels only
+        pass
+    return {"source": source or ""}
+
+
 @router.post("/actions/mount")
 def mount(payload: MountRequest) -> dict:
     try:
-        proc = mount_snapshot(payload.repo, payload.snapshot_id, payload.mountpoint)
+        proc = mount_snapshot(payload.repo, payload.snapshot_id, payload.mountpoint,
+                              info=_snapshot_info(payload.repo, payload.snapshot_id, None))
         return {"pid": proc.pid, "command": proc.args}
     except RepoOffline:
         raise                       # let the dedicated 503 handler explain it
+    except MountError as exc:
+        raise HTTPException(status_code=400, detail=f"Mount failed: {exc}") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -145,6 +165,11 @@ def mount(payload: MountRequest) -> dict:
 def mount_open(payload: MountOpenRequest) -> dict:
     """Mount a snapshot (auto drive letter if none given) and open Explorer at the file/folder
     inside it. Tracked in the mount manager like any other mount."""
+    if not payload.snapshot_id:
+        from ..api.restore import RestoreItem, resolve_item
+        r = resolve_item(payload.repo, RestoreItem(source=payload.source,
+                                                   full_path=payload.full_path or _source_root(payload.source)))
+        payload.snapshot_id = r["snapshot_id"]
     mountpoint = payload.mountpoint or next_free_drive()
     if not mountpoint:
         raise HTTPException(status_code=409, detail="no free drive letter for an auto mount; unmount something first")
@@ -154,10 +179,14 @@ def mount_open(payload: MountOpenRequest) -> dict:
         rel = payload.full_path[len(root):].lstrip(_SEP) if payload.full_path.startswith(root) else ""
         in_mount_target = (mountpoint + _SEP + rel) if rel else (mountpoint + _SEP)
     try:
-        proc = mount_and_browse(payload.repo, payload.snapshot_id, mountpoint, in_mount_target=in_mount_target)
+        proc = mount_and_browse(payload.repo, payload.snapshot_id, mountpoint, in_mount_target=in_mount_target,
+                                info={**_snapshot_info(payload.repo, payload.snapshot_id, payload.source),
+                                      "path": payload.full_path or ""})
         return {"pid": proc.pid, "command": proc.args, "mountpoint": mountpoint, "opening": in_mount_target}
     except RepoOffline:
         raise                       # let the dedicated 503 handler explain it
+    except MountError as exc:
+        raise HTTPException(status_code=400, detail=f"Mount failed: {exc}") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -320,6 +349,7 @@ class RemovePlanRequest(BaseModel):
     everywhere: bool = False        # B1: drop --source (whole-repo sweep) vs scope to the folder's sources
     by: str = "object-id"           # "object-id" (exact content) | "filename" (by basename)
     cap: int | None = None          # None = the remove_plan_cap setting (the UI sends top_n here)
+    parts: list[dict] | None = None  # several folders/files: [{source|None, prefix}]; replaces prefix/source
 
 
 DEFAULT_REMOVE_PLAN_CAP = 200000
@@ -336,23 +366,83 @@ def _plan_cap() -> int:
         return DEFAULT_REMOVE_PLAN_CAP
 
 
+def _remove_parts(parts: list[dict]) -> list[tuple[str | None, str]]:
+    """Distinct (source, prefix) parts; a part inside another selected folder is dropped."""
+    clean = []
+    for part in parts or []:
+        prefix = (part.get("prefix") or "").rstrip("\\/")
+        if prefix:
+            clean.append((part.get("source") or None, prefix))
+    clean = list(dict.fromkeys(clean))
+
+    def covers(outer, inner) -> bool:
+        (osrc, opre), (isrc, ipre) = outer, inner
+        if outer == inner or (osrc is not None and osrc != isrc):
+            return False
+        o, i = opre.lower(), ipre.lower()
+        return i == o or i.startswith(o + _SEP) or i.startswith(o + "/")
+
+    return [p for p in clean if not any(covers(o, p) for o in clean if o != p)]
+
+
 def _remove_targets(p: RemovePlanRequest) -> dict:
     # Footgun guard: with NO constraining filter at all, this would plan a delete over the entire
     # repo. Require at least one real constraint before enumerating anything.
+    parts = _remove_parts(p.parts) if p.parts is not None else None
     if not any([p.query, p.deleted_only, p.min_gb, p.over_gb, p.max_gb, p.source, p.ext,
                 p.ext_exclude, p.date_from, p.date_to, p.first_from, p.min_versions,
-                p.shared_min, p.prefix]):
+                p.shared_min, p.prefix, parts]):
         raise HTTPException(status_code=400,
                             detail="refusing to plan a delete with no filter - this would match the entire repo")
     min_size = int((p.min_gb or p.over_gb or 0) * 1_000_000_000)
-    return remove_targets(
-        p.repo, query=p.query, deleted_only=p.deleted_only, min_size=min_size,
-        max_size=int((p.max_gb or 0) * 1_000_000_000), source=p.source or None, ext=p.ext or None,
+    common = dict(
+        query=p.query, deleted_only=p.deleted_only, min_size=min_size,
+        max_size=int((p.max_gb or 0) * 1_000_000_000), ext=p.ext or None,
         ext_exclude=p.ext_exclude or None, date_from=p.date_from or None, date_to=p.date_to or None,
         min_versions=p.min_versions, shared_min=p.shared_min, first_from=p.first_from or None,
-        prefix=p.prefix or None,
-        all_versions=p.all_versions, cap=p.cap or _plan_cap(),
+        all_versions=p.all_versions,
     )
+    if parts is None:
+        return remove_targets(p.repo, source=p.source or None, prefix=p.prefix or None,
+                              cap=p.cap or _plan_cap(), **common)
+    return _merge_targets([remove_targets(p.repo, source=src, prefix=prefix, cap=_plan_cap(), **common)
+                           for src, prefix in parts])
+
+
+def _merge_targets(results: list[dict]) -> dict:
+    """One plan from several folder/file parts. Every part is taken whole (no top-N), and the
+    combined set must fit the plan cap."""
+    cap = _plan_cap()
+    if any(t["capped"] for t in results) or sum(t["file_count"] for t in results) > cap:
+        total = sum(t["total_file_count"] for t in results)
+        raise HTTPException(status_code=400, detail=(
+            f"{total:,} files is more than one delete takes ({cap:,}). Delete fewer folders at once."))
+    seen_pairs: set[tuple[str, str]] = set()
+    files, pairs = [], []
+    for t in results:
+        for pair in t["pairs"]:
+            if pair not in seen_pairs:
+                seen_pairs.add(pair)
+                pairs.append(pair)
+        files.extend(t["files"])
+    files = sorted({(f["source"], f["full_path"]): f for f in files}.values(),
+                   key=lambda f: int(f.get("physical") or 0), reverse=True)
+    oids = list(dict.fromkeys(o for t in results for o in t["object_ids"]))
+    names = list(dict.fromkeys(n for t in results for n in t["names"]))
+    return {
+        "file_count": len(pairs),
+        "total_file_count": len(pairs),
+        "total_physical": sum(t["total_physical"] for t in results),
+        "total_logical": sum(t["total_logical"] for t in results),
+        "capped": False,
+        "logical": sum(t["logical"] for t in results),
+        "physical": sum(t["physical"] for t in results),
+        "object_ids": oids,
+        "names": names,
+        "pairs": pairs,
+        "files": files[:200],
+        "sources": sorted({s for t in results for s in t["sources"]}),
+    }
 
 
 def _remove_scope(everywhere: bool, matched_sources: list[str]):
@@ -423,6 +513,16 @@ def remove_detail(payload: RemovePlanRequest) -> dict:
     top rows - never the full top-200k materialization. The detail walk describes the PLAN's set:
     its limit is min(cap, 5000), so a "Largest 100" plan is detailed over those 100 files, not the
     top 5,000 of the whole match."""
+    if payload.parts is not None:
+        t = _remove_targets(payload)
+        if not t["pairs"]:
+            return {"found": False}
+        pairs = t["pairs"][:5000]
+        out = batch_detail(payload.repo, [{"source": s, "full_path": fp} for s, fp in pairs],
+                           all_versions=payload.all_versions)
+        out["capped"] = len(t["pairs"]) > len(pairs)
+        out["scope"] = "selection"
+        return out
     if not any([payload.query, payload.deleted_only, payload.min_gb, payload.over_gb, payload.max_gb,
                 payload.source, payload.ext, payload.ext_exclude, payload.date_from, payload.date_to,
                 payload.first_from, payload.min_versions, payload.shared_min, payload.prefix]):
@@ -610,6 +710,24 @@ def mounts() -> dict:
 @router.post("/actions/unmount")
 def do_unmount(payload: UnmountRequest) -> dict:
     return {"ok": unmount(payload.pid)}
+
+
+@router.post("/actions/unmount-all")
+def do_unmount_all() -> dict:
+    from ..core import mounts
+    return {"unmounted": mounts.unmount_all()}
+
+
+@router.post("/actions/mount-browse")
+def mount_browse(payload: UnmountRequest) -> dict:
+    """Open Explorer on a running mount (at the path it was opened for, else its root)."""
+    from ..core import mounts
+    rec = mounts.get(payload.pid)
+    if not rec:
+        raise HTTPException(status_code=404, detail="That mount is no longer running.")
+    target = rec.get("open") or rec.get("mountpoint")
+    open_in_explorer(target)
+    return {"opening": target}
 
 
 @router.get("/actions/purge-plan")

@@ -58,3 +58,39 @@ def test_filename_scope_is_the_paths_holders_not_content_sources(monkeypatch):
     assert deleteplan.resolve_scope("3", "filename", None, facts) == ["A"]
     assert deleteplan.resolve_scope("3", "object-id", None, facts) == ["A", "B"]
     assert deleteplan.resolve_scope("3", "filename", ["B", "A"], facts) == ["A", "B"]
+
+
+def test_holders_stay_on_the_selected_files_machine(monkeypatch):
+    mine, nested, other = "me@pc:C:\\", "me@pc:C:\\Users", "me@laptop:C:\\"
+    fp = "C:\\Users\\notes.txt"
+    monkeypatch.setattr(deleteplan, "holders_for_paths", lambda repo, fps: {fp: [mine, nested, other]})
+    seen = []
+    monkeypatch.setattr(deleteplan, "file_versions",
+                        lambda repo, src, path: seen.append(src) or [{"content_id": "c-" + src}])
+    facts = deleteplan.selection_facts("3", [(mine, fp)])
+    assert facts["holders"] == [[mine, nested]]
+    assert facts["holder_union"] == [mine, nested]
+    assert other not in seen and "c-" + other not in facts["oids"]
+
+
+def test_snapshot_plan_copies_respect_ticked_backups(monkeypatch):
+    src, copy_src, unticked = "me@pc:C:\\", "me@pc:D:\\", "me@pc:E:\\"
+    monkeypatch.setattr(deleteplan, "selection_facts", lambda repo, files: {
+        "holders": [[src]], "holder_union": [src], "oids": ["c1"], "names": ["a.txt"], "versions": 1})
+    monkeypatch.setattr(deleteplan, "sources_for_content", lambda repo, oids: [src, copy_src, unticked])
+    asked = {}
+
+    def fake_paths(repo, oids, sources=None, cap=500):
+        asked["sources"] = sources
+        rows = [{"source": s, "full_path": s.split(":", 1)[1] + "copy.txt"} for s in (sources or [])]
+        return {"rows": rows, "total": len(rows)}
+
+    monkeypatch.setattr(deleteplan, "paths_for_contents", fake_paths)
+    monkeypatch.setattr(deleteplan, "sources_index", lambda repo: {})
+    monkeypatch.setattr(deleteplan, "holding_snapshots", lambda repo, s, fps, snaps=None: {f: [] for f in fps})
+    body = deleteplan.PlanBody(repo="3", files=[{"source": src, "full_path": "C:\\a.txt"}],
+                               method="snapshots", copies=True, sources=[src, copy_src])
+    out = deleteplan.delete_plan(body)
+    assert asked["sources"] == [src, copy_src]
+    assert set(out["candidates"]) == {src, copy_src, unticked}
+    assert out["capped"] is False

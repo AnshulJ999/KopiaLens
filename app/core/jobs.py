@@ -175,13 +175,21 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
         meta = {"snapshots": len(ids), "dry": dry}
     elif kind == "maintenance":
         cmd = maintenance_run_command(repo)
-        if not params.get("full", True):
+        full = bool(params.get("full", True))
+        if not full:
             cmd = cmd[:-1]  # drop --full -> quick maintenance
-        cmds, meta = [cmd], {"full": bool(params.get("full", True)), "dry": False}
+        safety = "none" if params.get("safety") == "none" else "full"
+        if safety == "none":
+            cmd = cmd + ["--safety=none"]
+        cmds, meta = [cmd], {"full": full, "safety": safety, "dry": False,
+                             "measure_path": params.get("measure_path"),
+                             "size_before": params.get("size_before")}
     elif kind == "restore":
-        cmd = restore_command_full(repo, params["source_id"], params["target"],
-                                   params.get("options"))
-        cmds, meta = [cmd], {"source_id": params["source_id"], "target": params["target"], "dry": False}
+        items = params.get("items") or [{"source_id": params["source_id"], "target": params["target"]}]
+        cmds = [restore_command_full(repo, it["source_id"], it["target"], params.get("options"))
+                for it in items]
+        meta = {"source_id": items[0]["source_id"], "target": params.get("label_target") or items[0]["target"],
+                "items": len(items), "dry": False}
     elif kind == "policy_write":
         # Python steps (one per policy), then optionally the delete's kopia commands.
         steps = list(params.get("steps") or [])
@@ -218,7 +226,8 @@ def _default_label(kind: str, params: dict, meta: dict) -> str:
     if kind == "snapshot_delete":
         return f"{meta['snapshots']} snapshot(s)" + (" - dry run" if meta["dry"] else "")
     if kind == "maintenance":
-        return "full maintenance" if meta["full"] else "quick maintenance"
+        return ("full maintenance" if meta["full"] else "quick maintenance") + (
+            ", safety none" if meta.get("safety") == "none" else "")
     if kind == "restore":
         target = meta["target"]
         return f"to {target}"
@@ -241,7 +250,7 @@ def _new_job(kind: str, repo: str, label: str, meta: dict, cmds: list[list[str]]
         "label": label,
         "mutating": (KINDS[kind]["mutating"] or bool(meta.get("then"))) and not meta.get("dry"),
         "dry": bool(meta.get("dry")),
-        "results": [], "held": False,
+        "results": [], "held": False, "target": meta.get("target") if kind == "restore" else None,
         "detail": meta, "state": "running", "rc": None, "error": None,
         "created": time.time(), "started": None, "finished": None,
         "total": len(cmds), "done": 0, "errors": 0,
@@ -349,6 +358,8 @@ def _run(job: dict, cmds: list[list[str]]) -> None:
                     job["error"] = f"exit {chunk_rc}: {last_err[:280]}" if last_err else f"exit {chunk_rc}"
             if job["errors"] == 0 and rc == 0:
                 job["rc"] = 0
+            if job["kind"] == "maintenance" and not job["stop_requested"]:
+                _record_freed(job, lf)
         if job["stop_requested"]:
             job["state"] = "stopped"
         elif job["kind"] in ("restore", "maintenance", "policy_write") and job["rc"] not in (None, 0):
@@ -377,6 +388,31 @@ def _run(job: dict, cmds: list[list[str]]) -> None:
                 job["on_done"](job)
             except Exception:  # noqa: BLE001 - a reporting callback must not break the job
                 log.exception("job %s on_done callback failed", job["job_id"])
+
+
+def folder_size(path: str) -> int | None:
+    """Folder size from Everything (instant); None when Everything cannot answer."""
+    from . import everything
+    try:
+        if not everything.available():
+            return None
+        return everything.recursive_size(path)
+    except Exception:  # noqa: BLE001 - the freed figure is optional
+        return None
+
+
+def _record_freed(job: dict, lf) -> None:
+    """Repository folder size before and after a maintenance run (filesystem repos)."""
+    detail = job.get("detail") or {}
+    path, before = detail.get("measure_path"), detail.get("size_before")
+    if not path or before is None:
+        return
+    time.sleep(3)  # Everything picks deletions up from the change journal
+    after = folder_size(path)
+    if after is None:
+        return
+    job["freed"] = {"before": before, "after": after, "freed": max(0, before - after)}
+    say(job, lf, f"Repository folder: {before:,} -> {after:,} bytes")
 
 
 def _prune_history() -> None:

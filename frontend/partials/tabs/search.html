@@ -25,6 +25,7 @@
           <button x-show="!groupByFolder" @click="openRemoveFromSearch()" class="h-8 rounded border border-danger text-danger px-2 text-xs font-medium" title="Delete EVERY file matching this filter (chunked remove-files, biggest first) — copy / .bat / run">🗑 Delete matching…</button>
           <span class="ml-2 flex items-center gap-1">
             <span class="text-[11px] text-faint">selected:</span>
+            <button @click="selRestore('search')" class="h-8 rounded border border-bd px-2 text-xs" title="Restore the selected items">Restore…</button>
             <button @click="selExclude('search')" class="h-8 rounded border border-bd px-2 text-xs" title="Add exclusion rules for the selected files">Exclude…</button>
             <button @click="selDelete('search')" class="h-8 rounded border border-danger-bd text-danger px-2 text-xs" title="Delete the selected files from backups">Delete…</button>
             <button @click="selExclude('search', 'delete')" class="h-8 rounded border border-danger-bd text-danger px-2 text-xs" title="Exclude the selected files, then delete them from backups">Exclude &amp; delete…</button>

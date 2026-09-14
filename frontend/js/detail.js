@@ -380,11 +380,19 @@ const detailPart = {
       this._removeLabel = "folder " + prefix + (source ? " (in " + sourcePath(source) + ")" : " (all sources)");
       this.buildRemovePlan();
     },
+    // Several folders and files in one plan: parts = [{source|null, prefix}]. filters = Tree filters.
+    openRemoveParts(parts, label, filters = {}) {
+      this._removeBase = { repo: this.repo, parts, deleted_only: !!filters.deleted_only,
+                           over_gb: filters.over_gb || 0, ext: filters.ext || null };
+      this._removeLabel = label;
+      this.buildRemovePlan();
+    },
     buildRemovePlan() {
       // Folder/file-context deletes (a Tree prefix) default to ALL versions: latest-only would
       // silently leave every older version's bytes in old snapshots ("deleted" folder still there).
-      const allVers = !!(this._removeBase && this._removeBase.prefix);
-      this.removePlan = { loading: true, label: this._removeLabel, all_versions: allVers, everywhere: false, by: "object-id", detail: null, detailLoading: false, job: null, batSaved: null, top_n: 0, dry: this.klDryState() };
+      const base = this._removeBase || {};
+      const allVers = !!(base.prefix || base.parts);
+      this.removePlan = { loading: true, label: this._removeLabel, all_versions: allVers, everywhere: false, by: "object-id", detail: null, detailLoading: false, job: null, batSaved: null, top_n: 0, dry: this.klDryState(), parts: base.parts || null };
       this.showRemove = true;
       this._fetchRemovePlan();
     },

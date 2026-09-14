@@ -1,29 +1,29 @@
       <section x-show="active==='actions'" class="h-full flex flex-col gap-3 overflow-auto">
-        <div class="grid max-w-5xl grid-cols-1 gap-3 lg:grid-cols-2">
-          <div class="rounded border border-bd bg-surface p-3">
-            <div class="mb-2 font-medium">Mount snapshot (read-only)</div>
-            <input x-model="mountSnapshot" class="mb-2 fld w-full border border-bd bg-surface" placeholder="Snapshot ID">
-            <input x-model="mountPoint" class="mb-2 fld w-full border border-bd bg-surface" placeholder="Mount folder / drive">
-            <button @click="mount()" class="h-8 rounded bg-ok-solid px-3 text-sm text-white">Mount</button>
+        <div class="max-w-5xl kl-sec rounded border border-bd bg-surface p-3">
+          <div class="h">
+            <span>Mounted snapshots</span>
+            <span class="count" x-text="mounts.length"></span>
+            <span class="acts">
+              <button class="kl-btn quiet" style="height:24px" @click="loadMounts()">Refresh</button>
+              <button class="kl-btn danger" style="height:24px" x-show="mounts.length > 1" @click="unmountAll()">Unmount all</button>
+            </span>
           </div>
-          <div class="rounded border border-bd bg-surface p-3">
-            <div class="mb-2 font-medium">Restore (preview command only)</div>
-            <input x-model="restoreSource" class="mb-2 fld w-full border border-bd bg-surface" placeholder="Snapshot/path">
-            <input x-model="restoreDest" class="mb-2 fld w-full border border-bd bg-surface" placeholder="Destination">
-            <button @click="restorePreviewLegacy()" class="h-8 rounded bg-fg px-3 text-sm text-surface">Preview</button>
+          <div x-show="!mounts.length" class="kl-note">No mounted snapshots. Mount one from Snapshots, Tree, or a file's Versions.</div>
+          <div class="kl-list" x-show="mounts.length">
+            <template x-for="m in mounts" :key="m.pid">
+              <div class="li">
+                <span class="font-mono font-medium shrink-0" style="width:3rem" x-text="m.mountpoint"></span>
+                <span class="grow min-w-0">
+                  <span class="font-mono break-all" x-text="mountLabel(m)"></span>
+                  <span class="kl-note" x-show="m.path && m.path !== sourcePath(m.source || '')" x-text="' · ' + m.path"></span>
+                </span>
+                <span class="kl-note shrink-0" x-show="m.snap_time" x-text="'snapshot ' + humanTime(m.snap_time)"></span>
+                <span class="kl-note shrink-0" x-text="'repo ' + m.repo"></span>
+                <button class="kl-btn quiet shrink-0" style="height:22px" @click="mountBrowse(m.pid)">Open</button>
+                <button class="kl-btn danger shrink-0" style="height:22px" @click="unmount(m.pid)">Unmount</button>
+              </div>
+            </template>
           </div>
         </div>
-        <div class="max-w-5xl rounded border border-bd bg-surface p-3">
-          <div class="mb-2 flex items-center gap-2"><span class="font-medium">Active mounts</span>
-            <button @click="loadMounts()" class="h-7 rounded border border-bd px-2 text-xs">⟳</button></div>
-          <div x-show="!mounts.length" class="text-xs text-muted">No active mounts started by KopiaLens.</div>
-          <template x-for="m in mounts" :key="m.pid">
-            <div class="flex items-center gap-3 py-1 text-sm border-t border-bd-soft">
-              <span class="font-mono" x-text="m.mountpoint"></span>
-              <span class="text-muted text-xs" x-text="'snap ' + m.snapshot_id.slice(0,16) + ' · pid ' + m.pid + ' · repo ' + m.repo"></span>
-              <button @click="unmount(m.pid)" class="ml-auto h-7 rounded border border-danger-bd text-danger px-2 text-xs">Unmount</button>
-            </div>
-          </template>
-        </div>
-        <pre class="min-h-0 overflow-auto rounded border border-bd bg-surface p-3 text-sm" x-text="actionText"></pre>
+        <pre x-show="actionText" class="min-h-0 overflow-auto rounded border border-bd bg-surface p-3 text-sm max-w-5xl" x-text="actionText"></pre>
       </section>
