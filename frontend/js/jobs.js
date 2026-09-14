@@ -53,7 +53,8 @@ const jobsPart = {
       if (!this.jobPanel) return;
       const wasRunning = this.jobPanel.state === "running";
       Object.assign(this.jobPanel, { state: s.state, rc: s.rc, error: s.error, total: s.total,
-        done: s.done, errors: s.errors, line_count: s.line_count, elapsed: s.elapsed, skipped: s.skipped || 0 });
+        done: s.done, errors: s.errors, line_count: s.line_count, elapsed: s.elapsed, skipped: s.skipped || 0,
+        results: s.results || [], held: !!s.held });
       if (s.lines && s.lines.length) {
         this.jobLines.push(...s.lines);
         if (this.jobLines.length > 5000) {  // render buffer cap; the log file always has everything
@@ -96,21 +97,47 @@ const jobsPart = {
       return p && p.total ? Math.min(100, Math.round((p.done / p.total) * 100)) : null;
     },
 
+    // A one-step job has nothing to count: the bar pulses instead of sitting empty.
+    jobIndeterminate() {
+      const p = this.jobPanel;
+      return !!(p && p.state === "running" && p.total <= 1);
+    },
+
     jobProgressLabel() {
       const p = this.jobPanel;
       if (!p) return "";
-      if (p.total) return `${p.done} of ${p.total} batch(es) · ${this.jobProgress()}%` + (p.errors ? ` · ${p.errors} errored` : "");
-      if (p.state === "running") return "running";
-      return p.total ? `${p.done} of ${p.total}` : "done";
+      const unit = p.kind === "policy_write" ? "step" : "batch";
+      if (p.total > 1) return `${p.done} of ${p.total} ${unit}s · ${this.jobProgress()}%` + (p.errors ? ` · ${p.errors} failed` : "");
+      if (p.state === "running") return "Working…";
+      return p.errors ? "Failed" : "Done";
+    },
+
+    jobResultDiff(r) {
+      return { label: r.target === "global" ? "Global" : sourcePath(r.target), before: r.before, after: r.stored || r.after };
+    },
+
+    async jobRunHeldDelete() {
+      const p = this.jobPanel;
+      const then = p && this._jobThen[p.job_id];
+      if (!then) return;
+      const ok = await this.klConfirm({
+        title: "Run the delete without the rule?",
+        facts: [["Rules", `${(p.results || []).filter((r) => r.ok).length} of ${(p.results || []).length} added`]],
+        callout: "Backups without the rule back this up again on their next snapshot.",
+        command: "", confirmLabel: "Run the delete", danger: true,
+      });
+      if (!ok) return;
+      delete this._jobThen[p.job_id];
+      await this.startJob(then.kind, then.params, p.label);
     },
 
     jobStateLine() {
       const p = this.jobPanel;
       if (!p) return "";
-      if (p.state === "running") return this.jobPanel.dry ? "Dry run - nothing is being changed" : "";
-      if (p.state === "stopped") return "Stopped" + (p.errors ? ` · ${p.errors} batch(es) had errored` : "");
-      if (p.state === "failed") return "Failed" + (p.error ? `: ${p.error}` : "");
-      if (p.errors) return `Finished · ${p.errors} batch(es) errored`;
+      if (p.state === "running") return this.jobPanel.dry ? "Dry run · nothing changes" : "";
+      if (p.state === "stopped") return "Stopped" + (p.errors ? ` · ${p.errors} failed` : "");
+      if (p.state === "failed") return "Failed";
+      if (p.errors) return `Finished · ${p.errors} failed`;
       return "Finished";
     },
 
@@ -119,7 +146,8 @@ const jobsPart = {
       if (!p) return "";
       if (p.kind === "maintenance") return "Kopia reclaims space during this run.";
       if (p.kind === "restore") return `Writes to ${p.label.replace(/^to /, "")}.`;
-      return "Space frees on the next maintenance run.";
+      if (p.kind === "policy_write" && p.kind_label !== "Excluding and deleting") return "Takes effect from each backup's next snapshot.";
+      return "Space frees after the next full maintenance.";
     },
 
     jobElapsed() {
@@ -197,6 +225,28 @@ const jobsPart = {
       const seen = this._seenJobs();
       this.runningJobs = (r.jobs || []).filter((j) => j.state === "running"
         || ((j.state === "failed" || (j.state === "done" && j.errors > 0)) && !seen.includes(j.job_id)));
+      const q = await getJson("/api/index/pending").catch(() => null);
+      if (q) this.indexPending = (q.pending || []).map((p) => ({ ...p, offset: Date.now() / 1000 - q.now }));
+    },
+
+    // ---- Index update queued after deletes ----
+    pendingFor(repo) {
+      return (this.indexPending || []).find((p) => p.repo === repo) || null;
+    },
+    pendingText(p) {
+      const left = Math.max(0, Math.round(p.due + p.offset - Date.now() / 1000));
+      if (!left) return "Index update starting…";
+      return `Index update in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+    },
+    async pendingRunNow(repo) {
+      const r = await getJson(`/api/index/pending/run?repo=${encodeURIComponent(repo)}`, { method: "POST" }).catch((e) => { this.error = e.message; return null; });
+      if (r && r.started === false && r.reason && r.reason !== "already up to date") this.actionText = `Index update queued: ${r.reason}.`;
+      this._jobChipTick();
+      if (r && r.started && repo === this.repo) this.pollIndex();
+    },
+    reloadAfterIndex() {
+      this.indexUpdated = null;
+      this.activate();
     },
 
     _jobCompleted(j) {
@@ -205,30 +255,33 @@ const jobsPart = {
       // Everything index-backed (Search, dashboard, tree) cannot: those rows change only when
       // the reindex publishes a new generation, so they wait for that moment instead.
       if (j.dry || j.repo !== this.repo) return;
-      if (j.kind === "snapshot_delete" && this.active === "snapshots") this.loadSnapshots(true);
-      if (j.kind === "remove_files" || j.kind === "snapshot_delete") this._armReindexReload(j.repo);
+      if (j.kind === "policy_write" && this.polData) this.loadPolicies(true);
+      const deleted = j.kind === "remove_files" || j.kind === "snapshot_delete"
+        || (j.kind === "policy_write" && j.kind_label === "Excluding and deleting" && !j.held);
+      if (deleted && this.active === "snapshots") this.loadSnapshots(true);
+      if (deleted) this._armReindexReload(j.repo);
     },
 
     _armReindexReload(repo) {
-      // Watch /api/index/status until the reindex this job triggered has published, then
-      // reload the active view - the moment the rows actually change. The reindex may never
-      // start (another repo mid-pass): give up after 90s and let the freshness strip tell it.
+      // Watch until the queued index update has published, then offer a reload instead of
+      // rebuilding the table under the user. While the update is queued it may be minutes away.
       if (this._reindexPoll) { this._reindexPoll.repo = repo; return; }
-      const w = this._reindexPoll = { repo, observed: false, ticks: 0, timer: null };
+      const w = this._reindexPoll = { repo, observed: false, idle: 0, ticks: 0, timer: null };
       w.timer = setInterval(async () => {
         w.ticks++;
         const s = await getJson(`/api/index/status?repo=${encodeURIComponent(w.repo)}`).catch(() => null);
         if (!s) return;
         if (s.building || s.offline) w.observed = true;
+        if (this.pendingFor(w.repo)) w.idle = 0; else w.idle++;
         if (w.observed && !s.building && !s.offline) {
           clearInterval(w.timer);
           this._reindexPoll = null;
-          if (this.repo === w.repo) this.activate();  // the generation landed - catch the view up
-        } else if ((!w.observed && w.ticks > 90) || w.ticks > 1800) {
+          if (this.repo === w.repo && ["dashboard", "search", "tree", "churn"].includes(this.active)) this.indexUpdated = { repo: w.repo };
+        } else if ((!w.observed && w.idle > 60) || w.ticks > 7200) {
           clearInterval(w.timer);
           this._reindexPoll = null;
         }
-      }, 1000);
+      }, 2000);
     },
 };
 

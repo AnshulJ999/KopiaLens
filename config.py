@@ -6,17 +6,42 @@ shape, so every caller that treats a repo id as an opaque key is unaffected.
 """
 import json
 import os
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-KOPIA_DIR = os.path.dirname(HERE)                                       # ..\Kopia
 
-# Env beats the record store beats the default - Docker sets env, so env has to win.
-CONFIG_DIR = os.environ.get("KOPIALENS_CONFIG_DIR") or HERE
-SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")              # KopiaLens-local (migrated from the old shared CLI file)
+
+def user_data_root() -> str:
+    """The per-user data folder for an installed app."""
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+        return os.path.join(base, "KopiaLens")
+    if sys.platform == "darwin":
+        return os.path.join(os.path.expanduser("~"), "Library", "Application Support", "KopiaLens")
+    base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+    return os.path.join(base, "kopialens")
+
+
+# Everything KopiaLens writes lives under one data folder: index, cache (cache/), logs, audit,
+# backups, settings.json, repos.json. KOPIALENS_DATA_DIR relocates all of it; the finer env
+# overrides below still win for their own part.
+#
+# Old layout: settings.json + repos.json next to the code, data/ beside them, the walk cache in
+# ../.cache. An install that still has repos.json here keeps that layout until it is moved.
+LEGACY_LAYOUT = not os.environ.get("KOPIALENS_DATA_DIR") and os.path.exists(os.path.join(HERE, "repos.json"))
+_LEGACY = LEGACY_LAYOUT
+if _LEGACY:
+    _DEFAULT_DATA_DIR = os.path.join(HERE, "data")
+    _DEFAULT_CONFIG_DIR = HERE
+    _DEFAULT_CACHE_DIR = os.path.join(os.path.dirname(HERE), ".cache")
+else:
+    _DEFAULT_DATA_DIR = os.environ.get("KOPIALENS_DATA_DIR") or user_data_root()
+    _DEFAULT_CONFIG_DIR = _DEFAULT_DATA_DIR
+    _DEFAULT_CACHE_DIR = os.path.join(_DEFAULT_DATA_DIR, "cache")
+
+CONFIG_DIR = os.environ.get("KOPIALENS_CONFIG_DIR") or _DEFAULT_CONFIG_DIR
+SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
 REPOS_FILE = os.environ.get("KOPIALENS_REPOS_FILE") or os.path.join(CONFIG_DIR, "repos.json")
-
-_DEFAULT_DATA_DIR = os.path.join(HERE, "data")                          # duckdb + logs (gitignored)
-_DEFAULT_CACHE_DIR = os.path.join(KOPIA_DIR, ".cache")                  # shared, already-warm cache
 
 # Loopback by DEFAULT: reaching KopiaLens from another machine is a deliberate choice, not the
 # out-of-the-box state (it browses and can delete from a backup repository). The actual bind comes
@@ -28,25 +53,6 @@ GUARD_HOST = "127.0.0.1"                                                # single
 # cannot kill itself and still answer the request that asked it to. Loopback ONLY and unauthenticated
 # - fine for a personal tool on this machine, revisit before any public release.
 TRAY_CONTROL_HOST, TRAY_CONTROL_PORT = "127.0.0.1", 7124
-
-# Seed used only when repos.json is absent AND an index already exists (i.e. an install that predates
-# the record store). A fresh install gets an EMPTY store and the "no repositories configured" state -
-# guessing someone else's drive letters would be worse than asking.
-_LEGACY_REPOS = [
-    {"id": "1", "name": "Main Kopia Backup (E:\\Kopia)", "kind": "kopia", "config_file": None},
-    {"id": "2", "name": "Kopia Big Backup (I:\\Kopia Big Backup)", "kind": "kopia",
-     "config_file": r"C:\Users\me\AppData\Roaming\kopia\repository.config"},
-    {"id": "bz", "name": "Backblaze Personal Backup", "kind": "backblaze", "config_file": None},
-]
-
-
-def _looks_like_existing_install() -> bool:
-    try:
-        return any(n.startswith("kopialens_repo") and n.endswith(".duckdb")
-                   for n in os.listdir(_DEFAULT_DATA_DIR))
-    except OSError:
-        return False
-
 
 def save_records(store: dict) -> None:
     """Persist the record store (see app.core.repos)."""
@@ -81,15 +87,17 @@ def _load_records() -> dict:
             os.replace(REPOS_FILE, REPOS_FILE + ".corrupt")
         except OSError:
             pass
-    store = {"version": 1, "data_dir": None, "cache_dir": None,
-             "repos": [dict(r) for r in _LEGACY_REPOS] if _looks_like_existing_install() else []}
+    # A fresh install starts with no repositories; guessing someone's drive letters is worse.
+    store = {"version": 1, "cache_dir": None, "repos": []}
     _write_records(store)
     return store
 
 
 RECORDS = _load_records()
 
-DATA_DIR = os.environ.get("KOPIALENS_DATA_DIR") or RECORDS.get("data_dir") or _DEFAULT_DATA_DIR
+# The record store lives inside the data folder, so it can only relocate the cache.
+DATA_DIR = (os.environ.get("KOPIALENS_DATA_DIR")
+            or (RECORDS.get("data_dir") if _LEGACY else None) or _DEFAULT_DATA_DIR)
 CACHEDIR = os.environ.get("KOPIALENS_CACHE_DIR") or RECORDS.get("cache_dir") or _DEFAULT_CACHE_DIR
 
 

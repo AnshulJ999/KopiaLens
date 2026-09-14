@@ -10,6 +10,7 @@ import json
 import os
 import sqlite3
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
@@ -202,7 +203,7 @@ def test_parquet_publish_reclaims_legacy_files(pq_env):
         ("C", r"C:\old\b.bin", r"c:\old\b.bin", "b.bin", "bin", 2, "0", 1, "folder:\\old\\"),
     ])
     bbdb.rebuild_fts(con)
-    con.execute("INSERT INTO folder_snapshots VALUES('2026-09-13', 'C', 'C:\\old', 2, 3)")
+    con.execute("INSERT INTO folder_snapshots VALUES(?, 'C', 'C:\\old', 2, 3)", [time.strftime("%Y-%m-%d")])
     con.commit()
     assert indexer.refresh(force=True)["ok"]
     # legacy rows gone, schema present and empty (switch-back rebuilds instead of erroring)

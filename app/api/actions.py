@@ -13,7 +13,7 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..core import audit
+from ..core import audit, reindexq
 from ..core.kopia import (
     _REMOVE_JOBS,
     list_mounts,
@@ -37,11 +37,12 @@ from ..core.kopia import (
     snapshot_delete_execute,
     unmount,
 )
-from ..core.sources import invalidate as invalidate_sources, sources_index
+from ..core.sources import invalidate as invalidate_sources
 from ..index.schema import RepoOffline
 from ..core.nightly import start_index_pass_async
+from ..index.holding import snapshots_for_path
 from ..index.physical import batch_detail, folder_detail
-from ..index.queries import remove_targets, remove_targets_summary, snapshots_for_path, sources_for_content, versions as file_versions
+from ..index.queries import remove_targets, remove_targets_summary
 from ..settings import load_settings
 
 router = APIRouter(tags=["actions"])
@@ -98,6 +99,7 @@ class RemoveFilesRequest(BaseModel):
     by: str = "object-id"   # "object-id" (precise content) | "filename" (by name)
     confirm: bool = False
     everywhere: bool = False  # object-id: drop --source to remove from ALL sources (sweeps whole repo)
+    sources: list[str] | None = None  # explicit --source scope (the Delete panel's ticked backups)
     source: str | None = None      # single-file form
     full_path: str | None = None
     files: list[dict] | None = None  # batch form: [{"source":..., "full_path":...}]
@@ -182,10 +184,7 @@ def snapshot_delete(payload: SnapshotDeleteRequest) -> dict:
     # next nightly pass - refresh on ANY progress, then report the failure.
     if deleted:
         invalidate_sources(payload.repo)        # the snapshot set changed -> drop the cached listing
-        try:
-            _start_index_run(payload.repo)      # incremental reindex picks up the now-missing snapshots
-        except Exception:  # noqa: BLE001 - reindex is best-effort; UI Refresh also recovers
-            pass
+        reindexq.request(payload.repo)          # incremental reindex picks up the now-missing snapshots
     if result["returncode"] != 0:
         err = result["stderr"].strip() or "kopia snapshot delete failed"
         raise HTTPException(
@@ -205,10 +204,7 @@ def _rf_targets(payload: RemoveFilesRequest) -> list[tuple[str, str]]:
 
 def _post_remove(repo: str) -> None:
     invalidate_sources(repo)
-    try:
-        _start_index_run(repo)  # snapshots were rewritten -> reindex so the UI reflects reality
-    except Exception:  # noqa: BLE001
-        pass
+    reindexq.request(repo)  # snapshots were rewritten -> reindex so the UI reflects reality
 
 
 def _rf_preview(repo: str, items: list[str], flag: str, scope, by: str) -> dict:
@@ -234,29 +230,20 @@ def _rf_preview(repo: str, items: list[str], flag: str, scope, by: str) -> dict:
 def _rf_resolve(payload: RemoveFilesRequest) -> tuple[list[str], list[str], list[str] | None]:
     """Content objects + basenames + --source scope for a remove-files request.
 
-    Distinct content objects across all targets' versions. Used both as the object-id set AND to
-    find EVERY source that references this content - because a deduped copy left in another source
-    keeps the content alive (GC won't free it). So we scope --source to all referencing sources:
-    complete (frees everywhere it lives) AND bounded (not the slow whole-repo scan). everywhere=true
-    drops --source for a full-repo sweep (the paranoid fallback for old-snapshot-only references)."""
+    Object-id mode scopes to every source referencing the content (a copy left elsewhere keeps it
+    alive). Filename mode scopes to the sources holding the selected paths: a source that only
+    shares the bytes under another name would match unrelated same-named files. ``sources``
+    overrides both; ``everywhere`` drops --source."""
+    from .deleteplan import resolve_scope, selection_facts
     targets = _rf_targets(payload)
     if not targets:
         raise HTTPException(status_code=400, detail="no files specified")
-    seen: set[str] = set()
-    oids: list[str] = []
-    for src, fp in targets:
-        for v in file_versions(payload.repo, src, fp):
-            oid = v.get("content_id")
-            if oid and oid not in seen:
-                seen.add(oid)
-                oids.append(oid)
-    scope = None if payload.everywhere else (sources_for_content(payload.repo, oids) or sorted({s for s, _ in targets}))
-    names: list[str] = []
-    for _src, fp in targets:
-        name = fp.rsplit(_SEP, 1)[-1].rsplit("/", 1)[-1]
-        if name not in names:
-            names.append(name)
-    return oids, names, scope
+    facts = selection_facts(payload.repo, targets)
+    if payload.everywhere:
+        scope = None
+    else:
+        scope = resolve_scope(payload.repo, payload.by, payload.sources, facts)
+    return facts["oids"], facts["names"], scope
 
 
 @router.post("/actions/remove-files")
@@ -629,16 +616,10 @@ def do_unmount(payload: UnmountRequest) -> dict:
 def purge_plan(repo: str = "1", source: str | None = None, full_path: str | None = None) -> dict:
     if not source or not full_path:
         raise HTTPException(status_code=400, detail="source and full_path are required")
-    snapshot_ids = snapshots_for_path(repo, source, full_path)
-    snaps = {s["id"]: s for s in sources_index(repo).get(source, [])}
-    items = [
-        {
-            "id": sid,
-            "retention": snaps.get(sid, {}).get("retention", []),
-            "pinned": bool(snaps.get(sid, {}).get("pins")),
-        }
-        for sid in snapshot_ids
-    ]
+    held = snapshots_for_path(repo, source, full_path)
+    snapshot_ids = [r["snapshot_id"] for r in held]
+    items = [{"id": r["snapshot_id"], "retention": r["retention"], "pinned": r["pinned"],
+              "start_time": r["start_time"]} for r in held]
     return {
         "repo": repo,
         "source": source,

@@ -53,11 +53,11 @@ const actionsPart = {
         const ok = await this.klConfirm({
           title: "Restore over existing files?",
           facts: [
-            ["What", `Restore to ${this.restore.target}`],
-            ["What it can do", flags],
-            ["How", "kopia restore (writes to the destination)"],
+            ["Restore", this.restore.name],
+            ["To", this.restore.target],
+            ["Allowed", flags],
           ],
-          callout: "This restore can overwrite or remove files at the destination.",
+          callout: "Files at the destination can be overwritten or removed.",
           command: this.restore.command, confirmLabel: "Restore", danger: true,
         });
         if (!ok) return;
@@ -65,7 +65,6 @@ const actionsPart = {
       await this.wrap(async () => {
         const started = await this.startJob("restore", { source_id: this.restore.source_id, target: this.restore.target, options: o });
         if (started) {
-          this.actionText = "Restore running - progress and live output in the job panel.";
           this.showRestore = false;
         }
       }, "Restoring (large restores can take a while)…");

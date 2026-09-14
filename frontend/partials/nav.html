@@ -20,6 +20,17 @@
             <span x-text="j.total ? Math.round((j.done / j.total) * 100) + '%' : ''"></span>
           </button>
         </template>
+        <template x-for="p in indexPending" :key="p.repo">
+          <span class="h-8 rounded border border-warn-bd bg-warn-bg text-warn px-2 flex items-center gap-2"
+                title="Deletes finished. The index updates once no delete has run for the quiet period (Settings, Indexing).">
+            <span x-text="(p.repo !== repo ? 'Repo ' + p.repo + ' · ' : '') + pendingText(p)"></span>
+            <button class="underline" @click="pendingRunNow(p.repo)">Update now</button>
+          </span>
+        </template>
+        <span x-show="indexUpdated && indexUpdated.repo === repo" class="h-8 rounded border border-ok-bd bg-ok-bg text-ok px-2 flex items-center gap-2">
+          <span>Index updated</span>
+          <button class="underline" @click="reloadAfterIndex()">Reload</button>
+        </span>
         <span x-show="repoKind!=='backblaze'" class="rounded border border-bd bg-surface2 px-2 py-1" x-text="indexLine()"></span>
         <button x-show="repoKind!=='backblaze'" @click="buildIndex()" :disabled="!!indexStatus.building" class="h-8 rounded bg-fg px-3 text-surface disabled:opacity-50" :title="indexStatus.never_indexed ? 'Build the first index for this repo' : 'Update index (incremental)'" x-text="indexStatus.never_indexed ? 'Index now' : 'Index'">Index</button>
         <span x-show="repoKind==='backblaze'" class="rounded border border-bd bg-surface2 px-2 py-1" x-text="bzStatusLine()" :title="bzStatusTitle()"></span>

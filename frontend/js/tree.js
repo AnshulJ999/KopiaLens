@@ -89,13 +89,6 @@ const treePart = {
     },
     treeFilterChanged() { this.loadTree(); },
     toggleTreeFlat() { this.treeFlat = !this.treeFlat; this.loadTree(); },
-    removeSelectedTree() {  // Remove button: route a selected folder to the chunked plan; files -> batch panel
-      const rows = this.selectedRows("tree");
-      const folders = rows.filter((r) => r.type === "folder");
-      if (folders.length === 1 && rows.length === 1) return this.openRemoveFolder(folders[0]);
-      if (folders.length) { window.alert("Select a single folder (or right-click it → Delete), or select files. Tip: use ☰ Flat to list files and multi-select."); return; }
-      return this.batchDetail("tree");
-    },
     jumpToTree(item) {
       this.selectedSource = item.source; this.treeMode = "all";
       const root = sourcePath(item.source).replace(/[\\/]+$/, "");

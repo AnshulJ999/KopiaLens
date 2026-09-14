@@ -67,20 +67,67 @@ def _resolve_params(kind: str, repo: str, params: dict) -> dict:
         if not params.get("source_id") or not params.get("target"):
             raise jobs.JobRefused("restore needs source_id and target")
         return params
+    if kind == "policy_write":
+        writes = [w for w in (params.get("writes") or []) if w.get("target")]
+        if not writes:
+            raise jobs.JobRefused("no rules to add")
+        then = params.get("then")
+        out = {"steps": [_write_step(repo, w) for w in writes], "then": None}
+        if then:
+            if then.get("kind") not in ("remove_files", "snapshot_delete"):
+                raise jobs.JobRefused("unknown delete step")
+            out["then"] = {"kind": then["kind"],
+                           "params": _resolve_params(then["kind"], repo, then.get("params") or {})}
+        return out
     return params  # maintenance and future kinds: the runner validates its own params
 
 
+def _write_step(repo: str, w: dict):
+    """One policy write as a job step: backup, write, re-read, and the before/after lists."""
+    def run(job: dict, lf) -> tuple[int, str]:
+        from fastapi import HTTPException as _HTTPException
+
+        from .policies import Changes, write_rules
+        target = w["target"]
+        label = "Global" if target == "global" else target
+        try:
+            r = write_rules(repo, target, Changes(add=w.get("add") or [], remove=w.get("remove") or [],
+                                                  delete_policy=bool(w.get("delete_policy"))),
+                            log=lambda text: jobs.say(job, lf, text))
+        except _HTTPException as exc:
+            jobs.say(job, lf, f"Not added to {label}: {exc.detail}")
+            job["results"].append({"target": target, "ok": False, "error": str(exc.detail)})
+            return 1, str(exc.detail)
+        diff = r["diff"]
+        job["results"].append({
+            "target": target, "ok": r["ok"], "before": diff["current_rules"],
+            "after": diff["resulting_rules"], "stored": r["stored_rules"],
+            "matches": r["stored_matches"], "backup": (r.get("backup") or {}).get("name", ""),
+            "error": "" if r["ok"] else r.get("output_tail", "")[-300:],
+        })
+        if not r["ok"]:
+            jobs.say(job, lf, f"kopia exited {r['returncode']}: {r.get('output_tail', '')[-300:]}")
+            return int(r["returncode"] or 1), r.get("output_tail", "")[-280:]
+        jobs.say(job, lf, f"Saved to {label}" if r["stored_matches"]
+                 else f"Kopia stored a different list for {label} than expected")
+        return 0, ""
+    return run
+
+
 def _on_done(job: dict) -> None:
-    """Mirror the legacy executors: a completed mutating remove/delete refreshes the source
-    listing and triggers the incremental reindex so the UI reflects reality."""
-    if job.get("dry") or not job.get("mutating"):
+    """A completed remove/delete refreshes the source listing and queues the incremental
+    reindex so the UI reflects reality."""
+    if job.get("dry") or not job.get("mutating") or job.get("held"):
         return
-    if job.get("kind") not in ("remove_files", "snapshot_delete"):
+    kind = job.get("kind")
+    if kind == "policy_write":
+        kind = (job.get("detail") or {}).get("then")
+    if kind not in ("remove_files", "snapshot_delete"):
         return
     invalidate_sources(job["repo"])
     try:
-        from .actions import _start_index_run  # same worker pass the Index button uses
-        _start_index_run(job["repo"])
+        from ..core import reindexq
+        reindexq.request(job["repo"])
     except Exception:  # noqa: BLE001 - reindex is best-effort; the UI Refresh also recovers
         pass
 

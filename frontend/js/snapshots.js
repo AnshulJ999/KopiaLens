@@ -109,6 +109,8 @@ const snapshotsPart = {
         reclaimKnown: reclaimVals.length === rows.length,
         pinned: rows.filter((r) => r.pins && r.pins.length).length,
         retained: rows.filter((r) => r.retention && r.retention.length).length,
+        sources: [...new Set(rows.map((r) => r.source || this.snapSource))].filter((s) => s && s !== "*ALL*"),
+        times: rows.map((r) => r.start_time).filter(Boolean).sort(),
         commands: "",
       };
       this.deleteConfirm = "";
@@ -148,24 +150,22 @@ const snapshotsPart = {
       const p = this.deletePlan;
       const warnN = (p.pinned || 0) + (p.retained || 0);
       const ok = await this.klConfirm({
-        title: `Delete ${p.count} snapshot(s)?`,
+        title: `Delete ${p.count} snapshot${p.count === 1 ? "" : "s"}?`,
         facts: [
-          ["What", "The selected snapshot manifests - those restore points stop existing"],
-          ["How many", `${p.count} snapshot(s) · combined reclaim ${fmtPhys(p.combinedReclaim != null ? p.combinedReclaim : p.reclaim)}`],
-          ["Where", this.snapSource === "*ALL*" ? "across all sources" : sourcePath(this.snapSource)],
-          ["How", `kopia snapshot delete --delete${p.ids.length > 200 ? `, ${Math.ceil(p.ids.length / 200)} call(s)` : ""}`],
+          ["Snapshots", `${p.count}` + (p.times.length ? ` · ${humanTime(p.times[0])}` + (p.times.length > 1 ? ` to ${humanTime(p.times[p.times.length - 1])}` : "") : "")],
+          ["Backups", p.sources.length ? p.sources.map((s) => sourcePath(s)).join(", ") : sourcePath(this.snapSource)],
+          ["Frees", fmtPhys(p.combinedReclaim != null ? p.combinedReclaim : p.reclaim) + " after maintenance"],
+          ["Kept", `${p.pinned} pinned · ${p.retained} kept by retention`],
         ],
-        callout: warnN ? `${p.pinned} pinned and ${p.retained} retained in this selection - deleting removes those restore points (and any pins).` : "",
-        note: (this.deleteDryChecked() ? "" : "No dry run has been done for this selection. ")
-          + "Space is reclaimed only after maintenance run --full. Files that also exist in other retained snapshots are not affected.",
-        command: p.commands, confirmLabel: `Delete ${p.count} snapshot(s)`, danger: true,
+        callout: warnN ? "Pinned and retained snapshots are restore points you chose to keep." : "",
+        note: (this.deleteDryChecked() ? "" : "No dry run yet. ") + "Files also in other snapshots stay.",
+        command: p.commands, confirmLabel: `Delete ${p.count} snapshot${p.count === 1 ? "" : "s"}`, danger: true,
       });
       if (!ok) return;
       await this.wrap(async () => {
         const started = await this.startJob("snapshot_delete", { snapshot_ids: p.ids });
         if (started) {
           this.showDelete = false; this.deletePlan = null; this.deleteConfirm = "";
-          this.actionText = `Delete running (${p.count} snapshot(s)) - progress and live output in the job panel. Space is reclaimed on maintenance run --full.`;
         }
       }, "Deleting snapshots…");
     },

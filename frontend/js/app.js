@@ -57,8 +57,8 @@ document.addEventListener("alpine:init", () => {
     groupReclaim: {},  // "repo:folder" -> {v: freeable, capped} - keyed by repo so one repo's
                        // numbers can never render in another repo's table
     mountSnapshot: "", mountPoint: "", restoreSource: "", restoreDest: "",
-    dashboardMeta: "", busy: "", error: "", detail: null, batch: null, showBatch: false, snapSource: "*ALL*", _poll: null, _searchSeq: 0, _detailSeq: 0,
-    _dashSeq: 0, _snapSeq: 0, _treeSeq: 0, _batchSeq: 0, _batchCmdSeq: 0, _removePlanSeq: 0, _removeDetailSeq: 0, _rfPlanSeq: 0, _contentsSeq: 0,
+    dashboardMeta: "", busy: "", error: "", detail: null, snapSource: "*ALL*", _poll: null, _searchSeq: 0, _detailSeq: 0,
+    _dashSeq: 0, _snapSeq: 0, _treeSeq: 0, _removePlanSeq: 0, _removeDetailSeq: 0, _rfPlanSeq: 0, _contentsSeq: 0,
     showRemove: false, removePlan: null, removeJobPoll: null, _removeBase: null,
     // Job runner (shared for every long kopia action): panel + follow state + header chip
     showJob: false, jobPanel: null, jobLines: [], jobEarly: 0, jobCursor: 0, jobFollow: true,
@@ -71,12 +71,12 @@ document.addEventListener("alpine:init", () => {
     // change them was to edit the file by hand. Defaults here mirror app/settings.py.
     lightInterval: 1800, dashboardInterval: 14400,
     autoCompact: true, compactRatio: 1.6, compactMinInterval: 86400, debugLog: false,
-    indexWorkerTimeout: 14400, indexDrainTimeout: 300, indexRetryDelay: 900, indexMaxRetries: 1,
+    indexWorkerTimeout: 14400, indexDrainTimeout: 300, indexRetryDelay: 900, indexMaxRetries: 1, reindexAfterDeleteDelay: 300,
     folderPrewarmBudget: 900, startupDelay: 300, dirMemoMaxMb: 1500, refcountWriteInterval: 21600,
     // Backblaze settings. Defaults mirror app/settings.py; the Save payload carries them as the
     // nested "backblaze" dict the settings endpoint already merges.
     bzDataPath: "C:\\ProgramData\\Backblaze\\bzdata", bzReindexMinGap: 21600, bzHistoryDays: 90,
-    bzCollapsePrefixes: "E:\\Kopia, I:\\Kopia Big Backup", bzEventlogArchive: "",
+    bzCollapsePrefixes: "E:\\Kopia, I:\\Kopia Big Backup", bzEventlogArchive: "", bzStore: "parquet",
     analyzingAll: false, showDelete: false, deletePlan: null, deleteConfirm: "", _autoRefresh: null,
     // detail-panel layout ("classic" | "tabbed"), persisted server-side, default Classic.
     panelLayout: "classic",
@@ -93,6 +93,11 @@ document.addEventListener("alpine:init", () => {
     showPolBackups: false, polBackups: null, _polBackupSeq: 0,
     // exclusion dialog: priced-before-commit pattern adder over the file/folder panels.
     exDialog: null, showExclude: false, _exOpenSeq: 0, _exTargetsSeq: 0, _exPriceSeq: 0, _exCustomTimer: null, _exPriceTimer: null,
+    _exDiffSeq: 0, _exDiffTimer: null,
+    // Delete panel + the Exclude & delete flow; the rule diff view mode; the delete a held job can still run.
+    showDel: false, delPanel: null, _delSeq: 0, _delStatsSeq: 0, showReview: false, flow: null,
+    diffMode: localStorage.getItem("kl-diffmode") || "changes", _jobThen: {},
+    indexPending: [], indexUpdated: null,
 
     fmtB(v) { return fmtBytes(v); },
     fmtPhys(v) { return fmtPhys(v); },
@@ -379,11 +384,6 @@ document.addEventListener("alpine:init", () => {
       const el = document.querySelector(scope === "tree" ? "#treeTable" : "#searchTable");
       return (el && el._tabulator) ? el._tabulator.getSelectedData() : [];
     },
-    _selFiles(scope) {
-      return this.selectedRows(scope).filter((r) => r.type !== "folder")
-        .map((r) => ({ source: r.source || this.selectedSource, full_path: r.full_path || r.path }))
-        .filter((f) => f.source && f.full_path);
-    },
 
     // ---- Range select (Shift+Click) — shared by search + snapshots tables ----
     _rangeClick(table, e, row) {
@@ -400,13 +400,13 @@ document.addEventListener("alpine:init", () => {
     csv(id, name) { downloadTable(id, name); },
     };
     // Duplicate-key guard: two parts declaring the same key would compose silently last-wins.
-    const parts = [["core", core], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["jobsPart", jobsPart], ["settingsPart", settingsPart], ["themePart", themePart], ["policiesPart", policiesPart]];
+    const parts = [["core", core], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["settingsPart", settingsPart], ["themePart", themePart], ["policiesPart", policiesPart]];
     const seen = new Map();
     for (const [owner, part] of parts)
       for (const k of Object.keys(part)) {
         if (seen.has(k)) console.error(`kopiaLens: duplicate key "${k}" declared in both ${seen.get(k)} and ${owner}`);
         else seen.set(k, owner);
       }
-    return Object.assign(core, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, jobsPart, settingsPart, themePart, policiesPart);
+    return Object.assign(core, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, diffviewPart, jobsPart, settingsPart, themePart, policiesPart);
   });
 });

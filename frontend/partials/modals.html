@@ -66,77 +66,26 @@
       </div>
     </div>
 
-    <!-- Batch detail panel (multi-file union: physical/freeable + multi-choice removal) -->
-    <div x-show="showBatch && batch" @click.self="showBatch=false" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
-      <!-- x-if (not x-show): the bindings dereference batch.*, which is null until
-           batchDetail() fills it - x-show hides the panel but still evaluates the bindings. -->
-      <template x-if="batch">
-      <div class="w-[46rem] max-w-full max-h-[85vh] overflow-auto rounded-lg border border-bd bg-surface p-4 text-sm">
-        <div class="flex items-center gap-2"><div class="font-medium">Batch — <span x-text="batch.count"></span> file(s)</div><button @click="showBatch=false" class="ml-auto text-muted text-lg leading-none">&times;</button></div>
-        <div class="text-[11px] text-warn mt-1" x-show="batch.loading">Computing union (physical / freeable)…</div>
-        <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2" x-show="batch.stats && batch.stats.found">
-          <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted">Logical (deduped)</div><div class="font-medium" x-text="batch.stats && fmtBytes(batch.stats.logical)"></div></div>
-          <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted">Physical</div><div class="font-medium" x-text="batch.stats && fmtPhys(batch.stats.physical)"></div></div>
-          <div class="rounded border border-ok-bd p-2"><div class="text-[10px] uppercase text-ok">Freeable</div><div class="font-medium" x-text="batch.stats && fmtPhys(batch.stats.freeable)"></div></div>
-          <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted">Shared (won't free)</div><div class="font-medium" x-text="batch.stats && fmtPhys(batch.stats.shared)"></div></div>
-        </div>
-        <div class="text-[11px] text-muted mt-1" x-show="batch.stats && batch.stats.found" x-text="batch.stats && (batch.stats.files + ' files · ' + batch.stats.distinct_content + ' distinct contents · ' + batch.stats.source_count + ' source(s) · ' + batch.stats.versions + ' versions')"></div>
-        <div class="text-[11px] text-muted mt-1">Freeable = packed bytes referenced ONLY by this selection (freed once you remove them and run <span class="font-mono">maintenance run --full</span>).</div>
-
-        <div class="mt-3 border-t border-bd pt-2">
-          <div class="font-medium text-xs" style="color:var(--danger)">Remove from snapshots <span class="kl-note">(keeps the snapshots)</span></div>
-          <div class="flex flex-wrap items-center gap-3 mt-2 text-xs">
-            <label class="flex items-center gap-1"><input type="radio" name="bby" :checked="batch.by==='object-id'" @change="setBatchBy('object-id')"> Object ID (exact content)</label>
-            <label class="flex items-center gap-1"><input type="radio" name="bby" :checked="batch.by==='filename'" @change="setBatchBy('filename')"> Filename (by name)</label>
-            <label class="flex items-center gap-1" x-show="batch.by==='object-id'"><input type="checkbox" :checked="batch.everywhere" @change="toggleBatchEverywhere()"> everywhere (drop --source; whole repo, slow)</label>
-          </div>
-          <div class="kl-note mt-1" x-show="batch.cmd && (batch.cmd.count || batch.cmd.batches)"
-               x-text="batch.cmd && (batch.cmd.count + (batch.by==='object-id' ? ' object-id(s)' : ' filename(s)') + ' · ' + batch.cmd.batches + ' batch(es)' + (batch.cmd.everywhere ? ' · everywhere (whole repo)' : ' · scoped to selected source(s)'))"></div>
-          <div class="kl-note mt-1" x-show="batch.cmdLoading">Building…</div>
-          <div class="kl-runbar mt-2">
-            <button class="kl-btn" @click="batchDry()" :disabled="batch.dry.running">
-              <span x-text="batch.dry.done ? 'Dry run again' : 'Dry run'"></span>
-            </button>
-            <button class="kl-btn danger" x-show="batch.cmd" @click="executeBatchRemove()" :disabled="batch.dry.running">
-              Remove <span x-text="batch.count"></span> file(s)
-            </button>
-            <span x-show="batchDryChecked()" class="pill ok">dry run checked</span>
-            <span class="grow"></span>
-            <button class="kl-btn quiet" x-show="batch.cmd" @click="copyText(batch.cmd.commit)">Copy command</button>
-            <button class="kl-btn quiet" x-show="batch.cmd" @click="batchSaveBat()" title="Download a .bat that runs the chunked commands and logs kopia's output">Save .bat</button>
-            <button class="kl-btn quiet" x-show="batch.cmd" @click="batch.showCmd = !batch.showCmd" x-text="batch.showCmd ? 'Hide command' : 'Show command'"></button>
-          </div>
-          <div class="kl-note mt-1" x-show="batch.cmd && batch.cmd.batches > 1" style="color:var(--warn)">
-            Runs as <span x-text="batch.cmd && batch.cmd.batches"></span> batch(es) through the job panel. Copy and Save .bat also work.
-          </div>
-          <template x-if="batch.showCmd && batch.cmd">
-            <div class="kl-term mt-2" style="max-height:96px"><div class="break-all" x-text="batch.cmd.commit"></div></div>
-          </template>
-          {{ dryresult('batch.dry') }}
-        </div>
-      </div>
-      </template>
-    </div>
-
-    <div x-show="showRemove && removePlan" @click.self="closeRemove()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+    <div x-show="showRemove && removePlan" @click.self="removePlan && removePlan.flow ? flowCancel() : closeRemove()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
       <div class="w-[52rem] max-w-full max-h-[88vh] overflow-auto rounded-lg border border-bd bg-surface p-4 text-sm">
         <div class="flex items-center gap-2">
-          <div class="font-medium text-danger">Delete matching — <span class="font-normal text-muted" x-text="removePlan && removePlan.label"></span></div>
-          <button @click="closeRemove()" class="ml-auto text-muted text-lg leading-none">&times;</button>
+          <span class="pill shrink-0" x-show="removePlan && removePlan.flow">Step 2 of 3</span>
+          <div class="font-medium text-danger">Delete · <span class="font-normal text-muted" x-text="removePlan && removePlan.label"></span></div>
+          <button @click="removePlan && removePlan.flow ? flowCancel() : closeRemove()" class="ml-auto text-muted text-lg leading-none">&times;</button>
         </div>
-        <div class="text-[11px] text-warn mt-1" x-show="removePlan && removePlan.loading">Building plan (sorting by physical, resolving sources)…</div>
+        <div class="text-[11px] text-warn mt-1" x-show="removePlan && removePlan.loading">Checking what this touches…</div>
 
         <template x-if="removePlan && !removePlan.loading">
           <div>
             <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
               <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted">Files</div><div class="font-medium" x-text="Number(removePlan.file_count||0).toLocaleString()"></div></div>
-              <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted" x-text="removePlan.by==='filename' ? 'Filenames' : 'Content objects'"></div><div class="font-medium" x-text="Number((removePlan.by==='filename'?removePlan.name_count:removePlan.object_count)||0).toLocaleString()"></div></div>
+              <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted" x-text="removePlan.by==='filename' ? 'Names' : 'Versions'"></div><div class="font-medium" x-text="Number((removePlan.by==='filename'?removePlan.name_count:removePlan.object_count)||0).toLocaleString()"></div></div>
               <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted">Physical</div><div class="font-medium" x-text="fmtPhys(removePlan.physical)"></div></div>
-              <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted">Batches</div><div class="font-medium" x-text="removePlan.batches"></div></div>
+              <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted">Backups</div><div class="font-medium" x-text="removePlan.everywhere ? 'All' : (removePlan.sources_scope || []).length"></div></div>
             </div>
 
             <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
-              <span class="text-muted" title="Kopia removes files one at a time, so deleting the biggest few hundred usually reclaims most of the space for a fraction of the time">Delete:</span>
+              <span class="text-muted" title="The biggest few hundred files usually hold most of the space">Delete:</span>
               <button @click="setRemoveTopN(0)" :disabled="removePlan.job" class="h-7 rounded border px-2" :class="!removePlan.top_n ? 'border-fg font-medium' : 'border-bd'">Everything matched</button>
               <template x-for="n in [100, 500, 1000]" :key="n">
                 <button @click="setRemoveTopN(n)" :disabled="removePlan.job" class="h-7 rounded border px-2" :class="removePlan.top_n===n ? 'border-fg font-medium' : 'border-bd'" x-text="'Largest ' + n"></button>
@@ -156,35 +105,35 @@
 
             <div class="mt-2 flex flex-wrap items-center gap-3 text-xs">
               <span class="text-muted">Match by:</span>
-              <label class="flex items-center gap-1" title="Exact content (sweeps deduped copies of the same content within scope)"><input type="radio" name="rby" :checked="removePlan.by==='object-id'" @change="setRemoveBy('object-id')" :disabled="removePlan.job"> Object ID (exact content)</label>
-              <label class="flex items-center gap-1" title="By basename (path-style, matches the existing batch panel)"><input type="radio" name="rby" :checked="removePlan.by==='filename'" @change="setRemoveBy('filename')" :disabled="removePlan.job"> Filename (by name)</label>
+              <label class="flex items-center gap-1" title="The same bytes, at any path in these backups"><input type="radio" name="rby" :checked="removePlan.by==='object-id'" @change="setRemoveBy('object-id')"> Exact content</label>
+              <label class="flex items-center gap-1" title="Any file with these names in these backups"><input type="radio" name="rby" :checked="removePlan.by==='filename'" @change="setRemoveBy('filename')"> File name</label>
             </div>
             <div class="mt-2 flex flex-wrap items-center gap-3 text-xs">
-              <label class="flex items-center gap-1" title="Remove every version of these files (full purge), not just the latest"><input type="checkbox" :checked="removePlan.all_versions" @change="toggleRemoveAllVersions()" :disabled="removePlan.job"> All versions (full purge)</label>
-              <label class="flex items-center gap-1 text-danger" title="Drop --source: sweep the WHOLE repo (slow). Off = scoped to the folder's own sources."><input type="checkbox" :checked="removePlan.everywhere" @change="toggleRemoveEverywhere()" :disabled="removePlan.job"> Everywhere (whole-repo sweep ⚠)</label>
+              <label class="flex items-center gap-1" title="Off: only the newest version of each file"><input type="checkbox" :checked="removePlan.all_versions" @change="toggleRemoveAllVersions()"> Every version</label>
+              <label class="flex items-center gap-1 text-danger" title="Not limited to these backups. Slow."><input type="checkbox" :checked="removePlan.everywhere" @change="toggleRemoveEverywhere()"> Whole repo</label>
             </div>
 
             <div class="text-[11px] text-muted mt-2">
-              <span x-show="!removePlan.everywhere">Scoped to <span class="font-medium" x-text="(removePlan.sources_scope||[]).length"></span> source(s):</span>
-              <span x-show="removePlan.everywhere" class="text-danger">⚠ NOT source-scoped — removes this content from every source in the repo.</span>
+              <span x-show="!removePlan.everywhere">Backups:</span>
+              <span x-show="removePlan.everywhere" class="text-danger">Removes this content from every backup in the repo.</span>
               <span x-show="!removePlan.everywhere" class="font-mono break-all" x-text="(removePlan.sources_scope||[]).map(shortSource).join('  ·  ')"></span>
             </div>
 
             <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
-              <button @click="removeComputeReclaim()" :disabled="removePlan.detailLoading" class="h-7 rounded border border-ok-bd text-ok px-2 disabled:opacity-50"><span x-text="removePlan.detailLoading ? 'Computing…' : 'Compute reclaim (freeable / shared)'"></span></button>
+              <button @click="removeComputeReclaim()" :disabled="removePlan.detailLoading" class="h-7 rounded border border-ok-bd text-ok px-2 disabled:opacity-50"><span x-text="removePlan.detailLoading ? 'Checking…' : 'Check what it frees'"></span></button>
               <template x-if="removePlan.detail && removePlan.detail.found!==false">
                 <span class="flex flex-wrap items-center gap-3">
                   <span>Logical <b x-text="fmtBytes(removePlan.detail.logical)"></b></span>
                   <span>Physical <b x-text="fmtPhys(removePlan.detail.physical)"></b></span>
-                  <span class="text-ok">Freeable <b x-text="fmtPhys(removePlan.detail.freeable)"></b></span>
+                  <span class="text-ok">Frees <b x-text="fmtPhys(removePlan.detail.freeable)"></b></span>
                   <span class="text-muted">Shared <b x-text="fmtPhys(removePlan.detail.shared)"></b></span>
-                  <span x-show="removePlan.detail.capped" class="text-warn" title="computed over the biggest 5000 files">(sample)</span>
+                  <span x-show="removePlan.detail.capped" class="text-warn" title="Checked over the biggest 5,000 files">(biggest 5,000)</span>
                 </span>
               </template>
             </div>
 
             <div class="mt-3 border-t border-bd pt-2" x-show="removePlan.preview && removePlan.preview.length">
-              <div class="text-[10px] uppercase text-muted">Biggest files first (preview)</div>
+              <div class="text-[10px] uppercase text-muted">Biggest first</div>
               <div class="mt-1 max-h-44 overflow-auto rounded border border-bd">
                 <template x-for="(f,i) in removePlan.preview.slice(0,40)" :key="i">
                   <div class="flex items-center gap-2 px-2 py-0.5 text-[11px] border-b border-bd">
@@ -200,12 +149,11 @@
                 <button class="kl-btn" @click="removePlanDry()" :disabled="removePlan.job && removePlan.job.running">
                   <span x-text="removePlan.dry.done ? 'Dry run again' : 'Dry run'"></span>
                 </button>
-                <button class="kl-btn danger" @click="removeRun()" :disabled="removePlan.job && removePlan.job.running"
-                        x-text="(removePlan.job && removePlan.job.running) ? 'Removing…' : 'Delete now'"></button>
+                <button class="kl-btn danger" x-show="!removePlan.flow" @click="removeRun()" :disabled="removePlan.dry.running">Delete…</button>
                 <span x-show="removePlanDryChecked()" class="pill ok">dry run checked</span>
                 <span class="grow"></span>
                 <button class="kl-btn quiet" @click="copyText(removePlan.commit)">Copy command</button>
-                <button class="kl-btn quiet" @click="removeSaveBat()" title="Write a .bat that runs the chunked commands and logs kopia's output">Save .bat</button>
+                <button class="kl-btn quiet" @click="removeSaveBat()" title="A .bat that runs the same commands and logs kopia's output">Save .bat</button>
                 <button class="kl-btn quiet" @click="removePlan.showCmd = !removePlan.showCmd" x-text="removePlan.showCmd ? 'Hide command' : 'Show command'"></button>
               </div>
               <div class="kl-note mt-1" x-show="removePlan.batSaved" x-text="removePlan.batSaved && ('Downloaded: ' + removePlan.batSaved.filename)"></div>
@@ -216,6 +164,11 @@
                 </div>
               </template>
               {{ dryresult('removePlan.dry') }}
+              <div class="kl-footer mt-3" x-show="removePlan.flow">
+                <span class="spacer"></span>
+                <button class="kl-btn" @click="flowBackToExclude()">Back</button>
+                <button class="kl-btn primary" @click="flowReview()" :disabled="!removePlan.item_count">Next: review</button>
+              </div>
             </div>
 
             <div class="mt-3 border-t border-bd pt-2" x-show="removePlan.job">

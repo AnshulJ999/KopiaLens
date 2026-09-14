@@ -8,9 +8,8 @@ import threading
 from copy import deepcopy
 from typing import Any
 
-from config import KOPIA_DIR, SETTINGS_FILE
+from config import SETTINGS_FILE
 
-_OLD_SETTINGS_FILE = os.path.join(KOPIA_DIR, "kopiatoolkit-settings.json")  # legacy shared-with-CLI file
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "last_repo": "1",
@@ -44,6 +43,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "folder_prewarm_budget": 900,  # max seconds the nightly spends pre-computing folder reclaim
         "index_retry_delay": 900,    # after a FAILED pass, wait this long before the one retry
         "index_max_retries": 1,      # retries per scheduled slot; 0 = never retry until the next slot
+        "reindex_after_delete_delay": 300,  # quiet seconds after the last delete before the index updates
         "light_interval": 1800,      # cheap in-process warm pass: next-snapshot times, stats, search landing
         "dashboard_mode": "nightly",  # "nightly" (rebuild with the heavy pass) | "interval" (also during the day)
         "dashboard_interval": 14400,  # dashboard_mode="interval" only: seconds between rebuilds
@@ -114,23 +114,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "eventlog_archive_path": r"H:\Excluded\BackblazeData\bzlogs\bzreports_eventlog",
     },
 }
-
-
-def _migrate_settings() -> None:
-    """One-time: seed the new KopiaLens-local settings file from the old shared CLI file."""
-    if os.path.exists(SETTINGS_FILE) or not os.path.exists(_OLD_SETTINGS_FILE):
-        return
-    try:
-        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
-        with open(_OLD_SETTINGS_FILE, encoding="utf-8") as src:
-            data = src.read()
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as dst:
-            dst.write(data)
-    except Exception:
-        pass
-
-
-_migrate_settings()
 
 
 # All settings reads/writes go through this lock so a read-modify-write (e.g. the many Tabulator

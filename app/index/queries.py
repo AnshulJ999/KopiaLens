@@ -425,10 +425,6 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "",
     return children
 
 
-def snapshots_for_path(repo: str, source: str, full_path: str) -> list[str]:
-    return [row["snapshot_id"] for row in versions(repo, source, full_path)]
-
-
 def paths_for_content(repo: str, content_id: str) -> list[dict]:
     """Every distinct (source, full_path) whose latest version IS this exact content object -
     i.e. all locations of an exact-duplicate file across sources/paths."""
@@ -506,22 +502,86 @@ def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | No
     return {"rows": rows, "depth": d}
 
 
-def snapshots_for_content(repo: str, content_id: str) -> list[str]:
-    """Every distinct snapshot id that references this content object (across all paths/sources).
-    This is the full set that must be deleted to free the content everywhere."""
+def holders_for_paths(repo: str, full_paths: list[str]) -> dict[str, list[str]]:
+    """``{full_path: [source, ...]}`` - every source that backs up each exact path."""
+    want = list(dict.fromkeys(p for p in full_paths if p))
+    out: dict[str, list[str]] = {p: [] for p in want}
+    if not want:
+        return out
     cur = read_cursor(repo)
     try:
-        c = resolve.cid_id(cur, content_id)
-        if c is None:  # unknown content: no snapshots referenced it before, none now
-            return []
-        rows = cur.execute(
-            "SELECT DISTINCT sn.snapshot_id FROM filev f "
-            "JOIN snap sn ON sn.snap_id = f.snap_id WHERE f.cid_id=?",
-            [c],
-        ).fetchall()
+        for i in range(0, len(want), 900):
+            grp = want[i:i + 900]
+            q = ("SELECT DISTINCT p.full_path, s.source FROM pathx p JOIN src s ON s.src_id = p.src_id "
+                 "WHERE p.full_path IN (%s)" % ",".join("?" * len(grp)))
+            for fp, src in cur.execute(q, grp).fetchall():
+                out[fp].append(src)
     finally:
         cur.close()
-    return [r[0] for r in rows]
+    for v in out.values():
+        v.sort()
+    return out
+
+
+def paths_named(repo: str, sources: list[str], names: list[str], cap: int = 500) -> dict:
+    """Every path in ``sources`` whose file name equals one of ``names`` - what kopia's
+    ``remove-files --filename`` matches. ``{"rows": [{source, full_path, size, in_latest}], "total"}``."""
+    names = list(dict.fromkeys(n for n in names if n))
+    if not names or not sources:
+        return {"rows": [], "total": 0}
+    cur = read_cursor(repo)
+    try:
+        sids = [i for i in (resolve.src_id(cur, s) for s in sources) if i is not None]
+        if not sids:
+            return {"rows": [], "total": 0}
+        where = ("p.src_id IN (%s) AND lower(p.name) IN (%s)"
+                 % (",".join("?" * len(sids)), ",".join("?" * len(names))))
+        params = [*sids, *[n.lower() for n in names]]
+        total = cur.execute(f"SELECT count(*) FROM pathx p WHERE {where}", params).fetchone()[0]
+        rows = _rows(
+            cur,
+            f"SELECT s.source, p.full_path, p.size, p.in_latest FROM pathx p "
+            f"JOIN src s ON s.src_id = p.src_id WHERE {where} "
+            f"ORDER BY s.source, p.full_path LIMIT {int(cap)}",
+            params,
+        )
+    finally:
+        cur.close()
+    return {"rows": rows, "total": int(total or 0)}
+
+
+def paths_for_contents(repo: str, object_ids: list[str], sources: list[str] | None = None,
+                       cap: int = 500) -> dict:
+    """Every (source, path) holding any of these content objects in any version - what
+    ``remove-files --object-id`` removes inside the scoped sources."""
+    oids = list(dict.fromkeys(o for o in object_ids if o))
+    if not oids:
+        return {"rows": [], "total": 0}
+    cur = read_cursor(repo)
+    try:
+        ids = sorted(set(resolve.cid_ids(cur, oids).values()))
+        if not ids:
+            return {"rows": [], "total": 0}
+        conds = ["f.cid_id IN (%s)" % ",".join("?" * len(ids))]
+        params: list = list(ids)
+        if sources is not None:
+            sids = [i for i in (resolve.src_id(cur, s) for s in sources) if i is not None]
+            if not sids:
+                return {"rows": [], "total": 0}
+            conds.append("p.src_id IN (%s)" % ",".join("?" * len(sids)))
+            params.extend(sids)
+        sub = ("SELECT DISTINCT p.src_id, p.full_path, p.size, p.in_latest FROM filev f "
+               "JOIN pathx p ON p.path_id = f.path_id WHERE " + " AND ".join(conds))
+        total = cur.execute(f"SELECT count(*) FROM ({sub})", params).fetchone()[0]
+        rows = _rows(
+            cur,
+            f"SELECT s.source, x.full_path, x.size, x.in_latest FROM ({sub}) x "
+            f"JOIN src s ON s.src_id = x.src_id ORDER BY s.source, x.full_path LIMIT {int(cap)}",
+            params,
+        )
+    finally:
+        cur.close()
+    return {"rows": rows, "total": int(total or 0)}
 
 
 def sources_for_content(repo: str, object_ids: list[str]) -> list[str]:

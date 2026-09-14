@@ -158,6 +158,7 @@ class DiffBody(BaseModel):
     repo: str = "1"
     target: str
     changes: Changes
+    price: bool = True            # false: rule lists only (the exclusion panels' diff view)
 
 
 class SaveBody(DiffBody):
@@ -390,12 +391,13 @@ def _validate_changes(repo: str, target: str, changes: Changes,
     return current, resulting, defined_policies
 
 
-def _build_diff(repo: str, target: str, changes: Changes, force: bool = False) -> dict:
+def _build_diff(repo: str, target: str, changes: Changes, force: bool = False,
+                price: bool = True) -> dict:
     current, resulting, defined_policies = _validate_changes(repo, target, changes, force=force)
     add = list(dict.fromkeys(changes.add))
     remove = list(dict.fromkeys(changes.remove))
     priced = []
-    if not changes.delete_policy and (add or remove):
+    if price and not changes.delete_policy and (add or remove):
         priced = _price_for_target(repo, target, add + remove, limit=_EXAMPLES_MAX)["results"]
     by_pattern = {r["pattern"]: r for r in priced}
     impact = {
@@ -428,7 +430,7 @@ def diff(body: DiffBody) -> dict:
     _kopia_repo(body.repo)
     if not body.target:
         raise HTTPException(status_code=400, detail="target is required")
-    return _build_diff(body.repo, body.target, body.changes)
+    return _build_diff(body.repo, body.target, body.changes, price=body.price)
 
 
 @router.post("/policies/save")
@@ -440,21 +442,33 @@ def save(body: SaveBody) -> dict:
         raise HTTPException(status_code=422, detail="confirmed=false - the confirm dialog must run first")
     if not body.target:
         raise HTTPException(status_code=400, detail="target is required")
-    is_global = _is_global(body.target)
-    target_key = _GLOBAL_TARGET if is_global else body.target
+    return write_rules(repo, body.target, body.changes)
+
+
+def write_rules(repo: str, target: str, changes: Changes, log=None) -> dict:
+    """Backup, write, re-read. ``log`` receives one line per step (the job runner's output)."""
+    say = log or (lambda _line: None)
+    is_global = _is_global(target)
+    target_key = _GLOBAL_TARGET if is_global else target
     # The written policy is built from a fresh export, so fields and rules changed elsewhere survive.
-    diff_payload = _build_diff(repo, body.target, body.changes, force=True)
+    diff_payload = _build_diff(repo, target, changes, force=True, price=False)
     defined_policies = load_defined_policies(repo).get("policies") or {}
 
+    say("Backing up policies")
     try:
         backup = policybackup.create_backup(repo, "pre-write")
     except BackupError as exc:
         raise HTTPException(status_code=500,
                             detail=f"pre-write policy backup failed; write refused (fail-closed): {exc}") from exc
+    say(f"Backup {backup.get('name', '')}".rstrip())
 
-    if body.changes.delete_policy:
-        res = policy_delete_execute(repo, None if is_global else body.target, global_=is_global)
+    label = "Global" if is_global else target
+    if changes.delete_policy:
+        say(f"Deleting the policy for {label}")
+        res = policy_delete_execute(repo, None if is_global else target, global_=is_global)
     else:
+        say(f"Writing {len(diff_payload['resulting_rules'])} rules to {label}"
+            f" (+{len(diff_payload['added'])} -{len(diff_payload['removed'])})")
         policy = copy.deepcopy(defined_policies.get(target_key) or {})
         files = dict(policy.get("files") or {})
         if diff_payload["resulting_rules"]:
@@ -462,10 +476,11 @@ def save(body: SaveBody) -> dict:
         else:
             files.pop("ignore", None)
         policy["files"] = files
-        res = policy_write_rules_execute(repo, None if is_global else body.target, is_global, policy,
+        res = policy_write_rules_execute(repo, None if is_global else target, is_global, policy,
                                          add=len(diff_payload["added"]),
                                          remove=len(diff_payload["removed"]))
-    invalidate_after_write(repo, targets=[target_key], ignore_only=not body.changes.delete_policy)
+    invalidate_after_write(repo, targets=[target_key], ignore_only=not changes.delete_policy)
+    say("Re-reading from kopia")
     ok = res.get("returncode") == 0
     stored = _own_rules(load_defined_policies(repo).get("policies") or {}, target_key)
     output = ((res.get("stdout") or "") + "\n" + (res.get("stderr") or "")).strip()

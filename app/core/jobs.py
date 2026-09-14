@@ -20,8 +20,8 @@ refused while the repo's index pass is running, and the nightly scheduler in tur
 while a maintenance job runs (main._tick checks maintenance_running) - user actions
 outrank indexing.
 
-Policy writes will ride the same registry: add a kind to KINDS with a command builder;
-nothing else changes.
+Policy writes run as Python steps (callables in the command list), optionally followed by a
+delete's kopia commands; a failed step holds the delete.
 """
 
 from __future__ import annotations
@@ -61,6 +61,7 @@ KINDS = {
     "snapshot_delete": {"label": "Deleting snapshots", "mutating": True},
     "maintenance": {"label": "Running maintenance", "mutating": True},
     "restore": {"label": "Restoring", "mutating": False},
+    "policy_write": {"label": "Saving policy rules", "mutating": False},
 }
 
 AUDIT_ACTION = {
@@ -68,7 +69,16 @@ AUDIT_ACTION = {
     "snapshot_delete": "snapshot-delete",
     "maintenance": "maintenance",
     "restore": "restore",
+    "policy_write": "policy-write",
 }
+
+
+def say(job: dict, lf, text: str) -> None:
+    """One output line from a Python step (policy writes), same shape as kopia's lines."""
+    job["buffer"].append(time.strftime("%H:%M:%S ") + text)
+    job["line_count"] += 1
+    lf.write(text + "\n")
+    lf.flush()
 
 # Dry-run jobs build the same summary the synchronous dry-run endpoints report; the parsers
 # are shared with them (one home in kopia.py, fed per streamed line here).
@@ -172,6 +182,16 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
         cmd = restore_command_full(repo, params["source_id"], params["target"],
                                    params.get("options"))
         cmds, meta = [cmd], {"source_id": params["source_id"], "target": params["target"], "dry": False}
+    elif kind == "policy_write":
+        # Python steps (one per policy), then optionally the delete's kopia commands.
+        steps = list(params.get("steps") or [])
+        then = params.get("then")
+        then_cmds: list[list[str]] = []
+        meta = {"writes": len(steps), "dry": False, "then": then["kind"] if then else None}
+        if then:
+            then_cmds, then_meta = _build_commands(then["kind"], repo, then["params"])
+            meta["then_detail"] = then_meta
+        return steps + then_cmds, meta
     else:
         raise JobRefused(f"unknown job kind: {kind}")
     # The builders return PASTEABLE commands: ["kopia"] + _repo_args(repo) + subcommand. The
@@ -202,6 +222,10 @@ def _default_label(kind: str, params: dict, meta: dict) -> str:
     if kind == "restore":
         target = meta["target"]
         return f"to {target}"
+    if kind == "policy_write":
+        n = meta["writes"]
+        base = f"{n} polic{'y' if n == 1 else 'ies'}"
+        return base + (", then delete" if meta.get("then") else "")
     return kind
 
 
@@ -213,8 +237,11 @@ def _new_job(kind: str, repo: str, label: str, meta: dict, cmds: list[list[str]]
     os.makedirs(log_dir, exist_ok=True)
     return {
         "job_id": job_id, "kind": kind, "repo": repo,
-        "kind_label": KINDS[kind]["label"], "label": label,
-        "mutating": KINDS[kind]["mutating"] and not meta.get("dry"), "dry": bool(meta.get("dry")),
+        "kind_label": KINDS[kind]["label"] if not meta.get("then") else "Excluding and deleting",
+        "label": label,
+        "mutating": (KINDS[kind]["mutating"] or bool(meta.get("then"))) and not meta.get("dry"),
+        "dry": bool(meta.get("dry")),
+        "results": [], "held": False,
         "detail": meta, "state": "running", "rc": None, "error": None,
         "created": time.time(), "started": None, "finished": None,
         "total": len(cmds), "done": 0, "errors": 0,
@@ -222,7 +249,8 @@ def _new_job(kind: str, repo: str, label: str, meta: dict, cmds: list[list[str]]
         "log_path": os.path.join(log_dir, f"job_{kind}_repo{repo}_{ts}_{job_id}.log"),
         # Pasteable form (kopia + repo args + the command): what the runner executes, and what
         # Copy command must hand the user - the bare `cmds` would not be runnable.
-        "commands_text": "\n".join(" ".join(_quote_arg(a) for a in c) for c in pasteable),
+        "commands_text": "\n".join(" ".join(_quote_arg(a) for a in c) for c in pasteable
+                                   if not callable(c)),
         "dry_summary": {},  # incremental dry-run summary (entries/snapshots/final_line)
         "stop_requested": False, "_stream": None, "on_done": on_done,
     }
@@ -240,12 +268,12 @@ def start_job(kind: str, repo: str, params: dict, label: str | None = None,
         raise JobRefused(str(exc)) from exc
     if not cmds:
         raise JobRefused("nothing to run for this job")
-    if KINDS[kind]["mutating"] and not meta.get("dry"):
+    if (KINDS[kind]["mutating"] or meta.get("then")) and not meta.get("dry"):
         from . import nightly  # lazy: avoids an import cycle at module load
         if nightly.is_running(repo):
             raise JobRefused(
                 f"Repo {repo} is being indexed right now - start after the index pass finishes.")
-    pasteable = [["kopia"] + _repo_args(repo) + c for c in cmds]
+    pasteable = [c if callable(c) else ["kopia"] + _repo_args(repo) + c for c in cmds]
     job = _new_job(kind, repo, label or _default_label(kind, params, meta), meta, cmds,
                    pasteable, on_done)
     with _JOBS_LOCK:
@@ -259,6 +287,9 @@ def start_job(kind: str, repo: str, params: dict, label: str | None = None,
                     f"{clash['kind_label']} is already running on repo {repo} - "
                     "one write at a time per repo.")
         _JOBS[job["job_id"]] = job
+    if job["mutating"]:
+        from . import reindexq  # lazy: reindexq reads the job registry
+        reindexq.touch(repo)
     threading.Thread(target=_run, args=(job, cmds), daemon=True).start()
     log.warning("JOB START %s repo=%s %s", kind, repo, job["label"])
     return job
@@ -299,9 +330,17 @@ def _run(job: dict, cmds: list[list[str]]) -> None:
             for i, cmd in enumerate(cmds, 1):
                 if job["stop_requested"]:
                     break
+                if job["kind"] == "policy_write" and job["errors"] and not callable(cmd):
+                    # A rule write failed: the delete waits for the user's decision.
+                    job["held"] = True
+                    say(job, lf, "A rule was not added. The delete did not run.")
+                    break
                 lf.write(f"\n--- command {i}/{len(cmds)} ---\n")
                 lf.flush()
-                chunk_rc, last_err = _stream_one(job, cmd, lf)
+                if callable(cmd):
+                    chunk_rc, last_err = cmd(job, lf)
+                else:
+                    chunk_rc, last_err = _stream_one(job, cmd, lf)
                 job["done"] = i
                 if chunk_rc != 0:
                     job["errors"] += 1
@@ -312,7 +351,7 @@ def _run(job: dict, cmds: list[list[str]]) -> None:
                 job["rc"] = 0
         if job["stop_requested"]:
             job["state"] = "stopped"
-        elif job["kind"] in ("restore", "maintenance") and job["rc"] not in (None, 0):
+        elif job["kind"] in ("restore", "maintenance", "policy_write") and job["rc"] not in (None, 0):
             job["state"] = "failed"
         else:
             job["state"] = "done"

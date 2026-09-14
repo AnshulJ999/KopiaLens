@@ -19,11 +19,10 @@ import weakref
 import pyarrow as pa
 
 from ..core.cache import cache_db, decode_json
-from ..core.kopia import snapshot_delete_commands
 from ..core.sizemap import load_sizemap
 from ..core.walk import expand_indirect
 from . import resolve
-from .queries import _ESC, like_literal, snapshots_for_content
+from .queries import _ESC, like_literal
 from .store import read_cursor
 
 
@@ -645,16 +644,13 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
     finally:
         cur.close()
 
-    # CONTENT-CENTRIC reclaim: what is TRULY freed if this exact content object is purged from
-    # EVERY location (all paths/sources), and the full set of snapshots that must be deleted to do
-    # it. Per-path `freeable` reads ~0 for a multi-copy file (the copies keep it alive); this is the
-    # honest repo-wide number. A chunk is freed iff its global source-refcount is fully attributable
-    # to the duplicate-holding sources (refs[c] <= number of distinct sources holding this object).
+    # Content-centric reclaim: what is freed if this content is removed from every location. Per-path
+    # `freeable` reads ~0 for a multi-copy file (the copies keep it alive). A chunk is freed iff its
+    # global source-refcount is fully attributable to the duplicate-holding sources. The snapshots
+    # holding it come from /api/delete/plan (the delta index cannot list them).
     dup_sources = {source} | {s for s, _ in others}
     n_dup = len(dup_sources)
     reclaim_everywhere = sum(smap.get(c, 0) for c in latest_chunks if refs.get(c, 0) <= n_dup)
-    snaps_everywhere = snapshots_for_content(repo, latest_obj) if latest_obj else []
-    purge_all_cmds = snapshot_delete_commands(repo, snaps_everywhere) if snaps_everywhere else []
 
     return {
         "found": True,
@@ -678,7 +674,4 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
         "locations": n_dup,                       # distinct sources holding this exact content
         "instances": len(others) + 1,             # distinct paths holding it (this one + others)
         "reclaim_everywhere": reclaim_everywhere,  # bytes freed if purged from every location
-        "snapshots_everywhere": snaps_everywhere,  # full delete-set to free it everywhere
-        "purge_everywhere_count": len(snaps_everywhere),
-        "purge_everywhere_cmds": "\n".join(" ".join(c) for c in purge_all_cmds),
     }

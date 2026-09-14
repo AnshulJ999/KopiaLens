@@ -1,3 +1,4 @@
+{% from "partials/_macros.html" import rulediff %}
 
     <div x-show="showJob" @click.self="closeJob()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
       <template x-if="jobPanel">
@@ -15,15 +16,35 @@
             <button class="kl-btn quiet" @click="closeJob()" x-text="jobPanel.state === 'running' ? 'Run in background' : 'Close'"></button>
           </div>
           <div class="px-4 py-3 border-b border-stone-200 dark:border-stone-800 flex flex-col gap-1.5">
-            <div class="kl-bar"><i :style="'width:' + (jobProgress() || 0) + '%'"></i></div>
+            <div class="kl-bar" :class="jobIndeterminate() ? 'busy' : ''"><i :style="'width:' + (jobIndeterminate() ? 30 : (jobProgress() || 0)) + '%'"></i></div>
             <div class="flex items-center gap-2 text-xs text-stone-500">
               <span x-text="jobProgressLabel()"></span>
               <span class="grow"></span>
               <span x-show="jobStateLine()" class="text-amber-600 dark:text-amber-400" x-text="jobStateLine()"></span>
               <span x-text="'elapsed ' + jobElapsed()"></span>
             </div>
-            <div x-show="jobPanel.error && jobPanel.state === 'failed'" class="text-xs text-red-600 break-all" x-text="jobPanel.error"></div>
+            <div x-show="jobPanel.error && jobPanel.state === 'failed'" class="text-xs text-danger break-all" x-text="jobPanel.error"></div>
           </div>
+          <template x-if="(jobPanel.results || []).length || jobPanel.held">
+            <div class="px-4 py-3 border-b border-bd space-y-2 overflow-auto" style="max-height:40vh">
+              <div class="kl-callout flex items-center gap-2" x-show="jobPanel.held">
+                <span class="grow">A rule was not added. The delete did not run.</span>
+                <button class="kl-btn danger" style="height:24px" x-show="_jobThen[jobPanel.job_id]" @click="jobRunHeldDelete()">Run the delete…</button>
+              </div>
+              <template x-for="(r, i) in (jobPanel.results || [])" :key="i">
+                <div>
+                  <div class="kl-callout" x-show="!r.ok" x-text="(r.target === 'global' ? 'Global' : shortSource(r.target)) + ': ' + (r.error || 'not added')"></div>
+                  <template x-if="r.ok">
+                    <div class="space-y-1">
+                      <div class="text-xs font-medium" :style="r.matches ? 'color:var(--ok)' : 'color:var(--warn)'"
+                           x-text="r.matches ? 'Saved to ' + (r.target === 'global' ? 'Global' : shortSource(r.target)) : 'Kopia stored a different list than expected. Check the Policies tab.'"></div>
+                      {{ rulediff('jobResultDiff(r)') }}
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </template>
           <div class="kl-sec px-4 py-3 min-h-0 grow">
             <div class="h">
               <span>Output</span>
@@ -52,7 +73,7 @@
           <div class="kl-footer">
             <span class="kl-note" x-text="jobFooterNote()"></span>
             <span class="spacer"></span>
-            <button class="kl-btn quiet" @click="jobCopyCommand()">Copy command</button>
+            <button class="kl-btn quiet" x-show="jobPanel.commands_text" @click="jobCopyCommand()">Copy command</button>
           </div>
         </div>
       </template>

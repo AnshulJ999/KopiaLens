@@ -36,6 +36,7 @@ const settingsPart = {
       this.indexWorkerTimeout = Number(kl.index_worker_timeout || 14400);
       this.indexDrainTimeout = Number(kl.index_drain_timeout || 300);
       this.indexRetryDelay = Number(kl.index_retry_delay || 900);
+      this.reindexAfterDeleteDelay = Number(kl.reindex_after_delete_delay ?? 300);
       this.indexMaxRetries = Number(kl.index_max_retries ?? 1);
       // ?? not ||: 0 is a meaningful value here (disables the stage) and || would silently
       // rewrite it to the default on every read and every save.
@@ -76,6 +77,7 @@ const settingsPart = {
           index_worker_timeout: Number(this.indexWorkerTimeout) || 14400,
           index_drain_timeout: Number(this.indexDrainTimeout) || 300,
           index_retry_delay: Number(this.indexRetryDelay) || 900,
+          reindex_after_delete_delay: Math.max(0, Number(this.reindexAfterDeleteDelay) || 0),
           index_max_retries: Math.max(0, Number(this.indexMaxRetries) || 0),
           folder_prewarm_budget: Number.isFinite(Number(this.folderPrewarmBudget))
             ? Math.max(0, Number(this.folderPrewarmBudget)) : 900,   // 0 = disable the stage

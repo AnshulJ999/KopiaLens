@@ -88,6 +88,21 @@ def get_index_status(repo: str = "1") -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get("/index/pending")
+def index_pending() -> dict:
+    """Index updates queued after deletes, with when each will start."""
+    from ..core import reindexq
+    return {"pending": reindexq.pending(), "delay": reindexq.delay(), "now": time.time()}
+
+
+@router.post("/index/pending/run")
+def index_pending_run(repo: str = "1") -> dict:
+    """Start a queued index update now instead of waiting out the quiet period."""
+    _require_kopia(repo)
+    from ..core import reindexq
+    return reindexq.run_now(repo)
+
+
 @router.get("/index/runs")
 def index_runs(limit: int = 100) -> dict:
     """ Per-run index history, ALL repos in one list (newest first) - the Logs tab's

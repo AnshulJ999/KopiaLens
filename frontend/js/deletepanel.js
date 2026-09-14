@@ -1,0 +1,383 @@
+// Delete panel (files) and the Exclude & delete flow (Exclude -> Delete -> Review -> one job).
+// Plan data: POST /api/delete/plan - exactly what each option touches, before anything runs.
+const deletePart = {
+
+    // files: [{source, full_path}]; opts: {method, copies, flow}
+    openDeletePanel(files, opts = {}) {
+      const list = (files || []).filter((f) => f && f.source && f.full_path);
+      if (!list.length) { this.error = "Select one or more files first."; return; }
+      this.delPanel = {
+        files: list, method: opts.method || "remove", by: "object-id", sources: null,
+        copies: !!opts.copies, plan: null, loading: true, error: "", stats: null,
+        statsLoading: false, dry: this.klDryState(), showCmd: false, flow: !!opts.flow,
+      };
+      this.showDel = true;
+      this.delLoad();
+    },
+
+    closeDelete() {
+      if (this.flow) return this.flowCancel();
+      this.showDel = false;
+      this.delPanel = null;
+    },
+
+    async delLoad() {
+      const p = this.delPanel;
+      if (!p) return;
+      const seq = ++this._delSeq;
+      p.loading = true; p.error = ""; p.stats = null;
+      this.klDryClear(p.dry);
+      try {
+        const r = await getJson("/api/delete/plan", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo: this.repo, files: p.files, method: p.method, by: p.by,
+                                 sources: p.sources, copies: p.copies }) });
+        if (seq !== this._delSeq || !this.delPanel) return;
+        p.plan = r;
+      } catch (e) {
+        if (seq !== this._delSeq || !this.delPanel) return;
+        p.error = e.message || String(e);
+      } finally {
+        if (seq === this._delSeq && this.delPanel) p.loading = false;
+      }
+      if (seq === this._delSeq && p.plan && p.method === "remove") this.delLoadStats();
+    },
+
+    async delLoadStats() {
+      const p = this.delPanel;
+      if (!p || !p.plan || !(p.plan.matches || []).length) return;
+      const seq = ++this._delStatsSeq;
+      p.statsLoading = true;
+      const files = p.plan.matches.map((m) => ({ source: m.source, full_path: m.full_path }));
+      const r = await getJson("/api/actions/batch-detail", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repo: this.repo, files, all_versions: true }) }).catch(() => null);
+      if (seq !== this._delStatsSeq || !this.delPanel) return;
+      p.stats = r && r.found ? r : null;
+      p.statsLoading = false;
+    },
+
+    delSetMethod(m) {
+      const p = this.delPanel;
+      if (!p || p.method === m) return;
+      p.method = m; p.sources = null;
+      this.delLoad();
+    },
+    delSetBy(by) {
+      const p = this.delPanel;
+      if (!p || p.by === by) return;
+      p.by = by; p.sources = null;
+      this.delLoad();
+    },
+    delToggleCopies() {
+      const p = this.delPanel;
+      if (!p) return;
+      p.copies = !p.copies;
+      this.delLoad();
+    },
+    delTicked(src) {
+      const p = this.delPanel;
+      return !!(p && p.plan && (p.plan.scope || []).includes(src));
+    },
+    delToggleSource(src) {
+      const p = this.delPanel;
+      if (!p || !p.plan) return;
+      const cur = new Set(p.plan.scope || []);
+      if (cur.has(src)) { if (cur.size === 1) return; cur.delete(src); } else cur.add(src);
+      p.sources = [...cur].sort();
+      this.delLoad();
+    },
+
+    // Backups the user can tick: holders of the selection, plus sources sharing its content.
+    delCandidates() {
+      const plan = this.delPanel && this.delPanel.plan;
+      if (!plan) return [];
+      const list = this.delPanel.method === "remove" ? plan.candidates : plan.holders;
+      return (list || []).map((s) => ({
+        source: s, holds: (plan.holders || []).includes(s),
+      }));
+    },
+
+    delFileLabel() {
+      const p = this.delPanel;
+      if (!p) return "";
+      if (p.files.length > 1) return `${p.files.length} files`;
+      return p.files[0].full_path.split(/[\\/]/).pop();
+    },
+
+    delRowTag(r) {
+      const p = this.delPanel;
+      if (r.selected) return "";
+      return p && p.by === "filename" ? "same name" : "identical copy";
+    },
+
+    delCount() {
+      const plan = this.delPanel && this.delPanel.plan;
+      if (!plan) return 0;
+      return this.delPanel.method === "remove" ? (plan.match_total || 0) : (plan.snapshots || []).length;
+    },
+
+    delScopeSources() {
+      const p = this.delPanel;
+      if (!p || !p.plan) return [];
+      if (p.method === "remove") return p.plan.scope || [];
+      return [...new Set((p.plan.snapshots || []).map((s) => s.source))];
+    },
+
+    delReady() {
+      const p = this.delPanel;
+      return !!(p && p.plan && !p.loading && this.delCount() > 0);
+    },
+
+    delDry() {
+      const p = this.delPanel;
+      if (!this.delReady()) return;
+      if (p.method === "remove") {
+        return this.klDry("/api/actions/remove-files-dry-run",
+          { repo: this.repo, files: p.files, by: p.by, sources: p.plan.scope }, p.dry);
+      }
+      return this.klDry("/api/actions/snapshot-delete-dry-run",
+        { repo: this.repo, snapshot_ids: p.plan.snapshots.map((s) => s.snapshot_id) }, p.dry);
+    },
+    delDryChecked() {
+      const st = this.delPanel && this.delPanel.dry;
+      return !!(st && st.done && st.ok && !st.running);
+    },
+
+    // The job a confirmed delete runs (also the Exclude & delete flow's second step).
+    delJobSpec() {
+      const p = this.delPanel;
+      if (p.method === "remove") {
+        return { kind: "remove_files", params: { form: "files", files: p.files, by: p.by, sources: p.plan.scope } };
+      }
+      return { kind: "snapshot_delete", params: { snapshot_ids: p.plan.snapshots.map((s) => s.snapshot_id) } };
+    },
+
+    delFacts() {
+      const p = this.delPanel, plan = p.plan;
+      const backups = this.delScopeSources().map((s) => sourcePath(s)).join(", ");
+      const facts = [[p.files.length > 1 ? "Files" : "File",
+        p.files.length > 1 ? `${p.files.length} selected` : p.files[0].full_path]];
+      if (p.method === "remove") {
+        facts.push(["Match", p.by === "filename" ? `File name: ${plan.names.join(", ")}` : "Exact content, every version"]);
+        facts.push(["Backups", backups]);
+        facts.push(["Removes", `${Number(plan.match_total).toLocaleString()} path${plan.match_total === 1 ? "" : "s"}`
+          + (plan.other_count ? ` · ${plan.other_count} not selected` : "")]);
+        if (p.stats) facts.push(["Frees", fmtPhys(p.stats.freeable) + " after maintenance"]);
+      } else {
+        const snaps = plan.snapshots || [];
+        facts.push(["Backups", backups]);
+        facts.push(["Snapshots", `${snaps.length} · ${fmtDate(snaps[snaps.length - 1].start_time)} to ${fmtDate(snaps[0].start_time)}`]);
+        if (plan.pinned_count || plan.retained_count) {
+          facts.push(["Kept", `${plan.pinned_count} pinned · ${plan.retained_count} kept by retention`]);
+        }
+      }
+      return facts;
+    },
+
+    delCallout() {
+      const p = this.delPanel, plan = p.plan;
+      if (p.method === "snapshots") return "Every other file in these snapshots is deleted with them.";
+      if (!plan.other_count) return "";
+      if (p.by === "object-id" && (plan.matches || []).every((m) => !Number(m.size))) {
+        return `Every empty file shares the same content. ${plan.other_count} other empty file${plan.other_count === 1 ? " is" : "s are"} removed too.`;
+      }
+      return p.by === "filename"
+        ? `${plan.other_count} other file${plan.other_count === 1 ? "" : "s"} with the same name ${plan.other_count === 1 ? "is" : "are"} removed too.`
+        : `${plan.other_count} identical cop${plan.other_count === 1 ? "y" : "ies"} at other paths ${plan.other_count === 1 ? "is" : "are"} removed too.`;
+    },
+
+    delConfirmLabel() {
+      const p = this.delPanel;
+      if (!p || !p.plan) return "Delete";
+      if (p.method === "remove") {
+        const n = this.delScopeSources().length;
+        return `Remove from ${n} backup${n === 1 ? "" : "s"}`;
+      }
+      const n = (p.plan.snapshots || []).length;
+      return `Delete ${n} snapshot${n === 1 ? "" : "s"}`;
+    },
+
+    async delExecute() {
+      const p = this.delPanel;
+      if (!this.delReady()) return;
+      const ok = await this.klConfirm({
+        title: p.method === "remove" ? `Remove ${this.delFileLabel()} from snapshots?` : `Delete ${p.plan.snapshots.length} snapshots?`,
+        facts: this.delFacts(), callout: this.delCallout(),
+        note: (this.delDryChecked() ? "" : "No dry run yet. ") + "Space frees after the next full maintenance.",
+        command: p.plan.command, confirmLabel: this.delConfirmLabel(), danger: true,
+      });
+      if (!ok) return;
+      const spec = this.delJobSpec();
+      const started = await this.startJob(spec.kind, spec.params, `${this.delFileLabel()} · ${this.delConfirmLabel().toLowerCase()}`);
+      if (started) { this.showDel = false; this.delPanel = null; if (this.detail) this.detail = null; }
+    },
+
+    // ---- Selections (Search, Tree) ----
+    _selItems(scope) {
+      const src = this.selectedSource !== "*ALL*" ? this.selectedSource : "";
+      return this.selectedRows(scope).map((r) => ({
+        kind: r.type === "folder" ? "folder" : "file",
+        path: r.full_path || r.path, source: r.source || src,
+      })).filter((i) => i.path);
+    },
+
+    selExclude(scope, mode = "exclude") {
+      const items = this._selItems(scope);
+      if (!items.length) { this.error = "Select one or more rows first."; return; }
+      const folders = items.filter((i) => i.kind === "folder").length;
+      if (mode === "delete" && folders && (folders > 1 || items.length > 1)) {
+        this.error = "Exclude & delete takes one folder, or files only.";
+        return;
+      }
+      this.openExclude({ items }, mode);
+    },
+
+    selDelete(scope) {
+      const rows = this.selectedRows(scope);
+      const items = this._selItems(scope);
+      if (!items.length) { this.error = "Select one or more rows first."; return; }
+      const folders = rows.filter((r) => r.type === "folder");
+      if (folders.length === 1 && rows.length === 1) return this.openRemoveFolder(folders[0]);
+      if (folders.length) { this.error = "Delete one folder at a time, or files only."; return; }
+      const files = items.filter((i) => i.source).map((i) => ({ source: i.source, full_path: i.path }));
+      if (files.length < items.length) { this.error = "Pick a source first to delete from Tree."; return; }
+      this.openDeletePanel(files);
+    },
+
+    // ---- Exclude & delete flow ----
+    // Step 1 is the Exclude panel (exDialog), step 2 the Delete panel (files) or the folder
+    // removal plan, step 3 the Review. Each step keeps its own state, so Back is lossless.
+    flowStart() {
+      const d = this.exDialog;
+      if (!d) return;
+      const items = d.multi ? d.items.filter((i) => i.on) : [{ kind: d.kind, path: d.path, src: d.src }];
+      const folders = items.filter((i) => i.kind === "folder");
+      if (folders.length && (folders.length > 1 || items.length > 1)) {
+        this.error = "Exclude & delete takes one folder, or files only.";
+        return;
+      }
+      this.flow = { step: 2, kind: folders.length ? "folder" : "files", diffs: [] };
+      this.showExclude = false;
+      if (this.flow.kind === "folder") {
+        if (this.removePlan && this.removePlan.flow) { this.showRemove = true; return; }
+        this.openRemoveFolderPath(folders[0].path, null);
+        if (this.removePlan) this.removePlan.flow = true;
+        return;
+      }
+      if (this.delPanel && this.delPanel.flow) { this.showDel = true; return; }
+      const files = items.map((i) => ({ source: i.src || this._exSourceFor(i), full_path: i.path }));
+      this.openDeletePanel(files, { flow: true });
+    },
+
+    flowBackToExclude() {
+      if (!this.flow) return;
+      this.flow.step = 1;
+      this.showDel = false;
+      this.showRemove = false;
+      this.showExclude = true;
+    },
+
+    async flowReview() {
+      if (!this.flow) return;
+      const writes = this.exWrites();
+      if (!writes.length) { this.error = "Pick where the rule goes."; return; }
+      if (this.flow.kind === "files" && !this.delReady()) return;
+      if (this.flow.kind === "folder" && !(this.removePlan && !this.removePlan.loading && this.removePlan.item_count)) return;
+      this.flow.step = 3;
+      this.flow.writes = writes;
+      this.showDel = false;
+      this.showRemove = false;
+      this.showReview = true;
+      this.flow.diffs = writes.map((w) => ({ target: w.target, label: this.exLabel(w.target), before: null, after: null, error: "" }));
+      await Promise.all(writes.map(async (w, i) => {
+        try {
+          const r = await getJson("/api/policies/diff", { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ repo: this.repo, target: w.target, changes: { add: w.add, remove: [] }, price: false }) });
+          if (this.flow) Object.assign(this.flow.diffs[i], { before: r.current_rules, after: r.resulting_rules });
+        } catch (e) {
+          if (this.flow) this.flow.diffs[i].error = e.message || String(e);
+        }
+      }));
+    },
+
+    flowBackToDelete() {
+      if (!this.flow) return;
+      this.flow.step = 2;
+      this.showReview = false;
+      if (this.flow.kind === "folder") this.showRemove = true;
+      else this.showDel = true;
+    },
+
+    flowCancel() {
+      this.flow = null;
+      this.showReview = false;
+      this.showDel = false; this.delPanel = null;
+      this.showExclude = false; this.exDialog = null;
+      if (this.removePlan && this.removePlan.flow) this.closeRemove();
+    },
+
+    flowDeleteSpec() {
+      if (!this.flow) return null;
+      if (this.flow.kind === "folder") return { kind: "remove_files", params: { ...this._removeBody(), form: "plan" } };
+      return this.delJobSpec();
+    },
+
+    flowDeleteSources() {
+      if (!this.flow) return [];
+      if (this.flow.kind === "folder") return (this.removePlan && this.removePlan.sources_scope) || [];
+      return this.delScopeSources();
+    },
+
+    // Backups the delete covers that will still back the path up after the rule.
+    flowStillBackedUp() {
+      const still = new Set(this.exStillSources());
+      return this.flowDeleteSources().filter((s) => still.has(s));
+    },
+
+    flowDeleteFacts() {
+      if (!this.flow) return [];
+      if (this.flow.kind === "files") return this.delFacts().slice(1);
+      const p = this.removePlan;
+      return [
+        ["Folder", p.label],
+        ["Match", p.by === "filename" ? "File name" : "Exact content"],
+        ["Removes", `${Number(p.file_count || 0).toLocaleString()} files · ${p.all_versions ? "every version" : "latest version"}`],
+        ["Backups", (p.sources_scope || []).map((s) => sourcePath(s)).join(", ")],
+        ["Frees", p.detail && p.detail.found !== false ? fmtPhys(p.detail.freeable) + " after maintenance" : fmtPhys(p.physical) + " stored"],
+      ];
+    },
+
+    flowDryState() {
+      if (!this.flow) return null;
+      return this.flow.kind === "folder" ? (this.removePlan && this.removePlan.dry) : (this.delPanel && this.delPanel.dry);
+    },
+
+    flowDry() {
+      if (!this.flow) return;
+      return this.flow.kind === "folder" ? this.removePlanDry() : this.delDry();
+    },
+
+    async flowExecute() {
+      if (!this.flow || !this.flow.writes) return;
+      const then = this.flowDeleteSpec();
+      const still = this.flowStillBackedUp();
+      const dry = this.flowDryState();
+      const facts = [
+        ["Rules", this.flow.writes.map((w) => `${this.exLabel(w.target)}: ${w.add.length === 1 ? w.add[0] : w.add.length + " rules"}`).join(" · ")],
+        ...this.flowDeleteFacts(),
+      ];
+      const ok = await this.klConfirm({
+        title: "Exclude and delete?",
+        facts,
+        callout: still.length ? `Still backed up by ${still.map((s) => sourcePath(s)).join(", ")}. Its next snapshot backs this up again.` : "",
+        note: (dry && dry.done && dry.ok ? "" : "No dry run yet. ") + "Rules are added first. If one fails, the delete waits for you.",
+        command: "", confirmLabel: "Exclude and delete", danger: true,
+      });
+      if (!ok) return;
+      const writes = this.flow.writes;
+      const jobId = await this.startJob("policy_write", { writes, then }, this.flow.kind === "folder" ? this.removePlan.label : this.delFileLabel());
+      if (!jobId) return;
+      this._jobThen[jobId] = then;
+      if (this.detail) this.detail = null;
+      this.flowCancel();
+    },
+};

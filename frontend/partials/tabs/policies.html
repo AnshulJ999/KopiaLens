@@ -1,3 +1,4 @@
+{% from "partials/_macros.html" import rulediff %}
       <section x-show="active==='policies'" class="h-full flex flex-col gap-3 min-h-0">
         <!-- toolbar -->
         <div class="flex items-center gap-2 shrink-0 flex-wrap">
@@ -50,7 +51,7 @@
                       <span class="pill warn" x-show="polNoParentIgnore()">ignores parent rules</span>
                       <span class="pill warn" x-show="polNoParentDotFiles()">ignores parent dot-files</span>
                       <span class="pill" x-show="polDetail && polDetail.summarized && polDetail.summarized.compression"
-                            x-text="'compress: ' + (polDetail.summarized ? polDetail.summarized.compression : '')"></span>
+                            x-text="'compress: ' + (polDetail && polDetail.summarized ? polDetail.summarized.compression : '')"></span>
                     </span>
                   </div>
                   <div class="kl-note mt-1" x-show="polSummaryLine()" x-text="polSummaryLine()"></div>
@@ -136,7 +137,7 @@
                     <div class="r"><span class="k">Schedule</span><span x-text="polDetail && polDetail.summarized ? polDetail.summarized.schedule : '—'"></span></div>
                     <div class="r"><span class="k">Compression</span><span x-text="polDetail && polDetail.summarized ? polDetail.summarized.compression : '—'"></span></div>
                     <div class="r" x-show="polDetail && polDetail.summarized && polDetail.summarized.ignore_identical"><span class="k">Snapshots</span><span>identical snapshots are skipped</span></div>
-                    <div class="r" x-show="polDetail && polDetail.effective && polDetail.effective.metadataCompression"><span class="k">Metadata</span><span x-text="'compressed with ' + (((polDetail.effective || {}).metadataCompression || {}).compressorName || 'none')"></span></div>
+                    <div class="r" x-show="polDetail && polDetail.effective && polDetail.effective.metadataCompression"><span class="k">Metadata</span><span x-text="'compressed with ' + ((((polDetail && polDetail.effective) || {}).metadataCompression || {}).compressorName || 'none')"></span></div>
                   </div>
                 </div>
 
@@ -172,7 +173,7 @@
           <!-- save mode: one group per staged policy -->
           <template x-if="polDiffMode === 'save'">
             <div class="space-y-3">
-              <div class="kl-note">Only the listed rules change; every other field and rule stays as it is. Impact is priced against the current index.</div>
+              <div class="kl-note">Only ignore rules change. Other settings stay as they are.</div>
               <template x-for="g in ((polDiff && polDiff.groups) || [])" :key="g.target">
                 <div class="rounded border border-bd bg-surface2 p-3">
                   <div class="flex items-center gap-2 mb-1.5">
@@ -187,24 +188,19 @@
                       <div class="kl-note" x-show="g.staged && g.staged.delete_policy">
                         Whole-policy removal: the target falls back to inherited rules afterwards.
                       </div>
+                      {{ rulediff('polDiffView(g)') }}
                       <template x-for="(pat, i) in (g.added || [])" :key="'a' + i">
-                        <div class="flex items-center gap-2 text-[12px] rounded border border-bd-soft bg-surface px-2 py-1.5">
-                          <span class="pill ok shrink-0">+ rule</span>
-                          <span class="font-mono break-all grow" x-text="pat"></span>
-                          <span class="num shrink-0" style="color:var(--muted);font-size:10.5px"
-                                x-text="polImpactText(((g.impact || {}).added || [])[i])"></span>
+                        <div class="flex items-center gap-2 text-[11px]" x-show="polImpactText(((g.impact || {}).added || [])[i])">
+                          <span class="font-mono break-all grow" style="color:var(--ok)" x-text="'+ ' + pat"></span>
+                          <span class="num shrink-0" style="color:var(--muted)" x-text="polImpactText(((g.impact || {}).added || [])[i])"></span>
                         </div>
                       </template>
                       <template x-for="(pat, i) in (g.removed || [])" :key="'r' + i">
-                        <div class="flex items-center gap-2 text-[12px] rounded border border-bd-soft bg-surface px-2 py-1.5">
-                          <span class="pill warn shrink-0">- rule</span>
-                          <span class="font-mono break-all grow" x-text="pat"></span>
-                          <span class="num shrink-0" style="color:var(--muted);font-size:10.5px"
-                                x-text="polImpactText(((g.impact || {}).removed || [])[i])"></span>
+                        <div class="flex items-center gap-2 text-[11px]" x-show="polImpactText(((g.impact || {}).removed || [])[i])">
+                          <span class="font-mono break-all grow" style="color:var(--danger)" x-text="'− ' + pat"></span>
+                          <span class="num shrink-0" style="color:var(--muted)" x-text="polImpactText(((g.impact || {}).removed || [])[i])"></span>
                         </div>
                       </template>
-                      <div class="kl-note" x-show="(g.added || []).length"
-                            x-text="'Adds stop protecting what matches now. ' + 'Removes let it be backed up again (if it still exists on disk).'"></div>
                       <div class="kl-note" x-show="!(g.added || []).length && !(g.removed || []).length && !(g.staged && g.staged.delete_policy)">
                         No differences found.
                       </div>

@@ -53,6 +53,8 @@ body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", 
 .kl-card .v { font-size: var(--fs-lg); font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
 .kl-card.good { border-color: var(--ok-bd); background: var(--ok-bg); }
 .kl-card.good .k, .kl-card.good .v { color: var(--ok); }
+.kl-card.warn { border-color: var(--warn-bd); background: var(--warn-bg); }
+.kl-card.warn .k, .kl-card.warn .v { color: var(--warn); }
 @media (max-width: 640px) { .kl-cards { grid-template-columns: repeat(2, 1fr); } }
 
 /* Lists: one height, one row shape. A truncated list says so in .kl-listfoot. */
@@ -91,6 +93,8 @@ body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", 
 /* Progress. */
 .kl-bar { height: 6px; border-radius: 3px; background: var(--bd); overflow: hidden; }
 .kl-bar > i { display: block; height: 100%; background: var(--fg); border-radius: 3px; }
+.kl-bar.busy > i { animation: kl-bar-busy 1.4s ease-in-out infinite; }
+@keyframes kl-bar-busy { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
 
 /* Run bar: dry run / execute / copy command, on every destructive action. */
 .kl-runbar { border: 1px solid var(--bd); border-radius: var(--r-md); background: var(--surface2); padding: 9px 10px; display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }

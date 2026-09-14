@@ -288,7 +288,7 @@ const policiesPart = {
       const bits = [];
       if ((s.ignore_dot_files || []).length) bits.push("dot-files: " + s.ignore_dot_files.join(", "));
       if (s.ignore_cache_dirs) bits.push("cache dirs");
-      if (s.max_file_size) bits.push("files over " + fmtB(s.max_file_size));
+      if (s.max_file_size) bits.push("files over " + fmtBytes(s.max_file_size));
       return bits.join(" · ");
     },
     polSummaryLine() {
@@ -300,12 +300,12 @@ const policiesPart = {
       if (r.error) return "error: " + r.error;
       if (r.files == null) return "unpriced";
       const dirs = r.dirs ? ` · ${r.dirs} dir${r.dirs === 1 ? "" : "s"}` : "";
-      return `${Number(r.files).toLocaleString()} files · ${fmtB(r.bytes || 0)}${dirs}`;
+      return `${Number(r.files).toLocaleString()} files · ${fmtBytes(r.bytes || 0)}${dirs}`;
     },
     polAddPreviewText() {
       const p = this.polAddPrice;
       if (!p || p.files == null) return "";
-      return "Would exclude " + Number(p.files).toLocaleString() + " files · " + fmtB(p.bytes || 0);
+      return "Would exclude " + Number(p.files).toLocaleString() + " files · " + fmtBytes(p.bytes || 0);
     },
     polAddExamplesText() {
       const p = this.polAddPrice;
@@ -316,7 +316,7 @@ const policiesPart = {
       if (!it || it.error) return it && it.error ? "error: " + it.error : "";
       if (it.files == null) return "";
       const dirs = it.dirs ? ` · ${it.dirs} dir${it.dirs === 1 ? "" : "s"}` : "";
-      return Number(it.files).toLocaleString() + " files · " + fmtB(it.bytes || 0) + dirs;
+      return Number(it.files).toLocaleString() + " files · " + fmtBytes(it.bytes || 0) + dirs;
     },
 
     // ---------- staging ----------
@@ -407,6 +407,9 @@ const policiesPart = {
       }
       return out;
     },
+    polDiffView(g) {
+      return { label: g.target === "global" ? "Global" : sourcePath(g.target), before: g.current_rules, after: g.resulting_rules };
+    },
     // One diff request per staged target, rendered as one group each.
     async polOpenDiff() {
       const changes = this.polChanges();
@@ -434,39 +437,22 @@ const policiesPart = {
       const ok = await this.klConfirm({
         title: "Save policy changes?",
         facts: [
-          ["What", `${nRules} change(s) across ${changes.length} polic${changes.length === 1 ? "y" : "ies"}`],
-          ["Where", changes.map((c) => (c.target === "global" ? "Global" : sourcePath(c.target))).join(", ")],
-          ["How", "kopia policy set / delete, one write per policy"],
-          ["Safety", "A verified backup is taken before each write; if it fails, that write is refused"],
+          ["Changes", `${nRules} across ${changes.length} polic${changes.length === 1 ? "y" : "ies"}`],
+          ["Policies", changes.map((c) => (c.target === "global" ? "Global" : sourcePath(c.target))).join(", ")],
         ],
-        note: "Kopia merges policy writes: the ignore rules you set take effect, everything else stays as it is.",
+        note: "A policy backup is taken before each write.",
         command: "", confirmLabel: "Save changes", danger: false,
       });
       if (!ok) return;
+      const writes = changes.map((c) => ({ target: c.target, add: c.add, remove: c.remove, delete_policy: c.delete_policy }));
+      const started = await this.startJob("policy_write", { writes }, `${changes.length} polic${changes.length === 1 ? "y" : "ies"}`);
+      if (!started) return;
       this.showPolDiff = false;
-      const results = [];
-      for (const c of changes) {
-        try {
-          const r = await getJson("/api/policies/save", { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ repo: this.repo, target: c.target, changes: { add: c.add, remove: c.remove, delete_policy: c.delete_policy }, confirmed: true }) });
-          results.push({ target: c.target, r });
-        } catch (e) {
-          results.push({ target: c.target, r: { ok: false, error: e.message || String(e) } });
-        }
-      }
       this.polDiscard();
-      // The stored numbers predate these writes now; drop the caches so the reload re-reads
-      // stored-prices and the pricing note shows the pre-save timestamp honestly.
+      // The stored numbers predate these writes; the reload after the job re-reads them.
       for (const c of changes) {
         if (this.polRowPrices) delete this.polRowPrices[c.target];
         if (this.polStoredTs) delete this.polStoredTs[c.target];
-      }
-      await this.loadPolicies(true);
-      const bad = results.filter((x) => !x.r.ok);
-      if (bad.length) {
-        this.error = bad.map((x) => `${x.target === "global" ? "Global" : sourcePath(x.target)}: ${x.r.error || ("kopia exit " + x.r.returncode + " - " + (x.r.output_tail || "").slice(-200))}`).join(" | ");
-      } else {
-        this.actionText = `Saved ${changes.length} polic${changes.length === 1 ? "y" : "ies"} - pre-write backups are in data/policy-backups.`;
       }
     },
 
@@ -543,13 +529,12 @@ const policiesPart = {
       const ok = await this.klConfirm({
         title: "Restore this policy backup?",
         facts: [
-          ["What", mirror ? "Full mirror-restore: this repo ends up with EXACTLY the backup's policies - everything else is deleted" : "Merge-restore: policies in the backup overwrite their targets; other policies stay"],
-          ["From", name],
-          ["How", "kopia policy import" + (mirror ? " --delete-other-policies" : " (merge)")],
-          ["Safety", "The current policies are backed up first (pre-restore, fail-closed)"],
+          ["Backup", name],
+          ["Mode", mirror ? "Mirror · policies not in the backup are deleted" : "Merge · policies in the backup replace theirs, others stay"],
+          ["Policies", `${(this.polRestoreParsed || []).length || "?"} in the backup`],
         ],
-        callout: mirror ? "Mirror-restore replaces the whole policy set for this repo." : "",
-        note: "KopiaLens restores only backups it made itself (data/policy-backups).",
+        callout: mirror ? "Every policy not in this backup is deleted." : "",
+        note: "Current policies are backed up first.",
         command: this.polRestoreCmd && this.polRestoreCmd.command ? this.polRestoreCmd.command : "",
         confirmLabel: mirror ? "Mirror-restore" : "Restore (merge)", danger: mirror,
       });

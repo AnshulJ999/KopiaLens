@@ -24,8 +24,9 @@
           </select>
           <button @click="treeUp()" class="h-8 rounded border border-bd px-3 text-sm" title="Up one level">⬆ Up</button>
           <button x-show="treeMode!=='all' && selectedSource!=='*ALL*'" @click="mountTreeSnapshot()" class="h-8 rounded border border-bd px-3 text-sm" title="Mount this snapshot (read-only) and open the current folder in Explorer">⤓ Mount &amp; browse</button>
-          <button @click="removeSelectedTree()" class="h-8 rounded border border-danger-bd text-danger px-2 text-sm" title="Remove selected files, or a selected folder (chunked, respects filters)">🗑 Remove…</button>
-          <button @click="batchExclude('tree')" class="h-8 rounded border border-bd px-2 text-sm" title="Copy exclude patterns for selected files">⊘ Exclude</button>
+          <button @click="selExclude('tree')" class="h-8 rounded border border-bd px-2 text-sm" title="Add exclusion rules for the selected files and folders">Exclude…</button>
+          <button @click="selDelete('tree')" class="h-8 rounded border border-danger-bd text-danger px-2 text-sm" title="Delete the selected files, or one folder (respects filters)">Delete…</button>
+          <button @click="selExclude('tree', 'delete')" class="h-8 rounded border border-danger-bd text-danger px-2 text-sm" title="Exclude, then delete from backups">Exclude &amp; delete…</button>
           <button @click="csv('#treeTable','tree')" class="h-8 rounded border border-bd px-3 text-sm" title="Export CSV">⬇ CSV</button>
         </div>
         <div class="flex items-center gap-1 text-sm flex-wrap px-1">

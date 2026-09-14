@@ -21,8 +21,8 @@ from fastapi.staticfiles import StaticFiles
 
 from config import DATA_DIR, REPOS, repo_kind
 
-from .api import (actions, audit, backblaze, dashboard, excluded, insights, jobs, logs, policies,
-                  search, simulate, snapshots, stats, tree)
+from .api import (actions, audit, backblaze, dashboard, deleteplan, excluded, insights, jobs, logs,
+                  policies, search, simulate, snapshots, stats, tree)
 from .core import auth
 from .core import jobs as jobrunner
 from .core import kopia as kopia_mod
@@ -518,6 +518,10 @@ async def lifespan(_app: FastAPI):
     except Exception as exc:  # noqa: BLE001 - a settings problem must not block startup
         log.warning("debug log setting could not be applied: %s", exc)
     log.info("KopiaLens starting up")
+    import config as _config
+    if _config.LEGACY_LAYOUT:
+        log.warning("Old folder layout: data in %s, settings next to the app. Move them into one "
+                    "data folder and set KOPIALENS_DATA_DIR.", _config.DATA_DIR)
     try:  # seed a password from the environment ONCE - how a provisioned Docker image gets auth
         seeded = os.environ.get("KOPIALENS_PASSWORD") or ""
         if seeded and not auth.password_hash():
@@ -533,6 +537,11 @@ async def lifespan(_app: FastAPI):
             log.warning("cleaned up orphaned index worker(s) for repo(s): %s", ", ".join(reaped))
     except Exception as exc:  # noqa: BLE001 - cleanup must never block startup
         log.error("orphan worker cleanup failed: %s", exc)
+    try:  # index updates queued after deletes before the last exit
+        from .core import reindexq
+        reindexq.load()
+    except Exception as exc:  # noqa: BLE001 - never block startup
+        log.warning("index update queue could not be resumed: %s", exc)
     try:  # apply the configurable in-process dir-cache RAM budget (default 1.5 GB)
         from .core import cache as _cache
         mb = float(load_settings().get("kopialens", {}).get("dir_memo_max_mb", 1500))
@@ -680,7 +689,7 @@ async def generation_pin_middleware(request: Request, call_next):
 _POLL_PATHS = frozenset({
     "/api/jobs/list", "/api/jobs/status", "/api/index/freshness", "/api/index/status",
     "/api/backblaze/status", "/api/settings/table", "/api/settings/tables", "/api/repos",
-    "/api/index/runs", "/api/logs/app", "/api/audit",
+    "/api/index/runs", "/api/logs/app", "/api/audit", "/api/index/pending",
 })
 _SLOW_REQUEST_MS = 3000.0
 _request_stats = RequestStats()
@@ -761,6 +770,7 @@ app.include_router(tree.router, prefix="/api")
 app.include_router(search.router, prefix="/api")
 app.include_router(simulate.router, prefix="/api")
 app.include_router(actions.router, prefix="/api")
+app.include_router(deleteplan.router, prefix="/api")
 app.include_router(jobs.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")

@@ -175,6 +175,14 @@
                   </div></div>
                 <p class="text-[11px] text-muted mt-1">How long the handover waits for queries already in flight before it takes the database offline. Ordinary queries here can run tens of seconds, so do not set this low.</p>
               </div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Update the index after deletes</span>
+                  <div class="flex items-center gap-2">
+                    <input type="number" min="0" step="30" x-model.number="reindexAfterDeleteDelay" class="fld border border-bd bg-surface2 w-28">
+                    <span class="text-[11px] text-muted">seconds after the last delete</span>
+                  </div></div>
+                <p class="text-[11px] text-muted mt-1">Back-to-back deletes share one update.</p>
+              </div>
               <div class="flex items-center justify-between gap-3"><span>Retry delay after a failed pass</span>
                 <div class="flex items-center gap-2">
                   <input type="number" min="60" step="60" x-model.number="indexRetryDelay" class="fld border border-bd bg-surface2 w-28">

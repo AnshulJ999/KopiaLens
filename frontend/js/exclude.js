@@ -1,7 +1,7 @@
-// Exclusion dialog (file/folder panels, Churn and Tree right-clicks). Targets and their
-// before/after coverage come from POST /api/policies/exclusion-targets; every write is priced
-// against the index before Exclude is enabled, then saved through /api/policies/save (which takes
-// the policy backup first). The delete half routes to the existing delete flow afterwards.
+// Exclude panel (file/folder panels, Search/Tree selections, Churn and Tree right-clicks). Targets
+// and their before/after coverage come from POST /api/policies/exclusion-targets; every write is
+// priced against the index before Exclude is enabled, shown as a rule diff, and runs as a
+// policy_write job. "Exclude & delete" continues into the Delete step (deletepanel.js flow).
 //
 //   POST /api/policies/exclusion-targets {repo, path, source, is_folder, shape, refresh, suggest}
 //     -> {sources: [{source, origin, owner, already_excluded}], targets: [{target, role, smart,
@@ -10,11 +10,17 @@
 //   POST /api/policies/save {repo, target, changes: {add, remove, delete_policy}, confirmed: true}
 const excludePart = {
 
-    // ctx: {kind: "file"|"folder", path, source?, preset?}; mode: "exclude"|"delete".
+    // ctx: {kind: "file"|"folder", path, source?, preset?} or {items: [{kind, path, source}]};
+    // mode: "exclude"|"delete".
     async openExclude(ctx, mode = "exclude") {
+      if (this.flow) this.flowCancel();
+      const items = (ctx.items || []).filter((i) => i && i.path);
+      if (items.length > 1) return this.exOpenMulti(items, mode);
+      if (items.length === 1) ctx = items[0];
       this.showExclude = true;
       const seq = ++this._exOpenSeq;
       const d = this.exDialog = {
+        multi: false, diffs: {},
         kind: ctx.kind, path: ctx.path, mode,
         src: ctx.source || "",              // the panel's source: disambiguates user@host + routes the delete half
         preset: ctx.preset || "",
@@ -243,6 +249,7 @@ const excludePart = {
           d.priceFor = first.pattern; d.priceTarget = first.target;
         }
       }, 250);
+      this.exLoadDiffs();
     },
 
     // Null on failure: an empty array would read as "matches nothing".
@@ -370,21 +377,61 @@ const excludePart = {
       this.loadSearch();
     },
 
-    // One policy write through /api/policies/save. Returns true only when kopia accepted it.
-    async exWriteRule(target, patterns) {
-      let wrote = false;
-      await this.wrap(async () => {
-        const r = await getJson("/api/policies/save", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo: this.repo, target, changes: { add: patterns, remove: [], delete_policy: false }, confirmed: true }) });
-        if (r.ok) {
-          wrote = true;
-          this.actionText = `Rule added to ${this.exLabel(target)}` + (r.backup && r.backup.name ? ` · backup ${r.backup.name}` : "");
-        } else {
-          this.error = `kopia exited ${r.returncode} - ${(r.output_tail || "").slice(-300)}`;
-        }
-        if (this.polData) this.loadPolicies(true);
-      }, "Adding the rule...");
-      return wrote;
+    // The writes a commit makes: [{target, add: [patterns]}], deepest policy first.
+    exWrites() {
+      const d = this.exDialog;
+      if (!d) return [];
+      if (d.multi) return this.exMultiWrites();
+      return this.exWritePlan().map((p) => ({ target: p.target, add: this._exPatternsFor(p) }));
+    },
+
+    // Rule diff per write, from the backend's current list (never rebuilt client-side).
+    exLoadDiffs() {
+      const d = this.exDialog;
+      if (!d) return;
+      if (this._exDiffTimer) clearTimeout(this._exDiffTimer);
+      const seq = ++this._exDiffSeq;
+      this._exDiffTimer = setTimeout(async () => {
+        const writes = this.exWrites();
+        const next = {};
+        await Promise.all(writes.map(async (w) => {
+          next[w.target] = { label: this.exLabel(w.target), before: null, after: null, error: "" };
+          try {
+            const r = await getJson("/api/policies/diff", { method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ repo: this.repo, target: w.target, changes: { add: w.add, remove: [] }, price: false }) });
+            Object.assign(next[w.target], { before: r.current_rules, after: r.resulting_rules });
+          } catch (e) {
+            next[w.target].error = e.message || String(e);
+          }
+        }));
+        if (seq === this._exDiffSeq && this.exDialog) this.exDialog.diffs = next;
+      }, 300);
+    },
+
+    exDiffList() {
+      const d = this.exDialog;
+      if (!d) return [];
+      return this.exWrites().map((w) => d.diffs[w.target]).filter(Boolean);
+    },
+
+    // Sources holding the path(s) that still back it up after the ticked writes.
+    exStillSources() {
+      const d = this.exDialog;
+      if (!d) return [];
+      if (d.multi) {
+        const out = new Set();
+        for (const it of d.items.filter((i) => i.on)) for (const s of this._exItemStill(it)) out.add(s);
+        return [...out];
+      }
+      if (!d.targetData || d.shape === "custom") return [];
+      const ticked = this.exTargets().filter((t) => d.ticked[t.target]);
+      return (d.targetData.sources || []).filter((s, idx) =>
+        !(s.already_excluded || ticked.some((t) => t.covers[idx] && t.covers[idx].matches))).map((s) => s.source);
+    },
+
+    _exSourceFor(item) {
+      const td = item.targetData;
+      return item.src || (td && td.sources && td.sources[0] && td.sources[0].source) || "";
     },
 
     exPlanFact(p) {
@@ -396,48 +443,54 @@ const excludePart = {
         : `${p.pattern} (stops using ${this.exRuleWord(n)} from ${from})`;
     },
 
+    exClose() {
+      if (this.flow) return this.flowCancel();
+      this.showExclude = false;
+    },
+
+    exCanCommit() {
+      const d = this.exDialog;
+      if (!d) return false;
+      return d.multi ? this.exMultiReady() : (!d.pricing && this.exPriceReady());
+    },
+
     async exConfirm() {
       const d = this.exDialog;
       if (!d) return;
-      const plan = this.exWritePlan();
-      if (!plan.length) { this.error = "Pick where the rule goes."; return; }
-      if (!this.exPriceReady()) {
+      const writes = this.exWrites();
+      if (!writes.length) { this.error = "Pick where the rule goes."; return; }
+      if (!this.exCanCommit()) {
         this.error = d.pricing ? "Still checking the index. Try again in a moment." : (this.exPriceNote() || "Not checked yet.");
         return;
       }
-      const facts = plan.length === 1
-        ? [["Rule", this.exPlanFact(plan[0])], ["Added to", this.exLabel(plan[0].target)]]
-        : plan.map((p) => [this.exLabel(p.target), this.exPlanFact(p)]);
-      facts.push(["Leaves out", this.exKeepoutText() || "not checked"]);
-      const coverage = this.exCoverageText();
-      if (coverage) facts.push(["Result", coverage]);
-      const drops = plan.filter((p) => p.is_child && !this.exCopies(p.t));
-      const dropText = drops.map((p) => `${this.exLabel(p.target)} stops using ${this.exRuleWord((p.t.inherited_rules || []).length)} from ${this.exLabel(p.t.inherits_from || "global")}. Files those rules leave out start being backed up again.`).join(" ");
-      const writes = plan.map((p) => ({ target: p.target, patterns: this._exPatternsFor(p) }));
-      if (d.mode === "exclude") {
-        const ok = await this.klConfirm({
-          title: plan.length === 1 ? "Add this exclusion rule?" : `Add ${plan.length} exclusion rules?`,
-          facts, callout: dropText,
-          note: "You can remove it later in the Policies tab.",
-          command: "", confirmLabel: plan.length === 1 ? "Add rule" : `Add ${plan.length} rules`, danger: !!drops.length,
-        });
-        if (!ok) return;
-        this.showExclude = false; this.exDialog = null;
-        await this._exWriteAll(writes);
-        return;
+      if (d.mode === "delete") return this.flowStart();
+      let facts, drops = [];
+      if (d.multi) {
+        facts = writes.map((w) => [this.exLabel(w.target), w.add.length === 1 ? w.add[0] : `${w.add.length} rules`]);
+        facts.push(["Items", `${d.items.filter((i) => i.on).length} of ${d.items.length}`]);
+      } else {
+        const plan = this.exWritePlan();
+        facts = plan.length === 1
+          ? [["Rule", this.exPlanFact(plan[0])], ["Added to", this.exLabel(plan[0].target)]]
+          : plan.map((p) => [this.exLabel(p.target), this.exPlanFact(p)]);
+        drops = plan.filter((p) => p.is_child && !this.exCopies(p.t));
       }
-      facts.push(["Then", "The delete flow opens for what's already backed up"]);
+      const keepout = this.exKeepoutText();
+      if (keepout) facts.push(["Leaves out", keepout]);
+      const coverage = d.multi ? this.exMultiCoverageText() : this.exCoverageText();
+      if (coverage) facts.push(["Result", coverage]);
+      const dropText = drops.map((p) => `${this.exLabel(p.target)} stops using ${this.exRuleWord((p.t.inherited_rules || []).length)} from ${this.exLabel(p.t.inherits_from || "global")}. Files those rules leave out start being backed up again.`).join(" ");
+      const n = writes.reduce((a, w) => a + (d.multi ? w.add.length : 1), 0);
       const ok = await this.klConfirm({
-        title: "Exclude, then delete what's backed up?",
+        title: n === 1 ? "Add this exclusion rule?" : `Add ${n} exclusion rules?`,
         facts, callout: dropText,
-        note: "Space frees after the next full maintenance.",
-        command: "", confirmLabel: "Exclude and delete…", danger: true,
+        note: "A policy backup is taken first. Remove rules later in the Policies tab.",
+        command: "", confirmLabel: n === 1 ? "Add rule" : `Add ${n} rules`, danger: !!drops.length,
       });
       if (!ok) return;
-      const route = { kind: d.kind, path: d.path, source: d.src };
-      this.showExclude = false; this.exDialog = null;
-      const wrote = await this._exWriteAll(writes);
-      if (wrote) this.exRouteDelete(route);
+      const label = d.multi ? `${d.items.filter((i) => i.on).length} items` : d.path.split(/[\\/]/).pop();
+      const started = await this.startJob("policy_write", { writes }, label);
+      if (started) { this.showExclude = false; this.exDialog = null; }
     },
 
     // A child write keeps its inherited rules (in their order) with the new rule at the bottom.
@@ -448,21 +501,151 @@ const excludePart = {
       return out;
     },
 
-    async _exWriteAll(writes) {
-      let any = false;
-      for (const w of writes) any = (await this.exWriteRule(w.target, w.patterns)) || any;
-      return any;
+    // ---- Several items at once ----
+    // Smart placement per item (its own targets and shape suggestion); writes are grouped per
+    // policy. Choosing policies by hand is a single-item action.
+    exOpenMulti(items, mode) {
+      this.showExclude = true;
+      ++this._exOpenSeq;
+      const d = this.exDialog = {
+        multi: true, mode, shape: "exact", diffs: {}, prices: {}, pricing: false, loading: true,
+        items: items.map((i) => ({ kind: i.kind, path: i.path, src: i.source || "", on: true,
+                                   shape: "exact", targetData: null, loading: true, error: "" })),
+      };
+      this.exMultiLoad();
+      return d;
     },
 
-    // The delete half: folder -> the folder removal plan across every source; file -> the file
-    // panel's remove section.
-    exRouteDelete(route) {
-      if (route.kind === "folder") {
-        this.openRemoveFolderPath(route.path, null);
-      } else {
-        this.openFileDetail({ source: route.source, full_path: route.path }).then(() => {
-          if (this.detail) { this.detail.panelTab = "actions"; this.rfEnsurePlan(); }
-        });
+    exMultiSetShape(shape) {
+      const d = this.exDialog;
+      if (!d || !d.multi || d.shape === shape) return;
+      d.shape = shape;
+      this.exMultiLoad();
+    },
+
+    async exMultiLoad() {
+      const d = this.exDialog;
+      if (!d || !d.multi) return;
+      const seq = ++this._exTargetsSeq;
+      d.loading = true; d.prices = {}; d.diffs = {};
+      let refresh = true;
+      const queue = [...d.items];
+      const worker = async () => {
+        while (queue.length) {
+          const it = queue.shift();
+          const shape = d.shape === "extension" && it.kind === "folder" ? "exact" : d.shape;
+          it.loading = true; it.error = "";
+          try {
+            const body = { repo: this.repo, path: it.path, source: it.src || null, is_folder: it.kind === "folder",
+                           shape, refresh, suggest: d.shape === "exact" };
+            refresh = false;
+            let r = await getJson("/api/policies/exclusion-targets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+            if (r.smart_shape && r.smart_shape !== shape) {
+              r = await getJson("/api/policies/exclusion-targets", { method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ...body, shape: r.smart_shape, suggest: false, refresh: false }) });
+            }
+            if (seq !== this._exTargetsSeq || !this.exDialog) return;
+            it.targetData = r; it.shape = r.shape || shape;
+          } catch (e) {
+            if (seq !== this._exTargetsSeq || !this.exDialog) return;
+            it.targetData = { targets: [], sources: [] }; it.error = e.message || String(e); it.on = false;
+          } finally {
+            it.loading = false;
+          }
+        }
+      };
+      await worker();                                   // first call refreshes policies once
+      await Promise.all([worker(), worker(), worker()]);
+      if (seq !== this._exTargetsSeq || !this.exDialog) return;
+      d.loading = false;
+      this.exMultiPrice();
+    },
+
+    exItemTargets(it) {
+      return ((it.targetData && it.targetData.targets) || []).filter((t) => t.smart && t.pattern);
+    },
+
+    _exItemStill(it) {
+      if (!it.targetData) return [];
+      const ticked = this.exItemTargets(it);
+      return (it.targetData.sources || []).filter((s, idx) =>
+        !(s.already_excluded || ticked.some((t) => t.covers[idx] && t.covers[idx].matches))).map((s) => s.source);
+    },
+
+    exItemStatus(it) {
+      if (it.loading) return "Reading policies…";
+      if (it.error) return it.error;
+      const total = ((it.targetData && it.targetData.sources) || []).length;
+      if (!total) return "No backup holds this";
+      const still = this._exItemStill(it).length;
+      if (!this.exItemTargets(it).length) return still ? "No Smart pick - open it on its own" : "Already left out";
+      return still ? `${total - still} of ${total} backups stop` : (total === 1 ? "Backup stops" : `All ${total} backups stop`);
+    },
+
+    exMultiToggle(it) {
+      it.on = !it.on;
+      this.exMultiPrice();
+    },
+
+    exMultiWrites() {
+      const d = this.exDialog;
+      const byTarget = new Map();
+      for (const it of d.items.filter((i) => i.on)) {
+        for (const t of this.exItemTargets(it)) {
+          if (!byTarget.has(t.target)) byTarget.set(t.target, []);
+          const list = byTarget.get(t.target);
+          if (!list.includes(t.pattern)) list.push(t.pattern);
+        }
       }
+      const rank = (target) => {
+        if (target === "global") return [2, 0];
+        if (!target.includes(":")) return [1, 0];
+        return [0, -target.split(":").slice(1).join(":").split(/[/\\]/).length];
+      };
+      return [...byTarget.entries()]
+        .sort((a, b) => { const ra = rank(a[0]), rb = rank(b[0]); return ra[0] - rb[0] || ra[1] - rb[1]; })
+        .map(([target, add]) => ({ target, add }));
+    },
+
+    exMultiPrice() {
+      const d = this.exDialog;
+      if (!d || !d.multi || d.loading) return;
+      const seq = ++this._exPriceSeq;
+      const writes = this.exMultiWrites();
+      d.prices = {};
+      d.pricing = !!writes.length;
+      Promise.all(writes.map(async (w) => {
+        let files = 0, bytes = 0, bad = false;
+        for (let i = 0; i < w.add.length; i += 30) {
+          const res = await this.exPricePatterns(w.target, w.add.slice(i, i + 30), 0);
+          if (!res) { bad = true; break; }
+          for (const r of res) { files += Number(r.files || 0); bytes += Number(r.bytes || 0); if (r.error) bad = true; }
+        }
+        if (seq === this._exPriceSeq && this.exDialog) d.prices[w.target] = { files, bytes, bad };
+      })).then(() => {
+        if (seq === this._exPriceSeq && this.exDialog) d.pricing = false;
+      });
+      this.exLoadDiffs();
+    },
+
+    exMultiReady() {
+      const d = this.exDialog;
+      if (!d || d.loading || d.pricing) return false;
+      const writes = this.exMultiWrites();
+      return writes.length > 0 && writes.every((w) => d.prices[w.target] && !d.prices[w.target].bad);
+    },
+
+    exMultiKeepout() {
+      const d = this.exDialog;
+      let files = 0, bytes = 0;
+      for (const p of Object.values(d.prices || {})) { files += p.files; bytes += p.bytes; }
+      return `up to ${files.toLocaleString()} file${files === 1 ? "" : "s"} · ${this.fmtB(bytes)}`;
+    },
+
+    exMultiCoverageText() {
+      const d = this.exDialog;
+      const on = d.items.filter((i) => i.on);
+      const done = on.filter((i) => !this._exItemStill(i).length).length;
+      return `${done} of ${on.length} items leave every backup that holds them.`;
     },
 };
