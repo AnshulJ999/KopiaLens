@@ -22,10 +22,43 @@ def test_flat_restore_names_are_unique():
 def test_beside_the_original_never_reuses_a_name(tmp_path):
     orig = tmp_path / "notes.txt"
     orig.write_text("x")
-    first = restore._beside(str(orig), "2026-09-01T10:00:00Z")
+    first = restore._beside(str(orig), "2026-09-01T10:00:00Z", os.sep)
     assert os.path.basename(first) == "notes (2026-09-01).txt"
     open(first, "w").close()
-    assert os.path.basename(restore._beside(str(orig), "2026-09-01T10:00:00Z")) == "notes (2026-09-01 2).txt"
+    assert os.path.basename(restore._beside(str(orig), "2026-09-01T10:00:00Z", os.sep)) == "notes (2026-09-01 2).txt"
+
+
+def test_beside_uses_the_sources_separator():
+    assert restore._beside("/home/me/notes.txt", "2026-09-01", "/") == "/home/me/notes (2026-09-01).txt"
+    assert restore._beside("C:\\Users\\me\\notes.txt", "2026-09-01", "\\") == "C:\\Users\\me\\notes (2026-09-01).txt"
+
+
+def test_original_location_must_be_a_path_on_this_computer(monkeypatch):
+    monkeypatch.setattr(restore.os, "name", "nt")
+    assert restore._writable_here("C:\\Users\\me\\a.txt") and restore._writable_here("\\\\nas\\share\\a.txt")
+    assert not restore._writable_here("/home/me/a.txt")
+    monkeypatch.setattr(restore.os, "name", "posix")
+    assert restore._writable_here("/home/me/a.txt") and not restore._writable_here("C:\\Users\\me\\a.txt")
+
+
+def test_version_restore_prefers_the_picked_snapshot(monkeypatch):
+    rows = [{"snapshot_id": "new", "start_time": "2026-09-10", "size": 5, "content_id": "c1"},
+            {"snapshot_id": "mid", "start_time": "2026-09-05", "size": 6, "content_id": "c2"},
+            {"snapshot_id": "old", "start_time": "2026-09-01", "size": 5, "content_id": "c1"}]
+    monkeypatch.setattr(restore, "file_versions", lambda repo, s, p: rows)
+    monkeypatch.setattr(restore, "sources_index", lambda repo: {SRC: [{"id": "new"}, {"id": "old"}]})
+    item = restore.RestoreItem(source=SRC, full_path="G:\\Data\\a.txt", content_id="c1", snapshot_id="old")
+    r = restore.resolve_item("3", item)
+    assert r["snapshot_id"] == "old" and r["source_id"] == "old/a.txt"
+
+
+def test_unticked_ignore_permission_errors_is_passed_to_kopia(monkeypatch):
+    from app.core import kopia
+    monkeypatch.setattr(kopia, "_repo_args", lambda repo: [])
+    base = {"restore_owners": True, "restore_permissions": True, "restore_times": True}
+    assert "--no-ignore-permission-errors" not in kopia.restore_command_full("3", "s", "t", {**base, "ignore_permission_errors": True})
+    assert "--no-ignore-permission-errors" in kopia.restore_command_full("3", "s", "t", {**base, "ignore_permission_errors": False})
+    assert "--no-ignore-permission-errors" not in kopia.restore_command_full("3", "s", "t", base)
 
 
 def test_compare_counts_new_identical_and_different(tmp_path, monkeypatch):

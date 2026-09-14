@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import re
 import shutil
 import stat as statmod
 import subprocess
@@ -88,10 +89,11 @@ def resolve_item(repo: str, it: RestoreItem) -> dict:
     snaps = sources_index(repo).get(it.source, [])
     if it.content_id:
         size, snap_id, snap_time = None, it.snapshot_id or "", ""
-        for v in file_versions(repo, it.source, it.full_path):
-            if v.get("content_id") == it.content_id:
-                size, snap_id, snap_time = v.get("size"), v.get("snapshot_id") or snap_id, v.get("start_time") or ""
-                break
+        rows = [v for v in file_versions(repo, it.source, it.full_path) if v.get("content_id") == it.content_id]
+        # the same content can return after a change (A -> B -> A): prefer the snapshot the user picked
+        pick = next((v for v in rows if it.snapshot_id and v.get("snapshot_id") == it.snapshot_id), rows[0] if rows else None)
+        if pick:
+            size, snap_id, snap_time = pick.get("size"), pick.get("snapshot_id") or snap_id, pick.get("start_time") or ""
         live = snap_id and any(s.get("id") == snap_id for s in snaps)
         return {"name": name, "obj": it.content_id, "type": "f", "size": int(size or 0), "files": 1,
                 "mtime": "", "snapshot_id": snap_id, "snap_time": str(snap_time or ""),
@@ -120,16 +122,24 @@ def resolve_item(repo: str, it: RestoreItem) -> dict:
             "source_id": _source_id(it.source, it.full_path, h["snapshot_id"])}
 
 
-def _beside(full_path: str, snap_time: str) -> str:
-    folder, base = os.path.split(full_path)
+def _beside(full_path: str, snap_time: str, sep: str) -> str:
+    """A dated copy next to the original, split with the source's own separator."""
+    folder, _, base = full_path.rstrip(sep).rpartition(sep)
     stem, ext = os.path.splitext(base)
     day = (snap_time or dt.date.today().isoformat())[:10]
-    cand = os.path.join(folder, f"{stem} ({day}){ext}")
+    cand = f"{folder}{sep}{stem} ({day}){ext}"
     n = 2
     while os.path.exists(cand):
-        cand = os.path.join(folder, f"{stem} ({day} {n}){ext}")
+        cand = f"{folder}{sep}{stem} ({day} {n}){ext}"
         n += 1
     return cand
+
+
+def _writable_here(path: str) -> bool:
+    """Whether a path from a backup can exist on this computer (Windows drive/UNC vs POSIX)."""
+    if os.name == "nt":
+        return bool(re.match(r"^([A-Za-z]:[\\/]|[\\/]{2}[^\\/])", path))
+    return path.startswith("/")
 
 
 def _flat_names(names: list[str]) -> list[str]:
@@ -227,10 +237,13 @@ def restore_plan(body: PlanBody) -> dict:
     names = _flat_names([r["name"] for r in resolved])
     items = []
     for it, r, name in zip(body.items, resolved, names):
+        if mode in ("original", "beside") and not _writable_here(it.full_path):
+            raise HTTPException(status_code=400, detail=(
+                f"{it.full_path} is not a path on this computer. Restore to a folder instead."))
         if mode == "original":
             target = it.full_path
         elif mode == "beside":
-            target = _beside(it.full_path, r["snap_time"])
+            target = _beside(it.full_path, r["snap_time"], pathrules.sep(it.source))
         elif archive:
             target = body.target.strip()
         else:

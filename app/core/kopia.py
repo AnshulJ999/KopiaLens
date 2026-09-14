@@ -1029,7 +1029,6 @@ _RESTORE_FLAG_MAP = {
     "ignore_errors": ("--ignore-errors", True),
     "write_files_atomically": ("--write-files-atomically", True),
     "write_sparse_files": ("--write-sparse-files", True),
-    "ignore_permission_errors": ("--ignore-permission-errors", True),
     "delete_extra": ("--delete-extra", True),
     # "restore X" toggles: when FALSE we pass --skip-X
     "restore_owners": ("--skip-owners", False),
@@ -1051,6 +1050,8 @@ def restore_command_full(repo: str, source_id: str, target: str, options: dict |
     for key, (flag, when) in _RESTORE_FLAG_MAP.items():
         if bool(opts.get(key)) == when:
             cmd.append(flag)
+    if opts.get("ignore_permission_errors") is False:  # kopia ignores permission errors by default
+        cmd.append("--no-ignore-permission-errors")
     if opts.get("parallel"):
         cmd += ["--parallel", str(int(opts["parallel"]))]
     if opts.get("shallow") not in (None, ""):
