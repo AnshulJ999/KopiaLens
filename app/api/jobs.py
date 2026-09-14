@@ -186,7 +186,7 @@ def start(payload: JobStartRequest) -> dict:
 
 @router.get("/jobs/status")
 def status(job_id: str, after: int = 0) -> dict:
-    s = jobs.job_status(job_id, after)
+    s = jobs.job_status(job_id, after) or jobs.history_status(job_id, after)
     if s is None:
         raise HTTPException(status_code=404, detail=f"unknown job: {job_id}")
     return s

@@ -60,3 +60,17 @@ def test_maintenance_job_builds_safety_and_mode(monkeypatch):
     assert meta["safety"] == "none"
     cmds, meta = jobs._build_commands("maintenance", "3", {"full": False})
     assert cmds == [["maintenance", "run"]] and meta["safety"] == "full"
+
+
+def test_finished_job_from_before_a_restart_still_opens(tmp_path, monkeypatch):
+    log = tmp_path / "job.log"
+    log.write_text("=== job abc restore ===\nerror restoring: boom\n", encoding="utf-8")
+    rec = {"job_id": "abc", "kind": "restore", "kind_label": "Restoring", "repo": "3", "label": "x",
+           "dry": False, "mutating": False, "state": "failed", "rc": 1, "error": "exit 1", "created": 1.0,
+           "started": 1.0, "finished": 2.0, "elapsed": 1.0, "total": 1, "done": 1, "errors": 1,
+           "log_path": str(log), "detail": {}}
+    monkeypatch.setattr(jobs, "read_job_history", lambda limit=200: [rec])
+    s = jobs.history_status("abc")
+    assert s["state"] == "failed" and s["from_history"] is True
+    assert s["lines"][-1].endswith("error restoring: boom") and s["cursor"] == 2
+    assert jobs.history_status("nope") is None

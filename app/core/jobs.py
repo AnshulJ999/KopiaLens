@@ -537,6 +537,26 @@ def job_status(job_id: str, after: int = 0) -> dict | None:
         return out
 
 
+HISTORY_TAIL_LINES = 400
+
+
+def history_status(job_id: str, after: int = 0) -> dict | None:
+    """A finished job from before the last restart: its saved record plus the tail of its log."""
+    rec = next((r for r in read_job_history(limit=HISTORY_FILE_LINES) if r.get("job_id") == job_id), None)
+    if rec is None:
+        return None
+    lines: list[str] = []
+    try:
+        with open(rec.get("log_path") or "", encoding="utf-8", errors="replace") as fh:
+            lines = [ln.rstrip("\n") for ln in fh if ln.strip()][-HISTORY_TAIL_LINES:]
+    except OSError:
+        pass
+    lines = [("--:--:-- " + ln) for ln in lines]   # the panel expects a time prefix
+    return {**rec, "results": [], "held": False, "freed": None, "target": None, "commands_text": "",
+            "from_history": True, "line_count": len(lines), "cursor": len(lines), "skipped": 0,
+            "lines": lines[max(0, int(after)):]}
+
+
 def list_jobs() -> list[dict]:
     """Every known job, newest first - the header chip reads running entries from here."""
     with _JOBS_LOCK:

@@ -14,7 +14,12 @@ const jobsPart = {
     async openJobPanel(jobId) {
       const seq = ++this._jobOpenSeq;
       const s = await getJson(`/api/jobs/status?job_id=${encodeURIComponent(jobId)}&after=0`).catch((e) => { this.error = e.message; return null; });
-      if (!s || seq !== this._jobOpenSeq) return;
+      if (!s) {  // gone from memory and history: never leave a chip that cannot open
+        this._markJobSeen(jobId);
+        this.runningJobs = (this.runningJobs || []).filter((j) => j.job_id !== jobId);
+        return;
+      }
+      if (seq !== this._jobOpenSeq) return;
       if (s.state !== "running") this._markJobSeen(jobId);  // opening the panel acknowledges a finished job
       this.jobEarly = 0;
       this.jobLines = [];
@@ -240,8 +245,10 @@ const jobsPart = {
         }
       }
       const seen = this._seenJobs();
+      const now = Date.now() / 1000;
       this.runningJobs = (r.jobs || []).filter((j) => j.state === "running"
-        || ((j.state === "failed" || (j.state === "done" && j.errors > 0)) && !seen.includes(j.job_id)));
+        || ((j.state === "failed" || (j.state === "done" && j.errors > 0)) && !seen.includes(j.job_id)
+            && now - (j.finished || j.created || 0) < JOB_CHIP_FAILURE_WINDOW));
       const q = await getJson("/api/index/pending").catch(() => null);
       if (q) this.indexPending = (q.pending || []).map((p) => ({ ...p, offset: Date.now() / 1000 - q.now }));
     },
@@ -304,4 +311,6 @@ const jobsPart = {
 
 // Clean-mode noise: the per-file action lines a big remove emits once per file; the plan
 // already knows the file list, so the pane shows what is being processed instead.
+// Unseen failures stay in the header chip for a day; older ones live in Logs > Activity.
+const JOB_CHIP_FAILURE_WINDOW = 24 * 3600;
 const JOB_LINE_NOISE = /^will remove file /i;
