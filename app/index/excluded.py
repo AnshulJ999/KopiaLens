@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from config import kopia_repos
 
-from ..core.everything import es_children, list_drives, recursive_count, recursive_size
+from ..core.disklookup import children as es_children, list_drives, recursive_count, recursive_size
 from .store import read_cursor
 
 _SEP = chr(92)  # backslash
@@ -209,13 +209,13 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
     dirs = [it for it in items if it["is_dir"]]
 
     def _cnt(it):
-        return recursive_count(base + sep + it["name"])
+        return recursive_count(base + sep + it["name"])  # None when the disk lookup could not count
 
     counts = list(ThreadPoolExecutor(max_workers=16).map(_cnt, dirs)) if dirs else []
     cmap = {id(it): n for it, n in zip(dirs, counts)}
     for it in items:
         it["total_size"] = it["disk_bytes"]
-        tf = cmap.get(id(it), 1) if it["is_dir"] else 1
+        tf = (cmap.get(id(it)) or 0) if it["is_dir"] else 1
         it["total_files"] = tf
         it["excluded_files"] = max(0, tf - it["backed_files"])
 
@@ -267,7 +267,7 @@ def drive_stats() -> list[dict]:
         return {
             "path": p, "used": d["used"], "total_size": ts, "total_files": tc,
             "backed_bytes": bs, "backed_files": bc,
-            "excluded_bytes": max(0, ts - bs), "excluded_files": max(0, tc - bc),
+            "excluded_bytes": max(0, (ts or 0) - bs), "excluded_files": max(0, (tc or 0) - bc),
             "bz_backed_bytes": bzb, "bz_backed_files": bzf,
         }
 

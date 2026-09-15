@@ -8,13 +8,14 @@
             <button @click="setExcludedFilter('all')" :class="excludedFilter==='all' ? 'bg-sel' : ''" class="px-2 h-8 border-l border-bd">All</button>
           </div>
           <span class="text-sm text-muted" x-text="excludedMeta"></span>
-          <span x-show="!excludedOk" class="text-sm text-danger font-medium">⚠ Everything (es.exe) not reachable — is it running?</span>
+          <span x-show="!excludedOk" class="text-sm text-danger font-medium" x-text="diskLookupText() || 'Disk lookup is not available.'"></span>
+          <span x-show="excludedOk && diskLookup && diskLookup.provider === 'scan'" class="text-xs text-muted">Folder scan in use: big folders may show sizes as not measured.</span>
         </div>
         <div class="flex items-center gap-1 text-sm flex-wrap px-1">
           <template x-for="(c, i) in excludedCrumbs()" :key="i">
             <span><span class="crumb" @click="excludedNav(c.path)" x-text="c.label"></span><span class="text-faint" x-show="i < excludedCrumbs().length - 1"> › </span></span>
           </template>
         </div>
-        <div class="text-[11px] text-muted px-1">"Not backed up" = on disk but absent from <span class="font-medium">paths(in_latest)</span> of either repo. Local fixed drives only. Folder sizes &amp; the disk listing come from Everything.</div>
+        <div class="text-[11px] text-muted px-1">"Not backed up" = on disk but absent from <span class="font-medium">paths(in_latest)</span> of either repo. Local fixed drives only. Folder sizes and the disk listing come from the disk lookup (Settings, Advanced).</div>
         <div id="excludedTable" class="flex-1 min-h-0"></div>
       </section>

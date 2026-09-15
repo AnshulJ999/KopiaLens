@@ -215,6 +215,11 @@ def run(repo: str, full: bool = False) -> dict:
                 policybackup.nightly_backup(repo)
             except Exception as exc:  # noqa: BLE001 - a backup hiccup must not fail the stage
                 logging.error("policy backup repo=%s failed: %s", repo, exc)
+            try:
+                from . import policycheck
+                policycheck.run(repo)
+            except Exception as exc:  # noqa: BLE001 - the check is a diagnostic
+                logging.error("policy inheritance check repo=%s failed: %s", repo, exc)
 
         def _policy_prices() -> None:
             #: whole-policy "keeping out" pricing as a STORED stage - the tab reads the

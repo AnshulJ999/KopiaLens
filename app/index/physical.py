@@ -26,12 +26,15 @@ from .queries import _ESC, like_literal
 from .store import read_cursor
 
 
-def _chunks_for_obj(repo: str, dbsql, obj: str) -> set[str]:
-    """Content chunks that physically back one file object (expands indirect objects)."""
+def _chunks_for_obj(repo: str, dbsql, obj: str, fetch: bool = True) -> set[str] | None:
+    """Content chunks that physically back one file object (expands indirect objects). With
+    ``fetch=False`` an object missing from the walk cache returns None instead of calling kopia."""
     if not obj:
         return set()
     if obj.startswith("I"):
-        return expand_indirect(repo, dbsql, {obj})
+        missing: list[str] = []
+        parts = expand_indirect(repo, dbsql, {obj}, fetch=fetch, missing=missing)
+        return None if missing else parts
     return {obj}
 
 
@@ -276,7 +279,83 @@ def _reclaim_cache_get(ck: tuple) -> int | None:
         return val
 
 
-def reclaim_for(repo: str, content_ids: list[str], cap: int = 500) -> dict[str, int]:
+def _objects_by_path(cur, handles: set[tuple[str, str]]) -> dict[tuple[str, str], list[str]]:
+    """(source, full_path) -> every distinct object the path has held across its versions.
+    Batched path resolution, then one chunked filev scan."""
+    objs_of: dict[tuple[str, str], list[str]] = {h: [] for h in handles}
+    if not handles:
+        return objs_of
+    sid_of = resolve.src_map(cur)
+    rev_sid = {v: k for k, v in sid_of.items()}
+    pid_of = resolve.path_ids(cur, [(sid_of[s], fp) for s, fp in handles if s in sid_of])
+    key_of = {pid: (rev_sid[sid], fp) for (sid, fp), pid in pid_of.items()}
+    rows_by_pid: dict[int, list[int]] = {}
+    all_c: set[int] = set()
+    pids = sorted(set(pid_of.values()))
+    for i in range(0, len(pids), 900):
+        grp = pids[i:i + 900]
+        if not grp:
+            continue
+        q = ("SELECT path_id, cid_id FROM filev WHERE path_id IN (%s)"
+             % ",".join("?" * len(grp)))
+        for pid, c in cur.execute(q, grp).fetchall():
+            if c is not None and pid in key_of:
+                rows_by_pid.setdefault(pid, []).append(c)
+                all_c.add(c)
+    cstr = resolve.content_ids(cur, sorted(all_c))
+    for pid, cs in rows_by_pid.items():
+        objs = objs_of[key_of[pid]]
+        for c in cs:
+            obj = cstr.get(c)
+            if obj and obj not in objs:  # DISTINCT: one object per path, however many versions
+                objs.append(obj)
+    return objs_of
+
+
+def stored_all_versions(repo: str, handles: list[tuple[str, str]]) -> dict[tuple[str, str], int | None]:
+    """Packed bytes of the union of chunks across every version a path has held (chunks shared
+    between its own versions count once). None when a version's chunk list is not in the walk
+    cache; never calls kopia."""
+    uniq = set(handles)
+    if not uniq:
+        return {}
+    from .store import read_manifest
+    gen = (read_manifest(repo) or {}).get("generation")
+    out: dict[tuple[str, str], int | None] = {}
+    todo = set()
+    for h in uniq:
+        hit = _reclaim_cache_get(("stored", repo, gen) + h)
+        if hit is not None:
+            out[h] = hit
+        else:
+            todo.add(h)
+    if not todo:
+        return out
+    dbsql = cache_db(repo)
+    smap = load_sizemap(repo)
+    cur = read_cursor(repo)
+    try:
+        objs_of = _objects_by_path(cur, todo)
+    finally:
+        cur.close()
+    memo: dict[str, set[str] | None] = {}
+    for h in todo:
+        chunks: set[str] = set()
+        known = True
+        for obj in objs_of.get(h, []):
+            if obj not in memo:
+                memo[obj] = _chunks_for_obj(repo, dbsql, obj, fetch=False)
+            if memo[obj] is None:
+                known = False
+                break
+            chunks |= memo[obj]
+        out[h] = sum(smap.get(c, 0) for c in chunks) if known and objs_of.get(h) else None
+        if out[h] is not None:
+            _reclaim_cache_put(("stored", repo, gen) + h, out[h])
+    return out
+
+
+def reclaim_for(repo: str, content_ids: list[str], cap: int = 500, fetch: bool = True) -> dict[str, int]:
     """For each content id (a file's latest object), compute the TRUE 'reclaim if purged
     everywhere': the deduped union of chunks across ALL versions of ALL paths sharing that
     content, whose global refcount is fully attributable to those paths. Cached per content id.
@@ -286,9 +365,10 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500) -> dict[str, 
     `files.content_id`, so the per-id loop scanned the full history once per id - up to 500 scans
     for one Reclaim click. One scan for "which paths hold these ids" plus one for "which objects
     each of those paths has held" returns byte-identical results, and the chunk-expansion memo is
-    shared across the page so a repeated indirect object is expanded once, not per id."""
-    dbsql = cache_db(repo)
-    smap = load_sizemap(repo)
+    shared across the page so a repeated indirect object is expanded once, not per id.
+
+    ``fetch=False`` never calls kopia: an id whose chunk lists are not all in the walk cache is left
+    out of the answer and not cached."""
     uniq: list[str] = []
     seen: set[str] = set()
     for cid in content_ids:
@@ -307,6 +387,8 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500) -> dict[str, 
             misses.append(cid)
     if not misses:
         return out
+    dbsql = cache_db(repo)   # loaded only on a cache miss: the sizemap unpickle alone is ~1 s
+    smap = load_sizemap(repo)
     cur = read_cursor(repo)
     try:
         # cid -> distinct (source, full_path) pairs holding it. Input ids resolve batched, then
@@ -328,48 +410,27 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500) -> dict[str, 
                 if name:
                     shares[name].append((src, fp))
 
-        # (source, full_path) -> every distinct object the path has held across its versions.
-        # Batched path resolution (KL47's shape - never a per-path lookup), then one chunked
-        # filev scan; objects come back named via the result-set join.
         handles = {(src, fp) for hs in shares.values() for src, fp in hs}
-        objs_of: dict[tuple[str, str], list[str]] = {h: [] for h in handles}
-        if handles:
-            sid_of = resolve.src_map(cur)
-            rev_sid = {v: k for k, v in sid_of.items()}
-            pid_of = resolve.path_ids(cur, [(sid_of[s], fp) for s, fp in handles if s in sid_of])
-            key_of = {pid: (rev_sid[sid], fp) for (sid, fp), pid in pid_of.items()}
-            rows_by_pid: dict[int, list[int]] = {}
-            all_c: set[int] = set()
-            pids = sorted(set(pid_of.values()))
-            for i in range(0, len(pids), 900):
-                grp = pids[i:i + 900]
-                if not grp:
-                    continue
-                q = ("SELECT path_id, cid_id FROM filev WHERE path_id IN (%s)"
-                     % ",".join("?" * len(grp)))
-                for pid, c in cur.execute(q, grp).fetchall():
-                    if c is not None and pid in key_of:
-                        rows_by_pid.setdefault(pid, []).append(c)
-                        all_c.add(c)
-            cstr = resolve.content_ids(cur, sorted(all_c))
-            for pid, cs in rows_by_pid.items():
-                objs = objs_of[key_of[pid]]
-                for c in cs:
-                    obj = cstr.get(c)
-                    if obj and obj not in objs:  # DISTINCT: one object per path, however many versions
-                        objs.append(obj)
+        objs_of = _objects_by_path(cur, handles)
 
-        chunk_memo: dict[str, set[str]] = {}
+        chunk_memo: dict[str, set[str] | None] = {}
         for cid in misses:
             this_refs: dict[str, int] = {}
+            unknown = False
             for src, fp in shares.get(cid, []):
                 for obj in objs_of.get((src, fp), []):
-                    chunks = chunk_memo.get(obj)
+                    if obj not in chunk_memo:
+                        chunk_memo[obj] = _chunks_for_obj(repo, dbsql, obj, fetch=fetch)
+                    chunks = chunk_memo[obj]
                     if chunks is None:
-                        chunks = _chunks_for_obj(repo, dbsql, obj)
-                        chunk_memo[obj] = chunks
+                        unknown = True
+                        break
                     for c in chunks:
                         this_refs[c] = this_refs.get(c, 0) + 1
+                if unknown:
+                    break
+            if unknown:
+                continue
             refs = _refcount_for(repo, this_refs.keys()) or {}
             reclaim = sum(smap.get(c, 0) for c in this_refs if refs.get(c, 0) <= this_refs[c])
             _reclaim_cache_put((repo, cid), reclaim)

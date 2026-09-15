@@ -71,8 +71,31 @@ def _clear_progress() -> None:
 _WORKER_LOCK = threading.Lock()
 
 
+_LEFTOVER_CHECK: list = [0.0, False]
+
+
+def leftover_worker_running() -> bool:
+    """A Backblaze worker started by a previous app process is still running (checked every 5 s)."""
+    if time.time() - _LEFTOVER_CHECK[0] < 5:
+        return _LEFTOVER_CHECK[1]
+    alive = False
+    try:
+        with open(_progress_path(), encoding="utf-8") as fh:
+            pid = int((json.load(fh) or {}).get("pid") or 0)
+        if pid and pid != os.getpid():
+            from ..core.nightly import our_worker
+            alive = our_worker(pid) is not None
+    except Exception:  # noqa: BLE001 - no progress file, or the process cannot be inspected
+        alive = False
+    _LEFTOVER_CHECK[:] = [time.time(), alive]
+    return alive
+
+
 def state() -> dict:
-    return dict(_STATE)
+    out = dict(_STATE)
+    if not out.get("building") and leftover_worker_running():
+        out["building"] = True
+    return out
 
 
 def _acc_roll(roll: dict, parent_lc: str, child: str, is_dir: bool, is_excl: bool, size: int, rule) -> None:
@@ -749,6 +772,9 @@ def refresh_via_worker(force: bool = False) -> dict:
     both pass the check and launch two worker subprocesses contending for the SQLite write lock);
     always releases and clears `building` when the subprocess finishes, success or failure."""
     if not _WORKER_LOCK.acquire(blocking=False):
+        return {"ok": False, "reason": "already running"}
+    if leftover_worker_running():
+        _WORKER_LOCK.release()
         return {"ok": False, "reason": "already running"}
     _STATE["building"] = True
     try:

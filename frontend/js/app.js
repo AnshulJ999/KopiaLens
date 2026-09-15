@@ -40,7 +40,7 @@ document.addEventListener("alpine:init", () => {
     searchTotal: 0, searchPage: 1, searchPageSize: "500", searchSort: "size", searchDir: "desc",
     pageSizes: ["100", "200", "500", "1000", "2000", "5000", "10000", "Infinite"],
     showFilters: false, minGb: "", maxGb: "", dateFrom: "", dateTo: "", minVersions: "", sharedMin: "", recentBackup: "",
-    dedupe: false, treeDedupe: false, reclaimMap: {}, reclaimComputing: false,
+    dedupe: false, treeDedupe: false, reclaimMap: {},
     showRestore: false, restore: null, showDiff: false, diffText: "", diffBusy: false,
     authProtected: false, newPassword: "",
     policyKeys: ["latest", "hourly", "daily", "weekly", "monthly", "annual"],
@@ -90,6 +90,21 @@ document.addEventListener("alpine:init", () => {
     showPolDiff: false, polDiff: null, polDiffBusy: false, polDiffMode: "save",
     polRestoreName: "", polRestoreMode: "merge", polRestoreCmd: null, polRestoreParsed: null,
     showPolBackups: false, polBackups: null, _polBackupSeq: 0,
+    // Policy editor: field catalogue, resolved previews per target, layout + leaving behaviour,
+    // Preview / leave / new-policy boxes, and the multi-policy draft.
+    polMeta: null, polResolved: {}, polResolveError: "", _polResolveSeq: 0, _polResolveTimer: null,
+    polLayout: "tabs", polLeave: "ask", polSection: "exclusions", polDiffOnly: null,
+    polLeaveBox: null, polNewBox: null, polNewTargets: [], polPreview: null, _polPreviewSeq: 0,
+    polMulti: { on: false, picked: [], fields: {}, plan: null, ticks: {}, busy: false }, _polMultiSeq: 0, _polMultiTimer: null,
+    versionSizes: {}, _versionSeq: 0, _versionTimer: null,
+    diskLookup: null, diskLookupMode: "auto", diskScanBudget: 15,
+    diskLookupText() {
+      const s = this.diskLookup;
+      if (!s) return "";
+      if (s.provider === "everything") return "In use: Everything.";
+      if (s.provider === "scan") return "In use: folder scan." + (s.everything && s.everything.supported && !s.everything.running ? (s.everything.installed ? " Everything is installed but not running." : " Everything is not installed.") : "");
+      return s.note || "Disk lookup is not available.";
+    },
     // exclusion dialog: priced-before-commit pattern adder over the file/folder panels.
     exDialog: null, showExclude: false, _exOpenSeq: 0, _exTargetsSeq: 0, _exPriceSeq: 0, _exCustomTimer: null, _exPriceTimer: null,
     _exDiffSeq: 0, _exDiffTimer: null,
@@ -131,6 +146,8 @@ document.addEventListener("alpine:init", () => {
         this.searchPageSize = this.pageSizes.includes(_ps) ? _ps : "500";
         this.snapSource = kl.snap_source || "*ALL*";  // snapshots-view scope (persisted, default All sources)
         this.panelLayout = kl.panel_layout === "tabbed" ? "tabbed" : "classic";  //
+        this.polLayout = kl.policy_layout === "scroll" ? "scroll" : "tabs";
+        this.polLeave = kl.policy_leave === "keep" ? "keep" : "ask";
         this.searchSort = kl.search_sort || "size";
         this.searchDir = kl.search_dir || "desc";
         this.dedupe = !!kl.search_dedupe;
@@ -170,6 +187,10 @@ document.addEventListener("alpine:init", () => {
       this.armAutoRefresh();
       this.armFreshness();
       this.armJobChip();
+      window.addEventListener("beforeunload", (e) => {
+        if (this.polStageCount()) { e.preventDefault(); e.returnValue = ""; }
+      });
+      this._prevRepo = this.repo;
     },
 
     armFreshness() {
@@ -261,9 +282,19 @@ document.addEventListener("alpine:init", () => {
     },
 
     async repoChanged() {
+      if (this.polStageCount()) {
+        const next = this.repo;
+        this.repo = this._prevRepo;
+        if (!(await this.polConfirmDiscard("Unsaved policy changes belong to this repo."))) return;
+        this.repo = next;
+      }
+      this._prevRepo = this.repo;
       this.selectedSnapshot = ""; this.snapshots = [];
       this.statsData = null; this.blobStats = "";  // stats are per-repo; force reload
       this.polData = null; this.polBackups = null; this.polDiscard();  // policies are per-repo too
+      this.polMeta = null; this.polResolved = {}; this.polNewTargets = [];
+      this.polMulti = { on: false, picked: [], fields: {}, plan: null, ticks: {}, busy: false };
+      this.versionSizes = {};
       this.repoKind = (this.repos.find((r) => r.id === this.repo) || {}).kind || "kopia";
       if (this.repoPinned) {  // pinned tab: keep the choice in the URL, don't touch shared last_repo
         const u = new URL(location.href); u.searchParams.set("repo", this.repo); history.replaceState(null, "", u);
@@ -401,13 +432,13 @@ document.addEventListener("alpine:init", () => {
     csv(id, name) { downloadTable(id, name); },
     };
     // Duplicate-key guard: two parts declaring the same key would compose silently last-wins.
-    const parts = [["core", core], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["themePart", themePart], ["policiesPart", policiesPart]];
+    const parts = [["core", core], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart]];
     const seen = new Map();
     for (const [owner, part] of parts)
       for (const k of Object.keys(part)) {
         if (seen.has(k)) console.error(`kopiaLens: duplicate key "${k}" declared in both ${seen.get(k)} and ${owner}`);
         else seen.set(k, owner);
       }
-    return Object.assign(core, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, diffviewPart, jobsPart, maintenancePart, settingsPart, themePart, policiesPart);
+    return Object.assign(core, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, diffviewPart, jobsPart, maintenancePart, settingsPart, themePart, policiesPart, policyEditPart);
   });
 });

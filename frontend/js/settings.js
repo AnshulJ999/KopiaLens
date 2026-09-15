@@ -19,6 +19,9 @@ const settingsPart = {
         this.reclaimInterval = Number(kl.reclaim_interval || 10800);
         this.excludedTolerance = Number(kl.excluded_tolerance ?? 0.05);
         this.esPath = kl.es_path || "";
+        this.diskLookupMode = ["auto", "everything", "scan", "off"].includes(kl.disk_lookup) ? kl.disk_lookup : "auto";
+        this.diskScanBudget = Number(kl.disk_scan_budget || 15);
+        getJson("/api/disk-lookup?refresh=true").then((s) => { this.diskLookup = s; }).catch(() => {});
         this.authProtected = !!kl.auth_protected;  // the hash itself never reaches the browser
         this.newPassword = "";
         this.panelLayout = kl.panel_layout === "tabbed" ? "tabbed" : "classic";  //
@@ -65,6 +68,8 @@ const settingsPart = {
           reclaim_interval: Number(this.reclaimInterval) || 10800,
           excluded_tolerance: Number(this.excludedTolerance),
           es_path: this.esPath || "",
+          disk_lookup: this.diskLookupMode,
+          disk_scan_budget: Math.max(1, Number(this.diskScanBudget) || 15),
           panel_layout: this.panelLayout === "tabbed" ? "tabbed" : "classic",
           index_mode: this.indexMode,
           index_time: this.indexTime,

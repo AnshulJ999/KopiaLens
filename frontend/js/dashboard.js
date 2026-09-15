@@ -32,6 +32,8 @@ const dashboardPart = {
           { title: "Last snapshot", field: "last_time", width: 165, formatter: (c) => timeCell(c.getValue()) },
           { title: "Next snapshot", field: "next_snapshot", width: 165, formatter: (c) => timeCell(c.getValue()) },
           { title: "Pins", field: "pins", width: 64, hozAlign: "right" },
+          { title: "", field: "_actions", headerSort: false, width: 170, hozAlign: "center",
+            formatter: () => "<button class='kl-btn quiet' data-act='snap' style='height:22px'>Snapshot now</button><button class='kl-btn quiet' data-act='policy' style='height:22px'>Policy</button>" },
         ], {
           initialSort: [{ column: "source", dir: "asc" }],
           onRowDblClick: (_e, row) => { this.selectedSource = row.getData().source; this.snapSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); },
@@ -39,9 +41,39 @@ const dashboardPart = {
             { label: "Browse snapshots", action: (_e, row) => { this.selectedSource = row.getData().source; this.snapSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); } },
             { label: "Browse files (tree)", action: (_e, row) => { this.selectedSource = row.getData().source; this.active = "tree"; this.openTree(); } },
             { label: "Simulate this source", action: (_e, row) => { this.selectedSource = row.getData().source; this.simMode = "one"; this.active = "simulate"; this.runSimulate(); } },
+            { label: "Snapshot now…", action: (_e, row) => this.snapshotNow(row.getData().source) },
+            { label: "Open its policy", action: (_e, row) => this.openSourcePolicy(row.getData().source) },
             { label: "Copy source", action: (_e, row) => this.copyText(row.getData().source) },
           ],
         });
+        const dt = document.querySelector("#dashboardTable");
+        if (dt && dt._tabulator && !dt._tabulator._klActions) {
+          dt._tabulator._klActions = true;
+          dt._tabulator.on("cellClick", (e, cell) => {
+            const act = e.target && e.target.closest && e.target.closest("[data-act]");
+            if (!act) return;
+            const src = cell.getRow().getData().source;
+            if (act.dataset.act === "snap") this.snapshotNow(src); else this.openSourcePolicy(src);
+          });
+        }
       }, "Loading dashboard...");
+    },
+
+    async snapshotNow(source) {
+      const r = await this.klConfirm({
+        title: "Take a snapshot now?",
+        facts: [["Folder", sourcePath(source)], ["Backup", source], ["Repo", (this.repos.find((x) => x.id === this.repo) || {}).name || this.repo]],
+        note: "Kopia applies this folder's policy: its exclusions, compression and retention. KopiaLens does not run schedules; KopiaUI or a kopia server does.",
+        input: { label: "Description (optional)", placeholder: "Before the upgrade" },
+        confirmLabel: "Snapshot now", danger: false,
+      });
+      if (!r) return;
+      await this.startJob("snapshot_create", { source, description: r.value || "" }, sourcePath(source));
+    },
+
+    async openSourcePolicy(source) {
+      this.active = "policies";
+      await this.loadPolicies();
+      this.polTryLeave(source);
     },
 };

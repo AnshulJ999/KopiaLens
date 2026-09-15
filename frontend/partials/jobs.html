@@ -43,8 +43,18 @@
                   <template x-if="r.ok">
                     <div class="space-y-1">
                       <div class="text-xs font-medium" :style="r.matches ? 'color:var(--ok)' : 'color:var(--warn)'"
-                           x-text="r.matches ? 'Saved to ' + (r.target === 'global' ? 'Global' : shortSource(r.target)) : 'Kopia stored a different list than expected. Check the Policies tab.'"></div>
-                      {{ rulediff('jobResultDiff(r)') }}
+                           x-text="r.matches ? 'Saved to ' + (r.target === 'global' ? 'Global' : shortSource(r.target)) : 'Kopia stored something different than expected. Check the Policies tab.'"></div>
+                      <template x-for="fc in (r.fields || [])" :key="fc.field">
+                        <div class="flex items-baseline gap-2 text-[12px] flex-wrap">
+                          <span class="w-44 shrink-0" x-text="polFieldLine(fc).label"></span>
+                          <span style="color:var(--danger)" class="line-through" x-text="polFieldLine(fc).before"></span>
+                          <span class="text-faint">→</span>
+                          <span style="color:var(--ok)" x-text="polFieldLine(fc).after"></span>
+                        </div>
+                      </template>
+                      <template x-if="JSON.stringify(r.before || []) !== JSON.stringify(r.stored || r.after || [])">
+                        <div>{{ rulediff('jobResultDiff(r)') }}</div>
+                      </template>
                     </div>
                   </template>
                 </div>

@@ -884,9 +884,19 @@ def snapshot_delete_dry_run(repo: str, snapshot_ids: list[str]) -> dict:
 
 def snapshot_pin_command(repo: str, ids: list[str], remove: bool = False,
                          pin_name: str = "do-not-delete") -> list[str]:
-    """Pin (protect from retention deletion) or unpin snapshots. Command-gen only."""
-    flag = "--remove" if remove else "--pins"
+    """Pin (protect from retention deletion) or unpin snapshots."""
+    flag = "--remove" if remove else "--add"
     return ["kopia"] + _repo_args(repo) + ["snapshot", "pin", *ids, flag, pin_name]
+
+
+def snapshot_create_command(repo: str, path: str, description: str = "") -> list[str]:
+    """Take a snapshot of a folder as this computer's kopia user. Kopia applies its policy."""
+    if not path or any(c in path for c in (chr(10), chr(13))):
+        raise ValueError("invalid snapshot path")
+    cmd = ["kopia"] + _repo_args(repo) + ["snapshot", "create", path]
+    if description:
+        cmd += ["--description", description[:1000]]
+    return cmd
 
 
 # ---- policy editing (/) ----------------------------------------------------

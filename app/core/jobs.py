@@ -46,7 +46,9 @@ from .kopia import (
     maintenance_run_command,
     remove_files_chunked_commands,
     restore_command_full,
+    snapshot_create_command,
     snapshot_delete_commands,
+    snapshot_pin_command,
 )
 
 log = get_logger("jobs")
@@ -61,7 +63,9 @@ KINDS = {
     "snapshot_delete": {"label": "Deleting snapshots", "mutating": True},
     "maintenance": {"label": "Running maintenance", "mutating": True},
     "restore": {"label": "Restoring", "mutating": False},
-    "policy_write": {"label": "Saving policy rules", "mutating": False},
+    "policy_write": {"label": "Saving policies", "mutating": False},
+    "snapshot_create": {"label": "Taking a snapshot", "mutating": False},
+    "snapshot_pin": {"label": "Changing pins", "mutating": False},
 }
 
 AUDIT_ACTION = {
@@ -70,6 +74,8 @@ AUDIT_ACTION = {
     "maintenance": "maintenance",
     "restore": "restore",
     "policy_write": "policy-write",
+    "snapshot_create": "snapshot-create",
+    "snapshot_pin": "snapshot-pin",
 }
 
 
@@ -190,6 +196,13 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
                 for it in items]
         meta = {"source_id": items[0]["source_id"], "target": params.get("label_target") or items[0]["target"],
                 "items": len(items), "dry": False}
+    elif kind == "snapshot_create":
+        cmds = [snapshot_create_command(repo, params["path"], params.get("description") or "")]
+        meta = {"path": params["path"], "dry": False}
+    elif kind == "snapshot_pin":
+        ids = params.get("snapshot_ids") or []
+        cmds = [snapshot_pin_command(repo, ids, remove=bool(params.get("remove")))] if ids else []
+        meta = {"snapshots": len(ids), "remove": bool(params.get("remove")), "dry": False}
     elif kind == "policy_write":
         # Python steps (one per policy), then optionally the delete's kopia commands.
         steps = list(params.get("steps") or [])
@@ -231,6 +244,10 @@ def _default_label(kind: str, params: dict, meta: dict) -> str:
     if kind == "restore":
         target = meta["target"]
         return f"to {target}"
+    if kind == "snapshot_create":
+        return meta["path"]
+    if kind == "snapshot_pin":
+        return f"{'unpin' if meta['remove'] else 'pin'} {meta['snapshots']} snapshot(s)"
     if kind == "policy_write":
         n = meta["writes"]
         base = f"{n} polic{'y' if n == 1 else 'ies'}"
@@ -391,12 +408,10 @@ def _run(job: dict, cmds: list[list[str]]) -> None:
 
 
 def folder_size(path: str) -> int | None:
-    """Folder size from Everything (instant); None when Everything cannot answer."""
-    from . import everything
+    """Folder size from the disk lookup; None when it cannot answer in time."""
+    from . import disklookup
     try:
-        if not everything.available():
-            return None
-        return everything.recursive_size(path)
+        return disklookup.recursive_size(path)
     except Exception:  # noqa: BLE001 - the freed figure is optional
         return None
 

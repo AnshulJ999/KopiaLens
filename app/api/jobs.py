@@ -89,10 +89,30 @@ def _resolve_params(kind: str, repo: str, params: dict) -> dict:
         if size is not None:
             out.update(measure_path=path, size_before=size)
         return out
+    if kind == "snapshot_create":
+        source = params.get("source") or ""
+        from ..core import policyresolve
+        from ..core.paths import source_root
+        from .policies import client_options
+        user, host, _path = policyresolve.parse_key(source)
+        client = client_options(repo)
+        if not source or not client["host"]:
+            raise jobs.JobRefused("this repository's client identity could not be read")
+        if user.lower() != client["user"].lower() or host.lower() != client["host"].lower():
+            raise jobs.JobRefused(f"{user}@{host} is another computer; snapshots run on the computer they back up")
+        path = source_root(source)
+        if not os.path.isdir(path):
+            raise jobs.JobRefused(f"{path} is not on this computer")
+        return {"path": path, "description": (params.get("description") or "").strip()}
+    if kind == "snapshot_pin":
+        ids = [i for i in (params.get("snapshot_ids") or []) if i]
+        if not ids:
+            raise jobs.JobRefused("no snapshots selected")
+        return {"snapshot_ids": ids, "remove": bool(params.get("remove"))}
     if kind == "policy_write":
         writes = [w for w in (params.get("writes") or []) if w.get("target")]
         if not writes:
-            raise jobs.JobRefused("no rules to add")
+            raise jobs.JobRefused("no changes to save")
         then = params.get("then")
         out = {"steps": [_write_step(repo, w) for w in writes], "then": None}
         if then:
@@ -114,7 +134,8 @@ def _write_step(repo: str, w: dict):
         label = "Global" if target == "global" else target
         try:
             r = write_rules(repo, target, Changes(add=w.get("add") or [], remove=w.get("remove") or [],
-                                                  delete_policy=bool(w.get("delete_policy"))),
+                                                  delete_policy=bool(w.get("delete_policy")),
+                                                  fields=w.get("fields") or {}),
                             log=lambda text: jobs.say(job, lf, text))
         except _HTTPException as exc:
             jobs.say(job, lf, f"Not added to {label}: {exc.detail}")
@@ -124,6 +145,7 @@ def _write_step(repo: str, w: dict):
         job["results"].append({
             "target": target, "ok": r["ok"], "before": diff["current_rules"],
             "after": diff["resulting_rules"], "stored": r["stored_rules"],
+            "fields": diff.get("field_changes") or [],
             "matches": r["stored_matches"], "backup": (r.get("backup") or {}).get("name", ""),
             "error": "" if r["ok"] else r.get("output_tail", "")[-300:],
         })
@@ -155,6 +177,9 @@ def _on_done(job: dict) -> None:
             refresh_stats(job["repo"])
         except Exception:  # noqa: BLE001
             pass
+        return
+    if job.get("kind") in ("snapshot_create", "snapshot_pin") and job.get("state") == "done":
+        invalidate_sources(job["repo"])  # the snapshot list reads kopia's own listing
         return
     if job.get("dry") or not job.get("mutating") or job.get("held"):
         return

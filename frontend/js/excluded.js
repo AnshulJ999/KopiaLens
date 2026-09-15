@@ -5,14 +5,14 @@ const excludedPart = {
     async loadExcluded() {
       if (!this.excludedDrives.length) {
         const d = await getJson("/api/excluded/drives").catch(() => null);
-        if (d) { this.excludedDrives = d.drives || []; this.excludedOk = !!d.everything_ok; }
+        if (d) { this.excludedDrives = d.drives || []; this.excludedOk = !!d.everything_ok; this.diskLookup = d.disk_lookup || null; }
       }
       if (this.excludedPath) return this.listExcluded(this.excludedPath);
       this.renderExcludedDrives();
     },
     renderExcludedDrives() {
       this.excludedPath = "";
-      this.excludedMeta = this.excludedOk ? `${this.excludedDrives.length} drive(s)` : "Everything (es.exe) not reachable";
+      this.excludedMeta = this.excludedOk ? `${this.excludedDrives.length} drive(s)` : "Disk lookup is not available";
       this.renderExcluded(this.excludedDrives.map((dr) => ({
         name: dr.path.replace(/\\$/, ""), path: dr.path, is_dir: true, status: "drive",
         total_size: dr.total_size || 0, disk_bytes: dr.total_size || 0,

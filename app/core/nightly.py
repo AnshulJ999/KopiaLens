@@ -160,7 +160,7 @@ def _with_reason(summary: dict, returncode: int | None = None) -> dict:
     return summary
 
 
-def _our_worker(pid: int):
+def our_worker(pid: int):
     """The live process for ``pid`` when it is one of our workers, else None. Checked by command
     line, never by PID alone (PIDs get recycled). Raises when the process cannot be inspected."""
     import psutil
@@ -232,17 +232,17 @@ def resume_workers(on_done=None) -> dict:
 
     A live kopia worker is adopted (slot reserved, watched to exit, result recorded); a result a
     worker wrote while no app was running is recorded; a worker that died without one is recorded
-    as interrupted, so the normal retry runs. A leftover Backblaze worker is stopped - it retries
-    straight after startup anyway. Returns the repos per outcome."""
+    as interrupted, so the normal retry runs. A leftover Backblaze worker is left to finish (it
+    records its own result). Returns the repos per outcome."""
     import glob
-    out: dict[str, list[str]] = {"adopted": [], "finished": [], "interrupted": [], "stopped": []}
+    out: dict[str, list[str]] = {"adopted": [], "finished": [], "interrupted": [], "left_running": []}
     dead: dict[str, dict] = {}
     for path in glob.glob(os.path.join(DATA_DIR, "index_progress_repo*.json")):
         repo = os.path.basename(path)[len("index_progress_repo"):-len(".json")]
         info = _read_json(path) or {}
         pid = int(info.get("pid") or 0)
         try:
-            proc = _our_worker(pid) if pid else None
+            proc = our_worker(pid) if pid else None
         except Exception as exc:  # noqa: BLE001 - never block startup on cleanup
             # Keep the file: it is the only record of which PID to check next startup.
             log.warning("could not inspect worker pid %s (%s) - keeping %s for the next startup",
@@ -253,14 +253,9 @@ def resume_workers(on_done=None) -> dict:
             dead[repo] = info
             continue
         if repo == "bz" or repo_kind(repo) == "backblaze":
-            log.warning("stopping the Backblaze index worker (pid %s) left by a previous run", pid)
-            proc.terminate()
-            try:
-                proc.wait(timeout=15)
-            except Exception:  # noqa: BLE001
-                proc.kill()
-            _remove(path)
-            out["stopped"].append(repo)
+            # It records its own result in the Backblaze database; the BZ checks treat it as running.
+            log.info("Backblaze index worker (pid %s) from the previous run left to finish", pid)
+            out["left_running"].append(repo)
             continue
         if repo not in REPOS or not _reserve(repo):
             log.warning("repo=%s index worker (pid %s) left running untracked", repo, pid)

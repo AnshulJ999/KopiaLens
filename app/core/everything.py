@@ -77,6 +77,26 @@ def recursive_size(path: str) -> int:
     return _count_out(_run(["-path", path, "file:", "-get-total-size"]))
 
 
+def find(root: str, name: str, folders_only: bool = False, limit: int = 20000) -> list[dict]:
+    """Entries under ``root`` whose name matches ``name`` (a wildcard, or an exact whole name),
+    biggest first: full path, size (folders: recursive), is_dir."""
+    term = name  # a plain name matches as a substring; callers check the exact match
+    args = ["-path", root, "-csv", "-full-path-and-name", "-size", "-attributes", "-size-format", "1",
+            "-sort", "size-descending", "-n", str(max(1, int(limit)))]
+    if folders_only:
+        args.append("folder:")
+    out = _run(args + [term])
+    rows: list[dict] = []
+    reader = csv.reader(io.StringIO(out))
+    next(reader, None)  # header: Filename,Size,Attributes
+    for rec in reader:
+        if len(rec) < 3:
+            continue
+        rows.append({"path": rec[0], "size": int(rec[1]) if rec[1].isdigit() else 0,
+                     "is_dir": "D" in (rec[2] or "")})
+    return rows
+
+
 def es_children(folder: str) -> list[dict]:
     """Direct children (files + folders) of `folder` from Everything: name, size (bytes), mtime,
     is_dir. Folders report their RECURSIVE size (Everything 1.5 folder-size index). One es call."""

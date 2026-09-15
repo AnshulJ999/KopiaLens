@@ -65,7 +65,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "recent_backup": "30",     # default "Backed up" filter in days ("" = Any); user changes persist
         "tree_dedupe": False,      # persisted dedupe toggle (tree)
         "panel_layout": "classic",  # detail-panel layout (): "classic" | "tabbed"
+        "policy_layout": "tabs",    # policy editor: "tabs" (one section at a time) | "scroll" (stacked, jump strip)
+        "policy_leave": "ask",      # leaving a policy with unsaved changes: "ask" | "keep" (drafts stay until saved)
         "es_path": r"G:\Apps\CLI Tools\es.exe",  # Everything CLI for the Excluded browser (local disk side)
+        "disk_lookup": "auto",       # what answers disk questions: auto | everything | scan | off
+        "disk_scan_budget": 15,      # seconds one folder scan may take before it answers "not measured"
         "excluded_tolerance": 0.05,  # folder counts as "backed" when excluded fraction is below this (cuts partial noise)
         "auto_compact": True,        # auto-compact the DuckDB when it bloats (DuckDB has no GC of its own)
         "compact_ratio": 1.8,        # compact when the file grows past this x its last-compacted size

@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from config import REPOS, repo_kind
 
-from ..core.everything import available
+from ..core import disklookup
 from ..core.kopia import _repo_args
 from ..index.excluded import drive_stats, folder_listing
 from ..settings import load_settings
@@ -18,7 +18,15 @@ router = APIRouter(tags=["excluded"])
 def drives() -> dict:
     """Local fixed drives, each with REAL total/backed/excluded size + file count (Everything vs
     index), so a drive row shows its excluded total - not its used-disk size. + es.exe liveness."""
-    return {"drives": drive_stats(), "everything_ok": available()}
+    st = disklookup.status()
+    return {"drives": drive_stats() if st["available"] else [], "everything_ok": st["available"],
+            "disk_lookup": st}
+
+
+@router.get("/disk-lookup")
+def disk_lookup_status(refresh: bool = False) -> dict:
+    """Which disk lookup provider answers (Everything, folder scan, or off) and why."""
+    return disklookup.status(refresh=refresh)
 
 
 @router.get("/excluded/include-cmds")

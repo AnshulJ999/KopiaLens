@@ -124,13 +124,25 @@ def test_a_dead_worker_with_its_result_is_finished_not_interrupted(data, monkeyp
     assert out["finished"] == ["1"] and out["interrupted"] == []
 
 
-def test_a_leftover_backblaze_worker_is_stopped(data, monkeypatch):
-    _write(data / "index_progress_repobz.json", {"repo": "bz", "pid": 5004})
+def test_a_leftover_backblaze_worker_is_left_to_finish(data, monkeypatch):
+    progress = data / "index_progress_repobz.json"
+    _write(progress, {"repo": "bz", "pid": 5004})
     worker = _Worker(5004, cmd="app.backblaze.worker")
     monkeypatch.setattr("psutil.Process", lambda pid: worker)
     out = nightly.resume_workers()
-    assert out["stopped"] == ["bz"] and worker.terminated
+    assert out["left_running"] == ["bz"] and not worker.terminated
+    assert progress.exists(), "its progress file is how the BZ checks see it running"
     assert nightly.reserved_repo() is None
+
+
+def test_backblaze_checks_see_a_leftover_worker(tmp_path, monkeypatch):
+    from app.backblaze import indexer
+    _write(tmp_path / "index_progress_repobz.json", {"repo": "bz", "pid": 5005})
+    monkeypatch.setattr(indexer, "_progress_path", lambda: str(tmp_path / "index_progress_repobz.json"))
+    monkeypatch.setattr(indexer, "_LEFTOVER_CHECK", [0.0, False])
+    monkeypatch.setattr("psutil.Process", lambda pid: _Worker(5005, cmd="app.backblaze.worker"))
+    assert indexer.state()["building"] is True
+    assert indexer.refresh_via_worker()["reason"] == "already running"
 
 
 def test_run_worker_consumes_only_its_own_result_file(data, monkeypatch):

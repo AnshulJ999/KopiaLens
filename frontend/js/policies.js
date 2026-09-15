@@ -47,9 +47,13 @@ const policiesPart = {
         this.polData = data;
         this.polDetailCache = {};  // detail payloads are invalidated with the overview
         this.polDetail = null;
-        const live = new Set((data.sources || []).map((s) => s.source));
-        if (!live.has(this.polSel)) this.polSel = "global";
+        this.polResolved = {};
+        await this.polLoadMeta();
+        const live = new Set([...(data.sources || []).map((s) => s.source), ...(data.others || []).map((o) => o.target)]);
+        this.polNewTargets = this.polNewTargets.filter((t) => !live.has(t));
+        if (this.polSel !== "global" && !live.has(this.polSel) && !this.polNewTargets.includes(this.polSel)) this.polSel = "global";
         this.loadPolDetail(this.polSel);
+        this.polResolve(this.polSel, true);
       } catch (e) { /* wrap() already surfaced the error */ }
     },
 
@@ -116,6 +120,7 @@ const policiesPart = {
       this.polSel = target;
       this.polAddText = ""; this.polAddPrice = null;
       this.loadPolDetail(target);
+      this.polResolve(target, true);
     },
 
     // The overview row for the selection (header facts live there; rule data in polDetail).
@@ -125,7 +130,11 @@ const policiesPart = {
         return this.polData.global ? { target: "global", isGlobal: true, ...this.polData.global } : null;
       }
       const row = (this.polData.sources || []).find((s) => s.source === this.polSel);
-      return row ? { ...row, target: row.source, isGlobal: false } : null;
+      if (row) return { ...row, target: row.source, isGlobal: false };
+      const other = (this.polData.others || []).find((o) => o.target === this.polSel);
+      if (other) return { ...other, source: other.target, defined: true, isGlobal: false };
+      return this.polNewTargets.includes(this.polSel)
+        ? { target: this.polSel, source: this.polSel, defined: false, isGlobal: false, isNew: true } : null;
     },
 
     // Own rules come from the detail payload (the DEFINED policy); empty until it lands.
@@ -321,7 +330,7 @@ const policiesPart = {
 
     // ---------- staging ----------
     polStagedFor(target) {
-      if (!this.polStaged[target]) this.polStaged[target] = { add: [], remove: [], removePolicy: false };
+      if (!this.polStaged[target]) this.polStaged[target] = { add: [], remove: [], removePolicy: false, fields: {} };
       return this.polStaged[target];
     },
     polStageAdd() {
@@ -335,6 +344,7 @@ const policiesPart = {
       st.add.push(pat);
       this.polAddText = ""; this.polAddPrice = null;
       this.polPriceStaged(this.polSel, pat);
+      this.polResolve();
     },
     polStageRemove(pat) {
       if (!this.polDetail) return;
@@ -343,6 +353,7 @@ const policiesPart = {
       if (!this.polOwnPatterns().includes(pat)) return;
       const st = this.polStagedFor(this.polSel);
       st.remove.push(pat);
+      this.polResolve();
     },
     polStageRemovePolicy() {
       if (!this.polDetail || this.polDetail.is_global) return;
@@ -354,11 +365,12 @@ const policiesPart = {
       if (kind === "add") st.add = st.add.filter((p) => p !== pat);
       if (kind === "remove") st.remove = st.remove.filter((p) => p !== pat);
       if (kind === "policy") st.removePolicy = false;
+      this.polResolve(target);
     },
     polStageCount() {
       let n = 0;
       for (const st of Object.values(this.polStaged)) {
-        n += st.add.length + st.remove.length + (st.removePolicy ? 1 : 0);
+        n += (st.add || []).length + (st.remove || []).length + (st.removePolicy ? 1 : 0) + Object.keys(st.fields || {}).length;
       }
       return n;
     },
@@ -366,7 +378,7 @@ const policiesPart = {
 
     polHasStaged(target) {
       const st = this.polStaged[target];
-      return !!(st && (st.add.length || st.remove.length || st.removePolicy));
+      return !!(st && ((st.add || []).length || (st.remove || []).length || st.removePolicy || Object.keys(st.fields || {}).length));
     },
 
     // ---------- add-box live pricing ----------
@@ -398,11 +410,12 @@ const policiesPart = {
     },
 
     // ---------- diff + save ----------
-    polChanges() {
+    polChanges(only) {
       const out = [];
       for (const [target, st] of Object.entries(this.polStaged)) {
-        if (st.add.length || st.remove.length || st.removePolicy) {
-          out.push({ target, add: st.add, remove: st.remove, delete_policy: st.removePolicy });
+        if (only && !only.includes(target)) continue;
+        if (this.polHasStaged(target)) {
+          out.push({ target, add: st.add || [], remove: st.remove || [], delete_policy: !!st.removePolicy, fields: st.fields || {} });
         }
       }
       return out;
@@ -411,9 +424,10 @@ const policiesPart = {
       return { label: g.target === "global" ? "Global" : sourcePath(g.target), before: g.current_rules, after: g.resulting_rules };
     },
     // One diff request per staged target, rendered as one group each.
-    async polOpenDiff() {
-      const changes = this.polChanges();
+    async polOpenDiff(only) {
+      const changes = this.polChanges(only);
       if (!changes.length) return;
+      this.polDiffOnly = only || null;
       this.showPolDiff = true;
       this.polDiffBusy = true;
       this.polDiff = null;
@@ -421,7 +435,7 @@ const policiesPart = {
       const groups = await Promise.all(changes.map(async (c) => {
         try {
           const r = await getJson("/api/policies/diff", { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ repo: this.repo, target: c.target, changes: { add: c.add, remove: c.remove, delete_policy: c.delete_policy } }) });
+            body: JSON.stringify({ repo: this.repo, target: c.target, changes: { add: c.add, remove: c.remove, delete_policy: c.delete_policy, fields: c.fields } }) });
           return { ...r, staged: c };
         } catch (e) {
           return { target: c.target, error: e.message || String(e), staged: c };
@@ -430,10 +444,14 @@ const policiesPart = {
       this.polDiff = { groups };
       this.polDiffBusy = false;
     },
+    polDiffErrors() {
+      return ((this.polDiff && this.polDiff.groups) || []).flatMap((g) => g.errors || []);
+    },
     async polSave() {
-      const changes = this.polChanges();
+      const changes = this.polChanges(this.polDiffOnly);
       if (!changes.length) { this.showPolDiff = false; return; }
-      const nRules = changes.reduce((n, c) => n + c.add.length + c.remove.length + (c.delete_policy ? 1 : 0), 0);
+      if (this.polDiffErrors().length) return;
+      const nRules = changes.reduce((n, c) => n + c.add.length + c.remove.length + (c.delete_policy ? 1 : 0) + Object.keys(c.fields).length, 0);
       const ok = await this.klConfirm({
         title: "Save policy changes?",
         facts: [
@@ -444,11 +462,12 @@ const policiesPart = {
         command: "", confirmLabel: "Save changes", danger: false,
       });
       if (!ok) return;
-      const writes = changes.map((c) => ({ target: c.target, add: c.add, remove: c.remove, delete_policy: c.delete_policy }));
+      const writes = changes.map((c) => ({ target: c.target, add: c.add, remove: c.remove, delete_policy: c.delete_policy, fields: c.fields }));
       const started = await this.startJob("policy_write", { writes }, `${changes.length} polic${changes.length === 1 ? "y" : "ies"}`);
       if (!started) return;
       this.showPolDiff = false;
-      this.polDiscard();
+      for (const c of changes) delete this.polStaged[c.target];
+      this.polStaged = { ...this.polStaged };
       // The stored numbers predate these writes; the reload after the job re-reads them.
       for (const c of changes) {
         if (this.polRowPrices) delete this.polRowPrices[c.target];

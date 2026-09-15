@@ -197,10 +197,20 @@ const snapshotsPart = {
     async pinSelected(remove) {
       const rows = this.snapSelected();
       if (!rows.length) { window.alert("Select snapshots first."); return; }
-      const r = await getJson("/api/snapshots/pin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_ids: rows.map((x) => x.id), remove }) }).catch((e) => { this.error = e.message; return null; });
-      if (!r) return;
-      this.copyText(r.command);
-      this.actionText = (remove ? "Unpin" : "Pin") + " command copied (run it yourself):\n" + r.command;
+      const already = rows.filter((x) => (x.pins || []).includes("do-not-delete")).length;
+      const n = rows.length;
+      const ok = await this.klConfirm({
+        title: `${remove ? "Unpin" : "Pin"} ${n} snapshot${n === 1 ? "" : "s"}?`,
+        facts: [
+          ["Snapshots", rows.slice(0, 4).map((x) => `${sourcePath(x.source || this.snapSource)} · ${humanTime(x.start_time || x.startTime)}`).join("; ") + (n > 4 ? `; and ${n - 4} more` : "")],
+          ["Pin", "do-not-delete"],
+          [remove ? "Pinned now" : "Already pinned", String(already)],
+        ],
+        note: remove ? "Unpinned snapshots follow retention again and can expire at the next cleanup." : "Pinned snapshots are never removed by retention.",
+        confirmLabel: `${remove ? "Unpin" : "Pin"} ${n} snapshot${n === 1 ? "" : "s"}`, danger: remove,
+      });
+      if (!ok) return;
+      await this.startJob("snapshot_pin", { snapshot_ids: rows.map((x) => x.id), remove }, `${remove ? "unpin" : "pin"} ${n} snapshot${n === 1 ? "" : "s"}`);
     },
     async diffSelected() {
       const rows = this.snapSelected();

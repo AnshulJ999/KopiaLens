@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..index.schema import RepoOffline
-from ..index.physical import file_detail, reclaim_for
+from ..index.physical import file_detail, reclaim_for, stored_all_versions
 from ..index.queries import group_by_folder, landing, search_export, search_paths, versions
 
 router = APIRouter(tags=["search"])
@@ -113,6 +113,35 @@ def search_reclaim(payload: ReclaimRequest) -> dict:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+class VersionRow(BaseModel):
+    source: str
+    full_path: str
+    content_id: str | None = None
+
+
+class VersionsRequest(BaseModel):
+    repo: str = "1"
+    rows: list[VersionRow]
+
+
+@router.post("/search/versions")
+def search_versions(payload: VersionsRequest) -> dict:
+    """All-versions sizes for the rows on screen: Stored (every version this path has held, shared
+    chunks once) and Frees (what removing every version of that content everywhere gives back).
+    Never calls kopia; a value whose chunk lists are not cached yet comes back null."""
+    rows = payload.rows[:200]
+    try:
+        stored = stored_all_versions(payload.repo, [(r.source, r.full_path) for r in rows])
+        frees = reclaim_for(payload.repo, [r.content_id for r in rows if r.content_id], cap=200, fetch=False)
+    except RepoOffline:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"rows": [{"source": r.source, "full_path": r.full_path,
+                      "stored": stored.get((r.source, r.full_path)),
+                      "frees": frees.get(r.content_id) if r.content_id else None} for r in rows]}
 
 
 def _csv_rows(cur):

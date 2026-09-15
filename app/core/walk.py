@@ -16,7 +16,10 @@ log = get_logger("walk")
 Visitor = Callable[[str, dict], None]
 
 
-def expand_indirect(repo: str, db: sqlite3.Connection, indirect_objs: set[str]) -> set[str]:
+def expand_indirect(repo: str, db: sqlite3.Connection, indirect_objs: set[str],
+                    fetch: bool = True, missing: list[str] | None = None) -> set[str]:
+    """Chunks behind indirect objects. ``fetch=False`` never calls kopia: objects not in the walk
+    cache are appended to ``missing`` and contribute only their index content."""
     parts: set[str] = set()
     misses: list[str] = []
     cur = db.cursor()
@@ -28,6 +31,10 @@ def expand_indirect(repo: str, db: sqlite3.Connection, indirect_objs: set[str]) 
             parts.update(decode_json(row[0]))
         else:
             misses.append(obj)
+    if not fetch:
+        if missing is not None:
+            missing.extend(misses)
+        return parts
 
     for i in range(0, len(misses), BATCH):
         group_objs = misses[i : i + BATCH]

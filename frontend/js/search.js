@@ -147,8 +147,12 @@ const searchPart = {
           // semantics overstated exclusivity. Returns with the proper implementation ().
           { title: "Src", field: "sources", headerSort: false, width: 62, hozAlign: "right",
             formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="content is held by ${v} sources (within-source copies excluded)">${v}</span>` : "1"; } },
-          { title: "Reclaim", field: "reclaim", headerSort: false, width: 110, hozAlign: "right",
-            formatter: (c) => { const v = c.getValue(); return (v == null) ? "<span style='color:var(--faint)'>—</span>" : fmtBytes(v); } },
+          { title: "Stored (all versions)", field: "stored_all", headerSort: false, width: 140, hozAlign: "right",
+            headerTooltip: "Space every version of this file takes. Data shared between its own versions counts once.",
+            formatter: (c) => self.versionCell(c.getRow().getData(), "stored") },
+          { title: "Frees (all versions)", field: "frees_all", headerSort: false, width: 130, hozAlign: "right",
+            headerTooltip: "Space that comes back if every version of this content is removed from every backup.",
+            formatter: (c) => self.versionCell(c.getRow().getData(), "frees") },
           H("Ext", "ext", { width: 70 }),
           H("Versions", "versions", { width: 80, hozAlign: "right" }),
           { title: "Copies", field: "copies", headerSort: false, width: 75, hozAlign: "right",
@@ -165,7 +169,7 @@ const searchPart = {
           const t = sEl._tabulator;
           // pass the full def (keeps headerClick + formatter) so only the rows + sort arrow change
           cols.forEach((c) => { try { t.updateColumnDefinition(c.field, c); } catch (e) {} });
-          t.replaceData(data.results || []);
+          t.replaceData(data.results || []).then(() => this.fillVersionSizes());
         } else {
           const sStbl = setTable("#searchTable", data.results || [], cols, {
             persistSort: false,
@@ -183,7 +187,12 @@ const searchPart = {
               { label: "Copy full path", action: (_e, row) => this.copyText(row.getData().full_path) },
             ],
           });
-          if (sStbl) sStbl.on("rowClick", (e, row) => this._rangeClick(sStbl, e, row));  // Shift+Click range select
+          if (sStbl) {
+            sStbl.on("rowClick", (e, row) => this._rangeClick(sStbl, e, row));  // Shift+Click range select
+            sStbl.on("scrollVertical", () => this.fillVersionSizes());
+            sStbl.on("tableBuilt", () => this.fillVersionSizes());
+          }
+          this.fillVersionSizes();
         }
       }, "Searching...");
     },
@@ -193,23 +202,44 @@ const searchPart = {
       window.open(`/api/search/export?${p.toString()}`, "_blank");
     },
 
-    // ---- Dedupe + compute-reclaim (Search) ----
+    // ---- Dedupe (Search) ----
     toggleDedupe() { this.dedupe = !this.dedupe; this.searchPage = 1; this.klSet({ search_dedupe: this.dedupe }); this.loadSearch(); },
-    async computeReclaim() {
+
+    // ---- All-versions sizes for the rows on screen ----
+    _versionKey(d) { return this.repo + "|" + d.source + "|" + d.full_path; },
+    versionCell(d, which) {
+      const v = this.versionSizes[this._versionKey(d)];
+      if (v === undefined) return "<span style='color:var(--faint)'>—</span>";
+      if (v === "pending") return "<span style='color:var(--faint)'>…</span>";
+      if (v[which] == null) return "<span style='color:var(--faint)' title='Not in the walk cache yet. The next index run fills it.'>not yet</span>";
+      return fmtBytes(v[which]);
+    },
+    fillVersionSizes() {
+      if (this._versionTimer) clearTimeout(this._versionTimer);
+      this._versionTimer = setTimeout(() => this._fillVersionSizes(), 250);
+    },
+    async _fillVersionSizes() {
       const el = document.querySelector("#searchTable");
-      if (!el || !el._tabulator) return;
-      const rows = el._tabulator.getData();
-      const top = [...rows].sort((a, b) => (b.physical || 0) - (a.physical || 0)).slice(0, 500);
-      const cids = [...new Set(top.map((r) => r.content_id).filter(Boolean))];
-      if (!cids.length) return;
-      this.reclaimComputing = true;
+      const t = el && el._tabulator;
+      if (!t || this.active !== "search" || this.groupByFolder) return;
+      const repo = this.repo;
+      const need = t.getRows("visible").map((r) => r.getData())
+        .filter((d) => d.full_path && !(this._versionKey(d) in this.versionSizes)).slice(0, 60);
+      if (!need.length) return;
+      for (const d of need) this.versionSizes[this._versionKey(d)] = "pending";
+      const redraw = () => t.getRows("visible").forEach((r) => r.reformat());
+      redraw();
       try {
-        const r = await getJson("/api/search/reclaim", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, content_ids: cids, cap: 500 }) });
-        const map = r.reclaim || {};
-        rows.forEach((row) => { row.reclaim = map[row.content_id]; });
-        rows.sort((a, b) => (b.reclaim || 0) - (a.reclaim || 0));  // most freeable first
-        el._tabulator.replaceData(rows);
-      } catch (err) { this.error = err.message || String(err); }
-      finally { this.reclaimComputing = false; }
+        const r = await getJson("/api/search/versions", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo, rows: need.map((d) => ({ source: d.source, full_path: d.full_path, content_id: d.content_id || null })) }) });
+        for (const x of r.rows || []) this.versionSizes[repo + "|" + x.source + "|" + x.full_path] = { stored: x.stored, frees: x.frees };
+      } catch (e) {
+        for (const d of need) delete this.versionSizes[repo + "|" + d.source + "|" + d.full_path];
+        this.error = e.message || String(e);
+        return;
+      }
+      if (repo !== this.repo) return;
+      redraw();
+      this.fillVersionSizes();
     },
 };

@@ -284,6 +284,8 @@ const jobsPart = {
       // the reindex publishes a new generation, so they wait for that moment instead.
       if (j.dry || j.repo !== this.repo) return;
       if (j.kind === "policy_write" && this.polData) this.loadPolicies(true);
+      // A pin rewrites the snapshot record under a new id; a new snapshot adds a row.
+      if ((j.kind === "snapshot_pin" || j.kind === "snapshot_create") && this.active === "snapshots") this.loadSnapshots(true);
       const deleted = j.kind === "remove_files" || j.kind === "snapshot_delete"
         || (j.kind === "policy_write" && j.kind_label === "Excluding and deleting" && !j.held);
       if (deleted && this.active === "snapshots") this.loadSnapshots(true);

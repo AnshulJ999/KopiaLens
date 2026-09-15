@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from config import kopia_repos, repo_kind
 
-from ..core import policybackup, policytargets
+from ..core import policybackup, policyresolve, policytargets
 from ..core.kopia import (
     _quote_arg,
     policy_delete_command,
@@ -153,6 +153,7 @@ class Changes(BaseModel):
     add: list[str] = Field(default_factory=list)
     remove: list[str] = Field(default_factory=list)
     delete_policy: bool = False
+    fields: dict = Field(default_factory=dict)   # field JSON path -> value (None = unset)
 
 
 class DiffBody(BaseModel):
@@ -231,7 +232,263 @@ def overview(repo: str = "1") -> dict:
                                         or (ep.get("files") or {}).get("noParentDotFiles")),
             "summarized": summarize(eff_pol) if eff_pol else None,
         })
-    return {"repo": repo, "stale": not fresh, "global": global_entry, "sources": sources}
+    source_keys = {s["source"] for s in sources}
+    others = []
+    for key in sorted(defined_policies):
+        if key == _GLOBAL_TARGET or key in source_keys:
+            continue
+        _user, _host, path = policyresolve.parse_key(key)
+        others.append({"target": key, "kind": "folder" if path else "computer", "root": path or key,
+                       "rule_count": len(_own_rules(defined_policies, key))})
+    return {"repo": repo, "stale": not fresh, "global": global_entry, "sources": sources,
+            "others": others}
+
+
+# ---- editor () ---------------------------------------------------------------------------
+
+_CLIENT_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+def client_options(repo: str) -> dict:
+    """This computer's kopia client identity for the repo (user, host, actions), cached 10 min."""
+    import json as _json
+    import time as _time
+    hit = _CLIENT_CACHE.get(repo)
+    if hit and _time.time() - hit[0] < 600:
+        return hit[1]
+    from ..core.kopia import kopia
+    opts: dict = {}
+    try:
+        res = kopia(repo, ["repository", "status", "--json"])
+        opts = (_json.loads(res.stdout or "{}").get("clientOptions") or {}) if res.returncode == 0 else {}
+    except Exception:  # noqa: BLE001 - an unreachable repo just has no client facts
+        opts = {}
+    out = {"user": opts.get("username") or "", "host": opts.get("hostname") or "",
+           "enable_actions": bool(opts.get("enableActions"))}
+    _CLIENT_CACHE[repo] = (_time.time(), out)
+    return out
+
+
+def _target_key(target: str) -> str:
+    return _GLOBAL_TARGET if _is_global(target) else target
+
+
+def _defined(repo: str, force: bool = False) -> dict:
+    return refresh_defined_policies(repo, force=force)[0].get("policies") or {}
+
+
+def _last_snapshot(repo: str, key: str):
+    import datetime as _dt
+    from ..core.sources import sources_index
+    snaps = sources_index(repo).get(key) or []
+    if not snaps:
+        return None
+    try:
+        return _dt.datetime.fromisoformat(snaps[-1]["startTime"].replace("Z", "+00:00")).astimezone().replace(tzinfo=None)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _retention_counts(eff: dict) -> dict[str, int] | None:
+    ret = eff.get("retention") or {}
+    vals = {k: int(ret.get(f) or 0) for k, f in (("latest", "keepLatest"), ("hourly", "keepHourly"),
+            ("daily", "keepDaily"), ("weekly", "keepWeekly"), ("monthly", "keepMonthly"), ("annual", "keepAnnual"))}
+    return None if not any(vals.values()) else vals   # all zero: kopia keeps everything
+
+
+def _retention_impact(repo: str, defined_before: dict, defined_after: dict, key: str) -> list[dict]:
+    """Snapshots kept per affected source, before and after (KopiaLens' retention replica)."""
+    from ..core.retention import retention_keep
+    from ..core.sources import sources_index
+    out = []
+    for src, snaps in sorted(sources_index(repo).items()):
+        if key not in {k for k, _ in policyresolve.hierarchy(defined_after, src)} and \
+                key not in {k for k, _ in policyresolve.hierarchy(defined_before, src)}:
+            continue
+        before = _retention_counts(policyresolve.resolve(defined_before, src)[0])
+        after = _retention_counts(policyresolve.resolve(defined_after, src)[0])
+        if before == after:
+            continue
+        total = len(snaps)
+        kb = total if before is None else len(retention_keep(snaps, before)[0])
+        ka = total if after is None else len(retention_keep(snaps, after)[0])
+        if kb == ka:
+            continue
+        out.append({"source": src, "total": total, "kept_before": kb, "kept_after": ka})
+        if len(out) >= 200:
+            break
+    return out
+
+
+def _draft_policy(defined: dict, key: str, changes: Changes) -> dict:
+    pol = policyresolve.apply_fields(defined.get(key) or {}, changes.fields)
+    current = list(((defined.get(key) or {}).get("files") or {}).get("ignore") or [])
+    rules = [p for p in current if p not in set(changes.remove)]
+    for p in changes.add:
+        if p not in rules:
+            rules.append(p)
+    files = dict(pol.get("files") or {})
+    if rules:
+        files["ignore"] = rules
+    else:
+        files.pop("ignore", None)
+    pol["files"] = files
+    return pol
+
+
+class ResolveBody(BaseModel):
+    repo: str = "1"
+    target: str
+    changes: Changes = Field(default_factory=Changes)
+    impact: bool = False
+
+
+@router.get("/policies/meta")
+def meta(repo: str = "1") -> dict:
+    """Field catalogue, option lists, and this computer's kopia client facts."""
+    _kopia_repo(repo)
+    return {"fields": policyresolve.FIELDS, "compressors": policyresolve.COMPRESSORS,
+            "splitters": policyresolve.SPLITTERS, "client": client_options(repo)}
+
+
+@router.post("/policies/resolve")
+def resolve_draft(body: ResolveBody) -> dict:
+    """Effective values and where each comes from, before and after the staged changes."""
+    _kopia_repo(body.repo)
+    key = _target_key(body.target)
+    defined = _defined(body.repo)
+    try:
+        draft = _draft_policy(defined, key, body.changes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    after_defined = dict(defined)
+    after_defined[key] = draft
+    eff_b, def_b = policyresolve.resolve(defined, key)
+    eff_a, def_a = policyresolve.resolve(after_defined, key)
+    last = _last_snapshot(body.repo, key)
+    chain = [k for k, _ in policyresolve.hierarchy(defined, key)]
+    from ..core import schedule as _sched
+    import datetime as _dt
+    now = _dt.datetime.now()
+    cron = []
+    for line in (draft.get("scheduling") or {}).get("cron") or []:
+        errs = [e for e in policyresolve.validate(key, {"scheduling": {"cron": [line]}}) if "Cron" in e]
+        nxt = []
+        if not errs:
+            t = now
+            for _ in range(3):
+                t = _sched.cron_next(line, t)
+                if t is None:
+                    break
+                nxt.append(t.isoformat())
+        cron.append({"line": line, "error": errs[0] if errs else "", "meaning": _sched.describe_cron(line),
+                     "next": nxt})
+    out = {
+        "target": key, "exists": key in defined, "chain": chain,
+        "global_defined": defined.get(_GLOBAL_TARGET) or {}, "cron": cron,
+        "defined": defined.get(key) or {}, "draft": draft,
+        "effective": eff_a, "definition": def_a,
+        "effective_before": eff_b, "definition_before": def_b,
+        "errors": policyresolve.validate(key, draft),
+        "next_snapshots": policyresolve.next_snapshots(eff_a, last),
+        "next_snapshots_before": policyresolve.next_snapshots(eff_b, last),
+        "inheritors": [s for s in _source_keys(body.repo)
+                       if s != key and key in {k for k, _ in policyresolve.hierarchy(defined, s)}],
+    }
+    if body.impact and any(p.startswith("retention.") for p in body.changes.fields):
+        out["retention_impact"] = _retention_impact(body.repo, defined, after_defined, key)
+    return out
+
+
+class MultiBody(BaseModel):
+    repo: str = "1"
+    targets: list[str]
+    fields: dict = Field(default_factory=dict)
+
+
+@router.post("/policies/multi-plan")
+def multi_plan(body: MultiBody) -> dict:
+    """Per field and target: today's value, whether it is inherited, and the shared parent."""
+    _kopia_repo(body.repo)
+    defined = _defined(body.repo)
+    plans = []
+    resolved = {t: policyresolve.resolve(defined, _target_key(t)) for t in body.targets}
+    for path in body.fields:
+        if path not in policyresolve.FIELD_PATHS or path.startswith("files.ignore"):
+            raise HTTPException(status_code=400, detail=f"field cannot be edited here: {path}")
+        spec = next(f for f in policyresolve.FIELDS if f["path"] == path)
+        rows = []
+        for t in body.targets:
+            key = _target_key(t)
+            eff, df = resolved[t]
+            own = policyresolve.get(defined.get(key) or {}, path)
+            src = df.get(path, _GLOBAL_TARGET)
+            inherits = own is None or (spec["kind"] == "plain" and not own)
+            rows.append({"target": key, "own": own, "effective": policyresolve.get(eff, path),
+                         "from": src, "inherits": inherits, "creates_policy": key not in defined,
+                         "no_effect": spec["kind"] == "plain" and body.fields[path] in (None, False, 0, "")
+                                      and inherits and bool(policyresolve.get(eff, path))})
+        parents = {r["from"] for r in rows if r["inherits"]}
+        common = next(iter(parents)) if len(parents) == 1 and all(r["inherits"] for r in rows) else None
+        plans.append({"field": path, "value": body.fields[path], "rows": rows, "common_parent": common})
+    return {"plans": plans}
+
+
+class PreviewBody(BaseModel):
+    repo: str = "1"
+    target: str
+    pattern: str
+    source: str | None = None
+    mode: str = "index"            # index = what the index would drop | disk = what is on disk now
+    rules: list[str] | None = None   # the rule list the pattern sits in (disk mode ordering)
+    limit: int = 500
+
+
+@router.post("/policies/preview")
+def preview(body: PreviewBody) -> dict:
+    """What one rule keeps out, listed: from the index (a new rule) or from disk (an active rule,
+    whose matches were never indexed)."""
+    from ..core import disklookup
+    _kopia_repo(body.repo)
+    from ..core.sources import sources_index
+    live = set(sources_index(body.repo))
+    scope = [s for s in _pricing_scope(body.repo, body.target) if s in live]
+    source = body.source if body.source in scope else (scope[0] if scope else None)
+    out = {"target": body.target, "pattern": body.pattern, "mode": body.mode, "scope": scope,
+           "source": source, "items": [], "total": 0, "bytes": 0, "capped": False, "note": ""}
+    if not source:
+        out["note"] = "No backup uses this policy's rules."
+        return out
+    limit = min(max(body.limit, 1), 2000)
+    if body.mode == "index":
+        res = policypricing.price_patterns(body.repo, source, [body.pattern], limit=min(limit, 500))
+        r = res["results"][0]
+        out.update(items=[{"path": e["path"], "size": e["size"], "is_dir": False} for e in r["examples"]],
+                   total=r.get("files", 0), bytes=r.get("bytes", 0), dirs=r.get("dirs", 0),
+                   capped=r.get("capped", False), error=r.get("error"))
+        return out
+    user, host, _path = policyresolve.parse_key(source)
+    client = client_options(body.repo)
+    if client["host"] and (host.lower() != client["host"].lower() or user.lower() != client["user"].lower()):
+        out["note"] = f"This backup belongs to {user}@{host}. Its disk is not on this computer."
+        return out
+    rules = body.rules
+    if rules is None:
+        defined = _defined(body.repo)
+        rules = policytargets._root_rules(body.repo, source, defined)[2]
+    if body.pattern not in rules:
+        rules = list(rules) + [body.pattern]
+    found = disklookup.excluded_by_rule(source, rules, rules.index(body.pattern), limit)
+    out.update(found)
+    return out
+
+
+@router.get("/policies/check")
+def check_status(repo: str = "1") -> dict:
+    """The last comparison of KopiaLens' inheritance copy with kopia's own output."""
+    _kopia_repo(repo)
+    from ..index import policycheck
+    return policycheck.load(repo) or {"repo": repo, "ts": None}
 
 
 @router.get("/policies/detail")
@@ -365,9 +622,9 @@ def _validate_changes(repo: str, target: str, changes: Changes,
     remove = list(dict.fromkeys(changes.remove))
 
     if changes.delete_policy:
-        if add or remove:
+        if add or remove or changes.fields:
             raise HTTPException(status_code=400,
-                                detail="delete_policy cannot be combined with add/remove")
+                                detail="delete_policy cannot be combined with other changes")
         if not current and not defined_policies.get(_GLOBAL_TARGET if _is_global(target) else target):
             raise HTTPException(status_code=400, detail="target has no defined policy to delete")
         return current, [], defined_policies
@@ -406,11 +663,34 @@ def _build_diff(repo: str, target: str, changes: Changes, force: bool = False,
         "removed": [by_pattern.get(p) for p in remove],
     }
     target_key = _GLOBAL_TARGET if _is_global(target) else target
-    will_create = (not changes.delete_policy and (add or remove)
+    will_create = (not changes.delete_policy and (add or remove or changes.fields)
                    and target_key not in defined_policies)
+    field_changes, errors, retention = [], [], []
+    if changes.fields and not changes.delete_policy:
+        try:
+            draft = _draft_policy(defined_policies, target_key, changes)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        after = dict(defined_policies)
+        after[target_key] = draft
+        eff_b, def_b = policyresolve.resolve(defined_policies, target_key)
+        eff_a, def_a = policyresolve.resolve(after, target_key)
+        before_pol = defined_policies.get(target_key) or {}
+        for path in changes.fields:
+            field_changes.append({
+                "field": path,
+                "before": policyresolve.get(before_pol, path), "after": policyresolve.get(draft, path),
+                "effective_before": policyresolve.get(eff_b, path), "from_before": def_b.get(path, _GLOBAL_TARGET),
+                "effective_after": policyresolve.get(eff_a, path), "from_after": def_a.get(path, _GLOBAL_TARGET),
+            })
+        errors = policyresolve.validate(target_key, draft)
+        if price and any(p.startswith("retention.") for p in changes.fields):
+            retention = _retention_impact(repo, defined_policies, after, target_key)
     if changes.delete_policy:
         command = policy_delete_command(repo, None if _is_global(target) else target,
                                         global_=_is_global(target))
+    elif changes.fields:
+        command = None  # a whole-policy import from a temporary file; nothing pasteable
     else:
         command = policy_set_command(repo, None if _is_global(target) else target,
                                      global_=_is_global(target),
@@ -419,8 +699,9 @@ def _build_diff(repo: str, target: str, changes: Changes, force: bool = False,
         "repo": repo, "target": target,
         "current_rules": current, "resulting_rules": resulting,
         "added": add, "removed": remove,
+        "field_changes": field_changes, "errors": errors, "retention_impact": retention,
         "impact": impact, "will_create_policy": will_create,
-        "command": _cmd_text(command),
+        "command": _cmd_text(command) if command else "",
         "backup_dir": policybackup.backup_dir(repo),
     }
 
@@ -466,6 +747,8 @@ def _write_rules(repo: str, target: str, changes: Changes, log=None) -> dict:
     target_key = _GLOBAL_TARGET if is_global else target
     # The written policy is built from a fresh export, so fields and rules changed elsewhere survive.
     diff_payload = _build_diff(repo, target, changes, force=True, price=False)
+    if diff_payload["errors"]:
+        raise HTTPException(status_code=400, detail="Kopia would refuse this policy: " + " ".join(diff_payload["errors"]))
     defined_policies = load_defined_policies(repo).get("policies") or {}
 
     say("Backing up policies")
@@ -481,22 +764,25 @@ def _write_rules(repo: str, target: str, changes: Changes, log=None) -> dict:
         say(f"Deleting the policy for {label}")
         res = policy_delete_execute(repo, None if is_global else target, global_=is_global)
     else:
-        say(f"Writing {len(diff_payload['resulting_rules'])} rules to {label}"
-            f" (+{len(diff_payload['added'])} -{len(diff_payload['removed'])})")
-        policy = copy.deepcopy(defined_policies.get(target_key) or {})
-        files = dict(policy.get("files") or {})
-        if diff_payload["resulting_rules"]:
-            files["ignore"] = diff_payload["resulting_rules"]
-        else:
-            files.pop("ignore", None)
-        policy["files"] = files
+        if changes.fields:
+            say(f"Writing {len(changes.fields)} setting(s) to {label}")
+        if changes.add or changes.remove:
+            say(f"Writing {len(diff_payload['resulting_rules'])} rules to {label}"
+                f" (+{len(diff_payload['added'])} -{len(diff_payload['removed'])})")
+        policy = _draft_policy(defined_policies, target_key,
+                               Changes(add=diff_payload["added"], remove=diff_payload["removed"],
+                                       fields=changes.fields))
         res = policy_write_rules_execute(repo, None if is_global else target, is_global, policy,
                                          add=len(diff_payload["added"]),
                                          remove=len(diff_payload["removed"]))
-    invalidate_after_write(repo, targets=[target_key], ignore_only=not changes.delete_policy)
+    invalidate_after_write(repo, targets=[target_key],
+                           ignore_only=not changes.delete_policy and not changes.fields)
     say("Re-reading from kopia")
     ok = res.get("returncode") == 0
-    stored = _own_rules(load_defined_policies(repo).get("policies") or {}, target_key)
+    stored_pol = (load_defined_policies(repo).get("policies") or {}).get(target_key) or {}
+    stored = list((stored_pol.get("files") or {}).get("ignore") or [])
+    fields_match = all(policyresolve.get(stored_pol, p) == policyresolve.get(policy, p)
+                       for p in changes.fields) if not changes.delete_policy else True
     output = ((res.get("stdout") or "") + "\n" + (res.get("stderr") or "")).strip()
     return {
         "ok": ok,
@@ -507,7 +793,7 @@ def _write_rules(repo: str, target: str, changes: Changes, log=None) -> dict:
         "diff": diff_payload,
         # what kopia stored, re-read after the write
         "stored_rules": stored,
-        "stored_matches": ok and stored == diff_payload["resulting_rules"],
+        "stored_matches": ok and stored == diff_payload["resulting_rules"] and fields_match,
     }
 
 

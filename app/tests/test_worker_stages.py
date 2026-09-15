@@ -47,6 +47,7 @@ def ran(monkeypatch):
     monkeypatch.setattr("app.index.foldercache.prewarm", lambda repo: executed.append("folders"))
     monkeypatch.setattr("app.core.policy.refresh_policies",
                         lambda repo, force=False: executed.append("policies"))
+    monkeypatch.setattr("app.index.policycheck.run", lambda repo, force=False: None)
     monkeypatch.setattr("app.core.schedule.compute_next_snapshots",
                         lambda repo: executed.append("next_snapshots"))
     monkeypatch.setattr("app.index.policypricing.precompute",

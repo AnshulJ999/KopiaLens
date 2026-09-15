@@ -48,9 +48,29 @@
                 <p class="text-[11px] text-muted mt-1">Subprocess means zero background kopia activity. Server runs a persistent kopia server in the background. Needs a restart to switch.</p>
               </div>
               <div>
+                <div class="flex items-center justify-between gap-3"><span>Disk lookup</span>
+                  <select x-model="diskLookupMode" class="fld border border-bd bg-surface2">
+                    <option value="auto">Automatic</option>
+                    <option value="everything">Everything only</option>
+                    <option value="scan">Folder scan</option>
+                    <option value="off">Off</option>
+                  </select></div>
+                <p class="text-[11px] text-muted mt-1">How KopiaLens reads what is on disk: the Excluded browser, rule Preview and space freed by maintenance. Automatic uses Everything when it is running, otherwise a folder scan.</p>
+                <p class="text-[11px] mt-1" x-show="diskLookup" :style="diskLookup && diskLookup.available ? 'color:var(--ok)' : 'color:var(--warn)'"
+                   x-text="diskLookupText()"></p>
+              </div>
+              <div x-show="diskLookupMode !== 'off'">
+                <div class="flex items-center justify-between gap-3"><span>Folder scan time limit</span>
+                  <div class="flex items-center gap-2">
+                    <input type="number" min="1" step="1" x-model.number="diskScanBudget" class="fld border border-bd bg-surface2 w-24">
+                    <span class="text-[11px] text-muted">seconds</span>
+                  </div></div>
+                <p class="text-[11px] text-muted mt-1">A scan that takes longer answers "not measured" instead of making you wait.</p>
+              </div>
+              <div x-show="diskLookupMode === 'auto' || diskLookupMode === 'everything'">
                 <div class="flex items-center justify-between gap-3"><span>Everything (es.exe) path</span>
                   <input x-model="esPath" class="fld border border-bd bg-surface2 min-w-[18rem]" placeholder="es.exe path"></div>
-                <p class="text-[11px] text-muted mt-1">The CLI the Excluded browser uses to list what is on disk. Needs a restart after changing.</p>
+                <p class="text-[11px] text-muted mt-1">Everything is a free Windows file index by voidtools (voidtools.com). es.exe is its command-line tool; Everything itself must be running.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Excluded-folder tolerance</span>

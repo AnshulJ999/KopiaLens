@@ -33,4 +33,19 @@
       </select></div>
     <p class="text-[11px] text-muted mt-1">Applies to the file and folder detail panels. Classic shows every section in order; Tabbed keeps the summary cards on screen and groups the rest under Overview / Storage / Versions / Actions.</p>
   </div>
+  <div>
+    <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Policy editor layout</span>
+      <select x-model="polLayout" @change="klSet({ policy_layout: polLayout })" class="fld border border-bd bg-surface2">
+        <option value="tabs">Tabs - one section at a time</option>
+        <option value="scroll">Scroll - every section stacked</option>
+      </select></div>
+  </div>
+  <div>
+    <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Leaving a policy with unsaved changes</span>
+      <select x-model="polLeave" @change="klSet({ policy_leave: polLeave })" class="fld border border-bd bg-surface2">
+        <option value="ask">Ask first</option>
+        <option value="keep">Keep the changes as a draft</option>
+      </select></div>
+    <p class="text-[11px] text-muted mt-1">Drafts are never saved on their own. Switching repo, Discard and closing the page always ask.</p>
+  </div>
 </section>

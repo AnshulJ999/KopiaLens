@@ -388,6 +388,12 @@ def _bz_reindex_due(now_ts: float) -> bool:
     be relaunched every tick)."""
     if _bz_kv_float("reindex_pending") != 1.0:
         return False
+    try:
+        from .backblaze import indexer as bz_indexer
+        if bz_indexer.state().get("building"):
+            return False   # a refresh (possibly left by the previous app run) is still going
+    except Exception:  # noqa: BLE001
+        pass
     if now_ts - _bz_kv_float("last_reindex_ts") < _bz_min_gap():
         return False
     return now_ts - _BZ_LAST_ATTEMPT >= _retry_delay()

@@ -38,10 +38,11 @@ def test_app_declares_exclude_part_once():
 
 
 def test_every_pol_binding_in_the_partial_exists_in_js():
-    html = (FRONTEND / "partials" / "tabs" / "policies.html").read_text(encoding="utf-8")
-    js = (FRONTEND / "js" / "policies.js").read_text(encoding="utf-8") + "\n" + \
-         (FRONTEND / "js" / "app.js").read_text(encoding="utf-8")
-    tokens = set(re.findall(r"\b(?:pol|showPol)[A-Z]\w*", html))
+    html = "\n".join((FRONTEND / "partials" / p).read_text(encoding="utf-8")
+                     for p in ("tabs/policies.html", "policyedit.html", "jobs.html"))
+    js = "\n".join((FRONTEND / "js" / f).read_text(encoding="utf-8")
+                   for f in ("policies.js", "policyedit.js", "app.js"))
+    tokens = set(re.findall(r"\b(?:pol|showPol|ed)[A-Z]\w*", html))
     assert tokens, "no policy bindings found - the partial stopped binding anything"
     missing = sorted(t for t in tokens if t not in js)
     assert not missing, f"partial binds symbols no JS file defines: {missing}"

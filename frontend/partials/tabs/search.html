@@ -19,7 +19,6 @@
           <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="overOneGb" @change="loadSearch()"> &gt;1 GB</label>
           <button @click="showFilters=!showFilters" class="h-8 rounded border border-bd px-2 text-xs" :class="showFilters ? 'bg-sel' : ''" title="More filters">⛃ Filters</button>
           <button @click="toggleDedupe()" class="h-8 rounded border border-bd px-2 text-xs" :class="dedupe ? 'bg-sel' : ''" title="Dedupe: collapse path/source copies of the same content into one row">⧉ Dedupe</button>
-          <button @click="computeReclaim()" :disabled="reclaimComputing" class="h-8 rounded border border-bd px-2 text-xs disabled:opacity-50" title="Compute true reclaim (all versions, everywhere) for the visible rows, then sort by it"><span x-text="reclaimComputing ? 'Computing…' : '∑ Reclaim'"></span></button>
           <button @click="toggleGroupByFolder()" class="h-8 rounded border border-bd px-2 text-xs" :class="groupByFolder ? 'bg-sel' : ''" title="Group results by folder (find bloated folders), ranked by physical size">⊞ By folder</button>
           <button @click="exportSearch()" class="h-8 rounded border border-bd px-2 text-xs" title="Export the FULL filtered set to CSV">⬇ CSV (all)</button>
           <button x-show="!groupByFolder" @click="openRemoveFromSearch()" class="h-8 rounded border border-danger text-danger px-2 text-xs font-medium" title="Delete EVERY file matching this filter (chunked remove-files, biggest first) — copy / .bat / run">🗑 Delete matching…</button>

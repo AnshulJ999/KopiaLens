@@ -19,6 +19,10 @@
               </div>
             </template>
             <div class="kl-callout" x-show="confirmBox.callout" x-text="confirmBox.callout"></div>
+            <template x-if="confirmBox.input">
+              <label class="block"><span class="text-xs text-muted" x-text="confirmBox.input.label"></span>
+                <input class="fld border border-bd bg-surface2 w-full mt-1 text-xs" x-model="confirmBox.value" :placeholder="confirmBox.input.placeholder || ''"></label>
+            </template>
             <div class="kl-note" x-show="confirmBox.note" x-text="confirmBox.note"></div>
           </div>
           <div class="kl-footer">
