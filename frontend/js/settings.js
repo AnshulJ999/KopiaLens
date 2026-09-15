@@ -38,6 +38,7 @@ const settingsPart = {
       this.indexRetryDelay = Number(kl.index_retry_delay || 900);
       this.reindexAfterDeleteDelay = Number(kl.reindex_after_delete_delay ?? 300);
       this.indexMaxRetries = Number(kl.index_max_retries ?? 1);
+      this.quitIndexing = kl.quit_indexing === "stop" ? "stop" : "finish";
       // ?? not ||: 0 is a meaningful value here (disables the stage) and || would silently
       // rewrite it to the default on every read and every save.
       this.folderPrewarmBudget = Number(kl.folder_prewarm_budget ?? 900);
@@ -79,6 +80,7 @@ const settingsPart = {
           index_retry_delay: Number(this.indexRetryDelay) || 900,
           reindex_after_delete_delay: Math.max(0, Number(this.reindexAfterDeleteDelay) || 0),
           index_max_retries: Math.max(0, Number(this.indexMaxRetries) || 0),
+          quit_indexing: this.quitIndexing === "stop" ? "stop" : "finish",
           folder_prewarm_budget: Number.isFinite(Number(this.folderPrewarmBudget))
             ? Math.max(0, Number(this.folderPrewarmBudget)) : 900,   // 0 = disable the stage
           startup_delay: Number(this.startupDelay) || 0,

@@ -25,7 +25,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 import pystray
 
-from config import DATA_DIR, GUARD_HOST, PORT, TRAY_CONTROL_HOST, TRAY_CONTROL_PORT
+from config import DATA_DIR, GUARD_HOST, PORT, SETTINGS_FILE, TRAY_CONTROL_HOST, TRAY_CONTROL_PORT
 
 HERE = Path(__file__).resolve().parent
 # Browsable URL, so loopback - NOT HOST, which is the 0.0.0.0 bind address. "Open" was handing the
@@ -99,6 +99,45 @@ def _workers_running() -> list[dict]:
             "total": info.get("total"), "age": round(now - float(info.get("updated") or now), 1),
         })
     return out
+
+
+def _quit_stops_indexing() -> bool:
+    """Settings "When quitting KopiaLens": stop a running index worker, or let it finish (default)."""
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as fh:
+            return (json.load(fh).get("kopialens") or {}).get("quit_indexing") == "stop"
+    except Exception:  # noqa: BLE001 - unreadable settings keep the default
+        return False
+
+
+def stop_workers() -> None:
+    """End running index workers, confirmed by command line (PIDs get recycled). The next app
+    start records the run as interrupted and retries it."""
+    try:
+        import psutil
+    except ImportError:  # pragma: no cover - psutil is a declared dependency
+        return
+    for info in _workers_running():
+        pid = int(info.get("pid") or 0)
+        try:
+            worker = psutil.Process(pid)
+            cmd = " ".join(worker.cmdline())
+            if "app.index.worker" not in cmd and "app.backblaze.worker" not in cmd:
+                continue
+            _log_guard(f"tray: stopping the index worker for repo {info.get('repo')} (pid {pid}) on quit", "INFO")
+            worker.terminate()
+            try:
+                worker.wait(timeout=15)
+            except Exception:  # noqa: BLE001
+                worker.kill()
+        except Exception:  # noqa: BLE001 - already gone, or not ours to inspect
+            continue
+
+
+def _quit() -> None:
+    if _quit_stops_indexing():
+        stop_workers()
+    stop_server()
 
 
 def start_server() -> None:
@@ -220,21 +259,22 @@ def open_ui(_icon=None, _item=None) -> None:
 
 
 def restart(_icon=None, _item=None) -> None:
+    _log_guard("tray menu: Restart", "INFO")
     _do_restart()
     # Do NOT auto-open the browser on restart (user opens via the "Open" menu).
 
 
 def quit_app(icon: pystray.Icon, _item=None) -> None:
-    stop_server()
+    _log_guard("tray menu: Quit", "INFO")
+    _quit()
     icon.stop()
 
 
 class _ControlHandler(BaseHTTPRequestHandler):
     """POST /restart · POST /quit · GET /status, loopback only.
 
-    /restart does not refuse while an index worker is running - it reports the worker in /status and
-    leaves the decision to the caller. A restart mid-pass costs that pass, not the data: the worker
-    is reaped at the next startup and the index self-heals on the following run."""
+    /restart does not refuse while an index worker is running: the worker keeps going and the new
+    server takes it over at startup."""
 
     def _json(self, code: int, obj: dict) -> None:
         body = json.dumps(obj).encode("utf-8")
@@ -271,7 +311,7 @@ class _ControlHandler(BaseHTTPRequestHandler):
     @staticmethod
     def _quit_after_response() -> None:
         time.sleep(0.2)
-        stop_server()
+        _quit()
         if _icon:
             _icon.stop()
 

@@ -43,6 +43,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "folder_prewarm_budget": 900,  # max seconds the nightly spends pre-computing folder reclaim
         "index_retry_delay": 900,    # after a FAILED pass, wait this long before the one retry
         "index_max_retries": 1,      # retries per scheduled slot; 0 = never retry until the next slot
+        "quit_indexing": "finish",   # tray Quit: "finish" leaves a running index worker to complete, "stop" ends it
         "reindex_after_delete_delay": 300,  # quiet seconds after the last delete before the index updates
         "light_interval": 1800,      # cheap in-process warm pass: next-snapshot times, stats, search landing
         "dashboard_mode": "nightly",  # "nightly" (rebuild with the heavy pass) | "interval" (also during the day)

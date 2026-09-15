@@ -219,7 +219,7 @@ def test_only_one_heavy_pass_can_run_even_under_a_race(monkeypatch):
     import time as _t
     from app.core import nightly
 
-    monkeypatch.setattr(nightly, "_run_kopia", lambda repo, full: (_t.sleep(0.2), {"ok": True})[1])
+    monkeypatch.setattr(nightly, "_run_kopia", lambda repo, full, trigger="manual": (_t.sleep(0.2), {"ok": True})[1])
     ran = []
 
     def go(repo):
@@ -303,47 +303,22 @@ def test_exclusive_offline_reports_what_is_blocking_on_timeout(monkeypatch):
         schema._active_reads.pop("9", None)
 
 
-# ---- orphaned worker cleanup ------------------------------------------------------------------
-# A worker can outlive the app (tray quit runs no graceful shutdown). Observed live: it kept the
-# repo's DuckDB exclusively and the next app start returned 500 for every request to that repo.
+# ---- leftover workers at startup ----------------------------------------------------------------
+# A worker outlives the app on tray Restart/Quit. Kopia workers are taken over
+# (test_worker_resume.py); the PID-recycling guard below still applies to every leftover.
 def _progress(tmp_path, repo, pid):
     f = tmp_path / f"index_progress_repo{repo}.json"
     f.write_text(json.dumps({"repo": repo, "pid": pid, "stage": "folders"}), encoding="utf-8")
     return f
 
 
-def test_reaper_kills_a_real_orphan_and_clears_its_file(tmp_path, monkeypatch):
-    from app.core import nightly
-
-    monkeypatch.setattr(nightly, "DATA_DIR", str(tmp_path))
-    f = _progress(tmp_path, "1", 4242)
-    killed = []
-
-    class _Proc:
-        def __init__(self, pid):
-            self.pid = pid
-
-        def cmdline(self):
-            return ["pythonw.exe", "-m", "app.index.worker", "1"]
-
-        def terminate(self):
-            killed.append(self.pid)
-
-        def wait(self, timeout=None):
-            return 0
-
-    monkeypatch.setattr("psutil.Process", _Proc)
-    assert nightly.reap_orphan_workers() == ["1"]
-    assert killed == [4242]
-    assert not f.exists(), "the stale progress file must be removed"
-
-
-def test_reaper_never_kills_an_unrelated_process(tmp_path, monkeypatch):
-    """PIDs get recycled. Killing whatever now holds that number would be catastrophic, so the
+def test_startup_never_touches_an_unrelated_process(tmp_path, monkeypatch):
+    """PIDs get recycled. Killing or adopting whatever now holds that number would be wrong, so the
     command line must be confirmed first."""
     from app.core import nightly
 
     monkeypatch.setattr(nightly, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(nightly, "REPOS", {"2": {"name": "Big"}})
     _progress(tmp_path, "2", 4243)
     killed = []
 
@@ -358,22 +333,24 @@ def test_reaper_never_kills_an_unrelated_process(tmp_path, monkeypatch):
             killed.append(self.pid)
 
     monkeypatch.setattr("psutil.Process", _Innocent)
-    assert nightly.reap_orphan_workers() == []
-    assert killed == [], "reaper killed a process that was not one of our workers"
+    out = nightly.resume_workers()
+    assert killed == [], "startup killed a process that was not one of our workers"
+    assert out["adopted"] == [] and out["interrupted"] == ["2"]
 
 
-def test_reaper_handles_an_already_dead_pid(tmp_path, monkeypatch):
+def test_startup_handles_an_already_dead_pid(tmp_path, monkeypatch):
     import psutil
     from app.core import nightly
 
     monkeypatch.setattr(nightly, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(nightly, "REPOS", {"1": {"name": "Main"}})
     f = _progress(tmp_path, "1", 999999)
 
     def _boom(pid):
         raise psutil.NoSuchProcess(pid)
 
     monkeypatch.setattr("psutil.Process", _boom)
-    assert nightly.reap_orphan_workers() == []
+    assert nightly.resume_workers()["interrupted"] == ["1"]
     assert not f.exists()
 
 

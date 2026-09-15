@@ -62,7 +62,7 @@ document.addEventListener("alpine:init", () => {
     // Job runner (shared for every long kopia action): panel + follow state + header chip
     showJob: false, jobPanel: null, jobLines: [], jobEarly: 0, jobCursor: 0, jobFollow: true,
     jobMode: localStorage.getItem("kl-jobmode") || "clean", jobExpanded: false, runningJobs: [],
-    _jobPoll: null, _jobChipPoll: null, _jobOpenSeq: 0, _handledJobs: null, _reindexPoll: null,
+    _jobPoll: null, _jobChipPoll: null, _jobOpenSeq: 0, _handledJobs: null, _reindexWatch: {},
     excludedDrives: [], excludedOk: true, excludedPath: "", excludedFilter: "excluded", excludedMeta: "", _excludedItems: [], _excludedSeq: 0, excludedDetail: null, showExcludedDetail: false,
     showSettings: false, settingsTab: "general", backend: "subprocess", repoPinned: false, reindexInterval: 1800, dashRefresh: 900,
     reclaimInterval: 10800, excludedTolerance: 0.05, esPath: "",
@@ -70,7 +70,7 @@ document.addEventListener("alpine:init", () => {
     // change them was to edit the file by hand. Defaults here mirror app/settings.py.
     lightInterval: 1800, dashboardInterval: 14400,
     autoCompact: true, compactRatio: 1.6, compactMinInterval: 86400, debugLog: false,
-    indexWorkerTimeout: 14400, indexDrainTimeout: 300, indexRetryDelay: 900, indexMaxRetries: 1, reindexAfterDeleteDelay: 300,
+    indexWorkerTimeout: 14400, indexDrainTimeout: 300, indexRetryDelay: 900, indexMaxRetries: 1, reindexAfterDeleteDelay: 300, quitIndexing: "finish",
     folderPrewarmBudget: 900, startupDelay: 300, dirMemoMaxMb: 1500, refcountWriteInterval: 21600,
     // Backblaze settings. Defaults mirror app/settings.py; the Save payload carries them as the
     // nested "backblaze" dict the settings endpoint already merges.

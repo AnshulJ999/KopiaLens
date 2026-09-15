@@ -16,7 +16,7 @@ from app.index import worker
 class _StubReporter:
     """The real reporter writes progress files into the live data directory and runs a thread."""
 
-    def __init__(self, repo: str) -> None:
+    def __init__(self, repo: str, full: bool = False) -> None:
         self.repo = repo
         self.stages: list[str] = []
 

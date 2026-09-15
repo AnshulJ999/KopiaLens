@@ -249,6 +249,15 @@ def mark_nightly_result(repo: str, ok: bool, reason: str | None = None) -> None:
     _write_state(data)
 
 
+def _close_stale_attempts(adopted: list[str]) -> None:
+    """Startup: an attempt still marked in progress has no pass behind it unless its worker was
+    just taken over. Record it as interrupted so the retry window opens."""
+    for repo, rec in list((_read_state().get("attempts") or {}).items()):
+        if rec.get("ok") is None and repo not in adopted:
+            log.warning("repo=%s last index attempt never finished; recorded as interrupted", repo)
+            mark_nightly_result(repo, False, nightly.INTERRUPTED)
+
+
 def nightly_error(repo: str) -> dict:
     """The last recorded failure for this repo ({} once a pass succeeds)."""
     return (_read_state().get("errors") or {}).get(repo) or {}
@@ -537,12 +546,11 @@ async def lifespan(_app: FastAPI):
     except Exception as exc:  # noqa: BLE001 - seeding must never block startup
         log.error("KOPIALENS_PASSWORD seeding failed: %s", exc)
     try:
-        # Before ANY DuckDB access: a worker from a previous run may still hold a repo exclusively.
-        reaped = nightly.reap_orphan_workers()
-        if reaped:
-            log.warning("cleaned up orphaned index worker(s) for repo(s): %s", ", ".join(reaped))
+        # Before the scheduler starts: a worker from the previous app run is taken over, not restarted.
+        resumed = nightly.resume_workers(on_done=mark_nightly_result)
+        _close_stale_attempts(resumed["adopted"])
     except Exception as exc:  # noqa: BLE001 - cleanup must never block startup
-        log.error("orphan worker cleanup failed: %s", exc)
+        log.error("resuming index workers failed: %s", exc)
     try:  # index updates queued after deletes before the last exit
         from .core import reindexq
         reindexq.load()
@@ -578,8 +586,7 @@ async def lifespan(_app: FastAPI):
     log.info("KopiaLens shutting down")
     _bg_stop.set()
     jobrunner.terminate_all()    # a running action must not outlive the registry as an orphan
-    nightly.terminate_running()  # a worker outlives us otherwise and keeps publishing
-    nightly.wait_idle()          # let the pass thread finish before we close anything
+    # A running index worker is left to finish; the next start takes it over (resume_workers).
     SERVERS.shutdown()
     store.close_all()            # the live and retired generations; the index reads come from here
     close_duckdb()               # the scratch/legacy pool, normally already empty

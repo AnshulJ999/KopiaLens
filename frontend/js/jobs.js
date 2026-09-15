@@ -250,7 +250,11 @@ const jobsPart = {
         || ((j.state === "failed" || (j.state === "done" && j.errors > 0)) && !seen.includes(j.job_id)
             && now - (j.finished || j.created || 0) < JOB_CHIP_FAILURE_WINDOW));
       const q = await getJson("/api/index/pending").catch(() => null);
-      if (q) this.indexPending = (q.pending || []).map((p) => ({ ...p, offset: Date.now() / 1000 - q.now }));
+      if (q) {
+        this.indexPending = (q.pending || []).map((p) => ({ ...p, offset: Date.now() / 1000 - q.now }));
+        for (const p of this.indexPending) this._armReindexReload(p.repo, p.requested);  // survives a page reload
+      }
+      this._reindexWatchTick();
     },
 
     // ---- Index update queued after deletes ----
@@ -283,29 +287,42 @@ const jobsPart = {
       const deleted = j.kind === "remove_files" || j.kind === "snapshot_delete"
         || (j.kind === "policy_write" && j.kind_label === "Excluding and deleting" && !j.held);
       if (deleted && this.active === "snapshots") this.loadSnapshots(true);
-      if (deleted) this._armReindexReload(j.repo);
+      if (deleted) this._armReindexReload(j.repo, j.finished || j.created || Date.now() / 1000);
     },
 
-    _armReindexReload(repo) {
-      // Watch until the queued index update has published, then offer a reload instead of
-      // rebuilding the table under the user. While the update is queued it may be minutes away.
-      if (this._reindexPoll) { this._reindexPoll.repo = repo; return; }
-      const w = this._reindexPoll = { repo, observed: false, idle: 0, ticks: 0, timer: null };
-      w.timer = setInterval(async () => {
-        w.ticks++;
-        const s = await getJson(`/api/index/status?repo=${encodeURIComponent(w.repo)}`).catch(() => null);
-        if (!s) return;
-        if (s.building || s.offline) w.observed = true;
-        if (this.pendingFor(w.repo)) w.idle = 0; else w.idle++;
-        if (w.observed && !s.building && !s.offline) {
-          clearInterval(w.timer);
-          this._reindexPoll = null;
-          if (this.repo === w.repo && ["dashboard", "search", "tree", "churn"].includes(this.active)) this.indexUpdated = { repo: w.repo };
-        } else if ((!w.observed && w.idle > 60) || w.ticks > 7200) {
-          clearInterval(w.timer);
-          this._reindexPoll = null;
+    // Offer a reload once the index update a delete queued has published, instead of rebuilding
+    // tables under the user. `since` is server time; the watch is driven by the header chip's
+    // poll (paused in a hidden tab) and reads freshness, which makes no kopia calls.
+    _armReindexReload(repo, since) {
+      const w = this._reindexWatch[repo];
+      if (w) { w.since = Math.min(w.since, since); return; }
+      this._reindexWatch[repo] = { since, active: Date.now() / 1000 };
+    },
+
+    async _reindexWatchTick() {
+      const repos = Object.keys(this._reindexWatch);
+      if (!repos.length) return;
+      const now = Date.now() / 1000;
+      const waiting = [];
+      for (const r of repos) {
+        if (this.pendingFor(r)) this._reindexWatch[r].active = now; else waiting.push(r);
+      }
+      if (!waiting.length) return;
+      const f = await getJson("/api/index/freshness").catch(() => null);
+      if (!f) return;
+      this.freshness = f.repos || [];
+      for (const r of waiting) {
+        const w = this._reindexWatch[r];
+        if (!w) continue;
+        const row = this.freshness.find((x) => x.repo === r);
+        if (row && row.running) { w.active = now; continue; }
+        if (row && row.last_index && row.last_index >= w.since) {
+          delete this._reindexWatch[r];
+          if (this.repo === r && ["dashboard", "search", "tree", "churn"].includes(this.active)) this.indexUpdated = { repo: r };
+        } else if (now - w.active > REINDEX_WATCH_IDLE) {
+          delete this._reindexWatch[r];
         }
-      }, 2000);
+      }
     },
 };
 
@@ -313,4 +330,6 @@ const jobsPart = {
 // already knows the file list, so the pane shows what is being processed instead.
 // Unseen failures stay in the header chip for a day; older ones live in Logs > Activity.
 const JOB_CHIP_FAILURE_WINDOW = 24 * 3600;
+// A reload watch with no queued or running update gives up after this long.
+const REINDEX_WATCH_IDLE = 600;
 const JOB_LINE_NOISE = /^will remove file /i;

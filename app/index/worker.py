@@ -17,7 +17,9 @@ There is no exclusive lock to hand over any more: the index is immutable Parquet
 ``publish.WriterLock``, and the app keeps serving the previous generation while this runs.
 Progress is written to ``data/index_progress_repo<N>.json`` so the app can show a live badge.
 
-Prints a JSON summary to stdout and exits 0; nonzero on failure.
+Prints a JSON summary to stdout and exits 0; nonzero on failure. The same summary is written to
+``data/index_result_repo<N>.json`` first: stdout dies with the app that started the worker, and a
+restarted app reads the file instead.
 """
 
 from __future__ import annotations
@@ -41,9 +43,18 @@ def progress_path(repo: str) -> str:
     return os.path.join(DATA_DIR, f"index_progress_repo{repo}.json")
 
 
-def write_progress(repo: str, payload: dict) -> None:
+def result_path(repo: str) -> str:
+    from config import DATA_DIR
+    return os.path.join(DATA_DIR, f"index_result_repo{repo}.json")
+
+
+def write_result(repo: str, payload: dict) -> None:
+    write_progress(repo, payload, path=result_path(repo))
+
+
+def write_progress(repo: str, payload: dict, path: str | None = None) -> None:
     """Atomic write so the app never reads a half-written progress file."""
-    path = progress_path(repo)
+    path = path or progress_path(repo)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = path + ".tmp"
@@ -65,8 +76,9 @@ class _Reporter:
     """Mirrors the builder's in-process job dict out to a file every couple of seconds, so the
     app (which cannot touch the DuckDB right now) can still render a live progress badge."""
 
-    def __init__(self, repo: str) -> None:
+    def __init__(self, repo: str, full: bool = False) -> None:
         self.repo = repo
+        self.full = full
         self.stage = "starting"
         self.started = time.time()
         self._stop = threading.Event()
@@ -78,6 +90,7 @@ class _Reporter:
         return {
             "repo": self.repo, "stage": self.stage, "started": self.started,
             "updated": time.time(), "pid": os.getpid(),
+            "trigger": trigger(), "full": self.full,
             "indexed": job.get("indexed", 0), "total": job.get("total", 0),
             "targets": job.get("targets"), "current_source": job.get("current_source"),
             "error": job.get("error"),
@@ -126,6 +139,11 @@ def index_stage(repo: str, full: bool = False) -> None:
     logging.info("published generation %s: %s", gen, body.get("stats"))
 
 
+def trigger() -> str:
+    """What started this run ("nightly" / "manual"), passed by the app for its run history."""
+    return os.environ.get("KOPIALENS_INDEX_TRIGGER") or "manual"
+
+
 def run(repo: str, full: bool = False) -> dict:
     """The nightly pass for one repo.
 
@@ -137,7 +155,7 @@ def run(repo: str, full: bool = False) -> dict:
     Stages after the index are otherwise independent: a failed churn rollup should not cost us the
     index. But if the INDEX itself fails, everything downstream would be computed over a
     half-updated index, so those are skipped rather than cached wrong."""
-    rep = _Reporter(repo)
+    rep = _Reporter(repo, full)
     rep.start()
     summary: dict = {"repo": repo, "ok": True, "full": full, "stages": {},
                      "errors": {}, "skipped": []}
@@ -285,12 +303,19 @@ def main(argv: list) -> int:
         print(json.dumps({"ok": False, "reason": "usage: worker <repo> [--full]"}))
         return 2
     repo = args[0]
+    full = "--full" in argv
+    started = time.time()
     try:
-        summary = run(repo, full="--full" in argv)
+        summary = run(repo, full=full)
     except Exception as exc:  # noqa: BLE001 - always emit parseable output, never crash silently
-        print(json.dumps({"ok": False, "repo": repo, "reason": str(exc)[:500]}))
-        return 1
-    print(json.dumps(summary))
+        summary = {"ok": False, "repo": repo, "reason": str(exc)[:500],
+                   "elapsed": round(time.time() - started, 1)}
+    summary.update({"pid": os.getpid(), "finished": time.time(), "trigger": trigger(), "full": full})
+    write_result(repo, summary)
+    try:
+        print(json.dumps(summary))
+    except OSError:
+        pass  # the app that started us is gone; it reads the result file instead
     return 0 if summary.get("ok") else 1
 
 

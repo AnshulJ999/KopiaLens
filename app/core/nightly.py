@@ -90,8 +90,7 @@ def worker_progress(repo: str) -> dict | None:
         return None
 
 
-_PROC_LOCK = threading.Lock()
-_PROCS: dict[str, subprocess.Popen] = {}   # live worker processes, so shutdown can end them
+INTERRUPTED = "Indexing stopped before it finished (KopiaLens was closed or restarted)"
 
 
 def worker_log_path(repo: str) -> str:
@@ -127,91 +126,180 @@ def _roll_worker_log(path: str, max_bytes: int = WORKER_LOG_MAX_BYTES,
         log.warning("worker log rotation failed for %s: %s", path, exc)
 
 
-def terminate_running(grace: float = 10.0) -> None:
-    """End any live worker. Called on app shutdown: a worker outlives its parent otherwise, and
-    since it holds the DuckDB exclusively, the app you just restarted could not open that repo at
-    all. A half-finished index is harmless - the next pass sees the missing snapshots and continues.
-    Waiting for it instead could block shutdown for the better part of an hour."""
-    with _PROC_LOCK:
-        procs = list(_PROCS.items())
-    for repo, proc in procs:
-        if proc.poll() is not None:
-            continue
-        log.warning("repo=%s terminating index worker (pid %s) for shutdown", repo, proc.pid)
-        try:
-            proc.terminate()
-            proc.wait(timeout=grace)
-        except Exception:  # noqa: BLE001
-            try:
-                proc.kill()
-            except Exception:  # noqa: BLE001
-                pass
+def result_path(repo: str) -> str:
+    """The worker's summary file (``app/index/worker.py`` writes it before printing to stdout)."""
+    return os.path.join(DATA_DIR, f"index_result_repo{repo}.json")
 
 
-def wait_idle(timeout: float = 20.0) -> bool:
-    """Wait (briefly) for any in-flight pass thread to finish unwinding. terminate_running() ends
-    the CHILD process, but the parent thread still has to reopen and possibly compact the DuckDB;
-    tearing the connection down underneath it is asking for trouble. Returns True if it went idle."""
-    deadline = time.time() + timeout
-    while any_running() and time.time() < deadline:
-        time.sleep(0.2)
-    return not any_running()
-
-
-def reap_orphan_workers() -> list[str]:
-    """Kill any index worker left over from a previous app run, before the DuckDB is opened.
-
-    Identified by the PID recorded in its own progress file, and confirmed by checking the process
-    is genuinely one of our workers (name + command line) so a recycled PID can never be mistaken
-    for one. Returns the repos cleaned up.
-    """
-    import glob
+def _read_json(path: str) -> dict | None:
     try:
-        import psutil
-    except ImportError:  # pragma: no cover - psutil is a declared dependency
-        return []
-    reaped: list[str] = []
-    for path in glob.glob(os.path.join(DATA_DIR, "index_progress_repo*.json")):
-        repo = None
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else None
+    except Exception:  # noqa: BLE001 - missing or half-written reads as nothing
+        return None
+
+
+def _remove(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def _with_reason(summary: dict, returncode: int | None = None) -> dict:
+    """A stage failure carries ``errors`` but no ``reason``; build one so the UI never shows a
+    placeholder while the real error sits in the summary."""
+    if summary.get("ok", True) or summary.get("reason"):
+        return summary
+    errs = summary.get("errors") or {}
+    if errs:
+        summary["reason"] = "; ".join(f"{s}: {m}" for s, m in errs.items())[:500]
+    else:
+        summary["reason"] = f"worker exit {returncode}" if returncode is not None else "index pass failed"
+    return summary
+
+
+def _our_worker(pid: int):
+    """The live process for ``pid`` when it is one of our workers, else None. Checked by command
+    line, never by PID alone (PIDs get recycled). Raises when the process cannot be inspected."""
+    import psutil
+    try:
+        proc = psutil.Process(pid)
+        cmd = " ".join(proc.cmdline())
+    except psutil.NoSuchProcess:
+        return None
+    if "app.index.worker" in cmd or "app.backblaze.worker" in cmd:
+        return proc
+    return None
+
+
+def _finish_resumed(repo: str, summary: dict, started: float, trigger: str, full: bool,
+                    on_done) -> None:
+    """Bookkeeping for a run this process did not start: state, run history, freshness."""
+    from . import runhistory  # lazy: keeps nightly import-light
+    _with_reason(summary)
+    now = time.time()
+    _STATE[repo] = {"running": False, "started": started, "finished": now,
+                    "elapsed": now - started, "error": None if summary.get("ok", True) else summary.get("reason"),
+                    "last": summary}
+    runhistory.record(repo, summary, trigger, full, float(summary.get("elapsed") or (now - started)))
+    if on_done:
         try:
-            with open(path, encoding="utf-8") as fh:
-                info = json.load(fh)
-            repo, pid = info.get("repo"), int(info.get("pid") or 0)
-        except Exception:  # noqa: BLE001 - unreadable progress file: just remove it
-            pid = 0
-        if pid:
+            on_done(repo, bool(summary.get("ok", False)), summary.get("reason"))
+        except Exception:  # noqa: BLE001 - a reporting callback must not break startup
+            log.exception("repo=%s on_done callback failed", repo)
+
+
+def _watch_adopted(repo: str, proc, pid: int, info: dict, on_done) -> None:
+    """Wait for a worker taken over at startup, then record its result like any other run."""
+    import psutil
+    started = float(info.get("started") or time.time())
+    summary = None
+    try:
+        while True:
             try:
-                proc = psutil.Process(pid)
-                cmd = " ".join(proc.cmdline())
-                # Confirm it is OUR worker before killing anything - PIDs get recycled.
-                #: the BZ worker writes the same progress-file protocol, so it is reaped too.
-                if "app.index.worker" in cmd or "app.backblaze.worker" in cmd:
-                    log.warning("reaping orphaned index worker for repo=%s (pid %s) left by a "
-                                "previous run - it still holds the DuckDB", repo, pid)
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=15)
-                    except Exception:  # noqa: BLE001
-                        proc.kill()
-                    if repo:
-                        reaped.append(repo)
+                proc.wait(timeout=5)
+                break
+            except psutil.TimeoutExpired:
+                if time.time() - started > worker_timeout():
+                    log.error("repo=%s index worker (pid %s) timed out - killing it", repo, pid)
+                    proc.kill()
+                    _remove(os.path.join(DATA_DIR, f"index_progress_repo{repo}.json"))
+                    summary = {"ok": False, "reason": "timeout"}
+                    break
             except psutil.NoSuchProcess:
-                pass
-            except Exception as exc:  # noqa: BLE001 - never block startup on cleanup
-                # Could not inspect it - it may still be alive and holding the DuckDB. KEEP the
-                # progress file: deleting it would destroy the only record of which PID to reap,
-                # so the next startup could not recover either.
-                log.warning("could not inspect worker pid %s (%s) - keeping %s for the next "
-                            "startup to retry", pid, exc, os.path.basename(path))
-                continue
+                break
+        if summary is None:
+            res = _read_json(result_path(repo))
+            if res and int(res.get("pid") or 0) == pid:
+                summary = res
+                _remove(result_path(repo))
+            else:
+                summary = {"ok": False, "reason": INTERRUPTED}
+    except Exception as exc:  # noqa: BLE001 - the slot must be released whatever happens
+        log.exception("repo=%s watching the resumed worker failed", repo)
+        summary = {"ok": False, "reason": str(exc)[:500]}
+    finally:
+        _release(repo)
+        _finish_resumed(repo, summary or {"ok": False, "reason": INTERRUPTED}, started,
+                        info.get("trigger") or "nightly", bool(info.get("full")), on_done)
+    log.info("repo=%s resumed index pass done: %s", repo, summary)
+
+
+def resume_workers(on_done=None) -> dict:
+    """Startup: take over index workers left running by the previous app process.
+
+    A live kopia worker is adopted (slot reserved, watched to exit, result recorded); a result a
+    worker wrote while no app was running is recorded; a worker that died without one is recorded
+    as interrupted, so the normal retry runs. A leftover Backblaze worker is stopped - it retries
+    straight after startup anyway. Returns the repos per outcome."""
+    import glob
+    out: dict[str, list[str]] = {"adopted": [], "finished": [], "interrupted": [], "stopped": []}
+    dead: dict[str, dict] = {}
+    for path in glob.glob(os.path.join(DATA_DIR, "index_progress_repo*.json")):
+        repo = os.path.basename(path)[len("index_progress_repo"):-len(".json")]
+        info = _read_json(path) or {}
+        pid = int(info.get("pid") or 0)
         try:
-            os.remove(path)   # the worker that owned it is confirmed gone
-        except Exception:  # noqa: BLE001
-            pass
-    return reaped
+            proc = _our_worker(pid) if pid else None
+        except Exception as exc:  # noqa: BLE001 - never block startup on cleanup
+            # Keep the file: it is the only record of which PID to check next startup.
+            log.warning("could not inspect worker pid %s (%s) - keeping %s for the next startup",
+                        pid, exc, os.path.basename(path))
+            continue
+        if proc is None:
+            _remove(path)
+            dead[repo] = info
+            continue
+        if repo == "bz" or repo_kind(repo) == "backblaze":
+            log.warning("stopping the Backblaze index worker (pid %s) left by a previous run", pid)
+            proc.terminate()
+            try:
+                proc.wait(timeout=15)
+            except Exception:  # noqa: BLE001
+                proc.kill()
+            _remove(path)
+            out["stopped"].append(repo)
+            continue
+        if repo not in REPOS or not _reserve(repo):
+            log.warning("repo=%s index worker (pid %s) left running untracked", repo, pid)
+            continue
+        _STATE[repo] = {"running": True, "started": float(info.get("started") or time.time()),
+                        "error": None, "last": None}
+        log.info("repo=%s taking over the running index worker (pid %s)", repo, pid)
+        threading.Thread(target=_watch_adopted, args=(repo, proc, pid, info, on_done),
+                         name=f"resumed-worker-{repo}", daemon=True).start()
+        out["adopted"].append(repo)
+
+    for path in glob.glob(os.path.join(DATA_DIR, "index_result_repo*.json")):
+        repo = os.path.basename(path)[len("index_result_repo"):-len(".json")]
+        if repo in out["adopted"]:
+            continue  # its watcher reads the file when the worker exits
+        res = _read_json(path)
+        _remove(path)
+        if not res or repo not in REPOS:
+            continue
+        started = float(res.get("finished") or time.time()) - float(res.get("elapsed") or 0)
+        _finish_resumed(repo, res, started, res.get("trigger") or "nightly", bool(res.get("full")), on_done)
+        log.info("repo=%s recorded an index pass that finished while KopiaLens was closed: ok=%s",
+                 repo, res.get("ok"))
+        out["finished"].append(repo)
+        dead.pop(repo, None)
+
+    for repo, info in dead.items():
+        if repo not in REPOS or repo_kind(repo) == "backblaze":
+            continue
+        started = float(info.get("started") or time.time())
+        _finish_resumed(repo, {"ok": False, "reason": INTERRUPTED,
+                               "elapsed": round(float(info.get("updated") or started) - started, 1)},
+                        started, info.get("trigger") or "nightly", bool(info.get("full")), on_done)
+        log.warning("repo=%s index worker stopped before it finished; recorded as interrupted", repo)
+        out["interrupted"].append(repo)
+    return out
 
 
-def _run_worker(repo: str, full: bool) -> dict:
+def _run_worker(repo: str, full: bool, trigger: str = "manual") -> dict:
     """Run the worker subprocess. Its stderr (all the run's log lines) goes to a file rather than a
     parent-side buffer: it survives the run for diagnosis, and none of it sits in this process.
 
@@ -230,10 +318,9 @@ def _run_worker(repo: str, full: bool) -> dict:
             errfh.flush()
             proc = subprocess.Popen(
                 args, cwd=_KL_ROOT, stdout=subprocess.PIPE, stderr=errfh, text=True,
+                env={**os.environ, "KOPIALENS_INDEX_TRIGGER": trigger},
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash under pythonw
             )
-            with _PROC_LOCK:
-                _PROCS[repo] = proc
             try:
                 out, _ = proc.communicate(timeout=worker_timeout())
             except subprocess.TimeoutExpired:
@@ -242,8 +329,10 @@ def _run_worker(repo: str, full: bool) -> dict:
                 proc.communicate()
                 return {"ok": False, "reason": "timeout"}
             finally:
-                with _PROC_LOCK:
-                    _PROCS.pop(repo, None)
+                # This process records the run from stdout; the file is for a restarted app only.
+                res = _read_json(result_path(repo))
+                if res and int(res.get("pid") or 0) == proc.pid:
+                    _remove(result_path(repo))
     except Exception as exc:  # noqa: BLE001 - could not even launch
         log.error("repo=%s index worker launch failed: %s", repo, exc)
         return {"ok": False, "reason": f"launch failed: {exc}"}
@@ -262,15 +351,7 @@ def _run_worker(repo: str, full: bool) -> dict:
     if proc.returncode != 0:
         if summary is not None:
             summary["ok"] = False
-            # A stage failure prints the full summary with `errors: {stage: msg}` and NO `reason`
-            # (index/worker.py) - build the reason from those instead of the placeholder, or the
-            # freshness strip shows "worker exit 1" while the real error sits right there.
-            if "reason" not in summary:
-                errs = summary.get("errors") or {}
-                if errs:
-                    summary["reason"] = "; ".join(f"{s}: {m}" for s, m in errs.items())[:500]
-                else:
-                    summary["reason"] = f"worker exit {proc.returncode}"
+            _with_reason(summary, proc.returncode)
             summary["log"] = logp
             log.error("repo=%s index worker exit %d: %s (see %s)",
                       repo, proc.returncode, summary["reason"], logp)
@@ -285,7 +366,7 @@ def _run_worker(repo: str, full: bool) -> dict:
     return summary
 
 
-def _run_kopia(repo: str, full: bool) -> dict:
+def _run_kopia(repo: str, full: bool, trigger: str = "manual") -> dict:
     """Run the worker. No handover, no compaction.
 
     The index is immutable Parquet published under a manifest, so the worker and the app read and
@@ -293,7 +374,7 @@ def _run_kopia(repo: str, full: bool) -> dict:
     never goes offline, and nothing accumulates dead space to reclaim. The app serves the previous
     generation for the whole run and picks up the new one when the manifest swaps.
     """
-    return _run_worker(repo, full)
+    return _run_worker(repo, full, trigger)
 
 
 def _run_backblaze(repo: str) -> dict:
@@ -330,7 +411,7 @@ def run_index_pass(repo: str, full: bool = False, _owned: bool = False,
                     "last": _STATE.get(repo, {}).get("last")}
     started = time.time()
     try:
-        summary = _run_kopia(repo, full) if repo_kind(repo) != "backblaze" else _run_backblaze(repo)
+        summary = _run_kopia(repo, full, trigger) if repo_kind(repo) != "backblaze" else _run_backblaze(repo)
     except Exception as exc:  # noqa: BLE001 - a failed pass must never kill the scheduler loop
         log.exception("repo=%s index pass failed", repo)
         summary = {"ok": False, "reason": str(exc)[:500]}
