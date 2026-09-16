@@ -23,6 +23,7 @@ import time
 from ..core.applog import get_logger
 from ..core.kopia import kopia_lines
 from . import tree
+from .store import read_cursor
 
 log = get_logger("index")
 
@@ -145,6 +146,46 @@ def chunk_sizes(con, repo: str, alloc, out: str = "csize_new") -> int:
     log.info("repo=%s chunk sizes: %d listed, %d mapped (%.1fs)", repo, n, kept,
              time.perf_counter() - t0)
     return kept
+
+
+def reach_content_ids(repo: str, roots: list[str]) -> set[str]:
+    """Content ids reachable from these snapshot root objects, read from the generation.
+
+    The read-side twin of `source_reach`: ONE recursive query over the tree, no walk cache. It
+    counts what `crefs` counts - a plain object, a split object's own index content, and every
+    piece behind it, plus the root objects themselves. Over-counting is deliberate (a missed
+    chunk reads as "safe to delete"). This is what replaces `core.walk.walk` for the callers that
+    only want the set (retention simulate, snapshot analysis).
+    """
+    roots = [r for r in dict.fromkeys(roots or []) if r]
+    if not roots:
+        return set()
+    cur = read_cursor(repo)
+    try:
+        ph = ",".join("?" * len(roots))
+        rows = cur.execute(
+            f"""WITH RECURSIVE r(dir_id) AS (
+                    SELECT t.dir_id FROM tdir t JOIN cid c ON c.cid_id = t.cid_id
+                    WHERE c.content_id IN ({ph})
+                    UNION
+                    SELECT e.child FROM r JOIN tent e ON e.dir_id = r.dir_id
+                    WHERE e.child IS NOT NULL),
+                objs AS (
+                    SELECT e.cid_id, e.ind, e.ind_cid FROM r JOIN tent e USING (dir_id)
+                    WHERE e.cid_id IS NOT NULL)
+                SELECT DISTINCT content_id FROM (
+                    SELECT c.content_id FROM cid c
+                      WHERE c.cid_id IN (SELECT cid_id FROM objs WHERE NOT ind)
+                    UNION ALL SELECT c.content_id FROM cid c
+                      WHERE c.cid_id IN (SELECT ind_cid FROM objs WHERE ind)
+                    UNION ALL SELECT pc.content_id FROM tpart p
+                      JOIN cid pc ON pc.cid_id = p.part_cid
+                      WHERE p.iobj_cid IN (SELECT cid_id FROM objs WHERE ind)
+                    UNION ALL SELECT content_id FROM cid WHERE content_id IN ({ph}))
+                WHERE content_id IS NOT NULL""", roots + roots).fetchall()
+    finally:
+        cur.close()
+    return {r[0] for r in rows}
 
 
 def roots_table(con, out: str = "_reach_roots") -> None:

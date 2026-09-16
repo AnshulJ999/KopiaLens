@@ -26,16 +26,30 @@ from .queries import _ESC, like_literal
 from .store import read_cursor
 
 
-def _chunks_for_obj(repo: str, dbsql, obj: str, fetch: bool = True) -> set[str] | None:
-    """Content chunks that physically back one file object (expands indirect objects). With
-    ``fetch=False`` an object missing from the walk cache returns None instead of calling kopia."""
+def _chunks_for_obj(repo: str, obj: str) -> set[str] | None:
+    """Content chunks that physically back one file object, from the generation's tree.
+
+    A split object (``I`` prefixed) returns its pieces from ``tpart``, which includes its own index
+    content as ordinal 0 - so nothing is missed. A plain object is its own single chunk. ``None``
+    means the tree does not hold the object (a snapshot newer than the last sync); the caller treats
+    that as unknown rather than as zero bytes, which is what kept a missing chunk list from reading
+    as "this file takes no space".
+    """
     if not obj:
         return set()
-    if obj.startswith("I"):
-        missing: list[str] = []
-        parts = expand_indirect(repo, dbsql, {obj}, fetch=fetch, missing=missing)
-        return None if missing else parts
-    return {obj}
+    if not obj.startswith("I"):
+        return {obj}
+    cur = read_cursor(repo)
+    try:
+        cid = resolve.cid_id(cur, obj)
+        if cid is None:
+            return None
+        parts = cur.execute("SELECT part_cid FROM tpart WHERE iobj_cid = ?", [cid]).fetchall()
+        if not parts:
+            return None
+        return set(resolve.content_ids(cur, [p[0] for p in parts]).values())
+    finally:
+        cur.close()
 
 
 def _arrow_insert(con, sql: str, columns: dict) -> None:
@@ -213,6 +227,64 @@ def _refcount_for(repo: str, cids) -> dict[str, int] | None:
     return out
 
 
+def _sizes_for(repo: str, cids) -> dict[str, int]:
+    """Targeted packed sizes for just these chunks, from the generation's `csize` map.
+
+    Batched IN queries, exactly like `_refcount_for`, instead of building the whole multi-million
+    row map: a page of file panels would otherwise pay seconds and hundreds of MB per open (the
+    KL47 lesson - batch, never full-map on a per-item path). Missing chunks are simply absent, and
+    every caller reads them with `.get(c, 0)` - the same default the sizemap had.
+    """
+    wanted = [c for c in dict.fromkeys(cids) if c]
+    if not wanted:
+        return {}
+    cur = read_cursor(repo)
+    out: dict[str, int] = {}
+    try:
+        id_of = resolve.cid_ids(cur, wanted)
+        rev = {v: k for k, v in id_of.items()}
+        ids = sorted(set(id_of.values()))
+        for i in range(0, len(ids), 900):
+            grp = ids[i:i + 900]
+            if not grp:
+                continue
+            q = ("SELECT cid_id, packed FROM csize WHERE cid_id IN (%s)"
+                 % ",".join("?" * len(grp)))
+            for c, p in cur.execute(q, grp).fetchall():
+                if c in rev:
+                    out[rev[c]] = p
+    finally:
+        cur.close()
+    return out
+
+
+def _size_map(repo: str, refresh: bool = False) -> dict[str, int]:
+    """content_id -> packed bytes for the WHOLE repo, from the generation's `csize` map.
+
+    For the few callers that price a large set difference (retention simulate: millions of ids),
+    where a targeted lookup per chunk is the wrong shape. `_sizes_for` is the default everywhere
+    else. Deliberately NOT memoized in the app: this is a multi-million-entry dict, and pinning one
+    between publishes is exactly the RAM the walk cache carried. It is rebuilt per call, as the
+    sizemap was.
+    """
+    cur = read_cursor(repo)
+    try:
+        rows = cur.execute(
+            "SELECT c.content_id, m.packed FROM csize m JOIN cid c ON c.cid_id = m.cid_id"
+        ).fetchall()
+    finally:
+        cur.close()
+    if rows:
+        return dict(rows)
+    # A generation published before the unified store has no csize map yet - fall back to the
+    # engine's sizemap so an old generation still prices. An unreadable map must not break a
+    # simulate: it degrades to zeros, which the caller reports as-is.
+    try:
+        return load_sizemap(repo, refresh=refresh)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 # MEASUREMENT, not a behaviour change. A chunk absent from content_refs reads as 0 references in
 # every caller, which means "nothing else needs this, deleting frees it". That is CORRECT for new
 # unique content (the common case) and an OVERSTATEMENT for new content that is also duplicated
@@ -355,25 +427,29 @@ def stored_all_versions(repo: str, handles: list[tuple[str, str]]) -> dict[tuple
             todo.add(h)
     if not todo:
         return out
-    dbsql = cache_db(repo)
-    smap = load_sizemap(repo)
     cur = read_cursor(repo)
     try:
         objs_of = _objects_by_path(cur, todo)
     finally:
         cur.close()
     memo: dict[str, set[str] | None] = {}
+    chunk_sets: dict[tuple, set[str]] = {}
     for h in todo:
-        chunks: set[str] = set()
-        known = True
+        chunks: set[str] | None = set()
         for obj in objs_of.get(h, []):
             if obj not in memo:
-                memo[obj] = _chunks_for_obj(repo, dbsql, obj, fetch=False)
+                memo[obj] = _chunks_for_obj(repo, obj)
             if memo[obj] is None:
-                known = False
+                chunks = None
                 break
             chunks |= memo[obj]
-        out[h] = sum(smap.get(c, 0) for c in chunks) if known and objs_of.get(h) else None
+        if chunks is not None:
+            chunk_sets[h] = chunks
+    sizes = _sizes_for(repo, {c for cs in chunk_sets.values() for c in cs})
+    for h in todo:
+        chunks = chunk_sets.get(h)
+        out[h] = (sum(sizes.get(c, 0) for c in chunks)
+                  if chunks is not None and objs_of.get(h) else None)
         if out[h] is not None:
             _reclaim_cache_put(("stored", repo, gen) + h, out[h])
     return out
@@ -411,8 +487,6 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500, fetch: bool =
             misses.append(cid)
     if not misses:
         return out
-    dbsql = cache_db(repo)   # loaded only on a cache miss: the sizemap unpickle alone is ~1 s
-    smap = load_sizemap(repo)
     cur = read_cursor(repo)
     try:
         # cid -> distinct (source, full_path) pairs holding it. Input ids resolve batched, then
@@ -444,7 +518,7 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500, fetch: bool =
             for src, fp in shares.get(cid, []):
                 for obj in objs_of.get((src, fp), []):
                     if obj not in chunk_memo:
-                        chunk_memo[obj] = _chunks_for_obj(repo, dbsql, obj, fetch=fetch)
+                        chunk_memo[obj] = _chunks_for_obj(repo, obj)
                     chunks = chunk_memo[obj]
                     if chunks is None:
                         unknown = True
@@ -456,7 +530,8 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500, fetch: bool =
             if unknown:
                 continue
             refs = _refcount_for(repo, this_refs.keys()) or {}
-            reclaim = sum(smap.get(c, 0) for c in this_refs if refs.get(c, 0) <= this_refs[c])
+            sizes = _sizes_for(repo, this_refs)
+            reclaim = sum(sizes.get(c, 0) for c in this_refs if refs.get(c, 0) <= this_refs[c])
             _reclaim_cache_put((repo, cid), reclaim)
             out[cid] = reclaim
     finally:
@@ -490,8 +565,6 @@ def folder_detail(repo: str, source: str | None, prefix: str, all_versions: bool
     # `Backup_2024` also selects `BackupX2024`. This one computes the freeable/shared figures the
     # delete decision is made on, so a wrong subtree here is worse than a wrong listing.
     exact_lc, like_lc = base.lower(), like_literal(base.lower()) + _SEP + "%"
-    dbsql = cache_db(repo)
-    smap = load_sizemap(repo)
     cur = read_cursor(repo)
     try:
         where = "(lower(p.full_path) = ? OR lower(p.full_path) LIKE ?" + _ESC + ")"
@@ -543,13 +616,14 @@ def folder_detail(repo: str, source: str | None, prefix: str, all_versions: bool
         cid = cstr[cid_id]
         chunks = obj_chunks.get(cid)
         if chunks is None:
-            chunks = _chunks_for_obj(repo, dbsql, cid)
+            chunks = _chunks_for_obj(repo, cid)
             obj_chunks[cid] = chunks
         for c in chunks:
             this_refs[c] = this_refs.get(c, 0) + int(n)
     refs = _refcount_for(repo, this_refs.keys()) or {}
-    physical = sum(smap.get(c, 0) for c in this_refs)
-    freeable = sum(smap.get(c, 0) for c in this_refs if refs.get(c, 0) <= this_refs[c])
+    sizes = _sizes_for(repo, this_refs)
+    physical = sum(sizes.get(c, 0) for c in this_refs)
+    freeable = sum(sizes.get(c, 0) for c in this_refs if refs.get(c, 0) <= this_refs[c])
     return {
         "logical": int(agg[1] or 0), "physical": physical, "freeable": freeable,
         "files": int(agg[0] or 0), "shared": physical - freeable,
@@ -571,8 +645,6 @@ def batch_detail(repo: str, files: list[dict], all_versions: bool = True) -> dic
     pairs = [(f.get("source"), f.get("full_path")) for f in files if f.get("source") and f.get("full_path")]
     if not pairs:
         return {"found": False}
-    dbsql = cache_db(repo)
-    smap = load_sizemap(repo)
     obj_chunks: dict[str, set[str]] = {}
     this_refs: dict[str, int] = {}     # references the selection contributes per chunk (all versions)
     latest: dict[tuple, tuple] = {}    # (source,fp) -> (latest content_id, latest size)
@@ -610,7 +682,7 @@ def batch_detail(repo: str, files: list[dict], all_versions: bool = True) -> dic
                 versions += 1
                 chunks = obj_chunks.get(obj)
                 if chunks is None:
-                    chunks = _chunks_for_obj(repo, dbsql, obj)
+                    chunks = _chunks_for_obj(repo, obj)
                     obj_chunks[obj] = chunks
                 for c in chunks:
                     this_refs[c] = this_refs.get(c, 0) + 1
@@ -623,8 +695,9 @@ def batch_detail(repo: str, files: list[dict], all_versions: bool = True) -> dic
     refs = _refcount_for(repo, union_chunks)
     if refs is None:
         refs = _refcount_map(repo)
-    physical = sum(smap.get(c, 0) for c in union_chunks)
-    freeable = sum(smap.get(c, 0) for c in union_chunks if refs.get(c, 0) <= this_refs.get(c, 0))
+    sizes = _sizes_for(repo, union_chunks)
+    physical = sum(sizes.get(c, 0) for c in union_chunks)
+    freeable = sum(sizes.get(c, 0) for c in union_chunks if refs.get(c, 0) <= this_refs.get(c, 0))
 
     seen_cid: set[str] = set()
     logical = 0
@@ -671,15 +744,12 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
     if not versions:
         return {"found": False}
 
-    dbsql = cache_db(repo)
-    smap = load_sizemap(repo)
-
     obj_chunks: dict[str, set[str]] = {}
     this_refs: dict[str, int] = {}  # references this file contributes per chunk (across versions)
     for _sid, _start, _size, obj in versions:
         chunks = obj_chunks.get(obj)
         if chunks is None:
-            chunks = _chunks_for_obj(repo, dbsql, obj)
+            chunks = _chunks_for_obj(repo, obj)
             obj_chunks[obj] = chunks
         for c in chunks:
             this_refs[c] = this_refs.get(c, 0) + 1
@@ -692,16 +762,17 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
     if refs is None:
         refs = _refcount_map(repo)            # cold-start fallback (full map / rebuild)
 
-    physical_latest = sum(smap.get(c, 0) for c in latest_chunks)
-    physical_total = sum(smap.get(c, 0) for c in union_chunks)
-    freeable = sum(smap.get(c, 0) for c in union_chunks if refs.get(c, 0) <= this_refs.get(c, 0))
+    sizes = _sizes_for(repo, union_chunks)
+    physical_latest = sum(sizes.get(c, 0) for c in latest_chunks)
+    physical_total = sum(sizes.get(c, 0) for c in union_chunks)
+    freeable = sum(sizes.get(c, 0) for c in union_chunks if refs.get(c, 0) <= this_refs.get(c, 0))
     shared = physical_total - freeable
 
     chunk_rows = []
-    for c in sorted(latest_chunks, key=lambda x: smap.get(x, 0), reverse=True)[:200]:
+    for c in sorted(latest_chunks, key=lambda x: sizes.get(x, 0), reverse=True)[:200]:
         g = refs.get(c, 0)
         chunk_rows.append({
-            "cid": c, "packed": smap.get(c, 0), "refs": g,
+            "cid": c, "packed": sizes.get(c, 0), "refs": g,
             "exclusive": g <= this_refs.get(c, 0),
         })
 
@@ -736,7 +807,7 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
     # holding it come from /api/delete/plan (the delta index cannot list them).
     dup_sources = {source} | {s for s, _ in others}
     n_dup = len(dup_sources)
-    reclaim_everywhere = sum(smap.get(c, 0) for c in latest_chunks if refs.get(c, 0) <= n_dup)
+    reclaim_everywhere = sum(sizes.get(c, 0) for c in latest_chunks if refs.get(c, 0) <= n_dup)
 
     return {
         "found": True,

@@ -10,7 +10,7 @@ import os
 import threading
 import time
 
-from . import resolve
+from . import entries, resolve
 from .store import read_cursor
 
 _SEP = chr(92)  # backslash path separator (avoids source-literal escaping)
@@ -962,48 +962,54 @@ def _source_root_path(source: str) -> str:
     return source.split(":", 1)[1] if ":" in source else source
 
 
-def tree_children_live(repo: str, source: str, root_obj: str, prefix: str) -> list[dict]:
-    """FULL point-in-time tree of one snapshot: walk the snapshot's directory objects via the
-    warm dir cache (Kopia-accurate, complete - not the delta index). Folder sizes come from each
-    entry's ``summ`` (no deep walk); per-file physical comes from the sizemap / indirect map."""
-    from ..core.cache import cache_db, get_children  # local import: avoid core<-index cycle on load
-    dbsql = cache_db(repo)
-    root = _source_root_path(source)
-    rel = prefix[len(root):] if prefix.startswith(root) else prefix
-    oid = root_obj
-    for seg in [s for s in rel.split(_SEP) if s]:
-        entries = get_children(repo, dbsql, [oid]).get(oid, [])
-        match = next((e for e in entries if e.get("type") == "d" and e.get("name") == seg), None)
-        if not match:
-            return []
-        oid = match.get("obj")
-    entries = get_children(repo, dbsql, [oid]).get(oid, [])
-
-    from ..core.sizemap import load_sizemap
-    smap = load_sizemap(repo)
-    ind_objs = [e.get("obj") for e in entries if e.get("type") == "f" and (e.get("obj") or "").startswith("I")]
-    ind_phys: dict[str, int] = {}
-    if ind_objs:
-        cur = read_cursor(repo)
-        try:
-            id_of = resolve.cid_ids(cur, ind_objs)
-            ids = sorted(set(id_of.values()))
-            packed: dict[int, int] = {}
+def _physical_for_objects(repo: str, objs: list[str]) -> dict[str, int]:
+    """Packed size per file object, from the generation's maps: `csize` for a plain object,
+    `iphys` for a split one (its index content alone would read as a few bytes)."""
+    objs = [o for o in dict.fromkeys(objs) if o]
+    if not objs:
+        return {}
+    cur = read_cursor(repo)
+    try:
+        id_of = resolve.cid_ids(cur, objs)
+        plain = sorted({c for o, c in id_of.items() if not o.startswith("I")})
+        split = sorted({c for o, c in id_of.items() if o.startswith("I")})
+        packed: dict[int, int] = {}
+        for table, ids in (("csize", plain), ("iphys", split)):
             for i in range(0, len(ids), 900):
                 grp = ids[i:i + 900]
                 if not grp:
                     continue
-                q = "SELECT cid_id, packed FROM iphys WHERE cid_id IN (%s)" % ",".join("?" * len(grp))
+                q = (f"SELECT cid_id, packed FROM {table} WHERE cid_id IN (%s)"
+                     % ",".join("?" * len(grp)))
                 for c, p in cur.execute(q, grp).fetchall():
                     packed[c] = p
-            rev = {v: k for k, v in id_of.items()}
-            ind_phys = {rev[c]: p for c, p in packed.items() if c in rev}
-        finally:
-            cur.close()
+        rev = {c: o for o, c in id_of.items()}
+        return {rev[c]: p for c, p in packed.items() if c in rev}
+    finally:
+        cur.close()
+
+
+def tree_children_live(repo: str, source: str, root_obj: str, prefix: str) -> list[dict]:
+    """FULL point-in-time tree of one snapshot: the snapshot's directory objects come from the
+    generation's tree, with a kopia fallback for folders newer than the last sync (Kopia-accurate,
+    complete - not the delta index). Folder sizes come from each entry's own summary (no deep
+    walk); per-file physical comes from the generation's `csize`/`iphys` maps."""
+    root = _source_root_path(source)
+    rel = prefix[len(root):] if prefix.startswith(root) else prefix
+    oid = root_obj
+    for seg in [s for s in rel.split(_SEP) if s]:
+        kids = entries.children_of(repo, [oid]).get(oid, [])
+        match = next((e for e in kids if e.get("type") == "d" and e.get("name") == seg), None)
+        if not match:
+            return []
+        oid = match.get("obj")
+    kids = entries.children_of(repo, [oid]).get(oid, [])
+    phys = _physical_for_objects(repo, [e.get("obj") for e in kids
+                                        if e.get("type") == "f" and e.get("obj")])
 
     base = prefix.rstrip(_SEP)
     children: list[dict] = []
-    for e in entries:
+    for e in kids:
         name = e.get("name", "")
         path = (base + _SEP + name) if base else name
         if e.get("type") == "d":
@@ -1015,11 +1021,10 @@ def tree_children_live(repo: str, source: str, root_obj: str, prefix: str) -> li
             })
         elif e.get("type") == "f":
             obj = e.get("obj", "")
-            phys = ind_phys.get(obj) if obj.startswith("I") else smap.get(obj, 0)
             children.append({
                 "path": path, "name": name, "size": int(e.get("size", 0) or 0),
                 "files": 1, "modified": e.get("mtime", "") or "",
-                "type": "file", "physical": phys, "content_id": obj,
+                "type": "file", "physical": phys.get(obj, 0), "content_id": obj,
             })
     return children
 

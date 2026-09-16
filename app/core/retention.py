@@ -11,14 +11,29 @@ import re
 
 from config import CACHEDIR
 
-from .cache import cache_db
+from ..index import layer2
+from ..index.physical import _refcount_map, _size_map
 from .kopia import kopia
-from .metrics import cached_refcount, gb
-from .sizemap import load_sizemap
+from .metrics import gb
 from .sources import resolve_source, roots_of, sources_index, split_sources
-from .walk import walk
 
 RET_RE = re.compile(r"\b(?:latest|hourly|daily|weekly|monthly|annual)-\d+")
+
+
+def _refcount_for_mode(repo: str, srcs: dict, mode: str) -> dict[str, int]:
+    """The per-source content refcount over the sources a mode selects.
+
+    ``mode="all"`` reads the generation's published `crefs` map. Any other mode counts the selected
+    sources' tree reach - the same Counter the walk-based path built, now sourced from the tree
+    instead of the walk cache. ````: the walk is gone, the numbers are not.
+    """
+    if mode == "all":
+        return _refcount_map(repo)
+    membership, _ = split_sources(srcs, mode)
+    count: collections.Counter = collections.Counter()
+    for key in membership:
+        count.update(layer2.reach_content_ids(repo, roots_of(srcs[key])))
+    return count
 
 
 def retention_keep(snaps: list[dict], policy: dict[str, int]) -> tuple[set[str], dict[str, list[str]]]:
@@ -73,16 +88,14 @@ def simulate(
     keep_ids, reasons = retention_keep(snaps, policy)
     keep_snaps = [snap for snap in snaps if snap["id"] in keep_ids]
     del_snaps = [snap for snap in snaps if snap["id"] not in keep_ids]
-    db = cache_db(repo)
-    smap = load_sizemap(repo, refresh=refresh)
+    smap = _size_map(repo, refresh=refresh)
     membership, _ = split_sources(srcs, mode)
     count_mode = mode if key in membership else "all"
-    count, _ = cached_refcount(repo, db, smap, mode=count_mode, recent=None)
+    count = _refcount_for_mode(repo, srcs, count_mode)
 
     def contents(items: list[dict]) -> set[str]:
         roots = [snap["rootEntry"]["obj"] for snap in items if snap.get("rootEntry", {}).get("obj")]
-        cids, _ = walk(repo, roots, db)
-        return cids
+        return layer2.reach_content_ids(repo, roots)
 
     kept_content = contents(keep_snaps) if keep_snaps else set()
     deleted_content = contents(del_snaps) if del_snaps else set()
@@ -129,10 +142,9 @@ def simulate_all(repo: str, policy: dict[str, int], mode: str = "all", refresh: 
             pass
 
     srcs = sources_index(repo)
-    db = cache_db(repo)
-    smap = load_sizemap(repo)
+    smap = _size_map(repo)
     _, display = split_sources(srcs, mode)
-    count, _ = cached_refcount(repo, db, smap, mode=mode)
+    count = _refcount_for_mode(repo, srcs, mode)
 
     union_del: set[str] = set()
     global_kept: set[str] = set()
@@ -142,8 +154,8 @@ def simulate_all(repo: str, policy: dict[str, int], mode: str = "all", refresh: 
         keep_ids, _ = retention_keep(snaps, policy)
         keep_snaps = [s for s in snaps if s["id"] in keep_ids]
         del_snaps = [s for s in snaps if s["id"] not in keep_ids]
-        kept_c = walk(repo, roots_of(keep_snaps), db)[0] if keep_snaps else set()
-        del_c = walk(repo, roots_of(del_snaps), db)[0] if del_snaps else set()
+        kept_c = layer2.reach_content_ids(repo, roots_of(keep_snaps)) if keep_snaps else set()
+        del_c = layer2.reach_content_ids(repo, roots_of(del_snaps)) if del_snaps else set()
         cand = del_c - kept_c
         reclaim = sum(smap.get(cid, 0) for cid in cand if count.get(cid, 0) == 1)
         rows.append({
@@ -193,15 +205,14 @@ def set_reclaim(repo: str, delete_ids: list[str], refresh: bool = False) -> dict
     affected = sorted({k for k, lst in srcs.items() if any(s["id"] in delete_set for s in lst)})
     if not affected:
         return {"reclaim": 0, "reclaim_gb": 0.0, "delete_snapshots": 0, "sources": [], "exact": True}
-    db = cache_db(repo)
-    smap = load_sizemap(repo, refresh=refresh)
-    count, _ = cached_refcount(repo, db, smap, mode="all")
+    smap = _size_map(repo, refresh=refresh)
+    count = _refcount_map(repo)
     del_snaps, kept_snaps = [], []
     for key in affected:
         for snap in srcs[key]:
             (del_snaps if snap["id"] in delete_set else kept_snaps).append(snap)
-    del_c = walk(repo, roots_of(del_snaps), db)[0] if del_snaps else set()
-    kept_c = walk(repo, roots_of(kept_snaps), db)[0] if kept_snaps else set()
+    del_c = layer2.reach_content_ids(repo, roots_of(del_snaps)) if del_snaps else set()
+    kept_c = layer2.reach_content_ids(repo, roots_of(kept_snaps)) if kept_snaps else set()
     candidates = del_c - kept_c
     na = len(affected)
     reclaim = sum(smap.get(cid, 0) for cid in candidates if count.get(cid, 0) <= na)

@@ -2,14 +2,15 @@
 
 The index is a delta: a file-version row sits on the snapshot where it changed, so it cannot
 answer "which snapshots contain this file today". This resolves the path inside every snapshot
-kopia currently lists for the source, through the walk cache's directory entries.
+kopia currently lists for the source, through the generation's tree - with the shared kopia
+fallback for folders of a snapshot newer than the last sync (see `entries.children_of`).
 """
 
 from __future__ import annotations
 
 from ..core import paths as pathrules
-from ..core.cache import cache_db, get_children
 from ..core.sources import sources_index
+from . import entries
 
 
 def _segments(source: str, full_path: str) -> list[str] | None:
@@ -48,7 +49,6 @@ def holding_snapshots(repo: str, source: str, full_paths: list[str],
     live = {p: s for p, s in segs.items() if s}
     if not live or not snaps:
         return out
-    db = cache_db(repo)
     # state per (path, snapshot): the directory oid reached so far
     cursor: dict[tuple[str, int], str] = {}
     for p in live:
@@ -59,7 +59,7 @@ def holding_snapshots(repo: str, source: str, full_paths: list[str],
     depth = 0
     while cursor:
         need = sorted({oid for oid in cursor.values()})
-        children = get_children(repo, db, need)
+        children = entries.children_of(repo, need)
         nxt: dict[tuple[str, int], str] = {}
         for (p, i), oid in cursor.items():
             parts = live[p]

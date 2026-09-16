@@ -28,12 +28,11 @@ SNAPS = [
 def _patch(monkeypatch):
     calls = []
 
-    def fake_children(repo, db, oids):
+    def fake_children(repo, oids, cursor=None):
         calls.append(list(oids))
         return {o: TREE.get(o, []) for o in oids}
 
-    monkeypatch.setattr(holding, "cache_db", lambda repo: None)
-    monkeypatch.setattr(holding, "get_children", fake_children)
+    monkeypatch.setattr(holding.entries, "children_of", fake_children)
     return calls
 
 

@@ -29,9 +29,9 @@ from config import DATA_DIR
 
 from ..core import audit
 from ..core import paths as pathrules
-from ..core.cache import cache_db, get_children
 from ..core.kopia import _base_command, check_readonly, open_in_explorer
 from ..core.sources import sources_index
+from ..index import entries
 from ..index.holding import _segments, holding_snapshots
 from ..index.queries import versions as file_versions
 
@@ -163,11 +163,10 @@ def _listing(repo: str, obj: str, kind: str, size: int, mtime: str):
     if kind != "d":
         yield "", size, mtime
         return
-    db = cache_db(repo)
     level = [(obj, "")]
     count = 0
     while level:
-        children = get_children(repo, db, sorted({o for o, _ in level}))
+        children = entries.children_of(repo, sorted({o for o, _ in level}))
         nxt = []
         for oid, rel in level:
             for e in children.get(oid, []):
