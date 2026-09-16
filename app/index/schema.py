@@ -373,16 +373,9 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     except Exception:
         pass  # column already present
 
-    # One-time first-seen backfill tracker (builder.backfill_first_seen). No PK/index on
-    # purpose: tiny table, and per-source DELETEs must never hit DuckDB's ART index-delete bug.
-    con.execute("CREATE TABLE IF NOT EXISTS first_seen_meta (repo VARCHAR, source VARCHAR, done_at TIMESTAMP)")
-
-    # Materialized physical/dedup maps (populated from the toolkit engine artifacts each build).
-    con.execute("CREATE TABLE IF NOT EXISTS content_sizes (repo VARCHAR, cid VARCHAR, packed UBIGINT)")
-    con.execute("CREATE TABLE IF NOT EXISTS content_refs (repo VARCHAR, cid VARCHAR, refs BIGINT)")
-    con.execute("CREATE TABLE IF NOT EXISTS indirect_phys (repo VARCHAR, oid VARCHAR, packed UBIGINT)")
-
-    # Per-snapshot analysis (churn / physical / reclaimable) - one pre-warmed pass, persisted.
+    # Per-snapshot analysis SHAPE. Nothing writes this table: a first build uses it as the empty
+    # typed template for the `sanalysis` artifact (the rows come from the published `sanalysis`
+    # view). Kept for that one `WHERE false` COPY.
     con.execute(
         """
         CREATE TABLE IF NOT EXISTS snapshot_analysis (
@@ -395,42 +388,11 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
             snaphash VARCHAR,
             computed_at TIMESTAMP DEFAULT now()
         )
-        -- No PRIMARY KEY / index on purpose: the per-source DELETE+INSERT in _persist must not
-        -- delete rows out of an ART index (DuckDB's fatal index-delete bug). The table is small
-        -- (~13k rows) so unindexed scans in read_analysis are cheap.
         """
     )
-    # Migrate pre-existing DBs (compacted/old) whose snapshot_analysis still has the PRIMARY KEY:
-    # recreate it index-free in place (DROP TABLE is wholesale, never a row-delete-from-index).
-    try:
-        has_pk = con.execute(
-            "SELECT count(*) FROM duckdb_constraints() WHERE table_name='snapshot_analysis' "
-            "AND constraint_type='PRIMARY KEY'"
-        ).fetchone()[0]
-        if has_pk:
-            con.execute("CREATE TABLE _sa_new AS SELECT repo, source, snapshot_id, churn, physical, "
-                        "reclaimable, snaphash, computed_at FROM snapshot_analysis")
-            con.execute("DROP TABLE snapshot_analysis")
-            con.execute("ALTER TABLE _sa_new RENAME TO snapshot_analysis")
-            log.info("migrated snapshot_analysis -> dropped PRIMARY KEY (index-delete safety)")
-    except Exception as exc:  # noqa: BLE001 - never block startup on the migration
-        log.warning("snapshot_analysis PK migration skipped: %s", exc)
-
-    # Index-free by design (see stamp_schema_version). Stamped only when ABSENT - an existing
-    # mismatch must survive until the builder has actually rebuilt, or the signal is erased here.
-    con.execute("CREATE TABLE IF NOT EXISTS kl_meta (key VARCHAR, value VARCHAR, set_at TIMESTAMP DEFAULT now())")
-    stored = stored_schema_version(con)
-    if stored is None:
-        stamp_schema_version(con)
-    elif stored != SCHEMA_VERSION:
-        log.warning("index schema_version %s != %s - a full rebuild from the walk cache is due",
-                    stored, SCHEMA_VERSION)
 
     con.execute("CREATE INDEX IF NOT EXISTS files_repo_source_path ON files(repo, source, full_path)")
     con.execute("CREATE INDEX IF NOT EXISTS files_snapshot ON files(repo, snapshot_id)")
     con.execute("CREATE INDEX IF NOT EXISTS paths_repo_source ON paths(repo, source)")
     con.execute("CREATE INDEX IF NOT EXISTS paths_content ON paths(repo, content_id)")  # copies count + shared_min
     con.execute("CREATE INDEX IF NOT EXISTS paths_path_lc ON paths(repo, path_lc)")  # Excluded browser prefix scans
-    con.execute("CREATE INDEX IF NOT EXISTS content_sizes_cid ON content_sizes(repo, cid)")
-    con.execute("CREATE INDEX IF NOT EXISTS content_refs_cid ON content_refs(repo, cid)")
-    con.execute("CREATE INDEX IF NOT EXISTS indirect_phys_oid ON indirect_phys(repo, oid)")
