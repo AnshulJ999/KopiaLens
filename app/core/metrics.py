@@ -13,7 +13,6 @@ import time
 from config import CACHEDIR
 
 from .applog import get_logger
-from .cache import cache_db
 from .schedule import load_next_snapshots
 from .sources import logical_stats, roots_of, sources_index, sources_meta, split_sources
 
@@ -31,25 +30,6 @@ _LOCKS_GUARD = threading.Lock()
 # Serializes the content_refs reinsert so concurrent builds can't collide (the DuckDB
 # "Conflict on tuple deletion" we saw).
 _REFCOUNT_WRITE_LOCK = threading.Lock()
-# Time-gate the DuckDB content_refs rewrite. The full-table DELETE+INSERT (~3.5M rows) is grow-only
-# in DuckDB and was the single biggest growth source (snapshots land many x/day, so the distinct-
-# content count changes constantly -> a rewrite nearly every build). The dashboard uses the FRESH
-# in-memory count below; only file_detail / reclaimable read the DuckDB table and tolerate a few-
-# hours-stale refcount, so we rewrite at most once per window. (last write per repo; 0 = never ->
-# the first build after a cold start always populates it.)
-_LAST_REFCOUNT_WRITE: dict[str, float] = {}
-_DEFAULT_REFCOUNT_WRITE_INTERVAL = 21600  # 6h; overridable via settings.kopialens.refcount_write_interval
-
-
-def _refcount_write_interval() -> float:
-    try:
-        from ..settings import load_settings
-        return float(load_settings().get("kopialens", {}).get("refcount_write_interval",
-                                                               _DEFAULT_REFCOUNT_WRITE_INTERVAL))
-    except Exception:  # noqa: BLE001
-        return _DEFAULT_REFCOUNT_WRITE_INTERVAL
-
-
 def _build_lock(repo: str, mode: str) -> threading.Lock:
     key = f"{repo}|{mode}"
     with _LOCKS_GUARD:
@@ -113,7 +93,6 @@ def refcount_path(repo: str, mode: str) -> str:
 
 def build_global(
     repo: str,
-    db,
     smap: dict[str, int],
     recent: int | str | None = None,
     mode: str = "all",
@@ -212,7 +191,7 @@ def _read_refcount_pkl(repo: str, mode: str, key: str):
     return None
 
 
-def cached_refcount(repo: str, db, smap: dict[str, int], mode: str = "all", recent: int | str | None = None):
+def cached_refcount(repo: str, smap: dict[str, int], mode: str = "all", recent: int | str | None = None):
     srcs = sources_index(repo)
     membership, _ = split_sources(srcs, mode)
     key = snaphash(srcs, membership, recent, mode)
@@ -225,7 +204,7 @@ def cached_refcount(repo: str, db, smap: dict[str, int], mode: str = "all", rece
         hit = _read_refcount_pkl(repo, mode, key)  # a concurrent build may have just written it
         if hit is not None:
             return hit
-        _, _, count, union = build_global(repo, db, smap, recent=recent, mode=mode)
+        _, _, count, union = build_global(repo, smap, recent=recent, mode=mode)
         return count, union
 
 
@@ -381,12 +360,11 @@ def table_rows(repo: str, recent: int | str | None = None, refresh: bool = False
 def _compute_table_rows(repo: str, recent: int | str | None, mode: str, want_hash: str) -> dict:
     cache_name = _table_cache_name(repo, mode)
     from ..index.physical import _size_map  # lazy: avoids core<-index import cycle
-    db = cache_db(repo)
     smap = _size_map(repo)
     meta = sources_meta(repo)
     nexts = load_next_snapshots(repo)  # computed next-snapshot times (subprocess mode)
     fcounts = _file_counts(repo)
-    rows, elapsed, _count, union_total = build_global(repo, db, smap, recent=recent, mode=mode)
+    rows, elapsed, _count, union_total = build_global(repo, smap, recent=recent, mode=mode)
     ordered = []
     for index, key in enumerate(sorted(rows, key=lambda item: rows[item]["total"], reverse=True)):
         row = rows[key]

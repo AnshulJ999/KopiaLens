@@ -14,7 +14,6 @@ for a legitimate reason, which says nothing about correctness.
 from __future__ import annotations
 
 import os
-import sqlite3
 
 import duckdb
 import pytest
@@ -40,7 +39,6 @@ TREE = {
 }
 SMAP = {"obj_a1": 100, "obj_a2": 150, "obj_b": 200, "obj_c": 300,
         "obj_d": 400, "obj_e": 600, "obj_x": 50}
-COUNT = {k: 1 for k in SMAP}
 
 
 def _snap(sid: str) -> dict:
@@ -69,16 +67,11 @@ def _clines(smap: dict) -> list[str]:
     return [f"{cid} {size}+{size}" for cid, size in smap.items()]
 
 
-def _patch(monkeypatch, tree: dict | None = None, smap: dict | None = None,
-           count: dict | None = None) -> None:
+def _patch(monkeypatch, tree: dict | None = None, smap: dict | None = None) -> None:
     import app.index.physical as physical
     monkeypatch.setattr(treesync, "kopia", FakeKopia(tree if tree is not None else dict(TREE)))
     monkeypatch.setattr(layer2, "kopia_lines",
                         lambda repo, args: iter(_clines(smap or SMAP)))
-    monkeypatch.setattr(artifacts, "cache_db", lambda repo: sqlite3.connect(":memory:"))
-    monkeypatch.setattr(artifacts, "_refcount",
-                        lambda repo, db: (dict(count or COUNT), 0))
-    monkeypatch.setattr(physical, "cache_db", lambda repo: sqlite3.connect(":memory:"))
     monkeypatch.setattr(physical, "load_sizemap",
                         lambda repo, refresh=False: dict(smap or SMAP))
 
@@ -295,7 +288,7 @@ def test_a_shared_folder_object_indexes_every_path_it_sits_at(tmp_path, monkeypa
             "kshared": [_f("f.txt", "obj_f", 10)]}
     root = str(tmp_path / "fresh")
     os.makedirs(root)
-    _patch(monkeypatch, tree=tree, smap={"obj_f": 10}, count={"obj_f": 1})
+    _patch(monkeypatch, tree=tree, smap={"obj_f": 10})
     listing = {S1: [{"id": "snapA", "startTime": TS["snap1"],
                      "rootEntry": {"obj": "root_snapA"}}]}
     monkeypatch.setattr(artifacts, "sources_index", lambda repo: listing)

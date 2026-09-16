@@ -27,24 +27,16 @@ import time
 import duckdb
 import pyarrow as pa
 
-from config import CACHEDIR
-
 from ..core import paths as pathrules
 from ..core.applog import get_logger
-from ..core.cache import cache_db
-from ..core.sizemap import load_sizemap
 from ..core.sources import sources_index
 from . import crypto, ids, layer2, layer3, tree, treeconvert, treesync
-# _build_source / backfill_first_seen are referenced only by the now-unreachable full-rebuild
-# path below, which step 7 of removes along with the walk cache itself.
-from .builder import _build_source, _drop_indexes, _refresh_paths, backfill_first_seen
-from .physical import fill_paths_physical, materialize_physical, materialize_refcount
+from .builder import _drop_indexes, _refresh_paths
+from .physical import fill_paths_physical
 from .schema import init_schema
 
 log = get_logger("store")
 
-_SEP = chr(92)
-_SEPS = ("/", _SEP)   # the only separators core.paths produces (POSIX root vs drive/UNC/unknown)
 _ZSTD = "FORMAT parquet, COMPRESSION zstd"
 # 3 = the unified store: layer 1 (the tree) is published inside the generation. A generation at
 # version 2 has no tree to carry, so it rebuilds once and carries one from then on.
@@ -156,7 +148,6 @@ def _empty_previous(con) -> None:
         physical UBIGINT, exclusive UBIGINT, full_path VARCHAR)""")
     con.execute("""CREATE OR REPLACE TABLE prev_hist (src_id SMALLINT, path_id INTEGER,
         snap_id INTEGER, cid_id INTEGER, size UBIGINT, mtime TIMESTAMP, ordinal BIGINT)""")
-    con.execute("CREATE OR REPLACE TABLE prev_iphys (cid_id INTEGER, packed UBIGINT)")
 
 
 def _write_tree(con, staging: str, gen: int) -> tuple[dict, list]:
@@ -175,204 +166,6 @@ def _write_tree(con, staging: str, gen: int) -> tuple[dict, list]:
 
 def _fwd(p: str) -> str:
     return p.replace("\\", "/").replace("'", "''")
-
-
-def _sep_table(con) -> None:
-    """(src_id, sep) for every source, from the per-source path rules, as a TEMP table so the
-    published ``src`` artifact keeps its schema. DuckDB's array_to_string only takes a CONSTANT
-    separator, so the transform's SQL switches on the two real values (``_ajts``); a third
-    separator would silently build wrong directory rows, so it fails loudly here instead."""
-    rows = con.execute("SELECT src_id, source FROM src ORDER BY src_id").fetchall()
-    seps = [pathrules.sep(source) for _sid, source in rows]
-    bad = sorted({s for s in seps if s not in _SEPS})
-    if bad:
-        raise RuntimeError(f"source separator(s) {bad!r} are not supported by the transform")
-    tbl = pa.table({"src_id": pa.array([r[0] for r in rows], pa.int16()),
-                    "sep": pa.array(seps, pa.string())})
-    con.register("_seps_arrow", tbl)
-    con.execute("CREATE OR REPLACE TEMP TABLE _seps AS SELECT src_id, sep FROM _seps_arrow")
-    con.unregister("_seps_arrow")
-
-
-def _transform(con: duckdb.DuckDBPyConnection) -> None:
-    """The current schema -> skinny integer-id tables. Ported verbatim from build_skinny.py
-    (the same transform that produced the byte-verified C7p artifacts); the source tables live
-    in the same database here, so the ``s.`` prefix is dropped. Do not redesign it.
-
-    Paths are split and rebuilt with each SOURCE's own separator (``_seps``, from the per-source
-    path rules) - a repo can hold POSIX and Windows sources side by side. ``_ajts`` exists
-    because array_to_string rejects a column separator; it switches on the two real values."""
-    con.execute("CREATE TABLE src AS SELECT row_number() OVER (ORDER BY source)::SMALLINT AS src_id, "
-                "source FROM (SELECT DISTINCT source FROM paths)")
-    _sep_table(con)
-    con.execute("CREATE OR REPLACE TEMP MACRO _ajts(l, sep) AS CASE WHEN sep = '/' "
-                f"THEN array_to_string(l, '/') ELSE array_to_string(l, '{_SEP}') END")
-    con.execute("""CREATE TEMPORARY TABLE _dseg AS
-        SELECT DISTINCT t.src_id, _ajts(t.parts[1:g.k], t.sep) AS dir_path, g.k::SMALLINT AS depth
-        FROM (SELECT sr.src_id, sp.sep, string_split(p.full_path, sp.sep) AS parts
-              FROM paths p
-              JOIN src sr ON sr.source = p.source
-              JOIN _seps sp ON sp.src_id = sr.src_id) t,
-             unnest(generate_series(1, len(t.parts) - 1)) AS g(k)""")
-    con.execute("""CREATE TABLE dir AS
-        SELECT row_number() OVER (ORDER BY d.src_id, d.dir_path)::INTEGER AS dir_id, d.src_id,
-               d.dir_path, d.depth,
-               _ajts(string_split(d.dir_path, sp.sep)[len(string_split(d.dir_path, sp.sep)):],
-                     sp.sep) AS name,
-               CASE WHEN d.depth <= 1 THEN NULL
-                    ELSE _ajts(string_split(d.dir_path, sp.sep)[1:d.depth - 1], sp.sep) END
-                   AS parent_path
-        FROM _dseg d JOIN _seps sp ON sp.src_id = d.src_id""")
-    con.execute("ALTER TABLE dir ADD COLUMN parent_id INTEGER")
-    con.execute("UPDATE dir SET parent_id = p.dir_id FROM dir p "
-                "WHERE p.src_id = dir.src_id AND p.dir_path = dir.parent_path")
-    con.execute("ALTER TABLE dir DROP COLUMN parent_path")
-    con.execute("""CREATE TABLE anc AS
-        WITH RECURSIVE up(dir_id, anc_id) AS (
-            SELECT dir_id, dir_id FROM dir
-            UNION ALL
-            SELECT u.dir_id, d.parent_id FROM up u JOIN dir d ON d.dir_id = u.anc_id
-            WHERE d.parent_id IS NOT NULL)
-        SELECT u.dir_id, a.depth, u.anc_id FROM up u JOIN dir a ON a.dir_id = u.anc_id""")
-    # content_refs is in here for the same reason the incremental path unions `_rc`: the refcount
-    # map can carry content the sizemap does not, and a chunk missing from the dictionary is
-    # dropped from crefs, where it then reads as zero references, i.e. "safe to delete".
-    con.execute("""CREATE TABLE cid AS
-        SELECT row_number() OVER (ORDER BY c)::INTEGER AS cid_id, c AS content_id FROM (
-            SELECT content_id AS c FROM files WHERE content_id IS NOT NULL
-            UNION SELECT cid FROM content_sizes
-            UNION SELECT cid FROM content_refs
-            UNION SELECT oid FROM indirect_phys)""")
-    con.execute("""CREATE TABLE snap AS
-        SELECT row_number() OVER (ORDER BY start_time, snapshot_id)::INTEGER AS snap_id,
-               snapshot_id, source, start_time FROM (
-            SELECT snapshot_id, any_value(source) AS source, min(start_time) AS start_time
-            FROM files GROUP BY snapshot_id)""")
-    con.execute("ALTER TABLE snap ADD COLUMN src_id SMALLINT")
-    con.execute("UPDATE snap SET src_id = sr.src_id FROM src sr WHERE sr.source = snap.source")
-    con.execute("ALTER TABLE snap DROP COLUMN source")
-    con.execute("""CREATE TABLE pathx AS
-        SELECT row_number() OVER (ORDER BY p.source, p.full_path)::INTEGER AS path_id,
-               sr.src_id, d.dir_id, p.name, p.ext, p.size, p.versions::INTEGER AS versions,
-               p.first_seen, p.last_seen, p.in_latest, c.cid_id, p.physical, p.exclusive,
-               p.full_path
-        FROM paths p
-        JOIN src sr ON sr.source = p.source
-        JOIN _seps sp ON sp.src_id = sr.src_id
-        JOIN dir d ON d.src_id = sr.src_id AND d.dir_path = _ajts(
-             string_split(p.full_path, sp.sep)[1:len(string_split(p.full_path, sp.sep)) - 1],
-             sp.sep)
-        LEFT JOIN cid c ON c.content_id = p.content_id""")
-    con.execute("""CREATE TABLE filev AS
-        SELECT px.path_id, sn.snap_id, c.cid_id, f.size, f.mtime, f.ordinal
-        FROM files f
-        JOIN src sr ON sr.source = f.source
-        JOIN _seps sp ON sp.src_id = sr.src_id
-        JOIN dir d ON d.src_id = sr.src_id AND d.dir_path = _ajts(
-             string_split(f.full_path, sp.sep)[1:len(string_split(f.full_path, sp.sep)) - 1],
-             sp.sep)
-        JOIN pathx px ON px.src_id = sr.src_id AND px.dir_id = d.dir_id
-             AND px.name = _ajts(string_split(f.full_path, sp.sep)
-                 [len(string_split(f.full_path, sp.sep)):], sp.sep)
-        JOIN snap sn ON sn.snapshot_id = f.snapshot_id
-        LEFT JOIN cid c ON c.content_id = f.content_id
-        ORDER BY px.path_id, sn.snap_id""")
-    con.execute("CREATE TABLE csize AS SELECT c.cid_id, m.packed FROM content_sizes m "
-                "JOIN cid c ON c.content_id = m.cid")
-    con.execute("CREATE TABLE crefs AS SELECT c.cid_id, m.refs::INTEGER AS refs FROM content_refs m "
-                "JOIN cid c ON c.content_id = m.cid")
-    con.execute("CREATE TABLE iphys AS SELECT c.cid_id, m.packed FROM indirect_phys m "
-                "JOIN cid c ON c.content_id = m.oid")
-    con.execute("CREATE TABLE sanalysis AS SELECT * FROM snapshot_analysis")
-    con.execute("CREATE TABLE isnaps AS SELECT * FROM indexed_snapshots")
-
-
-def _verify(con: duckdb.DuckDBPyConnection) -> tuple[bool, dict]:
-    """Reconstruct every path and diff against the source - a wrong transform fails loudly here
-    instead of shipping a subtly short index. Same checks as build_skinny.py."""
-    checks = {}
-    checks["src_paths"] = con.execute("SELECT count(*) FROM paths").fetchone()[0]
-    checks["pathx"] = con.execute("SELECT count(*) FROM pathx").fetchone()[0]
-    checks["src_files"] = con.execute("SELECT count(*) FROM files").fetchone()[0]
-    checks["filev"] = con.execute("SELECT count(*) FROM filev").fetchone()[0]
-    checks["path_mismatch"] = con.execute(
-        f"""SELECT count(*) FROM pathx px
-            JOIN dir d ON d.dir_id = px.dir_id
-            JOIN src sr ON sr.src_id = px.src_id
-            JOIN _seps sp ON sp.src_id = sr.src_id
-            LEFT JOIN paths p ON p.source = sr.source
-                 AND p.full_path = d.dir_path || sp.sep || px.name
-            WHERE p.full_path IS NULL""").fetchone()[0]
-    checks["size_src"] = con.execute("SELECT sum(size) FROM files").fetchone()[0]
-    checks["size_new"] = con.execute("SELECT sum(size) FROM filev").fetchone()[0]
-    checks["orphan_dir"] = con.execute(
-        "SELECT count(*) FROM dir WHERE depth > 1 AND parent_id IS NULL").fetchone()[0]
-    ok = (checks["pathx"] == checks["src_paths"]
-          and checks["filev"] == checks["src_files"]
-          and checks["path_mismatch"] == 0
-          and checks["orphan_dir"] == 0
-          and checks["size_src"] == checks["size_new"])
-    return ok, checks
-
-
-def _write(con: duckdb.DuckDBPyConnection, staging: str, gen: int) -> tuple[dict, list]:
-    """Write each artifact to staging; return (manifest artifact lists, staged->final moves).
-    Paths are repo-relative (``pool/...``); publish.py moves the staged files into ``pool/`` and
-    swaps the manifest, so a reader only ever sees a complete generation."""
-    fwd = lambda p: p.replace("\\", "/").replace("'", "''")  # noqa: E731
-    artifacts: dict[str, list[str]] = {}
-    moves: list[tuple[str, str]] = []
-    for r in con.execute("SELECT src_id FROM src ORDER BY src_id").fetchall():
-        n = r[0]
-        h = os.path.join(staging, f"history_{n}.parquet")
-        p = os.path.join(staging, f"pathx_{n}.parquet")
-        con.execute(
-            f"COPY (SELECT p.src_id, f.path_id, f.snap_id, f.cid_id, f.size, f.mtime, f.ordinal "
-            f"FROM filev f JOIN pathx p USING (path_id) WHERE p.src_id = {n} "
-            f"ORDER BY f.path_id, f.snap_id) TO '{fwd(h)}' ({_ZSTD})")
-        con.execute(f"COPY (SELECT * FROM pathx WHERE src_id = {n} ORDER BY dir_id, name) "
-                    f"TO '{fwd(p)}' ({_ZSTD})")
-        hrel = f"pool/history/src_id={n}/g{gen}.parquet"
-        prel = f"pool/pathx/src_id={n}/g{gen}.parquet"
-        artifacts.setdefault("filev", []).append(hrel)
-        artifacts.setdefault("pathx", []).append(prel)
-        moves += [(h, hrel), (p, prel)]
-    if "filev" not in artifacts:
-        # A repo with no sources (fresh install, zero snapshots) must still publish an openable
-        # generation: the store's compatibility views reference these tables. Empty but
-        # correctly-typed files, written under src_id=0 so the incremental path's file->source
-        # attribution finds a name to attribute (and no real source ever claims it).
-        h = os.path.join(staging, "history_empty.parquet")
-        p = os.path.join(staging, "pathx_empty.parquet")
-        con.execute(f"COPY (SELECT p.src_id, f.path_id, f.snap_id, f.cid_id, f.size, f.mtime, "
-                    f"f.ordinal FROM filev f JOIN pathx p USING (path_id) WHERE false) "
-                    f"TO '{fwd(h)}' ({_ZSTD})")
-        con.execute(f"COPY (SELECT * FROM pathx WHERE false) TO '{fwd(p)}' ({_ZSTD})")
-        hrel = f"pool/history/src_id=0/g{gen}.parquet"
-        prel = f"pool/pathx/src_id=0/g{gen}.parquet"
-        artifacts["filev"] = [hrel]
-        artifacts["pathx"] = [prel]
-        moves += [(h, hrel), (p, prel)]
-    for name, cols in (("src", "src_id"), ("dir", "src_id, dir_path"), ("anc", "depth, dir_id"),
-                       ("cid", "cid_id"), ("snap", "snap_id")):
-        out = os.path.join(staging, f"{name}.parquet")
-        con.execute(f"COPY (SELECT * FROM {name} ORDER BY {cols}) TO '{fwd(out)}' ({_ZSTD})")
-        rel = f"pool/{name}/g{gen}.parquet"
-        artifacts[name] = [rel]
-        moves.append((out, rel))
-    for name in ("csize", "crefs", "iphys"):
-        out = os.path.join(staging, f"{name}.parquet")
-        con.execute(f"COPY (SELECT * FROM {name} ORDER BY cid_id) TO '{fwd(out)}' ({_ZSTD})")
-        rel = f"pool/maps/{name}/g{gen}.parquet"
-        artifacts[name] = [rel]
-        moves.append((out, rel))
-    for name in ("sanalysis", "isnaps"):
-        out = os.path.join(staging, f"{name}.parquet")
-        con.execute(f"COPY (SELECT * FROM {name}) TO '{fwd(out)}' ({_ZSTD})")
-        rel = f"pool/small/{name}/g{gen}.parquet"
-        artifacts[name] = [rel]
-        moves.append((out, rel))
-    return artifacts, moves
 
 
 def _scratch(staging: str) -> tuple[str, duckdb.DuckDBPyConnection]:
@@ -409,7 +202,7 @@ def build_repo(repo: str, root: str, gen: int = 1, job: dict | None = None, full
     files). One entry point, two internal paths:
 
     - ``full=True``, no usable manifest, a schema-version change, or missing counters/artifact
-      files -> full rebuild from the warm walk cache (``_build_full``).
+      files -> rebuild from scratch, through the SAME code path.
     - otherwise -> per-source update (``_build_incremental``): unchanged sources carried by
       reference, only changed sources re-walked.
 
@@ -469,95 +262,6 @@ def _file_src_map(con, root: str, rels: list[str]) -> dict[int, list[str]]:
             raise RuntimeError(f"cannot attribute artifact file {rel!r} to a source")
         out.setdefault(int(m.group(1)), []).append(rel)
     return out
-
-
-def _rewalk_ids(snaps: list[dict], new_snaps: list[dict]) -> set[str]:
-    """The snapshots an append re-walks: the new ones plus the previous latest - the same
-    selection ``builder._extend_source`` makes."""
-    new_ids = {s["id"] for s in new_snaps}
-    snaps_sorted = sorted(snaps, key=lambda s: s.get("startTime", "") or "", reverse=True)
-    prev_latest = next((s for s in snaps_sorted if s["id"] not in new_ids), None)
-    return {s["id"] for s in snaps_sorted
-            if s["id"] in new_ids or (prev_latest and s["id"] == prev_latest["id"])}
-
-
-def _preload_retained(con, repo: str, key: str, sid: int, rewalk: set[str]) -> None:
-    """Append path: load the source's RETAINED history rows (snapshots the append will not
-    re-walk) into the scratch as old-schema ``files`` rows, so the paths aggregate recomputes
-    over the source's FULL version set - ``versions``, ``last_seen`` and the
-    arg_max-by-start_time latest version stay correct even though only the new snapshots were
-    walked. Rows for re-walked snapshots are excluded; the walk re-emits those."""
-    ph = ",".join("?" * len(rewalk))
-    miss = con.execute(
-        """SELECT count(*) FROM prev_hist h
-           LEFT JOIN cid_rev c ON c.cid_id = h.cid_id
-           WHERE h.src_id = ? AND h.cid_id IS NOT NULL AND c.content_id IS NULL""",
-        [sid]).fetchone()[0]
-    if miss:
-        raise RuntimeError(
-            f"repo {repo} source {key}: {miss} retained history row(s) reference a content id "
-            "missing from the previous cid dictionary - carrying them forward would silently "
-            "corrupt the content mapping. Run a full rebuild.")
-    con.execute(
-        f"""INSERT INTO files (repo, source, full_path, name, size, content_id, snapshot_id,
-                              start_time, ordinal, mtime)
-        SELECT ?, ?, px.full_path, px.name, h.size, c.content_id,
-               sn.snapshot_id, sn.start_time, h.ordinal, h.mtime
-        FROM prev_hist h
-        JOIN prev_pathx px ON px.path_id = h.path_id
-        JOIN snap sn ON sn.snap_id = h.snap_id
-        LEFT JOIN cid_rev c ON c.cid_id = h.cid_id
-        WHERE h.src_id = ? AND sn.snapshot_id NOT IN ({ph})""",
-        [repo, key, sid, *rewalk])
-
-
-def _build_full(repo: str, root: str, gen: int, job: dict) -> dict:
-    """Full rebuild: produce a Parquet generation under ``root`` and return the manifest body.
-    Does not write manifest.json - that is publish.py's atomic job."""
-    pool = os.path.join(root, "pool")
-    staging = os.path.join(root, "_staging")
-    os.makedirs(pool, exist_ok=True)
-    os.makedirs(staging, exist_ok=True)
-    srcs = sources_index(repo)
-    job.update({"total": sum(len(v) for v in srcs.values()), "indexed": 0,
-                "targets": len(srcs), "current_source": None, "error": None})
-
-    scratch, con = _scratch(staging)
-    db = cache_db(repo)
-    try:
-        init_schema(con)
-        _drop_indexes(con)  # scratch dies after the build; bulk inserts are faster unindexed
-        for key in sorted(srcs):
-            job["current_source"] = key
-            _build_source(con, db, repo, key, srcs[key], job)
-        job["current_source"] = "(first-seen backfill)"
-        backfill_first_seen(con, db, repo, job)
-        job["current_source"] = "(physical + refcount)"
-        materialize_physical(con, repo)
-        count, _union = _refcount(repo, db)
-        materialize_physical(con, repo)  # second pass - see the incremental path's note
-        materialize_refcount(con, repo, count)
-        job["current_source"] = "(transform)"
-        _transform(con)
-        ok, checks = _verify(con)
-        if not ok:
-            raise RuntimeError(f"transform verification failed: {checks}")
-        counters = {
-            "src_id": int(con.execute("SELECT max(src_id) FROM src").fetchone()[0] or 0),
-            "dir_id": int(con.execute("SELECT max(dir_id) FROM dir").fetchone()[0] or 0),
-            "path_id": int(con.execute("SELECT max(path_id) FROM pathx").fetchone()[0] or 0),
-            "cid_id": int(con.execute("SELECT max(cid_id) FROM cid").fetchone()[0] or 0),
-            "snap_id": int(con.execute("SELECT max(snap_id) FROM snap").fetchone()[0] or 0),
-        }
-        artifacts, moves = _write(con, staging, gen)
-    finally:
-        _close_scratch(scratch, con)
-
-    sources = {k: {"key": k, "snapshots": len(v)} for k, v in srcs.items()}
-    return {"generation": gen, "repo": repo, "schema_version": _MANIFEST_VERSION,
-            "counters": counters, "artifacts": artifacts, "sources": sources,
-            "stats": {"paths": checks["pathx"], "file_versions": checks["filev"]},
-            "_checks": checks, "_moves": moves}
 
 
 def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: dict,
@@ -861,7 +565,7 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
                     LEFT JOIN cid_rev cr ON cr.content_id = f.content_id
                     WHERE f.repo = ? AND f.source = ?""", [S, repo, key])
 
-            # Per-source acceptance - the same checks _verify runs on a full rebuild, plus
+            # Per-source acceptance - the same checks the old full rebuild ran, plus
             # path-id uniqueness and the sticky-first_seen guarantee, before anything is
             # staged for publication.
             row = {
@@ -1044,18 +748,3 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         _close_scratch(scratch, con)
 
 
-def _refcount(repo: str, db):
-    """The global content refcount Counter, from the persisted pkl when it matches the current
-    snapshot set, else a fresh streaming build. The live-DB persist inside build_global is
-    suppressed - this build owns a scratch index, not the live one."""
-    from ..core import metrics
-    srcs = sources_index(repo)
-    membership, _ = metrics.split_sources(srcs, "all")
-    key = metrics.snaphash(srcs, membership, None, "all")
-    hit = metrics._read_refcount_pkl(repo, "all", key)
-    if hit is not None:
-        return hit
-    smap = load_sizemap(repo)
-    metrics._LAST_REFCOUNT_WRITE[repo] = time.time()  # block the live-DB write throttle
-    _, _, count, union = metrics.build_global(repo, db, smap, mode="all")
-    return count, union

@@ -74,9 +74,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "auto_compact": True,        # auto-compact the DuckDB when it bloats (DuckDB has no GC of its own)
         "compact_ratio": 1.8,        # compact when the file grows past this x its last-compacted size
         "compact_min_interval": 86400,  # min seconds between auto-compactions (1 day)
-        "refcount_write_interval": 21600,  # min seconds between content_refs rewrites - a large churn
-                                           # on the DuckDB file, so deliberately infrequent (see metrics.py)
-        "dir_memo_max_mb": 1500,     # RAM budget for the in-process directory-listing LRU (byte-budgeted, not item-count)
         "debug_log": False,          # also write data/logs/kopialens-debug.log at DEBUG (env KOPIALENS_DEBUG_LOG overrides)
         # ---- unified store () ---------------------------------------------------------
         # Encryption at rest for every local file the store writes. It stays OFF until onboarding

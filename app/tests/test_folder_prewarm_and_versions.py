@@ -90,7 +90,6 @@ def priced(monkeypatch):
     sizes = {"c_common": 100, "c_new": 100, "c_mid": 100, "c_old": 100}
 
     monkeypatch.setattr(physical, "read_cursor", lambda repo: con.cursor())
-    monkeypatch.setattr(physical, "cache_db", lambda repo: None)
     monkeypatch.setattr(physical, "_sizes_for",
                         lambda repo, cids: {c: sizes[c] for c in set(cids) if c in sizes})
     monkeypatch.setattr(physical, "_chunks_for_obj", lambda repo, obj: set(chunks[obj]))

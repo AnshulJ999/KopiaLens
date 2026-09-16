@@ -1,13 +1,11 @@
-"""Physical / dedup materialization + per-file footprint analysis.
+"""Per-file footprint analysis: physical, freeable, dedup, and what a delete would reclaim.
 
-The toolkit engine already computes a content->packed-bytes map (``sizemap``), a
-content->reference-count map (``refcount``), and an indirect-object expansion (large/split
-files). This module lands those into DuckDB so the bulk **Physical** column is a plain join,
-and provides accurate per-file ``physical`` / ``freeable`` / dedup detail (which need the
-indirect expansion + refcount that a naive ``content_id`` join would miss for big files).
+Everything comes from the generation the app is already reading ( step 4): the content
+sizes and reference counts are the published ``csize`` / ``crefs`` maps, and a split file's chunks
+come from the tree's ``tpart`` piece lists. Nothing here walks kopia or touches the walk cache.
 
 A file's stored ``content_id`` is the object id: a single content for small files, or an
-``I``-prefixed indirect object for large/split files (the ones that matter for reclaim).
+``I``-prefixed split object for large ones (the ones that matter for reclaim).
 """
 
 from __future__ import annotations
@@ -16,11 +14,7 @@ import collections
 import threading
 import weakref
 
-import pyarrow as pa
-
-from ..core.cache import cache_db, decode_json
 from ..core.sizemap import load_sizemap
-from ..core.walk import expand_indirect
 from . import resolve
 from .queries import _ESC, like_literal
 from .store import read_cursor
@@ -50,86 +44,6 @@ def _chunks_for_obj(repo: str, obj: str) -> set[str] | None:
         return set(resolve.content_ids(cur, [p[0] for p in parts]).values())
     finally:
         cur.close()
-
-
-def _arrow_insert(con, sql: str, columns: dict) -> None:
-    n = len(next(iter(columns.values())))
-    if not n:
-        return
-    tbl = pa.table(columns)
-    con.register("_phys_ingest", tbl)
-    con.execute(sql)
-    con.unregister("_phys_ingest")
-
-
-def materialize_physical(con, repo: str) -> None:
-    """Populate ``content_sizes`` + ``indirect_phys`` from the engine artifacts and fill
-    ``paths.physical`` via set-based joins. Cheap to re-run: the bulk insert is skipped when
-    the sizemap is unchanged; only missing indirect objects are expanded."""
-    dbsql = cache_db(repo)
-    smap = load_sizemap(repo)
-
-    # 1) content_sizes - reinsert only when the sizemap changed (cheap row-count check).
-    # APPEND-ONLY (Lever 2): a content's packed size is immutable, so only INSERT new cids via an
-    # anti-join - never DELETE. No index-delete bug, far less churn/bloat. Stale rows for GC'd
-    # contents are harmless (never looked up; the physical/freeable math sums over current chunks).
-    existing = con.execute("SELECT count(*) FROM content_sizes WHERE repo=?", [repo]).fetchone()[0]
-    if existing != len(smap):
-        cids = list(smap.keys())
-        _arrow_insert(
-            con,
-            "INSERT INTO content_sizes SELECT t.repo, t.cid, t.packed FROM _phys_ingest t "
-            "WHERE NOT EXISTS (SELECT 1 FROM content_sizes cs WHERE cs.repo=t.repo AND cs.cid=t.cid)",
-            {"repo": [repo] * len(cids), "cid": cids, "packed": [smap[c] for c in cids]},
-        )
-
-    # 2) indirect_phys - packed footprint per indirect (large/split) file object.
-    # APPEND-ONLY (Lever 2): oid->packed is immutable; expand + insert only NEW I-objects, never
-    # DELETE. (Stale rows for objects no longer in paths are harmless.)
-    objs = [r[0] for r in con.execute(
-        "SELECT DISTINCT content_id FROM paths WHERE repo=? AND content_id LIKE 'I%'", [repo]
-    ).fetchall()]
-    have = {r[0] for r in con.execute("SELECT oid FROM indirect_phys WHERE repo=?", [repo]).fetchall()}
-    new_objs = [o for o in objs if o not in have]
-    if new_objs:
-        expand_indirect(repo, dbsql, set(new_objs))  # ensure expanded + cached in sqlite
-        cur = dbsql.cursor()
-        oid_list: list[str] = []
-        packed_list: list[int] = []
-        for oid in new_objs:
-            parts = {oid[1:]}  # the index content itself
-            row = cur.execute("SELECT parts FROM indirect WHERE oid=?", (oid,)).fetchone()
-            if row:
-                # decode_json, never raw json: expand_indirect above may have just written this row
-                # COMPRESSED, so a raw parse fails on the very rows this branch exists to read.
-                parts |= set(decode_json(row[0]))
-            oid_list.append(oid)
-            packed_list.append(sum(smap.get(p, 0) for p in parts))
-        _arrow_insert(
-            con,
-            "INSERT INTO indirect_phys SELECT repo, oid, packed FROM _phys_ingest",
-            {"repo": [repo] * len(oid_list), "oid": oid_list, "packed": packed_list},
-        )
-
-    # 3) paths.physical via joins, TARGETED to freshly-(re)built rows only (the dominant DuckDB
-    # churn fix). _refresh_paths inserts new/rebuilt paths with physical=0; unchanged sources keep
-    # their already-correct value. content_sizes/indirect_phys are append-only with IMMUTABLE packed
-    # sizes, and a path's content_id only changes via a source rebuild (which resets physical to 0),
-    # so a once-correct row never needs recompute. We therefore fill ONLY the physical=0 rows instead
-    # of blanket-zeroing + rewriting all ~8.5M rows every build. Genuinely-zero rows (empty files /
-    # content missing from the sizemap) are harmlessly re-attempted and self-heal if the sizemap later
-    # gains the content. (Removed the prior "UPDATE paths SET physical=0 WHERE repo=?" blanket rewrite.)
-    con.execute(
-        "UPDATE paths SET physical = cs.packed FROM content_sizes cs "
-        "WHERE paths.repo=? AND cs.repo=? AND paths.physical = 0 AND paths.content_id = cs.cid "
-        "AND paths.content_id NOT LIKE 'I%'",
-        [repo, repo],
-    )
-    con.execute(
-        "UPDATE paths SET physical = ip.packed FROM indirect_phys ip "
-        "WHERE paths.repo=? AND ip.repo=? AND paths.physical = 0 AND paths.content_id = ip.oid",
-        [repo, repo],
-    )
 
 
 def fill_paths_physical(con, repo: str) -> None:
@@ -171,31 +85,6 @@ def materialize_exclusive(con, repo: str) -> None:
         """,
         [repo, repo],
     )
-
-
-def materialize_refcount(con, repo: str, count: dict) -> bool:
-    """Persist the global content reference-count map into DuckDB (called from the pre-warm
-    pass / dashboard build, which compute it anyway). Powers accurate ``freeable``. Skips the
-    reinsert when the row count already matches (cheap to call every warm cycle).
-    Returns True iff the table was actually rewritten, so the caller's write-throttle only
-    advances on a real write (not on this early-return no-op)."""
-    existing = con.execute("SELECT count(*) FROM content_refs WHERE repo=?", [repo]).fetchone()[0]
-    if existing == len(count):
-        return False
-    # Drop the index around the rewrite: DuckDB's ART index has a fatal bug DELETING rows out of an
-    # index ("Failed to delete all rows from index" -> DB invalidated). Deleting from an UN-indexed
-    # table is safe; rebuilding the index after the bulk insert is also faster. (Per-repo DB, so the
-    # repo-scoped delete clears the whole table.)
-    con.execute("DROP INDEX IF EXISTS content_refs_cid")
-    con.execute("DELETE FROM content_refs WHERE repo=?", [repo])
-    cids = list(count.keys())
-    _arrow_insert(
-        con,
-        "INSERT INTO content_refs SELECT repo, cid, refs FROM _phys_ingest",
-        {"repo": [repo] * len(cids), "cid": cids, "refs": [int(count[c]) for c in cids]},
-    )
-    con.execute("CREATE INDEX IF NOT EXISTS content_refs_cid ON content_refs(repo, cid)")
-    return True
 
 
 def _refcount_for(repo: str, cids) -> dict[str, int] | None:
@@ -342,7 +231,7 @@ def _refcount_map(repo: str) -> dict[str, int]:
             _REFCOUNT_MEMO[gen] = count
         return count
     from ..core.metrics import cached_refcount  # lazy: avoids a heavy import on hot paths
-    count, _ = cached_refcount(repo, cache_db(repo), load_sizemap(repo), mode="all")
+    count, _ = cached_refcount(repo, load_sizemap(repo), mode="all")
     return count
 
 

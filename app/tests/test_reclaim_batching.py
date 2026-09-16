@@ -58,7 +58,6 @@ def batched(monkeypatch):
 
     counter = _CountingCursor(con)
     monkeypatch.setattr(physical, "read_cursor", lambda repo: counter)
-    monkeypatch.setattr(physical, "cache_db", lambda repo: None)
     monkeypatch.setattr(physical, "_sizes_for",
                         lambda repo, cids: {c: sizes[c] for c in set(cids) if c in sizes})
     monkeypatch.setattr(physical, "_chunks_for_obj", lambda repo, obj: set(chunks[obj]))

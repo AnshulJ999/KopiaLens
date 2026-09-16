@@ -293,15 +293,6 @@ def run(repo: str, full: bool = False) -> dict:
                 logging.info("refcount misses repo=%s: %s", repo, stats)
         except Exception:  # noqa: BLE001 - a diagnostic must never affect the run
             pass
-        try:
-            from ..core.cache import read_failure_stats
-            fails = read_failure_stats(repo)
-            if fails:
-                summary["unreadable_dirs"] = fails
-                logging.warning("repo=%s: %d unreadable director(y/ies) skipped (NOT cached, "
-                                "retried next build): e.g. %s", repo, fails["count"], fails["sample"])
-        except Exception:  # noqa: BLE001 - a diagnostic must never affect the run
-            pass
         from .store import close_all
         try:
             close_all()  # release the DuckDB file before we exit so the app can reopen it promptly
@@ -317,12 +308,10 @@ def main(argv: list) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
     from ..core.sources import pin_for_run
     pin_for_run()  # one snapshot listing per run; the stages are minutes apart, the TTL is 45s
-    # Run-scoped memos (analysis/folder floors: ~1s sizemap unpickle + ~1.8s refcount join per
-    # call). This process exits after the run, so holding one map per repo costs nothing here;
-    # the long-lived app keeps loading per call so its RAM never pins them.
-    from ..core import sizemap as _sizemap
+    # Run-scoped memo for the refcount join: the analysis and folder stages each ask for it, and
+    # the ~1.8s join was paid per call. This process exits after the run, so holding one map costs
+    # nothing here; the long-lived app keeps loading per call so its RAM never pins it.
     from . import physical as _physical
-    _sizemap.MEMO_ENABLED = True
     _physical.REFCOUNT_MEMO_ENABLED = True
     args = [a for a in argv if not a.startswith("--")]
     if not args:

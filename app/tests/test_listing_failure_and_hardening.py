@@ -19,7 +19,6 @@ import pytest
 from app import main as m
 from app.core import auth, nightly, sources
 from app.core import kopia as kopia_mod
-from app.index import builder
 
 
 class _Result:
@@ -124,62 +123,6 @@ def test_the_worker_run_pin_holds_one_listing_for_the_whole_run(monkeypatch):
     assert calls["n"] == 1, "a pinned run must not re-list between stages"
     sources.sources_index("1", force=True)
     assert calls["n"] == 2, "an explicit force still rebuilds under the pin"
-
-
-# --------------------------------------------------------------------------------------------
-# The builder's own guard
-# --------------------------------------------------------------------------------------------
-
-def _seeded_index(path):
-    """A file-backed index, because ``_run_build`` closes its connection in a finally - the rows
-    have to be checked from a fresh connection afterwards."""
-    con = duckdb.connect(str(path))
-    con.execute("CREATE TABLE files(repo VARCHAR, source VARCHAR, snapshot_id VARCHAR)")
-    con.execute("CREATE TABLE paths(repo VARCHAR, source VARCHAR, full_path VARCHAR)")
-    con.execute("CREATE TABLE indexed_snapshots(repo VARCHAR, snapshot_id VARCHAR, "
-                "source VARCHAR, start_time TIMESTAMP, root_obj VARCHAR, file_count BIGINT)")
-    con.execute("CREATE TABLE first_seen_meta(repo VARCHAR, source VARCHAR)")
-    con.execute("INSERT INTO indexed_snapshots VALUES ('1','s1','u@h:E:\\data',NULL,'k1',5)")
-    con.execute("INSERT INTO paths VALUES ('1','u@h:E:\\data','E:\\data\\a.txt')")
-    con.execute("INSERT INTO files VALUES ('1','u@h:E:\\data','s1')")
-    return con
-
-
-def test_an_empty_listing_against_a_populated_index_is_refused(monkeypatch, tmp_path):
-    """Even if a future change let an empty list reach the builder, the rows survive."""
-    path = tmp_path / "idx.duckdb"
-    _seeded_index(path).close()
-    monkeypatch.setattr(builder, "sources_index", lambda repo: {})
-    monkeypatch.setattr(builder, "write_cursor", lambda repo: duckdb.connect(str(path)))
-    monkeypatch.setattr(builder, "cache_db", lambda repo: None)
-    builder._JOBS["1"] = {"building": True, "error": None, "indexed": 0, "total": 0}
-
-    builder._run_build("1", None, False)
-
-    job = builder._JOBS["1"]
-    assert job["error"], "a refused build must report an error, not finish quietly"
-    assert "refusing" in job["error"]
-    check = duckdb.connect(str(path))
-    assert check.execute("SELECT count(*) FROM paths").fetchone()[0] == 1
-    assert check.execute("SELECT count(*) FROM indexed_snapshots").fetchone()[0] == 1
-    check.close()
-
-
-def test_an_empty_listing_against_an_empty_index_is_allowed(monkeypatch, tmp_path):
-    """A brand new install has neither sources nor rows; that must not be an error."""
-    path = tmp_path / "idx.duckdb"
-    con = _seeded_index(path)
-    con.execute("DELETE FROM indexed_snapshots")
-    con.execute("DELETE FROM paths")
-    con.close()
-    monkeypatch.setattr(builder, "sources_index", lambda repo: {})
-    monkeypatch.setattr(builder, "write_cursor", lambda repo: duckdb.connect(str(path)))
-    monkeypatch.setattr(builder, "cache_db", lambda repo: None)
-    monkeypatch.setattr(builder, "materialize_physical", lambda *a, **k: None)
-    builder._JOBS["1"] = {"building": True, "error": None, "indexed": 0, "total": 0}
-
-    builder._run_build("1", None, False)
-    assert not builder._JOBS["1"]["error"]
 
 
 # --------------------------------------------------------------------------------------------

@@ -25,17 +25,6 @@ def _rss_mb() -> float | None:
         return None
 
 
-def _dir_memo_mb() -> float | None:
-    """Exact DIR_MEMO footprint, tracked incrementally in cache.py (no sampling needed - the old
-    ~3000-sample estimator is retired now that the byte-budget LRU tracks its own running total)."""
-    try:
-        from .cache import memo_bytes
-
-        return memo_bytes() / (1024 * 1024)
-    except Exception:  # noqa: BLE001 - instrumentation must never crash
-        return None
-
-
 def _shallow_size(obj, _depth: int = 0) -> int:
     """Approximate size of an arbitrary cached value, recursing a few levels into dict/list/tuple
     contents (depth-capped so an unexpected deep structure can't make this slow). Good enough for a
@@ -64,13 +53,8 @@ def _cache_stats(cache_dict) -> tuple[int, float]:
 
 def memory_snapshot() -> dict:
     """Process RSS + the in-process caches + per-repo DuckDB table sizes (the real RAM drivers)."""
-    from .cache import DIR_MEMO, DIR_MEMO_MAX_BYTES
-
     snap: dict = {
         "rss_mb": _rss_mb(),
-        "dir_memo_items": len(DIR_MEMO),
-        "dir_memo_mb": _dir_memo_mb(),
-        "dir_memo_max_mb": round(DIR_MEMO_MAX_BYTES / (1024 * 1024), 1),
         "repos": {},
     }
     try:  # three other named in-process caches (Pass 12) that were never individually measured
@@ -133,9 +117,7 @@ def log_memory(tag: str = "", debug: bool = False) -> dict:
     """Emit ONE compact line and return the snapshot. ``debug`` for the recurring light-pass line."""
     s = memory_snapshot()
     rss = f"{s['rss_mb']:.0f}MB" if s.get("rss_mb") is not None else "?"
-    dmb = f"{s['dir_memo_mb']:.0f}" if s.get("dir_memo_mb") is not None else "?"
-    dmax = f"{s['dir_memo_max_mb']:.0f}" if s.get("dir_memo_max_mb") is not None else "?"
-    parts = [f"rss={rss}", f"dir_memo={s['dir_memo_items']} items, {dmb}/{dmax}MB"]
+    parts = [f"rss={rss}"]
     for key, label in (("recl_files_cache", "recl_files"), ("reclaim_cache", "reclaim")):
         c = s.get(key, {})
         if "error" not in c:
