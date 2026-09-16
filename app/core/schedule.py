@@ -353,16 +353,14 @@ def next_times(sched: dict, last_dt: dt.datetime | None, now: dt.datetime, count
     return out
 
 
-def _cache_path(repo: str) -> str:
-    return os.path.join(CACHEDIR, f"nextsnap_repo{repo}.json")
+def _cache_name(repo: str) -> str:
+    return f"nextsnap_repo{repo}"
 
 
 def load_next_snapshots(repo: str) -> dict[str, str]:
-    try:
-        with open(_cache_path(repo), encoding="utf-8") as fh:
-            return json.load(fh)
-    except Exception:
-        return {}
+    from ..index import sidecache  # lazy: avoids core<-index import cycle on load
+    data = sidecache.read(_cache_name(repo))
+    return data if isinstance(data, dict) else {}
 
 
 def _to_local_naive(iso: str | None, fallback: dt.datetime) -> dt.datetime:
@@ -410,9 +408,9 @@ def compute_next_snapshots(repo: str, force: bool = False) -> dict[str, str]:
         except Exception as exc:  # noqa: BLE001 - per-source, keep going
             log.warning("next_snapshot compute failed for %s: %s", key, exc)
     try:
-        with open(_cache_path(repo), "w", encoding="utf-8") as fh:
-            json.dump(out, fh)
-    except Exception:
+        from ..index import sidecache
+        sidecache.write(_cache_name(repo), out)
+    except Exception:  # noqa: BLE001 - a cache write must never fail the computation
         pass
     log.debug("next_snapshots repo=%s: %d sources (%d recomputed via policy show)", repo, len(out), spawned)
     return out

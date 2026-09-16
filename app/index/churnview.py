@@ -24,9 +24,8 @@ import threading
 import time
 import uuid
 
-from config import CACHEDIR
-
 from ..core.applog import get_logger
+from . import sidecache
 from .store import read_cursor
 
 log = get_logger("churnview")
@@ -168,32 +167,22 @@ def _index_hash(repo: str) -> str:
     return f"{row[0]}:{row[1]}" if row else "0"
 
 
-def _disk_path(repo: str, days: int, depth: int) -> str:
-    return os.path.join(CACHEDIR, f"churn_repo{repo}_{days}d_d{depth}.json")
+def _disk_name(repo: str, days: int, depth: int) -> str:
+    return f"churn_repo{repo}_{days}d_d{depth}"
 
 
 def _disk_get(repo: str, days: int, depth: int, stamp: str) -> dict | None:
     """The rollup is computed by the nightly WORKER, which then exits - so it has to land on disk
     or the app never sees it. Costs the app nothing to read, and means opening the tab on the
     default window is free rather than a ~5s, ~700MB aggregation."""
-    try:
-        with open(_disk_path(repo, days, depth), encoding="utf-8") as fh:
-            blob = json.load(fh)
-    except Exception:
+    blob = sidecache.read(_disk_name(repo, days, depth))
+    if blob is None:
         return None
     return blob if blob.get("v") == _CACHE_VERSION and blob.get("stamp") == stamp else None
 
 
 def _disk_put(repo: str, days: int, depth: int, payload: dict) -> None:
-    path = _disk_path(repo, days, depth)
-    try:
-        os.makedirs(CACHEDIR, exist_ok=True)
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh)
-        os.replace(tmp, path)
-    except Exception as exc:  # noqa: BLE001 - a cache write must never fail the request
-        log.warning("churn cache write failed: %s", exc)
+    sidecache.write(_disk_name(repo, days, depth), payload)
 
 
 def _cache_get(ck: tuple, stamp: str) -> dict | None:

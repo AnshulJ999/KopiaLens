@@ -72,6 +72,23 @@ def clear_progress(repo: str) -> None:
         pass
 
 
+def _pct(job: dict) -> int | None:
+    """An honest 0-100 for the index stage, or None when there is no real denominator.
+
+    Never a fabricated percentage: the walk-cache seed knows its folder count, and a source rebuild
+    knows how many sources it has. The tree sync discovers its folders level by level, so it reports
+    counters (`sync`) and no percentage - a bar that guessed would be a lie, and the UI is built to
+    show the counters instead when `pct` is None.
+    """
+    seed = job.get("seed") or {}
+    if seed.get("total"):
+        return min(99, int(100 * int(seed.get("done") or 0) / int(seed["total"])))
+    total = int(job.get("total") or 0)
+    if total:
+        return min(99, int(100 * int(job.get("indexed") or 0) / total))
+    return None
+
+
 class _Reporter:
     """Mirrors the builder's in-process job dict out to a file every couple of seconds, so the
     app (which cannot touch the DuckDB right now) can still render a live progress badge."""
@@ -94,6 +111,10 @@ class _Reporter:
             "indexed": job.get("indexed", 0), "total": job.get("total", 0),
             "targets": job.get("targets"), "current_source": job.get("current_source"),
             "error": job.get("error"),
+            # Index-stage detail: the phase name, the sync's live counters, the seed's folder
+            # count, and a percentage only where a denominator genuinely exists.
+            "phase": job.get("phase"), "sync": job.get("sync"), "seed": job.get("seed"),
+            "pct": _pct(job),
         }
 
     def set_stage(self, stage: str) -> None:

@@ -11,7 +11,7 @@ import re
 
 from config import CACHEDIR
 
-from ..index import layer2
+from ..index import layer2, sidecache
 from ..index.physical import _refcount_map, _size_map
 from .kopia import kopia
 from .metrics import gb
@@ -123,7 +123,7 @@ def _simall_cache(repo: str, policy: dict, mode: str) -> str:
     for key in sorted(srcs):
         for snap in srcs[key]:
             h.update(snap.get("id", "").encode())
-    return os.path.join(CACHEDIR, f"simall_repo{repo}_{h.hexdigest()}.json")
+    return f"simall_repo{repo}_{h.hexdigest()}"
 
 
 def simulate_all(repo: str, policy: dict[str, int], mode: str = "all", refresh: bool = False) -> dict:
@@ -131,15 +131,12 @@ def simulate_all(repo: str, policy: dict[str, int], mode: str = "all", refresh: 
     content freed and attributable to that source alone (global refcount == 1); the combined
     total is the true union (content that leaves no kept snapshot anywhere) - NOT the per-source
     sum, which double-counts content shared between sources. Cached by policy+mode+snapshot-set."""
-    cache_file = _simall_cache(repo, policy, mode)
+    cache_name = _simall_cache(repo, policy, mode)
     if not refresh:
-        try:
-            with open(cache_file, encoding="utf-8") as fh:
-                data = json.load(fh)
+        data = sidecache.read(cache_name)
+        if data is not None:
             data["cached"] = True
             return data
-        except Exception:
-            pass
 
     srcs = sources_index(repo)
     smap = _size_map(repo)
@@ -183,11 +180,7 @@ def simulate_all(repo: str, policy: dict[str, int], mode: str = "all", refresh: 
         "mode": mode,
         "cached": False,
     }
-    try:
-        with open(cache_file, "w", encoding="utf-8") as fh:
-            json.dump(data, fh)
-    except Exception:
-        pass
+    sidecache.write(cache_name, data)
     return data
 
 

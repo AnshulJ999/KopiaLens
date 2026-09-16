@@ -15,10 +15,10 @@ from app.core import metrics
 
 
 def test_read_cache_injects_the_blob_hash(tmp_path, monkeypatch):
-    cache = tmp_path / "table_cache_repo1_all.json"
-    cache.write_text(json.dumps(
-        {"version": metrics.TABLE_CACHE_VERSION, "hash": "h1", "data": {"rows": [1, 2]}}))
-    monkeypatch.setattr(metrics, "_table_cache_path", lambda repo, mode: str(cache))
+    from app.index import sidecache
+    monkeypatch.setattr(sidecache, "CACHEDIR", str(tmp_path))
+    sidecache.write(metrics._table_cache_name("1", "all"),
+                    {"version": metrics.TABLE_CACHE_VERSION, "hash": "h1", "data": {"rows": [1, 2]}})
 
     valid = metrics._read_cache("1", "all", "h1")
     assert valid is not None

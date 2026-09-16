@@ -99,7 +99,10 @@ def _sync_tree(con, repo: str, srcs: dict, alloc, job: dict) -> dict:
             if os.path.exists(treeconvert.cache_path(repo)):
                 job["current_source"] = "(seeding the tree from the walk cache)"
                 log.info("repo=%s no tree yet - seeding layer 1 from the walk cache", repo)
-                seeded = treeconvert.convert(con, repo, alloc=alloc)
+                # A real denominator (the cache's folder count), so the bar is honest here.
+                seeded = treeconvert.convert(
+                    con, repo, alloc=alloc,
+                    progress=lambda **kw: job.update({"phase": "seeding the tree", "seed": kw}))
         except Exception as exc:  # noqa: BLE001 - a bad cache must not block the build
             log.warning("repo=%s walk-cache seed failed (%s) - reading the tree from kopia "
                         "instead, which is slower but correct", repo, exc)
@@ -110,7 +113,10 @@ def _sync_tree(con, repo: str, srcs: dict, alloc, job: dict) -> dict:
         # this the sync would re-read from kopia everything the walk cache just gave us.
         known_sql += " UNION SELECT c.content_id FROM _tdir_new n JOIN cid c USING (cid_id)"
     con.execute(f"CREATE OR REPLACE TABLE _known AS {known_sql}")
-    res = treesync.sync(con, repo, roots, known_table="_known", alloc=alloc)
+    job["phase"] = "tree sync"
+    res = treesync.sync(con, repo, roots, known_table="_known", alloc=alloc,
+                        progress=lambda **kw: job.update({"sync": kw}))
+    job.pop("seed", None)
     mat = treesync.materialize(con, alloc, base_known="tdir")
 
     import pyarrow as pa
@@ -685,6 +691,7 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         # to be eleven of the nightly's minutes on repo 1.
         t_walk = time.perf_counter()
         if targets:
+            job["phase"] = "rebuilding sources"
             job["current_source"] = "(rebuilding from the tree)"
             layer3.build(con, repo, {k: srcs[k] for k, _m, _a in targets})
             for key, _m, _a in targets:
@@ -714,6 +721,7 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         # ones: the refcount is global, and a source missing from the reach reads as "no
         # references", i.e. freeable.
         job["current_source"] = "(maps from the tree)"
+        job["phase"] = "maps"
         t_phys = time.perf_counter()
         layer3.snapshots(con, repo, srcs)
         l2 = layer2.build(con, repo, alloc)
@@ -761,11 +769,13 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         new_entries: dict[int, tuple[str, str]] = {}
         per_source: dict[str, dict] = {}
         t_map = time.perf_counter()
+        job["phase"] = "sources"
         for key, mode, ap in targets:
             S = int(src_of[key])
             sep = pathrules.sep(key)
             ident_raw = pathrules.ident_sql(key)
             job["current_source"] = key
+            job["indexed"] = int(job.get("indexed") or 0) + 1
 
             con.execute(
                 f"CREATE OR REPLACE TEMPORARY TABLE _old_seen AS "
@@ -899,6 +909,7 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
             moves.append((staged_p, prel))
         log.info("repo=%s index per-source mapping (%d source(s)) in %.1fs",
                  repo, len(targets), time.perf_counter() - t_map)
+        job["phase"] = "writing"
         t_tail = time.perf_counter()
 
         # Small tables and maps. isnaps: a previous row survives only while its snapshot still

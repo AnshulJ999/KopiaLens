@@ -20,9 +20,8 @@ import os
 import threading
 import time
 
-from config import CACHEDIR
-
 from ..core.applog import get_logger
+from . import sidecache
 from .physical import folder_detail
 from .queries import _ESC, group_by_folder, like_literal
 from .store import read_cursor
@@ -89,8 +88,8 @@ _MEM: dict[str, dict] = {}   # repo -> {key: payload}
 _INFLIGHT: dict[tuple, threading.Lock] = {}
 
 
-def _path(repo: str) -> str:
-    return os.path.join(CACHEDIR, f"folder_reclaim_repo{repo}.json")
+def _name(repo: str) -> str:
+    return f"folder_reclaim_repo{repo}"
 
 
 def _key(prefix: str, source: str | None) -> str:
@@ -102,12 +101,8 @@ def _load(repo: str) -> dict:
         cached = _MEM.get(repo)
     if cached is not None:
         return cached
-    try:
-        with open(_path(repo), encoding="utf-8") as fh:
-            data = json.load(fh)
-        if not isinstance(data, dict):
-            data = {}
-    except Exception:
+    data = sidecache.read(_name(repo))
+    if not isinstance(data, dict):
         data = {}
     with _LOCK:
         _MEM[repo] = data
@@ -123,22 +118,7 @@ def _save(repo: str) -> None:
         data = dict(keep)
         with _LOCK:
             _MEM[repo] = data
-    # Per-writer temp name. A single fixed `.tmp` was shared by every background refresh thread, so
-    # two folders refreshing at once interleaved their writes into the same file and whichever
-    # finished last renamed the mess into place. Not dangerous - a corrupt cache reads as empty -
-    # but it throws away exactly the expensive work the cache exists to avoid.
-    tmp = f"{_path(repo)}.{os.getpid()}.{threading.get_ident()}.tmp"
-    try:
-        os.makedirs(CACHEDIR, exist_ok=True)
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(data, fh)
-        os.replace(tmp, _path(repo))
-    except Exception as exc:  # noqa: BLE001 - a cache write must never fail the caller
-        log.warning("repo=%s folder cache write failed: %s", repo, exc)
-        try:
-            os.remove(tmp)
-        except Exception:  # noqa: BLE001 - best effort; a stray temp file is harmless
-            pass
+    sidecache.write(_name(repo), data)
 
 
 def peek(repo: str, prefix: str, source: str | None = None, allow_stale: bool = False) -> dict | None:

@@ -13,7 +13,7 @@ import os
 import duckdb
 import pytest
 
-from app.index import policypricing, store
+from app.index import policypricing, sidecache, store
 
 SEP = chr(92)
 SRC = f"Anshul@anshul-desktop:C:{SEP}Src"
@@ -364,8 +364,9 @@ def test_precompute_without_a_fingerprint_block_prices_fresh(priced, tmp_path, m
     snaps = {SRC: "aa", SRC2: "bb"}
     _skip_env(priced, tmp_path, monkeypatch, ["gtmp1", "gtmp2"], snaps)
     calls = _count_fresh_prices(monkeypatch)
-    with open(policypricing.stored_path("1"), "w", encoding="utf-8") as fh:
-        json.dump({"version": policypricing._STORE_VERSION, "ts": 0.0, "rules": {}}, fh)
+    sidecache.write(policypricing.stored_name("1"),
+                    {"version": policypricing._STORE_VERSION, "ts": 0.0, "rules": {}},
+                    base=policypricing.DATA_DIR)
 
     payload = policypricing.precompute("1")
     assert calls["n"] == 2
@@ -380,8 +381,9 @@ def test_stored_file_from_an_older_code_version_reads_as_absent(priced, tmp_path
     snaps = {SRC: "aa", SRC2: "bb"}
     _skip_env(priced, tmp_path, monkeypatch, ["gtmp1", "gtmp2"], snaps)
     calls = _count_fresh_prices(monkeypatch)
-    with open(policypricing.stored_path("1"), "w", encoding="utf-8") as fh:
-        json.dump({"version": 1, "ts": 0.0, "rules": {"stale": True}, "fp": {"stale": True}}, fh)
+    sidecache.write(policypricing.stored_name("1"),
+                    {"version": 1, "ts": 0.0, "rules": {"stale": True}, "fp": {"stale": True}},
+                    base=policypricing.DATA_DIR)
 
     assert policypricing.stored("1") is None
     payload = policypricing.precompute("1")

@@ -17,11 +17,9 @@ import threading
 import time
 
 from ..core.applog import get_logger
-from ..core.cache import cache_db, get_children
-from ..core.sizemap import load_sizemap
 from ..core.sources import resolve_source
-from ..core.walk import walk, walk_new
-from .physical import _chunks_for_obj, _refcount_map
+from . import entries, layer2
+from .physical import _chunks_for_obj, _refcount_map, _size_map
 from .store import read_cursor
 
 log = get_logger("analysis")
@@ -70,17 +68,10 @@ def reclaimable_files(repo: str, source: str, snapshot_id: str, limit: int = 200
     troot = target and target.get("rootEntry", {}).get("obj")
     if not troot:
         return []
-    db = cache_db(repo)
-    smap = load_sizemap(repo)
-    target_chunks = walk_new(repo, db, [troot], set())
-    others: set[str] = set()
-    seen: set[str] = set()
-    for s in snaps:
-        if s["id"] == snapshot_id:
-            continue
-        r = s.get("rootEntry", {}).get("obj")
-        if r:
-            others |= walk_new(repo, db, [r], seen)
+    smap = _size_map(repo)
+    roots = [s.get("rootEntry", {}).get("obj") for s in snaps if s.get("rootEntry", {}).get("obj")]
+    target_chunks = layer2.reach_content_ids(repo, [troot])
+    others = layer2.reach_content_ids(repo, [r for r in roots if r != troot])
     refs = _refcount_map(repo)
     exclusive = {c for c in (target_chunks - others) if refs.get(c, 0) <= 1}
     if not exclusive:
@@ -89,36 +80,39 @@ def reclaimable_files(repo: str, source: str, snapshot_id: str, limit: int = 200
     root_path = key.split(":", 1)[1] if ":" in key else key
     files: list[dict] = []
 
-    def visitor(parent: str, entry: dict) -> None:
-        if entry.get("type") != "f":
-            return
-        chunks = _chunks_for_obj(repo, db, entry.get("obj", ""))
-        excl = chunks & exclusive
-        if excl:
-            rel = (parent + "\\" + entry.get("name", "")).lstrip("\\")
-            files.append({"full_path": root_path.rstrip("\\") + "\\" + rel,
-                          "size": sum(smap.get(c, 0) for c in excl)})
+    def visit(oid: str, parent: str) -> None:
+        for entry in entries.children_of(repo, [oid]).get(oid, []):
+            name = entry.get("name", "")
+            rel = (parent + "\\" + name).lstrip("\\")
+            if entry.get("type") == "d" and entry.get("obj"):
+                visit(entry["obj"], rel)
+            elif entry.get("type") == "f":
+                chunks = _chunks_for_obj(repo, entry.get("obj", ""))
+                excl = (chunks or set()) & exclusive
+                if excl:
+                    files.append({"full_path": root_path.rstrip("\\") + "\\" + rel,
+                                  "size": sum(smap.get(c, 0) for c in excl)})
 
-    walk(repo, [troot], db, visitor)
+    visit(troot, "")
     files.sort(key=lambda f: f["size"], reverse=True)
     _recl_cache_put(ck, files)
     return files[:limit]
 
 
-def _obj_physical(repo: str, db, obj: str, smap, icache: dict) -> int:
+def _obj_physical(repo: str, obj: str, smap, icache: dict) -> int:
     """Packed bytes backing one file object (indirect/split objects expanded + cached)."""
     if not obj:
         return 0
     if obj.startswith("I"):
         p = icache.get(obj)
         if p is None:
-            p = sum(smap.get(c, 0) for c in _chunks_for_obj(repo, db, obj))
+            p = sum(smap.get(c, 0) for c in (_chunks_for_obj(repo, obj) or set()))
             icache[obj] = p
         return p
     return smap.get(obj, 0)
 
 
-def _subtree_physical(repo: str, db, oid: str, smap, memo: dict, icache: dict) -> int:
+def _subtree_physical(repo: str, oid: str, smap, memo: dict, icache: dict) -> int:
     """Absolute physical of a directory subtree = sum of its files' packed bytes, MEMOIZED per
     directory object so subtrees shared across snapshots (the dedup norm) are computed once.
     Additive: intra-snapshot duplicate content is counted per file (a minor over-count) - this is
@@ -129,13 +123,13 @@ def _subtree_physical(repo: str, db, oid: str, smap, memo: dict, icache: dict) -
     if cached is not None:
         return cached
     total = 0
-    for e in get_children(repo, db, [oid]).get(oid, []):
+    for e in entries.children_of(repo, [oid]).get(oid, []):
         t = e.get("type")
         obj = e.get("obj", "")
         if t == "d":
-            total += _subtree_physical(repo, db, obj, smap, memo, icache)
+            total += _subtree_physical(repo, obj, smap, memo, icache)
         elif t == "f":
-            total += _obj_physical(repo, db, obj, smap, icache)
+            total += _obj_physical(repo, obj, smap, icache)
     memo[oid] = total
     return total
 
@@ -271,17 +265,17 @@ def compute_source(repo: str, source: str, with_reclaim: bool = True) -> dict:
     them. Persisted to DuckDB."""
     key, srcs = resolve_source(repo, source=source)
     snaps = sorted(srcs[key], key=lambda s: s.get("startTime", ""))  # oldest -> newest
-    db = cache_db(repo)
-    smap = load_sizemap(repo)
+    smap = _size_map(repo)
+    roots = {s["id"]: (s.get("rootEntry") or {}).get("obj") for s in snaps}
 
-    # Forward pass: churn (new physical) + remember each snapshot's forward-new chunk set.
-    seen_dirs: set[str] = set()
+    # Forward pass: churn (new physical) + remember each snapshot's forward-new chunk set. The
+    # tree reach replaces the incremental walk; subtracting the accumulated set gives the same
+    # "content this snapshot introduced" answer the old seen_dirs/seen_content pair did.
     seen_content: set[str] = set()
     fwd_new: dict[str, set[str]] = {}
     churn: dict[str, int] = {}
     for snap in snaps:
-        root = snap.get("rootEntry", {}).get("obj")
-        found = walk_new(repo, db, [root], seen_dirs) if root else set()
+        found = layer2.reach_content_ids(repo, [roots[snap["id"]]]) if roots[snap["id"]] else set()
         new_here = found - seen_content
         fwd_new[snap["id"]] = new_here
         churn[snap["id"]] = sum(smap.get(c, 0) for c in new_here)
@@ -295,17 +289,15 @@ def compute_source(repo: str, source: str, with_reclaim: bool = True) -> dict:
         phys_memo: dict[str, int] = {}
         icache: dict[str, int] = {}
         for snap in snaps:
-            root = snap.get("rootEntry", {}).get("obj")
-            physical[snap["id"]] = _subtree_physical(repo, db, root, smap, phys_memo, icache) if root else 0
+            root = roots[snap["id"]]
+            physical[snap["id"]] = _subtree_physical(repo, root, smap, phys_memo, icache) if root else 0
         # ... + reclaimable (backward pass: chunks ONLY in this snapshot, source-exclusive).
         refs = _refcount_map(repo)  # global per-source refcount: ==1 means only this source has it
-        seen_dirs_b: set[str] = set()
         seen_content_b: set[str] = set()
         for snap in reversed(snaps):  # newest -> oldest
-            root = snap.get("rootEntry", {}).get("obj")
-            found = walk_new(repo, db, [root], seen_dirs_b) if root else set()
-            new_bwd = found - seen_content_b
-            exclusive = fwd_new[snap["id"]] & new_bwd  # only in this snapshot (no older, no newer)
+            root = roots[snap["id"]]
+            found = layer2.reach_content_ids(repo, [root]) if root else set()
+            exclusive = fwd_new[snap["id"]] & (found - seen_content_b)  # no older, no newer
             reclaim[snap["id"]] = sum(smap.get(c, 0) for c in exclusive if refs.get(c, 0) <= 1)
             seen_content_b |= found
     else:

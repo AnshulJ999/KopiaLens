@@ -14,10 +14,8 @@ from config import CACHEDIR
 
 from .applog import get_logger
 from .cache import cache_db
-from .sizemap import load_sizemap
 from .schedule import load_next_snapshots
 from .sources import logical_stats, roots_of, sources_index, sources_meta, split_sources
-from .walk import walk
 
 log = get_logger("metrics")
 
@@ -82,7 +80,7 @@ def snaphash(srcs: dict[str, list[dict]], keys: list[str], recent: int | str | N
     return digest.hexdigest()
 
 
-def source_set(repo: str, db, smap: dict[str, int], key: str, snaps: list[dict], recent: int | str | None = None):
+def source_set(repo: str, smap: dict[str, int], key: str, snaps: list[dict], recent: int | str | None = None):
     rec = int(recent) if recent else None
     use = snaps[-rec:] if rec else snaps
     snap_hash = src_snaphash(use, recent)
@@ -97,8 +95,9 @@ def source_set(repo: str, db, smap: dict[str, int], key: str, snaps: list[dict],
     except Exception:
         pass
 
-    cids, _ = walk(repo, roots_of(use), db)
-    latest_cids, _ = walk(repo, roots_of(use[-1:]), db) if use else (set(), {})
+    from ..index import layer2  # lazy: avoids core<-index import cycle on load
+    cids = layer2.reach_content_ids(repo, roots_of(use))
+    latest_cids = layer2.reach_content_ids(repo, roots_of(use[-1:])) if use else set()
     phys_latest = sum(smap.get(cid, 0) for cid in latest_cids)
     try:
         with open(path, "wb") as handle:
@@ -137,7 +136,7 @@ def build_global(
 
     # Pass 1: accumulate the global refcount, keeping only the counter (sets discarded).
     for key in membership:
-        cids, phys_latest = source_set(repo, db, smap, key, srcs[key], recent)
+        cids, phys_latest = source_set(repo, smap, key, srcs[key], recent)
         latest[key] = phys_latest
         count.update(cids)
         del cids  # release this source's set before loading the next
@@ -147,7 +146,7 @@ def build_global(
         rows: dict[str, dict] = {}
         misses = 0
         for key in display:
-            cids, _ = source_set(repo, db, smap, key, srcs[key], recent)
+            cids, _ = source_set(repo, smap, key, srcs[key], recent)
             snaps = srcs[key][-rec:] if rec else srcs[key]
             st = logical_stats(snaps)
             total = sum(smap.get(cid, 0) for cid in cids)
@@ -163,11 +162,12 @@ def build_global(
         # New content landed after the cached map was built. Mirror physical_report's missing-ID
         # recovery: reload the sizemap once and re-price, instead of reporting low totals for up
         # to the TTL window. (phys_latest stays from pass 1 - the next build re-derives it.)
-        log.info("repo=%s %d content ids missing from the sizemap - refreshing it once", repo, misses)
+        log.info("repo=%s %d content ids missing from the size map - refreshing it once", repo, misses)
         try:
-            fresh = load_sizemap(repo, refresh=True)
+            from ..index.physical import _size_map  # lazy: avoids core<-index import cycle
+            fresh = _size_map(repo, refresh=True)
         except Exception as exc:  # noqa: BLE001 - stale numbers beat a failed dashboard build
-            log.warning("repo=%s sizemap refresh failed: %s", repo, exc)
+            log.warning("repo=%s size-map refresh failed: %s", repo, exc)
         else:
             rows, _ = _pass2(fresh)
             smap = fresh
@@ -234,16 +234,17 @@ def physical_report(repo: str, source: str, recent: int | str | None = None, ref
     snaps = srcs[source]
     rec = int(recent) if recent else None
     stats = logical_stats(snaps[-rec:] if rec else snaps)
-    db = cache_db(repo)
-    smap = load_sizemap(repo, refresh=refresh)
-    cids, walk_stats = walk(repo, roots_of(snaps, rec), db)
+    from ..index import layer2        # lazy: avoids core<-index import cycle on load
+    from ..index.physical import _size_map
+    smap = _size_map(repo, refresh=refresh)
+    cids = layer2.reach_content_ids(repo, roots_of(snaps, rec))
     missing = sum(1 for cid in cids if cid not in smap)
     if missing and not refresh:
-        smap = load_sizemap(repo, refresh=True)
+        smap = _size_map(repo, refresh=True)
         missing = sum(1 for cid in cids if cid not in smap)
     phys_all = sum(smap.get(cid, 0) for cid in cids)
     latest_roots = roots_of(snaps[-1:])
-    latest_cids, _ = walk(repo, latest_roots, db) if latest_roots else (set(), {})
+    latest_cids = layer2.reach_content_ids(repo, latest_roots) if latest_roots else set()
     phys_latest = sum(smap.get(cid, 0) for cid in latest_cids)
     return {
         "source": source,
@@ -252,14 +253,14 @@ def physical_report(repo: str, source: str, recent: int | str | None = None, ref
         "physical_latest": phys_latest,
         "dedup": stats["sum"] / phys_all if phys_all else 0,
         "accum": phys_all / phys_latest if phys_latest > 1_000_000 else 0,
-        "walk": walk_stats,
+        "walk": {},
         "content_ids": len(cids),
         "missing": missing,
     }
 
 
-def _table_cache_path(repo: str, mode: str) -> str:
-    return os.path.join(CACHEDIR, f"table_cache_repo{repo}_{mode}.json")
+def _table_cache_name(repo: str, mode: str) -> str:
+    return f"table_cache_repo{repo}_{mode}"
 
 
 def _table_snaphash(repo: str, mode: str, recent) -> str:
@@ -304,10 +305,9 @@ def _read_cache(repo: str, mode: str, want_hash: str | None) -> dict | None:
     """Return the cached dashboard data. If ``want_hash`` is given, only return it when the
     version + snaphash still match (a valid serve); if None, return whatever is on disk (a
     best-effort stale serve while a build is in progress)."""
-    try:
-        with open(_table_cache_path(repo, mode), encoding="utf-8") as fh:
-            blob = json.load(fh)
-    except Exception:
+    from ..index import sidecache  # lazy: avoids core<-index import cycle on load
+    blob = sidecache.read(_table_cache_name(repo, mode))
+    if not isinstance(blob, dict):
         return None
     if blob.get("version") != TABLE_CACHE_VERSION:
         return None
@@ -379,9 +379,10 @@ def table_rows(repo: str, recent: int | str | None = None, refresh: bool = False
 
 
 def _compute_table_rows(repo: str, recent: int | str | None, mode: str, want_hash: str) -> dict:
-    cache_file = _table_cache_path(repo, mode)
+    cache_name = _table_cache_name(repo, mode)
+    from ..index.physical import _size_map  # lazy: avoids core<-index import cycle
     db = cache_db(repo)
-    smap = load_sizemap(repo)
+    smap = _size_map(repo)
     meta = sources_meta(repo)
     nexts = load_next_snapshots(repo)  # computed next-snapshot times (subprocess mode)
     fcounts = _file_counts(repo)
@@ -420,9 +421,6 @@ def _compute_table_rows(repo: str, recent: int | str | None, mode: str, want_has
             # computed_at covers same-hash rebuilds (e.g. a nightly rebuild that only moved
             # next_snapshot times) - the hash alone only flips when snapshot membership changes.
             "computed_at": time.time()}
-    try:
-        with open(cache_file, "w", encoding="utf-8") as fh:
-            json.dump({"version": TABLE_CACHE_VERSION, "hash": want_hash, "data": data}, fh)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("repo=%s table cache write failed: %s", repo, exc)
+    from ..index import sidecache
+    sidecache.write(cache_name, {"version": TABLE_CACHE_VERSION, "hash": want_hash, "data": data})
     return data

@@ -33,6 +33,7 @@ from config import DATA_DIR
 from ..core import paths as pathrules
 from ..core.applog import get_logger
 from ..core.ignorematch import compile_pattern, file_match_regex
+from . import sidecache
 from .queries import like_literal
 from .resolve import src_id as resolve_src_id
 from .store import read_cursor
@@ -379,25 +380,16 @@ def _compute(repo: str, source_key: str, patterns: list[str]) -> dict:
 _STORE_VERSION = 2
 
 
-def stored_path(repo: str) -> str:
-    return os.path.join(DATA_DIR, f"policy_prices_repo{repo}.json")
+def stored_name(repo: str) -> str:
+    return f"policy_prices_repo{repo}"
 
 
 def stored(repo: str) -> dict | None:
-    """The parsed stored-prices file, or None when the worker has not produced one yet."""
-    try:
-        with open(stored_path(repo), encoding="utf-8") as fh:
-            data = json.load(fh)
-        return data if isinstance(data, dict) and data.get("version") == _STORE_VERSION else None
-    except Exception:  # noqa: BLE001 - absent/corrupt store = "not priced yet", never an error
-        return None
-
-
-def _atomic_write_json(path: str, payload: dict) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh)
-    os.replace(tmp, path)
+    """The parsed stored-prices payload, or None when the worker has not produced one yet."""
+    data = sidecache.read(stored_name(repo), base=DATA_DIR)
+    if isinstance(data, dict) and data.get("version") == _STORE_VERSION:
+        return data
+    return None
 
 
 def _rules_hash(rules: list) -> str:
@@ -517,10 +509,8 @@ def precompute(repo: str) -> dict:
 
     payload = {"version": _STORE_VERSION, "ts": time.time(), "rules": rules_out,
                "fp": {"global": _rules_hash(glob) if glob else "", "src": fp_src, "gc": fp_gc}}
-    try:
-        _atomic_write_json(stored_path(repo), payload)
-    except Exception as exc:  # noqa: BLE001 - a store write must never fail the worker stage
-        log.error("policy prices repo=%s store write failed: %s", repo, exc)
+    if not sidecache.write(stored_name(repo), payload, base=DATA_DIR):
+        log.error("policy prices repo=%s store write failed", repo)
         return payload
     log.info("policy prices repo=%s stored (%d targets, %.1fs, %d fingerprint reuse, %d priced)",
              repo, len(rules_out), time.time() - t0, reused, priced)
