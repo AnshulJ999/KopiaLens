@@ -34,9 +34,10 @@ from ..core.applog import get_logger
 from ..core.cache import cache_db
 from ..core.sizemap import load_sizemap
 from ..core.sources import sources_index
-from . import crypto, ids, layer3, tree, treesync
-from .builder import (_append_set, _backfill_source_first_seen, _build_source, _drop_indexes,
-                      _extend_source, backfill_first_seen)
+from . import crypto, ids, layer3, tree, treeconvert, treesync
+# _build_source / backfill_first_seen are referenced only by the now-unreachable full-rebuild
+# path below, which step 7 of removes along with the walk cache itself.
+from .builder import _build_source, _drop_indexes, _refresh_paths, backfill_first_seen
 from .physical import materialize_physical, materialize_refcount
 from .schema import init_schema
 
@@ -45,10 +46,9 @@ log = get_logger("store")
 _SEP = chr(92)
 _SEPS = ("/", _SEP)   # the only separators core.paths produces (POSIX root vs drive/UNC/unknown)
 _ZSTD = "FORMAT parquet, COMPRESSION zstd"
-# Bump to 3 in the SAME change that starts publishing the tree artifacts, not before: the version
-# is what tells a published generation it must be rebuilt, so raising it while the writer still
-# emits the old shape forces a full rebuild for no reason.
-_MANIFEST_VERSION = 2
+# 3 = the unified store: layer 1 (the tree) is published inside the generation. A generation at
+# version 2 has no tree to carry, so it rebuilds once and carries one from then on.
+_MANIFEST_VERSION = 3
 _TREE_TABLES = ("tdir", "tent", "tpart")
 
 
@@ -88,9 +88,29 @@ def _sync_tree(con, repo: str, srcs: dict, alloc, job: dict) -> dict:
     roots = sorted({(s.get("rootEntry") or {}).get("obj")
                     for snaps in srcs.values() for s in snaps
                     if (s.get("rootEntry") or {}).get("obj")})
-    con.execute("CREATE OR REPLACE TABLE _known AS "
-                "SELECT c.content_id AS oid FROM tdir d JOIN cid c USING (cid_id)")
-    res = treesync.sync(con, repo, roots, known_table="_known")
+
+    # No tree yet, but a warm walk cache on disk: seed from it instead of re-reading every
+    # folder object from kopia. This is the upgrade path for an install that predates the
+    # unified store - without it the first run after the schema bump would re-fetch 1.4M
+    # folders on repo 1. A fresh install has no cache and simply reads from kopia.
+    seeded = {}
+    if not con.execute("SELECT count(*) FROM tdir").fetchone()[0]:
+        try:
+            if os.path.exists(treeconvert.cache_path(repo)):
+                job["current_source"] = "(seeding the tree from the walk cache)"
+                log.info("repo=%s no tree yet - seeding layer 1 from the walk cache", repo)
+                seeded = treeconvert.convert(con, repo, alloc=alloc)
+        except Exception as exc:  # noqa: BLE001 - a bad cache must not block the build
+            log.warning("repo=%s walk-cache seed failed (%s) - reading the tree from kopia "
+                        "instead, which is slower but correct", repo, exc)
+
+    known_sql = "SELECT c.content_id AS oid FROM tdir d JOIN cid c USING (cid_id)"
+    if seeded:
+        # The seed's folders are in _tdir_new, not tdir (the merge happens later), so without
+        # this the sync would re-read from kopia everything the walk cache just gave us.
+        known_sql += " UNION SELECT c.content_id FROM _tdir_new n JOIN cid c USING (cid_id)"
+    con.execute(f"CREATE OR REPLACE TABLE _known AS {known_sql}")
+    res = treesync.sync(con, repo, roots, known_table="_known", alloc=alloc)
     mat = treesync.materialize(con, alloc, base_known="tdir")
 
     import pyarrow as pa
@@ -105,6 +125,32 @@ def _sync_tree(con, repo: str, srcs: dict, alloc, job: dict) -> dict:
         con.execute(f"ALTER TABLE {name}_final RENAME TO {name}")
     return {"sync": res.as_dict(), "materialize": mat, "merge": merged,
             "incomplete": sorted(set(res.unreadable))}
+
+
+def _empty_previous(con) -> None:
+    """The dictionaries and carried tables a FIRST build starts from, empty but correctly typed.
+
+    A full rebuild is just an incremental build whose previous generation happens to be empty.
+    Keeping one code path means the id allocation, the per-source verification and the manifest
+    assembly are exercised on every run rather than only on the path that happens to be taken.
+    """
+    con.execute("CREATE OR REPLACE TABLE src (src_id SMALLINT, source VARCHAR)")
+    con.execute("""CREATE OR REPLACE TABLE dir (dir_id INTEGER, src_id SMALLINT,
+        dir_path VARCHAR, depth SMALLINT, name VARCHAR, parent_id INTEGER)""")
+    con.execute("CREATE OR REPLACE TABLE anc (dir_id INTEGER, depth SMALLINT, anc_id INTEGER)")
+    con.execute("CREATE OR REPLACE TABLE cid (cid_id INTEGER, content_id VARCHAR)")
+    con.execute("""CREATE OR REPLACE TABLE snap (snap_id INTEGER, snapshot_id VARCHAR,
+        start_time TIMESTAMP, src_id SMALLINT)""")
+    con.execute("""CREATE OR REPLACE TABLE prev_isnaps (repo VARCHAR, snapshot_id VARCHAR,
+        source VARCHAR, start_time TIMESTAMP, root_obj VARCHAR, indexed_at TIMESTAMP,
+        file_count BIGINT)""")
+    con.execute("""CREATE OR REPLACE TABLE prev_pathx (path_id INTEGER, src_id SMALLINT,
+        dir_id INTEGER, name VARCHAR, ext VARCHAR, size UBIGINT, versions INTEGER,
+        first_seen TIMESTAMP, last_seen TIMESTAMP, in_latest BOOLEAN, cid_id INTEGER,
+        physical UBIGINT, exclusive UBIGINT, full_path VARCHAR)""")
+    con.execute("""CREATE OR REPLACE TABLE prev_hist (src_id SMALLINT, path_id INTEGER,
+        snap_id INTEGER, cid_id INTEGER, size UBIGINT, mtime TIMESTAMP, ordinal BIGINT)""")
+    con.execute("CREATE OR REPLACE TABLE prev_iphys (cid_id INTEGER, packed UBIGINT)")
 
 
 def _write_tree(con, staging: str, gen: int) -> tuple[dict, list]:
@@ -368,10 +414,10 @@ def build_repo(repo: str, root: str, gen: int = 1, job: dict | None = None, full
     prev = _read_prev_manifest(root)
     if prev is not None:
         gen = max(int(gen or 1), int(prev.get("generation") or 0) + 1)
-        if (not full and prev.get("schema_version") == _MANIFEST_VERSION
-                and _manifest_usable(root, prev)):
-            return _build_incremental(repo, root, prev, gen, job, frozenset(force or ()))
-    return _build_full(repo, root, gen, job)
+        if (full or prev.get("schema_version") != _MANIFEST_VERSION
+                or not _manifest_usable(root, prev)):
+            prev = None          # rebuild from scratch, through the SAME code path
+    return _build_incremental(repo, root, prev, gen, job, frozenset(force or ()))
 
 
 def _read_prev_manifest(root: str) -> dict | None:
@@ -508,7 +554,7 @@ def _build_full(repo: str, root: str, gen: int, job: dict) -> dict:
             "_checks": checks, "_moves": moves}
 
 
-def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
+def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: dict,
                        force: frozenset) -> dict:
     """Per-source update of the published generation under ``root`` (plan 2.10). Unchanged
     sources are carried into the new manifest by reference - no walk, no rewrite, ids
@@ -520,12 +566,21 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
     above the manifest's counters in bulk (``ids.Allocator``). A vanished source is dropped
     from the manifest and purged from the dictionaries (its ``cid`` rows are kept - content
     ids can be shared across sources); GC reclaims its files. The maps are rewritten whole
-    (accepted, ~40 MB); ``sanalysis`` is carried by reference unchanged."""
+    (accepted, ~40 MB); ``sanalysis`` is carried by reference unchanged.
+
+    ``prev=None`` means a FULL rebuild: the dictionaries start empty, every source is a target,
+    and nothing is carried. folded the two build paths together - a full rebuild used to
+    be a separate function with its own id assignment, which meant the incremental path's
+    verification only ever ran on incremental builds.
+
+    Sources are rebuilt from the TREE, not by walking kopia one folder at a time. A changed
+    source costs about a second, so there is no append fast path and no special case for
+    retention expiry: whatever changed, the source is rebuilt whole."""
     staging = os.path.join(root, "_staging")
     os.makedirs(staging, exist_ok=True)
     t0 = time.perf_counter()
     srcs = sources_index(repo)
-    prev_sources = set(prev.get("sources") or ())
+    prev_sources = set((prev or {}).get("sources") or ())
     if not srcs and prev_sources:
         raise RuntimeError(
             f"repo {repo}: the snapshot listing came back empty while the published "
@@ -533,8 +588,11 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
             "removal. The repository is most likely unreachable; the current generation is "
             "untouched.")
     scratch, con = _scratch(staging)
+    # Still the walk cache, for the size/refcount maps only: layer 2 is built and proven but
+    # wiring it in replaces core.sizemap and materialize_physical too, which is its own pass.
+    # The index itself no longer walks.
     db = cache_db(repo)
-    prev_art = prev["artifacts"]
+    prev_art = (prev or {}).get("artifacts", {})
     moves: list[tuple[str, str]] = []
     try:
         init_schema(con)
@@ -546,12 +604,15 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
         # auto-detection would let the DIRECTORY name override the file's own src_id column.
         def _read_prev_art(name: str, out: str) -> None:
             fl = ", ".join("'%s'" % _fwd(os.path.join(root, r)) for r in prev_art[name])
-            con.execute(f"CREATE TABLE {out} AS SELECT * FROM "
+            con.execute(f"CREATE OR REPLACE TABLE {out} AS SELECT * FROM "
                         f"read_parquet([{fl}], hive_partitioning=false)")
 
-        for name in ("src", "dir", "anc", "cid", "snap"):
-            _read_prev_art(name, name)
-        _read_prev_art("isnaps", "prev_isnaps")
+        _empty_previous(con)
+        if prev is not None:
+            for name in ("src", "dir", "anc", "cid", "snap"):
+                _read_prev_art(name, name)
+            _read_prev_art("isnaps", "prev_isnaps")
+        _load_tree(con, root, prev)
         con.execute("CREATE TABLE src_rev AS SELECT source, src_id FROM src")
         con.execute("CREATE TABLE cid_rev AS SELECT content_id, cid_id FROM cid")
         con.execute("CREATE TABLE snap_rev AS SELECT snapshot_id, snap_id FROM snap")
@@ -561,21 +622,21 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
         for source, sid in con.execute("SELECT source, snapshot_id FROM prev_isnaps").fetchall():
             prev_sets.setdefault(source, set()).add(sid)
         stale = sorted((prev_sources | set(prev_sets)) - set(srcs))
+        # One classification rule now: the snapshot set changed, or the caller forced it. There
+        # is no append mode any more - rebuilding a source from the tree costs about a second,
+        # and the append path was the source of both known index bugs (a late first_seen and
+        # duplicate rows after a folder reverted to an earlier state).
         targets: list[tuple[str, str, list | None]] = []
         for key in sorted(srcs):
             cur_ids = {s["id"] for s in srcs[key]}
             if key in prev_sources and key not in force and cur_ids == prev_sets.get(key, set()):
                 continue  # carried forward by reference
-            ap = (_append_set(srcs[key], prev_sets.get(key, set()))
-                  if (key in prev_sources and key not in force) else None)
-            targets.append((key, "append" if ap else "rebuild", ap))
+            targets.append((key, "rebuild", None))
         job.update({"total": sum(len(srcs[k]) for k, _m, _a in targets), "indexed": 0,
                     "targets": len(targets), "current_source": None, "error": None})
-        log.info("repo=%s index classified %d source(s) in %.1fs: %d carried, %d to walk "
-                 "(%d append, %d rebuild)", repo, len(srcs), time.perf_counter() - t0,
-                 len(srcs) - len(targets), len(targets),
-                 sum(1 for _k, m, _a in targets if m == "append"),
-                 sum(1 for _k, m, _a in targets if m == "rebuild"))
+        log.info("repo=%s index classified %d source(s) in %.1fs: %d carried, %d to rebuild",
+                 repo, len(srcs), time.perf_counter() - t0,
+                 len(srcs) - len(targets), len(targets))
 
         # Snapshot ids that still exist in the CURRENT listing, and the sources being purged -
         # both as tables so the carry filters below never build huge IN-lists in SQL text.
@@ -603,52 +664,40 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
             con.execute("DELETE FROM snap WHERE src_id=?", [sid])
             con.execute("DELETE FROM src WHERE src_id=?", [sid])
 
-        # The previous per-source artifacts for changed sources: id/first_seen carry and the
-        # append's retained rows. src_id=-1 matches nothing when the list is empty, which also
-        # yields an empty clone with the published schema.
+        # The previous pathx rows of the sources being rebuilt - the source of their carried
+        # path ids and sticky first_seen dates. src_id=-1 matches nothing when the list is
+        # empty, which also yields an empty clone with the published schema.
         src_of = dict(con.execute("SELECT source, src_id FROM src_rev").fetchall())
         tgt_ids = sorted({int(src_of[k]) for k, _m, _a in targets if src_of.get(k) is not None})
-        ap_ids = sorted({int(src_of[k]) for k, m, _a in targets
-                         if m == "append" and src_of.get(k) is not None})
-        fl = ", ".join("'%s'" % _fwd(os.path.join(root, r)) for r in prev_art["pathx"])
-        con.execute(f"CREATE TABLE prev_pathx AS SELECT * FROM "
-                    f"read_parquet([{fl}], hive_partitioning=false) "
-                    f"WHERE src_id IN ({','.join('?' * len(tgt_ids or [-1]))})",
-                    tgt_ids or [-1])
-        fl = ", ".join("'%s'" % _fwd(os.path.join(root, r)) for r in prev_art["filev"])
-        con.execute(f"CREATE TABLE prev_hist AS SELECT * FROM "
-                    f"read_parquet([{fl}], hive_partitioning=false) "
-                    f"WHERE src_id IN ({','.join('?' * len(ap_ids or [-1]))})",
-                    ap_ids or [-1])
+        if prev is not None:
+            fl = ", ".join("'%s'" % _fwd(os.path.join(root, r)) for r in prev_art["pathx"])
+            con.execute(f"CREATE OR REPLACE TABLE prev_pathx AS SELECT * FROM "
+                        f"read_parquet([{fl}], hive_partitioning=false) "
+                        f"WHERE src_id IN ({','.join('?' * len(tgt_ids or [-1]))})",
+                        tgt_ids or [-1])
 
-        # Walk what changed. Append preloads the retained rows first so the paths aggregate
-        # sees the source's full version set; a rebuild starts from an empty scratch.
+        # The allocator is the single id authority for this build, so it has to exist before the
+        # tree sync: folder objects, file contents and chunk ids all come out of one dictionary.
+        alloc = ids.Allocator((prev or {}).get("counters") or {})
+        hw0 = alloc.counters()
+
+        # Layer 1: bring the tree up to date, then merge and GC it.
+        tree_stats = _sync_tree(con, repo, srcs, alloc, job)
+
+        # Rebuild what changed, from the TREE. One level pass over whole sets replaces the
+        # per-folder walk AND the oldest-first first_seen backfill - the two stages that used
+        # to be eleven of the nightly's minutes on repo 1.
         t_walk = time.perf_counter()
-        for key, mode, ap in targets:
-            t_src = time.perf_counter()
-            job["current_source"] = key
-            if mode == "append":
-                _preload_retained(con, repo, key, int(src_of[key]), _rewalk_ids(srcs[key], ap))
-                _extend_source(con, db, repo, key, srcs[key], ap, job)
-            else:
-                _build_source(con, db, repo, key, srcs[key], job)
-            # Per-source timing: the stage logs nothing otherwise, and this is where the
-            # nightly's index minutes actually go ( - profile before optimising).
-            log.info("repo=%s index walked %s (%s, %d snapshots) in %.1fs",
-                     repo, key, mode, len(srcs[key]), time.perf_counter() - t_src)
-
-        # Sources NEW to the index have no previous artifact to carry sticky first_seen from,
-        # and the delta-built history alone dates every untouched file at its newest snapshot.
-        # Run the oldest-first backfill for exactly those sources, before the per-source
-        # mapping below reads the paths aggregate. Existing sources keep their carried dates.
-        new_keys = [key for key, _m, _a in targets if key not in prev_sources]
-        if new_keys:
-            t_bf = time.perf_counter()
-            job["current_source"] = "(first-seen backfill)"
-            for key in new_keys:
-                _backfill_source_first_seen(con, db, repo, key, srcs[key])
-            log.info("repo=%s index first-seen backfill (%d source(s)) in %.1fs",
-                     repo, len(new_keys), time.perf_counter() - t_bf)
+        if targets:
+            job["current_source"] = "(rebuilding from the tree)"
+            layer3.build(con, repo, {k: srcs[k] for k, _m, _a in targets})
+            for key, _m, _a in targets:
+                # first_seen merges what the published index knew with what the tree says, and
+                # takes the older - stickiness and correctness at once.
+                layer3.merge_old_seen(con, repo, key)
+                _refresh_paths(con, repo, key, captured=True)
+            log.info("repo=%s index rebuilt %d source(s) from the tree in %.1fs",
+                     repo, len(targets), time.perf_counter() - t_walk)
 
         # Sources new to the dictionary, then the physical fill and the global refcount.
         tbl = pa.table({"source": sorted(srcs)})
@@ -656,8 +705,6 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
         ids.anti_join(con, "_src_new", "SELECT source FROM _cur_keys",
                       "SELECT source FROM src", ["source"])
         con.unregister("_cur_keys")
-        alloc = ids.Allocator(prev["counters"])
-        hw0 = alloc.counters()
         alloc.assign(con, "_src_alloc", "SELECT source FROM _src_new", "source", "src_id",
                      id_col="src_id", id_type="SMALLINT")
         con.execute("INSERT INTO src SELECT src_id, source FROM _src_alloc")
@@ -896,15 +943,17 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
             log.warning("repo=%s %d content id(s) in the size/refcount maps are missing from the "
                         "cid dictionary and were dropped from csize/crefs - they read as zero "
                         "references (i.e. freeable) until the next build picks them up", repo, dropped)
-        _read_prev_art("iphys", "prev_iphys")
+        if prev is not None:
+            _read_prev_art("iphys", "prev_iphys")
         con.execute("CREATE TABLE iphys_final AS SELECT cid_id, packed FROM prev_iphys "
                     "UNION ALL SELECT c.cid_id, np.packed FROM indirect_phys np "
                     "JOIN cid_rev c ON c.content_id = np.oid "
                     "WHERE c.cid_id NOT IN (SELECT cid_id FROM prev_iphys)")
 
-        # Assemble the manifest: unchanged sources by reference, rewritten sources fresh.
-        px_map = _file_src_map(con, root, prev_art["pathx"])
-        fv_map = _file_src_map(con, root, prev_art["filev"])
+        # Assemble the manifest: unchanged sources by reference, rewritten sources fresh. With no
+        # previous generation there is nothing to carry, so every source is in new_entries.
+        px_map = _file_src_map(con, root, prev_art["pathx"]) if prev is not None else {}
+        fv_map = _file_src_map(con, root, prev_art["filev"]) if prev is not None else {}
         target_keys = {k for k, _m, _a in targets}
         carried_ids = sorted({int(src_of[k]) for k in srcs
                               if k not in target_keys and src_of.get(k) is not None})
@@ -918,11 +967,27 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
                 artifacts_out["filev"].extend(fv_map.get(sid, []))
                 artifacts_out["pathx"].extend(px_map.get(sid, []))
         if not artifacts_out["filev"]:
-            # The repo still holds no sources (e.g. a no-op nightly on an empty generation):
-            # carry the previous generation's empty per-source artifacts so the new manifest
-            # stays openable. (A populated repo always carries or rewrites something.)
-            artifacts_out["filev"] = list(prev_art["filev"])
-            artifacts_out["pathx"] = list(prev_art["pathx"])
+            # The repo holds no sources at all. The generation must still be OPENABLE, so write
+            # empty but correctly-typed per-source artifacts rather than leaving the reader with
+            # a view over nothing. (Carrying the previous empty pair works too, but a first
+            # build of an empty repo has none to carry.)
+            if prev is not None:
+                artifacts_out["filev"] = list(prev_art["filev"])
+                artifacts_out["pathx"] = list(prev_art["pathx"])
+            else:
+                for name, cols in (("filev", "src_id, path_id, snap_id, cid_id, size, mtime, "
+                                             "ordinal"),
+                                   ("pathx", "path_id, src_id, dir_id, name, ext, size, versions, "
+                                             "first_seen, last_seen, in_latest, cid_id, physical, "
+                                             "exclusive, full_path")):
+                    src = "prev_hist" if name == "filev" else "prev_pathx"
+                    staged = os.path.join(staging, f"{name}_empty.parquet")
+                    rel = (f"pool/history/src_id=0/g{gen}.parquet" if name == "filev"
+                           else f"pool/pathx/src_id=0/g{gen}.parquet")
+                    con.execute(f"COPY (SELECT {cols} FROM {src} WHERE false) "
+                                f"TO '{_fwd(staged)}' ({_copy_opts()})")
+                    artifacts_out[name] = [rel]
+                    moves.append((staged, rel))
         for name in ("src", "dir", "anc", "cid", "snap"):
             rel = f"pool/{name}/g{gen}.parquet"
             staged = os.path.join(staging, f"{name}.parquet")
@@ -948,11 +1013,24 @@ def _build_incremental(repo: str, root: str, prev: dict, gen: int, job: dict,
         # match against its own keep-set (it normalizes now, but the manifest is the source).
         artifacts_out["isnaps"] = [f"pool/small/isnaps/g{gen}.parquet"]
         moves.append((staged, artifacts_out["isnaps"][0]))
-        artifacts_out["sanalysis"] = list(prev_art["sanalysis"])  # carried by reference
+        if prev is not None:
+            artifacts_out["sanalysis"] = list(prev_art["sanalysis"])  # carried by reference
+        else:
+            staged = os.path.join(staging, "sanalysis.parquet")
+            con.execute(f"COPY (SELECT * FROM snapshot_analysis WHERE false) "
+                        f"TO '{_fwd(staged)}' ({_copy_opts()})")
+            artifacts_out["sanalysis"] = [f"pool/small/sanalysis/g{gen}.parquet"]
+            moves.append((staged, artifacts_out["sanalysis"][0]))
+
+        # Layer 1 travels with the generation, so the tree a reader sees is always the one the
+        # index was built from.
+        tree_art, tree_moves = _write_tree(con, staging, gen)
+        artifacts_out.update(tree_art)
+        moves.extend(tree_moves)
 
         # Global acceptance over the final artifact lists (staged files by their staging path).
         staged_of_rel = {rel: staged for staged, rel in moves}
-        checks: dict = {"sources": per_source, "stale": stale,
+        checks: dict = {"sources": per_source, "stale": stale, "tree": tree_stats,
                         "allocated": {s: alloc.mark(s) - hw0[s] for s in ids.Allocator.SPACES},
                         "orphan_dir": con.execute(
                             "SELECT count(*) FROM dir WHERE depth > 1 AND parent_id IS NULL"

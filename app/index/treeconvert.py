@@ -66,7 +66,8 @@ def _text(value) -> str:
     return value
 
 
-def convert(con, repo: str, *, progress=None) -> dict:
+def convert(con, repo: str, *, progress=None, alloc=None,
+            segment_folders: int = 50_000) -> dict:
     """Fill ``_sync_ent`` / ``_sync_part`` / ``_fetched`` from the walk cache.
 
     Leaves the connection in exactly the state ``treesync.sync`` would have left it in, so the
@@ -104,6 +105,7 @@ def convert(con, repo: str, *, progress=None) -> dict:
         con.execute("INSERT INTO _fetched SELECT oid FROM _read_ok")
 
     done = 0
+    last_seg = [0]
     pend_o: list[str] = []
     pend_t: list[str] = []
     pend_b = 0
@@ -121,8 +123,11 @@ def convert(con, repo: str, *, progress=None) -> dict:
                 _flush(pend_o, pend_t)
                 done += len(pend_o)
                 pend_o, pend_t, pend_b = [], [], 0
-                if done % CHECKPOINT_EVERY < ROWS:
-                    # A long ingest otherwise keeps every dirty block pinned in the buffer pool.
+                if alloc is not None and done - last_seg[0] >= segment_folders:
+                    # Fold this segment into the tree tables and drop its raw rows, so memory
+                    # tracks the segment size rather than the size of the repository.
+                    last_seg[0] = done
+                    treesync.materialize(con, alloc, base_known="tdir", segment=True)
                     con.execute("CHECKPOINT")
                 if progress:
                     progress(done=done, total=n_dirs)
@@ -131,6 +136,8 @@ def convert(con, repo: str, *, progress=None) -> dict:
         done += len(pend_o)
         if progress:
             progress(done=done, total=n_dirs)
+    if alloc is not None:
+        treesync.materialize(con, alloc, base_known="tdir", segment=True)
 
     def _flush_parts(oids: list[str], texts: list[str]) -> None:
         # The index object itself is a piece (ordinal 0), exactly as the live sync records it.
@@ -166,13 +173,20 @@ def convert(con, repo: str, *, progress=None) -> dict:
                 pend_o, pend_t, pend_b = [], [], 0
     if pend_o:
         _flush_parts(pend_o, pend_t)
+    if alloc is not None:
+        treesync.materialize(con, alloc, base_known="tdir", segment=True)
     db.close()
 
+    # Read the counts from the tree tables, not the raw buffers: with segmenting on those have
+    # already been folded in and cleared, so reading them reports zero for a full conversion.
+    seg = alloc is not None
     stats = {
         "cached_folders": n_dirs,
         "cached_split_objects": n_ind,
-        "entries": con.execute("SELECT count(*) FROM _sync_ent").fetchone()[0],
-        "parts": con.execute("SELECT count(*) FROM _sync_part").fetchone()[0],
+        "entries": con.execute(
+            "SELECT count(*) FROM %s" % ("_tent_new" if seg else "_sync_ent")).fetchone()[0],
+        "parts": con.execute(
+            "SELECT count(*) FROM %s" % ("_tpart_new" if seg else "_sync_part")).fetchone()[0],
         "seconds": round(time.perf_counter() - started, 1),
     }
     log.info("repo=%s walk cache converted: %s", repo, stats)

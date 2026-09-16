@@ -219,6 +219,68 @@ def test_row_ranges_are_contiguous_and_cover_every_entry(con, monkeypatch):
         assert hi - lo == n
 
 
+def _fingerprint(con):
+    """The tree as content, independent of the dir_id numbering a merge happens to assign."""
+    ent = con.execute("""SELECT c.content_id, e.pos, e.name, e.etype, e.size,
+               oc.content_id, ch.content_id
+        FROM tent_final e JOIN tdir_final d ON d.dir_id = e.dir_id
+        JOIN cid c ON c.cid_id = d.cid_id
+        LEFT JOIN cid oc ON oc.cid_id = e.cid_id
+        LEFT JOIN tdir_final cd ON cd.dir_id = e.child
+        LEFT JOIN cid ch ON ch.cid_id = cd.cid_id
+        ORDER BY 1, 2""").fetchall()
+    parts = con.execute("""SELECT ic.content_id, pc.content_id, p.ord FROM tpart_final p
+        JOIN cid ic ON ic.cid_id = p.iobj_cid JOIN cid pc ON pc.cid_id = p.part_cid
+        ORDER BY 1, 3""").fetchall()
+    dirs = sorted(r[0] for r in con.execute(
+        "SELECT c.content_id FROM tdir_final d JOIN cid c USING (cid_id)").fetchall())
+    return ent, parts, dirs
+
+
+def test_a_segmented_build_produces_the_same_tree_as_one_pass(con, monkeypatch, tmp_path):
+    """Memory safety must not cost correctness.
+
+    A segmented build materializes and clears as it goes, so a folder's children are often not
+    known when its own rows are written - which is exactly why `child` is resolved at merge time.
+    This pins that the two routes agree.
+    """
+    import duckdb as _duckdb
+    dirs = {"root": [_d(f"d{i}", f"k{i}") for i in range(6)] + [_f("top.txt", "ctop")]}
+    for i in range(6):
+        dirs[f"k{i}"] = [_f(f"f{i}.txt", f"c{i}", size=i), _d("deep", f"kd{i}")]
+        dirs[f"kd{i}"] = [_f("big.bin", "Ixidx")] if i == 0 else []
+    fake = FakeKopia(dirs, {"xidx": ["p1", "p2"]})
+
+    monkeypatch.setattr(treesync, "kopia", fake)
+    treesync.sync(con, "3", ["root"])
+    treesync.materialize(con, ids.Allocator({}))
+    treesync.merge(con)
+    one_pass = _fingerprint(con)
+
+    seg = _duckdb.connect()
+    seg.execute("CREATE TABLE cid (cid_id INTEGER, content_id VARCHAR)")
+    seg.execute("CREATE TABLE cid_rev (content_id VARCHAR, cid_id INTEGER)")
+    tree.create_tables(seg)
+    # alloc= makes sync materialize after EVERY level, so most folders are written before the
+    # folders they point at even exist.
+    treesync.sync(seg, "3", ["root"], alloc=ids.Allocator({}))
+    treesync.merge(seg)
+    segmented = _fingerprint(seg)
+    seg.close()
+
+    assert segmented[2] == one_pass[2], "different folder sets"
+    assert segmented[0] == one_pass[0], "different entries"
+    assert segmented[1] == one_pass[1], "different piece lists"
+
+
+def test_a_segment_flush_clears_its_raw_buffer(con, monkeypatch):
+    fake = FakeKopia({"root": [_d("a", "ka")], "ka": [_f("x", "c1")]})
+    monkeypatch.setattr(treesync, "kopia", fake)
+    treesync.sync(con, "3", ["root"], alloc=ids.Allocator({}))
+    assert con.execute("SELECT count(*) FROM _sync_ent").fetchone()[0] == 0
+    assert con.execute("SELECT count(*) FROM _tent_new").fetchone()[0] == 2
+
+
 def test_object_ids_are_shared_with_the_generation_dictionary(con, monkeypatch):
     fake = FakeKopia({"root": [_f("a", "cshared")], })
     run(con, fake, ["root"], monkeypatch)
