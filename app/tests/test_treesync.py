@@ -1,0 +1,227 @@
+"""Step 2 of: the tree sync, with kopia faked at the subprocess boundary.
+
+The live proof that the tree equals the old walker runs against a real repository; these pin the
+rules that a live run on healthy data would never exercise - a batch that aborts halfway, an
+empty folder, an unknown entry type, a split object whose piece list could not be read.
+"""
+
+from __future__ import annotations
+
+import json
+
+import duckdb
+import pytest
+
+from app.index import ids, tree, treesync
+
+
+class FakeKopia:
+    """Answers ``content show`` / ``show`` from a dict of object -> entry list.
+
+    ``broken`` names objects kopia refuses: the batch prints answers up to that point and exits
+    non-zero, exactly as the real CLI does.
+    """
+
+    def __init__(self, dirs: dict, parts: dict | None = None, broken: set | None = None):
+        self.dirs = dirs
+        self.parts = parts or {}
+        self.broken = broken or set()
+        self.calls = 0
+
+    def __call__(self, repo, args, **kw):
+        self.calls += 1
+        out, rc, err = [], 0, ""
+        if args[:2] == ["content", "show"]:
+            for oid in args[2:]:
+                key = oid if oid in self.dirs or oid in self.parts else oid
+                if key in self.broken:
+                    rc, err = 1, "content not found"
+                    break
+                if key in self.parts:
+                    out.append(json.dumps({"entries": [{"o": p} for p in self.parts[key]]}))
+                else:
+                    out.append(json.dumps({"entries": self.dirs.get(key, [])}))
+        elif args[0] == "show":
+            oid = args[1]
+            if oid in self.broken:
+                rc, err = 1, "not found"
+            else:
+                out.append(json.dumps({"entries": self.dirs.get(oid, [])}))
+        return type("R", (), {"stdout": "\n".join(out), "stderr": err, "returncode": rc})()
+
+
+@pytest.fixture
+def con():
+    c = duckdb.connect()
+    c.execute("CREATE TABLE cid (cid_id INTEGER, content_id VARCHAR)")
+    c.execute("CREATE TABLE cid_rev (content_id VARCHAR, cid_id INTEGER)")
+    tree.create_tables(c)
+    yield c
+    c.close()
+
+
+def _d(name, obj, **kw):
+    return {"name": name, "type": "d", "mode": "0777", "obj": obj, **kw}
+
+
+def _f(name, obj, size=1, **kw):
+    return {"name": name, "type": "f", "mode": "0666", "obj": obj, "size": size, **kw}
+
+
+def run(con, fake, roots, monkeypatch, known=None):
+    monkeypatch.setattr(treesync, "kopia", fake)
+    res = treesync.sync(con, "3", roots, known_table=known)
+    stats = treesync.materialize(con, ids.Allocator({}))
+    merged = treesync.merge(con)
+    return res, stats, merged
+
+
+def test_a_simple_tree_lands_with_every_folder_and_entry(con, monkeypatch):
+    fake = FakeKopia({
+        "root": [_d("sub", "ksub"), _f("a.txt", "c1", size=10)],
+        "ksub": [_f("b.txt", "c2", size=20)],
+    })
+    res, stats, merged = run(con, fake, ["root"], monkeypatch)
+    assert res.complete and res.levels == 2
+    assert stats["folders"] == 2 and stats["entries"] == 3
+    assert merged["folders"] == 2 and merged["entries"] == 3
+    names = [r[0] for r in con.execute("SELECT name FROM tent_final ORDER BY name").fetchall()]
+    assert names == ["a.txt", "b.txt", "sub"]
+
+
+def test_an_empty_folder_is_still_a_folder(con, monkeypatch):
+    # The bug this pins: building tdir from the ENTRIES drops every childless directory, which
+    # then looks unknown and is re-fetched from kopia on every run.
+    fake = FakeKopia({"root": [_d("empty", "kempty")], "kempty": []})
+    _res, stats, merged = run(con, fake, ["root"], monkeypatch)
+    assert stats["folders"] == 2, "the empty folder was dropped"
+    assert merged["folders"] == 2
+    lo, hi = con.execute("""SELECT row_lo, row_hi FROM tdir_final d JOIN cid c USING (cid_id)
+                            WHERE c.content_id = 'kempty'""").fetchone()
+    assert lo == hi                       # a real row, occupying no entry rows
+
+
+def test_a_shared_folder_object_is_stored_once(con, monkeypatch):
+    # Kopia stores identical directories ONCE, so the same object sits at several paths. The
+    # TREE is keyed by object; paths are layer 3's problem.
+    fake = FakeKopia({
+        "root": [_d("x", "kshared"), _d("y", "kshared")],
+        "kshared": [_f("f", "c1")],
+    })
+    _res, stats, _m = run(con, fake, ["root"], monkeypatch)
+    assert stats["folders"] == 2          # root + the shared object, not three
+    assert con.execute("SELECT count(*) FROM tent_final WHERE child IS NOT NULL").fetchone()[0] == 2
+
+
+def test_an_aborted_batch_never_records_the_tail_as_empty(con, monkeypatch):
+    # content show aborts at the first unreadable object and exits non-zero. The objects after it
+    # got NO answer - recording them as empty folders is how index rows silently go missing.
+    fake = FakeKopia({"root": [_d("a", "ka"), _d("b", "kb"), _d("c", "kc")],
+                      "ka": [_f("1", "c1")], "kb": [], "kc": [_f("3", "c3")]},
+                     broken={"kb"})
+    res, stats, _m = run(con, fake, ["root"], monkeypatch)
+    assert not res.complete
+    assert "kb" in res.unreadable or "kc" in res.unreadable
+    stored = {r[0] for r in con.execute(
+        "SELECT c.content_id FROM tdir_final d JOIN cid c USING (cid_id)").fetchall()}
+    for missed in res.unreadable:
+        assert missed not in stored, "an unreadable folder was written into the tree"
+
+
+def test_an_incomplete_sync_is_reported_not_swallowed(con, monkeypatch):
+    fake = FakeKopia({"root": [_d("a", "ka")], "ka": []}, broken={"ka"})
+    res, _s, _m = run(con, fake, ["root"], monkeypatch)
+    assert res.complete is False
+    assert res.as_dict()["unreadable"] == 1
+
+
+def test_indirect_directories_go_through_kopia_show(con, monkeypatch):
+    fake = FakeKopia({"root": [_d("big", "Ikbig")], "Ikbig": [_f("f", "c1")]})
+    res, stats, _m = run(con, fake, ["root"], monkeypatch)
+    assert res.complete and stats["folders"] == 2
+    assert con.execute("""SELECT ind FROM tdir_final d JOIN cid c USING (cid_id)
+                          WHERE c.content_id = 'Ikbig'""").fetchone()[0] is True
+
+
+def test_a_split_file_keeps_its_index_object_and_every_piece(con, monkeypatch):
+    # Ix... is a split object: strip the leading I, content show the rest for the piece list, and
+    # the index object itself counts as a piece (ordinal 0).
+    fake = FakeKopia({"root": [_f("big.bin", "Ixidx", size=99)]},
+                     parts={"xidx": ["p1", "p2", "p3"]})
+    res, stats, _m = run(con, fake, ["root"], monkeypatch)
+    assert res.complete and stats["parts"] == 4
+    got = [r[0] for r in con.execute("""SELECT pc.content_id FROM tpart_final p
+        JOIN cid pc ON pc.cid_id = p.part_cid ORDER BY p.ord""").fetchall()]
+    assert got == ["xidx", "p1", "p2", "p3"]
+
+
+def test_an_unreadable_piece_list_is_dropped_not_half_stored(con, monkeypatch):
+    # A piece list of only the index object would undercount that file's physical size forever,
+    # so a split object we could not resolve must leave NO rows at all.
+    fake = FakeKopia({"root": [_f("big.bin", "Ixidx", size=99)]}, parts={}, broken={"xidx"})
+    res, _s, _m = run(con, fake, ["root"], monkeypatch)
+    assert not res.complete
+    assert con.execute("SELECT count(*) FROM tpart_final").fetchone()[0] == 0
+
+
+def test_an_unknown_entry_type_is_kept_verbatim(con, monkeypatch):
+    fake = FakeKopia({"root": [{"name": "weird", "type": "q", "obj": "c1", "wat": 5}]})
+    _res, stats, _m = run(con, fake, ["root"], monkeypatch)
+    assert stats["unknown_type"] == 1 and stats["kept_raw"] == 1
+    raw = con.execute("SELECT extra FROM tent_final WHERE name = 'weird'").fetchone()[0]
+    assert json.loads(raw)["wat"] == 5    # nothing lost, even for a shape we do not model
+
+
+def test_timestamps_round_trip_to_the_exact_string_kopia_wrote(con, monkeypatch):
+    stamps = ["2024-02-25T11:56:36.4531752Z", "2026-07-22T02:09:36.722781Z",
+              "2026-01-01T00:00:00Z", "2023-03-03T03:03:03.123456789Z"]
+    fake = FakeKopia({"root": [_f(f"f{i}", f"c{i}", mtime=s) for i, s in enumerate(stamps)]})
+    run(con, fake, ["root"], monkeypatch)
+    got = [r[0] for r in con.execute(
+        f"SELECT {tree.ns_to_ts('mtime')} FROM tent_final ORDER BY name").fetchall()]
+    assert got == stamps
+
+
+def test_a_known_object_is_never_re_fetched(con, monkeypatch):
+    fake = FakeKopia({"root": [_d("sub", "ksub")], "ksub": [_f("b", "c2")]})
+    con.execute("CREATE TABLE _known (oid VARCHAR)")
+    con.execute("INSERT INTO _known VALUES ('ksub')")
+    res, _s, _m = run(con, fake, ["root"], monkeypatch, known="_known")
+    assert res.fetched == 1               # root only; the known subtree was not re-read
+
+
+def test_the_merge_drops_folders_nothing_reaches(con, monkeypatch):
+    fake = FakeKopia({"root": [_d("keep", "kkeep")], "kkeep": [], "kgone": []})
+    monkeypatch.setattr(treesync, "kopia", fake)
+    treesync.sync(con, "3", ["root", "kgone"])
+    treesync.materialize(con, ids.Allocator({}))
+    con.execute("""CREATE TABLE _reach AS SELECT cid_id FROM cid
+                   WHERE content_id IN ('root', 'kkeep')""")
+    merged = treesync.merge(con, reachable="_reach")
+    assert merged["folders"] == 2 and merged["dropped"] == 1
+    left = {r[0] for r in con.execute(
+        "SELECT c.content_id FROM tdir_final d JOIN cid c USING (cid_id)").fetchall()}
+    assert left == {"root", "kkeep"}
+
+
+def test_row_ranges_are_contiguous_and_cover_every_entry(con, monkeypatch):
+    fake = FakeKopia({"root": [_d("a", "ka"), _d("b", "kb")],
+                      "ka": [_f(f"f{i}", f"c{i}") for i in range(5)],
+                      "kb": [_f("z", "cz")]})
+    _res, _s, merged = run(con, fake, ["root"], monkeypatch)
+    rows = con.execute("SELECT dir_id, row_lo, row_hi FROM tdir_final ORDER BY dir_id").fetchall()
+    assert rows[0][1] == 0
+    for (_i, lo, hi), (_j, nlo, _nhi) in zip(rows, rows[1:]):
+        assert lo <= hi and hi == nlo     # contiguous, in dir_id order
+    assert rows[-1][2] == merged["entries"]
+    for dir_id, lo, hi in rows:
+        n = con.execute("SELECT count(*) FROM tent_final WHERE dir_id = ?", [dir_id]).fetchone()[0]
+        assert hi - lo == n
+
+
+def test_object_ids_are_shared_with_the_generation_dictionary(con, monkeypatch):
+    fake = FakeKopia({"root": [_f("a", "cshared")], })
+    run(con, fake, ["root"], monkeypatch)
+    cid_of = dict(con.execute("SELECT content_id, cid_id FROM cid").fetchall())
+    ent = con.execute("SELECT cid_id FROM tent_final WHERE name = 'a'").fetchone()[0]
+    assert ent == cid_of["cshared"]       # the same id space layer 3 resolves against

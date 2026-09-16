@@ -586,6 +586,15 @@ async def lifespan(_app: FastAPI):
         except Exception as exc:  # noqa: BLE001 - identity capture never blocks startup
             log.warning("repository unique-id capture failed: %s", exc)
 
+    try:  # encrypted install: unlock from the OS keychain if the user chose to remember it
+        from .index import crypto
+        if crypto.enabled() and not crypto.unlocked() and crypto.unlock_from_keychain():
+            log.info("index unlocked from the keychain")
+        elif crypto.enabled():
+            log.warning("the index is encrypted and locked - reads and the nightly wait for an unlock")
+    except Exception as exc:  # noqa: BLE001 - never block startup on the keystore
+        log.error("keystore check failed: %s", exc)
+    store.start_idle_reaper()    # nothing stays open: close every generation after the idle window
     threading.Thread(target=_capture_ids, daemon=True).start()
     threading.Thread(target=_bg_worker, daemon=True).start()
     yield
@@ -698,6 +707,8 @@ async def generation_pin_middleware(request: Request, call_next):
     touches are never opened at all."""
     if not request.url.path.startswith("/api"):
         return await call_next(request)
+    if request.url.path not in _POLL_PATHS:
+        store.touch()    # real activity only - a polled status endpoint must not defeat idle close
     token = store.begin_pins()
     try:
         return await call_next(request)

@@ -34,7 +34,7 @@ from ..core.applog import get_logger
 from ..core.cache import cache_db
 from ..core.sizemap import load_sizemap
 from ..core.sources import sources_index
-from . import ids
+from . import crypto, ids, layer3, tree, treesync
 from .builder import (_append_set, _backfill_source_first_seen, _build_source, _drop_indexes,
                       _extend_source, backfill_first_seen)
 from .physical import materialize_physical, materialize_refcount
@@ -45,7 +45,80 @@ log = get_logger("store")
 _SEP = chr(92)
 _SEPS = ("/", _SEP)   # the only separators core.paths produces (POSIX root vs drive/UNC/unknown)
 _ZSTD = "FORMAT parquet, COMPRESSION zstd"
-_MANIFEST_VERSION = 2  # a published manifest below this forces the full rebuild path
+# Bump to 3 in the SAME change that starts publishing the tree artifacts, not before: the version
+# is what tells a published generation it must be rebuilt, so raising it while the writer still
+# emits the old shape forces a full rebuild for no reason.
+_MANIFEST_VERSION = 2
+_TREE_TABLES = ("tdir", "tent", "tpart")
+
+
+def _copy_opts() -> str:
+    """The COPY option list, carrying the encryption config when encryption is on."""
+    return crypto.copy_options(_ZSTD)
+
+
+def _load_tree(con, root: str, prev: dict | None) -> bool:
+    """Load the carried tree into the scratch, or create it empty. True when one was carried.
+
+    A generation published before the unified store has no tree artifacts. That is not an error:
+    the sync simply finds nothing known and reads what it needs from kopia, exactly as a first
+    index does.
+    """
+    tree.create_tables(con)
+    art = (prev or {}).get("artifacts", {})
+    if not all(name in art for name in _TREE_TABLES):
+        return False
+    for name in _TREE_TABLES:
+        paths = [_fwd(os.path.join(root, r)) for r in art[name]]
+        con.execute(f"DROP TABLE IF EXISTS {name}")
+        con.execute(f"CREATE TABLE {name} AS SELECT * FROM "
+                    f"read_parquet({crypto.parquet_read_list(paths)}, hive_partitioning=false)")
+    return True
+
+
+def _sync_tree(con, repo: str, srcs: dict, alloc, job: dict) -> dict:
+    """Bring the tree up to date with the current snapshots, then merge and GC.
+
+    The GC is driven by the listing the CALLER passed in, which it has already established came
+    from a command that succeeded. Pruning the tree against a failed listing would drop folders
+    the store still needs - the same class of mistake that once made an empty listing look like
+    a repository with no sources.
+    """
+    job["current_source"] = "(tree sync)"
+    roots = sorted({(s.get("rootEntry") or {}).get("obj")
+                    for snaps in srcs.values() for s in snaps
+                    if (s.get("rootEntry") or {}).get("obj")})
+    con.execute("CREATE OR REPLACE TABLE _known AS "
+                "SELECT c.content_id AS oid FROM tdir d JOIN cid c USING (cid_id)")
+    res = treesync.sync(con, repo, roots, known_table="_known")
+    mat = treesync.materialize(con, alloc, base_known="tdir")
+
+    import pyarrow as pa
+    con.register("_roots_arrow", pa.table({"content_id": pa.array(roots, pa.string())}))
+    con.execute("CREATE OR REPLACE TABLE _root_cids AS SELECT c.cid_id FROM cid c "
+                "JOIN _roots_arrow r USING (content_id)")
+    con.unregister("_roots_arrow")
+    treesync.reach_from_roots(con, "_root_cids", "_tree_reach")
+    merged = treesync.merge(con, reachable="_tree_reach")
+    for name in _TREE_TABLES:
+        con.execute(f"DROP TABLE {name}")
+        con.execute(f"ALTER TABLE {name}_final RENAME TO {name}")
+    return {"sync": res.as_dict(), "materialize": mat, "merge": merged,
+            "incomplete": sorted(set(res.unreadable))}
+
+
+def _write_tree(con, staging: str, gen: int) -> tuple[dict, list]:
+    """Stage the three tree artifacts. Written in walk order, which is both how a folder's
+    entries become a contiguous row range and what makes them compress."""
+    artifacts, moves = {}, []
+    for name, order in (("tdir", "dir_id"), ("tent", "dir_id, pos"), ("tpart", "iobj_cid, ord")):
+        out = os.path.join(staging, f"{name}.parquet")
+        con.execute(f"COPY (SELECT * FROM {name} ORDER BY {order}) "
+                    f"TO '{_fwd(out)}' ({_copy_opts()})")
+        rel = f"pool/tree/{name}/g{gen}.parquet"
+        artifacts[name] = [rel]
+        moves.append((out, rel))
+    return artifacts, moves
 
 
 def _fwd(p: str) -> str:

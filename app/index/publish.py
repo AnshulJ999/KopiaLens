@@ -109,10 +109,9 @@ def replace_artifacts(repo: str, tables: dict) -> int | None:
     ``tables`` maps artifact name -> pyarrow.Table. Returns the new generation number, or None if
     another writer holds the repo (the caller's value is a cache and can be recomputed).
     """
-    import duckdb
     import pyarrow as pa  # noqa: F401 - the caller's tables are pyarrow
 
-    from . import store
+    from . import crypto, store
 
     root = store.repo_dir(repo)
     try:
@@ -131,20 +130,17 @@ def replace_artifacts(repo: str, tables: dict) -> int | None:
         gen = int(manifest.get("generation") or 0) + 1
         staging = os.path.join(root, "_staging")
         os.makedirs(staging, exist_ok=True)
-        con = duckdb.connect()
         moves, artifacts = [], dict(manifest.get("artifacts", {}))
-        try:
+        with store.scratch_connection(repo) as con:
             for name, table in tables.items():
                 staged = os.path.join(staging, f"{name}_g{gen}.parquet")
                 con.register("_repl", table)
-                con.execute("COPY (SELECT * FROM _repl) TO '%s' (FORMAT parquet, COMPRESSION zstd)"
-                            % staged.replace("\\", "/").replace("'", "''"))
+                con.execute("COPY (SELECT * FROM _repl) TO '%s' (%s)"
+                            % (staged.replace("\\", "/").replace("'", "''"), crypto.copy_options()))
                 con.unregister("_repl")
                 rel = f"pool/{name}/g{gen}.parquet"
                 moves.append((staged, rel))
                 artifacts[name] = [rel]
-        finally:
-            con.close()
         new = dict(manifest)
         new["generation"] = gen
         new["artifacts"] = artifacts

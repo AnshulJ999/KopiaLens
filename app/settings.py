@@ -78,6 +78,19 @@ DEFAULT_SETTINGS: dict[str, Any] = {
                                            # on the DuckDB file, so deliberately infrequent (see metrics.py)
         "dir_memo_max_mb": 1500,     # RAM budget for the in-process directory-listing LRU (byte-budgeted, not item-count)
         "debug_log": False,          # also write data/logs/kopialens-debug.log at DEBUG (env KOPIALENS_DEBUG_LOG overrides)
+        # ---- unified store () ---------------------------------------------------------
+        # Encryption at rest for every local file the store writes. It stays OFF until onboarding
+        # () offers the choice; the machinery underneath is complete either way. Turning it
+        # on or off rewrites only our own Parquet files, never the kopia repository.
+        "encryption": False,
+        # Seconds without a USER request before every open generation is closed and its memory
+        # returned. 0 disables. Polled status endpoints deliberately do not count as activity.
+        "store_idle_close": 1800,
+        # DuckDB limits. Empty/0 auto-detects from total RAM (see index/store.resolve_limits);
+        # these are the Advanced overrides. Threads are never left at the DuckDB default - a high
+        # count inflates hash-aggregate memory enough to OOM the small tier.
+        "duckdb_memory": "",
+        "duckdb_threads": 0,
         # Walk-cache storage format for NEWLY written rows: "none" | "zstd-1" | "zstd-3". Both
         # formats are readable side by side, so changing this is safe at any time; converting the
         # rows already on disk is a separate one-off (`python compress_cache.py`).

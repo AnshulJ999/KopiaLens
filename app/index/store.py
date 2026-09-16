@@ -10,6 +10,10 @@ old table shapes here - every read path resolves integer ids directly through
 
 The writer (``publish.py``, ``artifacts.py``, ``ids.py``) lands in the same pass; this module
 only ever READS. No directory is ever globbed - the manifest names every file.
+
+ added three things here: the tree artifacts (layer 1) bind alongside the index ones, every
+connection is an encrypted session when encryption is on, and nothing stays open - the generation
+opens on first use and closes again after ``store_idle_close`` seconds without a user request.
 """
 
 from __future__ import annotations
@@ -19,16 +23,52 @@ import contextvars
 import json
 import os
 import threading
+import time
 
 import duckdb
 
 from config import DATA_DIR, REPOS
 
 from ..core.applog import get_logger
+from . import crypto
 
 log = get_logger("store")
 
-MEMORY_LIMIT = os.environ.get("KOPIALENS_DUCKDB_MEMORY", "3GB")
+
+# ---------------------------------------------------------------------------- RAM tiers
+# Auto-detected from total RAM ( plan 4d). 8 GB is the design floor and was proven to
+# carry the heaviest query (P10: the layer-3 rebuild at 512 MB / 4 threads, both repos).
+#
+# Threads are pinned explicitly in EVERY tier, never left at the DuckDB default: the default
+# tracks core count (24 here), and a high thread count inflates hash-aggregate memory enough to
+# OOM the small tier. Measured at 512 MB, 4 threads was as fast or faster than 24.
+_TIERS = ((8, "512MB", 4), (24, "1GB", 8), (0, "3GB", 16))   # (min GB, memory_limit, threads)
+
+
+def resolve_limits() -> tuple[str, int]:
+    """(memory_limit, threads) for this machine: explicit settings win, then env, then the tier."""
+    try:
+        from ..settings import load_settings
+        kl = load_settings()["kopialens"]
+    except Exception:  # noqa: BLE001 - a settings problem must not stop the store opening
+        kl = {}
+    total_gb = 0.0
+    try:
+        import psutil
+        total_gb = psutil.virtual_memory().total / (1024 ** 3)
+    except Exception:  # noqa: BLE001 - unknown RAM falls through to the smallest tier
+        pass
+    limit, threads = _TIERS[-1][1], _TIERS[-1][2]
+    for min_gb, mem, thr in _TIERS:
+        if total_gb <= min_gb or min_gb == 0:
+            limit, threads = mem, thr
+            break
+    limit = (kl.get("duckdb_memory") or os.environ.get("KOPIALENS_DUCKDB_MEMORY") or limit)
+    threads = int(kl.get("duckdb_threads") or threads)
+    return str(limit), max(1, threads)
+
+
+MEMORY_LIMIT = os.environ.get("KOPIALENS_DUCKDB_MEMORY", "3GB")   # legacy name, still read by /debug
 
 # Per-request pin scope: a dict of repo -> Generation that read_cursor populates lazily on
 # first use and the request middleware releases at the end (begin_pins/end_pins). A request
@@ -44,8 +84,10 @@ _GENS: dict[str, "Generation"] = {}   # repo -> current generation handle
 _RETIRED: list["Generation"] = []
 _LOCK = threading.Lock()
 
-# Artifact names that are a list of files (history/pathx are per-source lists) vs single files.
-_ARTIFACT_TABLES = ("filev", "pathx", "dir", "anc", "src", "cid", "snap",
+# Artifact names bound as views. Layer 1 (the tree) is tdir/tent/tpart; layer 2 is the object
+# maps; layer 3 is the index schema. Some are a list of files (pathx/filev are per-source).
+_ARTIFACT_TABLES = ("tdir", "tent", "tpart",
+                    "filev", "pathx", "dir", "anc", "src", "cid", "snap",
                     "csize", "crefs", "iphys", "sanalysis", "isnaps")
 
 
@@ -53,13 +95,14 @@ class Generation:
     """One published generation: a manifest plus an in-memory DuckDB with views bound to it."""
 
     def __init__(self, repo: str, gen_id: int, manifest: dict, con: duckdb.DuckDBPyConnection,
-                 mtime_ns: int):
+                 mtime_ns: int, session=None):
         self.repo = repo
         self.id = gen_id
         self.manifest = manifest
         self._con = con
         self._mtime_ns = mtime_ns
         self._refs = 0
+        self._session = session        # crypto._Session: the attached encrypted scratch db
 
     def cursor(self):
         return self._con.cursor()
@@ -83,6 +126,8 @@ class Generation:
             self._con.close()
         except Exception:  # noqa: BLE001 - a failed close must not break the swap
             pass
+        if self._session is not None:
+            self._session.cleanup()    # the encrypted scratch db dies with its connection
 
 
 def repo_dir(repo: str) -> str:
@@ -104,11 +149,15 @@ def read_manifest(repo: str) -> dict | None:
 
 
 def _one_table(con, name: str, files: list[str]) -> None:
-    """Bind one artifact as a read_parquet view over an explicit file list (never a glob)."""
+    """Bind one artifact as a read_parquet view over an explicit file list (never a glob).
+
+    The argument list comes from ``crypto`` so the encryption config rides along when encryption
+    is on - a view built without it fails at read time with "Computed AES tag differs", which is
+    a confusing place to learn the key was missing."""
     if not files:
         raise ValueError(f"artifact {name} has no files")
-    paths = ", ".join("'%s'" % f.replace("\\", "/").replace("'", "''") for f in files)
-    con.execute(f"CREATE VIEW {name} AS SELECT * FROM read_parquet([{paths}])")
+    args = crypto.parquet_read_list([f.replace("\\", "/").replace("'", "''") for f in files])
+    con.execute(f"CREATE VIEW {name} AS SELECT * FROM read_parquet({args})")
 
 
 def _bind_generation(con, repo: str, artifacts: dict[str, list[str]]) -> None:
@@ -147,18 +196,25 @@ def open_generation(repo: str) -> Generation:
     manifest = read_manifest(repo)
     if manifest is None:
         raise FileNotFoundError(f"repo {repo!r} has no index (no manifest.json)")
-    con = duckdb.connect()
-    con.execute("SET memory_limit='%s'" % MEMORY_LIMIT)
+    if crypto.enabled() and not crypto.unlocked():
+        raise PermissionError("the index is encrypted and locked - unlock it to read this repo")
+    limit, threads = resolve_limits()
     tmp = os.path.join(DATA_DIR, f"duck_tmp_repo{repo}")
-    os.makedirs(tmp, exist_ok=True)
-    con.execute(f"SET temp_directory='{tmp.replace(chr(92), chr(47))}'")
+    con = duckdb.connect()
+    session = crypto.apply(con, tmp, limit, threads)
     base = repo_dir(repo)
     artifacts = {
         name: [p2 if os.path.isabs(p2) else os.path.join(base, p2) for p2 in files]
         for name, files in manifest.get("artifacts", {}).items()
     }
-    _bind_generation(con, repo, artifacts)
-    return Generation(repo, manifest.get("generation"), manifest, con, mtime)
+    try:
+        _bind_generation(con, repo, artifacts)
+    except Exception:
+        con.close()
+        if session is not None:
+            session.cleanup()
+        raise
+    return Generation(repo, manifest.get("generation"), manifest, con, mtime, session)
 
 
 def _reap_locked() -> None:
@@ -290,3 +346,99 @@ def close_all() -> None:
             gen.close()
         _GENS.clear()
         _RETIRED.clear()
+
+
+@contextlib.contextmanager
+def scratch_connection(repo: str):
+    """A standalone, fully configured DuckDB connection for build and publish work.
+
+    Every writer goes through here rather than calling ``duckdb.connect()`` directly, because a
+    connection built by hand misses three things at once: the RAM tier, the encrypted session
+    that keeps spilled temp files off disk in the clear, and the registered Parquet key without
+    which a COPY writes a PLAINTEXT file into an otherwise encrypted generation. That last one
+    fails silently - the file is perfectly readable, just not encrypted.
+    """
+    if crypto.enabled() and not crypto.unlocked():
+        raise PermissionError("the store is encrypted and locked - unlock it before writing")
+    limit, threads = resolve_limits()
+    tmp = os.path.join(DATA_DIR, f"duck_tmp_repo{repo}")
+    con = duckdb.connect()
+    session = crypto.apply(con, tmp, limit, threads)
+    try:
+        yield con
+    finally:
+        try:
+            con.close()
+        finally:
+            if session is not None:
+                session.cleanup()
+
+
+# ---------------------------------------------------------------------------- idle close
+# Nothing opens at app start and nothing stays open: the first use opens a generation (~0.05 s)
+# and after `store_idle_close` seconds without a USER request every connection is closed again,
+# which measurably returns the memory (three load/close cycles left ~10 MB residual, no creep).
+#
+# USER request is the operative word. The UI polls a handful of status endpoints every few
+# seconds and the light pass runs every 30 minutes; if either counted as activity an open browser
+# tab would pin the store open forever, and the light pass would churn open/close cycles. Only
+# `touch()` marks activity, and `main.py` calls it for non-polled API paths only.
+
+_LAST_TOUCH = time.time()
+_REAPER_STARTED = False
+_IDLE_DEFAULT = 1800
+
+
+def touch() -> None:
+    """Mark real user activity (see above). Cheap enough to call on every request."""
+    global _LAST_TOUCH
+    _LAST_TOUCH = time.time()
+
+
+def idle_seconds() -> int:
+    try:
+        from ..settings import load_settings
+        return int(load_settings()["kopialens"].get("store_idle_close", _IDLE_DEFAULT))
+    except Exception:  # noqa: BLE001
+        return _IDLE_DEFAULT
+
+
+def close_idle(now: float | None = None) -> bool:
+    """Close every generation nothing is reading, if the idle window has passed. True if closed."""
+    limit = idle_seconds()
+    if limit <= 0:
+        return False
+    now = time.time() if now is None else now
+    if now - _LAST_TOUCH < limit:
+        return False
+    with _LOCK:
+        if any(g._refs > 0 for g in list(_GENS.values()) + list(_RETIRED)):
+            return False               # a background build is mid-read; try again next tick
+        if not _GENS and not _RETIRED:
+            return False
+        for gen in list(_GENS.values()) + list(_RETIRED):
+            gen.close()
+        _GENS.clear()
+        _RETIRED.clear()
+    log.info("store idle for %ds - closed every generation", limit)
+    return True
+
+
+def start_idle_reaper(interval: int = 60) -> None:
+    """Start the one background thread that applies the idle close. Called from the app lifespan;
+    the worker never calls it (that process exits when its run ends)."""
+    global _REAPER_STARTED
+    with _LOCK:
+        if _REAPER_STARTED:
+            return
+        _REAPER_STARTED = True
+
+    def _loop() -> None:
+        while True:
+            time.sleep(interval)
+            try:
+                close_idle()
+            except Exception as exc:  # noqa: BLE001 - a reaper hiccup must never kill the thread
+                log.warning("idle close failed: %s", exc)
+
+    threading.Thread(target=_loop, name="store-idle", daemon=True).start()
