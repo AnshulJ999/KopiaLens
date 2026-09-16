@@ -30,7 +30,7 @@ import pyarrow as pa
 from ..core import paths as pathrules
 from ..core.applog import get_logger
 from ..core.sources import sources_index
-from . import crypto, ids, layer2, layer3, tree, treeconvert, treesync
+from . import crypto, ids, layer2, layer3, store, tree, treeconvert, treesync
 from .builder import _drop_indexes, _refresh_paths
 from .physical import fill_paths_physical
 from .schema import init_schema
@@ -169,16 +169,18 @@ def _fwd(p: str) -> str:
 
 
 def _scratch(staging: str) -> tuple[str, duckdb.DuckDBPyConnection]:
-    """A fresh scratch DuckDB in ``_staging/`` - spilled to disk, closed and deleted after."""
+    """A fresh scratch DuckDB in ``_staging/`` - spilled to disk, closed and deleted after.
+
+    Goes through ``crypto.open_scratch`` so the build gets the machine's RAM tier, the registered
+    Parquet key, and - when encryption is on - an encrypted scratch file and encrypted spills. A
+    hand-rolled ``duckdb.connect()`` here silently missed all four.
+    """
     scratch = os.path.join(staging, "build.duckdb")
     for suffix in ("", ".wal"):
         if os.path.exists(scratch + suffix):
             os.remove(scratch + suffix)
-    con = duckdb.connect(scratch)
-    con.execute("SET memory_limit='%s'" % os.environ.get("KOPIALENS_DUCKDB_MEMORY", "3GB"))
-    tmp = os.path.join(staging, "tmp")
-    os.makedirs(tmp, exist_ok=True)
-    con.execute(f"SET temp_directory='{tmp.replace(chr(92), chr(47))}'")
+    limit, threads = store.resolve_limits()
+    con = crypto.open_scratch(scratch, os.path.join(staging, "tmp"), limit, threads)
     return scratch, con
 
 
@@ -248,10 +250,10 @@ def _file_src_map(con, root: str, rels: list[str]) -> dict[int, list[str]]:
     attributes those, and anything still unattributable fails loudly rather than silently
     dropping a source from the next manifest."""
     out: dict[int, list[str]] = {}
-    fl = ", ".join("'%s'" % _fwd(os.path.join(root, r)) for r in rels)
+    fl = [_fwd(os.path.join(root, r)) for r in rels]
     for sid, fn in con.execute(
-            f"SELECT DISTINCT src_id, filename FROM read_parquet([{fl}], filename=true, "
-            f"hive_partitioning=false)").fetchall():
+            f"SELECT DISTINCT src_id, filename FROM read_parquet({crypto.parquet_read_list(fl)}, "
+            f"filename=true, hive_partitioning=false)").fetchall():
         out.setdefault(int(sid), []).append(os.path.relpath(fn, root).replace(os.sep, "/"))
     mapped = {r for lst in out.values() for r in lst}
     for rel in rels:
@@ -297,6 +299,16 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
             f"generation holds {len(prev_sources)} source(s) - refusing to treat that as a "
             "removal. The repository is most likely unreachable; the current generation is "
             "untouched.")
+    # A source indexed from a tree the sync could not read whole is still recorded as
+    # indexed, and its snapshot set then matches the listing forever - so it is carried by
+    # reference every later night and the short rows never come back. Archival sources never gain
+    # a new snapshot, so the gap is permanent. The previous generation's flag is therefore a
+    # rebuild trigger: unreadable folders are never written into the tree, so the next sync
+    # re-reads them, and rebuilding every source from the repaired tree costs about a second each.
+    if prev is not None and prev.get("tree_incomplete"):
+        log.warning("repo=%s the previous tree sync left %s folder object(s) unread - rebuilding "
+                    "every source from the repaired tree", repo, prev["tree_incomplete"])
+        force = frozenset(srcs)
     scratch, con = _scratch(staging)
     prev_art = (prev or {}).get("artifacts", {})
     moves: list[tuple[str, str]] = []
@@ -309,9 +321,10 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         # hive_partitioning=false: the pool paths look like `src_id=N/`, and DuckDB's
         # auto-detection would let the DIRECTORY name override the file's own src_id column.
         def _read_prev_art(name: str, out: str) -> None:
-            fl = ", ".join("'%s'" % _fwd(os.path.join(root, r)) for r in prev_art[name])
+            fl = [_fwd(os.path.join(root, r)) for r in prev_art[name]]
             con.execute(f"CREATE OR REPLACE TABLE {out} AS SELECT * FROM "
-                        f"read_parquet([{fl}], hive_partitioning=false)")
+                        f"read_parquet({crypto.parquet_read_list(fl)}, "
+                        f"hive_partitioning=false)")
 
         _empty_previous(con)
         if prev is not None:
@@ -338,7 +351,11 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
             if key in prev_sources and key not in force and cur_ids == prev_sets.get(key, set()):
                 continue  # carried forward by reference
             targets.append((key, "rebuild", None))
-        job.update({"total": sum(len(srcs[k]) for k, _m, _a in targets), "indexed": 0,
+        # `total` and `indexed` must carry the SAME unit - index_status renders the pair straight
+        # into the status strip. `indexed` ticks once per rebuilt SOURCE (a source rebuilds whole
+        # from the tree in about a second, so counting snapshots no longer means anything), so the
+        # denominator is the target count. Leaving it as a snapshot total read "3 / 6,629".
+        job.update({"total": len(targets), "indexed": 0,
                     "targets": len(targets), "current_source": None, "error": None})
         log.info("repo=%s index classified %d source(s) in %.1fs: %d carried, %d to rebuild",
                  repo, len(srcs), time.perf_counter() - t0,
@@ -376,9 +393,9 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         src_of = dict(con.execute("SELECT source, src_id FROM src_rev").fetchall())
         tgt_ids = sorted({int(src_of[k]) for k, _m, _a in targets if src_of.get(k) is not None})
         if prev is not None:
-            fl = ", ".join("'%s'" % _fwd(os.path.join(root, r)) for r in prev_art["pathx"])
+            fl = [_fwd(os.path.join(root, r)) for r in prev_art["pathx"]]
             con.execute(f"CREATE OR REPLACE TABLE prev_pathx AS SELECT * FROM "
-                        f"read_parquet([{fl}], hive_partitioning=false) "
+                        f"read_parquet({crypto.parquet_read_list(fl)}, hive_partitioning=false) "
                         f"WHERE src_id IN ({','.join('?' * len(tgt_ids or [-1]))})",
                         tgt_ids or [-1])
 
@@ -604,10 +621,10 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
             con.execute(
                 f"COPY (SELECT path_id, src_id, dir_id, name, ext, size, versions, first_seen, "
                 f"last_seen, in_latest, cid_id, physical, exclusive, full_path "
-                f"FROM _px_final ORDER BY dir_id, name) TO '{_fwd(staged_p)}' ({_ZSTD})")
+                f"FROM _px_final ORDER BY dir_id, name) TO '{_fwd(staged_p)}' ({_copy_opts()})")
             con.execute(
                 f"COPY (SELECT src_id, path_id, snap_id, cid_id, size, mtime, ordinal "
-                f"FROM _fv_final ORDER BY path_id, snap_id) TO '{_fwd(staged_h)}' ({_ZSTD})")
+                f"FROM _fv_final ORDER BY path_id, snap_id) TO '{_fwd(staged_h)}' ({_copy_opts()})")
             new_entries[S] = (hrel, prel)
             moves.append((staged_h, hrel))
             moves.append((staged_p, prel))
@@ -682,7 +699,7 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
             order = {"src": "src_id", "dir": "src_id, dir_path", "anc": "depth, dir_id",
                      "cid": "cid_id", "snap": "snap_id"}[name]
             con.execute(f"COPY (SELECT * FROM {name} ORDER BY {order}) "
-                        f"TO '{_fwd(staged)}' ({_ZSTD})")
+                        f"TO '{_fwd(staged)}' ({_copy_opts()})")
             artifacts_out[name] = [rel]
             moves.append((staged, rel))
         for name, table in (("csize", "csize_final"), ("crefs", "crefs_final"),
@@ -690,12 +707,12 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
             rel = f"pool/maps/{name}/g{gen}.parquet"
             staged = os.path.join(staging, f"{name}.parquet")
             con.execute(f"COPY (SELECT * FROM {table} ORDER BY cid_id) "
-                        f"TO '{_fwd(staged)}' ({_ZSTD})")
+                        f"TO '{_fwd(staged)}' ({_copy_opts()})")
             artifacts_out[name] = [rel]
             moves.append((staged, rel))
         staged = os.path.join(staging, "isnaps.parquet")
         con.execute(f"COPY (SELECT * FROM isnaps_final ORDER BY snapshot_id) "
-                    f"TO '{_fwd(staged)}' ({_ZSTD})")
+                    f"TO '{_fwd(staged)}' ({_copy_opts()})")
         # Forward slashes like every other artifact: manifest paths are the portable relative form,
         # not host paths. os.path.join here emitted backslashes on Windows, which GC then failed to
         # match against its own keep-set (it normalizes now, but the manifest is the source).
@@ -729,10 +746,12 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         def _abs_any(rel: str) -> str:
             return staged_of_rel.get(rel) or os.path.join(root, rel)
 
-        fl = ", ".join("'%s'" % _fwd(_abs_any(r)) for r in artifacts_out["pathx"])
-        n_paths = con.execute(f"SELECT count(*) FROM read_parquet([{fl}])").fetchone()[0]
-        fl = ", ".join("'%s'" % _fwd(_abs_any(r)) for r in artifacts_out["filev"])
-        n_filev = con.execute(f"SELECT count(*) FROM read_parquet([{fl}])").fetchone()[0]
+        fl = [_fwd(_abs_any(r)) for r in artifacts_out["pathx"]]
+        n_paths = con.execute(
+            f"SELECT count(*) FROM read_parquet({crypto.parquet_read_list(fl)})").fetchone()[0]
+        fl = [_fwd(_abs_any(r)) for r in artifacts_out["filev"]]
+        n_filev = con.execute(
+            f"SELECT count(*) FROM read_parquet({crypto.parquet_read_list(fl)})").fetchone()[0]
         stats = {"paths": n_paths, "file_versions": n_filev}
         checks["stats"] = stats
 
@@ -742,8 +761,11 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
                  repo, time.perf_counter() - t_tail, time.perf_counter() - t0)
         return {"generation": gen, "repo": repo, "schema_version": _MANIFEST_VERSION,
                 "counters": alloc.counters(), "artifacts": artifacts_out,
-                "sources": sources, "stats": stats, "_checks": checks, "_moves": moves,
-                "_mode": "incremental"}
+                "sources": sources, "stats": stats,
+                # A PUBLIC key on purpose: `_`-prefixed keys are stripped before the manifest is
+                # written, and the next build has to be able to read this one.
+                "tree_incomplete": len(tree_stats["incomplete"]),
+                "_checks": checks, "_moves": moves, "_mode": "incremental"}
     finally:
         _close_scratch(scratch, con)
 

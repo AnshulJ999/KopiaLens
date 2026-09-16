@@ -134,9 +134,13 @@ def file_rows(con, repo: str) -> int:
     """Insert the source's file-version rows into the scratch ``files`` table.
 
     Each file entry is credited to the NEWEST snapshot that reaches its location (``rmin``),
-    which is precisely what the delta index holds today. ``ordinal`` is filled deterministically
-    rather than left to walk order - the old value was the walker's emission position, was never
-    rebuild-stable, and nothing reads it.
+    which is precisely what the delta index holds today.
+
+    ``ordinal`` is written NULL. It was the walker's emission position, it was never rebuild-stable,
+    and nothing anywhere reads it - no query, no parity probe, no UI. Numbering it deterministically
+    cost a global sort of every file-version row (19M on repo 1) plus the largest column in the
+    published artifact (36 MB), to produce a value with no consumer. The column stays so the schema
+    is unchanged.
     """
     con.execute(f"""CREATE OR REPLACE TABLE _frows AS
         SELECT l.source,
@@ -154,7 +158,7 @@ def file_rows(con, repo: str) -> int:
         (repo, source, full_path, name, size, content_id, snapshot_id, start_time, ordinal, mtime)
         SELECT ?, r.source, r.full_path, r.name, r.size, c.content_id,
                sn.snapshot_id, sn.start_time,
-               row_number() OVER (ORDER BY r.source, r.dir_id, r.pos), r.mtime
+               NULL::BIGINT, r.mtime
         FROM _frows r
         JOIN _rsnap sn ON sn.source = r.source AND sn.rank = r.rmin
         LEFT JOIN cid c ON c.cid_id = r.cid_id""", [repo])

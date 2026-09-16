@@ -11,23 +11,51 @@ A file's stored ``content_id`` is the object id: a single content for small file
 from __future__ import annotations
 
 import collections
+import json
 import threading
 import weakref
 
+from ..core.applog import get_logger
 from ..core.sizemap import load_sizemap
 from . import resolve
 from .queries import _ESC, like_literal
 from .store import read_cursor
 
+log = get_logger("physical")
 
-def _chunks_for_obj(repo: str, obj: str) -> set[str] | None:
+
+def _chunks_from_kopia(repo: str, obj: str) -> set[str] | None:
+    """A split object's piece list straight from kopia - the click-time fallback.
+
+    A file backed up since the last tree sync is not in the tree, and a detail panel still has to
+    answer. Same shape the sync writes: the index object is chunk ordinal 0, so it belongs in the
+    set. A failed read stays None - unknown is not zero bytes.
+    """
+    from ..core.kopia import kopia
+    res = kopia(repo, ["content", "show", obj[1:]])
+    if res.returncode != 0:
+        log.warning("chunks: kopia content show failed for %s (rc=%d)", obj, res.returncode)
+        return None
+    try:
+        entries = json.loads(res.stdout).get("entries") or []
+    except ValueError:
+        log.warning("chunks: unparseable content show output for %s", obj)
+        return None
+    return {e["o"] for e in entries if e.get("o")} | {obj[1:]}
+
+
+def _chunks_for_obj(repo: str, obj: str, *, fetch: bool = False) -> set[str] | None:
     """Content chunks that physically back one file object, from the generation's tree.
 
     A split object (``I`` prefixed) returns its pieces from ``tpart``, which includes its own index
     content as ordinal 0 - so nothing is missed. A plain object is its own single chunk. ``None``
-    means the tree does not hold the object (a snapshot newer than the last sync); the caller treats
-    that as unknown rather than as zero bytes, which is what kept a missing chunk list from reading
-    as "this file takes no space".
+    means neither the tree nor kopia could say; the caller treats that as unknown rather than as
+    zero bytes, which is what kept a missing chunk list from reading as "this file takes no space".
+
+    ``fetch`` asks kopia for a split object the tree has not seen yet - the behaviour the old
+    ``expand_indirect(fetch=True)`` had, and the same trade ``entries.children_of`` makes for
+    folder listings. Click paths pass it; bulk analysis does not, because one kopia call per file
+    across a whole source is exactly the shape this store exists to remove.
     """
     if not obj:
         return set()
@@ -36,14 +64,28 @@ def _chunks_for_obj(repo: str, obj: str) -> set[str] | None:
     cur = read_cursor(repo)
     try:
         cid = resolve.cid_id(cur, obj)
-        if cid is None:
-            return None
-        parts = cur.execute("SELECT part_cid FROM tpart WHERE iobj_cid = ?", [cid]).fetchall()
-        if not parts:
-            return None
-        return set(resolve.content_ids(cur, [p[0] for p in parts]).values())
+        parts = (cur.execute("SELECT part_cid FROM tpart WHERE iobj_cid = ?", [cid]).fetchall()
+                 if cid is not None else [])
+        if parts:
+            return set(resolve.content_ids(cur, [p[0] for p in parts]).values())
     finally:
         cur.close()
+    return _chunks_from_kopia(repo, obj) if fetch else None
+
+
+def _chunks_memo(repo: str, obj: str, memo: dict, *, fetch: bool = False) -> set[str] | None:
+    """Chunk set for one object, memoized per call site.
+
+    A None answer is never memoized: `memo.get(obj)` cannot tell "not looked up yet" from "looked
+    up and unknown", so storing it both defeats the memo and leaves a None where callers used to
+    assume a set.
+    """
+    if obj in memo:
+        return memo[obj]
+    chunks = _chunks_for_obj(repo, obj, fetch=fetch)
+    if chunks is not None:
+        memo[obj] = chunks
+    return chunks
 
 
 def fill_paths_physical(con, repo: str) -> None:
@@ -230,9 +272,10 @@ def _refcount_map(repo: str) -> dict[str, int]:
         if REFCOUNT_MEMO_ENABLED and gen is not None:
             _REFCOUNT_MEMO[gen] = count
         return count
+    # Cold start only: a generation from before the unified store carries no crefs map. Counted
+    # from the tree in one query rather than by walking every source.
     from ..core.metrics import cached_refcount  # lazy: avoids a heavy import on hot paths
-    count, _ = cached_refcount(repo, load_sizemap(repo), mode="all")
-    return count
+    return cached_refcount(repo)
 
 
 _REFCOUNT_MEMO: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
@@ -499,16 +542,23 @@ def folder_detail(repo: str, source: str | None, prefix: str, all_versions: bool
 
     this_refs: dict[str, int] = {}
     obj_chunks: dict[str, set] = {}
+    unknown = 0
     for cid_id, n in objs:
         if not cid_id:
             continue
         cid = cstr[cid_id]
-        chunks = obj_chunks.get(cid)
+        # No kopia fetch here: a folder aggregate can hold thousands of objects, and one call each
+        # is the per-item shape this store exists to remove. An object the tree has not reached is
+        # left out and counted - understated, loudly, rather than crashing or silently zeroed.
+        chunks = _chunks_memo(repo, cid, obj_chunks)
         if chunks is None:
-            chunks = _chunks_for_obj(repo, cid)
-            obj_chunks[cid] = chunks
+            unknown += 1
+            continue
         for c in chunks:
             this_refs[c] = this_refs.get(c, 0) + int(n)
+    if unknown:
+        log.warning("repo=%s folder detail: %d object(s) are not in the tree yet - their bytes are "
+                    "not counted until the next index", repo, unknown)
     refs = _refcount_for(repo, this_refs.keys()) or {}
     sizes = _sizes_for(repo, this_refs)
     physical = sum(sizes.get(c, 0) for c in this_refs)
@@ -538,6 +588,7 @@ def batch_detail(repo: str, files: list[dict], all_versions: bool = True) -> dic
     this_refs: dict[str, int] = {}     # references the selection contributes per chunk (all versions)
     latest: dict[tuple, tuple] = {}    # (source,fp) -> (latest content_id, latest size)
     versions = 0
+    unknown = 0                        # objects the tree has not reached; counted, never zeroed
     cur = read_cursor(repo)
     try:
         # One batched path resolution for the whole selection, then one filev scan per 900
@@ -569,16 +620,19 @@ def batch_detail(repo: str, files: list[dict], all_versions: bool = True) -> dic
             latest[key] = (rows[0][0], int(rows[0][1] or 0))
             for obj, _sz in (rows if all_versions else rows[:1]):
                 versions += 1
-                chunks = obj_chunks.get(obj)
+                chunks = _chunks_memo(repo, obj, obj_chunks)
                 if chunks is None:
-                    chunks = _chunks_for_obj(repo, obj)
-                    obj_chunks[obj] = chunks
+                    unknown += 1
+                    continue
                 for c in chunks:
                     this_refs[c] = this_refs.get(c, 0) + 1
     finally:
         cur.close()
     if not latest:
         return {"found": False}
+    if unknown:
+        log.warning("repo=%s batch detail: %d version object(s) are not in the tree yet - their "
+                    "bytes are not counted until the next index", repo, unknown)
 
     union_chunks = set(this_refs)
     refs = _refcount_for(repo, union_chunks)
@@ -635,13 +689,20 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
 
     obj_chunks: dict[str, set[str]] = {}
     this_refs: dict[str, int] = {}  # references this file contributes per chunk (across versions)
+    unknown = 0
+    # One file, a handful of versions - so this is the one place that asks kopia for a split object
+    # the tree has not reached yet. A file backed up since the last index is exactly what a user
+    # opens this panel to look at, and "-" where a size belongs is the least useful honest answer.
     for _sid, _start, _size, obj in versions:
-        chunks = obj_chunks.get(obj)
+        chunks = _chunks_memo(repo, obj, obj_chunks, fetch=True)
         if chunks is None:
-            chunks = _chunks_for_obj(repo, obj)
-            obj_chunks[obj] = chunks
+            unknown += 1
+            continue
         for c in chunks:
             this_refs[c] = this_refs.get(c, 0) + 1
+    if unknown:
+        log.warning("repo=%s file detail %s: %d version(s) could not be measured", repo,
+                    full_path, unknown)
 
     latest_obj = versions[0][3]
     latest_chunks = obj_chunks.get(latest_obj, set())

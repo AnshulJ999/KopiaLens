@@ -61,6 +61,9 @@ def write(name: str, payload: dict, base: str | None = None) -> bool:
         try:
             con = duckdb.connect()
             try:
+                # copy_options NAMES the key; only this puts it on the connection. Without both,
+                # an encrypted write fails outright and every cache silently stops persisting.
+                crypto.register_key(con)
                 con.execute("CREATE TABLE _p AS SELECT ?::VARCHAR AS payload, now() AS written_at",
                             [json.dumps(payload)])
                 con.execute("COPY (SELECT * FROM _p) TO '%s' (%s)"
@@ -87,6 +90,7 @@ def read(name: str, base: str | None = None) -> dict | None:
         return None
     con = duckdb.connect()
     try:
+        crypto.register_key(con)     # parquet_read names the key; this registers it
         row = con.execute(
             f"SELECT payload FROM read_parquet({crypto.parquet_read(_sql(p))})"
         ).fetchone()

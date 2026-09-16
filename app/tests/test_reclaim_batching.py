@@ -60,7 +60,7 @@ def batched(monkeypatch):
     monkeypatch.setattr(physical, "read_cursor", lambda repo: counter)
     monkeypatch.setattr(physical, "_sizes_for",
                         lambda repo, cids: {c: sizes[c] for c in set(cids) if c in sizes})
-    monkeypatch.setattr(physical, "_chunks_for_obj", lambda repo, obj: set(chunks[obj]))
+    monkeypatch.setattr(physical, "_chunks_for_obj", lambda repo, obj, **kw: set(chunks[obj]))
     # Nothing outside the selection references these chunks beyond what this_refs already counts.
     monkeypatch.setattr(physical, "_refcount_for", lambda repo, cids: dict(refs))
     return counter

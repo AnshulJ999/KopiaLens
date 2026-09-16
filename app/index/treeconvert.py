@@ -26,7 +26,6 @@ import time
 from config import CACHEDIR
 
 from ..core.applog import get_logger
-from ..core.cache import decode_json
 from . import treesync
 
 log = get_logger("tree")

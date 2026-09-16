@@ -11,8 +11,6 @@ import re
 
 from config import CACHEDIR
 
-from ..index import layer2, sidecache
-from ..index.physical import _refcount_map, _size_map
 from .kopia import kopia
 from .metrics import gb
 from .sources import resolve_source, roots_of, sources_index, split_sources
@@ -27,6 +25,8 @@ def _refcount_for_mode(repo: str, srcs: dict, mode: str) -> dict[str, int]:
     sources' tree reach - the same Counter the walk-based path built, now sourced from the tree
     instead of the walk cache. ````: the walk is gone, the numbers are not.
     """
+    from ..index import layer2                      # lazy: core must not import index at load
+    from ..index.physical import _refcount_map
     if mode == "all":
         return _refcount_map(repo)
     membership, _ = split_sources(srcs, mode)
@@ -85,6 +85,10 @@ def simulate(
 ) -> dict:
     key, srcs = resolve_source(repo, source=source)
     snaps = srcs[key]
+    # lazy: core must not import index at module load - every neighbour here does the
+    # same, and one eager import is all it takes to make the cycle real.
+    from ..index import layer2
+    from ..index.physical import _refcount_map, _size_map
     keep_ids, reasons = retention_keep(snaps, policy)
     keep_snaps = [snap for snap in snaps if snap["id"] in keep_ids]
     del_snaps = [snap for snap in snaps if snap["id"] not in keep_ids]
@@ -131,6 +135,11 @@ def simulate_all(repo: str, policy: dict[str, int], mode: str = "all", refresh: 
     content freed and attributable to that source alone (global refcount == 1); the combined
     total is the true union (content that leaves no kept snapshot anywhere) - NOT the per-source
     sum, which double-counts content shared between sources. Cached by policy+mode+snapshot-set."""
+    # lazy: core must not import index at module load - every neighbour here does the
+    # same, and one eager import is all it takes to make the cycle real.
+    from ..index import layer2
+    from ..index.physical import _refcount_map, _size_map
+    from ..index import sidecache
     cache_name = _simall_cache(repo, policy, mode)
     if not refresh:
         data = sidecache.read(cache_name)
@@ -193,6 +202,10 @@ def set_reclaim(repo: str, delete_ids: list[str], refresh: bool = False) -> dict
     content also held by an unaffected source. EXACT for a single-source selection (the normal
     case); for a cross-source selection it is approximate (cross-source shared churn not fully
     deducted) and flagged ``exact=false``."""
+    # lazy: core must not import index at module load - every neighbour here does the
+    # same, and one eager import is all it takes to make the cycle real.
+    from ..index import layer2
+    from ..index.physical import _refcount_map, _size_map
     delete_set = set(delete_ids)
     srcs = sources_index(repo)
     affected = sorted({k for k, lst in srcs.items() if any(s["id"] in delete_set for s in lst)})

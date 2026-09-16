@@ -158,6 +158,13 @@ def index_stage(repo: str, full: bool = False) -> None:
         body = artifacts.build_repo(repo, root, gen=gen, job=job, full=full)
         publish.publish(root, body)
     logging.info("published generation %s: %s", gen, body.get("stats"))
+    # Loud, because it is the one condition that silently under-counts the index. The next build
+    # reads the same flag off the manifest and rebuilds every source from the repaired tree.
+    unread = ((body.get("_checks") or {}).get("tree") or {}).get("incomplete") or []
+    if unread:
+        logging.warning("repo=%s: kopia would not read %d folder object(s) - their subtrees are "
+                        "INCOMPLETE in this generation and every source rebuilds next run. "
+                        "e.g. %s", repo, len(unread), unread[:5])
 
 
 def trigger() -> str:
@@ -291,6 +298,13 @@ def run(repo: str, full: bool = False) -> dict:
             if stats:
                 summary["refcount_misses"] = stats
                 logging.info("refcount misses repo=%s: %s", repo, stats)
+        except Exception:  # noqa: BLE001 - a diagnostic must never affect the run
+            pass
+        try:  # unreadable folders belong in the run record, not only in the log
+            from .store import read_manifest
+            unread = int((read_manifest(repo) or {}).get("tree_incomplete") or 0)
+            if unread:
+                summary["unreadable_dirs"] = unread
         except Exception:  # noqa: BLE001 - a diagnostic must never affect the run
             pass
         from .store import close_all

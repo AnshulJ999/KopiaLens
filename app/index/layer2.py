@@ -35,7 +35,7 @@ def source_reach(con, out: str = "_reach_src") -> int:
     separately in Python and unioning sets, at 67 seconds and 3.3 GB on repo 1; the same answer
     as a set operation measured 2.7 seconds.
     """
-    tree.links(con)
+    tree.links(con, if_missing=True)   # layer 3 built it from the same tent moments ago
     f, d = tree.TYPES.index("f"), tree.TYPES.index("d")
     con.execute(f"""CREATE OR REPLACE TABLE {out} AS
         WITH RECURSIVE r(src, dir_id) AS (
@@ -93,11 +93,30 @@ def chunk_sizes(con, repo: str, alloc, out: str = "csize_new") -> int:
     old shape and it held hundreds of MB. Content ids new to the generation are allocated here,
     because a chunk the dictionary does not carry cannot be joined to anything afterwards.
     """
+    import pyarrow as pa
+
     from . import ids
 
     t0 = time.perf_counter()
     con.execute("CREATE OR REPLACE TABLE _csize_raw (content_id VARCHAR, packed UBIGINT)")
-    rows, n = [], 0
+    cids: list[str] = []
+    sizes: list[int] = []
+    n = 0
+
+    def _flush() -> None:
+        """One columnar insert per batch. ``executemany`` runs a prepared statement PER ROW, and
+        this listing is millions of rows on a real repository - it is the whole content index."""
+        nonlocal n
+        if not cids:
+            return
+        con.register("_csize_arrow", pa.table({"content_id": pa.array(cids, pa.string()),
+                                               "packed": pa.array(sizes, pa.uint64())}))
+        con.execute("INSERT INTO _csize_raw SELECT content_id, packed FROM _csize_arrow")
+        con.unregister("_csize_arrow")
+        n += len(cids)
+        cids.clear()
+        sizes.clear()
+
     for line in kopia_lines(repo, ["content", "list", "-l"]):
         fields = line.split()
         if len(fields) < 2:
@@ -108,15 +127,12 @@ def chunk_sizes(con, repo: str, alloc, out: str = "csize_new") -> int:
         for token in fields:
             left, sep, right = token.partition("+")
             if sep and left.isdigit() and right.isdigit():
-                rows.append((fields[0], int(right)))
+                cids.append(fields[0])
+                sizes.append(int(right))
                 break
-        if len(rows) >= 100_000:
-            con.executemany("INSERT INTO _csize_raw VALUES (?, ?)", rows)
-            n += len(rows)
-            rows = []
-    if rows:
-        con.executemany("INSERT INTO _csize_raw VALUES (?, ?)", rows)
-        n += len(rows)
+        if len(cids) >= 250_000:
+            _flush()
+    _flush()
     if not n:
         # An empty listing is only legitimate when the repository holds nothing. A repo with a
         # tree that lists no content is a failed or truncated listing, and a silently empty size
@@ -186,6 +202,122 @@ def reach_content_ids(repo: str, roots: list[str]) -> set[str]:
     finally:
         cur.close()
     return {r[0] for r in rows}
+
+
+# The read-side reach, as CTE text rather than a table: these run on the SHARED in-memory read
+# connection from request threads, so nothing here may CREATE anything (see reach_content_ids).
+# `roots` is supplied by the caller and must yield (src, dir_id).
+_REACH_CTE = """
+    r(src, dir_id) AS (
+        SELECT src, dir_id FROM roots
+        UNION
+        SELECT r.src, e.child FROM r JOIN tent e ON e.dir_id = r.dir_id
+        WHERE e.child IS NOT NULL),
+    objs AS (
+        SELECT DISTINCT r.src, e.cid_id, e.ind, e.ind_cid
+        FROM r JOIN tent e USING (dir_id)
+        WHERE e.etype IN ({f}, {d}) AND e.cid_id IS NOT NULL),
+    reach AS (
+        SELECT DISTINCT src, cid_id FROM (
+            SELECT src, cid_id FROM objs WHERE NOT ind
+            UNION ALL SELECT src, ind_cid FROM objs WHERE ind AND ind_cid IS NOT NULL
+            UNION ALL SELECT o.src, p.part_cid FROM objs o
+                      JOIN tpart p ON p.iobj_cid = o.cid_id WHERE o.ind
+            UNION ALL SELECT ro.src, d.cid_id FROM roots ro JOIN tdir d ON d.dir_id = ro.dir_id)
+        WHERE cid_id IS NOT NULL)
+"""
+
+
+def _roots_cte(recent: int | None, latest_only: bool) -> str:
+    """Snapshot roots per source, from the generation's own `isnaps` - no parameters, no listing.
+
+    Driving this from the published index rather than the live snapshot listing is not a
+    shortcut: a snapshot taken since the last sync has no folder in the tree either, so the walk
+    it replaces could not price it. `isnaps` is simply the honest statement of what is indexed.
+    """
+    window = ("SELECT * FROM ranked WHERE rn <= %d" % recent) if recent else "SELECT * FROM ranked"
+    if latest_only:
+        window = "SELECT * FROM ranked WHERE rn = 1"
+    return """
+    ranked AS (
+        SELECT s.src_id AS src, t.dir_id,
+               row_number() OVER (PARTITION BY s.src_id ORDER BY i.start_time DESC,
+                                                               i.snapshot_id DESC) AS rn
+        FROM isnaps i
+        JOIN src s ON s.source = i.source
+        JOIN cid c ON c.content_id = i.root_obj
+        JOIN tdir t ON t.cid_id = c.cid_id),
+    roots AS (%s)
+    """ % window
+
+
+def source_totals(repo: str, recent: int | None = None) -> tuple[dict[str, dict], int]:
+    """Per-source reachable bytes for the dashboard, as TWO queries over the whole tree.
+
+    This is the plan's headline. The shape it replaces walked every source separately in Python
+    and cached each source's content-id set in a pickle - 67 s and 3.3 GB on repo 1, and the sets
+    themselves were hundreds of MB of process memory that the app then held.
+
+    Returns ``{src_id: {"total", "free", "phys_latest"}}`` and the deduped union across every
+    source. ``free`` is content no OTHER source reaches, which is the delete-safety number, so it
+    is computed from the same reach in the same pass - never from a separately cached refcount
+    that could be a generation behind.
+    """
+    f, d = tree.TYPES.index("f"), tree.TYPES.index("d")
+    body = _REACH_CTE.format(f=f, d=d)
+    cur = read_cursor(repo)
+    try:
+        # src stays an INTEGER through the recursion - it rides on millions of rows, and the
+        # name is only needed on the ~100 grouped rows at the end.
+        rows = cur.execute(f"""
+            WITH RECURSIVE {_roots_cte(recent, False)}, {body},
+            refs AS (SELECT cid_id, count(*) AS n FROM reach GROUP BY cid_id),
+            agg AS (
+                SELECT re.src,
+                       sum(coalesce(cs.packed, 0))::HUGEINT AS total,
+                       sum(CASE WHEN rf.n = 1 THEN coalesce(cs.packed, 0) ELSE 0 END)::HUGEINT
+                           AS free
+                FROM reach re JOIN refs rf USING (cid_id) LEFT JOIN csize cs USING (cid_id)
+                GROUP BY re.src)
+            SELECT s.source, a.total, a.free FROM agg a JOIN src s ON s.src_id = a.src""").fetchall()
+        union_total = cur.execute(f"""
+            WITH RECURSIVE {_roots_cte(recent, False)}, {body}
+            SELECT coalesce(sum(coalesce(cs.packed, 0)), 0)::HUGEINT
+            FROM (SELECT DISTINCT cid_id FROM reach) u
+            LEFT JOIN csize cs USING (cid_id)""").fetchone()[0]
+        latest = cur.execute(f"""
+            WITH RECURSIVE {_roots_cte(recent, True)}, {body},
+            agg AS (
+                SELECT re.src, sum(coalesce(cs.packed, 0))::HUGEINT AS phys
+                FROM (SELECT DISTINCT src, cid_id FROM reach) re
+                LEFT JOIN csize cs USING (cid_id)
+                GROUP BY re.src)
+            SELECT s.source, a.phys FROM agg a JOIN src s ON s.src_id = a.src""").fetchall()
+    finally:
+        cur.close()
+    out = {k: {"total": int(t or 0), "free": int(fr or 0), "phys_latest": 0}
+           for k, t, fr in rows}
+    for k, p in latest:
+        out.setdefault(k, {"total": 0, "free": 0})["phys_latest"] = int(p or 0)
+    return out, int(union_total or 0)
+
+
+def source_refcounts(repo: str) -> dict[str, int]:
+    """content_id -> how many sources reach it, computed from the tree in one query.
+
+    Only for the cold start where the generation carries no ``crefs`` map (a pre- generation,
+    i.e. the first run after the upgrade). Every other caller reads the published map.
+    """
+    f, d = tree.TYPES.index("f"), tree.TYPES.index("d")
+    cur = read_cursor(repo)
+    try:
+        rows = cur.execute(f"""
+            WITH RECURSIVE {_roots_cte(None, False)}, {_REACH_CTE.format(f=f, d=d)}
+            SELECT c.content_id, count(*)::INTEGER
+            FROM reach re JOIN cid c USING (cid_id) GROUP BY c.content_id""").fetchall()
+    finally:
+        cur.close()
+    return dict(rows)
 
 
 def roots_table(con, out: str = "_reach_roots") -> None:

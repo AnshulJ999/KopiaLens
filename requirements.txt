@@ -10,3 +10,5 @@ pillow
 psutil
 zstandard
 jinja2
+argon2-cffi
+keyring

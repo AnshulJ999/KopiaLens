@@ -79,40 +79,68 @@ def reclaimable_files(repo: str, source: str, snapshot_id: str, limit: int = 200
         return []
     root_path = key.split(":", 1)[1] if ":" in key else key
     files: list[dict] = []
+    unknown = 0
 
-    def visit(oid: str, parent: str) -> None:
-        for entry in entries.children_of(repo, [oid]).get(oid, []):
+    # ONE cursor for the whole walk. `children_of` opens its own per call otherwise, and outside a
+    # request's pin scope that also re-resolves the current generation (a manifest stat) for every
+    # folder - on a source with tens of thousands of folders that is the dominant cost, not the
+    # query. Threading the cursor is what keeps this a bulk read rather than a per-folder one.
+    def visit(oid: str, parent: str, cur) -> None:
+        nonlocal unknown
+        for entry in entries.children_of(repo, [oid], cursor=cur).get(oid, []):
             name = entry.get("name", "")
             rel = (parent + "\\" + name).lstrip("\\")
             if entry.get("type") == "d" and entry.get("obj"):
-                visit(entry["obj"], rel)
+                visit(entry["obj"], rel, cur)
             elif entry.get("type") == "f":
                 chunks = _chunks_for_obj(repo, entry.get("obj", ""))
-                excl = (chunks or set()) & exclusive
+                if chunks is None:
+                    # Not in the tree: unknown, NOT "holds nothing". Coercing it to an empty set
+                    # would quietly drop a large split file out of the reclaimable list.
+                    unknown += 1
+                    continue
+                excl = chunks & exclusive
                 if excl:
                     files.append({"full_path": root_path.rstrip("\\") + "\\" + rel,
                                   "size": sum(smap.get(c, 0) for c in excl)})
 
-    visit(troot, "")
+    cur = read_cursor(repo)
+    try:
+        visit(troot, "", cur)
+    finally:
+        cur.close()
+    if unknown:
+        log.warning("repo=%s snapshot %s: %d file object(s) are not in the tree yet and are absent "
+                    "from the reclaimable list until the next index", repo, snapshot_id, unknown)
     files.sort(key=lambda f: f["size"], reverse=True)
     _recl_cache_put(ck, files)
     return files[:limit]
 
 
 def _obj_physical(repo: str, obj: str, smap, icache: dict) -> int:
-    """Packed bytes backing one file object (indirect/split objects expanded + cached)."""
+    """Packed bytes backing one file object (indirect/split objects expanded + cached).
+
+    An object the tree has not reached contributes 0 and is NOT cached, so the next pass - which
+    runs after the tree sync - prices it properly. Caching the 0 would make one bad moment stick
+    for the life of the process, and the count is logged by the caller.
+    """
     if not obj:
         return 0
     if obj.startswith("I"):
         p = icache.get(obj)
         if p is None:
-            p = sum(smap.get(c, 0) for c in (_chunks_for_obj(repo, obj) or set()))
+            chunks = _chunks_for_obj(repo, obj)
+            if chunks is None:
+                log.warning("repo=%s split object %s is not in the tree yet - counted as 0 bytes "
+                            "for this pass, priced properly once the index catches up", repo, obj)
+                return 0
+            p = sum(smap.get(c, 0) for c in chunks)
             icache[obj] = p
         return p
     return smap.get(obj, 0)
 
 
-def _subtree_physical(repo: str, oid: str, smap, memo: dict, icache: dict) -> int:
+def _subtree_physical(repo: str, oid: str, smap, memo: dict, icache: dict, cursor=None) -> int:
     """Absolute physical of a directory subtree = sum of its files' packed bytes, MEMOIZED per
     directory object so subtrees shared across snapshots (the dedup norm) are computed once.
     Additive: intra-snapshot duplicate content is counted per file (a minor over-count) - this is
@@ -123,11 +151,13 @@ def _subtree_physical(repo: str, oid: str, smap, memo: dict, icache: dict) -> in
     if cached is not None:
         return cached
     total = 0
-    for e in entries.children_of(repo, [oid]).get(oid, []):
+    # The cursor is threaded down the recursion: without it every folder opens its own, and outside
+    # a request's pin scope each of those also re-resolves the current generation.
+    for e in entries.children_of(repo, [oid], cursor=cursor).get(oid, []):
         t = e.get("type")
         obj = e.get("obj", "")
         if t == "d":
-            total += _subtree_physical(repo, obj, smap, memo, icache)
+            total += _subtree_physical(repo, obj, smap, memo, icache, cursor)
         elif t == "f":
             total += _obj_physical(repo, obj, smap, icache)
     memo[oid] = total
@@ -288,9 +318,14 @@ def compute_source(repo: str, source: str, with_reclaim: bool = True) -> dict:
         # Heavy pass: absolute per-snapshot physical (memoized across shared subtrees) ...
         phys_memo: dict[str, int] = {}
         icache: dict[str, int] = {}
-        for snap in snaps:
-            root = roots[snap["id"]]
-            physical[snap["id"]] = _subtree_physical(repo, root, smap, phys_memo, icache) if root else 0
+        pcur = read_cursor(repo)
+        try:
+            for snap in snaps:
+                root = roots[snap["id"]]
+                physical[snap["id"]] = (
+                    _subtree_physical(repo, root, smap, phys_memo, icache, pcur) if root else 0)
+        finally:
+            pcur.close()
         # ... + reclaimable (backward pass: chunks ONLY in this snapshot, source-exclusive).
         refs = _refcount_map(repo)  # global per-source refcount: ==1 means only this source has it
         seen_content_b: set[str] = set()

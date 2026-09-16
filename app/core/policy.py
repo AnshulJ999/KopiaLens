@@ -29,29 +29,25 @@ _PATH_CACHE_MAX = 300
 _PATH_LOCK = threading.Lock()
 
 
-def _cache_path(repo: str) -> str:
-    return os.path.join(CACHEDIR, f"policies_repo{repo}.json")
+def _cache_name(repo: str) -> str:
+    return f"policies_repo{repo}"
 
 
 def load_policies(repo: str) -> dict:
-    """Cached ``{"ts": float, "policies": {source_key: raw_policy}}``; empty dict when never built."""
-    try:
-        with open(_cache_path(repo), encoding="utf-8") as fh:
-            data = json.load(fh)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    """Cached ``{"ts": float, "policies": {source_key: raw_policy}}``; empty dict when never built.
+
+    Stored through the side-cache layer rather than as plain JSON: a policy list is source paths,
+    i.e. the same kopia-derived metadata the index holds, and it must not sit in the clear beside
+    an encrypted store.
+    """
+    from ..index import sidecache  # lazy: avoids core<-index import cycle on load
+    data = sidecache.read(_cache_name(repo))
+    return data if isinstance(data, dict) else {}
 
 
 def _write_policies(repo: str, policies: dict) -> None:
-    os.makedirs(CACHEDIR, exist_ok=True)
-    tmp = _cache_path(repo) + ".tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({"ts": time.time(), "policies": policies}, fh)
-        os.replace(tmp, _cache_path(repo))
-    except Exception as exc:  # noqa: BLE001 - a cache write must never fail the caller
-        log.warning("repo=%s policy cache write failed: %s", repo, exc)
+    from ..index import sidecache
+    sidecache.write(_cache_name(repo), {"ts": time.time(), "policies": policies})
 
 
 def show_policy(repo: str, target: str) -> dict:
@@ -204,19 +200,16 @@ _GLOBAL_TARGET = "(global)"
 _DEFINED_TTL = 24 * 3600
 
 
-def _defined_cache_path(repo: str) -> str:
-    return os.path.join(CACHEDIR, f"policies_defined_repo{repo}.json")
+def _defined_cache_name(repo: str) -> str:
+    return f"policies_defined_repo{repo}"
 
 
 def load_defined_policies(repo: str) -> dict:
     """Cached ``{"ts": float, "policies": {target: raw_policy}}`` from the last successful
     export; empty dict when never built. Targets are source keys or ``(global)``."""
-    try:
-        with open(_defined_cache_path(repo), encoding="utf-8") as fh:
-            data = json.load(fh)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    from ..index import sidecache  # lazy: avoids core<-index import cycle on load
+    data = sidecache.read(_defined_cache_name(repo))
+    return data if isinstance(data, dict) else {}
 
 
 def refresh_defined_policies(repo: str, force: bool = False) -> tuple[dict, bool]:
@@ -255,14 +248,8 @@ def refresh_defined_policies(repo: str, force: bool = False) -> tuple[dict, bool
 
 
 def _write_defined(repo: str, policies: dict) -> None:
-    os.makedirs(CACHEDIR, exist_ok=True)
-    tmp = _defined_cache_path(repo) + ".tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({"ts": time.time(), "policies": policies}, fh)
-        os.replace(tmp, _defined_cache_path(repo))
-    except Exception as exc:  # noqa: BLE001 - a cache write must never fail the caller
-        log.warning("repo=%s defined-policy cache write failed: %s", repo, exc)
+    from ..index import sidecache
+    sidecache.write(_defined_cache_name(repo), {"ts": time.time(), "policies": policies})
 
 
 def refresh_one_policy(repo: str, target: str) -> None:

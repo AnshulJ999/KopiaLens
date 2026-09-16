@@ -390,6 +390,53 @@ def apply(con, temp_dir: str, memory_limit: str, threads: int) -> _Session | Non
     return session
 
 
+def open_scratch(path: str, temp_dir: str, memory_limit: str, threads: int):
+    """A file-backed scratch database for the index build, encrypted when encryption is on.
+
+    Not ``duckdb.connect(path)``: DuckDB takes the encryption key on ATTACH, so the scratch is
+    attached and made current instead. That matters more than it looks - the build's scratch holds
+    the whole tree, i.e. every path in the repository, until the build finishes and deletes it.
+
+    Registering the Parquet key here is the other half. Without it a ``COPY ... TO`` writes a
+    PLAINTEXT Parquet file into an otherwise encrypted generation, and nothing complains: the file
+    is perfectly readable, just not encrypted.
+
+    The caller owns ``path`` and deletes it, so no ``_Session`` is returned.
+    """
+    os.makedirs(temp_dir, exist_ok=True)
+    con = duckdb.connect()
+    con.execute("SET temp_directory='%s'" % _sql(temp_dir))
+    con.execute("SET memory_limit='%s'" % memory_limit)
+    con.execute("SET threads=%d" % threads)
+    # Rule 1 of the store: nothing depends on input order, and insertion order costs memory in
+    # every hash aggregate. Every ordering the build relies on is an explicit ORDER BY.
+    con.execute("SET preserve_insertion_order=false")
+    on = enabled() and unlocked()
+    key = _check_key(data_key()) if on else None
+    try:
+        con.execute("ATTACH '%s' AS build%s"
+                    % (_sql(path), (" (ENCRYPTION_KEY '%s')" % key) if on else ""))
+        con.execute("USE build")
+        if on:
+            con.execute("SET temp_file_encryption=true")
+            con.execute("PRAGMA add_parquet_key('%s', '%s')" % (KEY_NAME, key))
+    except Exception:
+        con.close()
+        raise
+    return con
+
+
+def register_key(con) -> None:
+    """Register the Parquet key on a plain connection that only reads or writes store files.
+
+    ``copy_options`` / ``parquet_read`` name the key; only this puts it on the connection. A
+    connection that has one without the other fails at run time with "Computed AES tag differs" or
+    an unknown-key error, which is a confusing place to learn the key was never registered.
+    """
+    if enabled() and unlocked():
+        con.execute("PRAGMA add_parquet_key('%s', '%s')" % (KEY_NAME, _check_key(data_key())))
+
+
 def sweep_sessions(temp_dir: str) -> int:
     """Remove session databases a crashed process left behind. Returns how many went."""
     gone = 0

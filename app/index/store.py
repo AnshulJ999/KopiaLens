@@ -42,7 +42,9 @@ log = get_logger("store")
 # Threads are pinned explicitly in EVERY tier, never left at the DuckDB default: the default
 # tracks core count (24 here), and a high thread count inflates hash-aggregate memory enough to
 # OOM the small tier. Measured at 512 MB, 4 threads was as fast or faster than 24.
-_TIERS = ((8, "512MB", 4), (24, "1GB", 8), (0, "3GB", 16))   # (min GB, memory_limit, threads)
+# (max GB, memory_limit, threads) - the FIRST tier whose ceiling this machine is under wins;
+# 0 is the catch-all. Named as a ceiling because that is how it is compared.
+_TIERS = ((8, "512MB", 4), (24, "1GB", 8), (0, "3GB", 16))
 
 
 def resolve_limits() -> tuple[str, int]:
@@ -59,8 +61,8 @@ def resolve_limits() -> tuple[str, int]:
     except Exception:  # noqa: BLE001 - unknown RAM falls through to the smallest tier
         pass
     limit, threads = _TIERS[-1][1], _TIERS[-1][2]
-    for min_gb, mem, thr in _TIERS:
-        if total_gb <= min_gb or min_gb == 0:
+    for max_gb, mem, thr in _TIERS:
+        if total_gb <= max_gb or max_gb == 0:
             limit, threads = mem, thr
             break
     limit = (kl.get("duckdb_memory") or os.environ.get("KOPIALENS_DUCKDB_MEMORY") or limit)
@@ -68,7 +70,8 @@ def resolve_limits() -> tuple[str, int]:
     return str(limit), max(1, threads)
 
 
-MEMORY_LIMIT = os.environ.get("KOPIALENS_DUCKDB_MEMORY", "3GB")   # legacy name, still read by /debug
+# (The old module-level MEMORY_LIMIT constant is gone: nothing read it once resolve_limits()
+# became the single source, so it was a hardcoded default sitting next to the real answer.)
 
 # Per-request pin scope: a dict of repo -> Generation that read_cursor populates lazily on
 # first use and the request middleware releases at the end (begin_pins/end_pins). A request
@@ -352,11 +355,14 @@ def close_all() -> None:
 def scratch_connection(repo: str):
     """A standalone, fully configured DuckDB connection for build and publish work.
 
-    Every writer goes through here rather than calling ``duckdb.connect()`` directly, because a
-    connection built by hand misses three things at once: the RAM tier, the encrypted session
-    that keeps spilled temp files off disk in the clear, and the registered Parquet key without
-    which a COPY writes a PLAINTEXT file into an otherwise encrypted generation. That last one
-    fails silently - the file is perfectly readable, just not encrypted.
+    For writers that need an in-memory connection (``publish.replace_artifacts``). A connection
+    built by hand misses three things at once: the RAM tier, the encrypted session that keeps
+    spilled temp files off disk in the clear, and the registered Parquet key without which a COPY
+    writes a PLAINTEXT file into an otherwise encrypted generation - and that one fails silently,
+    since the file is perfectly readable, just not encrypted.
+
+    The index build needs a FILE-backed scratch (it holds the whole tree), so it goes through
+    ``crypto.open_scratch`` instead - same four guarantees, a database on disk.
     """
     if crypto.enabled() and not crypto.unlocked():
         raise PermissionError("the store is encrypted and locked - unlock it before writing")

@@ -92,7 +92,7 @@ def priced(monkeypatch):
     monkeypatch.setattr(physical, "read_cursor", lambda repo: con.cursor())
     monkeypatch.setattr(physical, "_sizes_for",
                         lambda repo, cids: {c: sizes[c] for c in set(cids) if c in sizes})
-    monkeypatch.setattr(physical, "_chunks_for_obj", lambda repo, obj: set(chunks[obj]))
+    monkeypatch.setattr(physical, "_chunks_for_obj", lambda repo, obj, **kw: set(chunks[obj]))
     # Nothing outside the selection references these chunks, so everything found is freeable.
     monkeypatch.setattr(physical, "_refcount_for", lambda repo, cids: {c: 1 for c in cids})
     return [{"source": "src", "full_path": "C:" + SEP + "f.dat"}]

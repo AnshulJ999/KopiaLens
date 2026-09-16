@@ -67,14 +67,21 @@ def _lines_table(con, blob: str, table: str) -> int:
     The split happens ONCE into a materialized table. Calling ``string_split`` twice on a large
     parameter took 142 s against 4 s for the same work done once - the parameter is re-scanned
     per reference, so this is not a micro-optimisation.
+
+    ``pos`` is numbered over the line's own index, never over an unordered window: position is
+    the ONLY mapping from a kopia answer back to the object it was requested for, and
+    ``row_number() OVER ()`` inherits whatever order the executor happened to produce. That is
+    stable only while the connection keeps ``preserve_insertion_order`` on - which the encrypted
+    session deliberately turns off - and the failure is silent, wrong entries under wrong folders.
+    Blank lines are filtered before numbering (WHERE runs ahead of the window function), so the
+    positions match the objects kopia actually answered for.
     """
     con.execute("CREATE OR REPLACE TEMP TABLE _blob AS SELECT string_split(?, chr(10)) AS parts",
                 [blob])
     con.execute(f"""CREATE OR REPLACE TEMP TABLE {table} AS
-        SELECT row_number() OVER () AS pos, line FROM (
-            SELECT trim(b.parts[g.i], chr(13)) AS line
-            FROM _blob b, generate_series(1, len(b.parts)) AS g(i)
-            ORDER BY g.i)
+        SELECT row_number() OVER (ORDER BY src_i) AS pos, line FROM (
+            SELECT g.i AS src_i, trim(b.parts[g.i], chr(13)) AS line
+            FROM _blob b, generate_series(1, len(b.parts)) AS g(i))
         WHERE length(trim(line)) > 0""")
     con.execute("DROP TABLE _blob")
     return con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
@@ -221,12 +228,18 @@ def _fetch_parts(con, repo: str, iobjs: list[str], result: SyncResult, out: str)
             # object would undercount that file's physical size forever.
             con.execute(f"DELETE FROM {out} WHERE iobj IN ({','.join('?' * len(missed))})", missed)
         _register_oids(con, group[:answered], "_oids")
+        # Parse ONCE into its own table, for the same reason _entries_from_lines does: referencing
+        # from_json twice (unnest needs the list, generate_subscripts needs it again) parses every
+        # line twice, and a piece list of a multi-gigabyte file is long.
+        con.execute(f"""CREATE OR REPLACE TEMP TABLE _pparsed AS
+            SELECT o.oid, from_json(l.line, '{_SHAPE}').entries AS es
+            FROM _lines l JOIN _oids o ON o.pos = l.pos""")
         con.execute(f"""INSERT INTO {out}
-            SELECT o.oid, json_extract_string(p, '$.o'), x.i
-            FROM _lines l JOIN _oids o ON o.pos = l.pos,
-            LATERAL (SELECT unnest(from_json(l.line, '{_SHAPE}').entries) AS p,
-                            generate_subscripts(from_json(l.line, '{_SHAPE}').entries, 1) AS i) x
-            WHERE json_extract_string(p, '$.o') IS NOT NULL""")
+            SELECT p.oid, json_extract_string(x.e, '$.o'), x.i
+            FROM _pparsed p,
+            LATERAL (SELECT unnest(p.es) AS e, generate_subscripts(p.es, 1) AS i) x
+            WHERE json_extract_string(x.e, '$.o') IS NOT NULL""")
+        con.execute("DROP TABLE _pparsed")
     result.parts = con.execute(f"SELECT count(*) FROM {out}").fetchone()[0]
 
 

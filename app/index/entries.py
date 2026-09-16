@@ -34,7 +34,7 @@ BATCH = 800
 # clicks into a snapshot the nightly has not reached yet.
 LRU_MAX_BYTES = 32 * 1024 * 1024
 
-_LRU: dict[str, collections.OrderedDict] = {}
+_LRU: dict[str, collections.OrderedDict] = {}   # repo -> {oid: (entries, bytes)}
 _LRU_BYTES: dict[str, int] = {}
 _LOCK = threading.Lock()
 
@@ -69,22 +69,29 @@ def _lru_get(repo: str, oids: list[str]) -> dict[str, list[dict]]:
             hit = lru.get(oid)
             if hit is not None:
                 lru.move_to_end(oid)
-                out[oid] = hit
+                out[oid] = hit[0]
     return out
 
 
 def _lru_put(repo: str, oid: str, entries: list[dict]) -> None:
+    """Store the folder with its measured size.
+
+    The size is kept beside the entries rather than recomputed on replace and on every eviction:
+    `_bytes_of` walks every entry and every key, a folder here runs to 50k children, and the old
+    shape did that walk inside the global lock - so one eviction stalled every repo's lookups.
+    Same rule the byte-budget cache this replaces had to learn.
+    """
     size = _bytes_of(entries)
     with _LOCK:
         lru = _LRU.setdefault(repo, collections.OrderedDict())
         old = lru.pop(oid, None)
         if old is not None:
-            _LRU_BYTES[repo] = _LRU_BYTES.get(repo, 0) - _bytes_of(old)
-        lru[oid] = entries
+            _LRU_BYTES[repo] = _LRU_BYTES.get(repo, 0) - old[1]
+        lru[oid] = (entries, size)
         _LRU_BYTES[repo] = _LRU_BYTES.get(repo, 0) + size
         while _LRU_BYTES.get(repo, 0) > LRU_MAX_BYTES and lru:
             _, evicted = lru.popitem(last=False)
-            _LRU_BYTES[repo] -= _bytes_of(evicted)
+            _LRU_BYTES[repo] -= evicted[1]
 
 
 def _parse(text: str) -> list[dict] | None:

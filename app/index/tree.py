@@ -83,13 +83,20 @@ def create_tables(con) -> None:
         iobj_cid INTEGER, part_cid INTEGER, ord INTEGER)""")
 
 
-def links(con, out: str = "tlink", fold: bool = False) -> None:
+def links(con, out: str = "tlink", fold: bool = False, *, if_missing: bool = False) -> None:
     """Materialize the folder -> child links table the recursive queries walk.
 
     Derived from ``tent`` at load rather than stored (the plan's call): it is ~184 MB in RAM on
     repo 1 against a stored copy that would have to be merged and published like everything
     else. ``fold`` adds the lowercase name used by case-insensitive sources.
+
+    ``if_missing`` reuses a table an earlier stage of the same build already made. ``tent`` does
+    not change between layer 3 and layer 2 (the tree merge is finished before either runs), so
+    rebuilding it for the second caller was a second 19M-row scan for an identical table.
     """
+    if if_missing and con.execute(
+            "SELECT count(*) FROM duckdb_tables() WHERE table_name = ?", [out]).fetchone()[0]:
+        return
     lname = ", lower(name) AS lname" if fold else ""
     con.execute(f"CREATE OR REPLACE TABLE {out} AS SELECT dir_id, child, name{lname} "
                 f"FROM tent WHERE child IS NOT NULL")

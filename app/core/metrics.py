@@ -6,7 +6,6 @@ import collections
 import hashlib
 import json
 import os
-import pickle
 import threading
 import time
 
@@ -60,152 +59,63 @@ def snaphash(srcs: dict[str, list[dict]], keys: list[str], recent: int | str | N
     return digest.hexdigest()
 
 
-def source_set(repo: str, smap: dict[str, int], key: str, snaps: list[dict], recent: int | str | None = None):
-    rec = int(recent) if recent else None
-    use = snaps[-rec:] if rec else snaps
-    snap_hash = src_snaphash(use, recent)
-    folder = os.path.join(CACHEDIR, f"srcsets_repo{repo}")
-    os.makedirs(folder, exist_ok=True)
-    path = os.path.join(folder, hashlib.md5(key.encode()).hexdigest() + f"_{rec or 'all'}.pkl")
-    try:
-        with open(path, "rb") as handle:
-            cached = pickle.load(handle)
-        if cached.get("hash") == snap_hash:
-            return cached["cids"], cached["phys_latest"]
-    except Exception:
-        pass
-
-    from ..index import layer2  # lazy: avoids core<-index import cycle on load
-    cids = layer2.reach_content_ids(repo, roots_of(use))
-    latest_cids = layer2.reach_content_ids(repo, roots_of(use[-1:])) if use else set()
-    phys_latest = sum(smap.get(cid, 0) for cid in latest_cids)
-    try:
-        with open(path, "wb") as handle:
-            pickle.dump({"hash": snap_hash, "cids": cids, "phys_latest": phys_latest}, handle, protocol=4)
-    except Exception:
-        pass
-    return cids, phys_latest
-
-
-def refcount_path(repo: str, mode: str) -> str:
-    return os.path.join(CACHEDIR, f"refcount_repo{repo}_{mode}.pkl")
-
-
 def build_global(
     repo: str,
-    smap: dict[str, int],
     recent: int | str | None = None,
     mode: str = "all",
-) -> tuple[dict[str, dict], float, dict[str, int], int]:
-    """Global content refcount + per-source physical/freeable.
+) -> tuple[dict[str, dict], float, int]:
+    """Per-source physical/freeable for the dashboard, from ONE pass over the tree.
 
-    Memory-light streaming: we build the refcount Counter one source at a time and DISCARD
-    each source's content-id set immediately (it is cheap to reload from the on-disk
-    ``srcsets`` pkl cache for the freeable pass), instead of holding every source's set in RAM
-    simultaneously. Peak RAM drops from (all sets + counter) to (counter + one set). The
-    refcount is also persisted to the DuckDB ``content_refs`` table so file_detail /
-    reclaimable read it without recomputing.
+    This is's dashboard headline. What it replaces walked every source separately in
+    Python, unioned the content-id sets, and cached each source's set in its own pickle so the
+    second pass could reload it - 67 s and 3.3 GB on repo 1, plus hundreds of MB of pickles on
+    disk that were really just a slower copy of what the index already held.
+
+    ``free`` (content no other source reaches) now comes from the SAME reach in the same query
+    rather than from a separately cached refcount, so the freeable figure can no longer be a
+    generation behind the totals it sits next to.
+
+    One behaviour note: sizes come from the generation's ``csize`` map, so content backed up since
+    the last index contributes 0 rather than triggering a live re-read from kopia. Every other
+    number on this page is already generation-bound, and the nightly rebuilds the dashboard
+    immediately after the index.
+
+    ``mode`` other than "all" is not reachable from the UI (the laptop filters);
+    it still selects which sources are DISPLAYED, but ``free`` is counted across every indexed
+    source either way.
     """
     srcs = sources_index(repo)
-    membership, display = split_sources(srcs, mode)
+    _membership, display = split_sources(srcs, mode)
     rec = int(recent) if recent else None
-    count: collections.Counter[str] = collections.Counter()
-    latest: dict[str, int] = {}
     start = time.time()
 
-    # Pass 1: accumulate the global refcount, keeping only the counter (sets discarded).
-    for key in membership:
-        cids, phys_latest = source_set(repo, smap, key, srcs[key], recent)
-        latest[key] = phys_latest
-        count.update(cids)
-        del cids  # release this source's set before loading the next
+    from ..index import layer2  # lazy: avoids core<-index import cycle on load
+    totals, union_total = layer2.source_totals(repo, rec)
 
-    # Pass 2: per-source physical/freeable, reloading each set (from the pkl cache) then discarding.
-    def _pass2(smap: dict[str, int]):
-        rows: dict[str, dict] = {}
-        misses = 0
-        for key in display:
-            cids, _ = source_set(repo, smap, key, srcs[key], recent)
-            snaps = srcs[key][-rec:] if rec else srcs[key]
-            st = logical_stats(snaps)
-            total = sum(smap.get(cid, 0) for cid in cids)
-            free = sum(smap.get(cid, 0) for cid in cids if count[cid] == 1)
-            pins = sum(1 for snap in snaps if snap.get("pins"))
-            misses += sum(1 for cid in cids if cid not in smap)
-            rows[key] = {"st": st, "total": total, "free": free, "phys_latest": latest.get(key, 0), "pins": pins}
-            del cids
-        return rows, misses
-
-    rows, misses = _pass2(smap)
-    if misses:
-        # New content landed after the cached map was built. Mirror physical_report's missing-ID
-        # recovery: reload the sizemap once and re-price, instead of reporting low totals for up
-        # to the TTL window. (phys_latest stays from pass 1 - the next build re-derives it.)
-        log.info("repo=%s %d content ids missing from the size map - refreshing it once", repo, misses)
-        try:
-            from ..index.physical import _size_map  # lazy: avoids core<-index import cycle
-            fresh = _size_map(repo, refresh=True)
-        except Exception as exc:  # noqa: BLE001 - stale numbers beat a failed dashboard build
-            log.warning("repo=%s size-map refresh failed: %s", repo, exc)
-        else:
-            rows, _ = _pass2(fresh)
-            smap = fresh
-
-    union_total = sum(smap.get(cid, 0) for cid in count)
-    # The Counter itself is passed on (pickled, materialized, returned) rather than copied with
-    # dict(count): on a repo with millions of distinct chunks each copy is a full second map, and
-    # the three of them used to be alive at once. Every consumer reads it with .get(), and a
-    # Counter is a dict subclass, so nothing downstream can tell the difference.
-    try:
-        with open(refcount_path(repo, mode), "wb") as handle:
-            pickle.dump(
-                {"hash": snaphash(srcs, membership, recent, mode), "count": count, "union": union_total},
-                handle,
-                protocol=4,
-            )
-    except Exception as exc:  # noqa: BLE001
-        log.warning("repo=%s refcount pkl write failed: %s", repo, exc)
-
-    # The refcount is no longer persisted from here. The index is immutable Parquet published by
-    # the worker, and `artifacts.build_repo` materializes `crefs` from this same map as part of the
-    # build, so a second writer in the app process would only race the worker for the repo. The pkl
-    # above is still written and is what every in-process consumer reads.
-
-    # paths.exclusive is NOT filled here anymore: the blanket UPDATE rewrote the whole multi-million-row
-    # paths table on every build (DuckDB update = delete+insert), riding a throttle never meant to gate
-    # it. The column semantics were also wrong for shared indirect content. `materialize_exclusive`
-    # stays in physical.py as the baseline for the proper reference-count + chunk-expansion fix
-    #; the Excl UI columns are hidden until then.
-
-    return rows, time.time() - start, count, union_total
+    rows: dict[str, dict] = {}
+    for key in display:
+        snaps = srcs[key][-rec:] if rec else srcs[key]
+        got = totals.get(key) or {}
+        rows[key] = {
+            "st": logical_stats(snaps),
+            "total": int(got.get("total") or 0),
+            "free": int(got.get("free") or 0),
+            "phys_latest": int(got.get("phys_latest") or 0),
+            "pins": sum(1 for snap in snaps if snap.get("pins")),
+        }
+    return rows, time.time() - start, union_total
 
 
-def _read_refcount_pkl(repo: str, mode: str, key: str):
-    try:
-        with open(refcount_path(repo, mode), "rb") as handle:
-            cached = pickle.load(handle)
-        if cached.get("hash") == key:
-            return cached["count"], cached["union"]
-    except Exception:
-        pass
-    return None
+def cached_refcount(repo: str) -> dict[str, int]:
+    """content_id -> how many sources reach it, from the tree.
 
-
-def cached_refcount(repo: str, smap: dict[str, int], mode: str = "all", recent: int | str | None = None):
-    srcs = sources_index(repo)
-    membership, _ = split_sources(srcs, mode)
-    key = snaphash(srcs, membership, recent, mode)
-    hit = _read_refcount_pkl(repo, mode, key)
-    if hit is not None:
-        return hit
-    # Share the dashboard single-flight lock so a refcount build can't run concurrently with a
-    # table_rows build (or another refcount build) - that was part of the multi-build RAM storm.
-    with _build_lock(repo, mode):
-        hit = _read_refcount_pkl(repo, mode, key)  # a concurrent build may have just written it
-        if hit is not None:
-            return hit
-        _, _, count, union = build_global(repo, smap, recent=recent, mode=mode)
-        return count, union
+    Only the cold start uses this: every generation publishes carries a ``crefs`` map, and
+    ``physical._refcount_map`` reads that. A generation from before the upgrade has none, and this
+    answers until the first build replaces it. The per-mode pickle it replaces is gone - it cached
+    a number the generation now owns.
+    """
+    from ..index import layer2  # lazy: avoids core<-index import cycle on load
+    return layer2.source_refcounts(repo)
 
 
 def physical_report(repo: str, source: str, recent: int | str | None = None, refresh: bool = False) -> dict:
@@ -232,7 +142,6 @@ def physical_report(repo: str, source: str, recent: int | str | None = None, ref
         "physical_latest": phys_latest,
         "dedup": stats["sum"] / phys_all if phys_all else 0,
         "accum": phys_all / phys_latest if phys_latest > 1_000_000 else 0,
-        "walk": {},
         "content_ids": len(cids),
         "missing": missing,
     }
@@ -359,12 +268,12 @@ def table_rows(repo: str, recent: int | str | None = None, refresh: bool = False
 
 def _compute_table_rows(repo: str, recent: int | str | None, mode: str, want_hash: str) -> dict:
     cache_name = _table_cache_name(repo, mode)
-    from ..index.physical import _size_map  # lazy: avoids core<-index import cycle
-    smap = _size_map(repo)
+    # No size map is built here any more: build_global prices straight out of the generation's
+    # csize, so the multi-million-entry dict this used to materialize per dashboard build is gone.
     meta = sources_meta(repo)
     nexts = load_next_snapshots(repo)  # computed next-snapshot times (subprocess mode)
     fcounts = _file_counts(repo)
-    rows, elapsed, _count, union_total = build_global(repo, smap, recent=recent, mode=mode)
+    rows, elapsed, union_total = build_global(repo, recent=recent, mode=mode)
     ordered = []
     for index, key in enumerate(sorted(rows, key=lambda item: rows[item]["total"], reverse=True)):
         row = rows[key]
