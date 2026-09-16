@@ -123,10 +123,13 @@ def test_empty_repo_publishes_an_openable_generation(tmp_path, monkeypatch):
     the store can open - the compatibility views reference the per-source artifacts."""
     from app.index import publish, store
     import app.index.physical as physical
+    from app.index import layer2
 
     root = str(tmp_path / "repo1")
     os.makedirs(root)
     monkeypatch.setattr(artifacts, "sources_index", lambda repo: {})
+    # An empty repo legitimately lists no content, so layer 2's stream is empty here.
+    monkeypatch.setattr(layer2, "kopia_lines", lambda repo, args: iter([]))
     monkeypatch.setattr(artifacts, "cache_db", lambda repo: sqlite3.connect(":memory:"))
     monkeypatch.setattr(artifacts, "_refcount", lambda repo, db: ({}, 0))
     monkeypatch.setattr(artifacts, "backfill_first_seen", lambda con, db, repo, job: 0)

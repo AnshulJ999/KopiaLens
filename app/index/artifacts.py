@@ -34,11 +34,11 @@ from ..core.applog import get_logger
 from ..core.cache import cache_db
 from ..core.sizemap import load_sizemap
 from ..core.sources import sources_index
-from . import crypto, ids, layer3, tree, treeconvert, treesync
+from . import crypto, ids, layer2, layer3, tree, treeconvert, treesync
 # _build_source / backfill_first_seen are referenced only by the now-unreachable full-rebuild
 # path below, which step 7 of removes along with the walk cache itself.
 from .builder import _build_source, _drop_indexes, _refresh_paths, backfill_first_seen
-from .physical import materialize_physical, materialize_refcount
+from .physical import fill_paths_physical, materialize_physical, materialize_refcount
 from .schema import init_schema
 
 log = get_logger("store")
@@ -588,10 +588,6 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
             "removal. The repository is most likely unreachable; the current generation is "
             "untouched.")
     scratch, con = _scratch(staging)
-    # Still the walk cache, for the size/refcount maps only: layer 2 is built and proven but
-    # wiring it in replaces core.sizemap and materialize_physical too, which is its own pass.
-    # The index itself no longer walks.
-    db = cache_db(repo)
     prev_art = (prev or {}).get("artifacts", {})
     moves: list[tuple[str, str]] = []
     try:
@@ -711,31 +707,27 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         con.execute("INSERT INTO src_rev SELECT source, src_id FROM _src_alloc")
         src_of = dict(con.execute("SELECT source, src_id FROM src_rev").fetchall())
 
-        job["current_source"] = "(physical + refcount)"
+        # Layer 2: the maps, from the tree. `csize` is the whole `content list -l` stream, `crefs`
+        # is one reach query covering every source at once (the walk cache answered this by
+        # walking each source in Python, 67 s / 3.3 GB on repo 1), `iphys` is the sum of a split
+        # object's pieces from `tpart`. `_rsnap` must cover EVERY source, not just the rebuilt
+        # ones: the refcount is global, and a source missing from the reach reads as "no
+        # references", i.e. freeable.
+        job["current_source"] = "(maps from the tree)"
         t_phys = time.perf_counter()
-        materialize_physical(con, repo)
-        count, _union = _refcount(repo, db)
-        # SECOND pass, and the order matters: _refcount rebuilds the sizemap when its walk finds
-        # content the cached map lacks, so content_sizes filled above is a version behind whenever
-        # that happens. Re-running is cheap (the bulk insert is skipped when the map is unchanged).
-        materialize_physical(con, repo)
-        log.info("repo=%s index physical + refcount in %.1fs", repo, time.perf_counter() - t_phys)
+        layer3.snapshots(con, repo, srcs)
+        l2 = layer2.build(con, repo, alloc)
+        fill_paths_physical(con, repo)
+        log.info("repo=%s index maps (layer 2) in %.1fs: %s", repo,
+                 time.perf_counter() - t_phys, l2)
 
-        # The cid namespace must cover everything the maps will join against - the full
-        # transform's definition (files/paths contents + the whole sizemap + indirect objects)
-        # AND the refcount map itself. Sizing the dictionary from file rows alone drops split
-        # files' underlying chunk ids, and a chunk missing from crefs reads as zero references,
-        # i.e. "safe to delete". `_rc` is registered here rather than at crefs_final so the
-        # dictionary and the map are built from one set of keys.
-        con.register("_rc", pa.table({"content_id": list(count.keys()),
-                                      "refs": list(count.values())}))
+        # A content id the index references that neither the tree nor the content listing knows.
+        # Should be empty - this is an assertion, not an expected state. Allocating it here keeps
+        # such a path priced at 0 rather than dropping it out of the dictionary entirely.
         ids.anti_join(con, "_cid_new",
                       "SELECT DISTINCT content_id FROM ("
                       "SELECT content_id FROM files WHERE content_id IS NOT NULL "
-                      "UNION SELECT content_id FROM paths WHERE content_id IS NOT NULL "
-                      "UNION SELECT cid FROM content_sizes "
-                      "UNION SELECT oid FROM indirect_phys "
-                      "UNION SELECT content_id FROM _rc)",
+                      "UNION SELECT content_id FROM paths WHERE content_id IS NOT NULL)",
                       "SELECT content_id FROM cid", ["content_id"])
         alloc.assign(con, "_cid_alloc", "SELECT content_id FROM _cid_new", "content_id",
                      "cid_id", id_col="cid_id")
@@ -923,32 +915,13 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
                UNION ALL
                SELECT repo, snapshot_id, source, start_time, root_obj, indexed_at,
                       file_count FROM indexed_snapshots""")
-        con.execute("CREATE TABLE csize_final AS SELECT c.cid_id, cs.packed "
-                    "FROM content_sizes cs JOIN cid c ON c.content_id = cs.cid")
-        con.execute("CREATE TABLE crefs_final AS SELECT c.cid_id, CAST(r.refs AS INTEGER) AS refs "
-                    "FROM _rc r JOIN cid c ON c.content_id = r.content_id")
-        # Both maps inner-join the dictionary: a content id the join drops would silently lose
-        # its packed size (physical reads 0) or its refcount (reads as "safe to delete"). The
-        # dictionary is now built from these same maps, so this should never be non-zero - it is
-        # an assertion, not an expected state. WARN, never abort: dropping a handful of chunks out
-        # of millions is a small optimistic error in numbers that are estimates anyway, and losing
-        # the whole night's index over it is far worse.
-        dropped = con.execute(
-            "SELECT (SELECT count(*) FROM content_sizes cs WHERE NOT EXISTS "
-            "           (SELECT 1 FROM cid c WHERE c.content_id = cs.cid)) + "
-            "       (SELECT count(*) FROM _rc r WHERE NOT EXISTS "
-            "           (SELECT 1 FROM cid c WHERE c.content_id = r.content_id))").fetchone()[0]
-        con.unregister("_rc")
-        if dropped:
-            log.warning("repo=%s %d content id(s) in the size/refcount maps are missing from the "
-                        "cid dictionary and were dropped from csize/crefs - they read as zero "
-                        "references (i.e. freeable) until the next build picks them up", repo, dropped)
-        if prev is not None:
-            _read_prev_art("iphys", "prev_iphys")
-        con.execute("CREATE TABLE iphys_final AS SELECT cid_id, packed FROM prev_iphys "
-                    "UNION ALL SELECT c.cid_id, np.packed FROM indirect_phys np "
-                    "JOIN cid_rev c ON c.content_id = np.oid "
-                    "WHERE c.cid_id NOT IN (SELECT cid_id FROM prev_iphys)")
+        # Layer 2 already produced these in the integer-keyed shape the artifacts are published
+        # in, so the tail copies them straight through. `iphys` comes from `tpart` (every piece of
+        # a split object, ordinal 0 included), so it needs no carry-forward from the previous
+        # generation: the tree it is derived from is whole.
+        con.execute("CREATE TABLE csize_final AS SELECT cid_id, packed FROM csize_new")
+        con.execute("CREATE TABLE crefs_final AS SELECT cid_id, refs FROM crefs_new")
+        con.execute("CREATE TABLE iphys_final AS SELECT cid_id, packed FROM iphys_new")
 
         # Assemble the manifest: unchanged sources by reference, rewritten sources fresh. With no
         # previous generation there is nothing to carry, so every source is in new_entries.

@@ -21,6 +21,7 @@ from __future__ import annotations
 import time
 
 from ..core.applog import get_logger
+from ..core.kopia import kopia_lines
 from . import tree
 
 log = get_logger("index")
@@ -91,7 +92,6 @@ def chunk_sizes(con, repo: str, alloc, out: str = "csize_new") -> int:
     old shape and it held hundreds of MB. Content ids new to the generation are allocated here,
     because a chunk the dictionary does not carry cannot be joined to anything afterwards.
     """
-    from ..core.kopia import kopia_lines
     from . import ids
 
     t0 = time.perf_counter()
@@ -117,9 +117,20 @@ def chunk_sizes(con, repo: str, alloc, out: str = "csize_new") -> int:
         con.executemany("INSERT INTO _csize_raw VALUES (?, ?)", rows)
         n += len(rows)
     if not n:
-        # An empty listing is never a legitimate answer for a repo that holds data, and a size
-        # map that is silently empty makes every physical figure read as zero.
-        raise RuntimeError(f"repo {repo}: 'content list -l' produced no usable rows")
+        # An empty listing is only legitimate when the repository holds nothing. A repo with a
+        # tree that lists no content is a failed or truncated listing, and a silently empty size
+        # map makes every physical figure read as zero. A repo with no sources at all (a fresh
+        # install) legitimately publishes the empty map.
+        if con.execute("SELECT count(*) FROM tent").fetchone()[0]:
+            raise RuntimeError(f"repo {repo}: 'content list -l' produced no usable rows for a "
+                               "repository that holds content")
+        log.warning("repo=%s 'content list -l' is empty and so is the tree - publishing empty "
+                    "maps", repo)
+        con.execute(f"CREATE OR REPLACE TABLE {out} AS "
+                    "SELECT CAST(NULL AS INTEGER) AS cid_id, CAST(NULL AS UBIGINT) AS packed "
+                    "WHERE false")
+        con.execute("DROP TABLE _csize_raw")
+        return 0
 
     ids.anti_join(con, "_csize_newid", "SELECT DISTINCT content_id FROM _csize_raw",
                   "SELECT content_id FROM cid", ["content_id"])

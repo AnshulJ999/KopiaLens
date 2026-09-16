@@ -266,6 +266,9 @@ def sync(con, repo: str, roots: list[str], *, known_table: str | None = None,
     # Split objects are collected as they are seen, because with segmenting on, the entry rows
     # that revealed them are cleared before the piece-list pass runs.
     con.execute("CREATE OR REPLACE TABLE _iobj_all (oid VARCHAR)")
+    # The accumulators must exist before the piece-list pass below anti-joins them, and a fully
+    # carried tree never enters the level loop (so materialize, which creates them, never runs).
+    _new_tables(con)
     if known_table:
         con.execute(f"INSERT INTO _seen SELECT oid FROM {known_table}")
 
@@ -300,6 +303,24 @@ def sync(con, repo: str, roots: list[str], *, known_table: str | None = None,
     else:
         raise RuntimeError(f"repo {repo}: tree deeper than {max_levels} levels - refusing to loop")
 
+    # Split objects the tree already references but holds no piece list for. The walk-cache seed
+    # takes piece lists from the cache's `indirect` table, and this sync only collects split
+    # objects from the folders it actually reads - so a split object inside an already-known
+    # folder whose cache row is missing would never be expanded, and its file's physical size
+    # would read as just its index object. That is the silent undercount this store exists to
+    # remove (and the old walker's `expand_indirect(fetch=True)` covered it), so it is fetched
+    # here. `cid_id` on an entry IS the I-object that `tpart.iobj_cid` names; `ind_cid` is the
+    # stripped index content and matches nothing in the piece table.
+    con.execute("""INSERT INTO _iobj_all
+        SELECT DISTINCT c.content_id
+        FROM (SELECT cid_id FROM tent WHERE ind AND cid_id IS NOT NULL
+                AND cid_id NOT IN (SELECT iobj_cid FROM tpart)
+              UNION
+              SELECT cid_id FROM _tent_new WHERE ind AND cid_id IS NOT NULL
+                AND cid_id NOT IN (SELECT iobj_cid FROM _tpart_new)) x
+        JOIN cid_rev c ON c.cid_id = x.cid_id
+        WHERE c.content_id IS NOT NULL
+          AND c.content_id NOT IN (SELECT oid FROM _iobj_all)""")
     iobjs = [r[0] for r in con.execute("SELECT oid FROM _iobj_all ORDER BY oid").fetchall()]
     if iobjs:
         _fetch_parts(con, repo, iobjs, result, "_sync_part")

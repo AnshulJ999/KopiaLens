@@ -118,6 +118,30 @@ def materialize_physical(con, repo: str) -> None:
     )
 
 
+def fill_paths_physical(con, repo: str) -> None:
+    """Fill ``paths.physical`` from the generation's own maps ( layer 2).
+
+    ``csize``/``iphys`` are keyed on ``cid_id``; ``paths`` still carries the string content id,
+    so the join goes through ``cid_rev``. Same target as ``materialize_physical``: only rows at
+    ``physical = 0`` (a rebuilt source resets them), because a content id only changes when its
+    source is rebuilt and the packed size of a content is immutable. Rows whose content is absent
+    stay 0 and are re-attempted next build - an empty file has no content size either.
+    """
+    con.execute(
+        "UPDATE paths SET physical = cs.packed FROM csize_new cs "
+        "JOIN cid_rev cr ON cr.cid_id = cs.cid_id "
+        "WHERE paths.repo=? AND paths.physical = 0 AND paths.content_id = cr.content_id "
+        "AND paths.content_id NOT LIKE 'I%'",
+        [repo],
+    )
+    con.execute(
+        "UPDATE paths SET physical = ip.packed FROM iphys_new ip "
+        "JOIN cid_rev cr ON cr.cid_id = ip.cid_id "
+        "WHERE paths.repo=? AND paths.physical = 0 AND paths.content_id = cr.content_id",
+        [repo],
+    )
+
+
 def materialize_exclusive(con, repo: str) -> None:
     """Fill ``paths.exclusive``: how many packed bytes of each path's content are held ONLY by this
     source. NOT WIRED - the blanket UPDATE rewrote the whole paths table every dashboard build, and

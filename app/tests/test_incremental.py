@@ -19,7 +19,7 @@ import sqlite3
 import duckdb
 import pytest
 
-from app.index import artifacts, publish, treesync
+from app.index import artifacts, layer2, publish, treesync
 from app.tests.test_treesync import FakeKopia, _d, _f
 
 SEP = chr(92)
@@ -60,10 +60,21 @@ def _listing_update() -> dict:
     return out
 
 
+def _clines(smap: dict) -> list[str]:
+    """`kopia content list -l` lines for the given content -> packed sizes.
+
+    Layer 2 reads the packed size from the RIGHT half of the one `original+packed` token on the
+    line, with the content id in field 0 - the same rule ``core.sizemap`` has always used.
+    """
+    return [f"{cid} {size}+{size}" for cid, size in smap.items()]
+
+
 def _patch(monkeypatch, tree: dict | None = None, smap: dict | None = None,
            count: dict | None = None) -> None:
     import app.index.physical as physical
     monkeypatch.setattr(treesync, "kopia", FakeKopia(tree if tree is not None else dict(TREE)))
+    monkeypatch.setattr(layer2, "kopia_lines",
+                        lambda repo, args: iter(_clines(smap or SMAP)))
     monkeypatch.setattr(artifacts, "cache_db", lambda repo: sqlite3.connect(":memory:"))
     monkeypatch.setattr(artifacts, "_refcount",
                         lambda repo, db: (dict(count or COUNT), 0))
@@ -244,13 +255,13 @@ def test_the_tree_drops_folders_no_snapshot_reaches(env, monkeypatch):
     assert {"root_snap1", "root_snap2", "root_snap3"} <= objs
 
 
-def test_a_chunk_known_only_to_the_size_map_still_reaches_the_dictionary(env, monkeypatch):
-    """A split file's underlying chunk ids exist only in the sizemap. The cid dictionary must
-    grow to hold them, and csize must not drop them in its join (a missing chunk reads as zero
-    references = 'safe to delete')."""
-    import app.index.physical as physical
-    monkeypatch.setattr(physical, "load_sizemap",
-                        lambda repo, refresh=False: {**SMAP, "chunk_z": 42})
+def test_a_chunk_known_only_to_the_content_listing_still_reaches_the_dictionary(env, monkeypatch):
+    """A split file's underlying chunk ids exist only in the content listing - the tree holds the
+    split object, not its pieces' sizes. The cid dictionary must grow to hold them, and csize
+    must not drop them in its join (a missing chunk reads as zero references = 'safe to
+    delete')."""
+    monkeypatch.setattr(layer2, "kopia_lines",
+                        lambda repo, args: iter(_clines({**SMAP, "chunk_z": 42})))
     body = artifacts.build_repo("1", env, gen=1, job={})
     publish.publish(env, body)
     cid = {r[1]: r[0] for r in _rows(env, body["artifacts"]["cid"][0])}
@@ -292,6 +303,42 @@ def test_a_shared_folder_object_indexes_every_path_it_sits_at(tmp_path, monkeypa
     publish.publish(root, body)
     assert set(_pathx(root, body)) == {f"C:{SEP}A{SEP}one{SEP}f.txt",
                                        f"C:{SEP}A{SEP}two{SEP}f.txt"}
+
+
+def test_crefs_counts_the_sources_that_reach_a_content(tmp_path, monkeypatch):
+    """`crefs` is the delete-safety number: it must count SOURCES, not rows. The same content
+    reachable from two sources has to read 2, or a content shared across backups looks freeable."""
+    tree = {"root_snap1": [_f("dup.txt", "obj_shared", 10)],
+            "root_snap2": [_f("dup.txt", "obj_shared", 10)]}
+    root = str(tmp_path / "fresh")
+    os.makedirs(root)
+    _patch(monkeypatch, tree=tree, smap={"obj_shared": 10})
+    listing = {S1: [_snap("snap1")], S2: [_snap("snap2")]}
+    monkeypatch.setattr(artifacts, "sources_index", lambda repo: listing)
+    body = artifacts.build_repo("1", root, gen=1, job={})
+    publish.publish(root, body)
+    cid = {r[1]: r[0] for r in _rows(root, body["artifacts"]["cid"][0])}
+    crefs = {r[0]: r[1] for r in _rows(root, body["artifacts"]["crefs"][0])}
+    assert crefs[cid["obj_shared"]] == 2
+
+
+def test_a_split_file_is_priced_from_its_piece_list(tmp_path, monkeypatch):
+    """`iphys` comes from the tree's piece list (`tpart`), and it is what makes a split file's
+    physical size right: the index object alone would read as a few bytes for a multi-GB file."""
+    tree = {"root_snap1": [_f("big.bin", "Ixidx", 99)]}
+    smap = {"xidx": 5, "p1": 40, "p2": 55}
+    root = str(tmp_path / "fresh")
+    os.makedirs(root)
+    _patch(monkeypatch, tree=tree, smap=smap)
+    monkeypatch.setattr(treesync, "kopia", FakeKopia(tree, parts={"xidx": ["p1", "p2"]}))
+    monkeypatch.setattr(artifacts, "sources_index", lambda repo: {S1: [_snap("snap1")]})
+    body = artifacts.build_repo("1", root, gen=1, job={})
+    publish.publish(root, body)
+    cid = {r[1]: r[0] for r in _rows(root, body["artifacts"]["cid"][0])}
+    iphys = {r[0]: r[1] for r in _rows(root, body["artifacts"]["iphys"][0])}
+    assert iphys[cid["Ixidx"]] == 100                     # 5 + 40 + 55, index object included
+    px = _pathx(root, body)[f"C:{SEP}A{SEP}big.bin"]
+    assert px[11] == 100                                  # physical, from the pieces
 
 
 def _manifest(root: str) -> dict:
