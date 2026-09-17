@@ -88,13 +88,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         # count inflates hash-aggregate memory enough to OOM the small tier.
         "duckdb_memory": "",
         "duckdb_threads": 0,
-        # Walk-cache storage format for NEWLY written rows: "none" | "zstd-1" | "zstd-3". Both
-        # formats are readable side by side, so changing this is safe at any time; converting the
-        # rows already on disk is a separate one-off (`python compress_cache.py`).
-        # zstd-1 measured on real rows (2026-09-05): 24.0% of original at 1.53x read cost, against
-        # zstd-3's 24.2% at 1.76x - level 3 is both bigger and slower here (small independent blobs),
-        # so it is offered but never the default.
-        "walk_cache_compression": "zstd-1",
         # ---- access control ---------------------------------------------------------
         # Auth is on BECAUSE a password exists, not the other way round: enabled() requires a
         # hash, so a fresh install (no password) is never locked out. The bind default is PER
