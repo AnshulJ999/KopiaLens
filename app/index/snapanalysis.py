@@ -19,7 +19,7 @@ import time
 from ..core.applog import get_logger
 from ..core.sources import resolve_source
 from . import entries, layer2
-from .physical import _chunks_for_obj, _refcount_map, _size_map
+from .physical import _chunks_for_objs, _refcount_map, _size_map
 from .store import read_cursor
 
 log = get_logger("analysis")
@@ -87,13 +87,18 @@ def reclaimable_files(repo: str, source: str, snapshot_id: str, limit: int = 200
     # query. Threading the cursor is what keeps this a bulk read rather than a per-folder one.
     def visit(oid: str, parent: str, cur) -> None:
         nonlocal unknown
-        for entry in entries.children_of(repo, [oid], cursor=cur).get(oid, []):
+        kids = entries.children_of(repo, [oid], cursor=cur).get(oid, [])
+        # One batched chunk lookup per FOLDER. Per file it was a query each, and this walk covers
+        # every folder in the source.
+        chunk_of = _chunks_for_objs(
+            repo, [e.get("obj", "") for e in kids if e.get("type") == "f"], cursor=cur)
+        for entry in kids:
             name = entry.get("name", "")
             rel = (parent + "\\" + name).lstrip("\\")
             if entry.get("type") == "d" and entry.get("obj"):
                 visit(entry["obj"], rel, cur)
             elif entry.get("type") == "f":
-                chunks = _chunks_for_obj(repo, entry.get("obj", ""))
+                chunks = chunk_of.get(entry.get("obj", ""))
                 if chunks is None:
                     # Not in the tree: unknown, NOT "holds nothing". Coercing it to an empty set
                     # would quietly drop a large split file out of the reclaimable list.
@@ -117,19 +122,20 @@ def reclaimable_files(repo: str, source: str, snapshot_id: str, limit: int = 200
     return files[:limit]
 
 
-def _obj_physical(repo: str, obj: str, smap, icache: dict) -> int:
+def _obj_physical(repo: str, obj: str, smap, icache: dict, chunk_of: dict | None = None) -> int:
     """Packed bytes backing one file object (indirect/split objects expanded + cached).
 
-    An object the tree has not reached contributes 0 and is NOT cached, so the next pass - which
-    runs after the tree sync - prices it properly. Caching the 0 would make one bad moment stick
-    for the life of the process, and the count is logged by the caller.
+    ``chunk_of`` is the caller's batched lookup for the folder being walked; without it this would
+    be one query per file. An object the tree has not reached contributes 0 and is NOT cached, so
+    the next pass - which runs after the tree sync - prices it properly. Caching the 0 would make
+    one bad moment stick for the life of the process.
     """
     if not obj:
         return 0
     if obj.startswith("I"):
         p = icache.get(obj)
         if p is None:
-            chunks = _chunks_for_obj(repo, obj)
+            chunks = (chunk_of or {}).get(obj)
             if chunks is None:
                 log.warning("repo=%s split object %s is not in the tree yet - counted as 0 bytes "
                             "for this pass, priced properly once the index catches up", repo, obj)
@@ -153,13 +159,20 @@ def _subtree_physical(repo: str, oid: str, smap, memo: dict, icache: dict, curso
     total = 0
     # The cursor is threaded down the recursion: without it every folder opens its own, and outside
     # a request's pin scope each of those also re-resolves the current generation.
-    for e in entries.children_of(repo, [oid], cursor=cursor).get(oid, []):
+    kids = entries.children_of(repo, [oid], cursor=cursor).get(oid, [])
+    # One batched chunk lookup per folder, for the split objects this folder's files point at.
+    chunk_of = _chunks_for_objs(
+        repo, [e.get("obj", "") for e in kids
+               if e.get("type") == "f" and str(e.get("obj", "")).startswith("I")
+               and e.get("obj") not in icache],
+        cursor=cursor)
+    for e in kids:
         t = e.get("type")
         obj = e.get("obj", "")
         if t == "d":
             total += _subtree_physical(repo, obj, smap, memo, icache, cursor)
         elif t == "f":
-            total += _obj_physical(repo, obj, smap, icache)
+            total += _obj_physical(repo, obj, smap, icache, chunk_of)
     memo[oid] = total
     return total
 

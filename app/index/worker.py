@@ -302,9 +302,9 @@ def run(repo: str, full: bool = False) -> dict:
             pass
         try:  # unreadable folders belong in the run record, not only in the log
             from .store import read_manifest
-            unread = int((read_manifest(repo) or {}).get("tree_incomplete") or 0)
+            unread = list((read_manifest(repo) or {}).get("tree_incomplete") or [])
             if unread:
-                summary["unreadable_dirs"] = unread
+                summary["unreadable_dirs"] = {"count": len(unread), "sample": unread[:5]}
         except Exception:  # noqa: BLE001 - a diagnostic must never affect the run
             pass
         from .store import close_all

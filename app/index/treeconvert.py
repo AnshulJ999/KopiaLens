@@ -94,9 +94,14 @@ def convert(con, repo: str, *, progress=None, alloc=None,
         treesync._lines_table(con, blob, "_lines")
         answered = con.execute("SELECT count(*) FROM _lines").fetchone()[0]
         if answered != len(oids):
-            raise RuntimeError(
-                f"repo {repo}: converted {answered} of {len(oids)} cached rows in one batch - "
-                "a cached listing contained a newline and the positional pairing would be wrong")
+            # A cached listing contained a newline, so POSITION no longer pairs answers to
+            # objects and nothing in this batch can be trusted. Skip the batch rather than abort
+            # the migration: those folders simply stay unknown, and the sync reads them from
+            # kopia straight afterwards. Slower for this batch, correct, and the run survives.
+            log.warning("repo=%s skipping a batch of %d cached folders: %d line(s) came back, so "
+                        "the positional pairing is unsafe - they will be read from kopia instead",
+                        repo, len(oids), answered)
+            return
         treesync._register_oids(con, oids, "_oids")
         treesync._entries_from_lines(con, "_lines", "_oids", "_ent_new")
         con.execute("INSERT INTO _sync_ent SELECT * FROM _ent_new")

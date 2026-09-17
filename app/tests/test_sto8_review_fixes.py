@@ -159,11 +159,22 @@ def test_a_previously_incomplete_tree_forces_every_source_to_rebuild(tmp_path, m
     assert job["targets"] == 0, "an unchanged listing should carry every source"
 
     manifest = _read_manifest(root)
-    manifest["tree_incomplete"] = 3
+    manifest["tree_incomplete"] = ["obj_a", "obj_b", "obj_c"]
     _write_manifest(root, manifest)
     job2: dict = {}
-    artifacts.build_repo("1", root, gen=3, job=job2)
+    body3 = artifacts.build_repo("1", root, gen=3, job=job2)
     assert job2["targets"] == len(_listing_published())
+
+    # ... but only ONCE for that set. A permanently unreadable object must not rebuild every
+    # source every night forever, so an unchanged set does not force again.
+    publish.publish(root, body3)
+    m = _read_manifest(root)
+    m["tree_incomplete"] = ["obj_a", "obj_b", "obj_c"]
+    m["tree_forced_for"] = ["obj_a", "obj_b", "obj_c"]
+    _write_manifest(root, m)
+    job3: dict = {}
+    artifacts.build_repo("1", root, gen=4, job=job3)
+    assert job3["targets"] == 0, "the same unreadable set must not force a second rebuild"
 
 
 def _read_manifest(root: str) -> dict:

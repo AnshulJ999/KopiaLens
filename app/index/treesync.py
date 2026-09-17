@@ -23,6 +23,7 @@ Every invariant of the old walker is carried, and they are the reason this file 
 
 from __future__ import annotations
 
+import contextlib
 import time
 
 from ..core.applog import get_logger
@@ -30,6 +31,25 @@ from ..core.kopia import kopia
 from . import ids, tree
 
 log = get_logger("tree")
+
+
+@contextlib.contextmanager
+def timed(label: str, out: dict | None = None):
+    """Time ONE statement and log it.
+
+    Per-phase timing is not enough. The merge was a single opaque 18-minute log line for four
+    reviews, and the nested-loop join inside it was invisible because nothing said which of its
+    statements the time went to. Anything here that touches the whole tree gets its own line.
+    """
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        secs = round(time.perf_counter() - t0, 1)
+        if out is not None:
+            out[label] = secs
+        if secs >= 1.0:
+            log.info("  %-22s %7.1fs", label, secs)
 
 BATCH = 800                     # kopia CLI overhead is 0.42 s/call, so batching is near-perfect
 _KNOWN = ("name", "type", "mode", "size", "mtime", "obj", "summ")
@@ -415,12 +435,9 @@ def materialize(con, alloc: ids.Allocator, *, base_known: str | None = None,
         JOIN cid_rev c ON c.content_id = d.parent_oid
         WHERE c.cid_id NOT IN (SELECT cid_id FROM _tdir_new)""")
 
-    # ONE lookup table instead of three separate joins against the string dictionary. The entry
-    # table runs to tens of millions of rows and cid_rev to millions, so each extra string join
-    # is another full hash table of the dictionary - that, not the row count, is what made this
-    # step run for a quarter of an hour instead of seconds.
-    con.execute("""CREATE OR REPLACE TABLE _objmap AS
-        SELECT content_id AS obj, cid_id FROM cid_rev""")
+    # Joined straight against cid_rev. The `_objmap` copy that used to sit here claimed to save
+    # a join and did not - both LEFT JOINs still build their own hash table - so it was copying
+    # millions of dictionary rows per segment for nothing.
     con.execute(f"""INSERT INTO _tent_new
         SELECT p.dir_id,
                (e.pos)::INTEGER AS pos,
@@ -441,11 +458,11 @@ def materialize(con, alloc: ids.Allocator, *, base_known: str | None = None,
                e.s_incomplete, e.s_numignorederrors, e.s_errors, e.extra
         FROM _sync_ent e
         JOIN _tdir_seg p ON p.parent_oid = e.parent_oid
-        LEFT JOIN _objmap om ON om.obj = e.obj
+        LEFT JOIN cid_rev om ON om.content_id = e.obj
         -- the join key is NULL for a normal object, so only split objects probe this side
-        LEFT JOIN _objmap omi
-               ON omi.obj = CASE WHEN starts_with(e.obj, 'I') THEN substr(e.obj, 2) END""")
-    con.execute("DROP TABLE _objmap")
+        LEFT JOIN cid_rev omi
+               ON omi.content_id = CASE WHEN starts_with(e.obj, 'I')
+                                        THEN substr(e.obj, 2) END""")
     con.execute("INSERT INTO _tdir_new SELECT * FROM _tdir_seg")
 
     con.execute("""INSERT INTO _tpart_new
@@ -489,7 +506,9 @@ def reach_from_roots(con, roots_table: str, out: str) -> int:
     """
     # A link is an entry whose object is itself a folder we hold. Derived from cid_id rather than
     # the `child` column, because in a segmented build `child` is not filled until the merge.
-    con.execute(f"""CREATE OR REPLACE TABLE _link_all AS
+    t: dict = {}
+    with timed("reach/links", t):
+        con.execute(f"""CREATE OR REPLACE TABLE _link_all AS
         WITH folders AS (
             SELECT cid_id FROM _tdir_new UNION SELECT cid_id FROM tdir)
         SELECT o.cid_id AS parent, e.cid_id AS child
@@ -499,7 +518,8 @@ def reach_from_roots(con, roots_table: str, out: str) -> int:
         SELECT o.cid_id, e.cid_id
         FROM tent e JOIN tdir o ON o.dir_id = e.dir_id
         WHERE e.etype = {tree.TYPES.index('d')} AND e.cid_id IN (SELECT cid_id FROM folders)""")
-    con.execute(f"""CREATE OR REPLACE TABLE {out} AS
+    with timed("reach/recursive", t):
+        con.execute(f"""CREATE OR REPLACE TABLE {out} AS
         WITH RECURSIVE r(cid_id) AS (
             SELECT cid_id FROM {roots_table}
             UNION
@@ -520,14 +540,17 @@ def merge(con, *, out_dir: str = "tdir_final", out_ent: str = "tent_final",
     is the GC. It must only ever be built from a listing that SUCCEEDED - pruning on a failed or
     partial listing is how a walk cache loses folders it still needs.
     """
-    con.execute("""CREATE OR REPLACE TABLE _all_dirs AS
-        SELECT cid_id, ind FROM tdir
-        UNION ALL
-        SELECT cid_id, ind FROM _tdir_new WHERE cid_id NOT IN (SELECT cid_id FROM tdir)""")
+    t: dict = {}
+    with timed("merge/all_dirs", t):
+        con.execute("""CREATE OR REPLACE TABLE _all_dirs AS
+            SELECT cid_id, ind FROM tdir
+            UNION ALL
+            SELECT cid_id, ind FROM _tdir_new WHERE cid_id NOT IN (SELECT cid_id FROM tdir)""")
     keep = ("WHERE cid_id IN (SELECT cid_id FROM %s)" % reachable) if reachable else ""
-    con.execute(f"""CREATE OR REPLACE TABLE _dir_order AS
-        SELECT (row_number() OVER (ORDER BY cid_id) - 1)::INTEGER AS dir_id, cid_id, ind
-        FROM _all_dirs {keep}""")
+    with timed("merge/dir_order", t):
+        con.execute(f"""CREATE OR REPLACE TABLE _dir_order AS
+            SELECT (row_number() OVER (ORDER BY cid_id) - 1)::INTEGER AS dir_id, cid_id, ind
+            FROM _all_dirs {keep}""")
 
     # Entries of every kept folder, from whichever side holds them: the new rows win, because a
     # folder object is immutable - if both sides have it they are identical, and preferring the
@@ -547,14 +570,23 @@ def merge(con, *, out_dir: str = "tdir_final", out_ent: str = "tent_final",
         WHERE o.cid_id NOT IN (SELECT cid_id FROM _tdir_new)
           AND o.cid_id IN (SELECT cid_id FROM _dir_order)""")
 
-    con.execute(f"""CREATE OR REPLACE TABLE {out_ent} AS
+    # The child link, as a PURE equality join. Written the obvious way -
+    #     LEFT JOIN _dir_order c ON c.cid_id = e.cid_id AND e.etype = 1
+    # - DuckDB plans BLOCKWISE_NL_JOIN, because it will not hash-join a LEFT JOIN whose ON mixes
+    # an equality with a single-side predicate. That is every entry against every folder: 27.7M x
+    # 404k on repo 2, and it is what made this merge take 17m50s. Moving the predicate into the
+    # join KEY gives the same answer (a non-folder gets a NULL key and matches nothing) with a
+    # HASH_JOIN plan. Verified by EXPLAIN; do not "simplify" it back.
+    with timed("merge/tent", t):
+        con.execute(f"""CREATE OR REPLACE TABLE {out_ent} AS
         SELECT d.dir_id, e.pos, e.name, e.etype, e.mode, e.size, e.mtime, e.cid_id, e.ind,
                e.ind_cid, c.dir_id AS child, e.s_size, e.s_files, e.s_symlinks, e.s_dirs,
                e.s_maxtime, e.s_numfailed, e.s_incomplete, e.s_numignorederrors, e.s_errors,
                e.extra
         FROM _ent_all e
         JOIN _dir_order d ON d.cid_id = e.owner
-        LEFT JOIN _dir_order c ON c.cid_id = e.cid_id AND e.etype = 1""")
+        LEFT JOIN _dir_order c
+               ON c.cid_id = CASE WHEN e.etype = {tree.TYPES.index('d')} THEN e.cid_id END""")
     # Deliberately NOT sorted here. The store runs with preserve_insertion_order=false, so a
     # CTAS ORDER BY is not guaranteed to survive into storage order anyway - and the artifact
     # writer sorts on its way to Parquet, which is the order a reader actually sees. Sorting in
@@ -564,7 +596,8 @@ def merge(con, *, out_dir: str = "tdir_final", out_ent: str = "tent_final",
 
     # The row-range sidecar. tent was just written in dir_id order, so a folder's entries are
     # contiguous and a point read is a range rather than a scan.
-    con.execute(f"""CREATE OR REPLACE TABLE {out_dir} AS
+    with timed("merge/tdir", t):
+        con.execute(f"""CREATE OR REPLACE TABLE {out_dir} AS
         WITH n AS (SELECT dir_id, count(*) AS c FROM {out_ent} GROUP BY dir_id)
         SELECT d.dir_id, d.cid_id,
                coalesce(sum(n.c) OVER (ORDER BY d.dir_id
@@ -579,7 +612,8 @@ def merge(con, *, out_dir: str = "tdir_final", out_ent: str = "tent_final",
     # way the old walk cache accumulated it (it was never pruned), so keep only the ones a
     # surviving entry actually points at. The split-DIRECTORY case costs nothing: those carry an
     # ind_cid too but have no tpart rows, so the intersection simply finds none.
-    con.execute(f"""CREATE OR REPLACE TABLE {out_part} AS
+    with timed("merge/tpart", t):
+        con.execute(f"""CREATE OR REPLACE TABLE {out_part} AS
         SELECT iobj_cid, part_cid, ord FROM (
             SELECT * FROM _tpart_new
             UNION ALL
@@ -593,6 +627,7 @@ def merge(con, *, out_dir: str = "tdir_final", out_ent: str = "tent_final",
         "parts": con.execute(f"SELECT count(*) FROM {out_part}").fetchone()[0],
         "dropped": con.execute(f"SELECT (SELECT count(*) FROM _all_dirs) - "
                                f"(SELECT count(*) FROM {out_dir})").fetchone()[0],
+        "seconds": t,
     }
     log.info("tree merged: %s", stats)
     return stats

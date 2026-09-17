@@ -42,6 +42,7 @@ _ZSTD = "FORMAT parquet, COMPRESSION zstd"
 # version 2 has no tree to carry, so it rebuilds once and carries one from then on.
 _MANIFEST_VERSION = 3
 _TREE_TABLES = ("tdir", "tent", "tpart")
+_MAX_UNREADABLE = 200      # how many unreadable object ids the manifest carries
 
 
 def _copy_opts() -> str:
@@ -62,9 +63,11 @@ def _load_tree(con, root: str, prev: dict | None) -> bool:
         return False
     for name in _TREE_TABLES:
         paths = [_fwd(os.path.join(root, r)) for r in art[name]]
-        con.execute(f"DROP TABLE IF EXISTS {name}")
-        con.execute(f"CREATE TABLE {name} AS SELECT * FROM "
-                    f"read_parquet({crypto.parquet_read_list(paths)}, hive_partitioning=false)")
+        with treesync.timed(f"load/{name}"):
+            con.execute(f"DROP TABLE IF EXISTS {name}")
+            con.execute(f"CREATE TABLE {name} AS SELECT * FROM "
+                        f"read_parquet({crypto.parquet_read_list(paths)}, "
+                        f"hive_partitioning=false)")
     return True
 
 
@@ -156,8 +159,9 @@ def _write_tree(con, staging: str, gen: int) -> tuple[dict, list]:
     artifacts, moves = {}, []
     for name, order in (("tdir", "dir_id"), ("tent", "dir_id, pos"), ("tpart", "iobj_cid, ord")):
         out = os.path.join(staging, f"{name}.parquet")
-        con.execute(f"COPY (SELECT * FROM {name} ORDER BY {order}) "
-                    f"TO '{_fwd(out)}' ({_copy_opts()})")
+        with treesync.timed(f"write/{name}"):
+            con.execute(f"COPY (SELECT * FROM {name} ORDER BY {order}) "
+                        f"TO '{_fwd(out)}' ({_copy_opts()})")
         rel = f"pool/tree/{name}/g{gen}.parquet"
         artifacts[name] = [rel]
         moves.append((out, rel))
@@ -302,13 +306,24 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
     # A source indexed from a tree the sync could not read whole is still recorded as
     # indexed, and its snapshot set then matches the listing forever - so it is carried by
     # reference every later night and the short rows never come back. Archival sources never gain
-    # a new snapshot, so the gap is permanent. The previous generation's flag is therefore a
-    # rebuild trigger: unreadable folders are never written into the tree, so the next sync
-    # re-reads them, and rebuilding every source from the repaired tree costs about a second each.
-    if prev is not None and prev.get("tree_incomplete"):
-        log.warning("repo=%s the previous tree sync left %s folder object(s) unread - rebuilding "
-                    "every source from the repaired tree", repo, prev["tree_incomplete"])
+    # a new snapshot, so the gap is permanent.
+    #
+    # So the previous generation's unreadable set triggers a rebuild - but ONCE per distinct set.
+    # Real repositories do contain permanently unreadable content, and forcing on every run would
+    # then rebuild every source every night forever (minutes per night on repo 2) while the tree
+    # still cannot hold the folder. If the set changes - something became readable, or something
+    # new broke - there is fresh information and it forces again.
+    unread_prev = list((prev or {}).get("tree_incomplete") or [])
+    forced_for = list((prev or {}).get("tree_forced_for") or [])
+    if unread_prev and unread_prev != forced_for:
+        log.warning("repo=%s the previous tree sync left %d folder object(s) unread - rebuilding "
+                    "every source once from the repaired tree", repo, len(unread_prev))
         force = frozenset(srcs)
+        forced_for = unread_prev
+    elif unread_prev:
+        log.warning("repo=%s %d folder object(s) are still unreadable and were already retried - "
+                    "not forcing another full rebuild. e.g. %s",
+                    repo, len(unread_prev), unread_prev[:3])
     scratch, con = _scratch(staging)
     prev_art = (prev or {}).get("artifacts", {})
     moves: list[tuple[str, str]] = []
@@ -762,9 +777,11 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         return {"generation": gen, "repo": repo, "schema_version": _MANIFEST_VERSION,
                 "counters": alloc.counters(), "artifacts": artifacts_out,
                 "sources": sources, "stats": stats,
-                # A PUBLIC key on purpose: `_`-prefixed keys are stripped before the manifest is
-                # written, and the next build has to be able to read this one.
-                "tree_incomplete": len(tree_stats["incomplete"]),
+                # PUBLIC keys on purpose: `_`-prefixed ones are stripped before the manifest is
+                # written, and the next build has to read both of these. Capped so a repository
+                # with a lot of bad content cannot bloat the manifest.
+                "tree_incomplete": tree_stats["incomplete"][:_MAX_UNREADABLE],
+                "tree_forced_for": forced_for[:_MAX_UNREADABLE],
                 "_checks": checks, "_moves": moves, "_mode": "incremental"}
     finally:
         _close_scratch(scratch, con)
