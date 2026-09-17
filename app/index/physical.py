@@ -167,29 +167,41 @@ def materialize_exclusive(con, repo: str) -> None:
     )
 
 
+def _values_by_content_id(cur, cids: list[str], table: str, col: str) -> dict[str, int]:
+    """``{content_id: value}`` from a per-chunk map, as ONE join ().
+
+    What this replaces resolved the ids through `cid` in batches of 900 and then queried the map
+    the same way - two scans of a multi-million row view per batch. Fine for a file panel holding
+    a few hundred chunks, and quadratic-feeling for a folder holding six figures of them: pricing
+    one 151k-object folder measured 21 s, 83% of it here. Binding the whole set once and letting
+    DuckDB hash-join it is the same answer in one pass.
+    """
+    import pyarrow as pa
+
+    if not cids:
+        return {}
+    cur.register("_want_cids", pa.table({"content_id": pa.array(cids, pa.string())}))
+    try:
+        rows = cur.execute(
+            f"SELECT c.content_id, m.{col} FROM _want_cids w "
+            f"JOIN cid c ON c.content_id = w.content_id "
+            f"JOIN {table} m ON m.cid_id = c.cid_id").fetchall()
+    finally:
+        cur.unregister("_want_cids")
+    return dict(rows)
+
+
 def _refcount_for(repo: str, cids) -> dict[str, int] | None:
-    """Targeted refcount for just these content chunks (one file's chunks), via batched IN
-    queries - far faster + lighter than loading the whole 4M-row crefs table into a dict
-    on every file-detail open. Returns None when crefs isn't built yet (cold start), so
-    the caller can fall back to the full map."""
+    """Targeted refcount for just these content chunks - far lighter than loading the whole 4M-row
+    crefs table into a dict on every file-detail open. Returns None when crefs isn't built yet
+    (cold start), so the caller can fall back to the full map."""
     cids = list(cids)
     cur = read_cursor(repo)
     out: dict[str, int] = {}
     try:
         if not cur.execute("SELECT count(*) FROM crefs").fetchone()[0]:
             return None
-        id_of = resolve.cid_ids(cur, cids)
-        rev = {v: k for k, v in id_of.items()}
-        ids = sorted(set(id_of.values()))
-        refs: dict[int, int] = {}
-        for i in range(0, len(ids), 900):
-            grp = ids[i:i + 900]
-            if not grp:
-                continue
-            q = "SELECT cid_id, refs FROM crefs WHERE cid_id IN (%s)" % ",".join("?" * len(grp))
-            for c, r in cur.execute(q, grp).fetchall():
-                refs[c] = r
-        out = {rev[c]: r for c, r in refs.items() if c in rev}
+        out = _values_by_content_id(cur, [c for c in dict.fromkeys(cids) if c], "crefs", "refs")
     finally:
         cur.close()
     _record_refcount_misses(repo, len(cids), len(cids) - len(out))
@@ -199,32 +211,19 @@ def _refcount_for(repo: str, cids) -> dict[str, int] | None:
 def _sizes_for(repo: str, cids) -> dict[str, int]:
     """Targeted packed sizes for just these chunks, from the generation's `csize` map.
 
-    Batched IN queries, exactly like `_refcount_for`, instead of building the whole multi-million
-    row map: a page of file panels would otherwise pay seconds and hundreds of MB per open (the
-    KL47 lesson - batch, never full-map on a per-item path). Missing chunks are simply absent, and
-    every caller reads them with `.get(c, 0)` - the same default the sizemap had.
+    One join, exactly like `_refcount_for`, instead of building the whole multi-million row map:
+    a page of file panels would otherwise pay seconds and hundreds of MB per open (the KL47
+    lesson - never full-map on a per-item path). Missing chunks are simply absent, and every
+    caller reads them with `.get(c, 0)` - the same default the sizemap had.
     """
     wanted = [c for c in dict.fromkeys(cids) if c]
     if not wanted:
         return {}
     cur = read_cursor(repo)
-    out: dict[str, int] = {}
     try:
-        id_of = resolve.cid_ids(cur, wanted)
-        rev = {v: k for k, v in id_of.items()}
-        ids = sorted(set(id_of.values()))
-        for i in range(0, len(ids), 900):
-            grp = ids[i:i + 900]
-            if not grp:
-                continue
-            q = ("SELECT cid_id, packed FROM csize WHERE cid_id IN (%s)"
-                 % ",".join("?" * len(grp)))
-            for c, p in cur.execute(q, grp).fetchall():
-                if c in rev:
-                    out[rev[c]] = p
+        return _values_by_content_id(cur, wanted, "csize", "packed")
     finally:
         cur.close()
-    return out
 
 
 def _size_map(repo: str, refresh: bool = False) -> dict[str, int]:

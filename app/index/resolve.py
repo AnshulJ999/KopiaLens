@@ -228,11 +228,36 @@ def cid_id(cur, content_id: str) -> int | None:
     return cid
 
 
+def _join_dict(cur, values, col: str, want: str, kind) -> dict:
+    """One hash join for a set too big to bind as IN-lists ().
+
+    An IN-list costs a scan of `cid` per 900 ids, so a folder holding 170k chunks paid ~190 of
+    them for a single lookup. Binding the set once is the same answer in one pass. Only the LARGE
+    case takes this path - a file panel resolving a dozen ids is faster with the plain IN-list and
+    keeps its exact behaviour.
+    """
+    import pyarrow as pa
+
+    cur.register("_res_want", pa.table({col: pa.array(values, kind)}))
+    try:
+        return dict(cur.execute(
+            f"SELECT c.{col}, c.{want} FROM _res_want w JOIN cid c ON c.{col} = w.{col}").fetchall())
+    finally:
+        cur.unregister("_res_want")
+
+
+_JOIN_ABOVE = 900        # one IN-batch; past this the join wins and the IN-list multiplies scans
+
+
 def cid_ids(cur, content_ids: list[str]) -> dict[str, int]:
-    """Batched content-id resolution for IN-lists (chunked at 900 like every other IN batch).
-    Unresolvable ids are simply absent - callers treat that as an empty result, never an error."""
+    """Content-id resolution. Unresolvable ids are simply absent - callers treat that as an empty
+    result, never an error."""
+    import pyarrow as pa
+
     out: dict[str, int] = {}
     ids = [c for c in dict.fromkeys(content_ids or []) if c]
+    if len(ids) > _JOIN_ABOVE:
+        return _join_dict(cur, ids, "content_id", "cid_id", pa.string())
     for i in range(0, len(ids), 900):
         grp = ids[i:i + 900]
         q = "SELECT content_id, cid_id FROM cid WHERE content_id IN (%s)" % ",".join("?" * len(grp))
@@ -244,8 +269,12 @@ def cid_ids(cur, content_ids: list[str]) -> dict[str, int]:
 def content_ids(cur, cid_ids: list[int]) -> dict[int, str]:
     """Reverse map for result sets already carrying cid_id values - the output side of the
     rule, for callers whose public shape is keyed by content-id string."""
+    import pyarrow as pa
+
     out: dict[int, str] = {}
     ids = [c for c in dict.fromkeys(cid_ids or []) if c is not None]
+    if len(ids) > _JOIN_ABOVE:
+        return _join_dict(cur, ids, "cid_id", "content_id", pa.int32())
     for i in range(0, len(ids), 900):
         grp = ids[i:i + 900]
         q = "SELECT cid_id, content_id FROM cid WHERE cid_id IN (%s)" % ",".join("?" * len(grp))

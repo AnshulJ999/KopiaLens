@@ -54,9 +54,49 @@ def _bound_duckdb(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _cap_raw_duckdb(monkeypatch, tmp_path):
+    """Cap connections tests open THEMSELVES, not just the ones the store opens.
+
+    Most test files call `duckdb.connect()` directly, which takes the machine defaults - 50 GiB
+    and one thread per core. Capping only `store.resolve_limits` leaves those uncovered, so the
+    ceiling is applied at the `connect` boundary where every path meets.
+    """
+    import duckdb
+
+    real = duckdb.connect
+    spill = str(tmp_path / "duck_tmp").replace("'", "''")
+
+    def capped(*args, **kwargs):
+        con = real(*args, **kwargs)
+        for stmt in ("SET memory_limit='512MB'", "SET threads=4",
+                     "SET temp_directory='%s'" % spill):
+            try:
+                con.execute(stmt)
+            except Exception:  # noqa: BLE001 - a read-only or odd connection still runs its test
+                pass
+        return con
+
+    monkeypatch.setattr(duckdb, "connect", capped)
+
+
+@pytest.fixture(autouse=True)
 def _watchdog():
+    """Hard stop for a runaway test. **This kills the whole pytest process, by design.**
+
+    `exit=True` means `_exit(1)`, so one overrun ends the run with no results rather than failing
+    a single test. That is deliberate and should not be "fixed" into a timer thread that fails
+    only the current test: the case this exists for is a query blocked inside DuckDB's C code,
+    which no Python-level timer can interrupt. A traceback plus a dead process beats a hung suite.
+    """
     faulthandler.dump_traceback_later(TEST_TIMEOUT, exit=True)
     try:
         yield
     finally:
         faulthandler.cancel_dump_traceback_later()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Remove the per-run cache sandbox; it is this file's own litter."""
+    import shutil
+
+    shutil.rmtree(_CACHE_SANDBOX, ignore_errors=True)

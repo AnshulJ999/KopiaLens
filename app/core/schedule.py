@@ -13,6 +13,7 @@ import datetime as dt
 import json
 import os
 import re
+import time
 
 from config import CACHEDIR
 
@@ -372,6 +373,31 @@ def _to_local_naive(iso: str | None, fallback: dt.datetime) -> dt.datetime:
         return fallback
 
 
+_POLICY_REUSE_MAX_AGE = 3600     # how fresh core.policy's cache must be to stand in for a spawn
+
+
+def _recent_policies(repo: str) -> dict:
+    """The policy cache, but ONLY while it is recent enough to schedule from ().
+
+    The nightly's `policies` stage runs `policy show` for every source and caches the whole
+    policy moments before this stage runs, and the scheduling block is a field of it - so
+    spawning kopia again per source was the same work twice (repo 2: ~100 + 67 subprocesses a
+    pass, at ~0.42 s of CLI overhead each).
+
+    The age gate is what makes it safe to read here: this also runs in the 30-minute light loop,
+    where an entry up to `POLICY_TTL` old would keep showing the old next-snapshot time after a
+    schedule was edited outside KopiaLens. Stale reads a spawn, as before.
+    """
+    try:
+        from .policy import load_policies
+        env = load_policies(repo)
+        if time.time() - float(env.get("ts") or 0) <= _POLICY_REUSE_MAX_AGE:
+            return env.get("policies") or {}
+    except Exception:  # noqa: BLE001 - no cache is simply a miss
+        pass
+    return {}
+
+
 def compute_next_snapshots(repo: str, force: bool = False) -> dict[str, str]:
     """Compute next-snapshot times for all sources and cache them.
 
@@ -385,8 +411,9 @@ def compute_next_snapshots(repo: str, force: bool = False) -> dict[str, str]:
     srcs = sources_index(repo)
     now = dt.datetime.now()
     prev = load_next_snapshots(repo) if not force else {}
+    pols = _recent_policies(repo)
     out: dict[str, str] = {}
-    spawned = 0
+    spawned = reused = 0
     for key, snaps in srcs.items():
         cached = prev.get(key)
         if cached:
@@ -397,12 +424,16 @@ def compute_next_snapshots(repo: str, force: bool = False) -> dict[str, str]:
             except Exception:
                 pass
         try:
-            res = kopia(repo, ["policy", "show", key, "--json"])
-            pol = json.loads(res.stdout) if res.stdout.strip() else {}
+            pol = pols.get(key)
+            if pol is None:
+                res = kopia(repo, ["policy", "show", key, "--json"])
+                pol = json.loads(res.stdout) if res.stdout.strip() else {}
+                spawned += 1
+            else:
+                reused += 1
             sched = pol.get("scheduling", {}) or {}
             last_dt = _to_local_naive(snaps[-1].get("startTime") if snaps else None, now)
             nt = next_time(sched, last_dt, now)
-            spawned += 1
             if nt:
                 out[key] = nt.isoformat()
         except Exception as exc:  # noqa: BLE001 - per-source, keep going
@@ -412,5 +443,6 @@ def compute_next_snapshots(repo: str, force: bool = False) -> dict[str, str]:
         sidecache.write(_cache_name(repo), out)
     except Exception:  # noqa: BLE001 - a cache write must never fail the computation
         pass
-    log.debug("next_snapshots repo=%s: %d sources (%d recomputed via policy show)", repo, len(out), spawned)
+    log.debug("next_snapshots repo=%s: %d sources (%d via policy show, %d from the policy cache)",
+              repo, len(out), spawned, reused)
     return out
