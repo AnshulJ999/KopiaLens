@@ -10,7 +10,8 @@ Every invariant of the old walker is carried, and they are the reason this file 
   * ``content show`` output carries NO object id. The only mapping from answer back to request
     is POSITION, and the command ABORTS THE WHOLE BATCH at the first unreadable object - printing
     the answers up to that point and exiting non-zero. So pairing by position is sound, but the
-    unanswered TAIL must never be recorded as empty folders.
+    unanswered TAIL must never be recorded as empty folders - nor written off, which is why the
+    batch retries past the one dead object instead of losing everything behind it ().
   * A transient failure must never become permanent state. An object we could not read is left
     out of the tree entirely and reported, so the next run retries it. Writing it down as "empty"
     is how 492,587 file rows once went missing.
@@ -52,6 +53,7 @@ def timed(label: str, out: dict | None = None):
             log.info("  %-22s %7.1fs", label, secs)
 
 BATCH = 800                     # kopia CLI overhead is 0.42 s/call, so batching is near-perfect
+MAX_SKIPS = 50                  # dead objects to step over in one batch before giving the rest up
 _KNOWN = ("name", "type", "mode", "size", "mtime", "obj", "summ")
 _SUMM_KNOWN = ("size", "files", "symlinks", "dirs", "maxTime", "numFailed", "incomplete",
                "numIgnoredErrors", "errors")
@@ -172,6 +174,34 @@ def _register_oids(con, oids: list[str], table: str) -> None:
     con.unregister("_oid_arrow")
 
 
+def _skip_dead(repo: str, pending: list[str], answered: int, res, result: SyncResult,
+               skips: int, what: str) -> tuple[list[str], int]:
+    """Step over the ONE object that aborted the batch and return what is left to retry.
+
+    ``content show`` stops at the first object it cannot read, so the object at position
+    ``answered`` is the dead one and everything after it simply never got asked. Recording the
+    whole tail as unreadable (what this did before) is permanent: the ids are fetched in
+    a stable order, so every later run aborts in the same place and those objects are never
+    priced. Skipping one per attempt converges at one extra kopia call per genuinely dead object.
+
+    ``MAX_SKIPS`` bounds the case this cannot distinguish from a dead object: kopia failing
+    wholesale answers nothing every time, and without a cap that would be one call per object in
+    the batch.
+    """
+    dead = pending[answered]
+    result.unreadable.append(dead)
+    log.warning("repo=%s content show answered %d of %d %ss (rc=%d): %s - %s is unreadable, "
+                "retrying the %d behind it", repo, answered, len(pending), what, res.returncode,
+                (res.stderr or "").strip()[:200], dead, len(pending) - answered - 1)
+    rest = pending[answered + 1:]
+    if skips + 1 >= MAX_SKIPS and rest:
+        result.unreadable.extend(rest)
+        log.warning("repo=%s gave up on this batch after %d unreadable %ss - %d object(s) left "
+                    "unread, NOT recorded as empty", repo, skips + 1, what, len(rest))
+        return [], skips + 1
+    return rest, skips + 1
+
+
 def _fetch_dirs(con, repo: str, oids: list[str], result: SyncResult, out: str) -> None:
     """Fetch one level's folders and append their entries to ``out``.
 
@@ -191,23 +221,19 @@ def _fetch_dirs(con, repo: str, oids: list[str], result: SyncResult, out: str) -
             con.execute("INSERT INTO _fetched SELECT oid FROM _read_ok")
 
     for i in range(0, len(normal), BATCH):
-        group = normal[i:i + BATCH]
-        res = kopia(repo, ["content", "show"] + group)
-        _lines_table(con, res.stdout, "_lines")
-        answered = con.execute("SELECT count(*) FROM _lines").fetchone()[0]
-        if answered < len(group):
-            # The batch aborted. Everything printed is still positionally paired and usable; the
-            # tail got no answer at all and is NOT empty - it is unknown.
-            missed = group[answered:]
-            result.unreadable.extend(missed)
-            log.warning("repo=%s content show answered %d of %d folders (rc=%d): %s - %d object(s) "
-                        "left unread, NOT recorded as empty", repo, answered, len(group),
-                        res.returncode, (res.stderr or "").strip()[:200], len(missed))
-        _register_oids(con, group[:answered], "_oids")
-        _entries_from_lines(con, "_lines", "_oids", "_ent_new")
-        con.execute(f"INSERT INTO {out} SELECT * FROM _ent_new")
-        _read(group[:answered])
-        result.fetched += answered
+        pending, skips = normal[i:i + BATCH], 0
+        while pending:
+            res = kopia(repo, ["content", "show"] + pending)
+            answered = _lines_table(con, res.stdout, "_lines")
+            if answered:
+                _register_oids(con, pending[:answered], "_oids")
+                _entries_from_lines(con, "_lines", "_oids", "_ent_new")
+                con.execute(f"INSERT INTO {out} SELECT * FROM _ent_new")
+                _read(pending[:answered])
+                result.fetched += answered
+            if answered >= len(pending):
+                break
+            pending, skips = _skip_dead(repo, pending, answered, res, result, skips, "folder")
 
     for oid in indirect:
         res = kopia(repo, ["show", oid])
@@ -235,31 +261,32 @@ def _fetch_parts(con, repo: str, iobjs: list[str], result: SyncResult, out: str)
     for oid in iobjs:                       # the object's own index content always counts
         con.execute(f"INSERT INTO {out} VALUES (?, ?, 0)", [oid, oid[1:]])
     for i in range(0, len(iobjs), BATCH):
-        group = iobjs[i:i + BATCH]
-        res = kopia(repo, ["content", "show"] + [o[1:] for o in group])
-        answered = _lines_table(con, res.stdout, "_lines")
-        if answered < len(group):
-            missed = group[answered:]
-            result.unreadable.extend(missed)
-            log.warning("repo=%s content show answered %d of %d split objects (rc=%d) - %d piece "
-                        "list(s) left unread, NOT recorded as empty", repo, answered, len(group),
-                        res.returncode, len(missed))
-            # Drop the seed rows of the objects we did not resolve: a piece list of only the index
+        pending, skips = iobjs[i:i + BATCH], 0
+        while pending:
+            res = kopia(repo, ["content", "show"] + [o[1:] for o in pending])
+            answered = _lines_table(con, res.stdout, "_lines")
+            if answered:
+                _register_oids(con, pending[:answered], "_oids")
+                # Parse ONCE into its own table, for the same reason _entries_from_lines does:
+                # referencing from_json twice (unnest needs the list, generate_subscripts needs it
+                # again) parses every line twice, and a piece list of a multi-gigabyte file is long.
+                con.execute(f"""CREATE OR REPLACE TEMP TABLE _pparsed AS
+                    SELECT o.oid, from_json(l.line, '{_SHAPE}').entries AS es
+                    FROM _lines l JOIN _oids o ON o.pos = l.pos""")
+                con.execute(f"""INSERT INTO {out}
+                    SELECT p.oid, json_extract_string(x.e, '$.o'), x.i
+                    FROM _pparsed p,
+                    LATERAL (SELECT unnest(p.es) AS e, generate_subscripts(p.es, 1) AS i) x
+                    WHERE json_extract_string(x.e, '$.o') IS NOT NULL""")
+                con.execute("DROP TABLE _pparsed")
+            if answered >= len(pending):
+                break
+            before = set(pending[answered:])
+            pending, skips = _skip_dead(repo, pending, answered, res, result, skips, "split object")
+            # Drop the seed rows of the objects we gave up on: a piece list of only the index
             # object would undercount that file's physical size forever.
-            con.execute(f"DELETE FROM {out} WHERE iobj IN ({','.join('?' * len(missed))})", missed)
-        _register_oids(con, group[:answered], "_oids")
-        # Parse ONCE into its own table, for the same reason _entries_from_lines does: referencing
-        # from_json twice (unnest needs the list, generate_subscripts needs it again) parses every
-        # line twice, and a piece list of a multi-gigabyte file is long.
-        con.execute(f"""CREATE OR REPLACE TEMP TABLE _pparsed AS
-            SELECT o.oid, from_json(l.line, '{_SHAPE}').entries AS es
-            FROM _lines l JOIN _oids o ON o.pos = l.pos""")
-        con.execute(f"""INSERT INTO {out}
-            SELECT p.oid, json_extract_string(x.e, '$.o'), x.i
-            FROM _pparsed p,
-            LATERAL (SELECT unnest(p.es) AS e, generate_subscripts(p.es, 1) AS i) x
-            WHERE json_extract_string(x.e, '$.o') IS NOT NULL""")
-        con.execute("DROP TABLE _pparsed")
+            gone = sorted(before - set(pending))
+            con.execute(f"DELETE FROM {out} WHERE iobj IN ({','.join('?' * len(gone))})", gone)
     result.parts = con.execute(f"SELECT count(*) FROM {out}").fetchone()[0]
 
 

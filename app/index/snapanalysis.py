@@ -1,10 +1,14 @@
 """Per-snapshot analysis: churn (new physical) + reclaimable (freed if this snapshot is
 deleted), persisted to DuckDB so it survives restarts and is instant to re-view.
 
-Churn = a forward incremental walk (chunks reachable via directories new vs older snapshots).
-Reclaimable = chunks that exist ONLY in this snapshot: new in BOTH the forward pass (not in any
-older snapshot) AND the backward pass (not in any newer), and not present in any OTHER source
-(global source refcount == 1). Deleting the snapshot frees exactly those.
+Churn = the chunks a snapshot introduced, i.e. those whose oldest snapshot is this one.
+Reclaimable = chunks that exist ONLY in this snapshot (their oldest and newest snapshot are the
+same one) and in no OTHER source (global source refcount == 1). Deleting it frees exactly those.
+Physical = the snapshot's own footprint: the packed bytes of every file it reaches.
+
+All three come from ONE recursive pass per source recording which snapshots reach which folders
+(). They were three separate whole-tree passes PER snapshot, which is why a 514-snapshot
+source took 662 s.
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ import time
 
 from ..core.applog import get_logger
 from ..core.sources import resolve_source
-from . import entries, layer2
+from . import entries, layer2, tree
 from .physical import _chunks_for_objs, _refcount_map, _size_map
 from .store import read_cursor
 
@@ -46,11 +50,6 @@ def _recl_cache_get(ck: tuple) -> list | None:
         if val is not None:
             _RECL_FILES_CACHE.move_to_end(ck)
         return val
-
-
-_MAX_HEAVY_PER_CYCLE = 100  # cap heavy (physical+reclaim) source recomputes per cycle (a soft guard;
-# the crash it once mitigated is fixed by the drop-index rewrite, so this is set high to not delay
-# population - effectively "all sources per cycle" for the current ~72-source repos)
 
 
 def reclaimable_files(repo: str, source: str, snapshot_id: str, limit: int = 200) -> list[dict]:
@@ -301,60 +300,152 @@ def _publish_analysis(repo: str, per_source: dict) -> int | None:
     return publish.replace_artifacts(repo, {"sanalysis": merged})
 
 
+def _ranked(snaps: list[dict]) -> list[tuple[int, str, str | None]]:
+    """(rank, snapshot_id, root object) newest-first, ranked the way layer 3 ranks.
+
+    Two stable sorts rather than one key, because the order is start time DESCENDING with the
+    snapshot id ASCENDING inside a tie. Kopia checkpoints share a start time exactly, so the
+    tiebreak decides which snapshot a chunk's first appearance is credited to; matching layer 3
+    means the whole store answers that question the same way.
+    """
+    ordered = sorted(snaps, key=lambda s: s.get("id") or "")
+    ordered.sort(key=lambda s: s.get("startTime") or "", reverse=True)
+    return [(r, s["id"], (s.get("rootEntry") or {}).get("obj"))
+            for r, s in enumerate(ordered, 1)]
+
+
+def _analyse(repo: str, snaps: list[dict], heavy: bool) -> tuple[dict, dict, dict]:
+    """Churn, physical and reclaimable for EVERY snapshot of one source, as set operations.
+
+    One recursive pass records which snapshots reach which folders; the rest are group-bys over
+    it. What this replaces ran two whole-tree reaches plus a Python folder walk PER snapshot,
+    which cost 722 s on a 514-snapshot source whose snapshots hold a few hundred chunks each -
+    the cost was per call, not per byte.
+
+    The two halves read that pass differently, and the difference is the whole performance story:
+
+      * churn and reclaimable only ever ask "oldest and newest snapshot holding this chunk", so
+        the folders collapse to one row each FIRST and the entry join stays tree-sized.
+      * physical is a total, so it needs real per-snapshot membership - but it joins folders to a
+        number already aggregated per folder, so the entries are never multiplied either.
+    """
+    import pyarrow as pa
+
+    ranked = _ranked(snaps)
+    churn = {sid: 0 for _r, sid, _o in ranked}
+    physical = {sid: 0 for _r, sid, _o in ranked}
+    reclaim: dict[str, int] = {sid: 0 for _r, sid, _o in ranked}
+    of_rank = {r: sid for r, sid, _o in ranked}
+    live = [(r, obj) for r, _sid, obj in ranked if obj]
+    if not live:
+        return churn, physical, reclaim
+
+    f = tree.TYPES.index("f")
+    cur = read_cursor(repo)
+    try:
+        cur.register("_sa_roots", pa.table({
+            "rank": pa.array([r for r, _o in live], pa.int32()),
+            "obj": pa.array([o for _r, o in live], pa.string())}))
+        # A root the tree could not read still contributes its own content id, which is what
+        # `reach_content_ids` does - it just reaches nothing below it.
+        cur.execute("""CREATE OR REPLACE TEMP TABLE _sa_rcid AS
+            SELECT a.rank, c.cid_id FROM _sa_roots a JOIN cid c ON c.content_id = a.obj
+            WHERE c.cid_id IS NOT NULL""")
+        cur.execute("""CREATE OR REPLACE TEMP TABLE _sa_reach AS
+            WITH RECURSIVE r(rank, dir_id) AS (
+                SELECT a.rank, t.dir_id FROM _sa_roots a
+                  JOIN cid c ON c.content_id = a.obj
+                  JOIN tdir t ON t.cid_id = c.cid_id
+                UNION
+                SELECT r.rank, e.child FROM r JOIN tent e ON e.dir_id = r.dir_id
+                WHERE e.child IS NOT NULL)
+            SELECT rank, dir_id FROM r""")
+        cur.unregister("_sa_roots")
+        # One row per folder: the newest rank reaching it and the oldest. A folder's snapshot
+        # coverage can have gaps, and these two numbers deliberately ignore them - they are only
+        # ever used for "first appearance" and "lives in exactly one snapshot", and both of those
+        # read off the extremes.
+        cur.execute("""CREATE OR REPLACE TEMP TABLE _sa_dir AS
+            SELECT dir_id, min(rank) AS rnew, max(rank) AS rold FROM _sa_reach GROUP BY dir_id""")
+        # Same reach definition as `reach_content_ids`: every entry carrying a content id, a split
+        # object's index content plus every piece behind it, and the snapshot roots themselves.
+        cur.execute("""CREATE OR REPLACE TEMP TABLE _sa_span AS
+            SELECT cid_id, min(rnew) AS rnew, max(rold) AS rold FROM (
+                SELECT l.rnew, l.rold, e.cid_id FROM _sa_dir l JOIN tent e USING (dir_id)
+                    WHERE e.cid_id IS NOT NULL AND NOT e.ind
+                UNION ALL
+                SELECT l.rnew, l.rold, e.ind_cid AS cid_id FROM _sa_dir l JOIN tent e USING (dir_id)
+                    WHERE e.cid_id IS NOT NULL AND e.ind AND e.ind_cid IS NOT NULL
+                UNION ALL
+                SELECT l.rnew, l.rold, p.part_cid AS cid_id FROM _sa_dir l JOIN tent e USING (dir_id)
+                    JOIN tpart p ON p.iobj_cid = e.cid_id WHERE e.cid_id IS NOT NULL AND e.ind
+                UNION ALL
+                SELECT rank, rank, cid_id FROM _sa_rcid)
+            WHERE cid_id IS NOT NULL
+            GROUP BY cid_id""")
+        # Churn = chunks whose OLDEST snapshot is this one, i.e. the content it introduced. A
+        # chunk with no size contributes 0, as the size-map lookup did.
+        for rank, total in cur.execute("""
+                SELECT s.rold, sum(coalesce(cs.packed, 0))::HUGEINT
+                FROM _sa_span s LEFT JOIN csize cs ON cs.cid_id = s.cid_id
+                GROUP BY s.rold""").fetchall():
+            churn[of_rank[rank]] = int(total or 0)
+        if not heavy:
+            return churn, physical, reclaim
+        # Reclaimable = chunks in no older and no newer snapshot, and in no other source. A chunk
+        # absent from `crefs` counts as zero references, same as the map lookup it replaces.
+        for rank, total in cur.execute("""
+                SELECT s.rold, sum(coalesce(cs.packed, 0))::HUGEINT
+                FROM _sa_span s
+                LEFT JOIN csize cs ON cs.cid_id = s.cid_id
+                LEFT JOIN crefs cr ON cr.cid_id = s.cid_id
+                WHERE s.rnew = s.rold AND coalesce(cr.refs, 0) <= 1
+                GROUP BY s.rold""").fetchall():
+            reclaim[of_rank[rank]] = int(total or 0)
+        # Physical: each folder's own file bytes once, then summed over the folders each snapshot
+        # reaches. A folder sitting at two paths in one snapshot is counted ONCE - kopia stores it
+        # once, and the walk this replaces counted it per path.
+        cur.execute(f"""CREATE OR REPLACE TEMP TABLE _sa_own AS
+            SELECT e.dir_id,
+                   sum(coalesce(CASE WHEN e.ind THEN ip.packed ELSE cs.packed END, 0))::HUGEINT
+                       AS own
+            FROM tent e
+            LEFT JOIN csize cs ON cs.cid_id = e.cid_id
+            LEFT JOIN iphys ip ON ip.cid_id = e.cid_id
+            WHERE e.etype = {f} AND e.cid_id IS NOT NULL
+              AND e.dir_id IN (SELECT dir_id FROM _sa_dir)
+            GROUP BY e.dir_id""")
+        for rank, total in cur.execute("""
+                SELECT r.rank, sum(coalesce(o.own, 0))::HUGEINT
+                FROM _sa_reach r LEFT JOIN _sa_own o ON o.dir_id = r.dir_id
+                GROUP BY r.rank""").fetchall():
+            physical[of_rank[rank]] = int(total or 0)
+    finally:
+        cur.close()
+    return churn, physical, reclaim
+
+
 def compute_source(repo: str, source: str, with_reclaim: bool = True) -> dict:
-    """Walk a source's snapshots and compute per-snapshot churn. ``with_reclaim`` ALSO computes the
-    heavy fields - absolute per-snapshot physical (memoized subtree walk) + reclaimable; the light
-    (churn-only) pass PRESERVES the previously-computed physical/reclaimable rather than wiping
-    them. Persisted to DuckDB."""
+    """Per-snapshot churn for a source. ``with_reclaim`` ALSO computes the heavy fields - absolute
+    per-snapshot physical + reclaimable; the light (churn-only) pass PRESERVES the
+    previously-computed physical/reclaimable rather than wiping them. Persisted to DuckDB."""
     key, srcs = resolve_source(repo, source=source)
     snaps = sorted(srcs[key], key=lambda s: s.get("startTime", ""))  # oldest -> newest
-    smap = _size_map(repo)
-    roots = {s["id"]: (s.get("rootEntry") or {}).get("obj") for s in snaps}
-
-    # Forward pass: churn (new physical) + remember each snapshot's forward-new chunk set. The
-    # tree reach replaces the incremental walk; subtracting the accumulated set gives the same
-    # "content this snapshot introduced" answer the old seen_dirs/seen_content pair did.
-    seen_content: set[str] = set()
-    fwd_new: dict[str, set[str]] = {}
-    churn: dict[str, int] = {}
-    for snap in snaps:
-        found = layer2.reach_content_ids(repo, [roots[snap["id"]]]) if roots[snap["id"]] else set()
-        new_here = found - seen_content
-        fwd_new[snap["id"]] = new_here
-        churn[snap["id"]] = sum(smap.get(c, 0) for c in new_here)
-        seen_content |= found
+    churn, phys, recl = _analyse(repo, snaps, heavy=with_reclaim)
 
     physical: dict[str, int] = {sid: 0 for sid in churn}      # 0 = not yet computed
     reclaim: dict[str, int | None] = {sid: None for sid in churn}  # None = not computed (shows "—")
 
     if with_reclaim:
-        # Heavy pass: absolute per-snapshot physical (memoized across shared subtrees) ...
-        phys_memo: dict[str, int] = {}
-        icache: dict[str, int] = {}
-        pcur = read_cursor(repo)
-        try:
-            for snap in snaps:
-                root = roots[snap["id"]]
-                physical[snap["id"]] = (
-                    _subtree_physical(repo, root, smap, phys_memo, icache, pcur) if root else 0)
-        finally:
-            pcur.close()
-        # ... + reclaimable (backward pass: chunks ONLY in this snapshot, source-exclusive).
-        refs = _refcount_map(repo)  # global per-source refcount: ==1 means only this source has it
-        seen_content_b: set[str] = set()
-        for snap in reversed(snaps):  # newest -> oldest
-            root = roots[snap["id"]]
-            found = layer2.reach_content_ids(repo, [root]) if root else set()
-            exclusive = fwd_new[snap["id"]] & (found - seen_content_b)  # no older, no newer
-            reclaim[snap["id"]] = sum(smap.get(c, 0) for c in exclusive if refs.get(c, 0) <= 1)
-            seen_content_b |= found
+        physical.update(phys)
+        reclaim.update(recl)
     else:
         # Light pass: keep the existing heavy fields; brand-new snapshots get 0/None so
         # phys_complete/recl_complete flip false -> the slow pass refills just those.
         existing = _existing_analysis(repo, key)
         for sid in churn:
-            phys, rec = existing.get(sid, (0, None))
-            physical[sid] = int(phys or 0)
+            kept, rec = existing.get(sid, (0, None))
+            physical[sid] = int(kept or 0)
             reclaim[sid] = None if rec is None else int(rec)
 
     rows = [{"id": sid, "churn": churn[sid], "physical": physical[sid], "reclaimable": reclaim[sid]}
@@ -403,7 +494,6 @@ def prewarm(repo: str, with_reclaim: bool = False) -> dict | None:
     stage succeeds. Returns ``{"failed_sources": [...]}`` when anything failed, else None - the
     caller surfaces the list so a nightly cannot report a clean pass that lost sources."""
     from ..core.sources import sources_index
-    heavy = 0
     failed: list[str] = []
     recomputed = 0
     compute_secs = 0.0
@@ -416,16 +506,7 @@ def prewarm(repo: str, with_reclaim: bool = False) -> dict | None:
                 need = (not info["fresh"]) or (with_reclaim and not (info["recl_complete"] and info["phys_complete"]))
                 if not need:
                     continue
-                # Throttle the HEAVY (with_reclaim) recompute to a few sources per cycle so the
-                # first-time populate doesn't burst-DELETE the indexed maps and corrupt DuckDB (the
-                # repo1 fatal-index incident). The rest catch up on subsequent cycles.
-                if with_reclaim:
-                    if heavy >= _MAX_HEAVY_PER_CYCLE:
-                        continue
-                    heavy += 1
-                # Per-source timing: the three whole-history passes in compute_source are the
-                # analysis stage's cost ( - the dominant one), and only these lines show
-                # which source ate the time.
+                # Per-source timing: only these lines show which source ate the stage.
                 t_src = time.perf_counter()
                 compute_source(repo, key, with_reclaim=with_reclaim)
                 dt = time.perf_counter() - t_src

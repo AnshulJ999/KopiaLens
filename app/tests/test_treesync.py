@@ -113,6 +113,11 @@ def test_a_shared_folder_object_is_stored_once(con, monkeypatch):
     assert con.execute("SELECT count(*) FROM tent_final WHERE child IS NOT NULL").fetchone()[0] == 2
 
 
+def _stored(con):
+    return {r[0] for r in con.execute(
+        "SELECT c.content_id FROM tdir_final d JOIN cid c USING (cid_id)").fetchall()}
+
+
 def test_an_aborted_batch_never_records_the_tail_as_empty(con, monkeypatch):
     # content show aborts at the first unreadable object and exits non-zero. The objects after it
     # got NO answer - recording them as empty folders is how index rows silently go missing.
@@ -121,11 +126,51 @@ def test_an_aborted_batch_never_records_the_tail_as_empty(con, monkeypatch):
                      broken={"kb"})
     res, stats, _m = run(con, fake, ["root"], monkeypatch)
     assert not res.complete
-    assert "kb" in res.unreadable or "kc" in res.unreadable
-    stored = {r[0] for r in con.execute(
-        "SELECT c.content_id FROM tdir_final d JOIN cid c USING (cid_id)").fetchall()}
     for missed in res.unreadable:
-        assert missed not in stored, "an unreadable folder was written into the tree"
+        assert missed not in _stored(con), "an unreadable folder was written into the tree"
+
+
+def test_a_dead_object_does_not_take_the_batch_behind_it_down(con, monkeypatch):
+    # The tail got no answer, but it is not unreadable - only the object the batch stopped
+    # at is. Writing the tail off is permanent: the ids are fetched in a stable order, so every
+    # later run aborts in the same place and those folders are never priced.
+    fake = FakeKopia({"root": [_d("a", "ka"), _d("b", "kb"), _d("c", "kc")],
+                      "ka": [_f("1", "c1")], "kb": [], "kc": [_f("3", "c3")]},
+                     broken={"kb"})
+    res, _s, _m = run(con, fake, ["root"], monkeypatch)
+    assert res.unreadable == ["kb"]
+    assert {"ka", "kc"} <= _stored(con) and "kb" not in _stored(con)
+
+
+def test_every_dead_object_in_one_batch_is_skipped_in_turn(con, monkeypatch):
+    fake = FakeKopia({"root": [_d("a", "ka"), _d("b", "kb"), _d("c", "kc"), _d("d", "kd")],
+                      "ka": [_f("1", "c1")], "kb": [], "kc": [], "kd": [_f("4", "c4")]},
+                     broken={"kb", "kc"})
+    res, _s, _m = run(con, fake, ["root"], monkeypatch)
+    assert sorted(res.unreadable) == ["kb", "kc"]
+    assert {"ka", "kd"} <= _stored(con)
+
+
+def test_a_wholesale_kopia_failure_stops_at_the_cap(con, monkeypatch):
+    # Nothing answers, which from `answered` alone is indistinguishable from a dead first object.
+    # Without the cap that is one kopia call per object in the batch.
+    monkeypatch.setattr(treesync, "MAX_SKIPS", 2)
+    kids = [_d(f"k{i}", f"k{i}") for i in range(6)]
+    fake = FakeKopia({"root": kids, **{f"k{i}": [] for i in range(6)}},
+                     broken={f"k{i}" for i in range(6)})
+    res, _s, _m = run(con, fake, ["root"], monkeypatch)
+    assert len(res.unreadable) == 6          # the 2 it stepped over plus the 4 it gave up on
+    assert fake.calls <= 3                   # the root, then 2 attempts - not one per object
+
+
+def test_a_dead_split_object_does_not_drop_the_next_one_s_pieces(con, monkeypatch):
+    fake = FakeKopia({"root": [_f("a.bin", "Ixa", size=9), _f("b.bin", "Ixb", size=9)]},
+                     parts={"xb": ["p1", "p2"]}, broken={"xa"})
+    res, _s, _m = run(con, fake, ["root"], monkeypatch)
+    assert res.unreadable == ["Ixa"]
+    got = [r[0] for r in con.execute("""SELECT pc.content_id FROM tpart_final p
+        JOIN cid pc ON pc.cid_id = p.part_cid ORDER BY p.ord""").fetchall()]
+    assert got == ["xb", "p1", "p2"], "the surviving split object lost its piece list"
 
 
 def test_an_incomplete_sync_is_reported_not_swallowed(con, monkeypatch):
