@@ -86,6 +86,30 @@ def test_pins_are_kept_outside_every_bucket():
     assert _kept(snaps, DEFAULTS) == {"new", "pinned"}
 
 
+def test_bucket_evaluation_follows_kopias_order():
+    """kopia evaluates latest -> annual -> monthly -> weekly -> daily -> hourly, sharing ONE
+    period-id namespace across buckets. An early-January snapshot's ISO week id ("2026-01")
+    collides with its month id, so kopia charges the MONTHLY budget for it, while the old
+    hour-first order charged WEEKLY. (The keep set can land the same either way - the attribution
+    is what proves which bucket claimed the shared id.)"""
+    snaps = [_snap("s", "2026-01-02T12:00:00Z"),    # ISO week 1 -> its weekly id == its month id
+             _snap("a1", "2025-12-22T12:00:00Z"),   # ISO week 52, inside the weekly cutoff
+             _snap("a2", "2025-12-15T12:00:00Z")]   # outside the 2-week weekly cutoff
+    policy = {"latest": 0, "hourly": 0, "daily": 0, "weekly": 2, "monthly": 1, "annual": 0}
+    keep, reasons = retention.retention_keep(snaps, policy)
+    assert reasons["s"] == ["monthly-1"]
+    assert reasons["a1"] == ["weekly-1"]
+    assert keep == {"s", "a1"}
+
+
+def test_reasons_come_out_in_kopias_canonical_order():
+    """SortRetentionTags orders the emitted tags weekly before monthly, whatever the eval order."""
+    snaps = [_snap("a", "2026-01-02T12:00:00Z"), _snap("b", "2026-01-10T12:00:00Z"),
+             _snap("c", "2026-01-16T12:00:00Z")]
+    policy = {"latest": 0, "hourly": 0, "daily": 0, "weekly": 2, "monthly": 2, "annual": 0}
+    assert retention.retention_keep(snaps, policy)[1]["c"] == ["weekly-1", "monthly-1"]
+
+
 def test_check_retention_matches_kopia_and_reports_the_rest():
     ok = f"u@h:C:{SEP}ok"
     bad = f"u@h:C:{SEP}bad"

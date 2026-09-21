@@ -57,7 +57,9 @@ def test_pricing_materializes_before_batching(monkeypatch):
 
     assert out["slow_path"] is False
     assert any(pp._MAT_PX in s for s in seen), "the source was not materialized"
-    assert f"batch:{pp._MAT_PX}" in seen, "the batches ran against the Parquet view"
+    assert any(s.startswith(f"batch:{pp._MAT_PX}") for s in seen), "the batches ran against the Parquet view"
+    # the per-call tables are dropped again: the read connection is shared and long-lived.
+    assert any("DROP TABLE IF EXISTS " + pp._MAT_PX in s for s in seen), "the temp tables were left behind"
 
 
 def test_a_single_batch_stays_on_the_view(monkeypatch):
@@ -85,4 +87,4 @@ def test_a_single_batch_stays_on_the_view(monkeypatch):
                         seen.append(f"batch:{px_table}"))
 
     pp._compute("3", "u@h:C:" + chr(92), [f"*.x{i}" for i in range(3)])
-    assert f"batch:{pp._MAT_PX}" not in seen and "batch:pathx" in seen
+    assert not any(s.startswith(f"batch:{pp._MAT_PX}") for s in seen) and "batch:pathx" in seen

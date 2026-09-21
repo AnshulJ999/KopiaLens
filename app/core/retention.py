@@ -39,6 +39,15 @@ _INCOMPLETE_MIN = 3                                  # retainIncompleteSnapshotM
 
 _BUCKETS = ("latest", "hourly", "daily", "weekly", "monthly", "annual")
 
+# kopia evaluates its buckets in THIS order (the cases list in retention_policy.go) and shares one
+# period-id namespace across them, so the order is part of the answer when a weekly id collides
+# with a monthly one (an early-January snapshot: ISO week 1 is "2026-01", and so is the month).
+_EVAL_ORDER = ("latest", "annual", "monthly", "weekly", "daily", "hourly")
+# The reasons a user sees are canonically sorted after evaluation (SortRetentionTags); pins are
+# the app's own tag and stay first.
+_REASON_RANK = {"pinned": 0, "latest": 1, "hourly": 2, "daily": 3, "weekly": 4, "monthly": 5,
+                "annual": 6}
+
 
 def _parse_ts(value: str) -> datetime.datetime | None:
     """kopia's startTime is tz-aware ISO; >6 fractional digits are trimmed (Go emits 7-9)."""
@@ -163,7 +172,7 @@ def retention_keep(snaps: list[dict], policy: dict[str, int]) -> tuple[set[str],
     for i, (snap, t) in enumerate(zip(ordered, times)):
         if t is None or _incomplete(snap):
             continue                      # incomplete snapshots get their own tag, below
-        for kind in _BUCKETS:
+        for kind in _EVAL_ORDER:
             if limits[kind] <= 0:
                 continue                  # 0 = defined as zero: this bucket keeps nothing
             cut = cutoffs[kind]
@@ -186,6 +195,8 @@ def retention_keep(snaps: list[dict], policy: dict[str, int]) -> tuple[set[str],
                 reasons[snap["id"]].append("incomplete")
             else:
                 break
+    for tags in reasons.values():
+        tags.sort(key=lambda r: _REASON_RANK.get(r.split("-", 1)[0], 99))
     return keep, reasons
 
 
@@ -391,7 +402,9 @@ def validate_retention(repo: str, source: str) -> dict:
     key, srcs = resolve_source(repo, source=source)
     snaps = srcs[key]
     policy, raw = parse_policy_retention(repo, key)
-    if not any(policy.values()):
+    try:
+        json.loads(raw)        # all-zero is a KEEP-EVERYTHING policy now, not a parse failure ()
+    except Exception:          # noqa: BLE001 - unreadable output is the failure this guard is for
         return {"source": key, "ok": False, "error": "could not parse policy retention", "raw": raw[:1200]}
 
     mine, _ = retention_keep(snaps, policy)

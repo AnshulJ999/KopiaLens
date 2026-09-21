@@ -426,6 +426,18 @@ def _analyse(repo: str, snaps: list[dict], heavy: bool) -> tuple[dict, dict, dic
                 GROUP BY r.rank""").fetchall():
             physical[of_rank[rank]] = int(total or 0)
     finally:
+        # The per-run working tables must not outlive the call: the read connection is shared
+        # and long-lived in the app, so without this a repo-wide Analyze piles up one set per source
+        # until its single publish retires the connection.
+        try:
+            cur.unregister(ns + "roots")
+        except Exception:  # noqa: BLE001 - normally unregistered already
+            pass
+        for name in (ns + "rcid", ns + "reach", ns + "dir", ns + "span", ns + "own"):
+            try:
+                cur.execute(f"DROP TABLE IF EXISTS {name}")
+            except Exception:  # noqa: BLE001 - cleanup must never mask the analysis result
+                pass
         cur.close()
     return churn, physical, reclaim
 

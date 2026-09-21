@@ -27,6 +27,7 @@ import json
 import os
 import threading
 import time
+import uuid
 
 from config import DATA_DIR
 
@@ -132,21 +133,25 @@ def _cond_for_inner(rel: str, rx: str, fragments: list[str], root_len: int, sep:
     return " AND ".join(f"({c})" for c in conds), params
 
 
-_MAT_PX = "px_priced"        # per-source temp tables the batch scans read
+_MAT_PX = "px_priced"        # prefix of the per-call temp tables the batch scans read
 _MAT_DIR = "dir_priced"
 
 
-def _materialize_source(cur, src: int) -> None:
+def _materialize_source(cur, src: int, ns: str) -> tuple[str, str]:
     """ One source's ``in_latest`` paths and its dir rows, as TEMP TABLES.
 
     DuckDB plans a 40-rule FILTER list over the multi-file Parquet view badly - 0.78 s for 567
     rows against 0.035 s for the same rows in a temp table, and superlinear in rule count, which
     is the 193 s ``policy_prices`` stage (memory trap 31). One materialization per source serves
-    every batch and every example lookup; the tables die with the connection."""
-    cur.execute(f"CREATE OR REPLACE TEMP TABLE {_MAT_PX} AS "
+    every batch and every example lookup. The names carry a per-call suffix and the caller
+    drops them: two pricing calls share the read connection, and a fixed name lets one clobber the
+    other's table mid-query - the same shape the analysis tables had."""
+    px, dr = f"{_MAT_PX}_{ns}", f"{_MAT_DIR}_{ns}"
+    cur.execute(f"CREATE OR REPLACE TEMP TABLE {px} AS "
                 f"SELECT * FROM pathx WHERE src_id = ? AND in_latest", [src])
-    cur.execute(f"CREATE OR REPLACE TEMP TABLE {_MAT_DIR} AS "
+    cur.execute(f"CREATE OR REPLACE TEMP TABLE {dr} AS "
                 f"SELECT * FROM dir WHERE src_id = ?", [src])
+    return px, dr
 
 
 def _price_batch_with_regex(cur, src: int, entries: list[list],
@@ -359,6 +364,7 @@ def _compute(repo: str, source_key: str, patterns: list[str]) -> dict:
 
     sep = pathrules.sep(source_key)
     root = pathrules.source_root(source_key)
+    mat: tuple[str, str] | None = None
     cur = read_cursor(repo)
     try:
         src = resolve_src_id(cur, source_key)
@@ -370,8 +376,8 @@ def _compute(repo: str, source_key: str, patterns: list[str]) -> dict:
             return {"results": results, "slow_path": False}
         # one batch is a single scan either way; more than one is where the temp tables pay.
         if len(entries) > _BATCH:
-            _materialize_source(cur, src)
-            px, dr = _MAT_PX, _MAT_DIR
+            mat = _materialize_source(cur, src, uuid.uuid4().hex[:8])
+            px, dr = mat
         else:
             px, dr = "pathx", "dir"
         for start in range(0, len(entries), _BATCH):
@@ -389,6 +395,11 @@ def _compute(repo: str, source_key: str, patterns: list[str]) -> dict:
                           "examples": examples, "error": None, "negated": compiled.negated}
         return {"results": results, "slow_path": False}
     finally:
+        for name in mat or ():
+            try:
+                cur.execute(f"DROP TABLE IF EXISTS {name}")
+            except Exception:  # noqa: BLE001 - cleanup must never mask the result
+                pass
         cur.close()
 
 

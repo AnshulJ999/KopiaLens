@@ -21,6 +21,7 @@ import time
 
 from . import bbdb, parsers, paths, pq, queries, rules
 from .safety import open_ro
+from ..core.paths import prefix_bounds
 
 log = logging.getLogger("kopialens.bz.indexer")  # under the app's logger so in-process calls reach the log files
 

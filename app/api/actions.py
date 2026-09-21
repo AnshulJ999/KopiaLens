@@ -447,7 +447,7 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
     scope = _remove_scope(payload.everywhere, t["sources"])
     generation = index_generation(payload.repo)
     plan_token = _remember_plan({"items": items, "flag": flag, "source": scope, "by": payload.by,
-                                 "generation": generation})
+                                 "repo": payload.repo, "generation": generation})
     # 8k per command so the copied lines are pasteable into a terminal (cmd.exe line cap ~8191).
     # The background executor uses larger 32k batches (fewer kopia invocations).
     commit_cmds = remove_files_chunked_commands(payload.repo, items, source=scope, commit=True, max_chars=8000, flag=flag)
