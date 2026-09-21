@@ -6,6 +6,7 @@ from __future__ import annotations
 import duckdb
 
 from app.index import queries
+from app.tests._tree_fixture import add_tree_tables
 
 SEP = chr(92)
 
@@ -17,6 +18,9 @@ def _tree_children_all(repo: str, rows: list[tuple], prefix: str = "") -> list[d
     con.execute("CREATE TABLE pathx(full_path VARCHAR, size BIGINT, "
                 "physical BIGINT, last_seen TIMESTAMP, in_latest BOOLEAN)")
     con.executemany("INSERT INTO pathx VALUES (?,?,?,?,?)", [r[2:] for r in rows])
+    # the folder scope resolves through dir/anc; a generation always carries them.
+    srcs = list(dict.fromkeys(r[1] for r in rows))
+    add_tree_tables(con, srcs, [(srcs.index(r[1]) + 1, r[2]) for r in rows])
     orig = queries.read_cursor
     monkey_cursor = con
     queries.read_cursor = lambda _repo: monkey_cursor

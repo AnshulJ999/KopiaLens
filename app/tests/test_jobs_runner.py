@@ -406,14 +406,20 @@ def test_shutdown_terminates_running_job_children(monkeypatch, isolated):
 # ---- the UI wiring's server half: request-shaped params resolve like the legacy endpoints ----
 
 def test_a_plan_form_start_resolves_like_remove_execute(monkeypatch, isolated):
+    """A plan-form start resolves through the same legacy helpers - as a DRY run: a mutating plan
+    delete requires the preview's ticket ( option (a)), so a ticket-less one refuses."""
     from app.api import actions, jobs as api_jobs
     monkeypatch.setattr(actions, "_remove_targets",
                         lambda p: {"object_ids": ["o1"], "names": ["n1"], "sources": ["s1"],
                                    "pairs": [], "files": []})
     params = api_jobs._resolve_params("remove_files", "1",
-                                      {"form": "plan", "query": "x", "source": "s1", "dry": False})
+                                      {"form": "plan", "query": "x", "source": "s1", "dry": True})
     assert params["items"] == ["o1"] and params["flag"] == "--object-id"
-    assert params["source"] == ["s1"] and params["dry"] is False
+    assert params["source"] == ["s1"] and params["dry"] is True
+    assert params["resolved"] == "filter"
+    with pytest.raises(jobs.JobRefused):
+        api_jobs._resolve_params("remove_files", "1",
+                                 {"form": "plan", "query": "x", "source": "s1", "dry": False})
 
 
 def test_a_files_form_start_resolves_like_the_detail_panel(monkeypatch, isolated):

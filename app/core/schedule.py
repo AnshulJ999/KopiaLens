@@ -377,22 +377,29 @@ _POLICY_REUSE_MAX_AGE = 3600     # how fresh core.policy's cache must be to stan
 
 
 def _recent_policies(repo: str) -> dict:
-    """The policy cache, but ONLY while it is recent enough to schedule from ().
+    """Scheduling blocks for every source, without a `policy show` per source ( +).
 
-    The nightly's `policies` stage runs `policy show` for every source and caches the whole
-    policy moments before this stage runs, and the scheduling block is a field of it - so
-    spawning kopia again per source was the same work twice (repo 2: ~100 + 67 subprocesses a
-    pass, at ~0.42 s of CLI overhead each).
-
-    The age gate is what makes it safe to read here: this also runs in the 30-minute light loop,
-    where an entry up to `POLICY_TTL` old would keep showing the old next-snapshot time after a
-    schedule was edited outside KopiaLens. Stale reads a spawn, as before.
+    The nightly's `policies` stage refreshes the per-source effective-policy cache moments before
+    this stage runs, so a fresh cache is used directly. A stale one (the 30-minute light loop)
+    resolves from ONE `policy export` instead of ~100 `policy show` calls, and the export itself is
+    re-read once it is older than the reuse window - so a schedule edited in KopiaUI still lands
+    within the hour, the same as before. Returns {} when neither is readable, which is the caller's
+    cue to fall back to a spawn per source.
     """
     try:
-        from .policy import load_policies
+        from . import policyresolve
+        from .policy import load_defined_policies, load_policies, refresh_defined_policies
+        from .sources import sources_index
+
         env = load_policies(repo)
         if time.time() - float(env.get("ts") or 0) <= _POLICY_REUSE_MAX_AGE:
             return env.get("policies") or {}
+        exp = load_defined_policies(repo)
+        if time.time() - float(exp.get("ts") or 0) > _POLICY_REUSE_MAX_AGE:
+            exp, _fresh = refresh_defined_policies(repo, force=True)
+        pols = exp.get("policies") or {}
+        if pols:
+            return {key: policyresolve.resolve(pols, key)[0] for key in sources_index(repo)}
     except Exception:  # noqa: BLE001 - no cache is simply a miss
         pass
     return {}

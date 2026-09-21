@@ -141,13 +141,32 @@ def _refresh_in_background(repo: str) -> None:
             _REFRESHING.discard(repo)
 
 
+_COLD_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _cold_lock(repo: str) -> threading.Lock:
+    """ One COLD listing per repo at a time. A cold cache is what an app start looks like, and
+    the UI fires its first requests together: each one used to run `kopia snapshot list` on its own
+    (eight simultaneous listings of the same repo). Callers that arrive while a build is in flight
+    wait for it and read its result instead of starting a second one."""
+    with _LOCK:
+        return _COLD_LOCKS.setdefault(repo, threading.Lock())
+
+
 def _ensure(repo: str, force: bool = False) -> dict:
     now = time.time()
     with _LOCK:
         entry = _CACHE.get(repo)
         fresh = bool(entry) and (_PINNED or now - entry["built"] < _TTL)
     if entry is None:
-        return _build_now(repo)  # nothing to fall back on: a failure here has to surface
+        # nothing to fall back on: a failure here has to surface - but only ONE of the callers
+        # that raced into this branch performs the build.
+        with _cold_lock(repo):
+            with _LOCK:
+                entry = _CACHE.get(repo)
+            if entry is not None:
+                return entry
+            return _build_now(repo)
     if force:
         try:
             return _build_now(repo)

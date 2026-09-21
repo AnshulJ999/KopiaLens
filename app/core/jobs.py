@@ -171,6 +171,12 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
             repo, items, source=params.get("source"), commit=not dry,
             max_chars=32000, flag=params.get("flag", "--object-id"))
         meta = {"items": len(items), "dry": dry}
+        if params.get("resolved"):
+            meta["resolved"] = params["resolved"]      # preview vs filter
+        if params.get("index_changed"):
+            meta["index_changed"] = True
+        if params.get("note"):
+            meta["note"] = params["note"]
     elif kind == "snapshot_delete":
         ids = params.get("snapshot_ids") or []
         cmds = snapshot_delete_commands(repo, ids, batch=True)
@@ -532,6 +538,11 @@ def _serialize(job: dict) -> dict:
     out["elapsed"] = round(max(0.0, (job["finished"] or time.time()) - (job["started"] or job["created"])), 1)
     if job["dry_summary"]:
         out["summary"] = dict(job["dry_summary"])
+    # The meta rides the record's "detail", which is not serialized; the note is the one piece the
+    # UI must see (e.g. "the index changed since your preview").
+    note = (job.get("detail") or {}).get("note")
+    if note:
+        out["note"] = note
     return out
 
 

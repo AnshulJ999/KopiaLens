@@ -11,6 +11,7 @@ import duckdb
 import pytest
 
 from app.index import queries
+from app.tests._tree_fixture import add_tree_tables
 
 SEP = chr(92)
 COMMA_SRC = "u@h:C:" + SEP + "A, docs"
@@ -41,6 +42,8 @@ def cur(monkeypatch):
         (5, 3, 3, "C:" + SEP + "A, docs" + SEP + "f.txt", "f.txt", "txt", 30, 9, 1, None, None, True, None),
     ]
     con.executemany("INSERT INTO pathx VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+    # folder scopes resolve through dir/anc, which a generation always carries.
+    add_tree_tables(con, [], [(r[1], r[3]) for r in rows])
     # A fresh cursor per call: the query layer closes what read_cursor hands it, so returning the
     # connection itself would leave the second call in a test talking to a closed connection.
     monkeypatch.setattr(queries, "read_cursor", lambda _repo: con.cursor())

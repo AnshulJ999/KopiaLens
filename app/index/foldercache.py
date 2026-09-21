@@ -23,7 +23,7 @@ import time
 from ..core.applog import get_logger
 from . import sidecache
 from .physical import folder_detail
-from .queries import _ESC, group_by_folder, like_literal
+from .queries import _ESC, dir_scope_sql, group_by_folder, like_literal
 from .store import read_cursor
 
 log = get_logger("foldercache")
@@ -62,12 +62,11 @@ def folder_stamp(repo: str, prefix: str, source: str | None = None) -> str:
     those sources' index content changes - the old repo-wide ``_index_hash`` stamp made every
     cached folder stale whenever any source anywhere changed, so the nightly recomputed all of
     them. Matching mirrors folder_detail: case-insensitive, the exact folder or under it."""
-    base = prefix.rstrip(_SEP).lower()
     cur = read_cursor(repo)
     try:
+        match, params = dir_scope_sql(cur, prefix, alias="d")
         sql = ("SELECT DISTINCT s.source FROM dir d JOIN src s ON s.src_id = d.src_id "
-               "WHERE lower(d.dir_path) = ? OR lower(d.dir_path) LIKE ?" + _ESC)
-        params: list = [base, like_literal(base) + _SEP + "%"]
+               f"WHERE {match}")
         if source:
             sql += " AND s.source = ?"
             params.append(source)

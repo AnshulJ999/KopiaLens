@@ -64,8 +64,12 @@ def test_holders_stay_on_the_selected_files_machine(monkeypatch):
     fp = "C:\\Users\\notes.txt"
     monkeypatch.setattr(deleteplan, "holders_for_paths", lambda repo, fps: {fp: [mine, nested, other]})
     seen = []
-    monkeypatch.setattr(deleteplan, "file_versions",
-                        lambda repo, src, path: seen.append(src) or [{"content_id": "c-" + src}])
+
+    def fake_versions(repo, pairs):
+        seen.extend(src for src, _fp in pairs)
+        return {(src, _fp): [{"content_id": "c-" + src}] for src, _fp in pairs}
+
+    monkeypatch.setattr(deleteplan, "versions_many", fake_versions)   # batched lookup
     facts = deleteplan.selection_facts("3", [(mine, fp)])
     assert facts["holders"] == [[mine, nested]]
     assert facts["holder_union"] == [mine, nested]

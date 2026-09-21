@@ -31,6 +31,8 @@ import hmac
 import ipaddress
 import os
 import secrets
+import threading
+import time
 
 from ..settings import load_settings, mutate_settings, raw_kopialens_settings
 
@@ -214,3 +216,46 @@ def cookie_kwargs() -> dict:
     """Session cookie flags. Not ``secure``: the app is commonly reached over plain HTTP on a LAN,
     and a secure-only cookie would silently never be sent there."""
     return {"httponly": True, "samesite": "lax", "max_age": 60 * 60 * 24 * 30, "path": "/"}
+
+
+# ---- login throttling -------------------------------------------------------------------
+# Wrong passwords cost an increasing wait; a right one clears the record. Deliberately NOT a
+# lockout: there is one shared password and no accounts, so a forgotten password must never be
+# able to lock the owner out - the worst case here is a 30 s wait. In memory only, so a restart
+# forgives everything, and a quiet period forgets too.
+#
+# Behind a reverse proxy every request arrives from the proxy, so all proxy users share one
+# bucket. Correct for the common single-user install; a trusted-proxy mode is's.
+_THROTTLE_AFTER = 5                    # failures before the first wait
+_THROTTLE_MAX = 30.0                   # seconds; the wait never exceeds this
+_THROTTLE_FORGET = 900.0               # a quiet period this long clears the record
+_THROTTLE_CAP = 1024                   # addresses remembered; past it expired entries are dropped
+_THROTTLE: dict[str, tuple[int, float]] = {}
+_THROTTLE_LOCK = threading.Lock()
+
+
+def login_delay(address: str) -> float:
+    """Seconds ``address`` must wait before another attempt; 0.0 when it may try now."""
+    now = time.time()
+    with _THROTTLE_LOCK:
+        count, last = _THROTTLE.get(address, (0, 0.0))
+        if count <= _THROTTLE_AFTER or now - last > _THROTTLE_FORGET:
+            return 0.0
+        return min(_THROTTLE_MAX, float(2 ** (count - _THROTTLE_AFTER)))
+
+
+def record_login_failure(address: str) -> None:
+    now = time.time()
+    with _THROTTLE_LOCK:
+        count, last = _THROTTLE.get(address, (0, 0.0))
+        _THROTTLE[address] = (count + 1 if now - last <= _THROTTLE_FORGET else 1, now)
+        if len(_THROTTLE) > _THROTTLE_CAP:
+            for addr in [a for a, (_c, t) in _THROTTLE.items() if now - t > _THROTTLE_FORGET]:
+                _THROTTLE.pop(addr, None)
+            if len(_THROTTLE) > _THROTTLE_CAP:          # all fresh: a spray, not a guesser
+                _THROTTLE.clear()
+
+
+def record_login_success(address: str) -> None:
+    with _THROTTLE_LOCK:
+        _THROTTLE.pop(address, None)

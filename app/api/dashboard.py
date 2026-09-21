@@ -88,6 +88,16 @@ def get_index_status(repo: str = "1") -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get("/index/log")
+def index_log(repo: str = "1", after: int = 0, limit: int = 400) -> dict:
+    """ Paged tail of this repo's worker log for the panel's log pane. ``after`` is the
+    cursor the previous call returned; only lines after it come back, and the cursor advances by
+    exactly what was returned so a burst pages through instead of being skipped."""
+    from ..core.nightly import worker_log_lines
+    lines, cursor = worker_log_lines(repo, after=after, limit=limit)
+    return {"repo": repo, "lines": lines, "cursor": cursor}
+
+
 @router.get("/index/pending")
 def index_pending() -> dict:
     """Index updates queued after deletes, with when each will start."""

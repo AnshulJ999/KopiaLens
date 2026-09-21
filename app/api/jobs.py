@@ -42,14 +42,39 @@ def _resolve_params(kind: str, repo: str, params: dict) -> dict:
         dry = bool(params.get("dry"))
         form = params.get("form")
         if form == "plan":
+            from .actions import index_generation, previewed_plan
+
             known = {k: v for k, v in params.items() if k not in ("form", "dry")}
+            token = str(known.pop("plan_token", "") or "")
+            plan = previewed_plan(token)
+            if plan is not None and plan.get("repo") != repo:
+                plan = None          # a ticket from another repo: never run it here
+            if plan is not None:
+                # exactly the list the preview showed - never re-derived, so a reindex that
+                # lands between preview and execute cannot add files nobody approved.
+                out = {"items": plan["items"], "flag": plan["flag"], "dry": dry,
+                       "source": plan["source"], "resolved": "preview"}
+                moved = (plan.get("generation") is not None
+                         and plan["generation"] != index_generation(repo))
+                if moved:
+                    out["index_changed"] = True
+                    out["note"] = ("The index changed since your preview. Removing exactly the "
+                                   "files you approved - nothing else.")
+                return out
+            # option (a): a MUTATING plan delete never re-derives silently - an expired or
+            # absent ticket refuses, and the panel re-previews so the user approves the fresh list.
+            # Dry runs mutate nothing, so they keep the old filter fallback.
+            if not dry:
+                raise jobs.JobRefused("That preview is out of date. The list has been refreshed, "
+                                      "so review it and delete again.")
             rp = RemovePlanRequest(**{**known, "repo": repo})
             t = _remove_targets(rp)
             items, flag = _remove_items(t, rp.by)
             if not items:
                 raise jobs.JobRefused("no matching files")
             return {"items": items, "flag": flag, "dry": dry,
-                    "source": _remove_scope(rp.everywhere, t["sources"])}
+                    "source": _remove_scope(rp.everywhere, t["sources"]),
+                    "resolved": "filter"}
         known = {k: v for k, v in params.items() if k not in ("form", "dry")}
         rf = RemoveFilesRequest(**{**known, "repo": repo})
         oids, names, scope = _rf_resolve(rf)

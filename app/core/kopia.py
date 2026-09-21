@@ -9,6 +9,7 @@ dry-run counterparts run the same commands without the mutating flag.
 
 from __future__ import annotations
 
+import contextvars
 import os
 import queue
 import re
@@ -50,6 +51,22 @@ MOUNT_ALLOWED = {("mount",)}
 
 KOPIA_CALLS = 0
 KOPIA_TIME = 0.0
+
+# The pair above is a process-wide total, so a request could only ever measure it as a
+# before/after DELTA - which charges a request for its neighbours' spawns under concurrency (187
+# logged against the real 85). The middleware sets this to a ``[calls, seconds]`` slot per request
+# and every spawn adds to it; the totals keep counting for /debug/memory.
+REQUEST_CALLS: contextvars.ContextVar = contextvars.ContextVar("kopialens_kopia_calls", default=None)
+
+
+def _count_spawn(elapsed: float) -> None:
+    global KOPIA_CALLS, KOPIA_TIME
+    KOPIA_CALLS += 1
+    KOPIA_TIME += elapsed
+    slot = REQUEST_CALLS.get()
+    if slot is not None:
+        slot[0] += 1
+        slot[1] += elapsed
 
 
 @dataclass
@@ -130,7 +147,6 @@ def kopia(repo: str, args: list[str], ro: bool = True, timeout: float | None = N
     exception, so every existing returncode check handles it.
     """
 
-    global KOPIA_CALLS, KOPIA_TIME
     if ro:
         check_readonly(args)
     full = _base_command(repo, args)
@@ -148,14 +164,12 @@ def kopia(repo: str, args: list[str], ro: bool = True, timeout: float | None = N
         )
     except subprocess.TimeoutExpired as exc:  # run() has already killed the child
         elapsed = time.time() - start
-        KOPIA_CALLS += 1
-        KOPIA_TIME += elapsed
+        _count_spawn(elapsed)
         log.error("kopia timed out after %.0fs: %s", elapsed, " ".join(full[:4]))
         return KopiaResult(args=full, returncode=TIMEOUT_RC, stdout=_as_text(exc.stdout),
                            stderr=f"kopia timed out after {elapsed:.0f}s", elapsed=elapsed)
     elapsed = time.time() - start
-    KOPIA_CALLS += 1
-    KOPIA_TIME += elapsed
+    _count_spawn(elapsed)
     return KopiaResult(args=full, returncode=res.returncode, stdout=res.stdout, stderr=res.stderr, elapsed=elapsed)
 
 
@@ -226,9 +240,7 @@ def kopia_lines(repo: str, args: list[str], ro: bool = True, timeout: float | No
             err = "".join(errbuf).strip()[:300]
             raise RuntimeError(f"kopia exited {rc}: {err or ' '.join(full[:4])}")
     finally:
-        global KOPIA_CALLS, KOPIA_TIME
-        KOPIA_CALLS += 1
-        KOPIA_TIME += time.time() - start
+        _count_spawn(time.time() - start)
         if watchdog:
             watchdog.cancel()
         if proc.poll() is None:      # generator closed early, or we raised

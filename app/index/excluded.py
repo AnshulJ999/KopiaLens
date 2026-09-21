@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from config import kopia_repos
 
+from ..core import paths as pathrules
 from ..core.disklookup import children as es_children, list_drives, recursive_count, recursive_size
 from .store import read_cursor
 
@@ -46,9 +47,11 @@ def _list_cache_put(ckey: tuple, val: tuple) -> None:
 
 def _prefix_bounds(folder: str) -> tuple[str, str, int]:
     """Lowercased [lo, hi) range that captures everything under `folder`, plus the prefix length
-    (chars to strip to get the path relative to the folder)."""
+    (chars to strip to get the path relative to the folder). the bound comes from
+    ``paths.prefix_bounds`` - ``lo + U+FFFF`` dropped every child whose name starts above U+FFFF."""
     lo = folder.lower().rstrip(_SEP) + _SEP
-    return lo, lo + "￿", len(lo)
+    _, hi = pathrules.prefix_bounds(lo)
+    return lo, hi, len(lo)
 
 
 def kopia_backed_children(folder: str) -> dict[str, dict]:
@@ -248,7 +251,7 @@ def drive_stats() -> list[dict]:
         p = d["path"]
         ts, tc = recursive_size(p), recursive_count(p)
         lo = p.lower().rstrip(_SEP) + _SEP
-        hi = lo + "￿"
+        _, hi = pathrules.prefix_bounds(lo)
         bs = bc = 0
         for repo in kopia_repos():
             cur = read_cursor(repo)

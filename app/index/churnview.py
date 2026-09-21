@@ -366,12 +366,35 @@ def cached_folder_window(repo: str, folder: str, days: int = 30, depth: int = 4)
     return total if found else None
 
 
-def prewarm(repo: str, depth: int = 4, windows=WINDOWS) -> None:
-    """Nightly: build EVERY standard window and persist it, so switching windows in the tab the
-    next day costs nothing. Each is ~5s, and doing it here means the ~700MB aggregation happens in
-    the worker process (which then exits) rather than in the long-lived app."""
+_PANEL_DEPTH = 4          # cached_folder_window's depth: the folder panel's 30-day row
+
+
+def ui_depth() -> int:
+    """The depth the Churn tab rolls up at: the user's ``churn_depth``, the same number the API
+    defaults to. Read here so the prewarm follows the setting instead of assuming 4."""
+    try:
+        from ..settings import load_settings
+        return max(1, int((load_settings().get("kopialens", {}) or {}).get("churn_depth", _PANEL_DEPTH)))
+    except Exception:  # noqa: BLE001 - an unreadable setting must not skip the prewarm
+        return _PANEL_DEPTH
+
+
+def prewarm(repo: str, depth: int | None = None, windows=WINDOWS) -> None:
+    """Nightly: build EVERY standard window at the depth the UI reads, plus the folder panel's row.
+
+ The tab rolls up at ``churn_depth`` while ``cached_folder_window`` reads depth 4, so one
+    hardcoded depth left the other recomputing from scratch on its first open - the nightly built 4
+    deep against a tab that read 8. Each pass is ~5s and happens in the worker process (which then
+    exits) rather than in the long-lived app."""
+    if depth is None:
+        depth = ui_depth()
     for days in windows:
         try:
             churn_rollup(repo, days=days, depth=depth, refresh=True)
         except Exception as exc:  # noqa: BLE001 - never fail the nightly cycle on a warm pass
-            log.error("churn prewarm repo=%s days=%d failed: %s", repo, days, exc)
+            log.error("churn prewarm repo=%s days=%d depth=%d failed: %s", repo, days, depth, exc)
+    if depth != _PANEL_DEPTH:
+        try:
+            churn_rollup(repo, days=30, depth=_PANEL_DEPTH, refresh=True)
+        except Exception as exc:  # noqa: BLE001 - the panel row is a bonus, not the pass
+            log.error("churn prewarm repo=%s days=30 depth=%d failed: %s", repo, _PANEL_DEPTH, exc)

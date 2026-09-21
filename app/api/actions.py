@@ -13,9 +13,8 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..core import audit, reindexq
+from ..core import audit
 from ..core.kopia import (
-    _REMOVE_JOBS,
     MountError,
     list_mounts,
     maintenance_run_command,
@@ -26,30 +25,64 @@ from ..core.kopia import (
     pick_folder,
     remove_files_bat_text,
     remove_files_chunked_commands,
-    remove_files_chunked_execute,
     remove_files_command,
     remove_files_dry_run,
-    remove_files_execute,
-    remove_log_path,
-    restore_command,
-    restore_command_full,
-    restore_execute,
     snapshot_delete_commands,
     snapshot_delete_dry_run,
-    snapshot_delete_execute,
     unmount,
 )
-from ..core.sources import invalidate as invalidate_sources
 from ..index.schema import RepoOffline
 from ..core.nightly import start_index_pass_async
 from ..index.holding import snapshots_for_path
 from ..index.physical import batch_detail, folder_detail
-from ..index.queries import remove_targets, remove_targets_summary
+from ..index.queries import paths_named, remove_targets, remove_targets_summary
 from ..settings import load_settings
 
 router = APIRouter(tags=["actions"])
 
 _SEP = chr(92)  # backslash
+_FILENAME_SAMPLE = 500   # collateral paths listed for a filename-mode plan (the count is exact)
+
+# Previewed plans, by token. The panel's job start passes the token back, so the delete runs
+# the exact list the user approved instead of re-deriving it from the filter (a reindex landing in
+# between - the nightly, or the 5-minute post-delete pass - could otherwise add files nobody saw).
+_PLANS: dict[str, dict] = {}
+_PLANS_LOCK = threading.Lock()
+_PLANS_TTL = 3600.0
+_PLANS_MAX = 20
+
+
+def index_generation(repo: str) -> int | None:
+    """The published generation's number, or None when the repo has no index yet."""
+    try:
+        from ..index import store
+        return int((store.read_manifest(repo) or {}).get("generation") or 0) or None
+    except Exception:  # noqa: BLE001 - a missing manifest simply means "unknown"
+        return None
+
+
+def _remember_plan(plan: dict) -> str:
+    token = uuid.uuid4().hex[:12]
+    now = time.time()
+    with _PLANS_LOCK:
+        for old in [t for t, p in _PLANS.items() if now - p["created"] > _PLANS_TTL]:
+            _PLANS.pop(old, None)
+        while len(_PLANS) >= _PLANS_MAX:
+            _PLANS.pop(next(iter(_PLANS)), None)
+        _PLANS[token] = {"created": now, **plan}
+    return token
+
+
+def previewed_plan(token: str) -> dict | None:
+    """The stored plan for a token, or None when it was never stored or has expired."""
+    if not token:
+        return None
+    with _PLANS_LOCK:
+        plan = _PLANS.get(token)
+        if plan is None or time.time() - plan["created"] > _PLANS_TTL:
+            _PLANS.pop(token, None)
+            return None
+        return dict(plan)
 
 
 def _source_root(source: str) -> str:
@@ -69,13 +102,6 @@ def _fmt_cmd(cmd: list[str]) -> str:
     return " ".join(f'"{a}"' if (not a or " " in a) else a for a in cmd)
 
 
-class RestorePreview(BaseModel):
-    repo: str = "1"
-    source: str
-    destination: str
-    overwrite: bool = False
-
-
 class MountRequest(BaseModel):
     repo: str = "1"
     snapshot_id: str
@@ -93,26 +119,16 @@ class MountOpenRequest(BaseModel):
 class SnapshotDeleteRequest(BaseModel):
     repo: str = "1"
     snapshot_ids: list[str]
-    confirm: bool = False
 
 
 class RemoveFilesRequest(BaseModel):
     repo: str = "1"
     by: str = "object-id"   # "object-id" (precise content) | "filename" (by name)
-    confirm: bool = False
     everywhere: bool = False  # object-id: drop --source to remove from ALL sources (sweeps whole repo)
     sources: list[str] | None = None  # explicit --source scope (the Delete panel's ticked backups)
     source: str | None = None      # single-file form
     full_path: str | None = None
     files: list[dict] | None = None  # batch form: [{"source":..., "full_path":...}]
-
-
-class RestoreRequest(BaseModel):
-    repo: str = "1"
-    source_id: str                 # object id (file/dir/snapshot root), optionally with /sub/path
-    target: str                    # destination folder or a .zip/.tar archive
-    options: dict = {}
-    confirm: bool = False
 
 
 class FolderReclaimRequest(BaseModel):
@@ -123,13 +139,6 @@ class FolderReclaimRequest(BaseModel):
 
 class UnmountRequest(BaseModel):
     pid: int
-
-
-@router.post("/actions/restore-preview")
-def restore_preview(payload: RestorePreview) -> dict:
-    audit.audit("generated", "restore-command", repo=payload.repo,
-                summary={"source": payload.source, "destination": payload.destination})
-    return {"command": restore_command(payload.repo, payload.source, payload.destination, overwrite=payload.overwrite)}
 
 
 def _snapshot_info(repo: str, snapshot_id: str, source: str | None) -> dict:
@@ -193,34 +202,18 @@ def mount_open(payload: MountOpenRequest) -> dict:
 
 @router.post("/actions/snapshot-delete")
 def snapshot_delete(payload: SnapshotDeleteRequest) -> dict:
-    """confirm=false -> return the exact delete commands (preview, nothing happens).
-    confirm=true  -> actually delete, then reindex the affected sources so the UI is current.
-    Space frees on the next maintenance run (kopia's own step)."""
+    """The exact delete commands (preview, nothing happens). Space frees on the next maintenance
+    run (kopia's own step). Executing is the job runner's, not a route's - the old
+    confirm=true branch ran kopia outside the runner's locks, audit and policy backups."""
     if not payload.snapshot_ids:
         raise HTTPException(status_code=400, detail="snapshot_ids is empty")
-    if not payload.confirm:
-        cmds = snapshot_delete_commands(payload.repo, payload.snapshot_ids, batch=True)
-        text = "\n".join(" ".join(c) for c in cmds)
-        maint = " ".join(maintenance_run_command(payload.repo))
-        audit.audit("generated", "snapshot-delete-commands", repo=payload.repo,
-                    summary={"ids": len(payload.snapshot_ids)})
-        return {"executed": False, "count": len(payload.snapshot_ids),
-                "commands": text + "\n\n# Then reclaim space with:\n" + maint}
-    result = snapshot_delete_execute(payload.repo, payload.snapshot_ids)
-    deleted = int(result.get("deleted") or 0)
-    # The execute chunks at 200 ids per kopia call, so a later chunk can fail after earlier ones
-    # succeeded. Raising first left the index describing snapshots that no longer exist until the
-    # next nightly pass - refresh on ANY progress, then report the failure.
-    if deleted:
-        invalidate_sources(payload.repo)        # the snapshot set changed -> drop the cached listing
-        reindexq.request(payload.repo)          # incremental reindex picks up the now-missing snapshots
-    if result["returncode"] != 0:
-        err = result["stderr"].strip() or "kopia snapshot delete failed"
-        raise HTTPException(
-            status_code=500,
-            detail=(f"deleted {deleted} of {len(payload.snapshot_ids)} snapshots, then failed: {err}"
-                    if deleted else err))
-    return {"deleted": deleted, "command": result.get("command")}
+    cmds = snapshot_delete_commands(payload.repo, payload.snapshot_ids, batch=True)
+    text = "\n".join(" ".join(c) for c in cmds)
+    maint = " ".join(maintenance_run_command(payload.repo))
+    audit.audit("generated", "snapshot-delete-commands", repo=payload.repo,
+                summary={"ids": len(payload.snapshot_ids)})
+    return {"executed": False, "count": len(payload.snapshot_ids),
+            "commands": text + "\n\n# Then reclaim space with:\n" + maint}
 
 
 def _rf_targets(payload: RemoveFilesRequest) -> list[tuple[str, str]]:
@@ -229,11 +222,6 @@ def _rf_targets(payload: RemoveFilesRequest) -> list[tuple[str, str]]:
     if payload.source and payload.full_path:
         return [(payload.source, payload.full_path)]
     return []
-
-
-def _post_remove(repo: str) -> None:
-    invalidate_sources(repo)
-    reindexq.request(repo)  # snapshots were rewritten -> reindex so the UI reflects reality
 
 
 def _rf_preview(repo: str, items: list[str], flag: str, scope, by: str) -> dict:
@@ -277,31 +265,16 @@ def _rf_resolve(payload: RemoveFilesRequest) -> tuple[list[str], list[str], list
 
 @router.post("/actions/remove-files")
 def remove_files(payload: RemoveFilesRequest) -> dict:
-    """Remove file(s) from ALL snapshots (without deleting the snapshots), via
-    `kopia snapshot fix remove-files`. Supports single or batch. by="object-id" removes the exact
-    content everywhere (no --source); by="filename" is scoped per source. confirm=false returns
-    dry-run + commit commands; confirm=true executes with --commit then reindexes."""
+    """The dry-run + commit commands for removing file(s) from ALL snapshots (nothing runs),
+    via `kopia snapshot fix remove-files`. by="object-id" removes the exact content everywhere
+    (no --source); by="filename" is scoped per source. Executing is the job runner's."""
     oids, names, scope = _rf_resolve(payload)
 
     if payload.by == "filename":
-        if not payload.confirm:
-            return _rf_preview(payload.repo, names, "--filename", scope, "filename")
-        r = remove_files_execute(payload.repo, filenames=names, source=scope)
-        if r["returncode"] != 0:
-            raise HTTPException(status_code=500, detail=r["stderr"].strip() or "remove-files failed")
-        _post_remove(payload.repo)
-        return {"executed": True}
-
-    # object-id (exact content)
+        return _rf_preview(payload.repo, names, "--filename", scope, "filename")
     if not oids:
         raise HTTPException(status_code=404, detail="no content objects found")
-    if not payload.confirm:
-        return _rf_preview(payload.repo, oids, "--object-id", scope, "object-id")
-    r = remove_files_execute(payload.repo, object_ids=oids, source=scope)
-    if r["returncode"] != 0:
-        raise HTTPException(status_code=500, detail=r["stderr"].strip() or "remove-files failed")
-    _post_remove(payload.repo)
-    return {"executed": True}
+    return _rf_preview(payload.repo, oids, "--object-id", scope, "object-id")
 
 
 def _dry_response(r: dict) -> dict:
@@ -468,8 +441,13 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
                 "commit": "", "dry_run": "", "preview": [], "sources_scope": [], "everywhere": False,
                 "logical": 0, "physical": 0, "all_versions": payload.all_versions, "by": payload.by,
                 "sources_matched": [], "total_file_count": 0, "total_physical": 0,
-                "total_logical": 0, "capped": False}
+                "total_logical": 0, "capped": False,
+                "filename_match_total": None, "filename_extra_count": 0, "filename_extra": [],
+                "filename_extra_capped": False}
     scope = _remove_scope(payload.everywhere, t["sources"])
+    generation = index_generation(payload.repo)
+    plan_token = _remember_plan({"items": items, "flag": flag, "source": scope, "by": payload.by,
+                                 "repo": payload.repo, "generation": generation})
     # 8k per command so the copied lines are pasteable into a terminal (cmd.exe line cap ~8191).
     # The background executor uses larger 32k batches (fewer kopia invocations).
     commit_cmds = remove_files_chunked_commands(payload.repo, items, source=scope, commit=True, max_chars=8000, flag=flag)
@@ -478,6 +456,24 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
                 summary={"items": len(items), "by": payload.by, "batches": len(commit_cmds),
                          "sources": scope or [], "everywhere": scope is None,
                          "query": payload.query, "first_from": payload.first_from})
+    # ``--filename`` is a basename match across the whole scoped source, so a folder plan
+    # also removes same-named files OUTSIDE it. The panel shows the plan's own set; these fields
+    # say how much rides along, and which.
+    extra: dict = {}
+    if payload.by == "filename" and t["names"]:
+        sweep_sources = scope
+        if sweep_sources is None:                     # everywhere: kopia drops --source
+            from ..core.sources import sources_index
+            sweep_sources = sorted(sources_index(payload.repo))
+        found = paths_named(payload.repo, sweep_sources, t["names"], cap=_FILENAME_SAMPLE)
+        planned = {(s, fp) for s, fp in t["pairs"]}
+        rows = [{**r} for r in found["rows"] if (r["source"], r["full_path"]) not in planned]
+        extra = {
+            "filename_match_total": int(found["total"]),
+            "filename_extra_count": max(0, int(found["total"]) - len(planned)),
+            "filename_extra": rows,
+            "filename_extra_capped": int(found["total"]) > len(found["rows"]),
+        }
     return {
         "file_count": t["file_count"], "object_count": len(t["object_ids"]), "name_count": len(t["names"]),
         "item_count": len(items), "by": payload.by,
@@ -491,6 +487,10 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
         "preview": t["files"], "all_versions": payload.all_versions,
         "commit": "\n".join(_fmt_cmd(c) for c in commit_cmds),
         "dry_run": "\n".join(_fmt_cmd(c) for c in dry_cmds),
+        "filename_match_total": None, "filename_extra_count": 0, "filename_extra": [],
+        "filename_extra_capped": False, **extra,
+        # the job start passes plan_token back; index_generation is what it compares.
+        "plan_token": plan_token, "index_generation": generation,
     }
 
 
@@ -594,36 +594,6 @@ def remove_plan_dry_run(payload: RemovePlanRequest) -> dict:
     return _dry_response(r)
 
 
-@router.post("/actions/remove-execute")
-def remove_execute(payload: RemovePlanRequest) -> dict:
-    """Run the chunked delete in the background (sequential --commit batches). Returns a job_id;
-    poll /actions/remove-status. kopia output is appended to the returned log path."""
-    t = _remove_targets(payload)
-    items, flag = _remove_items(t, payload.by)
-    if not items:
-        raise HTTPException(status_code=404, detail="no matching files")
-    scope = _remove_scope(payload.everywhere, t["sources"])
-    job_id = uuid.uuid4().hex[:12]
-    ts = time.strftime("%Y%m%d_%H%M%S")
-    log_path = remove_log_path(f"remove_repo{payload.repo}_{ts}.log")
-    _REMOVE_JOBS[job_id] = {"total": 0, "done": 0, "running": True, "errors": 0,
-                            "objects": len(items), "log": log_path}
-
-    def run() -> None:
-        try:
-            remove_files_chunked_execute(payload.repo, items, scope, job_id, log_path, flag=flag)
-        finally:
-            _post_remove(payload.repo)  # snapshots rewritten -> reindex so the UI reflects reality
-
-    threading.Thread(target=run, daemon=True).start()
-    return {"job_id": job_id, "items": len(items), "log": log_path}
-
-
-@router.get("/actions/remove-status")
-def remove_status(job_id: str) -> dict:
-    return _REMOVE_JOBS.get(job_id, {"running": False, "total": 0, "done": 0, "unknown": True})
-
-
 @router.post("/actions/snapshot-delete-dry-run")
 def snapshot_delete_dry_run_route(payload: SnapshotDeleteRequest) -> dict:
     """RUN snapshot delete without --delete: kopia lists exactly what it would delete.
@@ -631,23 +601,6 @@ def snapshot_delete_dry_run_route(payload: SnapshotDeleteRequest) -> dict:
     if not payload.snapshot_ids:
         raise HTTPException(status_code=400, detail="snapshot_ids is empty")
     return _dry_response(snapshot_delete_dry_run(payload.repo, payload.snapshot_ids))
-
-
-@router.post("/actions/restore")
-def restore(payload: RestoreRequest) -> dict:
-    """confirm=false -> the restore command preview. confirm=true -> execute it (writes to the
-    target folder / archive). Overwrite/delete-extra only happen if those options are enabled."""
-    if not payload.target:
-        raise HTTPException(status_code=400, detail="target is required")
-    if not payload.confirm:
-        cmd = restore_command_full(payload.repo, payload.source_id, payload.target, payload.options)
-        audit.audit("generated", "restore-command", repo=payload.repo,
-                    summary={"source_id": payload.source_id, "target": payload.target})
-        return {"executed": False, "command": _fmt_cmd(cmd)}
-    result = restore_execute(payload.repo, payload.source_id, payload.target, payload.options)
-    if result["returncode"] != 0:
-        raise HTTPException(status_code=500, detail=result["stderr"].strip() or "restore failed")
-    return {"executed": True, "command": result.get("command")}
 
 
 @router.post("/actions/browse-folder")

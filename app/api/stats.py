@@ -193,6 +193,33 @@ def _index_health(repo: str) -> list[dict]:
         return []
 
 
+def _retention_check(repo: str) -> dict:
+    """The nightly's retention self-check (``app/index/retentioncheck.py``), read from disk.
+
+    kopia computes its own ``retentionReason`` while listing, so the check compares the replica
+    against it, source by source - no subprocess here. The panel shows a line only when something
+    disagrees; "none" means no check has been recorded yet."""
+    try:
+        from ..index import retentioncheck
+        rec = retentioncheck.load(repo) or {}
+    except Exception:  # noqa: BLE001 - a health read must never break the panel
+        rec = {}
+    if not rec:
+        return {"status": "none", "checked": 0, "mismatches": 0, "failed": 0, "at": None, "detail": []}
+    mismatches = rec.get("mismatches") or []
+    failed = rec.get("failed") or []
+    ts = rec.get("ts")
+    return {
+        "status": "mismatch" if mismatches else ("failed" if failed else "ok"),
+        "checked": int(rec.get("checked") or 0),
+        "mismatches": len(mismatches),
+        "failed": len(failed),
+        "at": dt.datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M:%S") if ts else None,
+        "detail": [f"{m.get('source')}: {m.get('we_drop')} kept by kopia that we drop, "
+                   f"{m.get('we_keep')} we keep that kopia drops" for m in mismatches[:5]],
+    }
+
+
 _HISTORY_LOCK = threading.Lock()  # two repos refreshing at once must not lose samples
 
 
@@ -256,6 +283,17 @@ def _compute_stats(repo: str) -> dict:
         data["parsed"] = {}
     data["parsed"]["duckdb_health"] = _index_health(repo)
     health.extend(h for h in data["parsed"]["duckdb_health"] if h["status"] == "warn")
+    rc = _retention_check(repo)
+    data["parsed"]["retention_check"] = rc
+    if rc["status"] == "mismatch":
+        health.append({
+            "id": "retention-mismatch", "status": "warn",
+            "title": f"Retention check: {rc['mismatches']} of {rc['checked']} sources disagree with kopia",
+            "detail": "The simulator and the delete panel's keep counts come from KopiaLens's "
+                      "retention replica, so a disagreement means those numbers can be wrong. "
+                      + "; ".join(rc["detail"][:3]),
+            "fix_command": None,
+        })
     if content["packed_bytes"]:
         samples = _record_growth(repo, content["packed_bytes"])
         data["parsed"]["growth"] = samples

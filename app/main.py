@@ -15,6 +15,7 @@ from pathlib import Path
 
 import jinja2
 from fastapi import FastAPI, Request
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, RedirectResponse,
                                Response)
 from fastapi.staticfiles import StaticFiles
@@ -225,6 +226,22 @@ def _mark_nightly(repo: str, slot: float) -> None:
     data.setdefault("attempts", {})[repo] = {"slot": slot, "at": now, "retries": retries, "ok": None}
     data.setdefault("nightly", {})[repo] = now
     data["ts"] = now
+    _write_state(data)
+
+
+def mark_index_stopped(repo: str) -> None:
+    """ Record a DELIBERATE stop for the current slot so the retry never brings it back.
+
+    A stopped worker exits non-zero, which is indistinguishable from a crash - and the retry arm
+    exists exactly for crashes. The error text is replaced too: "stopped by you" is not a failure
+    to investigate, and the freshness strip reads this reason."""
+    data = _read_state()
+    rec = (data.get("attempts") or {}).get(repo) or {}
+    rec["stopped"] = True
+    data.setdefault("attempts", {})[repo] = rec
+    data.setdefault("errors", {})[repo] = {"at": time.time(),
+                                           "reason": "Stopped by you. It will not restart on its own."}
+    data["ts"] = time.time()
     _write_state(data)
 
 
@@ -453,6 +470,8 @@ def _index_due(repo: str, now_dt: dt.datetime, now_ts: float) -> bool:
     rec = _attempt_record(repo)
     if rec.get("slot") != slot or rec.get("ok") is not False:
         return False       # different slot, still running (ok is None), or it succeeded
+    if rec.get("stopped"):
+        return False       # a deliberate stop: this slot stays closed
     if int(rec.get("retries", 0)) >= _max_retries():
         return False
     return now_ts - float(rec.get("finished") or rec.get("at") or 0) >= _retry_delay()
@@ -644,12 +663,32 @@ async def _form(request: Request) -> dict[str, str]:
 @app.post("/api/auth/login")
 async def auth_login(request: Request):
     form = await _form(request)
+    address = request.client.host if request.client else "?"
+    wait = auth.login_delay(address)                      # increasing wait, never a lockout
+    if wait:
+        return HTMLResponse(auth.login_page(f"Too many attempts. Try again in {int(wait)}s."),
+                            status_code=429, headers={"Retry-After": str(int(wait) + 1)})
     if not auth.verify_password(str(form.get("password") or ""), auth.password_hash()):
-        log.warning("failed login attempt from %s", request.client.host if request.client else "?")
+        auth.record_login_failure(address)
+        log.warning("failed login attempt from %s", address)
         return HTMLResponse(auth.login_page("Wrong password."), status_code=401)
+    auth.record_login_success(address)
     resp = RedirectResponse("/", status_code=303)
     resp.set_cookie(auth.COOKIE_NAME, auth.session_token(), **auth.cookie_kwargs())
     return resp
+
+
+@app.post("/api/index/stop")
+def post_index_stop(repo: str = "1"):
+    """ Stop this repo's index run AND keep it stopped.
+
+    The worker is terminated, then the slot is closed so the scheduler's retry (a killed worker
+    looks like a crash) does not relaunch it 15 minutes later. A later manual Index or the next
+    nightly starts normally."""
+    out = nightly.stop_index_pass(repo)
+    if out.get("stopped"):
+        mark_index_stopped(repo)
+    return JSONResponse(out)
 
 
 @app.post("/api/auth/set-password")
@@ -722,13 +761,16 @@ _request_stats = RequestStats()
 @app.middleware("http")
 async def timing_middleware(request: Request, call_next):
     start = time.perf_counter()
-    calls0, ktime0 = kopia_mod.KOPIA_CALLS, kopia_mod.KOPIA_TIME
-    response = await call_next(request)
+    slot = [0, 0.0]                                  # this request's own spawns
+    token = kopia_mod.REQUEST_CALLS.set(slot)
+    try:
+        response = await call_next(request)
+    finally:
+        kopia_mod.REQUEST_CALLS.reset(token)
     path = request.url.path
     if path.startswith("/api"):
         ms = (time.perf_counter() - start) * 1000
-        kc = kopia_mod.KOPIA_CALLS - calls0
-        kms = (kopia_mod.KOPIA_TIME - ktime0) * 1000
+        kc, kms = slot[0], slot[1] * 1000
         args = (request.method, path, response.status_code, ms, kc, kms)
         if response.status_code >= 500:
             log.warning("%s %s -> %s  %.0fms  kopia_subproc=%d/%.0fms", *args)
@@ -741,6 +783,22 @@ async def timing_middleware(request: Request, call_next):
         else:
             log.debug("%s %s -> %s  %.0fms  kopia_subproc=%d/%.0fms", *args)
     return response
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """FastAPI's default shape, plus a LOG for 5xx.
+
+    Routes turn a failure into ``HTTPException(500, str(exc))`` at their boundary, so the real
+    traceback rides ``exc.__cause__`` - and HTTPException never reaches the handler below, which is
+    why those errors vanished from the log. A 4xx is a normal answer and stays quiet."""
+    if exc.status_code >= 500:
+        cause = exc.__cause__
+        log.error("%s %s -> %s: %s\n%s", request.method, request.url.path, exc.status_code,
+                  cause or exc.detail,
+                  "".join(traceback.format_exception(cause)) if cause else "")
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail},
+                        headers=getattr(exc, "headers", None))
 
 
 @app.exception_handler(FileNotFoundError)
