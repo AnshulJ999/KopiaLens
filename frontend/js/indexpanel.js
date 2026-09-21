@@ -147,7 +147,7 @@ const indexPanelPart = {
       }
       return kept.slice(-400);
     },
-    indexLogClass(ln) { return /error|warn|unable|failed|cannot|abort/i.test(ln) ? "w" : ""; },
+    indexLogClass(ln) { return klLogLineWarn(ln); },
 
     async indexStop() {
       if (!this.indexStatus || !this.indexStatus.building) return;

@@ -448,7 +448,10 @@ const detailPart = {
     removePlanDry() {  // run the whole matched plan's real kopia dry run
       if (!this.removePlan) return;
       const st = this.removePlan.dry = (this.removePlan.dry || this.klDryState());
-      return this.klDry("/api/actions/remove-plan-dry-run", this._removeBody(), st);
+      // The ticket is optional for a dry run, but sending it keeps the dry run on the previewed
+      // list too (an expired one simply falls back to the filter - nothing mutates).
+      return this.klDry("/api/actions/remove-plan-dry-run",
+        { ...this._removeBody(), plan_token: this.removePlan.plan_token }, st);
     },
     removePlanDryChecked() {
       const st = this.removePlan && this.removePlan.dry;
@@ -488,9 +491,16 @@ const detailPart = {
       });
       if (!ok) return;
       await this.wrap(async () => {
-        const started = await this.startJob("remove_files", { ...this._removeBody(), form: "plan" }, this._removeLabel);
+        // the ticket makes the job delete exactly the previewed list; when it has expired
+        // the server refuses, so refresh the preview and let the user review the fresh list.
+        const started = await this.startJob("remove_files",
+          { ...this._removeBody(), form: "plan", plan_token: this.removePlan.plan_token },
+          this._removeLabel);
         if (started) {
           this.closeRemove();
+        } else if (this.removePlan) {
+          this.klDryClear(this.removePlan.dry);   // the old dry run described the old list
+          this._fetchRemovePlan();
         }
       }, "Starting the chunked delete…");
     },

@@ -17,7 +17,7 @@ const treePart = {
       const holders = ((r && r.paths && r.paths[path]) || []).map((h) => h.source);
       if (!holders.length) { this.klNotify("No indexed backup holds this path.", "warn"); return null; }
       if (holders.length > 1) {
-        this.klNotify(`Held by ${holders.length} backups - showing ${sourcePath(holders[0])}. Switch in the panel's "Backed up by" list.`);
+        this.klNotify(`Held by ${holders.length} backups - showing ${sourcePath(holders[0])}. Switch in the panel's "Backed up by" list.`, "info");
       }
       return holders[0];
     },

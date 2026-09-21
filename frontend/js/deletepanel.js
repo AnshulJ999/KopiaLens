@@ -323,7 +323,13 @@ const deletePart = {
 
     flowDeleteSpec() {
       if (!this.flow) return null;
-      if (this.flow.kind === "folder") return { kind: "remove_files", params: { ...this._removeBody(), form: "plan" } };
+      if (this.flow.kind === "folder") {
+        // the ticket travels with the delete step (including policy_write's `then`), so the
+        // job removes exactly the previewed list - an expired one refuses server-side.
+        return { kind: "remove_files",
+                 params: { ...this._removeBody(), form: "plan",
+                           plan_token: this.removePlan && this.removePlan.plan_token } };
+      }
       return this.delJobSpec();
     },
 
@@ -381,7 +387,15 @@ const deletePart = {
       if (!ok) return;
       const writes = this.flow.writes;
       const jobId = await this.startJob("policy_write", { writes, then }, this.flow.kind === "folder" ? this.removePlan.label : this.delFileLabel());
-      if (!jobId) return;
+      if (!jobId) {
+        // The folder flow's delete step is a previewed plan: an expired ticket refuses, so show
+        // the fresh preview instead of leaving the review step pointing at a stale list.
+        if (this.flow && this.flow.kind === "folder" && this.removePlan) {
+          this.klDryClear(this.removePlan.dry);   // the old dry run described the old list
+          this._fetchRemovePlan();
+        }
+        return;
+      }
       this._jobThen[jobId] = then;
       if (this.detail) this.detail = null;
       this.flowCancel();

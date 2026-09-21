@@ -2,7 +2,8 @@
 // as "the click did nothing"; every such action raises a notice too. State lives in app.js.
 const toastPart = {
 
-    // kind: "ok" (default) | "warn". Warn stays longer (it usually carries a decision).
+    // kind: "ok" (default) | "warn" | "info". Warn stays longer (it usually carries a decision);
+    // info is a neutral note (neither success nor failure) and keeps the warn lifetime.
     klNotify(msg, kind = "ok") {
       if (!msg) return;
       const id = ++this._toastSeq;

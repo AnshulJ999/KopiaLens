@@ -160,7 +160,12 @@ document.addEventListener("alpine:init", () => {
       if (this.showPolBackups) { this.showPolBackups = false; return; }
       if (this.showPolDiff) { this.showPolDiff = false; return; }
       if (this.showExcludedDetail) { this.showExcludedDetail = false; return; }
-      if (this.showSettings) { this.showSettings = false; return; }
+      if (this.showSettings) {
+        // Autosave rides @change (fires on blur), so a field still focused would be dropped here.
+        if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+        this.showSettings = false;
+        return;
+      }
       if (this.polLeaveBox) { this.polLeaveBox = null; return; }
       if (this.detail) { this.detail = null; return; }
     },

@@ -5,7 +5,14 @@ const jobsPart = {
 
     async startJob(kind, params, label, repo) {
       const r = await getJson("/api/jobs/start", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, repo: repo || this.repo, params, label }) }).catch((e) => { this.error = e.message; return null; });
+        body: JSON.stringify({ kind, repo: repo || this.repo, params, label }) })
+        .catch((e) => {
+          this.error = e.message;
+          // A refused start is user-facing (an out-of-date preview, no matching files): say so
+          // where the click happened, not only in the error bar behind the panel.
+          this.klNotify(e.message || "The action could not start.", "warn");
+          return null;
+        });
       if (!r) return null;
       this.openJobPanel(r.job_id);
       return r.job_id;
@@ -85,7 +92,7 @@ const jobsPart = {
     },
 
     jobLineClass(ln) {
-      return /error|warn|unable|failed|cannot|abort/i.test(ln) ? "w" : "";
+      return klLogLineWarn(ln);
     },
 
     jobLineLabel() {

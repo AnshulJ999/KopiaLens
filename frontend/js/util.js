@@ -74,6 +74,15 @@ const getJson = async (url, options = {}) => {
   return data;
 };
 
+// A log line reads as a warning when a failure word appears WITHOUT a zero count in front of it:
+// the index worker's stage summaries legitimately print "0 failed"/"0 errors" on a clean pass, and
+// colouring those amber made every normal nightly look alarming. Shared by the job and index panes.
+const klLogLineWarn = (ln) => {
+  const s = String(ln || "");
+  if (!/\b(error|warn|unable|failed|cannot|abort|timed out|traceback)/i.test(s)) return "";
+  return /\b(0|no)\s+(failed|failures|errors|warnings)\b/i.test(s) ? "" : "w";
+};
+
 // ---- Backend-persisted table preferences (columns + sort), survives browser-data clears ----
 let TABLE_PREFS = {};
 const _persistTimers = {};
