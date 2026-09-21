@@ -64,6 +64,7 @@ const snapshotsPart = {
         if (keep) r.deselect(); else { r.select(); n++; }
       });
       this.actionText = `Selected ${n} unretained snapshot(s) (no retention, no pin). Use 'Delete selected…' to preview/copy the kopia command or delete.`;
+      this.klNotify(n ? `${n} unretained snapshot${n === 1 ? "" : "s"} selected - nothing keeps them.` : "No unretained snapshots to select - every one is pinned or kept by retention.", n ? "ok" : "warn");
     },
     selectIdenticalDuplicates() {  // HYBRID: group the source's snapshots by `root` (byte-identical
       const el = document.querySelector("#snapshotsTable");                       // content = same object),
@@ -89,6 +90,7 @@ const snapshotsPart = {
       this.actionText = n
         ? `Selected ${n} identical-duplicate snapshot(s) (kept oldest+newest per content; pinned kept; retained ARE included). Use 'Delete selected…'.`
         : `No identical duplicates to collapse — no content has 3+ snapshots (or 'root' is missing on the rows).`;
+      this.klNotify(n ? `${n} duplicate snapshot${n === 1 ? "" : "s"} selected - the oldest and newest of each set are kept.` : "No identical duplicates to collapse.", n ? "ok" : "warn");
     },
     changeSnapSource() {  // persist scope; Tree mirrors it (incl. *ALL*) so the two views stay in parity
       this.klSet({ snap_source: this.snapSource });
@@ -97,7 +99,7 @@ const snapshotsPart = {
     },
     planDelete() {  // build a confirm plan from the currently-selected snapshot rows
       const rows = this.snapSelected();
-      if (!rows.length) { window.alert("Select one or more snapshots first (click rows / checkboxes)."); return; }
+      if (!rows.length) { this.klNotify("Select one or more snapshots first - click rows or their checkboxes.", "warn"); return; }
       const reclaimVals = rows.map((r) => r.reclaimable).filter((v) => v !== null && v !== undefined);
       this.deletePlan = {
         ids: rows.map((r) => r.id),
@@ -110,9 +112,12 @@ const snapshotsPart = {
         retained: rows.filter((r) => r.retention && r.retention.length).length,
         sources: [...new Set(rows.map((r) => r.source || this.snapSource))].filter((s) => s && s !== "*ALL*"),
         times: rows.map((r) => r.start_time).filter(Boolean).sort(),
+        // One row per selected snapshot for the modal's list (newest first).
+        rows: rows.map((r) => ({ id: r.id, source: r.source || this.snapSource, start_time: r.start_time,
+                                 pinned: !!(r.pins && r.pins.length), retention: r.retention || [] }))
+                  .sort((a, b) => String(b.start_time).localeCompare(String(a.start_time))),
         commands: "",
       };
-      this.deleteConfirm = "";
       this.deletePlan.preview = [];
       this.deletePlan.combinedReclaim = null;     // accurate union(deleted)-union(kept), filled async
       this.deletePlan.combinedExact = true;
@@ -132,8 +137,13 @@ const snapshotsPart = {
     async loadDeletePreview(precise) {
       if (!this.deletePlan) return;
       const ids = this.deletePlan.ids.join(",");
-      const r = await getJson(`/api/snapshots/delete-preview?repo=${encodeURIComponent(this.repo)}&ids=${encodeURIComponent(ids)}&precise=${precise ? 1 : 0}&limit=40`).catch(() => null);
-      if (r && this.deletePlan) { this.deletePlan.preview = r.files || []; this.deletePlan.precise = precise; }
+      this.deletePlan.previewLoading = true;
+      this.deletePlan.previewError = false;
+      const r = await getJson(`/api/snapshots/delete-preview?repo=${encodeURIComponent(this.repo)}&ids=${encodeURIComponent(ids)}&precise=${precise ? 1 : 0}&limit=40`)
+        .catch((e) => { if (this.deletePlan) { this.deletePlan.previewError = true; this.error = e.message || String(e); } return null; });
+      if (!this.deletePlan) return;
+      this.deletePlan.previewLoading = false;
+      if (r) { this.deletePlan.preview = r.files || []; this.deletePlan.precise = precise; this.deletePlan.previewExact = !!r.exact; }
     },
     deleteDry() {  // run kopia's real snapshot-delete dry run (no --delete) for this selection
       if (!this.deletePlan) return;
@@ -164,7 +174,7 @@ const snapshotsPart = {
       await this.wrap(async () => {
         const started = await this.startJob("snapshot_delete", { snapshot_ids: p.ids });
         if (started) {
-          this.showDelete = false; this.deletePlan = null; this.deleteConfirm = "";
+          this.showDelete = false; this.deletePlan = null;
         }
       }, "Deleting snapshots…");
     },
@@ -196,7 +206,7 @@ const snapshotsPart = {
     // ---- Snapshots: pin / unpin / diff ----
     async pinSelected(remove) {
       const rows = this.snapSelected();
-      if (!rows.length) { window.alert("Select snapshots first."); return; }
+      if (!rows.length) { this.klNotify("Select snapshots first - click rows or their checkboxes.", "warn"); return; }
       const already = rows.filter((x) => (x.pins || []).includes("do-not-delete")).length;
       const n = rows.length;
       const ok = await this.klConfirm({
@@ -214,7 +224,7 @@ const snapshotsPart = {
     },
     async diffSelected() {
       const rows = this.snapSelected();
-      if (rows.length !== 2) { window.alert("Select exactly 2 snapshots to diff."); return; }
+      if (rows.length !== 2) { this.klNotify("Select exactly 2 snapshots to diff.", "warn"); return; }
       this.showDiff = true; this.diffText = "Running diff…"; this.diffBusy = true;
       try {
         const r = await getJson(`/api/snapshots/diff?repo=${encodeURIComponent(this.repo)}&id1=${encodeURIComponent(rows[0].id)}&id2=${encodeURIComponent(rows[1].id)}&run=true`);

@@ -5,8 +5,7 @@
     <template x-if="confirmBox">
       <div class="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4 sm:p-6"
            @click.self="confirmResolve(false)"
-           @keydown.escape.window="confirmResolve(false)"
-           @keydown.enter.window="confirmBox && !confirmBox.danger && confirmResolve(true)">
+           @keydown.enter.window="confirmEnter($event)">
         <div class="w-[34rem] max-w-full rounded-lg border bg-surface shadow-xl flex flex-col" style="border-color:var(--bd)">
           <div class="p-4 space-y-3 overflow-auto">
             <h3 class="text-[15px] font-semibold leading-snug" x-text="confirmBox.title"></h3>

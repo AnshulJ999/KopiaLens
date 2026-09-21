@@ -16,6 +16,7 @@ const actionsPart = {
       this.wrap(async () => {
         const r = await getJson("/api/actions/mount-open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_id: snapshotId || null, source, full_path: fullPath || null }) });
         this.actionText = `Mounted at ${r.mountpoint}. Opening Explorer.`;
+        this.klNotify(`Mounted at ${r.mountpoint}. Opening Explorer.`);
         this.loadMounts();
       }, "Mounting…");
     },
@@ -247,11 +248,17 @@ const actionsPart = {
       if (item.content_id) q.set("content_id", item.content_id);
       const a = document.createElement("a");
       a.href = `/api/restore/download?${q}`;
+      // A new tab, so a JSON error response (expired version, kopia failure) cannot navigate the
+      // whole app away from itself.
+      a.target = "_blank";
       a.rel = "noopener";
       document.body.appendChild(a);
       a.click();
       a.remove();
-      if (info.type === "d") this.actionText = `Building ${info.name}.zip. The download starts when it is ready.`;
+      if (info.type === "d") {
+        this.actionText = `Building ${info.name}.zip. The download starts when it is ready.`;
+        this.klNotify(`Building ${info.name}.zip - the download starts when it is ready.`);
+      }
     },
     downloadVersion(v) {
       if (this.detail) this.downloadItem({ source: this.detail.source, full_path: this.detail.title, content_id: v.content_id || null, snapshot_id: v.snapshot_id });

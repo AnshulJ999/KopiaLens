@@ -57,26 +57,33 @@ document.addEventListener("alpine:init", () => {
     groupReclaim: {},  // "repo:folder" -> {v: freeable, capped} - keyed by repo so one repo's
                        // numbers can never render in another repo's table
     dashboardMeta: "", busy: "", error: "", detail: null, snapSource: "*ALL*", _poll: null, _searchSeq: 0, _detailSeq: 0,
+    // Action results shown in the corner: a click that reports only on the Actions tab looks
+    // like it did nothing, so every action raises one of these too.
+    toasts: [], _toastSeq: 0,
+    // Indexing panel: the live pass, its worker log and the Stop control.
+    showIndex: false, indexLogLines: [], indexLogCursor: 0, indexLogNote: "",
+    indexLogMode: localStorage.getItem("kl-indexmode") || "clean", _indexLogPoll: null, _indexLogSeq: 0,
     _dashSeq: 0, _snapSeq: 0, _treeSeq: 0, _removePlanSeq: 0, _removeDetailSeq: 0, _rfPlanSeq: 0, _contentsSeq: 0,
-    showRemove: false, removePlan: null, removeJobPoll: null, _removeBase: null,
+    showRemove: false, removePlan: null, _removeBase: null,
     // Job runner (shared for every long kopia action): panel + follow state + header chip
     showJob: false, jobPanel: null, jobLines: [], jobEarly: 0, jobCursor: 0, jobFollow: true,
     jobMode: localStorage.getItem("kl-jobmode") || "clean", jobExpanded: false, runningJobs: [],
     _jobPoll: null, _jobChipPoll: null, _jobOpenSeq: 0, _handledJobs: null, _reindexWatch: {},
     excludedDrives: [], excludedOk: true, excludedPath: "", excludedFilter: "excluded", excludedMeta: "", _excludedItems: [], _excludedSeq: 0, excludedDetail: null, showExcludedDetail: false,
     showSettings: false, settingsTab: "general", backend: "subprocess", repoPinned: false, reindexInterval: 1800, dashRefresh: 900,
-    reclaimInterval: 10800, excludedTolerance: 0.05, esPath: "",
+    excludedTolerance: 0.05, esPath: "",
     // Advanced settings. These existed in settings.json all along and had no UI, so the only way to
     // change them was to edit the file by hand. Defaults here mirror app/settings.py.
     lightInterval: 1800, dashboardInterval: 14400,
-    autoCompact: true, compactRatio: 1.6, compactMinInterval: 86400, debugLog: false,
-    indexWorkerTimeout: 14400, indexDrainTimeout: 300, indexRetryDelay: 900, indexMaxRetries: 1, reindexAfterDeleteDelay: 300, quitIndexing: "finish",
-    folderPrewarmBudget: 900, startupDelay: 300, dirMemoMaxMb: 1500, refcountWriteInterval: 21600,
-    // Backblaze settings. Defaults mirror app/settings.py; the Save payload carries them as the
-    // nested "backblaze" dict the settings endpoint already merges.
+    debugLog: false,
+    indexWorkerTimeout: 14400, indexRetryDelay: 900, indexMaxRetries: 1, reindexAfterDeleteDelay: 300, quitIndexing: "finish",
+    folderPrewarmBudget: 900, startupDelay: 300,
+    repoLabels: "short",  // repo chips and columns: "short" (Repo 1) | "full" (the name from repos.json)
+    // Backblaze settings. Defaults mirror app/settings.py; each control saves its own key into
+    // the nested "backblaze" dict (KL_FIELDS in settings.js).
     bzDataPath: "C:\\ProgramData\\Backblaze\\bzdata", bzReindexMinGap: 21600, bzHistoryDays: 90,
     bzCollapsePrefixes: "E:\\Kopia, I:\\Kopia Big Backup", bzEventlogArchive: "", bzStore: "parquet",
-    analyzingAll: false, showDelete: false, deletePlan: null, deleteConfirm: "", _autoRefresh: null,
+    analyzingAll: false, showDelete: false, deletePlan: null, _autoRefresh: null,
     // detail-panel layout ("classic" | "tabbed"), persisted server-side, default Classic.
     panelLayout: "classic",
     confirmBox: null,  // the shared confirm dialog; truthy while it is open
@@ -124,6 +131,56 @@ document.addEventListener("alpine:init", () => {
     sourceRoot() { return this.selectedSource === "*ALL*" ? "" : sourcePath(this.selectedSource); },
     treePrefix: "",
 
+    // ---- Repo labels: ids stay the internal form; chips and columns show a short name unless
+    // the "Repo labels" setting asks for the full one. Pickers and tooltips always show the full name.
+    repoName(id) {
+      const r = this.repos.find((x) => x.id === id);
+      return (r && r.name) || (id === "bz" ? "Backblaze Personal Backup" : "Repo " + id);
+    },
+    repoShortLabel(id) {
+      const r = this.repos.find((x) => x.id === id);
+      return (r && (r.short_name || r.shortName)) || (id === "bz" ? "BZ" : "Repo " + id);
+    },
+    repoLabel(id) { return this.repoLabels === "full" ? this.repoName(id) : this.repoShortLabel(id); },
+
+    // Escape closes the topmost panel only. The confirm owns the first check (Cancel on Escape);
+    // a panel that holds edits asks before dropping them, and Settings needs no ask (it autosaves).
+    async escClose() {
+      if (this.confirmBox) { this.confirmResolve(false); return; }
+      if (this.showIndex) { this.closeIndexPanel(); return; }
+      if (this.showJob) { this.closeJob(); return; }
+      if (this.showReview) { this.flowCancel(); return; }
+      if (this.showMaint) { this.closeMaint(); return; }
+      if (this.showDel) { this.closeDelete(); return; }
+      if (this.showExclude) { return this.escCloseExclude(); }
+      if (this.showDelete) { this.showDelete = false; return; }
+      if (this.showRestore) { this.closeRestore(); return; }
+      if (this.showDiff) { this.showDiff = false; return; }
+      if (this.showRemove) { this.closeRemove(); return; }
+      if (this.showPolBackups) { this.showPolBackups = false; return; }
+      if (this.showPolDiff) { this.showPolDiff = false; return; }
+      if (this.showExcludedDetail) { this.showExcludedDetail = false; return; }
+      if (this.showSettings) { this.showSettings = false; return; }
+      if (this.polLeaveBox) { this.polLeaveBox = null; return; }
+      if (this.detail) { this.detail = null; return; }
+    },
+    async escCloseExclude() {
+      if (this.flow) return this.flowCancel();
+      const d = this.exDialog;
+      // Only work the USER put in: a typed custom pattern, a shape they picked, ticks they moved.
+      // (Smart's own default ticks are not an edit; asking on those would nag on every Escape.)
+      const edits = !!(d && (d.custom || d.userShape || d.reach === "manual"));
+      if (edits) {
+        const ok = await this.klConfirm({
+          title: "Close without adding the rule?",
+          body: "The exclusion you set up was not added to any backup.",
+          confirmLabel: "Close", danger: true,
+        });
+        if (!ok) return;
+      }
+      this.exClose();
+    },
+
     async init() {
       // Alpine fires the data object's init() AND x-init="init()" re-calls it. A second run
       // re-picks the already-resolved data-theme and loses "system", and doubles every
@@ -148,6 +205,7 @@ document.addEventListener("alpine:init", () => {
         this.panelLayout = kl.panel_layout === "tabbed" ? "tabbed" : "classic";  //
         this.polLayout = kl.policy_layout === "scroll" ? "scroll" : "tabs";
         this.polLeave = kl.policy_leave === "keep" ? "keep" : "ask";
+        this.repoLabels = kl.repo_labels === "full" ? "full" : "short";
         this.searchSort = kl.search_sort || "size";
         this.searchDir = kl.search_dir || "desc";
         this.dedupe = !!kl.search_dedupe;
@@ -164,7 +222,6 @@ document.addEventListener("alpine:init", () => {
         this.indexInterval = Number(kl.index_interval || 86400);
         this.dashboardMode = kl.dashboard_mode || "nightly";
         this.dashRefresh = Number(kl.dashboard_refresh ?? 900);
-        this.reclaimInterval = Number(kl.reclaim_interval || 10800);
         this.excludedTolerance = Number(kl.excluded_tolerance ?? 0.05);
         this.esPath = kl.es_path || "";
         // Also at startup, not only in openSettings: if that re-fetch ever fails, the advanced
@@ -187,6 +244,9 @@ document.addEventListener("alpine:init", () => {
       this.armAutoRefresh();
       this.armFreshness();
       this.armJobChip();
+      // One Escape handler for every panel: it closes the TOPMOST one and nothing else, so a
+      // confirm never resolves and closes the panel under it in the same keypress.
+      window.addEventListener("keydown", (e) => { if (e.key === "Escape") this.escClose(); });
       window.addEventListener("beforeunload", (e) => {
         if (this.polStageCount()) { e.preventDefault(); e.returnValue = ""; }
       });
@@ -231,17 +291,6 @@ document.addEventListener("alpine:init", () => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a"); a.href = url; a.download = name; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-    },
-
-    indexLine() {
-      const s = this.indexStatus;
-      // The nightly worker holds the database, so this repo's tabs are briefly unavailable.
-      // Say so plainly rather than letting the tabs just error.
-      if (s.offline) return `Indexing (${s.stage || "working"}) ${s.indexed_snapshots || 0}/${s.snapshots || "?"}`;
-      if (s.building) return `Indexing ${s.indexed_snapshots || 0}/${s.snapshots || "?"}...`;
-      if (s.never_indexed) return "Not indexed yet";
-      if (s.snapshots === undefined) return "Index: unknown";
-      return `Index ${s.indexed_snapshots}/${s.snapshots}`;
     },
 
     // A repo that has never been indexed has no data for the index-backed views; a friendly
@@ -432,13 +481,13 @@ document.addEventListener("alpine:init", () => {
     csv(id, name) { downloadTable(id, name); },
     };
     // Duplicate-key guard: two parts declaring the same key would compose silently last-wins.
-    const parts = [["core", core], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart]];
+    const parts = [["core", core], ["toastPart", toastPart], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["indexPanelPart", indexPanelPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart]];
     const seen = new Map();
     for (const [owner, part] of parts)
       for (const k of Object.keys(part)) {
         if (seen.has(k)) console.error(`kopiaLens: duplicate key "${k}" declared in both ${seen.get(k)} and ${owner}`);
         else seen.set(k, owner);
       }
-    return Object.assign(core, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, diffviewPart, jobsPart, maintenancePart, settingsPart, themePart, policiesPart, policyEditPart);
+    return Object.assign(core, toastPart, indexPanelPart, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, diffviewPart, jobsPart, maintenancePart, settingsPart, themePart, policiesPart, policyEditPart);
   });
 });

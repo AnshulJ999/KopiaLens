@@ -2,25 +2,25 @@
 
     <div x-show="showJob" @click.self="closeJob()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
       <template x-if="jobPanel">
-        <div class="bg-white dark:bg-stone-900 rounded-lg border border-stone-300 dark:border-stone-700 w-full max-w-3xl max-h-[85vh] flex flex-col">
-          <div class="flex items-center gap-3 px-4 py-3 border-b border-stone-200 dark:border-stone-800">
+        <div class="bg-surface rounded-lg border border-bd w-full max-w-3xl max-h-[85vh] flex flex-col">
+          <div class="flex items-center gap-3 px-4 py-3 border-b border-bd">
             <div class="min-w-0 grow">
               <div class="font-semibold flex items-center gap-2">
                 <span x-text="jobPanel.kind_label"></span>
-                <span x-show="jobPanel.dry" class="pill border border-stone-300 dark:border-stone-700 text-stone-500">dry run</span>
-                <span x-show="jobPanel.state === 'running'" class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                <span x-show="jobPanel.dry" class="pill">dry run</span>
+                <span x-show="jobPanel.state === 'running'" class="w-2 h-2 rounded-full bg-warn animate-pulse"></span>
               </div>
-              <div class="text-xs text-stone-500 truncate font-mono" x-text="'repo ' + jobPanel.repo + ' · ' + jobPanel.label + ' · job ' + jobPanel.job_id.slice(0, 6)"></div>
+              <div class="text-xs text-muted truncate font-mono" x-text="repoLabel(jobPanel.repo) + ' · ' + jobPanel.label + ' · job ' + jobPanel.job_id.slice(0, 6)"></div>
             </div>
             <button class="kl-btn danger" x-show="jobPanel.state === 'running'" @click="jobStop()">Stop</button>
             <button class="kl-btn quiet" @click="closeJob()" x-text="jobPanel.state === 'running' ? 'Run in background' : 'Close'"></button>
           </div>
-          <div class="px-4 py-3 border-b border-stone-200 dark:border-stone-800 flex flex-col gap-1.5">
+          <div class="px-4 py-3 border-b border-bd flex flex-col gap-1.5">
             <div class="kl-bar" :class="jobIndeterminate() ? 'busy' : ''"><i :style="'width:' + (jobIndeterminate() ? 30 : (jobProgress() || 0)) + '%'"></i></div>
-            <div class="flex items-center gap-2 text-xs text-stone-500">
+            <div class="flex items-center gap-2 text-xs text-muted">
               <span x-text="jobProgressLabel()"></span>
               <span class="grow"></span>
-              <span x-show="jobStateLine()" class="text-amber-600 dark:text-amber-400" x-text="jobStateLine()"></span>
+              <span x-show="jobStateLine()" class="text-warn" x-text="jobStateLine()"></span>
               <span x-text="'elapsed ' + jobElapsed()"></span>
             </div>
             <div x-show="jobPanel.error && jobPanel.state === 'failed'" class="text-xs text-danger break-all" x-text="jobPanel.error"></div>
@@ -73,7 +73,7 @@
               </span>
             </div>
             <div class="relative min-h-0">
-              <button class="absolute top-1.5 right-1.5 z-10 h-6 w-6 rounded border border-stone-300 dark:border-stone-700 bg-white/85 dark:bg-stone-900/85 text-stone-500 hover:text-stone-800 dark:hover:text-stone-200 flex items-center justify-center"
+              <button class="absolute top-1.5 right-1.5 z-10 h-6 w-6 rounded border border-bd bg-surface text-muted hover:text-fg flex items-center justify-center"
                 @click="jobExpanded = !jobExpanded" :title="jobExpanded ? 'Collapse output' : 'Expand output'" :aria-label="jobExpanded ? 'Collapse output' : 'Expand output'">
                 <svg x-show="!jobExpanded" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"/></svg>
                 <svg x-show="jobExpanded" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 6.5v-4h4M13.5 9.5v4h-4M6.5 9.5h-4v4M2.5 6.5v-4h4"/></svg>
@@ -82,7 +82,7 @@
                 <template x-for="(ln, i) in jobView().lines" :key="i">
                   <div><span class="t" x-text="ln.slice(0, 8)"></span><span :class="jobLineClass(ln)" x-text="' ' + ln.slice(9)"></span></div>
                 </template>
-                <div x-show="!jobView().lines.length" class="text-stone-500">waiting for output...</div>
+                <div x-show="!jobView().lines.length" class="text-muted">waiting for output...</div>
               </div>
             </div>
           </div>

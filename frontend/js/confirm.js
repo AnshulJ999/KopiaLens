@@ -13,6 +13,7 @@ const confirmPart = {
           facts: opts.facts || null, callout: opts.callout || "", note: opts.note || "",
           command: opts.command || "", confirmLabel: opts.confirmLabel || "Confirm",
           danger: !!opts.danger, input: opts.input || null, value: "", _resolve: resolve,
+          _openedAt: Date.now(),
         };
       });
     },
@@ -20,5 +21,14 @@ const confirmPart = {
       const cb = this.confirmBox;
       this.confirmBox = null;
       if (cb && cb._resolve) cb._resolve(v && cb.input ? { value: cb.value } : v);
+    },
+    // Enter may confirm a reversible action, but only as a deliberate press: never a held key's
+    // repeats and never the same keypress that opened the dialog (a double-tap in a filter box
+    // used to write a kopia policy). Danger dialogs stay click-only.
+    confirmEnter(e) {
+      const cb = this.confirmBox;
+      if (!cb || cb.danger || e.repeat) return;
+      if (Date.now() - (cb._openedAt || 0) < 500) return;
+      this.confirmResolve(true);
     },
 };

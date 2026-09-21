@@ -5,7 +5,9 @@
         <template x-for="item in repos" :key="item.id"><option :value="item.id" x-text="item.name"></option></template>
       </select>
       <div class="relative flex-1 max-w-xl">
-        <input x-model="query" @input.debounce.300ms="headerSearch()" @focus="active = repoKind==='backblaze' ? 'bz-search' : 'search'"
+        <!-- No @focus: switching tab on focus left Search blank until the first keystroke. Typing
+             switches and loads; clicking in only focuses. -->
+        <input x-model="query" @input.debounce.300ms="headerSearch()"
           class="fld w-full border border-bd bg-surface2 pl-9"
           :placeholder="repoKind==='backblaze' ? 'Search Backblaze files…' : 'Search files across all snapshots...'">
         <svg class="absolute left-3 top-2.5 h-4 w-4 text-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
@@ -13,9 +15,9 @@
       <div class="ml-auto flex items-center gap-2 text-xs shrink-0">
         <template x-for="j in runningJobs" :key="j.job_id">
           <button @click="openJobPanel(j.job_id)" class="h-8 rounded border px-3 flex items-center gap-1.5"
-            :class="j.state === 'running' ? 'border-rose-300 dark:border-rose-800 text-rose-600 dark:text-rose-400' : 'border-danger bg-danger-bg text-danger'"
+            :class="j.state === 'running' ? 'border-warn-bd bg-warn-bg text-warn' : 'border-danger bg-danger-bg text-danger'"
             :title="(j.state === 'running' ? 'Running: ' : (j.state === 'failed' ? 'FAILED: ' : 'Finished with errors: ')) + j.kind_label + ' - click to open'">
-            <span class="w-1.5 h-1.5 rounded-full" :class="j.state === 'running' ? 'bg-rose-500 animate-pulse' : 'bg-danger'"></span>
+            <span class="w-1.5 h-1.5 rounded-full" :class="j.state === 'running' ? 'bg-warn animate-pulse' : 'bg-danger'"></span>
             <span class="truncate max-w-[180px]" x-text="j.label"></span>
             <span x-text="j.total ? Math.round((j.done / j.total) * 100) + '%' : ''"></span>
           </button>
@@ -23,7 +25,7 @@
         <template x-for="p in indexPending" :key="p.repo">
           <span class="h-8 rounded border border-warn-bd bg-warn-bg text-warn px-2 flex items-center gap-2"
                 title="Deletes finished. The index updates once no delete has run for the quiet period (Settings, Indexing).">
-            <span x-text="(p.repo !== repo ? 'Repo ' + p.repo + ' · ' : '') + pendingText(p)"></span>
+            <span x-text="(p.repo !== repo ? repoLabel(p.repo) + ' · ' : '') + pendingText(p)"></span>
             <button class="underline" @click="pendingRunNow(p.repo)">Update now</button>
           </span>
         </template>
@@ -31,7 +33,16 @@
           <span>Index updated</span>
           <button class="underline" @click="reloadAfterIndex()">Reload</button>
         </span>
-        <span x-show="repoKind!=='backblaze'" class="rounded border border-bd bg-surface2 px-2 py-1" x-text="indexLine()"></span>
+        <!-- Index status: click for the panel. While a pass runs it carries the live percentage
+             (only when one honestly exists - the tree sync reports counters instead). -->
+        <button x-show="repoKind!=='backblaze'" @click="openIndexPanel()"
+                class="h-8 rounded border px-2 flex items-center gap-1.5"
+                :class="indexStatus.building ? 'border-warn-bd bg-warn-bg text-warn' : 'border-bd bg-surface2'"
+                :title="indexTooltip()">
+          <span x-show="indexStatus.building" class="w-2 h-2 rounded-full animate-pulse"
+                :class="indexPct() == null ? 'bg-warn' : 'bg-ok'"></span>
+          <span x-text="indexLine()"></span>
+        </button>
         <button x-show="repoKind!=='backblaze'" @click="buildIndex()" :disabled="!!indexStatus.building" class="h-8 rounded bg-fg px-3 text-surface disabled:opacity-50" :title="indexStatus.never_indexed ? 'Build the first index for this repo' : 'Update index (incremental)'" x-text="indexStatus.never_indexed ? 'Index now' : 'Index'">Index</button>
         <span x-show="repoKind==='backblaze'" class="rounded border border-bd bg-surface2 px-2 py-1" x-text="bzStatusLine()" :title="bzStatusTitle()"></span>
         <span x-show="repoKind==='backblaze' && bzRefreshResult" class="text-xs px-2 py-1 rounded" :class="bzRefreshResult.includes('FAILED') ? 'bg-danger-bg text-danger' : 'bg-ok-bg text-ok'" x-text="bzRefreshResult"></span>
@@ -52,14 +63,15 @@
           <span class="rounded px-1.5 py-0.5 border"
                 :class="freshStale(f) ? 'border-warn-bd text-warn' : 'border-bd-soft text-muted'"
                 :title="freshTitle(f)">
-            <span x-text="f.repo === 'bz' ? 'BZ' : 'Repo ' + f.repo"></span>
+            <span x-text="repoLabel(f.repo)"></span>
             <span x-text="' · ' + freshAge(f)"></span>
             <span x-show="f.pending" x-text="' · queued'"></span>
             <span x-show="f.error" class="text-danger">!</span>
           </span>
         </template>
         <span x-show="busy" class="text-warn" x-text="busy"></span>
-        <span x-show="error" class="text-danger max-w-md truncate" x-text="error"></span>
+        <!-- the full error on hover: the line itself must stay short, a long backend message must not -->
+        <span x-show="error" class="text-danger max-w-md truncate" :title="error" x-text="error"></span>
         <span class="text-faint" x-show="selectedSource" x-text="'· ' + shortSource(selectedSource)"></span>
       </div>
     </nav>

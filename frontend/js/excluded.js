@@ -98,7 +98,7 @@ const excludedPart = {
           { label: "Open", action: (_e, row) => this.excludedRowOpen(row.getData()) },
           { label: "Details", action: (_e, row) => this.openExcludedDetail(row.getData()) },
           { label: "Include in Kopia… (copy commands)", action: (_e, row) => this.excludedInclude(row.getData()) },
-          { label: "Exclude from Kopia (copy patterns)", action: (_e, row) => this.excludedExclude(row.getData()) },
+          { label: "Exclude…", action: (_e, row) => this.excludedExclude(row.getData()) },
           { label: "Copy path", action: (_e, row) => this.copyText(this._excludedPath(row.getData())) },
         ],
       });
@@ -114,13 +114,15 @@ const excludedPart = {
       const txt = (r.commands || []).map((c) => `# ${c.name}\n${c.command}`).join("\n\n");
       this.copyText(txt);
       this.actionText = "Include commands (copied — run the one for the repo you want):\n" + txt;
+      this.klNotify("Include commands copied - run the one for the backup you want.");
     },
     excludedExclude(row) {
-      const name = row.name;
-      const pats = [name];
-      if (!row.is_dir) { const dot = name.lastIndexOf("."); if (dot > 0) pats.push("*" + name.slice(dot)); }
-      this.copyText(pats.join("\n"));
-      this.actionText = "Exclude patterns (copied — paste into the KopiaUI policy ignore rules):\n" + pats.join("\n");
+      // The real Exclude dialog, not clipboard text: it resolves the backups holding the path and
+      // writes the rule through the same review as everywhere else.
+      if (row.status === "drive") { this.klNotify("Open a folder or file first - a whole drive is not a rule target.", "warn"); return; }
+      const path = this._excludedPath(row);
+      this.showExcludedDetail = false;
+      this.openExclude({ kind: row.is_dir ? "folder" : "file", path });
     },
     openExcludedDetail(row) {
       this.excludedDetail = { ...row, full_path: this._excludedPath(row) };

@@ -1,6 +1,27 @@
 // Tree tab: point-in-time / changed / reclaimable / all-snapshots browsing + crumbs + flat view.
 const treePart = {
 
+    // All-sources rows are deduped by path and deliberately carry no source. Resolve the backups
+    // holding a path at ACTION time (one batched call, never per rendered row); a single holder
+    // answers directly, several use the panel's own "Backed up by" list to switch.
+    async treeSourceFor(path) {
+      if (this.selectedSource !== "*ALL*") return this.selectedSource;
+      let r = null;
+      try {
+        r = await getJson("/api/tree/holders", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo: this.repo, full_paths: [path] }) });
+      } catch (e) {
+        this.klNotify("Could not read which backups hold this path - pick a source first.", "warn");
+        return null;
+      }
+      const holders = ((r && r.paths && r.paths[path]) || []).map((h) => h.source);
+      if (!holders.length) { this.klNotify("No indexed backup holds this path.", "warn"); return null; }
+      if (holders.length > 1) {
+        this.klNotify(`Held by ${holders.length} backups - showing ${sourcePath(holders[0])}. Switch in the panel's "Backed up by" list.`);
+      }
+      return holders[0];
+    },
+
     treeCrumbs() {
       const root = this.sourceRoot();
       const rootTrim = root.replace(/[\\/]+$/, "");
@@ -71,16 +92,50 @@ const treePart = {
         ], {
           selectableRows: true,
           initialSort: [{ column: "size", dir: "desc" }],
-          onRowDblClick: (_e, row) => { const d = row.getData(); if (d.type === "folder") this.navTree(d.path); else this.openFileDetail({ source: this.selectedSource, full_path: d.path }); },
+          onRowDblClick: async (_e, row) => {
+            const d = row.getData();
+            if (d.type === "folder") return this.navTree(d.path);
+            const s = await this.treeSourceFor(d.path);
+            if (s) this.openFileDetail({ source: s, full_path: d.path });
+          },
           rowMenu: [
             { label: "Open / drill in", action: (_e, row) => { const d = row.getData(); if (d.type === "folder") this.navTree(d.path); } },
-            { label: "Details (physical / dedup)", action: (_e, row) => this.openRowDetail(row.getData()) },
-            { label: "Version history", action: (_e, row) => this.openFileDetail({ source: this.selectedSource, full_path: row.getData().path }) },
-            { label: "Restore…", action: (_e, row) => { const d = row.getData(); if (this.selectedSource === "*ALL*") { this.error = "Pick a source first."; return; } this.openRestore([{ source: this.selectedSource, full_path: d.path, snapshot_id: this.treeMode === "full" ? this.selectedSnapshot || null : null }]); } },
-            { label: "Download", action: (_e, row) => { const d = row.getData(); if (this.selectedSource === "*ALL*") { this.error = "Pick a source first."; return; } this.downloadItem({ source: this.selectedSource, full_path: d.path, snapshot_id: this.treeMode === "full" ? this.selectedSnapshot || null : null }); } },
-            { label: "Mount + open in Explorer", action: (_e, row) => this.mountOpen(this.selectedSnapshot, this.selectedSource, row.getData().path) },
+            { label: "Details (physical / dedup)", action: async (_e, row) => {
+              const d = row.getData();
+              if (d.type === "folder") return this.openRowDetail(d);
+              const s = await this.treeSourceFor(d.path);
+              if (s) this.openRowDetail(d, s);
+            } },
+            { label: "Version history", action: async (_e, row) => {
+              const s = await this.treeSourceFor(row.getData().path);
+              if (s) this.openFileDetail({ source: s, full_path: row.getData().path });
+            } },
+            { label: "Restore…", action: async (_e, row) => {
+              const d = row.getData();
+              const s = await this.treeSourceFor(d.path);
+              if (s) this.openRestore([{ source: s, full_path: d.path, snapshot_id: this.treeMode === "full" ? this.selectedSnapshot || null : null }]);
+            } },
+            { label: "Download", action: async (_e, row) => {
+              const d = row.getData();
+              const s = await this.treeSourceFor(d.path);
+              if (s) this.downloadItem({ source: s, full_path: d.path, snapshot_id: this.treeMode === "full" ? this.selectedSnapshot || null : null });
+            } },
+            { label: "Mount + open in Explorer", action: async (_e, row) => {
+              const d = row.getData();
+              const s = await this.treeSourceFor(d.path);
+              if (s) this.mountOpen(this.selectedSnapshot, s, d.path);
+            } },
             { label: "Find in search", action: (_e, row) => { this.query = row.getData().name; this.searchSource = ""; this.active = "search"; this.loadSearch(); } },
-            { label: "Exclude & delete…", action: (_e, row) => { const d = row.getData(); this.openExclude({ kind: d.type === "folder" ? "folder" : "file", path: d.path, source: this.selectedSource }, "delete"); } },
+            { label: "Exclude & delete…", action: async (_e, row) => {
+              const d = row.getData();
+              const kind = d.type === "folder" ? "folder" : "file";
+              // A folder in All-sources mode belongs to every covering backup: the dialog resolves
+              // them itself, so hand it no source rather than the "*ALL*" scope marker.
+              const source = d.type === "folder" ? (this.selectedSource === "*ALL*" ? null : this.selectedSource)
+                                                 : await this.treeSourceFor(d.path);
+              if (d.type !== "folder" && !source) return;
+              this.openExclude({ kind, path: d.path, source }, "delete");
+            } },
             { label: "Delete (chunked, respects filters)…", action: (_e, row) => this.openRemoveFolder(row.getData()) },
             { label: "Copy path", action: (_e, row) => this.copyText(row.getData().path) },
           ],

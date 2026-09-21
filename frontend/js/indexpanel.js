@@ -1,0 +1,172 @@
+// Indexing panel: the running pass in one place - whole-run progress, the stage list, the
+// current source, the live worker log and Stop. Reads whatever /api/index/status carries: the flat
+// counters exist today; pct / eta_seconds / phase / sync / seed / queued_repo / log ride the
+// progress pass-through and are simply omitted from the UI when absent (never faked).
+const INDEX_STAGES = [
+  ["index", "Index snapshots"],
+  ["dashboard", "Dashboard + refcount"],
+  ["analysis", "Snapshot analysis"],
+  ["churn", "Churn rollup"],
+  ["folders", "Folder pre-compute"],
+  ["policies", "Policies"],
+  ["policy_prices", "Policy pricing"],
+  ["next_snapshots", "Next-snapshot times"],
+];
+
+const indexPanelPart = {
+
+    indexProg() { return (this.indexStatus && (this.indexStatus.progress || this.indexStatus)) || {}; },
+
+    indexPct() {
+      const v = this.indexProg().pct;
+      return (v === null || v === undefined) ? null : Math.max(0, Math.min(100, Math.round(Number(v))));
+    },
+
+    indexEtaText() {
+      const p = this.indexProg();
+      const secs = p.eta_seconds != null ? p.eta_seconds : p.eta;
+      if (secs === null || secs === undefined || !isFinite(Number(secs)) || Number(secs) <= 0) return "";
+      return "about " + fmtDur(Number(secs)) + " left";
+    },
+
+    indexQueuedText() {
+      const q = this.indexStatus && this.indexStatus.queued_repo;
+      return q ? this.repoLabel(q) : "";
+    },
+
+    // The phase inside a stage (the tree sync discovers its folders level by level, so it reports
+    // counters and no percentage), plus the seed's folder count when that is what is running.
+    indexDetailText() {
+      const p = this.indexProg();
+      const bits = [];
+      if (p.phase) bits.push(p.phase);
+      const sync = p.sync || null;
+      if (sync && (sync.snapshots || sync.folders || sync.done)) {
+        bits.push(`${Number(sync.done || 0).toLocaleString()} synced` +
+          (sync.snapshots ? ` · ${Number(sync.snapshots).toLocaleString()} snapshots` : "") +
+          (sync.folders ? ` · ${Number(sync.folders).toLocaleString()} folders` : ""));
+      }
+      const seed = p.seed || null;
+      if (seed && seed.total) bits.push(`seed ${Number(seed.done || 0).toLocaleString()}/${Number(seed.total).toLocaleString()}`);
+      if (p.current_source) bits.push(sourcePath(p.current_source));
+      return bits.join(" · ");
+    },
+
+    indexPanelCounts() {
+      const s = this.indexStatus || {};
+      const pct = this.indexPct();
+      const counts = s.offline ? `Indexing ${s.indexed_snapshots || 0}/${s.snapshots || "?"}`
+        : s.building ? `${Number(s.indexed_snapshots || 0).toLocaleString()} of ${Number(s.snapshots || 0).toLocaleString()} snapshots`
+        : (s.never_indexed ? "Not indexed yet" : `Index ${s.indexed_snapshots || 0}/${s.snapshots || "?"}`);
+      return counts + (pct == null ? "" : ` · ${pct}%`);
+    },
+
+    indexStageRows() {
+      const cur = this.indexProg().stage || "";
+      const idx = INDEX_STAGES.findIndex(([k]) => k === cur);
+      return INDEX_STAGES.map(([key, label], i) => ({
+        key, label,
+        state: idx < 0 ? "" : (i < idx ? "done" : (i === idx ? "now" : "")),
+      }));
+    },
+
+    // Same shapes the job panel uses: the flat stage list, then the panel.
+    indexLine() {
+      const s = this.indexStatus;
+      if (s.offline) return `Indexing (${s.stage || "working"}) ${s.indexed_snapshots || 0}/${s.snapshots || "?"}`;
+      if (s.building) {
+        const pct = this.indexPct();
+        return `Indexing ${s.indexed_snapshots || 0}/${s.snapshots || "?"}` + (pct == null ? "" : ` · ${pct}%`);
+      }
+      if (s.never_indexed) return "Not indexed yet";
+      if (s.snapshots === undefined) return "Index: unknown";
+      return `Index ${s.indexed_snapshots}/${s.snapshots}`;
+    },
+
+    indexTooltip() {
+      const s = this.indexStatus || {};
+      if (!s.building) return s.never_indexed ? "Build the first index for this repo" : "Indexed. Click for details.";
+      const bits = [this.indexPanelCounts()];
+      const detail = this.indexDetailText();
+      if (detail) bits.push(detail);
+      if (s.stage) bits.push(s.stage);
+      const eta = this.indexEtaText();
+      if (eta) bits.push(eta);
+      return bits.join(" · ");
+    },
+
+    // ---- the panel ----
+    openIndexPanel() {
+      this.showIndex = true;
+      this.indexLogLines = [];
+      this.indexLogCursor = 0;
+      this.indexLogNote = "";
+      if (this._indexLogPoll) clearInterval(this._indexLogPoll);
+      this._indexLogPoll = setInterval(() => { if (!document.hidden && this.showIndex) this._indexLogTick(); }, 2000);
+      this._indexLogTick();
+    },
+
+    closeIndexPanel() {
+      if (this._indexLogPoll) { clearInterval(this._indexLogPoll); this._indexLogPoll = null; }
+      this.showIndex = false;
+    },
+
+    indexLogSetMode(m) {
+      this.indexLogMode = m;
+      localStorage.setItem("kl-indexmode", m);
+    },
+
+    async _indexLogTick() {
+      const repo = this.repo;
+      const seq = ++this._indexLogSeq;
+      try {
+        const r = await getJson(`/api/index/log?repo=${encodeURIComponent(repo)}&after=${this.indexLogCursor}`);
+        if (seq !== this._indexLogSeq || !this.showIndex) return;
+        this.indexLogNote = (r && r.note) || "";
+        if (r && r.lines && r.lines.length) {
+          this.indexLogLines.push(...r.lines);
+          if (this.indexLogLines.length > 2000) this.indexLogLines = this.indexLogLines.slice(-2000);
+          this.indexLogCursor = r.cursor || this.indexLogCursor;
+        }
+      } catch (e) {
+        if (seq === this._indexLogSeq && this.showIndex) {
+          this.indexLogNote = "The live worker log is not available from this build.";
+        }
+      }
+      const s = await getJson(`/api/index/status?repo=${encodeURIComponent(repo)}`).catch(() => null);
+      if (seq !== this._indexLogSeq || !this.showIndex) return;
+      if (s) this.indexStatus = s;
+    },
+
+    indexLogView() {
+      const clean = this.indexLogMode === "clean";
+      const kept = [];
+      for (const ln of (this.indexLogLines || [])) {
+        if (clean && JOB_LINE_NOISE.test(ln)) continue;
+        kept.push(ln);
+      }
+      return kept.slice(-400);
+    },
+    indexLogClass(ln) { return /error|warn|unable|failed|cannot|abort/i.test(ln) ? "w" : ""; },
+
+    async indexStop() {
+      if (!this.indexStatus || !this.indexStatus.building) return;
+      const ok = await this.klConfirm({
+        title: `Stop indexing ${this.repoLabel(this.repo)}?`,
+        callout: "The pass ends where it is and will not restart by itself; the next scheduled slot builds it again.",
+        note: "Kopia already answered stays recorded - nothing is corrupted.",
+        confirmLabel: "Stop indexing", danger: true,
+      });
+      if (!ok) return;
+      try {
+        const r = await getJson("/api/index/stop", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo: this.repo }) });
+        if (r && r.stopped === false && r.reason) this.klNotify(`Could not stop: ${r.reason}`, "warn");
+        else this.klNotify("Indexing stopped.");
+      } catch (e) {
+        this.klNotify("Stopping an index run is not available from this build.", "warn");
+      }
+      const s = await getJson(`/api/index/status?repo=${encodeURIComponent(this.repo)}`).catch(() => null);
+      if (s) this.indexStatus = s;
+    },
+};

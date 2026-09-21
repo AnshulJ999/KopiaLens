@@ -224,10 +224,20 @@ const jobsPart = {
       } catch (e) { /* storage unavailable - the chip just re-shows after a reload */ }
     },
 
+    // Self-scheduling poll: 5 s while something is running or queued, 20 s when the app is idle
+    // (the idle case was 24 requests a minute for nothing). A job started elsewhere then shows up
+    // within one idle interval.
     armJobChip() {
-      if (this._jobChipPoll) clearInterval(this._jobChipPoll);
-      this._jobChipPoll = setInterval(() => { if (!document.hidden) this._jobChipTick(); }, 5000);
-      this._jobChipTick();
+      if (this._jobChipPoll) { clearTimeout(this._jobChipPoll); clearInterval(this._jobChipPoll); this._jobChipPoll = null; }
+      const tick = async () => {
+        if (!document.hidden) {
+          try { await this._jobChipTick(); } catch (e) { /* the next tick retries */ }
+        }
+        const busy = (this.runningJobs || []).length > 0 || (this.indexPending || []).length > 0
+          || !!this.indexStatus.building;
+        this._jobChipPoll = setTimeout(tick, busy ? JOB_CHIP_POLL_ACTIVE : JOB_CHIP_POLL_IDLE);
+      };
+      tick();
     },
 
     async _jobChipTick() {
@@ -268,7 +278,10 @@ const jobsPart = {
     },
     async pendingRunNow(repo) {
       const r = await getJson(`/api/index/pending/run?repo=${encodeURIComponent(repo)}`, { method: "POST" }).catch((e) => { this.error = e.message; return null; });
-      if (r && r.started === false && r.reason && r.reason !== "already up to date") this.actionText = `Index update queued: ${r.reason}.`;
+      if (r && r.started === false && r.reason && r.reason !== "already up to date") {
+        this.actionText = `Index update queued: ${r.reason}.`;
+        this.klNotify(`Index update queued: ${r.reason}.`, "warn");
+      }
       this._jobChipTick();
       if (r && r.started && repo === this.repo) this.pollIndex();
     },
@@ -334,4 +347,7 @@ const jobsPart = {
 const JOB_CHIP_FAILURE_WINDOW = 24 * 3600;
 // A reload watch with no queued or running update gives up after this long.
 const REINDEX_WATCH_IDLE = 600;
+// Header poll cadence: fast only while something is actually happening.
+const JOB_CHIP_POLL_ACTIVE = 5000;
+const JOB_CHIP_POLL_IDLE = 20000;
 const JOB_LINE_NOISE = /^will remove file /i;

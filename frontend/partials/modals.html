@@ -1,44 +1,92 @@
 {% from "partials/_macros.html" import dryresult %}
 
-    <!-- delete-snapshots confirm -->
+    <!-- Snapshots-tab delete: the same card / list / run-bar shape as the file delete panel.
+         Every number here comes from real data: Frees is the accurate union(deleted)-union(kept)
+         figure, the file list has an honest Fast (approximate) and Precise (accurate, cached) view. -->
     <div x-show="showDelete && deletePlan" @click.self="showDelete=false" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
       <!-- x-if (not x-show): the bindings dereference deletePlan.*, which is null until
            planDelete() fills it - x-show hides the panel but still evaluates the bindings. -->
       <template x-if="deletePlan">
-      <div class="w-[42rem] max-w-full rounded-lg border border-danger-bd bg-surface p-4 text-sm">
-        <div class="flex items-center gap-2"><div class="font-medium text-danger">Delete <span x-text="deletePlan.count"></span> snapshot(s)</div><button @click="showDelete=false" class="ml-auto text-muted text-lg leading-none">&times;</button></div>
-        <div class="mt-3 grid grid-cols-2 gap-2">
-          <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted">Combined reclaim (set)</div><div class="font-medium" x-text="deletePlan.combinedComputing ? (fmtPhys(deletePlan.reclaim) + ' · computing exact…') : (deletePlan.combinedReclaim != null ? (fmtPhys(deletePlan.combinedReclaim) + (deletePlan.combinedExact ? '' : ' · approx (multi-source)')) : (fmtPhys(deletePlan.reclaim) + (deletePlan.reclaimKnown ? ' · per-snap sum' : ' · partial — Analyze first')))"></div></div>
-          <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted">Pinned / retained in selection</div><div class="font-medium" :class="(deletePlan.pinned||deletePlan.retained) ? 'text-warn' : ''" x-text="deletePlan.pinned + ' pinned · ' + deletePlan.retained + ' retained'"></div></div>
-        </div>
-        <div x-show="deletePlan.pinned || deletePlan.retained" class="mt-2 text-[11px] text-warn">Some selected snapshots are pinned or kept by a retention rule - deleting removes those restore points (and any pins).</div>
-        <div class="mt-2 text-[11px] text-muted">Space is reclaimed only after <span class="font-mono">kopia maintenance run --full</span>. Files that also exist in other (retained) snapshots are not affected.</div>
-        <div class="mt-2">
-          <div class="flex items-center gap-2 mb-1">
-            <span class="font-medium text-xs">Largest files new in these snapshots</span>
-            <button @click="loadDeletePreview(false)" class="text-[11px] rounded border border-bd px-1.5" :class="!deletePlan.precise?'bg-sel font-medium':''">Fast</button>
-            <button @click="loadDeletePreview(true)" class="text-[11px] rounded border border-bd px-1.5" :class="deletePlan.precise?'bg-sel font-medium':''" title="Only content exclusive to this source (refcount ≤ 1)">Precise</button>
+      <div class="w-[54rem] max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
+        <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
+          <div class="flex items-center gap-2">
+            <div class="font-medium text-danger">Delete snapshots</div>
+            <button @click="showDelete=false" class="ml-auto kl-btn quiet" title="Close">&times;</button>
           </div>
-          <div class="rounded border border-bd max-h-40 overflow-auto text-[11px]">
-            <template x-for="(f,i) in (deletePlan.preview || [])" :key="i">
-              <div class="flex items-center gap-2 px-2 py-0.5 border-b border-bd">
-                <span class="text-muted" x-text="fmtB(f.size)"></span>
-                <span class="break-all flex-1" x-text="f.full_path"></span>
-              </div>
-            </template>
-            <div x-show="!(deletePlan.preview && deletePlan.preview.length)" class="px-2 py-1 text-muted">No preview (or computing)…</div>
+          <div class="kl-note mt-0.5 break-all" x-text="deletePlan.sources.length ? deletePlan.sources.map(shortSource).join(' · ') : ''"></div>
+        </div>
+
+        <div class="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+          <div class="kl-cards">
+            <div class="kl-card"><div class="k">Snapshots</div><div class="v" x-text="deletePlan.count"></div></div>
+            <div class="kl-card good"><div class="k" title="Freed after the next full maintenance">Frees</div>
+              <div class="v" x-text="deletePlan.combinedComputing ? '…' : (deletePlan.combinedReclaim != null ? fmtPhys(deletePlan.combinedReclaim) : fmtPhys(deletePlan.reclaim))"></div></div>
+            <div class="kl-card" :class="deletePlan.pinned ? 'warn' : ''"><div class="k">Pinned</div><div class="v" x-text="deletePlan.pinned"></div></div>
+            <div class="kl-card" :class="deletePlan.retained ? 'warn' : ''"><div class="k" title="Kept by a retention rule">Kept by retention</div><div class="v" x-text="deletePlan.retained"></div></div>
           </div>
+          <div class="kl-note" x-show="deletePlan.combinedComputing">Working out the exact space this frees…</div>
+          <div class="kl-callout" x-show="deletePlan.pinned || deletePlan.retained">Pinned and retained snapshots are restore points you chose to keep. Deleting removes them, and any pins with them.</div>
+          <div class="kl-note" x-show="!deletePlan.combinedComputing && deletePlan.combinedReclaim == null">No analysis for these snapshots yet, so Frees is the per-snapshot sum. Analyze on the Snapshots tab gives the exact figure.</div>
+          <div class="kl-note" x-show="deletePlan.combinedReclaim != null && !deletePlan.combinedExact">Content shared between the backups in this selection is not fully subtracted, so Frees is an estimate.</div>
+
+          <div class="kl-sec">
+            <div class="h">Snapshots deleted <span class="count" x-text="deletePlan.count + ', newest first'"></span></div>
+            <div class="kl-list" style="max-height:150px">
+              <template x-for="s in (deletePlan.rows || [])" :key="s.id">
+                <div class="li">
+                  <span class="num shrink-0" style="width:9.5rem" x-text="humanTime(s.start_time)"></span>
+                  <span class="font-mono break-all grow" x-text="shortSource(s.source)"></span>
+                  <span class="pill warn shrink-0" x-show="s.pinned">pinned</span>
+                  <span class="pill warn shrink-0" x-show="(s.retention || []).length" x-text="'kept: ' + s.retention.join(', ')"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div class="kl-sec">
+            <div class="h">Biggest files <span class="count" x-text="deletePlan.precise ? 'the accurate list' : 'new in these snapshots'"></span>
+              <span class="acts">
+                <span class="kl-seg">
+                  <span :class="!deletePlan.precise ? 'on' : ''" @click="loadDeletePreview(false)"
+                        title="Approximate: the largest files these snapshots added. Some may still be held by other snapshots.">Fast (approx)</span>
+                  <span :class="deletePlan.precise ? 'on' : ''" @click="loadDeletePreview(true)"
+                        title="Accurate: only content no other snapshot holds. Walks the snapshots once (can take a minute), then it stays cached.">Precise</span>
+                </span>
+              </span>
+            </div>
+            <div class="kl-note" x-show="!deletePlan.precise && !deletePlan.previewLoading">Approximate - some of these files are also in other snapshots, so this list is bigger than what actually frees. Precise shows what really frees.</div>
+            <div class="kl-note" x-show="deletePlan.precise && !deletePlan.previewExact && !deletePlan.previewLoading">Across several backups: content shared between them is not fully subtracted, so this list is an upper bound.</div>
+            <div class="kl-note" x-show="deletePlan.previewLoading">Working this out - the first precise list walks the snapshots once and can take a minute, then it stays cached.</div>
+            <div class="kl-list" style="max-height:190px">
+              <template x-for="(f, i) in (deletePlan.preview || [])" :key="i">
+                <div class="li">
+                  <span class="font-mono break-all grow" x-text="f.full_path"></span>
+                  <span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtB(f.size)"></span>
+                </div>
+              </template>
+              <div class="li" style="color:var(--muted)" x-show="!(deletePlan.preview || []).length && !deletePlan.previewLoading"
+                   x-text="deletePlan.previewError ? 'Could not read the file list.' : 'No files to list.'"></div>
+            </div>
+          </div>
+
+          <div class="kl-runbar">
+            <button class="kl-btn" @click="deleteDry()" :disabled="deletePlan.dry.running">
+              <span x-text="deletePlan.dry.done ? 'Dry run again' : 'Dry run'"></span>
+            </button>
+            <span x-show="deleteDryChecked()" class="pill ok">dry run checked</span>
+            <span class="grow"></span>
+            <button class="kl-btn quiet" x-show="deletePlan.commands" @click="copyText(deletePlan.commands)" title="Copy the exact kopia delete commands to run yourself">Copy command</button>
+          </div>
+          {{ dryresult('deletePlan.dry') }}
         </div>
-        <div class="mt-3 kl-runbar">
-          <button class="kl-btn" @click="deleteDry()" :disabled="deletePlan.dry.running">
-            <span x-text="deletePlan.dry.done ? 'Dry run again' : 'Dry run'"></span>
-          </button>
-          <button class="kl-btn danger" @click="executeDelete()" :disabled="deletePlan.dry.running">Delete <span x-text="deletePlan.count"></span> snapshot(s)</button>
-          <span x-show="deleteDryChecked()" class="pill ok">dry run checked</span>
-          <span class="grow"></span>
-          <button class="kl-btn quiet" @click="copyText(deletePlan.commands)" title="Copy the exact kopia delete commands to run yourself">Copy command</button>
+
+        <div class="kl-footer shrink-0">
+          <span class="kl-note">Space frees after the next full maintenance. Files also in other snapshots stay.</span>
+          <span class="spacer"></span>
+          <button class="kl-btn" @click="showDelete=false">Cancel</button>
+          <button class="kl-btn danger" @click="executeDelete()" :disabled="deletePlan.dry.running"
+                  x-text="'Delete ' + deletePlan.count + ' snapshot' + (deletePlan.count === 1 ? '' : 's')"></button>
         </div>
-        {{ dryresult('deletePlan.dry') }}
       </div>
       </template>
     </div>
@@ -59,7 +107,7 @@
         </div>
         <div class="mt-3 flex flex-wrap gap-2">
           <button @click="excludedInclude(excludedDetail)" class="h-8 rounded border border-ok-bd text-ok px-3 text-xs">Include in Kopia (copy commands)</button>
-          <button @click="excludedExclude(excludedDetail)" class="h-8 rounded border border-bd px-3 text-xs">Exclude (copy patterns)</button>
+          <button @click="excludedExclude(excludedDetail)" class="h-8 rounded border border-bd px-3 text-xs">Exclude…</button>
           <button @click="copyText(excludedDetail.full_path)" class="h-8 rounded border border-bd px-3 text-xs">Copy path</button>
         </div>
         <div class="text-[11px] text-muted mt-2 whitespace-pre-wrap break-all" x-show="actionText" x-text="actionText"></div>
@@ -93,13 +141,13 @@
             </template>
             <div class="mt-2 flex flex-wrap items-center gap-2 text-xs" x-show="!removePlan.parts">
               <span class="text-muted" title="The biggest few hundred files usually hold most of the space">Delete:</span>
-              <button @click="setRemoveTopN(0)" :disabled="removePlan.job" class="h-7 rounded border px-2" :class="!removePlan.top_n ? 'border-fg font-medium' : 'border-bd'">Everything matched</button>
+              <button @click="setRemoveTopN(0)" class="h-7 rounded border px-2" :class="!removePlan.top_n ? 'border-fg font-medium' : 'border-bd'">Everything matched</button>
               <template x-for="n in [100, 500, 1000]" :key="n">
-                <button @click="setRemoveTopN(n)" :disabled="removePlan.job" class="h-7 rounded border px-2" :class="removePlan.top_n===n ? 'border-fg font-medium' : 'border-bd'" x-text="'Largest ' + n"></button>
+                <button @click="setRemoveTopN(n)" class="h-7 rounded border px-2" :class="removePlan.top_n===n ? 'border-fg font-medium' : 'border-bd'" x-text="'Largest ' + n"></button>
               </template>
               <input type="number" min="1" placeholder="custom" class="fld h-7 w-24 border border-bd bg-surface2"
                      :value="([0,100,500,1000].includes(removePlan.top_n) ? '' : removePlan.top_n)"
-                     @change="setRemoveTopN(parseInt($event.target.value, 10) || 0)" :disabled="removePlan.job">
+                     @change="setRemoveTopN(parseInt($event.target.value, 10) || 0)">
             </div>
             <div class="text-[11px] mt-1" x-show="removePlan.total_physical">
               <span x-show="removePlan.capped" class="text-ok">
@@ -125,6 +173,31 @@
               <span x-show="removePlan.everywhere" class="text-danger">Removes this content from every backup in the repo.</span>
               <span x-show="!removePlan.everywhere" class="font-mono break-all" x-text="(removePlan.sources_scope||[]).map(shortSource).join('  ·  ')"></span>
             </div>
+
+            <!-- File-name matching sweeps the whole scope, not just the matched plan: show the
+                 collateral count, then the files themselves. -->
+            <template x-if="removePlan.by === 'filename' && removePlan.filename_extra_count">
+              <div class="mt-2">
+                <div class="kl-callout">
+                  Matching by file name also removes <b x-text="Number(removePlan.filename_extra_count).toLocaleString()"></b>
+                  other file<span x-show="removePlan.filename_extra_count !== 1">s</span> with the same names, outside this selection
+                  <span x-show="removePlan.everywhere">, across the whole repo</span>.
+                </div>
+                <details class="mt-1">
+                  <summary class="text-xs text-muted cursor-pointer select-none"
+                           x-text="'Other same-named files' + (removePlan.filename_extra_capped ? ' (first ' + (removePlan.filename_extra || []).length + ' of ' + Number(removePlan.filename_extra_count).toLocaleString() + ')' : ' (' + (removePlan.filename_extra || []).length + ')')"></summary>
+                  <div class="mt-1 max-h-40 overflow-auto rounded border border-bd">
+                    <template x-for="(f, i) in (removePlan.filename_extra || [])" :key="i">
+                      <div class="flex items-center gap-2 px-2 py-0.5 text-[11px] border-b border-bd">
+                        <span class="font-mono break-all grow" x-text="f.full_path"></span>
+                        <span class="pill shrink-0" x-show="f.in_latest === false">deleted from disk</span>
+                        <span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtB(f.size)"></span>
+                      </div>
+                    </template>
+                  </div>
+                </details>
+              </div>
+            </template>
 
             <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
               <button @click="removeComputeReclaim()" :disabled="removePlan.detailLoading" class="h-7 rounded border border-ok-bd text-ok px-2 disabled:opacity-50"><span x-text="removePlan.detailLoading ? 'Checking…' : 'Check what it frees'"></span></button>
@@ -153,10 +226,10 @@
 
             <div class="mt-3 border-t border-bd pt-2">
               <div class="kl-runbar">
-                <button class="kl-btn" @click="removePlanDry()" :disabled="removePlan.job && removePlan.job.running">
+                <button class="kl-btn" @click="removePlanDry()" :disabled="removePlan.dry.running || !removePlan.file_count">
                   <span x-text="removePlan.dry.done ? 'Dry run again' : 'Dry run'"></span>
                 </button>
-                <button class="kl-btn danger" x-show="!removePlan.flow" @click="removeRun()" :disabled="removePlan.dry.running">Delete…</button>
+                <button class="kl-btn danger" x-show="!removePlan.flow" @click="removeRun()" :disabled="removePlan.dry.running || !removePlan.file_count">Delete…</button>
                 <span x-show="removePlanDryChecked()" class="pill ok">dry run checked</span>
                 <span class="grow"></span>
                 <button class="kl-btn quiet" @click="copyText(removePlan.commit)">Copy command</button>
@@ -174,18 +247,10 @@
               <div class="kl-footer mt-3" x-show="removePlan.flow">
                 <span class="spacer"></span>
                 <button class="kl-btn" @click="flowBackToExclude()">Back</button>
-                <button class="kl-btn primary" @click="flowReview()" :disabled="!removePlan.item_count">Next: review</button>
+                <button class="kl-btn primary" @click="flowReview()" :disabled="!removePlan.item_count || !removePlan.file_count">Next: review</button>
               </div>
             </div>
 
-            <div class="mt-3 border-t border-bd pt-2" x-show="removePlan.job">
-              <div class="text-xs font-medium" x-text="removePlan.job && (removePlan.job.running ? 'Removing…' : 'Done')"></div>
-              <div class="mt-1 h-2 rounded bg-sel overflow-hidden">
-                <div class="h-full bg-danger" :style="`width:${removePlan.job && removePlan.job.total ? Math.round(100*removePlan.job.done/removePlan.job.total) : 0}%`"></div>
-              </div>
-              <div class="text-[11px] text-muted mt-1" x-text="removePlan.job && ((removePlan.job.done||0)+' / '+(removePlan.job.total||0)+' batches'+(removePlan.job.errors?(' · '+removePlan.job.errors+' error(s)'):'')+(removePlan.job.running?'':' — run kopia maintenance run --full to reclaim'))"></div>
-              <div class="text-[10px] text-muted break-all" x-text="removePlan.job && removePlan.job.log && ('log: '+removePlan.job.log)"></div>
-            </div>
           </div>
         </template>
       </div>

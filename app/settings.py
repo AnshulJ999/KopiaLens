@@ -39,7 +39,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "index_time": "23:00",       # daily mode: local time. A missed run catches up at the next opportunity.
         "index_interval": 86400,     # interval mode only: seconds between heavy passes
         "index_worker_timeout": 14400,  # hard ceiling on one worker run (4h) so a hang can't block tomorrow
-        "index_drain_timeout": 300,  # how long the handover waits for in-flight queries to finish
         "folder_prewarm_budget": 900,  # max seconds the nightly spends pre-computing folder reclaim
         "index_retry_delay": 900,    # after a FAILED pass, wait this long before the one retry
         "index_max_retries": 1,      # retries per scheduled slot; 0 = never retry until the next slot
@@ -49,7 +48,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "dashboard_mode": "nightly",  # "nightly" (rebuild with the heavy pass) | "interval" (also during the day)
         "dashboard_interval": 14400,  # dashboard_mode="interval" only: seconds between rebuilds
         "reindex_interval": 1800,    # legacy interval, still used for the restart-quiet-period calculation
-        "reclaim_interval": 10800,   # seconds between background reclaimable pre-warm passes (heavy: refcount + double walk)
         "startup_delay": 300,        # quiet period after every process start before any background work
         "dashboard_refresh": 900,    # seconds: how often the open Dashboard view re-fetches the cache (0 = off)
         "churn_days": 30,            # Churn tab: default window (1 / 3 / 7 / 30 / 90 / 180 / 365)
@@ -71,9 +69,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "disk_lookup": "auto",       # what answers disk questions: auto | everything | scan | off
         "disk_scan_budget": 15,      # seconds one folder scan may take before it answers "not measured"
         "excluded_tolerance": 0.05,  # folder counts as "backed" when excluded fraction is below this (cuts partial noise)
-        "auto_compact": True,        # auto-compact the DuckDB when it bloats (DuckDB has no GC of its own)
-        "compact_ratio": 1.8,        # compact when the file grows past this x its last-compacted size
-        "compact_min_interval": 86400,  # min seconds between auto-compactions (1 day)
+        "repo_labels": "short",      # repo chips/columns: "short" (Repo 1) | "full" (the name from repos.json)
         "debug_log": False,          # also write data/logs/kopialens-debug.log at DEBUG (env KOPIALENS_DEBUG_LOG overrides)
         # ---- unified store () ---------------------------------------------------------
         # Encryption at rest for every local file the store writes. It stays OFF until onboarding
@@ -130,41 +126,42 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 _SETTINGS_LOCK = threading.RLock()
 
 
-def raw_kopialens_settings() -> dict[str, Any]:
-    """The kopialens dict exactly as the FILE carries it - no DEFAULTS filling absent keys. The
-    only way to tell an explicit user choice from an absent one, which the profile-aware bind
-    default needs. Empty dict on a missing or unreadable file."""
+def _read_settings_file() -> dict[str, Any]:
+    """The file exactly as written - defaults do NOT fill absent keys. That distinction is the
+    only way to tell an explicit user choice from an absent one, which both the profile-aware
+    bind default and the save path need. A corrupt file is preserved for recovery and treated
+    as empty, so a following save can never wipe it silently."""
     with _SETTINGS_LOCK:
+        if not os.path.exists(SETTINGS_FILE):
+            return {}
         try:
-            if not os.path.exists(SETTINGS_FILE):
-                return {}
             with open(SETTINGS_FILE, encoding="utf-8") as handle:
                 loaded = json.load(handle)
-            return loaded.get("kopialens", {}) or {}
+            return loaded if isinstance(loaded, dict) else {}
         except Exception:
+            try:
+                os.replace(SETTINGS_FILE, SETTINGS_FILE + ".corrupt")
+            except Exception:
+                pass
             return {}
+
+
+def raw_kopialens_settings() -> dict[str, Any]:
+    """The kopialens dict exactly as the FILE carries it - no DEFAULTS filling absent keys."""
+    return _read_settings_file().get("kopialens") or {}
 
 
 def load_settings() -> dict[str, Any]:
     with _SETTINGS_LOCK:
         settings = deepcopy(DEFAULT_SETTINGS)
-        if not os.path.exists(SETTINGS_FILE):
-            return settings
-        try:
-            with open(SETTINGS_FILE, encoding="utf-8") as handle:
-                loaded = json.load(handle)
-        except Exception:
-            # File exists but is unreadable/corrupt. Do NOT silently return defaults that a
-            # following save could persist over the real file (that wipes the user's settings).
-            # Preserve the bad copy for recovery, then fall back to defaults.
-            try:
-                os.replace(SETTINGS_FILE, SETTINGS_FILE + ".corrupt")
-            except Exception:
-                pass
+        loaded = _read_settings_file()
+        if not loaded:
             return settings
         settings.update(loaded)
-        settings["kopialens"] = {**DEFAULT_SETTINGS["kopialens"], **loaded.get("kopialens", {})}
-        settings["backblaze"] = {**DEFAULT_SETTINGS["backblaze"], **loaded.get("backblaze", {})}
+        kl = loaded.get("kopialens") if isinstance(loaded.get("kopialens"), dict) else {}
+        bz = loaded.get("backblaze") if isinstance(loaded.get("backblaze"), dict) else {}
+        settings["kopialens"] = {**DEFAULT_SETTINGS["kopialens"], **kl}
+        settings["backblaze"] = {**DEFAULT_SETTINGS["backblaze"], **bz}
         return settings
 
 
@@ -183,10 +180,14 @@ def save_settings(settings: dict[str, Any]) -> None:
 
 
 def mutate_settings(mutator) -> dict[str, Any]:
-    """Atomic read-modify-write: hold the lock across load + mutate + save so concurrent writers
-    cannot interleave and clobber each other's changes. `mutator(settings)` edits in place."""
+    """Atomic read-modify-write: hold the lock across read + mutate + save so concurrent writers
+    cannot interleave and clobber each other's changes. `mutator(settings)` edits in place.
+
+    The write is based on the FILE's own content, never the defaults-merged view: persisting
+    merged defaults is what stamped values the user never chose - a server install that saved
+    anything wrote the desktop loopback bind into settings.json and lost its address on restart."""
     with _SETTINGS_LOCK:
-        settings = load_settings()
+        settings = _read_settings_file()
         mutator(settings)
         save_settings(settings)
-        return settings
+        return load_settings()

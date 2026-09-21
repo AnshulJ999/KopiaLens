@@ -43,7 +43,7 @@
                     <td class="p-1.5 whitespace-nowrap" x-text="humanTime(r.ts)"></td>
                     <td class="p-1.5" x-text="r.event"></td>
                     <td class="p-1.5" x-text="r.action"></td>
-                    <td class="p-1.5" x-text="r.repo || ''"></td>
+                    <td class="p-1.5" x-text="r.repo ? repoLabel(r.repo) : ''"></td>
                     <td class="p-1.5 font-mono break-all max-w-[36rem]" x-text="auditSummary(r)"></td>
                     <td class="p-1.5" :class="r.rc ? 'text-danger' : ''" x-text="r.rc ?? ''"></td>
                   </tr>
@@ -64,7 +64,7 @@
                   <tr class="border-t border-bd-soft">
                     <td class="p-1.5 whitespace-nowrap" x-text="humanTime(j.started || j.created)"></td>
                     <td class="p-1.5" x-text="(j.kind_label || j.kind || '') + (j.dry ? ' (dry run)' : '')"></td>
-                    <td class="p-1.5" x-text="j.repo || ''"></td>
+                    <td class="p-1.5" x-text="j.repo ? repoLabel(j.repo) : ''"></td>
                     <td class="p-1.5 break-all max-w-[24rem]" x-text="j.label || ''"></td>
                     <td class="p-1.5 font-medium" :class="jobStateClass(j)" :title="j.error || ''" x-text="j.state || ''"></td>
                     <td class="p-1.5" x-text="j.total ? j.done + '/' + j.total : ''"></td>
@@ -86,7 +86,7 @@
                 <template x-for="(r, i) in logsRuns()" :key="i">
                   <tr class="border-t border-bd-soft">
                     <td class="p-1.5 whitespace-nowrap" x-text="humanTime(r.ts_epoch || r.ts)"></td>
-                    <td class="p-1.5" x-text="r.repo || ''"></td>
+                    <td class="p-1.5" x-text="r.repo ? repoLabel(r.repo) : ''"></td>
                     <td class="p-1.5" x-text="r.trigger || ''"></td>
                     <td class="p-1.5 font-medium" :class="r.ok ? 'text-ok' : 'text-danger'" x-text="r.ok ? 'ok' : 'failed'"></td>
                     <td class="p-1.5 whitespace-nowrap" x-text="fmtDur(r.elapsed || 0)"></td>

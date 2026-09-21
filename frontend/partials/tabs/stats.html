@@ -2,6 +2,8 @@
         <div class="flex items-center gap-2">
           <span class="font-medium">Repository</span>
           <button @click="loadStats(true)" class="h-7 rounded border border-bd px-2 text-xs">⟳ Refresh</button>
+          <!-- the nightly retention self-check; silent while it agrees with kopia -->
+          <span class="kl-note text-warn" x-show="retentionIssueText()" x-text="retentionIssueText()"></span>
         </div>
         <template x-if="statsData">
           <div class="space-y-3">

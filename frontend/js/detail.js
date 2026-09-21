@@ -1,11 +1,11 @@
 // Detail panels + removal: file/folder panel, chunked remove plan.
 const detailPart = {
 
-    openRowDetail(d) {
+    openRowDetail(d, source = null) {
       if (d.type === "folder") {
         this.detail = { kind: "folder", title: d.path, logical: d.size, physical: d.physical, files: d.files };
       } else {
-        this.openFileDetail({ source: this.selectedSource, full_path: d.path });
+        this.openFileDetail({ source: source || this.selectedSource, full_path: d.path });
       }
     },
 
@@ -350,6 +350,16 @@ const detailPart = {
     },
     // ---- Chunked folder/filter delete (remove-files, respects the current view/filter) ----
     openRemoveFromSearch() {  // delete EVERY file matching the current Search filter (not just selected)
+      // No filter = "the whole repo": the backend refuses it, so say why instead of opening a
+      // panel that can never plan anything.
+      const filtered = !!(this.query || this.searchSource || this.searchExt || this.searchExtExclude
+        || this.deletedOnly || this.overOneGb || this.minGb !== "" || this.maxGb !== ""
+        || this.minVersions !== "" || this.sharedMin !== "" || this.dateFrom || this.dateTo
+        || this.recentBackupCutoff());
+      if (!filtered) {
+        this.klNotify("Type a search or pick a filter first - with no filter this would match the whole repository.", "warn");
+        return;
+      }
       this._removeBase = {
         repo: this.repo, query: this.query, source: this.searchSource || null,
         ext: this.searchExt || null, ext_exclude: this.searchExtExclude || null,
@@ -367,7 +377,9 @@ const detailPart = {
     },
     openRemoveFolder(row) {  // delete a Tree folder/file, honoring the active Tree filters
       this._removeBase = {
-        repo: this.repo, source: this.selectedSource, prefix: row.path,
+        // All-sources mode is a scope marker, not a source: with no source the plan covers every
+        // backup holding the folder.
+        repo: this.repo, source: this.selectedSource === "*ALL*" ? null : this.selectedSource, prefix: row.path,
         deleted_only: this.treeDeletedOnly, over_gb: this.treeOverGb ? 1 : 0, ext: this.treeExt || null,
       };
       this._removeLabel = (row.type === "folder" ? "folder " : "") + (row.path || row.name);
@@ -392,7 +404,7 @@ const detailPart = {
       // silently leave every older version's bytes in old snapshots ("deleted" folder still there).
       const base = this._removeBase || {};
       const allVers = !!(base.prefix || base.parts);
-      this.removePlan = { loading: true, label: this._removeLabel, all_versions: allVers, everywhere: false, by: "object-id", detail: null, detailLoading: false, job: null, batSaved: null, top_n: 0, dry: this.klDryState(), parts: base.parts || null };
+      this.removePlan = { loading: true, label: this._removeLabel, all_versions: allVers, everywhere: false, by: "object-id", detail: null, detailLoading: false, batSaved: null, top_n: 0, dry: this.klDryState(), parts: base.parts || null };
       this.showRemove = true;
       this._fetchRemovePlan();
     },
@@ -410,9 +422,9 @@ const detailPart = {
       // Auto-compute freeable/shared (like the file panel) unless the set is huge (avoid a long walk).
       if (r && (r.file_count || 0) <= 200000) this.removeComputeReclaim();
     },
-    toggleRemoveAllVersions() { if (this.removePlan && !this.removePlan.job) { this.removePlan.all_versions = !this.removePlan.all_versions; this.klDryClear(this.removePlan.dry); this._fetchRemovePlan(); } },
-    toggleRemoveEverywhere() { if (this.removePlan && !this.removePlan.job) { this.removePlan.everywhere = !this.removePlan.everywhere; this.klDryClear(this.removePlan.dry); this._fetchRemovePlan(); } },
-    setRemoveBy(by) { if (this.removePlan && !this.removePlan.job) { this.removePlan.by = by; this.klDryClear(this.removePlan.dry); this._fetchRemovePlan(); } },
+    toggleRemoveAllVersions() { if (this.removePlan) { this.removePlan.all_versions = !this.removePlan.all_versions; this.klDryClear(this.removePlan.dry); this._fetchRemovePlan(); } },
+    toggleRemoveEverywhere() { if (this.removePlan) { this.removePlan.everywhere = !this.removePlan.everywhere; this.klDryClear(this.removePlan.dry); this._fetchRemovePlan(); } },
+    setRemoveBy(by) { if (this.removePlan) { this.removePlan.by = by; this.klDryClear(this.removePlan.dry); this._fetchRemovePlan(); } },
     async removeComputeReclaim() {
       if (!this.removePlan) return;
       const seq = ++this._removeDetailSeq;
@@ -428,13 +440,13 @@ const detailPart = {
       return body;
     },
     setRemoveTopN(n) {
-      if (!this.removePlan || this.removePlan.job) return;
+      if (!this.removePlan) return;
       this.removePlan.top_n = n || 0;
       this.klDryClear(this.removePlan.dry);
       this._fetchRemovePlan();
     },
     removePlanDry() {  // run the whole matched plan's real kopia dry run
-      if (!this.removePlan || this.removePlan.job) return;
+      if (!this.removePlan) return;
       const st = this.removePlan.dry = (this.removePlan.dry || this.klDryState());
       return this.klDry("/api/actions/remove-plan-dry-run", this._removeBody(), st);
     },
@@ -453,6 +465,7 @@ const detailPart = {
       this._downloadText(r.filename, r.content);
       this.removePlan.batSaved = { filename: r.filename, batches: r.batches };
       this.actionText = `Downloaded ${r.filename} (${r.batches} batches). Run it; kopia output logs next to it.`;
+      this.klNotify(`Downloaded ${r.filename} (${r.batches} batches). Run it - kopia's output logs next to it.`);
     },
     async removeRun() {
       if (!this.removePlan) return;
@@ -481,5 +494,5 @@ const detailPart = {
         }
       }, "Starting the chunked delete…");
     },
-    closeRemove() { if (this.removeJobPoll) { clearInterval(this.removeJobPoll); this.removeJobPoll = null; } this.showRemove = false; this.removePlan = null; },
+    closeRemove() { this.showRemove = false; this.removePlan = null; },
 };

@@ -64,6 +64,12 @@ const getJson = async (url, options = {}) => {
   const text = await res.text();
   let data;
   try { data = text ? JSON.parse(text) : {}; } catch (e) { data = {}; }
+  // A sign-in that expired (or a password changed elsewhere) must land on the login page - the
+  // alternative is every poll failing forever in the corner of an open tab.
+  if (res.status === 401 && data && data.login) {
+    location.href = data.login;
+    throw new Error(data.detail || "Not signed in.");
+  }
   if (!res.ok) throw new Error((data && (data.detail || data.error)) || text || res.statusText);
   return data;
 };

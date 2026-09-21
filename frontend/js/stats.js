@@ -23,4 +23,23 @@ const statsPart = {
       } finally { this.blobLoading = false; }
     },
     statsBlock(v) { return typeof v === "string" ? v : JSON.stringify(v, null, 2); },
+
+    // Nightly retention self-check (validates our retention view against kopia's own reasons).
+    // Silent while it agrees - it only speaks up when something disagrees or the check fails.
+    retentionCheck() {
+      return (this.statsData && this.statsData.parsed && this.statsData.parsed.retention_check) || null;
+    },
+    retentionIssueText() {
+      const c = this.retentionCheck();
+      if (!c) return "";
+      const at = c.at ? " · " + c.at : "";
+      if (c.status === "failed") {
+        return `Retention check did not run: ${c.failed || 0} of ${c.checked || 0} sources failed${at}.`;
+      }
+      if (c.status === "mismatch") {
+        const detail = (c.detail || []).slice(0, 3).join("; ");
+        return `Retention check: ${c.mismatches} of ${c.checked} sources disagree with kopia${at}${detail ? " · " + detail : ""}.`;
+      }
+      return "";
+    },
 };

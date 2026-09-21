@@ -492,6 +492,7 @@ const policiesPart = {
         const r = await getJson("/api/policies/backup", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ repo: this.repo }) });
         this.actionText = `Policy backup written: ${r.name}`;
+        this.klNotify(`Policy backup written: ${r.name}`);
         this.polOpenBackups();
       }, "Backing up policies...");
     },
@@ -563,6 +564,7 @@ const policiesPart = {
           body: JSON.stringify({ repo: this.repo, name, mode: this.polRestoreMode, confirmed: true }) });
         if (r.ok) {
           this.actionText = `Policies restored from ${name}.`;
+          this.klNotify(`Policies restored from ${name}.`);
         } else {
           this.error = `kopia exited ${r.returncode} - ${(r.output_tail || "").slice(-300)}`;
         }

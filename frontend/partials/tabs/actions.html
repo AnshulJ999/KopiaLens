@@ -18,7 +18,7 @@
                   <span class="kl-note" x-show="m.path && m.path !== sourcePath(m.source || '')" x-text="' · ' + m.path"></span>
                 </span>
                 <span class="kl-note shrink-0" x-show="m.snap_time" x-text="'snapshot ' + humanTime(m.snap_time)"></span>
-                <span class="kl-note shrink-0" x-text="'repo ' + m.repo"></span>
+                <span class="kl-note shrink-0" x-text="repoLabel(m.repo)"></span>
                 <button class="kl-btn quiet shrink-0" style="height:22px" @click="mountBrowse(m.pid)">Open</button>
                 <button class="kl-btn danger shrink-0" style="height:22px" @click="unmount(m.pid)">Unmount</button>
               </div>
