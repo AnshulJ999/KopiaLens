@@ -20,7 +20,7 @@ from ..core.kopia import remove_files_chunked_commands, snapshot_delete_commands
 from ..core.sources import sources_index
 from ..index.holding import holding_snapshots
 from ..index.queries import (holders_for_paths, paths_for_contents, paths_named,
-                             sources_for_content, versions as file_versions)
+                             sources_for_content, versions_many)
 from .actions import _fmt_cmd
 
 router = APIRouter(tags=["delete"])
@@ -65,9 +65,12 @@ def selection_facts(repo: str, files: list[tuple[str, str]]) -> dict:
     oids: list[str] = []
     seen: set[str] = set()
     versions = 0
+    # one batched lookup for the whole selection - the per-file-per-holder shape scanned
+    # pathx once per pair and is what made DEL2's panel take minutes on a 500-file selection.
+    vers = versions_many(repo, [(h, fp) for (_src, fp), hs in zip(files, holders) for h in hs])
     for (src, fp), hs in zip(files, holders):
         for h in hs:
-            for v in file_versions(repo, h, fp):
+            for v in vers.get((h, fp)) or []:
                 versions += 1
                 oid = v.get("content_id")
                 if oid and oid not in seen:

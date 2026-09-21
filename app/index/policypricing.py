@@ -132,8 +132,26 @@ def _cond_for_inner(rel: str, rx: str, fragments: list[str], root_len: int, sep:
     return " AND ".join(f"({c})" for c in conds), params
 
 
+_MAT_PX = "px_priced"        # per-source temp tables the batch scans read
+_MAT_DIR = "dir_priced"
+
+
+def _materialize_source(cur, src: int) -> None:
+    """ One source's ``in_latest`` paths and its dir rows, as TEMP TABLES.
+
+    DuckDB plans a 40-rule FILTER list over the multi-file Parquet view badly - 0.78 s for 567
+    rows against 0.035 s for the same rows in a temp table, and superlinear in rule count, which
+    is the 193 s ``policy_prices`` stage (memory trap 31). One materialization per source serves
+    every batch and every example lookup; the tables die with the connection."""
+    cur.execute(f"CREATE OR REPLACE TEMP TABLE {_MAT_PX} AS "
+                f"SELECT * FROM pathx WHERE src_id = ? AND in_latest", [src])
+    cur.execute(f"CREATE OR REPLACE TEMP TABLE {_MAT_DIR} AS "
+                f"SELECT * FROM dir WHERE src_id = ?", [src])
+
+
 def _price_batch_with_regex(cur, src: int, entries: list[list],
-                            root_len: int, sep: str) -> None:
+                            root_len: int, sep: str,
+                            px_table: str = "pathx", dir_table: str = "dir") -> None:
     """Price a batch of patterns in ONE pathx scan + ONE dir scan, writing files/bytes/dirs
     into ``entries`` ([pattern, rx, fragments, [files, bytes, dirs]]) in place.
 
@@ -153,12 +171,12 @@ def _price_batch_with_regex(cur, src: int, entries: list[list],
     sel = ", ".join(
         f"count(*) FILTER (WHERE {c}) AS f{i}, coalesce(sum(size) FILTER (WHERE {c}), 0) AS b{i}"
         for i, c in enumerate(conds))
-    row = cur.execute(f"SELECT {sel} FROM pathx WHERE src_id = ? AND in_latest",
+    row = cur.execute(f"SELECT {sel} FROM {px_table} WHERE src_id = ? AND in_latest",
                       pparams + [src]).fetchone()
     dsel = ", ".join(
         f"count(*) FILTER (WHERE length({drel}) > 1 AND regexp_full_match({drel}, ?)) AS d{i}"
         for i in range(len(entries)))
-    drow = cur.execute(f"SELECT {dsel} FROM dir WHERE src_id = ?", dparams + [src]).fetchone()
+    drow = cur.execute(f"SELECT {dsel} FROM {dir_table} WHERE src_id = ?", dparams + [src]).fetchone()
     for i, entry in enumerate(entries):
         entry[3][0] = int(row[i * 2] or 0)
         entry[3][1] = int(row[i * 2 + 1] or 0)
@@ -350,15 +368,22 @@ def _compute(repo: str, source_key: str, patterns: list[str]) -> dict:
                 results[i] = {"pattern": pat, "files": 0, "bytes": 0, "dirs": 0, "examples": [],
                               "error": None, "negated": compiled.negated}
             return {"results": results, "slow_path": False}
+        # one batch is a single scan either way; more than one is where the temp tables pay.
+        if len(entries) > _BATCH:
+            _materialize_source(cur, src)
+            px, dr = _MAT_PX, _MAT_DIR
+        else:
+            px, dr = "pathx", "dir"
         for start in range(0, len(entries), _BATCH):
-            _price_batch_with_regex(cur, src, entries[start:start + _BATCH], len(root), sep)
+            _price_batch_with_regex(cur, src, entries[start:start + _BATCH], len(root), sep,
+                                    px_table=px, dir_table=dr)
         for i, (pat, compiled), entry in zip(valid_idx, valid_pats, entries):
             files, total, dirs = entry[3]
             examples: list = []
             if files and _EXAMPLE_CAP:  # examples only where the rule actually matches
                 cond, cparams = _cond_for_inner(_rel_expr(), entry[1], entry[2], len(root), sep)
                 examples = cur.execute(
-                    f"SELECT full_path, size FROM pathx WHERE src_id = ? AND in_latest AND {cond} "
+                    f"SELECT full_path, size FROM {px} WHERE src_id = ? AND in_latest AND {cond} "
                     f"ORDER BY size DESC LIMIT ?", [src] + cparams + [_EXAMPLE_CAP]).fetchall()
             results[i] = {"pattern": pat, "files": files, "bytes": total, "dirs": dirs,
                           "examples": examples, "error": None, "negated": compiled.negated}

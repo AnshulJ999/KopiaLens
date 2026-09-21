@@ -14,6 +14,7 @@ import threading
 import time
 
 from . import bbdb, parsers, paths, pq
+from ..core.paths import prefix_bounds
 
 _SEP = "\\"
 _CHURN_TAIL = 30 * 1024 * 1024  # bytes of the bzfileids tail scanned for "recently added"
@@ -362,7 +363,7 @@ def coverage_children(folder: str) -> dict[str, dict]:
     """Per immediate child segment under `folder`: backed (excluded=0) coverage from the BZ index.
     Shape mirrors index/excluded.py's backed_children: {seg_lc: {logical, files, has_file}}."""
     lo = folder.lower().rstrip(_SEP) + _SEP
-    hi = lo + "￿"
+    _, hi = prefix_bounds(lo)                 # not lo + U+FFFF: emoji sort above it
     plen = len(lo)
     agg: dict[str, dict] = {}
     with _files_cursor() as fc:
@@ -409,7 +410,7 @@ def folder_children(prefix: str) -> list[dict]:
         "FROM folder_rollup WHERE parent_lc=?", [lo]).fetchall()
     if rr:
         return _rollup_to_children(rr)
-    hi = lo + "￿"
+    _, hi = prefix_bounds(lo)                 #
     plen = len(lo)
     with _files_cursor() as fc:
         cur = fc.execute(
@@ -554,8 +555,11 @@ def _churn_build(top: int, depth: int, cl) -> dict:
     con = bbdb.connect()
     has_hist = (con.execute("SELECT count(DISTINCT day) FROM folder_snapshots").fetchone()[0] or 0) >= 2
     top_folders = sorted(raw.items(), key=lambda x: x[1], reverse=True)[:int(top)]
-    folders = [(folder, folder.lower().rstrip(_SEP) + _SEP, folder.lower().rstrip(_SEP) + _SEP + "￿")
-               for folder, _cnt in top_folders]
+    folders = []
+    for folder, _cnt in top_folders:
+        lo = folder.lower().rstrip(_SEP) + _SEP
+        _, hi = prefix_bounds(lo)             #
+        folders.append((folder, lo, hi))
     stats = _churn_folder_stats(folders)
     rows = []
     for folder, cnt in top_folders:

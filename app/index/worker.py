@@ -97,6 +97,7 @@ class _Reporter:
         self.repo = repo
         self.full = full
         self.stage = "starting"
+        self.stage_started = time.time()      # the panel's live stage fraction needs it
         self.started = time.time()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -106,6 +107,7 @@ class _Reporter:
         job = _JOBS.get(self.repo, {})
         return {
             "repo": self.repo, "stage": self.stage, "started": self.started,
+            "stage_started": self.stage_started,
             "updated": time.time(), "pid": os.getpid(),
             "trigger": trigger(), "full": self.full,
             "indexed": job.get("indexed", 0), "total": job.get("total", 0),
@@ -118,6 +120,7 @@ class _Reporter:
         }
 
     def set_stage(self, stage: str) -> None:
+        self.stage_started = time.time()
         self.stage = stage
         logging.info("stage: %s", stage)
         write_progress(self.repo, self.snapshot())
@@ -248,6 +251,13 @@ def run(repo: str, full: bool = False) -> dict:
                 policycheck.run(repo)
             except Exception as exc:  # noqa: BLE001 - the check is a diagnostic
                 logging.error("policy inheritance check repo=%s failed: %s", repo, exc)
+            try:
+                # The policy cache was refreshed moments ago, so the retention replica can be
+                # compared against kopia's own retentionReason with no subprocess at all.
+                from . import retentioncheck
+                retentioncheck.run(repo)
+            except Exception as exc:  # noqa: BLE001 - the check is a diagnostic
+                logging.error("retention check repo=%s failed: %s", repo, exc)
 
         def _policy_prices() -> None:
             #: whole-policy "keeping out" pricing as a STORED stage - the tab reads the

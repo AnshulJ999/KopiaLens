@@ -115,6 +115,41 @@ def _has_index(repo: str) -> bool:
     return store.read_manifest(repo) is not None
 
 
+def _nightly_progress_block(repo: str, prog: dict) -> dict:
+    """The flat shape the indexing panel reads: one overall percentage and ETA, the phase, the
+    counters and the stage list. ``estimated`` says whether the number came from run history."""
+    run = _nightly_run_progress(repo, prog)
+    pct = run.get("pct")
+    if pct is None:
+        pct = prog.get("pct")          # no estimate: the index stage's own REAL fraction
+    return {"stage": run.get("stage") or prog.get("stage"), "pct": pct,
+            "eta_seconds": run.get("eta_seconds"), "estimated": bool(run.get("estimated")),
+            "stages": run.get("stages"), "phase": prog.get("phase"), "sync": prog.get("sync"),
+            "seed": prog.get("seed"), "current_source": prog.get("current_source")}
+
+
+def _nightly_queued_repo(repo: str) -> str | None:
+    from ..core.nightly import queued_repo  # lazy: keeps core<->index imports one-directional
+    try:
+        return queued_repo(repo)
+    except Exception:  # noqa: BLE001 - a label must never break the status route
+        return None
+
+
+def _nightly_run_progress(repo: str, prog: dict) -> dict:
+    from ..core.nightly import run_progress  # lazy: keeps core<->index imports one-directional
+    try:
+        return run_progress(repo, prog)
+    except Exception as exc:  # noqa: BLE001 - an estimate must never break the status route
+        return {"stage": prog.get("stage"), "pct": None, "eta_seconds": None,
+                "estimated": False, "stages": [], "error": str(exc)[:120]}
+
+
+def _nightly_log_tail(repo: str) -> list[str]:
+    from ..core.nightly import worker_log_tail  # lazy: same reason
+    return worker_log_tail(repo)
+
+
 def index_status(repo: str) -> dict:
     srcs = sources_index(repo)
     total = sum(len(snaps) for snaps in srcs.values())
@@ -152,6 +187,16 @@ def index_status(repo: str) -> dict:
             "stage": prog.get("stage"),
             "current_source": prog.get("current_source"), "targets": prog.get("targets"),
             "error": prog.get("error"),
+            # the rest of the worker's progress, which nothing read until now: the phase
+            # name, the sync/seed counters, the honest per-stage pct, the whole-run estimate and
+            # the live log tail the panel renders. ``progress`` is the flat block the panel reads
+            # (``indexStatus.progress``); the same numbers also ride the top level.
+            "phase": prog.get("phase"), "sync": prog.get("sync"), "seed": prog.get("seed"),
+            "pct": prog.get("pct"),
+            "run": _nightly_run_progress(repo, prog),
+            "log_tail": _nightly_log_tail(repo),
+            "queued_repo": _nightly_queued_repo(repo),
+            "progress": _nightly_progress_block(repo, prog),
         }
     cur = read_cursor(repo) if _has_index(repo) else None
     if cur is None:

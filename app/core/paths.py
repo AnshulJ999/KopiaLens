@@ -85,6 +85,22 @@ def case_sensitive(source_key: str) -> bool:
     return rules(source_key)["case_sensitive"]
 
 
+def prefix_bounds(prefix: str) -> tuple[str, str]:
+    """The half-open ``[lo, hi)`` range covering every string that STARTS WITH ``prefix``.
+
+    ``hi`` advances the prefix's last character by one - it is NOT ``prefix + U+FFFF``: a name may
+    start with a character above U+FFFF (any emoji, and the U+FFFF noncharacter is the top of the
+    BMP, not of Unicode), and those rows sorted ABOVE the old bound, so a range query silently
+    dropped them and the Excluded browser called such a file "not backed up". DuckDB compares
+    VARCHAR by codepoint, so advancing one codepoint is the exact bound."""
+    if not prefix:
+        return "", ""
+    last = ord(prefix[-1])
+    if last >= 0x10FFFF:                      # cannot advance: nothing exists above it anyway
+        return prefix, prefix + chr(0x10FFFF)
+    return prefix, prefix[:-1] + chr(last + 1)
+
+
 def ident_sql(source_key: str, column: str = "full_path") -> str:
     """SQL expression for a path's IDENTITY within this source.
 

@@ -161,6 +161,9 @@ def test_folder_stamp_covers_only_sources_under_the_prefix(monkeypatch):
     con.execute("CREATE TABLE dir(dir_id INTEGER, src_id INTEGER, dir_path VARCHAR)")
     con.execute(f"INSERT INTO dir VALUES "
                 f"(1, 1, 'C:{SEP}One'), (2, 1, 'C:{SEP}One{SEP}Sub'), (3, 2, 'C:{SEP}Two')")
+    # the closure rows folder_stamp's scope join reads: itself + every ancestor.
+    con.execute("CREATE TABLE anc(dir_id INTEGER, depth SMALLINT, anc_id INTEGER)")
+    con.execute("INSERT INTO anc VALUES (1, 1, 1), (2, 2, 2), (2, 1, 1), (3, 1, 3)")
     con.execute("CREATE TABLE isnaps(source VARCHAR, snapshot_id VARCHAR)")
     con.execute(f"INSERT INTO isnaps VALUES "
                 f"('a@h:C:{SEP}One', 's1'), ('a@h:C:{SEP}One', 's2'), ('b@h:C:{SEP}Two', 's9')")

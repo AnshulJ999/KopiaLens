@@ -97,6 +97,144 @@ def worker_log_path(repo: str) -> str:
     return os.path.join(DATA_DIR, "logs", f"index_worker_repo{repo}.log")
 
 
+def worker_log_lines(repo: str, after: int = 0, limit: int = 400) -> tuple[list[str], int]:
+    """ ``(the lines after ``after``, the new cursor)`` - the panel's poll.
+
+    ``after`` is the cursor a previous call returned (a line count). The log is rolled at 1 MB, so
+    a cursor above the current length means the file rolled: start from the top again. Only the
+    first ``limit`` new lines come back, with the cursor advanced by exactly those - the pane pages
+    through a burst instead of skipping the middle."""
+    try:
+        with open(worker_log_path(repo), encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().splitlines()
+    except Exception:  # noqa: BLE001 - no log is not an error
+        return [], max(0, int(after))
+    base = max(0, int(after))
+    if base > len(lines):
+        base = 0
+    chunk = lines[base:base + max(1, int(limit))]
+    return chunk, base + len(chunk)
+
+
+def queued_repo(active: str) -> str | None:
+    """The next repo the nightly will take, for the panel's "then: ..." line.
+
+    Read from the scheduler's own state file instead of guessing: the repos run in ``REPOS`` order,
+    one per slot, so the queued one is the next repo whose nightly stamp is older than the ACTIVE
+    repo's slot. None when nothing is waiting (the last repo of the night)."""
+    from config import REPOS, repo_kind
+    try:
+        with open(os.path.join(DATA_DIR, "bg_worker_state.json"), encoding="utf-8") as fh:
+            state = json.load(fh)
+    except Exception:  # noqa: BLE001
+        return None
+    attempts = state.get("attempts") or {}
+    stamps = state.get("nightly") or {}
+    slot = float((attempts.get(active) or {}).get("slot") or stamps.get(active) or 0)
+    order = [r for r in REPOS if repo_kind(r) != "backblaze"]
+    if not slot or active not in order:
+        return None
+    for repo in order[order.index(active) + 1:]:
+        if float(stamps.get(repo) or 0) < slot:
+            return repo
+    return None
+
+
+def worker_log_tail(repo: str, limit: int = 200) -> list[str]:
+    """ The last ``limit`` lines of this repo's worker log, for the progress panel's live
+    log pane. Read-only and bounded; nothing here can block the run it describes."""
+    try:
+        with open(worker_log_path(repo), encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().splitlines()
+        return lines[-max(1, int(limit)):]
+    except Exception:  # noqa: BLE001 - no log is not an error
+        return []
+
+
+# The worker's stage order (app/index/worker.py). The panel lists exactly these.
+STAGE_ORDER = ("index", "dashboard", "analysis", "churn", "folders", "policies",
+               "policy_prices", "next_snapshots")
+
+
+def _stage_weights(repo: str, full: bool) -> dict[str, float]:
+    """Typical seconds per stage, from recent runs of the SAME kind (a full rebuild and a nightly
+    update differ by minutes). The median of the last few good runs resists one freak night."""
+    try:
+        from . import runhistory
+        runs = [r for r in runhistory.read_tail(limit=40, repos=[repo])
+                if r.get("ok") and bool(r.get("full")) == bool(full) and r.get("stages")][:5]
+    except Exception:  # noqa: BLE001 - no history is simply no estimate
+        runs = []
+    weights: dict[str, float] = {}
+    for name in STAGE_ORDER:
+        vals = sorted(float((r.get("stages") or {}).get(name) or 0) for r in runs)
+        vals = [v for v in vals if v > 0]
+        if vals:
+            weights[name] = vals[len(vals) // 2]
+    return weights
+
+
+def run_progress(repo: str, prog: dict | None = None) -> dict:
+    """ One whole-run percentage and ETA, never a lame per-stage bar.
+
+    Completed stages' typical seconds plus the current stage's own fraction, over the sum of the
+    typical seconds. Where a stage has a REAL fraction (``prog["pct"]`` - the index stage's folder
+    count) that is used; elsewhere the fraction is time-based and capped below 100 % so the number
+    cannot free-run on a slow stage. Without run history there is no estimate: ``estimated`` is
+    False and ``pct`` is None, and the panel shows the counters it does have."""
+    prog = prog or {}
+    stage = str(prog.get("stage") or "")
+    weights = _stage_weights(repo, bool(prog.get("full")))
+    total = sum(weights.values())
+    stages = [{"name": n, "seconds": weights.get(n), "state": "pending"} for n in STAGE_ORDER]
+    if stage not in STAGE_ORDER or not total:
+        return {"stage": stage or None, "pct": None, "eta_seconds": None, "estimated": False,
+                "stages": stages}
+    idx = STAGE_ORDER.index(stage)
+    for i, item in enumerate(stages):
+        item["state"] = "done" if i < idx else ("current" if i == idx else "pending")
+    done = sum(weights.get(n, 0.0) for n in STAGE_ORDER[:idx])
+    cur_w = weights.get(stage, 0.0)
+    real = prog.get("pct")
+    if real is not None:
+        frac = max(0.0, min(1.0, float(real) / 100.0))
+    else:
+        started = float(prog.get("stage_started") or 0)
+        frac = min(0.95, max(0.0, (time.time() - started) / cur_w)) if (started and cur_w) else 0.0
+    overall = (done + cur_w * frac) / total if total else 0.0
+    return {"stage": stage, "pct": int(max(0.0, min(0.99, overall)) * 100),
+            "eta_seconds": int(max(0.0, total - done - cur_w * frac)),
+            "estimated": True, "stages": stages}
+
+
+def stop_index_pass(repo: str) -> dict:
+    """ Terminate this repo's in-flight worker and report what was stopped.
+
+    The worker writes its pid into the progress file and ``our_worker`` confirms the pid is really
+    ours (never a pid alone - they get recycled). A kill LOOKS like a crash to the scheduler, which
+    is why the caller must also record the stop: that record is what keeps it stopped."""
+    info = _read_json(os.path.join(DATA_DIR, f"index_progress_repo{repo}.json")) or {}
+    pid = int(info.get("pid") or 0)
+    if not pid:
+        return {"stopped": False, "reason": "nothing is indexing this repo"}
+    try:
+        proc = our_worker(pid)
+    except Exception as exc:  # noqa: BLE001 - an uninspectable pid is not a licence to kill
+        return {"stopped": False, "reason": f"cannot inspect pid {pid}: {exc}"}
+    if proc is None:
+        return {"stopped": False, "reason": "the worker has already exited"}
+    try:
+        proc.terminate()
+        proc.wait(timeout=10)
+    except Exception:  # noqa: BLE001 - fall back to a hard kill, then say if that failed too
+        try:
+            proc.kill()
+        except Exception as exc:  # noqa: BLE001
+            return {"stopped": False, "reason": f"could not stop pid {pid}: {exc}"}
+    log.info("repo=%s index worker (pid %s) stopped on request", repo, pid)
+    return {"stopped": True, "pid": pid}
+
+
 WORKER_LOG_MAX_BYTES = 1_000_000
 WORKER_LOG_KEEP = 10
 

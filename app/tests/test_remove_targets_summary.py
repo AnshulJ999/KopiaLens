@@ -13,6 +13,7 @@ import pytest
 
 from app.api import actions
 from app.index import queries
+from app.tests._tree_fixture import add_tree_tables
 
 SEP = chr(92)
 FOLDER = "G:" + SEP + "Big"
@@ -37,6 +38,8 @@ def scratch(monkeypatch):
                 "ext VARCHAR, last_seen VARCHAR, first_seen VARCHAR, versions INTEGER)")
     con.executemany("INSERT INTO pathx VALUES (?, ?, ?, ?, ?, ?, true, '', '2026-09-13', '2026-09-13', 1)",
                     rows)
+    # folder scopes resolve through dir/anc, so the fixture carries them like a generation.
+    add_tree_tables(con, ["s1", "s2"], [(r[1], r[2]) for r in rows])
 
     class _NoCloseCursor:
         """The callers close() in finally; the fixture owns the connection's real lifetime."""

@@ -23,7 +23,9 @@ from .kopia import kopia
 log = get_logger("policy")
 
 POLICY_TTL = 24 * 3600          # per-source policies are refreshed nightly; this is the read-side floor
-_PATH_TTL = 900.0               # effective-policy-for-a-folder lookups (one subprocess each)
+_REFRESHING: set[str] = set()   # repos with an in-flight background policy refresh
+_REFRESH_LOCK = threading.Lock()
+_PATH_TTL = 900.0               # effective-policy-for-a-folder lookups (resolved, not spawned)
 _PATH_CACHE: dict[tuple, tuple[float, dict]] = {}
 _PATH_CACHE_MAX = 300
 _PATH_LOCK = threading.Lock()
@@ -59,26 +61,54 @@ def show_policy(repo: str, target: str) -> dict:
     return json.loads(out) if out else {}
 
 
+def _resolve_all(repo: str, keys) -> dict | None:
+    """Every source's EFFECTIVE policy, resolved from ONE ``policy export``.
+
+    ``policyresolve`` is the port the nightly checks, target by target, against kopia's own
+    ``policy show`` output (``index/policycheck.py``), so the merged result is the same answer
+    without a subprocess per source. Returns None when no definitions can be read, which is the
+    caller's cue to fall back to the live per-source path."""
+    from . import policyresolve  # local import: avoids a circular dependency
+
+    defined, fresh = refresh_defined_policies(repo)
+    pols = defined.get("policies") or {}
+    if not pols and not fresh:
+        return None
+    return {key: policyresolve.resolve(pols, key)[0] for key in keys}
+
+
 def refresh_policies(repo: str, force: bool = False) -> dict:
-    """Re-read every source's policy (one subprocess each) and cache it. Skips entirely when the
-    cache is younger than POLICY_TTL unless ``force``. Runs in the nightly worker."""
+    """Re-read every source's effective policy and cache it. One ``policy export`` feeds the whole
+    refresh; only an unreadable export falls back to one ``policy show`` per source. Skips
+    entirely when the cache is younger than POLICY_TTL unless ``force``. Runs in the nightly worker."""
     from .sources import sources_index  # local import: avoids a circular dependency
 
     cached = load_policies(repo)
     if not force and cached.get("policies") and time.time() - float(cached.get("ts") or 0) < POLICY_TTL:
         return cached["policies"]
     # Start from what we already know and MERGE. Building a fresh dict would mean one transient
-    # subprocess failure silently erased that source's policy for the next 24 hours - the panel
-    # would then show "policy not loaded" for a source that has a perfectly good policy.
+    # failure silently erased that source's policy for the next 24 hours - the panel would then
+    # show "policy not loaded" for a source that has a perfectly good policy.
     policies: dict = dict(cached.get("policies") or {})
     live = set(sources_index(repo))
     failed = 0
-    for key in sorted(live):
-        try:
-            policies[key] = show_policy(repo, key)
-        except Exception as exc:  # noqa: BLE001 - one bad source must not lose the rest
-            failed += 1
-            log.warning("policy show failed for %s (keeping previous): %s", key, exc)
+    resolved = _resolve_all(repo, sorted(live))
+    if resolved is None:
+        log.warning("repo=%s policy export unavailable - falling back to one policy show per source", repo)
+        for key in sorted(live):
+            try:
+                policies[key] = show_policy(repo, key)
+            except Exception as exc:  # noqa: BLE001 - one bad source must not lose the rest
+                failed += 1
+                log.warning("policy show failed for %s (keeping previous): %s", key, exc)
+    else:
+        for key in sorted(live):
+            pol = resolved.get(key)
+            if pol is None:
+                failed += 1
+                log.warning("policy resolve produced nothing for %s (keeping previous)", key)
+                continue
+            policies[key] = pol
     for gone in [k for k in policies if k not in live]:
         policies.pop(gone)      # source no longer exists; do not keep its policy forever
     if policies:
@@ -97,7 +127,10 @@ def _user_host(source_key: str) -> str:
 
 def effective_for_path(repo: str, source_key: str, path: str) -> dict:
     """Effective policy for an arbitrary folder under a source (kopia resolves inheritance).
-    One subprocess, cached ~15 min - the folder detail panel calls this per folder opened."""
+
+ Resolved in-process from the defined-policies export - the same verified merge the nightly
+    checks against ``policy show`` - so opening a folder panel no longer launches kopia. Falls back
+    to the one-subprocess lookup only when the export cannot be read. Cached ~15 min either way."""
     target = f"{_user_host(source_key)}:{path}"
     ck = (repo, target.lower())
     now = time.time()
@@ -106,7 +139,10 @@ def effective_for_path(repo: str, source_key: str, path: str) -> dict:
         if hit is not None and now - hit[0] < _PATH_TTL:
             return hit[1]
     try:
-        pol = show_policy(repo, target)
+        resolved = _resolve_all(repo, [target])
+        pol = (resolved or {}).get(target) if resolved is not None else None
+        if not pol:
+            pol = show_policy(repo, target)   # no export readable, or nothing resolved: live lookup
     except Exception as exc:  # noqa: BLE001
         log.warning("effective policy failed for %s: %s", target, exc)
         pol = {}
@@ -181,12 +217,30 @@ def summarize(pol: dict) -> dict:
     }
 
 
+def _refresh_policies_bg(repo: str) -> None:
+    try:
+        refresh_policies(repo, force=True)
+    except Exception as exc:  # noqa: BLE001 - the stale cache stands; the next pass retries
+        log.warning("background policy refresh repo=%s failed: %s", repo, exc)
+    finally:
+        with _REFRESH_LOCK:
+            _REFRESHING.discard(repo)
+
+
 def source_summaries(repo: str) -> dict[str, dict]:
-    """``{source_key: summarize(policy)}`` from cache; refreshes when the cache is stale/missing."""
+    """``{source_key: summarize(policy)}`` from cache, served even while stale.
+
+    The old shape ran the refresh inside the request: an empty policy cache turned one folder-panel
+    open into 85+ kopia launches (a 153 s request). The cached view now returns immediately - an
+    empty dict on a cold cache, which the panel shows as "loading" - and one background refresh
+    fills it in."""
     cached = load_policies(repo)
     policies = cached.get("policies") or {}
     if not policies or time.time() - float(cached.get("ts") or 0) >= POLICY_TTL:
-        policies = refresh_policies(repo) or policies
+        with _REFRESH_LOCK:
+            if repo not in _REFRESHING:
+                _REFRESHING.add(repo)
+                threading.Thread(target=_refresh_policies_bg, args=(repo,), daemon=True).start()
     return {key: summarize(pol) for key, pol in policies.items()}
 
 

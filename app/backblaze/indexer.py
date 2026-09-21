@@ -122,7 +122,8 @@ def _write_rollup(con, root_lc: str, roll1: dict, roll2: dict) -> None:
             big.add(plc + clc + "\\")
     rows = [(plc, clc, e[0], e[1], e[2], e[3], e[4], e[5], e[6]) for (plc, clc), e in roll1.items()]
     rows += [(plc, clc, e[0], e[1], e[2], e[3], e[4], e[5], e[6]) for (plc, clc), e in roll2.items() if plc in big]
-    con.execute("DELETE FROM folder_rollup WHERE parent_lc >= ? AND parent_lc < ?", [root_lc, root_lc + "￿"])
+    _, root_hi = prefix_bounds(root_lc)       # lo + U+FFFF misses emoji names
+    con.execute("DELETE FROM folder_rollup WHERE parent_lc >= ? AND parent_lc < ?", [root_lc, root_hi])
     if rows:
         con.executemany("INSERT INTO folder_rollup VALUES(?,?,?,?,?,?,?,?,?)", rows)
 

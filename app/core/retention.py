@@ -15,9 +15,6 @@ from .kopia import kopia
 from .metrics import gb
 from .sources import resolve_source, roots_of, sources_index, split_sources
 
-RET_RE = re.compile(r"\b(?:latest|hourly|daily|weekly|monthly|annual)-\d+")
-
-
 def _refcount_for_mode(repo: str, srcs: dict, mode: str) -> dict[str, int]:
     """The per-source content refcount over the sources a mode selects.
 
@@ -36,8 +33,81 @@ def _refcount_for_mode(repo: str, srcs: dict, mode: str) -> dict[str, int]:
     return count
 
 
+_MAX_INT = 2 ** 62                # kopia's EffectiveKeepLatest returns MaxInt when all six are 0
+_INCOMPLETE_YOUNG = datetime.timedelta(hours=4)     # retainIncompleteSnapshotsYoungerThan
+_INCOMPLETE_MIN = 3                                  # retainIncompleteSnapshotMinimumCount
+
+_BUCKETS = ("latest", "hourly", "daily", "weekly", "monthly", "annual")
+
+
+def _parse_ts(value: str) -> datetime.datetime | None:
+    """kopia's startTime is tz-aware ISO; >6 fractional digits are trimmed (Go emits 7-9)."""
+    if not value:
+        return None
+    try:
+        t = datetime.datetime.fromisoformat(re.sub(r"\.(\d{1,6})\d*", r".\1", str(value)))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.astimezone()   # naive means local; keep every comparison comparable
+
+
+def _incomplete(snap: dict) -> str:
+    """kopia's manifest JSON names this ``incomplete`` (a reason string, e.g. "checkpoint") and
+    only emits it when set. Reading ``incompleteReason`` instead never matched anything."""
+    return snap.get("incomplete") or ""
+
+
+def _go_add_date(t: datetime.datetime, years: int = 0, months: int = 0,
+                 days: int = 0) -> datetime.datetime:
+    """Go's Time.AddDate, which NORMALIZES day overflow: Mar 31 minus one month is Mar 2 (leap) or
+    Mar 3, never Feb 28. Clamping instead moves the age cutoff and was the porting trap here."""
+    y, m = t.year + years, t.month + months
+    y += (m - 1) // 12
+    m = (m - 1) % 12 + 1
+    return t.replace(year=y, month=m, day=1) + datetime.timedelta(days=t.day - 1 + days)
+
+
+def _retention_counts(pol: dict) -> dict[str, int]:
+    """A ``policy show --json`` (or resolved effective policy) -> the six bucket counts."""
+    ret = (pol or {}).get("retention") or {}
+    return {b: int(ret.get("keep" + b.capitalize()) or 0) for b in _BUCKETS}
+
+
+def _policy_counts(policy: dict) -> dict[str, int]:
+    """The six bucket counts from either spelling: the app's own (``latest``/``hourly``/...) or
+    kopia's (``keepLatest``/...), which a raw policy dict carries.
+
+    A kopia-spelled dict read as all-zero - and all-zero now means keep EVERYTHING, so a caller
+    holding a policy straight from kopia would silently get the opposite of what its policy says."""
+    out: dict[str, int] = {}
+    for b in _BUCKETS:
+        val = policy.get(b)
+        if val is None:
+            val = policy.get("keep" + b.capitalize())
+        out[b] = int(val or 0)
+    return out
+
+
+def keep_all_note(policy: dict) -> str | None:
+    """The sentence to show when a policy carries all six zeros, or None.
+
+    kopia treats that as "keep everything" (EffectiveKeepLatest = MaxInt) - the exact opposite of
+    "delete everything", which is what a naive reading of six zeros suggests."""
+    if any(_policy_counts(policy).values()):
+        return None
+    return "All retention counts are 0. kopia keeps every snapshot, so nothing gets deleted."
+
+
 def retention_keep(snaps: list[dict], policy: dict[str, int]) -> tuple[set[str], dict[str, list[str]]]:
-    ordered = sorted(snaps, key=lambda item: item.get("startTime", ""), reverse=True)
+    """Port of kopia's ComputeRetentionReasons (snapshot/policy/retention_policy.go).
+
+    A snapshot is kept when a bucket still has room AND the snapshot is not older than that
+    bucket's cutoff, where every cutoff is measured from the newest COMPLETE snapshot - `keepHourly
+    48` means "within the last 48 hours", not "the 48 latest hours". Pins are always kept (kopia's
+    expire step keeps ``len(reasons) > 0 or len(pins) > 0``). An all-zero policy keeps everything:
+    kopia's EffectiveKeepLatest becomes MaxInt. Incomplete snapshots only carry the reasons kopia
+    gives them - a leading run younger than 4 h or among the first three."""
+    ordered = sorted(snaps, key=lambda s: (s.get("startTime", ""), s.get("endTime", "")), reverse=True)
     keep: set[str] = set()
     reasons: dict[str, list[str]] = collections.defaultdict(list)
     for snap in ordered:
@@ -45,34 +115,77 @@ def retention_keep(snaps: list[dict], policy: dict[str, int]) -> tuple[set[str],
             keep.add(snap["id"])
             reasons[snap["id"]].append("pinned")
 
-    cats = [
-        ("hourly", "%Y-%m-%d-%H"),
-        ("daily", "%Y-%m-%d"),
-        ("weekly", "%G-%V"),
-        ("monthly", "%Y-%m"),
-        ("annual", "%Y"),
-    ]
-    seen = {cat: set() for cat, _ in cats}
-    kept = {cat: 0 for cat, _ in cats}
-    latest = 0
-    for snap in ordered:
-        timestamp = snap.get("startTime", "")
-        try:
-            dt = datetime.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-        except Exception:
-            continue
-        if latest < policy.get("latest", 0):
-            keep.add(snap["id"])
-            reasons[snap["id"]].append(f"latest-{latest + 1}")
-            latest += 1
-        for cat, fmt in cats:
-            period = dt.strftime(fmt)
-            if period in seen[cat] or kept[cat] >= policy.get(cat, 0):
+    counts = _policy_counts(policy)
+    keep_latest = _MAX_INT if not any(counts.values()) else counts["latest"]
+
+    times = [_parse_ts(s.get("startTime", "")) for s in ordered]
+    complete = [t for s, t in zip(ordered, times)
+                if t is not None and not _incomplete(s)]
+    max_complete = max(complete) if complete else None
+    max_any = max((t for t in times if t is not None), default=None)
+
+    def _cut(shift, n: int) -> datetime.datetime | None:
+        # kopia measures every cutoff from the newest complete snapshot; with none it falls back to
+        # Go's zero time, i.e. "no cutoff" for all practical purposes.
+        return shift(max_complete, n) if max_complete is not None else None
+
+    cutoffs = {
+        "latest": None,
+        "annual": _cut(lambda t, n: _go_add_date(t, years=-n), counts["annual"]),
+        "monthly": _cut(lambda t, n: _go_add_date(t, months=-n), counts["monthly"]),
+        "weekly": _cut(lambda t, n: _go_add_date(t, days=-n * 7), counts["weekly"]),
+        "daily": _cut(lambda t, n: _go_add_date(t, days=-n), counts["daily"]),
+        "hourly": _cut(lambda t, n: t - datetime.timedelta(hours=n), counts["hourly"]),
+    }
+    limits = {**counts, "latest": keep_latest}
+
+    def _period(kind: str, t: datetime.datetime, i: int) -> str:
+        if kind == "latest":
+            return str(i)
+        if kind == "annual":
+            return f"{t.year:04d}"
+        if kind == "monthly":
+            return f"{t.year:04d}-{t.month:02d}"
+        if kind == "weekly":
+            # kopia's weekly bucket is the ONLY one measured in the machine's local zone: the code
+            # calls StartTime.ToTime().ISOWeek(), and Go's ToTime() renders in the local location.
+            # Every other bucket goes through UTCTimestamp.Format, which is UTC. So a snapshot
+            # between 00:00 and 05:29 IST belongs to a different ISO week here than in UTC - match
+            # kopia's local render or the weekly period ids drift apart.
+            iso = t.astimezone().isocalendar()
+            return f"{iso[0]:04d}-{iso[1]:02d}"
+        if kind == "daily":
+            return t.strftime("%Y-%m-%d")
+        return t.strftime("%Y-%m-%d %H")
+
+    seen: set[str] = set()
+    kept: collections.Counter = collections.Counter()
+    for i, (snap, t) in enumerate(zip(ordered, times)):
+        if t is None or _incomplete(snap):
+            continue                      # incomplete snapshots get their own tag, below
+        for kind in _BUCKETS:
+            if limits[kind] <= 0:
+                continue                  # 0 = defined as zero: this bucket keeps nothing
+            cut = cutoffs[kind]
+            if cut is not None and t < cut:
                 continue
-            seen[cat].add(period)
-            kept[cat] += 1
+            pid = _period(kind, t, i)
+            if pid in seen or kept[kind] >= limits[kind]:
+                continue
+            seen.add(pid)
+            kept[kind] += 1
             keep.add(snap["id"])
-            reasons[snap["id"]].append(f"{cat}-{kept[cat]}")
+            reasons[snap["id"]].append(f"{kind}-{kept[kind]}")
+
+    if max_any is not None:               # kopia's leading-incomplete pass, in list order
+        for i, (snap, t) in enumerate(zip(ordered, times)):
+            if t is None or not _incomplete(snap):
+                break
+            if max_any - t < _INCOMPLETE_YOUNG or i < _INCOMPLETE_MIN:
+                keep.add(snap["id"])
+                reasons[snap["id"]].append("incomplete")
+            else:
+                break
     return keep, reasons
 
 
@@ -118,11 +231,15 @@ def simulate(
         "pinned_by_other_sources_gb": gb(pinned),
         "delete_ids": [snap["id"] for snap in del_snaps],
         "reasons": dict(reasons),
+        "note": keep_all_note(policy),
     }
 
 
+_SIMALL_CACHE_VERSION = 2   # bump on any retention_keep rule change: old payloads assume old rules
+
+
 def _simall_cache(repo: str, policy: dict, mode: str) -> str:
-    h = hashlib.md5(f"{sorted(policy.items())}|{mode}".encode())
+    h = hashlib.md5(f"v{_SIMALL_CACHE_VERSION}|{sorted(policy.items())}|{mode}".encode())
     srcs = sources_index(repo)
     for key in sorted(srcs):
         for snap in srcs[key]:
@@ -155,13 +272,24 @@ def simulate_all(repo: str, policy: dict[str, int], mode: str = "all", refresh: 
     union_del: set[str] = set()
     global_kept: set[str] = set()
     rows = []
+    # ONE reach for every source's kept and deleted sets. Two walks per source measured
+    # ~2.0 s each on repo 1 (~170 s across 85 sources) for the same question asked 170 times; the
+    # groups all come back from a single recursive pass.
+    groups: dict[str, list[str]] = {}
+    planned: list[tuple[str, list[dict]]] = []
     for key in display:
         snaps = srcs[key]
         keep_ids, _ = retention_keep(snaps, policy)
         keep_snaps = [s for s in snaps if s["id"] in keep_ids]
         del_snaps = [s for s in snaps if s["id"] not in keep_ids]
-        kept_c = layer2.reach_content_ids(repo, roots_of(keep_snaps)) if keep_snaps else set()
-        del_c = layer2.reach_content_ids(repo, roots_of(del_snaps)) if del_snaps else set()
+        groups[f"{key}|keep"] = roots_of(keep_snaps)
+        groups[f"{key}|del"] = roots_of(del_snaps)
+        planned.append((key, keep_snaps, del_snaps))
+    reached = layer2.reach_by_group(repo, groups)
+    for key, keep_snaps, del_snaps in planned:
+        snaps = srcs[key]
+        kept_c = reached.get(f"{key}|keep") or set()
+        del_c = reached.get(f"{key}|del") or set()
         cand = del_c - kept_c
         reclaim = sum(smap.get(cid, 0) for cid in cand if count.get(cid, 0) == 1)
         rows.append({
@@ -188,6 +316,7 @@ def simulate_all(repo: str, policy: dict[str, int], mode: str = "all", refresh: 
         "policy": policy,
         "mode": mode,
         "cached": False,
+        "note": keep_all_note(policy),
     }
     sidecache.write(cache_name, data)
     return data
@@ -234,25 +363,31 @@ def set_reclaim(repo: str, delete_ids: list[str], refresh: bool = False) -> dict
 
 def parse_policy_retention(repo: str, target: str) -> tuple[dict[str, int], str]:
     out = kopia(repo, ["policy", "show", target, "--json"]).stdout
-    policy = {"latest": 0, "hourly": 0, "daily": 0, "weekly": 0, "monthly": 0, "annual": 0}
-    fmap = {
-        "latest": "keepLatest",
-        "hourly": "keepHourly",
-        "daily": "keepDaily",
-        "weekly": "keepWeekly",
-        "monthly": "keepMonthly",
-        "annual": "keepAnnual",
-    }
     try:
-        retention = json.loads(out).get("retention", {})
-        for key, json_key in fmap.items():
-            policy[key] = retention.get(json_key, 0) or 0
+        policy = _retention_counts(json.loads(out))
     except Exception:
-        pass
+        policy = {b: 0 for b in _BUCKETS}
     return policy, out
 
 
+def kopia_kept_ids(snaps: list[dict]) -> set[str]:
+    """What KOPIA keeps, straight from the listing `sources_index` already holds.
+
+    kopia computes a retention reason per snapshot while it lists (``retentionReason`` in the JSON;
+    the subprocess backend normalizes it to ``retention``), and its expire step keeps a snapshot on
+    ``retentionReason`` OR a pin. The old validator parsed the TEXT listing instead - which
+    collapses identical consecutive snapshots unless ``--show-identical`` is passed, so it reported
+    false disagreements on 55 of 85 sources."""
+    kept = set()
+    for snap in snaps:
+        if (snap.get("retention") or snap.get("retentionReason") or snap.get("pins")):
+            kept.add(snap["id"])
+    return kept
+
+
 def validate_retention(repo: str, source: str) -> dict:
+    """One source: the replica against kopia's own reasons. No extra kopia call - the listing is
+    the source of truth, and it includes every snapshot kopia actually keeps."""
     key, srcs = resolve_source(repo, source=source)
     snaps = srcs[key]
     policy, raw = parse_policy_retention(repo, key)
@@ -260,16 +395,7 @@ def validate_retention(repo: str, source: str) -> dict:
         return {"source": key, "ok": False, "error": "could not parse policy retention", "raw": raw[:1200]}
 
     mine, _ = retention_keep(snaps, policy)
-    all_ids = {snap["id"] for snap in snaps}
-    text = kopia(repo, ["snapshot", "list", key, "--manifest-id"]).stdout
-    kopia_keep: set[str] = set()
-    for line in text.splitlines():
-        if not (RET_RE.search(line) or "pins:" in line):
-            continue
-        for token in re.findall(r"[0-9a-f]{16,40}", line):
-            if token in all_ids:
-                kopia_keep.add(token)
-
+    kopia_keep = kopia_kept_ids(snaps)
     only_mine = sorted(mine - kopia_keep)
     only_kopia = sorted(kopia_keep - mine)
     return {
@@ -283,3 +409,38 @@ def validate_retention(repo: str, source: str) -> dict:
         "replica_only": only_mine,
         "kopia_only": only_kopia,
     }
+
+
+def check_retention(repo: str, srcs: dict | None = None, policies: dict | None = None) -> dict:
+    """Every source at once: the replica against kopia's own reasons, entirely in-process.
+
+    Called by the nightly right after the policy stage refreshed the effective-policy cache, so
+    neither the listing nor a policy costs a subprocess here. A source whose policy the cache does
+    not hold is reported as failed, never silently skipped."""
+    if srcs is None:
+        srcs = sources_index(repo)
+    if policies is None:
+        from .policy import load_policies              # lazy: core must not import index at load
+        policies = load_policies(repo).get("policies") or {}
+    mismatches: list[dict] = []
+    failed: list[str] = []
+    checked = 0
+    for key in sorted(srcs):
+        snaps = srcs[key]
+        if not snaps:
+            continue
+        pol = policies.get(key)
+        if not isinstance(pol, dict) or not pol:
+            failed.append(key)
+            continue
+        mine, _ = retention_keep(snaps, _retention_counts(pol))
+        kopia_keep = kopia_kept_ids(snaps)
+        checked += 1
+        if mine != kopia_keep:
+            we_drop = sorted(kopia_keep - mine)
+            we_keep = sorted(mine - kopia_keep)
+            mismatches.append({"source": key, "snapshots": len(snaps),
+                               "ours_keeps": len(mine), "kopia_keeps": len(kopia_keep),
+                               "we_drop": len(we_drop), "we_keep": len(we_keep),
+                               "sample": (we_drop + we_keep)[:3]})
+    return {"checked": checked, "mismatches": mismatches, "failed": failed}

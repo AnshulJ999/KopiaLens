@@ -334,6 +334,42 @@ def versions(repo: str, source: str, full_path: str) -> list[dict]:
         cur.close()
 
 
+def versions_many(repo: str, pairs: list[tuple[str, str]]) -> dict[tuple[str, str], list[dict]]:
+    """Batched ``versions``: one path resolution per source group, one filev scan per 900 paths.
+
+ ``selection_facts`` priced a 500-file selection at one full 5.3M-row pathx scan PER FILE
+    PER HOLDER - a thousand scans, minutes before the delete panel could open. Rows come
+    back in the same order ``versions`` returns: snapshot start DESC, snapshot id DESC."""
+    want = list(dict.fromkeys((s, p) for s, p in pairs if s and p))
+    out: dict[tuple[str, str], list[dict]] = {k: [] for k in want}
+    if not want:
+        return out
+    cur = read_cursor(repo)
+    try:
+        pid_of = resolve.path_ids(cur, want)
+        if not pid_of:
+            return out
+        by_pid = {pid: key for key, pid in pid_of.items()}
+        pids = sorted(by_pid)
+        grouped: dict[int, list[dict]] = {pid: [] for pid in pids}
+        for i in range(0, len(pids), 900):
+            grp = pids[i:i + 900]
+            q = ("SELECT f.path_id, sn.snapshot_id, sn.start_time, f.size, c.content_id "
+                 "FROM filev f JOIN snap sn ON sn.snap_id = f.snap_id "
+                 "LEFT JOIN cid c ON c.cid_id = f.cid_id "
+                 "WHERE f.path_id IN (%s) "
+                 "ORDER BY sn.start_time DESC, sn.snapshot_id DESC"
+                 % ",".join("?" * len(grp)))
+            for pid, snapshot_id, start_time, size, content_id in cur.execute(q, grp).fetchall():
+                grouped[pid].append({"snapshot_id": snapshot_id, "start_time": start_time,
+                                     "size": size, "content_id": content_id})
+        for pid, key in by_pid.items():
+            out[key] = grouped[pid]
+    finally:
+        cur.close()
+    return out
+
+
 def largest_files(repo: str, limit: int = 200) -> list[dict]:
     return search_paths(repo, query="", deleted_only=False, min_size=0, limit=limit)["rows"]
 
@@ -376,7 +412,6 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "",
     keeps only files whose content is exclusive to this source (global refcount <= 1) = the
     Reclaimable tree mode (what is freed if this snapshot is deleted)."""
     base = prefix.rstrip(_SEP)
-    like = like_literal(base) + _SEP + "%" if base else "%"
     recl = " AND f.cid_id IN (SELECT m.cid_id FROM crefs m WHERE m.refs <= 1)" if reclaimable_only else ""
     cur = read_cursor(repo)
     try:
@@ -384,6 +419,8 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "",
         snid = resolve.snap_id(cur, snapshot_id)
         if sid is None or snid is None:  # unknown source/snapshot: no rows before, none now
             return []
+        scope, sp = scope_sql(cur, prefix, include_path=False)
+        cond = f" AND {scope}" if scope else ""
         rows = _rows(
             cur,
             f"""
@@ -393,7 +430,7 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "",
                             ELSE substr(p.full_path, length(?) + 2) END AS remainder
                 FROM filev f
                 JOIN pathx p ON p.path_id = f.path_id
-                WHERE p.src_id = ? AND f.snap_id = ? AND p.full_path LIKE ?{_ESC}{recl}
+                WHERE p.src_id = ? AND f.snap_id = ?{cond}{recl}
             )
             SELECT split_part(remainder, ?, 1) AS name,
                    sum(size) AS size,
@@ -405,7 +442,7 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "",
             GROUP BY name
             ORDER BY size DESC, name
             """,
-            [base, base, sid, snid, like, _SEP, _SEP],
+            [base, base, sid, snid, *sp, _SEP, _SEP],
         )
     finally:
         cur.close()
@@ -622,10 +659,11 @@ def _remove_where(cur, *, query: str, deleted_only: bool, min_size: int, source:
     where, params = _search_where(cur, query, deleted_only, min_size, source, ext, max_size,
                                   date_from, date_to, min_versions, shared_min, ext_exclude,
                                   first_from=first_from)
-    if prefix:
-        base = prefix.rstrip(_SEP)
-        where.append("(p.full_path = ? OR p.full_path LIKE ?" + _ESC + ")")
-        params.extend([base, like_literal(base) + _SEP + "%"])
+    if prefix and prefix.rstrip(_SEP):
+        scope, sp = scope_sql(cur, prefix, include_path=True)
+        if scope:
+            where.append(scope)
+            params.extend(sp)
     return _where(where), params
 
 
@@ -777,10 +815,106 @@ def remove_targets_summary(repo: str, *, query: str = "", deleted_only: bool = F
     }
 
 
-def _prefix_params(prefix: str) -> tuple[str, str]:
-    """(exact_lc, like_lc) for matching a folder and everything under it via the path_lc index."""
-    base = prefix.rstrip(_SEP).lower()
-    return base, like_literal(base) + _SEP + "%"
+def _src_rule_ids(cur) -> tuple[list[int], list[int]]:
+    """(case-insensitive src_ids, case-sensitive src_ids).
+
+    Read from the generation's own ``src`` table, not ``sources_index``: this runs inside SQL
+    helpers, and a listing call there could spawn kopia on a cold cache."""
+    from ..core import paths
+    ci: list[int] = []
+    cs: list[int] = []
+    for src_id, key in cur.execute("SELECT src_id, source FROM src").fetchall():
+        (cs if paths.case_sensitive(str(key)) else ci).append(int(src_id))
+    return ci, cs
+
+
+def _id_list(ids: list[int]) -> str:
+    return ",".join(str(i) for i in ids)
+
+
+def _match_dirs(cur, path: str, ci: list[int], cs: list[int]) -> list[int]:
+    """The ``dir`` ids whose ``dir_path`` IS ``path``, each source matched by its own case rule."""
+    parts: list[str] = []
+    params: list = []
+    if ci:
+        parts.append(f"(lower(dir_path) = ? AND src_id IN ({_id_list(ci)}))")
+        params.append(path.lower())
+    if cs:
+        parts.append(f"(dir_path = ? AND src_id IN ({_id_list(cs)}))")
+        params.append(path)
+    if not parts:
+        return []
+    return [int(r[0]) for r in cur.execute(
+        f"SELECT dir_id FROM dir WHERE {' OR '.join(parts)}", params).fetchall()]
+
+
+def _name_match(alias: str, name: str, ci: list[int], cs: list[int]) -> tuple[str, list]:
+    """``(sql, params)``: a pathx row's own NAME, under its source's case rule."""
+    parts: list[str] = []
+    params: list = []
+    if ci:
+        parts.append(f"(lower({alias}.name) = ? AND {alias}.src_id IN ({_id_list(ci)}))")
+        params.append(name.lower())
+    if cs:
+        parts.append(f"({alias}.name = ? AND {alias}.src_id IN ({_id_list(cs)}))")
+        params.append(name)
+    return ("(" + " OR ".join(parts) + ")", params) if parts else ("1 = 0", [])
+
+
+def dir_scope_sql(cur, prefix: str, alias: str = "p") -> tuple[str, list]:
+    """``(sql, params)``: ``{alias}.dir_id`` is ``prefix`` itself or anywhere under it.
+
+    The folder is found by an equality on ``dir`` (664k rows) and its subtree comes from the
+    ``anc`` closure table, so no string work touches the 5.3M-row ``pathx`` column: measured
+    ~110 ms against ~205-360 ms for ``lower(full_path) LIKE 'prefix%'`` on a 125k-row subtree,
+    and the folder panel asks five of these per open. Case follows each SOURCE's rule
+    (``core.paths``): folded where the source folds, exact where it does not."""
+    base = prefix.rstrip("\\/")
+    if not base:
+        return "", []
+    ci, cs = _src_rule_ids(cur)
+    ids = _match_dirs(cur, base, ci, cs)
+    if not ids:
+        return "1 = 0", []          # no such folder in this repo: nothing is under it
+    return (f"{alias}.dir_id IN (SELECT a.dir_id FROM anc a WHERE a.anc_id IN ({_id_list(ids)}))",
+            [])
+
+
+def scope_sql(cur, prefix: str, *, include_path: bool = True,
+              alias: str = "p") -> tuple[str, list]:
+    """``(sql, params)``: a ``pathx`` row named ``prefix`` or under it.
+
+    ``include_path`` adds the path's own row, which the old ``full_path = ? OR LIKE ?`` sites
+    relied on. The two shapes are mutually exclusive: ``pathx`` holds no folder rows (verified
+    against the build), so a prefix that resolves to a folder scopes to its subtree and anything
+    else is matched as (parent folder, name). Keeping them as ONE branch is deliberate - an OR of
+    the two costs a full ``pathx`` scan (~500 ms) for an answer that cannot differ otherwise. A
+    file at the same path as a folder can only exist ACROSS sources and is not covered; no repo
+    has that shape (checked), and the folder answer is the one a folder panel wants.
+
+    POSIX prefixes stay on the old scan shape: the build stores POSIX ``dir`` paths without their
+    leading separator, so the closure table cannot identify them yet (```` is the
+    cross-platform pass)."""
+    base = prefix.rstrip("\\/")
+    if not base:
+        return "", []
+    if base.startswith("/"):
+        like = like_literal(base.lower()) + "/" + "%"
+        return (f"((lower({alias}.full_path) = ? OR lower({alias}.full_path) LIKE ?{_ESC}))",
+                [base.lower(), like])
+    ci, cs = _src_rule_ids(cur)
+    folder_ids = _match_dirs(cur, base, ci, cs)
+    if folder_ids:
+        return (f"{alias}.dir_id IN (SELECT a.dir_id FROM anc a WHERE a.anc_id IN "
+                f"({_id_list(folder_ids)}))", [])
+    if not include_path:
+        return "1 = 0", []
+    parent, _, name = base.rpartition(_SEP)
+    parent_ids = _match_dirs(cur, parent, ci, cs) if parent and name else []
+    if not parent_ids:
+        return "1 = 0", []
+    name_sql, name_params = _name_match(alias, name, ci, cs)
+    return (f"{alias}.dir_id IN ({_id_list(parent_ids)}) AND {name_sql}", name_params)
 
 
 def folder_sources(repo: str, prefix: str) -> list[dict]:
@@ -789,9 +923,9 @@ def folder_sources(repo: str, prefix: str) -> list[dict]:
     A folder living inside two sources (e.g. ``G:\\Apps\\X`` covered by both the ``G:\\Apps`` and
     ``G:\\`` sources) is snapshotted twice, so deleting it from one source leaves it in the other.
     That is the single most confusing thing about folder deletion, hence surfacing it up front."""
-    exact, like = _prefix_params(prefix)
     cur = read_cursor(repo)
     try:
+        where, params = scope_sql(cur, prefix, include_path=True)
         return _rows(
             cur,
             "SELECT s.source AS source, count(*) AS files, COALESCE(sum(p.physical), 0) AS physical, "
@@ -799,9 +933,9 @@ def folder_sources(repo: str, prefix: str) -> list[dict]:
             "  max(p.last_seen) AS last_seen, "
             "  count(*) FILTER (WHERE NOT p.in_latest) AS deleted_files "
             "FROM pathx p JOIN src s ON s.src_id = p.src_id "
-            "WHERE (lower(p.full_path) = ? OR lower(p.full_path) LIKE ?" + _ESC + ") "
+            f"WHERE {where or '1 = 1'} "
             "GROUP BY s.source ORDER BY physical DESC, s.source",
-            [exact, like],
+            params,
         )
     finally:
         cur.close()
@@ -811,11 +945,10 @@ def folder_summary(repo: str, prefix: str, source: str | None = None) -> dict:
     """Cheap, instantly-available folder facts (no chunk walk): counts, sizes, dates, versions.
     The expensive freeable/shared numbers come separately from ``physical.folder_detail`` so the
     panel can render immediately and fill those in afterwards."""
-    exact, like = _prefix_params(prefix)
     cur = read_cursor(repo)
     try:
-        conds = ["(lower(p.full_path) = ? OR lower(p.full_path) LIKE ?" + _ESC + ")"]
-        params: list = [exact, like]
+        scope, params = scope_sql(cur, prefix, include_path=True)
+        conds = [scope] if scope else []
         if source:
             cond, sp = _src_cond_exact(cur, source)
             conds.append(cond)
@@ -841,11 +974,10 @@ def folder_top_children(repo: str, prefix: str, limit: int = 5, source: str | No
     """The biggest immediate children of a folder, by physical - answers "what is actually big in
     here" without making the user drill down."""
     base = prefix.rstrip(_SEP)
-    _, like = _prefix_params(prefix)
     cur = read_cursor(repo)
     try:
-        conds = ["lower(p.full_path) LIKE ?" + _ESC]
-        params: list = [like]
+        scope, params = scope_sql(cur, prefix, include_path=False)
+        conds = [scope] if scope else []
         if source:
             cond, sp = _src_cond_exact(cur, source)
             conds.append(cond)
@@ -864,9 +996,8 @@ def folder_top_children(repo: str, prefix: str, limit: int = 5, source: str | No
 
 
 def _folder_scope(cur, prefix: str, source: str | None) -> tuple[str, list]:
-    _, like = _prefix_params(prefix)
-    conds = ["lower(p.full_path) LIKE ?" + _ESC]
-    params: list = [like]
+    scope, params = scope_sql(cur, prefix, include_path=False)
+    conds = [scope] if scope else []
     if source:
         cond, sp = _src_cond_exact(cur, source)
         conds.append(cond)
@@ -935,10 +1066,11 @@ def flat_files(repo: str, source: str, prefix: str = "", deleted_only: bool = Fa
     try:
         where, params = _search_where(cur, "", deleted_only, min_size, source, ext, 0,
                                       None, None, 0, 0, ext_exclude)
-        base = prefix.rstrip(_SEP)
-        if base:
-            where.append("(p.full_path = ? OR p.full_path LIKE ?" + _ESC + ")")
-            params.extend([base, like_literal(base) + _SEP + "%"])
+        if prefix.rstrip(_SEP):
+            scope, sp = scope_sql(cur, prefix, include_path=True)
+            if scope:
+                where.append(scope)
+                params.extend(sp)
         where_sql = _where(where)
         rows = _rows(
             cur,
@@ -1043,8 +1175,10 @@ def tree_children_all(repo: str, prefix: str, latest_only: bool = False, deleted
             where.append("p.in_latest = true")
         base = prefix.rstrip(_SEP)
         if base:
-            where.append("p.full_path LIKE ?" + _ESC)
-            params.append(like_literal(base) + _SEP + "%")
+            scope, sp = scope_sql(cur, prefix, include_path=False)
+            if scope:
+                where.append(scope)
+                params.extend(sp)
         where_sql = _where(where)
         rows = _rows(
             cur,
@@ -1093,13 +1227,14 @@ def tree_children_snaps(repo: str, snapshot_ids: list[str], prefix: str = "") ->
     if not snapshot_ids:
         return []
     base = prefix.rstrip(_SEP)
-    like = like_literal(base) + _SEP + "%" if base else "%"
     cur = read_cursor(repo)
     try:
         sids = [i for i in (resolve.snap_id(cur, s) for s in snapshot_ids) if i is not None]
         if not sids:  # none of the given snapshot ids exist: no rows before, none now
             return []
         ph = ",".join("?" * len(sids))
+        scope, sp = scope_sql(cur, prefix, include_path=False)
+        cond = f" AND {scope}" if scope else ""
         rows = _rows(
             cur,
             f"""
@@ -1107,7 +1242,7 @@ def tree_children_snaps(repo: str, snapshot_ids: list[str], prefix: str = "") ->
                 SELECT p.full_path, max(f.size) AS size, max(f.mtime) AS mtime
                 FROM filev f
                 JOIN pathx p ON p.path_id = f.path_id
-                WHERE f.snap_id IN ({ph}) AND p.full_path LIKE ?{_ESC}
+                WHERE f.snap_id IN ({ph}){cond}
                 GROUP BY p.full_path
             ), sub AS (
                 SELECT size, mtime,
@@ -1126,7 +1261,7 @@ def tree_children_snaps(repo: str, snapshot_ids: list[str], prefix: str = "") ->
                    max(CASE WHEN position(? IN remainder) > 0 THEN 1 ELSE 0 END) AS is_folder
             FROM sub WHERE remainder <> '' GROUP BY name ORDER BY size DESC, name
             """,
-            [*sids, like, base, base,
+            [*sids, *sp, base, base,
              _SEP * 2, _SEP * 2, _SEP, _SEP, _SEP, _SEP, _SEP],
         )
     finally:
@@ -1151,14 +1286,14 @@ def tree_children_paths(repo: str, source: str, prefix: str, deleted_only: bool 
     filters (deleted-from-disk / >= size / ext include+exclude) keep only matching descendants, so
     folders with no match drop out (e.g. 'folders containing deleted files')."""
     base = prefix.rstrip(_SEP)
-    like = like_literal(base) + _SEP + "%" if base else "%"
     cur = read_cursor(repo)
     try:
         sid = resolve.src_id(cur, source)
         if sid is None:  # unknown source: no rows before, none now
             return []
-        conds = ["p.src_id = ?", "p.full_path LIKE ?" + _ESC]
-        params: list = [sid, like]
+        scope, sp = scope_sql(cur, prefix, include_path=False)
+        conds = ["p.src_id = ?"] + ([scope] if scope else [])
+        params: list = [sid, *sp]
         if deleted_only:
             conds.append("p.in_latest = false")
         if min_size:

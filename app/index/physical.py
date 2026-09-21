@@ -18,7 +18,7 @@ import weakref
 from ..core.applog import get_logger
 from ..core.sizemap import load_sizemap
 from . import resolve
-from .queries import _ESC, like_literal
+from .queries import _ESC, like_literal, scope_sql
 from .store import read_cursor
 
 log = get_logger("physical")
@@ -527,15 +527,9 @@ def folder_detail(repo: str, source: str | None, prefix: str, all_versions: bool
     Matching is case-insensitive: Windows paths are, and ``folder_summary`` already matched that
     way, so a case-sensitive comparison here could make the two halves of the panel disagree.
     """
-    base = prefix.rstrip(_SEP)
-    # Escaped like every other prefix match: `_` is a single-character wildcard, so an unescaped
-    # `Backup_2024` also selects `BackupX2024`. This one computes the freeable/shared figures the
-    # delete decision is made on, so a wrong subtree here is worse than a wrong listing.
-    exact_lc, like_lc = base.lower(), like_literal(base.lower()) + _SEP + "%"
     cur = read_cursor(repo)
     try:
-        where = "(lower(p.full_path) = ? OR lower(p.full_path) LIKE ?" + _ESC + ")"
-        params: list = [exact_lc, like_lc]
+        where, params = scope_sql(cur, prefix, include_path=True)
         run = True
         if source:
             sid = resolve.src_id(cur, source)

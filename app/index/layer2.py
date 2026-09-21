@@ -204,6 +204,59 @@ def reach_content_ids(repo: str, roots: list[str]) -> set[str]:
     return {r[0] for r in rows}
 
 
+def reach_by_group(repo: str, groups: dict[str, list[str]]) -> dict[str, set[str]]:
+    """Content ids reachable from EACH group's root objects, in ONE recursive pass.
+
+    ``simulate_all`` used to run two reaches per source (~2.0 s each measured on repo 1 = ~170 s
+    for 85 sources) to answer the same question 170 times. The recursion carries the group key
+    with it, so every group falls out of a single walk of the tree - the shape
+    ``source_totals`` already uses for every source at once (3.8 s for the same repo).
+    ``groups`` maps a caller-chosen key to that group's snapshot root object ids."""
+    from . import resolve  # local: keeps this module's import graph unchanged
+
+    import pyarrow as pa
+
+    rows = [(grp, root) for grp, roots in groups.items()
+            for root in dict.fromkeys(roots or []) if root]
+    if not rows:
+        return {grp: set() for grp in groups}
+    cur = read_cursor(repo)
+    try:
+        cur.register("_reach_groups", pa.table({
+            "grp": pa.array([r[0] for r in rows], pa.string()),
+            "obj": pa.array([r[1] for r in rows], pa.string())}))
+        try:
+            got = cur.execute("""
+                WITH RECURSIVE r(grp, dir_id) AS (
+                        SELECT g.grp, t.dir_id FROM _reach_groups g
+                          JOIN cid c ON c.content_id = g.obj
+                          JOIN tdir t ON t.cid_id = c.cid_id
+                        UNION
+                        SELECT r.grp, e.child FROM r JOIN tent e ON e.dir_id = r.dir_id
+                        WHERE e.child IS NOT NULL),
+                    objs AS (
+                        SELECT DISTINCT r.grp, e.cid_id, e.ind, e.ind_cid
+                        FROM r JOIN tent e USING (dir_id) WHERE e.cid_id IS NOT NULL)
+                    SELECT DISTINCT grp, cid FROM (
+                        SELECT grp, cid_id AS cid FROM objs WHERE NOT ind
+                        UNION ALL SELECT grp, ind_cid FROM objs WHERE ind
+                        UNION ALL SELECT o.grp, p.part_cid FROM objs o
+                                  JOIN tpart p ON p.iobj_cid = o.cid_id WHERE o.ind
+                        UNION ALL SELECT g.grp, c.cid_id FROM _reach_groups g
+                                  JOIN cid c ON c.content_id = g.obj)
+                    WHERE cid IS NOT NULL""").fetchall()
+        finally:
+            cur.unregister("_reach_groups")
+        cstr = resolve.content_ids(cur, sorted({int(c) for _g, c in got if c is not None}))
+    finally:
+        cur.close()
+    out: dict[str, set[str]] = {grp: set() for grp in groups}
+    for grp, cid in got:
+        if cid is not None and cid in cstr:
+            out[grp].add(cstr[cid])
+    return out
+
+
 # The read-side reach, as CTE text rather than a table: these run on the SHARED in-memory read
 # connection from request threads, so nothing here may CREATE anything (see reach_content_ids).
 # `roots` is supplied by the caller and must yield (src, dir_id).
@@ -269,6 +322,8 @@ def source_totals(repo: str, recent: int | None = None) -> tuple[dict[str, dict]
     try:
         # src stays an INTEGER through the recursion - it rides on millions of rows, and the
         # name is only needed on the ~100 grouped rows at the end.
+        # The repo-wide union rides the SAME reach as the per-source rows: it used to be a
+        # second recursive walk of the whole tree for a number this one already had every row of.
         rows = cur.execute(f"""
             WITH RECURSIVE {_roots_cte(recent, False)}, {body},
             refs AS (SELECT cid_id, count(*) AS n FROM reach GROUP BY cid_id),
@@ -278,13 +333,13 @@ def source_totals(repo: str, recent: int | None = None) -> tuple[dict[str, dict]
                        sum(CASE WHEN rf.n = 1 THEN coalesce(cs.packed, 0) ELSE 0 END)::HUGEINT
                            AS free
                 FROM reach re JOIN refs rf USING (cid_id) LEFT JOIN csize cs USING (cid_id)
-                GROUP BY re.src)
-            SELECT s.source, a.total, a.free FROM agg a JOIN src s ON s.src_id = a.src""").fetchall()
-        union_total = cur.execute(f"""
-            WITH RECURSIVE {_roots_cte(recent, False)}, {body}
-            SELECT coalesce(sum(coalesce(cs.packed, 0)), 0)::HUGEINT
-            FROM (SELECT DISTINCT cid_id FROM reach) u
-            LEFT JOIN csize cs USING (cid_id)""").fetchone()[0]
+                GROUP BY re.src),
+            uniq AS (
+                SELECT sum(coalesce(cs.packed, 0))::HUGEINT AS union_total
+                FROM (SELECT DISTINCT cid_id FROM reach) u LEFT JOIN csize cs USING (cid_id))
+            SELECT s.source, a.total, a.free, u.union_total
+            FROM agg a JOIN src s ON s.src_id = a.src CROSS JOIN uniq u""").fetchall()
+        union_total = int(rows[0][3] or 0) if rows else 0
         latest = cur.execute(f"""
             WITH RECURSIVE {_roots_cte(recent, True)}, {body},
             agg AS (
@@ -296,7 +351,7 @@ def source_totals(repo: str, recent: int | None = None) -> tuple[dict[str, dict]
     finally:
         cur.close()
     out = {k: {"total": int(t or 0), "free": int(fr or 0), "phys_latest": 0}
-           for k, t, fr in rows}
+           for k, t, fr, _u in rows}
     for k, p in latest:
         out.setdefault(k, {"total": 0, "free": 0})["phys_latest"] = int(p or 0)
     return out, int(union_total or 0)

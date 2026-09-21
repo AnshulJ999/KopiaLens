@@ -6,11 +6,14 @@ import datetime as dt
 import re
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from ..core.sources import sources_index
+from ..index.holding import holding_snapshots
 from ..index.schema import RepoOffline
 from ..index.queries import (
     flat_files,
+    holders_for_paths,
     tree_children,
     tree_children_all,
     tree_children_live,
@@ -105,6 +108,42 @@ def _dedupe_children(children: list[dict]) -> list[dict]:
             seen.add(cid)
         out.append(c)
     return out
+
+
+_HOLDERS_DETAIL_CAP = 25   # paths resolved to holding-snapshot counts in one call
+
+
+class HoldersBody(BaseModel):
+    repo: str = "1"
+    full_paths: list[str]
+    detail: bool = False
+
+
+@router.post("/tree/holders")
+def tree_holders(body: HoldersBody) -> dict:
+    """Which backups hold each of these paths - the All-sources tree's file actions [B4].
+
+    A row in All-sources mode is a MERGED path: ``tree_children_all`` dedupes by full_path and
+    carries no source, so an action there has none to run against. Resolve the holders at action
+    time, for the paths the user actually picked - never per rendered row, which would put a
+    holder lookup behind every tree paint. ``detail`` adds each holder's snapshot count on the
+    path (bounded: it walks snapshots); without it this is one indexed query."""
+    paths = [p for p in dict.fromkeys(body.full_paths) if p]
+    out: dict[str, list[dict]] = {p: [] for p in paths}
+    if not paths:
+        return {"paths": out, "capped": False}
+    if body.detail and len(paths) > _HOLDERS_DETAIL_CAP:
+        return {"paths": out, "capped": True}
+    by_path = holders_for_paths(body.repo, paths)
+    if not body.detail:
+        return {"paths": {fp: [{"source": s} for s in srcs] for fp, srcs in by_path.items()},
+                "capped": False}
+    for fp, srcs in by_path.items():
+        for src in srcs:
+            held = holding_snapshots(body.repo, src, [fp]).get(fp) or []
+            out[fp].append({"source": src, "snapshots": len(held),
+                            "latest": held[0].get("start_time") if held else None})
+    return {"paths": out, "capped": False}
 
 
 @router.get("/tree")

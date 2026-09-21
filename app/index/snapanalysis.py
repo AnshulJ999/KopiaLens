@@ -16,6 +16,7 @@ from __future__ import annotations
 import collections
 import contextlib
 from datetime import datetime
+import uuid
 import hashlib
 import threading
 import time
@@ -341,62 +342,66 @@ def _analyse(repo: str, snaps: list[dict], heavy: bool) -> tuple[dict, dict, dic
         return churn, physical, reclaim
 
     f = tree.TYPES.index("f")
+    # Working tables carry a per-RUN suffix: two Analyze passes share the read connection,
+    # and fixed names let one run's `_sa_dir` overwrite the other's mid-query - silently wrong
+    # numbers rather than an error.
+    ns = f"_sa{uuid.uuid4().hex[:8]}_"
     cur = read_cursor(repo)
     try:
-        cur.register("_sa_roots", pa.table({
+        cur.register(ns + "roots", pa.table({
             "rank": pa.array([r for r, _o in live], pa.int32()),
             "obj": pa.array([o for _r, o in live], pa.string())}))
         # A root the tree could not read still contributes its own content id, which is what
         # `reach_content_ids` does - it just reaches nothing below it.
-        cur.execute("""CREATE OR REPLACE TEMP TABLE _sa_rcid AS
-            SELECT a.rank, c.cid_id FROM _sa_roots a JOIN cid c ON c.content_id = a.obj
+        cur.execute(f"""CREATE OR REPLACE TEMP TABLE {ns}rcid AS
+            SELECT a.rank, c.cid_id FROM {ns}roots a JOIN cid c ON c.content_id = a.obj
             WHERE c.cid_id IS NOT NULL""")
-        cur.execute("""CREATE OR REPLACE TEMP TABLE _sa_reach AS
+        cur.execute(f"""CREATE OR REPLACE TEMP TABLE {ns}reach AS
             WITH RECURSIVE r(rank, dir_id) AS (
-                SELECT a.rank, t.dir_id FROM _sa_roots a
+                SELECT a.rank, t.dir_id FROM {ns}roots a
                   JOIN cid c ON c.content_id = a.obj
                   JOIN tdir t ON t.cid_id = c.cid_id
                 UNION
                 SELECT r.rank, e.child FROM r JOIN tent e ON e.dir_id = r.dir_id
                 WHERE e.child IS NOT NULL)
             SELECT rank, dir_id FROM r""")
-        cur.unregister("_sa_roots")
+        cur.unregister(ns + "roots")
         # One row per folder: the newest rank reaching it and the oldest. A folder's snapshot
         # coverage can have gaps, and these two numbers deliberately ignore them - they are only
         # ever used for "first appearance" and "lives in exactly one snapshot", and both of those
         # read off the extremes.
-        cur.execute("""CREATE OR REPLACE TEMP TABLE _sa_dir AS
-            SELECT dir_id, min(rank) AS rnew, max(rank) AS rold FROM _sa_reach GROUP BY dir_id""")
+        cur.execute(f"""CREATE OR REPLACE TEMP TABLE {ns}dir AS
+            SELECT dir_id, min(rank) AS rnew, max(rank) AS rold FROM {ns}reach GROUP BY dir_id""")
         # Same reach definition as `reach_content_ids`: every entry carrying a content id, a split
         # object's index content plus every piece behind it, and the snapshot roots themselves.
-        cur.execute("""CREATE OR REPLACE TEMP TABLE _sa_span AS
+        cur.execute(f"""CREATE OR REPLACE TEMP TABLE {ns}span AS
             SELECT cid_id, min(rnew) AS rnew, max(rold) AS rold FROM (
-                SELECT l.rnew, l.rold, e.cid_id FROM _sa_dir l JOIN tent e USING (dir_id)
+                SELECT l.rnew, l.rold, e.cid_id FROM {ns}dir l JOIN tent e USING (dir_id)
                     WHERE e.cid_id IS NOT NULL AND NOT e.ind
                 UNION ALL
-                SELECT l.rnew, l.rold, e.ind_cid AS cid_id FROM _sa_dir l JOIN tent e USING (dir_id)
+                SELECT l.rnew, l.rold, e.ind_cid AS cid_id FROM {ns}dir l JOIN tent e USING (dir_id)
                     WHERE e.cid_id IS NOT NULL AND e.ind AND e.ind_cid IS NOT NULL
                 UNION ALL
-                SELECT l.rnew, l.rold, p.part_cid AS cid_id FROM _sa_dir l JOIN tent e USING (dir_id)
+                SELECT l.rnew, l.rold, p.part_cid AS cid_id FROM {ns}dir l JOIN tent e USING (dir_id)
                     JOIN tpart p ON p.iobj_cid = e.cid_id WHERE e.cid_id IS NOT NULL AND e.ind
                 UNION ALL
-                SELECT rank, rank, cid_id FROM _sa_rcid)
+                SELECT rank, rank, cid_id FROM {ns}rcid)
             WHERE cid_id IS NOT NULL
             GROUP BY cid_id""")
         # Churn = chunks whose OLDEST snapshot is this one, i.e. the content it introduced. A
         # chunk with no size contributes 0, as the size-map lookup did.
-        for rank, total in cur.execute("""
+        for rank, total in cur.execute(f"""
                 SELECT s.rold, sum(coalesce(cs.packed, 0))::HUGEINT
-                FROM _sa_span s LEFT JOIN csize cs ON cs.cid_id = s.cid_id
+                FROM {ns}span s LEFT JOIN csize cs ON cs.cid_id = s.cid_id
                 GROUP BY s.rold""").fetchall():
             churn[of_rank[rank]] = int(total or 0)
         if not heavy:
             return churn, physical, reclaim
         # Reclaimable = chunks in no older and no newer snapshot, and in no other source. A chunk
         # absent from `crefs` counts as zero references, same as the map lookup it replaces.
-        for rank, total in cur.execute("""
+        for rank, total in cur.execute(f"""
                 SELECT s.rold, sum(coalesce(cs.packed, 0))::HUGEINT
-                FROM _sa_span s
+                FROM {ns}span s
                 LEFT JOIN csize cs ON cs.cid_id = s.cid_id
                 LEFT JOIN crefs cr ON cr.cid_id = s.cid_id
                 WHERE s.rnew = s.rold AND coalesce(cr.refs, 0) <= 1
@@ -405,7 +410,7 @@ def _analyse(repo: str, snaps: list[dict], heavy: bool) -> tuple[dict, dict, dic
         # Physical: each folder's own file bytes once, then summed over the folders each snapshot
         # reaches. A folder sitting at two paths in one snapshot is counted ONCE - kopia stores it
         # once, and the walk this replaces counted it per path.
-        cur.execute(f"""CREATE OR REPLACE TEMP TABLE _sa_own AS
+        cur.execute(f"""CREATE OR REPLACE TEMP TABLE {ns}own AS
             SELECT e.dir_id,
                    sum(coalesce(CASE WHEN e.ind THEN ip.packed ELSE cs.packed END, 0))::HUGEINT
                        AS own
@@ -413,11 +418,11 @@ def _analyse(repo: str, snaps: list[dict], heavy: bool) -> tuple[dict, dict, dic
             LEFT JOIN csize cs ON cs.cid_id = e.cid_id
             LEFT JOIN iphys ip ON ip.cid_id = e.cid_id
             WHERE e.etype = {f} AND e.cid_id IS NOT NULL
-              AND e.dir_id IN (SELECT dir_id FROM _sa_dir)
+              AND e.dir_id IN (SELECT dir_id FROM {ns}dir)
             GROUP BY e.dir_id""")
-        for rank, total in cur.execute("""
+        for rank, total in cur.execute(f"""
                 SELECT r.rank, sum(coalesce(o.own, 0))::HUGEINT
-                FROM _sa_reach r LEFT JOIN _sa_own o ON o.dir_id = r.dir_id
+                FROM {ns}reach r LEFT JOIN {ns}own o ON o.dir_id = r.dir_id
                 GROUP BY r.rank""").fetchall():
             physical[of_rank[rank]] = int(total or 0)
     finally:
