@@ -1,0 +1,238 @@
+"""Nightly exact top lists for the Search all-versions columns ().
+
+The on-demand columns (Stored / Frees, every version) need piece-by-piece maths per file, which is
+fine for a page of rows and far too heavy for millions of paths every night. The nightly therefore
+ranks the top ``rank_count`` entries exactly, using a sound upper bound to prune:
+
+* **Stored** (per path): bound = the sum of the path's DISTINCT version objects' packed sizes
+  (chunks shared between its own versions count once in the exact value, so the bound is never
+  below it).
+* **Frees** (per content): bound = the sum of the bound above over EVERY path that ever held the
+  content, because Frees counts what removing every version of that content everywhere gives back -
+  copies push it above any single path's own size, so a per-path bound is not sound for it.
+
+Descend the bounds, work out the exact value per candidate, stop when the next candidate's bound is
+below the Nth exact value found. The numbers are byte-identical to the shipped on-demand helpers
+(verified against them across repos 1/2/3).
+
+The result is a small payload in the side cache that Search reads (memoized per generation) to sort
+by either column; rows outside the list keep their on-demand value and read "not ranked".
+"""
+
+from __future__ import annotations
+
+import time
+
+from config import DATA_DIR
+
+from ..core.applog import get_logger
+from . import sidecache
+from .store import read_cursor
+
+log = get_logger("rankpaths")
+
+_NAME = "rank_paths_repo%s"
+_VERSION = 1
+DEFAULT_COUNT = 10000
+_BOUND_BATCH = 2000          # paths per exact-math batch in the stored descent
+_FREES_BATCH = 500           # contents per exact-math batch in the frees descent
+_BUDGET_SECONDS = 900.0      # a pathological repo stops here; the payload is then marked inexact
+
+
+def count() -> int:
+    """How many entries to rank, from the Advanced setting (0 disables the step)."""
+    try:
+        from ..settings import load_settings
+        n = int(((load_settings().get("kopialens") or {}).get("rank_count") or DEFAULT_COUNT))
+    except Exception:  # noqa: BLE001 - a settings problem must not stop the nightly step
+        return DEFAULT_COUNT
+    return max(0, min(n, 200_000))
+
+
+def _bounds(cur) -> None:
+    """The cheap tables both descents read: a price per content, the (path, object) pairs, the
+    per-path and per-content bounds, and both sorted orders."""
+    cur.execute("""
+        CREATE OR REPLACE TABLE _rank_price AS
+        SELECT c.cid_id, coalesce(i.packed, s.packed, 0)::UBIGINT AS packed
+        FROM cid c LEFT JOIN iphys i ON i.cid_id = c.cid_id
+        LEFT JOIN csize s ON s.cid_id = c.cid_id""")
+    cur.execute("CREATE OR REPLACE TABLE _rank_pair AS "
+                "SELECT DISTINCT path_id, cid_id FROM filev")
+    cur.execute("""
+        CREATE OR REPLACE TABLE _rank_est AS
+        SELECT p.path_id, sum(pr.packed)::UBIGINT AS est
+        FROM _rank_pair p JOIN _rank_price pr ON pr.cid_id = p.cid_id
+        GROUP BY p.path_id""")
+    cur.execute("""
+        CREATE OR REPLACE TABLE _rank_ord AS
+        SELECT path_id AS key, est, row_number() OVER (ORDER BY est DESC, path_id) AS rn
+        FROM _rank_est""")
+    cur.execute("""
+        CREATE OR REPLACE TABLE _rank_gest AS
+        SELECT p.cid_id, sum(e.est)::HUGEINT AS gest
+        FROM _rank_pair p JOIN _rank_est e ON e.path_id = p.path_id
+        GROUP BY p.cid_id""")
+    cur.execute("""
+        CREATE OR REPLACE TABLE _rank_gord AS
+        SELECT cid_id AS key, gest, row_number() OVER (ORDER BY gest DESC, cid_id) AS rn
+        FROM _rank_gest""")
+
+
+def _exact_stored(cur, out: str = "_rank_bst") -> None:
+    """Exact Stored per path for the paths in ``_rank_batch``: the priced union of the chunks of
+    every version object. A path holding an object the tree has not reached is left out - its
+    number would be understated, and an understated number must never enter the ranking."""
+    cur.execute("""
+        CREATE OR REPLACE TABLE _rank_bobjs AS
+        SELECT DISTINCT pb.path_id, pb.cid_id AS obj FROM _rank_pair pb
+        JOIN _rank_batch b ON b.key = pb.path_id""")
+    cur.execute("""
+        CREATE OR REPLACE TABLE _rank_bch AS
+        SELECT b.path_id, coalesce(tp.part_cid, b.obj) AS chunk,
+               (c.content_id LIKE 'I%' AND tp.part_cid IS NULL) AS unknown
+        FROM _rank_bobjs b JOIN cid c ON c.cid_id = b.obj
+        LEFT JOIN tpart tp ON tp.iobj_cid = b.obj""")
+    cur.execute(f"""
+        CREATE OR REPLACE TABLE {out} AS
+        SELECT d.path_id AS key, sum(pr.packed)::UBIGINT AS value
+        FROM (SELECT DISTINCT path_id, chunk FROM _rank_bch
+              WHERE NOT unknown
+                AND path_id NOT IN (SELECT path_id FROM _rank_bch WHERE unknown)) d
+        JOIN _rank_price pr ON pr.cid_id = d.chunk
+        GROUP BY d.path_id""")
+
+
+def _exact_frees(cur, out: str = "_rank_gf") -> None:
+    """Exact Frees per CONTENT for the contents in ``_rank_batch``, mirroring the shipped
+    on-demand maths: a chunk counts when its global source refcount is fully explained by the
+    group's (path, object) occurrences. Contents with an unreadable split object are dropped."""
+    cur.execute("CREATE OR REPLACE TABLE _rank_tgt AS SELECT key AS target FROM _rank_batch")
+    cur.execute("""
+        CREATE OR REPLACE TABLE _rank_grp AS
+        SELECT DISTINCT g.target, p2.path_id, p2.cid_id AS obj
+        FROM _rank_tgt g JOIN _rank_pair h ON h.cid_id = g.target
+        JOIN _rank_pair p2 ON p2.path_id = h.path_id""")
+    cur.execute("""
+        CREATE OR REPLACE TABLE _rank_gt AS
+        SELECT target, chunk, count(*)::INTEGER AS n FROM (
+            SELECT DISTINCT g.target, g.path_id, g.obj,
+                   coalesce(tp.part_cid, g.obj) AS chunk,
+                   (c.content_id LIKE 'I%' AND tp.part_cid IS NULL) AS unknown
+            FROM _rank_grp g JOIN cid c ON c.cid_id = g.obj
+            LEFT JOIN tpart tp ON tp.iobj_cid = g.obj)
+        WHERE NOT unknown
+          AND target NOT IN (SELECT target FROM _rank_grp g LEFT JOIN cid c ON c.cid_id = g.obj
+                             LEFT JOIN tpart tp ON tp.iobj_cid = g.obj
+                             WHERE c.content_id LIKE 'I%' AND tp.part_cid IS NULL)
+        GROUP BY target, chunk""")
+    cur.execute(f"""
+        CREATE OR REPLACE TABLE {out} AS
+        SELECT gt.target AS key, sum(coalesce(pr.packed, 0))::UBIGINT AS value
+        FROM _rank_gt gt
+        LEFT JOIN crefs r ON r.cid_id = gt.chunk
+        LEFT JOIN _rank_price pr ON pr.cid_id = gt.chunk
+        WHERE coalesce(r.refs, 0) <= gt.n
+        GROUP BY gt.target""")
+
+
+def _descend(cur, *, order: str, bound: str, batch: int, n: int, label: str,
+             exact_fn, out: str) -> tuple[list, bool, int, str]:
+    """Walk a bound-ordered candidate list, keeping the top ``n`` exact values. Stops as soon as
+    the next candidate's bound cannot reach the Nth exact value found. Returns
+    ([(value, key)] best first, exact, candidates processed, how it ended)."""
+    top: list[tuple[int, int]] = []
+    rn = 0
+    processed = 0
+    total = cur.execute(f"SELECT max(rn) FROM {order}").fetchone()[0] or 0
+    ended = "exhausted"
+    t0 = time.time()
+    while rn < total:
+        cur.execute(f"""
+            CREATE OR REPLACE TABLE _rank_batch AS
+            SELECT key, rn FROM {order} WHERE rn > {int(rn)} ORDER BY rn LIMIT {batch}""")
+        head = cur.execute("SELECT max(rn), count(*) FROM _rank_batch").fetchone()
+        if not head or not head[1]:
+            break
+        rn = int(head[0])
+        exact_fn(cur, out)
+        rows = cur.execute(f"SELECT value, key FROM {out}").fetchall()
+        processed += len(rows)
+        top.extend((int(v), int(k)) for v, k in rows)
+        top.sort(key=lambda kv: (-kv[0], kv[1]))
+        del top[n:]
+        if len(top) >= n:
+            nxt = cur.execute(f"SELECT {bound} FROM {order} WHERE rn = ?", [rn + 1]).fetchone()
+            if nxt is None or int(nxt[0]) < top[n - 1][0]:
+                ended = "pruned"            # nothing left can reach the Nth exact value
+                break
+        if time.time() - t0 > _BUDGET_SECONDS:
+            ended = "budget"
+            log.warning("rank_paths: %s descent hit the %.0fs budget after %d candidates",
+                        label, _BUDGET_SECONDS, processed)
+            break
+    return top, ended != "budget", processed, ended
+
+
+def precompute(repo: str, n: int | None = None) -> dict:
+    """Worker stage: build and store the ranked lists. Returns the payload."""
+    n = count() if n is None else max(0, int(n))
+    from .store import read_manifest
+    gen = (read_manifest(repo) or {}).get("generation")
+    if n <= 0:
+        payload = {"version": _VERSION, "ts": time.time(), "n": 0, "exact": False,
+                   "generation": gen, "stored": [], "frees": []}
+        sidecache.write(_NAME % repo, payload, base=DATA_DIR)
+        return payload
+    t0 = time.time()
+    cur = read_cursor(repo)
+    try:
+        _bounds(cur)
+        stored, exact_s, done_s, end_s = _descend(cur, order="_rank_ord", bound="est",
+                                                  batch=_BOUND_BATCH, n=n, label="stored",
+                                                  exact_fn=_exact_stored, out="_rank_bst")
+        frees, exact_f, done_f, end_f = _descend(cur, order="_rank_gord", bound="gest",
+                                                 batch=_FREES_BATCH, n=n, label="frees",
+                                                 exact_fn=_exact_frees, out="_rank_gf")
+    finally:
+        cur.close()
+    payload = {"version": _VERSION, "ts": time.time(), "n": n, "generation": gen,
+               "exact": bool(exact_s and exact_f),
+               "stored": [[k, v] for v, k in stored],
+               "frees": [[k, v] for v, k in frees]}
+    if not sidecache.write(_NAME % repo, payload, base=DATA_DIR):
+        log.error("rank_paths repo=%s store write failed", repo)
+    log.info("rank_paths repo=%s: %d stored (%s) + %d frees (%s) in %.1fs, exact=%s",
+             repo, len(stored), end_s, len(frees), end_f, time.time() - t0, payload["exact"])
+    return payload
+
+
+def stored(repo: str) -> dict | None:
+    """The stored payload, or None when the nightly has not built one (fresh install, first run)."""
+    data = sidecache.read(_NAME % repo, base=DATA_DIR)
+    if isinstance(data, dict) and data.get("version") == _VERSION:
+        return data
+    return None
+
+
+_MEMO: dict[str, tuple] = {}
+
+
+def current(repo: str) -> dict | None:
+    """The payload for the CURRENT generation, memoized - the Search route asks per request."""
+    from .store import read_manifest
+    gen = (read_manifest(repo) or {}).get("generation")
+    hit = _MEMO.get(repo)
+    if hit is not None and hit[0] == gen:
+        return hit[1]
+    data = stored(repo)
+    _MEMO[repo] = (gen, data)
+    return data
+
+
+def ranked_values(repo: str, kind: str) -> dict[int, int]:
+    """{key: bytes} for one ranked list, or {} when there is none (or it is not exact)."""
+    data = current(repo)
+    if not data or not data.get("exact"):
+        return {}
+    return {int(k): int(v) for k, v in data.get("stored" if kind == "stored" else "frees") or []}

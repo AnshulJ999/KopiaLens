@@ -41,6 +41,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "index_interval": 86400,     # interval mode only: seconds between heavy passes
         "index_worker_timeout": 14400,  # hard ceiling on one worker run (4h) so a hang can't block tomorrow
         "folder_prewarm_budget": 900,  # max seconds the nightly spends pre-computing folder reclaim
+        "log_cleanup_days": 90,      # days of job/dry-run/mount logs to keep; 0 = keep everything
+        "rank_count": 10000,         # exact top entries the nightly ranks for the Search columns
         "index_retry_delay": 900,    # after a FAILED pass, wait this long before the one retry
         "index_max_retries": 1,      # retries per scheduled slot; 0 = never retry until the next slot
         "quit_indexing": "finish",   # tray Quit: "finish" leaves a running index worker to complete, "stop" ends it

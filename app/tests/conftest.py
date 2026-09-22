@@ -17,8 +17,18 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def isolate_disk_side_channels(tmp_path, monkeypatch):
-    from app.core import audit, jobs, runhistory
+    from app.core import applog, audit, jobs, runhistory
 
     monkeypatch.setattr(audit, "_path", lambda: str(tmp_path / "audit.jsonl"))
     monkeypatch.setattr(runhistory, "_runs_dir", lambda: str(tmp_path / "runs"))
     monkeypatch.setattr(jobs, "_history_path", lambda: str(tmp_path / "jobs_history.jsonl"))
+    #: every log writer too. The dry-run tests used to drop `dry_run_*.log` files into
+    # the developer's real data folder on every suite run (the paths are read from applog at call
+    # time by kopia/jobs/nightly, so patching here covers all of them).
+    log_dir = tmp_path / "logs"
+    monkeypatch.setattr(applog, "LOG_DIR", str(log_dir))
+    monkeypatch.setattr(applog, "APP_LOG_DIR", str(log_dir / "app"))
+    monkeypatch.setattr(applog, "INDEX_LOG_DIR", str(log_dir / "indexing"))
+    monkeypatch.setattr(applog, "JOB_LOG_DIR", str(log_dir / "jobs"))
+    monkeypatch.setattr(applog, "LOG_FILE", str(log_dir / "app" / "kopialens.log"))
+    monkeypatch.setattr(applog, "DEBUG_LOG_FILE", str(log_dir / "app" / "kopialens-debug.log"))

@@ -362,9 +362,9 @@ def mount_snapshot(repo: str, snapshot_id: str, mountpoint: str, info: dict | No
 
     args = ["mount", snapshot_id, mountpoint]
     full = _base_command(repo, args)
-    log_dir = os.path.join(DATA_DIR, "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, f"mount_{time.strftime('%Y%m%d_%H%M%S')}.log")
+    from .applog import JOB_LOG_DIR, ensure_dirs
+    ensure_dirs()
+    log_path = os.path.join(JOB_LOG_DIR, f"mount_{time.strftime('%Y%m%d_%H%M%S')}.log")
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     with open(log_path, "w", encoding="utf-8", errors="replace") as lf:
         proc = subprocess.Popen(full, stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
@@ -570,7 +570,8 @@ def remove_files_chunked_commands(repo: str, items: list[str], source: str | lis
 
 
 def remove_log_path(name: str) -> str:
-    d = os.path.join(DATA_DIR, "logs")
+    from .applog import JOB_LOG_DIR
+    d = JOB_LOG_DIR
     os.makedirs(d, exist_ok=True)
     return os.path.join(d, name)
 

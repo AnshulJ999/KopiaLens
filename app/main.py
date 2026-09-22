@@ -363,6 +363,11 @@ def _warm(repo: str) -> None:
 
 def _light_pass() -> None:
     """One light warm pass over every kopia repo that is currently available."""
+    try:
+        from .core.applog import cleanup_jobs
+        cleanup_jobs()          # log_cleanup_days; OFF (0) does nothing
+    except Exception as exc:  # noqa: BLE001 - housekeeping must never stop the warm pass
+        log.warning("log cleanup failed: %s", exc)
     for repo in REPOS:
         if _bg_stop.is_set():
             return

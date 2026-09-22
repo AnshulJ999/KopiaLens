@@ -265,8 +265,9 @@ def _new_job(kind: str, repo: str, label: str, meta: dict, cmds: list[list[str]]
              pasteable: list[list[str]], on_done) -> dict:
     job_id = uuid.uuid4().hex[:12]
     ts = time.strftime("%Y%m%d_%H%M%S")
-    log_dir = os.path.join(DATA_DIR, "logs")
-    os.makedirs(log_dir, exist_ok=True)
+    from .applog import JOB_LOG_DIR, ensure_dirs
+    ensure_dirs()
+    log_dir = JOB_LOG_DIR
     return {
         "job_id": job_id, "kind": kind, "repo": repo,
         "kind_label": KINDS[kind]["label"] if not meta.get("then") else "Excluding and deleting",

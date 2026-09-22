@@ -78,7 +78,7 @@ document.addEventListener("alpine:init", () => {
     lightInterval: 1800, dashboardInterval: 14400,
     debugLog: false,
     indexWorkerTimeout: 14400, indexRetryDelay: 900, indexMaxRetries: 1, reindexAfterDeleteDelay: 300, quitIndexing: "finish",
-    folderPrewarmBudget: 900, startupDelay: 300,
+    folderPrewarmBudget: 900, startupDelay: 300, logCleanupDays: 90, rankCount: 10000,
     repoLabels: "short",  // repo chips and columns: "short" (Repo 1) | "full" (the name from repos.json)
     // Backblaze settings. Defaults mirror app/settings.py; each control saves its own key into
     // the nested "backblaze" dict (KL_FIELDS in settings.js).

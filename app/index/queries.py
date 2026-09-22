@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+import uuid
 
 from . import entries, resolve
 from .store import read_cursor
@@ -69,11 +70,14 @@ def index_summary(repo: str) -> dict:
 
 
 # Whitelisted sort columns (server-side sort over the FULL filtered set, never the page).
+# "stored"/"frees" order by the nightly ranked list () through a joined column, not pathx.
 _SEARCH_SORT = {
     "size": "size", "physical": "physical", "full_path": "full_path", "name": "name",
     "ext": "ext", "versions": "versions", "last_seen": "last_seen", "first_seen": "first_seen",
     "in_latest": "in_latest", "source": "source",
+    "stored": "ranked_value", "frees": "ranked_value",
 }
+_RANK_SORTS = ("stored", "frees")
 
 
 def _split_exts(ext: str) -> list[str]:
@@ -178,10 +182,12 @@ def _search_where(cur, query: str, deleted_only: bool, min_size: int,
 # Every ordered query ends on a column that is unique in its own output, so tied sort keys resolve
 # the same way on every run. Without it a top-N list silently changes membership between identical
 # calls. Row-level queries use (source, full_path); grouped queries use their group key.
-def _order_clause(sort: str, direction: str, tiebreak: str = "source, full_path") -> str:
+def _order_clause(sort: str, direction: str, tiebreak: str = "source, full_path",
+                  nulls_last: bool = False) -> str:
     col = _SEARCH_SORT.get(sort, "size")
     dirn = "ASC" if str(direction).lower() == "asc" else "DESC"
-    return f"ORDER BY {col} {dirn}, last_seen DESC, {tiebreak}"
+    tail = " NULLS LAST" if nulls_last else ""
+    return f"ORDER BY {col} {dirn}{tail}, last_seen DESC, {tiebreak}"
 
 
 def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_size: int = 0,
@@ -192,9 +198,33 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                  ext_exclude: str | None = None, first_from: str | None = None) -> dict:
     """Search the pre-aggregated ``paths`` table. Returns the TRUE total count plus one page,
     with sort + filters applied in SQL over the entire matched set. ``dedupe`` collapses all
-    path/source variations of the SAME content (group by content id) into one content-aware row."""
+    path/source variations of the SAME content (group by content id) into one content-aware row.
+
+    Sorting by ``stored``/``frees`` uses the nightly ranked list (): ranked rows come first
+    (each carrying its exact value in ``stored_all_versions``/``frees_all_versions``), unranked
+    rows after them. With no exact list yet the sort falls back to physical and ``ranked`` says so.
+    """
     cur = read_cursor(repo)
+    ranked_meta = {"available": False, "kind": sort if sort in _RANK_SORTS else None, "count": 0}
+    mat = None
     try:
+        if sort in _RANK_SORTS:
+            from . import rankpaths
+            uuid_tag = uuid.uuid4().hex[:8]
+            values = rankpaths.ranked_values(repo, sort)
+            if values:
+                import pyarrow as pa
+                mat = f"_ranked_values_{uuid_tag}"
+                cur.register(mat, pa.table({
+                    "key": pa.array(list(values), pa.int64()),
+                    "value": pa.array([values[k] for k in values], pa.uint64())}))
+                ranked_meta = {"available": True, "kind": sort, "count": len(values)}
+            else:
+                sort = "physical"      # nothing ranked yet: the closest meaningful order
+        join_sql = f"LEFT JOIN {mat} r ON r.key = p.path_id" if mat else ""
+        if mat and sort == "frees":
+            join_sql = f"LEFT JOIN {mat} r ON r.key = p.cid_id"
+        value_sql = ", r.value AS ranked_value" if mat else ""
         where, params = _search_where(cur, query, deleted_only, min_size, source, ext, max_size,
                                       date_from, date_to, min_versions, shared_min, ext_exclude, first_from)
         where_sql = _where(where)
@@ -213,12 +243,14 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                        max(p.exclusive) AS exclusive,
                        min(p.first_seen) AS first_seen, max(p.last_seen) AS last_seen,
                        bool_or(p.in_latest) AS in_latest, c.content_id, count(DISTINCT p.full_path) AS copies
+                       {", max(r.value) AS ranked_value" if mat else ""}
                 FROM pathx p
                 JOIN src s ON s.src_id = p.src_id
                 LEFT JOIN cid c ON c.cid_id = p.cid_id
+                {join_sql}
                 WHERE {where_sql} AND p.cid_id IS NOT NULL
                 GROUP BY p.cid_id, c.content_id
-                {_order_clause(sort, direction, "c.content_id")}
+                {_order_clause(sort, direction, "c.content_id", nulls_last=bool(mat))}
                 LIMIT ? OFFSET ?
                 """,
                 [*params, limit, offset],
@@ -230,11 +262,13 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                 f"""
                 SELECT s.source AS source, p.full_path, p.name, p.ext, p.size, p.physical, p.exclusive,
                        p.versions, p.first_seen, p.last_seen, p.in_latest, c.content_id
+                       {value_sql}
                 FROM pathx p
                 JOIN src s ON s.src_id = p.src_id
                 LEFT JOIN cid c ON c.cid_id = p.cid_id
+                {join_sql}
                 WHERE {where_sql}
-                {_order_clause(sort, direction)}
+                {_order_clause(sort, direction, nulls_last=bool(mat))}
                 LIMIT ? OFFSET ?
                 """,
                 [*params, limit, offset],
@@ -261,12 +295,22 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
             for row in rows:
                 row["copies"] = cp.get(row.get("content_id"), 1)
                 row["sources"] = cs.get(row.get("content_id"), 1)
+        if mat:
+            field = "stored_all_versions" if ranked_meta["kind"] == "stored" else "frees_all_versions"
+            for row in rows:
+                value = row.pop("ranked_value", None)
+                row[field] = int(value) if value is not None else None
     finally:
+        if mat:
+            try:
+                cur.unregister(mat)
+            except Exception:  # noqa: BLE001 - already gone / connection closing
+                pass
         cur.close()
     if confirm_exists:
         for row in rows:
             row["on_disk"] = os.path.exists(row["full_path"])
-    return {"rows": rows, "total": total, "offset": offset, "limit": limit}
+    return {"rows": rows, "total": total, "offset": offset, "limit": limit, "ranked": ranked_meta}
 
 
 # ---- Search "landing view" cache (default empty-query view) — serve-stale + bg revalidate ----

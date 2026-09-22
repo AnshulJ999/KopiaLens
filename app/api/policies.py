@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from config import kopia_repos, repo_kind
 
-from ..core import policybackup, policyresolve, policytargets
+from ..core import policybackup, policyresolve, policytargets, rulelayers
 from ..core.kopia import (
     _quote_arg,
     policy_delete_command,
@@ -42,7 +42,7 @@ from ..index import policypricing
 router = APIRouter(tags=["policies"])
 
 _BACKUP_OUTPUT_TAIL = 2000
-_EXAMPLES_MAX = 200  # endpoint-level example cap (the pricing cache itself stores 500)
+_EXAMPLES_MAX = 5000  # endpoint-level example cap (the pricing cache itself keeps fewer)
 
 
 # ---- helpers ---------------------------------------------------------------------------
@@ -75,69 +75,30 @@ def _own_rules(defined_policies: dict, target: str) -> list[str]:
     return list((pol.get("files") or {}).get("ignore") or [])
 
 
-def _pricing_scope(repo: str, target: str) -> list[str]:
-    """Sources whose effective ignore rules a write to ``target`` actually changes, and therefore
-    what pricing must cover: the global policy prices over every source that inherits global
-    rules; a source target prices over ITSELF plus every source inheriting FROM it ( - a
-    rule at an ancestor policy re-anchors to each inheritor's walk root, so the per-target price
-    must cover the target's full reach, not just its own source)."""
-    defined = load_defined_policies(repo).get("policies") or {}
-    if _is_global(target):
-        return [key for key in _source_keys(repo)
-                if effective_ignore_origin(repo, key, defined)[0] == "global"]
-    out = [target] if ":" in target else []   # a user@host or @host policy is not a source
-    for key in _source_keys(repo):
-        origin, owner = effective_ignore_origin(repo, key, defined)
-        if origin == "inherited" and owner == target:
-            out.append(key)
-    return out
+def _pricing_scope(repo: str, target: str) -> list[dict]:
+    """Every backup a write to ``target`` can affect, each with the anchor its rules price at.
+
+    Root layer: the target itself plus sources whose root list comes from it ( - a rule at
+    an ancestor policy re-anchors to each inheritor's walk root). Folder layer (): every
+    source whose walk passes through the target's folder applies its rules there anchored at that
+    folder - pricing that ignores this undercounts what the policy keeps out."""
+    return rulelayers.scope_for_target(repo, target)
 
 
 def _price_for_target(repo: str, target: str, patterns: list[str], limit: int = 10) -> dict:
-    """Price patterns against a source, or - for a target whose rules other sources inherit -
-    aggregated over that full reach (per-source breakdown included). The rollup is
-    single-flighted: concurrent identical requests block on one lock and then hit the price
-    cache the leader populated."""
+    """Price patterns over every backup the target's rules reach, each at its own anchor. The
+    rollup is single-flighted: concurrent identical requests block on one lock and then hit the
+    price cache the leader populated."""
     scope = _pricing_scope(repo, target)
     if len(scope) > 1:
-        merged: dict[str, dict] = {}
-        breakdown = []
-        lock = policypricing.rollup_lock((repo, tuple(sorted(patterns))))
-        with lock:
-            per_source = {key: policypricing.price_patterns(repo, key, patterns,
-                                                            limit=_EXAMPLES_MAX)
-                          for key in scope}
-        for key in scope:
-            out = per_source[key]
-            totals = {}
-            for res in out["results"]:
-                item = merged.setdefault(res["pattern"], {
-                    "pattern": res["pattern"], "files": 0, "bytes": 0, "dirs": 0,
-                    "examples": [], "error": res["error"], "negated": res["negated"]})
-                if res["error"]:
-                    continue
-                item["files"] += res["files"]
-                item["bytes"] += res["bytes"]
-                item["dirs"] += res["dirs"]
-                item["examples"].extend(res["examples"])
-                totals[res["pattern"]] = {"files": res["files"], "bytes": res["bytes"]}
-            breakdown.append({"source": key, "results": totals})
-        results = []
-        for item in merged.values():
-            item["examples"].sort(key=lambda e: e["size"], reverse=True)
-            item["total_examples"] = item["files"]
-            results.append(item)
-        results.sort(key=lambda r: patterns.index(r["pattern"]) if r["pattern"] in patterns else 0)
-        return {"target": target, "scope": {"sources": scope, "inheriting_global": len(scope)},
-                "results": results, "breakdown": breakdown}
-    out = policypricing.price_patterns(repo, target, patterns, limit=_EXAMPLES_MAX)
-    for res in out["results"]:
-        res["total_examples"] = res["files"] if not res["error"] else 0
-        res["capped"] = res["total_examples"] > limit
-        res["examples"] = res["examples"][:limit]
-    return {"target": target,
-            "scope": {"sources": [target], "inheriting_global": 0},
-            "results": out["results"]}
+        with policypricing.rollup_lock((repo, tuple(sorted(patterns)))):
+            out = policypricing.price_scope(repo, scope, patterns, limit=limit)
+    else:
+        out = policypricing.price_scope(repo, scope, patterns, limit=limit)
+    out["target"] = target
+    out.setdefault("scope", {})["inheriting_global"] = (
+        len(scope) if target == _GLOBAL_TARGET else 0)
+    return out
 
 
 # ---- models ----------------------------------------------------------------------------
@@ -558,8 +519,10 @@ def price(body: PriceBody) -> dict:
     if not body.target:
         raise HTTPException(status_code=400, detail="target is required")
     if not body.patterns:
-        return {"target": body.target, "scope": {"sources": [], "inheriting_global": 0},
-                "results": []}
+        return {"target": body.target,
+                "scope": {"sources": [], "layers": {"root": [], "folder": []},
+                          "inheriting_global": 0},
+                "results": [], "breakdown": []}
     if len(body.patterns) > policypricing._LIVE_PRICE_CAP:
         raise HTTPException(
             status_code=400,
@@ -586,6 +549,16 @@ def stored_prices(repo: str = "1", target: str = "") -> dict:
     if out is None:
         return {"repo": repo, "target": target, "stored": False, "ts": None, "results": [],
                 "detail": "no nightly pricing stored yet - available after the next index run"}
+    out["repo"] = repo
+    return out
+
+
+@router.get("/policies/ignore-files")
+def ignore_files(repo: str = "1", target: str = "") -> dict:
+    """Dot-ignore files found under a target (whole repo when omitted) with the rules each holds
+    and what they keep out (). Read from the nightly artifact - no kopia calls."""
+    _kopia_repo(repo)
+    out = policypricing.ignore_files_for(repo, target or None)
     out["repo"] = repo
     return out
 

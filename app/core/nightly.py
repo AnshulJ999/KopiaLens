@@ -47,6 +47,27 @@ def _reserve(repo: str) -> bool:
         return True
 
 
+def summary_line(summary: dict, elapsed: float | None = None) -> str:
+    """One readable sentence for a finished index pass, instead of the raw summary dict.
+
+    e.g. ``OK in 500s - index 245s, dashboard 9s, ... - skipped: churn``. The dict itself stays
+    where it already was (the run record, the progress API); only the app log gets the sentence.
+    """
+    state = "OK" if summary.get("ok") else "FAILED"
+    head = f"{state} in {elapsed:.0f}s" if elapsed else state
+    stages = summary.get("stages") or {}
+    parts = ", ".join(f"{name} {float(secs):.0f}s" for name, secs in stages.items())
+    if parts:
+        head += f" - {parts}"
+    if summary.get("skipped"):
+        head += f" - skipped: {', '.join(summary['skipped'])}"
+    if summary.get("errors"):
+        head += f" - errors: {', '.join(summary['errors'])}"
+    if summary.get("reason"):
+        head += f" - {summary['reason']}"
+    return head
+
+
 def _release(repo: str) -> None:
     global _RESERVED
     with _LOCKS_GUARD:
@@ -94,7 +115,8 @@ INTERRUPTED = "Indexing stopped before it finished (KopiaLens was closed or rest
 
 
 def worker_log_path(repo: str) -> str:
-    return os.path.join(DATA_DIR, "logs", f"index_worker_repo{repo}.log")
+    from .applog import INDEX_LOG_DIR
+    return os.path.join(INDEX_LOG_DIR, f"index_worker_repo{repo}.log")
 
 
 def worker_log_lines(repo: str, after: int = 0, limit: int = 400) -> tuple[list[str], int]:
@@ -153,7 +175,7 @@ def worker_log_tail(repo: str, limit: int = 200) -> list[str]:
 
 # The worker's stage order (app/index/worker.py). The panel lists exactly these.
 STAGE_ORDER = ("index", "dashboard", "analysis", "churn", "folders", "policies",
-               "policy_prices", "next_snapshots")
+               "policy_prices", "ignore_files", "rank_paths", "next_snapshots")
 
 
 def _stage_weights(repo: str, full: bool) -> dict[str, float]:
@@ -362,7 +384,7 @@ def _watch_adopted(repo: str, proc, pid: int, info: dict, on_done) -> None:
         _release(repo)
         _finish_resumed(repo, summary or {"ok": False, "reason": INTERRUPTED}, started,
                         info.get("trigger") or "nightly", bool(info.get("full")), on_done)
-    log.info("repo=%s resumed index pass done: %s", repo, summary)
+    log.info("repo=%s resumed index pass: %s", repo, summary_line(summary, None))
 
 
 def resume_workers(on_done=None) -> dict:
@@ -561,7 +583,7 @@ def run_index_pass(repo: str, full: bool = False, _owned: bool = False,
         # survived to report.
         from . import runhistory  # lazy: keeps nightly import-light
         runhistory.record(repo, summary, trigger, full, elapsed)
-    log.info("repo=%s index pass done in %.0fs: %s", repo, elapsed, summary)
+    log.info("repo=%s index pass: %s", repo, summary_line(summary, elapsed))
     return summary
 
 

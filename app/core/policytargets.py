@@ -16,9 +16,9 @@ get their rules from; child sources are offered too, with the inherited rules co
 from __future__ import annotations
 
 import re
-from functools import lru_cache
 
 from . import paths as pathrules
+from . import rulelayers
 from .applog import get_logger
 from .ignorematch import compile_pattern
 from .policy import _GLOBAL_TARGET, effective_ignore_origin, global_ignores
@@ -153,11 +153,6 @@ def _matches(pattern: str, rel: str, is_folder: bool) -> bool:
     return pat.match(probe, is_dir=False)
 
 
-@lru_cache(maxsize=20000)
-def _compiled(rule: str, base: str):
-    return compile_pattern(rule, base_dir=base)
-
-
 def _own_rules(defined: dict, key: str) -> list[str]:
     return list(((defined.get(key) or {}).get("files") or {}).get("ignore") or [])
 
@@ -172,62 +167,13 @@ def _root_rules(repo: str, source_key: str, defined: dict) -> tuple[str, str | N
 
 
 def _excluded_in(repo: str, source_key: str, rel: str, is_folder: bool, defined: dict) -> bool:
-    """Is ``rel`` (relative to the source root) kept out of this source's snapshots? The root
-    list, plus the rules of every path policy on a folder the walk passes through, evaluated in
-    kopia's order (parent context first, last match wins). A folder equal to the source root counts
-    as left out when its root rules leave out everything inside it."""
-    if not rel and not is_folder:
-        return False
-    root = pathrules.source_root(source_key)
-    sep = pathrules.sep(source_key)
-    fold = not pathrules.case_sensitive(source_key)
-    user_host = source_key.split(":", 1)[0]
-    _origin, _owner, root_list = _root_rules(repo, source_key, defined)
+    """Is ``rel`` (relative to the source root) kept out of this source's snapshots?
 
-    segs = [s for s in rel.strip("/").split("/") if s]
-    nested: list[tuple[str, list]] = []   # (base "/a/b" in the path's own casing, compiled rules)
-    for key, pol in defined.items():
-        if ":" not in key or key.split(":", 1)[0] != user_host:
-            continue
-        rules = list(((pol or {}).get("files") or {}).get("ignore") or [])
-        if not rules:
-            continue
-        ppath = key.split(":", 1)[1]
-        if not _under(ppath, root, sep, fold, strict=True):
-            continue
-        prel = _rel(ppath, root, sep, fold)
-        depth = prel.count("/") + 1
-        # only policies on folders this path actually passes through
-        if _norm("/".join(segs[:depth]), "/", fold) != _norm(prel, "/", fold) or \
-                depth > len(segs) - (0 if is_folder else 1):
-            continue
-        base = "/" + "/".join(segs[:depth])
-        nested.append((base, [_compiled(r, base) for r in rules]))
-    nested.sort(key=lambda n: n[0].count("/"))
-    root_c = [_compiled(r, "") for r in root_list]
-
-    from ..index.policypricing import _machine  # lazy: index layer
-
-    def rules_in(dir_path: str) -> list:
-        out = list(root_c)
-        for base, comp in nested:
-            if dir_path == base or dir_path.startswith(base + "/"):
-                out.extend(comp)
-        return out
-
-    for i in range(1, len(segs)):  # proper ancestors: a pruned folder prunes everything under it
-        parent = "/" + "/".join(segs[:i - 1]) if i > 1 else ""
-        if _machine(rules_in(parent), "/" + "/".join(segs[:i]), True)[0]:
-            return True
-    if not segs:  # the source root itself (a folder selection)
-        return _machine(rules_in(""), "/__kl_probe__", False)[0]
-    parent = "/" + "/".join(segs[:-1]) if len(segs) > 1 else ""
-    full = "/" + "/".join(segs)
-    if is_folder:
-        if _machine(rules_in(parent), full, True)[0]:
-            return True
-        return _machine(rules_in(full), full + "/__kl_probe__", False)[0]
-    return _machine(rules_in(parent), full, False)[0]
+    Delegates to the shared rule layer (/): the root list, the rules of every path
+    policy on a folder the walk passes through, and every dot-ignore file in effect, evaluated in
+    kopia's order (parent context first, a deeper level can negate it). A folder equal to the
+    source root counts as left out when its rules leave out everything inside it."""
+    return rulelayers.excluded_in(repo, source_key, rel, is_folder, defined=defined)
 
 
 def _target_label_kind(key: str) -> str:

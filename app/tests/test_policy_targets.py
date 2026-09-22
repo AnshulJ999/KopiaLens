@@ -273,11 +273,14 @@ def test_route_refresh_re_exports_policies_only_when_asked(wired, monkeypatch):
 
 
 def test_pricing_scope_skips_a_host_level_target(monkeypatch):
+    """A user@host target prices over the sources whose root list it owns - and nothing else."""
     dsrc = f"{UH}:D:{SEP}"
     defined = {UH: {"files": {"ignore": ["u"]}}}
-    monkeypatch.setattr(api, "load_defined_policies", lambda repo: {"policies": defined})
-    monkeypatch.setattr(api, "load_policies", lambda repo: {"policies": {dsrc: {}}})
-    assert api._pricing_scope("1", UH) == [dsrc]
+    import app.core.policy as pol
+    import app.core.rulelayers as rl
+    monkeypatch.setattr(pol, "load_defined_policies", lambda repo: {"policies": defined})
+    monkeypatch.setattr(rl, "sources_index", lambda repo: {dsrc: []})
+    assert [e["source"] for e in api._pricing_scope("1", UH)] == [dsrc]
 
 
 def test_folder_that_is_a_source_root_counts_as_left_out_by_its_own_rule(wired):
