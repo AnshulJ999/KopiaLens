@@ -82,7 +82,8 @@ def _pricing_scope(repo: str, target: str) -> list[dict]:
     an ancestor policy re-anchors to each inheritor's walk root). Folder layer (): every
     source whose walk passes through the target's folder applies its rules there anchored at that
     folder - pricing that ignores this undercounts what the policy keeps out."""
-    return rulelayers.scope_for_target(repo, target)
+    # The API says "global"; the policy layer keys it as kopia does, "(global)".
+    return rulelayers.scope_for_target(repo, _GLOBAL_TARGET if _is_global(target) else target)
 
 
 def _price_for_target(repo: str, target: str, patterns: list[str], limit: int = 10) -> dict:
@@ -423,8 +424,11 @@ def preview(body: PreviewBody) -> dict:
     _kopia_repo(body.repo)
     from ..core.sources import sources_index
     live = set(sources_index(body.repo))
-    scope = [s for s in _pricing_scope(body.repo, body.target) if s in live]
+    entries = [s for s in _pricing_scope(body.repo, body.target) if s["source"] in live]
+    scope = [s["source"] for s in entries]
     source = body.source if body.source in scope else (scope[0] if scope else None)
+    # A backup that only walks through the policy's folder applies its rules anchored there.
+    anchor = next((s.get("anchor") for s in entries if s["source"] == source), None)
     out = {"target": body.target, "pattern": body.pattern, "mode": body.mode, "scope": scope,
            "source": source, "items": [], "total": 0, "bytes": 0, "capped": False, "note": ""}
     if not source:
@@ -432,11 +436,15 @@ def preview(body: PreviewBody) -> dict:
         return out
     limit = min(max(body.limit, 1), 2000)
     if body.mode == "index":
-        res = policypricing.price_patterns(body.repo, source, [body.pattern], limit=min(limit, 500))
+        res = policypricing.price_patterns(body.repo, source, [body.pattern], limit=min(limit, 500),
+                                           anchor=anchor)
         r = res["results"][0]
         out.update(items=[{"path": e["path"], "size": e["size"], "is_dir": False} for e in r["examples"]],
                    total=r.get("files", 0), bytes=r.get("bytes", 0), dirs=r.get("dirs", 0),
                    capped=r.get("capped", False), error=r.get("error"))
+        return out
+    if anchor is not None:
+        out["note"] = "Disk preview runs from the backups that use this policy's rules directly."
         return out
     user, host, _path = policyresolve.parse_key(source)
     client = client_options(body.repo)

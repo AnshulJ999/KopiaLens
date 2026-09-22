@@ -92,6 +92,23 @@ def test_price_passes_through_with_totals(wired):
     assert res["capped"] is True and len(res["examples"]) == 1
 
 
+def test_price_for_global_covers_the_backups_that_use_global(wired):
+    """The API names Global "global"; the rule layer keys it "(global)". A mismatch priced
+    nothing and the Exclude panel said "could not check the index"."""
+    out = api.price(api.PriceBody(repo="1", target="global", patterns=["*.tmp"], limit=5))
+    assert OTHER in out["scope"]["sources"] and SRC not in out["scope"]["sources"]
+    assert out["results"][0]["files"] == 3
+
+
+@pytest.mark.parametrize("target,want", [(SRC, SRC), ("global", OTHER)])
+def test_preview_picks_a_backup_from_the_scope(wired, monkeypatch, target, want):
+    import app.core.sources as src_mod
+    monkeypatch.setattr(src_mod, "sources_index", lambda repo: {SRC: [], OTHER: []})
+    out = api.preview(api.PreviewBody(repo="1", target=target, pattern="*.tmp"))
+    assert out["source"] == want and want in out["scope"]
+    assert out["total"] == 3 and out["items"]
+
+
 def test_diff_rejects_removing_an_inherited_rule(wired):
     from fastapi import HTTPException
     with pytest.raises(HTTPException) as e:
