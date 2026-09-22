@@ -134,10 +134,14 @@ const searchPart = {
         // shows a ▼/▲ arrow.
         const self = this;
         const arrow = (f) => (this.searchSort === f ? (this.searchDir === "desc" ? "  ▼" : "  ▲") : "");
-        const H = (title, field, extra) => Object.assign({
-          title: title + arrow(field), field, headerSort: false,
-          headerClick: () => self.setSearchSort(field, (self.searchSort === field && self.searchDir === "desc") ? "asc" : "desc"),
+        const H = (title, field, extra, key = field) => Object.assign({
+          title: title + arrow(key), field, headerSort: false,
+          headerClick: () => self.setSearchSort(key, (self.searchSort === key && self.searchDir === "desc") ? "asc" : "desc"),
         }, extra || {});
+        const ranked = data.ranked || {};
+        if (["stored", "frees"].includes(this.searchSort) && ranked.kind && !ranked.available) {
+          this.klNotify("That list is built by the nightly index. Sorted by Physical (latest) until then.", "warn");
+        }
         const cols = [
           H("Path", "full_path", { widthGrow: 5, minWidth: 320 }),
           H("Size", "size", { width: 100, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" }),
@@ -147,12 +151,12 @@ const searchPart = {
           // semantics overstated exclusivity. Returns with the proper implementation ().
           { title: "Src", field: "sources", headerSort: false, width: 62, hozAlign: "right",
             formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="content is held by ${v} sources (within-source copies excluded)">${v}</span>` : "1"; } },
-          { title: "Stored (all versions)", field: "stored_all", headerSort: false, width: 140, hozAlign: "right",
-            headerTooltip: "Space every version of this file takes. Data shared between its own versions counts once.",
-            formatter: (c) => self.versionCell(c.getRow().getData(), "stored") },
-          { title: "Frees (all versions)", field: "frees_all", headerSort: false, width: 130, hozAlign: "right",
-            headerTooltip: "Space that comes back if every version of this content is removed from every backup.",
-            formatter: (c) => self.versionCell(c.getRow().getData(), "frees") },
+          H("Stored (all versions)", "stored_all", { width: 140, hozAlign: "right",
+            headerTooltip: "Space every version of this file takes. Data shared between its own versions counts once. Sorting uses the nightly top list; files outside it come after.",
+            formatter: (c) => self.versionCell(c.getRow().getData(), "stored") }, "stored"),
+          H("Frees (all versions)", "frees_all", { width: 130, hozAlign: "right",
+            headerTooltip: "Space that comes back if every version of this content is removed from every backup. Sorting uses the nightly top list; files outside it come after.",
+            formatter: (c) => self.versionCell(c.getRow().getData(), "frees") }, "frees"),
           H("Ext", "ext", { width: 70 }),
           H("Versions", "versions", { width: 80, hozAlign: "right" }),
           { title: "Copies", field: "copies", headerSort: false, width: 75, hozAlign: "right",
@@ -208,6 +212,8 @@ const searchPart = {
     // ---- All-versions sizes for the rows on screen ----
     _versionKey(d) { return this.repo + "|" + d.source + "|" + d.full_path; },
     versionCell(d, which) {
+      const exact = d[which + "_all_versions"];   // present when sorted by this column
+      if (exact != null) return fmtBytes(exact);
       const v = this.versionSizes[this._versionKey(d)];
       if (v === undefined) return "<span style='color:var(--faint)'>—</span>";
       if (v === "pending") return "<span style='color:var(--faint)'>…</span>";
