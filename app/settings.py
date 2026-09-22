@@ -28,6 +28,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         # flips between. Values are validated against the known lists before use.
         "theme": "system",           # daylight|parchment|slate|lilac|ember|midnight|pine|obsidian|system
         "density": "normal",         # compact|normal|comfortable
+        "sort_arrows": "sorted",     # sorted|all - table header sort arrows
         "light_theme": "daylight",   # remembered light slot for the quick switch
         "dark_theme": "ember",       # remembered dark slot for the quick switch
         "tables": {},          # per-table Tabulator persistence (columns + sort), keyed by table id

@@ -84,6 +84,17 @@ body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", 
 .kl-seg > * { padding: 2px 9px; font-size: var(--fs-xs); color: var(--muted); cursor: pointer; }
 .kl-seg > .on { background: var(--sel); color: var(--fg); font-weight: 500; }
 
+/* Sort arrows only on the sorted column (and on hover) unless the setting asks for all. The
+   title's arrow gap goes too, so the header text gets that width back. */
+:root:not([data-sortarrows="all"]) .tabulator .tabulator-header .tabulator-col.tabulator-sortable[aria-sort="none"] .tabulator-col-title { padding-right: 0; }
+:root:not([data-sortarrows="all"]) .tabulator .tabulator-header .tabulator-col[aria-sort="none"]:not(:hover) .tabulator-col-sorter { display: none; }
+
+/* Chips: an exclusive choice among a longer, wrapping list (folder levels). */
+.kl-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.kl-chip { font-size: var(--fs-xs); padding: 1px 8px; border: 1px solid var(--bd); border-radius: 9px; color: var(--muted); background: var(--surface); cursor: pointer; }
+.kl-chip:hover { background: var(--hover); }
+.kl-chip.on { background: var(--sel); color: var(--fg); border-color: var(--fg); font-weight: 500; }
+
 /* Live kopia output. */
 .kl-term { background: var(--term-bg); border: 1px solid var(--bd); border-radius: var(--r-md); color: var(--term-fg); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: var(--fs-xs); line-height: 1.65; padding: var(--sp-2) 10px; overflow: auto; }
 .kl-term .t { color: var(--term-dim); }

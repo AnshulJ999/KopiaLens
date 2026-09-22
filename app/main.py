@@ -899,6 +899,7 @@ def _compose_html() -> str:
         asset_v=_asset_version(),
         theme=kl.get("theme") if kl.get("theme") in _THEMES else "system",
         density=kl.get("density") if kl.get("density") in _DENSITY else "normal",
+        sortarrows="all" if kl.get("sort_arrows") == "all" else "sorted",
     )
 
 

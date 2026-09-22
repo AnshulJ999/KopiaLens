@@ -183,10 +183,20 @@ class TargetsBody(BaseModel):
     path: str
     source: str | None = None     # the panel the dialog opened from: disambiguates user@host
     is_folder: bool = False
-    shape: str = "exact"          # exact | name | extension | parent
+    shape: str = "exact"          # exact | name | extension | similar | parent
+    level: int = 0                # folders up from the path (exact) or the "under" folder
+    where: str = "any"            # any | here | under - scope of a name-type rule
+    leaf: str | None = None       # similar-names pattern; None = the suggested one
     price: bool = False           # opt-in impact pricing; the dialog ranks by covers count
     refresh: bool = False         # re-export policies first (the dialog's first load)
     suggest: bool = False         # also return smart_shape
+
+
+class VariantsBody(BaseModel):
+    repo: str = "1"
+    path: str
+    source: str | None = None
+    is_folder: bool = False
 
 
 # ---- read half -------------------------------------------------------------------------
@@ -604,7 +614,20 @@ def exclusion_targets(body: TargetsBody) -> dict:
     try:
         return policytargets.resolve_targets(
             body.repo, body.path, source=body.source,
-            is_folder=body.is_folder, shape=body.shape, price=body.price, suggest=body.suggest)
+            is_folder=body.is_folder, shape=body.shape, price=body.price, suggest=body.suggest,
+            level=body.level, where=body.where, leaf=body.leaf)
+    except TargetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/policies/exclusion-variants")
+def exclusion_variants(body: VariantsBody) -> dict:
+    """Ready-made exclusion rules for the file/folder panel, each written for the policy Smart
+    picks for it. Reads the cached policy export; no kopia call."""
+    _kopia_repo(body.repo)
+    try:
+        return policytargets.variants(body.repo, body.path, source=body.source,
+                                      is_folder=body.is_folder)
     except TargetError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

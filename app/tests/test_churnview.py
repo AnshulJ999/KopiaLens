@@ -87,6 +87,21 @@ def test_nesting_uses_the_full_source_list_not_just_churning_ones():
     assert with_all["by_source"][0]["nested_in"] == parent
 
 
+def test_size_columns_roll_up_and_attach_current_totals():
+    c = _src("C:" + SEP)
+    rows = [{**_row(c, "C:" + SEP + "Chrome", "dat", 300, 30, 2), "logical": 900},
+            {**_row(c, "C:" + SEP + "Music", "mp3", 100, 1, 1), "logical": 120}]
+    current = {"source": {c: (5000, 2000)}, "folder": {"C:" + SEP + "Chrome": (4000, 1500)},
+               "ext": {"mp3": (700, 650)}}
+    v = build_views(rows, limit=10, current=current)
+    src = v["by_source"][0]
+    assert src["logical"] == 1020 and (src["size_now"], src["physical_latest"]) == (5000, 2000)
+    folders = {r["folder"]: r for r in v["by_folder"]}
+    assert folders["C:" + SEP + "Chrome"]["physical_latest"] == 1500
+    assert folders["C:" + SEP + "Music"]["size_now"] == 0          # not in the current map
+    assert "size_now" not in build_views(rows, limit=10)["by_ext"][0]
+
+
 def test_limit_truncates_each_view():
     rows = [_row(_src(f"C:{SEP}s{i}"), f"C:{SEP}f{i}", "x", i, 1, 1) for i in range(1, 20)]
     v = build_views(rows, limit=5)

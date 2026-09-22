@@ -15,7 +15,7 @@ const themePart = {
       title: "Follow the OS between your light and dark themes" },
   ],
   DENSITIES: ["compact", "normal", "comfortable"],
-  theme: "system", density: "normal", lightTheme: "daylight", darkTheme: "ember",
+  theme: "system", density: "normal", lightTheme: "daylight", darkTheme: "ember", sortArrows: "sorted",
 
   _themeIsDark(id) {
     const t = this.THEMES.find((x) => x.id === id);
@@ -61,6 +61,13 @@ const themePart = {
     this.klSet({ density: d });
   },
 
+  // Table header sort arrows: "sorted" shows one only on the sorted column (and on hover).
+  setSortArrows(v) {
+    this.sortArrows = v === "all" ? "all" : "sorted";
+    document.documentElement.dataset.sortarrows = this.sortArrows;
+    this.klSet({ sort_arrows: this.sortArrows });
+  },
+
   initTheme(kl) {
     const el = document.documentElement;
     const valid = (x) => this.THEMES.some((t) => t.id === x);
@@ -80,5 +87,7 @@ const themePart = {
       : this.DENSITIES.includes(localStorage.getItem("kl-density")) ? localStorage.getItem("kl-density")
       : "normal";
     el.dataset.density = this.density;
+    this.sortArrows = kl.sort_arrows === "all" ? "all" : "sorted";
+    el.dataset.sortarrows = this.sortArrows;
   },
 };

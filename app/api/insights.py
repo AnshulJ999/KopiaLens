@@ -24,6 +24,7 @@ from ..core.policy import effective_for_path, source_summaries, summarize
 from ..index.schema import RepoOffline
 from ..index.churnview import cached_folder_window, churn_rollup
 from ..index.foldercache import compute as folder_reclaim
+from ..index.foldercache import peek as folder_reclaim_cached
 from ..index.queries import (
     folder_contents,
     folder_file_types,
@@ -77,13 +78,26 @@ def _require_kopia(repo: str) -> None:
         raise HTTPException(status_code=400, detail=f"repo {repo!r} is not a kopia repo")
 
 
+def _with_source_physical(repo: str, out: dict) -> dict:
+    """Each source's all-versions physical, read from the dashboard's cached table (never
+    computed here). Missing when the dashboard has not been built yet."""
+    from ..core.metrics import _read_cache
+    dash = _read_cache(repo, "all", None) or {}
+    phys = {r["source"]: r.get("physical") for r in dash.get("rows") or []}
+    if phys:
+        out = {**out, "by_source": [{**r, "physical_all": phys.get(r["source"])}
+                                    for r in out.get("by_source") or []]}
+    return out
+
+
 @router.get("/churn")
 def churn(repo: str = "1", days: int = 30, depth: int = 4, limit: int = 400,
           refresh: bool = False) -> dict:
     """New backed-up data in the last ``days``, rolled up three ways from one computation."""
     _require_kopia(repo)
     try:
-        return churn_rollup(repo, days=days, depth=depth, limit=limit, refresh=refresh)
+        return _with_source_physical(repo, churn_rollup(repo, days=days, depth=depth, limit=limit,
+                                                        refresh=refresh))
     except RepoOffline:
         raise                       # the dedicated 503 handler explains this one properly
     except Exception as exc:
@@ -169,6 +183,23 @@ def folder_policy(repo: str = "1", source: str = "", prefix: str = "") -> dict:
         raise                       # the dedicated 503 handler explains this one properly
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+class FolderPhysicalRequest(BaseModel):
+    repo: str = "1"
+    folders: list[str] = []
+
+
+@router.post("/churn/folder-physical")
+def churn_folder_physical(payload: FolderPhysicalRequest) -> dict:
+    """All-versions physical for folders already worked out (nightly prewarm or an opened folder
+    panel). Never computes: one large folder can take minutes."""
+    _require_kopia(payload.repo)
+    out = {}
+    for folder in payload.folders[:200]:
+        hit = folder_reclaim_cached(payload.repo, folder, None, allow_stale=True)
+        out[folder] = hit.get("physical") if hit else None
+    return {"physical": out}
 
 
 class FolderDetailRequest(BaseModel):

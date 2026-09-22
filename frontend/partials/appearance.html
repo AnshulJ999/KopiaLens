@@ -26,6 +26,14 @@
     <p class="text-[11px] text-muted mt-1">Row height and text size. Independent of theme.</p>
   </div>
   <div>
+    <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Sort arrows in table headers</span>
+      <select :value="sortArrows" @change="setSortArrows($event.target.value)" class="fld border border-bd bg-surface2">
+        <option value="sorted">Sorted column only</option>
+        <option value="all">Every column</option>
+      </select></div>
+    <p class="text-[11px] text-muted mt-1">With "Sorted column only", hovering a header still shows its arrow.</p>
+  </div>
+  <div>
     <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Detail panel layout</span>
       <select x-model="panelLayout" @change="klSet({ panel_layout: panelLayout })" class="fld border border-bd bg-surface2">
         <option value="classic">Classic - everything on one scroll</option>

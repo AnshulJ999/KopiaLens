@@ -35,6 +35,7 @@ document.addEventListener("alpine:init", () => {
     query: "", deletedOnly: false, overOneGb: false, searchSource: "", searchExt: "", searchExtExclude: "", omniMeta: "",
     groupByFolder: false, groupDepth: 3, groupMinGb: 0, groupMinFiles: 0,
     churnDays: "30", churnDepth: 4, churnView: "source", churnData: null, churnMeta: "", _churnSeq: 0,
+    _churnPhysSeq: 0, _churnPhysCache: {}, _churnPhysTimer: null,   // folder view: on-screen all-versions physical
     indexMode: "daily", indexTime: "23:00", indexInterval: 86400, dashboardMode: "nightly",
     freshness: [], _freshTimer: null,
     searchTotal: 0, searchPage: 1, searchPageSize: "500", searchSort: "size", searchDir: "desc",
@@ -114,7 +115,8 @@ document.addEventListener("alpine:init", () => {
     },
     // exclusion dialog: priced-before-commit pattern adder over the file/folder panels.
     exDialog: null, showExclude: false, _exOpenSeq: 0, _exTargetsSeq: 0, _exPriceSeq: 0, _exCustomTimer: null, _exPriceTimer: null,
-    _exDiffSeq: 0, _exDiffTimer: null,
+    _exDiffSeq: 0, _exDiffTimer: null, _exLeafTimer: null,
+    exVariants: null, _exVarSeq: 0,   // file/folder panel "Stop backing this up" rows
     // Delete panel + the Exclude & delete flow; the rule diff view mode; the delete a held job can still run.
     showDel: false, delPanel: null, _delSeq: 0, _delStatsSeq: 0, showReview: false, flow: null,
     diffMode: localStorage.getItem("kl-diffmode") || "changes", _jobThen: {},

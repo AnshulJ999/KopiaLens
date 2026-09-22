@@ -236,21 +236,29 @@
 </div>
 {%- endmacro -%}
 
+{%- macro exclude_variants(kind) -%}
+<div class="kl-list" x-effect="exLoadVariants()">
+  <div class="li" x-show="exVariants && exVariants.loading"><span class="kl-note">Reading policies…</span></div>
+  <div class="li" x-show="exVariants && exVariants.error"><span class="kl-note" x-text="exVariants ? exVariants.error : ''"></span></div>
+  <template x-for="(v, i) in exVariantRows()" :key="i">
+    <div class="li">
+      <span style="color:var(--muted);width:170px;flex:none" x-text="v.label"></span>
+      <span class="font-mono break-all grow" x-text="v.patterns.join('   ')"></span>
+      <span class="shrink-0" style="color:var(--muted)" x-text="'in ' + exLabel(v.target)" :title="'Smart puts this rule in ' + exLabel(v.target)"></span>
+      <span class="pill shrink-0" x-show="v.already_excluded">already excluded</span>
+      <button class="kl-btn quiet" style="height:22px" @click="openExclude({kind: '{{ kind }}', path: detail.title, source: detail.source, spec: v.spec}, 'exclude')">Exclude…</button>
+      <button class="kl-btn quiet" style="height:22px" @click="copyText(v.patterns.join('\n'))">Copy</button>
+    </div>
+  </template>
+</div>
+{%- endmacro -%}
+
 {%- macro file_exclude() -%}
 <div class="kl-sec">
-  <div class="h">Stop backing this up <span class="count" x-text="excludePatterns().length + ' patterns'"></span>
+  <div class="h">Stop backing this up <span class="count" x-text="exVariantRows().length + ' rules'"></span>
     <span class="acts"><button class="kl-btn" style="height:24px" @click="openExclude({kind: 'file', path: detail.title, source: detail.source}, 'delete')">Exclude and delete…</button></span>
   </div>
-  <div class="kl-list">
-    <template x-for="(p, i) in excludePatterns()" :key="i">
-      <div class="li">
-        <span style="color:var(--muted);width:150px;flex:none" x-text="p.label"></span>
-        <span class="font-mono break-all grow" x-text="p.pat"></span>
-        <button class="kl-btn quiet" style="height:22px" @click="openExclude({kind: 'file', path: detail.title, source: detail.source, preset: p.pat}, 'exclude')">Exclude…</button>
-        <button class="kl-btn quiet" style="height:22px" @click="copyText(p.pat)">Copy</button>
-      </div>
-    </template>
-  </div>
+  {{ exclude_variants('file') }}
 </div>
 {%- endmacro -%}
 
@@ -262,6 +270,7 @@
       <button class="kl-btn quiet" style="height:24px" @click="openExclude({kind: 'folder', path: detail.title, source: detail.source}, 'exclude')">Exclude…</button>
     </span>
   </div>
+  {{ exclude_variants('folder') }}
   <div class="kl-note" x-show="detail.effective_policy && ((detail.effective_policy && detail.effective_policy.ignore) || []).length">
     Rules already applying here: <span class="font-mono" x-text="((detail.effective_policy && detail.effective_policy.ignore) || []).slice(0, 8).join('  ·  ')"></span><span x-show="((detail.effective_policy && detail.effective_policy.ignore) || []).length > 8"> …</span>
   </div>

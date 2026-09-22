@@ -42,7 +42,7 @@ _MAX_LIMIT = 2000  # rows retained per view in the cache; requests slice this do
 
 # Bumped whenever the qualifying rule changes semantics, so on-disk rollups built by the old
 # rule cannot be served as current (the index stamp alone does not change on a code fix).
-_CACHE_VERSION = 2
+_CACHE_VERSION = 3
 
 # Last path segment, then its extension - built from string_split only, so the SQL text carries no
 # backslash literal (the separator is always bound as a parameter).
@@ -77,17 +77,18 @@ _FOLDER = ("array_to_string(list_slice(string_split(full_path, ?), 1, "
 # Tests: test_churn_sql.py pins each branch against an in-memory DuckDB.
 _QUALIFY_CTE = """
 WITH pc AS (
-  SELECT f.path_id, f.cid_id, min(sn.start_time) AS first_ts, max(sn.start_time) AS last_ts
+  SELECT f.path_id, f.cid_id, min(sn.start_time) AS first_ts, max(sn.start_time) AS last_ts,
+         max(f.size) AS size
   FROM filev f
   JOIN snap sn ON sn.snap_id = f.snap_id
   GROUP BY f.path_id, f.cid_id
 ), hist AS (
-  SELECT path_id, cid_id, first_ts, last_ts,
+  SELECT path_id, cid_id, first_ts, last_ts, size,
          row_number() OVER (PARTITION BY path_id ORDER BY last_ts, cid_id) AS rn,
          lag(last_ts) OVER (PARTITION BY path_id ORDER BY last_ts, cid_id) AS prev_last
   FROM pc
 ), newc AS (
-  SELECT s.source, p.full_path, hist.cid_id,
+  SELECT s.source, p.full_path, hist.cid_id, COALESCE(hist.size, 0) AS size,
          COALESCE(cs.packed, ip.packed, 0) AS packed
   FROM hist
   LEFT JOIN pathx p ON p.path_id = hist.path_id
@@ -121,10 +122,36 @@ _MATERIALIZE_SQL = f"CREATE OR REPLACE TEMPORARY TABLE {{tmp}} AS {_QUALIFY_CTE}
 def _base_sql(tmp: str) -> str:
     return f"""
 SELECT source, {_FOLDER} AS folder, {_EXT} AS ext,
-       sum(packed) AS bytes, count(*) AS versions, count(DISTINCT full_path) AS files
+       sum(packed) AS bytes, count(*) AS versions, count(DISTINCT full_path) AS files,
+       sum(size) AS logical
 FROM {tmp}
 GROUP BY source, folder, ext
 """
+
+
+# What each source / folder / file type holds NOW (latest snapshot), for the size columns next to
+# the churn figures. Same folder/ext expressions as the rollup, so the keys line up.
+_CURRENT_SQL = {
+    "source": ("SELECT s.source, sum(x.size), sum(x.physical) FROM pathx x "
+               "JOIN src s ON s.src_id = x.src_id WHERE x.in_latest GROUP BY 1", lambda depth: []),
+    "folder": (f"SELECT {_FOLDER}, sum(size), sum(physical) FROM pathx WHERE in_latest GROUP BY 1",
+               lambda depth: [_SEP, int(depth), _SEP, _SEP]),
+    "ext": (f"SELECT {_EXT}, sum(size), sum(physical) FROM pathx WHERE in_latest GROUP BY 1",
+            lambda depth: [_SEP, _SEP]),
+}
+
+
+def _current(repo: str, depth: int) -> dict[str, dict]:
+    """{view: {key: (logical, physical_latest)}} over the latest snapshot. ~1 s on repo 1."""
+    out: dict[str, dict] = {}
+    cur = read_cursor(repo)
+    try:
+        for view, (sql, params) in _CURRENT_SQL.items():
+            out[view] = {r[0]: (int(r[1] or 0), int(r[2] or 0))
+                         for r in cur.execute(sql, params(depth)).fetchall()}
+    finally:
+        cur.close()
+    return out
 
 
 # Deduped total = true repo growth, each content counted once however many paths hold it. Reads the
@@ -228,7 +255,8 @@ def _compute(repo: str, depth: int, cutoff: str) -> tuple[list[dict], int]:
         cur.execute(_MATERIALIZE_SQL.format(tmp=tmp), _qualify_params(cutoff))
         rows = [
             {"source": r[0], "folder": r[1], "ext": r[2],
-             "bytes": int(r[3] or 0), "versions": int(r[4] or 0), "files": int(r[5] or 0)}
+             "bytes": int(r[3] or 0), "versions": int(r[4] or 0), "files": int(r[5] or 0),
+             "logical": int(r[6] or 0)}
             for r in cur.execute(
                 _base_sql(tmp), [_SEP, int(depth), _SEP, _SEP, _SEP, _SEP],
             ).fetchall()
@@ -249,23 +277,32 @@ def _roll(rows: list[dict], key: str) -> dict[str, dict]:
         k = r[key]
         e = out.get(k)
         if e is None:
-            out[k] = {key: k, "bytes": r["bytes"], "versions": r["versions"], "files": r["files"]}
+            out[k] = {key: k, "bytes": r["bytes"], "versions": r["versions"], "files": r["files"],
+                      "logical": r.get("logical", 0)}
         else:
             e["bytes"] += r["bytes"]
             e["versions"] += r["versions"]
             e["files"] += r["files"]
+            e["logical"] += r.get("logical", 0)
     return out
 
 
-def build_views(rows: list[dict], limit: int, all_sources=None) -> dict:
+def build_views(rows: list[dict], limit: int, all_sources=None, current=None) -> dict:
     """Roll the (source, folder, ext) base rows up into the three tab views. Pure - unit tested.
 
     ``all_sources`` must be the repo's COMPLETE source list, not just the ones that churned: a
     source is only correctly flagged as nested if its parent is in the set being compared, and a
-    parent with zero churn in this window would otherwise be missing."""
+    parent with zero churn in this window would otherwise be missing. ``current`` (from
+    ``_current``) adds what each row holds now: ``size_now`` and ``physical_latest``."""
     by_source = _roll(rows, "source")
     by_folder = _roll(rows, "folder")
     by_ext = _roll(rows, "ext")
+    for view, table in (("source", by_source), ("folder", by_folder), ("ext", by_ext)):
+        now = (current or {}).get(view)
+        if now is None:
+            continue
+        for k, row in table.items():
+            row["size_now"], row["physical_latest"] = now.get(k, (0, 0))
 
     # Per source: its single biggest-churning folder ("C: is churning, mostly Chrome"). Ties break
     # lexicographically: DuckDB's GROUP BY emission order varies between runs, and a first-seen
@@ -321,6 +358,11 @@ def churn_rollup(repo: str, days: int = 30, depth: int = 4, limit: int = 400,
         cutoff = (dt.datetime.now() - dt.timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
         rows, deduped = _compute(repo, depth, cutoff)
         try:
+            current = _current(repo, depth)
+        except Exception as exc:  # noqa: BLE001 - the size columns are extra; churn must still load
+            log.warning("churn repo=%s: current sizes failed: %s", repo, exc)
+            current = None
+        try:
             from ..core.sources import sources_index
             all_sources = list(sources_index(repo))
         except Exception:  # noqa: BLE001 - nesting is a hint, never a hard requirement
@@ -336,7 +378,7 @@ def churn_rollup(repo: str, days: int = 30, depth: int = 4, limit: int = 400,
             "group_count": len(rows),
             # Cache the FULL rollup, never a limited slice: `limit` is not part of the cache key,
             # so storing a truncated view would serve 10 rows to a later caller asking for 400.
-            **build_views(rows, _MAX_LIMIT, all_sources=all_sources),
+            **build_views(rows, _MAX_LIMIT, all_sources=all_sources, current=current),
         }
         _cache_put(ck, payload)
         log.info("churn repo=%s days=%d depth=%d: %d groups, %.1fs",

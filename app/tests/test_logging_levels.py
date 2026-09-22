@@ -102,7 +102,7 @@ def test_custom_exclusion_mode_writes_the_custom_text():
     backend pattern, and sent shape="custom", which the endpoint rejects."""
     js = (FRONTEND / "js" / "exclude.js").read_text(encoding="utf-8")
     assert 'shape: d.shape === "custom" ? "exact" : d.shape' in js
-    assert "pattern: this.exPatternOf(t)" in js
+    assert "const patterns = this.exPatternsOf(t);" in js
     assert "exPriceNow" not in js, "custom mode must price through the per-target path"
 
 

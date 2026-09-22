@@ -326,28 +326,6 @@ const detailPart = {
       }, "Deleting snapshots…");
     },
 
-    // ---- Exclusion-pattern suggestions (paste into the KopiaUI policy) ----
-    excludePatterns() {
-      if (!this.detail || this.detail.kind !== "file") return [];
-      const full = this.detail.title || "";
-      const root = sourcePath(this.detail.source || "").replace(/[\\/]+$/, "");
-      const rel = full.startsWith(root) ? full.slice(root.length).replace(/^[\\/]+/, "") : full;
-      const relFwd = rel.replace(/\\/g, "/");
-      const name = full.split("\\").pop().split("/").pop();
-      const parentRel = relFwd.includes("/") ? relFwd.slice(0, relFwd.lastIndexOf("/")) : "";
-      const parentName = parentRel ? parentRel.split("/").pop() : "";
-      const dot = name.lastIndexOf(".");
-      const out = [
-        { label: "This file (any depth)", pat: name },
-        { label: "This file (anchored)", pat: "/" + relFwd },
-      ];
-      if (parentName) {
-        out.push({ label: "Containing folder (any depth)", pat: parentName });
-        out.push({ label: "Containing folder (anchored)", pat: "/" + parentRel + "/**" });
-      }
-      if (dot > 0) out.push({ label: "By extension", pat: "*" + name.slice(dot) });
-      return out;
-    },
     // ---- Chunked folder/filter delete (remove-files, respects the current view/filter) ----
     openRemoveFromSearch() {  // delete EVERY file matching the current Search filter (not just selected)
       // No filter = "the whole repo": the backend refuses it, so say why instead of opening a
