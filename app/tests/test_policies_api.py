@@ -35,10 +35,14 @@ def wired(monkeypatch):
     monkeypatch.setattr(api, "load_defined_policies", lambda repo: {"policies": DEFINED})
     monkeypatch.setattr(api, "refresh_defined_policies",
                         lambda repo, force=False: ({"policies": DEFINED}, True))
+    import app.core.policy as pol
+    import app.core.rulelayers as rl
+    monkeypatch.setattr(pol, "load_defined_policies", lambda repo: {"policies": DEFINED})
+    monkeypatch.setattr(rl, "sources_index", lambda repo: {SRC: [], OTHER: []})
     monkeypatch.setattr(api.policypricing, "price_patterns", _fake_price)
 
 
-def _fake_price(repo, source_key, patterns, limit=10, use_cache=True):
+def _fake_price(repo, source_key, patterns, limit=10, use_cache=True, anchor=None):
     return {"source": source_key, "slow_path": False,
             "results": [{"pattern": p, "files": 3, "bytes": 700, "dirs": 1,
                          "examples": [{"path": f"{source_key}\\x", "size": 700}],

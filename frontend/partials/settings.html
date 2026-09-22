@@ -218,6 +218,29 @@
                   <button @click="debugLog = !debugLog; saveKl('debug_log')" class="h-8 rounded border border-bd px-3" x-text="debugLog ? 'On' : 'Off'"></button></div>
                 <p class="text-[11px] text-muted mt-1">Writes detailed diagnostics to <code>data/logs/kopialens-debug.log</code>, alongside the normal app log. Useful when troubleshooting; leave it off otherwise. Applies immediately.</p>
               </div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Log cleanup</span>
+                  <select x-model.number="logCleanupDays" @change="saveKl('log_cleanup_days')" class="fld border border-bd bg-surface2">
+                    <option value="0">Keep everything</option>
+                    <option value="30">30 days</option>
+                    <option value="60">60 days</option>
+                    <option value="90">90 days</option>
+                    <option value="180">180 days</option>
+                    <option value="365">365 days</option>
+                  </select></div>
+                <p class="text-[11px] text-muted mt-1">Removes old job, dry-run and mount logs from <code>data/logs/jobs</code>. The newest 100 are always kept.</p>
+              </div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Ranked files</span>
+                  <select x-model.number="rankCount" @change="saveKl('rank_count')" class="fld border border-bd bg-surface2">
+                    <option value="1000">1,000</option>
+                    <option value="5000">5,000</option>
+                    <option value="10000">10,000</option>
+                    <option value="25000">25,000</option>
+                    <option value="50000">50,000</option>
+                  </select></div>
+                <p class="text-[11px] text-muted mt-1">How many files the nightly ranks exactly so Search can sort by Stored and Frees. Higher counts cost a few extra seconds per run.</p>
+              </div>
             </section>
 
             <section x-show="settingsTab==='backblaze'" class="space-y-4">

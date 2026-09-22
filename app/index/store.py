@@ -426,7 +426,7 @@ def close_idle(now: float | None = None) -> bool:
             gen.close()
         _GENS.clear()
         _RETIRED.clear()
-    log.info("store idle for %ds - closed every generation", limit)
+    log.debug("store idle for %ds - closed every generation", limit)
     return True
 
 

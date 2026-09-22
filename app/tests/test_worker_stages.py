@@ -52,6 +52,10 @@ def ran(monkeypatch):
                         lambda repo: executed.append("next_snapshots"))
     monkeypatch.setattr("app.index.policypricing.precompute",
                         lambda repo: executed.append("policy_prices"))
+    monkeypatch.setattr("app.index.policypricing.precompute_ignore_files",
+                        lambda repo: executed.append("ignore_files"))
+    monkeypatch.setattr("app.index.rankpaths.precompute",
+                        lambda repo: executed.append("rank_paths"))
     monkeypatch.setattr("app.core.metrics.table_rows",
                         lambda repo, refresh=False, mode="all": executed.append("dashboard"))
     return executed
@@ -67,7 +71,7 @@ def test_every_stage_runs_when_nothing_fails(ran):
     summary = worker.run("1")
     assert summary["ok"] is True
     assert ran == ["index", "dashboard", "analysis", "churn", "folders", "policies",
-                   "policy_prices",
+                   "policy_prices", "ignore_files", "rank_paths",
                    "next_snapshots"]
     assert summary["skipped"] == []
 
@@ -107,7 +111,8 @@ def test_a_failed_index_skips_everything_downstream(ran, monkeypatch):
     assert ran == []
     assert summary["ok"] is False
     assert set(summary["skipped"]) == {"dashboard", "analysis", "churn", "folders", "policies",
-                                       "policy_prices", "next_snapshots"}
+                                       "policy_prices", "ignore_files", "rank_paths",
+                                       "next_snapshots"}
 
 
 def test_one_failing_independent_stage_does_not_stop_the_others(ran, monkeypatch):

@@ -243,6 +243,7 @@ def test_filter_batch_matches_known_counts_across_a_batch_boundary(priced):
 
 def test_precompute_stores_per_source_and_global_rollup(priced, tmp_path, monkeypatch):
     import app.core.policy as pol
+    import app.core.rulelayers as rl
 
     glob_rules = ["gtmp1", "gtmp2"]
     defined = {"(global)": {"files": {"ignore": list(glob_rules)}},
@@ -253,6 +254,7 @@ def test_precompute_stores_per_source_and_global_rollup(priced, tmp_path, monkey
     monkeypatch.setattr(pol, "load_policies", lambda repo: {"policies": effective})
     monkeypatch.setattr(pol, "refresh_defined_policies",
                         lambda repo, force=False: ({"policies": defined}, True))
+    monkeypatch.setattr(rl, "sources_index", lambda repo: {SRC: [], f"x@y:D:{SEP}": []})
     monkeypatch.setattr(policypricing, "DATA_DIR", str(tmp_path))
 
     payload = policypricing.precompute("1")
@@ -284,6 +286,7 @@ def _skip_env(priced, tmp_path, monkeypatch, glob_rules, snapsets):
     """The stored-stage environment: two policies (SRC own rules, SRC2 global-inheriting),
     redirect the store at tmp_path, pin the snapshot-set fingerprints, reset the TTL cache."""
     import app.core.policy as pol
+    import app.core.rulelayers as rl
 
     defined = {"(global)": {"files": {"ignore": list(glob_rules)}},
                SRC: {"files": {"ignore": ["*.tmp"]}}}
@@ -293,6 +296,7 @@ def _skip_env(priced, tmp_path, monkeypatch, glob_rules, snapsets):
     monkeypatch.setattr(pol, "load_policies", lambda repo: {"policies": effective})
     monkeypatch.setattr(pol, "refresh_defined_policies",
                         lambda repo, force=False: ({"policies": defined}, True))
+    monkeypatch.setattr(rl, "sources_index", lambda repo: {SRC: [], SRC2: []})
     monkeypatch.setattr(policypricing, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(policypricing, "_snapset_hashes", lambda repo: dict(snapsets))
     monkeypatch.setattr(policypricing, "_CACHE", {})

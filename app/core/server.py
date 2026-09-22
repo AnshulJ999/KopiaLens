@@ -34,7 +34,7 @@ import httpx
 from config import REPOS, kopia_repos
 
 from ..settings import load_settings, save_settings
-from .applog import LOG_DIR, get_logger
+from .applog import APP_LOG_DIR, get_logger
 from .kopia import _repo_args
 
 log = get_logger("server")
@@ -119,8 +119,8 @@ class KopiaServers:
             ]
         )
         log.info("starting kopia server repo=%s on 127.0.0.1:%d", repo, port)
-        os.makedirs(LOG_DIR, exist_ok=True)
-        logf = open(os.path.join(LOG_DIR, f"kopia-server-repo{repo}.log"), "a", encoding="utf-8", errors="replace")
+        os.makedirs(APP_LOG_DIR, exist_ok=True)
+        logf = open(os.path.join(APP_LOG_DIR, f"kopia-server-repo{repo}.log"), "a", encoding="utf-8", errors="replace")
         proc = subprocess.Popen(
             args,
             stdin=subprocess.PIPE,

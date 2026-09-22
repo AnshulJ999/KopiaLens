@@ -269,6 +269,23 @@ def run(repo: str, full: bool = False) -> dict:
             from ..index import policypricing
             policypricing.precompute(repo)
 
+        def _rank_paths() -> None:
+            #: the exact top lists Search sorts the all-versions columns by.
+            from .store import close_all
+            close_all()
+            gc.collect()
+            from . import rankpaths
+            rankpaths.precompute(repo)
+
+        def _ignore_files() -> None:
+            #: dot-ignore files - discover, read the changed ones, price their rules over
+            # every walk that reaches their folder. Zero files on most installs.
+            from .store import close_all
+            close_all()
+            gc.collect()
+            from ..index import policypricing
+            policypricing.precompute_ignore_files(repo)
+
         def _next_snaps() -> None:
             from ..core.schedule import compute_next_snapshots
             compute_next_snapshots(repo)
@@ -285,6 +302,8 @@ def run(repo: str, full: bool = False) -> dict:
                                              ("folders", _folders, True),
                                              ("policies", _policies, False),
                                              ("policy_prices", _policy_prices, False),
+                                             ("ignore_files", _ignore_files, False),
+                                             ("rank_paths", _rank_paths, False),
                                              ("next_snapshots", _next_snaps, False)):
                 if needs_refcount and not fresh_refcount:
                     summary["skipped"].append(name)
@@ -294,7 +313,8 @@ def run(repo: str, full: bool = False) -> dict:
                 stage(name, fn)
         else:
             summary["skipped"] = ["dashboard", "analysis", "churn", "folders", "policies",
-                                  "policy_prices", "next_snapshots"]
+                                  "policy_prices", "ignore_files", "rank_paths",
+                                  "next_snapshots"]
             logging.error("index stage failed - skipping every stage that reads the index")
     finally:
         rep.stop()

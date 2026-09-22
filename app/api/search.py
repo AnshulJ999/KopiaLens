@@ -96,7 +96,8 @@ def search(
                 first_from=first_from or None,
                 min_versions=min_versions, shared_min=shared_min, dedupe=dedupe,
             )
-        return {"results": res["rows"], "total": res["total"], "offset": res["offset"], "limit": res["limit"]}
+        return {"results": res["rows"], "total": res["total"], "offset": res["offset"],
+                "limit": res["limit"], "ranked": res.get("ranked")}
     except RepoOffline:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:

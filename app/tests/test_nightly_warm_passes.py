@@ -50,7 +50,8 @@ def test_pricing_materializes_before_batching(monkeypatch):
     monkeypatch.setattr(pp, "read_cursor", lambda repo: _Cur())
     monkeypatch.setattr(pp, "resolve_src_id", lambda cur, key: 5)
     monkeypatch.setattr(pp, "_price_batch_with_regex",
-                        lambda cur, src, entries, root_len, sep, px_table="pathx", dir_table="dir":
+                        lambda cur, src, entries, root_len, sep, px_table="pathx", dir_table="dir",
+                        anchor=None:
                         seen.append(f"batch:{px_table}"))
 
     out = pp._compute("3", "u@h:C:" + chr(92), [f"*.tmp{i}" for i in range(pp._BATCH + 1)])
@@ -83,7 +84,8 @@ def test_a_single_batch_stays_on_the_view(monkeypatch):
     monkeypatch.setattr(pp, "read_cursor", lambda repo: _Cur())
     monkeypatch.setattr(pp, "resolve_src_id", lambda cur, key: 5)
     monkeypatch.setattr(pp, "_price_batch_with_regex",
-                        lambda cur, src, entries, root_len, sep, px_table="pathx", dir_table="dir":
+                        lambda cur, src, entries, root_len, sep, px_table="pathx", dir_table="dir",
+                        anchor=None:
                         seen.append(f"batch:{px_table}"))
 
     pp._compute("3", "u@h:C:" + chr(92), [f"*.x{i}" for i in range(3)])

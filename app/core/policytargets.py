@@ -15,9 +15,10 @@ get their rules from; child sources are offered too, with the inherited rules co
 
 from __future__ import annotations
 
-from functools import lru_cache
+import re
 
 from . import paths as pathrules
+from . import rulelayers
 from .applog import get_logger
 from .ignorematch import compile_pattern
 from .policy import _GLOBAL_TARGET, effective_ignore_origin, global_ignores
@@ -25,7 +26,8 @@ from .sources import sources_index
 
 log = get_logger("policytargets")
 
-_SHAPES = ("exact", "name", "extension", "parent")
+_SHAPES = ("exact", "name", "extension", "similar", "parent")
+_WHERES = ("any", "here", "under")
 
 
 class TargetError(ValueError):
@@ -74,34 +76,71 @@ def _rel(path: str, root: str, sep: str, fold: bool) -> str:
     return path.replace(sep, "/").rstrip("/")[len(nroot) + 1:]
 
 
-def _pattern_for_shape(shape: str, rel: str, is_folder: bool, path: str) -> str | None:
+def similar_leaf(name: str, is_folder: bool = False) -> str:
+    """A name pattern for names like this one: digit runs become '*' and stars joined only by
+    separators collapse ("ws-2026-09-21.log" -> "ws-*.log"). No digits: '*' before the extension."""
+    stem, ext = name, ""
+    if not is_folder and "." in name.lstrip("."):
+        stem, ext = name.rsplit(".", 1)
+        ext = "." + ext
+    out = re.sub(r"\*(?:[-_.: ]*\*)+", "*", re.sub(r"\d+", "*", stem))
+    if out == stem:
+        out = stem + "*"
+    return out + ext
+
+
+def _pattern_for_shape(shape: str, rel: str, is_folder: bool, level: int = 0,
+                       where: str = "any", leaf: str | None = None) -> str | None:
     """The pattern text as it lives in the TARGET's policy (anchored = relative to the target's
-    root). Returns None when the shape does not apply to this selection."""
+    root). ``level`` counts folders up from the path; ``where`` limits a name-type rule to the
+    containing folder ("here"), to anything under the folder ``level`` up ("under"), or not at all.
+    Returns None when the shape does not apply here (e.g. that folder is above the target)."""
     if shape not in _SHAPES:
         raise TargetError(f"unknown shape {shape!r} (expected one of {_SHAPES})")
+    if where not in _WHERES:
+        raise TargetError(f"unknown scope {where!r} (expected one of {_WHERES})")
+    segs = [s for s in rel.split("/") if s]
+    if shape == "parent":
+        if len(segs) < 2:
+            return None  # already at the target root: there is no level up
+        shape, level = "exact", 1
     if shape == "exact":
-        if not rel:
-            return "/**" if is_folder else None  # the target root itself: only a folder rule exists
-        return "/" + rel + ("/**" if is_folder else "")
-    if shape == "name":
-        base = rel.rsplit("/", 1)[-1] if rel else ""
-        if not base:
+        if level <= 0:
+            if not segs:
+                return "/**" if is_folder else None  # the target root itself: only a folder rule exists
+            return "/" + "/".join(segs) + ("/**" if is_folder else "")
+        if level > len(segs):
             return None
+        anc = segs[:len(segs) - level]
+        return "/" + "/".join(anc) + "/**" if anc else "/**"
+
+    base = segs[-1] if segs else ""
+    if not base:
+        return None
+    if shape == "name":
         # A folder name rule is directory-only ("Name/"): it matches at any depth and prunes the
         # subtree. "Name/**" would be rooted and miss nested folders.
-        return base + "/" if is_folder else base
-    if shape == "extension":
-        if is_folder:
+        tail = base
+    elif shape == "extension":
+        if is_folder or "." not in base.lstrip("."):
             return None
-        base = rel.rsplit("/", 1)[-1] if rel else path.rsplit("/", 1)[-1]
-        if "." not in base.lstrip("."):
-            return None
-        return "*." + base.rsplit(".", 1)[-1]
-    if shape == "parent":
-        if not rel or "/" not in rel:
-            return None  # already at the target root: there is no level up
-        return "/" + rel.rsplit("/", 1)[0] + "/**"
-    return None  # pragma: no cover - guarded above
+        tail = "*." + base.rsplit(".", 1)[-1]
+    else:
+        tail = (leaf or "").strip().strip("/") or similar_leaf(base, is_folder)
+        if "/" in tail:
+            raise TargetError("a name pattern cannot contain /")
+    if is_folder:
+        tail += "/"
+    if where == "any":
+        return tail
+    if where == "here":
+        anc = segs[:-1]
+        return ("/" + "/".join(anc) if anc else "") + "/" + tail
+    k = max(level, 1)
+    if k > len(segs):
+        return None
+    anc = segs[:len(segs) - k]
+    return ("/" + "/".join(anc) if anc else "") + "/**/" + tail
 
 
 def _matches(pattern: str, rel: str, is_folder: bool) -> bool:
@@ -112,11 +151,6 @@ def _matches(pattern: str, rel: str, is_folder: bool) -> bool:
         return is_folder and pat.match("/" + (rel or ""), is_dir=True)
     probe = "/" + rel if not is_folder else "/" + (rel or "") + "/__kl_probe__"
     return pat.match(probe, is_dir=False)
-
-
-@lru_cache(maxsize=20000)
-def _compiled(rule: str, base: str):
-    return compile_pattern(rule, base_dir=base)
 
 
 def _own_rules(defined: dict, key: str) -> list[str]:
@@ -133,62 +167,13 @@ def _root_rules(repo: str, source_key: str, defined: dict) -> tuple[str, str | N
 
 
 def _excluded_in(repo: str, source_key: str, rel: str, is_folder: bool, defined: dict) -> bool:
-    """Is ``rel`` (relative to the source root) kept out of this source's snapshots? The root
-    list, plus the rules of every path policy on a folder the walk passes through, evaluated in
-    kopia's order (parent context first, last match wins). A folder equal to the source root counts
-    as left out when its root rules leave out everything inside it."""
-    if not rel and not is_folder:
-        return False
-    root = pathrules.source_root(source_key)
-    sep = pathrules.sep(source_key)
-    fold = not pathrules.case_sensitive(source_key)
-    user_host = source_key.split(":", 1)[0]
-    _origin, _owner, root_list = _root_rules(repo, source_key, defined)
+    """Is ``rel`` (relative to the source root) kept out of this source's snapshots?
 
-    segs = [s for s in rel.strip("/").split("/") if s]
-    nested: list[tuple[str, list]] = []   # (base "/a/b" in the path's own casing, compiled rules)
-    for key, pol in defined.items():
-        if ":" not in key or key.split(":", 1)[0] != user_host:
-            continue
-        rules = list(((pol or {}).get("files") or {}).get("ignore") or [])
-        if not rules:
-            continue
-        ppath = key.split(":", 1)[1]
-        if not _under(ppath, root, sep, fold, strict=True):
-            continue
-        prel = _rel(ppath, root, sep, fold)
-        depth = prel.count("/") + 1
-        # only policies on folders this path actually passes through
-        if _norm("/".join(segs[:depth]), "/", fold) != _norm(prel, "/", fold) or \
-                depth > len(segs) - (0 if is_folder else 1):
-            continue
-        base = "/" + "/".join(segs[:depth])
-        nested.append((base, [_compiled(r, base) for r in rules]))
-    nested.sort(key=lambda n: n[0].count("/"))
-    root_c = [_compiled(r, "") for r in root_list]
-
-    from ..index.policypricing import _machine  # lazy: index layer
-
-    def rules_in(dir_path: str) -> list:
-        out = list(root_c)
-        for base, comp in nested:
-            if dir_path == base or dir_path.startswith(base + "/"):
-                out.extend(comp)
-        return out
-
-    for i in range(1, len(segs)):  # proper ancestors: a pruned folder prunes everything under it
-        parent = "/" + "/".join(segs[:i - 1]) if i > 1 else ""
-        if _machine(rules_in(parent), "/" + "/".join(segs[:i]), True)[0]:
-            return True
-    if not segs:  # the source root itself (a folder selection)
-        return _machine(rules_in(""), "/__kl_probe__", False)[0]
-    parent = "/" + "/".join(segs[:-1]) if len(segs) > 1 else ""
-    full = "/" + "/".join(segs)
-    if is_folder:
-        if _machine(rules_in(parent), full, True)[0]:
-            return True
-        return _machine(rules_in(full), full + "/__kl_probe__", False)[0]
-    return _machine(rules_in(parent), full, False)[0]
+    Delegates to the shared rule layer (/): the root list, the rules of every path
+    policy on a folder the walk passes through, and every dot-ignore file in effect, evaluated in
+    kopia's order (parent context first, a deeper level can negate it). A folder equal to the
+    source root counts as left out when its rules leave out everything inside it."""
+    return rulelayers.excluded_in(repo, source_key, rel, is_folder, defined=defined)
 
 
 def _target_label_kind(key: str) -> str:
@@ -199,9 +184,25 @@ def _target_label_kind(key: str) -> str:
     return "path"
 
 
+def _uses(i: dict) -> str | None:
+    """The policy a source's root rule list comes from."""
+    return _GLOBAL_TARGET if i["origin"] == "global" else i["owner"]
+
+
+def _smart_rank(t: dict) -> tuple:
+    """Deepest path policy first, then host-level, then Global."""
+    key = "global" if t["is_global"] else t["target"]
+    if key == "global":
+        return (0, 0)
+    if ":" not in key:
+        return (1, 0)
+    return (2, len([s for s in re.split(r"[\\/]+", pathrules.source_root(key)) if s]))
+
+
 def _evaluate(repo: str, path: str, covering: list[str], source: str | None, is_folder: bool,
-              shape: str, defined: dict) -> dict:
-    """Every target for one shape, with before/after coverage per covering source."""
+              spec: dict, defined: dict) -> dict:
+    """Every target for one rule spec ({shape, level, where, leaf}), with before/after coverage
+    per covering source."""
     info = []
     for key in covering:
         origin, owner, rules = _root_rules(repo, key, defined)
@@ -223,33 +224,59 @@ def _evaluate(repo: str, path: str, covering: list[str], source: str | None, is_
         if i["source"] not in cands:
             cands[i["source"]] = {"role": "child", "inherits_from": (
                 "global" if i["origin"] == "global" else i["owner"]), "inherited_rules": i["rules"]}
+    # Folder policies on this path that already hold rules: every backup walking through the
+    # folder applies them (layer 2), and adding one changes no backup's own rule list.
+    hosts = {i["source"].split(":", 1)[0] for i in info}
+    for key in defined:
+        if key in cands or ":" not in key or key.split(":", 1)[0] not in hosts \
+                or not _own_rules(defined, key):
+            continue
+        kroot = pathrules.source_root(key)
+        ksep, kfold = pathrules.sep(key), not pathrules.case_sensitive(key)
+        if _under(path, kroot, ksep, kfold) and \
+                any(_under(kroot, i["root"], ksep, kfold, strict=True) for i in info):
+            cands[key] = {"role": "folder"}
     cands.setdefault(_GLOBAL_TARGET, {"role": "global"})
+
+    def pattern(rel: str) -> str | None:
+        return _pattern_for_shape(spec["shape"], rel, is_folder, spec.get("level", 0),
+                                  spec.get("where", "any"), spec.get("leaf"))
 
     targets = []
     for key, meta in cands.items():
         kind = _target_label_kind(key)
+        pats: list[str] = []
+        roots: dict[str, list[str]] = {}
         if kind == "path":
             troot = pathrules.source_root(key)
-            rel_t = _rel(path, troot, pathrules.sep(key), not pathrules.case_sensitive(key))
-            text_path = path.replace(pathrules.sep(key), "/")
-        else:   # global and host-level rules anchor at each inheriting source's root
-            rel_t = anchor["rel"]
-            text_path = path.replace(pathrules.sep(anchor["source"]), "/")
-        pattern = _pattern_for_shape(shape, rel_t, is_folder, text_path)
+            p = pattern(_rel(path, troot, pathrules.sep(key), not pathrules.case_sensitive(key)))
+            pats = [p] if p else []
+        else:
+            # Global and host-level rules anchor at each using source's root: an anchored rule
+            # needs its own text per distinct root; an unanchored one collapses to one rule.
+            users = [i for i in info if _uses(i) == key] or [anchor]
+            for i in users:
+                p = pattern(i["rel"])
+                if not p:
+                    continue
+                if p not in roots:
+                    pats.append(p)
+                    roots[p] = []
+                roots[p].append(i["root"])
         own = global_ignores(repo, defined) if key == _GLOBAL_TARGET else _own_rules(defined, key)
         copied = list(meta.get("inherited_rules") or [])
         covers = []
         for i in info:
             after = i["before"]
-            if pattern and not i["before"]:
-                new_list = (copied if meta["role"] == "child" else own) + [pattern]
+            if pats and not i["before"]:
+                new_list = (copied if meta["role"] == "child" else own) + pats
                 after_defined = dict(defined)
                 after_defined[key] = {**(defined.get(key) or {}),
                                       "files": {**((defined.get(key) or {}).get("files") or {}),
                                                 "ignore": new_list}}
                 after = _excluded_in(repo, i["source"], i["rel"], is_folder, after_defined)
             covers.append({"source": i["source"], "root": i["root"], "rel_path": i["rel"],
-                           "matches": bool(pattern) and after, "already_excluded": i["before"]})
+                           "matches": bool(pats) and after, "already_excluded": i["before"]})
         protects = sum(1 for c in covers if c["matches"] and not c["already_excluded"])
         targets.append({
             "target": "global" if key == _GLOBAL_TARGET else key,
@@ -259,14 +286,27 @@ def _evaluate(repo: str, path: str, covering: list[str], source: str | None, is_
             "will_create_policy": meta["role"] in ("start", "child") or (kind == "path" and key not in defined),
             "inherits_from": meta.get("inherits_from"),
             "inherited_rules": copied,
-            "uses_count": sum(1 for i in info if (_GLOBAL_TARGET if i["origin"] == "global" else i["owner"]) == key),
-            "pattern": pattern,
-            "pattern_anchored": bool(pattern) and pattern.startswith("/"),
+            "uses_count": sum(1 for i in info if _uses(i) == key),
+            "pattern": pats[0] if pats else None,
+            "patterns": pats,
+            "pattern_roots": [{"pattern": p, "roots": roots[p]} for p in pats] if len(pats) > 1 else [],
+            "pattern_anchored": any(p.startswith("/") for p in pats),
             "covers": covers,
             "protects": protects,
             "smart": meta["role"] in ("owner", "start") and protects > 0,
             "impact": None,
         })
+
+    # One write is enough when a single policy keeps the path out of every backup still holding
+    # it: Smart picks only that policy, the deepest one on a tie.
+    pending = [idx for idx, i in enumerate(info) if not i["before"]]
+    whole = [t for t in targets if pending and t["patterns"]
+             and t["role"] in ("owner", "folder", "start")
+             and all(t["covers"][idx]["matches"] for idx in pending)]
+    if whole:
+        best = max(whole, key=_smart_rank)
+        for t in targets:
+            t["smart"] = t is best
     return {"sources": info, "targets": targets}
 
 
@@ -280,7 +320,7 @@ def _coverage(ev: dict) -> tuple[int, int]:
     return covered, total
 
 
-_ROLE_ORDER = {"owner": 0, "start": 0, "global": 1, "child": 2}
+_ROLE_ORDER = {"owner": 0, "start": 0, "folder": 0, "global": 1, "child": 2}
 
 
 def path_status(repo: str, source: str, path: str, is_folder: bool = False) -> dict:
@@ -299,12 +339,27 @@ def path_status(repo: str, source: str, path: str, is_folder: bool = False) -> d
             "rule_count": len(rules), "excluded": _excluded_in(repo, source, rel, is_folder, defined)}
 
 
+def _levels(path: str, source_key: str, is_folder: bool) -> list[dict]:
+    """The path and each folder above it up to the source root: level 0 is the path itself."""
+    root = pathrules.source_root(source_key)
+    sep = pathrules.sep(source_key)
+    segs = [s for s in _rel(path, root, sep, not pathrules.case_sensitive(source_key)).split("/") if s]
+    root_name = [s for s in root.split(sep) if s][-1:] or [root]
+    out = []
+    for k in range(len(segs) + 1):
+        name = segs[len(segs) - 1 - k] if k < len(segs) else root_name[0].rstrip(sep) or root
+        out.append({"level": k, "name": name, "folder": k > 0 or is_folder, "root": k == len(segs)})
+    return out
+
+
 def resolve_targets(repo: str, path: str, source: str | None = None,
                     is_folder: bool = False, shape: str = "exact",
-                    price: bool = False, suggest: bool = False) -> dict:
+                    price: bool = False, suggest: bool = False, level: int = 0,
+                    where: str = "any", leaf: str | None = None) -> dict:
     """Targets for this path, Smart picks first. ``suggest`` also returns ``smart_shape``: the
     shape whose Smart picks keep the path out of the most sources (exact on a tie). ``price`` adds
-    per-target impact for the matching covers (small scopes only)."""
+    per-target impact for the matching covers (small scopes only). ``levels`` names the folders
+    above the path for the level picker; ``similar_default`` is the suggested similar-names leaf."""
     from ..index import policypricing  # local import: keeps the index layer out of import time
     from .policy import load_defined_policies
 
@@ -312,14 +367,19 @@ def resolve_targets(repo: str, path: str, source: str | None = None,
         raise TargetError("path is required")
     if shape not in _SHAPES:
         raise TargetError(f"unknown shape {shape!r} (expected one of {_SHAPES})")
+    if where not in _WHERES:
+        raise TargetError(f"unknown scope {where!r} (expected one of {_WHERES})")
+    spec = {"shape": shape, "level": max(0, min(int(level or 0), 64)), "where": where, "leaf": leaf}
     defined = load_defined_policies(repo).get("policies") or {}
     host = source.split(":", 1)[0] if source else None
     covering = _covering_sources(repo, path, host)
     if not covering:
         return {"repo": repo, "path": path, "shape": shape, "sources": [], "targets": [],
-                "note": "no configured source contains this path", "smart_shape": None}
+                "note": "no configured source contains this path", "smart_shape": None,
+                "levels": [], "similar_default": None, "sep": None}
+    anchor_key = source if source in covering else covering[0]
 
-    ev = _evaluate(repo, path, covering, source, is_folder, shape, defined)
+    ev = _evaluate(repo, path, covering, source, is_folder, spec, defined)
 
     smart_shape = None
     if suggest:
@@ -327,7 +387,8 @@ def resolve_targets(repo: str, path: str, source: str | None = None,
         for alt in ("exact", "name"):
             if alt == shape:
                 continue
-            alt_ev = _evaluate(repo, path, covering, source, is_folder, alt, defined)
+            alt_ev = _evaluate(repo, path, covering, source, is_folder,
+                               {"shape": alt, "level": 0, "where": "any", "leaf": None}, defined)
             got = _coverage(alt_ev)[0]
             if got > best[0] or (got == best[0] and alt == "exact" and best[1] != "exact"):
                 best = (got, alt)
@@ -353,5 +414,41 @@ def resolve_targets(repo: str, path: str, source: str | None = None,
                                       -len(t["covers"]), t["target"]))
     sources = [{"source": i["source"], "root": i["root"], "origin": i["origin"], "owner": i["owner"],
                 "already_excluded": i["before"]} for i in ev["sources"]]
+    base = [s for s in re.split(r"[\\/]+", path) if s][-1:] or [path]
     return {"repo": repo, "path": path, "shape": shape, "sources": sources,
-            "targets": ev["targets"], "smart_shape": smart_shape}
+            "targets": ev["targets"], "smart_shape": smart_shape,
+            "levels": _levels(path, anchor_key, is_folder),
+            "similar_default": similar_leaf(base[0], is_folder),
+            "sep": pathrules.sep(anchor_key)}
+
+
+_VARIANTS = {
+    False: (("This file", {"shape": "exact"}),
+            ("Same name anywhere", {"shape": "name"}),
+            ("Same extension anywhere", {"shape": "extension"}),
+            ("Same extension in this folder", {"shape": "extension", "where": "here"}),
+            ("Similar names anywhere", {"shape": "similar"}),
+            ("Its folder", {"shape": "exact", "level": 1})),
+    True: (("This folder", {"shape": "exact"}),
+           ("Same folder name anywhere", {"shape": "name"}),
+           ("Similar folder names anywhere", {"shape": "similar"}),
+           ("Its parent folder", {"shape": "exact", "level": 1})),
+}
+
+
+def variants(repo: str, path: str, source: str | None = None, is_folder: bool = False) -> dict:
+    """Ready-made rules for the file/folder panel: each variant's text as it would be written into
+    the policy Smart picks for it."""
+    rows = []
+    for label, spec in _VARIANTS[bool(is_folder)]:
+        full = {"shape": spec["shape"], "level": spec.get("level", 0),
+                "where": spec.get("where", "any"), "leaf": None}
+        out = resolve_targets(repo, path, source=source, is_folder=is_folder, **full)
+        picks = [t for t in out["targets"] if t["smart"] and t["patterns"]] \
+            or [t for t in out["targets"] if t["patterns"]][:1]
+        if not picks or any(r["patterns"] == picks[0]["patterns"] for r in rows):
+            continue   # not applicable, or the same rule as an earlier row
+        rows.append({"label": label, "spec": full, "target": picks[0]["target"],
+                     "patterns": picks[0]["patterns"], "more_targets": len(picks) - 1,
+                     "already_excluded": all(s["already_excluded"] for s in out["sources"])})
+    return {"repo": repo, "path": path, "variants": rows}

@@ -273,11 +273,14 @@ def test_route_refresh_re_exports_policies_only_when_asked(wired, monkeypatch):
 
 
 def test_pricing_scope_skips_a_host_level_target(monkeypatch):
+    """A user@host target prices over the sources whose root list it owns - and nothing else."""
     dsrc = f"{UH}:D:{SEP}"
     defined = {UH: {"files": {"ignore": ["u"]}}}
-    monkeypatch.setattr(api, "load_defined_policies", lambda repo: {"policies": defined})
-    monkeypatch.setattr(api, "load_policies", lambda repo: {"policies": {dsrc: {}}})
-    assert api._pricing_scope("1", UH) == [dsrc]
+    import app.core.policy as pol
+    import app.core.rulelayers as rl
+    monkeypatch.setattr(pol, "load_defined_policies", lambda repo: {"policies": defined})
+    monkeypatch.setattr(rl, "sources_index", lambda repo: {dsrc: []})
+    assert [e["source"] for e in api._pricing_scope("1", UH)] == [dsrc]
 
 
 def test_folder_that_is_a_source_root_counts_as_left_out_by_its_own_rule(wired):
@@ -299,3 +302,85 @@ def test_path_status_names_the_rule_list_and_whether_it_matches(monkeypatch):
     assert s2["origin"] == "own" and s2["excluded"] is False
     with pytest.raises(TargetError):
         path_status("1", PS, f"D:{SEP}elsewhere.txt")
+
+
+# ---- rule variants: levels, scopes, similar names --------------------------------------
+
+@pytest.mark.parametrize("name,folder,want", [
+    ("ws-2026-09-21.log", False, "ws-*.log"),
+    ("Crash 2026-09-21 21-10-44.txt", False, "Crash *.txt"),
+    ("data_12", False, "data_*"),
+    ("config.json", False, "config*.json"),
+    ("cache-2026", True, "cache-*"),
+])
+def test_similar_leaf(name, folder, want):
+    assert policytargets.similar_leaf(name, folder) == want
+
+
+@pytest.mark.parametrize("shape,level,where,want", [
+    ("exact", 0, "any", "/a/b/c/f.log"),
+    ("exact", 1, "any", "/a/b/c/**"),
+    ("exact", 3, "any", "/a/**"),
+    ("exact", 4, "any", "/**"),
+    ("exact", 5, "any", None),
+    ("parent", 0, "any", "/a/b/c/**"),
+    ("name", 0, "any", "f.log"),
+    ("name", 2, "under", "/a/b/**/f.log"),
+    ("extension", 0, "here", "/a/b/c/*.log"),
+    ("extension", 1, "under", "/a/b/c/**/*.log"),
+    ("extension", 4, "under", "/**/*.log"),
+    ("similar", 0, "any", "f*.log"),
+])
+def test_pattern_levels_and_scopes(shape, level, where, want):
+    assert policytargets._pattern_for_shape(shape, "a/b/c/f.log", False, level, where) == want
+
+
+def test_parent_shape_at_the_root_is_still_not_applicable():
+    assert policytargets._pattern_for_shape("parent", "f.log", False) is None
+    assert policytargets._pattern_for_shape("exact", "f.log", False, level=1) == "/**"
+
+
+def test_folder_levels_resolve_per_target(wired):
+    out = resolve_targets("1", FILE, source=PS, shape="exact", level=2)
+    t = _targets(out)
+    assert t[PS]["pattern"] == "/**"
+    assert t[G]["pattern"] == "/GitHub/Example-Repo/**"
+    assert [lv["name"] for lv in out["levels"]] == ["model.safetensors", "Stash", "Example-Repo"]
+    assert out["levels"][-1]["root"] is True
+    assert out["similar_default"] == "model*.safetensors"
+
+
+def test_global_writes_one_anchored_rule_per_backup_root(monkeypatch):
+    d, sub = f"{UH}:D:{SEP}", f"{UH}:D:{SEP}sub"
+    _wire(monkeypatch, {"(global)": {"files": {"ignore": ["g1"]}}}, [d, sub])
+    path = f"D:{SEP}sub{SEP}a{SEP}f.txt"
+    g = _targets(resolve_targets("1", path, source=sub, shape="exact"))["global"]
+    assert g["patterns"] == ["/sub/a/f.txt", "/a/f.txt"]
+    assert _covers(g) == {d: True, sub: True}
+    g2 = _targets(resolve_targets("1", path, source=sub, shape="name"))["global"]
+    assert g2["patterns"] == ["f.txt"] and g2["pattern_roots"] == []
+
+
+def test_smart_picks_the_deepest_folder_policy_that_covers_every_backup(monkeypatch):
+    """A folder policy with rules on the path applies inside every walk through it, so one rule
+    there keeps the file out of both backups; Smart writes only that one."""
+    j, ja = f"{UH}:J:{SEP}", f"{UH}:J:{SEP}A"
+    jab = f"{UH}:J:{SEP}A{SEP}B"
+    _wire(monkeypatch, {"(global)": {"files": {"ignore": ["g1"]}},
+                        ja: {"files": {"ignore": ["a1"]}},
+                        jab: {"files": {"ignore": ["b1"]}}}, [j, ja])
+    t = _targets(resolve_targets("1", f"J:{SEP}A{SEP}B{SEP}c{SEP}f.txt", source=ja, shape="exact"))
+    assert t[jab]["role"] == "folder" and t[jab]["pattern"] == "/c/f.txt"
+    assert _covers(t[jab]) == {j: True, ja: True}
+    assert [k for k, v in t.items() if v["smart"]] == [jab]
+
+
+def test_variants_list_rules_for_the_smart_policy(wired, monkeypatch):
+    monkeypatch.setattr(api, "kopia_repos", lambda: ["1"])
+    monkeypatch.setattr(api, "repo_kind", lambda r: "kopia")
+    out = api.exclusion_variants(api.VariantsBody(repo="1", path=FILE, source=PS))
+    rows = {r["label"]: r for r in out["variants"]}
+    assert rows["Same name anywhere"]["patterns"] == ["model.safetensors"]
+    assert rows["Same extension anywhere"]["patterns"] == ["*.safetensors"]
+    assert rows["Similar names anywhere"]["spec"]["shape"] == "similar"
+    assert rows["This file"]["target"] == G
