@@ -137,6 +137,36 @@ const policiesPart = {
         ? { target: this.polSel, source: this.polSel, defined: false, isGlobal: false, isNew: true } : null;
     },
 
+    // Ignore files (.kopiaignore and any other names a policy sets) kopia reads inside the folders
+    // this policy covers. Read-only; found and read by the nightly, so this never calls kopia.
+    // Runs from x-effect: it reloads when the selection changes.
+    async polLoadIgnoreFiles() {
+      const t = this.polSelected();
+      if (!t || t.isNew) return;
+      const key = this.repo + "|" + t.target;
+      if (this.polIgnore && this.polIgnore.key === key) return;
+      const seq = ++this._polIgnoreSeq;
+      this.polIgnore = { key, loading: true, files: [], stored: true, unavailable: false };
+      try {
+        const r = await getJson(`/api/policies/ignore-files?repo=${encodeURIComponent(this.repo)}&target=${encodeURIComponent(t.target)}`);
+        if (seq !== this._polIgnoreSeq) return;
+        this.polIgnore = { key, loading: false, files: r.files || [], stored: r.stored !== false, unavailable: false };
+      } catch (e) {
+        if (seq !== this._polIgnoreSeq) return;
+        this.polIgnore = { key, loading: false, files: [], stored: true, unavailable: true };
+      }
+    },
+    polIgnoreShown() {
+      const t = this.polSelected();
+      const g = this.polIgnore;
+      return !!(t && g && !g.loading && !g.unavailable && g.key === this.repo + "|" + t.target);
+    },
+    polIgnoreFacts(f) {
+      const rules = `${f.rule_count || 0} rule${f.rule_count === 1 ? "" : "s"}`;
+      if (f.files == null) return rules;
+      return `${rules} · keeps out ${Number(f.files).toLocaleString()} files · ${this.fmtB(f.bytes || 0)}`;
+    },
+
     // Own rules come from the detail payload (the DEFINED policy); empty until it lands.
     polOwnPatterns() {
       return this.polDetail ? (this.polDetail.rules.own || []) : [];

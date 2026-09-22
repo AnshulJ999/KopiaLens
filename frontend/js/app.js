@@ -95,6 +95,7 @@ document.addEventListener("alpine:init", () => {
     polAddPrices: {}, polRowPrices: {}, polPriceError: {}, polStoredTs: {},
     _polAddTimer: null, _polSeq: 0, _polRowPriceSeq: 0, _polAddPriceSeq: 0, _polStoredSeq: 0,
     polDetail: null, polDetailCache: {}, _polDetailSeq: 0,
+    polIgnore: null, _polIgnoreSeq: 0,   // ignore files (.kopiaignore) inside the selected policy's folders
     showPolDiff: false, polDiff: null, polDiffBusy: false, polDiffMode: "save",
     polRestoreName: "", polRestoreMode: "merge", polRestoreCmd: null, polRestoreParsed: null,
     showPolBackups: false, polBackups: null, _polBackupSeq: 0,

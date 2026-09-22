@@ -24,7 +24,6 @@ from ..core.policy import effective_for_path, source_summaries, summarize
 from ..index.schema import RepoOffline
 from ..index.churnview import cached_folder_window, churn_rollup
 from ..index.foldercache import compute as folder_reclaim
-from ..index.foldercache import peek as folder_reclaim_cached
 from ..index.queries import (
     folder_contents,
     folder_file_types,
@@ -183,23 +182,6 @@ def folder_policy(repo: str = "1", source: str = "", prefix: str = "") -> dict:
         raise                       # the dedicated 503 handler explains this one properly
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-class FolderPhysicalRequest(BaseModel):
-    repo: str = "1"
-    folders: list[str] = []
-
-
-@router.post("/churn/folder-physical")
-def churn_folder_physical(payload: FolderPhysicalRequest) -> dict:
-    """All-versions physical for folders already worked out (nightly prewarm or an opened folder
-    panel). Never computes: one large folder can take minutes."""
-    _require_kopia(payload.repo)
-    out = {}
-    for folder in payload.folders[:200]:
-        hit = folder_reclaim_cached(payload.repo, folder, None, allow_stale=True)
-        out[folder] = hit.get("physical") if hit else None
-    return {"physical": out}
 
 
 class FolderDetailRequest(BaseModel):

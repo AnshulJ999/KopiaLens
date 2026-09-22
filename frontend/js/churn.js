@@ -42,13 +42,19 @@ const churnPart = {
         headerTooltip: "Plain size of everything here in the latest backup." };
       const physLatestCol = { title: "Physical (latest)", field: "physical_latest", width: 125, hozAlign: "right", sorter: "number", formatter: size,
         headerTooltip: "Stored size of the latest versions." };
-      const physAllCol = (sortable) => ({ title: "Physical (all versions)", field: "physical_all", width: 150, hozAlign: "right",
-        headerSort: sortable, sorter: "number", headerTooltip: sortable ? "Stored size of every version kept."
-          : "Stored size of every version kept. Shown for folders already worked out; click a dash to open the folder and work it out.",
+      // Rows without a number yet (folder view fills as you scroll) always sort to the bottom.
+      const missingLast = (a, b, _ar, _br, _col, dir) => {
+        const ma = typeof a !== "number", mb = typeof b !== "number";
+        if (ma || mb) return ma === mb ? 0 : (ma ? 1 : -1) * (dir === "desc" ? -1 : 1);
+        return a - b;
+      };
+      const physAllCol = (onScreen) => ({ title: "Physical (all versions)", field: "physical_all", width: 150, hozAlign: "right",
+        sorter: missingLast, headerTooltip: onScreen
+          ? "Stored size of every version kept. Worked out for the rows on screen as you scroll; sorting uses the rows worked out so far."
+          : "Stored size of every version kept.",
         formatter: (c) => { const v = c.getValue();
-          if (v === false) return `<span title="Not worked out yet. Click to open the folder." style="cursor:pointer">–</span>`;
-          return v == null ? "" : fmtPhys(v); },
-        cellClick: sortable ? undefined : (_e, cell) => { if (cell.getValue() === false) this.openFolderPanel(cell.getRow().getData().folder); } });
+          if (v === false) return `<span title="Could not work this out">–</span>`;
+          return v == null ? (onScreen ? "…" : "") : fmtPhys(v); } });
       const sizeCols = [logicalCol, nowCol, physLatestCol];
       let rows = [], cols = [], menu = [];
       if (this.churnView === "source") {
@@ -59,7 +65,7 @@ const churnPart = {
               const warn = r.nested_in ? ` <span title="Also covered by ${sourcePath(r.nested_in)}, so this data is snapshotted twice and counted in both rows" style="color:var(--warn)">⚠ inside ${sourcePath(r.nested_in)}</span>` : "";
               return sourcePath(c.getValue()) + warn;
             } },
-          bytesCol, rateCol, verCol, rewriteCol, fileCol, ...sizeCols, physAllCol(true),
+          bytesCol, rateCol, verCol, rewriteCol, fileCol, ...sizeCols, physAllCol(false),
           { title: "Mostly from", field: "top_folder", widthGrow: 2, minWidth: 180, headerSort: false,
             formatter: (c) => { const r = c.getRow().getData(); return r.top_folder ? `${r.top_folder} <span style="opacity:.6">(${fmtPhys(r.top_folder_bytes)})</span>` : ""; } },
         ];
@@ -75,7 +81,7 @@ const churnPart = {
         rows = (d.by_folder || []).map(enrich);
         cols = [
           { title: "Folder", field: "folder", widthGrow: 4, minWidth: 280 },
-          bytesCol, rateCol, verCol, rewriteCol, fileCol, ...sizeCols, physAllCol(false),
+          bytesCol, rateCol, verCol, rewriteCol, fileCol, ...sizeCols, physAllCol(true),
           { title: "Sources", field: "source_count", width: 90, hozAlign: "right", sorter: "number",
             headerTooltip: "How many backup sources contributed churn in this folder. Several usually means sub-folders with their own policies, not duplication - open the folder to see which actually cover it.",
             formatter: (c) => { const r = c.getRow().getData(); const n = r.source_count || 0;
@@ -97,6 +103,7 @@ const churnPart = {
         ];
       }
       const table = setTable("#churnTable", rows, cols, {
+        persistenceID: "churnTable_" + this.churnView,   // each view has its own columns and layout
         rowMenu: menu.length ? menu : undefined,
         onRowDblClick: (_e, row) => {
           const r = row.getData();
@@ -109,32 +116,31 @@ const churnPart = {
       else ++this._churnPhysSeq;
     },
 
-    // Folder view: all-versions physical for the rows on screen, from folders already worked out
-    // (nightly prewarm, opened folder panels). Never computes - one big folder can take minutes.
+    // Folder view: all-versions physical for the rows on screen, one folder at a time. The server
+    // caches each folder (the same cache as the folder panel), so a revisit is instant.
     _churnFillPhysical(table) {
       const seq = ++this._churnPhysSeq;
       let busy = false;
       const next = async () => {
         if (busy || seq !== this._churnPhysSeq || this.active !== "churn") return;
-        const rows = table.getRows("visible").filter((r) => r.getData().physical_all == null);
-        if (!rows.length) return;
+        const row = table.getRows("visible").find((r) => r.getData().physical_all == null);
+        if (!row) return;
         busy = true;
-        // Only numbers are remembered: a folder not worked out yet is asked again (a cheap lookup),
-        // so it fills in once its panel has been opened.
-        const want = rows.map((r) => r.getData().folder).filter((f) => typeof this._churnPhysCache[this.repo + "|" + f] !== "number");
-        if (want.length) {
+        const folder = row.getData().folder;
+        const key = this.repo + "|" + folder;
+        let v = this._churnPhysCache[key];
+        if (v === undefined) {
           try {
-            const d = await getJson("/api/churn/folder-physical", { method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ repo: this.repo, folders: want }) });
-            for (const f of want) {
-              const v = (d.physical || {})[f];
-              this._churnPhysCache[this.repo + "|" + f] = v != null ? Number(v) : false;
-            }
-          } catch (e) { for (const f of want) this._churnPhysCache[this.repo + "|" + f] = false; }
+            const d = await getJson("/api/folder/detail", { method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ repo: this.repo, prefix: folder }) });
+            v = d && d.physical != null ? Number(d.physical) : false;
+          } catch (e) { v = false; }
+          if (v !== false) this._churnPhysCache[key] = v;
         }
         busy = false;
         if (seq !== this._churnPhysSeq) return;
-        for (const r of rows) r.update({ physical_all: this._churnPhysCache[this.repo + "|" + r.getData().folder] });
+        row.update({ physical_all: v });
+        next();
       };
       table.on("tableBuilt", () => setTimeout(next, 50));
       setTimeout(next, 400);   // in case the build finished before the listener attached

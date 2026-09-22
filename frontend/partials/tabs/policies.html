@@ -162,6 +162,28 @@
                       <div class="kl-note mt-1">Remove these at the policy that owns them <button class="underline" style="color:var(--link)" @click="polTryLeave(polInheritedOrigin())">Jump there</button></div>
                     </div>
                   </template>
+                  <div x-effect="polLoadIgnoreFiles()">
+                    <template x-if="polIgnoreShown()">
+                      <div>
+                        <div class="text-xs font-medium mb-1">Ignore files <span class="count" style="color:var(--muted);font-weight:400"
+                              x-text="polIgnore.files.length + ' found, read-only'"></span></div>
+                        <div class="kl-note" x-show="!polIgnore.stored">Not checked yet. The nightly index looks for them.</div>
+                        <div class="kl-note" x-show="polIgnore.stored && !polIgnore.files.length">No ignore files in the folders this policy covers.</div>
+                        <div class="kl-list" style="max-height:260px" x-show="polIgnore.files.length">
+                          <template x-for="f in polIgnore.files" :key="f.path">
+                            <div class="li" style="flex-wrap:wrap">
+                              <span class="font-mono break-all grow" x-text="f.path"></span>
+                              <span class="num shrink-0" style="color:var(--muted);font-size:10.5px" x-text="polIgnoreFacts(f)"></span>
+                              <span class="pill shrink-0" x-show="f.in_effect === false" title="Kopia does not read this file here.">not in effect</span>
+                              <span class="pill warn shrink-0" x-show="f.readable === false" :title="f.error || ''">not readable</span>
+                              <div class="w-full font-mono text-[11px] break-all" style="color:var(--muted)" x-show="(f.rules || []).length" x-text="(f.rules || []).join('  ·  ')"></div>
+                            </div>
+                          </template>
+                        </div>
+                        <div class="kl-note mt-1">Kopia also follows these files. Edit them on disk.</div>
+                      </div>
+                    </template>
+                  </div>
                 </div>
                 {%- endmacro %}
 
