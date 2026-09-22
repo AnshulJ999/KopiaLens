@@ -219,13 +219,20 @@ _MEMO: dict[str, tuple] = {}
 
 
 def current(repo: str) -> dict | None:
-    """The payload for the CURRENT generation, memoized - the Search route asks per request."""
+    """The payload for the CURRENT generation, memoized - the Search route asks per request.
+
+    A payload whose generation is ABOVE the current one is dropped: a from-scratch rebuild
+    (``data/repoN/`` deleted) restarts the id counters, so the old keys would name other paths.
+    A payload from an earlier generation in the same chain stays valid - ids only ever grow."""
     from .store import read_manifest
     gen = (read_manifest(repo) or {}).get("generation")
     hit = _MEMO.get(repo)
     if hit is not None and hit[0] == gen:
         return hit[1]
     data = stored(repo)
+    built = data.get("generation") if isinstance(data, dict) else None
+    if isinstance(built, int) and isinstance(gen, int) and gen < built:
+        data = None
     _MEMO[repo] = (gen, data)
     return data
 

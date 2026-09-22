@@ -58,6 +58,7 @@ document.addEventListener("alpine:init", () => {
     groupReclaim: {},  // "repo:folder" -> {v: freeable, capped} - keyed by repo so one repo's
                        // numbers can never render in another repo's table
     dashboardMeta: "", busy: "", error: "", detail: null, snapSource: "*ALL*", _poll: null, _searchSeq: 0, _detailSeq: 0,
+    _rankedNotice: {},   // "repo|column" -> shown once per session (Search sort falls back to physical)
     // Action results shown in the corner: a click that reports only on the Actions tab looks
     // like it did nothing, so every action raises one of these too.
     toasts: [], _toastSeq: 0,

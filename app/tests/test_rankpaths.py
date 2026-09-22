@@ -144,3 +144,20 @@ def test_search_falls_back_to_physical_when_nothing_is_ranked(tmp_path, monkeypa
     out = queries.search_paths("1", sort="stored", direction="desc", limit=2)
     assert out["ranked"]["available"] is False
     assert all(r.get("stored_all_versions") is None for r in out["rows"])
+
+
+def test_ranked_values_are_dropped_when_the_id_chain_restarted(tmp_path, monkeypatch):
+    """A from-scratch rebuild (data/repoN deleted) restarts the generation and the id counters,
+    so a payload from the old chain is ignored; a later publish in the same chain keeps it."""
+    _build(tmp_path, monkeypatch)                      # manifest generation 7
+    import app.index.sidecache as sidecache
+    import app.index.store as store_mod
+    monkeypatch.setattr(sidecache, "read", lambda name, base=None: {
+        "version": rankpaths._VERSION, "ts": 1.0, "n": 2, "exact": True,
+        "generation": 43, "stored": [[1, 5]], "frees": [[6, 5]]})
+    monkeypatch.setattr(rankpaths, "_MEMO", {})
+    assert rankpaths.ranked_values("1", "stored") == {}          # gen 7 < 43: rebuilt chain
+
+    monkeypatch.setattr(store_mod, "read_manifest", lambda repo: {"generation": 50})
+    monkeypatch.setattr(rankpaths, "_MEMO", {})
+    assert rankpaths.ranked_values("1", "stored") == {1: 5}      # same chain, ids still valid

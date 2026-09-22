@@ -208,3 +208,52 @@ def test_build_map_reads_only_changed_files_and_keeps_the_rest(monkeypatch, tmp_
     second = RL.build_map("1", names=[".kopiaignore"])
     assert calls == ["deadbeef"] and second["files"][0]["rules"] == ["*.tmp"]
     assert second["read"] == 0
+
+
+def test_a_root_ignore_file_is_evaluated_before_a_deeper_policy(monkeypatch):
+    """Kopia walks directory by directory: a root-level ignore file comes before a policy on a
+    folder below it, so the policy's negation can overturn it (the reverse of grouping by kind)."""
+    defined = {SRC: {"files": {"ignore": []}},
+               f"{SRC}{SEP}Deep": {"files": {"ignore": ["!keep.log"]}}}
+    _wire(monkeypatch, [SRC], defined)
+    ig = _map(f"G:{SEP}Src", ".kopiaignore", ["*.log"])
+    assert [l["kind"] for l in RL.layers_for_source("1", SRC, defined=defined, ignore_map=ig)] \
+        == ["root", "ignore_file", "policy"]
+    assert RL.excluded_in("1", SRC, "Deep/keep.log", False, defined=defined, ignore_map=ig) is False
+
+    # The mirror: a negated root file cannot re-include what a deeper policy ignores.
+    defined2 = {SRC: {"files": {"ignore": []}},
+                f"{SRC}{SEP}Deep": {"files": {"ignore": ["*.log"]}}}
+    ig2 = _map(f"G:{SEP}Src", ".kopiaignore", ["!keep.log"])
+    assert RL.excluded_in("1", SRC, "Deep/keep.log", False, defined=defined2, ignore_map=ig2) is True
+
+
+def test_ignore_file_names_match_by_the_sources_case_rule(monkeypatch):
+    """kopia asks the filesystem for the dot-ignore name: Windows finds .KOPIAIGNORE, a POSIX
+    source does not."""
+    posix = f"{UH}:/home/u/src"
+    defined = {"(global)": {"files": {"ignoreDotFiles": [".kopiaignore"]}}}
+    _wire(monkeypatch, [SRC, posix], defined)
+    upper = {"version": RL._MAP_VERSION, "ts": 0.0, "names": [".KOPIAIGNORE"],
+             "files": [{"source": SRC, "path": f"G:{SEP}Src{SEP}.KOPIAIGNORE",
+                        "name": ".KOPIAIGNORE", "size": 10, "content_id": "c1",
+                        "from": "index", "rules": ["*.tmp"], "error": None},
+                       {"source": posix, "path": "/home/u/src/.KOPIAIGNORE",
+                        "name": ".KOPIAIGNORE", "size": 10, "content_id": "c2",
+                        "from": "index", "rules": ["*.tmp"], "error": None}]}
+    assert RL.excluded_in("1", SRC, "x.tmp", False, defined=defined, ignore_map=upper) is True
+    assert RL.excluded_in("1", posix, "x.tmp", False, defined=defined, ignore_map=upper) is False
+
+
+def test_the_same_ignore_file_from_two_sources_is_one_layer(monkeypatch):
+    defined = {"(global)": {"files": {"ignoreDotFiles": [".kopiaignore"]}}}
+    inner = f"{SRC}{SEP}inner"
+    _wire(monkeypatch, [SRC, inner], defined)
+    path = f"G:{SEP}Src{SEP}inner{SEP}.kopiaignore"
+    ig = {"version": RL._MAP_VERSION, "ts": 0.0, "names": [".kopiaignore"],
+          "files": [{"source": SRC, "path": path, "name": ".kopiaignore", "size": 10,
+                     "content_id": "c1", "from": "index", "rules": ["*.tmp"], "error": None},
+                    {"source": inner, "path": path, "name": ".kopiaignore", "size": 10,
+                     "content_id": "c1", "from": "disk", "rules": ["*.tmp"], "error": None}]}
+    layers = RL.layers_for_source("1", SRC, defined=defined, ignore_map=ig)
+    assert [l["kind"] for l in layers] == ["root", "ignore_file"]

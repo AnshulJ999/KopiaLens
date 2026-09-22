@@ -140,7 +140,11 @@ const searchPart = {
         }, extra || {});
         const ranked = data.ranked || {};
         if (["stored", "frees"].includes(this.searchSort) && ranked.kind && !ranked.available) {
-          this.klNotify("That list is built by the nightly index. Sorted by Physical (latest) until then.", "warn");
+          const noticeKey = this.repo + "|" + this.searchSort;
+          if (!this._rankedNotice[noticeKey]) {   // once per repo and column per session
+            this._rankedNotice[noticeKey] = 1;
+            this.klNotify("That list is built by the nightly index. Sorted by Physical (latest) until then.", "warn");
+          }
         }
         const cols = [
           H("Path", "full_path", { widthGrow: 5, minWidth: 320 }),

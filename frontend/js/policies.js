@@ -146,9 +146,11 @@ const policiesPart = {
       const key = this.repo + "|" + t.target;
       if (this.polIgnore && this.polIgnore.key === key) return;
       const seq = ++this._polIgnoreSeq;
+      // Global covers every source, so it lists the whole repo; a host or path target narrows it.
+      const target = t.isGlobal ? "" : `&target=${encodeURIComponent(t.target)}`;
       this.polIgnore = { key, loading: true, files: [], stored: true, unavailable: false };
       try {
-        const r = await getJson(`/api/policies/ignore-files?repo=${encodeURIComponent(this.repo)}&target=${encodeURIComponent(t.target)}`);
+        const r = await getJson(`/api/policies/ignore-files?repo=${encodeURIComponent(this.repo)}${target}`);
         if (seq !== this._polIgnoreSeq) return;
         this.polIgnore = { key, loading: false, files: r.files || [], stored: r.stored !== false, unavailable: false };
       } catch (e) {

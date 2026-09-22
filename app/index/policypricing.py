@@ -722,7 +722,8 @@ def stored_ignore_files(repo: str) -> dict | None:
 
 def _name_in_effect(repo: str, source: str, folder: str, name: str, defined: dict) -> bool:
     names = rlayers.dot_names_at(repo, source, folder, defined)
-    return any(n.lower() == (name or "").lower() for n in names)
+    case_sensitive = pathrules.case_sensitive(source)
+    return any(rlayers.name_matches(n, name or "", case_sensitive) for n in names)
 
 
 def precompute_ignore_files(repo: str) -> dict:
