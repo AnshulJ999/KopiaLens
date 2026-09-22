@@ -122,18 +122,20 @@ def worker_log_path(repo: str) -> str:
 def worker_log_lines(repo: str, after: int = 0, limit: int = 400) -> tuple[list[str], int]:
     """ ``(the lines after ``after``, the new cursor)`` - the panel's poll.
 
-    ``after`` is the cursor a previous call returned (a line count). The log is rolled at 1 MB, so
-    a cursor above the current length means the file rolled: start from the top again. Only the
-    first ``limit`` new lines come back, with the cursor advanced by exactly those - the pane pages
-    through a burst instead of skipping the middle."""
+    ``after`` is the cursor a previous call returned (a line count). A first call (0) starts at the
+    latest run's first line - the file holds many nights. A cursor above the current length means
+    the file rolled: start from that run again. Only the first ``limit`` new lines come back, with
+    the cursor advanced by exactly those - the pane pages through a burst instead of skipping the
+    middle."""
     try:
         with open(worker_log_path(repo), encoding="utf-8", errors="replace") as fh:
             lines = fh.read().splitlines()
     except Exception:  # noqa: BLE001 - no log is not an error
         return [], max(0, int(after))
     base = max(0, int(after))
-    if base > len(lines):
-        base = 0
+    if base == 0 or base > len(lines):
+        base = next((i for i in range(len(lines) - 1, -1, -1)
+                     if lines[i].startswith("===== run started")), 0)
     chunk = lines[base:base + max(1, int(limit))]
     return chunk, base + len(chunk)
 

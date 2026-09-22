@@ -64,6 +64,7 @@ document.addEventListener("alpine:init", () => {
     toasts: [], _toastSeq: 0,
     // Indexing panel: the live pass, its worker log and the Stop control.
     showIndex: false, indexLogLines: [], indexLogCursor: 0, indexLogNote: "",
+    indexLogRepo: "", indexPanelStatus: null,   // the repo the indexing panel follows + its status
     indexLogMode: localStorage.getItem("kl-indexmode") || "clean", _indexLogPoll: null, _indexLogSeq: 0,
     _dashSeq: 0, _snapSeq: 0, _treeSeq: 0, _removePlanSeq: 0, _removeDetailSeq: 0, _rfPlanSeq: 0, _contentsSeq: 0,
     showRemove: false, removePlan: null, _removeBase: null,

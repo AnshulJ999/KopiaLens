@@ -40,7 +40,7 @@
                 :class="indexStatus.building ? 'border-warn-bd bg-warn-bg text-warn' : 'border-bd bg-surface2'"
                 :title="indexTooltip()">
           <span x-show="indexStatus.building" class="w-2 h-2 rounded-full animate-pulse"
-                :class="indexPct() == null ? 'bg-warn' : 'bg-ok'"></span>
+                :class="indexPct(indexStatus) == null ? 'bg-warn' : 'bg-ok'"></span>
           <span x-text="indexLine()"></span>
         </button>
         <button x-show="repoKind!=='backblaze'" @click="buildIndex()" :disabled="!!indexStatus.building" class="h-8 rounded bg-fg px-3 text-surface disabled:opacity-50" :title="indexStatus.never_indexed ? 'Build the first index for this repo' : 'Update index (incremental)'" x-text="indexStatus.never_indexed ? 'Index now' : 'Index'">Index</button>

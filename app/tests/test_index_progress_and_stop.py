@@ -101,6 +101,22 @@ def test_worker_log_lines_pages_with_a_cursor(monkeypatch, tmp_path):
     assert lines == ["fresh"] and cursor == 1
 
 
+def test_worker_log_lines_first_call_starts_at_the_latest_run(monkeypatch, tmp_path):
+    """The file holds many nights; the panel's first call must open on the current run, not page
+    through old ones."""
+    from app.core import nightly
+
+    log = tmp_path / "w.log"
+    log.write_text(chr(10).join(["===== run started 2026-09-21 23:00:00 repo=2 full=False =====",
+                                 "old a", "old b",
+                                 "===== run started 2026-09-23 03:06:36 repo=2 full=False =====",
+                                 "new a", "new b"]), encoding="utf-8")
+    monkeypatch.setattr(nightly, "worker_log_path", lambda repo: str(log))
+    lines, cursor = nightly.worker_log_lines("2", after=0)
+    assert lines[0].startswith("===== run started 2026-09-23") and lines[1:] == ["new a", "new b"]
+    assert cursor == 6
+
+
 def test_queued_repo_reads_the_scheduler_state(monkeypatch, tmp_path):
     import json
 

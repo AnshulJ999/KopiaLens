@@ -10,15 +10,28 @@ const INDEX_STAGES = [
   ["folders", "Folder pre-compute"],
   ["policies", "Policies"],
   ["policy_prices", "Policy pricing"],
+  ["ignore_files", "Ignore files"],
+  ["rank_paths", "Ranked sizes"],
   ["next_snapshots", "Next-snapshot times"],
 ];
 
 const indexPanelPart = {
 
-    indexProg() { return (this.indexStatus && (this.indexStatus.progress || this.indexStatus)) || {}; },
+    // The repo the panel follows: the one indexing now (a nightly moves through every repo), else
+    // the selected one. The header indicator keeps showing the selected repo's own status.
+    indexPanelRepo() {
+      const run = (this.freshness || []).find((f) => f.running && f.kind !== "backblaze");
+      return run ? String(run.repo) : this.repo;
+    },
+    ixs() { return (this.showIndex && this.indexPanelStatus) || this.indexStatus || {}; },
 
-    indexPct() {
-      const v = this.indexProg().pct;
+    indexProg(s) {
+      const st = s || this.ixs();
+      return (st && (st.progress || st)) || {};
+    },
+
+    indexPct(s) {
+      const v = this.indexProg(s).pct;
       return (v === null || v === undefined) ? null : Math.max(0, Math.min(100, Math.round(Number(v))));
     },
 
@@ -30,7 +43,7 @@ const indexPanelPart = {
     },
 
     indexQueuedText() {
-      const q = this.indexStatus && this.indexStatus.queued_repo;
+      const q = this.ixs().queued_repo;
       return q ? this.repoLabel(q) : "";
     },
 
@@ -52,9 +65,9 @@ const indexPanelPart = {
       return bits.join(" · ");
     },
 
-    indexPanelCounts() {
-      const s = this.indexStatus || {};
-      const pct = this.indexPct();
+    indexPanelCounts(st) {
+      const s = st || this.ixs();
+      const pct = this.indexPct(s);
       const counts = s.offline ? `Indexing ${s.indexed_snapshots || 0}/${s.snapshots || "?"}`
         : s.building ? `${Number(s.indexed_snapshots || 0).toLocaleString()} of ${Number(s.snapshots || 0).toLocaleString()} snapshots`
         : (s.never_indexed ? "Not indexed yet" : `Index ${s.indexed_snapshots || 0}/${s.snapshots || "?"}`);
@@ -75,7 +88,7 @@ const indexPanelPart = {
       const s = this.indexStatus;
       if (s.offline) return `Indexing (${s.stage || "working"}) ${s.indexed_snapshots || 0}/${s.snapshots || "?"}`;
       if (s.building) {
-        const pct = this.indexPct();
+        const pct = this.indexPct(s);
         return `Indexing ${s.indexed_snapshots || 0}/${s.snapshots || "?"}` + (pct == null ? "" : ` · ${pct}%`);
       }
       if (s.never_indexed) return "Not indexed yet";
@@ -86,7 +99,7 @@ const indexPanelPart = {
     indexTooltip() {
       const s = this.indexStatus || {};
       if (!s.building) return s.never_indexed ? "Build the first index for this repo" : "Indexed. Click for details.";
-      const bits = [this.indexPanelCounts()];
+      const bits = [this.indexPanelCounts(s)];
       const detail = this.indexDetailText();
       if (detail) bits.push(detail);
       if (s.stage) bits.push(s.stage);
@@ -99,8 +112,10 @@ const indexPanelPart = {
     openIndexPanel() {
       this.showIndex = true;
       this.indexLogLines = [];
-      this.indexLogCursor = 0;
+      this.indexLogCursor = 0;   // 0 = from the current run's first line (server side)
       this.indexLogNote = "";
+      this.indexLogRepo = "";
+      this.indexPanelStatus = null;
       if (this._indexLogPoll) clearInterval(this._indexLogPoll);
       this._indexLogPoll = setInterval(() => { if (!document.hidden && this.showIndex) this._indexLogTick(); }, 2000);
       this._indexLogTick();
@@ -117,7 +132,13 @@ const indexPanelPart = {
     },
 
     async _indexLogTick() {
-      const repo = this.repo;
+      const repo = this.indexPanelRepo();
+      if (repo !== this.indexLogRepo) {   // a nightly moved on to the next repo: start its log fresh
+        this.indexLogRepo = repo;
+        this.indexLogLines = [];
+        this.indexLogCursor = 0;
+        this.indexPanelStatus = null;
+      }
       const seq = ++this._indexLogSeq;
       try {
         const r = await getJson(`/api/index/log?repo=${encodeURIComponent(repo)}&after=${this.indexLogCursor}`);
@@ -135,7 +156,10 @@ const indexPanelPart = {
       }
       const s = await getJson(`/api/index/status?repo=${encodeURIComponent(repo)}`).catch(() => null);
       if (seq !== this._indexLogSeq || !this.showIndex) return;
-      if (s) this.indexStatus = s;
+      if (s) {
+        this.indexPanelStatus = s;
+        if (repo === this.repo) this.indexStatus = s;
+      }
     },
 
     indexLogView() {
@@ -150,9 +174,10 @@ const indexPanelPart = {
     indexLogClass(ln) { return klLogLineWarn(ln); },
 
     async indexStop() {
-      if (!this.indexStatus || !this.indexStatus.building) return;
+      const repo = this.indexLogRepo || this.repo;
+      if (!this.ixs().building) return;
       const ok = await this.klConfirm({
-        title: `Stop indexing ${this.repoLabel(this.repo)}?`,
+        title: `Stop indexing ${this.repoLabel(repo)}?`,
         callout: "The pass ends where it is and will not restart by itself; the next scheduled slot builds it again.",
         note: "Kopia already answered stays recorded - nothing is corrupted.",
         confirmLabel: "Stop indexing", danger: true,
@@ -160,13 +185,16 @@ const indexPanelPart = {
       if (!ok) return;
       try {
         const r = await getJson("/api/index/stop", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo: this.repo }) });
+          body: JSON.stringify({ repo }) });
         if (r && r.stopped === false && r.reason) this.klNotify(`Could not stop: ${r.reason}`, "warn");
         else this.klNotify("Indexing stopped.");
       } catch (e) {
         this.klNotify("Stopping an index run is not available from this build.", "warn");
       }
-      const s = await getJson(`/api/index/status?repo=${encodeURIComponent(this.repo)}`).catch(() => null);
-      if (s) this.indexStatus = s;
+      const s = await getJson(`/api/index/status?repo=${encodeURIComponent(repo)}`).catch(() => null);
+      if (s) {
+        this.indexPanelStatus = s;
+        if (repo === this.repo) this.indexStatus = s;
+      }
     },
 };
