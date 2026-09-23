@@ -737,8 +737,8 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
         for c in chunks:
             this_refs[c] = this_refs.get(c, 0) + 1
     if unknown:
-        log.warning("repo=%s file detail %s: %d version(s) could not be measured", repo,
-                    full_path, unknown)
+        log.warning("repo=%s file detail: %d version(s) could not be measured", repo, unknown)
+        log.debug("repo=%s file detail path %s", repo, full_path)
 
     latest_obj = versions[0][3]
     latest_chunks = obj_chunks.get(latest_obj, set())

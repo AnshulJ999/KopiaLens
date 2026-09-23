@@ -23,6 +23,7 @@ import threading
 
 from config import DATA_DIR
 
+from . import filecrypto
 from .applog import get_logger
 
 log = get_logger("audit")
@@ -66,9 +67,9 @@ def audit(event: str, action: str, repo: str | None = None, summary: dict | None
     try:
         line = json.dumps(rec, ensure_ascii=False)
         with _LOCK:
-            os.makedirs(os.path.dirname(_path()), exist_ok=True)
-            with open(_path(), "a", encoding="utf-8") as fh:
-                fh.write(line + "\n")
+            ok = filecrypto.append_line(_path(), line)
+        if not ok:
+            log.warning("audit write failed (%s %s): %s", event, action, "not written")
     except Exception as exc:  # noqa: BLE001 - the audit trail must never break the action
         log.warning("audit write failed (%s %s): %s", event, action, exc)
 
@@ -85,19 +86,11 @@ def read_tail(limit: int = 200) -> list[dict]:
     whole file - the file only ever grows."""
     try:
         with _LOCK:
-            size = os.path.getsize(_path())
-            with open(_path(), "rb") as fh:
-                if size > 262_144:           # 256 KB is far more than 200 lines
-                    fh.seek(-262_144, os.SEEK_END)
-                    fh.readline()            # discard the partial line the seek landed in
-                tail = fh.read().decode("utf-8", "replace")
-    except OSError:
+            lines = filecrypto.tail_lines(_path(), limit)
+    except Exception:  # noqa: BLE001
         return []
     out: list[dict] = []
-    for line in tail.splitlines():
-        line = line.strip()
-        if not line:
-            continue
+    for line in lines:
         try:
             out.append(json.loads(line))
         except Exception:  # noqa: BLE001 - one damaged line must not hide the rest

@@ -100,13 +100,13 @@ def refresh_policies(repo: str, force: bool = False) -> dict:
                 policies[key] = show_policy(repo, key)
             except Exception as exc:  # noqa: BLE001 - one bad source must not lose the rest
                 failed += 1
-                log.warning("policy show failed for %s (keeping previous): %s", key, exc)
+                log.debug("policy show failed for %s (keeping previous): %s", key, exc)
     else:
         for key in sorted(live):
             pol = resolved.get(key)
             if pol is None:
                 failed += 1
-                log.warning("policy resolve produced nothing for %s (keeping previous)", key)
+                log.debug("policy resolve produced nothing for %s (keeping previous)", key)
                 continue
             policies[key] = pol
     for gone in [k for k in policies if k not in live]:
@@ -144,7 +144,7 @@ def effective_for_path(repo: str, source_key: str, path: str) -> dict:
         if not pol:
             pol = show_policy(repo, target)   # no export readable, or nothing resolved: live lookup
     except Exception as exc:  # noqa: BLE001
-        log.warning("effective policy failed for %s: %s", target, exc)
+        log.debug("effective policy failed for %s: %s", target, exc)
         pol = {}
     with _PATH_LOCK:
         if len(_PATH_CACHE) >= _PATH_CACHE_MAX:
@@ -314,7 +314,7 @@ def refresh_one_policy(repo: str, target: str) -> None:
     try:
         policies[target] = show_policy(repo, target)
     except Exception as exc:  # noqa: BLE001 - keep the old value, the next nightly fixes it
-        log.warning("policy refresh failed for %s (keeping previous): %s", target, exc)
+        log.debug("policy refresh failed for %s (keeping previous): %s", target, exc)
         return
     _write_policies(repo, policies)
 

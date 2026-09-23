@@ -239,10 +239,8 @@ def _record_growth(repo: str, packed_bytes: int) -> list:
                 samples.append([round(now), packed_bytes])
                 samples = samples[-_HISTORY_KEEP:]
                 history[repo] = samples
-                tmp = _HISTORY_FILE + ".tmp"
-                with open(tmp, "w", encoding="utf-8") as fh:
-                    json.dump(history, fh)
-                os.replace(tmp, _HISTORY_FILE)
+                from ..core import filecrypto
+                filecrypto.write_json(_HISTORY_FILE, history)
             return samples
     except Exception as exc:  # noqa: BLE001 - a trend sample must never break the panel
         log.warning("growth sample failed: %s", exc)

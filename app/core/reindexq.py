@@ -15,6 +15,7 @@ import time
 from config import DATA_DIR
 
 from ..settings import load_settings
+from . import filecrypto
 from .applog import get_logger
 
 log = get_logger("reindexq")
@@ -33,21 +34,14 @@ def _path() -> str:
 
 def _save() -> None:
     """Called under _LOCK. A restart must not drop a queued update."""
-    try:
-        tmp = _path() + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(_PENDING, fh)
-        os.replace(tmp, _path())
-    except OSError as exc:
-        log.warning("could not save the index update queue: %s", exc)
+    if not filecrypto.write_json(_path(), _PENDING):
+        log.warning("could not save the index update queue")
 
 
 def load() -> None:
     """App startup: resume updates queued before the last exit."""
-    try:
-        with open(_path(), encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError):
+    data = filecrypto.read_json(_path(), {})
+    if not isinstance(data, dict):
         return
     with _LOCK:
         for repo, rec in (data or {}).items():

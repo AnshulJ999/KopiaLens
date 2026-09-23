@@ -19,16 +19,14 @@ from config import CACHEDIR
 log = logging.getLogger("kopialens.policycheck")
 
 
-def _path(repo: str) -> str:
-    return os.path.join(CACHEDIR, f"policy_check_repo{repo}.json")
+def _cache_name(repo: str) -> str:
+    return f"policy_check_repo{repo}"
 
 
 def load(repo: str) -> dict | None:
-    try:
-        with open(_path(repo), encoding="utf-8") as fh:
-            return json.load(fh)
-    except Exception:  # noqa: BLE001 - never checked yet
-        return None
+    from . import sidecache
+    data = sidecache.read(_cache_name(repo))
+    return data if isinstance(data, dict) else None
 
 
 def _fingerprint(defined: dict, targets: list[str]) -> str:
@@ -60,18 +58,14 @@ def run(repo: str, force: bool = False) -> dict:
     rec = {"repo": repo, "ts": time.time(), "fingerprint": fp, "elapsed": round(time.time() - t0, 1),
            "checked": out["checked"], "failed": out["failed"], "mismatches": out["mismatches"]}
     if out["mismatches"]:
-        log.error("repo=%s policy inheritance check: %d of %d targets differ from kopia's own output "
-                  "(kopia upgrade?): %s", repo, len(out["mismatches"]), out["checked"],
+        log.error("repo=%s policy inheritance check: %d of %d targets differ from kopia's own "
+                  "output (kopia upgrade?)", repo, len(out["mismatches"]), out["checked"])
+        log.debug("policy mismatches: %s",
                   "; ".join(f"{m['target']}: {m['diff'][0]}" for m in out["mismatches"][:3]))
     else:
         log.info("repo=%s policy inheritance check: %d targets match kopia (%.1fs)",
                  repo, out["checked"], rec["elapsed"])
-    try:
-        os.makedirs(CACHEDIR, exist_ok=True)
-        tmp = _path(repo) + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(rec, fh)
-        os.replace(tmp, _path(repo))
-    except OSError as exc:
-        log.warning("repo=%s policy check result not saved: %s", repo, exc)
+    from . import sidecache
+    if not sidecache.write(_cache_name(repo), rec):
+        log.warning("repo=%s policy check result not saved", repo)
     return rec

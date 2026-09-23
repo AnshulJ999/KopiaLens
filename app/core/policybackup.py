@@ -25,7 +25,7 @@ import tempfile
 
 from config import DATA_DIR
 
-from . import audit
+from . import audit, filecrypto
 from .applog import get_logger
 from .kopia import kopia, policy_import_execute
 from .policy import invalidate_after_write
@@ -57,9 +57,8 @@ def nightly_backup(repo: str) -> dict:
     text = _read_export(repo)
     for entry in list_backups(repo):
         if entry["trigger"] == "nightly":
-            with open(entry["path"], encoding="utf-8") as fh:
-                if _hash(fh.read()) == _hash(text):
-                    return {"name": entry["name"], "changed": False, "verified": True}
+            if _hash(filecrypto.read_text(entry["path"]) or "") == _hash(text):
+                return {"name": entry["name"], "changed": False, "verified": True}
             break
     return {**create_backup_from_text(repo, text, "nightly"), "changed": True}
 
@@ -104,8 +103,8 @@ def create_backup_from_text(repo: str, text: str, trigger: str) -> dict:
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     name = f"{stamp}_{trigger}.json"
     path = os.path.join(d, name)
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(text)
+    if not filecrypto.write_text(path, text):
+        raise BackupError(f"could not write the backup file {name}")
     size = os.path.getsize(path)
     log.info("policy backup repo=%s trigger=%s file=%s (%d bytes)", repo, trigger, name, size)
     audit.audit("executed", "policy-backup", repo=repo, summary={"trigger": trigger, "file": name}, rc=0)
@@ -138,10 +137,13 @@ def list_backups(repo: str) -> list[dict]:
 
 
 def read_backup(repo: str, name: str) -> str:
-    """The raw export text of one backup. Raises FileNotFoundError for unknown names."""
+    """The raw export text of one backup. Raises for unknown names or an unreadable file
+    (encrypted with a key this install does not have)."""
     path = _validated_path(repo, name)
-    with open(path, encoding="utf-8") as fh:
-        return fh.read()
+    text = filecrypto.read_text(path)
+    if text is None:
+        raise BackupError(f"backup {name} cannot be read - wrong or missing key?")
+    return text
 
 
 def _validated_path(repo: str, name: str) -> str:
@@ -181,7 +183,20 @@ def restore_backup(repo: str, name: str, mirror: bool = False) -> dict:
         raise BackupError(f"backup {name} failed verification: {exc}") from exc
 
     pre = create_backup(repo, "pre-restore")  # fail-closed: no backup, no restore
-    res = policy_import_execute(repo, _validated_path(repo, name), mirror=mirror)
+    # kopia reads the import file itself, so the text is handed over in a temp file that is
+    # removed the moment the import returns (the same shape as `policy export`).
+    tmp_dir = os.path.join(DATA_DIR, "tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
+    fd, import_path = tempfile.mkstemp(prefix="policy_restore_", suffix=".json", dir=tmp_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        res = policy_import_execute(repo, import_path, mirror=mirror)
+    finally:
+        try:
+            os.remove(import_path)
+        except OSError:
+            pass
     invalidate_after_write(repo, targets=None)
     log.warning("policy restore repo=%s file=%s mirror=%s rc=%d", repo, name, mirror,
                 res.get("returncode"))

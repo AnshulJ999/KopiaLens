@@ -134,7 +134,9 @@ def _store_wrapped(kind: str, kek: str, data_key: str) -> None:
     os.makedirs(keystore_dir(), exist_ok=True)   # first setup on a fresh install gets here first
     path = _wrap_path(kind)
     tmp = path + ".tmp"
-    for p in (tmp, tmp + ".wal"):
+    # The TARGET's `.wal` too, not just the temp's: os.replace would otherwise leave a stale
+    # DuckDB WAL beside the new database file, and the next open could replay it onto it.
+    for p in (tmp, tmp + ".wal", path + ".wal"):
         if os.path.exists(p):
             os.remove(p)
     con = duckdb.connect()
@@ -146,6 +148,15 @@ def _store_wrapped(kind: str, kek: str, data_key: str) -> None:
     finally:
         con.close()
     os.replace(tmp, path)
+
+
+class StoreLocked(PermissionError):
+    """The data key is not in memory, so an encrypted store cannot be read or written.
+
+    A PermissionError subclass so every existing ``except PermissionError`` keeps working,
+    while the API can tell a LOCK from a real filesystem permission problem and answer the
+    unlock screen with a structured 423 instead of a raw 500.
+    """
 
 
 class KeystoreError(Exception):
@@ -173,6 +184,10 @@ def _redact(text: str, *secrets_: str) -> str:
 
 
 def _load_wrapped(kind: str, kek: str) -> str | None:
+    return _load_wrapped_path(_wrap_path(kind), kek)
+
+
+def _load_wrapped_path(path: str, kek: str) -> str | None:
     """The data key from a wrap file, or None when the file is absent.
 
     DuckDB's database encryption is authenticated, so a wrong key raises "Wrong encryption key
@@ -180,7 +195,6 @@ def _load_wrapped(kind: str, kek: str) -> str | None:
     usable password check. That error is told apart from a damaged file: they used to be the
     same ``None``, so a corrupt keystore read to the user as "wrong password" forever.
     """
-    path = _wrap_path(kind)
     if not os.path.exists(path):
         return None
     con = duckdb.connect()
@@ -223,14 +237,43 @@ def configured() -> bool:
     return os.path.exists(_wrap_path("password"))
 
 
+LEVEL_OFF = "off"                    # nothing encrypted
+LEVEL_INDEX = "index"                # the index, its caches and the side caches
+LEVEL_EVERYTHING = "everything"      # + the small JSON files, audit/history, logs, Backblaze
+LEVELS = (LEVEL_OFF, LEVEL_INDEX, LEVEL_EVERYTHING)
+
+
+def level() -> str:
+    """The user's INTENT: how much of the data should be encrypted.
+
+    ``encryption_level`` is the setting. An install that predates it carries the old boolean
+    ``encryption``, which reads as index-level when on - the only level that existed then.
+
+    Reads the FILE's own keys (``raw_kopialens_settings``), never the defaults-merged view: the
+    default for ``encryption_level`` is "off", and taking it as the answer would silently read
+    every part-1 install's already-encrypted index as plaintext.
+    """
+    from ..settings import raw_kopialens_settings
+    kl = raw_kopialens_settings()
+    chosen = str(kl.get("encryption_level") or "").strip().lower()
+    if chosen in LEVELS:
+        return chosen
+    return LEVEL_INDEX if kl.get("encryption") else LEVEL_OFF
+
+
 def enabled() -> bool:
-    """The user's INTENT: the setting is on and a keystore exists. Off until onboarding sets it.
+    """The INDEX is covered: the level includes it and a keystore exists.
 
     This is not the state of any file on disk - generations follow their manifest and side caches
-    follow their own footer - it is what a NEW file should be written as.
+    follow their own footer - it is what a NEW index file should be written as.
     """
-    from ..settings import load_settings
-    return bool(load_settings()["kopialens"].get("encryption")) and configured()
+    return level() != LEVEL_OFF and configured()
+
+
+def covers_files() -> bool:
+    """The non-index layer is covered: small JSON files, audit/history, logs, policy backups,
+    Backblaze state. ``core.filecrypto`` owns the actual work."""
+    return level() == LEVEL_EVERYTHING and configured()
 
 
 def unlocked() -> bool:
@@ -278,8 +321,8 @@ def _resolve(encrypted: bool | None) -> bool:
     plaintext here would write an unencrypted file into an encrypted generation, silently."""
     state = writes_encrypted() if encrypted is None else bool(encrypted)
     if state and not unlocked():
-        raise PermissionError("the data key is locked - refusing to read or write as if "
-                              "encryption were off")
+        raise StoreLocked("the data key is locked - refusing to read or write as if "
+                          "encryption were off")
     return state
 
 
@@ -323,8 +366,9 @@ def setup(password: str, remember: bool = False, with_recovery: bool = True) -> 
         return recovery
 
 
-def _password_kek(password: str) -> str | None:
-    salt_b64 = (_read_meta().get("kdf") or {}).get("salt")
+def _password_kek(password: str, kdf: dict | None = None) -> str | None:
+    kdf = (_read_meta().get("kdf") or {}) if kdf is None else kdf
+    salt_b64 = kdf.get("salt")
     if not salt_b64:
         return None
     try:
@@ -332,6 +376,34 @@ def _password_kek(password: str) -> str | None:
     except ValueError:
         log.error("the keystore's KDF parameters are damaged")
         return None
+
+
+def _retry_previous_wrap(password: str) -> str | None:
+    """The data key opened with the PREVIOUS salt, when a password change was interrupted.
+
+    ``_rewrap_password`` writes two files (the wrap and the salt in the meta); a crash between
+    them leaves the current pair unable to open anything. The previous salt is kept in the
+    meta and the old wrap is kept beside it until both writes land, so the OLD password still
+    opens the keystore and the change can simply be retried. Caller holds ``_LOCK``.
+    """
+    prev_kdf = _read_meta().get("kdf_prev") or {}
+    if not prev_kdf:
+        return None
+    prev_kek = _password_kek(password, prev_kdf)
+    if prev_kek is None:
+        return None
+    wrap = _wrap_path("password")
+    for path in (wrap, wrap + ".prev"):
+        if not os.path.exists(path):
+            continue
+        try:
+            key = _load_wrapped_path(path, prev_kek)
+        except (WrongPassword, CorruptKeystore):
+            continue
+        if key:
+            log.warning("an interrupted password change was recovered with the previous state")
+            return key
+    return None
 
 
 def unlock_detailed(password: str) -> tuple[bool, str]:
@@ -343,6 +415,10 @@ def unlock_detailed(password: str) -> tuple[bool, str]:
         if kek is None:
             return False, "not-set-up"
         key, reason = _open_wrap("password", kek)
+        if key is None and reason == "wrong-password":
+            key = _retry_previous_wrap(password)
+            if key is not None:
+                reason = "ok"
         if key is None:
             return False, reason
         _DATA_KEY, _SOURCE = key, "password"
@@ -653,7 +729,7 @@ class _Session:
                 pass
 
 
-def apply(con, temp_dir: str, memory_limit: str, threads: int,
+def apply(con, temp_dir: str, memory_limit: str, threads: int | None,
           encrypted: bool | None = None) -> _Session | None:
     """Configure one DuckDB connection: limits, temp directory, and the encrypted session.
 
@@ -667,7 +743,8 @@ def apply(con, temp_dir: str, memory_limit: str, threads: int,
     os.makedirs(temp_dir, exist_ok=True)
     con.execute("SET temp_directory='%s'" % _sql(temp_dir))
     con.execute("SET memory_limit='%s'" % memory_limit)
-    con.execute("SET threads=%d" % threads)
+    if threads:               # None keeps the caller's own thread setting (the BZ store)
+        con.execute("SET threads=%d" % threads)
     # Rule 1 of the store: results stay in DuckDB until the final small answer, and nothing
     # depends on input order. Insertion order costs memory in every hash aggregate.
     con.execute("SET preserve_insertion_order=false")

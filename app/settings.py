@@ -75,10 +75,17 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "repo_labels": "short",      # repo chips/columns: "short" (Repo 1) | "full" (the name from repos.json)
         "debug_log": False,          # also write data/logs/kopialens-debug.log at DEBUG (env KOPIALENS_DEBUG_LOG overrides)
         # ---- unified store () ---------------------------------------------------------
-        # Encryption at rest for every local file the store writes. This is the INTENT: new files
-        # are written in this state, while a generation already on disk keeps its own state (the
-        # manifest records it) until the switch () rewrites it. Off until onboarding
-        # (); turning it on or off rewrites only our own files, never the kopia repository.
+        # Encryption at rest (). Three levels, decided in onboarding ():
+        #   "off"        nothing
+        #   "index"      the index generations + side caches + policy caches (the full map)
+        #   "everything" the above + the small JSON files, audit/history, logs, policy backups
+        #                and the Backblaze store - kopia's own posture
+        # This is the INTENT: new files are written in this state, while anything already on disk
+        # keeps its own state (a generation records it in its manifest, a file in its own bytes)
+        # until the switch rewrites it. Never touches the kopia repository.
+        "encryption_level": "off",
+        # The old boolean, read as index-level when on. Kept so an install upgrading from part 1
+        # keeps meaning something until `filecrypto.upgrade_step` folds it into the level.
         "encryption": False,
         # Seconds without a USER request before every open generation is closed and its memory
         # returned. 0 disables. Polled status endpoints deliberately do not count as activity.

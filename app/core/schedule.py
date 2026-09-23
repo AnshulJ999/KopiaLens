@@ -444,7 +444,7 @@ def compute_next_snapshots(repo: str, force: bool = False) -> dict[str, str]:
             if nt:
                 out[key] = nt.isoformat()
         except Exception as exc:  # noqa: BLE001 - per-source, keep going
-            log.warning("next_snapshot compute failed for %s: %s", key, exc)
+            log.debug("next_snapshot compute failed for %s: %s", key, exc)
     try:
         from ..index import sidecache
         sidecache.write(_cache_name(repo), out)

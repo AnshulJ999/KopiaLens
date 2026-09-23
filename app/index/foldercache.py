@@ -166,7 +166,7 @@ def _kick_refresh(repo: str, prefix: str, source: str | None) -> None:
         try:
             _compute_now(repo, prefix, source)
         except Exception as exc:  # noqa: BLE001 - a background refresh must never surface
-            log.warning("repo=%s background folder refresh failed for %s: %s", repo, prefix, exc)
+            log.debug("repo=%s background folder refresh failed for %s: %s", repo, prefix, exc)
     threading.Thread(target=_go, daemon=True).start()
 
 
@@ -191,8 +191,9 @@ def _compute_now(repo: str, prefix: str, source: str | None = None) -> dict:
             data[_key(prefix, source)] = payload
         _save(repo)
         if payload["elapsed"] > 5:
-            log.info("repo=%s folder reclaim %s took %.1fs (%d objects)",
-                     repo, prefix, payload["elapsed"], payload.get("objects", 0))
+            log.info("repo=%s folder reclaim took %.1fs (%d objects)",
+                     repo, payload["elapsed"], payload.get("objects", 0))
+            log.debug("repo=%s folder reclaim prefix %s", repo, prefix)
         return {**payload, "cached": False, "stale": False}
 
 
@@ -295,7 +296,7 @@ def prewarm(repo: str, top: int = _PREWARM_TOP, depths=None) -> None:
                 done += 1
             except Exception as exc:  # noqa: BLE001 - one bad folder must not end the pass
                 failed += 1
-                log.warning("repo=%s folder prewarm failed for %s: %s", repo, prefix, exc)
+                log.debug("repo=%s folder prewarm failed for %s: %s", repo, prefix, exc)
     log.debug("repo=%s prewarm depths=%s", repo, depths)
     log.info("repo=%s folder reclaim prewarm: %d computed, %d skipped (unchanged), "
              "%d skipped (too large), %d failed, %.0fs%s",

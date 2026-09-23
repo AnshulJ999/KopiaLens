@@ -104,11 +104,9 @@ def worker_timeout() -> float:
 def worker_progress(repo: str) -> dict | None:
     """The subprocess's live progress file, if it is mid-run. The app cannot query the DuckDB while
     the worker holds it, so this is the only way to render a progress badge during the window."""
-    try:
-        with open(os.path.join(DATA_DIR, f"index_progress_repo{repo}.json"), encoding="utf-8") as fh:
-            return json.load(fh)
-    except Exception:
-        return None
+    from . import filecrypto
+    data = filecrypto.read_json(os.path.join(DATA_DIR, f"index_progress_repo{repo}.json"))
+    return data if isinstance(data, dict) else None
 
 
 INTERRUPTED = "Indexing stopped before it finished (KopiaLens was closed or restarted)"
@@ -127,9 +125,9 @@ def worker_log_lines(repo: str, after: int = 0, limit: int = 400) -> tuple[list[
     the file rolled: start from that run again. Only the first ``limit`` new lines come back, with
     the cursor advanced by exactly those - the pane pages through a burst instead of skipping the
     middle."""
+    from . import filecrypto
     try:
-        with open(worker_log_path(repo), encoding="utf-8", errors="replace") as fh:
-            lines = fh.read().splitlines()
+        lines = filecrypto.read_lines(worker_log_path(repo))
     except Exception:  # noqa: BLE001 - no log is not an error
         return [], max(0, int(after))
     base = max(0, int(after))
@@ -147,10 +145,9 @@ def queued_repo(active: str) -> str | None:
     one per slot, so the queued one is the next repo whose nightly stamp is older than the ACTIVE
     repo's slot. None when nothing is waiting (the last repo of the night)."""
     from config import REPOS, repo_kind
-    try:
-        with open(os.path.join(DATA_DIR, "bg_worker_state.json"), encoding="utf-8") as fh:
-            state = json.load(fh)
-    except Exception:  # noqa: BLE001
+    from . import filecrypto
+    state = filecrypto.read_json(os.path.join(DATA_DIR, "bg_worker_state.json"))
+    if not isinstance(state, dict):
         return None
     attempts = state.get("attempts") or {}
     stamps = state.get("nightly") or {}
@@ -167,10 +164,9 @@ def queued_repo(active: str) -> str | None:
 def worker_log_tail(repo: str, limit: int = 200) -> list[str]:
     """ The last ``limit`` lines of this repo's worker log, for the progress panel's live
     log pane. Read-only and bounded; nothing here can block the run it describes."""
+    from . import filecrypto
     try:
-        with open(worker_log_path(repo), encoding="utf-8", errors="replace") as fh:
-            lines = fh.read().splitlines()
-        return lines[-max(1, int(limit)):]
+        return filecrypto.read_lines(worker_log_path(repo))[-max(1, int(limit)):]
     except Exception:  # noqa: BLE001 - no log is not an error
         return []
 
@@ -481,35 +477,49 @@ def _run_worker(repo: str, full: bool, trigger: str = "manual") -> dict:
     env = {**os.environ, "KOPIALENS_INDEX_TRIGGER": trigger}
     if payload is not None:
         env["KOPIALENS_KEY_STDIN"] = "1"
+    from . import filecrypto
+    child_logs = filecrypto.available()
+    if child_logs:
+        # The child writes its own log: a redirected descriptor would bypass any wrapper and
+        # land plaintext in a file the Everything level says is encrypted.
+        env["KOPIALENS_WORKER_LOG"] = logp
+        filecrypto.append_line(logp, "")
+        filecrypto.append_line(logp, f"===== run started {dt.datetime.now():%Y-%m-%d %H:%M:%S} "
+                                     f"repo={repo} full={full} =====")
+    errfh = None if child_logs else open(logp, "a", encoding="utf-8", errors="replace")
     try:
-        with open(logp, "a", encoding="utf-8", errors="replace") as errfh:
+        if errfh is not None:
             errfh.write(f"\n===== run started {dt.datetime.now():%Y-%m-%d %H:%M:%S} "
                         f"repo={repo} full={full} =====\n")
             errfh.flush()
-            proc = subprocess.Popen(
-                args, cwd=_KL_ROOT, stdout=subprocess.PIPE, stderr=errfh, text=True,
-                stdin=subprocess.PIPE if payload is not None else subprocess.DEVNULL,
-                env=env,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash under pythonw
-            )
-            try:
-                if payload is None:
-                    out, _ = proc.communicate(timeout=worker_timeout())
-                else:
-                    out, _ = proc.communicate(input=payload, timeout=worker_timeout())
-            except subprocess.TimeoutExpired:
-                log.error("repo=%s index worker timed out - killing it", repo)
-                proc.kill()
-                proc.communicate()
-                return {"ok": False, "reason": "timeout"}
-            finally:
-                # This process records the run from stdout; the file is for a restarted app only.
-                res = _read_json(result_path(repo))
-                if res and int(res.get("pid") or 0) == proc.pid:
-                    _remove(result_path(repo))
+        proc = subprocess.Popen(
+            args, cwd=_KL_ROOT, stdout=subprocess.PIPE,
+            stderr=errfh if errfh is not None else subprocess.DEVNULL, text=True,
+            stdin=subprocess.PIPE if payload is not None else subprocess.DEVNULL,
+            env=env,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash under pythonw
+        )
+        try:
+            if payload is None:
+                out, _ = proc.communicate(timeout=worker_timeout())
+            else:
+                out, _ = proc.communicate(input=payload, timeout=worker_timeout())
+        except subprocess.TimeoutExpired:
+            log.error("repo=%s index worker timed out - killing it", repo)
+            proc.kill()
+            proc.communicate()
+            return {"ok": False, "reason": "timeout"}
+        finally:
+            # This process records the run from stdout; the file is for a restarted app only.
+            res = _read_json(result_path(repo))
+            if res and int(res.get("pid") or 0) == proc.pid:
+                _remove(result_path(repo))
     except Exception as exc:  # noqa: BLE001 - could not even launch
         log.error("repo=%s index worker launch failed: %s", repo, exc)
         return {"ok": False, "reason": f"launch failed: {exc}"}
+    finally:
+        if errfh is not None:
+            errfh.close()
     # Parse FIRST, exit code second. The worker prints a JSON summary carrying the real reason
     # ("repository unavailable", the failing stage) and THEN exits 1 - on both of its failure
     # shapes. Reading the exit code first threw that away and surfaced "worker exit 1", which is

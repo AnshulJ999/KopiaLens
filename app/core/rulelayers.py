@@ -297,7 +297,7 @@ def discover_disk(repo: str, names: list[str], source: str) -> list[dict]:
         try:
             rows, _capped = disklookup.find(root, name, folders_only=False, limit=200)
         except Exception as exc:  # noqa: BLE001 - a disk provider hiccup must not fail discovery
-            log.warning("disk lookup for %s under %s failed: %s", name, root, exc)
+            log.debug("disk lookup for %s under %s failed: %s", name, root, exc)
             return out
         for row in rows or []:
             path = row.get("path") or row.get("full_path") or ""

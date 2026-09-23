@@ -43,6 +43,19 @@ _debug_handler: RotatingFileHandler | None = None
 _handler_lock = threading.Lock()
 
 
+class _CryptoRotatingFileHandler(RotatingFileHandler):
+    """A rotating log file whose stream encrypts each line when the files layer is live ().
+
+    The stream decides per LINE, not at attach time, so a level switch never has to reopen a
+    live handler: after switching to Everything the next line is encrypted and the reader
+    handles the mixed file. Rotation is untouched - it works on whole lines.
+    """
+
+    def _open(self):
+        from . import filecrypto
+        return filecrypto.wrap_stream(super()._open())
+
+
 def ensure_dirs() -> None:
     for d in (LOG_DIR, APP_LOG_DIR, INDEX_LOG_DIR, JOB_LOG_DIR):
         os.makedirs(d, exist_ok=True)
@@ -124,7 +137,8 @@ def setup_logging(level: int = logging.INFO) -> None:
     if _configured:
         return
     moved = migrate()
-    handler = RotatingFileHandler(LOG_FILE, maxBytes=1_000_000, backupCount=15, encoding="utf-8")
+    handler = _CryptoRotatingFileHandler(LOG_FILE, maxBytes=1_000_000, backupCount=15,
+                                         encoding="utf-8")
     handler.setFormatter(logging.Formatter(_FORMAT))
     handler.setLevel(level)
     root = logging.getLogger("kopialens")
@@ -135,6 +149,24 @@ def setup_logging(level: int = logging.INFO) -> None:
     _configured = True
     if moved:
         root.info("logs: moved %d legacy log file(s) into app/, indexing/ and jobs/", moved)
+
+
+def setup_worker_logging(path: str | None = None) -> None:
+    """Logging for a worker process.
+
+    The index worker OWNS its log file when the app names one: the parent cannot route the
+    child's stderr into an encrypted file (the child writes to the raw descriptor, bypassing any
+    wrapper), so the child writes it itself - encrypted per line when the files layer is live.
+    Without a path it keeps the old behaviour, stderr.
+    """
+    handlers: list[logging.Handler] = []
+    if path:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        h = _CryptoRotatingFileHandler(path, maxBytes=1_000_000, backupCount=10, encoding="utf-8")
+        h.setFormatter(logging.Formatter("%(asctime)s  %(message)s", datefmt="%H:%M:%S"))
+        handlers.append(h)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S",
+                        handlers=handlers or None, force=True)
 
 
 def debug_log_wanted(settings: dict | None) -> bool:
@@ -154,7 +186,8 @@ def apply_logging_settings(settings: dict | None) -> None:
     with _handler_lock:
         if want and _debug_handler is None:
             ensure_dirs()
-            h = RotatingFileHandler(DEBUG_LOG_FILE, maxBytes=5_000_000, backupCount=5, encoding="utf-8")
+            h = _CryptoRotatingFileHandler(DEBUG_LOG_FILE, maxBytes=5_000_000, backupCount=5,
+                                           encoding="utf-8")
             h.setFormatter(logging.Formatter(_FORMAT))
             h.setLevel(logging.DEBUG)
             root.addHandler(h)

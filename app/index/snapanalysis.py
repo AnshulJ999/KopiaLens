@@ -529,16 +529,18 @@ def prewarm(repo: str, with_reclaim: bool = False) -> dict | None:
                 dt = time.perf_counter() - t_src
                 recomputed += 1
                 compute_secs += dt
-                log.info("repo=%s analysis recomputed %s (%d snapshots, %s) in %.1fs",
-                         repo, key, len(srcs[key]), "heavy" if with_reclaim else "churn-only", dt)
+                log.info("repo=%s analysis recomputed a source (%d snapshots, %s) in %.1fs",
+                         repo, len(srcs[key]), "heavy" if with_reclaim else "churn-only", dt)
+                log.debug("repo=%s analysis source %s", repo, key)
             except Exception as exc:  # noqa: BLE001 - one source failing must not abort the stage
                 failed.append(key)
-                log.warning("repo=%s analysis failed for %s: %s", repo, key, exc)
+                log.debug("repo=%s analysis failed for %s: %s", repo, key, exc)
                 continue
     log.info("repo=%s analysis stage: %d of %d source(s) recomputed in %.1fs of %.1fs total",
              repo, recomputed, len(srcs), compute_secs, time.perf_counter() - t_stage)
     if failed:
-        log.warning("repo=%s analysis stage: %d source(s) failed (partial results published): %s",
-                    repo, len(failed), ", ".join(failed[:10]))
+        log.warning("repo=%s analysis stage: %d source(s) failed (partial results published)",
+                    repo, len(failed))
+        log.debug("repo=%s analysis failed sources: %s", repo, ", ".join(failed[:10]))
         return {"failed_sources": failed}
     return None

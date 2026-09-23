@@ -35,7 +35,7 @@ from collections import deque
 
 from config import DATA_DIR
 
-from . import audit
+from . import audit, filecrypto
 from .applog import get_logger
 from .kopia import (
     _parse_delete_line,
@@ -69,6 +69,9 @@ KINDS = {
     # Local-only (): rewrites KopiaLens's own index, never the kopia repository. Mutating
     # so it cannot run beside another write job or an index pass - both touch the same manifest.
     "encryption_switch": {"label": "Switching encryption", "mutating": True},
+    # Install-wide level change: every repo's generation, the file layer, Backblaze. Mutating,
+    # but tolerant - a busy repo is deferred and reported rather than failing the job.
+    "encryption_level": {"label": "Changing encryption level", "mutating": True},
 }
 
 AUDIT_ACTION = {
@@ -80,6 +83,7 @@ AUDIT_ACTION = {
     "snapshot_create": "snapshot-create",
     "snapshot_pin": "snapshot-pin",
     "encryption_switch": "encryption-switch",
+    "encryption_level": "encryption-level",
 }
 
 
@@ -124,17 +128,12 @@ def _record_history(job: dict) -> None:
     try:
         line = json.dumps(rec, ensure_ascii=False)
         with _HISTORY_LOCK:
-            os.makedirs(os.path.dirname(_history_path()), exist_ok=True)
-            with open(_history_path(), "a", encoding="utf-8") as fh:
-                fh.write(line + "\n")
-            if os.path.getsize(_history_path()) > HISTORY_FILE_LINES * 140:  # heuristic lines cap
-                with open(_history_path(), encoding="utf-8") as fh:
-                    lines = fh.readlines()
+            path = _history_path()
+            filecrypto.append_line(path, line)
+            if os.path.getsize(path) > HISTORY_FILE_LINES * 140:  # heuristic lines cap
+                lines = filecrypto.read_lines(path)
                 if len(lines) > HISTORY_FILE_LINES:
-                    tmp = _history_path() + ".tmp"
-                    with open(tmp, "w", encoding="utf-8") as fh:
-                        fh.writelines(lines[-HISTORY_FILE_LINES:])
-                    os.replace(tmp, _history_path())
+                    filecrypto.write_lines(path, lines[-HISTORY_FILE_LINES:])
     except Exception as exc:  # noqa: BLE001 - history is best-effort, the job already ran
         log.warning("job history write failed: %s", exc)
 
@@ -144,15 +143,11 @@ def read_job_history(limit: int = 200) -> list[dict]:
     survives restarts."""
     try:
         with _HISTORY_LOCK:
-            with open(_history_path(), encoding="utf-8") as fh:
-                lines = fh.readlines()
+            lines = filecrypto.read_lines(_history_path())
     except OSError:
         return []
     out: list[dict] = []
     for line in lines[-max(1, limit):]:
-        line = line.strip()
-        if not line:
-            continue
         try:
             out.append(json.loads(line))
         except Exception:  # noqa: BLE001 - one damaged line must not hide the rest
@@ -243,6 +238,27 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
                 return 1, str(exc)[:280]
 
         return [_switch_step], {"on": on, "dry": False}
+    elif kind == "encryption_level":
+        # One Python step: move the whole install to a level (index generations, the file
+        # layer, Backblaze) with the same verified rewrites the per-repo switch uses.
+        level = str(params.get("level") or "").lower()
+        if level not in ("off", "index", "everything"):
+            raise JobRefused(f"unknown encryption level: {level or '(none)'}")
+
+        def _level_step(job: dict, lf) -> tuple[int, str]:
+            from ..index import keyswitch
+            say_ = lambda text: say(job, lf, text)          # noqa: E731
+            try:
+                out = keyswitch.apply_level(level, say=say_)
+                job["level"] = out
+                if out.get("deferred"):
+                    say_(f"deferred: {', '.join(out['deferred'])} - run it again to finish")
+                return 0, ""
+            except Exception as exc:  # noqa: BLE001 - the runner reports it like any other step
+                say_(f"failed: {exc}")
+                return 1, str(exc)[:280]
+
+        return [_level_step], {"level": level, "dry": False}
     else:
         raise JobRefused(f"unknown job kind: {kind}")
     # The builders return PASTEABLE commands: ["kopia"] + _repo_args(repo) + subcommand. The
@@ -284,6 +300,8 @@ def _default_label(kind: str, params: dict, meta: dict) -> str:
         return base + (", then delete" if meta.get("then") else "")
     if kind == "encryption_switch":
         return "encrypting the index" if meta.get("on") else "removing encryption"
+    if kind == "encryption_level":
+        return f"encryption level -> {meta.get('level')}"
     return kind
 
 
@@ -346,7 +364,9 @@ def start_job(kind: str, repo: str, params: dict, label: str | None = None,
                     f"{clash['kind_label']} is already running on repo {repo} - "
                     "one write at a time per repo.")
         _JOBS[job["job_id"]] = job
-    if job["mutating"]:
+    if job["mutating"] and kind not in ("encryption_switch", "encryption_level"):
+        # An encryption rewrite is not a delete: the index's CONTENT is unchanged, so an
+        # incremental pass would burn a nightly for nothing.
         from . import reindexq  # lazy: reindexq reads the job registry
         reindexq.touch(repo)
     threading.Thread(target=_run, args=(job, cmds), daemon=True).start()
@@ -382,7 +402,7 @@ def _run(job: dict, cmds: list[list[str]]) -> None:
     job["started"] = time.time()
     rc = 0
     try:
-        with open(job["log_path"], "a", encoding="utf-8", errors="replace") as lf:
+        with filecrypto.open_text(job["log_path"]) as lf:
             lf.write(f"=== job {job['job_id']} {job['kind']} repo={job['repo']} "
                      f"{'dry-run' if job['dry'] else 'execute'} {len(cmds)} command(s) ===\n")
             lf.flush()
@@ -412,8 +432,8 @@ def _run(job: dict, cmds: list[list[str]]) -> None:
                 _record_freed(job, lf)
         if job["stop_requested"]:
             job["state"] = "stopped"
-        elif job["kind"] in ("restore", "maintenance", "policy_write",
-                             "encryption_switch") and job["rc"] not in (None, 0):
+        elif job["kind"] in ("restore", "maintenance", "policy_write", "encryption_switch",
+                             "encryption_level") and job["rc"] not in (None, 0):
             job["state"] = "failed"
         else:
             job["state"] = "done"

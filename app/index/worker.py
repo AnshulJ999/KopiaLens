@@ -62,11 +62,8 @@ def write_progress(repo: str, payload: dict, path: str | None = None) -> None:
     """Atomic write so the app never reads a half-written progress file."""
     path = path or progress_path(repo)
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh)
-        os.replace(tmp, path)
+        from ..core import filecrypto
+        filecrypto.write_json(path, payload)
     except Exception:  # noqa: BLE001 - progress reporting must never affect the real work
         pass
 
@@ -355,7 +352,8 @@ def run(repo: str, full: bool = False) -> dict:
 
 
 def main(argv: list) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
+    from ..core.applog import setup_worker_logging
+    setup_worker_logging(os.environ.get("KOPIALENS_WORKER_LOG"))
     from ..core.sources import pin_for_run
     pin_for_run()  # one snapshot listing per run; the stages are minutes apart, the TTL is 45s
     # Run-scoped memo for the refcount join: the analysis and folder stages each ask for it, and

@@ -587,7 +587,7 @@ def check(repo: str, defined: dict, targets: list[str]) -> dict:
         try:
             res = kopia(repo, args)
         except Exception as exc:  # noqa: BLE001 - one bad target must not stop the check
-            log.warning("repo=%s policy check: show failed for %s: %s", repo, key, exc)
+            log.debug("repo=%s policy check: show failed for %s: %s", repo, key, exc)
             out["failed"].append(key)
             continue
         if res.returncode != 0:

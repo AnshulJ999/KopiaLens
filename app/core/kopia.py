@@ -506,8 +506,9 @@ def remove_files_execute(repo: str, object_ids: list[str] | None = None, filenam
     if not object_ids and not filenames:
         return {"returncode": 1, "stdout": "", "stderr": "nothing specified (object_ids or filenames required)"}
     full = remove_files_command(repo, object_ids, filenames, source, commit=True) + ["--no-progress"]
-    log.warning("EXECUTING remove-files repo=%s filenames=%d object_ids=%d source=%r",
-                repo, len(filenames or []), len(object_ids or []), source)
+    log.warning("EXECUTING remove-files repo=%s filenames=%d object_ids=%d",
+                repo, len(filenames or []), len(object_ids or []))
+    log.debug("remove-files scope source=%r", source)
     t0 = time.time()
     res = subprocess.run(
         full, capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -688,11 +689,13 @@ def remove_files_chunked_execute(repo: str, items: list[str], source: str | list
     job = _REMOVE_JOBS.setdefault(job_id, {})
     job.update({"total": len(cmds), "done": 0, "running": True, "errors": 0,
                 "log": log_path, "objects": len(items), "rc": 0})
-    log.warning("EXECUTING chunked remove-files repo=%s flag=%s items=%d batches=%d source=%r",
-                repo, flag, len(items), len(cmds), source)
+    log.warning("EXECUTING chunked remove-files repo=%s flag=%s items=%d batches=%d",
+                repo, flag, len(items), len(cmds))
+    log.debug("chunked remove-files scope source=%r", source)
     t0 = time.time()
     try:
-        with open(log_path, "a", encoding="utf-8", errors="replace") as lf:
+        from . import filecrypto
+        with filecrypto.open_text(log_path) as lf:
             lf.write(f"=== chunked remove-files repo={repo} {flag} items={len(items)} batches={len(cmds)} ===\n")
             lf.flush()
             for i, cmd in enumerate(cmds, 1):
@@ -754,7 +757,8 @@ def _run_dry_commands(repo: str, cmds: list[list[str]], kind: str, expect_flag: 
     acc: dict = {}
     t0 = time.time()
     try:
-        lf = open(log_path, "a", encoding="utf-8", errors="replace")
+        from . import filecrypto
+        lf = filecrypto.open_text(log_path)
         lf.write(f"=== kopia {kind} dry run repo={repo} batches={len(cmds)} ===\n")
         lf.flush()
     except Exception as exc:  # noqa: BLE001 - a log-write failure must not kill the dry run
@@ -868,8 +872,9 @@ def remove_files_dry_run(repo: str, object_ids: list[str] | None = None,
     cmds = remove_files_chunked_commands(repo, object_ids or filenames or [],
                                          source=source, commit=False, max_chars=32000,
                                          flag="--filename" if filenames else "--object-id")
-    log.info("DRY RUN remove-files repo=%s filenames=%d object_ids=%d source=%r batches=%d",
-             repo, len(filenames or []), len(object_ids or []), source, len(cmds))
+    log.info("DRY RUN remove-files repo=%s filenames=%d object_ids=%d batches=%d",
+             repo, len(filenames or []), len(object_ids or []), len(cmds))
+    log.debug("dry-run remove-files scope source=%r", source)
     r = _run_dry_commands(repo, cmds, "remove-files", "--commit", parse_line=_parse_remove_line)
     audit.audit("dry-run", "remove-files", repo=repo,
                 summary={"filenames": len(filenames or []), "object_ids": len(object_ids or []),
@@ -1086,7 +1091,8 @@ def restore_execute(repo: str, source_id: str, target: str, options: dict | None
     """ACTUALLY run a restore (writes files/archive to ``target``). Logged. Non-destructive for a
     new folder / archive; can overwrite when the overwrite/delete-extra options are enabled."""
     full = restore_command_full(repo, source_id, target, options) + ["--no-progress"]
-    log.warning("EXECUTING restore repo=%s source=%s -> %s", repo, source_id, target)
+    log.warning("EXECUTING restore repo=%s snapshot=%s", repo, source_id)
+    log.debug("restore target %s", target)
     t0 = time.time()
     res = subprocess.run(
         full, capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -1155,7 +1161,7 @@ def open_in_explorer(target: str) -> None:
         else:
             subprocess.Popen(["explorer", "/select,", target], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except Exception as exc:  # noqa: BLE001
-        log.warning("open_in_explorer failed for %s: %s", target, exc)
+        log.debug("open_in_explorer failed for %s: %s", target, exc)
 
 
 def mount_and_browse(repo: str, snapshot_id: str, mountpoint: str, in_mount_target: str | None = None,
@@ -1172,7 +1178,7 @@ def mount_and_browse(repo: str, snapshot_id: str, mountpoint: str, in_mount_targ
                     open_in_explorer(target)
                     return
                 time.sleep(0.5)
-            log.warning("mount %s not ready in time; opening mountpoint root", mountpoint)
+            log.debug("mount %s not ready in time; opening mountpoint root", mountpoint)
             open_in_explorer(mountpoint)
 
         threading.Thread(target=_wait_and_open, daemon=True).start()

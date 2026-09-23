@@ -137,6 +137,41 @@ class WriterLock:
             pass
 
 
+def target_state() -> bool:
+    """Whether a NEW BZ file should be encrypted: the published manifest decides, and a
+    first build follows the Everything level - the same rule the index build uses."""
+    manifest = read_manifest()
+    if manifest is not None:
+        return bool(manifest.get("encrypted"))
+    from ..index import crypto
+    return crypto.covers_files()
+
+
+def ensure_staged_state(staged: str) -> bool:
+    """Re-encode a staged plaintext drive file into the encrypted state when it is due.
+
+    The BZ writer is PyArrow, which cannot write DuckDB-encrypted Parquet; DuckDB can read a
+    PyArrow file and write an encrypted one, so the file is converted on its way into the
+    pool and the plaintext original is removed at once. Only a crash mid-refresh can leave
+    one behind, in the app's own staging folder (cleared by the next refresh).
+    """
+    if not target_state():
+        return False
+    from ..index import crypto
+    tmp = staged + ".enc"
+    con = duckdb.connect()
+    try:
+        crypto.register_key(con, encrypted=True)
+        con.execute("COPY (SELECT * FROM read_parquet('%s')) TO '%s' (%s)"
+                    % (staged.replace(chr(92), "/").replace("'", "''"),
+                       tmp.replace(chr(92), "/").replace("'", "''"),
+                       crypto.copy_options(encrypted=True)))
+    finally:
+        con.close()
+    os.replace(tmp, staged)
+    return True
+
+
 def open_writer(staged: str) -> pqt.ParquetWriter:
     """Streaming zstd Parquet writer over SCHEMA for one staged drive file (caller closes)."""
     return pqt.ParquetWriter(staged, SCHEMA, compression="zstd", compression_level=3)
@@ -147,7 +182,8 @@ def table_from_rows(batch: list[tuple]) -> pa.Table:
     return pa.table(dict(zip(COLUMNS, zip(*batch))), schema=SCHEMA)
 
 
-def publish(gen: int, drive_rels: dict[str, str], moves: list[tuple[str, str]]) -> None:
+def publish(gen: int, drive_rels: dict[str, str], moves: list[tuple[str, str]],
+            encrypted: bool | None = None) -> None:
     """Move staged per-drive files into pool/ (atomic per file), swap the manifest, GC.
 
     Caller holds WriterLock. Unchanged drives keep their previous rel path (carried by
@@ -159,15 +195,26 @@ def publish(gen: int, drive_rels: dict[str, str], moves: list[tuple[str, str]]) 
             previous = list(json.load(fh).get("artifacts", {}).get("files", []))
     except Exception:
         previous = []
+    state = target_state() if encrypted is None else bool(encrypted)
     for staged, rel in moves:
         dst = os.path.join(r, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         os.replace(staged, dst)
+    # The same self-check the index build runs: every file this generation will name must be
+    # in the state the manifest is about to declare. A PyArrow write that skipped the
+    # re-encode would otherwise land plaintext under an `encrypted: true` manifest.
+    from ..index import crypto
+    misplaced = [rel for rel in drive_rels.values()
+                 if crypto.file_is_encrypted(os.path.join(r, rel)) != state]
+    if misplaced:
+        raise RuntimeError(f"BZ generation {gen}: {len(misplaced)} file(s) are not in the "
+                           f"declared encryption state, e.g. {misplaced[:3]}")
     manifest = {
         "generation": gen,
         "schema": SCHEMA_VERSION,
         "artifacts": {"files": sorted(drive_rels.values())},
         "drives": dict(drive_rels),
+        "encrypted": state,
     }
     path = manifest_path()
     tmp = path + ".tmp"
@@ -213,25 +260,31 @@ def _gc(current: list[str], previous: list[str]) -> None:
 
 # ---- reader ---------------------------------------------------------------------------------
 
-def _bind(con: duckdb.DuckDBPyConnection, files: list[str]) -> None:
+def _bind(con: duckdb.DuckDBPyConnection, files: list[str], encrypted: bool) -> None:
     """Bind the `files` view over the manifest's explicit file list (never a glob)."""
     if not files:
         raise FileNotFoundError("BZ parquet manifest lists no files")
-    paths = ", ".join("'%s'" % f.replace("\\", "/").replace("'", "''") for f in files)
-    con.execute(f"CREATE VIEW files AS SELECT * FROM read_parquet([{paths}])")
+    from ..index import crypto
+    args = crypto.parquet_read_list([f.replace("\\", "/").replace("'", "''") for f in files],
+                                    encrypted=encrypted)
+    con.execute(f"CREATE VIEW files AS SELECT * FROM read_parquet({args})")
 
 
 def _open_generation(gen_id: int, manifest: dict, mtime_ns: int):
+    from ..index import crypto
     r = root()
     files = [p if os.path.isabs(p) else os.path.join(r, p)
              for p in manifest.get("artifacts", {}).get("files", [])]
+    encrypted = bool(manifest.get("encrypted"))
+    if encrypted and not crypto.unlocked():
+        raise crypto.StoreLocked("the Backblaze store is encrypted and locked - unlock KopiaLens")
     con = duckdb.connect()
-    con.execute("SET memory_limit='%s'" % MEMORY_LIMIT)
     tmp = os.path.join(r, "_tmp")
     os.makedirs(tmp, exist_ok=True)
-    con.execute("SET temp_directory='%s'" % tmp.replace("\\", "/"))
-    _bind(con, files)
-    return _Generation(gen_id, manifest, con, mtime_ns)
+    session = crypto.apply(con, tmp, MEMORY_LIMIT, None, encrypted=encrypted)
+    # crypto.apply sets the memory limit itself; BZ keeps DuckDB's own thread default.
+    _bind(con, files, encrypted)
+    return _Generation(gen_id, manifest, con, mtime_ns, session)
 
 
 class _Generation:
@@ -239,15 +292,21 @@ class _Generation:
     index/store.Generation, minus the per-request pin scope - a BZ publish lands at most once
     per reindex gap, and every query function holds one cursor across its statements)."""
 
-    def __init__(self, gen_id, manifest, con, mtime_ns):
+    def __init__(self, gen_id, manifest, con, mtime_ns, session=None):
         self.id = gen_id
         self.manifest = manifest
         self._con = con
         self._mtime_ns = mtime_ns
         self._refs = 0
+        self._session = session          # index.crypto._Session: the encrypted scratch db
 
     def cursor(self):
-        return self._con.cursor()
+        cur = self._con.cursor()
+        from ..index import crypto
+        path = crypto.cursor_search_path(self._session)
+        if path:
+            cur.execute("SET search_path='%s'" % path)
+        return cur
 
     def acquire(self) -> None:
         with _LOCK:
@@ -263,6 +322,8 @@ class _Generation:
             self._con.close()
         except Exception:  # noqa: BLE001 - a failed close must not break the swap
             pass
+        if self._session is not None:
+            self._session.cleanup()
 
 
 _LOCK = threading.Lock()
@@ -274,6 +335,21 @@ def _reap_locked() -> None:
     for gen in [g for g in _RETIRED if g._refs <= 0]:
         _RETIRED.remove(gen)
         gen.close()
+
+
+def close_open_generation() -> bool:
+    """Close the live/retired BZ generation if nothing is reading it. False = busy (the
+    switch then leaves the superseded files to the normal GC, exactly like the index side)."""
+    global _GEN
+    with _LOCK:
+        gens = ([_GEN] if _GEN is not None else []) + list(_RETIRED)
+        if any(g._refs > 0 for g in gens):
+            return False
+        for gen in gens:
+            gen.close()
+        _GEN = None
+        _RETIRED.clear()
+    return True
 
 
 def current() -> _Generation:

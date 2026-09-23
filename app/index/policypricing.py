@@ -463,7 +463,7 @@ def _compute(repo: str, source_key: str, patterns: list[str],
     try:
         src = resolve_src_id(cur, source_key)
         if src is None:
-            log.warning("pricing: source %r not found in repo %s index", source_key, repo)
+            log.debug("pricing: source %r not found in repo %s index", source_key, repo)
             for i, (pat, compiled) in zip(valid_idx, valid_pats):
                 results[i] = {"pattern": pat, "files": 0, "bytes": 0, "dirs": 0, "examples": [],
                               "error": None, "negated": compiled.negated}

@@ -96,7 +96,8 @@ def publish(root: str, manifest: dict) -> None:
     move_into_pool(root, manifest.get("_moves", []))
     write_manifest(root, manifest)
     _gc(root, manifest.get("artifacts", {}), previous)
-    log.info("published generation %s -> %s", manifest.get("generation"), root)
+    log.info("published generation %s", manifest.get("generation"))
+    log.debug("published into %s", root)
 
 
 def replace_artifacts(repo: str, tables: dict) -> int | None:

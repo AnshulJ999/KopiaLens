@@ -47,15 +47,12 @@ def app_log_tail(limit: int = 500, file: str = "app", level: str = "info") -> di
     limit = max(1, min(limit, 2000))
     path = DEBUG_LOG_FILE if file == "debug" else LOG_FILE
     min_level = _LEVELS.get(level.upper(), 20)
+    from ..core import filecrypto
     try:
         size = os.path.getsize(path)
-        with open(path, "rb") as fh:
-            if size > _TAIL_BYTES:
-                fh.seek(-_TAIL_BYTES, os.SEEK_END)
-                fh.readline()  # discard the partial line the seek landed in
-            tail = fh.read().decode("utf-8", "replace")
     except OSError as exc:
         raise HTTPException(status_code=404, detail=f"log not found: {exc}") from exc
+    tail = filecrypto.read_tail_text(path, _TAIL_BYTES)
     records = [r for r in parse_records(tail) if _LEVELS.get(r["level"], 20) >= min_level]
     records.reverse()
     return {"records": records[:limit], "path": path, "file": "debug" if file == "debug" else "app",

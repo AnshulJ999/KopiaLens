@@ -17,7 +17,7 @@ import time
 
 from config import DATA_DIR
 
-from . import audit
+from . import audit, filecrypto
 from .applog import get_logger
 
 log = get_logger("mounts")
@@ -34,13 +34,8 @@ def _path() -> str:
 
 
 def _save() -> None:
-    try:
-        tmp = _path() + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(list(_RECORDS.values()), fh)
-        os.replace(tmp, _path())
-    except OSError as exc:
-        log.warning("could not save the mount list: %s", exc)
+    if not filecrypto.write_json(_path(), list(_RECORDS.values())):
+        log.warning("could not save the mount list")
 
 
 def _load() -> None:
@@ -48,10 +43,8 @@ def _load() -> None:
     if _LOADED:
         return
     _LOADED = True
-    try:
-        with open(_path(), encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError):
+    data = filecrypto.read_json(_path(), [])
+    if not isinstance(data, list):
         return
     for rec in data or []:
         if isinstance(rec, dict) and rec.get("pid"):
@@ -128,7 +121,7 @@ def active() -> list[dict]:
             try:
                 drop_mapping(rec.get("mountpoint", ""))
             except Exception as exc:  # noqa: BLE001
-                log.warning("mapping cleanup for %s failed: %s", rec.get("mountpoint"), exc)
+                log.debug("mapping cleanup for %s failed: %s", rec.get("mountpoint"), exc)
         if dead:
             _save()
         return sorted((dict(r) for r in _RECORDS.values()), key=lambda r: r.get("started", 0))

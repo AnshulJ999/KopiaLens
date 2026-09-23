@@ -1,9 +1,15 @@
 """Encryption routes (): status, setup, unlock, lock, password/recovery, the switch.
 
 This is the backend the onboarding screens and the Settings section () call. Onboarding
-POLICY - the default-ticked box, the pros and cons copy, the Docker choice - is the UI's job;
-these routes only do what they say, and every one of them answers with the current status so the
-caller never has to guess what state it left the install in.
+POLICY - the default-ticked box meaning Everything, the pros and cons copy, the Docker choice -
+is the UI's job; these routes only do what they say, and every one of them answers with the
+current status so the caller never has to guess what state it left the install in.
+
+The three levels (Off / Index / Everything) are the one user-facing choice:
+  off        nothing
+  index      the index generations + side caches + policy caches (the full map of names)
+  everything the above + the small JSON files, audit/history, logs, policy backups, Backblaze
+`level` moves the whole install; every part of it is a verified rewrite, never a flag flip.
 
 Conventions that matter:
 
@@ -33,6 +39,7 @@ class SetupRequest(BaseModel):
     password: str
     remember: bool = False
     recovery: bool = True                 # issue a recovery key, returned once
+    level: str = "everything"              # what the ticked onboarding box means
 
 
 class UnlockRequest(BaseModel):
@@ -57,28 +64,38 @@ class RememberRequest(BaseModel):
     on: bool
 
 
-class SwitchRequest(BaseModel):
-    repo: str = "1"
-    on: bool
+class LevelRequest(BaseModel):
+    level: str = "everything"
 
 
-def _set_intent(on: bool) -> None:
+def _set_level(level: str) -> None:
     """Write the setting (the INTENT). The data follows through the switch, never on its own."""
     def _apply(settings: dict) -> None:
-        settings.setdefault("kopialens", {})["encryption"] = bool(on)
+        kl = settings.setdefault("kopialens", {})
+        kl["encryption_level"] = level
+        kl.pop("encryption", None)        # the old boolean is folded in by the REL30 step
     mutate_settings(_apply)
 
 
 def _status() -> dict:
+    from ..core import filecrypto
     repos = keyswitch.repo_states()
+    bz = keyswitch.bz_state()
+    try:
+        files_pending = len(filecrypto.pending_files())
+    except Exception:  # noqa: BLE001 - a status route never fails on a scan
+        files_pending = 0
     return {
         "configured": crypto.configured(),
+        "level": crypto.level(),
         "enabled": crypto.enabled(),
         "unlocked": crypto.unlocked(),
         "remembered": crypto.is_remembered(),
         "has_recovery": crypto.has_recovery(),
         "pending": [r["repo"] for r in repos if r["pending"]],
         "repos": repos,
+        "backblaze": bz,
+        "files_pending": files_pending,
     }
 
 
@@ -115,7 +132,10 @@ def setup(payload: SetupRequest) -> dict:
                                     with_recovery=payload.recovery)
     except RuntimeError as exc:               # a second keystore would orphan the first data key
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    _set_intent(True)
+    level = (payload.level or "everything").strip().lower()
+    if level not in crypto.LEVELS:
+        raise HTTPException(status_code=400, detail=f"Unknown level {payload.level!r}.")
+    _set_level(level)
     return {"ok": True, "recovery_key": recovery_key, "status": _status()}
 
 
@@ -192,24 +212,29 @@ def remember(payload: RememberRequest) -> dict:
     return {"ok": True, "status": _status()}
 
 
-@router.post("/encryption/switch")
-def switch(payload: SwitchRequest) -> dict:
-    """Move one repo's data (and the side caches) between plaintext and encrypted.
+@router.post("/encryption/level")
+def set_level(payload: LevelRequest) -> dict:
+    """Move the whole install to an encryption level.
 
-    Flips the intent first, then runs the rewrite as a job - the job's progress appears wherever
-    jobs appear. Both directions need the key, one to write the new files and the other to read
-    the old ones.
+    Flips the intent, then runs ONE job that makes the data match: every index generation
+    whose state differs, the file layer (small JSON, audit/history, logs, policy backups) and
+    the Backblaze store. Each part is a verified rewrite, so a failure leaves everything
+    readable and the job can simply be run again; a repo that is mid-index is deferred.
     """
-    from config import REPOS, repo_kind
-    if payload.repo not in REPOS or repo_kind(payload.repo) == "backblaze":
-        raise HTTPException(status_code=404, detail=f"Unknown repo {payload.repo}.")
-    if not crypto.unlocked():
-        raise HTTPException(status_code=409, detail="Unlock KopiaLens first.")
-    if payload.on and not crypto.configured():
+    level = (payload.level or "").strip().lower()
+    if level not in crypto.LEVELS:
+        raise HTTPException(status_code=400,
+                            detail=f"Unknown level {payload.level!r}. One of: "
+                                   f"{', '.join(crypto.LEVELS)}.")
+    if level != crypto.LEVEL_OFF and not crypto.configured():
         raise HTTPException(status_code=409, detail="Set up encryption before turning it on.")
-    _set_intent(payload.on)
+    if crypto.configured() and not crypto.unlocked():
+        raise HTTPException(status_code=409, detail="Unlock KopiaLens first.")
+    _set_level(level)
     try:
-        job = jobrunner.start_job("encryption_switch", payload.repo, {"on": payload.on})
+        # 'all' is deliberate: this job is install-wide, not a repo write, and it defers any
+        # repo that is busy rather than refusing to start.
+        job = jobrunner.start_job("encryption_level", "all", {"level": level})
     except jobrunner.JobRefused as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"started": job["job_id"], "job": jobrunner.job_status(job["job_id"], after=0),

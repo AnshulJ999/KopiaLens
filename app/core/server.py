@@ -120,7 +120,8 @@ class KopiaServers:
         )
         log.info("starting kopia server repo=%s on 127.0.0.1:%d", repo, port)
         os.makedirs(APP_LOG_DIR, exist_ok=True)
-        logf = open(os.path.join(APP_LOG_DIR, f"kopia-server-repo{repo}.log"), "a", encoding="utf-8", errors="replace")
+        from . import filecrypto
+        logf = filecrypto.open_text(os.path.join(APP_LOG_DIR, f"kopia-server-repo{repo}.log"))
         proc = subprocess.Popen(
             args,
             stdin=subprocess.PIPE,

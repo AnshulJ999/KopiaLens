@@ -207,6 +207,7 @@ def test_restore_makes_a_pre_restore_backup_first(tmp_path, monkeypatch):
 
     def fake_import(repo, file_path, mirror=False):
         calls["file"] = file_path
+        calls["content"] = open(file_path, encoding="utf-8").read()
         calls["mirror"] = mirror
         return {"returncode": 0, "stdout": "ok", "stderr": "", "command": ["kopia"]}
 
@@ -215,7 +216,10 @@ def test_restore_makes_a_pre_restore_backup_first(tmp_path, monkeypatch):
     backup = policybackup.create_backup("1", "manual")
     out = policybackup.restore_backup("1", backup["name"], mirror=False)
     assert out["returncode"] == 0
-    assert calls["file"].endswith(backup["name"])
+    # kopia is handed a temp file holding the backup's text, removed the moment it returns
+    assert os.path.basename(calls["file"]).startswith("policy_restore_")
+    assert calls["content"] == policybackup.read_backup("1", backup["name"])
+    assert not os.path.exists(calls["file"])
     assert out["pre_restore_backup"]["name"].endswith("_pre-restore.json")
     assert calls["mirror"] is False
     with pytest.raises(FileNotFoundError):

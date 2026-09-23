@@ -37,16 +37,20 @@ def sandbox(tmp_path, monkeypatch):
     """Scratch data folder + keystore, encryption ON and unlocked, repo ids fenced to one."""
     data = tmp_path / "data"
     (data / "cache").mkdir(parents=True)
+    monkeypatch.setattr("config.DATA_DIR", str(data))     # filecrypto resolves it at call time
     monkeypatch.setattr(store, "DATA_DIR", str(data))
     monkeypatch.setattr(keyswitch, "DATA_DIR", str(data))
     monkeypatch.setattr(keyswitch, "CACHEDIR", str(data / "cache"))
     monkeypatch.setattr(keyswitch, "REPOS", ["3"])
     monkeypatch.setattr(keyswitch, "repo_kind", lambda repo: "kopia")
+    monkeypatch.setattr("app.backblaze.pq.ROOT", str(data / "bz"))   # never the real BZ store
     monkeypatch.setattr(crypto, "keystore_dir", lambda: str(data))
     monkeypatch.setattr(crypto, "remember_on_this_machine", lambda on: True)
     monkeypatch.setattr("app.settings.load_settings", lambda: {"kopialens": {"encryption": True}})
-    (data / "settings.json").write_text(json.dumps({"kopialens": {"encryption": True}}),
-                                        encoding="utf-8")
+    monkeypatch.setattr("app.settings.raw_kopialens_settings",
+                        lambda: {"encryption_level": "everything"})
+    (data / "settings.json").write_text(
+        json.dumps({"kopialens": {"encryption_level": "everything"}}), encoding="utf-8")
     crypto.lock()
     crypto.setup("pw", with_recovery=False)
     yield data
@@ -145,6 +149,7 @@ def test_a_build_never_flips_a_generation_on_its_own(sandbox, monkeypatch):
 
     keyswitch.switch_repo("3", True)
     monkeypatch.setattr("app.settings.load_settings", lambda: {"kopialens": {"encryption": False}})
+    monkeypatch.setattr("app.settings.raw_kopialens_settings", lambda: {"encryption_level": "off"})
     body = artifacts.build_repo("3", root, gen=3)
     assert seen["state"] is True                       # data encrypted, setting now OFF
     assert body["encrypted"] is True
@@ -240,6 +245,62 @@ def test_a_cache_already_in_the_target_state_is_left_alone(sandbox):
     assert crypto.file_is_encrypted(os.path.join(cache, "churn_repo3_30d_d4.parquet")) is True
     out = keyswitch.switch_caches(True)
     assert out["files"] == 0 and out["dropped"] == 0
+
+
+def test_apply_level_moves_the_generation_and_the_files_together(sandbox):
+    from app.core import filecrypto
+    make_generation(sandbox, rows=20)                      # plaintext generation
+    mounts = sandbox / "mounts.json"
+    mounts.write_text(json.dumps([{"target": "X:"}]), encoding="utf-8")
+
+    out = keyswitch.apply_level("everything")
+    assert out["repos"]["3"]["files"] == 2 and out["deferred"] == []
+    assert out["files"]["files"] == 1
+    assert store.generation_state("3") is True
+    assert filecrypto.read_json(str(mounts)) == [{"target": "X:"}]
+
+    down = keyswitch.apply_level("index")                  # index level keeps the index only
+    assert down["repos"]["3"]["note"].startswith("already")
+    assert store.generation_state("3") is True
+    assert filecrypto.is_encrypted_file(str(mounts)) is False
+    assert json.loads(mounts.read_text(encoding="utf-8")) == [{"target": "X:"}]
+
+
+def test_the_backblaze_parquet_generation_switches_both_ways(sandbox, tmp_path, monkeypatch):
+    SEP = chr(92)
+    from app.backblaze import pq
+    staged = pq.staged_path("C", 1)
+    os.makedirs(os.path.dirname(staged), exist_ok=True)
+    writer = pq.open_writer(staged)
+    writer.write_table(pq.table_from_rows([("C:", "C:" + SEP + "Users" + SEP + "secret.txt",
+                                            "c:" + SEP + "users" + SEP + "secret.txt",
+                                            "secret.txt", ".txt",
+                                            10, "abc", 0, "")]))
+    writer.close()
+    # a first build at the INDEX level: the BZ store is not covered yet, so it starts plain
+    monkeypatch.setattr("app.settings.raw_kopialens_settings",
+                        lambda: {"encryption_level": "index"})
+    assert pq.ensure_staged_state(staged) is False
+    rel = pq.pool_rel("C", 1)
+    pq.publish(1, {"C": rel}, [(staged, rel)])
+    with pq.files_cursor() as cur:
+        assert cur.execute("SELECT count(*) FROM files").fetchone()[0] == 1
+
+    monkeypatch.setattr("app.settings.raw_kopialens_settings",
+                        lambda: {"encryption_level": "everything"})
+    out = keyswitch.switch_bz(True)
+    assert out["files"] == 1 and pq.read_manifest()["encrypted"] is True
+    new_rel = pq.read_manifest()["artifacts"]["files"][0]
+    assert new_rel != rel and not os.path.exists(os.path.join(pq.root(), rel))
+    assert crypto.file_is_encrypted(os.path.join(pq.root(), new_rel))   # DuckDB footer magic
+    with pq.files_cursor() as cur:                     # the reader follows the manifest
+        expected = "C:" + SEP + "Users" + SEP + "secret.txt"
+        assert cur.execute("SELECT full_path FROM files").fetchone()[0] == expected
+
+    keyswitch.switch_bz(False)
+    assert pq.read_manifest()["encrypted"] is False
+    with pq.files_cursor() as cur:
+        assert cur.execute("SELECT count(*) FROM files").fetchone()[0] == 1
 
 
 # ---------------------------------------------------------------------------- worker key handoff

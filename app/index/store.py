@@ -224,9 +224,9 @@ def open_generation(repo: str) -> Generation:
         # Two different problems with two different fixes - a locked key wants a password, a
         # missing keystore wants a restore or a rebuild.
         if not crypto.configured():
-            raise PermissionError("the index is encrypted but its keystore is gone - restore the "
-                                  "keystore file or rebuild the index from kopia")
-        raise PermissionError("the index is encrypted and locked - unlock it to read this repo")
+            raise crypto.StoreLocked("the index is encrypted but its keystore is gone - restore "
+                                     "the keystore file or rebuild the index from kopia")
+        raise crypto.StoreLocked("the index is encrypted and locked - unlock it to read this repo")
     limit, threads = resolve_limits()
     tmp = os.path.join(DATA_DIR, f"duck_tmp_repo{repo}")
     con = duckdb.connect()
@@ -417,7 +417,7 @@ def scratch_connection(repo: str):
     """
     encrypted = generation_state(repo)
     if encrypted and not crypto.unlocked():
-        raise PermissionError("the store is encrypted and locked - unlock it before writing")
+        raise crypto.StoreLocked("the store is encrypted and locked - unlock it before writing")
     limit, threads = resolve_limits()
     tmp = os.path.join(DATA_DIR, f"duck_tmp_repo{repo}")
     con = duckdb.connect()

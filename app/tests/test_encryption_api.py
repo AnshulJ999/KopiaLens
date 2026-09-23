@@ -23,15 +23,22 @@ def wired(tmp_path, monkeypatch):
     monkeypatch.setattr(crypto, "remember_on_this_machine", lambda on: True)
     monkeypatch.setattr(crypto, "is_remembered", lambda: False)
     monkeypatch.setattr("app.settings.load_settings", lambda: {"kopialens": {"encryption": True}})
+    monkeypatch.setattr("app.settings.raw_kopialens_settings",
+                        lambda: {"encryption_level": "index"})
     monkeypatch.setattr(keyswitch, "repo_states", lambda: [
         {"repo": "1", "generation": 4, "encrypted": False, "pending": True},
     ])
-    saved = {"intent": None}
+    monkeypatch.setattr(keyswitch, "bz_state", lambda: {
+        "repo": "bz", "generation": None, "encrypted": False, "pending": False,
+        "exists": False})
+    monkeypatch.setattr("app.core.filecrypto.pending_files", lambda: [])
+    saved = {"level": None, "writes": 0}
 
     def fake_mutate(mutator):
-        settings = {"kopialens": {"encryption": False}}
+        settings = {"kopialens": {}}
         mutator(settings)
-        saved["intent"] = settings["kopialens"]["encryption"]
+        saved["level"] = settings["kopialens"].get("encryption_level")
+        saved["writes"] += 1
         return settings
 
     monkeypatch.setattr(api, "mutate_settings", fake_mutate)
@@ -48,10 +55,12 @@ def wired(tmp_path, monkeypatch):
     crypto.lock()
 
 
-def test_status_reports_the_pending_repos(wired):
+def test_status_reports_the_pending_repos_and_the_level(wired):
     body = api.status()
     assert body["configured"] is False and body["unlocked"] is False
     assert body["pending"] == ["1"] and body["repos"][0]["generation"] == 4
+    assert body["level"] == "index" and body["files_pending"] == 0
+    assert body["backblaze"]["exists"] is False
 
 
 def test_setup_creates_the_keystore_and_returns_a_recovery_key(wired):
@@ -59,7 +68,7 @@ def test_setup_creates_the_keystore_and_returns_a_recovery_key(wired):
     assert body["ok"] is True and body["recovery_key"]
     assert body["status"]["configured"] is True and body["status"]["unlocked"] is True
     assert body["status"]["has_recovery"] is True
-    assert wired["saved"]["intent"] is True            # setup turns the intent on
+    assert wired["saved"]["level"] == "everything"     # the ticked onboarding box means Everything
 
 
 def test_setup_refuses_a_second_keystore(wired):
@@ -151,30 +160,31 @@ def test_remember_refuses_while_locked(wired):
     assert exc.value.status_code == 409
 
 
-def test_the_switch_flips_the_intent_and_starts_one_job(wired):
+def test_the_level_route_flips_the_intent_and_starts_one_job(wired):
     api.setup(api.SetupRequest(password="correct horse", recovery=False))
-    body = api.switch(api.SwitchRequest(repo="3", on=True))
-    assert wired["saved"]["intent"] is True
+    body = api.set_level(api.LevelRequest(level="index"))
+    assert wired["saved"]["level"] == "index"
     assert wired["jobs"]["started"] == [
-        {"kind": "encryption_switch", "repo": "3", "params": {"on": True}}]
+        {"kind": "encryption_level", "repo": "all", "params": {"level": "index"}}]
     assert body["started"] == "j1"
 
 
-def test_the_switch_refuses_to_run_locked_or_on_an_unknown_repo(wired):
+def test_the_level_route_refuses_a_bad_level_or_a_locked_install(wired):
     api.setup(api.SetupRequest(password="correct horse", recovery=False))
     with pytest.raises(HTTPException) as exc:
-        api.switch(api.SwitchRequest(repo="nope", on=True))
-    assert exc.value.status_code == 404
+        api.set_level(api.LevelRequest(level="sometimes"))
+    assert exc.value.status_code == 400
     api.lock()
     with pytest.raises(HTTPException) as exc:
-        api.switch(api.SwitchRequest(repo="3", on=True))
+        api.set_level(api.LevelRequest(level="everything"))
     assert exc.value.status_code == 409
     assert wired["jobs"]["started"] == []
+    assert wired["saved"]["writes"] == 1             # setup's own write; neither refusal wrote
 
 
-def test_the_switch_refuses_to_encrypt_without_a_keystore(wired, monkeypatch):
+def test_the_level_route_refuses_to_encrypt_without_a_keystore(wired, monkeypatch):
     monkeypatch.setattr(crypto, "unlocked", lambda: True)    # past the unlock check, keystore absent
     with pytest.raises(HTTPException) as exc:
-        api.switch(api.SwitchRequest(repo="3", on=True))
+        api.set_level(api.LevelRequest(level="everything"))
     assert exc.value.status_code == 409
     assert "Set up encryption" in exc.value.detail

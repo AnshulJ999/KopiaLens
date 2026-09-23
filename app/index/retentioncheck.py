@@ -18,16 +18,14 @@ from config import CACHEDIR
 log = logging.getLogger("kopialens.retentioncheck")
 
 
-def _path(repo: str) -> str:
-    return os.path.join(CACHEDIR, f"retention_check_repo{repo}.json")
+def _cache_name(repo: str) -> str:
+    return f"retention_check_repo{repo}"
 
 
 def load(repo: str) -> dict | None:
-    try:
-        with open(_path(repo), encoding="utf-8") as fh:
-            return json.load(fh)
-    except Exception:  # noqa: BLE001 - never checked yet
-        return None
+    from . import sidecache
+    data = sidecache.read(_cache_name(repo))
+    return data if isinstance(data, dict) else None
 
 
 def run(repo: str) -> dict:
@@ -39,18 +37,14 @@ def run(repo: str) -> dict:
            "checked": out["checked"], "mismatches": out["mismatches"], "failed": out["failed"]}
     if out["mismatches"]:
         log.error("repo=%s retention check: %d of %d sources differ from kopia's own retention "
-                  "reasons: %s", repo, len(out["mismatches"]), out["checked"],
+                  "reasons", repo, len(out["mismatches"]), out["checked"])
+        log.debug("retention mismatches: %s",
                   "; ".join(f"{m['source']} (we drop {m['we_drop']}, we keep {m['we_keep']})"
                             for m in out["mismatches"][:3]))
     else:
         log.info("repo=%s retention check: %d sources match kopia (%.1fs)",
                  repo, out["checked"], rec["elapsed"])
-    try:
-        os.makedirs(CACHEDIR, exist_ok=True)
-        tmp = _path(repo) + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(rec, fh)
-        os.replace(tmp, _path(repo))
-    except OSError as exc:
-        log.warning("repo=%s retention check result not saved: %s", repo, exc)
+    from . import sidecache
+    if not sidecache.write(_cache_name(repo), rec):
+        log.warning("repo=%s retention check result not saved", repo)
     return rec

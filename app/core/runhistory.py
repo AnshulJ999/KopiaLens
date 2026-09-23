@@ -20,6 +20,7 @@ import time
 
 from config import DATA_DIR
 
+from . import filecrypto
 from .applog import get_logger
 
 log = get_logger("runhistory")
@@ -59,9 +60,8 @@ def record(repo: str, summary: dict, trigger: str, full: bool, elapsed: float) -
     try:
         line = json.dumps(rec, ensure_ascii=False)
         with _LOCK:
-            os.makedirs(os.path.dirname(_path(repo)), exist_ok=True)
-            with open(_path(repo), "a", encoding="utf-8") as fh:
-                fh.write(line + "\n")
+            if not filecrypto.append_line(_path(repo), line):
+                log.warning("run-history write failed repo=%s", repo)
     except Exception as exc:  # noqa: BLE001 - history must never break the pass
         log.warning("run-history write failed repo=%s: %s", repo, exc)
 
@@ -75,16 +75,8 @@ def read_tail(limit: int = 100, repos: list[str] | None = None) -> list[dict]:
     for path in paths:
         try:
             with _LOCK:
-                size = os.path.getsize(path)
-                with open(path, "rb") as fh:
-                    if size > 1_048_576:  # far more than the asked tail
-                        fh.seek(-1_048_576, os.SEEK_END)
-                        fh.readline()
-                    tail = fh.read().decode("utf-8", "replace")
-            for line in tail.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
+                lines = filecrypto.tail_lines(path, max(1, limit))
+            for line in lines:
                 try:
                     out.append(json.loads(line))
                 except Exception:  # noqa: BLE001 - one damaged line must not hide the rest

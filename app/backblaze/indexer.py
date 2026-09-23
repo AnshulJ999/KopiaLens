@@ -52,10 +52,8 @@ def _write_progress(stage: str) -> None:
         payload = {"repo": "bz", "stage": stage, "pid": os.getpid(), "updated": time.time()}
         import config
         os.makedirs(config.DATA_DIR, exist_ok=True)
-        tmp = _progress_path() + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh)
-        os.replace(tmp, _progress_path())
+        from ..core import filecrypto
+        filecrypto.write_json(_progress_path(), payload)
     except Exception:  # noqa: BLE001 - progress reporting must never affect the real work
         pass
 
@@ -511,6 +509,11 @@ def refresh(force: bool = False) -> dict:
     """Incremental refresh of the whole BZ index. Returns a per-drive summary."""
     if not paths.exists():
         return {"ok": False, "reason": f"bzdata not found at {paths.bzdata_root()}"}
+    from ..index import crypto
+    if pq.target_state() and not crypto.unlocked():
+        # The BZ store is encrypted and this process holds no key: nothing may index in the clear.
+        return {"ok": False, "skipped": True,
+                "reason": "the Backblaze store is encrypted and locked - unlock KopiaLens"}
     t0 = time.time()
     _STATE["building"] = True
     _write_progress("starting")
@@ -595,6 +598,8 @@ def refresh(force: bool = False) -> dict:
                         _write_progress(f"reindexing {vol.letter}")
                         staged = pq.staged_path(vol.letter, pq_gen)
                         total, backed, excluded, roll1, roll2 = _reindex_drive_pq(vol, engine, staged)
+                        if pq.ensure_staged_state(staged):   # Everything level
+                            _write_progress(f"encrypting {vol.letter}")
                         _write_rollup(con, vol.letter.lower() + ":\\", roll1, roll2)
                         rel = pq.pool_rel(vol.letter, pq_gen)
                         pq_moves.append((staged, rel))
@@ -783,9 +788,15 @@ def refresh_via_worker(force: bool = False) -> dict:
         args = [sys.executable, "-m", "app.backblaze.worker"]
         if force:
             args.append("--force")
+        from ..index import crypto
+        payload = crypto.worker_payload() if crypto.enabled() else None
+        env = {**os.environ}
+        if payload is not None:
+            env["KOPIALENS_KEY_STDIN"] = "1"
         try:
             res = subprocess.run(
                 args, cwd=_KL_ROOT, capture_output=True, text=True, timeout=45 * 60,
+                input=payload, env=env,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash under pythonw
             )
         except subprocess.TimeoutExpired:

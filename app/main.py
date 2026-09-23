@@ -26,6 +26,8 @@ from .api import (actions, audit, backblaze, dashboard, deleteplan, encryption, 
                   jobs, logs, policies, restore, search, simulate, snapshots, stats, tree)
 from .core import auth
 from .core import jobs as jobrunner
+from .index.crypto import StoreLocked
+from .index import crypto as crypto_mod
 from .core import kopia as kopia_mod
 from .core import nightly
 from .core.applog import RequestStats, apply_logging_settings, get_logger, setup_logging
@@ -141,14 +143,9 @@ def _read_state() -> dict:
 
 
 def _write_state(data: dict) -> None:
-    try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        tmp = _LAST_CYCLE_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(data, fh)
-        os.replace(tmp, _LAST_CYCLE_FILE)
-    except Exception as exc:  # noqa: BLE001 - never fail the bg loop on housekeeping
-        log.warning("bg worker state write failed: %s", exc)
+    from .core import filecrypto
+    if not filecrypto.write_json(_LAST_CYCLE_FILE, data):
+        log.warning("bg worker state write failed")
 
 
 def _read_last_cycle_ts() -> float | None:
@@ -571,8 +568,9 @@ async def lifespan(_app: FastAPI):
     log.info("KopiaLens starting up")
     import config as _config
     if _config.LEGACY_LAYOUT:
-        log.warning("Old folder layout: data in %s, settings next to the app. Move them into one "
-                    "data folder and set KOPIALENS_DATA_DIR.", _config.DATA_DIR)
+        log.warning("Old folder layout: data and settings sit next to the app. Move them into "
+                    "one data folder and set KOPIALENS_DATA_DIR.")
+        log.debug("old layout data dir: %s", _config.DATA_DIR)
     try:  # seed a password from the environment ONCE - how a provisioned Docker image gets auth
         seeded = os.environ.get("KOPIALENS_PASSWORD") or ""
         if seeded and not auth.password_hash():
@@ -849,6 +847,34 @@ async def _repo_offline_handler(_request: Request, exc: RepoOffline):
             "reason": exc.info.get("reason", "indexing"), "since": since,
         },
     )
+
+
+@app.exception_handler(StoreLocked)
+def _locked_store_handler(request: Request, exc: StoreLocked) -> JSONResponse:
+    """Encrypted and locked: one structured answer for the unlock screen, never a raw 500.
+
+    Every index-backed route raises this while the data key is not in memory (a restart with
+    "remember" off, or a Docker restart), so the UI can show the unlock prompt instead of a
+    wall of red errors. 423 Locked; the detail already names the store.
+    """
+    return JSONResponse(status_code=423, content={
+        "locked": True, "detail": str(exc), "repos": gated_repos(),
+        "unlock": "/api/encryption/status"})
+
+
+def gated_repos() -> list[str]:
+    """The repos whose reads are refused right now, for the unlock screen's wording."""
+    out = []
+    try:
+        from .index import store as _store
+        for repo in REPOS:
+            if repo_kind(repo) == "backblaze":
+                continue
+            if _store.generation_state(repo) and not crypto_mod.unlocked():
+                out.append(repo)
+    except Exception:  # noqa: BLE001 - a diagnostic for the message only
+        pass
+    return out
 
 
 @app.exception_handler(Exception)
