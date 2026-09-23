@@ -86,6 +86,15 @@ def touch(repo: str, now: float | None = None) -> None:
             _save()
 
 
+def forget(repo: str) -> bool:
+    """Drop a queued update for a repo that no longer exists (used when a repo is removed)."""
+    with _LOCK:
+        if _PENDING.pop(repo, None) is None:
+            return False
+        _save()
+    return True
+
+
 def pending() -> list[dict]:
     with _LOCK:
         return [{"repo": r, "requested": v["requested"], "due": v["due"]} for r, v in _PENDING.items()]

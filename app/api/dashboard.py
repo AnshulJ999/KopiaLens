@@ -47,7 +47,8 @@ def _require_kopia(repo: str) -> None:
 
 @router.get("/repos")
 def repos() -> dict:
-    from ..core import auth
+    from ..core import auth, kopiabin
+    from ..core import repos as repo_store
 
     settings = load_settings()
     kl = settings.get("kopialens", {})
@@ -55,12 +56,19 @@ def repos() -> dict:
     # server - anyone holding it could mint valid sessions. The UI only needs yes/no.
     kl.pop("auth_password_hash", None)
     kl["auth_protected"] = auth.enabled()
-    return {"repos": [{"id": key, "name": value["name"], "kind": value.get("kind", "kopia")}
-                      for key, value in REPOS.items()], "settings": _scrub_secrets(settings)}
+    return {
+        # Every record, with the fields the repo UI needs: short label, connection source,
+        # "counts as a backup", and the cached storage facts (no kopia call on a polled route).
+        "repos": [repo_store.detail(rec) for rec in repo_store.all_records()],
+        # Where the kopia program is (resolved, or not found). The version is read once at
+        # startup, so this route never spawns anything.
+        "kopia": kopiabin.info(with_version=False),
+        "settings": _scrub_secrets(settings),
+    }
 
 
 @router.get("/dashboard")
-def dashboard(repo: str = "1", mode: str = "all", refresh: bool = False) -> dict:
+def dashboard(repo: str, mode: str = "all", refresh: bool = False) -> dict:
     _require_kopia(repo)
     try:
         return table_rows(repo, refresh=refresh, mode=mode)
@@ -71,14 +79,14 @@ def dashboard(repo: str = "1", mode: str = "all", refresh: bool = False) -> dict
 
 
 @router.get("/sources")
-def sources(repo: str = "1", force: bool = False) -> dict:
+def sources(repo: str, force: bool = False) -> dict:
     _require_kopia(repo)
     srcs = sources_index(repo, force=force)
     return {"sources": sorted(srcs)}
 
 
 @router.get("/index/status")
-def get_index_status(repo: str = "1") -> dict:
+def get_index_status(repo: str) -> dict:
     _require_kopia(repo)
     try:
         return index_status_with_summary(repo)
@@ -89,7 +97,7 @@ def get_index_status(repo: str = "1") -> dict:
 
 
 @router.get("/index/log")
-def index_log(repo: str = "1", after: int = 0, limit: int = 400) -> dict:
+def index_log(repo: str, after: int = 0, limit: int = 400) -> dict:
     """ Paged tail of this repo's worker log for the panel's log pane. ``after`` is the
     cursor the previous call returned; only lines after it come back, and the cursor advances by
     exactly what was returned so a burst pages through instead of being skipped."""
@@ -106,7 +114,7 @@ def index_pending() -> dict:
 
 
 @router.post("/index/pending/run")
-def index_pending_run(repo: str = "1") -> dict:
+def index_pending_run(repo: str) -> dict:
     """Start a queued index update now instead of waiting out the quiet period."""
     _require_kopia(repo)
     from ..core import reindexq
@@ -123,7 +131,7 @@ def index_runs(limit: int = 100) -> dict:
 
 
 @router.post("/index/build")
-def post_index_build(repo: str = "1", source: str | None = None, full: bool = False) -> dict:
+def post_index_build(repo: str, source: str | None = None, full: bool = False) -> dict:
     """Manual index: the SAME worker-subprocess pass the nightly scheduler runs, so a
     hand-triggered index costs this process no memory either.
 

@@ -19,7 +19,9 @@ def test_maintenance_fix_commands_target_their_own_repo():
     assert health2, "an owner mismatch must warn"
     assert all("--config-file" in h["fix_command"] for h in health2), health2
     _, health1 = stats_api._maintenance_health("1", maint, {"clientOptions": {"hostname": "x"}})
-    assert all(h["fix_command"].startswith("kopia maintenance") for h in health1), health1
+    from app.core.kopiabin import exe as kopia_exe
+    prefix = f'"{kopia_exe()}"' if " " in kopia_exe() else kopia_exe()
+    assert all(h["fix_command"].startswith(f"{prefix} maintenance") for h in health1), health1
 
 
 def test_index_health_reports_the_published_generation(monkeypatch):

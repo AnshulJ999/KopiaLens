@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from config import REPOS, repo_kind
 
 from ..core import disklookup
-from ..core.kopia import _repo_args
+from ..core.kopia import _kopia_exe, _repo_args
 from ..index.excluded import drive_stats, folder_listing
 from ..settings import load_settings
 
@@ -39,7 +39,7 @@ def include_cmds(path: str = "") -> dict:
     for repo, cfg in REPOS.items():
         if repo_kind(repo) != "kopia":
             continue  # a non-kopia repo has no args: the bare command would target the DEFAULT repo
-        parts = ["kopia"] + _repo_args(repo) + ["snapshot", "create", path]
+        parts = [_kopia_exe()] + _repo_args(repo) + ["snapshot", "create", path]
         cmds.append({"repo": repo, "name": cfg["name"],
                      "command": " ".join(f'"{a}"' if (" " in a or not a) else a for a in parts)})
     return {"path": path, "commands": cmds}

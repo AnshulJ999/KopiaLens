@@ -68,6 +68,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "panel_layout": "classic",  # detail-panel layout (): "classic" | "tabbed"
         "policy_layout": "tabs",    # policy editor: "tabs" (one section at a time) | "scroll" (stacked, jump strip)
         "policy_leave": "ask",      # leaving a policy with unsaved changes: "ask" | "keep" (drafts stay until saved)
+        # ---- external tools -----------------------------------------------------------------
+        # The kopia program. Empty = auto: PATH, then the usual install locations, then the
+        # binary KopiaUI bundles (see core/kopiabin.py - the ONLY place that resolves it).
+        # KOPIALENS_KOPIA overrides it for tests/Docker without touching the file.
+        "kopia_path": "",
         "es_path": r"G:\Apps\CLI Tools\es.exe",  # Everything CLI for the Excluded browser (local disk side)
         "disk_lookup": "auto",       # what answers disk questions: auto | everything | scan | off
         "disk_scan_budget": 15,      # seconds one folder scan may take before it answers "not measured"

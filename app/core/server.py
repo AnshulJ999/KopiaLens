@@ -35,7 +35,7 @@ from config import REPOS, kopia_repos
 
 from ..settings import load_settings, save_settings
 from .applog import APP_LOG_DIR, get_logger
-from .kopia import _repo_args
+from .kopia import _kopia_exe, _repo_args
 
 log = get_logger("server")
 
@@ -106,7 +106,7 @@ class KopiaServers:
             raise ValueError(f"unknown repo: {repo}")
         port = self.port(repo)
         args = (
-            ["kopia"]
+            [_kopia_exe()]
             + _repo_args(repo)   # never the raw args: a non-kopia repo would launch against the default
             + [
                 "server", "start",

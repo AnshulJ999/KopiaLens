@@ -351,6 +351,34 @@ def close_all() -> None:
         _RETIRED.clear()
 
 
+def close_repo(repo: str) -> dict:
+    """Close this repo's live generation (and any retired ones) so its files can be deleted -
+    Windows refuses to unlink a Parquet file another handle holds open. A generation still being
+    read is left for the reaper and reported as busy, so a request never loses its cursor mid-flight;
+    the caller warns about the leftovers instead of pretending the delete was complete."""
+    closed, busy = 0, 0
+    with _LOCK:
+        gen = _GENS.pop(repo, None)
+        if gen is not None:
+            if gen._refs <= 0:      # the property would take _LOCK again (plain Lock, not RLock)
+                gen.close()
+                closed += 1
+            else:
+                _RETIRED.append(gen)
+                busy += 1
+        keep = []
+        for g in _RETIRED:
+            if getattr(g, "repo", None) == repo:
+                if g._refs <= 0:
+                    g.close()
+                    closed += 1
+                    continue
+                busy += 1
+            keep.append(g)
+        _RETIRED[:] = keep
+    return {"closed": closed, "busy": busy}
+
+
 @contextlib.contextmanager
 def scratch_connection(repo: str):
     """A standalone, fully configured DuckDB connection for build and publish work.

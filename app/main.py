@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from config import DATA_DIR, REPOS, repo_kind
 
 from .api import (actions, audit, backblaze, dashboard, deleteplan, excluded, insights, jobs, logs,
-                  policies, restore, search, simulate, snapshots, stats, tree)
+                  policies, restore, search, setup, simulate, snapshots, stats, tree)
 from .core import auth
 from .core import jobs as jobrunner
 from .core import kopia as kopia_mod
@@ -598,6 +598,11 @@ async def lifespan(_app: FastAPI):
 
     def _capture_ids() -> None:  # a couple of kopia calls - off the startup path
         try:
+            from .core import kopiabin
+            kopiabin.version()      # one spawn, once: /api/repos must never do it on a poll
+        except Exception as exc:  # noqa: BLE001 - a version read is cosmetic
+            log.warning("kopia version read failed: %s", exc)
+        try:
             from .core.repos import ensure_unique_ids
             ensure_unique_ids()
         except Exception as exc:  # noqa: BLE001 - identity capture never blocks startup
@@ -684,7 +689,7 @@ async def auth_login(request: Request):
 
 
 @app.post("/api/index/stop")
-def post_index_stop(repo: str = "1"):
+def post_index_stop(repo: str):
     """ Stop this repo's index run AND keep it stopped.
 
     The worker is terminated, then the slot is closed so the scheduler's retry (a killed worker
@@ -866,6 +871,7 @@ app.include_router(logs.router, prefix="/api")
 app.include_router(excluded.router, prefix="/api")
 app.include_router(policies.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")
+app.include_router(setup.router, prefix="/api")
 app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
 
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")

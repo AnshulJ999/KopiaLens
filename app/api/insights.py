@@ -90,7 +90,7 @@ def _with_source_physical(repo: str, out: dict) -> dict:
 
 
 @router.get("/churn")
-def churn(repo: str = "1", days: int = 30, depth: int = 4, limit: int = 400,
+def churn(repo: str, days: int = 30, depth: int = 4, limit: int = 400,
           refresh: bool = False) -> dict:
     """New backed-up data in the last ``days``, rolled up three ways from one computation."""
     _require_kopia(repo)
@@ -104,7 +104,7 @@ def churn(repo: str = "1", days: int = 30, depth: int = 4, limit: int = 400,
 
 
 @router.get("/folder/summary")
-def folder_summary_route(repo: str = "1", prefix: str = "", source: str | None = None) -> dict:
+def folder_summary_route(repo: str, prefix: str = "", source: str | None = None) -> dict:
     """Instant folder facts + which sources back it up, each with its schedule and retention.
     Policy summaries come from the nightly-refreshed cache, so this stays a fast call."""
     _require_kopia(repo)
@@ -150,7 +150,7 @@ def folder_summary_route(repo: str = "1", prefix: str = "", source: str | None =
 
 
 @router.get("/folder/contents")
-def folder_contents_route(repo: str = "1", prefix: str = "", source: str | None = None,
+def folder_contents_route(repo: str, prefix: str = "", source: str | None = None,
                           limit: int = 500) -> dict:
     """Everything directly inside a folder (the folder panel's Contents tab)."""
     _require_kopia(repo)
@@ -168,7 +168,7 @@ def folder_contents_route(repo: str = "1", prefix: str = "", source: str | None 
 
 
 @router.get("/folder/policy")
-def folder_policy(repo: str = "1", source: str = "", prefix: str = "") -> dict:
+def folder_policy(repo: str, source: str = "", prefix: str = "") -> dict:
     """The EFFECTIVE kopia policy for this exact folder - kopia resolves inheritance, so a folder
     with its own rules (or its own ignore list) reports them rather than the source's. One
     subprocess, cached; fetched lazily because it is the only part of the panel that shells out."""
@@ -185,7 +185,7 @@ def folder_policy(repo: str = "1", source: str = "", prefix: str = "") -> dict:
 
 
 class FolderDetailRequest(BaseModel):
-    repo: str = "1"
+    repo: str
     prefix: str
     source: str | None = None  # None = every source covering the folder (the honest cross-source answer)
 

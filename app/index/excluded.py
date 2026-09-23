@@ -1,8 +1,10 @@
-"""Excluded browser: which on-disk paths are NOT backed up by EITHER kopia repo.
+"""Excluded browser: which on-disk paths are NOT backed up by ANY kopia repo.
 
-"Backed up" = the path is present in `pathx(in_latest=true)` of repo1 OR repo2 (case-insensitive,
-via inline `lower(full_path)`). Disk side = Everything (`es.exe`). For each folder you open we do
-ONE indexed range scan per repo (bounded to that subtree), aggregated by immediate child segment.
+"Backed up" = the path is present in `pathx(in_latest=true)` of any repo that counts as a backup
+(`coverage_repos()` - a repo with the record's `counts_as_backup` off is a test/junk repository and
+must not make a folder look covered; case-insensitive, via inline `lower(full_path)`). Disk side =
+Everything (`es.exe`). For each folder you open we do ONE indexed range scan per repo (bounded to
+that subtree), aggregated by immediate child segment.
 """
 
 from __future__ import annotations
@@ -12,11 +14,17 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from config import kopia_repos
+from config import REPOS, kopia_repos
 
 from ..core import paths as pathrules
 from ..core.disklookup import children as es_children, list_drives, recursive_count, recursive_size
 from .store import read_cursor
+
+
+def coverage_repos() -> list:
+    """Kopia repos that COUNT as backup coverage. A repo with `counts_as_backup` off (a test or
+    junk repository) still shows its own tabs, but it must not make a folder look backed up here."""
+    return [r for r in kopia_repos() if REPOS.get(r, {}).get("counts_as_backup", True)]
 
 _SEP = chr(92)  # backslash
 # (folder_lc, tolerance) -> (ts, result); TTL so repeated nav is instant. LRU-bounded (matches the
@@ -60,7 +68,7 @@ def kopia_backed_children(folder: str) -> dict[str, dict]:
     `logical` = kopia's stored file size (exact backed size, comparable to Everything's disk size)."""
     lo, hi, plen = _prefix_bounds(folder)
     agg: dict[str, dict] = {}
-    for repo in kopia_repos():
+    for repo in coverage_repos():
         cur = read_cursor(repo)
         try:
             # Dedupe by path FIRST (GROUP BY path_lc): a file backed by several overlapping sources
@@ -124,7 +132,7 @@ def kopia_drive_backed() -> dict[str, tuple]:
     letter. Used by the BZ Excluded drive view for its Kopia cross-coverage column. Overlap between
     repo1/repo2 on the same path is counted once per repo (a coarse cross-coverage hint, not exact)."""
     out: dict[str, tuple] = {}
-    for repo in kopia_repos():
+    for repo in coverage_repos():
         cur = read_cursor(repo)
         try:
             rows = cur.execute(
@@ -145,7 +153,7 @@ def _newest_snapshot() -> str:
     """Newest snapshot start_time across both repos (small `indexed_snapshots` table = instant).
     Used only to label not-backed-up files 'new' (mtime newer than any snapshot) vs 'excluded'."""
     best = ""
-    for repo in kopia_repos():
+    for repo in coverage_repos():
         cur = read_cursor(repo)
         try:
             row = cur.execute("SELECT max(start_time) FROM isnaps").fetchone()
@@ -253,7 +261,7 @@ def drive_stats() -> list[dict]:
         lo = p.lower().rstrip(_SEP) + _SEP
         _, hi = pathrules.prefix_bounds(lo)
         bs = bc = 0
-        for repo in kopia_repos():
+        for repo in coverage_repos():
             cur = read_cursor(repo)
             try:
                 row = cur.execute(

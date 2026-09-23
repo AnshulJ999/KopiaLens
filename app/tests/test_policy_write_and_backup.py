@@ -12,7 +12,7 @@ import os
 
 import pytest
 
-from app.core import kopia, policybackup
+from app.core import kopiabin, kopia, policybackup
 from app.core.policy import effective_ignore_origin, global_ignores
 from app.core.policybackup import BackupError
 
@@ -26,7 +26,7 @@ GLOBAL_EXPORT = {"(global)": {"files": {"ignore": ["*.log", "node_modules"]}},
 
 def test_policy_set_command_shape():
     cmd = kopia.policy_set_command("1", target=SRC, add_ignore=["/a/**"], remove_ignore=["b"])
-    assert cmd[:5] == ["kopia", "policy", "set", SRC, "--remove-ignore"]
+    assert cmd[:5] == [kopiabin.exe(), "policy", "set", SRC, "--remove-ignore"]
     assert cmd[5:7] == ["b", "--add-ignore"]
     assert cmd[7] == "/a/**"
     assert "--no-progress" not in cmd  # the executor appends the quiet flag, not the builder
@@ -34,7 +34,7 @@ def test_policy_set_command_shape():
 
 def test_policy_set_command_global():
     cmd = kopia.policy_set_command("1", global_=True, add_ignore=["x"])
-    assert cmd[:5] == ["kopia", "policy", "set", "--global", "--add-ignore"]
+    assert cmd[:5] == [kopiabin.exe(), "policy", "set", "--global", "--add-ignore"]
 
 
 def test_policy_set_command_validates():

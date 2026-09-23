@@ -23,13 +23,13 @@ def _fmt_cmd(cmd: list[str]) -> str:
 
 
 class PinRequest(BaseModel):
-    repo: str = "1"
+    repo: str
     snapshot_ids: list[str]
     remove: bool = False
 
 
 class SetReclaimRequest(BaseModel):
-    repo: str = "1"
+    repo: str
     snapshot_ids: list[str]
     refresh: bool = False
 
@@ -56,7 +56,7 @@ def _snap_row(key: str, snap: dict, a: dict) -> dict:
 
 
 @router.get("/snapshots")
-def snapshots(repo: str = "1", source: str | None = None, source_index: int | None = None) -> dict:
+def snapshots(repo: str, source: str | None = None, source_index: int | None = None) -> dict:
     """Snapshots for a source, merged with persisted per-snapshot churn + reclaimable (when
     available; computed by the background pre-warm or the analyze endpoint). source="*ALL*"
     returns every snapshot across all sources (for the repo-wide by-reclaimable view).
@@ -91,7 +91,7 @@ def snapshots(repo: str = "1", source: str | None = None, source_index: int | No
 
 
 @router.post("/snapshots/analyze")
-def analyze(repo: str = "1", source: str | None = None, reclaim: bool = True) -> dict:
+def analyze(repo: str, source: str | None = None, reclaim: bool = True) -> dict:
     """Kick a background per-snapshot analysis (churn + reclaimable) for one source. Poll
     /snapshots to pick up results when ``analyzing`` flips back to false."""
     if not source:
@@ -113,7 +113,7 @@ def analyze(repo: str = "1", source: str | None = None, reclaim: bool = True) ->
 
 
 @router.post("/snapshots/analyze-all")
-def analyze_all(repo: str = "1", reclaim: bool = True) -> dict:
+def analyze_all(repo: str, reclaim: bool = True) -> dict:
     """Compute churn + reclaimable for EVERY source in the repo, in the background, and cache it.
     Reclaimable reads the materialized content_refs (kept fresh by the dashboard refresh), so this
     is a one-shot repo-wide pass. Poll /snapshots/analyze-status for completion."""
@@ -149,7 +149,7 @@ def analyze_all(repo: str = "1", reclaim: bool = True) -> dict:
 
 
 @router.get("/snapshots/analyze-status")
-def analyze_status(repo: str = "1") -> dict:
+def analyze_status(repo: str) -> dict:
     return {"repo": repo, "analyzing_all": repo in _ANALYZING_ALL,
             "last_run": _LAST_ALL.get(repo)}
 
@@ -177,7 +177,7 @@ def pin(payload: PinRequest) -> dict:
 
 
 @router.get("/snapshots/diff")
-def diff(repo: str = "1", id1: str | None = None, id2: str | None = None, run: bool = False) -> dict:
+def diff(repo: str, id1: str | None = None, id2: str | None = None, run: bool = False) -> dict:
     """Diff two snapshots. run=false -> the command; run=true -> execute and return the text."""
     if not id1 or not id2:
         raise HTTPException(status_code=400, detail="id1 and id2 are required")
@@ -191,7 +191,7 @@ def diff(repo: str = "1", id1: str | None = None, id2: str | None = None, run: b
 
 
 @router.get("/snapshots/delete-preview")
-def delete_preview(repo: str = "1", ids: str = "", precise: bool = False, limit: int = 60) -> dict:
+def delete_preview(repo: str, ids: str = "", precise: bool = False, limit: int = 60) -> dict:
     """What gets reclaimed by deleting the selected snapshots.
     Fast = largest files new in them (delta). Precise (single snapshot) = the ACCURATE
     exclusive-content file list (matches the reclaimable number)."""

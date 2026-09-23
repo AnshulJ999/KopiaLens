@@ -22,7 +22,7 @@ from typing import Iterable
 
 from config import DATA_DIR, REPOS
 
-from . import audit
+from . import audit, kopiabin
 from .applog import get_logger
 
 log = get_logger("kopia")
@@ -119,7 +119,7 @@ def _repo_args(repo: str) -> list[str]:
 def _base_command(repo: str, args: list[str], progress: bool = False) -> list[str]:
     """``progress=True`` omits --no-progress: the job streamer exists to show kopia's live
     output, so it must not ask kopia to be quiet. Every other caller keeps the flag."""
-    return ["kopia"] + _repo_args(repo) + args + ([] if progress else ["--no-progress"])
+    return [_kopia_exe()] + _repo_args(repo) + args + ([] if progress else ["--no-progress"])
 
 
 DEFAULT_TIMEOUT = 3600.0  # generous: `content list -l` on a large repo legitimately runs minutes
@@ -136,6 +136,16 @@ def _timeout() -> float:
         return DEFAULT_TIMEOUT
 
 
+def _kopia_exe() -> str:
+    """The resolved kopia program. Every command prefix goes through here - a bare ``"kopia"``
+    string is what ``test_kopia_binary_guard.py`` fails on."""
+    return kopiabin.exe()
+
+
+MISSING_KOPIA = ("kopia was not found. Install Kopia or KopiaUI, or set the path to the kopia "
+                 "program in Settings (see the Kopia setup section).")
+
+
 def kopia(repo: str, args: list[str], ro: bool = True, timeout: float | None = None) -> KopiaResult:
     """Run kopia via subprocess arg-lists only.
 
@@ -145,6 +155,9 @@ def kopia(repo: str, args: list[str], ro: bool = True, timeout: float | None = N
     A hung kopia used to keep the calling request or background job alive forever; the call is
     now bounded and a timeout comes back as a failed result (rc=TIMEOUT_RC) rather than an
     exception, so every existing returncode check handles it.
+
+    stdin is DEVNULL so a kopia that wants a password prompt (a repo whose password is not
+    remembered) fails in milliseconds instead of blocking until the timeout - there is no tty here.
     """
 
     if ro:
@@ -160,6 +173,7 @@ def kopia(repo: str, args: list[str], ro: bool = True, timeout: float | None = N
             encoding="utf-8",
             errors="replace",
             timeout=limit if limit and limit > 0 else None,
+            stdin=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash under pythonw
         )
     except subprocess.TimeoutExpired as exc:  # run() has already killed the child
@@ -168,6 +182,12 @@ def kopia(repo: str, args: list[str], ro: bool = True, timeout: float | None = N
         log.error("kopia timed out after %.0fs: %s", elapsed, " ".join(full[:4]))
         return KopiaResult(args=full, returncode=TIMEOUT_RC, stdout=_as_text(exc.stdout),
                            stderr=f"kopia timed out after {elapsed:.0f}s", elapsed=elapsed)
+    except OSError as exc:   # the binary is missing or not executable
+        elapsed = time.time() - start
+        _count_spawn(elapsed)
+        log.error("kopia could not be started (%s): %s", full[0], exc)
+        return KopiaResult(args=full, returncode=1, stdout="",
+                           stderr=f"{MISSING_KOPIA} ({exc})", elapsed=elapsed)
     elapsed = time.time() - start
     _count_spawn(elapsed)
     return KopiaResult(args=full, returncode=res.returncode, stdout=res.stdout, stderr=res.stderr, elapsed=elapsed)
@@ -199,11 +219,15 @@ def kopia_lines(repo: str, args: list[str], ro: bool = True, timeout: float | No
     full = _base_command(repo, args)
     limit = _timeout() if timeout is None else timeout
     start = time.time()
-    proc = subprocess.Popen(
-        full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        encoding="utf-8", errors="replace", bufsize=1,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
+    try:
+        proc = subprocess.Popen(
+            full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace", bufsize=1, stdin=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except OSError as exc:   # the binary is missing or not executable
+        _count_spawn(time.time() - start)
+        raise RuntimeError(f"{MISSING_KOPIA} ({exc})") from exc
     timed_out = threading.Event()
     errbuf: list[str] = []
 
@@ -275,13 +299,20 @@ def kopia_job_stream(repo: str, args: list[str], result: dict):
     # CREATE_NEW_PROCESS_GROUP so a console event, if one ever becomes deliverable, can be
     # addressed to the child; CREATE_NO_WINDOW is the standing pythonw rule.
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    proc = subprocess.Popen(
-        full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        encoding="utf-8", errors="replace", bufsize=1, creationflags=flags,
-    )
-    result["proc"] = proc
     lines: queue.Queue = queue.Queue()
     start = time.time()
+    try:
+        proc = subprocess.Popen(
+            full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace", bufsize=1, stdin=subprocess.DEVNULL,
+            creationflags=flags,
+        )
+    except OSError as exc:   # the binary is missing: a job must fail with a message, not hang
+        global KOPIA_CALLS, KOPIA_TIME
+        KOPIA_CALLS += 1
+        KOPIA_TIME += time.time() - start
+        raise RuntimeError(f"{MISSING_KOPIA} ({exc})") from exc
+    result["proc"] = proc
 
     def _pump(name: str, stream) -> None:
         try:
@@ -316,8 +347,7 @@ def kopia_job_stream(repo: str, args: list[str], result: dict):
             rc = proc.wait(timeout=30)
         result["returncode"] = rc
     finally:
-        global KOPIA_CALLS, KOPIA_TIME
-        KOPIA_CALLS += 1
+        KOPIA_CALLS += 1        # the global declaration is at the top of this function
         KOPIA_TIME += time.time() - start
         if proc.poll() is None:  # generator abandoned early - do not orphan the child
             try:
@@ -401,7 +431,7 @@ def unmount(pid: int) -> bool:
 def restore_command(repo: str, source: str, destination: str, overwrite: bool = False) -> list[str]:
     """Return a restore command preview; v1 does not execute restores."""
 
-    args = ["kopia"] + _repo_args(repo) + ["restore", source, destination]
+    args = [_kopia_exe()] + _repo_args(repo) + ["restore", source, destination]
     if overwrite:
         args.append("--overwrite")
     return args
@@ -415,7 +445,7 @@ _SNAP_DELETE_CHUNK = 200
 def maintenance_run_command(repo: str) -> list[str]:
     """The `kopia [args] maintenance run --full` command for a repo (space is reclaimed by this, not
     by the snapshot delete itself). Generation only."""
-    return ["kopia"] + _repo_args(repo) + ["maintenance", "run", "--full"]
+    return [_kopia_exe()] + _repo_args(repo) + ["maintenance", "run", "--full"]
 
 
 def snapshot_delete_commands(repo: str, snapshot_ids: list[str], batch: bool = False) -> list[list[str]]:
@@ -425,7 +455,7 @@ def snapshot_delete_commands(repo: str, snapshot_ids: list[str], batch: bool = F
     ``batch=False`` (default) = one command per id - REQUIRED by callers that align commands 1:1 with
     a per-snapshot ``items`` list (the purge-plan UI). ``batch=True`` = <=200 ids per command, for a
     short/directly-runnable bulk-delete script (the snapshot-delete preview)."""
-    prefix = ["kopia"] + _repo_args(repo) + ["snapshot", "delete"]
+    prefix = [_kopia_exe()] + _repo_args(repo) + ["snapshot", "delete"]
     if batch:
         return [
             prefix + snapshot_ids[i:i + _SNAP_DELETE_CHUNK] + ["--delete"]
@@ -444,7 +474,7 @@ def snapshot_delete_execute(repo: str, snapshot_ids: list[str]) -> dict:
     Kopia-Delete.py is preferable - this call blocks for the whole run.)"""
     if not snapshot_ids:
         return {"deleted": 0, "returncode": 0, "stdout": "", "stderr": "no ids", "command": None, "chunks": 0}
-    prefix = ["kopia"] + _repo_args(repo) + ["snapshot", "delete"]
+    prefix = [_kopia_exe()] + _repo_args(repo) + ["snapshot", "delete"]
     chunks = [snapshot_ids[i:i + _SNAP_DELETE_CHUNK] for i in range(0, len(snapshot_ids), _SNAP_DELETE_CHUNK)]
     log.warning("EXECUTING snapshot delete repo=%s count=%d chunks=%d", repo, len(snapshot_ids), len(chunks))
     deleted, rc, outs, errs, first_cmd = 0, 0, [], [], None
@@ -454,6 +484,7 @@ def snapshot_delete_execute(repo: str, snapshot_ids: list[str]) -> dict:
             first_cmd = full
         res = subprocess.run(
             full, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdin=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if res.returncode == 0:
@@ -487,7 +518,7 @@ def remove_files_command(repo: str, object_ids: list[str] | None = None, filenam
     repeatable: ``source`` may be a single string or a LIST (scope to several sources in ONE
     command - object-ids are content-exact so cross-source mismatches are harmless no-ops, and
     listing only the affected sources avoids the slow whole-repo scan). ``--commit`` applies it."""
-    cmd = ["kopia"] + _repo_args(repo) + ["snapshot", "fix", "remove-files"]
+    cmd = [_kopia_exe()] + _repo_args(repo) + ["snapshot", "fix", "remove-files"]
     for oid in object_ids or []:
         cmd += ["--object-id", oid]
     for fn in filenames or []:
@@ -511,6 +542,7 @@ def remove_files_execute(repo: str, object_ids: list[str] | None = None, filenam
     t0 = time.time()
     res = subprocess.run(
         full, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        stdin=subprocess.DEVNULL,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     log.warning("remove-files repo=%s rc=%d stderr=%s", repo, res.returncode, (res.stderr or "").strip()[:300])
@@ -545,7 +577,7 @@ def remove_files_chunked_commands(repo: str, items: list[str], source: str | lis
     each command line stays under a safe limit (default 8000 - works in a .bat / cmd.exe line too,
     not just CreateProcess's 32k). Biggest-files-first order is preserved (caller pre-sorts). Each
     command is --source-scoped to the folder's own sources; ``source=None`` = whole-repo sweep."""
-    base = ["kopia"] + _repo_args(repo) + ["snapshot", "fix", "remove-files"]
+    base = [_kopia_exe()] + _repo_args(repo) + ["snapshot", "fix", "remove-files"]
     src_args = _source_args(source)
     tail = ["--commit"] if commit else []
     fixed_len = sum(len(_quote_arg(a)) + 1 for a in base + src_args + tail) + 16  # safety margin
@@ -699,7 +731,7 @@ def remove_files_chunked_execute(repo: str, items: list[str], source: str | list
                 lf.write(f"\n--- batch {i}/{len(cmds)} ---\n"); lf.flush()
                 res = subprocess.run(
                     cmd + ["--no-progress"], capture_output=True, text=True,
-                    encoding="utf-8", errors="replace",
+                    encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 lf.write(res.stdout or "")
@@ -775,7 +807,7 @@ def _run_dry_commands(repo: str, cmds: list[list[str]], kind: str, expect_flag: 
         try:
             res = subprocess.run(
                 cmd + ["--no-progress"], capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=limit,
+                encoding="utf-8", errors="replace", timeout=limit, stdin=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except subprocess.TimeoutExpired as exc:
@@ -884,7 +916,7 @@ def snapshot_delete_dry_run(repo: str, snapshot_ids: list[str]) -> dict:
     Chunked like the executor (200 ids per call). Preview-only; logged."""
     if not snapshot_ids:
         return {"returncode": 1, "output": "", "error": "snapshot_ids is empty"}
-    prefix = ["kopia"] + _repo_args(repo) + ["snapshot", "delete"]
+    prefix = [_kopia_exe()] + _repo_args(repo) + ["snapshot", "delete"]
     cmds = [prefix + snapshot_ids[i:i + _SNAP_DELETE_CHUNK]
             for i in range(0, len(snapshot_ids), _SNAP_DELETE_CHUNK)]
     log.info("DRY RUN snapshot delete repo=%s count=%d batches=%d", repo, len(snapshot_ids), len(cmds))
@@ -899,14 +931,14 @@ def snapshot_pin_command(repo: str, ids: list[str], remove: bool = False,
                          pin_name: str = "do-not-delete") -> list[str]:
     """Pin (protect from retention deletion) or unpin snapshots."""
     flag = "--remove" if remove else "--add"
-    return ["kopia"] + _repo_args(repo) + ["snapshot", "pin", *ids, flag, pin_name]
+    return [_kopia_exe()] + _repo_args(repo) + ["snapshot", "pin", *ids, flag, pin_name]
 
 
 def snapshot_create_command(repo: str, path: str, description: str = "") -> list[str]:
     """Take a snapshot of a folder as this computer's kopia user. Kopia applies its policy."""
     if not path or any(c in path for c in (chr(10), chr(13))):
         raise ValueError("invalid snapshot path")
-    cmd = ["kopia"] + _repo_args(repo) + ["snapshot", "create", path]
+    cmd = [_kopia_exe()] + _repo_args(repo) + ["snapshot", "create", path]
     if description:
         cmd += ["--description", description[:1000]]
     return cmd
@@ -936,7 +968,7 @@ def policy_set_command(repo: str, target: str | None = None, global_: bool = Fal
     kopia CREATES one - callers surface that via the diff (`will_create_policy`)."""
     if not add_ignore and not remove_ignore:
         raise ValueError("policy set needs at least one change (add_ignore or remove_ignore)")
-    cmd = ["kopia"] + _repo_args(repo) + ["policy", "set"] + _policy_target_args(target, global_)
+    cmd = [_kopia_exe()] + _repo_args(repo) + ["policy", "set"] + _policy_target_args(target, global_)
     for p in remove_ignore or []:
         cmd += ["--remove-ignore", p]
     for p in add_ignore or []:
@@ -952,7 +984,8 @@ def _run_policy_write(repo: str, cmd: list[str], action: str, summary: dict) -> 
     try:
         res = subprocess.run(
             cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=_timeout(), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            timeout=_timeout(), stdin=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         rc, out, err = res.returncode, res.stdout, res.stderr
     except subprocess.TimeoutExpired:
         rc, out, err = TIMEOUT_RC, "", f"kopia timed out after {_timeout():.0f}s"
@@ -978,7 +1011,7 @@ def policy_set_execute(repo: str, target: str | None = None, global_: bool = Fal
 
 def policy_delete_command(repo: str, target: str | None = None, global_: bool = False) -> list[str]:
     """Build `kopia policy delete` - removes the whole policy DEFINITION (never snapshots)."""
-    return ["kopia"] + _repo_args(repo) + ["policy", "delete"] + _policy_target_args(target, global_)
+    return [_kopia_exe()] + _repo_args(repo) + ["policy", "delete"] + _policy_target_args(target, global_)
 
 
 def policy_delete_execute(repo: str, target: str | None = None, global_: bool = False) -> dict:
@@ -995,7 +1028,7 @@ def policy_import_command(repo: str, file_path: str, mirror: bool = False,
     that one policy."""
     if not file_path:
         raise ValueError("policy import needs a file path")
-    cmd = ["kopia"] + _repo_args(repo) + ["policy", "import", "--from-file", file_path]
+    cmd = [_kopia_exe()] + _repo_args(repo) + ["policy", "import", "--from-file", file_path]
     if target or global_:
         if mirror:
             raise ValueError("a mirror import cannot be limited to one target")
@@ -1037,7 +1070,7 @@ def policy_write_rules_execute(repo: str, target: str | None, global_: bool, pol
 
 
 def snapshot_diff_command(repo: str, id1: str, id2: str) -> list[str]:
-    return ["kopia"] + _repo_args(repo) + ["diff", id1, id2]
+    return [_kopia_exe()] + _repo_args(repo) + ["diff", id1, id2]
 
 
 def diff_execute(repo: str, id1: str, id2: str) -> str:
@@ -1069,7 +1102,7 @@ def restore_command_full(repo: str, source_id: str, target: str, options: dict |
     executed here. ``source_id`` is an object id (file/dir/snapshot root), optionally with a
     sub-path; target is a folder or a .zip/.tar archive."""
     opts = options or {}
-    cmd = ["kopia"] + _repo_args(repo) + ["restore", source_id, target]
+    cmd = [_kopia_exe()] + _repo_args(repo) + ["restore", source_id, target]
     for key, (flag, when) in _RESTORE_FLAG_MAP.items():
         if bool(opts.get(key)) == when:
             cmd.append(flag)
@@ -1090,6 +1123,7 @@ def restore_execute(repo: str, source_id: str, target: str, options: dict | None
     t0 = time.time()
     res = subprocess.run(
         full, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        stdin=subprocess.DEVNULL,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     log.warning("restore repo=%s rc=%d stderr=%s", repo, res.returncode, (res.stderr or "").strip()[:300])

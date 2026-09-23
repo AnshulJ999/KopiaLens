@@ -38,6 +38,7 @@ from config import DATA_DIR
 from . import audit
 from .applog import get_logger
 from .kopia import (
+    _kopia_exe,
     _parse_delete_line,
     _parse_remove_line,
     _quote_arg,
@@ -221,13 +222,13 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
         return steps + then_cmds, meta
     else:
         raise JobRefused(f"unknown job kind: {kind}")
-    # The builders return PASTEABLE commands: ["kopia"] + _repo_args(repo) + subcommand. The
-    # streamer consumes BARE args via _base_command, which re-adds "kopia" AND the repo args.
-    # Stripping only "kopia" left the repo args in, and _base_command added them a second time -
-    # invisible on repo 1 (empty args list), but repo 2 ran with its --config-file twice. Strip
-    # the exact prefix; a mismatch means a builder changed shape and would double args, so it
-    # fails loudly instead of silently corrupting the command.
-    prefix = ["kopia"] + _repo_args(repo)
+    # The builders return PASTEABLE commands: [kopia] + _repo_args(repo) + subcommand. The
+    # streamer consumes BARE args via _base_command, which re-adds the kopia prefix AND the repo
+    # args. Stripping only the binary left the repo args in, and _base_command added them a
+    # second time - invisible on repo 1 (empty args list), but repo 2 ran with its --config-file
+    # twice. Strip the exact prefix; a mismatch means a builder changed shape and would double
+    # args, so it fails loudly instead of silently corrupting the command.
+    prefix = [_kopia_exe()] + _repo_args(repo)
     stripped = []
     for c in cmds:
         if c[:len(prefix)] != prefix:
@@ -306,7 +307,7 @@ def start_job(kind: str, repo: str, params: dict, label: str | None = None,
         if nightly.is_running(repo):
             raise JobRefused(
                 f"Repo {repo} is being indexed right now - start after the index pass finishes.")
-    pasteable = [c if callable(c) else ["kopia"] + _repo_args(repo) + c for c in cmds]
+    pasteable = [c if callable(c) else [_kopia_exe()] + _repo_args(repo) + c for c in cmds]
     job = _new_job(kind, repo, label or _default_label(kind, params, meta), meta, cmds,
                    pasteable, on_done)
     with _JOBS_LOCK:
