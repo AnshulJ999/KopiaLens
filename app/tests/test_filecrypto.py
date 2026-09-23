@@ -10,6 +10,7 @@ covered file both ways with nothing lost.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -185,6 +186,24 @@ def test_a_switch_that_dies_mid_file_keeps_the_original(layer, monkeypatch):
     assert out["failed"] == 1
     assert open(path, "rb").read() == original         # untouched
     assert [n for n in os.listdir(str(layer)) if n.endswith(".tmp")] == []
+
+
+def test_the_switch_refuses_to_empty_a_file_it_cannot_read(layer):
+    """The 2026-09-23 loss: every line unreadable (a key from another install) reads as zero
+    lines, and the old switch wrote the file back EMPTY - the read-back check passed because
+    empty matched empty. A non-empty file that reads as nothing must be left alone, loudly."""
+    path = str(layer / "audit.jsonl")
+    foreign = "kle:" + base64.b64encode(b"a line from another keystore, not ours").decode() + "\n"
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(foreign * 3)
+    original = open(path, "rb").read()
+    sibling = str(layer / "mounts.json")
+    assert filecrypto.write_json(sibling, {"x": 1}) is True     # encrypted, so it CAN be rewritten
+
+    out = filecrypto.switch_files(False)
+    assert out["failed"] == 1 and out["files"] == 1 and out["skipped"] == 0
+    assert open(path, "rb").read() == original          # untouched, not emptied
+    assert filecrypto.is_encrypted_file(sibling) is False
 
 
 # ---------------------------------------------------------------------------- logs

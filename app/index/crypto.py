@@ -588,24 +588,49 @@ def worker_key(payload: dict | None) -> bool:
 
 
 def _rewrap_password(key: str, new: str) -> None:
-    """Write the password wrap of ``key`` under ``new`` with a fresh salt. Caller holds _LOCK."""
+    """Write the password wrap of ``key`` under ``new`` with a fresh salt. Caller holds _LOCK.
+
+    Two files move (the wrap and the salt in the meta); a crash between them would leave neither
+    the old nor the new password able to open the keystore. So the previous wrap is copied beside
+    the new one and its salt is kept in the meta until both writes land: the OLD password still
+    opens the keystore through ``_retry_previous_wrap`` and the change is simply retried."""
+    wrap = _wrap_path("password")
+    prev = wrap + ".prev"
+    old_kdf = dict(_read_meta().get("kdf") or {})
+    if os.path.exists(wrap):
+        tmp = prev + ".tmp"
+        with open(wrap, "rb") as src, open(tmp, "wb") as dst:
+            dst.write(src.read())
+        os.replace(tmp, prev)
+    meta = _read_meta()
+    meta["kdf_prev"] = old_kdf
+    _write_meta(meta)                      # crash here: the current pair still opens the old way
     salt = secrets.token_bytes(16)         # fresh salt on every change
     _store_wrapped("password", _derive(new, salt), key)
     meta = _read_meta()
     meta["kdf"] = {"name": "argon2id", "salt": base64.b64encode(salt).decode(), **_KDF}
-    _write_meta(meta)
+    meta.pop("kdf_prev", None)
+    _write_meta(meta)                      # both writes landed: the previous state is not needed
+    try:
+        os.remove(prev)
+    except OSError:
+        pass
 
 
 def change_password_detailed(old: str, new: str) -> tuple[bool, str]:
     """Re-wrap the data key under a new password. Nothing on disk is re-encrypted.
 
-    ``(ok, reason)`` so the caller can tell a wrong password from a damaged keystore.
+    ``(ok, reason)`` so the caller can tell a wrong password from a damaged keystore. An
+    interrupted earlier change is recovered here too: the old password opened ``.prev``, so
+    retrying with it completes the change instead of reporting a wrong password.
     """
     with _LOCK:
         kek = _password_kek(old)
         if kek is None:
             return False, "not-set-up"
         key, reason = _open_wrap("password", kek)
+        if key is None and reason == "wrong-password":
+            key = _retry_previous_wrap(old)
         if key is None:
             return False, reason
         _rewrap_password(key, new)

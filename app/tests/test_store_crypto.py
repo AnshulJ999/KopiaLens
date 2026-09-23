@@ -104,6 +104,45 @@ def test_changing_the_password_needs_the_old_one(keystore):
     assert crypto.change_password("guess", "new pw") is False
 
 
+def test_an_interrupted_password_change_still_opens_with_the_old_password(keystore, monkeypatch):
+    """The wrap and the salt are two files; a crash between them used to leave NEITHER password
+    working. The previous wrap + salt are kept until both writes land, so the old password still
+    opens the keystore and the change is simply retried."""
+    crypto.setup("old pw", with_recovery=False)
+    key = crypto.data_key()
+    real_write = crypto._write_meta
+    calls = {"n": 0}
+
+    def crash_on_the_second_write(meta):
+        calls["n"] += 1
+        if calls["n"] == 2:                    # the salt write, after the new wrap already landed
+            raise OSError("simulated crash between the two writes")
+        return real_write(meta)
+
+    with monkeypatch.context() as m:
+        m.setattr(crypto, "_write_meta", crash_on_the_second_write)
+        with pytest.raises(OSError):
+            crypto.change_password("old pw", "new pw")
+
+    crypto.lock()
+    assert crypto.unlock("old pw") is True      # the old password still opens the keystore
+    assert crypto.data_key() == key
+    assert crypto.change_password("old pw", "new pw") is True     # retried: the change completes
+    crypto.lock()
+    assert crypto.unlock("old pw") is False
+    assert crypto.unlock("new pw") is True
+    assert crypto.data_key() == key
+
+
+def test_a_finished_password_change_leaves_no_previous_state(keystore):
+    crypto.setup("old pw", with_recovery=False)
+    assert crypto.change_password("old pw", "new pw") is True
+    cfg = keystore / "cfg"
+    assert not (cfg / "keystore-password.kdb.prev").exists()
+    meta = json.loads((cfg / "keystore.json").read_text(encoding="utf-8"))
+    assert "kdf_prev" not in meta
+
+
 def test_unlock_says_why_it_failed(keystore):
     """A wrong password and a damaged keystore used to be the same ``False``; the UI needs to
     tell the user which one they are looking at."""

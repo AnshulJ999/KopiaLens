@@ -11,20 +11,64 @@ Two things went wrong on 2026-09-17 and both are fenced off here:
   * Nothing bounded a runaway test, so it consumed RAM and disk until someone killed the run.
 
 The cache redirect is the fix; the memory cap and the watchdog are the net under it.
+
+The data folder is sandboxed too (2026-09-23): the shell's KOPIALENS_DATA_DIR points at the live
+install, and a test run wrote into it. Every run gets a throwaway data folder seeded with copies of
+the real repos.json/settings.json, and refuses to start if config still resolves to the real one.
 """
 
 from __future__ import annotations
 
 import faulthandler
 import os
+import shutil
 import tempfile
 
 import pytest
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _real_config_dir() -> str:
+    """Where config.py would find repos.json/settings.json for this shell (read-only use)."""
+    env = os.environ.get("KOPIALENS_CONFIG_DIR") or os.environ.get("KOPIALENS_DATA_DIR")
+    if env:
+        return env
+    if os.path.exists(os.path.join(_HERE, "repos.json")):
+        return _HERE
+    base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+    return os.path.join(base, "KopiaLens")
+
 
 # Before `config` is imported by anything. A test must never reach the real walk caches or
 # refcount pickles - they are retired multi-GB files that no test has any business reading.
 _CACHE_SANDBOX = tempfile.mkdtemp(prefix="kopialens-test-cache-")
 os.environ["KOPIALENS_CACHE_DIR"] = _CACHE_SANDBOX
+
+# A test must never write into the live data folder. Copies keep tests that read the real repo
+# records behaving as before; every write lands in the sandbox.
+_DATA_SANDBOX = tempfile.mkdtemp(prefix="kopialens-test-data-")
+_REAL_CONFIG_DIR = _real_config_dir()
+for _name in ("repos.json", "settings.json"):
+    _src = os.path.join(_REAL_CONFIG_DIR, _name)
+    if os.path.isfile(_src):
+        shutil.copy2(_src, os.path.join(_DATA_SANDBOX, _name))
+os.environ["KOPIALENS_DATA_DIR"] = _DATA_SANDBOX
+os.environ["KOPIALENS_CONFIG_DIR"] = _DATA_SANDBOX
+os.environ["KOPIALENS_REPOS_FILE"] = os.path.join(_DATA_SANDBOX, "repos.json")
+
+
+def pytest_sessionstart(session):
+    """Refuse the whole run if config still points outside the sandbox: continuing would write
+    into a real install."""
+    import config
+
+    sandbox = os.path.realpath(_DATA_SANDBOX)
+    for label, path in (("DATA_DIR", config.DATA_DIR), ("CONFIG_DIR", config.CONFIG_DIR),
+                        ("REPOS_FILE", config.REPOS_FILE)):
+        if not os.path.realpath(path).startswith(sandbox):
+            pytest.exit(f"config.{label} resolves outside the test sandbox ({path}); refusing to "
+                        f"run tests against a real data folder", returncode=2)
 
 # Ceiling for every connection the app opens during tests (`store.resolve_limits` reads this).
 # Test fixtures are tiny; anything that wants more than this is misbehaving and should fail
@@ -96,7 +140,6 @@ def _watchdog():
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Remove the per-run cache sandbox; it is this file's own litter."""
-    import shutil
-
+    """Remove the per-run sandboxes; they are this file's own litter."""
     shutil.rmtree(_CACHE_SANDBOX, ignore_errors=True)
+    shutil.rmtree(_DATA_SANDBOX, ignore_errors=True)

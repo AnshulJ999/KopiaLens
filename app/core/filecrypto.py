@@ -556,6 +556,13 @@ def switch_files(on: bool, say=None) -> dict:
                 _replace_verified(path, payload, lambda blob: _same_json(blob, obj, on))
             else:
                 lines = read_lines(path)
+                if os.path.getsize(path) and not lines:
+                    # The 2026-09-23 loss: every line unreadable (a foreign key, or damage) reads
+                    # as zero lines, and the rewrite would empty the file - whose read-back check
+                    # then passed, because empty matched empty. Never replace a non-empty file
+                    # with nothing.
+                    raise ValueError("reads as empty although the file is not - refusing to "
+                                     "replace it")
                 payload = _render_lines(lines, on)
                 _replace_verified(path, payload, lambda blob: _same_lines(blob, lines, on))
             done += 1

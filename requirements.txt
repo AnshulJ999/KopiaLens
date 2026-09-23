@@ -11,4 +11,5 @@ psutil
 zstandard
 jinja2
 argon2-cffi
+cryptography
 keyring
