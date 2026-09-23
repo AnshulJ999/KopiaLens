@@ -127,6 +127,7 @@ def replace_artifacts(repo: str, tables: dict) -> int | None:
         manifest = store.read_manifest(repo)
         if manifest is None:
             return None
+        encrypted = bool(manifest.get("encrypted"))
         gen = int(manifest.get("generation") or 0) + 1
         staging = os.path.join(root, "_staging")
         os.makedirs(staging, exist_ok=True)
@@ -136,7 +137,8 @@ def replace_artifacts(repo: str, tables: dict) -> int | None:
                 staged = os.path.join(staging, f"{name}_g{gen}.parquet")
                 con.register("_repl", table)
                 con.execute("COPY (SELECT * FROM _repl) TO '%s' (%s)"
-                            % (staged.replace("\\", "/").replace("'", "''"), crypto.copy_options()))
+                            % (staged.replace("\\", "/").replace("'", "''"),
+                               crypto.copy_options(encrypted=encrypted)))
                 con.unregister("_repl")
                 rel = f"pool/{name}/g{gen}.parquet"
                 moves.append((staged, rel))

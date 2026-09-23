@@ -72,7 +72,7 @@ def artifacts(tmp_path):
 
 def _bind(artifacts):
     con = duckdb.connect()
-    store._bind_generation(con, "1", artifacts)
+    store._bind_generation(con, "1", artifacts, encrypted=False)
     return con
 
 

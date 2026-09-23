@@ -102,7 +102,7 @@ def priced(tmp_path, monkeypatch):
             pass  # a no-op: the real read_cursor hands out per-call cursors, this shares one con
 
     con = duckdb.connect()
-    store._bind_generation(con, "1", artifacts)
+    store._bind_generation(con, "1", artifacts, encrypted=False)
 
     monkeypatch.setattr(policypricing, "read_cursor", lambda repo: _Cursor(con))
     monkeypatch.setattr(policypricing, "_CACHE", {})

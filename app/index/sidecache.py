@@ -13,6 +13,11 @@ change - only where the bytes live.
 Encryption is off until onboarding, so these are plaintext Parquet today; when it is switched on
 they are written encrypted and read with the key, with no caller change.
 
+A cache file carries its own state - the Parquet footer magic (PARE/PAR1) says whether it is
+encrypted - so a read never has to trust the setting. That matters while a switch is running:
+the setting can already be flipped while old files are still in the previous state, and each
+file stays readable until the switch rewrites it.
+
 Two rules:
   * A cache is never written in cleartext while encryption is on. If the key is locked, ``write``
     returns False and the caller keeps its data - a stale cache is fine, a leaked one is not.
@@ -46,7 +51,7 @@ def _sql(p: str) -> str:
 
 def write(name: str, payload: dict, base: str | None = None) -> bool:
     """Persist one cache payload. False when encryption is on but locked (never write cleartext)."""
-    if crypto.enabled() and not crypto.unlocked():
+    if crypto.writes_encrypted() and not crypto.unlocked():
         log.warning("sidecache %s not written: encryption is on and locked", name)
         return False
     try:
@@ -88,11 +93,12 @@ def read(name: str, base: str | None = None) -> dict | None:
     p = path(name, base)
     if not os.path.exists(p):
         return None
+    encrypted = crypto.file_is_encrypted(p)   # the file's own state, never the setting
     con = duckdb.connect()
     try:
-        crypto.register_key(con)     # parquet_read names the key; this registers it
+        crypto.register_key(con, encrypted=encrypted)   # parquet_read names the key; this registers it
         row = con.execute(
-            f"SELECT payload FROM read_parquet({crypto.parquet_read(_sql(p))})"
+            f"SELECT payload FROM read_parquet({crypto.parquet_read(_sql(p), encrypted=encrypted)})"
         ).fetchone()
     except Exception as exc:  # noqa: BLE001 - a cache miss, never an error
         log.debug("sidecache %s unreadable: %s", name, exc)

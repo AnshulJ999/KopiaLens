@@ -75,9 +75,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "repo_labels": "short",      # repo chips/columns: "short" (Repo 1) | "full" (the name from repos.json)
         "debug_log": False,          # also write data/logs/kopialens-debug.log at DEBUG (env KOPIALENS_DEBUG_LOG overrides)
         # ---- unified store () ---------------------------------------------------------
-        # Encryption at rest for every local file the store writes. It stays OFF until onboarding
-        # () offers the choice; the machinery underneath is complete either way. Turning it
-        # on or off rewrites only our own Parquet files, never the kopia repository.
+        # Encryption at rest for every local file the store writes. This is the INTENT: new files
+        # are written in this state, while a generation already on disk keeps its own state (the
+        # manifest records it) until the switch () rewrites it. Off until onboarding
+        # (); turning it on or off rewrites only our own files, never the kopia repository.
         "encryption": False,
         # Seconds without a USER request before every open generation is closed and its memory
         # returned. 0 disables. Polled status endpoints deliberately do not count as activity.

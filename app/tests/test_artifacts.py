@@ -37,7 +37,7 @@ def test_empty_repo_publishes_an_openable_generation(tmp_path, monkeypatch):
             for name, rels in body["artifacts"].items()}
     con = duckdb.connect()
     try:
-        store._bind_generation(con, "1", arts)
+        store._bind_generation(con, "1", arts, encrypted=False)
         assert con.execute("SELECT count(*) FROM pathx").fetchone()[0] == 0
         assert con.execute("SELECT count(*) FROM filev").fetchone()[0] == 0
         assert con.execute("SELECT count(*) FROM isnaps").fetchone()[0] == 0

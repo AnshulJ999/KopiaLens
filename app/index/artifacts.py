@@ -46,7 +46,12 @@ _MAX_UNREADABLE = 200      # how many unreadable object ids the manifest carries
 
 
 def _copy_opts() -> str:
-    """The COPY option list, carrying the encryption config when encryption is on."""
+    """The COPY option list for this build's state.
+
+    No explicit flag on purpose: ``build_repo`` wraps the whole build in ``crypto.writing_state``
+    so every COPY in it follows the generation's state (which can differ from the setting while a
+    switch is pending) instead of each call site remembering to pass it.
+    """
     return crypto.copy_options(_ZSTD)
 
 
@@ -214,7 +219,11 @@ def build_repo(repo: str, root: str, gen: int = 1, job: dict | None = None, full
 
     ``gen`` is bumped past the published generation either way, so artifact file names are
     never reused while a reader can hold them. ``force`` names sources to rebuild even when
-    their snapshot set is unchanged (manual rebuild)."""
+    their snapshot set is unchanged (manual rebuild).
+
+    A build never changes the generation's encryption state: an existing manifest dictates it,
+    and only a first build follows the setting. ``crypto.writing_state`` pins that for every
+    COPY and every connection inside the build."""
     job = {} if job is None else job
     prev = _read_prev_manifest(root)
     if prev is not None:
@@ -222,7 +231,11 @@ def build_repo(repo: str, root: str, gen: int = 1, job: dict | None = None, full
         if (full or prev.get("schema_version") != _MANIFEST_VERSION
                 or not _manifest_usable(root, prev)):
             prev = None          # rebuild from scratch, through the SAME code path
-    return _build_incremental(repo, root, prev, gen, job, frozenset(force or ()))
+    state = bool(prev.get("encrypted")) if prev is not None else crypto.writes_encrypted()
+    with crypto.writing_state(state):
+        body = _build_incremental(repo, root, prev, gen, job, frozenset(force or ()))
+    body["encrypted"] = state
+    return body
 
 
 def _read_prev_manifest(root: str) -> dict | None:
@@ -769,6 +782,18 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
             f"SELECT count(*) FROM read_parquet({crypto.parquet_read_list(fl)})").fetchone()[0]
         stats = {"paths": n_paths, "file_versions": n_filev}
         checks["stats"] = stats
+
+        # Encryption self-check, before anything is published: every file this generation will
+        # name must be in the state the manifest is about to declare. A writer that missed the
+        # key produces a file that is perfectly readable and silently NOT encrypted, which is
+        # the one failure the rest of the pipeline cannot notice.
+        state = crypto.writes_encrypted()
+        named = [_abs_any(r) for rels in artifacts_out.values() for r in rels]
+        misplaced = crypto.wrong_state(named, state)
+        if misplaced:
+            raise RuntimeError(f"repo {repo}: {len(misplaced)} of {len(named)} artifact file(s) "
+                               f"are not in the expected encryption state: {misplaced[:3]}")
+        checks["encryption"] = {"state": "encrypted" if state else "plain", "files": len(named)}
 
         sources = {k: {"key": k, "snapshots": len(v), "updated_gen": gen}
                    for k, v in srcs.items()}

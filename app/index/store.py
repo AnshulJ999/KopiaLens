@@ -108,7 +108,13 @@ class Generation:
         self._session = session        # crypto._Session: the attached encrypted scratch db
 
     def cursor(self):
-        return self._con.cursor()
+        cur = self._con.cursor()
+        path = crypto.cursor_search_path(self._session)
+        if path:
+            # The artifact views live in the attached encrypted session database, and a cursor
+            # does not inherit the USE that made it current (see crypto.cursor_search_path).
+            cur.execute("SET search_path='%s'" % path)
+        return cur
 
     def acquire(self) -> None:
         with _LOCK:
@@ -151,19 +157,33 @@ def read_manifest(repo: str) -> dict | None:
         return json.load(fh)
 
 
-def _one_table(con, name: str, files: list[str]) -> None:
+def generation_state(repo: str) -> bool:
+    """Whether this repo's data is encrypted - from its MANIFEST, which is the fact.
+
+    A repo with no generation yet follows the setting: that is what its first build will write.
+    The setting can be ahead of the data while a switch is pending, so anything that decides by
+    the setting alone gets the wrong answer for exactly one transition window.
+    """
+    manifest = read_manifest(repo)
+    if manifest is None:
+        return crypto.writes_encrypted()
+    return bool(manifest.get("encrypted"))
+
+
+def _one_table(con, name: str, files: list[str], encrypted: bool) -> None:
     """Bind one artifact as a read_parquet view over an explicit file list (never a glob).
 
-    The argument list comes from ``crypto`` so the encryption config rides along when encryption
-    is on - a view built without it fails at read time with "Computed AES tag differs", which is
-    a confusing place to learn the key was missing."""
+    The argument list comes from ``crypto`` so the encryption config rides along when the
+    generation is encrypted - a view built without it fails at read time with "Computed AES tag
+    differs", which is a confusing place to learn the key was missing."""
     if not files:
         raise ValueError(f"artifact {name} has no files")
-    args = crypto.parquet_read_list([f.replace("\\", "/").replace("'", "''") for f in files])
+    args = crypto.parquet_read_list([f.replace("\\", "/").replace("'", "''") for f in files],
+                                    encrypted=encrypted)
     con.execute(f"CREATE VIEW {name} AS SELECT * FROM read_parquet({args})")
 
 
-def _bind_generation(con, repo: str, artifacts: dict[str, list[str]]) -> None:
+def _bind_generation(con, repo: str, artifacts: dict[str, list[str]], encrypted: bool) -> None:
     """Bind the raw artifact views over an explicit file list (never a glob).
 
     M2 deleted the compatibility views that used to reassemble the old ``files``/``paths``/
@@ -173,7 +193,7 @@ def _bind_generation(con, repo: str, artifacts: dict[str, list[str]]) -> None:
     """
     for name in _ARTIFACT_TABLES:
         if name in artifacts:
-            _one_table(con, name, artifacts[name])
+            _one_table(con, name, artifacts[name], encrypted)
 
     # Read-only stubs: these are builder-only tables (rewrite/backfill tracking). Empty but
     # correctly typed so any accidental read returns nothing instead of raising.
@@ -199,19 +219,25 @@ def open_generation(repo: str) -> Generation:
     manifest = read_manifest(repo)
     if manifest is None:
         raise FileNotFoundError(f"repo {repo!r} has no index (no manifest.json)")
-    if crypto.enabled() and not crypto.unlocked():
+    encrypted = bool(manifest.get("encrypted"))
+    if encrypted and not crypto.unlocked():
+        # Two different problems with two different fixes - a locked key wants a password, a
+        # missing keystore wants a restore or a rebuild.
+        if not crypto.configured():
+            raise PermissionError("the index is encrypted but its keystore is gone - restore the "
+                                  "keystore file or rebuild the index from kopia")
         raise PermissionError("the index is encrypted and locked - unlock it to read this repo")
     limit, threads = resolve_limits()
     tmp = os.path.join(DATA_DIR, f"duck_tmp_repo{repo}")
     con = duckdb.connect()
-    session = crypto.apply(con, tmp, limit, threads)
+    session = crypto.apply(con, tmp, limit, threads, encrypted=encrypted)
     base = repo_dir(repo)
     artifacts = {
         name: [p2 if os.path.isabs(p2) else os.path.join(base, p2) for p2 in files]
         for name, files in manifest.get("artifacts", {}).items()
     }
     try:
-        _bind_generation(con, repo, artifacts)
+        _bind_generation(con, repo, artifacts, encrypted)
     except Exception:
         con.close()
         if session is not None:
@@ -351,6 +377,28 @@ def close_all() -> None:
         _RETIRED.clear()
 
 
+def close_repo(repo: str) -> bool:
+    """Close this process's generations for ONE repo, if nothing is reading them.
+
+    False means a reader still holds one (or a retired generation is finishing), and the caller
+    must leave its files alone. Used by the encryption switch, which wants the superseded copy
+    off disk now rather than after the GC's one-hour grace; a busy repo falls back to that GC.
+    """
+    with _LOCK:
+        gens = [g for g in list(_GENS.values()) + list(_RETIRED) if g.repo == repo]
+        if any(g._refs > 0 for g in gens):
+            return False
+        for gen in gens:
+            if _GENS.get(repo) is gen:
+                _GENS.pop(repo, None)
+            if gen in _RETIRED:
+                _RETIRED.remove(gen)
+            gen.close()
+    if gens:
+        log.debug("repo=%s: closed %d open generation(s)", repo, len(gens))
+    return True
+
+
 @contextlib.contextmanager
 def scratch_connection(repo: str):
     """A standalone, fully configured DuckDB connection for build and publish work.
@@ -363,13 +411,17 @@ def scratch_connection(repo: str):
 
     The index build needs a FILE-backed scratch (it holds the whole tree), so it goes through
     ``crypto.open_scratch`` instead - same four guarantees, a database on disk.
+
+    The state comes from the repo's manifest, not the setting: a writer must not flip a
+    generation's state on its own, and while a switch is pending the setting says the opposite.
     """
-    if crypto.enabled() and not crypto.unlocked():
+    encrypted = generation_state(repo)
+    if encrypted and not crypto.unlocked():
         raise PermissionError("the store is encrypted and locked - unlock it before writing")
     limit, threads = resolve_limits()
     tmp = os.path.join(DATA_DIR, f"duck_tmp_repo{repo}")
     con = duckdb.connect()
-    session = crypto.apply(con, tmp, limit, threads)
+    session = crypto.apply(con, tmp, limit, threads, encrypted=encrypted)
     try:
         yield con
     finally:

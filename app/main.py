@@ -22,8 +22,8 @@ from fastapi.staticfiles import StaticFiles
 
 from config import DATA_DIR, REPOS, repo_kind
 
-from .api import (actions, audit, backblaze, dashboard, deleteplan, excluded, insights, jobs, logs,
-                  policies, restore, search, simulate, snapshots, stats, tree)
+from .api import (actions, audit, backblaze, dashboard, deleteplan, encryption, excluded, insights,
+                  jobs, logs, policies, restore, search, simulate, snapshots, stats, tree)
 from .core import auth
 from .core import jobs as jobrunner
 from .core import kopia as kopia_mod
@@ -368,13 +368,19 @@ def _light_pass() -> None:
         cleanup_jobs()          # log_cleanup_days; OFF (0) does nothing
     except Exception as exc:  # noqa: BLE001 - housekeeping must never stop the warm pass
         log.warning("log cleanup failed: %s", exc)
+    from .index import crypto
+    locked = crypto.enabled() and not crypto.unlocked()
+    if locked:
+        # Every read raises while the store is locked, and the nightly records its own skip.
+        # One line here instead of one error per repo every interval.
+        log.info("light pass skipped: the index is encrypted and locked")
     for repo in REPOS:
         if _bg_stop.is_set():
             return
         if repo_kind(repo) == "backblaze":
             continue  # BZ has no cheap warm step - its detect has its own pass below
-        if nightly.is_running(repo) or offline_status(repo):
-            continue  # the worker owns the DuckDB right now
+        if locked or nightly.is_running(repo) or offline_status(repo):
+            continue  # locked, or the worker owns the DuckDB right now
         try:
             _warm(repo)
         except RepoOffline:
@@ -609,6 +615,9 @@ async def lifespan(_app: FastAPI):
             log.info("index unlocked from the keychain")
         elif crypto.enabled():
             log.warning("the index is encrypted and locked - reads and the nightly wait for an unlock")
+        gone = crypto.sweep_all()   # session databases a crashed process left behind
+        if gone:
+            log.info("removed %d leftover session database file(s)", gone)
     except Exception as exc:  # noqa: BLE001 - never block startup on the keystore
         log.error("keystore check failed: %s", exc)
     store.start_idle_reaper()    # nothing stays open: close every generation after the idle window
@@ -866,6 +875,7 @@ app.include_router(logs.router, prefix="/api")
 app.include_router(excluded.router, prefix="/api")
 app.include_router(policies.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")
+app.include_router(encryption.router, prefix="/api")
 app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
 
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")

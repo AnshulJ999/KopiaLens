@@ -461,13 +461,26 @@ def _run_worker(repo: str, full: bool, trigger: str = "manual") -> dict:
     parent-side buffer: it survives the run for diagnosis, and none of it sits in this process.
 
     APPEND, never truncate - past runs are the only evidence for questions about whether a stage
-    has been healthy over several nights. ``_roll_worker_log`` bounds the size."""
+    has been healthy over several nights. ``_roll_worker_log`` bounds the size.
+
+    Encryption: the worker gets the data key over its stdin (never argv or env, which other
+    same-user processes can read) as one JSON line, with the OS keychain as the other carrier.
+    A locked install SKIPS the pass rather than writing a plaintext generation."""
+    from ..index import crypto
+    if crypto.enabled() and not crypto.unlocked() and not crypto.unlock_from_keychain():
+        log.error("repo=%s index pass skipped: the index is encrypted and locked", repo)
+        return {"ok": False, "skipped": True,
+                "reason": "the index is encrypted and locked - unlock KopiaLens to run the index"}
     args = [sys.executable, "-m", "app.index.worker", repo]
     if full:
         args.append("--full")
     logp = worker_log_path(repo)
     os.makedirs(os.path.dirname(logp), exist_ok=True)
     _roll_worker_log(logp)
+    payload = crypto.worker_payload() if crypto.enabled() else None
+    env = {**os.environ, "KOPIALENS_INDEX_TRIGGER": trigger}
+    if payload is not None:
+        env["KOPIALENS_KEY_STDIN"] = "1"
     try:
         with open(logp, "a", encoding="utf-8", errors="replace") as errfh:
             errfh.write(f"\n===== run started {dt.datetime.now():%Y-%m-%d %H:%M:%S} "
@@ -475,11 +488,15 @@ def _run_worker(repo: str, full: bool, trigger: str = "manual") -> dict:
             errfh.flush()
             proc = subprocess.Popen(
                 args, cwd=_KL_ROOT, stdout=subprocess.PIPE, stderr=errfh, text=True,
-                env={**os.environ, "KOPIALENS_INDEX_TRIGGER": trigger},
+                stdin=subprocess.PIPE if payload is not None else subprocess.DEVNULL,
+                env=env,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash under pythonw
             )
             try:
-                out, _ = proc.communicate(timeout=worker_timeout())
+                if payload is None:
+                    out, _ = proc.communicate(timeout=worker_timeout())
+                else:
+                    out, _ = proc.communicate(input=payload, timeout=worker_timeout())
             except subprocess.TimeoutExpired:
                 log.error("repo=%s index worker timed out - killing it", repo)
                 proc.kill()

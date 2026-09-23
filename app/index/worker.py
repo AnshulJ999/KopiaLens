@@ -17,6 +17,12 @@ There is no exclusive lock to hand over any more: the index is immutable Parquet
 ``publish.WriterLock``, and the app keeps serving the previous generation while this runs.
 Progress is written to ``data/index_progress_repo<N>.json`` so the app can show a live badge.
 
+An encrypted install hands the data key over on stdin (one JSON line, flagged by
+``KOPIALENS_KEY_STDIN``) with the OS keychain as the other carrier; with encryption on and no
+key available the run stops with ``skipped`` rather than writing a plaintext generation. A
+manual ``python -m app.index.worker`` run has the console on stdin, which is why the read only
+happens when the parent flags it.
+
 Prints a JSON summary to stdout and exits 0; nonzero on failure. The same summary is written to
 ``data/index_result_repo<N>.json`` first: stdout dies with the app that started the worker, and a
 restarted app reads the file instead.
@@ -364,6 +370,21 @@ def main(argv: list) -> int:
     repo = args[0]
     full = "--full" in argv
     started = time.time()
+    from . import crypto
+    if not crypto.worker_key(crypto.read_key_payload(os.environ.get("KOPIALENS_KEY_STDIN") == "1")):
+        # Nothing indexes in plaintext: with encryption on and no key anywhere, stop before any
+        # store connection exists. The app's own pre-flight check means this is the manual run.
+        logging.error("the index is encrypted and locked - no data key available, skipping")
+        summary = {"ok": False, "skipped": True, "repo": repo,
+                   "reason": "the index is encrypted and locked - unlock KopiaLens to run the index"}
+        summary.update({"pid": os.getpid(), "finished": time.time(), "trigger": trigger(),
+                        "full": full, "elapsed": round(time.time() - started, 1)})
+        write_result(repo, summary)
+        try:
+            print(json.dumps(summary))
+        except OSError:
+            pass
+        return 0
     try:
         summary = run(repo, full=full)
     except Exception as exc:  # noqa: BLE001 - always emit parseable output, never crash silently

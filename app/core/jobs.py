@@ -66,6 +66,9 @@ KINDS = {
     "policy_write": {"label": "Saving policies", "mutating": False},
     "snapshot_create": {"label": "Taking a snapshot", "mutating": False},
     "snapshot_pin": {"label": "Changing pins", "mutating": False},
+    # Local-only (): rewrites KopiaLens's own index, never the kopia repository. Mutating
+    # so it cannot run beside another write job or an index pass - both touch the same manifest.
+    "encryption_switch": {"label": "Switching encryption", "mutating": True},
 }
 
 AUDIT_ACTION = {
@@ -76,6 +79,7 @@ AUDIT_ACTION = {
     "policy_write": "policy-write",
     "snapshot_create": "snapshot-create",
     "snapshot_pin": "snapshot-pin",
+    "encryption_switch": "encryption-switch",
 }
 
 
@@ -219,6 +223,26 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
             then_cmds, then_meta = _build_commands(then["kind"], repo, then["params"])
             meta["then_detail"] = then_meta
         return steps + then_cmds, meta
+    elif kind == "encryption_switch":
+        # One Python step, no kopia command: rewrite the generation and the side caches, then
+        # report what they were. Returns early so the kopia-prefix check below is skipped.
+        on = bool(params.get("on"))
+
+        def _switch_step(job: dict, lf) -> tuple[int, str]:
+            from ..index import keyswitch
+            say_ = lambda text: say(job, lf, text)          # noqa: E731
+            try:
+                out = keyswitch.switch_repo(repo, on, say=say_)
+                out["caches"] = keyswitch.switch_caches(on, say=say_)
+                job["keyswitch"] = out
+                if out.get("note"):
+                    say_(out["note"])
+                return 0, ""
+            except Exception as exc:  # noqa: BLE001 - the runner reports it like any other step
+                say_(f"failed: {exc}")
+                return 1, str(exc)[:280]
+
+        return [_switch_step], {"on": on, "dry": False}
     else:
         raise JobRefused(f"unknown job kind: {kind}")
     # The builders return PASTEABLE commands: ["kopia"] + _repo_args(repo) + subcommand. The
@@ -258,6 +282,8 @@ def _default_label(kind: str, params: dict, meta: dict) -> str:
         n = meta["writes"]
         base = f"{n} polic{'y' if n == 1 else 'ies'}"
         return base + (", then delete" if meta.get("then") else "")
+    if kind == "encryption_switch":
+        return "encrypting the index" if meta.get("on") else "removing encryption"
     return kind
 
 
@@ -386,7 +412,8 @@ def _run(job: dict, cmds: list[list[str]]) -> None:
                 _record_freed(job, lf)
         if job["stop_requested"]:
             job["state"] = "stopped"
-        elif job["kind"] in ("restore", "maintenance", "policy_write") and job["rc"] not in (None, 0):
+        elif job["kind"] in ("restore", "maintenance", "policy_write",
+                             "encryption_switch") and job["rc"] not in (None, 0):
             job["state"] = "failed"
         else:
             job["state"] = "done"
