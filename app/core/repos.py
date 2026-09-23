@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 
 import config
@@ -29,6 +30,8 @@ from .applog import get_logger
 from .kopia import kopia
 
 log = get_logger("repos")
+
+_ID_LOCK = threading.Lock()   # id allocation + the record-store read-modify-write
 
 ID_RE = re.compile(r"^[a-z0-9]{1,12}$")
 RESERVED_IDS = frozenset({"bz"})     # the Backblaze pseudo-repo: never allocated to a kopia repo
@@ -73,6 +76,21 @@ def _advance_id_mark(rid: str) -> None:
     config.RECORDS["next_id"] = max(stored, int(rid) + 1)
 
 
+def reserve_id() -> str:
+    """Allocate an id AND persist the high-water mark, BEFORE anything slow happens.
+
+    The connect flow holds the id across a kopia call that takes seconds to minutes; allocating and
+    only persisting at `add_record()` let two overlapping connects take the SAME id and the same
+    managed config path, so the loser wrote the winner's file and one record could describe the
+    other's storage. Ids are never reused, so a failed connect just burns one number - that is the
+    intended trade."""
+    with _ID_LOCK:
+        rid = next_id()
+        _advance_id_mark(rid)
+        config.save_records(config.RECORDS)
+    return rid
+
+
 def all_records() -> list[dict]:
     return config.RECORDS.get("repos", [])
 
@@ -85,6 +103,67 @@ def config_path_for(repo: str) -> str | None:
     """The kopia config file this repo uses, or None for kopia's own default connection."""
     rec = config.repo_record(repo)
     return rec.get("config_file") or None
+
+
+# Storage-config keys that must NEVER leave the machine. A kopia config file holds credentials in
+# the clear (the `kopia:"sensitive"` tag exists only so kopia's own `repository status` can scrub
+# them for display), and KopiaLens both persists that block in repos.json and serves it to the
+# browser - so it is scrubbed ON READ, everywhere. Sources: repo/blob/*/*_options.go tags, plus two
+# untagged rclone fields that carry a remote's credentials.
+SENSITIVE_CONFIG_KEYS = frozenset({
+    "storagekey", "sastoken", "clientsecret", "clientcertificate",   # azureBlob
+    "key",                                                            # b2
+    "credentials",                                                    # gcs + gdrive service account
+    "secretaccesskey", "sessiontoken",                                # s3
+    "password", "keydata",                                            # sftp + webdav
+    "embeddedconfig", "rcloneenv",                                    # rclone (untagged in kopia)
+})
+# Fallback for a provider whose shape we have not seen: a key that LOOKS like a credential is
+# scrubbed rather than trusted - with an explicit exception list for fields whose NAME suggests a
+# secret but whose VALUE is a path or an identifier (kopia's `credentialsFile` is the path TO the
+# service-account JSON; `accessKeyID`/`keyID` are public identifiers).
+NOT_SENSITIVE_KEYS = frozenset({"credentialsfile", "serviceaccountcredentialsfile", "keyfile",
+                                "accesskeyid", "keyid"})
+_SENSITIVE_KEY_RE = re.compile(r"(secret|password|token|credential|keydata|^key$|storagekey|sas)",
+                               re.I)
+SCRUBBED = "***"
+
+
+def is_sensitive_key(key: str) -> bool:
+    text = str(key or "")
+    if text.lower() in NOT_SENSITIVE_KEYS:
+        return False
+    return text.lower() in SENSITIVE_CONFIG_KEYS or bool(_SENSITIVE_KEY_RE.search(text))
+
+
+def _scrub_list_item(value):
+    if isinstance(value, dict):
+        return scrub_storage_config(value)
+    text = str(value)
+    if "=" in text and is_sensitive_key(text.split("=", 1)[0]):
+        return SCRUBBED           # e.g. rclone's ["SOME_TOKEN=..."] environment entries
+    return value
+
+
+def scrub_storage_config(config) -> dict:
+    """A copy of a storage config with every credential replaced by "***".
+
+    Recursive: nested blocks and a service-account JSON embedded as a string are covered, while the
+    display fields the screens need (bucket, host, path, url, prefix, endpoint, container, remote
+    path, region, port) pass through untouched."""
+    if not isinstance(config, dict):
+        return {}
+    out: dict = {}
+    for key, value in config.items():
+        if is_sensitive_key(str(key)):
+            out[key] = SCRUBBED
+        elif isinstance(value, dict):
+            out[key] = scrub_storage_config(value)
+        elif isinstance(value, list):
+            out[key] = [_scrub_list_item(v) for v in value]
+        else:
+            out[key] = value
+    return out
 
 
 def storage_kind(storage_type: str) -> str:
@@ -102,13 +181,16 @@ def storage_kind(storage_type: str) -> str:
 
 def storage_info(repo: str) -> dict:
     """The CACHED storage facts for a repo (type, kind, capacity, when captured). Never spawns -
-    the polled `/api/repos` must not launch kopia ()."""
+    the polled `/api/repos` must not launch kopia ().
+
+    The config is scrubbed AGAIN on the way out: a record written before the scrub existed (or by
+    an older version) must not leak a credential into a response even once."""
     rec = config.repo_record(repo)
     storage = rec.get("storage") or {}
     return {
         "type": storage.get("type") or "",
         "kind": storage_kind(storage.get("type")),
-        "config": storage.get("config") or {},
+        "config": scrub_storage_config(storage.get("config") or {}),
         "capacity": rec.get("capacity") or {},
         "captured_at": rec.get("status_at") or 0,
     }
@@ -168,9 +250,12 @@ def capture_status(repo: str, status: dict | None = None) -> dict:
     storage = data.get("storage") or {}
     if storage:
         stype = storage.get("type") or ""
+        # kopia's own status output is scrubbed, but KopiaLens must not depend on that: scrub
+        # before it can reach repos.json.
+        sconfig = scrub_storage_config(storage.get("config") or {})
         if (rec.get("storage") or {}).get("type") != stype or \
-                (rec.get("storage") or {}).get("config") != (storage.get("config") or {}):
-            rec["storage"] = {"type": stype, "config": storage.get("config") or {}}
+                (rec.get("storage") or {}).get("config") != sconfig:
+            rec["storage"] = {"type": stype, "config": sconfig}
             changed = True
     volume = data.get("volume") or {}
     if volume:
@@ -190,10 +275,36 @@ def unique_id(repo: str) -> str | None:
     return (read_status(repo) or {}).get("uniqueIDHex") or None
 
 
+def scrub_stored_records() -> list[str]:
+    """One-time cleanup: rewrite any record whose stored storage config still holds a credential
+    (a record written before the scrub existed, or by an older version). Returns the repo ids that
+    were cleaned."""
+    cleaned = []
+    for rec in config.RECORDS.get("repos", []):
+        storage = rec.get("storage") or {}
+        raw = storage.get("config")
+        if not isinstance(raw, dict) or not raw:
+            continue
+        scrubbed = scrub_storage_config(raw)
+        if scrubbed != raw:
+            rec["storage"] = {**storage, "config": scrubbed}
+            cleaned.append(str(rec.get("id")))
+    if cleaned:
+        config.save_records(config.RECORDS)
+        log.warning("scrubbed credentials from %d stored repo record(s): %s", len(cleaned),
+                    ", ".join(cleaned))
+    return cleaned
+
+
 def ensure_unique_ids() -> None:
     """Startup background pass: capture the live status of every kopia repo into its record - the
     unique id (as before) AND the storage type/capacity (repo-type detection), from the SAME spawn
-    so detection costs nothing extra."""
+    so detection costs nothing extra. Also scrubs any legacy record that still carries a
+    credential."""
+    try:
+        scrub_stored_records()
+    except Exception as exc:  # noqa: BLE001 - a cleanup must not stop the capture
+        log.warning("stored-record scrub failed: %s", exc)
     for rec in list(config.RECORDS.get("repos", [])):
         rid = str(rec.get("id", ""))
         if rid not in config.kopia_repos():
@@ -236,23 +347,25 @@ def _require_free(repo: str) -> None:
 
 
 def add_record(rec: dict) -> dict:
-    """Append one validated record and persist. `id` may be blank (the allocator fills it)."""
+    """Append one validated record and persist. `id` may be blank (the allocator fills it; the
+    connect flow reserves one up front with `reserve_id()`)."""
     rec = dict(rec)
-    rid = str(rec.get("id") or "").strip() or next_id()
+    rid = str(rec.get("id") or "").strip() or reserve_id()
     if not valid_id(rid):
         raise ValueError(f"invalid repo id: {rid!r}")
-    if any(str(r.get("id")) == rid for r in all_records()):
-        raise ValueError(f"repo id {rid} is already in use")
-    rec["id"] = rid
-    rec.setdefault("kind", "kopia")
-    rec.setdefault("name", rec.get("name") or f"Repo {rid}")
-    rec.setdefault("short_name", "")
-    rec.setdefault("counts_as_backup", True)
-    rec.setdefault("source", "connected")
-    rec.setdefault("created", time.time())
-    config.RECORDS.setdefault("repos", []).append(rec)
-    _advance_id_mark(rid)
-    config.save_records(config.RECORDS)
+    with _ID_LOCK:
+        if any(str(r.get("id")) == rid for r in all_records()):
+            raise ValueError(f"repo id {rid} is already in use")
+        rec["id"] = rid
+        rec.setdefault("kind", "kopia")
+        rec.setdefault("name", rec.get("name") or f"Repo {rid}")
+        rec.setdefault("short_name", "")
+        rec.setdefault("counts_as_backup", True)
+        rec.setdefault("source", "connected")
+        rec.setdefault("created", time.time())
+        config.RECORDS.setdefault("repos", []).append(rec)
+        _advance_id_mark(rid)
+        config.save_records(config.RECORDS)
     config.reload_repos()
     log.info("repo=%s added (%s)", rid, rec.get("name"))
     return rec

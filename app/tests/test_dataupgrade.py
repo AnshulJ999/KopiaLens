@@ -121,6 +121,23 @@ def test_prune_is_a_noop_with_a_missing_or_broken_file(folder, monkeypatch):
     assert dataupgrade.prune_dead_settings() == []
 
 
+def test_status_reports_pending_steps_before_the_startup_run(folder, monkeypatch):
+    """The UI can poll this before the background thread has imported the step modules."""
+    monkeypatch.setattr(dataupgrade, "DATA_VERSION", 2)
+    dataupgrade.register(1, lambda: {}, "one-to-two")
+    (folder / "data_version.json").write_text(json.dumps({"version": 1}), encoding="utf-8")
+    pending = dataupgrade.status()["pending"]
+    assert [p["name"] for p in pending] == ["one-to-two"]
+
+
+def test_a_newer_folder_says_only_the_migration_is_refused(folder):
+    """The wording must not over-promise: other parts of the app still write their own files."""
+    (folder / "data_version.json").write_text(json.dumps({"version": 99}), encoding="utf-8")
+    detail = dataupgrade.status()["detail"]
+    assert "Nothing will be migrated" in detail and "version stamp is left untouched" in detail
+    assert "Nothing in it will be written" not in detail
+
+
 def test_atomic_writers_leave_no_temp_and_replace_in_one_step(folder):
     target = folder / "x.json"
     dataupgrade.atomic_json(str(target), {"a": 1})

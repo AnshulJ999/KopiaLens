@@ -518,6 +518,7 @@ def _tick() -> None:
                 log.info("BZ reindex started (detect flagged a change, min-gap opened)")
             else:
                 log.info("BZ reindex deferred: %s", started.get("reason"))
+    index_upgrade.drain_queue()   # an index a user cannot read must not wait for its next slot
     if now_ts - _last_light >= _light_interval():
         _last_light = now_ts
         _light_pass()
@@ -868,16 +869,27 @@ async def _repo_offline_handler(_request: Request, exc: RepoOffline):
     )
 
 
+def _index_mismatch_payload(exc: IndexVersionMismatch) -> dict:
+    """The 503 body for a generation written by another KopiaLens.
+
+    An OLDER generation is being upgraded - the app started that work itself at startup, so the
+    answer is a progress state ("upgrading"), not an error. A NEWER one is a hard stop: nothing can
+    be migrated forward, and the way out is the explicit rebuild with this version."""
+    upgrading = exc.mode != "newer" and (
+        exc.mode == "migrate"
+        or exc.repo in index_upgrade.queued_rebuilds()
+        or nightly.is_running(exc.repo))
+    detail = (f"Repo {exc.repo}: its index is being upgraded for this version of KopiaLens and "
+              f"becomes readable when that pass finishes.") if upgrading else str(exc)
+    return {"detail": detail, "index_upgrade": True, "upgrading": upgrading, "repo": exc.repo,
+            "found": exc.found, "expected": exc.expected, "mode": exc.mode}
+
+
 @app.exception_handler(IndexVersionMismatch)
 async def _index_version_handler(_request: Request, exc: IndexVersionMismatch):
-    """A generation written by a different KopiaLens. Not `offline` (nothing is coming back on its
-    own): the message says which way the mismatch runs, and the next index pass or an app update is
-    the fix."""
-    return JSONResponse(
-        status_code=503,
-        content={"detail": str(exc), "index_upgrade": True, "repo": exc.repo,
-                 "found": exc.found, "expected": exc.expected},
-    )
+    """Not `offline` (nothing comes back on its own): the message says which way the mismatch runs
+    and what actually happens next."""
+    return JSONResponse(status_code=503, content=_index_mismatch_payload(exc))
 
 
 @app.exception_handler(Exception)

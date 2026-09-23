@@ -128,11 +128,33 @@ def test_migrate_all_repos_refuses_a_newer_generation(clean_registry, repo_root)
 
 def test_store_refuses_to_read_a_generation_from_another_version(clean_registry, repo_root):
     _write(repo_root, _manifest(CURRENT - 1))
-    with pytest.raises(upgrade.IndexVersionMismatch, match="needs a one-time upgrade"):
+    with pytest.raises(upgrade.IndexVersionMismatch, match="An index pass rebuilds it") as older:
         store.open_generation("1")
+    assert older.value.mode == "rebuild" and older.value.found == CURRENT - 1
     _write(repo_root, _manifest(CURRENT + 1))
-    with pytest.raises(upgrade.IndexVersionMismatch, match="newer KopiaLens"):
+    with pytest.raises(upgrade.IndexVersionMismatch, match="newer KopiaLens") as newer:
         store.open_generation("1")
+    assert newer.value.mode == "newer"
+
+
+def test_the_older_format_message_follows_the_registered_step(clean_registry, repo_root):
+    """A registgered in-place step must NOT be announced as a rebuild (and the reverse). The
+    message is user-visible, so it has to match what will actually happen."""
+    upgrade.register(CURRENT - 1, lambda root, manifest: {**manifest, "schema_version": CURRENT},
+                     "m")
+    _write(repo_root, _manifest(CURRENT - 1))
+    with pytest.raises(upgrade.IndexVersionMismatch) as exc:
+        store.open_generation("1")
+    assert exc.value.mode == "migrate" and "upgraded in place" in str(exc.value)
+    assert upgrade.migration_mode(CURRENT - 1) == "migrate"
+
+
+def test_a_step_that_needs_kopia_reads_as_a_rebuild(clean_registry, repo_root):
+    upgrade.register(CURRENT - 1, lambda root, manifest: None, "m", needs_rebuild=True)
+    _write(repo_root, _manifest(CURRENT - 1))
+    with pytest.raises(upgrade.IndexVersionMismatch) as exc:
+        store.open_generation("1")
+    assert exc.value.mode == "rebuild" and "rebuilds it" in str(exc.value)
 
 
 def test_build_refuses_a_newer_generation_instead_of_overwriting_it(clean_registry, repo_root):
@@ -150,6 +172,69 @@ def test_build_rebuilds_loudly_when_no_migration_was_applied(clean_registry, rep
                         lambda repo, root, prev, gen, job, force: {"prev": prev})
     out = artifacts.build_repo("1", str(repo_root))
     assert out["prev"] is None
+
+
+def test_migrate_all_repos_skips_a_repo_whose_worker_is_running(clean_registry, repo_root, monkeypatch):
+    """The app takes over live workers, so a migration must never run under one: rewriting files
+    either fails (Windows) or publishes a manifest built from the pre-migration snapshot (POSIX)."""
+    upgrade.register(CURRENT - 1, lambda root, manifest: {**manifest, "schema_version": CURRENT},
+                     "m")
+    _write(repo_root, _manifest(CURRENT - 1))
+    from app.core import nightly
+    monkeypatch.setattr(nightly, "is_running", lambda repo: True)
+    report = upgrade.migrate_all_repos(["1"])
+    assert report["skipped_worker_running"] == ["1"] and report["migrated"] == []
+    assert json.loads((repo_root / "manifest.json").read_text(encoding="utf-8"))["schema_version"] == CURRENT - 1
+
+
+def test_an_unmigratable_index_starts_an_index_pass_now(clean_registry, repo_root, monkeypatch):
+    """An index the user cannot read must not sit broken until the nightly."""
+    _write(repo_root, _manifest(CURRENT - 1))          # no step registered -> rebuild
+    calls = []
+    from app.core import nightly
+    monkeypatch.setattr(nightly, "start_index_pass_async",
+                        lambda repo, trigger=None, **kw: calls.append((repo, trigger)) or {"started": True})
+    report = upgrade.migrate_all_repos(["1"])
+    assert report["needs_rebuild"] == ["1"]
+    assert calls == [("1", "upgrade")]
+
+
+def test_a_failed_migration_also_starts_a_pass(clean_registry, repo_root, monkeypatch):
+    """A broken step must not leave the repo unreadable until the nightly either."""
+    def boom(root, manifest):
+        raise RuntimeError("disk on fire")
+
+    upgrade.register(CURRENT - 1, boom, "broken")
+    _write(repo_root, _manifest(CURRENT - 1))
+    calls = []
+    from app.core import nightly
+    monkeypatch.setattr(nightly, "start_index_pass_async",
+                        lambda repo, trigger=None, **kw: calls.append((repo, trigger)) or {"started": True})
+    report = upgrade.migrate_all_repos(["1"])
+    assert report["needs_rebuild"] == ["1"] and calls == [("1", "upgrade")]
+
+
+def test_a_busy_scheduler_queues_the_rebuild_and_the_tick_drains_it(clean_registry, monkeypatch):
+    from app.core import nightly
+    state = {"busy": True}
+    started = []
+
+    def fake_start(repo, trigger=None, **kw):
+        if state["busy"]:
+            return {"started": False, "reason": "another pass is running"}
+        started.append((repo, trigger))
+        return {"started": True}
+
+    monkeypatch.setattr(nightly, "start_index_pass_async", fake_start)
+    with upgrade._QUEUE_LOCK:
+        upgrade._REBUILD_QUEUE.clear()
+    out = upgrade.request_rebuild("1")
+    assert out == {"started": False, "queued": True} and upgrade.queued_rebuilds() == ["1"]
+    assert upgrade.drain_queue() == []                 # still busy: stays queued
+    assert upgrade.queued_rebuilds() == ["1"]
+    state["busy"] = False
+    assert upgrade.drain_queue() == ["1"] and started == [("1", "upgrade")]
+    assert upgrade.queued_rebuilds() == []
 
 
 def test_build_carries_a_current_manifest_forward(clean_registry, repo_root, monkeypatch):

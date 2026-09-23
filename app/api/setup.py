@@ -210,3 +210,75 @@ def remove(repo: str, confirm: bool = False, delete_config: bool = False) -> dic
         return repoconnect.remove(repo, delete_config=delete_config)
     except ValueError as exc:
         raise _bad(exc) from exc
+
+
+class IndexRebuildRequest(BaseModel):
+    repo: str
+    confirm: bool = False
+
+
+@router.get("/setup/index/rebuild-preview")
+def index_rebuild_preview(repo: str) -> dict:
+    """What an explicit "rebuild this index with this version" would do, and its cost.
+
+    The case it exists for: an index written by a NEWER KopiaLens (someone went back to an older
+    version). Nothing can migrate it forward safely, and updating again is not always an option -
+    so the app offers to set the old generation aside (never delete it) and rebuild from kopia."""
+    from ..core import nightly
+    from ..index import upgrade as index_upgrade
+
+    if not repos.exists(repo):
+        raise _bad(ValueError(f"unknown repo: {repo}"))
+    status = index_upgrade.index_status(repo)
+    started = nightly.is_running(repo)
+    return {
+        "repo": repo, "state": status["state"], "found": status["found"],
+        "expected": status["expected"],
+        "mode": (index_upgrade.migration_mode(status["found"])
+                 if status["found"] is not None else ""),
+        "can_rebuild": status["state"] in ("newer", "rebuild", "migratable") and not started,
+        "blocked": ("this repo is being indexed right now - the rebuild starts after that pass"
+                    if started else ""),
+        "cost": ("one full index pass: 10-40 min per repo on a large one, and the sticky "
+                 "first-seen dates are lost (they come from snapshots that have since expired)"),
+        "keeps": "the old generation is moved aside, never deleted",
+    }
+
+
+@router.post("/setup/index/rebuild")
+def index_rebuild(payload: IndexRebuildRequest) -> dict:
+    """Rebuild one repo's index with THIS version: set the current generation aside and start an
+    index pass now. `confirm=true` is required - the old generation is kept, but the rebuild is the
+    expensive path (see rebuild-preview)."""
+    import time
+
+    from ..core import nightly
+    from ..index import store as index_store
+    from ..index import upgrade as index_upgrade
+
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Rebuilding an index needs confirm=true "
+                                                    "(see index/rebuild-preview first).")
+    if not repos.exists(payload.repo):
+        raise _bad(ValueError(f"unknown repo: {payload.repo}"))
+    if nightly.is_running(payload.repo):
+        raise _bad(ValueError(f"repo {payload.repo} is being indexed right now - try again after "
+                              f"that pass"))
+    status = index_upgrade.index_status(payload.repo)
+    if status["state"] in ("current", "absent"):
+        raise _bad(ValueError(f"repo {payload.repo} has no index to rebuild"
+                              + (" yet" if status["state"] == "absent" else "")))
+    closed = index_store.close_repo(payload.repo)
+    root = index_store.repo_dir(payload.repo)
+    archived = ""
+    if os.path.isdir(root):
+        archived = f"{root}.v{status['found']}-{time.strftime('%Y%m%d-%H%M%S')}"
+        try:
+            os.rename(root, archived)
+        except OSError as exc:
+            raise _bad(ValueError(f"could not set the old generation aside ({exc}) - close other "
+                                  f"KopiaLens tabs and try again")) from exc
+    out = index_upgrade.request_rebuild(payload.repo, trigger="explicit-rebuild")
+    return {"ok": True, "repo": payload.repo, "archived_to": archived,
+            "started": out["started"], "queued": out["queued"], "generations": closed,
+            "note": "the old generation is kept beside the data folder; the pass rebuilds from kopia"}

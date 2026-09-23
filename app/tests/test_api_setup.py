@@ -98,7 +98,75 @@ def test_data_status_route_reports_versions_and_index_states(sandbox, monkeypatc
     assert out["index"] == [{"repo": "1", "found": None, "expected": 3, "state": "absent"}]
 
 
-def test_repos_route_carries_the_data_block(sandbox):
+def test_index_rebuild_preview_and_action(sandbox, monkeypatch, tmp_path):
+    """The way out of a downgrade: set the newer generation aside (never delete it) and rebuild
+    with THIS version, stating the cost first."""
+    from app.index import store as index_store
+    from app.index import upgrade as index_upgrade
+
+    repo_store.add_record({"name": "One", "config_file": None})
+    root = tmp_path / "data" / "repo1"
+    root.mkdir(parents=True)
+    (root / "manifest.json").write_text(json.dumps({"generation": 1,
+                                                    "schema_version": index_upgrade.MANIFEST_VERSION + 1,
+                                                    "artifacts": {}}), encoding="utf-8")
+    monkeypatch.setattr(index_store, "repo_dir", lambda repo: str(root))
+    monkeypatch.setattr(index_store, "manifest_path", lambda repo: str(root / "manifest.json"))
+    monkeypatch.setattr("app.index.publish.repo_dir", lambda repo: str(root))
+
+    preview = setup.index_rebuild_preview("1")
+    assert preview["state"] == "newer" and preview["can_rebuild"] is True
+    assert "10-40 min" in preview["cost"] and "never deleted" in preview["keeps"]
+
+    with pytest.raises(HTTPException) as exc:
+        setup.index_rebuild(setup.IndexRebuildRequest(repo="1"))
+    assert exc.value.status_code == 400 and "confirm=true" in exc.value.detail
+
+    calls = []
+    from app.core import nightly
+    monkeypatch.setattr(nightly, "start_index_pass_async",
+                        lambda repo, trigger=None, **kw: calls.append((repo, trigger)) or {"started": True})
+    out = setup.index_rebuild(setup.IndexRebuildRequest(repo="1", confirm=True))
+    assert out["ok"] is True and calls == [("1", "explicit-rebuild")]
+    assert out["archived_to"].startswith(str(root)) and "v4-" in out["archived_to"]
+    assert not root.exists() and os.path.isdir(out["archived_to"])       # kept, not deleted
+    assert setup.index_rebuild_preview("1")["state"] == "absent"          # fresh rebuild next
+
+
+def test_index_rebuild_refuses_a_current_index(sandbox, monkeypatch, tmp_path):
+    from app.index import store as index_store
+    from app.index import upgrade as index_upgrade
+    repo_store.add_record({"name": "One", "config_file": None})
+    root = tmp_path / "data" / "repo1"
+    root.mkdir(parents=True)
+    (root / "manifest.json").write_text(json.dumps({"schema_version": index_upgrade.MANIFEST_VERSION}),
+                                        encoding="utf-8")
+    monkeypatch.setattr(index_store, "repo_dir", lambda repo: str(root))
+    monkeypatch.setattr(index_store, "manifest_path", lambda repo: str(root / "manifest.json"))
+    with pytest.raises(HTTPException) as exc:
+        setup.index_rebuild(setup.IndexRebuildRequest(repo="1", confirm=True))
+    assert "no index to rebuild" in exc.value.detail
+
+
+def test_the_mismatch_payload_says_upgrading_only_when_work_is_under_way(monkeypatch):
+    """Reads during an upgrade must show progress, not an error - and a downgrade must be an
+    explicit hard stop with a way out."""
+    from app.index.upgrade import IndexVersionMismatch
+    import app.main as main_mod
+
+    exc = IndexVersionMismatch("1", 2, 3)
+    monkeypatch.setattr(main_mod.index_upgrade, "queued_rebuilds", lambda: [])
+    monkeypatch.setattr(main_mod.nightly, "is_running", lambda repo: False)
+    payload = main_mod._index_mismatch_payload(exc)
+    assert payload["mode"] == "rebuild" and payload["upgrading"] is False
+    monkeypatch.setattr(main_mod.index_upgrade, "queued_rebuilds", lambda: ["1"])
+    payload = main_mod._index_mismatch_payload(exc)
+    assert payload["upgrading"] is True and "being upgraded" in payload["detail"]
+
+    newer = IndexVersionMismatch("1", 4, 3)
+    payload = main_mod._index_mismatch_payload(newer)
+    assert payload["mode"] == "newer" and payload["upgrading"] is False
+    assert "newer KopiaLens" in payload["detail"]
     out = dashboard_api.repos()
     assert out["data"]["app_version"] >= 1
     assert out["kopia"]["tested"] == kopiabin.TESTED_VERSION

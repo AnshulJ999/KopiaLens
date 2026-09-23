@@ -145,6 +145,7 @@ def prune_dead_settings() -> list[str]:
 def status() -> dict:
     """What the UI needs: the folder's version, the app's, whether the folder is NEWER than this
     app (refused), which steps are pending, and how the last run went."""
+    _load_steps()          # a pending step must be visible before the startup thread imports them
     info = read_version()
     with _LOCK:
         known = sorted(_STEPS.items())
@@ -162,8 +163,9 @@ def status() -> dict:
         "last": state.get("last"),
         "error": state.get("error") or "",
         "detail": (f"This data folder was written by a newer KopiaLens (version {info['version']}; "
-                   f"this app writes {DATA_VERSION}). Use the newer app, or point KopiaLens at a "
-                   f"different data folder.") if newer else "",
+                   f"this app writes {DATA_VERSION}). Nothing will be migrated and the version "
+                   f"stamp is left untouched; use the newer app, or point KopiaLens at a different "
+                   f"data folder.") if newer else "",
     }
 
 
@@ -236,7 +238,11 @@ def start_background() -> None:
     server coming up."""
     info = read_version()
     if info["version"] > DATA_VERSION:
-        log.error("REFUSING to migrate: the data folder is from a newer KopiaLens (v%s vs v%s). "
-                  "Nothing in it will be written by this app.", info["version"], DATA_VERSION)
+        # "Refuse" is scoped to the MIGRATION: nothing is migrated and the version stamp is left
+        # alone. The rest of the app still writes its own files (settings, logs, side caches) - the
+        # user-facing banner is's, and `status()['newer']` is what it reads.
+        log.error("REFUSING to migrate: the data folder is from a newer KopiaLens (v%s vs v%s) - "
+                  "no step runs and the version stamp is untouched. Use the newer app.", info["version"],
+                  DATA_VERSION)
         return
     threading.Thread(target=_background, name="data-upgrade", daemon=True).start()

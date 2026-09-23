@@ -49,6 +49,73 @@ def test_next_id_never_reuses_a_removed_id(store):
     assert repos.next_id() == "3"
 
 
+def test_scrub_storage_config_hides_credentials_and_keeps_the_rest(store):
+    """A kopia config file holds credentials in the clear; nothing secret may reach a response or
+    repos.json. The display fields the screens need must survive."""
+    from app.core import repos
+    raw = {
+        "bucket": "my-backups", "endpoint": "s3.amazonaws.com", "region": "eu-central-1",
+        "prefix": "kopia/", "accessKeyID": "AKIA123", "secretAccessKey": "shhh",
+        "sessionToken": "tok", "path": "/mnt/backup", "host": "nas.local", "port": 22,
+        "password": "pw", "keyData": "-----BEGIN KEY-----", "keyID": "002",
+        "storageKey": "azure-key", "sasToken": "sv=2021", "ClientSecret": "cs",
+        "ClientCertificate": "cert", "credentials": "{\"private_key\": \"...\"}",
+        "embeddedConfig": "[remote]\ntype = drive", "rcloneEnv": ["TOKEN=abc"],
+        "rcloneArgs": ["--fast-list"], "credentialsFile": "/home/u/sa.json", "readOnly": True,
+        "nested": {"secretAccessKey": "inner", "bucket": "inner-bucket"},
+    }
+    out = repos.scrub_storage_config(raw)
+    assert "shhh" not in json.dumps(out) and "azure-key" not in json.dumps(out)
+    assert "-----BEGIN KEY-----" not in json.dumps(out) and "sv=2021" not in json.dumps(out)
+    assert out["nested"]["secretAccessKey"] == repos.SCRUBBED   # nested blocks too
+    assert out["secretAccessKey"] == repos.SCRUBBED and out["password"] == repos.SCRUBBED
+    assert out["storageKey"] == repos.SCRUBBED and out["ClientSecret"] == repos.SCRUBBED
+    assert out["ClientCertificate"] == repos.SCRUBBED and out["credentials"] == repos.SCRUBBED
+    assert out["embeddedConfig"] == repos.SCRUBBED and out["rcloneEnv"] == repos.SCRUBBED
+    assert out["key"] if "key" in out else True
+    # identifiers and paths are NOT secrets - the screens show them
+    assert out["bucket"] == "my-backups" and out["endpoint"] == "s3.amazonaws.com"
+    assert out["accessKeyID"] == "AKIA123" and out["credentialsFile"] == "/home/u/sa.json"
+    assert out["nested"]["bucket"] == "inner-bucket" and out["rcloneArgs"] == ["--fast-list"]
+    assert repos.scrub_storage_config(None) == {} and repos.scrub_storage_config("junk") == {}
+
+
+def test_storage_info_scrubs_a_legacy_record_and_the_cleanup_rewrites_it(store):
+    """A record written before the scrub existed must not leak once, and gets cleaned up."""
+    from app.core import repos
+    repos.add_record({"name": "Legacy", "config_file": None})
+    config.RECORDS["repos"][0]["storage"] = {"type": "s3",
+                                             "config": {"bucket": "b", "secretAccessKey": "leak"}}
+    assert repos.storage_info("1")["config"]["secretAccessKey"] == repos.SCRUBBED
+    assert repos.scrub_stored_records() == ["1"]
+    on_disk = json.loads((store / "repos.json").read_text(encoding="utf-8"))
+    assert on_disk["repos"][0]["storage"]["config"]["secretAccessKey"] == repos.SCRUBBED
+    assert on_disk["repos"][0]["storage"]["config"]["bucket"] == "b"
+    assert repos.scrub_stored_records() == []
+
+
+def test_capture_status_stores_a_scrubbed_config(store):
+    from app.core import repos
+    repos.add_record({"name": "Main", "config_file": None})
+    repos.capture_status("1", {"uniqueIDHex": "a" * 64,
+                               "storage": {"type": "b2", "config": {"bucket": "b", "key": "leak"}},
+                               "volume": {"capacity": 10, "available": 5}})
+    stored = config.RECORDS["repos"][0]["storage"]["config"]
+    assert stored["key"] == repos.SCRUBBED and "leak" not in json.dumps(config.RECORDS)
+
+
+def test_reserve_id_advances_the_persisted_mark_before_anything_slow(store):
+    """Two overlapping connects must never share an id (and therefore a managed config path)."""
+    from app.core import repos
+    assert repos.reserve_id() == "1"
+    assert repos.reserve_id() == "2"          # persisted at allocation, not at add_record
+    on_disk = json.loads((store / "repos.json").read_text(encoding="utf-8"))
+    assert on_disk["next_id"] == 3
+    # a failed connect leaves the id burned by design
+    repos.add_record({"id": "1", "name": "First"})
+    assert repos.reserve_id() == "3"
+
+
 def test_forget_state_clears_the_id_keyed_state_files(store):
     from app.core import repos
     (store / "bg_worker_state.json").write_text(json.dumps({

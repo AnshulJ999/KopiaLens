@@ -495,10 +495,13 @@ def _establish(verb: str, provider: str, fields: dict, password: str, name: str,
     spec = _spec(provider)
     if spec.get("password", True) and not (password or "").strip():
         raise ValueError("The repository password is required.")
+    # The id + the managed config path are RESERVED before the kopia call: two overlapping
+    # connects must never share an identity or a file (a failed connect just burns a number).
     with _CONNECT_LOCK:
-        rid = repos.next_id()
+        rid = repos.reserve_id()
         config_file = managed_config_path(rid)
         os.makedirs(os.path.dirname(config_file), exist_ok=True)
+    log.info("repo id %s reserved for a new connection", rid)
     args = _build_args(verb, provider, fields, config_file, options)
     log.info("%s repo=%s provider=%s config=%s", verb, rid, provider, config_file)
     res = _run(args, password)
@@ -548,17 +551,22 @@ def read_config_file(config_file: str) -> dict:
 
 
 def describe_config(config_file: str) -> dict:
-    """Type facts for a config file, read directly (no spawn, and the file holds no secret:
-    passwords live in the keyring / a sibling file)."""
+    """Type facts for a config file, read directly (no spawn).
+
+    The file DOES hold credentials (kopia marshals the storage options as-is; S3's secret key, B2's
+    key, Azure's key/SAS/secret, GCS/GDrive's service-account JSON, SFTP/WebDAV passwords, rclone's
+    embedded config). Every returned config therefore goes through `repos.scrub_storage_config()` -
+    the scrub happens ON READ, so a credential can never reach a response or `repos.json`."""
     data = read_config_file(config_file)
     storage = data.get("storage") or {}
     api = data.get("apiServer") or {}
     if api:
         return {"type": "server", "kind": "server", "label": "Kopia repository server",
-                "config": {"url": api.get("baseURL") or ""}}
+                "config": repos.scrub_storage_config({"url": api.get("baseURL") or ""})}
     stype = storage.get("type") or ""
     return {"type": stype, "kind": repos.storage_kind(stype),
-            "label": stype or "unknown", "config": storage.get("config") or {}}
+            "label": stype or "unknown",
+            "config": repos.scrub_storage_config(storage.get("config") or {})}
 
 
 def detect_configs() -> list[dict]:
@@ -566,8 +574,8 @@ def detect_configs() -> list[dict]:
 
     Both folders are scanned: kopia's own (KopiaUI's `repository-*.config` files and the CLI
     default) and KopiaLens's data folder for connections WE created there. Filesystem only (no
-    spawn), reading the config JSON directly (it carries no secret), and it marks the ones already
-    in the store."""
+    spawn), reading the config JSON directly and scrubbing every credential out of it (see
+    `describe_config`); it marks the ones already in the store."""
     base = kopia_config_dir()
     ours = os.path.join(config.DATA_DIR, "configs")
     default_cfg = os.path.join(base, "repository.config")
@@ -644,7 +652,8 @@ def probe(config_file: str | None = None, repo: str | None = None) -> dict:
     out.update({
         "ok": True, "unique_id": (data or {}).get("uniqueIDHex") or "", "type": stype,
         "kind": repos.storage_kind(stype),
-        "config": storage.get("config") or config_facts.get("config") or {},
+        "config": repos.scrub_storage_config(storage.get("config")
+                                             or config_facts.get("config") or {}),
         "capacity": volume.get("capacity"), "available": volume.get("available"),
         "error": "",
     })
@@ -677,7 +686,7 @@ def attach(config_file: str | None, name: str = "", short_name: str = "",
         if cfg and existing and os.path.normcase(os.path.abspath(existing)) == os.path.normcase(cfg):
             raise ValueError(f"that connection is already attached as repo {rec.get('id')}")
     with _CONNECT_LOCK:
-        rid = repos.next_id()
+        rid = repos.reserve_id()
     record = repos.add_record({
         "id": rid, "name": name or f"Repo {rid}", "short_name": short_name, "kind": "kopia",
         "config_file": cfg, "source": "attached", "counts_as_backup": bool(counts_as_backup),

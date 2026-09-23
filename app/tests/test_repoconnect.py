@@ -225,6 +225,43 @@ def test_create_in_the_kopia_config_folder(store, fixed_binary, monkeypatch):
     assert not os.path.exists(rec["config_file"])
 
 
+def test_no_flow_leaks_a_storage_credential(store, fixed_binary, monkeypatch):
+    """The whole point of scrubbing on read: a config file's credentials must not reach
+    detect-configs, attach, probe, repos.json or /api/repos - while the display fields stay."""
+    from app.core import repoconnect, repos
+    cfg = store / "repository-cloud.config"
+    cfg.write_text(json.dumps({
+        "storage": {"type": "s3", "config": {
+            "bucket": "my-backups", "endpoint": "s3.amazonaws.com", "prefix": "kopia/",
+            "accessKeyID": "AKIA123", "secretAccessKey": "TOPSECRET", "sessionToken": "TOK"}}}),
+        encoding="utf-8")
+    monkeypatch.setattr(repoconnect, "kopia_config_dir", lambda: str(store))
+
+    facts = repoconnect.describe_config(str(cfg))
+    assert facts["config"]["secretAccessKey"] == repos.SCRUBBED
+    assert facts["config"]["sessionToken"] == repos.SCRUBBED
+    assert facts["config"]["bucket"] == "my-backups" and facts["config"]["accessKeyID"] == "AKIA123"
+
+    listed = {f["filename"]: f for f in repoconnect.detect_configs()}
+    assert "TOPSECRET" not in json.dumps(listed)
+
+    rec = repoconnect.attach(str(cfg), "Cloud")   # capture_status is a no-op in this suite
+    assert "TOPSECRET" not in json.dumps(rec)
+    assert rec["storage"]["config"]["bucket"] == "my-backups"
+    # a live status reading is scrubbed before it is stored, too
+    repos.capture_status(rec["id"], {"storage": {"type": "s3", "config": {"bucket": "my-backups",
+                                                                         "secretAccessKey": "TOPSECRET"}}})
+    assert "TOPSECRET" not in json.dumps(config.RECORDS)
+    assert "TOPSECRET" not in json.dumps(repos.detail(config.repo_record(rec["id"])))
+
+    monkeypatch.setattr(repoconnect, "_run", lambda args, password, timeout=600.0: {
+        "returncode": 0, "stdout": json.dumps({"uniqueIDHex": "a" * 64, "storage": {
+            "type": "s3", "config": {"bucket": "my-backups", "secretAccessKey": "TOPSECRET"}}}),
+        "stderr": "", "command": args})
+    out = repoconnect.probe(repo=rec["id"])
+    assert "TOPSECRET" not in json.dumps(out) and out["config"]["bucket"] == "my-backups"
+
+
 def test_connect_records_a_managed_config(store, fixed_binary, monkeypatch):
     from app.core import repoconnect
     seen = {}
