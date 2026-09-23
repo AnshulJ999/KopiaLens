@@ -56,7 +56,10 @@ def _isolate(monkeypatch, tmp_path, *, env=None, setting=None, which=None,
 
 
 def test_resolution_order(monkeypatch, tmp_path):
-    """env -> setting -> PATH -> install locations -> KopiaUI bundle, first existing wins."""
+    """env -> setting -> BUNDLED -> PATH -> install locations -> KopiaUI bundle.
+
+    The bundle comes before the machine's copies on purpose: a release pins the kopia it was tested
+    with, so "works out of the box" does not depend on what a user happens to have installed."""
     ui = _stub(tmp_path, "ui-kopia")
     _isolate(monkeypatch, tmp_path, kopiaui=[str(ui)])
     assert kopiabin.resolve() == str(ui)
@@ -71,15 +74,47 @@ def test_resolution_order(monkeypatch, tmp_path):
     assert kopiabin.resolve() == str(on_path)
     assert kopiabin.source() == "PATH"
 
+    bundled = _stub(tmp_path, "bundled-kopia")
+    _isolate(monkeypatch, tmp_path, which=str(on_path), locations=[str(loc)], kopiaui=[str(ui)],
+             bundled=[str(bundled)])
+    assert kopiabin.resolve() == str(bundled)
+    assert kopiabin.source() == "bundled"
+    assert kopiabin.info(with_version=False)["bundled"] is True
+
     chosen = _stub(tmp_path, "set-kopia")
-    _isolate(monkeypatch, tmp_path, setting=str(chosen), which=str(on_path))
+    _isolate(monkeypatch, tmp_path, setting=str(chosen), which=str(on_path), bundled=[str(bundled)])
     assert kopiabin.resolve() == str(chosen)
     assert kopiabin.source() == "setting"
 
     forced = _stub(tmp_path, "env-kopia")
-    _isolate(monkeypatch, tmp_path, env=str(forced), setting=str(chosen), which=str(on_path))
+    _isolate(monkeypatch, tmp_path, env=str(forced), setting=str(chosen), which=str(on_path),
+             bundled=[str(bundled)])
     assert kopiabin.resolve() == str(forced)
     assert kopiabin.source() == "environment"
+
+
+def test_inventory_lists_every_copy_with_its_version(monkeypatch, tmp_path):
+    """The data for the Settings row and the one-time "a different kopia was found" notice: every
+    copy present, with version, which one is in use, and which is newest."""
+    bundled = _stub(tmp_path, "bundled-kopia")
+    other = _stub(tmp_path, "other-kopia")
+    _isolate(monkeypatch, tmp_path, which=str(other), bundled=[str(bundled)])
+
+    class _Res:
+        def __init__(self, out):
+            self.returncode = 0
+            self.stdout = out
+            self.stderr = ""
+
+    monkeypatch.setattr(kopiabin.subprocess, "run",
+                        lambda cmd, **kw: _Res("0.24.1 build: abc from: kopia/kopia"
+                                               if cmd[0] == str(other) else
+                                               "0.23.1 build: def from: kopia/kopia"))
+    found = kopiabin.inventory()
+    assert len(found) == 2
+    by_path = {f["path"]: f for f in found}
+    assert by_path[str(bundled)]["in_use"] is True and by_path[str(bundled)]["version"] == "0.23.1"
+    assert by_path[str(other)]["in_use"] is False and by_path[str(other)]["newest"] is True
 
 
 def test_a_candidate_that_does_not_exist_is_skipped(monkeypatch, tmp_path):

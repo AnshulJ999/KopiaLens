@@ -34,13 +34,15 @@ from . import crypto, ids, layer2, layer3, store, tree, treeconvert, treesync
 from .builder import _drop_indexes, _refresh_paths
 from .physical import fill_paths_physical
 from .schema import init_schema
+from .upgrade import MANIFEST_VERSION as _MANIFEST_VERSION, IndexVersionMismatch
 
 log = get_logger("store")
 
 _ZSTD = "FORMAT parquet, COMPRESSION zstd"
 # 3 = the unified store: layer 1 (the tree) is published inside the generation. A generation at
 # version 2 has no tree to carry, so it rebuilds once and carries one from then on.
-_MANIFEST_VERSION = 3
+# The generation format lives in index/upgrade.py (one authority: it is also imported
+# by index/store.py, which refuses to read a generation written at another version).
 _TREE_TABLES = ("tdir", "tent", "tpart")
 _MAX_UNREADABLE = 200      # how many unreadable object ids the manifest carries
 
@@ -214,13 +216,27 @@ def build_repo(repo: str, root: str, gen: int = 1, job: dict | None = None, full
 
     ``gen`` is bumped past the published generation either way, so artifact file names are
     never reused while a reader can hold them. ``force`` names sources to rebuild even when
-    their snapshot set is unchanged (manual rebuild)."""
+    their snapshot set is unchanged (manual rebuild).
+
+    A schema-version change is migrated IN PLACE by the app's startup routine (``index.upgrade``),
+    never by a rebuild: a rebuild is 10-40 min per repo and loses the sticky first-seen dates. This
+    path only sees the leftover case (no migration registered, or the routine could not run), and
+    says so loudly before falling back."""
     job = {} if job is None else job
     prev = _read_prev_manifest(root)
     if prev is not None:
         gen = max(int(gen or 1), int(prev.get("generation") or 0) + 1)
-        if (full or prev.get("schema_version") != _MANIFEST_VERSION
-                or not _manifest_usable(root, prev)):
+        found = int(prev.get("schema_version") or 0)
+        if found > _MANIFEST_VERSION:
+            raise IndexVersionMismatch(repo, found, _MANIFEST_VERSION)
+        if full:
+            prev = None
+        elif found != _MANIFEST_VERSION:
+            log.warning("repo=%s index format %s -> %s has no in-place migration applied - "
+                        "rebuilding from kopia (10-40 min; sticky first-seen dates are lost)",
+                        repo, found, _MANIFEST_VERSION)
+            prev = None
+        elif not _manifest_usable(root, prev):
             prev = None          # rebuild from scratch, through the SAME code path
     return _build_incremental(repo, root, prev, gen, job, frozenset(force or ()))
 

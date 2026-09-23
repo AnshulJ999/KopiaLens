@@ -47,7 +47,7 @@ def _require_kopia(repo: str) -> None:
 
 @router.get("/repos")
 def repos() -> dict:
-    from ..core import auth, kopiabin
+    from ..core import auth, dataupgrade, kopiabin
     from ..core import repos as repo_store
 
     settings = load_settings()
@@ -63,6 +63,9 @@ def repos() -> dict:
         # Where the kopia program is (resolved, or not found). The version is read once at
         # startup, so this route never spawns anything.
         "kopia": kopiabin.info(with_version=False),
+        # The data folder's format version: pending migration steps, or a folder from a NEWER
+        # KopiaLens (which this app refuses to touch).
+        "data": dataupgrade.status(),
         "settings": _scrub_secrets(settings),
     }
 

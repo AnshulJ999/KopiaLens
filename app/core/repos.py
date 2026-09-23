@@ -87,16 +87,6 @@ def config_path_for(repo: str) -> str | None:
     return rec.get("config_file") or None
 
 
-def managed_config_dir() -> str:
-    """Where a KopiaLens-created connection keeps its kopia config file (self-contained: it lives
-    and travels with the data folder, and works unchanged in Docker)."""
-    return os.path.join(config.DATA_DIR, "configs")
-
-
-def managed_config_path(rid: str) -> str:
-    return os.path.join(managed_config_dir(), f"repo{rid}.config")
-
-
 def storage_kind(storage_type: str) -> str:
     t = str(storage_type or "")
     if t in LOCAL_STORAGE:

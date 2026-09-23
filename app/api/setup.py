@@ -64,8 +64,27 @@ class RepoEditRequest(BaseModel):
 
 @router.get("/setup/kopia")
 def get_kopia() -> dict:
-    """Which kopia program KopiaLens will run, where it was found, and the version (display only)."""
-    return kopiabin.info(with_candidates=True)
+    """Which kopia program KopiaLens will run, where it was found, and the version (display only).
+
+    `found` lists EVERY kopia on this machine with its version (one spawn each) - the data the
+    Settings row and the one-time "a different kopia was found" notice need. The notice itself is
+    the UI's to design."""
+    info = kopiabin.info(with_candidates=True)
+    info["found"] = kopiabin.inventory()
+    return info
+
+
+@router.get("/setup/data")
+def get_data_status() -> dict:
+    """The data folder's format version and what (if anything) is pending, plus each repo's index
+    format - the `` state, for the Settings/diagnostics surfaces."""
+    from ..core import dataupgrade
+    from ..index import upgrade as index_upgrade
+
+    out = dataupgrade.status()
+    out["index"] = [index_upgrade.index_status(str(rec.get("id")))
+                    for rec in repos.all_records() if rec.get("kind", "kopia") == "kopia"]
+    return out
 
 
 @router.post("/setup/kopia")

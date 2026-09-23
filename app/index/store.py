@@ -30,7 +30,7 @@ import duckdb
 from config import DATA_DIR, REPOS
 
 from ..core.applog import get_logger
-from . import crypto
+from . import crypto, upgrade
 
 log = get_logger("store")
 
@@ -199,6 +199,12 @@ def open_generation(repo: str) -> Generation:
     manifest = read_manifest(repo)
     if manifest is None:
         raise FileNotFoundError(f"repo {repo!r} has no index (no manifest.json)")
+    found = int(manifest.get("schema_version") or 0)
+    if found != upgrade.MANIFEST_VERSION:
+        # Refusing is the point: an older layout read by newer code misreads silently, and a NEWER
+        # layout must never be read (or written) by an older app. The startup routine migrates the
+        # older case in place; the newer case is the user's to resolve.
+        raise upgrade.IndexVersionMismatch(repo, found, upgrade.MANIFEST_VERSION)
     if crypto.enabled() and not crypto.unlocked():
         raise PermissionError("the index is encrypted and locked - unlock it to read this repo")
     limit, threads = resolve_limits()

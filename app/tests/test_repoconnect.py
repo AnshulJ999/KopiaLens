@@ -128,6 +128,103 @@ def test_create_records_a_created_repo(store, fixed_binary, monkeypatch):
     assert os.path.isfile(rec["config_file"])
 
 
+def test_config_location_defaults_by_profile_and_can_be_overridden(store, monkeypatch):
+    """Where a CREATED connection keeps its kopia config: kopia's own folder on a desktop install
+    (so KopiaUI and the kopia CLI see it too), KopiaLens's data folder on a server/Docker install
+    (a container's data folder is the mounted volume; kopia's folder inside the container is not).
+    Env beats the setting beats the profile - the same order as the bind default."""
+    from app import settings as settings_mod
+    from app.core import repoconnect
+
+    monkeypatch.delenv("KOPIALENS_KOPIA_CONFIG_LOCATION", raising=False)
+    monkeypatch.delenv("KOPIALENS_PROFILE", raising=False)
+    (store / "settings.json").write_text(json.dumps({}), encoding="utf-8")
+    monkeypatch.setattr(settings_mod, "SETTINGS_FILE", str(store / "settings.json"))
+    assert repoconnect.config_location() == "data"          # no tray in the test = server
+
+    monkeypatch.setenv("KOPIALENS_PROFILE", "desktop")
+    assert repoconnect.config_location() == "kopia"
+
+    (store / "settings.json").write_text(json.dumps({"kopialens": {"kopia_config_location": "data"}}),
+                                         encoding="utf-8")
+    assert repoconnect.config_location() == "data"          # explicit choice beats the profile
+
+    monkeypatch.setenv("KOPIALENS_KOPIA_CONFIG_LOCATION", "kopia")
+    assert repoconnect.config_location() == "kopia"         # env beats everything
+
+
+def test_managed_config_paths_and_ownership(store, monkeypatch):
+    from app import settings as settings_mod
+    from app.core import repoconnect
+
+    monkeypatch.setattr(repoconnect, "kopia_config_dir", lambda: str(store / "kopia"))
+    monkeypatch.setattr(settings_mod, "SETTINGS_FILE", str(store / "settings.json"))
+    monkeypatch.delenv("KOPIALENS_KOPIA_CONFIG_LOCATION", raising=False)
+
+    monkeypatch.setenv("KOPIALENS_PROFILE", "desktop")
+    path = repoconnect.managed_config_path("7")
+    assert os.path.basename(path) == "repository-kopialens-7.config"   # KopiaUI's own convention
+    assert os.path.dirname(path) == str(store / "kopia")
+    assert repoconnect.is_managed_config(path) is True
+    # a config KopiaUI made itself is NOT ours to delete
+    theirs = store / "kopia" / "repository-1754765417479.config"
+    assert repoconnect.is_managed_config(str(theirs)) is False
+    # an unrelated path is never ours either
+    assert repoconnect.is_managed_config(str(store / "notes.config")) is False
+    assert repoconnect.is_managed_config(None) is False
+
+    monkeypatch.setenv("KOPIALENS_KOPIA_CONFIG_LOCATION", "data")
+    path = repoconnect.managed_config_path("7")
+    assert path == os.path.join(str(store), "configs", "repo7.config")
+    assert repoconnect.is_managed_config(path) is True
+
+
+def test_detect_configs_scans_both_folders(store, monkeypatch):
+    from app.core import repoconnect
+    kopia_dir = store / "kopia"
+    kopia_dir.mkdir()
+    data_dir = store / "configs"
+    data_dir.mkdir()
+    (kopia_dir / "repository.config").write_text(json.dumps({"storage": {"type": "filesystem"}}),
+                                                 encoding="utf-8")
+    ours = data_dir / "repo7.config"
+    ours.write_text(json.dumps({"storage": {"type": "b2"}}), encoding="utf-8")
+    monkeypatch.setattr(repoconnect, "kopia_config_dir", lambda: str(kopia_dir))
+
+    found = repoconnect.detect_configs()
+    by_name = {f["filename"]: f for f in found}
+    assert set(by_name) == {"repository.config", "repo7.config"}
+    assert by_name["repository.config"]["folder"] == "kopia"
+    assert by_name["repository.config"]["managed"] is False
+    assert by_name["repo7.config"]["folder"] == "data" and by_name["repo7.config"]["managed"] is True
+
+
+def test_create_in_the_kopia_config_folder(store, fixed_binary, monkeypatch):
+    """The default-created connection lands in kopia's folder with KopiaUI's naming, and a remove
+    with delete_config takes exactly that file."""
+    from app import settings as settings_mod
+    from app.core import repoconnect
+
+    kopia_dir = store / "kopia"
+    kopia_dir.mkdir()
+    monkeypatch.setattr(repoconnect, "kopia_config_dir", lambda: str(kopia_dir))
+    monkeypatch.setattr(settings_mod, "SETTINGS_FILE", str(store / "settings.json"))
+    monkeypatch.setenv("KOPIALENS_PROFILE", "desktop")
+    seen = {}
+
+    def fake_run(args, password, timeout=600.0):
+        seen["args"] = args
+        open(args[2], "w", encoding="utf-8").write("{}")
+        return {"returncode": 0, "stdout": "", "stderr": "", "command": args}
+
+    monkeypatch.setattr(repoconnect, "_run", fake_run)
+    rec = repoconnect.create("filesystem", {"path": "/repo"}, "pw")
+    assert rec["config_file"] == str(kopia_dir / "repository-kopialens-1.config")
+    assert os.path.isfile(rec["config_file"])
+    repoconnect.remove("1", delete_config=True)
+    assert not os.path.exists(rec["config_file"])
+
+
 def test_connect_records_a_managed_config(store, fixed_binary, monkeypatch):
     from app.core import repoconnect
     seen = {}

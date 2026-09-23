@@ -18,11 +18,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import threading
 import time
+
+import config
 
 from . import audit, kopiabin, repos
 from .applog import get_logger
@@ -43,6 +46,75 @@ def kopia_config_dir() -> str:
         return os.path.join(os.path.expanduser("~"), "Library", "Application Support", "kopia")
     base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
     return os.path.join(base, "kopia")
+
+
+# Where a KopiaLens-CREATED connection keeps its kopia config file.
+CONFIG_LOCATIONS = ("kopia", "data")
+
+
+def _location_setting() -> str:
+    try:
+        from ..settings import load_settings
+        return str(load_settings().get("kopialens", {}).get("kopia_config_location") or "").strip()
+    except Exception:  # noqa: BLE001 - a settings read must not break a connect
+        return ""
+
+
+def config_location() -> str:
+    """`kopia` = kopia's own config folder, so KopiaUI and the kopia command line see the
+    connection too; `data` = KopiaLens's data folder, which is what a container wants (the data
+    folder is a mounted volume, kopia's folder inside a container is not).
+
+    Precedence mirrors the bind default: env beats an explicit setting, which beats the profile
+    default (tray = desktop = kopia's folder; bare python/systemd/Docker = server = data folder)."""
+    env = (os.environ.get("KOPIALENS_KOPIA_CONFIG_LOCATION") or "").strip().lower()
+    if env in CONFIG_LOCATIONS:
+        return env
+    chosen = _location_setting().lower()
+    if chosen in CONFIG_LOCATIONS:
+        return chosen
+    # Lazy: core.auth owns the launch profile, and importing it at module level drags in the whole
+    # auth/settings chain for anyone who only wants a provider list.
+    try:
+        from .auth import profile
+        return "kopia" if profile() == "desktop" else "data"
+    except Exception:  # noqa: BLE001
+        return "kopia"
+
+
+def managed_config_dir() -> str:
+    """The folder a created connection's config file lives in, per `config_location()`."""
+    if config_location() == "data":
+        return os.path.join(config.DATA_DIR, "configs")
+    return kopia_config_dir()
+
+
+def managed_config_path(rid: str) -> str:
+    """The config file for a connection KopiaLens creates. In kopia's folder it uses KopiaUI's own
+    `repository-*.config` convention (so KopiaUI lists it as a connection), in our data folder the
+    shorter `repo<id>.config`."""
+    if config_location() == "data":
+        return os.path.join(managed_config_dir(), f"repo{rid}.config")
+    return os.path.join(kopia_config_dir(), f"repository-kopialens-{rid}.config")
+
+
+def is_managed_config(config_file: str | None) -> bool:
+    """True when this path is a config KopiaLens created (either location). Used to decide whether
+    removing a repo may delete the file - a user's own config is never deleted."""
+    if not config_file:
+        return False
+    try:
+        path = os.path.abspath(config_file)
+        name = os.path.basename(path)
+        in_kopia = os.path.normcase(os.path.dirname(path)) == os.path.normcase(
+            os.path.abspath(kopia_config_dir()))
+        in_data = os.path.normcase(os.path.dirname(path)) == os.path.normcase(
+            os.path.abspath(os.path.join(config.DATA_DIR, "configs")))
+        if not (in_kopia or in_data):
+            return False
+        return bool(re.match(r"^(repo\d{1,12}\.config|repository-kopialens-\d{1,12}\.config)$", name))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _field(key: str, flag: str, label: str, kind: str = "text", *, required: bool = False,
@@ -425,7 +497,7 @@ def _establish(verb: str, provider: str, fields: dict, password: str, name: str,
         raise ValueError("The repository password is required.")
     with _CONNECT_LOCK:
         rid = repos.next_id()
-        config_file = repos.managed_config_path(rid)
+        config_file = managed_config_path(rid)
         os.makedirs(os.path.dirname(config_file), exist_ok=True)
     args = _build_args(verb, provider, fields, config_file, options)
     log.info("%s repo=%s provider=%s config=%s", verb, rid, provider, config_file)
@@ -491,8 +563,13 @@ def describe_config(config_file: str) -> dict:
 
 def detect_configs() -> list[dict]:
     """Every kopia connection config found on this machine - the zero-typing path into KopiaLens.
-    Filesystem only (no spawn), and it marks the ones already in the store."""
+
+    Both folders are scanned: kopia's own (KopiaUI's `repository-*.config` files and the CLI
+    default) and KopiaLens's data folder for connections WE created there. Filesystem only (no
+    spawn), reading the config JSON directly (it carries no secret), and it marks the ones already
+    in the store."""
     base = kopia_config_dir()
+    ours = os.path.join(config.DATA_DIR, "configs")
     default_cfg = os.path.join(base, "repository.config")
     known: dict[str, str] = {}
     for rec in repos.all_records():
@@ -503,25 +580,28 @@ def detect_configs() -> list[dict]:
         known[os.path.normcase(os.path.abspath(path))] = str(rec.get("id"))
 
     out: list[dict] = []
-    if not os.path.isdir(base):
-        return out
-    for name in sorted(os.listdir(base)):
-        if not name.endswith(".config"):
+    for folder in (base, ours):
+        if not os.path.isdir(folder):
             continue
-        path = os.path.join(base, name)
-        if not os.path.isfile(path):
-            continue
-        info = describe_config(path)
-        key = os.path.normcase(os.path.abspath(path))
-        out.append({
-            "config_file": path,
-            "filename": name,
-            "is_default": key == os.path.normcase(os.path.abspath(default_cfg)),
-            "type": info["type"], "kind": info["kind"], "label": info["label"],
-            "config": info["config"],
-            "in_store": bool(known.get(key)),
-            "repo_id": known.get(key, ""),
-        })
+        for name in sorted(os.listdir(folder)):
+            if not name.endswith(".config"):
+                continue
+            path = os.path.join(folder, name)
+            if not os.path.isfile(path):
+                continue
+            info = describe_config(path)
+            key = os.path.normcase(os.path.abspath(path))
+            out.append({
+                "config_file": path,
+                "filename": name,
+                "folder": "kopia" if os.path.normcase(folder) == os.path.normcase(base) else "data",
+                "is_default": key == os.path.normcase(os.path.abspath(default_cfg)),
+                "managed": is_managed_config(path),
+                "type": info["type"], "kind": info["kind"], "label": info["label"],
+                "config": info["config"],
+                "in_store": bool(known.get(key)),
+                "repo_id": known.get(key, ""),
+            })
     return out
 
 
@@ -659,23 +739,11 @@ def remove_preview(repo: str) -> dict:
         size = _size_of(path)
         total += size
         files.append({"path": path, "bytes": size})
-    managed = _is_managed_config(rec.get("config_file"))
+    managed = is_managed_config(rec.get("config_file"))
     return {"repo": repo, "name": rec.get("name") or repo, "paths": [f["path"] for f in files],
             "bytes": total, "files": files,
             "config_file": rec.get("config_file"), "managed_config": managed,
             "kopia_repository_untouched": True}
-
-
-def _is_managed_config(config_file: str | None) -> bool:
-    """True when KopiaLens created this config (it lives under our own configs folder)."""
-    if not config_file:
-        return False
-    try:
-        managed = os.path.normcase(os.path.abspath(repos.managed_config_dir()))
-        path = os.path.normcase(os.path.abspath(config_file))
-        return os.path.dirname(path) == managed
-    except Exception:  # noqa: BLE001
-        return False
 
 
 def _size_of(path: str) -> int:
@@ -719,7 +787,7 @@ def remove(repo: str, delete_config: bool = False) -> dict:
             log.warning("repo=%s remove: could not delete %s: %s", repo, path, exc)
     state_cleaned = repos.forget_state(repo)
     config_deleted = ""
-    if delete_config and _is_managed_config(rec.get("config_file")):
+    if delete_config and is_managed_config(rec.get("config_file")):
         cfg = rec["config_file"]
         _remove_config_files(cfg)
         config_deleted = cfg

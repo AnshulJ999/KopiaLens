@@ -14,6 +14,7 @@ import sys
 import pytest
 from fastapi import HTTPException
 
+from app.api import dashboard as dashboard_api
 from app.api import setup
 from app.core import kopiabin, repoconnect
 from app.core import repos as repo_store
@@ -71,6 +72,37 @@ def test_kopia_block_reports_the_missing_binary(sandbox, monkeypatch):
     out = setup.get_kopia()
     assert out["available"] is False and out["detail"]
     assert out["tested"] == kopiabin.TESTED_VERSION
+
+
+def test_kopia_route_lists_every_copy_found(sandbox, monkeypatch):
+    found = [{"path": "/bundled/kopia", "source": "bundled", "version": "0.23.1",
+              "in_use": True, "newest": False},
+             {"path": "/usr/bin/kopia", "source": "PATH", "version": "0.24.1",
+              "in_use": False, "newest": True}]
+    monkeypatch.setattr(kopiabin, "inventory", lambda: found)
+    out = setup.get_kopia()
+    assert out["found"] == found
+    assert out["searched"]
+
+
+def test_data_status_route_reports_versions_and_index_states(sandbox, monkeypatch):
+    from app.core import dataupgrade
+    from app.index import store as index_store
+    monkeypatch.setattr(dataupgrade, "VERSION_FILE", str(sandbox.parent / "data_version.json"))
+    # store binds DATA_DIR at import, so the index paths are redirected directly
+    monkeypatch.setattr(index_store, "manifest_path",
+                        lambda repo: str(sandbox.parent / f"repo{repo}" / "manifest.json"))
+    repo_store.add_record({"name": "One", "config_file": None})
+    out = setup.get_data_status()
+    assert out["version"] == dataupgrade.DATA_VERSION and out["newer"] is False
+    assert out["index"] == [{"repo": "1", "found": None, "expected": 3, "state": "absent"}]
+
+
+def test_repos_route_carries_the_data_block(sandbox):
+    out = dashboard_api.repos()
+    assert out["data"]["app_version"] >= 1
+    assert out["kopia"]["tested"] == kopiabin.TESTED_VERSION
+    assert "repos" in out and "settings" in out
 
 
 def test_set_kopia_rejects_junk_and_accepts_a_runnable_program(sandbox, tmp_path, monkeypatch):

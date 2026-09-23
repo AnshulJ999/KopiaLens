@@ -102,6 +102,43 @@ def _bundled_copies() -> list[str]:
     return paths
 
 
+def inventory() -> list[dict]:
+    """Every kopia program actually present on this machine, with its version.
+
+    Explicit request only (one spawn per candidate), for the Settings "Kopia program" row and the
+    one-time "a different kopia was found" data. The resolved one is marked `in_use`; `newest`
+    flags the highest version seen, so a caller can say "KopiaUI uses 0.24, KopiaLens uses 0.23"
+    without deciding anything here."""
+    resolved = resolve()
+    out = []
+    for path, src in candidates():
+        try:
+            if not os.path.isfile(path):
+                continue
+        except OSError:
+            continue
+        entry = {"path": path, "source": src, "version": "",
+                 "in_use": path == resolved, "newest": False}
+        try:
+            res = subprocess.run(
+                [path, "--version"], capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=20, stdin=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            entry["version"] = _first_token((res.stdout or res.stderr or "").strip())
+        except Exception:  # noqa: BLE001 - one unreadable candidate must not hide the others
+            pass
+        out.append(entry)
+
+    def _ver(entry: dict) -> tuple:
+        parts = str(entry["version"]).split(".")
+        return tuple(int(p) if p.isdigit() else 0 for p in (parts + ["0", "0", "0"])[:3])
+
+    if out and max(_ver(e) for e in out) > (0, 0, 0):
+        max(out, key=_ver)["newest"] = True
+    return out
+
+
 def explicit_setting() -> str:
     """The path saved in settings, if any (lazy import - settings reads config at import time)."""
     try:
@@ -113,7 +150,12 @@ def explicit_setting() -> str:
 
 def candidates() -> list[tuple[str, str]]:
     """(path, source) pairs in the order they are tried. Existence is checked by ``resolve()``;
-    this list is also what the Settings screen shows when nothing works."""
+    this list is also what the Settings screen shows when nothing works.
+
+    The BUNDLED copy comes first (after an explicit choice): a release pins the kopia it was tested
+    with, so "works out of the box" does not depend on what a user happens to have installed. The
+    machine's own copies stay in the list - a power user can select one, and Settings can point out
+    that KopiaUI ships a different version."""
     out: list[tuple[str, str]] = []
 
     def add(path: str, source: str) -> None:
@@ -123,6 +165,8 @@ def candidates() -> list[tuple[str, str]]:
 
     add(os.environ.get(ENV_OVERRIDE) or "", "environment")
     add(explicit_setting(), "setting")
+    for path in _bundled_copies():
+        add(path, "bundled")
     found = shutil.which("kopia")
     if found:
         add(found, "PATH")
@@ -130,8 +174,6 @@ def candidates() -> list[tuple[str, str]]:
         add(path, "install location")
     for path in _kopiaui_bundles():
         add(path, "KopiaUI")
-    for path in _bundled_copies():
-        add(path, "bundled")
     return out
 
 
@@ -246,7 +288,8 @@ def info(with_version: bool = True, with_candidates: bool = False) -> dict:
     """What ``/api/repos`` and the Settings screen show: resolved path, where it came from, and
     (once read) the version. ``with_version=False`` never spawns; ``with_candidates`` adds the
     full search list - off by default because /api/repos is polled and building that list reads
-    the settings file. It is always included when the binary is missing: that is the message."""
+    the settings file. It is always included when the binary is missing: that is the message.
+    ``inventory()`` (every kopia found, with versions) is a separate call - it spawns per copy."""
     path = resolve()
     ver = version() if (with_version and path) else _version
     searched = [{"path": p, "source": s} for p, s in candidates()] if (with_candidates or not path) else []
@@ -256,6 +299,7 @@ def info(with_version: bool = True, with_candidates: bool = False) -> dict:
         "source": source(),
         "version": ver or "",
         "tested": TESTED_VERSION,
+        "bundled": bool(path) and source() == "bundled",
         "searched": searched,
         "detail": "" if path else ("Kopia was not found. Install Kopia or KopiaUI, or set the "
                                    "path to the kopia program in Settings."),
