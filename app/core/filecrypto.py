@@ -742,6 +742,7 @@ def upgrade_step() -> dict:
         pending = []
         notes.append(f"could not scan the covered files: {exc}")
     if pending:
-        notes.append(f"{len(pending)} file(s) are still plaintext at level "
-                     f"{crypto.level()} - the encryption switch rewrites them")
-    return {"changed": changed, "pending": pending, "notes": notes}
+        notes.append(f"{len(pending)} file(s) are not in the state level {crypto.level()} asks "
+                     f"for - the encryption switch rewrites them")
+        log.debug("files pending the switch: %s", pending)    # paths: debug log only
+    return {"changed": changed, "pending": len(pending), "notes": notes}

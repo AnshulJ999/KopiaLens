@@ -262,7 +262,7 @@ def test_the_upgrade_step_folds_the_old_boolean_into_the_level(layer, monkeypatc
     assert written["encryption_level"] == "index" and "encryption" not in written
     assert out["changed"]
     # at the INDEX level a plaintext mounts.json is correct, so nothing is pending
-    assert out["pending"] == []
+    assert out["pending"] == 0
     monkeypatch.setattr("app.settings.raw_kopialens_settings",
                         lambda: {"encryption_level": "full"})
-    assert "mounts.json" in filecrypto.upgrade_step()["pending"][0]
+    assert filecrypto.upgrade_step()["pending"] == 1
