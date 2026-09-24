@@ -160,7 +160,8 @@ def candidates() -> list[tuple[str, str]]:
 
     def add(path: str, source: str) -> None:
         path = (path or "").strip()
-        if path and all(p != path for p, _ in out):
+        key = os.path.normcase(os.path.abspath(path)) if path else ""
+        if path and all(os.path.normcase(os.path.abspath(p)) != key for p, _ in out):
             out.append((path, source))
 
     add(os.environ.get(ENV_OVERRIDE) or "", "environment")

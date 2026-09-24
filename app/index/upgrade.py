@@ -253,7 +253,7 @@ def migrate_all_repos(repos: list) -> dict:
                 out = migrate(root, manifest)
                 if out is not None:
                     publish.write_manifest(root, out)
-        except RuntimeError as exc:            # another writer holds the repo right now
+        except publish.WriterBusy as exc:      # another writer holds the repo right now
             skipped.append(repo)
             log.warning("repo=%s migration skipped: %s", repo, exc)
             continue

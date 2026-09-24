@@ -104,7 +104,8 @@ class WriterLock:
                     pass
                 fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             else:
-                raise RuntimeError(f"another writer holds {self.path}")
+                from ..index.publish import WriterBusy
+                raise WriterBusy(f"another writer holds {self.path}")
         try:
             import psutil
             stamp = f"{os.getpid()}:{psutil.Process(os.getpid()).create_time()}"

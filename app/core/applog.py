@@ -47,7 +47,7 @@ class _CryptoRotatingFileHandler(RotatingFileHandler):
     """A rotating log file whose stream encrypts each line when the files layer is live ().
 
     The stream decides per LINE, not at attach time, so a level switch never has to reopen a
-    live handler: after switching to Everything the next line is encrypted and the reader
+    live handler: after switching to Full the next line is encrypted and the reader
     handles the mixed file. Rotation is untouched - it works on whole lines.
     """
 

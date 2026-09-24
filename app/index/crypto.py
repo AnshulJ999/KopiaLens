@@ -495,7 +495,11 @@ def unlock_from_keychain() -> bool:
             return False
         if not key:
             return False
-        _DATA_KEY, _SOURCE = _check_key(key), "keychain"
+        try:
+            _DATA_KEY, _SOURCE = _check_key(key), "keychain"
+        except ValueError:                 # not a key: fall back to the pipe / a password
+            log.warning("the keychain entry is not a usable key - ignoring it")
+            return False
         return True
 
 

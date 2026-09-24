@@ -118,7 +118,7 @@ def replace_artifacts(repo: str, tables: dict) -> int | None:
     try:
         lock = WriterLock(repo)
         lock.__enter__()
-    except RuntimeError:
+    except WriterBusy:
         log.info("repo=%s replace_artifacts skipped, another writer holds the repo", repo)
         return None
     try:
@@ -163,6 +163,10 @@ def _owner_stamp() -> str:
         return str(os.getpid())
 
 
+class WriterBusy(RuntimeError):
+    """Another writer holds the lock - try again later. A RuntimeError so older catchers work."""
+
+
 class WriterLock:
     """One-process-at-a-time publication via an O_CREAT|O_EXCL lock file (PID inside, stale
     detection by process check - the technique reap_orphan_workers already uses)."""
@@ -182,7 +186,7 @@ class WriterLock:
                     pass
                 fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             else:
-                raise RuntimeError(f"another writer holds {self.path}")
+                raise WriterBusy(f"another writer holds {self.path}")
         with os.fdopen(fd, "w") as fh:
             fh.write(_owner_stamp())
 

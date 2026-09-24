@@ -259,7 +259,7 @@ def apply_level(level: str, say=None) -> dict:
             continue
         try:
             out["repos"][repo] = switch_repo(repo, want_index, say=say)
-        except RuntimeError as exc:      # another writer holds the repo's lock
+        except publish.WriterBusy as exc:      # another writer holds the repo's lock
             out["deferred"].append(repo)
             say(f"repo {repo}: another write is in progress - deferred ({exc})")
     if crypto.unlocked():
@@ -271,7 +271,7 @@ def apply_level(level: str, say=None) -> dict:
         if bz["encrypted"] != want_bz:
             try:
                 out["backblaze"] = switch_bz(want_bz, say=say)
-            except RuntimeError as exc:
+            except publish.WriterBusy as exc:
                 out["deferred"].append("bz")
                 say(f"backblaze: another write is in progress - deferred ({exc})")
         else:
