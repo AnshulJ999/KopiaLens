@@ -11,10 +11,11 @@ import hashlib
 import json
 import logging
 import os
-import shutil
 import time
 
 from config import CACHEDIR
+
+from ..core import kopiabin
 
 log = logging.getLogger("kopialens.policycheck")
 
@@ -32,7 +33,7 @@ def load(repo: str) -> dict | None:
 def _fingerprint(defined: dict, targets: list[str]) -> str:
     h = hashlib.sha256(json.dumps(defined, sort_keys=True).encode("utf-8"))
     h.update("\n".join(targets).encode("utf-8"))
-    exe = shutil.which("kopia")
+    exe = kopiabin.resolve()   # the resolved binary, not whichever `kopia` PATH happens to hold
     if exe:
         try:
             st = os.stat(exe)

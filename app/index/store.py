@@ -30,7 +30,7 @@ import duckdb
 from config import DATA_DIR, REPOS
 
 from ..core.applog import get_logger
-from . import crypto
+from . import crypto, upgrade
 
 log = get_logger("store")
 
@@ -219,6 +219,12 @@ def open_generation(repo: str) -> Generation:
     manifest = read_manifest(repo)
     if manifest is None:
         raise FileNotFoundError(f"repo {repo!r} has no index (no manifest.json)")
+    found = int(manifest.get("schema_version") or 0)
+    if found != upgrade.MANIFEST_VERSION:
+        # Refusing is the point: an older layout read by newer code misreads silently, and a NEWER
+        # layout must never be read (or written) by an older app. The startup routine migrates the
+        # older case in place; the newer case is the user's to resolve.
+        raise upgrade.IndexVersionMismatch(repo, found, upgrade.MANIFEST_VERSION)
     encrypted = bool(manifest.get("encrypted"))
     if encrypted and not crypto.unlocked():
         # Two different problems with two different fixes - a locked key wants a password, a
@@ -377,26 +383,33 @@ def close_all() -> None:
         _RETIRED.clear()
 
 
-def close_repo(repo: str) -> bool:
-    """Close this process's generations for ONE repo, if nothing is reading them.
-
-    False means a reader still holds one (or a retired generation is finishing), and the caller
-    must leave its files alone. Used by the encryption switch, which wants the superseded copy
-    off disk now rather than after the GC's one-hour grace; a busy repo falls back to that GC.
-    """
+def close_repo(repo: str) -> dict:
+    """Close this repo's live generation (and any retired ones) so its files can be deleted -
+    Windows refuses to unlink a Parquet file another handle holds open. A generation still being
+    read is left for the reaper and reported as busy, so a request never loses its cursor mid-flight;
+    the caller warns about the leftovers (or leaves the files alone) instead of pretending the
+    delete was complete."""
+    closed, busy = 0, 0
     with _LOCK:
-        gens = [g for g in list(_GENS.values()) + list(_RETIRED) if g.repo == repo]
-        if any(g._refs > 0 for g in gens):
-            return False
-        for gen in gens:
-            if _GENS.get(repo) is gen:
-                _GENS.pop(repo, None)
-            if gen in _RETIRED:
-                _RETIRED.remove(gen)
-            gen.close()
-    if gens:
-        log.debug("repo=%s: closed %d open generation(s)", repo, len(gens))
-    return True
+        gen = _GENS.pop(repo, None)
+        if gen is not None:
+            if gen._refs <= 0:      # the property would take _LOCK again (plain Lock, not RLock)
+                gen.close()
+                closed += 1
+            else:
+                _RETIRED.append(gen)
+                busy += 1
+        keep = []
+        for g in _RETIRED:
+            if getattr(g, "repo", None) == repo:
+                if g._refs <= 0:
+                    g.close()
+                    closed += 1
+                    continue
+                busy += 1
+            keep.append(g)
+        _RETIRED[:] = keep
+    return {"closed": closed, "busy": busy}
 
 
 @contextlib.contextmanager

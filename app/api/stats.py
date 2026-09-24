@@ -99,12 +99,14 @@ def _kopia_cmd(repo: str, args: list[str]) -> str:
     """A pasteable kopia command that targets THIS repo (config args included). A bare
     `kopia maintenance ...` silently operates on the DEFAULT repository - copying a fix from
     repo 2 onto repo 1 is exactly the failure this prevents."""
-    from ..core.kopia import _repo_args
+    from ..core.kopia import _kopia_exe, _repo_args
 
     def _q(a) -> str:
         a = str(a)
         return f'"{a}"' if " " in a else a
-    return " ".join(["kopia"] + [_q(a) for a in _repo_args(repo)] + [_q(a) for a in args])
+    # the resolved program itself is quoted too: a KopiaUI bundle path has a space in it, and an
+    # unquoted one is not a command anybody can paste.
+    return " ".join([_q(_kopia_exe())] + [_q(a) for a in _repo_args(repo)] + [_q(a) for a in args])
 
 
 def _maintenance_health(repo: str, maint: dict, status: dict) -> tuple[dict, list[dict]]:
@@ -329,7 +331,7 @@ def refresh_stats(repo: str) -> None:
 
 
 @router.get("/stats")
-def stats(repo: str = "1") -> dict:
+def stats(repo: str) -> dict:
     """Fast read-only repo-level info for the Stats tab. Served from cache (serve-stale); a stale
     cache is refreshed in the background. ``blob stats`` is on-demand via /stats/blob."""
     with _stats_lock:
@@ -345,7 +347,7 @@ def stats(repo: str = "1") -> dict:
 
 
 @router.get("/stats/blob")
-def blob_stats(repo: str = "1") -> dict:
+def blob_stats(repo: str) -> dict:
     """On-demand `blob stats` (slow). Serialized + cached so it can never spawn duplicates."""
     if not _blob_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="blob stats already running")

@@ -86,7 +86,9 @@ def test_only_local_kopia_mappings_are_removed(monkeypatch):
 
 
 def test_maintenance_job_builds_safety_and_mode(monkeypatch):
-    monkeypatch.setattr(jobs, "maintenance_run_command", lambda repo: ["kopia", "maintenance", "run", "--full"])
+    from app.core.kopiabin import exe as kopia_exe
+    monkeypatch.setattr(jobs, "maintenance_run_command",
+                        lambda repo: [kopia_exe(), "maintenance", "run", "--full"])
     monkeypatch.setattr(jobs, "_repo_args", lambda repo: [])
     cmds, meta = jobs._build_commands("maintenance", "3", {"full": True, "safety": "none"})
     assert cmds == [["maintenance", "run", "--full", "--safety=none"]]

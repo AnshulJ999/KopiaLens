@@ -110,7 +110,7 @@ def switch_repo(repo: str, on: bool, say=None) -> dict:
         new["_moves"] = out["moves"]
         publish.publish(root, new)
         _drop_superseded(root, manifest.get("artifacts") or {}, out["artifacts"],
-                         lambda: store.close_repo(repo), say)
+                         lambda: store.close_repo(repo)["busy"] == 0, say)
         summary = {"repo": repo, "generation": out["generation"], "files": out["files"],
                    "rows": out["rows"], "mb": out["mb"], "encrypted": on,
                    "seconds": round(time.time() - started, 1)}

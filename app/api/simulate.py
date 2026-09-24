@@ -30,7 +30,7 @@ def post_simulate_all(payload: SimRequest) -> dict:
 
 
 @router.get("/validate")
-def validate(repo: str = "1", source: str | None = None) -> dict:
+def validate(repo: str, source: str | None = None) -> dict:
     if not source:
         raise HTTPException(status_code=400, detail="source is required")
     try:

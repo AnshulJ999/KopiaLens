@@ -19,7 +19,7 @@ router = APIRouter(tags=["search"])
 
 @router.get("/search/group-by-folder")
 def search_group_by_folder(
-    repo: str = "1", depth: int = 3, q: str = "", source: str | None = None, ext: str | None = None,
+    repo: str, depth: int = 3, q: str = "", source: str | None = None, ext: str | None = None,
     ext_exclude: str | None = None, deleted_only: bool = False, min_gb: float = 0, min_files: int = 0,
     sort: str = "physical", direction: str = "desc", limit: int = 500,
 ) -> dict:
@@ -37,7 +37,7 @@ def search_group_by_folder(
 
 
 class ReclaimRequest(BaseModel):
-    repo: str = "1"
+    repo: str
     content_ids: list[str] = []
     cap: int = 500
 
@@ -55,7 +55,7 @@ def _bounds(over_gb: float, largest: bool, min_gb: float, max_gb: float) -> tupl
 
 @router.get("/search")
 def search(
-    repo: str = "1",
+    repo: str,
     q: str = "",
     deleted_only: bool = False,
     largest: bool = False,
@@ -123,7 +123,7 @@ class VersionRow(BaseModel):
 
 
 class VersionsRequest(BaseModel):
-    repo: str = "1"
+    repo: str
     rows: list[VersionRow]
 
 
@@ -172,7 +172,7 @@ def _csv_rows(cur):
 
 @router.get("/search/export")
 def export(
-    repo: str = "1", q: str = "", deleted_only: bool = False, largest: bool = False,
+    repo: str, q: str = "", deleted_only: bool = False, largest: bool = False,
     over_gb: float = 0, source: str | None = None, ext: str | None = None,
     ext_exclude: str | None = None, sort: str = "size", dir: str = "desc",
     min_gb: float = 0, max_gb: float = 0, date_from: str | None = None, date_to: str | None = None,
@@ -193,14 +193,14 @@ def export(
 
 
 @router.get("/search/versions")
-def file_versions(repo: str = "1", source: str | None = None, full_path: str | None = None) -> dict:
+def file_versions(repo: str, source: str | None = None, full_path: str | None = None) -> dict:
     if not source or not full_path:
         raise HTTPException(status_code=400, detail="source and full_path are required")
     return {"versions": versions(repo, source, full_path)}
 
 
 @router.get("/search/detail")
-def detail(repo: str = "1", source: str | None = None, full_path: str | None = None) -> dict:
+def detail(repo: str, source: str | None = None, full_path: str | None = None) -> dict:
     """Accurate per-file footprint: logical/physical/freeable + dedup chunks + shared paths."""
     if not source or not full_path:
         raise HTTPException(status_code=400, detail="source and full_path are required")

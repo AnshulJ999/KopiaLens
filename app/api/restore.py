@@ -51,7 +51,7 @@ class RestoreItem(BaseModel):
 
 
 class PlanBody(BaseModel):
-    repo: str = "1"
+    repo: str
     items: list[RestoreItem]
     target_mode: str = "folder"      # folder | original | beside
     target: str = ""

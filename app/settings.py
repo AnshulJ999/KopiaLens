@@ -68,6 +68,17 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "panel_layout": "classic",  # detail-panel layout (): "classic" | "tabbed"
         "policy_layout": "tabs",    # policy editor: "tabs" (one section at a time) | "scroll" (stacked, jump strip)
         "policy_leave": "ask",      # leaving a policy with unsaved changes: "ask" | "keep" (drafts stay until saved)
+        # ---- external tools -----------------------------------------------------------------
+        # The kopia program. Empty = auto: the BUNDLED copy first (a release pins the kopia it was
+        # tested with), then PATH, the usual install locations and KopiaUI's bundle - see
+        # core/kopiabin.py, the ONLY place that resolves it. KOPIALENS_KOPIA overrides it.
+        "kopia_path": "",
+        # Where a connection KopiaLens CREATES keeps its kopia config file:
+        #   "" = profile default (tray/desktop = "kopia", server/Docker = "data")
+        #   "kopia" = kopia's own config folder, so KopiaUI and the kopia CLI see it too
+        #   "data"  = KopiaLens's data folder (a container's data folder is the mounted volume)
+        # KOPIALENS_KOPIA_CONFIG_LOCATION overrides it. See core/repoconnect.config_location().
+        "kopia_config_location": "",
         "es_path": r"G:\Apps\CLI Tools\es.exe",  # Everything CLI for the Excluded browser (local disk side)
         "disk_lookup": "auto",       # what answers disk questions: auto | everything | scan | off
         "disk_scan_budget": 15,      # seconds one folder scan may take before it answers "not measured"

@@ -25,9 +25,12 @@ def test_include_cmds_skips_non_kopia_repos(monkeypatch):
     monkeypatch.setattr(kopia, "REPOS", fake_repos)
     out = excluded.include_cmds(path="C:\\test")
     assert [c["repo"] for c in out["commands"]] == ["1", "2"]  # bz never appears
-    # the surviving commands keep their repo targeting intact
-    assert out["commands"][0]["command"] == "kopia snapshot create C:\\test"
-    assert out["commands"][1]["command"] == 'kopia --config-file big.config snapshot create C:\\test'
+    # the surviving commands keep their repo targeting intact, and name the resolved kopia program
+    from app.core.kopiabin import exe as kopia_exe
+    assert out["commands"][0]["command"].endswith("snapshot create C:\\test")
+    assert kopia_exe() in out["commands"][0]["command"]
+    assert "--config-file" not in out["commands"][0]["command"]
+    assert "--config-file big.config" in out["commands"][1]["command"]
 
 
 def test_include_cmds_requires_path():

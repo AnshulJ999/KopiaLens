@@ -66,7 +66,7 @@ class RetentionPolicy(BaseModel):
 
 
 class SimRequest(BaseModel):
-    repo: str = "1"
+    repo: str
     source: str | None = None
     mode: str = "all"
     refresh: bool = False

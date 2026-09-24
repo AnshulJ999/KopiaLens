@@ -12,6 +12,7 @@ import pytest
 from app.core import jobs, nightly
 from app.core import kopia as kopia_mod
 from app.core.kopia import maintenance_run_command, _repo_args
+from app.core.kopiabin import exe as kopia_exe
 
 
 @pytest.fixture(autouse=True)
@@ -304,7 +305,8 @@ def test_the_pasteable_command_text_carries_the_repo_args_once(monkeypatch, isol
     job = jobs.start_job("snapshot_delete", "2", {"snapshot_ids": ["a" * 64], "dry": True})
     _wait_state(job, "done")
     text = job["commands_text"]
-    assert text.startswith("kopia --config-file ")
+    prefix = f'"{kopia_exe()}"' if " " in kopia_exe() else kopia_exe()
+    assert text.startswith(f"{prefix} --config-file ")
     assert text.count("--config-file") == 1
     assert "--delete" not in text and text.endswith("a" * 64)
 
@@ -333,7 +335,7 @@ def test_the_streamed_command_carries_repo_args_once_and_progress(monkeypatch):
     result: dict = {}
     lines = list(kopia_mod.kopia_job_stream("2", ["maintenance", "run", "--full"], result))
     full = captured["cmd"]
-    assert full[0] == "kopia"
+    assert full[0] == kopia_exe()
     assert full.count("--config-file") == 1  # once - not zero, not the doubled two
     assert "--no-progress" not in full
     assert full[-3:] == ["maintenance", "run", "--full"]
@@ -360,7 +362,7 @@ def test_the_streamer_never_receives_a_doubled_kopia_prefix(monkeypatch, isolate
                          ("restore", {"source_id": "abc", "target": "D:/out"})):
         job = jobs.start_job(kind, "1", params)
         _wait_state(job, "done")
-    assert seen and all(c[0] != "kopia" for c in seen)
+    assert seen and all(c[0] not in ("kopia", kopia_exe()) for c in seen)
 
 
 def test_maintenance_running_is_scoped_and_state_gated(monkeypatch, isolated):

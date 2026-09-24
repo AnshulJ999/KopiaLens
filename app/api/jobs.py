@@ -23,7 +23,7 @@ router = APIRouter(tags=["jobs"])
 
 class JobStartRequest(BaseModel):
     kind: str                       # remove_files | snapshot_delete | maintenance | restore
-    repo: str = "1"
+    repo: str
     params: dict = {}               # kind-specific; resolved below into core.jobs' shapes
     label: str | None = None        # overrides the default one-line description
 

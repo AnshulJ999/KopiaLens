@@ -16,7 +16,7 @@ import sys
 import duckdb
 import pytest
 
-from app.index import crypto, store
+from app.index import crypto, store, upgrade
 
 
 class _FakeKeyring:
@@ -332,7 +332,8 @@ def test_a_locked_encrypted_store_refuses_to_open_or_write(keystore, monkeypatch
     root = store.repo_dir("3")
     os.makedirs(root, exist_ok=True)
     with open(os.path.join(root, "manifest.json"), "w", encoding="utf-8") as fh:
-        json.dump({"generation": 1, "encrypted": True, "artifacts": {}}, fh)
+        json.dump({"generation": 1, "encrypted": True, "artifacts": {},
+                   "schema_version": upgrade.MANIFEST_VERSION}, fh)
     crypto.lock()
     assert crypto.ready() is False
     with pytest.raises(PermissionError):

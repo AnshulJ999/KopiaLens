@@ -105,7 +105,7 @@ def _price_for_target(repo: str, target: str, patterns: list[str], limit: int = 
 # ---- models ----------------------------------------------------------------------------
 
 class PriceBody(BaseModel):
-    repo: str = "1"
+    repo: str
     target: str
     patterns: list[str] = Field(default_factory=list)
     limit: int = 10
@@ -119,7 +119,7 @@ class Changes(BaseModel):
 
 
 class DiffBody(BaseModel):
-    repo: str = "1"
+    repo: str
     target: str
     changes: Changes
     price: bool = True            # false: rule lists only (the exclusion panels' diff view)
@@ -130,18 +130,18 @@ class SaveBody(DiffBody):
 
 
 class BackupBody(BaseModel):
-    repo: str = "1"
+    repo: str
 
 
 class RestoreBody(BaseModel):
-    repo: str = "1"
+    repo: str
     name: str
     mode: str = "merge"
     confirmed: bool = False
 
 
 class TargetsBody(BaseModel):
-    repo: str = "1"
+    repo: str
     path: str
     source: str | None = None     # the panel the dialog opened from: disambiguates user@host
     is_folder: bool = False
@@ -155,7 +155,7 @@ class TargetsBody(BaseModel):
 
 
 class VariantsBody(BaseModel):
-    repo: str = "1"
+    repo: str
     path: str
     source: str | None = None
     is_folder: bool = False
@@ -164,7 +164,7 @@ class VariantsBody(BaseModel):
 # ---- read half -------------------------------------------------------------------------
 
 @router.get("/policies/overview")
-def overview(repo: str = "1") -> dict:
+def overview(repo: str) -> dict:
     """Left-rail data: the global policy + every source with its inheritance state."""
     _kopia_repo(repo)
     defined, fresh = refresh_defined_policies(repo)
@@ -309,14 +309,14 @@ def _draft_policy(defined: dict, key: str, changes: Changes) -> dict:
 
 
 class ResolveBody(BaseModel):
-    repo: str = "1"
+    repo: str
     target: str
     changes: Changes = Field(default_factory=Changes)
     impact: bool = False
 
 
 @router.get("/policies/meta")
-def meta(repo: str = "1") -> dict:
+def meta(repo: str) -> dict:
     """Field catalogue, option lists, and this computer's kopia client facts."""
     _kopia_repo(repo)
     return {"fields": policyresolve.FIELDS, "compressors": policyresolve.COMPRESSORS,
@@ -373,7 +373,7 @@ def resolve_draft(body: ResolveBody) -> dict:
 
 
 class MultiBody(BaseModel):
-    repo: str = "1"
+    repo: str
     targets: list[str]
     fields: dict = Field(default_factory=dict)
 
@@ -407,7 +407,7 @@ def multi_plan(body: MultiBody) -> dict:
 
 
 class PreviewBody(BaseModel):
-    repo: str = "1"
+    repo: str
     target: str
     pattern: str
     source: str | None = None
@@ -463,7 +463,7 @@ def preview(body: PreviewBody) -> dict:
 
 
 @router.get("/policies/check")
-def check_status(repo: str = "1") -> dict:
+def check_status(repo: str) -> dict:
     """The last comparison of KopiaLens' inheritance copy with kopia's own output."""
     _kopia_repo(repo)
     from ..index import policycheck
@@ -471,7 +471,7 @@ def check_status(repo: str = "1") -> dict:
 
 
 @router.get("/policies/detail")
-def detail(repo: str = "1", target: str = "") -> dict:
+def detail(repo: str, target: str = "") -> dict:
     """Full policy for ONE target (defined + effective + the rule block the tab renders)."""
     _kopia_repo(repo)
     if not target:
@@ -545,7 +545,7 @@ def price(body: PriceBody) -> dict:
 
 
 @router.get("/policies/stored-prices")
-def stored_prices(repo: str = "1", target: str = "") -> dict:
+def stored_prices(repo: str, target: str = "") -> dict:
     """Nightly-stored "keeping out" numbers for one target (whole policies - the Global
     rollup's 250 rules cost nothing to read here). Shape matches POST /policies/price's
     results so the UI renders both with one path; `stored: false` = not priced yet (first
@@ -562,7 +562,7 @@ def stored_prices(repo: str = "1", target: str = "") -> dict:
 
 
 @router.get("/policies/ignore-files")
-def ignore_files(repo: str = "1", target: str = "") -> dict:
+def ignore_files(repo: str, target: str = "") -> dict:
     """Dot-ignore files found under a target (whole repo when omitted) with the rules each holds
     and what they keep out (). Read from the nightly artifact - no kopia calls."""
     _kopia_repo(repo)
@@ -572,7 +572,7 @@ def ignore_files(repo: str = "1", target: str = "") -> dict:
 
 
 @router.get("/policies/path-status")
-def path_status(repo: str = "1", source: str = "", path: str = "", is_folder: bool = False) -> dict:
+def path_status(repo: str, source: str = "", path: str = "", is_folder: bool = False) -> dict:
     """The rule list a source uses for one path, and whether a rule already leaves it out."""
     _kopia_repo(repo)
     if not source or not path:
@@ -804,7 +804,7 @@ def _write_rules(repo: str, target: str, changes: Changes, log=None) -> dict:
 # ---- backups ---------------------------------------------------------------------------
 
 @router.get("/policies/backups")
-def backups(repo: str = "1") -> dict:
+def backups(repo: str) -> dict:
     _kopia_repo(repo)
     return {"repo": repo, "dir": policybackup.backup_dir(repo),
             "backups": [{k: v for k, v in e.items() if k != "path"}
@@ -822,7 +822,7 @@ def manual_backup(body: BackupBody) -> dict:
 
 
 @router.get("/policies/backup-file")
-def backup_file(repo: str = "1", name: str = "") -> dict:
+def backup_file(repo: str, name: str = "") -> dict:
     _kopia_repo(repo)
     try:
         content = policybackup.read_backup(repo, name)
@@ -832,7 +832,7 @@ def backup_file(repo: str = "1", name: str = "") -> dict:
 
 
 @router.get("/policies/restore-cmd")
-def restore_cmd(repo: str = "1", name: str = "", mode: str = "merge") -> dict:
+def restore_cmd(repo: str, name: str = "", mode: str = "merge") -> dict:
     """The always-available copy path: the exact kopia command a restore would run."""
     _kopia_repo(repo)
     if mode not in ("merge", "mirror"):

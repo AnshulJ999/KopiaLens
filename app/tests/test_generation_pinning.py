@@ -18,6 +18,7 @@ import duckdb
 import pytest
 
 from app.index import store
+from app.index.upgrade import MANIFEST_VERSION
 
 SEP = chr(92)
 
@@ -65,7 +66,7 @@ def _write_generation(root: str, generation: int = 7) -> None:
         con.execute(f"COPY {table} TO '{target}' (FORMAT parquet)")
     con.close()
     manifest = {
-        "generation": generation, "repo": "1", "schema_version": 2,
+        "generation": generation, "repo": "1", "schema_version": MANIFEST_VERSION,
         "artifacts": {name: [f"pool/{rel}"] for name, rel in rels.items()},
         "sources": {f"s1:C:{SEP}A": {"key": f"s1:C:{SEP}A", "snapshots": 1}},
         "counters": {"src_id": 1, "dir_id": 1, "path_id": 1, "cid_id": 1, "snap_id": 1},

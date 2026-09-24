@@ -109,6 +109,9 @@ def _to_entry(rec: dict) -> dict:
         "name": rec.get("name") or rec.get("id"),
         "args": ["--config-file", cfg] if cfg else [],
         "kind": rec.get("kind", "kopia"),
+        # display + policy fields the legacy callers may not need but must not drop:
+        "short_name": rec.get("short_name") or "",
+        "counts_as_backup": rec.get("counts_as_backup", True),
     }
 
 
@@ -122,6 +125,20 @@ REPOS = {str(r["id"]): _to_entry(r) for r in RECORDS.get("repos", []) if r.get("
 PATH_OVERRIDES = {}
 for _rec in RECORDS.get("repos", []):
     PATH_OVERRIDES.update(_rec.get("path_overrides") or {})
+
+
+def reload_repos() -> None:
+    """Rebuild REPOS / PATH_OVERRIDES from the record store, IN PLACE.
+
+    In place is the point: `from config import REPOS` binds the dict object, so rebinding the
+    name would leave every importer reading the pre-edit store - a repo added at runtime would
+    stay invisible to `_repo_args` until a restart. Called by core.repos after every store write.
+    """
+    REPOS.clear()
+    REPOS.update({str(r["id"]): _to_entry(r) for r in RECORDS.get("repos", []) if r.get("id")})
+    PATH_OVERRIDES.clear()
+    for rec in RECORDS.get("repos", []):
+        PATH_OVERRIDES.update(rec.get("path_overrides") or {})
 
 
 def repo_record(repo: str) -> dict:

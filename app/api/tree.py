@@ -114,7 +114,7 @@ _HOLDERS_DETAIL_CAP = 25   # paths resolved to holding-snapshot counts in one ca
 
 
 class HoldersBody(BaseModel):
-    repo: str = "1"
+    repo: str
     full_paths: list[str]
     detail: bool = False
 
@@ -148,7 +148,7 @@ def tree_holders(body: HoldersBody) -> dict:
 
 @router.get("/tree")
 def tree(
-    repo: str = "1",
+    repo: str,
     source: str | None = None,
     snapshot_id: str | None = None,
     prefix: str = "",

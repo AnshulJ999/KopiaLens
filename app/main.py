@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from config import DATA_DIR, REPOS, repo_kind
 
 from .api import (actions, audit, backblaze, dashboard, deleteplan, encryption, excluded, insights,
-                  jobs, logs, policies, restore, search, simulate, snapshots, stats, tree)
+                  jobs, logs, policies, restore, search, setup, simulate, snapshots, stats, tree)
 from .core import auth
 from .core import jobs as jobrunner
 from .index.crypto import StoreLocked
@@ -35,9 +35,10 @@ from .core.instrument import log_memory, memory_snapshot
 from .core.metrics import table_rows
 from .core.schedule import compute_next_snapshots
 from .core.server import SERVERS
-from .index import store
+from .index import store, upgrade as index_upgrade
 from .index.schema import RepoOffline, offline_status
 from .index.schema import close_all as close_duckdb
+from .index.upgrade import IndexVersionMismatch
 from .settings import load_settings
 
 log = get_logger("app")
@@ -520,6 +521,7 @@ def _tick() -> None:
                 log.info("BZ reindex started (detect flagged a change, min-gap opened)")
             else:
                 log.info("BZ reindex deferred: %s", started.get("reason"))
+    index_upgrade.drain_queue()   # an index a user cannot read must not wait for its next slot
     if now_ts - _last_light >= _light_interval():
         _last_light = now_ts
         _light_pass()
@@ -571,6 +573,11 @@ async def lifespan(_app: FastAPI):
         log.warning("Old folder layout: data and settings sit next to the app. Move them into "
                     "one data folder and set KOPIALENS_DATA_DIR.")
         log.debug("old layout data dir: %s", _config.DATA_DIR)
+    try:  # the folder's own version stamp + any registered migration step (background)
+        from .core import dataupgrade
+        dataupgrade.start_background()
+    except Exception as exc:  # noqa: BLE001 - an upgrade problem must not block startup
+        log.error("data folder version check failed: %s", exc)
     try:  # seed a password from the environment ONCE - how a provisioned Docker image gets auth
         seeded = os.environ.get("KOPIALENS_PASSWORD") or ""
         if seeded and not auth.password_hash():
@@ -602,10 +609,28 @@ async def lifespan(_app: FastAPI):
 
     def _capture_ids() -> None:  # a couple of kopia calls - off the startup path
         try:
+            from .core import kopiabin
+            kopiabin.version()      # one spawn, once: /api/repos must never do it on a poll
+        except Exception as exc:  # noqa: BLE001 - a version read is cosmetic
+            log.warning("kopia version read failed: %s", exc)
+        try:
             from .core.repos import ensure_unique_ids
             ensure_unique_ids()
         except Exception as exc:  # noqa: BLE001 - identity capture never blocks startup
             log.warning("repository unique-id capture failed: %s", exc)
+
+    def _upgrade_indexes() -> None:
+        """ Migrate any generation still in an older format, ONCE, off the startup path.
+
+        Before this, a format bump silently rebuilt every repo on its next pass (10-40 min each,
+        and the sticky first-seen dates were lost). A generation from a NEWER app is refused here
+        and by store.open_generation, so an older KopiaLens can never write into it."""
+        try:
+            report = index_upgrade.migrate_all_repos(list(REPOS))
+            if any(report.values()):
+                log.warning("index format pass: %s", report)
+        except Exception as exc:  # noqa: BLE001 - never block startup
+            log.error("index format migration failed: %s", exc, exc_info=True)
 
     try:  # encrypted install: unlock from the OS keychain if the user chose to remember it
         from .index import crypto
@@ -620,6 +645,8 @@ async def lifespan(_app: FastAPI):
         log.error("keystore check failed: %s", exc)
     store.start_idle_reaper()    # nothing stays open: close every generation after the idle window
     threading.Thread(target=_capture_ids, daemon=True).start()
+    # After the keychain unlock above: a migration step that rewrites Parquet needs the key.
+    threading.Thread(target=_upgrade_indexes, name="index-upgrade", daemon=True).start()
     threading.Thread(target=_bg_worker, daemon=True).start()
     yield
     log.info("KopiaLens shutting down")
@@ -691,7 +718,7 @@ async def auth_login(request: Request):
 
 
 @app.post("/api/index/stop")
-def post_index_stop(repo: str = "1"):
+def post_index_stop(repo: str):
     """ Stop this repo's index run AND keep it stopped.
 
     The worker is terminated, then the slot is closed so the scheduler's retry (a killed worker
@@ -877,6 +904,29 @@ def gated_repos() -> list[str]:
     return out
 
 
+def _index_mismatch_payload(exc: IndexVersionMismatch) -> dict:
+    """The 503 body for a generation written by another KopiaLens.
+
+    An OLDER generation is being upgraded - the app started that work itself at startup, so the
+    answer is a progress state ("upgrading"), not an error. A NEWER one is a hard stop: nothing can
+    be migrated forward, and the way out is the explicit rebuild with this version."""
+    upgrading = exc.mode != "newer" and (
+        exc.mode == "migrate"
+        or exc.repo in index_upgrade.queued_rebuilds()
+        or nightly.is_running(exc.repo))
+    detail = (f"Repo {exc.repo}: its index is being upgraded for this version of KopiaLens and "
+              f"becomes readable when that pass finishes.") if upgrading else str(exc)
+    return {"detail": detail, "index_upgrade": True, "upgrading": upgrading, "repo": exc.repo,
+            "found": exc.found, "expected": exc.expected, "mode": exc.mode}
+
+
+@app.exception_handler(IndexVersionMismatch)
+async def _index_version_handler(_request: Request, exc: IndexVersionMismatch):
+    """Not `offline` (nothing comes back on its own): the message says which way the mismatch runs
+    and what actually happens next."""
+    return JSONResponse(status_code=503, content=_index_mismatch_payload(exc))
+
+
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception):
     """Log the FULL traceback to kopialens.log and return JSON (never a plain-text 500). Fixes the
@@ -902,6 +952,7 @@ app.include_router(excluded.router, prefix="/api")
 app.include_router(policies.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")
 app.include_router(encryption.router, prefix="/api")
+app.include_router(setup.router, prefix="/api")
 app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
 
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")

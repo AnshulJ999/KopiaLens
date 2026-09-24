@@ -103,13 +103,13 @@ def _fmt_cmd(cmd: list[str]) -> str:
 
 
 class MountRequest(BaseModel):
-    repo: str = "1"
+    repo: str
     snapshot_id: str
     mountpoint: str
 
 
 class MountOpenRequest(BaseModel):
-    repo: str = "1"
+    repo: str
     snapshot_id: str | None = None  # None = the newest current snapshot holding full_path
     source: str
     full_path: str | None = None  # a file/folder inside the source; None = mount root only
@@ -117,12 +117,12 @@ class MountOpenRequest(BaseModel):
 
 
 class SnapshotDeleteRequest(BaseModel):
-    repo: str = "1"
+    repo: str
     snapshot_ids: list[str]
 
 
 class RemoveFilesRequest(BaseModel):
-    repo: str = "1"
+    repo: str
     by: str = "object-id"   # "object-id" (precise content) | "filename" (by name)
     everywhere: bool = False  # object-id: drop --source to remove from ALL sources (sweeps whole repo)
     sources: list[str] | None = None  # explicit --source scope (the Delete panel's ticked backups)
@@ -132,7 +132,7 @@ class RemoveFilesRequest(BaseModel):
 
 
 class FolderReclaimRequest(BaseModel):
-    repo: str = "1"
+    repo: str
     source: str
     prefix: str
 
@@ -303,7 +303,7 @@ def remove_files_dry_run_route(payload: RemoveFilesRequest) -> dict:
 class RemovePlanRequest(BaseModel):
     """Chunked folder/filter delete: removes the files matching the CURRENT view/filter (optionally
     scoped to a folder ``prefix``), biggest-files-first, via chunked remove-files."""
-    repo: str = "1"
+    repo: str
     query: str = ""
     source: str | None = None
     ext: str | None = None
@@ -621,7 +621,7 @@ def folder_reclaim(payload: FolderReclaimRequest) -> dict:
 
 
 class BatchDetailRequest(BaseModel):
-    repo: str = "1"
+    repo: str
     files: list[dict]  # [{"source":..., "full_path":...}, ...]
     all_versions: bool = True  # must mirror the caller's delete plan, or the preview prices a
                                # different deletion than the one about to run
@@ -684,7 +684,7 @@ def mount_browse(payload: UnmountRequest) -> dict:
 
 
 @router.get("/actions/purge-plan")
-def purge_plan(repo: str = "1", source: str | None = None, full_path: str | None = None) -> dict:
+def purge_plan(repo: str, source: str | None = None, full_path: str | None = None) -> dict:
     if not source or not full_path:
         raise HTTPException(status_code=400, detail="source and full_path are required")
     held = snapshots_for_path(repo, source, full_path)

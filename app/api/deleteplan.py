@@ -35,7 +35,7 @@ class PlanFile(BaseModel):
 
 
 class PlanBody(BaseModel):
-    repo: str = "1"
+    repo: str
     files: list[PlanFile]
     method: str = "remove"
     by: str = "object-id"
