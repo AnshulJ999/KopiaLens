@@ -229,11 +229,9 @@ def _record_growth(repo: str, packed_bytes: int) -> list:
     """Hourly (ts, packed-bytes) samples for the growth trend. Small JSON file, bounded length."""
     try:
         with _HISTORY_LOCK:
-            history: dict = {}
-            try:
-                with open(_HISTORY_FILE, encoding="utf-8") as fh:
-                    history = json.load(fh)
-            except Exception:  # noqa: BLE001 - missing/corrupt just means we start fresh
+            from ..core import filecrypto
+            history = filecrypto.read_json(_HISTORY_FILE)   # missing/unreadable: start fresh
+            if not isinstance(history, dict):
                 history = {}
             samples = history.get(repo) or []
             now = time.time()
@@ -241,7 +239,6 @@ def _record_growth(repo: str, packed_bytes: int) -> list:
                 samples.append([round(now), packed_bytes])
                 samples = samples[-_HISTORY_KEEP:]
                 history[repo] = samples
-                from ..core import filecrypto
                 filecrypto.write_json(_HISTORY_FILE, history)
             return samples
     except Exception as exc:  # noqa: BLE001 - a trend sample must never break the panel

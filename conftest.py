@@ -13,13 +13,15 @@ Two things went wrong on 2026-09-17 and both are fenced off here:
 The cache redirect is the fix; the memory cap and the watchdog are the net under it.
 
 The data folder is sandboxed too (2026-09-23): the shell's KOPIALENS_DATA_DIR points at the live
-install, and a test run wrote into it. Every run gets a throwaway data folder seeded with copies of
-the real repos.json/settings.json, and refuses to start if config still resolves to the real one.
+install, and a test run wrote into it. Every run gets a throwaway data folder seeded with a copy of
+settings.json and the real repo records with their kopia connections pointed at nothing (no test
+may reach a real repository), and refuses to start if config still resolves to the real folder.
 """
 
 from __future__ import annotations
 
 import faulthandler
+import json
 import os
 import shutil
 import tempfile
@@ -45,14 +47,35 @@ def _real_config_dir() -> str:
 _CACHE_SANDBOX = tempfile.mkdtemp(prefix="kopialens-test-cache-")
 os.environ["KOPIALENS_CACHE_DIR"] = _CACHE_SANDBOX
 
-# A test must never write into the live data folder. Copies keep tests that read the real repo
-# records behaving as before; every write lands in the sandbox.
+# A test must never write into the live data folder; every write lands in the sandbox.
 _DATA_SANDBOX = tempfile.mkdtemp(prefix="kopialens-test-data-")
 _REAL_CONFIG_DIR = _real_config_dir()
-for _name in ("repos.json", "settings.json"):
-    _src = os.path.join(_REAL_CONFIG_DIR, _name)
-    if os.path.isfile(_src):
-        shutil.copy2(_src, os.path.join(_DATA_SANDBOX, _name))
+_settings_src = os.path.join(_REAL_CONFIG_DIR, "settings.json")
+if os.path.isfile(_settings_src):
+    shutil.copy2(_settings_src, os.path.join(_DATA_SANDBOX, "settings.json"))
+
+
+def _sandbox_repo_records() -> None:
+    """The real repo ids and names, but every kopia connection points at a config file that does
+    not exist: an unmocked kopia call in a test fails at once instead of reaching a real
+    repository. A test that truly needs kopia builds its own throwaway repo."""
+    src = os.path.join(_REAL_CONFIG_DIR, "repos.json")
+    try:
+        with open(src, encoding="utf-8") as fh:
+            store = json.load(fh)
+    except (OSError, ValueError):
+        return
+    dead = os.path.join(_DATA_SANDBOX, "no-such-kopia-config")
+    for rec in store.get("repos") or []:
+        if rec.get("kind", "kopia") == "kopia":
+            rec["config_file"] = os.path.join(dead, f"repo{rec.get('id')}.config")
+    with open(os.path.join(_DATA_SANDBOX, "repos.json"), "w", encoding="utf-8") as fh:
+        json.dump(store, fh)
+
+
+_sandbox_repo_records()
+# kopia's own default connection too: a bare `kopia` call must not find the real repository.config
+os.environ["KOPIA_CONFIG_PATH"] = os.path.join(_DATA_SANDBOX, "no-such-kopia-config", "default.config")
 os.environ["KOPIALENS_DATA_DIR"] = _DATA_SANDBOX
 os.environ["KOPIALENS_CONFIG_DIR"] = _DATA_SANDBOX
 os.environ["KOPIALENS_REPOS_FILE"] = os.path.join(_DATA_SANDBOX, "repos.json")

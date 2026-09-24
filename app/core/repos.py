@@ -87,7 +87,7 @@ def reserve_id() -> str:
     with _ID_LOCK:
         rid = next_id()
         _advance_id_mark(rid)
-        config.save_records(config.RECORDS)
+        config.save_records(config.RECORDS, strict=True)
     return rid
 
 
@@ -365,7 +365,11 @@ def add_record(rec: dict) -> dict:
         rec.setdefault("created", time.time())
         config.RECORDS.setdefault("repos", []).append(rec)
         _advance_id_mark(rid)
-        config.save_records(config.RECORDS)
+        try:
+            config.save_records(config.RECORDS, strict=True)
+        except OSError:
+            config.RECORDS["repos"].remove(rec)
+            raise
     config.reload_repos()
     log.info("repo=%s added (%s)", rid, rec.get("name"))
     return rec
@@ -380,7 +384,7 @@ def update_record(repo: str, fields: dict) -> dict:
     for key in ("name", "short_name", "counts_as_backup"):
         if key in fields:
             rec[key] = fields[key]
-    config.save_records(config.RECORDS)
+    config.save_records(config.RECORDS, strict=True)
     config.reload_repos()
     return rec
 
@@ -392,8 +396,13 @@ def remove_record(repo: str) -> dict:
     rec = next((r for r in all_records() if str(r.get("id")) == str(repo)), None)
     if rec is None:
         raise ValueError(f"unknown repo: {repo}")
-    config.RECORDS["repos"] = [r for r in all_records() if str(r.get("id")) != str(repo)]
-    config.save_records(config.RECORDS)
+    before = config.RECORDS.get("repos", [])
+    config.RECORDS["repos"] = [r for r in before if str(r.get("id")) != str(repo)]
+    try:
+        config.save_records(config.RECORDS, strict=True)
+    except OSError:
+        config.RECORDS["repos"] = before
+        raise
     config.reload_repos()
     log.warning("repo=%s removed from the record store", repo)
     return rec
@@ -402,11 +411,8 @@ def remove_record(repo: str) -> dict:
 def _drop_key(path: str, key: str, *, nested: tuple[str, ...] = ()) -> bool:
     """Remove one repo's entry from a small JSON state file. `nested` names the sub-dicts to look
     the key up in (bg_worker_state keeps one per concern). Unreadable/absent file = nothing to do."""
-    try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError):
-        return False
+    from . import filecrypto        # these state files are encrypted at the Full level
+    data = filecrypto.read_json(path)
     if not isinstance(data, dict):
         return False
     changed = False
@@ -417,13 +423,8 @@ def _drop_key(path: str, key: str, *, nested: tuple[str, ...] = ()) -> bool:
             changed = True
     if not changed:
         return False
-    try:
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(data, fh)
-        os.replace(tmp, path)
-    except OSError as exc:
-        log.warning("could not clean %s for repo=%s: %s", os.path.basename(path), key, exc)
+    if not filecrypto.write_json(path, data):
+        log.warning("could not clean %s for repo=%s", os.path.basename(path), key)
         return False
     return True
 

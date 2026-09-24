@@ -64,7 +64,7 @@ def pending() -> list[str]:
 
 
 def bz_state() -> dict:
-    """The Backblaze parquet store's own state line (): the level covers it at Everything."""
+    """The Backblaze parquet store's own state line (): the level covers it at Full."""
     from ..backblaze import pq as bz_pq
     from . import crypto
     manifest = bz_pq.read_manifest()
@@ -74,7 +74,7 @@ def bz_state() -> dict:
     encrypted = bool(manifest.get("encrypted"))
     return {"repo": "bz", "generation": manifest.get("generation"), "encrypted": encrypted,
             "exists": True,
-            "pending": encrypted != (crypto.level() == crypto.LEVEL_EVERYTHING)}
+            "pending": encrypted != (crypto.level() == crypto.LEVEL_FULL)}
 
 
 def _fwd(path: str) -> str:
@@ -123,7 +123,7 @@ def switch_repo(repo: str, on: bool, say=None) -> dict:
 def switch_bz(on: bool, say=None) -> dict:
     """Rewrite the Backblaze parquet generations between plaintext and encrypted ().
 
-    The BZ store is covered at the Everything level and uses the same DuckDB footer key as the
+    The BZ store is covered at the Full level and uses the same DuckDB footer key as the
     index. The slim SQLite (history/state tables) is NOT covered yet - see the report: its
     path-bearing tables are queried by SQL, so encrypting them needs a query-layer change.
     """
@@ -226,7 +226,8 @@ def _rewrite_generation(root: str, manifest: dict, on: bool, staging: str, tmp: 
 
 
 def apply_level(level: str, say=None) -> dict:
-    """Move the whole install to ``level``: the index generations, the file layer, Backblaze.
+    """Move the whole install to ``level``: the index generations, the side caches, the file
+    layer, Backblaze.
 
     Every part is the same verified rewrite as the per-repo switch, so a failure or a crash
     leaves each file readable and the caller can simply run it again. A repo whose index pass is
@@ -261,10 +262,12 @@ def apply_level(level: str, say=None) -> dict:
         except RuntimeError as exc:      # another writer holds the repo's lock
             out["deferred"].append(repo)
             say(f"repo {repo}: another write is in progress - deferred ({exc})")
-    out["files"] = filecrypto.switch_files(level == crypto.LEVEL_EVERYTHING, say=say)
+    if crypto.unlocked():
+        out["caches"] = switch_caches(want_index, say=say)
+    out["files"] = filecrypto.switch_files(level == crypto.LEVEL_FULL, say=say)
     bz = bz_state()
     if bz["exists"]:
-        want_bz = level == crypto.LEVEL_EVERYTHING
+        want_bz = level == crypto.LEVEL_FULL
         if bz["encrypted"] != want_bz:
             try:
                 out["backblaze"] = switch_bz(want_bz, say=say)
@@ -379,3 +382,154 @@ def switch_caches(on: bool, say=None) -> dict:
         say(f"caches: {done} rewritten, {dropped} dropped")
         log.info("side caches switched to %s: %s", "encrypted" if on else "plain", out)
     return out
+
+
+# ---------------------------------------------------------------------------- start over
+
+def _size(path: str) -> int:
+    if os.path.isfile(path):
+        return os.path.getsize(path)
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                pass
+    return total
+
+
+def _reset_plan() -> dict:
+    """Everything the lost key made unreadable, grouped for the confirm dialog.
+
+    ``remove`` goes whole (the keystore, encrypted index generations and caches, fully encrypted
+    small files); ``trim`` are line files written across a switch - their plaintext lines stay and
+    only the encrypted ones go."""
+    from ..backblaze import pq as bz_pq
+    from ..core import filecrypto
+    remove: list[dict] = []
+    trim: list[dict] = []
+    reindex: list[str] = []
+    ks = crypto.keystore_dir()
+    for name in sorted(os.listdir(ks)) if os.path.isdir(ks) else []:
+        if name.startswith("keystore"):
+            remove.append({"path": os.path.join(ks, name), "what": "keystore"})
+    for state in repo_states():
+        if state.get("generation") and state["encrypted"]:
+            remove.append({"path": store.repo_dir(state["repo"]), "what": "index"})
+            reindex.append(state["repo"])
+    bz = bz_state()
+    if bz["exists"] and bz["encrypted"]:
+        remove.append({"path": bz_pq.root(), "what": "backblaze"})
+    for path in cache_files():
+        if crypto.file_is_encrypted(path):
+            remove.append({"path": path, "what": "cache"})
+    for path in sorted(filecrypto.covered_paths()):
+        state = filecrypto.file_state(path) if os.path.exists(path) else None
+        if state == "encrypted":
+            remove.append({"path": path, "what": "history"})
+        elif state == "mixed":
+            trim.append({"path": path, "what": "history"})
+    for item in remove + trim:
+        item["bytes"] = _size(item["path"])
+    return {"remove": remove, "trim": trim, "reindex": reindex,
+            "backblaze": bz["exists"] and bz["encrypted"]}
+
+
+def _aside_path(aside: str, path: str) -> str:
+    """Where a set-aside file goes: its path relative to the data folder, so two policy backups
+    with one name never collide."""
+    try:
+        rel = os.path.relpath(path, DATA_DIR)
+    except ValueError:              # another drive (a relocated cache folder)
+        rel = os.path.basename(path)
+    if rel.startswith(".."):
+        rel = os.path.basename(path)
+    return os.path.join(aside, rel)
+
+
+def reset_preview() -> dict:
+    """What "start over" does, for a user who lost the password AND the recovery key."""
+    plan = _reset_plan()
+    history = [i for i in plan["remove"] + plan["trim"] if i["what"] == "history"]
+    return {"configured": crypto.configured(), **plan,
+            "bytes": sum(i["bytes"] for i in plan["remove"]),
+            "history_lost": len(history)}
+
+
+def reset(keep_copy: bool = False) -> dict:
+    """Start over without the key: forget the keystore, remove (or set aside) everything it
+    encrypted, turn encryption off and re-index from kopia. The kopia repositories are never
+    touched; the index and caches rebuild, encrypted history does not.
+
+    ``keep_copy`` moves everything into ``data/encryption-reset-<time>/`` instead of deleting it,
+    for a user who might still find the password."""
+    import shutil
+
+    from ..backblaze import pq as bz_pq
+    from ..core import audit, filecrypto, nightly
+    from ..settings import mutate_settings
+    from . import upgrade as index_upgrade
+
+    if nightly.any_running():
+        raise RuntimeError("an index pass is running - start over after it finishes")
+    plan = _reset_plan()
+    crypto.lock()
+    crypto.remember_on_this_machine(False)
+    store.close_all()
+    bz_pq.close_open_generation()
+
+    def _off(settings: dict) -> None:
+        kl = settings.setdefault("kopialens", {})
+        kl["encryption_level"] = crypto.LEVEL_OFF
+        kl.pop("encryption", None)
+    mutate_settings(_off)
+
+    aside = os.path.join(DATA_DIR, f"encryption-reset-{time.strftime('%Y%m%d-%H%M%S')}") \
+        if keep_copy else ""
+    done, failed = [], []
+    for item in plan["remove"]:
+        path = item["path"]
+        try:
+            if aside:
+                dest = _aside_path(aside, path)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.move(path, dest)
+            elif os.path.isdir(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+            done.append(path)
+        except OSError as exc:
+            failed.append({"path": path, "error": str(exc)})
+    for item in plan["trim"]:
+        path = item["path"]
+        try:
+            with open(path, "rb") as fh:
+                raw = fh.read()
+            kept, _lost = filecrypto.decode_lines(raw)   # locked: only the plaintext lines read
+            if aside:
+                dest = _aside_path(aside, path)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                with open(dest, "wb") as fh:
+                    fh.write(raw)
+            filecrypto.write_lines(path, kept)
+            done.append(path)
+        except OSError as exc:
+            failed.append({"path": path, "error": str(exc)})
+    for repo in plan["reindex"]:
+        index_upgrade.request_rebuild(repo, trigger="encryption-reset")
+    if plan["backblaze"]:
+        try:
+            import threading
+
+            from ..backblaze import indexer as bz_indexer
+            threading.Thread(target=bz_indexer.refresh_via_worker, kwargs={"force": True},
+                             name="bz-after-reset", daemon=True).start()
+        except Exception as exc:  # noqa: BLE001 - it rebuilds on its own schedule anyway
+            log.warning("backblaze rebuild after the reset could not start: %s", exc)
+    summary = {"removed": len(done), "failed": len(failed), "kept_copy": aside,
+               "reindex": plan["reindex"]}
+    log.warning("encryption reset: %s", summary)
+    audit.audit("executed", "encryption-reset", summary=summary)
+    return {"ok": True, **summary, "failed_paths": failed}

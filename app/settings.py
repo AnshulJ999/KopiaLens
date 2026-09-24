@@ -88,9 +88,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         # ---- unified store () ---------------------------------------------------------
         # Encryption at rest (). Three levels, decided in onboarding ():
         #   "off"        nothing
-        #   "index"      the index generations + side caches + policy caches (the full map)
-        #   "everything" the above + the small JSON files, audit/history, logs, policy backups
-        #                and the Backblaze store - kopia's own posture
+        #   "index"      the index generations + side caches + policy caches (the full map) -
+        #                kopia's own posture: its repository and cache encrypted, config and logs not
+        #   "full"       the above + the small JSON files, audit/history, logs, policy backups
+        #                and the Backblaze store - stricter than kopia
         # This is the INTENT: new files are written in this state, while anything already on disk
         # keeps its own state (a generation records it in its manifest, a file in its own bytes)
         # until the switch rewrites it. Never touches the kopia repository.

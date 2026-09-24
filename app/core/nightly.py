@@ -105,8 +105,22 @@ def worker_progress(repo: str) -> dict | None:
     """The subprocess's live progress file, if it is mid-run. The app cannot query the DuckDB while
     the worker holds it, so this is the only way to render a progress badge during the window."""
     from . import filecrypto
-    data = filecrypto.read_json(os.path.join(DATA_DIR, f"index_progress_repo{repo}.json"))
-    return data if isinstance(data, dict) else None
+    data = _read_json(os.path.join(DATA_DIR, f"index_progress_repo{repo}.json"))
+    if data is None:
+        return None
+    detail = filecrypto.read_json(_detail_path(repo))     # paths: follows the encryption level
+    if isinstance(detail, dict):
+        data.update(detail)
+    return data
+
+
+def _detail_path(repo: str) -> str:
+    return os.path.join(DATA_DIR, f"index_progress_detail_repo{repo}.json")
+
+
+def _remove_progress(repo: str) -> None:
+    _remove(os.path.join(DATA_DIR, f"index_progress_repo{repo}.json"))
+    _remove(_detail_path(repo))
 
 
 INTERRUPTED = "Indexing stopped before it finished (KopiaLens was closed or restarted)"
@@ -290,12 +304,20 @@ def result_path(repo: str) -> str:
 
 
 def _read_json(path: str) -> dict | None:
+    """The worker's PLAIN status file (pid, stage, counts)."""
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
         return data if isinstance(data, dict) else None
     except Exception:  # noqa: BLE001 - missing or half-written reads as nothing
         return None
+
+
+def _read_result(path: str) -> dict | None:
+    """The worker's summary file, encrypted at the Full level."""
+    from . import filecrypto
+    data = filecrypto.read_json(path)
+    return data if isinstance(data, dict) else None
 
 
 def _remove(path: str) -> None:
@@ -363,13 +385,13 @@ def _watch_adopted(repo: str, proc, pid: int, info: dict, on_done) -> None:
                 if time.time() - started > worker_timeout():
                     log.error("repo=%s index worker (pid %s) timed out - killing it", repo, pid)
                     proc.kill()
-                    _remove(os.path.join(DATA_DIR, f"index_progress_repo{repo}.json"))
+                    _remove_progress(repo)
                     summary = {"ok": False, "reason": "timeout"}
                     break
             except psutil.NoSuchProcess:
                 break
         if summary is None:
-            res = _read_json(result_path(repo))
+            res = _read_result(result_path(repo))
             if res and int(res.get("pid") or 0) == pid:
                 summary = res
                 _remove(result_path(repo))
@@ -393,6 +415,8 @@ def resume_workers(on_done=None) -> dict:
     as interrupted, so the normal retry runs. A leftover Backblaze worker is left to finish (it
     records its own result). Returns the repos per outcome."""
     import glob
+
+    from . import filecrypto
     out: dict[str, list[str]] = {"adopted": [], "finished": [], "interrupted": [], "left_running": []}
     dead: dict[str, dict] = {}
     for path in glob.glob(os.path.join(DATA_DIR, "index_progress_repo*.json")):
@@ -407,7 +431,7 @@ def resume_workers(on_done=None) -> dict:
                         pid, exc, os.path.basename(path))
             continue
         if proc is None:
-            _remove(path)
+            _remove_progress(repo)
             dead[repo] = info
             continue
         if repo == "bz" or repo_kind(repo) == "backblaze":
@@ -429,7 +453,11 @@ def resume_workers(on_done=None) -> dict:
         repo = os.path.basename(path)[len("index_result_repo"):-len(".json")]
         if repo in out["adopted"]:
             continue  # its watcher reads the file when the worker exits
-        res = _read_json(path)
+        res = _read_result(path)
+        if res is None and filecrypto.file_state(path) == "encrypted" and not filecrypto.available():
+            # Encrypted and no key yet (remember-me off): keep it for the next start after an unlock.
+            log.info("repo=%s index result is encrypted and locked - kept for later", repo)
+            continue
         _remove(path)
         if not res or repo not in REPOS:
             continue
@@ -481,7 +509,7 @@ def _run_worker(repo: str, full: bool, trigger: str = "manual") -> dict:
     child_logs = filecrypto.available()
     if child_logs:
         # The child writes its own log: a redirected descriptor would bypass any wrapper and
-        # land plaintext in a file the Everything level says is encrypted.
+        # land plaintext in a file the Full level says is encrypted.
         env["KOPIALENS_WORKER_LOG"] = logp
         filecrypto.append_line(logp, "")
         filecrypto.append_line(logp, f"===== run started {dt.datetime.now():%Y-%m-%d %H:%M:%S} "
@@ -511,7 +539,7 @@ def _run_worker(repo: str, full: bool, trigger: str = "manual") -> dict:
             return {"ok": False, "reason": "timeout"}
         finally:
             # This process records the run from stdout; the file is for a restarted app only.
-            res = _read_json(result_path(repo))
+            res = _read_result(result_path(repo))
             if res and int(res.get("pid") or 0) == proc.pid:
                 _remove(result_path(repo))
     except Exception as exc:  # noqa: BLE001 - could not even launch

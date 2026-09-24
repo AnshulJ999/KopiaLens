@@ -68,7 +68,7 @@ def test_setup_creates_the_keystore_and_returns_a_recovery_key(wired):
     assert body["ok"] is True and body["recovery_key"]
     assert body["status"]["configured"] is True and body["status"]["unlocked"] is True
     assert body["status"]["has_recovery"] is True
-    assert wired["saved"]["level"] == "everything"     # the ticked onboarding box means Everything
+    assert wired["saved"]["level"] == "full"           # the ticked onboarding box means Full
 
 
 def test_setup_refuses_a_second_keystore(wired):
@@ -176,7 +176,7 @@ def test_the_level_route_refuses_a_bad_level_or_a_locked_install(wired):
     assert exc.value.status_code == 400
     api.lock()
     with pytest.raises(HTTPException) as exc:
-        api.set_level(api.LevelRequest(level="everything"))
+        api.set_level(api.LevelRequest(level="full"))
     assert exc.value.status_code == 409
     assert wired["jobs"]["started"] == []
     assert wired["saved"]["writes"] == 1             # setup's own write; neither refusal wrote
@@ -185,6 +185,6 @@ def test_the_level_route_refuses_a_bad_level_or_a_locked_install(wired):
 def test_the_level_route_refuses_to_encrypt_without_a_keystore(wired, monkeypatch):
     monkeypatch.setattr(crypto, "unlocked", lambda: True)    # past the unlock check, keystore absent
     with pytest.raises(HTTPException) as exc:
-        api.set_level(api.LevelRequest(level="everything"))
+        api.set_level(api.LevelRequest(level="full"))
     assert exc.value.status_code == 409
     assert "Set up encryption" in exc.value.detail

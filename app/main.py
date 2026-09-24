@@ -133,8 +133,8 @@ def _startup_delay() -> float:
 def _read_state() -> dict:
     """``{"ts": float, "nightly": {repo: float}}``. Tolerates the older ts-only file shape."""
     try:
-        with open(_LAST_CYCLE_FILE, encoding="utf-8") as fh:
-            data = json.load(fh)
+        from .core import filecrypto
+        data = filecrypto.read_json(_LAST_CYCLE_FILE)
         if not isinstance(data, dict):
             return {}
         data.setdefault("nightly", {})
@@ -586,8 +586,20 @@ async def lifespan(_app: FastAPI):
                         "password already chosen later is never overwritten)")
     except Exception as exc:  # noqa: BLE001 - seeding must never block startup
         log.error("KOPIALENS_PASSWORD seeding failed: %s", exc)
+    try:  # encrypted install: unlock from the OS keychain if the user chose to remember it
+        from .index import crypto
+        if crypto.enabled() and not crypto.unlocked() and crypto.unlock_from_keychain():
+            log.info("index unlocked from the keychain")
+        elif crypto.enabled():
+            log.warning("the index is encrypted and locked - reads and the nightly wait for an unlock")
+        gone = crypto.sweep_all()   # session databases a crashed process left behind
+        if gone:
+            log.info("removed %d leftover session database file(s)", gone)
+    except Exception as exc:  # noqa: BLE001 - never block startup on the keystore
+        log.error("keystore check failed: %s", exc)
     try:
         # Before the scheduler starts: a worker from the previous app run is taken over, not restarted.
+        # After the keychain unlock: its result file is encrypted at the Full level.
         resumed = nightly.resume_workers(on_done=mark_nightly_result)
         _close_stale_attempts(resumed["adopted"])
     except Exception as exc:  # noqa: BLE001 - cleanup must never block startup
@@ -632,17 +644,6 @@ async def lifespan(_app: FastAPI):
         except Exception as exc:  # noqa: BLE001 - never block startup
             log.error("index format migration failed: %s", exc, exc_info=True)
 
-    try:  # encrypted install: unlock from the OS keychain if the user chose to remember it
-        from .index import crypto
-        if crypto.enabled() and not crypto.unlocked() and crypto.unlock_from_keychain():
-            log.info("index unlocked from the keychain")
-        elif crypto.enabled():
-            log.warning("the index is encrypted and locked - reads and the nightly wait for an unlock")
-        gone = crypto.sweep_all()   # session databases a crashed process left behind
-        if gone:
-            log.info("removed %d leftover session database file(s)", gone)
-    except Exception as exc:  # noqa: BLE001 - never block startup on the keystore
-        log.error("keystore check failed: %s", exc)
     store.start_idle_reaper()    # nothing stays open: close every generation after the idle window
     threading.Thread(target=_capture_ids, daemon=True).start()
     # After the keychain unlock above: a migration step that rewrites Parquet needs the key.

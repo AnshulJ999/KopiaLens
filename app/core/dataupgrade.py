@@ -21,9 +21,9 @@ Step contract (what a registered step may assume):
   the status for the UI;
 * it never deletes: superseded information is archived or left alone.
 
-Adding a step (how A2's encryption conversion plugs in): write `def my_step(ctx) -> dict`, call
-`register(from_version=2, fn=my_step, name="...", description="...")` at import time, and add your
-module to `_STEP_MODULES` below so the routine imports it. Bump `DATA_VERSION` by one.
+Adding a step: write `def my_step() -> dict`, call `register(from_version=N, fn=my_step,
+name="...", description="...")` at import time, add the module to `_STEP_MODULES` below so the
+routine imports it, and bump `DATA_VERSION` to N+1 (`core/encryption_upgrade.py` is the example).
 """
 
 from __future__ import annotations

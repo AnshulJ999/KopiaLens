@@ -789,6 +789,8 @@ def ignore_files_for(repo: str, target: str | None = None) -> dict:
                 "files": [], "detail": "no ignore files stored yet - available after the next "
                                        "index run"}
     files = list(data.get("files") or [])
+    if target in ("global", "(global)"):
+        target = None                     # Global covers every source (trap 37's boundary rule)
     if target:
         folder = target.split(":", 1)[1] if ":" in target else ""
         uh = rlayers.user_host_of(target)

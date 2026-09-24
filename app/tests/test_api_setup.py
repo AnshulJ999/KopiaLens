@@ -246,7 +246,7 @@ def test_connect_attach_edit_remove_round_trip(sandbox, monkeypatch):
     external.write_text(json.dumps({"storage": {"type": "s3", "config": {"bucket": "b"}}}),
                         encoding="utf-8")
 
-    monkeypatch.setattr(repoconnect, "_run", lambda args, password, timeout=600.0: {
+    monkeypatch.setattr(repoconnect, "_run", lambda args, password, timeout=600.0, **_kw: {
         "returncode": 0, "stdout": "Connected to repository.", "stderr": "", "command": args})
     rec = setup.connect(setup.ConnectRequest(provider="filesystem", fields={"path": "/repo"},
                                             password="pw", name="Connected", short_name="C"))["repo"]

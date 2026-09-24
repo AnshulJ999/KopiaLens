@@ -67,9 +67,7 @@ KINDS = {
     "policy_write": {"label": "Saving policies", "mutating": False},
     "snapshot_create": {"label": "Taking a snapshot", "mutating": False},
     "snapshot_pin": {"label": "Changing pins", "mutating": False},
-    # Local-only (): rewrites KopiaLens's own index, never the kopia repository. Mutating
-    # so it cannot run beside another write job or an index pass - both touch the same manifest.
-    "encryption_switch": {"label": "Switching encryption", "mutating": True},
+    # Local-only (): rewrites KopiaLens's own files, never the kopia repository.
     # Install-wide level change: every repo's generation, the file layer, Backblaze. Mutating,
     # but tolerant - a busy repo is deferred and reported rather than failing the job.
     "encryption_level": {"label": "Changing encryption level", "mutating": True},
@@ -83,7 +81,6 @@ AUDIT_ACTION = {
     "policy_write": "policy-write",
     "snapshot_create": "snapshot-create",
     "snapshot_pin": "snapshot-pin",
-    "encryption_switch": "encryption-switch",
     "encryption_level": "encryption-level",
 }
 
@@ -219,31 +216,11 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
             then_cmds, then_meta = _build_commands(then["kind"], repo, then["params"])
             meta["then_detail"] = then_meta
         return steps + then_cmds, meta
-    elif kind == "encryption_switch":
-        # One Python step, no kopia command: rewrite the generation and the side caches, then
-        # report what they were. Returns early so the kopia-prefix check below is skipped.
-        on = bool(params.get("on"))
-
-        def _switch_step(job: dict, lf) -> tuple[int, str]:
-            from ..index import keyswitch
-            say_ = lambda text: say(job, lf, text)          # noqa: E731
-            try:
-                out = keyswitch.switch_repo(repo, on, say=say_)
-                out["caches"] = keyswitch.switch_caches(on, say=say_)
-                job["keyswitch"] = out
-                if out.get("note"):
-                    say_(out["note"])
-                return 0, ""
-            except Exception as exc:  # noqa: BLE001 - the runner reports it like any other step
-                say_(f"failed: {exc}")
-                return 1, str(exc)[:280]
-
-        return [_switch_step], {"on": on, "dry": False}
     elif kind == "encryption_level":
         # One Python step: move the whole install to a level (index generations, the file
         # layer, Backblaze) with the same verified rewrites the per-repo switch uses.
         level = str(params.get("level") or "").lower()
-        if level not in ("off", "index", "everything"):
+        if level not in ("off", "index", "full"):
             raise JobRefused(f"unknown encryption level: {level or '(none)'}")
 
         def _level_step(job: dict, lf) -> tuple[int, str]:
@@ -299,8 +276,6 @@ def _default_label(kind: str, params: dict, meta: dict) -> str:
         n = meta["writes"]
         base = f"{n} polic{'y' if n == 1 else 'ies'}"
         return base + (", then delete" if meta.get("then") else "")
-    if kind == "encryption_switch":
-        return "encrypting the index" if meta.get("on") else "removing encryption"
     if kind == "encryption_level":
         return f"encryption level -> {meta.get('level')}"
     return kind
@@ -365,7 +340,7 @@ def start_job(kind: str, repo: str, params: dict, label: str | None = None,
                     f"{clash['kind_label']} is already running on repo {repo} - "
                     "one write at a time per repo.")
         _JOBS[job["job_id"]] = job
-    if job["mutating"] and kind not in ("encryption_switch", "encryption_level"):
+    if job["mutating"] and kind != "encryption_level":
         # An encryption rewrite is not a delete: the index's CONTENT is unchanged, so an
         # incremental pass would burn a nightly for nothing.
         from . import reindexq  # lazy: reindexq reads the job registry
@@ -433,7 +408,7 @@ def _run(job: dict, cmds: list[list[str]]) -> None:
                 _record_freed(job, lf)
         if job["stop_requested"]:
             job["state"] = "stopped"
-        elif job["kind"] in ("restore", "maintenance", "policy_write", "encryption_switch",
+        elif job["kind"] in ("restore", "maintenance", "policy_write",
                              "encryption_level") and job["rc"] not in (None, 0):
             job["state"] = "failed"
         else:
@@ -620,12 +595,7 @@ def history_status(job_id: str, after: int = 0) -> dict | None:
     rec = next((r for r in read_job_history(limit=HISTORY_FILE_LINES) if r.get("job_id") == job_id), None)
     if rec is None:
         return None
-    lines: list[str] = []
-    try:
-        with open(rec.get("log_path") or "", encoding="utf-8", errors="replace") as fh:
-            lines = [ln.rstrip("\n") for ln in fh if ln.strip()][-HISTORY_TAIL_LINES:]
-    except OSError:
-        pass
+    lines = filecrypto.read_lines(rec.get("log_path") or "")[-HISTORY_TAIL_LINES:]
     lines = [("--:--:-- " + ln) for ln in lines]   # the panel expects a time prefix
     return {**rec, "results": [], "held": False, "freed": None, "target": None, "commands_text": "",
             "from_history": True, "line_count": len(lines), "cursor": len(lines), "skipped": 0,

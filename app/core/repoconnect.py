@@ -1,8 +1,9 @@
 """Connect KopiaLens to a kopia repository - every storage type kopia supports.
 
-One flow for all of them: KopiaLens writes a config file under ``<data>/configs/`` and runs
-``kopia repository connect <provider> <flags>``. The repository password travels in
-``KOPIA_PASSWORD`` (never argv, which is visible in a process list) and kopia then persists it
+One flow for all of them: KopiaLens writes a config file (kopia's own folder or ``<data>/configs/``,
+see ``config_location``) and runs ``kopia repository connect <provider> <flags>``. The repository
+password travels in ``KOPIA_PASSWORD`` and storage secrets in kopia's own environment variables or
+stdin (never argv, which is visible in a process list); kopia then persists the password
 itself (Credential Manager on Windows, ``<config>.kopia-password`` elsewhere) - KopiaLens never
 stores a repo password.
 
@@ -118,9 +119,12 @@ def is_managed_config(config_file: str | None) -> bool:
 
 
 def _field(key: str, flag: str, label: str, kind: str = "text", *, required: bool = False,
-           secret: bool = False, default=None, help: str = "", advanced: bool = False) -> dict:
+           secret: bool = False, default=None, help: str = "", advanced: bool = False,
+           env: str = "") -> dict:
+    # `env`: kopia reads this secret from that environment variable (cli/storage_*.go `.Envar`),
+    # so it never has to appear in argv.
     return {"key": key, "flag": flag, "label": label, "kind": kind, "required": required,
-            "secret": secret, "default": default, "help": help, "advanced": advanced}
+            "secret": secret, "default": default, "help": help, "advanced": advanced, "env": env}
 
 
 def _bool(key: str, flag: str, label: str, *, default: bool = False, help: str = "",
@@ -156,6 +160,8 @@ PROVIDERS: dict[str, dict] = {
         "cloud": False,
         "requires_any": [("[sftp_password]", "[keyfile]", "[key_data]"),
                          ("[known_hosts]", "[known_hosts_data]")],
+        # kopia skips both groups when the system ssh command is used (cli/storage_sftp.go)
+        "requires_any_unless": "external",
         "fields": [
             _field("host", "--host", "Server", required=True),
             _field("port", "--port", "Port", "int", default=22),
@@ -188,9 +194,9 @@ PROVIDERS: dict[str, dict] = {
             _field("region", "--region", "Region"),
             _field("access_key", "--access-key", "Access key ID", required=True),
             _field("secret_access_key", "--secret-access-key", "Secret access key", "password",
-                   required=True, secret=True),
+                   required=True, secret=True, env="AWS_SECRET_ACCESS_KEY"),
             _field("session_token", "--session-token", "Session token", "password", secret=True,
-                   advanced=True),
+                   advanced=True, env="AWS_SESSION_TOKEN"),
             _field("prefix", "--prefix", "Prefix",
                    help="Folder inside the bucket. End it with a slash to use it as a directory."),
             _bool("disable_tls", "--disable-tls", "Use plain HTTP", advanced=True),
@@ -208,7 +214,8 @@ PROVIDERS: dict[str, dict] = {
         "fields": [
             _field("bucket", "--bucket", "Bucket", required=True),
             _field("key_id", "--key-id", "Key ID", required=True),
-            _field("key", "--key", "Application key", "password", required=True, secret=True),
+            _field("key", "--key", "Application key", "password", required=True, secret=True,
+                   env="B2_KEY"),
             _field("prefix", "--prefix", "Prefix"),
         ],
     },
@@ -238,14 +245,16 @@ PROVIDERS: dict[str, dict] = {
         "fields": [
             _field("container", "--container", "Container", required=True),
             _field("storage_account", "--storage-account", "Storage account", required=True),
-            _field("storage_key", "--storage-key", "Account key", "password", secret=True),
-            _field("sas_token", "--sas-token", "SAS token", "password", secret=True),
+            _field("storage_key", "--storage-key", "Account key", "password", secret=True,
+                   env="AZURE_STORAGE_KEY"),
+            _field("sas_token", "--sas-token", "SAS token", "password", secret=True,
+                   env="AZURE_STORAGE_SAS_TOKEN"),
             _field("storage_domain", "--storage-domain", "Storage domain", advanced=True),
             _field("prefix", "--prefix", "Prefix"),
             _field("tenant_id", "--tenant-id", "Service principal tenant ID", advanced=True),
             _field("client_id", "--client-id", "Service principal client ID", advanced=True),
             _field("client_secret", "--client-secret", "Service principal secret", "password",
-                   secret=True, advanced=True),
+                   secret=True, advanced=True, env="AZURE_CLIENT_SECRET"),
             _field("client_cert", "--client-cert", "Service principal certificate", "file",
                    advanced=True),
             _field("azure_federated_token_file", "--azure-federated-token-file",
@@ -260,7 +269,8 @@ PROVIDERS: dict[str, dict] = {
         "fields": [
             _field("url", "--url", "URL", required=True),
             _field("webdav_username", "--webdav-username", "User name"),
-            _field("webdav_password", "--webdav-password", "Password", "password", secret=True),
+            _field("webdav_password", "--webdav-password", "Password", "password", secret=True,
+                   env="KOPIA_WEBDAV_PASSWORD"),
             _bool("atomic_writes", "--atomic-writes", "Provider supports atomic writes", advanced=True),
             _bool("flat", "--flat", "Flat layout", advanced=True),
         ],
@@ -339,6 +349,9 @@ def provider_list() -> list[dict]:
             # A repository server and a token are CONNECTIONS to an existing repository - neither
             # can create one, so the create screen must not offer them.
             "can_create": bool(spec.get("can_create", True)),
+            # "fill at least one of these" groups, by field key, for the form
+            "requires_any": [[g.strip("[]") for g in group] for group in spec.get("requires_any", [])],
+            "requires_any_unless": spec.get("requires_any_unless", ""),
             "fields": [dict(f) for f in spec["fields"]],
         })
     return out
@@ -363,7 +376,9 @@ def validate_fields(provider: str, fields: dict) -> list[str]:
             continue
         if value is None or str(value).strip() == "":
             missing.append(f"{f['label']} is required.")
-    for group in spec.get("requires_any", []):
+    unless = spec.get("requires_any_unless")
+    groups = [] if (unless and fields.get(unless)) else spec.get("requires_any", [])
+    for group in groups:
         keys = [g.strip("[]") for g in group]
         if not any(str(fields.get(k) or "").strip() for k in keys):
             labels = " or ".join(next(f["label"] for f in spec["fields"] if f["key"] == k)
@@ -414,7 +429,11 @@ def _build_args(verb: str, provider: str, fields: dict, config_file: str,
             continue
         if value is None or str(value).strip() == "":
             continue
+        if f.get("env") or (provider == "token" and f["key"] == "token"):
+            continue                 # carried by `secret_inputs`, never argv
         args += [f["flag"], str(value)]
+    if provider == "token" and str(fields.get("token") or "").strip():
+        args.append("--token-stdin")
     for key, flag in CREATE_OPTIONS.items():
         value = (options or {}).get(key)
         if value is None or str(value).strip() == "" or str(value).strip() == "0":
@@ -426,21 +445,34 @@ def _build_args(verb: str, provider: str, fields: dict, config_file: str,
     return args
 
 
-def _run(args: list[str], password: str | None, timeout: float = 600.0) -> dict:
-    """Run one connect/attach command. KOPIA_PASSWORD goes in the environment only; stdin is
-    DEVNULL so a password prompt fails instantly instead of hanging."""
+def secret_inputs(provider: str, fields: dict) -> tuple[dict, str | None]:
+    """``(env, stdin)`` for the secrets `_build_args` leaves out of argv: kopia's own environment
+    variables, and the repository token over ``--token-stdin``."""
+    spec = _spec(provider)
+    env = {f["env"]: str(fields[f["key"]]) for f in spec["fields"]
+           if f.get("env") and str(fields.get(f["key"]) or "").strip()}
+    token = str(fields.get("token") or "").strip() if provider == "token" else ""
+    return env, (token or None)
+
+
+def _run(args: list[str], password: str | None, timeout: float = 600.0,
+         extra_env: dict | None = None, stdin_text: str | None = None) -> dict:
+    """Run one connect/attach command. Secrets go in the environment or stdin only; with no stdin
+    text, stdin is DEVNULL so a password prompt fails instantly instead of hanging."""
     env = dict(os.environ)
     env["KOPIA_CHECK_FOR_UPDATES"] = "false"
+    env.update(extra_env or {})
     if password:
         env["KOPIA_PASSWORD"] = password
     if not kopiabin.resolve():
         return {"returncode": 1, "stdout": "", "stderr": MISSING_KOPIA, "command": args}
     t0 = time.time()
     try:
+        stdin_kw = {"input": stdin_text} if stdin_text is not None else {"stdin": subprocess.DEVNULL}
         res = subprocess.run(
             args, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=timeout, stdin=subprocess.DEVNULL, env=env,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            timeout=timeout, env=env, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            **stdin_kw,
         )
     except subprocess.TimeoutExpired:
         return {"returncode": -9, "stdout": "", "stderr": f"kopia timed out after {timeout:.0f}s",
@@ -452,11 +484,19 @@ def _run(args: list[str], password: str | None, timeout: float = 600.0) -> dict:
             "command": args, "elapsed": time.time() - t0}
 
 
+_CONFIG_SUFFIXES = ("", ".kopia-password", ".update-info.json", ".mlock")
+
+
+def _config_siblings(config_file: str) -> list[str]:
+    """A config file and the siblings kopia keeps beside it that exist on disk."""
+    return [config_file + s for s in _CONFIG_SUFFIXES if os.path.isfile(config_file + s)]
+
+
 def _remove_config_files(config_file: str) -> None:
     """Remove a config file and the siblings kopia keeps beside it (persisted password, update
     info, lock). Used for what a FAILED connect left behind, and for a managed config the user
     asked to delete with the repo. Never called on a config KopiaLens did not create."""
-    for suffix in ("", ".kopia-password", ".update-info.json", ".mlock"):
+    for suffix in _CONFIG_SUFFIXES:
         path = config_file + suffix
         try:
             if os.path.isfile(path):
@@ -503,8 +543,9 @@ def _establish(verb: str, provider: str, fields: dict, password: str, name: str,
         os.makedirs(os.path.dirname(config_file), exist_ok=True)
     log.info("repo id %s reserved for a new connection", rid)
     args = _build_args(verb, provider, fields, config_file, options)
+    extra_env, stdin_text = secret_inputs(provider, fields)
     log.info("%s repo=%s provider=%s config=%s", verb, rid, provider, config_file)
-    res = _run(args, password)
+    res = _run(args, password, extra_env=extra_env, stdin_text=stdin_text)
     if res["returncode"] != 0:
         _remove_config_files(config_file)
         detail = _last_meaningful_line((res.get("stderr") or "") + "\n" + (res.get("stdout") or ""))
@@ -561,8 +602,11 @@ def describe_config(config_file: str) -> dict:
     storage = data.get("storage") or {}
     api = data.get("apiServer") or {}
     if api:
+        # repo/api_server_repository.go APIServerInfo: `url` + `serverCertFingerprint`
         return {"type": "server", "kind": "server", "label": "Kopia repository server",
-                "config": repos.scrub_storage_config({"url": api.get("baseURL") or ""})}
+                "config": repos.scrub_storage_config({
+                    "url": api.get("url") or "",
+                    "serverCertFingerprint": api.get("serverCertFingerprint") or ""})}
     stype = storage.get("type") or ""
     return {"type": stype, "kind": repos.storage_kind(stype),
             "label": stype or "unknown",
@@ -724,6 +768,9 @@ def unlock(repo: str, password: str) -> dict:
             raise ValueError("the config does not carry a server URL")
         args = [kopiabin.exe(), "--config-file", cfg, "repository", "connect", "server",
                 "--url", url, "--no-check-for-updates"]
+        fingerprint = (describe["config"] or {}).get("serverCertFingerprint") or ""
+        if fingerprint:
+            args += ["--server-cert-fingerprint", fingerprint]
     else:
         args = [kopiabin.exe(), "--config-file", cfg, "repository", "connect", "from-config",
                 "--file", cfg, "--no-check-for-updates"]
@@ -749,9 +796,13 @@ def remove_preview(repo: str) -> dict:
         total += size
         files.append({"path": path, "bytes": size})
     managed = is_managed_config(rec.get("config_file"))
+    # Deleted only when the user ticks "delete the connection file too" - listed apart for that.
+    config_files = [{"path": p, "bytes": _size_of(p)}
+                    for p in (_config_siblings(rec["config_file"]) if managed else [])]
     return {"repo": repo, "name": rec.get("name") or repo, "paths": [f["path"] for f in files],
             "bytes": total, "files": files,
             "config_file": rec.get("config_file"), "managed_config": managed,
+            "config_files": config_files,
             "kopia_repository_untouched": True}
 
 
@@ -783,6 +834,13 @@ def remove(repo: str, delete_config: bool = False) -> dict:
     if nightly.is_running(repo):
         raise ValueError(f"repo {repo} is being indexed right now - wait for the pass to finish")
     closed = store.close_repo(repo)
+    # The record goes FIRST and must be saved: a failed save must not leave a record whose data
+    # is already gone (it would re-index from scratch on the next start).
+    try:
+        repos.remove_record(repo)
+    except OSError as exc:
+        raise ValueError(f"could not save the repository list ({exc}) - nothing was removed") \
+            from exc
     removed, failed = [], []
     for path in repos.data_paths(repo):
         try:
@@ -800,7 +858,6 @@ def remove(repo: str, delete_config: bool = False) -> dict:
         cfg = rec["config_file"]
         _remove_config_files(cfg)
         config_deleted = cfg
-    repos.remove_record(repo)
     audit.audit("executed", "repo-remove", repo=repo,
                 summary={"name": rec.get("name"), "removed": len(removed), "failed": len(failed),
                          "config_deleted": config_deleted, "state_cleaned": state_cleaned,

@@ -22,10 +22,14 @@ How it works:
     and what lets the switch verify a file it just wrote.
   * **Nothing here is load-bearing.** An unreadable file reads as absent and the app recreates
     it; a torn line is skipped and counted. The one thing that cannot be rebuilt is history:
-    at the Everything level a lost password AND recovery key make the audit and the histories
+    at the Full level a lost password AND recovery key make the audit and the histories
     unreadable for good. That is stated in onboarding.
 
 The level is the switch: ``crypto.covers_files()`` says whether this layer is live.
+
+Every writer in this module and the switch share ``_WRITE_LOCK``, so a line appended while a file
+is being rewritten is never lost. Nothing may log while holding it: the logging handlers write
+through this module, and a handler waiting on the lock while its own lock is held would deadlock.
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import secrets
 import threading
 
@@ -51,8 +56,14 @@ _HEADER = len(MAGIC) + _NONCE
 _SUBKEY_INFO = b"kopialens:files:v1"
 
 _KEY_LOCK = threading.Lock()
+_WRITE_LOCK = threading.RLock()               # every writer + the switch (see the module doc)
 _CACHE: tuple[str, bytes] | None = None      # (data key as handed out, derived sub-key)
 _OPEN: dict[str, "CryptoStream"] = {}        # streams this process holds open, by path
+
+# Plain on purpose: the version stamp is read before anything can unlock, and the worker status
+# file (pid, stage, counts - no paths) is read by the keyless tray and by Stop.
+_NEVER_COVERED = re.compile(r"^(data_version\.json|index_progress_repo[^_]*\.json)$")
+_WORKER_LOG = re.compile(r"^index_worker_repo(\w+)\.log(\.\d+)?$")
 
 
 # ---------------------------------------------------------------------------- key + primitives
@@ -61,7 +72,7 @@ def subkey() -> bytes | None:
     """The files sub-key, or None when there is no key to derive it from.
 
     NOT gated on the level on purpose: READING must work whenever the key is available, so a
-    switch DOWN (everything -> index) can still decrypt what it is about to rewrite. Gating
+    switch DOWN (full -> index) can still decrypt what it is about to rewrite. Gating
     this on ``covers_files()`` once made a down-switch read every encrypted file as empty and
     replace it with nothing. What the level decides is WRITES (see ``available``).
 
@@ -82,6 +93,13 @@ def subkey() -> bytes | None:
         return derived
 
 
+def forget_key() -> None:
+    """Drop the derived sub-key (on Lock)."""
+    global _CACHE
+    with _KEY_LOCK:
+        _CACHE = None
+
+
 def locked_error() -> Exception:
     """The structured lock error (see crypto.StoreLocked) for this layer."""
     from ..index.crypto import StoreLocked
@@ -89,7 +107,7 @@ def locked_error() -> Exception:
 
 
 def available() -> bool:
-    """Encrypt new content: the Everything level is on and the key is unlocked."""
+    """Encrypt new content: the Full level is on and the key is unlocked."""
     from ..index import crypto
     return crypto.covers_files() and subkey() is not None
 
@@ -219,7 +237,9 @@ def write_text(path: str, text: str) -> bool:
                     os.path.basename(path))
         return False
     try:
-        _atomic_write(path, encrypt_bytes(text.encode()) if available() else text.encode())
+        payload = encrypt_bytes(text.encode()) if available() else text.encode()
+        with _WRITE_LOCK:
+            _atomic_write(path, payload)
         return True
     except Exception as exc:  # noqa: BLE001 - callers treat a failed write as non-fatal
         log.warning("write failed for %s: %s", os.path.basename(path), exc)
@@ -323,7 +343,9 @@ def write_lines(path: str, lines: list[str]) -> bool:
     if writes_blocked():
         return False
     try:
-        _atomic_write(path, _render_lines(lines, available()))
+        payload = _render_lines(lines, available())
+        with _WRITE_LOCK:
+            _atomic_write(path, payload)
         return True
     except Exception as exc:  # noqa: BLE001
         log.warning("write failed for %s: %s", os.path.basename(path), exc)
@@ -340,7 +362,7 @@ def append_line(path: str, text: str) -> bool:
             return False
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         payload = encrypt_line(text) if available() else text
-        with open(path, "a", encoding="utf-8") as fh:
+        with _WRITE_LOCK, open(path, "a", encoding="utf-8") as fh:
             fh.write(payload.rstrip("\n") + "\n")
         return True
     except Exception as exc:  # noqa: BLE001 - history is best-effort, like it always was
@@ -382,10 +404,12 @@ class CryptoStream:
             return 0
         if writes_blocked():
             return len(text)           # covered but locked: dropping beats leaking
-        if getattr(self._fh, "closed", True):
-            self.reopen()                  # a log record must never be lost to a closed handle
-        for line in text.splitlines():
-            self._fh.write((encrypt_line(line) if available() else line) + "\n")
+        on = available()
+        out = "".join((encrypt_line(line) if on else line) + "\n" for line in text.splitlines())
+        with _WRITE_LOCK:
+            if getattr(self._fh, "closed", True):
+                self.reopen()              # the switch closed it to replace the file
+            self._fh.write(out)
         return len(text)
 
     def flush(self) -> None:
@@ -477,7 +501,7 @@ def read_tail_text(path: str, max_bytes: int) -> str:
 # ---------------------------------------------------------------------------- the file switch
 
 def covered_paths() -> dict[str, str]:
-    """Every non-index file the Everything level covers: ``path -> kind``.
+    """Every non-index file the Full level covers: ``path -> kind``.
 
     kind is one of ``json``, ``lines`` (whole-file rewrite, per-line format), ``text``
     (whole-file rewrite, plain text) or ``parquet`` (handled by the generation switch).
@@ -489,7 +513,7 @@ def covered_paths() -> dict[str, str]:
     try:
         for name in os.listdir(DATA_DIR):
             path = os.path.join(DATA_DIR, name)
-            if not os.path.isfile(path):
+            if not os.path.isfile(path) or _NEVER_COVERED.match(name):
                 continue
             if name.endswith(".jsonl"):
                 out[path] = "lines"
@@ -541,31 +565,17 @@ def switch_files(on: bool, say=None) -> dict:
         # across a switch, or a crash mid-append) is normalized by rewriting it.
         if file_state(path) == ("encrypted" if on else "plain"):
             continue
-        held = _OPEN.get(path)
-        if held is not None:
-            # Windows refuses to replace a file this process holds open; the stream reopens
-            # itself on its next line, which is written in the new state.
-            held.close()
+        if _written_by_running_worker(path):
+            skipped += 1
+            log.info("%s belongs to a running index pass and was left for the next run",
+                     os.path.basename(path))
+            continue
         try:
-            if kind == "json":
-                obj = read_json(path)
-                if obj is None:
-                    raise ValueError("not readable as JSON")
-                text = json.dumps(obj, indent=2)
-                payload = encrypt_bytes(text.encode()) if on else text.encode()
-                _replace_verified(path, payload, lambda blob: _same_json(blob, obj, on))
-            else:
-                lines = read_lines(path)
-                if os.path.getsize(path) and not lines:
-                    # The 2026-09-23 loss: every line unreadable (a foreign key, or damage) reads
-                    # as zero lines, and the rewrite would empty the file - whose read-back check
-                    # then passed, because empty matched empty. Never replace a non-empty file
-                    # with nothing.
-                    raise ValueError("reads as empty although the file is not - refusing to "
-                                     "replace it")
-                payload = _render_lines(lines, on)
-                _replace_verified(path, payload, lambda blob: _same_lines(blob, lines, on))
+            broken = _switch_one(path, kind, on)
             done += 1
+            if broken:
+                log.warning("%s: %d unreadable line(s) dropped by the rewrite",
+                            os.path.basename(path), broken)
         except PermissionError as exc:  # a file another process holds open: next run gets it
             skipped += 1
             log.warning("%s is in use and was left alone (%s)", os.path.basename(path), exc)
@@ -575,6 +585,69 @@ def switch_files(on: bool, say=None) -> dict:
     if done or skipped or failed:
         say(f"files: {done} rewritten, {skipped} skipped, {failed} failed")
     return {"files": done, "skipped": skipped, "failed": failed}
+
+
+def _written_by_running_worker(path: str) -> bool:
+    """A worker log another process is appending to: replacing it would strand that writer."""
+    m = _WORKER_LOG.match(os.path.basename(path))
+    if not m:
+        return False
+    try:
+        from . import nightly
+        return nightly.is_running(m.group(1))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def decode_lines(raw: bytes) -> tuple[list[str], int]:
+    """(decrypted lines, unreadable count). Never logs - it runs under ``_WRITE_LOCK``."""
+    out: list[str] = []
+    broken = 0
+    for line in raw.decode("utf-8", "replace").splitlines():
+        if not line.strip():
+            continue
+        if not is_encrypted_line(line):
+            out.append(line)
+            continue
+        try:
+            out.append(decrypt_line(line))
+        except Exception:  # noqa: BLE001
+            broken += 1
+    return out, broken
+
+
+def _switch_one(path: str, kind: str, on: bool) -> int:
+    """Rewrite one file under ``_WRITE_LOCK``, so no in-process append lands between the read and
+    the replace. Returns the unreadable-line count; raises on failure. Never logs (see the module
+    doc)."""
+    with _WRITE_LOCK:
+        held = _OPEN.get(path)
+        if held is not None:
+            # Windows refuses to replace a file this process holds open; the stream reopens
+            # itself on its next line, which is written in the new state.
+            held.close()
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        if kind == "json":
+            try:
+                text = decrypt_bytes(raw).decode("utf-8") if is_encrypted_blob(raw) \
+                    else raw.decode("utf-8")
+                obj = json.loads(text)
+            except Exception as exc:  # noqa: BLE001
+                raise ValueError(f"not readable as JSON ({type(exc).__name__})") from None
+            text = json.dumps(obj, indent=2)
+            payload = encrypt_bytes(text.encode()) if on else text.encode()
+            _replace_verified(path, payload, lambda blob: _same_json(blob, obj, on))
+            return 0
+        lines, broken = decode_lines(raw)
+        if raw.strip() and not lines:
+            # The 2026-09-23 loss: every line unreadable (a foreign key, or damage) reads as zero
+            # lines, and the rewrite would empty the file - whose read-back check then passed,
+            # because empty matched empty. Never replace a non-empty file with nothing.
+            raise ValueError("reads as empty although the file is not - refusing to replace it")
+        payload = _render_lines(lines, on)
+        _replace_verified(path, payload, lambda blob: _same_lines(blob, lines, on))
+        return broken
 
 
 def _replace_verified(path: str, payload: bytes, verify) -> None:

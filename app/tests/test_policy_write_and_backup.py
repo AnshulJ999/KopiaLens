@@ -18,6 +18,11 @@ from app.core.policybackup import BackupError
 
 SEP = chr(92)
 SRC = f"Anshul@anshul-desktop:C:{SEP}Src"
+
+
+def _pre(repo: str = "1") -> list[str]:
+    """kopia + the repo's own connection args - what every builder starts with."""
+    return [kopiabin.exe()] + kopia._repo_args(repo)
 GLOBAL_EXPORT = {"(global)": {"files": {"ignore": ["*.log", "node_modules"]}},
                  SRC: {"files": {"ignore": ["/Temp/**"]}}}
 
@@ -26,15 +31,18 @@ GLOBAL_EXPORT = {"(global)": {"files": {"ignore": ["*.log", "node_modules"]}},
 
 def test_policy_set_command_shape():
     cmd = kopia.policy_set_command("1", target=SRC, add_ignore=["/a/**"], remove_ignore=["b"])
-    assert cmd[:5] == [kopiabin.exe(), "policy", "set", SRC, "--remove-ignore"]
-    assert cmd[5:7] == ["b", "--add-ignore"]
-    assert cmd[7] == "/a/**"
+    n = len(_pre())
+    assert cmd[:n] == _pre()
+    assert cmd[n:n + 4] == ["policy", "set", SRC, "--remove-ignore"]
+    assert cmd[n + 4:n + 6] == ["b", "--add-ignore"]
+    assert cmd[n + 6] == "/a/**"
     assert "--no-progress" not in cmd  # the executor appends the quiet flag, not the builder
 
 
 def test_policy_set_command_global():
     cmd = kopia.policy_set_command("1", global_=True, add_ignore=["x"])
-    assert cmd[:5] == [kopiabin.exe(), "policy", "set", "--global", "--add-ignore"]
+    n = len(_pre())
+    assert cmd[:n + 4] == _pre() + ["policy", "set", "--global", "--add-ignore"]
 
 
 def test_policy_set_command_validates():
@@ -47,10 +55,11 @@ def test_policy_set_command_validates():
 
 
 def test_policy_delete_and_import_commands():
-    assert kopia.policy_delete_command("1", target=SRC)[1:4] == ["policy", "delete", SRC]
+    n = len(_pre())
+    assert kopia.policy_delete_command("1", target=SRC)[n:n + 3] == ["policy", "delete", SRC]
     assert "--global" in kopia.policy_delete_command("1", global_=True)
     imp = kopia.policy_import_command("1", "C:\\backup.json")
-    assert imp[1:] == ["policy", "import", "--from-file", "C:\\backup.json"]
+    assert imp[n:] == ["policy", "import", "--from-file", "C:\\backup.json"]
     assert "--delete-other-policies" not in imp
     assert kopia.policy_import_command("1", "b.json", mirror=True)[-1] == "--delete-other-policies"
     with pytest.raises(ValueError):
@@ -61,7 +70,7 @@ def test_policy_delete_and_import_commands():
 
 def test_import_limited_to_one_target():
     one = kopia.policy_import_command("1", "p.json", target=SRC)
-    assert one[1:] == ["policy", "import", "--from-file", "p.json", SRC]
+    assert one[len(_pre()):] == ["policy", "import", "--from-file", "p.json", SRC]
     assert kopia.policy_import_command("1", "p.json", global_=True)[-1] == "--global"
     with pytest.raises(ValueError):
         kopia.policy_import_command("1", "p.json", mirror=True, target=SRC)

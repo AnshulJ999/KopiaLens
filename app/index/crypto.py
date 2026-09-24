@@ -239,8 +239,10 @@ def configured() -> bool:
 
 LEVEL_OFF = "off"                    # nothing encrypted
 LEVEL_INDEX = "index"                # the index, its caches and the side caches
-LEVEL_EVERYTHING = "everything"      # + the small JSON files, audit/history, logs, Backblaze
-LEVELS = (LEVEL_OFF, LEVEL_INDEX, LEVEL_EVERYTHING)
+LEVEL_FULL = "full"                  # + the small JSON files, audit/history, logs, Backblaze
+LEVELS = (LEVEL_OFF, LEVEL_INDEX, LEVEL_FULL)
+
+_LEVEL_CACHE: tuple[tuple, str] | None = None     # ((mtime_ns, size, reader), level)
 
 
 def level() -> str:
@@ -252,13 +254,25 @@ def level() -> str:
     Reads the FILE's own keys (``raw_kopialens_settings``), never the defaults-merged view: the
     default for ``encryption_level`` is "off", and taking it as the answer would silently read
     every part-1 install's already-encrypted index as plaintext.
+
+    Cached on the settings file's stat: every log line asks, and re-parsing the file each time
+    cost two full reads per line. A write from any process changes the stat.
     """
-    from ..settings import raw_kopialens_settings
+    global _LEVEL_CACHE
+    from ..settings import SETTINGS_FILE, raw_kopialens_settings
+    try:
+        st = os.stat(SETTINGS_FILE)
+        stamp = (st.st_mtime_ns, st.st_size, raw_kopialens_settings)
+    except OSError:
+        stamp = (0, 0, raw_kopialens_settings)    # a replaced reader (tests) misses too
+    cached = _LEVEL_CACHE
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
     kl = raw_kopialens_settings()
     chosen = str(kl.get("encryption_level") or "").strip().lower()
-    if chosen in LEVELS:
-        return chosen
-    return LEVEL_INDEX if kl.get("encryption") else LEVEL_OFF
+    value = chosen if chosen in LEVELS else (LEVEL_INDEX if kl.get("encryption") else LEVEL_OFF)
+    _LEVEL_CACHE = (stamp, value)
+    return value
 
 
 def enabled() -> bool:
@@ -273,7 +287,7 @@ def enabled() -> bool:
 def covers_files() -> bool:
     """The non-index layer is covered: small JSON files, audit/history, logs, policy backups,
     Backblaze state. ``core.filecrypto`` owns the actual work."""
-    return level() == LEVEL_EVERYTHING and configured()
+    return level() == LEVEL_FULL and configured()
 
 
 def unlocked() -> bool:
@@ -292,6 +306,8 @@ def lock() -> None:
     with _LOCK:
         _DATA_KEY = None
         _SOURCE = None
+    from ..core import filecrypto
+    filecrypto.forget_key()
 
 
 def writes_encrypted() -> bool:
@@ -837,12 +853,30 @@ def register_key(con, encrypted: bool | None = None) -> None:
         con.execute("PRAGMA add_parquet_key('%s', '%s')" % (KEY_NAME, _check_key(data_key())))
 
 
+_SESSION_PID = re.compile(r"^session_(\d+)_")
+
+
+def _owner_alive(fn: str) -> bool:
+    """The session file's process (its pid is in the name) is still running. POSIX lets a live
+    file be unlinked, so a worker the app took over at startup would lose its session."""
+    m = _SESSION_PID.match(fn)
+    if not m or int(m.group(1)) == os.getpid():
+        return False
+    try:
+        import psutil
+        return psutil.pid_exists(int(m.group(1)))
+    except Exception:  # noqa: BLE001 - cannot tell: keep the file
+        return True
+
+
 def sweep_sessions(temp_dir: str) -> int:
     """Remove session databases a crashed process left behind. Returns how many went."""
     gone = 0
     try:
         for fn in os.listdir(temp_dir):
             if fn.startswith("session_") and (fn.endswith(".db") or fn.endswith(".db.wal")):
+                if _owner_alive(fn):
+                    continue
                 try:
                     os.remove(os.path.join(temp_dir, fn))
                     gone += 1

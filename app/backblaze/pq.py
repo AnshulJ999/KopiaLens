@@ -139,7 +139,7 @@ class WriterLock:
 
 def target_state() -> bool:
     """Whether a NEW BZ file should be encrypted: the published manifest decides, and a
-    first build follows the Everything level - the same rule the index build uses."""
+    first build follows the Full level - the same rule the index build uses."""
     manifest = read_manifest()
     if manifest is not None:
         return bool(manifest.get("encrypted"))

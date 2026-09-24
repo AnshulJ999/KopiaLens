@@ -78,9 +78,9 @@ const getJson = async (url, options = {}) => {
 // the index worker's stage summaries legitimately print "0 failed"/"0 errors" on a clean pass, and
 // colouring those amber made every normal nightly look alarming. Shared by the job and index panes.
 const klLogLineWarn = (ln) => {
-  const s = String(ln || "");
-  if (!/\b(error|warn|unable|failed|cannot|abort|timed out|traceback)/i.test(s)) return "";
-  return /\b(0|no)\s+(failed|failures|errors|warnings)\b/i.test(s) ? "" : "w";
+  // Drop the zero counts first, then test what is left: "1 warning, 0 errors" stays amber.
+  const s = String(ln || "").replace(/\b(0|no)\s+(failed|failures|errors?|warnings?)\b/gi, "");
+  return /\b(error|warn|unable|failed|cannot|abort|timed out|traceback)/i.test(s) ? "w" : "";
 };
 
 // ---- Backend-persisted table preferences (columns + sort), survives browser-data clears ----

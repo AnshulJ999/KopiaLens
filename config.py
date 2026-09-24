@@ -54,13 +54,14 @@ GUARD_HOST = "127.0.0.1"                                                # single
 # - fine for a personal tool on this machine, revisit before any public release.
 TRAY_CONTROL_HOST, TRAY_CONTROL_PORT = "127.0.0.1", 7124
 
-def save_records(store: dict) -> None:
-    """Persist the record store (see app.core.repos)."""
-    _write_records(store)
+def save_records(store: dict, strict: bool = False) -> None:
+    """Persist the record store (see app.core.repos). ``strict`` raises OSError instead of
+    swallowing it - a user's add/edit/remove must not report success when nothing was saved."""
+    _write_records(store, strict)
 
 
-def _write_records(store: dict) -> None:
-    """Atomic, and never fatal: a read-only config dir must not stop the app from starting."""
+def _write_records(store: dict, strict: bool = False) -> None:
+    """Atomic, and never fatal at startup: a read-only config dir must not stop the app."""
     try:
         os.makedirs(os.path.dirname(REPOS_FILE), exist_ok=True)
         tmp = REPOS_FILE + ".tmp"
@@ -70,7 +71,8 @@ def _write_records(store: dict) -> None:
             os.fsync(fh.fileno())
         os.replace(tmp, REPOS_FILE)
     except OSError:
-        pass
+        if strict:
+            raise
 
 
 def _load_records() -> dict:

@@ -187,7 +187,10 @@ def queued_rebuilds() -> list[str]:
 def drain_queue() -> list[str]:
     """Called by the scheduler on its tick: start ONE queued rebuild as soon as the slot is free.
     Anything still queued stays queued (the next tick tries again)."""
+    from config import REPOS
     with _QUEUE_LOCK:
+        for gone in [r for r in _REBUILD_QUEUE if r not in REPOS]:
+            _REBUILD_QUEUE.pop(gone, None)      # disconnected since: it would block the queue
         pending = sorted(_REBUILD_QUEUE, key=lambda r: _REBUILD_QUEUE[r])
     started = []
     for repo in pending[:1]:

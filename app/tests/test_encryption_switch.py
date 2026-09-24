@@ -48,9 +48,9 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(crypto, "remember_on_this_machine", lambda on: True)
     monkeypatch.setattr("app.settings.load_settings", lambda: {"kopialens": {"encryption": True}})
     monkeypatch.setattr("app.settings.raw_kopialens_settings",
-                        lambda: {"encryption_level": "everything"})
+                        lambda: {"encryption_level": "full"})
     (data / "settings.json").write_text(
-        json.dumps({"kopialens": {"encryption_level": "everything"}}), encoding="utf-8")
+        json.dumps({"kopialens": {"encryption_level": "full"}}), encoding="utf-8")
     crypto.lock()
     crypto.setup("pw", with_recovery=False)
     yield data
@@ -253,7 +253,7 @@ def test_apply_level_moves_the_generation_and_the_files_together(sandbox):
     mounts = sandbox / "mounts.json"
     mounts.write_text(json.dumps([{"target": "X:"}]), encoding="utf-8")
 
-    out = keyswitch.apply_level("everything")
+    out = keyswitch.apply_level("full")
     assert out["repos"]["3"]["files"] == 2 and out["deferred"] == []
     assert out["files"]["files"] == 1
     assert store.generation_state("3") is True
@@ -287,7 +287,7 @@ def test_the_backblaze_parquet_generation_switches_both_ways(sandbox, tmp_path, 
         assert cur.execute("SELECT count(*) FROM files").fetchone()[0] == 1
 
     monkeypatch.setattr("app.settings.raw_kopialens_settings",
-                        lambda: {"encryption_level": "everything"})
+                        lambda: {"encryption_level": "full"})
     out = keyswitch.switch_bz(True)
     assert out["files"] == 1 and pq.read_manifest()["encrypted"] is True
     new_rel = pq.read_manifest()["artifacts"]["files"][0]
@@ -351,3 +351,57 @@ def test_the_handoff_works_across_a_real_process_boundary(sandbox):
                           capture_output=True, cwd=KL_ROOT, env=env, timeout=60)
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "OK", proc.stdout + proc.stderr
+
+
+# ---------------------------------------------------------------------------- start over
+
+@pytest.fixture
+def lost(sandbox, monkeypatch):
+    """An encrypted repo 3 plus an encrypted history file, and a settings file on scratch."""
+    from app.core import filecrypto
+    from app.index import upgrade
+    monkeypatch.setattr("app.settings.SETTINGS_FILE", str(sandbox / "settings.json"))
+    make_generation(sandbox)
+    keyswitch.switch_repo("3", True)
+    filecrypto.write_json(str(sandbox / "mounts.json"), [{"mountpoint": "X:"}])
+    rebuilds = []
+    monkeypatch.setattr(upgrade, "request_rebuild",
+                        lambda repo, trigger="upgrade": rebuilds.append(repo) or {"started": True})
+    return sandbox, rebuilds
+
+
+def test_start_over_previews_what_goes(lost):
+    data, _ = lost
+    out = keyswitch.reset_preview()
+    whats = {i["what"] for i in out["remove"]}
+    assert {"keystore", "index", "history"} <= whats and out["reindex"] == ["3"]
+
+
+def test_start_over_deletes_the_unreadable_data_and_reindexes(lost):
+    data, rebuilds = lost
+    out = keyswitch.reset(keep_copy=False)
+    assert out["ok"] and not out["failed_paths"]
+    assert not os.path.exists(os.path.join(str(data), "repo3"))
+    assert not os.path.exists(str(data / "mounts.json"))
+    assert not crypto.configured() and not crypto.unlocked()
+    saved = json.loads((data / "settings.json").read_text(encoding="utf-8"))
+    assert saved["kopialens"]["encryption_level"] == "off"
+    assert rebuilds == ["3"]
+
+
+def test_start_over_can_keep_a_copy(lost):
+    data, _ = lost
+    out = keyswitch.reset(keep_copy=True)
+    aside = out["kept_copy"]
+    assert aside and os.path.isdir(os.path.join(aside, "repo3"))
+    assert os.path.isfile(os.path.join(aside, "mounts.json"))
+    assert not os.path.exists(os.path.join(str(data), "repo3"))
+
+
+def test_start_over_needs_confirm():
+    from fastapi import HTTPException
+
+    from app.api import encryption as api
+    with pytest.raises(HTTPException) as exc:
+        api.reset(api.ResetRequest())
+    assert exc.value.status_code == 400

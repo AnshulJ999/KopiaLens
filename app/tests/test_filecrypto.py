@@ -30,9 +30,9 @@ def layer(tmp_path, monkeypatch):
     monkeypatch.setattr("config.DATA_DIR", str(data))
     monkeypatch.setattr(crypto, "keystore_dir", lambda: str(data))
     monkeypatch.setattr("app.settings.load_settings",
-                        lambda: {"kopialens": {"encryption_level": "everything"}})
+                        lambda: {"kopialens": {"encryption_level": "full"}})
     monkeypatch.setattr("app.settings.raw_kopialens_settings",
-                        lambda: {"encryption_level": "everything"})
+                        lambda: {"encryption_level": "full"})
     for name, value in (("LOG_DIR", str(data / "logs")),
                         ("APP_LOG_DIR", str(data / "logs" / "app")),
                         ("INDEX_LOG_DIR", str(data / "logs" / "indexing")),
@@ -114,8 +114,8 @@ def test_the_level_reads_the_file_not_the_merged_defaults(monkeypatch):
     assert crypto.level() == crypto.LEVEL_INDEX
     monkeypatch.setattr("app.settings.raw_kopialens_settings", lambda: {"encryption": False})
     assert crypto.level() == crypto.LEVEL_OFF
-    monkeypatch.setattr("app.settings.raw_kopialens_settings", lambda: {"encryption_level": "everything"})
-    assert crypto.level() == crypto.LEVEL_EVERYTHING
+    monkeypatch.setattr("app.settings.raw_kopialens_settings", lambda: {"encryption_level": "full"})
+    assert crypto.level() == crypto.LEVEL_FULL
 
 
 # ---------------------------------------------------------------------------- the file switch
@@ -264,5 +264,5 @@ def test_the_upgrade_step_folds_the_old_boolean_into_the_level(layer, monkeypatc
     # at the INDEX level a plaintext mounts.json is correct, so nothing is pending
     assert out["pending"] == []
     monkeypatch.setattr("app.settings.raw_kopialens_settings",
-                        lambda: {"encryption_level": "everything"})
+                        lambda: {"encryption_level": "full"})
     assert "mounts.json" in filecrypto.upgrade_step()["pending"][0]

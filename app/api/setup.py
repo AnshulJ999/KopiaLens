@@ -124,7 +124,7 @@ def probe(payload: ProbeRequest) -> dict:
     storage type, capacity. This is the "verify" step of the connect flow."""
     try:
         return repoconnect.probe(config_file=payload.config_file, repo=payload.repo)
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         raise _bad(exc) from exc
 
 
@@ -135,7 +135,7 @@ def connect(payload: ConnectRequest) -> dict:
         record = repoconnect.connect(
             payload.provider, payload.fields, payload.password, payload.name,
             payload.short_name, payload.counts_as_backup)
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         raise _bad(exc) from exc
     return {"ok": True, "repo": repos.detail(record)}
 
@@ -150,7 +150,7 @@ def create(payload: CreateRequest) -> dict:
         record = repoconnect.create(
             payload.provider, payload.fields, payload.password, payload.name,
             payload.short_name, payload.counts_as_backup, payload.options)
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         raise _bad(exc) from exc
     return {"ok": True, "repo": repos.detail(record)}
 
@@ -161,7 +161,7 @@ def attach(payload: AttachRequest) -> dict:
     try:
         record = repoconnect.attach(payload.config_file, payload.name, payload.short_name,
                                     payload.counts_as_backup)
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         raise _bad(exc) from exc
     return {"ok": True, "repo": repos.detail(record)}
 
@@ -172,7 +172,7 @@ def unlock(repo: str, payload: UnlockRequest) -> dict:
     password is not remembered (KopiaUI's "remember" unchecked, or a config copied here)."""
     try:
         return repoconnect.unlock(repo, payload.password)
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         raise _bad(exc) from exc
 
 
@@ -184,7 +184,7 @@ def edit(repo: str, payload: RepoEditRequest) -> dict:
         fields["counts_as_backup"] = bool(fields["counts_as_backup"])
     try:
         record = repos.update_record(repo, fields)
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         raise _bad(exc) from exc
     return {"ok": True, "repo": repos.detail(record)}
 
@@ -195,7 +195,7 @@ def remove_preview(repo: str) -> dict:
     never touched), with sizes."""
     try:
         return repoconnect.remove_preview(repo)
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         raise _bad(exc) from exc
 
 
@@ -208,7 +208,7 @@ def remove(repo: str, confirm: bool = False, delete_config: bool = False) -> dic
                                                     "(see remove-preview first).")
     try:
         return repoconnect.remove(repo, delete_config=delete_config)
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         raise _bad(exc) from exc
 
 

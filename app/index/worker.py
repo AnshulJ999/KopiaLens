@@ -49,30 +49,51 @@ def progress_path(repo: str) -> str:
     return os.path.join(DATA_DIR, f"index_progress_repo{repo}.json")
 
 
+def detail_path(repo: str) -> str:
+    from config import DATA_DIR
+    return os.path.join(DATA_DIR, f"index_progress_detail_repo{repo}.json")
+
+
 def result_path(repo: str) -> str:
     from config import DATA_DIR
     return os.path.join(DATA_DIR, f"index_result_repo{repo}.json")
 
 
+# Progress fields that can name paths: written to the detail file, which follows the encryption
+# level. The status file stays plain so the keyless tray and Stop can always read the pid.
+DETAIL_KEYS = ("current_source", "targets", "error")
+
+
 def write_result(repo: str, payload: dict) -> None:
-    write_progress(repo, payload, path=result_path(repo))
-
-
-def write_progress(repo: str, payload: dict, path: str | None = None) -> None:
-    """Atomic write so the app never reads a half-written progress file."""
-    path = path or progress_path(repo)
     try:
         from ..core import filecrypto
-        filecrypto.write_json(path, payload)
+        filecrypto.write_json(result_path(repo), payload)
+    except Exception:  # noqa: BLE001 - the stdout summary is the primary channel
+        pass
+
+
+def write_progress(repo: str, payload: dict) -> None:
+    """Atomic writes so the app never reads a half-written progress file."""
+    try:
+        status = {k: v for k, v in payload.items() if k not in DETAIL_KEYS}
+        path = progress_path(repo)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(status, fh)
+        os.replace(tmp, path)
+        from ..core import filecrypto
+        filecrypto.write_json(detail_path(repo), {k: payload.get(k) for k in DETAIL_KEYS})
     except Exception:  # noqa: BLE001 - progress reporting must never affect the real work
         pass
 
 
 def clear_progress(repo: str) -> None:
-    try:
-        os.remove(progress_path(repo))
-    except Exception:  # noqa: BLE001
-        pass
+    for path in (progress_path(repo), detail_path(repo)):
+        try:
+            os.remove(path)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _pct(job: dict) -> int | None:

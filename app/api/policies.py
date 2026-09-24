@@ -828,6 +828,8 @@ def backup_file(repo: str, name: str = "") -> dict:
         content = policybackup.read_backup(repo, name)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except BackupError as exc:            # encrypted with a key this install does not have
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"repo": repo, "name": name, "content": content}
 
 
@@ -841,8 +843,14 @@ def restore_cmd(repo: str, name: str = "", mode: str = "merge") -> dict:
         path = policybackup._validated_path(repo, name)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    from ..core import filecrypto
+    encrypted = filecrypto.file_state(path) == "encrypted"
     return {"repo": repo, "name": name, "mode": mode,
-            "command": _cmd_text(policy_import_command(repo, path, mirror=mode == "mirror"))}
+            "command": _cmd_text(policy_import_command(repo, path, mirror=mode == "mirror")),
+            # kopia reads the file itself, and cannot read an encrypted one
+            "encrypted": encrypted,
+            "note": ("This backup is encrypted on disk, so kopia cannot read it directly. "
+                     "Use Restore in KopiaLens instead.") if encrypted else ""}
 
 
 @router.post("/policies/restore")

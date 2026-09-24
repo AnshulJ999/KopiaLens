@@ -281,7 +281,9 @@ def test_live_pricing_caps_large_rule_sets(wired):
     assert len(out["results"]) == 32
 
 
-def test_targets_default_to_no_pricing(wired):
+def test_targets_default_to_no_pricing(wired, monkeypatch):
+    from app.core import policytargets
+    monkeypatch.setattr(policytargets, "sources_index", lambda repo: {SRC: [], OTHER: []})
     out = api.exclusion_targets(api.TargetsBody(repo="1", path=SRC + SEP + "x" + SEP + "a.tmp", source=SRC))
     assert all(t["impact"] is None for t in out["targets"])
     assert out["smart_shape"] is None

@@ -1,14 +1,14 @@
 """Encryption routes (): status, setup, unlock, lock, password/recovery, the switch.
 
 This is the backend the onboarding screens and the Settings section () call. Onboarding
-POLICY - the default-ticked box meaning Everything, the pros and cons copy, the Docker choice -
+POLICY - the default-ticked box and its level, the pros and cons copy, the Docker choice -
 is the UI's job; these routes only do what they say, and every one of them answers with the
 current status so the caller never has to guess what state it left the install in.
 
-The three levels (Off / Index / Everything) are the one user-facing choice:
+The three levels (Off / Index / Full) are the one user-facing choice:
   off        nothing
   index      the index generations + side caches + policy caches (the full map of names)
-  everything the above + the small JSON files, audit/history, logs, policy backups, Backblaze
+  full       the above + the small JSON files, audit/history, logs, policy backups, Backblaze
 `level` moves the whole install; every part of it is a verified rewrite, never a flag flip.
 
 Conventions that matter:
@@ -39,7 +39,7 @@ class SetupRequest(BaseModel):
     password: str
     remember: bool = False
     recovery: bool = True                 # issue a recovery key, returned once
-    level: str = "everything"              # what the ticked onboarding box means
+    level: str = "full"                    # what the ticked onboarding box means (default:)
 
 
 class UnlockRequest(BaseModel):
@@ -65,7 +65,7 @@ class RememberRequest(BaseModel):
 
 
 class LevelRequest(BaseModel):
-    level: str = "everything"
+    level: str = "full"
 
 
 def _set_level(level: str) -> None:
@@ -127,14 +127,14 @@ def setup(payload: SetupRequest) -> dict:
                                    "recovery key if the password is lost.")
     if len(payload.password) < 8:
         raise HTTPException(status_code=400, detail="Use a password of at least 8 characters.")
+    level = (payload.level or crypto.LEVEL_FULL).strip().lower()
+    if level not in crypto.LEVELS:            # checked BEFORE the keystore exists
+        raise HTTPException(status_code=400, detail=f"Unknown level {payload.level!r}.")
     try:
         recovery_key = crypto.setup(payload.password, remember=payload.remember,
                                     with_recovery=payload.recovery)
     except RuntimeError as exc:               # a second keystore would orphan the first data key
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    level = (payload.level or "everything").strip().lower()
-    if level not in crypto.LEVELS:
-        raise HTTPException(status_code=400, detail=f"Unknown level {payload.level!r}.")
     _set_level(level)
     return {"ok": True, "recovery_key": recovery_key, "status": _status()}
 
@@ -239,3 +239,28 @@ def set_level(payload: LevelRequest) -> dict:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"started": job["job_id"], "job": jobrunner.job_status(job["job_id"], after=0),
             "status": _status()}
+
+
+class ResetRequest(BaseModel):
+    confirm: bool = False
+    keep_copy: bool = False               # set the unreadable files aside instead of deleting them
+
+
+@router.get("/encryption/reset-preview")
+def reset_preview() -> dict:
+    """Start over after losing the password AND the recovery key: what goes, what rebuilds."""
+    return keyswitch.reset_preview()
+
+
+@router.post("/encryption/reset")
+def reset(payload: ResetRequest) -> dict:
+    """Forget the keystore, remove (or set aside) what it encrypted, turn encryption off and
+    re-index from kopia. The kopia repositories are never touched."""
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Starting over needs confirm=true "
+                                                    "(see reset-preview first).")
+    try:
+        out = keyswitch.reset(keep_copy=payload.keep_copy)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {**out, "status": _status()}

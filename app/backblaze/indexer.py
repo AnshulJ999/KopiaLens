@@ -49,11 +49,14 @@ def _write_progress(stage: str) -> None:
     `indexing` list and the orphan reaper glob data/index_progress_repo*.json, and this filename
     matches that glob. Atomic write; a failure never affects the refresh itself."""
     try:
+        # Plain on purpose (no paths in it): the keyless tray reads it too.
         payload = {"repo": "bz", "stage": stage, "pid": os.getpid(), "updated": time.time()}
         import config
         os.makedirs(config.DATA_DIR, exist_ok=True)
-        from ..core import filecrypto
-        filecrypto.write_json(_progress_path(), payload)
+        tmp = _progress_path() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
+        os.replace(tmp, _progress_path())
     except Exception:  # noqa: BLE001 - progress reporting must never affect the real work
         pass
 

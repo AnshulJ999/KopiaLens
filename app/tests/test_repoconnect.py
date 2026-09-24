@@ -115,7 +115,7 @@ def test_create_records_a_created_repo(store, fixed_binary, monkeypatch):
     from app.core import repoconnect
     seen = {}
 
-    def fake_run(args, password, timeout=600.0):
+    def fake_run(args, password, timeout=600.0, **_kw):
         seen["args"] = args
         open(args[2], "w", encoding="utf-8").write("{}")
         return {"returncode": 0, "stdout": "Initializing repository with:", "stderr": "",
@@ -212,7 +212,7 @@ def test_create_in_the_kopia_config_folder(store, fixed_binary, monkeypatch):
     monkeypatch.setenv("KOPIALENS_PROFILE", "desktop")
     seen = {}
 
-    def fake_run(args, password, timeout=600.0):
+    def fake_run(args, password, timeout=600.0, **_kw):
         seen["args"] = args
         open(args[2], "w", encoding="utf-8").write("{}")
         return {"returncode": 0, "stdout": "", "stderr": "", "command": args}
@@ -254,7 +254,7 @@ def test_no_flow_leaks_a_storage_credential(store, fixed_binary, monkeypatch):
     assert "TOPSECRET" not in json.dumps(config.RECORDS)
     assert "TOPSECRET" not in json.dumps(repos.detail(config.repo_record(rec["id"])))
 
-    monkeypatch.setattr(repoconnect, "_run", lambda args, password, timeout=600.0: {
+    monkeypatch.setattr(repoconnect, "_run", lambda args, password, timeout=600.0, **_kw: {
         "returncode": 0, "stdout": json.dumps({"uniqueIDHex": "a" * 64, "storage": {
             "type": "s3", "config": {"bucket": "my-backups", "secretAccessKey": "TOPSECRET"}}}),
         "stderr": "", "command": args})
@@ -266,7 +266,7 @@ def test_connect_records_a_managed_config(store, fixed_binary, monkeypatch):
     from app.core import repoconnect
     seen = {}
 
-    def fake_run(args, password, timeout=600.0):
+    def fake_run(args, password, timeout=600.0, **_kw):
         seen["args"], seen["password"] = args, password
         open(args[2], "w", encoding="utf-8").write("{}")   # kopia wrote the config
         return {"returncode": 0, "stdout": "Connected to repository.", "stderr": "", "command": args}
@@ -284,7 +284,7 @@ def test_connect_records_a_managed_config(store, fixed_binary, monkeypatch):
 def test_connect_failure_leaves_nothing_behind(store, fixed_binary, monkeypatch):
     from app.core import repoconnect
 
-    def fake_run(args, password, timeout=600.0):
+    def fake_run(args, password, timeout=600.0, **_kw):
         open(args[2], "w", encoding="utf-8").write("{}")
         return {"returncode": 1, "stdout": "", "stderr": "error connecting to repository: no such bucket",
                 "command": args}
@@ -311,7 +311,7 @@ def test_describe_config_reads_both_connection_shapes(store):
                            encoding="utf-8")
     assert repoconnect.describe_config(str(storage_cfg))["kind"] == "cloud"
     server_cfg = store / "repository-2.config"
-    server_cfg.write_text(json.dumps({"apiServer": {"baseURL": "https://kopia.local:51515"}}),
+    server_cfg.write_text(json.dumps({"apiServer": {"url": "https://kopia.local:51515"}}),
                           encoding="utf-8")
     facts = repoconnect.describe_config(str(server_cfg))
     assert facts["type"] == "server" and facts["config"]["url"] == "https://kopia.local:51515"
@@ -341,7 +341,7 @@ def test_probe_parses_status_and_falls_back_to_the_config_for_a_server(store, fi
     status = {"uniqueIDHex": "a" * 64, "storage": {"type": "s3", "config": {"bucket": "b"}},
               "volume": {"capacity": 100, "available": 40}}
     monkeypatch.setattr(repoconnect, "_run",
-                        lambda args, password, timeout=600.0: {"returncode": 0, "stdout": json.dumps(status),
+                        lambda args, password, timeout=600.0, **_kw: {"returncode": 0, "stdout": json.dumps(status),
                                                                "stderr": "", "command": args})
     out = repoconnect.probe(config_file=None)
     assert out["ok"] and out["unique_id"] == "a" * 64 and out["kind"] == "cloud"
@@ -349,9 +349,9 @@ def test_probe_parses_status_and_falls_back_to_the_config_for_a_server(store, fi
 
     # A repository-server connection reports no storage through `repository status`
     server_cfg = store / "srv.config"
-    server_cfg.write_text(json.dumps({"apiServer": {"baseURL": "https://kopia.local:51515"}}), encoding="utf-8")
+    server_cfg.write_text(json.dumps({"apiServer": {"url": "https://kopia.local:51515"}}), encoding="utf-8")
     monkeypatch.setattr(repoconnect, "_run",
-                        lambda args, password, timeout=600.0: {"returncode": 0, "stdout": "{}",
+                        lambda args, password, timeout=600.0, **_kw: {"returncode": 0, "stdout": "{}",
                                                                "stderr": "", "command": args})
     out = repoconnect.probe(config_file=str(server_cfg))
     assert out["ok"] and out["type"] == "server" and out["kind"] == "server"
@@ -360,7 +360,7 @@ def test_probe_parses_status_and_falls_back_to_the_config_for_a_server(store, fi
 def test_probe_reports_a_failure_instead_of_raising(store, fixed_binary, monkeypatch):
     from app.core import repoconnect
     monkeypatch.setattr(repoconnect, "_run",
-                        lambda args, password, timeout=600.0: {"returncode": 1, "stdout": "",
+                        lambda args, password, timeout=600.0, **_kw: {"returncode": 1, "stdout": "",
                                                                "stderr": "ERROR: cannot open repository",
                                                                "command": args})
     out = repoconnect.probe(config_file=None)
@@ -396,13 +396,13 @@ def test_unlock_uses_from_config_for_storage_and_the_url_for_a_server(store, fix
     cfg = store / "repository-1.config"
     cfg.write_text(json.dumps({"storage": {"type": "filesystem"}}), encoding="utf-8")
     srv = store / "repository-2.config"
-    srv.write_text(json.dumps({"apiServer": {"baseURL": "https://kopia.local:51515"}}), encoding="utf-8")
+    srv.write_text(json.dumps({"apiServer": {"url": "https://kopia.local:51515"}}), encoding="utf-8")
     repoconnect.attach(str(cfg), "A")
     repoconnect.attach(str(srv), "B")
     monkeypatch.setattr(repoconnect, "probe", lambda config_file=None, repo=None: {"ok": True})
     calls = []
 
-    def fake_run(args, password, timeout=600.0):
+    def fake_run(args, password, timeout=600.0, **_kw):
         calls.append((args, password))
         return {"returncode": 0, "stdout": "Connected to repository.", "stderr": "", "command": args}
 
@@ -443,7 +443,7 @@ def test_remove_deletes_only_this_repos_files(store, fixed_binary, monkeypatch):
 
 def test_remove_can_delete_a_config_kopialens_created(store, fixed_binary, monkeypatch):
     from app.core import repoconnect
-    monkeypatch.setattr(repoconnect, "_run", lambda args, password, timeout=600.0: {
+    monkeypatch.setattr(repoconnect, "_run", lambda args, password, timeout=600.0, **_kw: {
         "returncode": 0, "stdout": "", "stderr": "", "command": args})
     rec = repoconnect.connect("filesystem", {"path": "/repo"}, "pw")
     cfg = rec["config_file"]

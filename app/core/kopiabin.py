@@ -6,10 +6,10 @@ PATH (KopiaUI bundles it under its own install folder). Resolution order:
 
   1. ``KOPIALENS_KOPIA`` env (a test/Docker override)
   2. ``kopialens.kopia_path`` in settings (the Settings control)
-  3. PATH
-  4. the usual install locations for this OS
-  5. the binary KopiaUI bundles
-  6. a copy shipped next to a packaged KopiaLens
+  3. the copy shipped next to a packaged KopiaLens (the tested version)
+  4. PATH
+  5. the usual install locations for this OS
+  6. the binary KopiaUI bundles
 
 Filesystem reads only (no spawn) and cached in memory; ``invalidate()`` after the setting changes.
 ``version()`` spawns once and is DISPLAY ONLY - nothing gates on a kopia version
