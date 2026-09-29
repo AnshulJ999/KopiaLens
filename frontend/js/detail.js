@@ -360,7 +360,8 @@ const detailPart = {
         repo: this.repo, source: this.selectedSource === "*ALL*" ? null : this.selectedSource, prefix: row.path,
         deleted_only: this.treeDeletedOnly, over_gb: this.treeOverGb ? 1 : 0, ext: this.treeExt || null,
       };
-      this._removeLabel = (row.type === "folder" ? "folder " : "") + (row.path || row.name);
+      const filtered = this.treeDeletedOnly || this.treeOverGb || this.treeExt;
+      this._removeLabel = (row.type === "folder" ? "folder " : "") + (row.path || row.name) + (filtered ? " (filtered)" : "");
       this.buildRemovePlan();
     },
     openRemoveFolderPath(prefix, source = null) {
@@ -435,6 +436,22 @@ const detailPart = {
       const st = this.removePlan && this.removePlan.dry;
       return !!(st && st.done && st.ok && !st.running);
     },
+    // A file-name delete also removes same-named files outside the plan; every count and size the
+    // panel and confirm show includes them.
+    removeExtra(key) {
+      const p = this.removePlan;
+      return p && p.by === "filename" ? Number(p[key] || 0) : 0;
+    },
+    removeFileTotal() {
+      return this.removePlan ? Number(this.removePlan.file_count || 0) + this.removeExtra("filename_extra_count") : 0;
+    },
+    removePhysTotal() {
+      return this.removePlan ? Number(this.removePlan.physical || 0) + this.removeExtra("filename_extra_physical") : 0;
+    },
+    removeFilesSplit() {  // "9 here + 8 with the same name elsewhere", or "" when nothing rides along
+      const extra = this.removeExtra("filename_extra_count");
+      return extra ? `${Number(this.removePlan.file_count || 0).toLocaleString()} here + ${extra.toLocaleString()} with the same name elsewhere` : "";
+    },
     removeCoverage() {  // "these 100 files are 70% of the folder" - the number that makes top-N a decision
       const p = this.removePlan;
       if (!p || !p.total_physical) return null;
@@ -451,21 +468,24 @@ const detailPart = {
     async removeRun() {
       if (!this.removePlan) return;
       const p = this.removePlan;
-      const n = Number(p.file_count || 0);
+      const files = countOf(this.removeFileTotal(), "file");
       const share = p.capped && this.removeCoverage() != null ? ` · ${this.removeCoverage()}% of the match` : "";
+      const split = this.removeFilesSplit();
       const ok = await this.klConfirm({
-        title: `Delete ${n.toLocaleString()} file${n === 1 ? "" : "s"}?`,
+        title: `Delete ${files}?`,
         facts: [
           ["What", p.label],
-          ["Files", `${n.toLocaleString()} · ${p.all_versions ? "every version" : "latest version only"}${share}`],
-          ["Match", p.by === "filename" ? `File name · ${Number(p.name_count || 0).toLocaleString()} names` : "Exact content"],
+          ["Files", `${split || files} · ${p.all_versions ? "every version" : "latest version only"}${share}`],
+          ["Match", p.by === "filename" ? `File name · ${countOf(p.name_count, "name")}` : "Exact content"],
           ["Backups", p.everywhere ? "Every backup in the repo" : (p.sources_scope || []).map((s) => sourcePath(s)).join(", ")],
-          ["Frees", p.detail && p.detail.found !== false ? fmtPhys(p.detail.freeable) + " after maintenance" : fmtPhys(p.physical) + " stored"],
+          ["Frees", p.detail && p.detail.found !== false
+            ? fmtPhys(p.detail.freeable) + " after maintenance" + (p.detail.capped ? " · biggest 5,000 files checked" : "")
+            : fmtPhys(this.removePhysTotal()) + " stored"],
         ],
         callout: p.everywhere ? "Not limited to these backups: removes this content from the whole repo."
           : (p.by === "filename" ? "Every file with these names in these backups goes." : ""),
         note: (this.removePlanDryChecked() ? "" : "No dry run yet. ") + "Snapshots stay. Space frees after the next full maintenance.",
-        command: p.commit, confirmLabel: `Delete ${n.toLocaleString()} file${n === 1 ? "" : "s"}`, danger: true,
+        command: p.commit, confirmLabel: `Delete ${files}`, danger: true,
       });
       if (!ok) return;
       await this.wrap(async () => {

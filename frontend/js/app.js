@@ -38,7 +38,7 @@ document.addEventListener("alpine:init", () => {
     _churnPhysSeq: 0, _churnPhysCache: {}, _churnPhysTimer: null,   // folder view: on-screen all-versions physical
     indexMode: "daily", indexTime: "23:00", indexInterval: 86400, dashboardMode: "nightly",
     freshness: [], _freshTimer: null,
-    searchTotal: 0, searchPage: 1, searchPageSize: "500", searchSort: "size", searchDir: "desc",
+    searchTotal: 0, searchEmpty: false, searchPage: 1, searchPageSize: "500", searchSort: "size", searchDir: "desc",
     pageSizes: ["100", "200", "500", "1000", "2000", "5000", "10000", "Infinite"],
     showFilters: false, minGb: "", maxGb: "", dateFrom: "", dateTo: "", minVersions: "", sharedMin: "", recentBackup: "",
     dedupe: false, treeDedupe: false, reclaimMap: {},

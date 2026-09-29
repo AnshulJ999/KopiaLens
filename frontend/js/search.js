@@ -31,6 +31,15 @@ const searchPart = {
       this.klSet({ page_size: this.searchPageSize });  // persist the raw value, including "Infinite"
       this.searchPage = 1; this.loadSearch();
     },
+    searchFiltersOn() {
+      return !!(this.minGb || this.maxGb || this.dateFrom || this.dateTo || this.minVersions || this.sharedMin
+        || this.searchExt || this.searchExtExclude || this.searchSource || this.deletedOnly || this.overOneGb
+        || this.recentBackup);
+    },
+    searchEmptyText() {
+      if (this.query) return `No results for “${this.query}”.`;
+      return this.searchFiltersOn() ? "No results for these filters." : "No results.";
+    },
     clearFilters() {
       this.minGb = ""; this.maxGb = ""; this.dateFrom = ""; this.dateTo = ""; this.minVersions = ""; this.sharedMin = "";
       this.searchExt = ""; this.searchExtExclude = ""; this.searchSource = ""; this.deletedOnly = false; this.overOneGb = false;
@@ -126,9 +135,11 @@ const searchPart = {
         const data = await getJson(`/api/search?${p.toString()}`);
         if (seq !== this._searchSeq) return;
         this.searchTotal = data.total || 0;
+        this.searchEmpty = this.searchTotal === 0;
         const shownFrom = this.searchTotal ? offset + 1 : 0;
         const shownTo = Math.min(offset + (data.results || []).length, this.searchTotal);
-        this.omniMeta = `${this.searchTotal.toLocaleString()} results` + (infinite ? "" : ` · showing ${shownFrom.toLocaleString()}-${shownTo.toLocaleString()}`);
+        this.omniMeta = this.searchEmpty ? ""
+          : countOf(this.searchTotal, "result") + (infinite ? "" : ` · showing ${shownFrom.toLocaleString()}-${shownTo.toLocaleString()}`);
         // Headers do NOT sort locally (headerSort:false) - a click re-queries the server so the
         // sort is always over the ENTIRE result set, never just the visible page. Active column
         // shows a ▼/▲ arrow.
@@ -181,6 +192,7 @@ const searchPart = {
         } else {
           const sStbl = setTable("#searchTable", data.results || [], cols, {
             persistSort: false,
+            placeholder: false,   // the tab shows its own no-results line above the table
             selectableRows: true,
             onRowDblClick: (_e, row) => this.openFileDetail(row.getData()),
             rowMenu: [
@@ -191,7 +203,7 @@ const searchPart = {
               { label: "Download", action: (_e, row) => { const d = row.getData(); this.downloadItem({ source: d.source, full_path: d.full_path }); } },
               { label: "Jump to it in tree", action: (_e, row) => this.jumpToTree(row.getData()) },
               { label: "Browse this source", action: (_e, row) => { this.selectedSource = row.getData().source; this.snapSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); } },
-              { label: "Delete ALL matching this filter (chunked)…", action: () => this.openRemoveFromSearch() },
+              { label: "Delete all matching…", action: () => this.openRemoveFromSearch() },
               { label: "Copy full path", action: (_e, row) => this.copyText(row.getData().full_path) },
             ],
           });
@@ -221,7 +233,7 @@ const searchPart = {
       const v = this.versionSizes[this._versionKey(d)];
       if (v === undefined) return "<span style='color:var(--faint)'>—</span>";
       if (v === "pending") return "<span style='color:var(--faint)'>…</span>";
-      if (v[which] == null) return "<span style='color:var(--faint)' title='Not in the walk cache yet. The next index run fills it.'>not yet</span>";
+      if (v[which] == null) return "<span style='color:var(--muted)' title='Filled in by the next index run'>not yet</span>";
       return fmtBytes(v[which]);
     },
     fillVersionSizes() {

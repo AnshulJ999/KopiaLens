@@ -76,6 +76,30 @@ def test_holders_stay_on_the_selected_files_machine(monkeypatch):
     assert other not in seen and "c-" + other not in facts["oids"]
 
 
+def test_selection_facts_find_every_version_through_the_real_index(monkeypatch):
+    """The panel's default Exact-content plan starts from these content ids. A lookup handed
+    source KEYS where the resolver wants integer ids matched nothing, so the plan came back empty."""
+    import duckdb
+    from app.index import queries
+    fp = "C:\\Data\\notes.txt"
+    con = duckdb.connect()
+    con.execute(f"CREATE TABLE src AS SELECT * FROM (VALUES (1::SMALLINT, '{SRC}')) t(src_id, source)")
+    con.execute(f"CREATE TABLE pathx AS SELECT * FROM (VALUES (7::BIGINT, 1::SMALLINT, '{fp}')) "
+                "t(path_id, src_id, full_path)")
+    con.execute("CREATE TABLE snap AS SELECT * FROM (VALUES "
+                "(1::INTEGER, 's1', TIMESTAMP '2026-01-01'), (2, 's2', TIMESTAMP '2026-02-01')) "
+                "t(snap_id, snapshot_id, start_time)")
+    con.execute("CREATE TABLE cid AS SELECT * FROM (VALUES (10::INTEGER, 'c1'), (20, 'c2')) "
+                "t(cid_id, content_id)")
+    con.execute("CREATE TABLE filev AS SELECT * FROM (VALUES "
+                "(7::BIGINT, 1::INTEGER, 10::UBIGINT, 10::INTEGER), (7, 2, 12::UBIGINT, 20::INTEGER)) "
+                "t(path_id, snap_id, size, cid_id)")
+    monkeypatch.setattr(queries, "read_cursor", lambda repo: con.cursor())
+    monkeypatch.setattr(deleteplan, "holders_for_paths", lambda repo, fps: {fp: [SRC]})
+    facts = deleteplan.selection_facts("3", [(SRC, fp)])
+    assert facts["oids"] == ["c2", "c1"] and facts["versions"] == 2
+
+
 def test_snapshot_plan_copies_respect_ticked_backups(monkeypatch):
     src, copy_src, unticked = "me@pc:C:\\", "me@pc:D:\\", "me@pc:E:\\"
     monkeypatch.setattr(deleteplan, "selection_facts", lambda repo, files: {

@@ -66,7 +66,7 @@ def test_delete_dry_summary_parses_real_output():
     ])
     s = _parse_delete_dry(text)
     assert s["snapshots"] == 2
-    assert "2 snapshot(s)" in s["final_line"]
+    assert s["final_line"] == "Would delete 2 snapshots"
 
 
 def test_run_dry_commands_reports_timeout_distinctly(monkeypatch):
@@ -124,7 +124,7 @@ def test_the_line_parsers_accumulate_across_batches():
     acc = {}
     _parse_delete_line("Would delete snapshot g1 of g:\\x (pass --delete to confirm)", acc)
     _parse_delete_line("Would delete snapshot g2 of g:\\x (pass --delete to confirm)", acc)
-    assert acc["snapshots"] == 2 and "2 snapshot(s)" in acc["final_line"]
+    assert acc["snapshots"] == 2 and acc["final_line"] == "Would delete 2 snapshots"
 
 
 def test_a_multi_batch_remove_summary_does_not_lose_the_fixed_count():

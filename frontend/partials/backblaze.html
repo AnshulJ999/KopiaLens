@@ -10,7 +10,7 @@
         </div>
         <div class="flex items-center gap-2 text-sm">
           <span class="font-medium">Per-drive coverage</span>
-          <span class="text-faint text-xs">double-click a drive to browse · diff vs Backblaze's own count should be +0</span>
+          <span class="text-muted text-xs">double-click a drive to browse · diff vs Backblaze's own count should be +0</span>
         </div>
         <div id="bzDashTable" class="min-h-[16rem]"></div>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -21,7 +21,7 @@
                 <span class="text-muted w-16 text-right" x-text="Number(r.count).toLocaleString()"></span>
                 <span class="text-warn w-12 text-right" x-text="r.pct + '%'"></span>
                 <span class="break-all flex-1" x-text="r.folder"></span>
-                <span class="text-[10px] shrink-0" :class="r.status==='active' ? 'text-ok' : 'text-faint'" x-text="r.status"></span>
+                <span class="text-[10px] shrink-0" :class="r.status==='active' ? 'text-ok' : 'text-muted'" x-text="r.status"></span>
               </div>
             </template>
           </div>
@@ -128,7 +128,7 @@
           </div>
           <div id="bzNamingTable" class="mt-2" x-show="bzNamingRows.length"></div>
         </div>
-        <div class="flex items-center gap-2 text-sm"><span class="font-medium">Exclusion impact</span><span class="text-faint text-xs">files + size each rule keeps out of backup · right-click a folder to generate a rule</span></div>
+        <div class="flex items-center gap-2 text-sm"><span class="font-medium">Exclusion impact</span><span class="text-muted text-xs">files + size each rule keeps out of backup · right-click a folder to generate a rule</span></div>
         <div id="bzImpactTable" class="min-h-[14rem]"></div>
         <div class="rounded border border-bd-soft p-2" x-show="bzExclusions && bzExclusions.dormant_folders.length">
           <div class="text-xs font-medium mb-1">Dormant folder rules (<span x-text="bzExclusions && bzExclusions.dormant_folders.length"></span>) — match nothing on disk now</div>
@@ -155,7 +155,7 @@
             <option value="">All drives</option>
             <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" x-text="d.drive + ':'"></option></template>
           </select>
-          <span class="text-faint text-xs">total recent IDs: <span x-text="Number(bzChurnTotal||0).toLocaleString()"></span></span>
+          <span class="text-muted text-xs">total recent IDs: <span x-text="Number(bzChurnTotal||0).toLocaleString()"></span></span>
         </div>
         <div id="bzChurnTable" class="flex-1 min-h-0"></div>
       </section>
@@ -171,7 +171,7 @@
         <div class="flex flex-wrap items-center gap-3 text-sm" x-show="bzQueue">
           <span class="font-medium">Upload queue (scheduled for backup)</span>
           <span x-text="bzQueue && (Number(bzQueue.total_files||0).toLocaleString() + ' files · ' + fmtB(bzQueue.total_bytes))"></span>
-          <span class="text-faint text-xs">Backblaze scans ~once/twice a day, so this changes roughly daily.</span>
+          <span class="text-muted text-xs">Backblaze scans ~once/twice a day, so this changes roughly daily.</span>
         </div>
         <div class="flex flex-wrap gap-2 text-xs" x-show="bzQueue">
           <template x-for="(d,i) in (bzQueue ? bzQueue.by_drive : [])" :key="i">
@@ -196,15 +196,15 @@
           <span class="text-xs text-ok" x-text="bzImportMsg"></span>
         </div>
         <div>
-          <div class="text-sm font-medium mb-1">Recent backup sessions <span class="text-faint text-xs font-normal">(live log + imported archive = ~1 year)</span></div>
+          <div class="text-sm font-medium mb-1">Recent backup sessions <span class="text-muted text-xs font-normal">(live log + imported archive = ~1 year)</span></div>
           <div id="bzSessionsTable"></div>
         </div>
         <div>
-          <div class="text-sm font-medium mb-1">Daily upload history <span class="text-faint text-xs font-normal">(per-day successful-upload counts)</span></div>
+          <div class="text-sm font-medium mb-1">Daily upload history <span class="text-muted text-xs font-normal">(per-day successful-upload counts)</span></div>
           <div id="bzUploadsTable" class="min-h-[12rem]"></div>
         </div>
         <div x-show="bzSessions && bzSessions.deletion_events && bzSessions.deletion_events.length">
-          <div class="text-sm font-medium mb-1 text-danger">Mass-deletion events <span class="text-faint text-xs font-normal">(big bz_done files = the F: filelist-bug signature)</span></div>
+          <div class="text-sm font-medium mb-1 text-danger">Mass-deletion events <span class="text-muted text-xs font-normal">(big bz_done files = the F: filelist-bug signature)</span></div>
           <div class="rounded border border-danger-bd">
             <template x-for="(d,i) in (bzSessions ? bzSessions.deletion_events : [])" :key="i">
               <div class="text-[12px] flex items-center gap-2 border-b border-bd-soft px-2 py-0.5">
@@ -219,7 +219,7 @@
 
       <section x-show="active==='bz-health'" class="h-full flex flex-col gap-3 overflow-auto">
         <div class="rounded p-3" :class="bzHealth && bzHealth.ok ? 'border border-ok-bd bg-ok-bg/20' : 'border border-danger-bd bg-danger-bg/20'" x-show="bzHealth">
-          <div class="font-medium text-sm" x-text="bzHealth && (bzHealth.ok ? '✓ No anomalies detected — backup state looks healthy.' : (bzHealth.issues.length + ' potential issue(s) detected:'))"></div>
+          <div class="font-medium text-sm" x-text="bzHealth && (bzHealth.ok ? '✓ No anomalies detected — backup state looks healthy.' : (countOf(bzHealth.issues.length, 'potential issue') + ' detected:'))"></div>
           <template x-for="(iss,i) in (bzHealth ? bzHealth.issues : [])" :key="i">
             <div class="text-[12px] text-danger">• <span x-text="iss"></span></div>
           </template>

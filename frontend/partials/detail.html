@@ -133,7 +133,7 @@
 
 {%- macro file_others() -%}
 <div class="kl-sec" x-show="detail.others && detail.others.length">
-  <div class="h">Deduped against this one <span class="count" x-text="detail.others.length + ' path(s)'"></span></div>
+  <div class="h">Deduped against this one <span class="count" x-text="countOf(detail.others.length, 'path')"></span></div>
   <div class="kl-list">
     <template x-for="(o, i) in detail.others" :key="i">
       <div class="li"><span class="break-all" x-text="shortSource(o.source) + '  ·  ' + o.full_path"></span></div>
@@ -194,7 +194,7 @@
     <button class="kl-btn" @click="purgeDry()" :disabled="detail.purgeDry.running">
       <span x-text="detail.purgeDry.done ? 'Dry run again' : 'Dry run'"></span>
     </button>
-    <button class="kl-btn danger" @click="executePurge()" :disabled="detail.purgeDry.running" x-text="'Delete ' + purgeIds().length + ' snapshot(s)'"></button>
+    <button class="kl-btn danger" @click="executePurge()" :disabled="detail.purgeDry.running" x-text="'Delete ' + countOf(purgeIds().length, 'snapshot')"></button>
     <span x-show="purgeDryChecked()" class="pill ok">dry run checked</span>
     <span class="grow"></span>
     <button class="kl-btn quiet" @click="copyText(detail.purgeCmds)">Copy command</button>
@@ -221,7 +221,7 @@
       <span x-text="detail.rfDry.done ? 'Dry run again' : 'Dry run'"></span>
     </button>
     <button class="kl-btn danger" @click="executeRemoveFiles()" :disabled="detail.rfDry.running"
-            x-text="detail.removeFiles ? ('Remove ' + detail.removeFiles.count + (detail.removeFiles.by === 'object-id' ? ' object(s)' : ' name(s)')) : 'Remove from snapshots'"></button>
+            x-text="detail.removeFiles ? ('Remove ' + countOf(detail.removeFiles.count, detail.removeFiles.by === 'object-id' ? 'version' : 'name')) : 'Remove from snapshots'"></button>
     <span x-show="rfDryChecked()" class="pill ok">dry run checked</span>
     <span class="grow"></span>
     <button class="kl-btn quiet" x-show="detail.removeFiles" @click="detail.showCmd = !detail.showCmd" x-text="detail.showCmd ? 'Hide command' : 'Show command'"></button>
@@ -300,7 +300,7 @@
 
 {%- macro folder_backedby() -%}
 <div class="kl-sec">
-  <div class="h">Backed up by <span class="count" x-text="(detail.covers || 0) + ' source(s)'"></span></div>
+  <div class="h">Backed up by <span class="count" x-text="countOf(detail.covers, 'backup')"></span></div>
   <div class="kl-note">
     <span x-text="detail.covers || 0"></span> source<span x-show="(detail.covers || 0) !== 1">s</span> back up this folder itself<span
       x-show="detail.sub_policies" x-text="', plus ' + detail.sub_policies + ' sub-folder polic' + (detail.sub_policies === 1 ? 'y' : 'ies') + ' inside it'"></span>.

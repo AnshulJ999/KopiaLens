@@ -129,7 +129,7 @@ const runbarPart = {
       if (!st || !st.done) return "";
       if (st.final_line) return st.final_line + " - nothing written.";
       if (st.mode === "clean" && st.snapshots != null) {
-        return `Would touch ${st.snapshots} snapshot(s) - nothing written.`;
+        return `Would touch ${countOf(st.snapshots, "snapshot")} - nothing written.`;
       }
       return "";
     },

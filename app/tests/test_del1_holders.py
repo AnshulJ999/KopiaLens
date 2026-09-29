@@ -14,22 +14,24 @@ def _plan(**kw):
     return actions.RemovePlanRequest(repo="3", prefix=FOLDER, by="filename", **kw)
 
 
+TARGETS = {"names": ["config.json"], "pairs": [(f"u@h:G:{SEP}", FOLDER + SEP + "config.json")],
+           "files": [], "object_ids": ["o1"], "sources": [f"u@h:G:{SEP}"],
+           "file_count": 1, "total_file_count": 1, "total_physical": 10, "total_logical": 1,
+           "capped": False, "logical": 1, "physical": 10}
+SWEEP = {"rows": [{"source": f"u@h:G:{SEP}", "full_path": FOLDER + SEP + "config.json",
+                   "size": 1, "physical": 10, "in_latest": True},
+                  {"source": f"u@h:D:{SEP}", "full_path": f"D:{SEP}other{SEP}config.json",
+                   "size": 2, "physical": 20, "in_latest": True},
+                  {"source": f"u@h:D:{SEP}", "full_path": f"D:{SEP}x{SEP}config.json",
+                   "size": 3, "physical": 30, "in_latest": True}],
+         "total": 3, "logical": 6, "physical": 60}
+
+
 def test_a_filename_plan_reports_what_rides_along(monkeypatch):
-    targets = {"names": ["config.json"], "pairs": [(f"u@h:G:{SEP}", FOLDER + SEP + "config.json")],
-               "files": [], "object_ids": ["o1"], "sources": [f"u@h:G:{SEP}"],
-               "file_count": 1, "total_file_count": 1, "total_physical": 0, "total_logical": 0,
-               "capped": False, "logical": 0, "physical": 0}
-    monkeypatch.setattr(actions, "_remove_targets", lambda payload: targets)
+    monkeypatch.setattr(actions, "_remove_targets", lambda payload: TARGETS)
     monkeypatch.setattr(actions, "remove_files_chunked_commands", lambda *a, **k: [["kopia", "x"]])
     monkeypatch.setattr(actions.audit, "audit", lambda *a, **k: None)
-    sweep = {"rows": [{"source": f"u@h:G:{SEP}", "full_path": FOLDER + SEP + "config.json",
-                       "size": 1, "in_latest": True},
-                      {"source": f"u@h:D:{SEP}", "full_path": f"D:{SEP}other{SEP}config.json",
-                       "size": 2, "in_latest": True},
-                      {"source": f"u@h:D:{SEP}", "full_path": f"D:{SEP}x{SEP}config.json",
-                       "size": 3, "in_latest": True}],
-             "total": 3}
-    monkeypatch.setattr(actions, "paths_named", lambda repo, sources, names, cap: sweep)
+    monkeypatch.setattr(actions, "paths_named", lambda repo, sources, names, cap, biggest_first=False: SWEEP)
 
     out = actions.remove_plan(_plan())
     assert out["filename_match_total"] == 3
@@ -37,6 +39,28 @@ def test_a_filename_plan_reports_what_rides_along(monkeypatch):
     assert [r["full_path"] for r in out["filename_extra"]] == [f"D:{SEP}other{SEP}config.json",
                                                               f"D:{SEP}x{SEP}config.json"]
     assert out["filename_extra_capped"] is False
+    assert (out["filename_extra_logical"], out["filename_extra_physical"]) == (5, 50)
+
+
+def test_a_filename_plan_prices_every_same_named_file(monkeypatch):
+    """What it frees covers everything --filename removes, not only the plan's own files."""
+    monkeypatch.setattr(actions, "_remove_targets", lambda payload: TARGETS)
+    asked = {}
+
+    def fake_named(repo, sources, names, cap, biggest_first=False):
+        asked.update(cap=cap, biggest_first=biggest_first)
+        return SWEEP
+
+    def fake_detail(repo, files, all_versions=False):
+        asked["files"] = [f["full_path"] for f in files]
+        return {"freeable": 1}
+
+    monkeypatch.setattr(actions, "paths_named", fake_named)
+    monkeypatch.setattr(actions, "batch_detail", fake_detail)
+    out = actions.remove_detail(_plan())
+    assert asked["files"] == [r["full_path"] for r in SWEEP["rows"]]
+    assert asked["biggest_first"] is True and asked["cap"] == 5000
+    assert out["scope"] == "filename" and out["capped"] is False
 
 
 def test_an_object_id_plan_carries_empty_collateral_fields(monkeypatch):

@@ -50,6 +50,27 @@ def test_version_restore_prefers_the_picked_snapshot(monkeypatch):
     item = restore.RestoreItem(source=SRC, full_path="G:\\Data\\a.txt", content_id="c1", snapshot_id="old")
     r = restore.resolve_item("3", item)
     assert r["snapshot_id"] == "old" and r["source_id"] == "old/a.txt"
+    assert r["expired"] is False
+
+
+def _expired_version(monkeypatch, held):
+    """The index lists a version on snapshot "gone", which kopia has since expired."""
+    rows = [{"snapshot_id": "gone", "start_time": "2026-09-01", "size": 5, "content_id": "c1"}]
+    monkeypatch.setattr(restore, "file_versions", lambda repo, s, p: rows)
+    monkeypatch.setattr(restore, "sources_index", lambda repo: {SRC: [{"id": "live"}]})
+    monkeypatch.setattr(restore, "holding_snapshots", lambda repo, s, fps, snaps=None: {fps[0]: held})
+    item = restore.RestoreItem(source=SRC, full_path="G:\\Data\\a.txt", content_id="c1", snapshot_id="gone")
+    return restore.resolve_item("3", item)
+
+
+def test_an_expired_version_restores_from_a_live_snapshot_that_still_holds_it(monkeypatch):
+    r = _expired_version(monkeypatch, [{"snapshot_id": "live", "start_time": "2026-09-20", "obj": "c1"}])
+    assert r["source_id"] == "live/a.txt" and r["snapshot_id"] == "live" and r["expired"] is False
+
+
+def test_an_expired_version_nothing_else_holds_restores_the_bare_object(monkeypatch):
+    r = _expired_version(monkeypatch, [{"snapshot_id": "live", "start_time": "2026-09-20", "obj": "c2"}])
+    assert r["source_id"] == "c1" and r["expired"] is True
 
 
 def test_unticked_ignore_permission_errors_is_passed_to_kopia(monkeypatch):

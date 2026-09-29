@@ -873,7 +873,8 @@ def _parse_delete_line(line: str, acc: dict) -> dict:
     for ln in line.splitlines():
         if "Would delete" in ln:
             acc["snapshots"] = acc.get("snapshots", 0) + 1
-            acc["final_line"] = f"Would delete {acc['snapshots']} snapshot(s)"
+            n = acc["snapshots"]
+            acc["final_line"] = f"Would delete {n} snapshot{'' if n == 1 else 's'}"
     return acc
 
 

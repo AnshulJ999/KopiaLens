@@ -390,10 +390,12 @@ def versions_many(repo: str, pairs: list[tuple[str, str]]) -> dict[tuple[str, st
         return out
     cur = read_cursor(repo)
     try:
-        pid_of = resolve.path_ids(cur, want)
+        sid_of = resolve.src_map(cur)   # path_ids takes integer source ids, not source keys
+        pid_of = resolve.path_ids(cur, [(sid_of[s], p) for s, p in want if s in sid_of])
         if not pid_of:
             return out
-        by_pid = {pid: key for key, pid in pid_of.items()}
+        src_of = {sid: s for s, sid in sid_of.items()}
+        by_pid = {pid: (src_of[sid], fp) for (sid, fp), pid in pid_of.items()}
         pids = sorted(by_pid)
         grouped: dict[int, list[dict]] = {pid: [] for pid in pids}
         for i in range(0, len(pids), 900):
@@ -604,31 +606,38 @@ def holders_for_paths(repo: str, full_paths: list[str]) -> dict[str, list[str]]:
     return out
 
 
-def paths_named(repo: str, sources: list[str], names: list[str], cap: int = 500) -> dict:
+def paths_named(repo: str, sources: list[str], names: list[str], cap: int = 500,
+                biggest_first: bool = False) -> dict:
     """Every path in ``sources`` whose file name equals one of ``names`` - what kopia's
-    ``remove-files --filename`` matches. ``{"rows": [{source, full_path, size, in_latest}], "total"}``."""
+    ``remove-files --filename`` matches. ``{"rows": [{source, full_path, size, physical,
+    in_latest}], "total", "logical", "physical"}``; the totals cover every match, not just ``rows``."""
+    empty = {"rows": [], "total": 0, "logical": 0, "physical": 0}
     names = list(dict.fromkeys(n for n in names if n))
     if not names or not sources:
-        return {"rows": [], "total": 0}
+        return empty
     cur = read_cursor(repo)
     try:
         sids = [i for i in (resolve.src_id(cur, s) for s in sources) if i is not None]
         if not sids:
-            return {"rows": [], "total": 0}
+            return empty
         where = ("p.src_id IN (%s) AND lower(p.name) IN (%s)"
                  % (",".join("?" * len(sids)), ",".join("?" * len(names))))
         params = [*sids, *[n.lower() for n in names]]
-        total = cur.execute(f"SELECT count(*) FROM pathx p WHERE {where}", params).fetchone()[0]
+        total, logical, phys = cur.execute(
+            f"SELECT count(*), sum(p.size), sum(p.physical) FROM pathx p WHERE {where}", params).fetchone()
+        order = ("p.physical DESC NULLS LAST, p.size DESC, s.source, p.full_path" if biggest_first
+                 else "s.source, p.full_path")
         rows = _rows(
             cur,
-            f"SELECT s.source, p.full_path, p.size, p.in_latest FROM pathx p "
+            f"SELECT s.source, p.full_path, p.size, p.physical, p.in_latest FROM pathx p "
             f"JOIN src s ON s.src_id = p.src_id WHERE {where} "
-            f"ORDER BY s.source, p.full_path LIMIT {int(cap)}",
+            f"ORDER BY {order} LIMIT {int(cap)}",
             params,
         )
     finally:
         cur.close()
-    return {"rows": rows, "total": int(total or 0)}
+    return {"rows": rows, "total": int(total or 0), "logical": int(logical or 0),
+            "physical": int(phys or 0)}
 
 
 def paths_for_contents(repo: str, object_ids: list[str], sources: list[str] | None = None,

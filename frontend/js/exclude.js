@@ -553,6 +553,36 @@ const excludePart = {
       this.showExclude = false;
     },
 
+    // Exclude & delete on items every backup already leaves out: there is no rule to add, so the
+    // dialog offers the plain delete instead of a disabled Next.
+    exAlreadyExcluded() {
+      const d = this.exDialog;
+      if (!d || d.mode !== "delete" || d.loading) return false;
+      if (!d.multi) {
+        const c = this.exCoverage();
+        return !!(c && c.total && c.already);
+      }
+      const on = d.items.filter((i) => i.on);
+      return on.length > 0 && on.every((it) => !it.loading && !it.error
+        && ((it.targetData && it.targetData.sources) || []).length > 0
+        && !this.exItemTargets(it).length && !this._exItemStill(it).length);
+    },
+    exJustDelete() {
+      const d = this.exDialog;
+      if (!d) return;
+      const items = d.multi ? d.items.filter((i) => i.on)
+        : [{ kind: d.kind, path: d.path, src: d.src, targetData: d.targetData }];
+      const files = items.map((i) => ({ source: i.src || this._exSourceFor(i) || null, path: i.path, kind: i.kind }));
+      this.flowCancel();   // closes this dialog and any half-started flow
+      const folders = files.filter((f) => f.kind === "folder");
+      if (folders.length === 1 && files.length === 1) return this.openRemoveFolderPath(folders[0].path, null);
+      if (folders.length) {
+        return this.openRemoveParts(files.map((f) => ({ source: f.kind === "folder" ? null : f.source, prefix: f.path })),
+                                    this._partsLabel(items));
+      }
+      this.openDeletePanel(files.map((f) => ({ source: f.source, full_path: f.path })));
+    },
+
     // File/folder panel "Stop backing this up": ready-made rules, each written for the policy
     // Smart picks for it. Runs from x-effect, so it reloads when the panel shows another item.
     async exLoadVariants() {

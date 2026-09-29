@@ -75,7 +75,7 @@ const logsPart = {
         const errs = r.errors || {};
         const failed = r.analysis_failed_sources || [];
         const bits = Object.entries(errs).map(([k, v]) => `${k}: ${v}`);
-        if (failed.length) bits.push(`${failed.length} source(s) failed analysis`);
+        if (failed.length) bits.push(`${countOf(failed.length, "backup")} failed analysis`);
         return bits.join(" · ");
       }
       return r.reason || "failed";
@@ -97,7 +97,7 @@ const logsPart = {
     logLevelClass(rec) {
       if (rec.level === "ERROR" || rec.level === "CRITICAL") return "text-danger";
       if (rec.level === "WARNING" || rec.level === "WARN") return "text-warn";
-      if (rec.level === "DEBUG") return "text-faint";
+      if (rec.level === "DEBUG") return "text-muted";
       return "text-muted";
     },
     logStamp(ts) {

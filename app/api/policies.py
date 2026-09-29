@@ -769,7 +769,8 @@ def _write_rules(repo: str, target: str, changes: Changes, log=None) -> dict:
         res = policy_delete_execute(repo, None if is_global else target, global_=is_global)
     else:
         if changes.fields:
-            say(f"Writing {len(changes.fields)} setting(s) to {label}")
+            n = len(changes.fields)
+            say(f"Writing {n} setting{'' if n == 1 else 's'} to {label}")
         if changes.add or changes.remove:
             say(f"Writing {len(diff_payload['resulting_rules'])} rules to {label}"
                 f" (+{len(diff_payload['added'])} -{len(diff_payload['removed'])})")

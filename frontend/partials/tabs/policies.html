@@ -42,19 +42,19 @@
             <template x-for="t in polRail()" :key="t.isGlobal ? 'global' : t.target">{{ pol_rail_row('polRailLabel(t)') }}</template>
             <template x-if="polRailOthers('folder').length">
               <div>
-                <div class="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-faint">Folder policies</div>
+                <div class="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted">Folder policies</div>
                 <template x-for="t in polRailOthers('folder')" :key="t.target">{{ pol_rail_row('shortSource(t.target)') }}</template>
               </div>
             </template>
             <template x-if="polRailOthers('computer').length">
               <div>
-                <div class="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-faint">User and computer policies</div>
+                <div class="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted">User and computer policies</div>
                 <template x-for="t in polRailOthers('computer')" :key="t.target">{{ pol_rail_row('t.target') }}</template>
               </div>
             </template>
             <template x-if="polNewTargets.length">
               <div>
-                <div class="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-faint">New, not saved</div>
+                <div class="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted">New, not saved</div>
                 <template x-for="t in polNewTargets.map((n) => ({ target: n, depth: 0 }))" :key="t.target">{{ pol_rail_row('shortSource(t.target)') }}</template>
               </div>
             </template>
@@ -114,7 +114,7 @@
                 {%- macro exclusions_body() %}
                 <div class="space-y-2">
                   <div class="flex items-center gap-2 flex-wrap">
-                    <span class="text-[11px] text-muted" x-text="polRuleRows().length + ' own rule(s)'"></span>
+                    <span class="text-[11px] text-muted" x-text="countOf(polRuleRows().length, 'own rule')"></span>
                     <span class="text-[11px] text-ok" x-show="polKeepout().priced"
                           x-text="'keeping out ' + polKeepout().files.toLocaleString() + ' files · ' + fmtB(polKeepout().bytes)"></span>
                     <span class="grow"></span>
@@ -125,7 +125,7 @@
                   </div>
                   <div class="kl-note" x-text="polTargetNote()"></div>
                   <div class="kl-note" x-show="polGlobalShadowed()"
-                       x-text="'These own rules replace the Global list of ' + (polData && polData.global ? polData.global.rule_count : 0) + ' rule(s) entirely - kopia never merges the two lists.'"></div>
+                       x-text="'These own rules replace the Global list of ' + countOf(polData && polData.global ? polData.global.rule_count : 0, 'rule') + ' entirely - kopia never merges the two lists.'"></div>
                   <div class="kl-list" style="max-height:calc(100vh - 26rem);min-height:10rem" x-show="polRuleRows().length">
                     <template x-for="r in polRuleRows()" :key="r.state + '|' + r.pattern">
                       <div class="li">
@@ -300,7 +300,7 @@
                   <div class="kl-facts" x-show="polRestoreParsed">
                     <template x-for="e in (polRestoreParsed || [])" :key="e.target">
                       <div class="r"><span class="k shrink-0" style="max-width:14rem;overflow:hidden;text-overflow:ellipsis" x-text="e.target === 'global' ? 'Global' : shortSource(e.target)"></span>
-                        <span x-text="(e.rules.length ? e.rules.length + ' rule(s)' : 'no ignore rules') + (e.rules.length ? '  ·  e.g. ' + e.rules.slice(0, 3).join(', ') : '')"></span></div>
+                        <span x-text="(e.rules.length ? countOf(e.rules.length, 'rule') : 'no ignore rules') + (e.rules.length ? '  ·  e.g. ' + e.rules.slice(0, 3).join(', ') : '')"></span></div>
                     </template>
                   </div>
                   <div class="kl-note" x-show="!polRestoreParsed && polRestoreCmd && !polRestoreCmd.error">The backup could not be summarised - the raw file is still importable by kopia.</div>

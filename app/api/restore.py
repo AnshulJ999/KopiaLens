@@ -95,9 +95,17 @@ def resolve_item(repo: str, it: RestoreItem) -> dict:
         if pick:
             size, snap_id, snap_time = pick.get("size"), pick.get("snapshot_id") or snap_id, pick.get("start_time") or ""
         live = snap_id and any(s.get("id") == snap_id for s in snaps)
+        if not live:
+            # The index can list a version whose snapshot kopia has since expired. A live snapshot
+            # still holding the same content restores it with its attributes; only when none does
+            # is the bare object restored (no modified time).
+            held = holding_snapshots(repo, it.source, [it.full_path], snaps=snaps).get(it.full_path) or []
+            same = next((h for h in held if h.get("obj") == it.content_id), None)
+            if same:
+                live, snap_id, snap_time = True, same["snapshot_id"], same["start_time"]
         return {"name": name, "obj": it.content_id, "type": "f", "size": int(size or 0), "files": 1,
                 "mtime": "", "snapshot_id": snap_id, "snap_time": str(snap_time or ""),
-                # the version's snapshot may have expired; the content object still restores
+                "expired": not live,
                 "source_id": _source_id(it.source, it.full_path, snap_id) if live else it.content_id}
     if it.snapshot_id:
         snaps = [s for s in snaps if s.get("id") == it.snapshot_id]

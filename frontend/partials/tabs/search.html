@@ -21,9 +21,9 @@
           <button @click="toggleDedupe()" class="h-8 rounded border border-bd px-2 text-xs" :class="dedupe ? 'bg-sel' : ''" title="Dedupe: collapse path/source copies of the same content into one row">⧉ Dedupe</button>
           <button @click="toggleGroupByFolder()" class="h-8 rounded border border-bd px-2 text-xs" :class="groupByFolder ? 'bg-sel' : ''" title="Group results by folder (find bloated folders), ranked by physical size">⊞ By folder</button>
           <button @click="exportSearch()" class="h-8 rounded border border-bd px-2 text-xs" title="Export the FULL filtered set to CSV">⬇ CSV (all)</button>
-          <button x-show="!groupByFolder" @click="openRemoveFromSearch()" class="h-8 rounded border border-danger text-danger px-2 text-xs font-medium" title="Delete EVERY file matching this filter (chunked remove-files, biggest first) — copy / .bat / run">🗑 Delete matching…</button>
+          <button x-show="!groupByFolder" @click="openRemoveFromSearch()" class="h-8 rounded border border-danger text-danger px-2 text-xs font-medium" title="Delete every file that matches this search">🗑 Delete matching…</button>
           <span class="ml-2 flex items-center gap-1">
-            <span class="text-[11px] text-faint">selected:</span>
+            <span class="text-[11px] text-muted">selected:</span>
             <button @click="selRestore('search')" class="h-8 rounded border border-bd px-2 text-xs" title="Restore the selected items">Restore…</button>
             <button @click="selExclude('search')" class="h-8 rounded border border-bd px-2 text-xs" title="Add exclusion rules for the selected files">Exclude…</button>
             <button @click="selDelete('search')" class="h-8 rounded border border-danger-bd text-danger px-2 text-xs" title="Delete the selected files from backups">Delete…</button>
@@ -65,6 +65,10 @@
               </span>
             </template>
           </span>
+        </div>
+        <div x-show="!groupByFolder && searchEmpty" class="flex flex-wrap items-center gap-2 text-sm text-muted">
+          <span x-text="searchEmptyText()"></span>
+          <button x-show="searchFiltersOn()" @click="clearFilters()" class="h-7 rounded border border-bd px-2 text-xs">Clear filters</button>
         </div>
         <div id="searchTable" class="flex-1 min-h-0" x-show="!groupByFolder"></div>
         <div id="groupTable" class="flex-1 min-h-0" x-show="groupByFolder"></div>
