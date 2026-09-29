@@ -26,9 +26,10 @@ from ..core.paths import prefix_bounds
 log = logging.getLogger("kopialens.bz.indexer")  # under the app's logger so in-process calls reach the log files
 
 try:
-    from config import HERE as _KL_ROOT  # KopiaLens root, needed as the worker subprocess cwd
+    from config import HERE as _KL_ROOT, SELF_EXE as _SELF_EXE  # _KL_ROOT: the worker subprocess cwd
 except Exception:  # standalone / tests
     _KL_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    _SELF_EXE = sys.executable
 
 _BATCH = 50_000
 _CHURN_TAIL_BYTES = 30 * 1024 * 1024  # read ~last 30 MB of bzfileids for "recent additions"
@@ -788,7 +789,7 @@ def refresh_via_worker(force: bool = False) -> dict:
         return {"ok": False, "reason": "already running"}
     _STATE["building"] = True
     try:
-        args = [sys.executable, "-m", "app.backblaze.worker"]
+        args = [_SELF_EXE, "-m", "app.backblaze.worker"]
         if force:
             args.append("--force")
         from ..index import crypto

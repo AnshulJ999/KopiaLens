@@ -25,13 +25,18 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 import pystray
 
-from config import DATA_DIR, GUARD_HOST, PORT, SETTINGS_FILE, TRAY_CONTROL_HOST, TRAY_CONTROL_PORT
+from config import (COMPILED, DATA_DIR, GUARD_HOST, PORT, SELF_EXE, SETTINGS_FILE, TRAY_CONTROL_HOST,
+                    TRAY_CONTROL_PORT)
 
 HERE = Path(__file__).resolve().parent
 # Browsable URL, so loopback - NOT HOST, which is the 0.0.0.0 bind address. "Open" was handing the
 # browser http://0.0.0.0:7123 ever since the server was rebound for LAN access.
 URL = f"http://{GUARD_HOST}:{PORT}"
 _NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW (Windows) - suppress the child console (no flicker)
+# Compiled: kopialens.exe runs the server via --server (see kopialens.py).
+SERVER_CMD = [SELF_EXE, "--server"] if COMPILED else [sys.executable, str(HERE / "main.py")]
+# A tray on a non-default control port is a separate instance (e.g. a test build beside the live app).
+_MUTEX = "KopiaLensTray_SingleInstance" + ("" if TRAY_CONTROL_PORT == 7124 else f"_{TRAY_CONTROL_PORT}")
 proc: subprocess.Popen | None = None
 _icon: pystray.Icon | None = None
 
@@ -43,7 +48,7 @@ def _is_first_instance() -> bool:
     lifetime); Windows frees it automatically on exit, so there is no stale-lock problem."""
     try:
         kernel32 = ctypes.windll.kernel32
-        kernel32.CreateMutexW(None, False, "KopiaLensTray_SingleInstance")
+        kernel32.CreateMutexW(None, False, _MUTEX)
         return kernel32.GetLastError() != 183  # 183 = ERROR_ALREADY_EXISTS
     except Exception:  # noqa: BLE001 - if the guard itself errors, never block startup
         return True
@@ -156,7 +161,7 @@ def start_server() -> None:
     child_env = dict(os.environ)
     child_env["KOPIALENS_PROFILE"] = "desktop"
     proc = subprocess.Popen(
-        [sys.executable, str(HERE / "main.py")],
+        SERVER_CMD,
         cwd=str(HERE),
         env=child_env,
         stdout=subprocess.DEVNULL,
@@ -168,7 +173,7 @@ def start_server() -> None:
 def _find_server_process():
     """The running KopiaLens server, even when this tray did not start it.
 
-    Matched by command line against our own main.py path - never by port owner (enumerating socket
+    Matched by command line against our own server command - never by port owner (enumerating socket
     owners needs elevation on Windows) and never by PID alone (PIDs get recycled). Without this,
     launching the tray on top of an already-running server left Restart and Quit controlling
     nothing at all."""
@@ -176,7 +181,8 @@ def _find_server_process():
         import psutil
     except ImportError:  # pragma: no cover - psutil is a declared dependency
         return None
-    target = str(HERE / "main.py").lower()
+    # From source the interpreter varies (python / pythonw), so match on the script path alone.
+    target = (" ".join(SERVER_CMD) if COMPILED else SERVER_CMD[1]).lower()
     me = os.getpid()
     for candidate in psutil.process_iter(["pid", "cmdline"]):
         if candidate.info.get("pid") == me:

@@ -21,7 +21,7 @@ def _already_running(host: str, port: int) -> bool:
         return sock.connect_ex((host, port)) == 0
 
 
-if __name__ == "__main__":
+def run() -> None:
     setup_logging()
     log = get_logger("startup")
     if _already_running(GUARD_HOST, PORT):
@@ -34,4 +34,9 @@ if __name__ == "__main__":
                     "port %s can browse and delete from the backup repositories", host, PORT)
     log.info("starting KopiaLens on %s:%s (auth %s)", host, PORT,
              "on" if auth.enabled() else "off")
-    uvicorn.run("app.main:app", host=host, port=PORT, reload=False)
+    from app.main import app  # the app object, not "app.main:app": import strings fail when compiled
+    uvicorn.run(app, host=host, port=PORT, reload=False)
+
+
+if __name__ == "__main__":
+    run()

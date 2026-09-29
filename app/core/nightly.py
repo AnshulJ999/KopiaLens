@@ -17,11 +17,10 @@ import datetime as dt
 import json
 import os
 import subprocess
-import sys
 import threading
 import time
 
-from config import DATA_DIR, HERE as _KL_ROOT, REPOS, repo_kind
+from config import DATA_DIR, HERE as _KL_ROOT, REPOS, SELF_EXE, repo_kind
 
 from .applog import get_logger
 from ..settings import load_settings
@@ -495,7 +494,7 @@ def _run_worker(repo: str, full: bool, trigger: str = "manual") -> dict:
         log.error("repo=%s index pass skipped: the index is encrypted and locked", repo)
         return {"ok": False, "skipped": True,
                 "reason": "the index is encrypted and locked - unlock KopiaLens to run the index"}
-    args = [sys.executable, "-m", "app.index.worker", repo]
+    args = [SELF_EXE, "-m", "app.index.worker", repo]
     if full:
         args.append("--full")
     logp = worker_log_path(repo)

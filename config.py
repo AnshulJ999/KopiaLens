@@ -9,6 +9,10 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# The program that relaunches KopiaLens roles (server, workers). A Nuitka build's sys.executable
+# names a python.exe that does not exist; its real binary is sys.argv[0].
+COMPILED = "__compiled__" in globals()
+SELF_EXE = os.path.abspath(sys.argv[0]) if COMPILED else sys.executable
 
 
 def user_data_root() -> str:
@@ -46,13 +50,13 @@ REPOS_FILE = os.environ.get("KOPIALENS_REPOS_FILE") or os.path.join(CONFIG_DIR, 
 # Loopback by DEFAULT: reaching KopiaLens from another machine is a deliberate choice, not the
 # out-of-the-box state (it browses and can delete from a backup repository). The actual bind comes
 # from settings.kopialens.bind_host - see app.core.auth.bind_host - with this as the fallback.
-HOST, PORT = "127.0.0.1", 7123
+HOST, PORT = "127.0.0.1", int(os.environ.get("KOPIALENS_PORT") or 7123)
 GUARD_HOST = "127.0.0.1"                                                # single-instance guard probes loopback (a 0.0.0.0 bind includes it; connecting to 0.0.0.0 is unreliable on Windows)
 
 # Tray control API (kopialens_tray.py). Restart/quit live in the TRAY, not the server: a process
 # cannot kill itself and still answer the request that asked it to. Loopback ONLY and unauthenticated
 # - fine for a personal tool on this machine, revisit before any public release.
-TRAY_CONTROL_HOST, TRAY_CONTROL_PORT = "127.0.0.1", 7124
+TRAY_CONTROL_HOST, TRAY_CONTROL_PORT = "127.0.0.1", int(os.environ.get("KOPIALENS_TRAY_PORT") or 7124)
 
 def save_records(store: dict, strict: bool = False) -> None:
     """Persist the record store (see app.core.repos). ``strict`` raises OSError instead of

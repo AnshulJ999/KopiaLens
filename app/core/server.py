@@ -40,7 +40,7 @@ from .kopia import _kopia_exe, _repo_args
 log = get_logger("server")
 
 _NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW - no console flash
-BASE_PORT = 51830  # repo "1" -> 51831, repo "2" -> 51832
+BASE_PORT = int(os.environ.get("KOPIALENS_KOPIA_BASE_PORT") or 51830)  # repo "1" -> 51831, repo "2" -> 51832
 USERNAME = "kopialens"
 READY_TIMEOUT = 40.0
 
