@@ -30,6 +30,7 @@ from .index.crypto import StoreLocked
 from .index import crypto as crypto_mod
 from .core import kopia as kopia_mod
 from .core import nightly
+from .core import repos as repos_store
 from .core.applog import RequestStats, apply_logging_settings, get_logger, setup_logging
 from .core.instrument import log_memory, memory_snapshot
 from .core.metrics import table_rows
@@ -387,6 +388,8 @@ def _light_pass() -> None:
             return
         if repo_kind(repo) == "backblaze":
             continue  # BZ has no cheap warm step - its detect has its own pass below
+        if repos_store.via_server(repo):
+            continue  # browse-only: no index to warm
         if locked or nightly.is_running(repo) or offline_status(repo):
             continue  # locked, or the worker owns the DuckDB right now
         try:
@@ -513,6 +516,8 @@ def _tick() -> None:
                 return
             if repo_kind(repo) == "backblaze":
                 continue  # BZ left the daily slot () - its detect-driven check runs below
+            if repos_store.via_server(repo):
+                continue  # browse-only: kopia refuses the reads an index needs
             if _index_due(repo, now_dt, now_ts):
                 slot = _current_slot(now_dt, now_ts)
                 log.info("heavy pass due for repo=%s (mode=%s, slot=%s)", repo, _index_mode(), int(slot))

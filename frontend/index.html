@@ -53,6 +53,11 @@
         <button x-show="!indexStatus.building" @click="buildIndex()" class="kl-btn primary">Start indexing</button>
         <button x-show="indexStatus.building" @click="openIndexPanel()" class="kl-btn">Show progress</button>
       </div>
+      <!-- Reached through a kopia server: say once what works, and where the full analysis lives. -->
+      <div x-show="repoKind === 'server'" x-cloak class="mb-4 rounded-md border border-bd bg-surface2 px-4 py-3 text-sm">
+        <div class="font-medium">Browse-only: this repository is reached through a kopia server</div>
+        <div class="text-xs text-muted">Snapshots, folders, restore, pins and policies work here. You see the snapshots your server account may see. Space analysis, dedup and cleanup need direct access to the storage: run KopiaLens on the computer that runs the kopia server, or connect to the storage itself.</div>
+      </div>
 {% include "partials/tabs/dashboard.html" %}
 
 {% include "partials/tabs/snapshots.html" %}
@@ -81,6 +86,7 @@
 {% include "partials/exclude.html" %}
 {% include "partials/delete.html" %}
 {% include "partials/modals.html" %}
+{% include "partials/browse.html" %}
 {% include "partials/repodialogs.html" %}
 {% include "partials/onboarding.html" %}
 {% include "partials/lock.html" %}
@@ -103,6 +109,7 @@
   <script src="/static/js/bz/health.js?v={{ asset_v }}"></script>
   <script src="/static/js/dashboard.js?v={{ asset_v }}"></script>
   <script src="/static/js/snapshots.js?v={{ asset_v }}"></script>
+  <script src="/static/js/browse.js?v={{ asset_v }}"></script>
   <script src="/static/js/tree.js?v={{ asset_v }}"></script>
   <script src="/static/js/search.js?v={{ asset_v }}"></script>
   <script src="/static/js/churn.js?v={{ asset_v }}"></script>

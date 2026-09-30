@@ -26,7 +26,8 @@
              switches and loads; clicking in only focuses. -->
         <input x-model="query" @input.debounce.300ms="headerSearch()"
           class="fld w-full border border-bd bg-surface2 pl-9"
-          :placeholder="repoKind==='backblaze' ? 'Search Backblaze files…' : 'Search files across all snapshots...'">
+          :disabled="repoKind==='server'" :title="repoKind==='server' ? 'Search needs the index, and a kopia server connection has none' : ''"
+          :placeholder="repoKind==='backblaze' ? 'Search Backblaze files…' : (repoKind==='server' ? 'Search needs the index' : 'Search files across all snapshots...')">
         <svg class="absolute left-3 top-2.5 h-4 w-4 text-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
       </div>
       <div class="ml-auto flex items-center gap-2 text-xs shrink-0">
@@ -60,7 +61,7 @@
                 :class="indexPct(indexStatus) == null ? 'bg-warn' : 'bg-ok'"></span>
           <span x-text="indexLine()"></span>
         </button>
-        <button x-show="repoKind!=='backblaze'" @click="buildIndex()" :disabled="!!indexStatus.building" class="h-8 rounded bg-fg px-3 text-surface disabled:opacity-50" :title="indexStatus.never_indexed ? 'Build the first index for this repo' : 'Update index (incremental)'" x-text="indexStatus.never_indexed ? 'Index now' : 'Index'">Index</button>
+        <button x-show="repoKind==='kopia'" @click="buildIndex()" :disabled="!!indexStatus.building" class="h-8 rounded bg-fg px-3 text-surface disabled:opacity-50" :title="indexStatus.never_indexed ? 'Build the first index for this repo' : 'Update index (incremental)'" x-text="indexStatus.never_indexed ? 'Index now' : 'Index'">Index</button>
         <span x-show="repoKind==='backblaze'" class="rounded border border-bd bg-surface2 px-2 py-1" x-text="bzStatusLine()" :title="bzStatusTitle()"></span>
         <span x-show="repoKind==='backblaze' && bzRefreshResult" class="text-xs px-2 py-1 rounded" :class="bzRefreshResult.includes('FAILED') ? 'bg-danger-bg text-danger' : 'bg-ok-bg text-ok'" x-text="bzRefreshResult"></span>
         <button x-show="repoKind==='backblaze'" @click="bzRefresh()" class="h-8 rounded bg-fg px-3 text-surface" title="Re-scan the read-only Backblaze index">↻ Index BZ</button>

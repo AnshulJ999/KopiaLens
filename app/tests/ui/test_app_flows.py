@@ -153,10 +153,14 @@ def test_restart_keeps_settings_and_signing_in_unlocks_the_index(indexed_server,
     fmt = page.get_by_role("button", name="🕒 abs")
     fmt.click()
     expect(page.get_by_role("button", name="⏱ rel")).to_be_visible()
-    page.context.close()
 
     indexed_server.restart()
     assert indexed_server.get("/api/encryption/status")["unlocked"] is False
+    # A tab left open across the restart asks for the unlock box, not a raw error.
+    page.kl_allow.append("status of 423")
+    page.get_by_role("button", name="⟳ Refresh").click()
+    expect(page.get_by_text("Unlock the index")).to_be_visible(timeout=30_000)
+    page.context.close()
 
     fresh = open_page(indexed_server, signed_in=False)
     fresh.kl_allow.append("status of 401")        # the sign-in page answers 401 until signed in

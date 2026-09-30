@@ -317,6 +317,10 @@ PROVIDERS: dict[str, dict] = {
                    help="For example https://127.0.0.1:51515."),
             _field("server_cert_fingerprint", "--server-cert-fingerprint", "Certificate fingerprint",
                    advanced=True),
+            _field("username", "--override-username", "Username", advanced=True,
+                   help="The account's user name on the kopia server, when it isn't this computer's."),
+            _field("hostname", "--override-hostname", "Hostname", advanced=True,
+                   help="The host part of the account (user@host), when it isn't this computer's name."),
         ],
     },
     "token": {
@@ -842,6 +846,19 @@ def _size_of(path: str) -> int:
         return 0
 
 
+def _disconnect(repo: str, config_file: str) -> None:
+    """``kopia repository disconnect`` for a connection KopiaLens itself made: kopia then deletes
+    the password it saved in the OS keychain and the connection's cache, which removing the files
+    alone would leave behind. Local only, so it works with the storage offline."""
+    if not os.path.isfile(config_file):
+        return
+    res = _run([kopiabin.exe(), "--config-file", config_file, "repository", "disconnect"], None,
+               timeout=60)
+    if res["returncode"] != 0:
+        log.warning("repo=%s remove: kopia disconnect failed: %s", repo,
+                    _last_meaningful_line(res.get("stderr") or ""))
+
+
 def remove(repo: str, delete_config: bool = False) -> dict:
     """Remove a repo from KopiaLens: close its index generation, delete the app's own derived
     files, drop the record. The kopia repository and any config KopiaLens did not create are left
@@ -876,6 +893,8 @@ def remove(repo: str, delete_config: bool = False) -> dict:
     config_deleted = ""
     if delete_config and is_managed_config(rec.get("config_file")):
         cfg = rec["config_file"]
+        if rec.get("source") in ("created", "connected"):
+            _disconnect(repo, cfg)
         _remove_config_files(cfg)
         config_deleted = cfg
     audit.audit("executed", "repo-remove", repo=repo,

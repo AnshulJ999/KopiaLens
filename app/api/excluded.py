@@ -10,6 +10,7 @@ from ..core import disklookup
 from ..core.kopia import _kopia_exe, _repo_args
 from ..index.excluded import drive_stats, folder_listing
 from ..settings import load_settings
+from .errors import PASS_THROUGH
 
 router = APIRouter(tags=["excluded"])
 
@@ -54,5 +55,7 @@ def list_folder(path: str = "") -> dict:
     try:
         tol = float(load_settings().get("kopialens", {}).get("excluded_tolerance", 0.05) or 0.05)
         return folder_listing(path, tolerance=tol)
+    except PASS_THROUGH:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc

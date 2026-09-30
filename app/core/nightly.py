@@ -650,6 +650,10 @@ def start_index_pass_async(repo: str, full: bool = False, on_done=None,
     worker alongside a nightly one on another repo."""
     if repo not in REPOS:     # validate BEFORE taking the slot, never after
         return {"started": False, "repo": repo, "reason": f"unknown repo {repo}"}
+    from . import repos as repo_store
+    if repo_store.via_server(repo):
+        return {"started": False, "repo": repo,
+                "reason": "reached through a kopia server, which cannot be indexed"}
     if not _reserve(repo):    # synchronous, so a "started" answer is never a guess
         busy = reserved_repo()
         return {"started": False, "repo": repo,

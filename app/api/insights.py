@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from config import REPOS, repo_kind
 
 from ..core.policy import effective_for_path, source_summaries, summarize
-from ..index.schema import RepoOffline
+from .errors import PASS_THROUGH
 from ..index.churnview import cached_folder_window, churn_rollup
 from ..index.foldercache import compute as folder_reclaim
 from ..index.queries import (
@@ -97,7 +97,7 @@ def churn(repo: str, days: int = 30, depth: int = 4, limit: int = 400,
     try:
         return _with_source_physical(repo, churn_rollup(repo, days=days, depth=depth, limit=limit,
                                                         refresh=refresh))
-    except RepoOffline:
+    except PASS_THROUGH:
         raise                       # the dedicated 503 handler explains this one properly
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -143,7 +143,7 @@ def folder_summary_route(repo: str, prefix: str = "", source: str | None = None)
         return summary
     except HTTPException:
         raise
-    except RepoOffline:
+    except PASS_THROUGH:
         raise                       # the dedicated 503 handler explains this one properly
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -161,7 +161,7 @@ def folder_contents_route(repo: str, prefix: str = "", source: str | None = None
         for r in rows:
             r["last_seen"] = str(r["last_seen"]) if r.get("last_seen") else None
         return {"prefix": prefix, "rows": rows}
-    except RepoOffline:
+    except PASS_THROUGH:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -178,7 +178,7 @@ def folder_policy(repo: str, source: str = "", prefix: str = "") -> dict:
     try:
         raw = effective_for_path(repo, source, prefix)
         return {"prefix": prefix, "source": source, "policy": summarize(raw), "found": bool(raw)}
-    except RepoOffline:
+    except PASS_THROUGH:
         raise                       # the dedicated 503 handler explains this one properly
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -202,7 +202,7 @@ def folder_detail_route(payload: FolderDetailRequest) -> dict:
         raise HTTPException(status_code=400, detail="prefix is required")
     try:
         return folder_reclaim(payload.repo, payload.prefix, payload.source or None)
-    except RepoOffline:
+    except PASS_THROUGH:
         raise                       # the dedicated 503 handler explains this one properly
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

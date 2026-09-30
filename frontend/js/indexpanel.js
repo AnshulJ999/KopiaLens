@@ -86,6 +86,7 @@ const indexPanelPart = {
     // Same shapes the job panel uses: the flat stage list, then the panel.
     indexLine() {
       const s = this.indexStatus;
+      if (s.via_server) return "Browse-only";
       if (s.offline) return `Indexing (${s.stage || "working"}) ${s.indexed_snapshots || 0}/${s.snapshots || "?"}`;
       if (s.building) {
         const pct = this.indexPct(s);
@@ -98,6 +99,7 @@ const indexPanelPart = {
 
     indexTooltip() {
       const s = this.indexStatus || {};
+      if (s.via_server) return "Reached through a kopia server: snapshots, folders, restore and policies work; the index can't be built.";
       if (!s.building) return s.never_indexed ? "Build the first index for this repo" : "Indexed. Click for details.";
       const bits = [this.indexPanelCounts(s)];
       const detail = this.indexDetailText();

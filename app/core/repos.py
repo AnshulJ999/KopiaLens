@@ -105,6 +105,38 @@ def config_path_for(repo: str) -> str | None:
     return rec.get("config_file") or None
 
 
+_SERVER_CACHE: dict[str, tuple[int, bool]] = {}
+
+
+def via_server(repo: str) -> bool:
+    """True when the repo is reached through a kopia repository server (an ``apiServer`` config).
+
+    kopia refuses the direct-only commands the index is built from over such a connection
+    (content/blob/index reads), so the repo is browse-only. Read from the config file itself, so
+    records written before this existed answer correctly; cached per file mtime."""
+    if config.repo_kind(repo) != "kopia" or not exists(repo):
+        return False
+    path = config_path_for(repo)
+    if not path:
+        from .repoconnect import kopia_config_dir   # lazy: repoconnect imports this module
+        path = os.path.join(kopia_config_dir(), "repository.config")
+    try:
+        mtime = os.stat(path).st_mtime_ns
+    except OSError:
+        return False
+    hit = _SERVER_CACHE.get(path)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        answer = bool(isinstance(data, dict) and data.get("apiServer"))
+    except (OSError, ValueError):
+        answer = False
+    _SERVER_CACHE[path] = (mtime, answer)
+    return answer
+
+
 # Storage-config keys that must NEVER leave the machine. A kopia config file holds credentials in
 # the clear (the `kopia:"sensitive"` tag exists only so kopia's own `repository status` can scrub
 # them for display), and KopiaLens both persists that block in repos.json and serves it to the
@@ -210,6 +242,7 @@ def detail(record: dict) -> dict:
         "counts_as_backup": record.get("counts_as_backup", True),
         "unique_id": record.get("unique_id") or "",
         "storage": info,
+        "via_server": via_server(rid),
     }
 
 

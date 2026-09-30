@@ -1,0 +1,57 @@
+    <!-- Snapshot folder browser. Below the restore dialog (z-50), which opens on top of it. -->
+    <div x-show="browse" @click.self="closeBrowse()" x-cloak class="fixed inset-0 z-40 bg-black/50 flex items-center justify-center p-4 sm:p-6">
+      <template x-if="browse">
+        <div class="w-[56rem] max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col" role="dialog" aria-label="Browse snapshot">
+          <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
+            <div class="flex items-center gap-2">
+              <div class="font-medium min-w-0 truncate" x-text="'Snapshot from ' + humanTime(browse.start_time)"></div>
+              <button type="button" @click="browseRestore(null)" class="ml-auto kl-btn shrink-0" :disabled="browse.loading || !!browse.error">Restore this folder…</button>
+              <button type="button" @click="closeBrowse()" class="kl-btn quiet shrink-0" title="Close" aria-label="Close">&times;</button>
+            </div>
+            <nav class="mt-1.5 flex flex-wrap items-center gap-1 text-xs" aria-label="Folder path">
+              <template x-for="(c, i) in browse.crumbs" :key="c.path + i">
+                <span class="flex items-center gap-1">
+                  <span x-show="i > 0" class="text-faint" aria-hidden="true">›</span>
+                  <button type="button" class="font-mono hover:underline" :class="i === browse.crumbs.length - 1 ? 'text-fg font-medium' : 'text-muted'"
+                          :aria-current="i === browse.crumbs.length - 1 ? 'location' : null" @click="browseTo(c.path)" x-text="c.name"></button>
+                </span>
+              </template>
+            </nav>
+          </div>
+          <div class="flex-1 min-h-0 overflow-auto">
+            <p x-show="browse.loading" class="p-4 text-muted">Reading the folder…</p>
+            <p x-show="!browse.loading && browse.error" class="p-4" style="color:var(--danger)" x-text="browse.error"></p>
+            <p x-show="!browse.loading && !browse.error && !browse.entries.length" class="p-4 text-muted">This folder is empty.</p>
+            <table x-show="!browse.loading && !browse.error && browse.entries.length" class="w-full text-sm">
+              <thead class="text-xs text-muted sticky top-0 bg-surface">
+                <tr>
+                  <th class="text-left px-4 py-1.5 font-normal">Name</th>
+                  <th class="text-right px-2 font-normal">Size</th>
+                  <th class="text-right px-2 font-normal hidden sm:table-cell">Files</th>
+                  <th class="text-left px-2 font-normal hidden sm:table-cell">Modified</th>
+                  <th class="px-2"><span class="sr-only">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="e in browse.entries" :key="e.full_path">
+                  <tr class="border-t border-bd-soft hover:bg-head">
+                    <td class="px-4 py-1.5 break-all">
+                      <button x-show="e.type === 'd'" type="button" class="text-left hover:underline inline-flex items-start gap-1.5" @click="browseOpen(e)">
+                        <svg class="h-4 w-4 shrink-0 mt-0.5 text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                        <span x-text="e.name"></span>
+                      </button>
+                      <span x-show="e.type !== 'd'" class="pl-[1.375rem]" x-text="e.name"></span>
+                    </td>
+                    <td class="text-right px-2 tabular-nums whitespace-nowrap" x-text="fmtB(e.size)"></td>
+                    <td class="text-right px-2 tabular-nums hidden sm:table-cell" x-text="e.files == null ? '' : Number(e.files).toLocaleString()"></td>
+                    <td class="px-2 whitespace-nowrap text-muted hidden sm:table-cell" x-text="e.mtime ? humanTime(e.mtime) : ''"></td>
+                    <td class="px-2 text-right"><button type="button" class="kl-btn quiet" @click="browseRestore(e)">Restore…</button></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+          <div class="shrink-0 px-4 py-2 border-t border-bd text-xs text-muted" x-text="browseFoot()"></div>
+        </div>
+      </template>
+    </div>

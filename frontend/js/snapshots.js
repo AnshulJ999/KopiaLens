@@ -15,6 +15,8 @@ const snapshotsPart = {
         this.snapStaleAnalysis = !!data.analyzed && data.analysis_fresh === false;
         if (!this.snapshots.find((x) => x.id === this.selectedSnapshot)) this.selectedSnapshot = this.snapshots.length ? this.snapshots[this.snapshots.length - 1].id : "";
         const allSrc = this.snapSource === "*ALL*";
+        const server = this.repoKind === "server";   // no index: the space columns would stay empty
+        const spaceCols = ["physical", "accum", "churn", "reclaimable"];
         const cols = [
           ...(allSrc ? [{ title: "Source", field: "source", widthGrow: 2, minWidth: 200, formatter: (c) => sourcePath(c.getValue()) }] : []),
           { title: "Start", field: "start_time", width: 185, formatter: (c) => timeCell(c.getValue()) },
@@ -28,13 +30,23 @@ const snapshotsPart = {
           { title: "Retention", field: "retention", widthGrow: 2, minWidth: 150, formatter: (c) => (c.getValue() || []).map((r) => `<span class="pill" style="background:#dbeafe;color:#1e40af">${r}</span>`).join("") },
           { title: "Pins", field: "pins", widthGrow: 1, minWidth: 90, formatter: (c) => (c.getValue() || []).map((p) => `<span class="pill" style="background:#fef3c7;color:#92400e">${p}</span>`).join("") },
           { title: "ID", field: "id", width: 200 },
-        ];
+        ].filter((c) => !(server && spaceCols.includes(c.field)));
+        const pick = (label, fn) => ({ label, action: fn });
+        const rowMenu = server ? [
+          pick("Browse files", (_e, row) => this.browseSnapshot(row.getData())),
+          pick("Restore this snapshot…", (_e, row) => { const d = row.getData(); this.openRestore([{ source: d.source, full_path: sourcePath(d.source), snapshot_id: d.id }], { label: "snapshot " + this.humanTime(d.start_time) }); }),
+          pick("Mount + open in Explorer", (_e, row) => { const d = row.getData(); this.mountOpen(d.id, d.source, sourcePath(d.source)); }),
+          pick("Pin selected (protect)", () => this.pinSelected(false)),
+          pick("Unpin selected", () => this.pinSelected(true)),
+          pick("Diff selected (pick 2)", () => this.diffSelected()),
+          pick("Copy snapshot ID", (_e, row) => this.copyText(row.getData().id)),
+        ] : null;
         const stbl = setTable("#snapshotsTable", this.snapshots, cols, {
           selectableRows: true,  // multi-select for bulk delete / pin / diff
-          initialSort: allSrc ? [{ column: "reclaimable", dir: "desc" }] : [{ column: "start_time", dir: "desc" }],
-          onRowDblClick: (_e, row) => { const d = row.getData(); this.selectedSource = d.source; this.selectedSnapshot = d.id; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); },
-          rowMenu: [
-            { label: "Browse files", action: (_e, row) => { const d = row.getData(); this.selectedSource = d.source; this.selectedSnapshot = d.id; this.active = "tree"; this.treeMode = "full"; this.treePrefix = this.sourceRoot(); this.loadTree(); } },
+          initialSort: allSrc && !server ? [{ column: "reclaimable", dir: "desc" }] : [{ column: "start_time", dir: "desc" }],
+          onRowDblClick: (_e, row) => this.browseSnapshot(row.getData()),
+          rowMenu: rowMenu || [
+            { label: "Browse files", action: (_e, row) => this.browseSnapshot(row.getData()) },
             { label: "Restore this snapshot…", action: (_e, row) => { const d = row.getData(); this.openRestore([{ source: d.source, full_path: sourcePath(d.source), snapshot_id: d.id }], { label: "snapshot " + this.humanTime(d.start_time) }); } },
             { label: "Mount + open in Explorer", action: (_e, row) => { const d = row.getData(); this.mountOpen(d.id, d.source, sourcePath(d.source)); } },
             { label: "Select all unretained (no retention/pin)", action: () => this.selectUnretained() },

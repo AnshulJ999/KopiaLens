@@ -26,7 +26,7 @@
                       <template x-if="r.kind !== 'backblaze'">
                         <div class="flex flex-wrap justify-end gap-1.5">
                           <button @click="raCheck(r)" class="h-8 rounded border border-bd px-2.5 text-xs">Check connection</button>
-                          <button @click="raIndex(r)" class="h-8 rounded border border-bd px-2.5 text-xs">Index now</button>
+                          <button x-show="!r.via_server" @click="raIndex(r)" class="h-8 rounded border border-bd px-2.5 text-xs">Index now</button>
                           <button @click="raEdit(r)" class="h-8 rounded border border-bd px-2.5 text-xs">Edit…</button>
                           <button @click="raRemove(r)" class="h-8 rounded border px-2.5 text-xs" style="color:var(--danger);border-color:var(--danger-bd)">Remove…</button>
                         </div>

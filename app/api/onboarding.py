@@ -96,9 +96,12 @@ def start_indexing(payload: StartRequest) -> dict:
     """Index the new repositories now, one after another: each is queued with no wait, and the
     queue starts the next as soon as the previous pass finishes."""
     from ..core import reindexq
-    wanted = [r for r in payload.repos if repos.exists(r)]
-    if not wanted:
+    known = [r for r in payload.repos if repos.exists(r)]
+    if not known:
         raise HTTPException(status_code=400, detail="No repository to index.")
+    wanted = [r for r in known if not repos.via_server(r)]   # browse-only repos have no index
+    if not wanted:
+        return {"ok": True, "queued": [], "started": False}
     for rid in wanted:
         reindexq.request(rid, wait=0, reason="first")
     first = reindexq.run_now(wanted[0])

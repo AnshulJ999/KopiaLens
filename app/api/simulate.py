@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..core.retention import simulate, simulate_all, validate_retention
 from ..models import SimRequest
+from .errors import PASS_THROUGH
 
 router = APIRouter(tags=["simulate"])
 
@@ -17,6 +18,8 @@ def post_simulate(payload: SimRequest) -> dict:
         if payload.source:
             return simulate(payload.repo, payload.source, payload.policy.model_dump(), mode=payload.mode)
         return simulate_all(payload.repo, payload.policy.model_dump(), mode=payload.mode, refresh=payload.refresh)
+    except PASS_THROUGH:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -25,6 +28,8 @@ def post_simulate(payload: SimRequest) -> dict:
 def post_simulate_all(payload: SimRequest) -> dict:
     try:
         return simulate_all(payload.repo, payload.policy.model_dump(), mode=payload.mode, refresh=payload.refresh)
+    except PASS_THROUGH:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -35,5 +40,7 @@ def validate(repo: str, source: str | None = None) -> dict:
         raise HTTPException(status_code=400, detail="source is required")
     try:
         return validate_retention(repo, source)
+    except PASS_THROUGH:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

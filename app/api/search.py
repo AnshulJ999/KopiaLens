@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from pydantic import BaseModel
 
-from ..index.schema import RepoOffline
+from .errors import PASS_THROUGH
 from ..index.physical import file_detail, reclaim_for, stored_all_versions
 from ..index.queries import group_by_folder, landing, search_export, search_paths, versions
 
@@ -30,7 +30,7 @@ def search_group_by_folder(
             deleted_only=deleted_only, min_size=int(min_gb * 1_000_000_000), min_files=min_files,
             sort=sort, direction=direction, limit=limit,
         )
-    except RepoOffline:
+    except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -98,7 +98,7 @@ def search(
             )
         return {"results": res["rows"], "total": res["total"], "offset": res["offset"],
                 "limit": res["limit"], "ranked": res.get("ranked")}
-    except RepoOffline:
+    except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -110,7 +110,7 @@ def search_reclaim(payload: ReclaimRequest) -> dict:
     content ids (the visible page, capped). Cached per content id. Frontend sorts by it."""
     try:
         return {"reclaim": reclaim_for(payload.repo, payload.content_ids, cap=payload.cap)}
-    except RepoOffline:
+    except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -136,7 +136,7 @@ def search_versions(payload: VersionsRequest) -> dict:
     try:
         stored = stored_all_versions(payload.repo, [(r.source, r.full_path) for r in rows])
         frees = reclaim_for(payload.repo, [r.content_id for r in rows if r.content_id], cap=200, fetch=False)
-    except RepoOffline:
+    except PASS_THROUGH:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -206,7 +206,7 @@ def detail(repo: str, source: str | None = None, full_path: str | None = None) -
         raise HTTPException(status_code=400, detail="source and full_path are required")
     try:
         return file_detail(repo, source, full_path)
-    except RepoOffline:
+    except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

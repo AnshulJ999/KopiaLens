@@ -17,7 +17,9 @@ Once connected, each repository shows how many sources and snapshots it holds. Y
 
 ### Repositories reached through a kopia server
 
-If a repository is reached through a kopia server rather than directly, kopia doesn't allow the detailed reads KopiaLens needs for space analysis and cleanup. For full analysis, install KopiaLens on the computer that runs the kopia server, or connect to the storage directly (for example the folder, B2 bucket or S3 bucket the server uses).
+If a repository is reached through a kopia server rather than directly, kopia doesn't allow the detailed reads KopiaLens needs for its index. Such a repository is **browse-only** (see [Repositories](repositories.md#repositories-reached-through-a-kopia-server)). Select **Continue with browsing only** to add it anyway.
+
+For full analysis, install KopiaLens on the computer that runs the kopia server, or connect to the storage directly (for example the folder, B2 bucket or S3 bucket the server uses).
 
 ## 2. Protect KopiaLens
 

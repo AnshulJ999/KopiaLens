@@ -30,7 +30,7 @@ const reposPart = {
       this.cx = {
         context, loading: true, error: "", busy: false,
         detected: [], picked: {}, providers: [],
-        mode: "", provider: "", fields: {}, password: "", name: "",
+        mode: "", provider: "", fields: {}, password: "", name: "", serverOk: false,
         added: (existing || []).map((r) => this._cxEntry(r)),
       };
       try {
@@ -45,7 +45,8 @@ const reposPart = {
       const st = r.storage || {};
       return { id: r.id, name: r.name || "", short_name: r.short_name || "", type: st.type || "",
                where: repoWhereOf(st.type, st.config), summary: null, loading: false, error: "",
-               pw: "", unlocking: false, managed: r.source === "connected" || r.source === "created" };
+               pw: "", unlocking: false, managed: r.source === "connected" || r.source === "created",
+               server: !!r.via_server || st.type === "server" };
     },
     cxCandidates() { return ((this.cx && this.cx.detected) || []).filter((c) => !c.in_store); },
     cxPickedCount() { return this.cxCandidates().filter((c) => this.cx.picked[c.config_file]).length; },
@@ -61,7 +62,7 @@ const reposPart = {
     },
     async cxUseSelected() {
       const cx = this.cx;
-      const chosen = this.cxCandidates().filter((c) => cx.picked[c.config_file] && c.type !== "server");
+      const chosen = this.cxCandidates().filter((c) => cx.picked[c.config_file]);
       if (!chosen.length || cx.busy) return;
       cx.busy = true; cx.error = "";
       for (const c of chosen) {
@@ -90,13 +91,14 @@ const reposPart = {
     cxSpec() { return ((this.cx && this.cx.providers) || []).find((p) => p.key === this.cx.provider) || null; },
     cxSetProvider(key) {
       const cx = this.cx;
-      cx.provider = key; cx.error = "";
+      cx.provider = key; cx.error = ""; cx.serverOk = false;
       const spec = this.cxSpec();
       cx.fields = {};
       for (const f of (spec ? spec.fields : [])) cx.fields[f.key] = f.default == null ? (f.kind === "bool" ? false : "") : f.default;
     },
     cxFieldList(advanced) { const s = this.cxSpec(); return s ? s.fields.filter((f) => !!f.advanced === advanced) : []; },
     cxPasswordNote() {
+      if (this.cx.provider === "server") return "Your account's password on the kopia server. Not your KopiaLens password.";
       return this.cx.mode === "create"
         ? "kopia encrypts the repository with this password. Without it the backups can't be read, so keep it safe. It's not your KopiaLens password."
         : "kopia's own password for this repository. Not your KopiaLens password.";
@@ -105,7 +107,7 @@ const reposPart = {
     async cxSubmit() {
       const cx = this.cx;
       const spec = this.cxSpec();
-      if (!spec || cx.busy || spec.key === "server") return;
+      if (!spec || cx.busy || (spec.key === "server" && !cx.serverOk)) return;
       const fields = {};
       for (const f of spec.fields) {
         const v = cx.fields[f.key];
@@ -211,6 +213,7 @@ const reposPart = {
     },
     raIndexLine(r) {
       if (r.kind === "backblaze") return "Backblaze's own index, read-only";
+      if (r.via_server) return "No index through a kopia server";
       const f = (this.freshness || []).find((x) => x.repo === r.id);
       if (!f) return "";
       if (f.running) return "Indexing now";
@@ -225,7 +228,7 @@ const reposPart = {
     raPill(r) {
       const chk = this.repoChecks[r.id];
       if (chk && chk.busy) return ["Checking…", ""];
-      if ((r.storage || {}).type === "server") return ["Browsing only", "warn"];
+      if (r.via_server || (r.storage || {}).type === "server") return ["Browse-only", "warn"];
       if (chk && chk.ok) return ["Connected", "ok"];
       if (chk && chk.error) return ["Can't connect", "bad"];
       return null;

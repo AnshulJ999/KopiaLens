@@ -40,13 +40,13 @@
                     <div class="h">Found on this computer</div>
                     <div class="rounded-md border border-bd divide-y divide-[var(--bd)]">
                       <template x-for="c in cxCandidates()" :key="c.config_file">
-                        <label class="flex items-start gap-3 p-3" :class="c.type === 'server' ? 'opacity-80' : 'cursor-pointer hover:bg-head'">
-                          <input type="checkbox" class="mt-0.5" x-model="cx.picked[c.config_file]" :disabled="c.type === 'server'">
+                        <label class="flex items-start gap-3 p-3 cursor-pointer hover:bg-head">
+                          <input type="checkbox" class="mt-0.5" x-model="cx.picked[c.config_file]">
                           <span class="min-w-0 flex-1">
                             <span class="block font-medium truncate" x-text="c.filename"></span>
                             <span class="block text-xs text-muted truncate" :title="cxWhere(c)" x-text="[cxTypeLabel(c.type), cxWhere(c)].filter(Boolean).join(' · ') + (c.folder === 'kopia' && !c.is_default ? ' · also used by KopiaUI' : '')"></span>
                             <template x-if="c.type === 'server'">
-                              <span class="block text-xs mt-1" style="color:var(--warn)">Reached through a kopia server. Space analysis and cleanup need direct access to the storage.</span>
+                              <span class="block text-xs mt-1" style="color:var(--warn)">Through a kopia server: browse-only. Space analysis and cleanup need direct access to the storage.</span>
                             </template>
                           </span>
                         </label>
@@ -90,17 +90,17 @@
                       <p class="kl-note mt-1" x-show="cxSpec()" x-text="cxSpec() && cxSpec().summary"></p>
                     </div>
 
-                    <template x-if="cx.provider === 'server'">
+                    <template x-if="cx.provider === 'server' && !cx.serverOk">
                       <div class="space-y-2">
                         <div class="kl-callout">Through a kopia server you can browse snapshots and sources. Space analysis, dedup and cleanup need direct access to the storage: install KopiaLens on the computer that runs the kopia server, or connect to the storage itself (a folder, B2, S3…).</div>
                         <div class="flex gap-2">
                           <button type="button" class="kl-btn" @click="cxSetProvider('filesystem')">Connect to storage directly</button>
-                          <button type="button" class="kl-btn" disabled data-placeholder="server-browsing" title="Coming soon">Continue with browsing only</button>
+                          <button type="button" class="kl-btn" @click="cx.serverOk = true">Continue with browsing only</button>
                         </div>
                       </div>
                     </template>
 
-                    <template x-if="cxSpec() && cx.provider !== 'server'">
+                    <template x-if="cxSpec() && (cx.provider !== 'server' || cx.serverOk)">
                       <div class="space-y-3">
                         <div class="grid gap-2 sm:grid-cols-2">
                           <template x-for="f in cxFieldList(false)" :key="cx.provider + f.key">

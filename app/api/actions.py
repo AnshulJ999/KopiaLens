@@ -31,7 +31,7 @@ from ..core.kopia import (
     snapshot_delete_dry_run,
     unmount,
 )
-from ..index.schema import RepoOffline
+from .errors import PASS_THROUGH
 from ..core.nightly import start_index_pass_async
 from ..index.holding import snapshots_for_path
 from ..index.physical import batch_detail, folder_detail
@@ -162,7 +162,7 @@ def mount(payload: MountRequest) -> dict:
         proc = mount_snapshot(payload.repo, payload.snapshot_id, payload.mountpoint,
                               info=_snapshot_info(payload.repo, payload.snapshot_id, None))
         return {"pid": proc.pid, "command": proc.args}
-    except RepoOffline:
+    except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except MountError as exc:
         raise HTTPException(status_code=400, detail=f"Mount failed: {exc}") from exc
@@ -192,7 +192,7 @@ def mount_open(payload: MountOpenRequest) -> dict:
                                 info={**_snapshot_info(payload.repo, payload.snapshot_id, payload.source),
                                       "path": payload.full_path or ""})
         return {"pid": proc.pid, "command": proc.args, "mountpoint": mountpoint, "opening": in_mount_target}
-    except RepoOffline:
+    except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except MountError as exc:
         raise HTTPException(status_code=400, detail=f"Mount failed: {exc}") from exc
@@ -647,7 +647,7 @@ def folder_reclaim(payload: FolderReclaimRequest) -> dict:
     """Subtree reclaim (logical / physical / freeable) for a folder - an on-demand walk."""
     try:
         return folder_detail(payload.repo, payload.source, payload.prefix)
-    except RepoOffline:
+    except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -669,7 +669,7 @@ def batch_detail_route(payload: BatchDetailRequest) -> dict:
         raise HTTPException(status_code=400, detail="no files specified")
     try:
         return batch_detail(payload.repo, payload.files, all_versions=payload.all_versions)
-    except RepoOffline:
+    except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc

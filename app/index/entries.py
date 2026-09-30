@@ -22,10 +22,11 @@ import json
 import sys
 import threading
 
+from ..core import repos
 from ..core.applog import get_logger
 from ..core.kopia import kopia
 from . import resolve, tree
-from .store import read_cursor
+from .store import NoIndex, read_cursor
 
 log = get_logger("entries")
 
@@ -148,8 +149,12 @@ def _from_tree(cur, id_of: dict[str, int]) -> dict[str, list[dict]]:
 def _from_kopia(repo: str, oids: list[str]) -> dict[str, list[dict]]:
     """Objects the tree does not hold, straight from kopia. Reads nothing into the store."""
     out: dict[str, list[dict]] = {}
-    normal = [o for o in oids if not o.startswith("I")]
-    indirect = [o for o in oids if o.startswith("I")]
+    if repos.via_server(repo):
+        # `content show` is direct-only; `kopia show` reads any object through a server too.
+        normal, indirect = [], list(oids)
+    else:
+        normal = [o for o in oids if not o.startswith("I")]
+        indirect = [o for o in oids if o.startswith("I")]
     for i in range(0, len(normal), BATCH):
         group = normal[i:i + BATCH]
         res = kopia(repo, ["content", "show"] + group)
@@ -191,15 +196,19 @@ def children_of(repo: str, oids: list[str], *, cursor=None) -> dict[str, list[di
     if not missing:
         return out
     own = cursor is None
-    cur = read_cursor(repo) if own else cursor
     try:
-        id_of = resolve.cid_ids(cur, missing)
-        if id_of:
-            out.update(_from_tree(cur, id_of))
+        cur = read_cursor(repo) if own else cursor
+    except NoIndex:
+        cur = None                 # never indexed (or reached through a server): kopia only
+    try:
+        if cur is not None:
+            id_of = resolve.cid_ids(cur, missing)
+            if id_of:
+                out.update(_from_tree(cur, id_of))
         unresolved = [o for o in missing if o not in out]
         if unresolved:
             out.update(_from_kopia(repo, unresolved))
     finally:
-        if own:
+        if own and cur is not None:
             cur.close()
     return out

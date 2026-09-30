@@ -7,12 +7,14 @@ kopia nor KopiaLens sees the developer's real kopia connections, caches or keyri
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import http.cookiejar
 import json
 import os
 import random
 import site
 import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -104,6 +106,47 @@ def build_fixture_repo(root: Path, kopia: str) -> dict:
         kopia_run(kopia, env, config, "snapshot", "create", str(src),
                   "--start-time", when, "--end-time", when)
     return {"source": str(src), "repo": str(repo), "config": str(config), "env": env}
+
+
+# ---------------------------------------------------------------- kopia repository server
+
+SERVER_USER_PASSWORD = "server user pw"
+
+
+def start_kopia_server(root: Path, kopia: str, env: dict, config: str) -> dict:
+    """``kopia server start`` over the fixture repository, with one account for the snapshots'
+    owner (a server account sees only its own snapshots). TLS is mandatory for its clients."""
+    cfg = Path(config)
+    env = {**env, "KOPIA_PASSWORD": REPO_PASSWORD}
+    kopia_run(kopia, env, cfg, "server", "user", "add", f"{USER}@{HOST}",
+              "--user-password", SERVER_USER_PASSWORD)
+    port = _free_port()
+    crt, key, log = root / "kopia-server.crt", root / "kopia-server.key", root / "kopia-server.log"
+    out = open(log, "a", encoding="utf-8")
+    proc = subprocess.Popen([kopia, "--config-file", str(cfg), "server", "start",
+                             f"--address=127.0.0.1:{port}", "--tls-generate-cert",
+                             "--tls-cert-file", str(crt), "--tls-key-file", str(key),
+                             "--server-control-username", "control",
+                             "--server-control-password", "control pw", "--no-ui"],
+                            env=env, stdout=out, stderr=subprocess.STDOUT)
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError("kopia server exited early:\n" + log.read_text(errors="replace")[-2000:])
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                pass
+            if crt.exists() and crt.stat().st_size:
+                break
+        except OSError:
+            pass
+        time.sleep(0.3)
+    else:
+        proc.terminate()
+        raise RuntimeError("kopia server did not start within 60s")
+    fingerprint = hashlib.sha256(ssl.PEM_cert_to_DER_cert(crt.read_text())).hexdigest()
+    return {"proc": proc, "log": out, "url": f"https://127.0.0.1:{port}", "fingerprint": fingerprint,
+            "username": USER, "hostname": HOST, "password": SERVER_USER_PASSWORD}
 
 
 # ---------------------------------------------------------------- KopiaLens server

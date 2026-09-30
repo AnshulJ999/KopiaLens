@@ -16,8 +16,18 @@ document.addEventListener("alpine:init", () => {
       { id: "excluded", label: "Excluded" },
       { id: "policies", label: "Policies" }, { id: "actions", label: "Actions" },
     ],
+    // Reached through a kopia server: kopia refuses the reads an index needs, so only the views
+    // that work straight from kopia are offered.
+    serverTabs: [
+      { id: "snapshots", label: "Snapshots" }, { id: "policies", label: "Policies" }, { id: "logs", label: "Logs" },
+    ],
     active: "dashboard",
-    currentTabs() { return this.repoKind === "backblaze" ? this.bzTabs : this.tabs; },
+    currentTabs() { return this.repoKind === "backblaze" ? this.bzTabs : (this.repoKind === "server" ? this.serverTabs : this.tabs); },
+    kindOf(id) {
+      const r = (this.repos || []).find((x) => x.id === id) || {};
+      if (r.kind === "backblaze") return "backblaze";
+      return r.via_server ? "server" : (r.kind || "kopia");
+    },
     get dark() {  // live: theme/dark-mode state lives in themePart; "system" defers to the OS
       if (this.theme === "system") return window.matchMedia("(prefers-color-scheme: dark)").matches;
       return this.themeIsDark();
@@ -169,6 +179,7 @@ document.addEventListener("alpine:init", () => {
       if (this.showExclude) { return this.escCloseExclude(); }
       if (this.showDelete) { this.showDelete = false; return; }
       if (this.showRestore) { this.closeRestore(); return; }
+      if (this.browse) { this.closeBrowse(); return; }
       if (this.showDiff) { this.showDiff = false; return; }
       if (this.showRemove) { this.closeRemove(); return; }
       if (this.showPolBackups) { this.showPolBackups = false; return; }
@@ -237,7 +248,7 @@ document.addEventListener("alpine:init", () => {
           const first = data.repos.find((r) => r.kind !== "backblaze") || data.repos[0];
           this.repo = data.repos.some((r) => r.id === saved) ? saved : (first ? first.id : "1");
         }
-        this.repoKind = (data.repos.find((r) => r.id === this.repo) || {}).kind || "kopia";
+        this.repoKind = this.kindOf(this.repo);
         // A locked index shows the unlock box on load, not only once a view happens to read it.
         getJson("/api/encryption/status").then((s) => { if (s.enabled && !s.unlocked) this.showLock({}); }).catch(() => {});
         this.backend = data.settings?.listing_backend || "subprocess";
@@ -278,9 +289,11 @@ document.addEventListener("alpine:init", () => {
           this.active = "bz-dashboard";
           await this.bzInit();
         } else {
+          if (this.repoKind === "server") this.active = "snapshots";
           await this.refreshBase();
           if (this.indexStatus.building) this.pollIndex();  // show progress for the auto-triggered (migration) rebuild
-          if (!this._neverIndexed()) await this.loadDashboard();
+          if (this.repoKind === "server") await this.activate();
+          else if (!this._neverIndexed()) await this.loadDashboard();
         }
       });
       this.armAutoRefresh();
@@ -353,6 +366,7 @@ document.addEventListener("alpine:init", () => {
       try { this.freshness = (await getJson("/api/index/freshness")).repos || []; } catch (e) { /* non-critical */ }
     },
     freshAge(row) {
+      if (row.via_server) return "browse-only";
       if (row.running) return "indexing now";
       if (!row.last_index) return "never";
       const mins = Math.round((Date.now() / 1000 - row.last_index) / 60);
@@ -361,11 +375,12 @@ document.addEventListener("alpine:init", () => {
       return hrs < 36 ? `${hrs}h ago` : `${Math.round(hrs / 24)}d ago`;
     },
     freshStale(row) {  // amber past a day and a half - long enough that a missed run is the reason
-      return !row.running && (!row.last_index || (Date.now() / 1000 - row.last_index) > 36 * 3600);
+      return !row.via_server && !row.running && (!row.last_index || (Date.now() / 1000 - row.last_index) > 36 * 3600);
     },
     // Tooltip per strip row. BZ: verification age ("checked Xm ago") + queued/failed states -
     // the badge itself carries the rebuild age, so the two facts stay separate (2026-09-13).
     freshTitle(row) {
+      if (row.via_server) return row.name + " - reached through a kopia server, so it has no index";
       if (row.kind !== "backblaze") return row.name + (row.error ? " - last run failed: " + row.error : "");
       const parts = [];
       if (row.last_check_ts) {
@@ -391,7 +406,7 @@ document.addEventListener("alpine:init", () => {
       this.polMeta = null; this.polResolved = {}; this.polNewTargets = [];
       this.polMulti = { on: false, picked: [], fields: {}, plan: null, ticks: {}, busy: false };
       this.versionSizes = {};
-      this.repoKind = (this.repos.find((r) => r.id === this.repo) || {}).kind || "kopia";
+      this.repoKind = this.kindOf(this.repo);
       if (this.repoPinned) {  // pinned tab: keep the choice in the URL, don't touch shared last_repo
         const u = new URL(location.href); u.searchParams.set("repo", this.repo); history.replaceState(null, "", u);
       } else {
@@ -403,6 +418,7 @@ document.addEventListener("alpine:init", () => {
           return this.bzInit();
         }
         if (String(this.active).startsWith("bz-")) this.active = "dashboard";  // coming back from BZ
+        if (this.repoKind === "server" && !this.serverTabs.some((t) => t.id === this.active)) this.active = "snapshots";
         await this.refreshBase(true);
         this.selectedSource = this.sources[0] || "";
         await this.activate();
@@ -421,7 +437,8 @@ document.addEventListener("alpine:init", () => {
 
     activate() {
       if (this.repoKind === "backblaze") return this.bzActivate();
-      if (["dashboard", "snapshots", "tree", "search", "churn", "stats"].includes(this.active)
+      // Snapshots reads kopia's own list, so it works before the first index too.
+      if (["dashboard", "tree", "search", "churn", "stats"].includes(this.active)
           && this._neverIndexed()) return;
       if (this.active === "dashboard") return this.loadDashboard();
       if (this.active === "snapshots") return this.loadSnapshots();
@@ -437,6 +454,7 @@ document.addEventListener("alpine:init", () => {
     },
 
     headerSearch() {  // top search box (Option B): drives BZ search when a Backblaze repo is active
+      if (this.repoKind === "server") return;   // search needs the index
       if (this.repoKind === "backblaze") { this.active = "bz-search"; this.bzLoadSearch(); }
       else { this.active = "search"; this.loadSearch(); }
     },
@@ -528,13 +546,13 @@ document.addEventListener("alpine:init", () => {
     csv(id, name) { downloadTable(id, name); },
     };
     // Duplicate-key guard: two parts declaring the same key would compose silently last-wins.
-    const parts = [["core", core], ["toastPart", toastPart], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["indexPanelPart", indexPanelPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["accountPart", accountPart], ["reposPart", reposPart], ["onboardingPart", onboardingPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart]];
+    const parts = [["core", core], ["toastPart", toastPart], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["browsePart", browsePart], ["treePart", treePart], ["searchPart", searchPart], ["indexPanelPart", indexPanelPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["accountPart", accountPart], ["reposPart", reposPart], ["onboardingPart", onboardingPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart]];
     const seen = new Map();
     for (const [owner, part] of parts)
       for (const k of Object.keys(part)) {
         if (seen.has(k)) console.error(`kopiaLens: duplicate key "${k}" declared in both ${seen.get(k)} and ${owner}`);
         else seen.set(k, owner);
       }
-    return Object.assign(core, toastPart, indexPanelPart, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, diffviewPart, jobsPart, maintenancePart, settingsPart, accountPart, reposPart, onboardingPart, themePart, policiesPart, policyEditPart);
+    return Object.assign(core, toastPart, indexPanelPart, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, browsePart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, diffviewPart, jobsPart, maintenancePart, settingsPart, accountPart, reposPart, onboardingPart, themePart, policiesPart, policyEditPart);
   });
 });

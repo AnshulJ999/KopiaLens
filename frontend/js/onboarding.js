@@ -131,7 +131,7 @@ const onboardingPart = {
     // ---- Start ------------------------------------------------------------------------------
     obSummary() {
       const o = this.ob;
-      const names = ((this.cx && this.cx.added) || []).map((a) => a.name).join(", ");
+      const names = ((this.cx && this.cx.added) || []).map((a) => a.name + (a.server ? " (browse-only, not indexed)" : "")).join(", ");
       return [
         ["Repositories", names || "None"],
         ["Sign-in", o.protected === "account" ? "On" : (o.protected === "skipped" ? "Off" : "Unchanged")],

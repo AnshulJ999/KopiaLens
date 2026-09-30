@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from ..core.sources import sources_index
 from ..index.holding import holding_snapshots
-from ..index.schema import RepoOffline
+from .errors import PASS_THROUGH
 from ..index.queries import (
     flat_files,
     holders_for_paths,
@@ -247,7 +247,7 @@ def tree(
         return {"children": children, "mode": mode}
     except HTTPException:
         raise
-    except RepoOffline:
+    except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

@@ -42,6 +42,19 @@ def fixture_repo(tmp_path_factory, kopia) -> dict:
 
 
 @pytest.fixture(scope="session")
+def kopia_server(fixture_repo, kopia) -> dict:
+    """A kopia repository server over the fixture repository."""
+    srv = h.start_kopia_server(fixture_repo["root"], kopia, fixture_repo["env"], fixture_repo["config"])
+    yield srv
+    srv["proc"].terminate()
+    try:
+        srv["proc"].wait(timeout=20)
+    except Exception:  # noqa: BLE001
+        srv["proc"].kill()
+    srv["log"].close()
+
+
+@pytest.fixture(scope="session")
 def browser():
     from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:

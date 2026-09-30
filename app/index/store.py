@@ -205,6 +205,10 @@ def _bind_generation(con, repo: str, artifacts: dict[str, list[str]], encrypted:
                 "NULL::TIMESTAMP AS set_at WHERE false")
 
 
+class NoIndex(FileNotFoundError):
+    """The repo has never been indexed (no manifest yet): a normal state, not a fault."""
+
+
 def open_generation(repo: str) -> Generation:
     """Open the current generation: read the manifest, bind views, return the handle.
 
@@ -214,11 +218,11 @@ def open_generation(repo: str) -> Generation:
     the NEXT publish. Stamping the older mtime can only cause one extra reopen."""
     p = manifest_path(repo)
     if not os.path.exists(p):
-        raise FileNotFoundError(f"repo {repo!r} has no index (no manifest.json)")
+        raise NoIndex(f"repo {repo!r} has no index (no manifest.json)")
     mtime = os.stat(p).st_mtime_ns
     manifest = read_manifest(repo)
     if manifest is None:
-        raise FileNotFoundError(f"repo {repo!r} has no index (no manifest.json)")
+        raise NoIndex(f"repo {repo!r} has no index (no manifest.json)")
     found = int(manifest.get("schema_version") or 0)
     if found != upgrade.MANIFEST_VERSION:
         # Refusing is the point: an older layout read by newer code misreads silently, and a NEWER

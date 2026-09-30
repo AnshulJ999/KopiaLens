@@ -8,12 +8,17 @@ from fastapi import APIRouter, HTTPException
 
 from pydantic import BaseModel
 
+from ..core import paths as pathrules
 from ..core.kopia import diff_execute, snapshot_diff_command, snapshot_pin_command
 from ..core.nightly import is_running
 from ..core.retention import set_reclaim
 from ..core.sources import resolve_source, sources_index
+from ..index import entries
+from ..index.holding import _find, _segments
 from ..index.queries import snapshot_files
+from ..index.store import NoIndex
 from ..index.snapanalysis import batched, compute_source, read_analysis, reclaimable_files
+from .errors import PASS_THROUGH
 
 router = APIRouter(tags=["snapshots"])
 
@@ -55,6 +60,15 @@ def _snap_row(key: str, snap: dict, a: dict) -> dict:
     }
 
 
+def _analysis(repo: str, key: str) -> dict:
+    """Persisted per-snapshot space figures, or none before the first index (and always for a repo
+    reached through a kopia server): the list itself comes from kopia and still shows."""
+    try:
+        return read_analysis(repo, key)
+    except NoIndex:
+        return {}
+
+
 @router.get("/snapshots")
 def snapshots(repo: str, source: str | None = None, source_index: int | None = None) -> dict:
     """Snapshots for a source, merged with persisted per-snapshot churn + reclaimable (when
@@ -66,7 +80,7 @@ def snapshots(repo: str, source: str | None = None, source_index: int | None = N
         rows, analyzed_sources = [], 0
         all_fresh = True
         for key in sorted(sources_index(repo)):
-            info = read_analysis(repo, key)
+            info = _analysis(repo, key)
             analysis = info.get("by_id", {})
             if analysis:
                 analyzed_sources += 1
@@ -82,7 +96,7 @@ def snapshots(repo: str, source: str | None = None, source_index: int | None = N
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    info = read_analysis(repo, key)
+    info = _analysis(repo, key)
     analysis = info.get("by_id", {})
     rows = [_snap_row(key, snap, analysis.get(snap["id"], {})) for snap in srcs[key]]
     return {"source": key, "snapshots": rows, "analyzed": bool(analysis),
@@ -163,6 +177,8 @@ def set_reclaim_route(payload: SetReclaimRequest) -> dict:
         raise HTTPException(status_code=400, detail="snapshot_ids is empty")
     try:
         return set_reclaim(payload.repo, payload.snapshot_ids, refresh=payload.refresh)
+    except PASS_THROUGH:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -174,6 +190,60 @@ def pin(payload: PinRequest) -> dict:
         raise HTTPException(status_code=400, detail="snapshot_ids is empty")
     cmd = snapshot_pin_command(payload.repo, payload.snapshot_ids, remove=payload.remove)
     return {"remove": payload.remove, "command": _fmt_cmd(cmd)}
+
+
+def _iso(value) -> str:
+    if hasattr(value, "isoformat"):
+        text = value.isoformat()
+        return text if value.tzinfo else text + "Z"
+    return str(value or "")
+
+
+@router.get("/snapshots/browse")
+def browse(repo: str, source: str, snapshot_id: str, path: str = "") -> dict:
+    """One folder of one snapshot, read on demand: the index when it holds the folder, kopia
+    otherwise. Needs no index, so it also serves repos reached through a kopia server."""
+    snap = next((s for s in sources_index(repo).get(source, []) if s.get("id") == snapshot_id), None)
+    if snap is None:
+        raise HTTPException(status_code=404, detail="That snapshot no longer exists.")
+    root = pathrules.source_root(source).rstrip("\\/")
+    full = (path or root).rstrip("\\/") or root
+    segs = _segments(source, full)
+    if segs is None:
+        raise HTTPException(status_code=400, detail="That folder is not inside this snapshot's source.")
+    fold = not pathrules.case_sensitive(source)
+    sep = pathrules.sep(source)
+    oid = (snap.get("rootEntry") or {}).get("obj") or ""
+    crumbs = [{"name": root or sep, "path": root}]
+    try:
+        for i, seg in enumerate(segs):
+            kids = entries.children_of(repo, [oid]).get(oid)
+            entry = _find(kids or [], seg, fold) if kids is not None else None
+            if entry is None or entry.get("type") != "d":
+                raise HTTPException(status_code=404, detail=f"{seg} is not a folder in this snapshot.")
+            oid = entry.get("obj") or ""
+            crumbs.append({"name": seg, "path": sep.join([root, *segs[:i + 1]])})
+        kids = entries.children_of(repo, [oid]).get(oid)
+    except PASS_THROUGH:
+        raise
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    if kids is None:
+        raise HTTPException(status_code=502, detail="kopia could not read this folder. Check the connection and try again.")
+    rows = []
+    for e in kids:
+        summ = e.get("summ") or {}
+        is_dir = e.get("type") == "d"
+        rows.append({"name": e.get("name") or "", "type": e.get("type") or "",
+                     "size": int((summ.get("size") if is_dir else e.get("size")) or 0),
+                     "files": int(summ.get("files") or 0) if is_dir else None,
+                     "mtime": _iso(e.get("mtime")),
+                     "full_path": sep.join([full, e.get("name") or ""])})
+    rows.sort(key=lambda r: (r["type"] != "d", r["name"].lower()))
+    return {"source": source, "snapshot_id": snapshot_id, "start_time": snap.get("startTime") or "",
+            "path": full, "crumbs": crumbs, "entries": rows}
 
 
 @router.get("/snapshots/diff")

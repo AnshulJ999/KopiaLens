@@ -11,7 +11,7 @@ from config import REPOS, repo_kind
 from ..core.metrics import table_rows
 from ..core.nightly import start_index_pass_async, state as nightly_state, worker_progress
 from ..core.sources import sources_index
-from ..index.schema import RepoOffline
+from .errors import PASS_THROUGH
 from ..index.builder import index_status_with_summary
 from ..settings import load_settings, mutate_settings
 
@@ -83,7 +83,7 @@ def dashboard(repo: str, mode: str = "all", refresh: bool = False) -> dict:
     _require_kopia(repo)
     try:
         return table_rows(repo, refresh=refresh, mode=mode)
-    except RepoOffline:
+    except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -99,9 +99,12 @@ def sources(repo: str, force: bool = False) -> dict:
 @router.get("/index/status")
 def get_index_status(repo: str) -> dict:
     _require_kopia(repo)
+    from ..core import repos as repo_store
+    if repo_store.via_server(repo):
+        return {"repo": repo, "via_server": True, "never_indexed": False, "building": False}
     try:
         return index_status_with_summary(repo)
-    except RepoOffline:
+    except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -156,7 +159,7 @@ def post_index_build(repo: str, source: str | None = None, full: bool = False) -
         # leave the freshness strip showing the old success time.
         from ..main import mark_nightly_result  # lazy: app.main imports this router
         return start_index_pass_async(repo, full=full, on_done=mark_nightly_result)
-    except RepoOffline:
+    except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -167,6 +170,7 @@ def index_freshness() -> dict:
     """How current every repo's data is - one call for the whole header strip, so the UI does not
     need a per-repo round trip just to say "indexed 3h ago"."""
     from ..main import nightly_error, nightly_success_ts, nightly_ts  # lazy: app.main imports this router
+    from ..core import repos as repo_store
     from ..core.sources import last_listing_error
 
     out = []
@@ -175,6 +179,7 @@ def index_freshness() -> dict:
         stored = nightly_error(key)
         row = {
             "repo": key, "name": cfg.get("name", key), "kind": cfg.get("kind", "kopia"),
+            "via_server": repo_store.via_server(key),
             # last SUCCESS, not last attempt - a crashed run must never read as "indexed just now"
             "last_index": nightly_success_ts(key) or None,
             "last_attempt": nightly_ts(key) or None,
