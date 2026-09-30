@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from config import DATA_DIR, REPOS, repo_kind
 
 from .api import (account, actions, audit, backblaze, dashboard, deleteplan, encryption, excluded, insights,
-                  jobs, logs, policies, restore, search, setup, simulate, snapshots, stats, tree)
+                  jobs, logs, onboarding, policies, restore, search, setup, simulate, snapshots, stats, tree)
 from .core import auth
 from .core import jobs as jobrunner
 from .index.crypto import StoreLocked
@@ -78,9 +78,10 @@ def _reindex_interval() -> float:
 
 
 def _index_mode() -> str:
-    """``daily`` (default: one heavy pass at a fixed wall-clock time) or ``interval`` (the older
-    every-N-seconds behaviour, kept as an option rather than removed)."""
-    return "interval" if str(_kl().get("index_mode", "daily")).lower() == "interval" else "daily"
+    """``daily`` (default: one heavy pass at a fixed wall-clock time), ``interval`` (every N
+    seconds) or ``off`` (only when the user starts it)."""
+    mode = str(_kl().get("index_mode", "daily")).lower()
+    return mode if mode in ("interval", "off") else "daily"
 
 
 def _index_time() -> tuple[int, int]:
@@ -179,6 +180,15 @@ def nightly_ts(repo: str) -> float:
     try:
         return float(val or 0)
     except Exception:
+        return 0.0
+
+
+def _repo_created(repo: str) -> float:
+    import config
+    rec = next((r for r in config.RECORDS.get("repos", []) if str(r.get("id")) == str(repo)), {})
+    try:
+        return float(rec.get("created") or 0)
+    except (TypeError, ValueError):
         return 0.0
 
 
@@ -473,8 +483,12 @@ def _index_due(repo: str, now_dt: dt.datetime, now_ts: float) -> bool:
     """Due when this slot has not been attempted yet - or when the attempt FAILED and the retry
     window has opened. Without the retry arm, a single crashed worker costs a whole day: exactly
     what would have happened on the first night, when the worker could not start at all."""
+    if _index_mode() == "off":
+        return False
     slot = _current_slot(now_dt, now_ts)
-    if nightly_ts(repo) < slot:
+    # A repo added after this slot waits for the next one: adding a repo never starts an index
+    # the user did not ask for.
+    if max(nightly_ts(repo), _repo_created(repo)) < slot:
         return True
     rec = _attempt_record(repo)
     if rec.get("slot") != slot or rec.get("ok") is not False:
@@ -683,7 +697,15 @@ async def access_middleware(request: Request, call_next):
         return JSONResponse(status_code=421, content={
             "detail": f"Host {request.headers.get('host', '')!r} is not allowed. Add it to "
                       "settings.kopialens.allowed_hosts if you reach KopiaLens by that name."})
-    if not auth.enabled() or auth.exempt(request.url.path):
+    path = request.url.path
+    # Setup closed with no protection chosen: the API needs the setup code (entered once, kept in
+    # a cookie). Pages and static files carry no data and stay reachable to ask for it.
+    if (path.startswith("/api/") and auth.first_run_state()["needs_code"]
+            and not auth.setup_gate_exempt(path)
+            and not auth.setup_cookie_ok(request.cookies.get(auth.SETUP_COOKIE))):
+        return JSONResponse(status_code=403, content={
+            "detail": "Setup is closed. Enter the setup code from the KopiaLens log.", "setup_code": True})
+    if not auth.enabled() or auth.exempt(path):
         return await call_next(request)
     user = auth.session_user(request.cookies.get(auth.COOKIE_NAME))
     if user is not None:
@@ -1010,6 +1032,7 @@ app.include_router(insights.router, prefix="/api")
 app.include_router(encryption.router, prefix="/api")
 app.include_router(setup.router, prefix="/api")
 app.include_router(account.router, prefix="/api")
+app.include_router(onboarding.router, prefix="/api")
 app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
 
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")

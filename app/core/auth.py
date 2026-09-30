@@ -230,10 +230,29 @@ def first_run_state(now: float | None = None) -> dict:
             "needs_code": required and not is_open}
 
 
-def first_run_allowed(code: str = "") -> bool:
+def first_run_allowed(code: str = "", cookie: str = "") -> bool:
     if not first_run_state()["needs_code"]:
         return True
-    return hmac.compare_digest((code or "").strip().upper(), setup_code())
+    return hmac.compare_digest((code or "").strip().upper(), setup_code()) or setup_cookie_ok(cookie)
+
+
+# Entering the setup code once sets this cookie, so the rest of setup needs no code. Its value is
+# bound to this process's code, so a restart (which reopens the window anyway) invalidates it.
+SETUP_COOKIE = "kopialens_setup"
+
+
+def setup_cookie_value() -> str:
+    return hmac.new(users.secret(), f"setup:{setup_code()}".encode(), hashlib.sha256).hexdigest()
+
+
+def setup_cookie_ok(cookie: str | None) -> bool:
+    return bool(cookie) and hmac.compare_digest(str(cookie), setup_cookie_value())
+
+
+def setup_gate_exempt(path: str) -> bool:
+    """API paths reachable while setup is closed and no code was entered: the state the setup page
+    needs to explain itself, the code entry, and the sign-in/health paths."""
+    return exempt(path) or path in ("/api/onboarding/state", "/api/onboarding/setup-code")
 
 
 def announce_setup() -> None:

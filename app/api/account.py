@@ -80,8 +80,9 @@ def _check_new_password(password: str) -> None:
                             detail=f"Use a password of at least {auth.MIN_PASSWORD} characters.")
 
 
-def _first_run_gate(code: str) -> None:
-    if not auth.first_run_allowed(code):
+def _first_run_gate(code: str, request: Request | None) -> None:
+    cookie = request.cookies.get(auth.SETUP_COOKIE, "") if request is not None else ""
+    if not auth.first_run_allowed(code, cookie):
         raise HTTPException(status_code=403,
                             detail="Setup is closed. Enter the setup code from the KopiaLens log.")
 
@@ -121,11 +122,11 @@ def state() -> dict:
 
 
 @router.post("/account/create")
-def create(payload: CreateRequest):
+def create(payload: CreateRequest, request: Request = None):
     """The first account (onboarding's Protect screen, or Settings before one exists)."""
     if users.has_accounts():
         raise HTTPException(status_code=409, detail="An account already exists.")
-    _first_run_gate(payload.code)
+    _first_run_gate(payload.code, request)
     problem = users.username_problem(payload.username.strip())
     if problem:
         raise HTTPException(status_code=400, detail=problem)
@@ -190,7 +191,7 @@ def sign_out_all():
 
 
 @router.post("/account/enabled")
-def set_enabled(payload: EnabledRequest):
+def set_enabled(payload: EnabledRequest, request: Request = None):
     """Sign-in on/off. Off keeps the account; on needs one. Switching off before any protection
     choice is onboarding's "skip protection", so it is under the first-run gate."""
     if payload.on:
@@ -198,7 +199,7 @@ def set_enabled(payload: EnabledRequest):
         auth.set_enabled(True)
         return _signed_in({"ok": True, "state": _state()}, user)   # this browser stays signed in
     if not auth.protection_chosen():
-        _first_run_gate(payload.code)
+        _first_run_gate(payload.code, request)
     auth.set_enabled(False)
     return {"ok": True, "state": _state()}
 

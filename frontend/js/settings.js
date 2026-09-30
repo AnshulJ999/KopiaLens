@@ -25,6 +25,7 @@ const settingsPart = {
         getJson("/api/disk-lookup?refresh=true").then((s) => { this.diskLookup = s; }).catch(() => {});
         this.sessionDays = Number(kl.session_days || 30);
         this.loadAccount();
+        this.raLoad();
         this.panelLayout = kl.panel_layout === "tabbed" ? "tabbed" : "classic";  //
         this._readAdvanced(kl);
         this._readBackblaze(data.settings?.backblaze || {});
@@ -64,7 +65,7 @@ const settingsPart = {
       disk_scan_budget: { s: "diskScanBudget", t: "int", min: 1 },
       es_path: { s: "esPath", t: "str" },
       excluded_tolerance: { s: "excludedTolerance", t: "num" },
-      index_mode: { s: "indexMode", t: "choice", of: ["daily", "interval"] },
+      index_mode: { s: "indexMode", t: "choice", of: ["daily", "interval", "off"] },
       index_time: { s: "indexTime", t: "str" },
       index_interval: { s: "indexInterval", t: "int", min: 3600 },
       dashboard_mode: { s: "dashboardMode", t: "choice", of: ["nightly", "interval"] },

@@ -279,9 +279,15 @@ const jobsPart = {
       return (this.indexPending || []).find((p) => p.repo === repo) || null;
     },
     pendingText(p) {
+      if (p.reason === "first") return "First index queued";
       const left = Math.max(0, Math.round(p.due + p.offset - Date.now() / 1000));
       if (!left) return "Index update starting…";
       return `Index update in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+    },
+    pendingTitle(p) {
+      return p.reason === "first"
+        ? "Starts as soon as the index running now finishes. One repository indexes at a time."
+        : "Deletes finished. The index updates once no delete has run for the quiet period (Settings, Indexing).";
     },
     async pendingRunNow(repo) {
       const r = await getJson(`/api/index/pending/run?repo=${encodeURIComponent(repo)}`, { method: "POST" }).catch((e) => { this.error = e.message; return null; });

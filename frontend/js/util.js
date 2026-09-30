@@ -74,6 +74,8 @@ const getJson = async (url, options = {}) => {
   }
   // An encrypted index that is locked: the app shows one unlock box instead of per-view errors.
   if (res.status === 423 && data && data.locked) window.dispatchEvent(new CustomEvent("kl-locked", { detail: data }));
+  // Setup closed mid-way on a server install: onboarding asks for the setup code.
+  if (res.status === 403 && data && data.setup_code) window.dispatchEvent(new CustomEvent("kl-setup-code"));
   if (!res.ok) throw new Error((data && (data.detail || data.error)) || text || res.statusText);
   return data;
 };

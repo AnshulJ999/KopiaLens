@@ -176,6 +176,15 @@ def unlock(repo: str, payload: UnlockRequest) -> dict:
         raise _bad(exc) from exc
 
 
+@router.get("/setup/repos/{repo}/summary")
+def repo_summary(repo: str) -> dict:
+    """Sources, computers and snapshots in a repository (one live listing) - the "Connected" card."""
+    try:
+        return repoconnect.summary(repo)
+    except (ValueError, OSError) as exc:
+        raise _bad(exc) from exc
+
+
 @router.patch("/setup/repos/{repo}")
 def edit(repo: str, payload: RepoEditRequest) -> dict:
     """Rename a repo, set its short label, or take it out of the Excluded browser's coverage."""

@@ -1,0 +1,220 @@
+
+    <!-- First-run onboarding (onboarding.js): shown instead of the app while it is needed. -->
+    <template x-if="ob">
+      <div class="fixed inset-0 z-[50] bg-canvas overflow-y-auto text-sm">
+        <div class="mx-auto max-w-2xl px-4 py-8 sm:py-12 space-y-5">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="font-semibold text-lg">Kopia<span class="text-ok">Lens</span></div>
+            <ol x-show="!ob.needsCode" class="flex items-center gap-1 text-xs" aria-label="Setup steps">
+              <template x-for="(s, i) in obSteps()" :key="s[0]">
+                <li class="flex items-center gap-1">
+                  <span x-show="i > 0" class="w-5 border-t border-bd"></span>
+                  <button type="button" @click="obGo(s[0])" :disabled="!obStepDone(s[0])"
+                          class="flex items-center gap-1.5 rounded-full px-2 py-1"
+                          :class="obStepIndex(ob.step) === i ? 'bg-sel font-medium text-fg' : (obStepDone(s[0]) ? 'text-fg hover:bg-head' : 'text-muted')"
+                          :aria-current="obStepIndex(ob.step) === i ? 'step' : null">
+                    <span class="inline-flex h-4 w-4 items-center justify-center rounded-full border text-[10px]"
+                          :class="obStepDone(s[0]) ? 'border-ok-bd text-ok' : 'border-bd'" x-text="obStepDone(s[0]) ? '✓' : i + 1"></span>
+                    <span x-text="s[1]"></span>
+                  </button>
+                </li>
+              </template>
+            </ol>
+          </div>
+
+          <div class="rounded-lg border border-bd bg-surface shadow-sm">
+
+            <!-- Setup code -->
+            <template x-if="ob.needsCode">
+              <form @submit.prevent="obSubmitCode()">
+                <div class="p-5 space-y-3">
+                  <h1 class="text-lg font-semibold">Enter the setup code</h1>
+                  <p class="text-muted">Setup was open for 30 minutes after KopiaLens started. To continue, enter the setup code from the KopiaLens log, or restart KopiaLens to reopen setup.</p>
+                  <label class="flex flex-col gap-1 text-xs font-medium max-w-xs">Setup code
+                    <input type="text" x-model="ob.code" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX" x-init="$nextTick(() => $el.focus())" class="fld border border-bd bg-surface2 font-mono"></label>
+                  <p class="kl-note">In Docker: <code>docker logs</code> followed by the container name.</p>
+                  <p class="text-xs" style="color:var(--danger)" x-show="ob.codeError" x-text="ob.codeError"></p>
+                </div>
+                <div class="kl-footer"><span class="spacer"></span>
+                  <button type="submit" class="kl-btn primary" :disabled="!ob.code.trim() || ob.codeBusy" x-text="ob.codeBusy ? 'Checking…' : 'Continue'"></button></div>
+              </form>
+            </template>
+
+            <!-- 1. Connect -->
+            <template x-if="!ob.needsCode && ob.step === 'connect'">
+              <div>
+                <div class="p-5 space-y-4">
+                  <div>
+                    <h1 class="text-lg font-semibold">Connect a repository</h1>
+                    <p class="text-muted">Pick the kopia repositories you already use, or add one.</p>
+                  </div>
+                  <template x-if="obKopiaMissing()">
+                    <form @submit.prevent="obKopiaSave()" class="space-y-2">
+                      <div class="kl-callout">KopiaLens couldn't find kopia on this computer. Enter where kopia is installed.</div>
+                      <div class="flex flex-wrap items-end gap-2">
+                        <label class="flex flex-col gap-1 text-xs font-medium flex-1 min-w-[14rem]">Path to kopia
+                          <input type="text" x-model="ob.kopiaPath" spellcheck="false" class="fld border border-bd bg-surface2"></label>
+                        <button type="submit" class="kl-btn" :disabled="!ob.kopiaPath.trim()">Use this kopia</button>
+                      </div>
+                      <p class="text-xs" style="color:var(--danger)" x-show="ob.kopiaError" x-text="ob.kopiaError"></p>
+                    </form>
+                  </template>
+                  <template x-if="cx && !obKopiaMissing()">
+                    <div>
+{% include "partials/connectform.html" %}
+                    </div>
+                  </template>
+                </div>
+                <div class="kl-footer">
+                  <button type="button" class="kl-btn quiet" disabled data-placeholder="sample-data" title="Coming soon">Try with sample data</button>
+                  <span class="spacer"></span>
+                  <button type="button" @click="ob.step = 'protect'" class="kl-btn primary" :disabled="!obConnectReady()">Continue</button>
+                </div>
+              </div>
+            </template>
+
+            <!-- 2. Protect -->
+            <template x-if="!ob.needsCode && ob.step === 'protect' && ob.protected">
+              <div>
+                <div class="p-5 space-y-3">
+                  <h1 class="text-lg font-semibold">Protect KopiaLens</h1>
+                  <p x-text="ob.protected === 'account' ? 'Sign-in is set up.' : 'KopiaLens opens without a password.'"></p>
+                  <p class="kl-note">Change sign-in and encryption any time in Settings.</p>
+                </div>
+                <div class="kl-footer">
+                  <button type="button" @click="ob.step = 'connect'" class="kl-btn">Back</button>
+                  <span class="spacer"></span>
+                  <button type="button" @click="ob.step = 'start'" class="kl-btn primary">Continue</button>
+                </div>
+              </div>
+            </template>
+
+            <template x-if="!ob.needsCode && ob.step === 'protect' && !ob.protected">
+              <form @submit.prevent="obProtect()">
+                <div class="p-5 space-y-5">
+                  <div>
+                    <h1 class="text-lg font-semibold">Protect KopiaLens</h1>
+                    <p class="text-muted">Who can open KopiaLens, and how its index is stored.</p>
+                  </div>
+
+                  <fieldset class="space-y-2">
+                    <legend class="font-medium mb-1">Sign-in</legend>
+                    <label class="flex flex-col gap-1 text-xs font-medium max-w-xs">Username
+                      <input type="text" x-model="ob.username" autocomplete="username" spellcheck="false" class="fld border border-bd bg-surface2"></label>
+                    <div class="grid gap-2 sm:grid-cols-2">
+                      <label class="flex flex-col gap-1 text-xs font-medium">KopiaLens password
+                        <input type="password" x-model="ob.pw" autocomplete="new-password" class="fld border border-bd bg-surface2"></label>
+                      <label class="flex flex-col gap-1 text-xs font-medium">Confirm password
+                        <input type="password" x-model="ob.confirm" autocomplete="new-password" class="fld border border-bd bg-surface2"></label>
+                    </div>
+                  </fieldset>
+
+                  <fieldset class="space-y-2">
+                    <legend class="font-medium mb-1">Encryption</legend>
+                    <template x-for="l in ['off', 'index', 'full']" :key="l">
+                      <label class="flex gap-2 items-start rounded-md border p-2.5 cursor-pointer" :class="ob.level === l ? 'border-fg bg-sel' : 'border-bd hover:bg-head'">
+                        <input type="radio" :value="l" x-model="ob.level" class="mt-0.5">
+                        <span><b x-text="encLevelLabel(l)"></b><span x-show="l === 'index'" class="pill ok ml-1.5">Recommended</span>
+                          <span class="block text-xs text-muted" x-text="encLevelNote(l)"></span></span>
+                      </label>
+                    </template>
+                    <template x-if="ob.level !== 'off'">
+                      <div class="space-y-2 pt-1">
+                        <label class="flex items-center gap-2 text-xs"><input type="checkbox" x-model="ob.usePw">Use my KopiaLens password for encryption too</label>
+                        <template x-if="!ob.usePw">
+                          <div class="grid gap-2 sm:grid-cols-2">
+                            <label class="flex flex-col gap-1 text-xs font-medium">Encryption password
+                              <input type="password" x-model="ob.encPw" autocomplete="new-password" class="fld border border-bd bg-surface2"></label>
+                            <label class="flex flex-col gap-1 text-xs font-medium">Confirm
+                              <input type="password" x-model="ob.encConfirm" autocomplete="new-password" class="fld border border-bd bg-surface2"></label>
+                          </div>
+                        </template>
+                        <label class="flex items-start gap-2 text-xs"><input type="checkbox" x-model="ob.remember" class="mt-0.5"><span>Unlock automatically on this computer<span class="block text-muted">Off: someone enters the password after every restart.</span></span></label>
+                        <p class="kl-note">Next, you get a recovery key to save. It's the only way back in if you forget the password.</p>
+                      </div>
+                    </template>
+                  </fieldset>
+
+                  <template x-if="ob.state.profile === 'server'">
+                    <fieldset class="space-y-1">
+                      <legend class="font-medium mb-1">Remote access</legend>
+                      <label class="flex flex-col gap-1 text-xs font-medium"><span>Domain names you open KopiaLens from <span class="font-normal text-muted">(optional)</span></span>
+                        <input type="text" x-model="ob.hosts" spellcheck="false" placeholder="backups.example.com" class="fld border border-bd bg-surface2 font-normal"></label>
+                      <p class="kl-note">Not needed for an IP address or localhost. Separate several with commas.</p>
+                    </fieldset>
+                  </template>
+
+                  <p class="text-xs" style="color:var(--danger)" x-show="ob.error" x-text="ob.error"></p>
+                </div>
+                <div class="kl-footer">
+                  <button type="button" @click="ob.step = 'connect'" class="kl-btn">Back</button>
+                  <span class="spacer"></span>
+                  <button type="button" @click="obSkipProtect()" class="kl-btn quiet" :disabled="ob.busy">Skip protection</button>
+                  <button type="submit" class="kl-btn primary" :disabled="ob.busy" x-text="ob.busy ? 'Setting up…' : 'Continue'"></button>
+                </div>
+              </form>
+            </template>
+
+            <!-- 2b. Recovery key (only when encryption was turned on) -->
+            <template x-if="!ob.needsCode && ob.step === 'key'">
+              <div>
+                <div class="p-5 space-y-3">
+                  <h1 class="text-lg font-semibold">Save your recovery key</h1>
+                  <input type="text" readonly :value="ob.recoveryKey" @focus="$el.select()" class="fld border border-bd bg-surface2 w-full font-mono text-center">
+                  <div class="flex gap-2">
+                    <button type="button" @click="copyRecoveryKey(ob.recoveryKey)" class="kl-btn">Copy</button>
+                    <button type="button" @click="downloadRecoveryKey(ob.recoveryKey)" class="kl-btn">Save as file</button>
+                  </div>
+                  <div class="kl-callout">If you forget your password, this key is the only way to unlock the index. Store it somewhere safe, away from this computer. It won't be shown again.</div>
+                  <div class="kl-callout" x-show="ob.keyNote" x-text="ob.keyNote"></div>
+                  <label class="flex items-center gap-2 text-xs"><input type="checkbox" x-model="ob.keySaved">I've saved my recovery key</label>
+                </div>
+                <div class="kl-footer"><span class="spacer"></span>
+                  <button type="button" @click="ob.step = 'start'" class="kl-btn primary" :disabled="!ob.keySaved">Continue</button></div>
+              </div>
+            </template>
+
+            <!-- 3. Start -->
+            <template x-if="!ob.needsCode && ob.step === 'start'">
+              <div>
+                <div class="p-5 space-y-5">
+                  <div>
+                    <h1 class="text-lg font-semibold">Build the index</h1>
+                    <p class="text-muted">KopiaLens reads your snapshots once to build its index. After that it only reads what changed.</p>
+                  </div>
+                  <div class="rounded-md border border-bd p-3 flex items-center justify-between gap-3 opacity-60" data-placeholder="index-eta" title="Coming soon">
+                    <span>Time estimate</span><span class="text-xs text-muted">Coming soon</span>
+                  </div>
+                  <p class="kl-note -mt-3">You can keep using KopiaLens while it runs. With several repositories, they're indexed one after another.</p>
+
+                  <div class="space-y-1">
+                    <div class="font-medium">Keep the index up to date</div>
+                    <label class="flex flex-wrap items-center gap-2 text-xs">
+                      <input type="checkbox" x-model="ob.auto">
+                      <span x-show="!obInterval()">Update automatically every day at</span>
+                      <input x-show="!obInterval()" type="time" x-model="ob.time" :disabled="!ob.auto" class="fld border border-bd bg-surface2 disabled:opacity-50">
+                      <span x-show="obInterval()">Update automatically at the interval set in Settings</span>
+                    </label>
+                    <p class="kl-note">Only new snapshots are read. Change this any time in Settings → Indexing.</p>
+                  </div>
+
+                  <div class="kl-facts">
+                    <template x-for="row in obSummary()" :key="row[0]">
+                      <div class="r"><span class="k" x-text="row[0]"></span><span x-text="row[1]"></span></div>
+                    </template>
+                  </div>
+                  <p class="text-xs" style="color:var(--danger)" x-show="ob.error" x-text="ob.error"></p>
+                </div>
+                <div class="kl-footer">
+                  <button type="button" @click="ob.step = 'protect'" class="kl-btn" :disabled="ob.busy">Back</button>
+                  <span class="spacer"></span>
+                  <button type="button" @click="obSkipIndex()" class="kl-btn quiet" :disabled="ob.busy">Skip for now</button>
+                  <button type="button" @click="obFinish(true)" class="kl-btn primary" :disabled="ob.busy" x-text="ob.busy ? 'Starting…' : 'Start indexing'"></button>
+                </div>
+              </div>
+            </template>
+
+          </div>
+        </div>
+      </div>
+    </template>

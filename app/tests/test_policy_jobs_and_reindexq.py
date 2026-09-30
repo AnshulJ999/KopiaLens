@@ -83,7 +83,7 @@ def test_queue_survives_a_restart(monkeypatch):
     reindexq.request("3", now=1000)
     monkeypatch.setattr(reindexq, "_PENDING", {})
     reindexq.load()
-    assert reindexq.pending() == [{"repo": "3", "requested": 1000.0, "due": 1300.0}]
+    assert reindexq.pending() == [{"repo": "3", "requested": 1000.0, "due": 1300.0, "reason": "delete"}]
 
 
 def test_queue_drops_when_a_later_pass_already_ran(monkeypatch):

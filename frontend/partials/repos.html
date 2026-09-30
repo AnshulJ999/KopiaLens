@@ -1,0 +1,76 @@
+
+            <!-- Settings: Repositories (repos.js, ra*). Add opens the shared connect form. -->
+            <section x-show="settingsTab==='repositories'" class="space-y-3">
+              <div class="flex items-center gap-3">
+                <span class="font-medium">Repositories</span>
+                <button @click="openAddRepo()" class="ml-auto kl-btn primary">Add repository…</button>
+              </div>
+              <p class="kl-note">The order here is the order in the repository menu.</p>
+              <template x-for="(r, i) in repos" :key="r.id">
+                <div class="rounded-md border border-bd p-3 space-y-2">
+                  <div class="flex items-start gap-3">
+                    <div class="flex flex-col -my-1">
+                      <button @click="raMove(i, -1)" :disabled="i === 0" class="h-5 w-5 text-muted hover:text-fg disabled:opacity-30" title="Move up" aria-label="Move up">▲</button>
+                      <button @click="raMove(i, 1)" :disabled="i === repos.length - 1" class="h-5 w-5 text-muted hover:text-fg disabled:opacity-30" title="Move down" aria-label="Move down">▼</button>
+                    </div>
+                    <div class="min-w-0 flex-1 space-y-0.5">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <span class="font-medium truncate" x-text="r.name"></span>
+                        <span x-show="r.short_name" class="text-xs text-muted" x-text="r.short_name"></span>
+                        <template x-if="raPill(r)"><span class="pill" :class="raPill(r)[1]" x-text="raPill(r)[0]"></span></template>
+                      </div>
+                      <div class="text-xs text-muted truncate" :title="raWhere(r)" x-text="r.kind === 'backblaze' ? 'Backblaze' : raWhere(r)"></div>
+                      <div class="text-xs text-muted" x-text="raIndexLine(r)"></div>
+                    </div>
+                    <div class="flex flex-wrap justify-end gap-1.5 shrink-0">
+                      <template x-if="r.kind !== 'backblaze'">
+                        <div class="flex flex-wrap justify-end gap-1.5">
+                          <button @click="raCheck(r)" class="h-8 rounded border border-bd px-2.5 text-xs">Check connection</button>
+                          <button @click="raIndex(r)" class="h-8 rounded border border-bd px-2.5 text-xs">Index now</button>
+                          <button @click="raEdit(r)" class="h-8 rounded border border-bd px-2.5 text-xs">Edit…</button>
+                          <button @click="raRemove(r)" class="h-8 rounded border px-2.5 text-xs" style="color:var(--danger);border-color:var(--danger-bd)">Remove…</button>
+                        </div>
+                      </template>
+                      <template x-if="r.kind === 'backblaze'">
+                        <div class="flex gap-1.5">
+                          <button @click="raEdit(r)" class="h-8 rounded border border-bd px-2.5 text-xs">Edit…</button>
+                          <button @click="settingsTab = 'backblaze'" class="h-8 rounded border border-bd px-2.5 text-xs">Backblaze settings</button>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                  <template x-if="repoChecks[r.id] && repoChecks[r.id].error">
+                    <div class="space-y-2 pl-8">
+                      <p class="text-xs break-words" style="color:var(--danger)" x-text="repoChecks[r.id].error"></p>
+                      <form @submit.prevent="raUnlock(r)" class="flex flex-wrap items-end gap-2">
+                        <label class="flex flex-col gap-1 text-xs font-medium flex-1 min-w-[12rem]">Repository password
+                          <input type="password" x-model="repoChecks[r.id].pw" autocomplete="off" class="fld border border-bd bg-surface2"></label>
+                        <button type="submit" class="kl-btn" :disabled="!repoChecks[r.id].pw">Save password</button>
+                      </form>
+                      <p class="kl-note">Only if kopia no longer remembers this repository's password. Not your KopiaLens password.</p>
+                    </div>
+                  </template>
+                  <label x-show="r.kind !== 'backblaze'" class="flex items-center gap-2 text-xs pl-8">
+                    <input type="checkbox" :checked="r.counts_as_backup" @change="raCountsAsBackup(r, $event.target.checked)">
+                    <span>Counts as a backup <span class="text-muted">· the Excluded view treats files in it as backed up</span></span></label>
+                </div>
+              </template>
+
+              <div class="pt-3 border-t border-bd">
+                <div class="flex items-center justify-between gap-3"><span>kopia program</span>
+                  <span class="flex items-center gap-3"><span class="text-xs" :class="kopiaInfo && !kopiaInfo.available ? '' : 'text-muted'" :style="kopiaInfo && !kopiaInfo.available ? 'color:var(--danger)' : ''" x-text="raKopiaLine()"></span>
+                    <button @click="repoKopiaEdit = {path: (kopiaInfo && kopiaInfo.path) || ''}" class="h-8 rounded border border-bd px-3 text-xs">Change…</button></span></div>
+                <p class="text-[11px] text-muted mt-1 break-all" x-show="kopiaInfo && kopiaInfo.path" x-text="kopiaInfo && kopiaInfo.path"></p>
+                <template x-if="repoKopiaEdit">
+                  <form @submit.prevent="raKopiaSave(repoKopiaEdit.path)" class="mt-2 space-y-2">
+                    <label class="flex flex-col gap-1 text-xs font-medium">Path to kopia
+                      <input type="text" x-model="repoKopiaEdit.path" spellcheck="false" class="fld border border-bd bg-surface2 font-normal"></label>
+                    <div class="flex gap-2 justify-end">
+                      <button type="button" @click="raKopiaSave('')" class="kl-btn">Find automatically</button>
+                      <button type="button" @click="repoKopiaEdit = null" class="kl-btn">Cancel</button>
+                      <button type="submit" class="kl-btn primary">Save</button>
+                    </div>
+                  </form>
+                </template>
+              </div>
+            </section>

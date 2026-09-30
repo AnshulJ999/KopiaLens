@@ -45,6 +45,13 @@ def _require_kopia(repo: str) -> None:
         raise HTTPException(status_code=400, detail=f"repo {repo!r} is not a kopia repo (use /api/backblaze/*)")
 
 
+def _ordered(rows: list[dict], order: list) -> list[dict]:
+    """The display order the user chose in Settings; repos it does not name keep their place after
+    the named ones. Display only - the record store (and the nightly queue) keep their own order."""
+    rank = {str(rid): i for i, rid in enumerate(order)}
+    return sorted(rows, key=lambda r: rank.get(r["id"], len(rank)))
+
+
 @router.get("/repos")
 def repos() -> dict:
     from ..core import auth, dataupgrade, kopiabin
@@ -59,7 +66,8 @@ def repos() -> dict:
     return {
         # Every record, with the fields the repo UI needs: short label, connection source,
         # "counts as a backup", and the cached storage facts (no kopia call on a polled route).
-        "repos": [repo_store.detail(rec) for rec in repo_store.all_records()],
+        "repos": _ordered([repo_store.detail(rec) for rec in repo_store.all_records()],
+                          kl.get("repo_order") or []),
         # Where the kopia program is (resolved, or not found). The version is read once at
         # startup, so this route never spawns anything.
         "kopia": kopiabin.info(with_version=False),

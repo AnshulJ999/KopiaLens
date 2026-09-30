@@ -46,7 +46,8 @@ def load() -> None:
     with _LOCK:
         for repo, rec in (data or {}).items():
             if isinstance(rec, dict) and "requested" in rec and "due" in rec:
-                _PENDING[str(repo)] = {"requested": float(rec["requested"]), "due": float(rec["due"])}
+                _PENDING[str(repo)] = {"requested": float(rec["requested"]), "due": float(rec["due"]),
+                                       "reason": str(rec.get("reason") or "delete")}
     if _PENDING:
         log.info("resuming %d queued index update(s)", len(_PENDING))
         _ensure_thread()
@@ -60,12 +61,16 @@ def delay() -> int:
         return DEFAULT_DELAY
 
 
-def request(repo: str, now: float | None = None) -> None:
+def request(repo: str, now: float | None = None, wait: float | None = None,
+            reason: str = "delete") -> None:
+    """Queue one pass. ``wait`` overrides the quiet period (0 = as soon as the slot is free);
+    ``reason`` is "delete" (after deletes) or "first" (a new repository's first index)."""
     now = time.time() if now is None else now
     with _LOCK:
         rec = _PENDING.setdefault(repo, {"requested": now})
         rec["requested"] = now
-        rec["due"] = now + delay()
+        rec["due"] = now + (delay() if wait is None else wait)
+        rec["reason"] = reason
         _save()
     _ensure_thread()
 
@@ -91,7 +96,8 @@ def forget(repo: str) -> bool:
 
 def pending() -> list[dict]:
     with _LOCK:
-        return [{"repo": r, "requested": v["requested"], "due": v["due"]} for r, v in _PENDING.items()]
+        return [{"repo": r, "requested": v["requested"], "due": v["due"],
+                 "reason": v.get("reason", "delete")} for r, v in _PENDING.items()]
 
 
 def run_now(repo: str) -> dict:

@@ -706,6 +706,26 @@ def probe(config_file: str | None = None, repo: str | None = None) -> dict:
     return out
 
 
+def summary(repo: str) -> dict:
+    """What a connected repository holds, from one snapshot listing (an explicit user action):
+    source, computer and snapshot counts, and when the newest snapshot finished."""
+    from .sources import ListingFailed, _key_of, all_snapshots
+    if not repos.exists(repo):
+        raise ValueError(f"unknown repo: {repo}")
+    try:
+        snaps = all_snapshots(repo)
+    except ListingFailed as exc:
+        raise ValueError(str(exc)) from exc
+    srcs = [s.get("source") or {} for s in snaps]
+    return {
+        "repo": repo,
+        "snapshots": len(snaps),
+        "sources": len({_key_of(s) for s in srcs}),
+        "hosts": len({s.get("host") for s in srcs if s.get("host")}),
+        "newest": max((s.get("endTime") or s.get("startTime") or "" for s in snaps), default=""),
+    }
+
+
 def attach(config_file: str | None, name: str = "", short_name: str = "",
            counts_as_backup: bool = True) -> dict:
     """Record an EXISTING kopia connection (KopiaUI's, the CLI default, a copied config). The file

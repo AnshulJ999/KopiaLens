@@ -45,6 +45,8 @@ document.addEventListener("alpine:init", () => {
     showRestore: false, restore: null, showDiff: false, diffText: "", diffBusy: false,
     // Settings Account + Encryption sections, their shared dialog, and the unlock box (lock.html).
     acct: null, encStatus: null, acctDialog: null, locked: null, sessionDays: 30,
+    // Onboarding (onboarding.js) and repositories (repos.js): the shared connect form is `cx`.
+    ob: null, cx: null, repoMenu: false, repoAdd: false, repoDlg: null, repoChecks: {}, kopiaInfo: null, repoKopiaEdit: null,
     policyKeys: ["latest", "hourly", "daily", "weekly", "monthly", "annual"],
     policy: { latest: 100, hourly: 96, daily: 30, weekly: 52, monthly: 36, annual: 5 },
     simMode: "all", simMeta: "", simText: "", actionText: "",
@@ -145,7 +147,7 @@ document.addEventListener("alpine:init", () => {
     },
     repoShortLabel(id) {
       const r = this.repos.find((x) => x.id === id);
-      return (r && (r.short_name || r.shortName)) || (id === "bz" ? "BZ" : "Repo " + id);
+      return (r && (r.short_name || r.shortName || r.name)) || (id === "bz" ? "BZ" : "Repo " + id);
     },
     repoLabel(id) { return this.repoLabels === "full" ? this.repoName(id) : this.repoShortLabel(id); },
 
@@ -155,6 +157,10 @@ document.addEventListener("alpine:init", () => {
       if (this.confirmBox) { this.confirmResolve(false); return; }
       if (this.acctDialog) { if (this.acctDialog.mode !== "showkey") this.acctDialog = null; return; }
       if (this.locked) return;    // the unlock box has no close: nothing behind it has data
+      if (this.ob) return;        // onboarding is the whole page
+      if (this.repoMenu) { this.repoMenu = false; return; }
+      if (this.repoDlg) { this.repoDlg = null; return; }
+      if (this.repoAdd) { this.closeAddRepo(); return; }
       if (this.showIndex) { this.closeIndexPanel(); return; }
       if (this.showJob) { this.closeJob(); return; }
       if (this.showReview) { this.flowCancel(); return; }
@@ -201,6 +207,17 @@ document.addEventListener("alpine:init", () => {
       if (this._inited) return;
       this._inited = true;
       window.addEventListener("kl-locked", (e) => this.showLock(e.detail));
+      window.addEventListener("kl-setup-code", () => this.obNeedCode());
+      // A fresh install (no repository yet) or a closed setup window shows onboarding, and nothing
+      // else loads until it is finished.
+      try {
+        const obState = await getJson("/api/onboarding/state");
+        if (obState.needed || !obState.setup_unlocked) {
+          window.addEventListener("keydown", (e) => { if (e.key === "Escape") this.escClose(); });
+          await this.obBegin(obState);
+          return;
+        }
+      } catch (e) { /* an older server or a network hiccup: the app loads as usual */ }
       try {   // a note carried across a reload (start over)
         const flash = sessionStorage.getItem("kl-flash");
         if (flash) { sessionStorage.removeItem("kl-flash"); setTimeout(() => this.klNotify(flash), 0); }
@@ -320,10 +337,15 @@ document.addEventListener("alpine:init", () => {
 
     // A repo that has never been indexed has no data for the index-backed views; a friendly
     // one-liner beats the raw 500 they would otherwise each raise (observed on a fresh repo).
-    _neverIndexed() {
-      if (!this.indexStatus || !this.indexStatus.never_indexed) return false;
-      this.error = "This repo has not been indexed yet - click Index (top right) to build the first index.";
-      return true;
+    _neverIndexed() {   // the banner above the views says so and offers to start
+      return !!(this.indexStatus && this.indexStatus.never_indexed);
+    },
+    notIndexedTitle() { return this.indexStatus && this.indexStatus.building ? "Building the first index…" : "This repository isn't indexed yet"; },
+    notIndexedNote() {
+      if (this.indexStatus && this.indexStatus.building) return "You can keep using KopiaLens. The pages fill in when it finishes.";
+      if (this.indexMode === "off") return "Automatic updates are off. Start indexing to see this repository's data.";
+      if (this.indexMode === "interval") return "It runs with the next automatic update, or start it now.";
+      return `It runs automatically at ${this.indexTime}, or start it now.`;
     },
 
     // ---- Freshness strip: how current each repo's data is (one call covers all three) ----
@@ -506,13 +528,13 @@ document.addEventListener("alpine:init", () => {
     csv(id, name) { downloadTable(id, name); },
     };
     // Duplicate-key guard: two parts declaring the same key would compose silently last-wins.
-    const parts = [["core", core], ["toastPart", toastPart], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["indexPanelPart", indexPanelPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["accountPart", accountPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart]];
+    const parts = [["core", core], ["toastPart", toastPart], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["indexPanelPart", indexPanelPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["accountPart", accountPart], ["reposPart", reposPart], ["onboardingPart", onboardingPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart]];
     const seen = new Map();
     for (const [owner, part] of parts)
       for (const k of Object.keys(part)) {
         if (seen.has(k)) console.error(`kopiaLens: duplicate key "${k}" declared in both ${seen.get(k)} and ${owner}`);
         else seen.set(k, owner);
       }
-    return Object.assign(core, toastPart, indexPanelPart, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, diffviewPart, jobsPart, maintenancePart, settingsPart, accountPart, themePart, policiesPart, policyEditPart);
+    return Object.assign(core, toastPart, indexPanelPart, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, diffviewPart, jobsPart, maintenancePart, settingsPart, accountPart, reposPart, onboardingPart, themePart, policiesPart, policyEditPart);
   });
 });

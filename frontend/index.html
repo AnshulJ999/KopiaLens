@@ -40,9 +40,19 @@
   <link href="/static/css/app.css?v={{ asset_v }}" rel="stylesheet">
 </head>
 <body class="bg-canvas text-fg">
-  <div id="app" x-data="kopiaLens()" x-init="init()" x-cloak class="h-screen flex flex-col">
+  <div id="app" x-data="kopiaLens()" x-init="init()" x-cloak class="h-screen flex flex-col" :class="ob ? 'overflow-hidden' : ''">
 {% include "partials/nav.html" %}
     <main class="min-w-0 flex-1 overflow-auto p-4">
+      <!-- A repository with no index yet: say so once, with the way to start, instead of blank pages. -->
+      <div x-show="repoKind !== 'backblaze' && indexStatus && indexStatus.never_indexed" x-cloak
+           class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm">
+        <div class="min-w-0 flex-1">
+          <div class="font-medium" x-text="notIndexedTitle()"></div>
+          <div class="text-xs text-muted" x-text="notIndexedNote()"></div>
+        </div>
+        <button x-show="!indexStatus.building" @click="buildIndex()" class="kl-btn primary">Start indexing</button>
+        <button x-show="indexStatus.building" @click="openIndexPanel()" class="kl-btn">Show progress</button>
+      </div>
 {% include "partials/tabs/dashboard.html" %}
 
 {% include "partials/tabs/snapshots.html" %}
@@ -71,6 +81,8 @@
 {% include "partials/exclude.html" %}
 {% include "partials/delete.html" %}
 {% include "partials/modals.html" %}
+{% include "partials/repodialogs.html" %}
+{% include "partials/onboarding.html" %}
 {% include "partials/lock.html" %}
 {% include "partials/confirm.html" %}
 {% include "partials/jobs.html" %}
@@ -103,6 +115,8 @@
   <script src="/static/js/runbar.js?v={{ asset_v }}"></script>
   <script src="/static/js/settings.js?v={{ asset_v }}"></script>
   <script src="/static/js/account.js?v={{ asset_v }}"></script>
+  <script src="/static/js/repos.js?v={{ asset_v }}"></script>
+  <script src="/static/js/onboarding.js?v={{ asset_v }}"></script>
   <script src="/static/js/theme.js?v={{ asset_v }}"></script>
   <script src="/static/js/detail.js?v={{ asset_v }}"></script>
   <script src="/static/js/exclude.js?v={{ asset_v }}"></script>

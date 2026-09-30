@@ -13,7 +13,7 @@
         <div class="flex min-h-0 flex-1">
           <nav class="w-36 sm:w-40 shrink-0 overflow-y-auto border-r border-bd p-2 space-y-1 text-sm">
 
-            <template x-for="s in [['general','General'],['account','Account'],['encryption','Encryption'],['appearance','Appearance'],['indexing','Indexing'],['refresh','Refresh'],['advanced','Advanced'],['backblaze','Backblaze']]" :key="s[0]">
+            <template x-for="s in [['general','General'],['repositories','Repositories'],['account','Account'],['encryption','Encryption'],['appearance','Appearance'],['indexing','Indexing'],['refresh','Refresh'],['advanced','Advanced'],['backblaze','Backblaze']]" :key="s[0]">
               <button @click="settingsTab=s[0]"
                       :class="settingsTab===s[0] ? 'w-full text-left rounded px-2 py-1.5 bg-sel text-fg font-medium' : 'w-full text-left rounded px-2 py-1.5 hover:bg-head'"
                       x-text="s[1]"></button>
@@ -72,6 +72,7 @@
             </section>
 
 {% include "partials/appearance.html" %}
+{% include "partials/repos.html" %}
 {% include "partials/account.html" %}
 
             <section x-show="settingsTab==='indexing'" class="space-y-4">
@@ -80,6 +81,7 @@
                   <select x-model="indexMode" @change="saveKl('index_mode')" class="fld border border-bd bg-surface2">
                     <option value="daily">Once a day, at a set time</option>
                     <option value="interval">Every N hours</option>
+                    <option value="off">Off, only when I start it</option>
                   </select></div>
                 <div class="flex items-center justify-between gap-3 mt-2" x-show="indexMode==='daily'"><span>Run at</span>
                   <input type="time" x-model="indexTime" @change="saveKl('index_time')" class="fld border border-bd bg-surface2"></div>
