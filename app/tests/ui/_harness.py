@@ -30,6 +30,64 @@ USERNAME, PASSWORD = "admin", "battery staple horse"   # the KopiaLens account
 SNAPSHOT_DAYS_AGO = (6, 4, 2)           # one snapshot per generation, oldest first
 
 
+# ---------------------------------------------------------------- child cleanup
+# Every process the harness starts must die with the test run, including a hard exit (a crash or
+# the watchdog) where fixture teardown never runs. Windows: a kill-on-close job object, which
+# also takes the children's own children. Elsewhere: best effort at interpreter exit.
+
+_JOB = None
+_POSIX_CHILDREN: list = []
+
+
+def _windows_job():
+    import ctypes
+    from ctypes import wintypes
+
+    class Basic(ctypes.Structure):
+        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD)]
+
+    class Io(ctypes.Structure):
+        _fields_ = [(n, ctypes.c_uint64) for n in ("Read", "Write", "Other", "ReadBytes", "WriteBytes", "OtherBytes")]
+
+    class Extended(ctypes.Structure):
+        _fields_ = [("Basic", Basic), ("Io", Io), ("ProcessMemoryLimit", ctypes.c_size_t),
+                    ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                    ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateJobObjectW.restype = wintypes.HANDLE
+    k32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    job = k32.CreateJobObjectW(None, None)
+    info = Extended()
+    info.Basic.LimitFlags = 0x2000                # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    if not job or not k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+        raise OSError(ctypes.get_last_error(), "could not create the cleanup job object")
+    return k32, job
+
+
+def contain(proc: subprocess.Popen) -> subprocess.Popen:
+    """Tie ``proc`` (and anything it starts) to this test run's lifetime."""
+    global _JOB
+    if os.name == "nt":
+        if _JOB is None:
+            _JOB = _windows_job()           # never closed: the handle closes when this process ends
+        k32, job = _JOB
+        if not k32.AssignProcessToJobObject(job, int(proc._handle)):
+            print(f"warning: pid {proc.pid} is not tied to the test run", file=sys.stderr)
+    else:
+        if not _POSIX_CHILDREN:
+            import atexit
+            atexit.register(lambda: [p.kill() for p in _POSIX_CHILDREN if p.poll() is None])
+        _POSIX_CHILDREN.append(proc)
+    return proc
+
+
 def isolated_env(root: Path, kopia: str) -> dict:
     env = dict(os.environ)
     for key in [k for k in env if k.startswith("KOPIALENS_") or k.startswith("KOPIA_")]:
@@ -123,12 +181,12 @@ def start_kopia_server(root: Path, kopia: str, env: dict, config: str) -> dict:
     port = _free_port()
     crt, key, log = root / "kopia-server.crt", root / "kopia-server.key", root / "kopia-server.log"
     out = open(log, "a", encoding="utf-8")
-    proc = subprocess.Popen([kopia, "--config-file", str(cfg), "server", "start",
+    proc = contain(subprocess.Popen([kopia, "--config-file", str(cfg), "server", "start",
                              f"--address=127.0.0.1:{port}", "--tls-generate-cert",
                              "--tls-cert-file", str(crt), "--tls-key-file", str(key),
                              "--server-control-username", "control",
                              "--server-control-password", "control pw", "--no-ui"],
-                            env=env, stdout=out, stderr=subprocess.STDOUT)
+                            env=env, stdout=out, stderr=subprocess.STDOUT))
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         if proc.poll() is not None:
@@ -172,8 +230,8 @@ class Server:
 
     def start(self, timeout: float = 60) -> "Server":
         self._out = open(self.log, "a", encoding="utf-8")
-        self.proc = subprocess.Popen([sys.executable, "main.py"], cwd=APP_ROOT, env=self.env,
-                                     stdout=self._out, stderr=subprocess.STDOUT)
+        self.proc = contain(subprocess.Popen([sys.executable, "main.py"], cwd=APP_ROOT, env=self.env,
+                                             stdout=self._out, stderr=subprocess.STDOUT))
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:

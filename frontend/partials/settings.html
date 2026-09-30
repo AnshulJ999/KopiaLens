@@ -77,7 +77,7 @@
 
             <section x-show="settingsTab==='indexing'" class="space-y-4">
               <div>
-                <div class="flex items-center justify-between gap-3"><span>Heavy pass</span>
+                <div class="flex items-center justify-between gap-3"><span>Kopia indexing</span>
                   <select x-model="indexMode" @change="saveKl('index_mode')" class="fld border border-bd bg-surface2">
                     <option value="daily">Once a day, at a set time</option>
                     <option value="interval">Every N hours</option>
@@ -92,7 +92,7 @@
                     <option value="43200">12 hours</option>
                     <option value="86400">24 hours</option>
                   </select></div>
-                <p class="text-[11px] text-muted mt-1">Indexing, snapshot analysis, reclaimable, the dashboard rebuild, folder pre-compute and the Backblaze rescan all run together in a separate process that exits afterwards, so this app never holds on to the memory. One repo at a time. If the PC was off at the scheduled time it catches up at the next opportunity. The app stays usable while a repo indexes; a heavy pass just isn't included in that repo's numbers until it finishes.</p>
+                <p class="text-[11px] text-muted mt-1">Indexing, snapshot analysis, reclaimable, the dashboard rebuild and folder pre-compute run together in a separate process that exits afterwards, so this app never holds on to the memory. One repo at a time. If the PC was off at the scheduled time it catches up at the next opportunity. The app stays usable while a repo indexes; a heavy pass just isn't included in that repo's numbers until it finishes. Backblaze has its own schedule; this setting doesn't change it.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Dashboard numbers</span>

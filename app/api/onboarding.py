@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..core import auth, kopiabin, repos, users
+from ..index import crypto
 from ..settings import load_settings, mutate_settings, raw_kopialens_settings
 
 router = APIRouter(tags=["onboarding"])
@@ -43,7 +44,7 @@ def state(request: Request) -> dict:
     unlocked = not first_run["needs_code"] or auth.setup_cookie_ok(request.cookies.get(auth.SETUP_COOKIE))
     out = {
         "needed": needed(),
-        "first_run": {**first_run, "setup_code": None},
+        "first_run": first_run,
         "setup_unlocked": unlocked,
         "profile": auth.profile(),
     }
@@ -53,6 +54,7 @@ def state(request: Request) -> dict:
     out.update({
         "protection_chosen": auth.protection_chosen(),
         "has_account": users.has_accounts(),
+        "encryption_level": crypto.level() if crypto.configured() else "off",
         "kopia": kopiabin.info(with_version=False),
         "index_mode": kl.get("index_mode", "daily"),
         "index_time": kl.get("index_time", "23:00"),

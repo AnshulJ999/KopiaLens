@@ -21,6 +21,7 @@ from ..index.snapanalysis import batched, compute_source, read_analysis, reclaim
 from .errors import PASS_THROUGH
 
 router = APIRouter(tags=["snapshots"])
+_UNREADABLE = "kopia could not read this folder. Check the connection and try again."
 
 
 def _fmt_cmd(cmd: list[str]) -> str:
@@ -218,7 +219,9 @@ def browse(repo: str, source: str, snapshot_id: str, path: str = "") -> dict:
     try:
         for i, seg in enumerate(segs):
             kids = entries.children_of(repo, [oid]).get(oid)
-            entry = _find(kids or [], seg, fold) if kids is not None else None
+            if kids is None:
+                raise HTTPException(status_code=502, detail=_UNREADABLE)
+            entry = _find(kids, seg, fold)
             if entry is None or entry.get("type") != "d":
                 raise HTTPException(status_code=404, detail=f"{seg} is not a folder in this snapshot.")
             oid = entry.get("obj") or ""
@@ -231,7 +234,7 @@ def browse(repo: str, source: str, snapshot_id: str, path: str = "") -> dict:
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     if kids is None:
-        raise HTTPException(status_code=502, detail="kopia could not read this folder. Check the connection and try again.")
+        raise HTTPException(status_code=502, detail=_UNREADABLE)
     rows = []
     for e in kids:
         summ = e.get("summ") or {}

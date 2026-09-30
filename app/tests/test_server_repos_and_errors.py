@@ -127,6 +127,14 @@ def test_browse_refuses_a_file_or_a_gone_snapshot(one_snapshot):
     assert gone.value.status_code == 404
 
 
+def test_browse_reports_an_unreadable_folder_on_the_way_down(one_snapshot, monkeypatch):
+    monkeypatch.setattr(entries, "children_of", lambda repo, oids: {"root": [
+        {"name": "docs", "type": "d", "obj": "kdocs"}]} if oids == ["root"] else {})
+    with pytest.raises(HTTPException) as err:
+        snapshots.browse("1", SOURCE, "s1", "C:\\data\\docs\\deeper")
+    assert err.value.status_code == 502
+
+
 # ---- removing a connection KopiaLens made clears kopia's saved password ------------------------------
 
 @pytest.fixture

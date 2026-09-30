@@ -18,6 +18,10 @@ const repoWhereOf = (type, c) => {
     default: return "";
   }
 };
+const REPO_SHORT_TYPES = {
+  filesystem: "Folder", sftp: "SFTP", s3: "S3", b2: "B2", gcs: "GCS", azureBlob: "Azure",
+  webdav: "WebDAV", rclone: "Rclone", gdrive: "Drive", server: "Server",
+};
 const REPO_TYPE_LABELS = {
   filesystem: "Folder", sftp: "SFTP", s3: "S3", b2: "Backblaze B2", gcs: "Google Cloud Storage",
   azureBlob: "Azure", webdav: "WebDAV", rclone: "Rclone", gdrive: "Google Drive", server: "Kopia server",
@@ -26,9 +30,9 @@ const REPO_TYPE_LABELS = {
 const reposPart = {
 
     // ---- The connect form (partials/connectform.html) ---------------------------------------
-    async cxOpen(context, existing) {
+    async cxOpen(existing) {
       this.cx = {
-        context, loading: true, error: "", busy: false,
+        loading: true, error: "", busy: false,
         detected: [], picked: {}, providers: [],
         mode: "", provider: "", fields: {}, password: "", name: "", serverOk: false,
         added: (existing || []).map((r) => this._cxEntry(r)),
@@ -60,6 +64,16 @@ const reposPart = {
       for (let i = 2; taken.has(name); i++) name = `${tail || fallback} ${i}`;
       return name;
     },
+    // Suggested chip label: the folder or bucket name when it fits in 12 characters, else the storage type.
+    cxDefaultShort(type, config) {
+      const tail = repoWhereOf(type, config).replace(/[\\/:]+$/, "").split(/[\\/:]/).filter(Boolean).pop() || "";
+      const base = tail && tail.length <= 12 ? tail : (REPO_SHORT_TYPES[type] || "");
+      if (!base) return "";
+      const taken = new Set((this.repos || []).map((r) => r.short_name).concat(((this.cx && this.cx.added) || []).map((a) => a.short_name)));
+      let label = base;
+      for (let i = 2; taken.has(label); i++) label = `${base.slice(0, 12 - String(i).length - 1)} ${i}`;
+      return label;
+    },
     async cxUseSelected() {
       const cx = this.cx;
       const chosen = this.cxCandidates().filter((c) => cx.picked[c.config_file]);
@@ -68,7 +82,7 @@ const reposPart = {
       for (const c of chosen) {
         try {
           const name = this.cxDefaultName(c.type, c.config, c.filename.replace(/\.config$/, ""));
-          const r = await _setupPost("/api/setup/attach", { config_file: c.config_file, name });
+          const r = await _setupPost("/api/setup/attach", { config_file: c.config_file, name, short_name: this.cxDefaultShort(c.type, c.config) });
           cx.added.push(this._cxEntry(r.repo));
           c.in_store = true;
           delete cx.picked[c.config_file];
@@ -121,7 +135,8 @@ const reposPart = {
       cx.busy = true; cx.error = "";
       try {
         const url = cx.mode === "create" ? "/api/setup/create" : "/api/setup/connect";
-        const r = await _setupPost(url, { provider: spec.key, fields, password: cx.password, name });
+        const short_name = this.cxDefaultShort(spec.key === "azure" ? "azureBlob" : spec.key, cfg);
+        const r = await _setupPost(url, { provider: spec.key, fields, password: cx.password, name, short_name });
         cx.added.push({ ...this._cxEntry(r.repo), managed: true });
         cx.mode = ""; cx.password = ""; cx.name = "";
         this.cxSummary(cx.added[cx.added.length - 1]);   // the tracked copy, so the card updates
@@ -193,7 +208,7 @@ const reposPart = {
     async openAddRepo() {
       this.repoMenu = false;
       this.repoAdd = true;
-      await this.cxOpen("add");
+      await this.cxOpen();
     },
     async closeAddRepo() {
       this.repoAdd = false;

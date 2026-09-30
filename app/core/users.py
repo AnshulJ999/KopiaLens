@@ -50,24 +50,37 @@ def _read() -> dict:
     path = _path()
     try:
         mtime = os.stat(path).st_mtime_ns
-    except OSError:                      # no file yet: one stable empty store until the first write
+    except FileNotFoundError:            # no file yet: one stable empty store until the first write
         with _LOCK:
             if _CACHE["data"] is None or _CACHE["mtime"] is not None:
                 _CACHE.update(mtime=None, data=_empty())
             return _CACHE["data"]
+    except OSError as exc:
+        return _last_good(exc)
     with _LOCK:
         if _CACHE["mtime"] == mtime and _CACHE["data"] is not None:
             return _CACHE["data"]
         try:
             with open(path, encoding="utf-8") as fh:
                 data = json.load(fh)
-        except (OSError, ValueError) as exc:
+        except OSError as exc:           # transient (a lock held by antivirus or backup): never cached
+            return _last_good(exc)
+        except ValueError as exc:
             log.error("users.json unreadable (%s); treating as no accounts", exc)
             data = _empty()
         if not isinstance(data, dict) or not isinstance(data.get("users"), list):
             data = _empty()
         _CACHE.update(mtime=mtime, data=data)
         return data
+
+
+def _last_good(exc: OSError) -> dict:
+    """A failed read keeps the last good content so a momentary lock cannot switch sign-in off."""
+    log.warning("users.json could not be read (%s); using the last good copy", exc)
+    with _LOCK:
+        if _CACHE["data"] is not None and _CACHE["mtime"] is not None:
+            return _CACHE["data"]
+    return _empty()
 
 
 def _write(data: dict) -> None:

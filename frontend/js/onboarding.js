@@ -20,7 +20,7 @@ const onboardingPart = {
       const st = this.ob.state;
       await _setupPost("/api/onboarding/begin").catch(() => {});
       if (st.protection_chosen) this.ob.protected = st.has_account ? "account" : "skipped";
-      await this.cxOpen("onboarding", (st.repos || []).filter((r) => r.kind !== "backblaze"));
+      await this.cxOpen((st.repos || []).filter((r) => r.kind !== "backblaze"));
     },
     obSteps() { return OB_STEPS; },
     obStepIndex(step) { const s = step === "key" ? "protect" : step; return OB_STEPS.findIndex((x) => x[0] === s); },
@@ -30,6 +30,7 @@ const onboardingPart = {
     // ---- Setup code (server install, setup window closed) -----------------------------------
     obNeedCode() {
       if (this.ob) this.ob.needsCode = true;
+      else location.reload();                 // the reload lands on the setup-code screen
     },
     async obSubmitCode() {
       const o = this.ob;
@@ -135,7 +136,7 @@ const onboardingPart = {
       return [
         ["Repositories", names || "None"],
         ["Sign-in", o.protected === "account" ? "On" : (o.protected === "skipped" ? "Off" : "Unchanged")],
-        ["Encryption", o.recoveryKey ? `${this.encLevelLabel(o.level)}${o.remember ? ", unlocks automatically" : ""}` : (o.protected === "account" && o.level === "off" ? "Off" : "Unchanged")],
+        ["Encryption", o.recoveryKey ? `${this.encLevelLabel(o.level)}${o.remember ? ", unlocks automatically" : ""}` : (o.protected === "account" && o.level === "off" ? "Off" : (o.state.encryption_level && o.state.encryption_level !== "off" ? this.encLevelLabel(o.state.encryption_level) : "Unchanged"))],
       ];
     },
     obInterval() { return this.ob.state.index_mode === "interval"; },

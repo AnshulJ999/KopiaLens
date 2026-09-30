@@ -157,7 +157,7 @@ document.addEventListener("alpine:init", () => {
     },
     repoShortLabel(id) {
       const r = this.repos.find((x) => x.id === id);
-      return (r && (r.short_name || r.shortName || r.name)) || (id === "bz" ? "BZ" : "Repo " + id);
+      return (r && (r.short_name || r.shortName)) || (id === "bz" ? "BZ" : "Repo " + id);
     },
     repoLabel(id) { return this.repoLabels === "full" ? this.repoName(id) : this.repoShortLabel(id); },
 

@@ -9,7 +9,7 @@ import time
 import pytest
 
 from app import main as m
-from app.api import dashboard, onboarding
+from app.api import dashboard, onboarding, setup
 from app.core import auth, reindexq, repoconnect, repos
 
 
@@ -180,3 +180,12 @@ def test_summary_counts_sources_computers_and_snapshots(monkeypatch):
     monkeypatch.setattr(sources, "all_snapshots", lambda r: snaps)
     out = repoconnect.summary("4")
     assert out == {"repo": "4", "snapshots": 3, "sources": 2, "hosts": 2, "newest": "2026-09-30T00:00:00Z"}
+
+
+def test_backblaze_takes_a_name_and_short_name(records, monkeypatch):
+    records["repos"] = [{"id": "bz", "kind": "backblaze", "name": "Backblaze Personal Backup"}]
+    monkeypatch.setattr(repos.config, "save_records", lambda *a, **kw: None)
+    monkeypatch.setattr(repos.config, "reload_repos", lambda: None)
+    monkeypatch.setattr(repos, "detail", lambda rec: dict(rec))
+    out = setup.edit("bz", setup.RepoEditRequest(short_name="BZ", name="Backblaze"))
+    assert out["repo"]["short_name"] == "BZ" and out["repo"]["name"] == "Backblaze"

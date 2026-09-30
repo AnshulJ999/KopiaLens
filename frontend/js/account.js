@@ -168,7 +168,8 @@ const accountPart = {
         case "startover":
           r = await _acctPost("/api/encryption/reset", { confirm: true, keep_copy: d.choice === "aside" });
           try {
-            sessionStorage.setItem("kl-flash", r.kept_copy ? `Started over. The old files are in ${r.kept_copy}.` : "Started over. The old files were deleted.");
+            const left = r.failed ? ` ${countOf(r.failed, "file")} couldn't be ${r.kept_copy ? "moved" : "deleted"}; see the log.` : "";
+            sessionStorage.setItem("kl-flash", (r.kept_copy ? `Started over. The old files are in ${r.kept_copy}.` : "Started over. The old files were deleted.") + left);
           } catch (e) { /* the page still reloads without the note */ }
           location.reload();
           return;

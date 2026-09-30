@@ -4,6 +4,7 @@ first-run window, and the shared sign-in/encryption password."""
 from __future__ import annotations
 
 import json
+import os
 import time
 
 import pytest
@@ -43,6 +44,25 @@ def _account(name="admin", password="correct horse", **kw):
 
 def _body(resp) -> dict:
     return json.loads(resp.body)
+
+
+# ---- the account store -----------------------------------------------------------------------
+
+def test_a_failed_read_keeps_the_last_good_accounts(env, monkeypatch):
+    _account()
+    path = users._path()
+    stamp = os.stat(path).st_mtime_ns + 1_000_000
+    os.utime(path, ns=(stamp, stamp))           # force a re-read
+    calls = []
+
+    def _locked(*a, **kw):
+        calls.append(a)
+        raise PermissionError("locked by another process")
+
+    monkeypatch.setattr(users, "open", _locked, raising=False)
+    assert users.has_accounts() and auth.enabled()
+    monkeypatch.delattr(users, "open")
+    assert users.has_accounts() and calls
 
 
 # ---- sessions --------------------------------------------------------------------------------
