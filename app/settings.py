@@ -108,14 +108,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "duckdb_memory": "",
         "duckdb_threads": 0,
         # ---- access control ---------------------------------------------------------
-        # Auth is on BECAUSE a password exists, not the other way round: enabled() requires a
-        # hash, so a fresh install (no password) is never locked out. The bind default is PER
-        # INSTALL PROFILE (tray = desktop = loopback; anything else = server = all interfaces) -
-        # resolved in core/auth.py, which also honours KOPIALENS_BIND_HOST / _ALLOWED_HOSTS /
-        # _PASSWORD env overrides (an auth OFF switch does not exist yet - see). Choosing
-        # a password belongs to onboarding (); Settings carries the control until then.
+        # Sign-in guards once an account exists (accounts live in users.json, core/users.py) and
+        # auth_enabled is on; switching off keeps the account. The bind default is PER INSTALL
+        # PROFILE (tray = desktop = loopback; anything else = server = all interfaces) - resolved
+        # in core/auth.py, which also honours KOPIALENS_BIND_HOST / _ALLOWED_HOSTS / _PASSWORD /
+        # _USERNAME / _AUTH_ENABLED env overrides.
         "auth_enabled": True,
-        "auth_password_hash": "",      # pbkdf2_sha256$iters$salt$digest - never the password
+        "session_days": 30,            # "stay signed in for": one of auth.SESSION_CHOICES
         "bind_host": "127.0.0.1",      # desktop-profile default; a server install resolves 0.0.0.0
         "allowed_hosts": [],           # extra Host header names (a reverse proxy's domain).
                                        # localhost and bare IP addresses are always accepted.

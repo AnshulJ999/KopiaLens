@@ -420,17 +420,7 @@ def test_a_malformed_stored_hash_is_simply_not_a_match():
     assert not auth.verify_password("anything", "garbage")
 
 
-def test_changing_the_password_invalidates_existing_sessions(monkeypatch):
-    first, second = auth.hash_password("first"), auth.hash_password("second")
-    monkeypatch.setattr(auth, "password_hash", lambda: first)
-    token = auth.session_token()
-    assert auth.valid_session(token)
-    monkeypatch.setattr(auth, "password_hash", lambda: second)
-    assert not auth.valid_session(token)
-
-
-def test_no_password_means_no_valid_session(monkeypatch):
-    monkeypatch.setattr(auth, "password_hash", lambda: "")
+def test_no_account_means_no_valid_session():
     assert not auth.valid_session("")
     assert not auth.valid_session("anything")
 
@@ -448,48 +438,6 @@ def test_an_unlisted_domain_name_is_rejected(monkeypatch):
     monkeypatch.setattr(auth, "_kl", lambda: {"allowed_hosts": ["kopia.example.net"]})
     assert auth.host_allowed("kopia.example.net:7123")
     assert not auth.host_allowed("evil.example.com")
-
-
-def test_auth_is_on_because_a_password_exists(monkeypatch):
-    """The REL2 model: a fresh install has no password and must never be locked out; a hash turns
-    auth on; an explicit off stays off even when a hash exists."""
-    monkeypatch.setattr(auth, "_kl", lambda: {"auth_enabled": True, "auth_password_hash": ""})
-    assert auth.enabled() is False
-    monkeypatch.setattr(auth, "_kl",
-                        lambda: {"auth_enabled": True, "auth_password_hash": "pbkdf2_sha256$1$ab$cd"})
-    assert auth.enabled() is True
-    monkeypatch.setattr(auth, "_kl",
-                        lambda: {"auth_enabled": False, "auth_password_hash": "pbkdf2_sha256$1$ab$cd"})
-    assert auth.enabled() is False
-
-
-def test_set_password_stores_a_hash_and_enables_auth(monkeypatch):
-    captured = {}
-
-    def _fake_mutate(fn):
-        s = {"kopialens": {}}
-        fn(s)
-        captured.update(s["kopialens"])
-
-    monkeypatch.setattr(auth, "mutate_settings", _fake_mutate)
-    auth.set_password("correct horse battery")
-    assert captured["auth_enabled"] is True
-    assert captured["auth_password_hash"].startswith("pbkdf2_sha256$")
-    assert "correct horse battery" not in str(captured)
-
-
-def test_removing_the_password_clears_the_hash_and_records_the_choice(monkeypatch):
-    captured = {}
-
-    def _fake_mutate(fn):
-        s = {"kopialens": {"auth_password_hash": "x", "auth_enabled": True}}
-        fn(s)
-        captured.update(s["kopialens"])
-
-    monkeypatch.setattr(auth, "mutate_settings", _fake_mutate)
-    auth.clear_password()
-    assert captured["auth_password_hash"] == ""
-    assert captured["auth_enabled"] is False
 
 
 def test_the_bind_default_follows_the_launch_profile(monkeypatch):

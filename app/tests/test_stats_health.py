@@ -59,7 +59,9 @@ def test_the_settings_payload_never_carries_the_password_hash(monkeypatch):
                         lambda: {"kopialens": {"auth_password_hash": "secret", "auth_enabled": True},
                                  "backblaze": {}})
     monkeypatch.setattr(dash, "REPOS", {"1": {"name": "Main", "kind": "kopia"}})
-    monkeypatch.setattr(auth, "_kl", lambda: {"auth_enabled": True, "auth_password_hash": "secret"})
+    monkeypatch.setattr(auth, "_kl", lambda: {"auth_enabled": True})
+    from app.core import users
+    users.create("admin", auth.hash_password("correct horse"))
     kl = dash.repos()["settings"]["kopialens"]
     assert "auth_password_hash" not in kl
     assert kl["auth_protected"] is True

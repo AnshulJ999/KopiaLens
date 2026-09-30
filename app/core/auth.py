@@ -1,13 +1,18 @@
-"""Single shared-password access control (REL2, "Option A").
+"""Sign-in and access control.
 
-Shape, deliberately small: no user accounts, no roles, no session store. One password guards the
-whole app; a correct login sets a signed cookie derived from the stored password hash, so changing
-the password invalidates every existing session and nothing has to be persisted server-side.
+Accounts live in ``core/users.py`` (v1: one admin account). A correct sign-in sets a stateless
+signed cookie carrying the username, the sign-in time, the account's session epoch and whether
+the user ticked "keep me signed in"; the MAC also covers the account's password hash. So the
+server enforces the session length itself, a password change or "sign out all devices" (epoch
+bump) invalidates every existing session, and nothing is stored per session.
 
-Auth is on BECAUSE a password exists, not the other way round: a fresh install has no password and
-no lockout. The middleware only guards once a hash is stored and auth is not explicitly disabled.
-Choosing the password belongs to onboarding (); until then Settings carries the control, and
-KOPIALENS_PASSWORD can seed one so a headless/Docker image is provisionable without a browser.
+Sign-in is on when an account exists and it has not been switched off (setting ``auth_enabled``,
+env ``KOPIALENS_AUTH_ENABLED``); switching it off keeps the account. A fresh install has no account
+and no lockout. KOPIALENS_PASSWORD seeds the first account so a headless image is provisionable.
+
+First run on a server install: while no protection choice exists (no account, sign-in not
+explicitly off), creating the first account or skipping protection is allowed for
+``SETUP_WINDOW`` seconds after start, then only with the one-time setup code printed at startup.
 
 Two independent protections live here:
 
@@ -26,6 +31,7 @@ settings value, which beats the profile.
 from __future__ import annotations
 
 import base64
+import contextvars
 import hashlib
 import hmac
 import ipaddress
@@ -35,14 +41,26 @@ import threading
 import time
 
 from ..settings import load_settings, mutate_settings, raw_kopialens_settings
+from . import users
+from .applog import get_logger
+
+log = get_logger("auth")
 
 COOKIE_NAME = "kopialens_session"
 _ITERATIONS = 200_000
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", ""}
-# Multi-user groundwork (2026-09-06): today there is exactly one identity. Everything that will
-# need a user - the session subject, the audit actor - goes through here, so adding a real user
-# store later changes this function and nothing else.
+# The audit actor when nobody is signed in (sign-in off): the single-user identity.
 SUBJECT = "admin"
+MIN_PASSWORD = 8
+SESSION_CHOICES = (1, 7, 14, 30, 90, 180, 365)   # days; "stay signed in for" (advanced setting)
+DEFAULT_SESSION_DAYS = 30
+SETUP_WINDOW = 30 * 60                            # seconds first-run setup is open after start
+_STARTED = time.time()
+_SETUP_CODE = ""
+_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O/1/I
+_ACTOR: contextvars.ContextVar[str | None] = contextvars.ContextVar("kopialens_actor", default=None)
+# verify_password against this when the username is unknown, so both cases take the same time
+_DUMMY_HASH = f"pbkdf2_sha256${_ITERATIONS}${'00' * 16}${'00' * 32}"
 
 
 def _kl() -> dict:
@@ -62,14 +80,30 @@ def profile() -> str:
     return "desktop" if _env("KOPIALENS_PROFILE").lower() == "desktop" else "server"
 
 
+def switched_on() -> bool:
+    """The on/off choice alone (env beats the setting), whether or not an account exists."""
+    env = _env("KOPIALENS_AUTH_ENABLED").lower()
+    if env in ("0", "false", "no", "off"):
+        return False
+    if env in ("1", "true", "yes", "on"):
+        return True
+    return bool(_kl().get("auth_enabled", True))
+
+
 def enabled() -> bool:
-    """Auth guards only when a password was actually chosen AND has not been explicitly disabled -
-    a fresh install (no password yet) is never locked out."""
-    return bool(_kl().get("auth_enabled", True)) and bool(password_hash())
+    """Sign-in guards only when an account exists AND it is switched on - a fresh install (no
+    account yet) is never locked out, and switching off keeps the account."""
+    return switched_on() and users.has_accounts()
 
 
-def password_hash() -> str:
-    return str(_kl().get("auth_password_hash") or "")
+def set_enabled(on: bool) -> None:
+    mutate_settings(lambda s: s.setdefault("kopialens", {}).__setitem__("auth_enabled", bool(on)))
+
+
+def protection_chosen() -> bool:
+    """Onboarding's Protect decision was made: an account exists, or sign-in was explicitly
+    switched off ("skip protection")."""
+    return users.has_accounts() or raw_kopialens_settings().get("auth_enabled") is False
 
 
 def hash_password(password: str) -> str:
@@ -90,48 +124,126 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(digest.hex(), digest_hex)
 
 
-def set_password(password: str) -> None:
-    stored = hash_password(password)
-
-    def _apply(settings: dict) -> None:
-        settings.setdefault("kopialens", {})["auth_password_hash"] = stored
-        settings["kopialens"]["auth_enabled"] = True
-
-    mutate_settings(_apply)
-
-
-def clear_password() -> None:
-    """Turn auth off entirely: drop the hash and record the explicit choice (the Settings note
-    "not password protected" reads this), so a later hash can flip it back on."""
-
-    def _apply(settings: dict) -> None:
-        settings.setdefault("kopialens", {})["auth_password_hash"] = ""
-        settings["kopialens"]["auth_enabled"] = False
-
-    mutate_settings(_apply)
+def authenticate(username: str, password: str) -> dict | None:
+    """The account these credentials sign in to, or None. An unknown username costs the same
+    hashing time as a wrong password."""
+    user = users.find(username)
+    ok = verify_password(password, user["password_hash"] if user else _DUMMY_HASH)
+    return user if (ok and user) else None
 
 
 def current_actor() -> str:
-    """Who is performing the action, for audit records. Returns SUBJECT for the single shared
-    password; a user store replaces this one function (and the session subject) later."""
-    return SUBJECT
+    """Who is performing the action, for audit records: the signed-in account, else SUBJECT."""
+    return _ACTOR.get() or SUBJECT
 
 
-def session_token() -> str:
-    """Stateless session value: an HMAC over the current password hash AND the subject, so the
-    cookie format already carries an identity and never has to change when users arrive.
-    Restart-safe (nothing is held in memory) and self-invalidating when the password changes."""
-    stored = password_hash()
-    if not stored:
-        return ""
-    mac = hmac.new(stored.encode("utf-8"), f"kopialens-session-v1:{SUBJECT}".encode(),
-                   hashlib.sha256).digest()
-    return base64.urlsafe_b64encode(mac).decode().rstrip("=")
+def set_actor(username: str | None) -> contextvars.Token:
+    return _ACTOR.set(username)
+
+
+# ---- sessions --------------------------------------------------------------------------------
+
+def session_days() -> int:
+    try:
+        days = int(_kl().get("session_days", DEFAULT_SESSION_DAYS))
+    except (TypeError, ValueError):
+        return DEFAULT_SESSION_DAYS
+    return days if days in SESSION_CHOICES else DEFAULT_SESSION_DAYS
+
+
+def _b64(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode().rstrip("=")
+
+
+def _unb64(text: str) -> bytes:
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def _mac(payload: str, user: dict) -> str:
+    msg = f"kopialens-session-v2|{payload}|{user.get('password_hash', '')}".encode()
+    return _b64(hmac.new(users.secret(), msg, hashlib.sha256).digest())
+
+
+def issue_session(user: dict, persist: bool, now: float | None = None) -> str:
+    """Cookie value: base64(username|signed-in-at|epoch|persist) "." MAC."""
+    issued = int(now if now is not None else time.time())
+    payload = _b64(f"{user['username']}|{issued}|{int(user.get('epoch', 0))}|{int(persist)}".encode())
+    return f"{payload}.{_mac(payload, user)}"
+
+
+def session_user(token: str | None, now: float | None = None) -> dict | None:
+    """The account a cookie signs in, or None when it is malformed, forged, from before a password
+    change or "sign out all devices", or older than the session length."""
+    if not token or "." not in token:
+        return None
+    payload, mac = token.rsplit(".", 1)
+    try:
+        username, issued, epoch, _persist = _unb64(payload).decode().split("|")
+        issued_at, epoch_n = int(issued), int(epoch)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    user = users.find(username)
+    if user is None or not hmac.compare_digest(mac, _mac(payload, user)):
+        return None
+    if epoch_n != int(user.get("epoch", 0)):
+        return None
+    now = now if now is not None else time.time()
+    if issued_at > now + 300 or now - issued_at > session_days() * 86400:
+        return None
+    return user
 
 
 def valid_session(token: str | None) -> bool:
-    expected = session_token()
-    return bool(expected) and bool(token) and hmac.compare_digest(token, expected)
+    return session_user(token) is not None
+
+
+def session_persists(token: str | None) -> bool:
+    """Whether a cookie was issued with "keep me signed in" (unreadable = yes, the default)."""
+    try:
+        return _unb64((token or "").rsplit(".", 1)[0]).decode().split("|")[3] == "1"
+    except (ValueError, IndexError, UnicodeDecodeError):
+        return True
+
+
+# ---- first run (server installs) -------------------------------------------------------------
+
+def mark_started() -> None:
+    global _STARTED
+    _STARTED = time.time()
+
+
+def setup_code() -> str:
+    global _SETUP_CODE
+    if not _SETUP_CODE:
+        chars = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(8))
+        _SETUP_CODE = f"{chars[:4]}-{chars[4:]}"
+    return _SETUP_CODE
+
+
+def first_run_state(now: float | None = None) -> dict:
+    """``required``: a server install with no protection choice yet. ``open``: setup works without
+    a code. ``needs_code``: the window has closed; the setup code is required."""
+    required = profile() == "server" and not protection_chosen()
+    closes = _STARTED + SETUP_WINDOW
+    is_open = (not required) or (now if now is not None else time.time()) < closes
+    return {"required": required, "open": is_open, "closes_at": closes if required else None,
+            "needs_code": required and not is_open}
+
+
+def first_run_allowed(code: str = "") -> bool:
+    if not first_run_state()["needs_code"]:
+        return True
+    return hmac.compare_digest((code or "").strip().upper(), setup_code())
+
+
+def announce_setup() -> None:
+    """Print the setup code where a headless install's owner can read it (stdout = docker logs)."""
+    if not first_run_state()["required"]:
+        return
+    msg = (f"Setup is open for {SETUP_WINDOW // 60} minutes. After that, enter this setup code: "
+           f"{setup_code()} (restarting KopiaLens also reopens setup).")
+    log.warning(msg)
+    print(f"KopiaLens: {msg}", flush=True)
 
 
 def _hostname(host_header: str) -> str:
@@ -184,44 +296,81 @@ def exempt(path: str) -> bool:
 
 
 LOGIN_PAGE = """<!doctype html>
-<html><head><meta charset="utf-8"><title>KopiaLens</title>
+<html lang="en"><head><meta charset="utf-8"><title>Sign in - KopiaLens</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
- body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
-      background:#1c1917;color:#e7e5e4;font:14px system-ui,Segoe UI,sans-serif}
- form{width:320px;padding:28px;background:#292524;border:1px solid #44403c;border-radius:10px}
- h1{margin:0 0 4px;font-size:18px;font-weight:600}
- p{margin:0 0 18px;color:#a8a29e;font-size:12px;line-height:1.5}
- input{width:100%;box-sizing:border-box;padding:9px 10px;margin-bottom:12px;border-radius:6px;
-       border:1px solid #57534e;background:#1c1917;color:#e7e5e4;font-size:14px}
- button{width:100%;padding:9px;border:0;border-radius:6px;background:#0d9488;color:#fff;
+ :root{--canvas:#f5f5f4;--surface:#fff;--bd:#d6d3d1;--fg:#1c1917;--muted:#78716c;--bad:#b91c1c;
+       --accent:#4f46e5;--accent-bd:#a5b4fc;--accent-bg:#eef2ff}
+ @media (prefers-color-scheme: dark){:root{--canvas:#0f0f10;--surface:#18181b;--bd:#3a3a42;
+       --fg:#e7e5e4;--muted:#a1a1aa;--bad:#f87171;--accent:#a5b4fc;--accent-bd:#4338ca;--accent-bg:#1e1b4b}}
+ *{box-sizing:border-box}
+ body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;
+      background:var(--canvas);color:var(--fg);font:14px/1.45 system-ui,"Segoe UI",sans-serif}
+ form{width:100%;max-width:340px;padding:24px;background:var(--surface);border:1px solid var(--bd);
+      border-radius:12px;display:flex;flex-direction:column;gap:12px}
+ .brand{display:flex;gap:8px;align-items:center;font-weight:600}
+ .logo{width:22px;height:22px;border-radius:6px;background:var(--fg)}
+ h1{margin:0;font-size:17px}
+ label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:500}
+ input[type=text],input[type=password]{height:34px;padding:0 9px;border-radius:6px;border:1px solid var(--bd);
+      background:var(--surface);color:var(--fg);font-size:14px}
+ input.bad{border-color:var(--bad)}
+ label.c{display:flex;gap:7px;align-items:center;font-size:13px}
+ button{height:34px;border:1px solid var(--fg);border-radius:6px;background:var(--fg);color:var(--surface);
         font-size:14px;font-weight:600;cursor:pointer}
- .err{color:#fda4af;font-size:12px;margin-bottom:12px}
+ .err{color:var(--bad);font-size:12px}
+ .lock{border:1px solid var(--accent-bd);background:var(--accent-bg);border-radius:6px;padding:8px 10px;font-size:12px}
+ .note{color:var(--muted);font-size:12px}
 </style></head><body>
 <form method="post" action="/api/auth/login">
-  <h1>KopiaLens</h1>
-  <p>Enter the shared password to continue.</p>
+  <div class="brand"><span class="logo"></span>KopiaLens</div>
+  <h1>Sign in</h1>
+  __LOCK__
+  <label class="f">Username<input type="text" name="username" autocomplete="username" value="__USER__" required __FOCUS_USER__></label>
+  <label class="f">Password<input type="password" name="password" autocomplete="current-password" required __BAD__ __FOCUS_PW__></label>
   __ERROR__
-  <input type="password" name="password" placeholder="Password" autofocus required>
-  <button type="submit">Sign in</button>
+  <label class="c"><input type="checkbox" name="remember" value="1" checked>Keep me signed in</label>
+  <button type="submit">__BUTTON__</button>
+  <div class="note">__REMEMBER_NOTE__</div>
 </form></body></html>"""
 
 
-def login_page(error: str = "") -> str:
-    err = f'<div class="err">{error}</div>' if error else ""
-    return LOGIN_PAGE.replace("__ERROR__", err)
+def _days_label(days: int) -> str:
+    return {1: "1 day", 7: "1 week", 14: "2 weeks", 30: "30 days", 90: "3 months",
+            180: "6 months", 365: "1 year"}.get(days, f"{days} days")
 
 
-def cookie_kwargs() -> dict:
+def login_page(error: str = "", username: str = "", unlocks: bool = False) -> str:
+    """The sign-in form. ``unlocks``: the index is locked and signing in will unlock it."""
+    from html import escape
+    lock = ('<div class="lock">The index is locked since KopiaLens restarted. '
+            'Signing in unlocks it.</div>') if unlocks else ""
+    note = (f"Stays signed in for {_days_label(session_days())} on this browser. "
+            "Unticked: until you close the browser.")
+    return (LOGIN_PAGE.replace("__LOCK__", lock)
+            .replace("__USER__", escape(username, quote=True))
+            .replace("__FOCUS_USER__", "" if username else "autofocus")
+            .replace("__FOCUS_PW__", "autofocus" if username else "")
+            .replace("__BAD__", 'class="bad"' if error else "")
+            .replace("__ERROR__", f'<div class="err">{escape(error)}</div>' if error else "")
+            .replace("__BUTTON__", "Sign in and unlock" if unlocks else "Sign in")
+            .replace("__REMEMBER_NOTE__", note))
+
+
+def cookie_kwargs(persist: bool = True) -> dict:
     """Session cookie flags. Not ``secure``: the app is commonly reached over plain HTTP on a LAN,
-    and a secure-only cookie would silently never be sent there."""
-    return {"httponly": True, "samesite": "lax", "max_age": 60 * 60 * 24 * 30, "path": "/"}
+    and a secure-only cookie would silently never be sent there. Without ``persist`` it is a
+    browser-session cookie; the server enforces the session length either way."""
+    kwargs = {"httponly": True, "samesite": "lax", "path": "/"}
+    if persist:
+        kwargs["max_age"] = session_days() * 86400
+    return kwargs
 
 
 # ---- login throttling -------------------------------------------------------------------
 # Wrong passwords cost an increasing wait; a right one clears the record. Deliberately NOT a
-# lockout: there is one shared password and no accounts, so a forgotten password must never be
-# able to lock the owner out - the worst case here is a 30 s wait. In memory only, so a restart
+# lockout: v1 has one admin account, so guessing must never be able to lock the owner out - the
+# worst case here is a 30 s wait. In memory only, so a restart
 # forgives everything, and a quiet period forgets too.
 #
 # Behind a reverse proxy every request arrives from the proxy, so all proxy users share one

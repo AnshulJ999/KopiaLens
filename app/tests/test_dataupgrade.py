@@ -139,19 +139,22 @@ def test_a_newer_folder_says_only_the_migration_is_refused(folder):
     assert "Nothing in it will be written" not in detail
 
 
-def test_the_encryption_level_step_is_registered_and_brings_a_folder_to_this_version(
+def test_the_shipped_steps_are_registered_and_bring_a_folder_to_this_version(
         folder, monkeypatch):
-    """The shipped registry: an unversioned folder runs the v1 -> v2 encryption-level step."""
+    """The shipped registry: an unversioned folder runs v1 -> v2 (encryption level) and
+    v2 -> v3 (accounts), in order."""
     import importlib
 
-    from app.core import encryption_upgrade, filecrypto
+    from app.core import encryption_upgrade, filecrypto, users, users_upgrade
     monkeypatch.setattr(filecrypto, "upgrade_step", lambda: {"changed": ["stub"]})
+    monkeypatch.setattr(users, "migrate_legacy", lambda: {"moved": False})
     importlib.reload(encryption_upgrade)          # re-register onto the fixture's empty registry
-    assert dataupgrade.DATA_VERSION == 2
+    importlib.reload(users_upgrade)
+    assert dataupgrade.DATA_VERSION == 3
     out = dataupgrade.run_pending()
-    assert out["version"] == 2
-    assert [r["name"] for r in out["ran"]] == ["encryption-level"]
-    assert json.loads((folder / "data_version.json").read_text(encoding="utf-8"))["version"] == 2
+    assert out["version"] == 3
+    assert [r["name"] for r in out["ran"]] == ["encryption-level", "accounts"]
+    assert json.loads((folder / "data_version.json").read_text(encoding="utf-8"))["version"] == 3
 
 
 def test_atomic_writers_leave_no_temp_and_replace_in_one_step(folder):

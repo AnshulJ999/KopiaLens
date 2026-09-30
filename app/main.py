@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import DATA_DIR, REPOS, repo_kind
 
-from .api import (actions, audit, backblaze, dashboard, deleteplan, encryption, excluded, insights,
+from .api import (account, actions, audit, backblaze, dashboard, deleteplan, encryption, excluded, insights,
                   jobs, logs, policies, restore, search, setup, simulate, snapshots, stats, tree)
 from .core import auth
 from .core import jobs as jobrunner
@@ -578,14 +578,18 @@ async def lifespan(_app: FastAPI):
         dataupgrade.start_background()
     except Exception as exc:  # noqa: BLE001 - an upgrade problem must not block startup
         log.error("data folder version check failed: %s", exc)
-    try:  # seed a password from the environment ONCE - how a provisioned Docker image gets auth
+    try:  # seed the first account from the environment ONCE - how a provisioned image gets auth
+        from .core import users
         seeded = os.environ.get("KOPIALENS_PASSWORD") or ""
-        if seeded and not auth.password_hash():
-            auth.set_password(seeded)
-            log.warning("auth password seeded from KOPIALENS_PASSWORD (first boot only - a "
-                        "password already chosen later is never overwritten)")
+        if seeded and not users.has_accounts():
+            name = (os.environ.get("KOPIALENS_USERNAME") or "admin").strip()
+            users.create(name, auth.hash_password(seeded))
+            log.warning("account %r seeded from KOPIALENS_PASSWORD (first boot only - an account "
+                        "that already exists is never overwritten)", name)
+        auth.mark_started()
+        auth.announce_setup()
     except Exception as exc:  # noqa: BLE001 - seeding must never block startup
-        log.error("KOPIALENS_PASSWORD seeding failed: %s", exc)
+        log.error("account seeding failed: %s", exc)
     try:  # encrypted install: unlock from the OS keychain if the user chose to remember it
         from .index import crypto
         if crypto.enabled() and not crypto.unlocked() and crypto.unlock_from_keychain():
@@ -681,16 +685,34 @@ async def access_middleware(request: Request, call_next):
                       "settings.kopialens.allowed_hosts if you reach KopiaLens by that name."})
     if not auth.enabled() or auth.exempt(request.url.path):
         return await call_next(request)
-    if auth.valid_session(request.cookies.get(auth.COOKIE_NAME)):
-        return await call_next(request)
+    user = auth.session_user(request.cookies.get(auth.COOKIE_NAME))
+    if user is not None:
+        token = auth.set_actor(user["username"])
+        try:
+            return await call_next(request)
+        finally:
+            auth._ACTOR.reset(token)
     if request.url.path.startswith("/api/"):
         return JSONResponse(status_code=401, content={"detail": "Not signed in.", "login": "/login"})
-    return HTMLResponse(auth.login_page(), status_code=401)
+    return HTMLResponse(_login_html(), status_code=401)
+
+
+def _login_html(error: str = "", username: str = "") -> str:
+    """The sign-in page; says it will unlock when the index is locked and the password is shared."""
+    from .core import users
+    from .index import crypto
+    try:
+        user = users.primary()
+        unlocks = bool(user and user.get("unlocks_encryption")
+                       and crypto.configured() and not crypto.unlocked())
+    except Exception:  # noqa: BLE001 - the sign-in page must always render
+        unlocks = False
+    return auth.login_page(error, username=username, unlocks=unlocks)
 
 
 @app.get("/login")
 def login_page() -> HTMLResponse:
-    return HTMLResponse(auth.login_page())
+    return HTMLResponse(_login_html())
 
 
 async def _form(request: Request) -> dict[str, str]:
@@ -703,18 +725,24 @@ async def _form(request: Request) -> dict[str, str]:
 @app.post("/api/auth/login")
 async def auth_login(request: Request):
     form = await _form(request)
+    username = str(form.get("username") or "").strip()
+    password = str(form.get("password") or "")
+    persist = bool(form.get("remember"))
     address = request.client.host if request.client else "?"
     wait = auth.login_delay(address)                      # increasing wait, never a lockout
     if wait:
-        return HTMLResponse(auth.login_page(f"Too many attempts. Try again in {int(wait)}s."),
+        return HTMLResponse(_login_html(f"Too many attempts. Try again in {int(wait)} s.", username),
                             status_code=429, headers={"Retry-After": str(int(wait) + 1)})
-    if not auth.verify_password(str(form.get("password") or ""), auth.password_hash()):
+    user = auth.authenticate(username, password)
+    if user is None:
         auth.record_login_failure(address)
         log.warning("failed login attempt from %s", address)
-        return HTMLResponse(auth.login_page("Wrong password."), status_code=401)
+        return HTMLResponse(_login_html("Wrong username or password.", username), status_code=401)
     auth.record_login_success(address)
+    from .api.account import unlock_if_linked
+    unlock_if_linked(user, password)
     resp = RedirectResponse("/", status_code=303)
-    resp.set_cookie(auth.COOKIE_NAME, auth.session_token(), **auth.cookie_kwargs())
+    resp.set_cookie(auth.COOKIE_NAME, auth.issue_session(user, persist), **auth.cookie_kwargs(persist))
     return resp
 
 
@@ -733,28 +761,40 @@ def post_index_stop(repo: str):
 
 @app.post("/api/auth/set-password")
 async def auth_set_password(request: Request):
-    """Choose or change the shared password. When auth is ON the middleware has already demanded
-    a session, so only someone who knows the current password can replace it; when auth is OFF
-    the app has nothing to protect yet and this is how a password gets added before onboarding
-    () exists."""
+    """The current Settings control (until the Account section replaces it): creates the admin
+    account when none exists, otherwise sets its password and switches sign-in on. A password
+    shared with encryption is changed only through /api/account/password, which asks for the
+    current one."""
+    from .core import users
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"ok": False, "detail": "invalid request body"}, status_code=400)
     password = str(body.get("password") or "")
-    if len(password) < 8:
-        return JSONResponse({"ok": False, "detail": "Use at least 8 characters."}, status_code=400)
-    auth.set_password(password)
+    if len(password) < auth.MIN_PASSWORD:
+        return JSONResponse({"ok": False, "detail": f"Use at least {auth.MIN_PASSWORD} characters."},
+                            status_code=400)
+    user = users.primary()
+    if user is None:
+        if not auth.first_run_allowed(str(body.get("code") or "")):
+            return JSONResponse({"ok": False, "detail": "Setup is closed. Enter the setup code "
+                                 "from the KopiaLens log."}, status_code=403)
+        user = users.create("admin", auth.hash_password(password))
+    elif user.get("unlocks_encryption"):
+        return JSONResponse({"ok": False, "detail": "This password also unlocks encryption. Change it "
+                             "in Settings, Account."}, status_code=409)
+    else:
+        user = users.set_password_hash(user["username"], auth.hash_password(password))
+    auth.set_enabled(True)
     resp = JSONResponse({"ok": True})
-    resp.set_cookie(auth.COOKIE_NAME, auth.session_token(), **auth.cookie_kwargs())
+    resp.set_cookie(auth.COOKIE_NAME, auth.issue_session(user, True), **auth.cookie_kwargs(True))
     return resp
 
 
 @app.post("/api/auth/remove-password")
 async def auth_remove_password():
-    """Turn auth off entirely. Reachable only with a valid session while auth is on (middleware);
-    a no-op when it is already off."""
-    auth.clear_password()
+    """Switch sign-in off. The account is kept, so switching back on needs no new password."""
+    auth.set_enabled(False)
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(auth.COOKIE_NAME, path="/")
     return resp
@@ -954,6 +994,7 @@ app.include_router(policies.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")
 app.include_router(encryption.router, prefix="/api")
 app.include_router(setup.router, prefix="/api")
+app.include_router(account.router, prefix="/api")
 app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
 
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")

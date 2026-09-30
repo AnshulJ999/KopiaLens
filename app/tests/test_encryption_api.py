@@ -68,7 +68,7 @@ def test_setup_creates_the_keystore_and_returns_a_recovery_key(wired):
     assert body["ok"] is True and body["recovery_key"]
     assert body["status"]["configured"] is True and body["status"]["unlocked"] is True
     assert body["status"]["has_recovery"] is True
-    assert wired["saved"]["level"] == "full"           # the ticked onboarding box means Full
+    assert wired["saved"]["level"] == "index"          # onboarding's default level is Index
 
 
 def test_setup_refuses_a_second_keystore(wired):

@@ -17,9 +17,14 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def isolate_disk_side_channels(tmp_path, monkeypatch):
-    from app.core import applog, audit, jobs, runhistory
+    from app.core import applog, audit, jobs, runhistory, users
 
     monkeypatch.setattr(audit, "_path", lambda: str(tmp_path / "audit.jsonl"))
+    # Accounts: a per-test users.json, and the legacy-password move marked done so no test reads
+    # (or rewrites) the developer's real settings.json through it.
+    monkeypatch.setattr(users, "_path", lambda: str(tmp_path / "users.json"))
+    monkeypatch.setattr(users, "_CACHE", {"mtime": None, "data": None})
+    monkeypatch.setattr(users, "_MIGRATED", True)
     monkeypatch.setattr(runhistory, "_runs_dir", lambda: str(tmp_path / "runs"))
     monkeypatch.setattr(jobs, "_history_path", lambda: str(tmp_path / "jobs_history.jsonl"))
     #: every log writer too. The dry-run tests used to drop `dry_run_*.log` files into

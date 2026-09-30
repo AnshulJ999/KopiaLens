@@ -39,7 +39,7 @@ class SetupRequest(BaseModel):
     password: str
     remember: bool = False
     recovery: bool = True                 # issue a recovery key, returned once
-    level: str = "full"                    # what the ticked onboarding box means (default:)
+    level: str = "index"                   # onboarding's default level
 
 
 class UnlockRequest(BaseModel):
@@ -127,7 +127,7 @@ def setup(payload: SetupRequest) -> dict:
                                    "recovery key if the password is lost.")
     if len(payload.password) < 8:
         raise HTTPException(status_code=400, detail="Use a password of at least 8 characters.")
-    level = (payload.level or crypto.LEVEL_FULL).strip().lower()
+    level = (payload.level or crypto.LEVEL_INDEX).strip().lower()
     if level not in crypto.LEVELS:            # checked BEFORE the keystore exists
         raise HTTPException(status_code=400, detail=f"Unknown level {payload.level!r}.")
     try:
@@ -136,6 +136,8 @@ def setup(payload: SetupRequest) -> dict:
     except RuntimeError as exc:               # a second keystore would orphan the first data key
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     _set_level(level)
+    from .account import link_if_matches
+    link_if_matches(payload.password)         # the account's own password = one password for both
     return {"ok": True, "recovery_key": recovery_key, "status": _status()}
 
 
@@ -174,6 +176,8 @@ def change_password(payload: ChangePasswordRequest) -> dict:
     ok, reason = crypto.change_password_detailed(payload.old, payload.new)
     if not ok:
         raise _refuse(reason)
+    from .account import unlink
+    unlink()                                  # changed on its own: no longer the sign-in password
     return {"ok": True, "status": _status()}
 
 
@@ -185,6 +189,8 @@ def reset_password(payload: ResetPasswordRequest) -> dict:
     ok, reason = crypto.reset_password_with_recovery(payload.recovery_key, payload.new)
     if not ok:
         raise _refuse(reason)
+    from .account import unlink
+    unlink()
     return {"ok": True, "status": _status()}
 
 
