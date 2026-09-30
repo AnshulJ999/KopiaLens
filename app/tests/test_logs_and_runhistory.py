@@ -109,6 +109,25 @@ def test_index_status_reports_a_never_indexed_repo(monkeypatch):
     assert out["error"] is None
 
 
+@pytest.mark.parametrize("runner", ["in-process job", "index worker"])
+def test_a_first_index_in_progress_still_reports_never_indexed(monkeypatch, runner):
+    """While the FIRST index builds there is still no generation to read: the UI keeps its banner,
+    skips the index-backed views, and loads them when the pass ends. Without the flag it opened
+    the dashboard mid-build (a 500) and never reloaded it afterwards."""
+    from app.core import nightly
+    from app.index import builder
+    monkeypatch.setattr(builder, "sources_index", lambda repo: {"u@h:C:": ["s1"]})
+    monkeypatch.setattr(builder, "_has_index", lambda repo: False)
+    if runner == "in-process job":
+        monkeypatch.setitem(builder._JOBS, "3", {"building": True, "total": 1})
+    else:
+        monkeypatch.setattr(builder, "offline_status", lambda repo: None)
+        monkeypatch.setattr(nightly, "state", lambda repo: {"running": True})
+        monkeypatch.setattr(nightly, "worker_progress", lambda repo: {})
+    out = builder.index_status("3")
+    assert out["building"] is True and out["never_indexed"] is True
+
+
 def test_status_with_summary_skips_the_summary_for_a_never_indexed_repo(monkeypatch):
     """/api/index/status goes through index_status_with_summary; a repo with no index must not
     reach index_summary (no generation to open - it answered 500 on a fresh install)."""

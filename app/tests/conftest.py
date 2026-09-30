@@ -12,7 +12,24 @@ fixture); this is only the floor.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+
+UI_DIR = Path(__file__).parent / "ui"
+
+
+def pytest_ignore_collect(collection_path, config):
+    """The browser suite in ui/ is slow and needs Playwright: it runs only when named."""
+    path = Path(collection_path)
+    if path != UI_DIR and UI_DIR not in path.parents:
+        return None
+    here = Path(config.invocation_params.dir)
+    for arg in config.args:
+        target = (here / str(arg).split("::")[0]).resolve()
+        if target == UI_DIR or UI_DIR in target.parents:
+            return None
+    return True
 
 
 @pytest.fixture(autouse=True)

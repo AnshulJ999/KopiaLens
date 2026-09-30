@@ -27,7 +27,10 @@ const jobsPart = {
         return;
       }
       if (seq !== this._jobOpenSeq) return;
-      if (s.state !== "running") this._markJobSeen(jobId);  // opening the panel acknowledges a finished job
+      if (s.state !== "running") {
+        this._markJobSeen(jobId);  // opening the panel acknowledges a finished job
+        this._jobChipTick();       // a job that finished before its panel opened: refresh now
+      }
       this.jobEarly = 0;
       this.jobLines = [];
       this.jobCursor = 0;
@@ -76,7 +79,10 @@ const jobsPart = {
         this.jobCursor = s.cursor;
         if (this.jobFollow) this.$nextTick(() => this._jobScrollBottom());
       }
-      if (wasRunning && s.state !== "running") this._markJobSeen(s.job_id);  // the user watched it finish
+      if (wasRunning && s.state !== "running") {
+        this._markJobSeen(s.job_id);  // the user watched it finish
+        this._jobChipTick();          // run the post-job refreshes now, not at the next idle poll
+      }
     },
 
     jobView() {  // Clean collapses per-file spam; the render window is the tail so 100k-line runs stay cheap

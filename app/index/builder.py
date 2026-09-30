@@ -163,6 +163,7 @@ def index_status(repo: str) -> dict:
             "snapshots": job.get("total") or total,
             "indexed_snapshots": job.get("indexed", 0),
             "files": None, "building": True, "error": None,
+            "never_indexed": not _has_index(repo),     # a first index: still no generation
             "current_source": job.get("current_source"), "targets": job.get("targets"),
         }
     # The worker subprocess cannot be queried in-process and, on Parquet, holds no exclusive
@@ -181,7 +182,7 @@ def index_status(repo: str) -> dict:
         return {
             "repo": repo, "snapshots": prog.get("total") or total,
             "indexed_snapshots": prog.get("indexed", 0), "files": None,
-            "building": True, "offline": off is not None,
+            "building": True, "never_indexed": not _has_index(repo), "offline": off is not None,
             "offline_reason": off.get("reason") if off else None,
             "offline_since": off.get("since") if off else None,
             "stage": prog.get("stage"),

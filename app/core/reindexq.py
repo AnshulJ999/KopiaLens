@@ -131,7 +131,8 @@ def _try_start(repo: str, force: bool = False) -> dict:
         with _LOCK:
             _PENDING.pop(repo, None)
             _save()
-        log.info("repo=%s index update started after deletes", repo)
+        log.info("repo=%s %s", repo, "first index started" if rec.get("reason") == "first"
+                 else "index update started after deletes")
     return r
 
 

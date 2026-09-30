@@ -1,0 +1,168 @@
+"""The main flows of an onboarded, indexed install, driven through the browser. Assertions are on
+visible text and on what kopia itself reports afterwards, never on pixels."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from playwright.sync_api import expect
+
+from . import _harness as h
+
+TABS = ["Dashboard", "Snapshots", "Tree", "Search", "Churn", "Simulate", "Stats", "Logs",
+        "Excluded", "Policies", "Actions"]
+
+
+def _idle(page) -> None:
+    page.wait_for_function("() => !Alpine.$data(document.getElementById('app')).busy")
+
+
+def _error_line(page):
+    return page.locator("span.text-danger[x-text='error']")
+
+
+def _kopia_json(kopia: str, fixture_repo: dict, *args: str):
+    return json.loads(h.kopia_run(kopia, fixture_repo["env"], Path(fixture_repo["config"]),
+                                  *args, "--json"))
+
+
+def test_sign_in_rejects_a_wrong_password_then_signs_in(app_server, open_page):
+    page = open_page(app_server, signed_in=False)
+    page.kl_allow.append("status of 401")
+    page.goto(app_server.url + "/")
+    page.fill("input[name=username]", h.USERNAME)
+    page.fill("input[name=password]", "not the password")
+    page.locator("button[type=submit]").click()
+    expect(page.get_by_text("Wrong username or password.")).to_be_visible()
+
+    page.fill("input[name=password]", h.PASSWORD)
+    page.locator("button[type=submit]").click()
+    expect(page.locator("button.tab", has_text="Dashboard")).to_be_visible()
+
+
+def test_every_tab_renders_without_an_error(app_server, open_page):
+    page = open_page(app_server)
+    for label in TABS:
+        h.go_tab(page, label)
+        _idle(page)
+        expect(_error_line(page)).to_be_hidden()
+
+
+def test_snapshot_delete_dry_run_leaves_every_snapshot(app_server, open_page, kopia, fixture_repo):
+    page = open_page(app_server)
+    h.go_tab(page, "Snapshots")
+    rows = page.locator("#snapshotsTable .tabulator-row")
+    expect(rows).to_have_count(3)
+    rows.filter(has_text="latest-3").click()
+    page.get_by_role("button", name="🗑 Delete selected").click()
+
+    page.get_by_role("button", name="Dry run", exact=True).click()
+    expect(page.get_by_text("dry run checked")).to_be_visible(timeout=60_000)
+    page.locator("button.kl-btn", has_text="Cancel").last.click()
+
+    assert len(_kopia_json(kopia, fixture_repo, "snapshot", "list", "--all")) == 3
+
+
+def test_search_finds_a_file_and_marks_one_deleted_from_disk(app_server, open_page):
+    page = open_page(app_server)
+    h.go_tab(page, "Search")
+    box = page.get_by_placeholder("Search paths (matches the full path)")
+    box.fill("needle")
+    expect(page.get_by_text("1 result", exact=False)).to_be_visible()
+    expect(page.get_by_role("row", name="needle-report.txt", exact=False)).to_be_visible()
+
+    box.fill("big-video")
+    expect(page.get_by_role("row", name="big-video.mp4", exact=False)).to_contain_text("deleted")
+
+
+def test_tree_opens_a_folder_and_goes_back_up(app_server, open_page):
+    page = open_page(app_server)
+    h.go_tab(page, "Tree")
+    page.get_by_role("row", name="📁 Documents", exact=False).dblclick()
+    expect(page.get_by_role("row", name="needle-report.txt", exact=False)).to_be_visible()
+    page.get_by_role("button", name="⬆ Up").click()
+    expect(page.get_by_role("row", name="📁 Photos", exact=False)).to_be_visible()
+
+
+def _save_staged(page) -> None:
+    page.get_by_role("button", name="Review 1 change…").click()
+    page.locator("button:visible", has_text="Save changes").click()
+    expect(page.get_by_text("Save policy changes?")).to_be_visible()
+    page.locator("button[x-text='confirmBox.confirmLabel']").click()
+    expect(page.get_by_text("Saved to Global").first).to_be_visible(timeout=60_000)
+    page.get_by_role("button", name="Close", exact=True).click()
+
+
+def test_global_rule_is_saved_to_kopia_and_removed_again(app_server, open_page, kopia, fixture_repo):
+    def ignore_rules() -> list:
+        pol = _kopia_json(kopia, fixture_repo, "policy", "show", "--global")
+        return ((pol.get("files") or {}).get("ignore")) or []
+
+    page = open_page(app_server)
+    h.go_tab(page, "Policies")
+    expect(page.get_by_text("No exclusion rules defined here.")).to_be_visible()
+    page.get_by_placeholder("Add a pattern (kopia ignore syntax)…").fill("*.bin")
+    page.get_by_role("button", name="Stage add").click()
+    _save_staged(page)
+    assert ignore_rules() == ["*.bin"]
+
+    # The saved rule shows at once (the job's completion refreshes the pane), not at the next poll.
+    remove = page.locator(".kl-list .li").filter(has_text="*.bin").get_by_role("button", name="Remove", exact=True)
+    expect(remove).to_be_visible(timeout=5_000)
+    remove.click()
+    _save_staged(page)
+    assert ignore_rules() == []
+
+
+def test_repositories_rename_add_reorder_and_remove(fresh_server, open_page, fixture_repo, tmp_path):
+    fresh_server.post("/api/account/create", {"username": h.USERNAME, "password": h.PASSWORD})
+    fresh_server.sign_in(h.USERNAME, h.PASSWORD)
+    fresh_server.post("/api/setup/attach", {"config_file": fixture_repo["config"], "name": "Fixture"})
+    fresh_server.post("/api/onboarding/finish")
+    page = open_page(fresh_server)
+    picker = page.get_by_title("Switch repository")
+
+    picker.click()
+    page.get_by_role("menuitem", name="Manage repositories…").click()
+    page.get_by_role("button", name="Edit…").click()
+    page.get_by_role("textbox", name="Name", exact=True).fill("Main backups")
+    page.get_by_role("button", name="Save", exact=True).click()
+    expect(picker).to_contain_text("Main backups")
+
+    page.get_by_role("button", name="Add repository…").first.click()
+    page.get_by_role("button", name="Create a new repository").click()
+    page.get_by_role("textbox", name="Folder The folder").fill(str(tmp_path / "second-repo"))
+    page.get_by_label("Repository password").first.fill("second repo password")
+    page.get_by_role("button", name="Create repository").click()
+    expect(page.get_by_text("No snapshots yet")).to_be_visible(timeout=60_000)
+    page.get_by_role("button", name="Done").click()
+
+    names = page.locator("span.font-medium[x-text='r.name']")
+    expect(names).to_have_text(["Main backups", "second-repo"])
+    page.get_by_role("button", name="Move down").first.click()
+    expect(names).to_have_text(["second-repo", "Main backups"])
+
+    page.get_by_role("button", name="Remove…").first.click()
+    page.get_by_role("button", name="Remove repository").click()
+    expect(names).to_have_text(["Main backups"])
+
+
+def test_restart_keeps_settings_and_signing_in_unlocks_the_index(indexed_server, open_page):
+    page = open_page(indexed_server)
+    fmt = page.get_by_role("button", name="🕒 abs")
+    fmt.click()
+    expect(page.get_by_role("button", name="⏱ rel")).to_be_visible()
+    page.context.close()
+
+    indexed_server.restart()
+    assert indexed_server.get("/api/encryption/status")["unlocked"] is False
+
+    fresh = open_page(indexed_server, signed_in=False)
+    fresh.kl_allow.append("status of 401")        # the sign-in page answers 401 until signed in
+    fresh.goto(indexed_server.url + "/")
+    expect(fresh.locator("button[type=submit]")).to_have_text("Sign in and unlock")
+    h.sign_in(fresh, indexed_server)
+    expect(fresh.get_by_role("row", name="3 33 35", exact=False)).to_be_visible(timeout=30_000)
+    expect(fresh.get_by_role("button", name="⏱ rel")).to_be_visible()
+
