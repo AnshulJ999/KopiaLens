@@ -23,8 +23,8 @@ const settingsPart = {
         this.diskLookupMode = ["auto", "everything", "scan", "off"].includes(kl.disk_lookup) ? kl.disk_lookup : "auto";
         this.diskScanBudget = Number(kl.disk_scan_budget || 15);
         getJson("/api/disk-lookup?refresh=true").then((s) => { this.diskLookup = s; }).catch(() => {});
-        this.authProtected = !!kl.auth_protected;  // the hash itself never reaches the browser
-        this.newPassword = "";
+        this.sessionDays = Number(kl.session_days || 30);
+        this.loadAccount();
         this.panelLayout = kl.panel_layout === "tabbed" ? "tabbed" : "classic";  //
         this._readAdvanced(kl);
         this._readBackblaze(data.settings?.backblaze || {});
@@ -89,6 +89,7 @@ const settingsPart = {
       history_days: { s: "bzHistoryDays", t: "int", min: 7, block: "backblaze" },
       collapse_prefixes: { s: "bzCollapsePrefixes", t: "list", block: "backblaze" },
       eventlog_archive_path: { s: "bzEventlogArchive", t: "str", block: "backblaze" },
+      session_days: { s: "sessionDays", t: "int", min: 1, max: 365 },
     },
 
     // Save ONE key on change. The payload never carries a value the user did not touch, so a
@@ -124,22 +125,5 @@ const settingsPart = {
           if (key === "dashboard_refresh") this.armAutoRefresh();
         })
         .catch((e) => { this.error = e.message || String(e); });
-    },
-    // Auth is on BECAUSE a password exists - set/remove through the dedicated routes,
-    // never through saveSettings: the hash is PBKDF2'd server-side and never round-trips here.
-    async setPassword() {
-      if (!this.newPassword || this.newPassword.length < 8) { this.klNotify("Use at least 8 characters.", "warn"); return; }
-      const r = await getJson("/api/auth/set-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: this.newPassword }) }).catch((e) => { this.error = e.message; return null; });
-      if (r && r.ok) { this.authProtected = true; this.newPassword = ""; this.klNotify("Password set - the app now asks for it."); }
-    },
-    async removePassword() {
-      const ok = await this.klConfirm({
-        title: "Remove password protection?",
-        callout: "Anyone who can reach this address will be able to browse and act on the repositories.",
-        confirmLabel: "Remove password", danger: true,
-      });
-      if (!ok) return;
-      const r = await getJson("/api/auth/remove-password", { method: "POST" }).catch((e) => { this.error = e.message; return null; });
-      if (r && r.ok) { this.authProtected = false; this.klNotify("Password removed - the app is open again."); }
     },
 };

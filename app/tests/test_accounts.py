@@ -238,3 +238,53 @@ def test_signing_in_through_the_route_passes_the_gate(env):
     finally:
         with auth._THROTTLE_LOCK:
             auth._THROTTLE.clear()
+
+
+def test_the_recovery_key_resets_a_shared_password_and_unlocks(env):
+    from starlette.testclient import TestClient
+
+    from app import main
+    key = crypto.setup("correct horse", with_recovery=True)
+    account.create(account.CreateRequest(username="admin", password="correct horse"))
+    crypto.lock()
+    client = TestClient(main.app, base_url="http://127.0.0.1")
+    try:
+        assert "Recovery key" in client.get("/login/recover").text
+        form = {"recovery_key": "WRONG-KEY", "new": "battery staple", "confirm": "battery staple"}
+        assert client.post("/api/auth/recover", data=form, follow_redirects=False).status_code == 401
+        form["recovery_key"] = key
+        ok = client.post("/api/auth/recover", data=form, follow_redirects=False)
+        assert ok.status_code == 303 and "kopialens_session=" in ok.headers["set-cookie"]
+        assert auth.authenticate("admin", "battery staple") is not None
+        assert crypto.unlocked() and users.find("admin")["unlocks_encryption"] is True
+        crypto.lock()
+        assert crypto.unlock("battery staple")
+    finally:
+        with auth._THROTTLE_LOCK:
+            auth._THROTTLE.clear()
+
+
+def test_without_a_shared_password_recovery_points_to_the_local_reset(env):
+    from app import main
+    _account()
+    page = auth.recover_page(with_key=main._recovery_by_key())
+    assert "--reset-password" in page and 'name="recovery_key"' not in page
+
+
+def test_turning_sign_in_on_keeps_this_browser_signed_in(env):
+    _account()
+    auth.set_enabled(False)
+    resp = account.set_enabled(account.EnabledRequest(on=True))
+    assert auth.enabled() and "kopialens_session=" in resp.headers["set-cookie"]
+
+
+def test_the_local_reset_sets_a_new_sign_in_password_only(env, monkeypatch):
+    from app.core import resetpw
+    _shared(env)
+    answers = iter(["short", "battery staple", "battery staple"])
+    monkeypatch.setattr(resetpw.getpass, "getpass", lambda prompt="": next(answers))
+    assert resetpw.main() == 0
+    assert auth.authenticate("admin", "battery staple") is not None
+    assert users.find("admin")["unlocks_encryption"] is False          # encryption kept its password
+    crypto.lock()
+    assert crypto.unlock("correct horse")

@@ -1,0 +1,133 @@
+
+    <!-- Unlock box: an index read answered 423 (encrypted and locked). No close button: nothing
+         behind it has data until the index is unlocked. -->
+    <template x-if="locked">
+      <div class="fixed inset-0 z-[55] bg-black/50 flex items-center justify-center p-4">
+        <form @submit.prevent="unlockSubmit()" class="w-[22rem] max-w-full rounded-lg border border-bd bg-surface shadow-xl p-6 flex flex-col gap-3 text-sm">
+          <div class="font-semibold text-[15px]" x-text="locked.mode === 'recovery' ? 'Unlock with your recovery key' : 'Unlock the index'"></div>
+          <p class="kl-note" x-text="lockIntro()"></p>
+          <template x-if="locked.mode === 'password'">
+            <label class="flex flex-col gap-1 text-xs font-medium"><span x-text="locked.shared ? 'Password' : 'Encryption password'"></span>
+              <input type="password" x-model="locked.pw" autocomplete="current-password" x-init="$nextTick(() => $el.focus())" class="fld border border-bd bg-surface2"></label>
+          </template>
+          <template x-if="locked.mode === 'recovery'">
+            <label class="flex flex-col gap-1 text-xs font-medium">Recovery key
+              <input type="text" x-model="locked.key" autocomplete="off" spellcheck="false" x-init="$nextTick(() => $el.focus())" class="fld border border-bd bg-surface2 font-mono"></label>
+          </template>
+          <label x-show="!locked.remembered" class="flex items-center gap-2 text-xs"><input type="checkbox" x-model="locked.remember">Unlock automatically on this computer from now on</label>
+          <p class="text-xs" style="color:var(--danger)" x-show="locked.error" x-text="locked.error"></p>
+          <button type="submit" class="kl-btn primary justify-center" :disabled="locked.busy" x-text="locked.busy ? 'Unlocking…' : 'Unlock'"></button>
+          <div class="flex justify-between gap-3 text-xs">
+            <button type="button" @click="lockToggleMode()" style="color:var(--link)" x-text="locked.mode === 'password' ? 'Use recovery key' : 'Use password'"></button>
+            <button type="button" x-show="locked.signedIn" @click="lockSignOut()" style="color:var(--link)">Sign out</button>
+          </div>
+          <button type="button" x-show="locked.mode === 'recovery'" @click="startOver()" class="text-xs text-left text-muted">Lost the recovery key too? Start over…</button>
+        </form>
+      </div>
+    </template>
+
+    <!-- Account and encryption forms (account.js). The recovery key screen has no Cancel and
+         ignores Escape and outside clicks: the key is shown only once. -->
+    <template x-if="acctDialog">
+      <div class="fixed inset-0 z-[58] bg-black/40 flex items-center justify-center p-4 sm:p-6"
+           @click.self="acctDialog.mode === 'showkey' || (acctDialog = null)">
+        <form @submit.prevent="acctSubmit()" class="w-[30rem] max-w-full rounded-lg border border-bd bg-surface shadow-xl flex flex-col text-sm">
+          <div class="p-4 space-y-3 overflow-auto max-h-[80vh]">
+            <h3 class="text-[15px] font-semibold leading-snug" x-text="acctTitle()"></h3>
+
+            <template x-if="acctDialog.mode === 'create' || acctDialog.mode === 'username'">
+              <label class="flex flex-col gap-1 text-xs font-medium">Username
+                <input type="text" x-model="acctDialog.username" autocomplete="username" spellcheck="false" x-init="$nextTick(() => $el.focus())" class="fld border border-bd bg-surface2"></label>
+            </template>
+
+            <template x-if="['password', 'split', 'encpw', 'recovery-new', 'join'].includes(acctDialog.mode)">
+              <label class="flex flex-col gap-1 text-xs font-medium">
+                <span x-text="{password: 'Current password', split: 'Current password', join: 'Sign-in password', encpw: 'Current encryption password', 'recovery-new': acctSharedPw() ? 'Password' : 'Encryption password'}[acctDialog.mode]"></span>
+                <input type="password" x-model="acctDialog.current" autocomplete="current-password" x-init="$nextTick(() => $el.focus())" class="fld border border-bd bg-surface2"></label>
+            </template>
+
+            <template x-if="acctDialog.mode === 'join'">
+              <label class="flex flex-col gap-1 text-xs font-medium">Current encryption password
+                <input type="password" x-model="acctDialog.pw" autocomplete="off" class="fld border border-bd bg-surface2"></label>
+            </template>
+
+            <template x-if="acctDialog.mode === 'enc-setup'">
+              <div class="space-y-3">
+                <fieldset class="space-y-1.5">
+                  <legend class="text-xs font-medium mb-1">Level</legend>
+                  <label class="flex gap-2 items-start text-xs"><input type="radio" value="index" x-model="acctDialog.level" class="mt-0.5"><span><b>Index</b> (recommended) <span class="text-muted" x-text="encLevelNote('index')"></span></span></label>
+                  <label class="flex gap-2 items-start text-xs"><input type="radio" value="full" x-model="acctDialog.level" class="mt-0.5"><span><b>Full</b> <span class="text-muted" x-text="encLevelNote('full')"></span></span></label>
+                </fieldset>
+                <label x-show="acct && acct.has_account" class="flex items-center gap-2 text-xs"><input type="checkbox" x-model="acctDialog.usePw">Use my KopiaLens password</label>
+              </div>
+            </template>
+
+            <template x-if="['create', 'password', 'split', 'encpw'].includes(acctDialog.mode) || (acctDialog.mode === 'enc-setup')">
+              <div class="grid gap-2" :class="acctDialog.mode === 'enc-setup' && acctDialog.usePw ? '' : 'sm:grid-cols-2'">
+                <label class="flex flex-col gap-1 text-xs font-medium">
+                  <span x-text="acctDialog.mode === 'enc-setup' ? (acctDialog.usePw ? 'Your KopiaLens password' : 'Encryption password') : (acctDialog.mode === 'create' ? 'Password' : (acctDialog.mode === 'split' ? 'New encryption password' : 'New password'))"></span>
+                  <input type="password" x-model="acctDialog.pw" :autocomplete="acctDialog.mode === 'enc-setup' && acctDialog.usePw ? 'current-password' : 'new-password'" class="fld border border-bd bg-surface2"></label>
+                <label x-show="!(acctDialog.mode === 'enc-setup' && acctDialog.usePw)" class="flex flex-col gap-1 text-xs font-medium">Confirm
+                  <input type="password" x-model="acctDialog.confirm" autocomplete="new-password" class="fld border border-bd bg-surface2"></label>
+              </div>
+            </template>
+
+            <template x-if="acctDialog.mode === 'create' && acct && acct.first_run && acct.first_run.needs_code">
+              <label class="flex flex-col gap-1 text-xs font-medium">Setup code
+                <input type="text" x-model="acctDialog.code" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX" class="fld border border-bd bg-surface2 font-mono">
+                <span class="kl-note font-normal">Setup was open for 30 minutes after KopiaLens started. The code is in the KopiaLens log.</span></label>
+            </template>
+
+            <template x-if="acctDialog.mode === 'enc-setup'">
+              <label class="flex items-start gap-2 text-xs"><input type="checkbox" x-model="acctDialog.remember" class="mt-0.5"><span>Unlock automatically on this computer<span class="block text-muted">Off: someone enters the password after every restart.</span></span></label>
+            </template>
+
+            <template x-if="acctDialog.mode === 'level'">
+              <fieldset class="space-y-1.5">
+                <template x-for="l in ['off', 'index', 'full']" :key="l">
+                  <label class="flex gap-2 items-start text-xs"><input type="radio" :value="l" x-model="acctDialog.level" class="mt-0.5"><span><b x-text="encLevelLabel(l)"></b> <span class="text-muted" x-text="encLevelNote(l)"></span></span></label>
+                </template>
+              </fieldset>
+            </template>
+
+            <template x-if="acctDialog.mode === 'password'">
+              <div>
+                <div class="text-xs font-medium">This changes:</div>
+                <ul class="list-disc pl-5 text-xs mt-1 space-y-0.5">
+                  <li>Your sign-in password</li>
+                  <li x-show="acctSharedPw()">Your encryption password (they're the same)</li>
+                  <li>Every other browser is signed out</li>
+                </ul>
+              </div>
+            </template>
+
+            <template x-if="acctDialog.mode === 'showkey'">
+              <div class="space-y-3">
+                <input type="text" readonly :value="acctDialog.key" @focus="$el.select()" class="fld border border-bd bg-surface2 w-full font-mono text-center">
+                <div class="flex gap-2">
+                  <button type="button" @click="copyRecoveryKey(acctDialog.key)" class="kl-btn">Copy</button>
+                  <button type="button" @click="downloadRecoveryKey(acctDialog.key)" class="kl-btn">Download</button>
+                </div>
+                <div class="kl-callout">Store it somewhere safe, away from this computer. It unlocks the index if the password is lost, and it won't be shown again.</div>
+              </div>
+            </template>
+
+            <p class="kl-note" x-show="acctDialog.mode === 'create'">Sign-in turns on. This browser stays signed in.</p>
+            <p class="kl-note" x-show="acctDialog.mode === 'password' && acctSharedPw() && encStatus && encStatus.has_recovery">Your recovery key still works.
+              <button type="button" @click="openAcct('split')" style="color:var(--link)">Use separate passwords instead</button></p>
+            <p class="kl-note" x-show="acctDialog.mode === 'split'">Your sign-in password stays the same.</p>
+            <p class="kl-note" x-show="acctDialog.mode === 'join'">Encryption switches to your sign-in password. Changing it later changes both.</p>
+            <p class="kl-note" x-show="acctDialog.mode === 'enc-setup'">A recovery key is shown next. The data is then encrypted in the background; progress shows in the jobs panel.</p>
+            <p class="kl-note" x-show="acctDialog.mode === 'level'">The data is rewritten in the background. Progress shows in the jobs panel.</p>
+            <p class="kl-note" x-show="acctDialog.mode === 'recovery-new'">The old recovery key stops working.</p>
+            <div class="kl-callout" x-show="acctDialog.note" x-text="acctDialog.note"></div>
+            <p class="text-xs" style="color:var(--danger)" x-show="acctDialog.error" x-text="acctDialog.error"></p>
+          </div>
+          <div class="kl-footer">
+            <span class="spacer"></span>
+            <button type="button" x-show="acctDialog.mode !== 'showkey'" @click="acctDialog = null" class="kl-btn">Cancel</button>
+            <button type="submit" class="kl-btn primary" :disabled="acctDialog.busy" x-text="acctButton()"></button>
+          </div>
+        </form>
+      </div>
+    </template>

@@ -194,10 +194,12 @@ def set_enabled(payload: EnabledRequest):
     """Sign-in on/off. Off keeps the account; on needs one. Switching off before any protection
     choice is onboarding's "skip protection", so it is under the first-run gate."""
     if payload.on:
-        _account()
-    elif not auth.protection_chosen():
+        user = _account()
+        auth.set_enabled(True)
+        return _signed_in({"ok": True, "state": _state()}, user)   # this browser stays signed in
+    if not auth.protection_chosen():
         _first_run_gate(payload.code)
-    auth.set_enabled(payload.on)
+    auth.set_enabled(False)
     return {"ok": True, "state": _state()}
 
 

@@ -72,6 +72,8 @@ const getJson = async (url, options = {}) => {
     location.href = data.login;
     throw new Error(data.detail || "Not signed in.");
   }
+  // An encrypted index that is locked: the app shows one unlock box instead of per-view errors.
+  if (res.status === 423 && data && data.locked) window.dispatchEvent(new CustomEvent("kl-locked", { detail: data }));
   if (!res.ok) throw new Error((data && (data.detail || data.error)) || text || res.statusText);
   return data;
 };

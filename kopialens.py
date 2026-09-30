@@ -2,6 +2,7 @@
 
     kopialens.exe                               tray (starts the server)
     kopialens.exe --server                      server
+    kopialens.exe --reset-password              set a new sign-in password (local reset)
     kopialens.exe -m app.index.worker <repo>    index worker
     kopialens.exe -m app.backblaze.worker       Backblaze worker
 
@@ -19,6 +20,9 @@ def run() -> int:
     if argv[:2] == ["-m", "app.backblaze.worker"]:
         from app.backblaze import worker
         return worker.main(argv[2:])
+    if argv[:1] == ["--reset-password"]:
+        from app.core import resetpw
+        return resetpw.main()
     if argv[:1] == ["--server"]:
         import main
         main.run()

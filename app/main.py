@@ -759,44 +759,59 @@ def post_index_stop(repo: str):
     return JSONResponse(out)
 
 
-@app.post("/api/auth/set-password")
-async def auth_set_password(request: Request):
-    """The current Settings control (until the Account section replaces it): creates the admin
-    account when none exists, otherwise sets its password and switches sign-in on. A password
-    shared with encryption is changed only through /api/account/password, which asks for the
-    current one."""
+def _recovery_by_key() -> bool:
+    """The recovery key can reset the sign-in password only while that password is also the
+    encryption password and a recovery key exists."""
     from .core import users
+    from .index import crypto
     try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"ok": False, "detail": "invalid request body"}, status_code=400)
-    password = str(body.get("password") or "")
-    if len(password) < auth.MIN_PASSWORD:
-        return JSONResponse({"ok": False, "detail": f"Use at least {auth.MIN_PASSWORD} characters."},
-                            status_code=400)
-    user = users.primary()
-    if user is None:
-        if not auth.first_run_allowed(str(body.get("code") or "")):
-            return JSONResponse({"ok": False, "detail": "Setup is closed. Enter the setup code "
-                                 "from the KopiaLens log."}, status_code=403)
-        user = users.create("admin", auth.hash_password(password))
-    elif user.get("unlocks_encryption"):
-        return JSONResponse({"ok": False, "detail": "This password also unlocks encryption. Change it "
-                             "in Settings, Account."}, status_code=409)
-    else:
-        user = users.set_password_hash(user["username"], auth.hash_password(password))
-    auth.set_enabled(True)
-    resp = JSONResponse({"ok": True})
+        user = users.primary()
+        return bool(user and user.get("unlocks_encryption") and crypto.configured()
+                    and crypto.has_recovery())
+    except Exception:  # noqa: BLE001 - the page must always render
+        return False
+
+
+@app.get("/login/recover")
+def recover_page() -> HTMLResponse:
+    return HTMLResponse(auth.recover_page(with_key=_recovery_by_key()))
+
+
+@app.post("/api/auth/recover")
+async def auth_recover(request: Request):
+    """Forgotten password: the recovery key sets a new shared (sign-in + encryption) password,
+    signs this browser in and unlocks the index. Throttled like sign-in."""
+    from .core import users
+    from .index import crypto
+    form = await _form(request)
+    key = str(form.get("recovery_key") or "").strip()
+    new, confirm = str(form.get("new") or ""), str(form.get("confirm") or "")
+    address = request.client.host if request.client else "?"
+
+    def page(error: str, status: int) -> HTMLResponse:
+        return HTMLResponse(auth.recover_page(error, with_key=_recovery_by_key()), status_code=status)
+
+    wait = auth.login_delay(address)
+    if wait:
+        return page(f"Too many attempts. Try again in {int(wait)} s.", 429)
+    if not _recovery_by_key():
+        return page("", 409)
+    if len(new) < auth.MIN_PASSWORD:
+        return page(f"Use a password of at least {auth.MIN_PASSWORD} characters.", 400)
+    if new != confirm:
+        return page("The new passwords don't match.", 400)
+    ok, _reason = crypto.reset_password_with_recovery(key, new)
+    if not ok:
+        auth.record_login_failure(address)
+        log.warning("failed password recovery attempt from %s", address)
+        return page("That recovery key didn't work. Check it and try again.", 401)
+    auth.record_login_success(address)
+    user = users.set_password_hash(users.primary()["username"], auth.hash_password(new))
+    log.warning("password reset with the recovery key from %s", address)
+    from .api.account import unlock_if_linked
+    unlock_if_linked(user, new)
+    resp = RedirectResponse("/", status_code=303)
     resp.set_cookie(auth.COOKIE_NAME, auth.issue_session(user, True), **auth.cookie_kwargs(True))
-    return resp
-
-
-@app.post("/api/auth/remove-password")
-async def auth_remove_password():
-    """Switch sign-in off. The account is kept, so switching back on needs no new password."""
-    auth.set_enabled(False)
-    resp = JSONResponse({"ok": True})
-    resp.delete_cookie(auth.COOKIE_NAME, path="/")
     return resp
 
 

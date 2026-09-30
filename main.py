@@ -39,4 +39,7 @@ def run() -> None:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--reset-password"]:
+        from app.core import resetpw
+        sys.exit(resetpw.main())
     run()

@@ -43,7 +43,8 @@ document.addEventListener("alpine:init", () => {
     showFilters: false, minGb: "", maxGb: "", dateFrom: "", dateTo: "", minVersions: "", sharedMin: "", recentBackup: "",
     dedupe: false, treeDedupe: false, reclaimMap: {},
     showRestore: false, restore: null, showDiff: false, diffText: "", diffBusy: false,
-    authProtected: false, newPassword: "",
+    // Settings Account + Encryption sections, their shared dialog, and the unlock box (lock.html).
+    acct: null, encStatus: null, acctDialog: null, locked: null, sessionDays: 30,
     policyKeys: ["latest", "hourly", "daily", "weekly", "monthly", "annual"],
     policy: { latest: 100, hourly: 96, daily: 30, weekly: 52, monthly: 36, annual: 5 },
     simMode: "all", simMeta: "", simText: "", actionText: "",
@@ -152,6 +153,8 @@ document.addEventListener("alpine:init", () => {
     // a panel that holds edits asks before dropping them, and Settings needs no ask (it autosaves).
     async escClose() {
       if (this.confirmBox) { this.confirmResolve(false); return; }
+      if (this.acctDialog) { if (this.acctDialog.mode !== "showkey") this.acctDialog = null; return; }
+      if (this.locked) return;    // the unlock box has no close: nothing behind it has data
       if (this.showIndex) { this.closeIndexPanel(); return; }
       if (this.showJob) { this.closeJob(); return; }
       if (this.showReview) { this.flowCancel(); return; }
@@ -197,6 +200,7 @@ document.addEventListener("alpine:init", () => {
       // startup fetch.
       if (this._inited) return;
       this._inited = true;
+      window.addEventListener("kl-locked", (e) => this.showLock(e.detail));
       await this.wrap(async () => {
         TABLE_PREFS = await getJson("/api/settings/tables").catch(() => ({})) || {};
         const data = await getJson("/api/repos");
@@ -213,6 +217,8 @@ document.addEventListener("alpine:init", () => {
           this.repo = data.repos.some((r) => r.id === saved) ? saved : (first ? first.id : "1");
         }
         this.repoKind = (data.repos.find((r) => r.id === this.repo) || {}).kind || "kopia";
+        // A locked index shows the unlock box on load, not only once a view happens to read it.
+        getJson("/api/encryption/status").then((s) => { if (s.enabled && !s.unlocked) this.showLock({}); }).catch(() => {});
         this.backend = data.settings?.listing_backend || "subprocess";
         const _ps = String(kl.page_size || 500);  // snap to a valid <option> so the select can't visually revert to 100
         this.searchPageSize = this.pageSizes.includes(_ps) ? _ps : "500";
@@ -496,13 +502,13 @@ document.addEventListener("alpine:init", () => {
     csv(id, name) { downloadTable(id, name); },
     };
     // Duplicate-key guard: two parts declaring the same key would compose silently last-wins.
-    const parts = [["core", core], ["toastPart", toastPart], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["indexPanelPart", indexPanelPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart]];
+    const parts = [["core", core], ["toastPart", toastPart], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["treePart", treePart], ["searchPart", searchPart], ["indexPanelPart", indexPanelPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["accountPart", accountPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart]];
     const seen = new Map();
     for (const [owner, part] of parts)
       for (const k of Object.keys(part)) {
         if (seen.has(k)) console.error(`kopiaLens: duplicate key "${k}" declared in both ${seen.get(k)} and ${owner}`);
         else seen.set(k, owner);
       }
-    return Object.assign(core, toastPart, indexPanelPart, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, diffviewPart, jobsPart, maintenancePart, settingsPart, themePart, policiesPart, policyEditPart);
+    return Object.assign(core, toastPart, indexPanelPart, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, diffviewPart, jobsPart, maintenancePart, settingsPart, accountPart, themePart, policiesPart, policyEditPart);
   });
 });

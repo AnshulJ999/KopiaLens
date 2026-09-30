@@ -289,10 +289,11 @@ def bind_host() -> str:
 
 
 def exempt(path: str) -> bool:
-    """Paths reachable without a session: the login page itself, its POST target, logout, and the
-    health probe (used by supervisors that hold no cookie). Deliberately EXACT matches - a prefix
-    rule here would leave set/remove-password open to unauthenticated callers."""
-    return path in ("/login", "/health", "/api/auth/login", "/api/auth/logout")
+    """Paths reachable without a session: the login and password-recovery pages, their POST
+    targets, logout, and the health probe (used by supervisors that hold no cookie). Deliberately
+    EXACT matches - a prefix rule here would leave account routes open to unauthenticated callers."""
+    return path in ("/login", "/login/recover", "/health", "/api/auth/login", "/api/auth/recover",
+                    "/api/auth/logout")
 
 
 LOGIN_PAGE = """<!doctype html>
@@ -321,6 +322,8 @@ LOGIN_PAGE = """<!doctype html>
  .err{color:var(--bad);font-size:12px}
  .lock{border:1px solid var(--accent-bd);background:var(--accent-bg);border-radius:6px;padding:8px 10px;font-size:12px}
  .note{color:var(--muted);font-size:12px}
+ a{color:var(--accent);font-size:12px}
+ code{font-family:ui-monospace,Consolas,monospace;font-size:12px}
 </style></head><body>
 <form method="post" action="/api/auth/login">
   <div class="brand"><span class="logo"></span>KopiaLens</div>
@@ -332,7 +335,11 @@ LOGIN_PAGE = """<!doctype html>
   <label class="c"><input type="checkbox" name="remember" value="1" checked>Keep me signed in</label>
   <button type="submit">__BUTTON__</button>
   <div class="note">__REMEMBER_NOTE__</div>
+  <a href="/login/recover">Forgot password?</a>
 </form></body></html>"""
+
+_LOCAL_RESET = ("On the computer running KopiaLens, run <code>kopialens --reset-password</code> "
+                "(from source: <code>python main.py --reset-password</code>).")
 
 
 def _days_label(days: int) -> str:
@@ -355,6 +362,37 @@ def login_page(error: str = "", username: str = "", unlocks: bool = False) -> st
             .replace("__ERROR__", f'<div class="err">{escape(error)}</div>' if error else "")
             .replace("__BUTTON__", "Sign in and unlock" if unlocks else "Sign in")
             .replace("__REMEMBER_NOTE__", note))
+
+
+def recover_page(error: str = "", with_key: bool = False) -> str:
+    """Forgotten password. ``with_key``: the password also unlocks encryption and a recovery key
+    exists, so the recovery key can reset it here; otherwise only the local reset applies."""
+    from html import escape
+    head, _form_open, _rest = LOGIN_PAGE.partition('<form method="post" action="/api/auth/login">')
+    err = f'<div class="err">{escape(error)}</div>' if error else ""
+    if with_key:
+        body = ('<form method="post" action="/api/auth/recover">'
+                '<div class="brand"><span class="logo"></span>KopiaLens</div>'
+                '<h1>Reset your password</h1>'
+                '<div class="note">Your recovery key sets a new password for signing in and for '
+                'encryption.</div>'
+                '<label class="f">Recovery key<input type="text" name="recovery_key" '
+                'autocomplete="off" spellcheck="false" required autofocus></label>'
+                '<label class="f">New password<input type="password" name="new" '
+                'autocomplete="new-password" required minlength="8"></label>'
+                '<label class="f">Confirm new password<input type="password" name="confirm" '
+                'autocomplete="new-password" required minlength="8"></label>'
+                f'{err}<button type="submit">Reset password</button>'
+                f'<div class="note">No recovery key? {_LOCAL_RESET}</div>'
+                '<a href="/login">Back to sign in</a></form>')
+    else:
+        body = ('<form onsubmit="return false">'
+                '<div class="brand"><span class="logo"></span>KopiaLens</div>'
+                '<h1>Reset your password</h1>'
+                f'<div class="note">{_LOCAL_RESET}</div>'
+                '<a href="/login">Back to sign in</a></form>')
+    return head.replace("<title>Sign in - KopiaLens</title>",
+                        "<title>Reset password - KopiaLens</title>") + body + "</body></html>"
 
 
 def cookie_kwargs(persist: bool = True) -> dict:
