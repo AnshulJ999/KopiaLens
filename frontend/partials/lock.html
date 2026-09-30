@@ -112,6 +112,22 @@
               </div>
             </template>
 
+            <template x-if="acctDialog.mode === 'startover'">
+              <div class="space-y-3">
+                <div class="kl-facts">
+                  <template x-for="row in startOverFacts()" :key="row[0]">
+                    <div class="r"><span class="k" x-text="row[0]"></span><span x-text="row[1]"></span></div>
+                  </template>
+                </div>
+                <div class="kl-callout">Only if both the password and the recovery key are lost. Encryption is turned off and the index is rebuilt from kopia.</div>
+                <fieldset class="space-y-2">
+                  <legend class="text-xs font-medium mb-1">The encrypted files</legend>
+                  <label class="flex gap-2 items-start text-xs"><input type="radio" value="delete" x-model="acctDialog.choice" class="mt-0.5"><span><b>Delete them permanently</b><span class="block text-muted">The disk space is freed now.</span></span></label>
+                  <label class="flex gap-2 items-start text-xs"><input type="radio" value="aside" x-model="acctDialog.choice" class="mt-0.5"><span><b>Move them aside</b><span class="block text-muted break-all" x-text="'Only if you might still find the password. They go into a new encryption-reset folder in ' + (acctDialog.preview && acctDialog.preview.aside_dir || 'the data folder') + ', and you delete it when you no longer need it.'"></span></span></label>
+                </fieldset>
+              </div>
+            </template>
+
             <p class="kl-note" x-show="acctDialog.mode === 'create'">Sign-in turns on. This browser stays signed in.</p>
             <p class="kl-note" x-show="acctDialog.mode === 'password' && acctSharedPw() && encStatus && encStatus.has_recovery">Your recovery key still works.
               <button type="button" @click="openAcct('split')" style="color:var(--link)">Use separate passwords instead</button></p>
@@ -126,7 +142,8 @@
           <div class="kl-footer">
             <span class="spacer"></span>
             <button type="button" x-show="acctDialog.mode !== 'showkey'" @click="acctDialog = null" class="kl-btn">Cancel</button>
-            <button type="submit" class="kl-btn primary" :disabled="acctDialog.busy" x-text="acctButton()"></button>
+            <button type="submit" :class="acctDialog.mode === 'startover' ? 'kl-btn danger' : 'kl-btn primary'"
+                    :disabled="acctDialog.busy || (acctDialog.mode === 'startover' && !acctDialog.choice)" x-text="acctButton()"></button>
           </div>
         </form>
       </div>

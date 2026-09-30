@@ -96,6 +96,7 @@ def _status() -> dict:
         "repos": repos,
         "backblaze": bz,
         "files_pending": files_pending,
+        "set_aside": keyswitch.set_aside(),
     }
 
 

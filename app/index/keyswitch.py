@@ -454,7 +454,29 @@ def reset_preview() -> dict:
     history = [i for i in plan["remove"] + plan["trim"] if i["what"] == "history"]
     return {"configured": crypto.configured(), **plan,
             "bytes": sum(i["bytes"] for i in plan["remove"]),
-            "history_lost": len(history)}
+            "history_lost": len(history), "aside_dir": DATA_DIR}
+
+
+def set_aside() -> list[dict]:
+    """Folders earlier "start over" runs moved files into, so the UI can remind the user."""
+    out = []
+    try:
+        names = sorted(n for n in os.listdir(DATA_DIR) if n.startswith("encryption-reset-"))
+    except OSError:
+        return out
+    for name in names:
+        path = os.path.join(DATA_DIR, name)
+        if not os.path.isdir(path):
+            continue
+        size = 0
+        for root, _dirs, files in os.walk(path):
+            for f in files:
+                try:
+                    size += os.path.getsize(os.path.join(root, f))
+                except OSError:
+                    pass
+        out.append({"path": path, "bytes": size})
+    return out
 
 
 def reset(keep_copy: bool = False) -> dict:

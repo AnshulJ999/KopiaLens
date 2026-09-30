@@ -288,3 +288,14 @@ def test_the_local_reset_sets_a_new_sign_in_password_only(env, monkeypatch):
     assert users.find("admin")["unlocks_encryption"] is False          # encryption kept its password
     crypto.lock()
     assert crypto.unlock("correct horse")
+
+
+def test_start_over_lists_folders_it_moved_files_into(tmp_path, monkeypatch):
+    from app.index import keyswitch
+    monkeypatch.setattr(keyswitch, "DATA_DIR", str(tmp_path))
+    assert keyswitch.set_aside() == []
+    aside = tmp_path / "encryption-reset-20260930-220000"
+    (aside / "index").mkdir(parents=True)
+    (aside / "index" / "gen.parquet").write_bytes(b"x" * 100)
+    (tmp_path / "unrelated").mkdir()
+    assert keyswitch.set_aside() == [{"path": str(aside), "bytes": 100}]

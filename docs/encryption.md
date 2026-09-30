@@ -54,7 +54,7 @@ With the recovery key you can:
 
 Without either, the encrypted data can't be read, not even by KopiaLens. **Start over…** in **Settings → Encryption** (or **Lost the recovery key too?** on the unlock box) resets KopiaLens:
 
-- the encrypted files are moved aside into the data folder, in case the password turns up;
+- you choose what happens to the encrypted files: **delete them permanently**, or **move them aside** into a new `encryption-reset-…` folder in the data folder in case the password turns up. Settings → Encryption shows moved files until you delete that folder;
 - encryption is turned off;
 - the index is rebuilt from your kopia repositories on the next index pass.
 

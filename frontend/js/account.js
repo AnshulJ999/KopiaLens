@@ -14,6 +14,7 @@ const ACCT_DIALOGS = {
   level: ["Change the encryption level", "Change level"],
   "recovery-new": ["Create a new recovery key?", "Create recovery key"],
   showkey: ["Save your recovery key", "Done"],
+  startover: ["Start over without the password?", "Start over"],
 };
 // Modes that set a new password: it needs the minimum length and a matching confirmation.
 const ACCT_NEW_PASSWORD = ["create", "password", "split", "encpw"];
@@ -85,7 +86,7 @@ const accountPart = {
     acctButton() {
       const d = this.acctDialog;
       if (!d) return "";
-      if (d.busy) return d.mode === "enc-setup" ? "Turning on…" : "Saving…";
+      if (d.busy) return { "enc-setup": "Turning on…", startover: "Starting over…" }[d.mode] || "Saving…";
       return (ACCT_DIALOGS[d.mode] || ["", "Save"])[1];
     },
     acctSharedPw() { return !!(this.acct && this.acct.unlocks_encryption); },
@@ -101,6 +102,7 @@ const accountPart = {
         if (d.pw !== d.confirm) return "The passwords don't match.";
       }
       if (d.mode === "create" && this.acct?.first_run?.needs_code && !d.code.trim()) return "Enter the setup code.";
+      if (d.mode === "startover" && !d.choice) return "Choose what happens to the old files.";
       return "";
     },
     async acctSubmit() {
@@ -163,6 +165,13 @@ const accountPart = {
           return;
         case "enc-setup":
           return this._encSetup(d);
+        case "startover":
+          r = await _acctPost("/api/encryption/reset", { confirm: true, keep_copy: d.choice === "aside" });
+          try {
+            sessionStorage.setItem("kl-flash", r.kept_copy ? `Started over. The old files are in ${r.kept_copy}.` : "Started over. The old files were deleted.");
+          } catch (e) { /* the page still reloads without the note */ }
+          location.reload();
+          return;
       }
     },
     // Setup creates the key and returns the recovery key once; the level call then starts the
@@ -246,28 +255,28 @@ const accountPart = {
         location.reload();
       } catch (e) { this.klNotify(e.message || String(e), "warn"); }
     },
-    // Lost the password AND the recovery key. The unreadable files are moved aside, not deleted,
-    // in case the password turns up.
+    // Lost the password AND the recovery key. The user must choose what happens to the
+    // unreadable files; nothing is pre-selected.
     async startOver() {
       let p;
       try { p = await getJson("/api/encryption/reset-preview"); } catch (e) { this.klNotify(e.message || String(e), "warn"); return; }
-      const ok = await this.klConfirm({
-        title: "Start over without the password?",
-        facts: [
-          ["Moved aside", `${fmtBytes(p.bytes || 0)}, into the data folder`],
-          ["Re-indexed", (p.reindex || []).map((r) => this.repoLabel(r)).join(", ") || "None"],
-          ["History lost", p.history_lost ? `${p.history_lost} encrypted history file(s)` : "None"],
-          ["Kopia repositories", "Not touched"],
-        ],
-        callout: "Only if both the password and the recovery key are lost. Encryption is turned off.",
-        note: "If the password turns up, the moved files can still be read with it.",
-        confirmLabel: "Start over", danger: true,
-      });
-      if (!ok) return;
-      try {
-        await _acctPost("/api/encryption/reset", { confirm: true, keep_copy: true });
-        location.reload();
-      } catch (e) { this.klNotify(e.message || String(e), "warn"); }
+      this.openAcct("startover", { preview: p, choice: "" });
+    },
+    startOverFacts() {
+      const p = this.acctDialog && this.acctDialog.preview;
+      if (!p) return [];
+      return [
+        ["Encrypted files", fmtBytes(p.bytes || 0)],
+        ["Re-indexed", (p.reindex || []).map((r) => this.repoLabel(r)).join(", ") || "None"],
+        ["History lost", p.history_lost ? `${p.history_lost} encrypted history file(s)` : "None"],
+        ["Kopia repositories", "Not touched"],
+      ];
+    },
+    setAsideText() {
+      const list = (this.encStatus && this.encStatus.set_aside) || [];
+      if (!list.length) return "";
+      const bytes = list.reduce((n, x) => n + (x.bytes || 0), 0);
+      return `${fmtBytes(bytes)} of old encrypted files in ${list.map((x) => x.path).join(", ")}. Delete ${list.length > 1 ? "these folders" : "the folder"} when you no longer need ${list.length > 1 ? "them" : "it"}.`;
     },
 
     // ---- The unlock box ----------------------------------------------------------------------

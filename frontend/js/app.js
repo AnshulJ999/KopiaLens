@@ -201,6 +201,10 @@ document.addEventListener("alpine:init", () => {
       if (this._inited) return;
       this._inited = true;
       window.addEventListener("kl-locked", (e) => this.showLock(e.detail));
+      try {   // a note carried across a reload (start over)
+        const flash = sessionStorage.getItem("kl-flash");
+        if (flash) { sessionStorage.removeItem("kl-flash"); setTimeout(() => this.klNotify(flash), 0); }
+      } catch (e) { /* storage blocked: no note */ }
       await this.wrap(async () => {
         TABLE_PREFS = await getJson("/api/settings/tables").catch(() => ({})) || {};
         const data = await getJson("/api/repos");

@@ -95,6 +95,7 @@
                       <button @click="startOver()" class="h-8 rounded border px-3 text-xs" style="color:var(--danger);border-color:var(--danger-bd)">Start over…</button></div>
                     <p class="text-[11px] text-muted mt-1">For a lost password and recovery key. Turns encryption off and re-indexes from kopia; encrypted history can't be recovered.</p>
                   </div>
+                  <p class="text-[11px] break-all" style="color:var(--warn)" x-show="setAsideText()" x-text="setAsideText()"></p>
                 </div>
               </template>
             </section>
