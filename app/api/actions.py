@@ -425,6 +425,16 @@ def _remove_scope(everywhere: bool, matched_sources: list[str]):
     return None if everywhere else sorted(set(matched_sources))
 
 
+def _filename_matches(repo: str, scope: list[str] | None, names: list[str], cap: int,
+                      biggest_first: bool = False) -> dict:
+    """Every file ``--filename`` removes: all same-named files in the scoped backups, or in every
+    backup when ``scope`` is None (kopia then drops --source)."""
+    if scope is None:
+        from ..core.sources import sources_index
+        scope = sorted(sources_index(repo))
+    return paths_named(repo, scope, names, cap=cap, biggest_first=biggest_first)
+
+
 def _remove_items(t: dict, by: str) -> tuple[list[str], str]:
     """Return (items, flag) for the chosen mechanism: object-ids (exact content) or basenames."""
     return (t["names"], "--filename") if by == "filename" else (t["object_ids"], "--object-id")
@@ -443,7 +453,8 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
                 "sources_matched": [], "total_file_count": 0, "total_physical": 0,
                 "total_logical": 0, "capped": False,
                 "filename_match_total": None, "filename_extra_count": 0, "filename_extra": [],
-                "filename_extra_capped": False}
+                "filename_extra_capped": False, "filename_extra_logical": 0,
+                "filename_extra_physical": 0}
     scope = _remove_scope(payload.everywhere, t["sources"])
     generation = index_generation(payload.repo)
     plan_token = _remember_plan({"items": items, "flag": flag, "source": scope, "by": payload.by,
@@ -457,15 +468,10 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
                          "sources": scope or [], "everywhere": scope is None,
                          "query": payload.query, "first_from": payload.first_from})
     # ``--filename`` is a basename match across the whole scoped source, so a folder plan
-    # also removes same-named files OUTSIDE it. The panel shows the plan's own set; these fields
-    # say how much rides along, and which.
+    # also removes same-named files OUTSIDE it. These fields say how much rides along, and which.
     extra: dict = {}
     if payload.by == "filename" and t["names"]:
-        sweep_sources = scope
-        if sweep_sources is None:                     # everywhere: kopia drops --source
-            from ..core.sources import sources_index
-            sweep_sources = sorted(sources_index(payload.repo))
-        found = paths_named(payload.repo, sweep_sources, t["names"], cap=_FILENAME_SAMPLE)
+        found = _filename_matches(payload.repo, scope, t["names"], _FILENAME_SAMPLE)
         planned = {(s, fp) for s, fp in t["pairs"]}
         rows = [{**r} for r in found["rows"] if (r["source"], r["full_path"]) not in planned]
         extra = {
@@ -473,6 +479,9 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
             "filename_extra_count": max(0, int(found["total"]) - len(planned)),
             "filename_extra": rows,
             "filename_extra_capped": int(found["total"]) > len(found["rows"]),
+            # every planned file is itself a match, so the extras are the match totals minus the plan's
+            "filename_extra_logical": max(0, int(found["logical"]) - int(t["logical"] or 0)),
+            "filename_extra_physical": max(0, int(found["physical"]) - int(t["physical"] or 0)),
         }
     return {
         "file_count": t["file_count"], "object_count": len(t["object_ids"]), "name_count": len(t["names"]),
@@ -488,7 +497,8 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
         "commit": "\n".join(_fmt_cmd(c) for c in commit_cmds),
         "dry_run": "\n".join(_fmt_cmd(c) for c in dry_cmds),
         "filename_match_total": None, "filename_extra_count": 0, "filename_extra": [],
-        "filename_extra_capped": False, **extra,
+        "filename_extra_capped": False, "filename_extra_logical": 0, "filename_extra_physical": 0,
+        **extra,
         # the job start passes plan_token back; index_generation is what it compares.
         "plan_token": plan_token, "index_generation": generation,
     }
@@ -505,6 +515,27 @@ def _has_filters(payload: RemovePlanRequest) -> bool:
     return any(getattr(payload, name, None) for name in _NARROWING_FILTERS)
 
 
+_DETAIL_LIMIT = 5000
+
+
+def _filename_detail(payload: RemovePlanRequest) -> dict:
+    """A file-name delete removes every same-named file in the scoped backups, not only the plan's
+    own set, and every version of each (kopia rewrites every snapshot), so the detail prices that
+    whole set across all versions, biggest first."""
+    t = _remove_targets(payload)
+    if not t["names"]:
+        return {"found": False}
+    found = _filename_matches(payload.repo, _remove_scope(payload.everywhere, t["sources"]),
+                              t["names"], _DETAIL_LIMIT, biggest_first=True)
+    if not found["rows"]:
+        return {"found": False}
+    out = batch_detail(payload.repo, [{"source": r["source"], "full_path": r["full_path"]}
+                                      for r in found["rows"]], all_versions=True)
+    out["capped"] = found["total"] > len(found["rows"])
+    out["scope"] = "filename"
+    return out
+
+
 @router.post("/actions/remove-detail")
 def remove_detail(payload: RemovePlanRequest) -> dict:
     """On-demand reclaim/freeable/shared for the matched set (a chunk walk, so it's a button, not
@@ -513,6 +544,8 @@ def remove_detail(payload: RemovePlanRequest) -> dict:
     top rows - never the full top-200k materialization. The detail walk describes the PLAN's set:
     its limit is min(cap, 5000), so a "Largest 100" plan is detailed over those 100 files, not the
     top 5,000 of the whole match."""
+    if payload.by == "filename":
+        return _filename_detail(payload)
     if payload.parts is not None:
         t = _remove_targets(payload)
         if not t["pairs"]:

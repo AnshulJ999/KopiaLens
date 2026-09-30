@@ -254,14 +254,20 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
     return stripped, meta
 
 
+def _count(n: int, one: str, many: str | None = None) -> str:
+    """``_count(1, "backup")`` -> "1 backup", ``_count(3, "backup")`` -> "3 backups"."""
+    return f"{n:,} {one if n == 1 else (many or one + 's')}"
+
+
 def _default_label(kind: str, params: dict, meta: dict) -> str:
     if kind == "remove_files":
         src = params.get("source")
         scope = ("everywhere" if not src
-                 else f"{len(src) if isinstance(src, list) else 1} source(s)")
-        return f"{meta['items']} object(s) - {scope}" + (" - dry run" if meta["dry"] else "")
+                 else _count(len(src) if isinstance(src, list) else 1, "source"))
+        what = "name" if params.get("flag") == "--filename" else "version"
+        return f"{_count(meta['items'], what)} - {scope}" + (" - dry run" if meta["dry"] else "")
     if kind == "snapshot_delete":
-        return f"{meta['snapshots']} snapshot(s)" + (" - dry run" if meta["dry"] else "")
+        return _count(meta["snapshots"], "snapshot") + (" - dry run" if meta["dry"] else "")
     if kind == "maintenance":
         return ("full maintenance" if meta["full"] else "quick maintenance") + (
             ", safety none" if meta.get("safety") == "none" else "")
@@ -271,7 +277,7 @@ def _default_label(kind: str, params: dict, meta: dict) -> str:
     if kind == "snapshot_create":
         return meta["path"]
     if kind == "snapshot_pin":
-        return f"{'unpin' if meta['remove'] else 'pin'} {meta['snapshots']} snapshot(s)"
+        return f"{'unpin' if meta['remove'] else 'pin'} {_count(meta['snapshots'], 'snapshot')}"
     if kind == "policy_write":
         n = meta["writes"]
         base = f"{n} polic{'y' if n == 1 else 'ies'}"

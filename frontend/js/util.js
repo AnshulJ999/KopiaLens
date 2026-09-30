@@ -7,6 +7,8 @@ const fmtBytes = (value) => {
   return `${n} B`;
 };
 const fmtPhys = (v) => (v === null || v === undefined ? "—" : fmtBytes(v));
+// A count with its noun: countOf(1, "file") -> "1 file", countOf(3, "file") -> "3 files".
+const countOf = (n, one, many = one + "s") => `${Number(n || 0).toLocaleString()} ${Number(n) === 1 ? one : many}`;
 
 // Accepts an ISO / "YYYY-MM-DD HH:MM:SS" string, a Date, or an epoch number. Epoch SECONDS (the
 // backend's time.time()) are told apart from milliseconds by magnitude.
@@ -113,6 +115,7 @@ const setTable = (id, data, columns, opts = {}) => {
   if (el._tabulator) { try { el._tabulator.destroy(); } catch (e) {} el._tabulator = null; }
   columns.forEach((c) => {
     c.headerContextMenu = colVisibilityMenu;
+    if (c.headerTooltip === undefined) c.headerTooltip = true;   // full title on hover when a header is clipped
     if (!c.sorter && data && data.length && typeof data[0][c.field] === "number") c.sorter = "number";
   });
   const table = new Tabulator(id, {
@@ -121,7 +124,7 @@ const setTable = (id, data, columns, opts = {}) => {
     height: "100%",
     movableColumns: true,
     selectableRows: 1,
-    placeholder: "No rows",
+    placeholder: "Nothing to show",
     persistence: { columns: true, sort: persistSort !== false },
     persistenceID: id.replace("#", ""),
     persistenceReaderFunc: persistReader,

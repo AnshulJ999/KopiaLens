@@ -201,7 +201,7 @@ const deletePart = {
       const p = this.delPanel;
       if (!this.delReady()) return;
       const ok = await this.klConfirm({
-        title: p.method === "remove" ? `Remove ${this.delFileLabel()} from snapshots?` : `Delete ${p.plan.snapshots.length} snapshots?`,
+        title: p.method === "remove" ? `Remove ${this.delFileLabel()} from snapshots?` : `Delete ${countOf(p.plan.snapshots.length, "snapshot")}?`,
         facts: this.delFacts(), callout: this.delCallout(),
         note: (this.delDryChecked() ? "" : "No dry run yet. ") + "Space frees after the next full maintenance.",
         command: p.plan.command, confirmLabel: this.delConfirmLabel(), danger: true,
@@ -352,9 +352,9 @@ const deletePart = {
       return [
         ["Folder", p.label],
         ["Match", p.by === "filename" ? "File name" : "Exact content"],
-        ["Removes", `${Number(p.file_count || 0).toLocaleString()} files · ${p.all_versions ? "every version" : "latest version"}`],
+        ["Removes", `${this.removeFilesSplit() || countOf(this.removeFileTotal(), "file")} · ${this.removeAllVersions() ? "every version" : "latest version"}`],
         ["Backups", (p.sources_scope || []).map((s) => sourcePath(s)).join(", ")],
-        ["Frees", p.detail && p.detail.found !== false ? fmtPhys(p.detail.freeable) + " after maintenance" : fmtPhys(p.physical) + " stored"],
+        ["Frees", this.removeFreesText()],
       ];
     },
 

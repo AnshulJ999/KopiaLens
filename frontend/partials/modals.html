@@ -126,9 +126,10 @@
         <template x-if="removePlan && !removePlan.loading">
           <div>
             <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted">Files</div><div class="font-medium" x-text="Number(removePlan.file_count||0).toLocaleString()"></div></div>
+              <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted">Files</div><div class="font-medium" x-text="removeFileTotal().toLocaleString()"></div>
+                <div class="text-[10px] text-muted" x-show="removeExtra('filename_extra_count')" x-text="Number(removePlan.file_count||0).toLocaleString() + ' here · ' + removeExtra('filename_extra_count').toLocaleString() + ' elsewhere'"></div></div>
               <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted" x-text="removePlan.by==='filename' ? 'Names' : 'Versions'"></div><div class="font-medium" x-text="Number((removePlan.by==='filename'?removePlan.name_count:removePlan.object_count)||0).toLocaleString()"></div></div>
-              <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted">Physical</div><div class="font-medium" x-text="fmtPhys(removePlan.physical)"></div></div>
+              <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted">Physical</div><div class="font-medium" x-text="fmtPhys(removePhysTotal())"></div></div>
               <div class="rounded border border-bd p-2"><div class="text-[10px] uppercase text-muted">Backups</div><div class="font-medium" x-text="removePlan.everywhere ? 'All' : (removePlan.sources_scope || []).length"></div></div>
             </div>
 
@@ -151,11 +152,13 @@
             </div>
             <div class="text-[11px] mt-1" x-show="removePlan.total_physical">
               <span x-show="removePlan.capped" class="text-ok">
-                These <span x-text="Number(removePlan.file_count||0).toLocaleString()"></span> files are
-                <b x-text="fmtPhys(removePlan.physical)"></b> = <b x-text="removeCoverage() + '%'"></b>
-                of the match (<span x-text="Number(removePlan.total_file_count||0).toLocaleString()"></span> files, <span x-text="fmtPhys(removePlan.total_physical)"></span> total).
+                Largest <span x-text="countOf(removePlan.file_count, 'file')"></span>:
+                <b x-text="fmtPhys(removePlan.physical)"></b>, <b x-text="removeCoverage() + '%'"></b>
+                of the match (<span x-text="countOf(removePlan.total_file_count, 'file')"></span>, <span x-text="fmtPhys(removePlan.total_physical)"></span> total).
               </span>
-              <span x-show="!removePlan.capped" class="text-muted">Everything matched: <span x-text="Number(removePlan.total_file_count||0).toLocaleString()"></span> files, <span x-text="fmtPhys(removePlan.total_physical)"></span>.</span>
+              <span x-show="!removePlan.capped" class="text-muted">Everything matched: <span x-text="countOf(removePlan.total_file_count, 'file')"></span>, <span x-text="fmtPhys(removePlan.total_physical)"></span>.</span>
+              <span x-show="removeExtra('filename_extra_count')" class="text-warn"
+                    x-text="'+ ' + countOf(removeExtra('filename_extra_count'), 'file') + ' with the same name elsewhere.'"></span>
             </div>
 
             <div class="mt-2 flex flex-wrap items-center gap-3 text-xs">
@@ -164,7 +167,8 @@
               <label class="flex items-center gap-1" title="Any file with these names in these backups"><input type="radio" name="rby" :checked="removePlan.by==='filename'" @change="setRemoveBy('filename')"> File name</label>
             </div>
             <div class="mt-2 flex flex-wrap items-center gap-3 text-xs">
-              <label class="flex items-center gap-1" title="Off: only the newest version of each file"><input type="checkbox" :checked="removePlan.all_versions" @change="toggleRemoveAllVersions()"> Every version</label>
+              <label class="flex items-center gap-1" :class="removePlan.by==='filename' ? 'opacity-60' : ''"
+                     :title="removePlan.by==='filename' ? 'A delete by file name removes every version' : 'Off: only the newest version of each file'"><input type="checkbox" :checked="removeAllVersions()" :disabled="removePlan.by==='filename'" @change="toggleRemoveAllVersions()"> Every version</label>
               <label class="flex items-center gap-1 text-danger" title="Not limited to these backups. Slow."><input type="checkbox" :checked="removePlan.everywhere" @change="toggleRemoveEverywhere()"> Whole repo</label>
             </div>
 

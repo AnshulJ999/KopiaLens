@@ -63,7 +63,7 @@ const snapshotsPart = {
         const keep = (d.retention && d.retention.length) || (d.pins && d.pins.length);
         if (keep) r.deselect(); else { r.select(); n++; }
       });
-      this.actionText = `Selected ${n} unretained snapshot(s) (no retention, no pin). Use 'Delete selected…' to preview/copy the kopia command or delete.`;
+      this.actionText = `Selected ${countOf(n, "unretained snapshot")} (no retention, no pin). Use 'Delete selected…' to preview/copy the kopia command or delete.`;
       this.klNotify(n ? `${n} unretained snapshot${n === 1 ? "" : "s"} selected - nothing keeps them.` : "No unretained snapshots to select - every one is pinned or kept by retention.", n ? "ok" : "warn");
     },
     selectIdenticalDuplicates() {  // HYBRID: group the source's snapshots by `root` (byte-identical
@@ -88,7 +88,7 @@ const snapshotsPart = {
       let n = 0;
       tbl.getRows().forEach((r) => { if (del.has(r.getData().id)) { r.select(); n++; } else r.deselect(); });
       this.actionText = n
-        ? `Selected ${n} identical-duplicate snapshot(s) (kept oldest+newest per content; pinned kept; retained ARE included). Use 'Delete selected…'.`
+        ? `Selected ${countOf(n, "identical-duplicate snapshot")} (kept oldest+newest per content; pinned kept; retained ARE included). Use 'Delete selected…'.`
         : `No identical duplicates to collapse — no content has 3+ snapshots (or 'root' is missing on the rows).`;
       this.klNotify(n ? `${n} duplicate snapshot${n === 1 ? "" : "s"} selected - the oldest and newest of each set are kept.` : "No identical duplicates to collapse.", n ? "ok" : "warn");
     },

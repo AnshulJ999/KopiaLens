@@ -7,7 +7,7 @@
         <div class="w-[46rem] max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
           <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
             <div class="flex items-center gap-2">
-              <span class="pill shrink-0" x-show="exDialog.mode === 'delete'">Step 1 of 3</span>
+              <span class="pill shrink-0" x-show="exDialog.mode === 'delete' && !exAlreadyExcluded()">Step 1 of 3</span>
               <div class="font-medium" x-text="exDialog.mode === 'delete' ? 'Exclude & delete · Exclude' : 'Exclude'"></div>
               <button @click="exClose()" class="ml-auto kl-btn quiet" title="Close">&times;</button>
             </div>
@@ -155,7 +155,7 @@
                         <div class="kl-note" x-text="exWhy(t)"></div>
                         <template x-for="pr in exPatternRows(t)" :key="pr.pattern">
                           <div class="font-mono text-[11px] break-all" style="color:var(--muted)">
-                            <span x-text="pr.pattern"></span><span class="font-sans" style="color:var(--faint)" x-show="pr.note" x-text="'  ' + pr.note"></span>
+                            <span x-text="pr.pattern"></span><span class="font-sans" style="color:var(--muted)" x-show="pr.note" x-text="'  ' + pr.note"></span>
                           </div>
                         </template>
                       </div>
@@ -229,13 +229,14 @@
           </template>
 
           <div class="kl-footer shrink-0">
-            <span class="kl-note">A policy backup is taken first.</span>
+            <span class="kl-note" x-show="!exAlreadyExcluded()">A policy backup is taken first.</span>
             <span class="spacer"></span>
             <button class="kl-btn" @click="exClose()">Cancel</button>
             <button class="kl-btn primary" x-show="exDialog.mode === 'exclude'" @click="exConfirm()"
                     :disabled="!exCanCommit()">Exclude…</button>
-            <button class="kl-btn primary" x-show="exDialog.mode === 'delete'" @click="exConfirm()"
+            <button class="kl-btn primary" x-show="exDialog.mode === 'delete' && !exAlreadyExcluded()" @click="exConfirm()"
                     :disabled="!exCanCommit()">Next: delete</button>
+            <button class="kl-btn danger" x-show="exAlreadyExcluded()" @click="exJustDelete()">Delete…</button>
           </div>
         </div>
       </template>

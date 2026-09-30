@@ -136,7 +136,7 @@ const treePart = {
               if (d.type !== "folder" && !source) return;
               this.openExclude({ kind, path: d.path, source }, "delete");
             } },
-            { label: "Delete (chunked, respects filters)…", action: (_e, row) => this.openRemoveFolder(row.getData()) },
+            { label: "Delete…", action: (_e, row) => this.openRemoveFolder(row.getData()) },
             { label: "Copy path", action: (_e, row) => this.copyText(row.getData().path) },
           ],
         });

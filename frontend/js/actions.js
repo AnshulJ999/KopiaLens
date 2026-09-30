@@ -172,6 +172,11 @@ const actionsPart = {
         facts.push(["To", r.mode === "folder" ? r.target : r.mode === "original" ? "Where each came from" : "Next to each original"]);
       }
       facts.push(["Files", `${Number(t.files).toLocaleString()} · ${fmtBytes(t.size)}`]);
+      const expired = p.items.filter((i) => i.expired).length;
+      if (expired) {
+        facts.push(["Modified time", p.items.length === 1 ? "Not restored: the snapshot has expired"
+          : `Not restored for ${countOf(expired, "item")}: their snapshots have expired`]);
+      }
       facts.push(["Existing files", { safe: "Skipped", replace: "Replaced when different", exact: "Replaced when different", custom: "Custom options" }[r.preset]]);
       if (p.previewed) {
         facts.push(["On disk now", `${t.new.toLocaleString()} new · ${t.identical.toLocaleString()} identical · ${t.different.toLocaleString()} different`]);
@@ -235,13 +240,16 @@ const actionsPart = {
         info = plan.items[0];
       } catch (e) { this.error = e.message || String(e); return; }
       if (info.size > DOWNLOAD_WARN_BYTES) {
+        const facts = [["Size", fmtBytes(info.size)], ["Files", Number(info.files).toLocaleString()], ["Snapshot", this.humanTime(info.snap_time)]];
+        if (info.expired) facts.push(["Modified time", "Not restored: the snapshot has expired"]);
         const ok = await this.klConfirm({
-          title: `Download ${info.name}?`,
-          facts: [["Size", fmtBytes(info.size)], ["Files", Number(info.files).toLocaleString()], ["Snapshot", this.humanTime(info.snap_time)]],
+          title: `Download ${info.name}?`, facts,
           callout: info.type === "d" ? "The .zip is built on the server first, which needs this much free space." : "",
           confirmLabel: "Download",
         });
         if (!ok) return;
+      } else if (info.expired) {
+        this.klNotify("Modified time not restored: the snapshot has expired.", "warn");
       }
       const q = new URLSearchParams({ repo: this.repo, source: item.source, full_path: item.full_path });
       if (item.snapshot_id) q.set("snapshot_id", item.snapshot_id);

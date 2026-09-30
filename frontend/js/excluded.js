@@ -12,7 +12,7 @@ const excludedPart = {
     },
     renderExcludedDrives() {
       this.excludedPath = "";
-      this.excludedMeta = this.excludedOk ? `${this.excludedDrives.length} drive(s)` : "Disk lookup is not available";
+      this.excludedMeta = this.excludedOk ? countOf(this.excludedDrives.length, "drive") : "Disk lookup is not available";
       this.renderExcluded(this.excludedDrives.map((dr) => ({
         name: dr.path.replace(/\\$/, ""), path: dr.path, is_dir: true, status: "drive",
         total_size: dr.total_size || 0, disk_bytes: dr.total_size || 0,

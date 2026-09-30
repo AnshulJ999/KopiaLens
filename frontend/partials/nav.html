@@ -72,7 +72,7 @@
         <span x-show="busy" class="text-warn" x-text="busy"></span>
         <!-- the full error on hover: the line itself must stay short, a long backend message must not -->
         <span x-show="error" class="text-danger max-w-md truncate" :title="error" x-text="error"></span>
-        <span class="text-faint" x-show="selectedSource" x-text="'· ' + shortSource(selectedSource)"></span>
+        <span class="text-muted" x-show="selectedSource" x-text="'· ' + shortSource(selectedSource)"></span>
       </div>
     </nav>
 

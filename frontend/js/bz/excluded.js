@@ -11,7 +11,7 @@ const bzExcludedPart = {
       this.bzExclPath = "";
       await this.wrap(async () => {
         const r = await getJson("/api/backblaze/excluded/drives");
-        this.bzExclMeta = `${r.drives.length} drive(s) · ${bzFmt(r.grand_bytes)} backed by Backblaze`;
+        this.bzExclMeta = `${countOf(r.drives.length, "drive")} · ${bzFmt(r.grand_bytes)} backed by Backblaze`;
         this._bzExclItems = (r.drives || []).map((d) => ({
           name: d.drive, path: d.path, is_dir: true, status: "drive",
           backed_bytes: d.backed_bytes, backed_files: d.backed_files,
