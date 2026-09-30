@@ -52,15 +52,32 @@ def test_a_filename_plan_prices_every_same_named_file(monkeypatch):
         return SWEEP
 
     def fake_detail(repo, files, all_versions=False):
-        asked["files"] = [f["full_path"] for f in files]
+        asked.update(files=[f["full_path"] for f in files], all_versions=all_versions)
         return {"freeable": 1}
 
     monkeypatch.setattr(actions, "paths_named", fake_named)
     monkeypatch.setattr(actions, "batch_detail", fake_detail)
-    out = actions.remove_detail(_plan())
+    out = actions.remove_detail(_plan(all_versions=False))
     assert asked["files"] == [r["full_path"] for r in SWEEP["rows"]]
     assert asked["biggest_first"] is True and asked["cap"] == 5000
+    assert asked["all_versions"] is True          # kopia's --filename rewrites every snapshot
     assert out["scope"] == "filename" and out["capped"] is False
+
+
+def test_filename_matching_is_case_sensitive_like_kopia(monkeypatch):
+    """kopia matches --filename with Go's path.Match: Config.json is not config.json."""
+    import duckdb
+    from app.index import queries
+    src = f"u@h:G:{SEP}"
+    con = duckdb.connect()
+    con.execute(f"CREATE TABLE src AS SELECT * FROM (VALUES (1::SMALLINT, '{src}')) t(src_id, source)")
+    con.execute(f"CREATE TABLE pathx AS SELECT * FROM (VALUES "
+                f"(1::SMALLINT, 'config.json', 'G:{SEP}a{SEP}config.json', 1::UBIGINT, 10::UBIGINT, true), "
+                f"(1, 'Config.json', 'G:{SEP}b{SEP}Config.json', 2::UBIGINT, 20::UBIGINT, true)) "
+                f"t(src_id, name, full_path, size, physical, in_latest)")
+    monkeypatch.setattr(queries, "read_cursor", lambda repo: con.cursor())
+    out = queries.paths_named("3", [src], ["config.json"])
+    assert out["total"] == 1 and [r["full_path"] for r in out["rows"]] == [f"G:{SEP}a{SEP}config.json"]
 
 
 def test_an_object_id_plan_carries_empty_collateral_fields(monkeypatch):

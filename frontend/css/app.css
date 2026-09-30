@@ -124,7 +124,7 @@ body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", 
 /* Policy editor rows: setting | this policy's value | value in effect. */
 .pe-rows { border: 1px solid var(--bd); border-radius: var(--r-md); background: var(--surface); }
 .pe-head, .pe-row { display: grid; grid-template-columns: minmax(12rem, 1.1fr) minmax(13rem, 1fr) minmax(11rem, 1fr); gap: 10px; padding: 7px 9px; }
-.pe-head { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); border-bottom: 1px solid var(--bd); }
+.pe-head { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); border-bottom: 1px solid var(--bd); }
 .pe-row { border-bottom: 1px solid var(--bd-soft); align-items: start; font-size: var(--fs-sm); }
 .pe-row:last-child { border-bottom: none; }
 .pe-staged { background: var(--warn-bg); box-shadow: inset 3px 0 0 var(--warn); }

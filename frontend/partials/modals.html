@@ -157,6 +157,8 @@
                 of the match (<span x-text="countOf(removePlan.total_file_count, 'file')"></span>, <span x-text="fmtPhys(removePlan.total_physical)"></span> total).
               </span>
               <span x-show="!removePlan.capped" class="text-muted">Everything matched: <span x-text="countOf(removePlan.total_file_count, 'file')"></span>, <span x-text="fmtPhys(removePlan.total_physical)"></span>.</span>
+              <span x-show="removeExtra('filename_extra_count')" class="text-warn"
+                    x-text="'+ ' + countOf(removeExtra('filename_extra_count'), 'file') + ' with the same name elsewhere.'"></span>
             </div>
 
             <div class="mt-2 flex flex-wrap items-center gap-3 text-xs">
@@ -165,7 +167,8 @@
               <label class="flex items-center gap-1" title="Any file with these names in these backups"><input type="radio" name="rby" :checked="removePlan.by==='filename'" @change="setRemoveBy('filename')"> File name</label>
             </div>
             <div class="mt-2 flex flex-wrap items-center gap-3 text-xs">
-              <label class="flex items-center gap-1" title="Off: only the newest version of each file"><input type="checkbox" :checked="removePlan.all_versions" @change="toggleRemoveAllVersions()"> Every version</label>
+              <label class="flex items-center gap-1" :class="removePlan.by==='filename' ? 'opacity-60' : ''"
+                     :title="removePlan.by==='filename' ? 'A delete by file name removes every version' : 'Off: only the newest version of each file'"><input type="checkbox" :checked="removeAllVersions()" :disabled="removePlan.by==='filename'" @change="toggleRemoveAllVersions()"> Every version</label>
               <label class="flex items-center gap-1 text-danger" title="Not limited to these backups. Slow."><input type="checkbox" :checked="removePlan.everywhere" @change="toggleRemoveEverywhere()"> Whole repo</label>
             </div>
 

@@ -520,7 +520,8 @@ _DETAIL_LIMIT = 5000
 
 def _filename_detail(payload: RemovePlanRequest) -> dict:
     """A file-name delete removes every same-named file in the scoped backups, not only the plan's
-    own set, so the detail prices that whole set, biggest first."""
+    own set, and every version of each (kopia rewrites every snapshot), so the detail prices that
+    whole set across all versions, biggest first."""
     t = _remove_targets(payload)
     if not t["names"]:
         return {"found": False}
@@ -529,7 +530,7 @@ def _filename_detail(payload: RemovePlanRequest) -> dict:
     if not found["rows"]:
         return {"found": False}
     out = batch_detail(payload.repo, [{"source": r["source"], "full_path": r["full_path"]}
-                                      for r in found["rows"]], all_versions=payload.all_versions)
+                                      for r in found["rows"]], all_versions=True)
     out["capped"] = found["total"] > len(found["rows"])
     out["scope"] = "filename"
     return out

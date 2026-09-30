@@ -263,7 +263,7 @@ def _default_label(kind: str, params: dict, meta: dict) -> str:
     if kind == "remove_files":
         src = params.get("source")
         scope = ("everywhere" if not src
-                 else _count(len(src) if isinstance(src, list) else 1, "backup"))
+                 else _count(len(src) if isinstance(src, list) else 1, "source"))
         what = "name" if params.get("flag") == "--filename" else "version"
         return f"{_count(meta['items'], what)} - {scope}" + (" - dry run" if meta["dry"] else "")
     if kind == "snapshot_delete":

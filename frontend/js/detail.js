@@ -442,11 +442,20 @@ const detailPart = {
       const p = this.removePlan;
       return p && p.by === "filename" ? Number(p[key] || 0) : 0;
     },
+    removeAllVersions() {  // kopia's --filename rewrites every snapshot, so a name delete is always every version
+      const p = this.removePlan;
+      return !!(p && (p.all_versions || p.by === "filename"));
+    },
     removeFileTotal() {
       return this.removePlan ? Number(this.removePlan.file_count || 0) + this.removeExtra("filename_extra_count") : 0;
     },
     removePhysTotal() {
       return this.removePlan ? Number(this.removePlan.physical || 0) + this.removeExtra("filename_extra_physical") : 0;
+    },
+    removeFreesText() {
+      const d = this.removePlan && this.removePlan.detail;
+      if (d && d.found !== false) return fmtPhys(d.freeable) + " after maintenance" + (d.capped ? " · biggest 5,000 files checked" : "");
+      return fmtPhys(this.removePhysTotal()) + " stored";
     },
     removeFilesSplit() {  // "9 here + 8 with the same name elsewhere", or "" when nothing rides along
       const extra = this.removeExtra("filename_extra_count");
@@ -475,12 +484,10 @@ const detailPart = {
         title: `Delete ${files}?`,
         facts: [
           ["What", p.label],
-          ["Files", `${split || files} · ${p.all_versions ? "every version" : "latest version only"}${share}`],
+          ["Files", `${split || files} · ${this.removeAllVersions() ? "every version" : "latest version only"}${share}`],
           ["Match", p.by === "filename" ? `File name · ${countOf(p.name_count, "name")}` : "Exact content"],
           ["Backups", p.everywhere ? "Every backup in the repo" : (p.sources_scope || []).map((s) => sourcePath(s)).join(", ")],
-          ["Frees", p.detail && p.detail.found !== false
-            ? fmtPhys(p.detail.freeable) + " after maintenance" + (p.detail.capped ? " · biggest 5,000 files checked" : "")
-            : fmtPhys(this.removePhysTotal()) + " stored"],
+          ["Frees", this.removeFreesText()],
         ],
         callout: p.everywhere ? "Not limited to these backups: removes this content from the whole repo."
           : (p.by === "filename" ? "Every file with these names in these backups goes." : ""),

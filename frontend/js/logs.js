@@ -75,7 +75,7 @@ const logsPart = {
         const errs = r.errors || {};
         const failed = r.analysis_failed_sources || [];
         const bits = Object.entries(errs).map(([k, v]) => `${k}: ${v}`);
-        if (failed.length) bits.push(`${countOf(failed.length, "backup")} failed analysis`);
+        if (failed.length) bits.push(`${countOf(failed.length, "source")} failed analysis`);
         return bits.join(" · ");
       }
       return r.reason || "failed";

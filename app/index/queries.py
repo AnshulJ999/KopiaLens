@@ -620,9 +620,11 @@ def paths_named(repo: str, sources: list[str], names: list[str], cap: int = 500,
         sids = [i for i in (resolve.src_id(cur, s) for s in sources) if i is not None]
         if not sids:
             return empty
-        where = ("p.src_id IN (%s) AND lower(p.name) IN (%s)"
+        # Exact, case-sensitive: kopia compares names with Go's path.Match, so Config.json does not
+        # match config.json.
+        where = ("p.src_id IN (%s) AND p.name IN (%s)"
                  % (",".join("?" * len(sids)), ",".join("?" * len(names))))
-        params = [*sids, *[n.lower() for n in names]]
+        params = [*sids, *names]
         total, logical, phys = cur.execute(
             f"SELECT count(*), sum(p.size), sum(p.physical) FROM pathx p WHERE {where}", params).fetchone()
         order = ("p.physical DESC NULLS LAST, p.size DESC, s.source, p.full_path" if biggest_first
