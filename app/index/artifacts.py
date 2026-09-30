@@ -30,7 +30,7 @@ import pyarrow as pa
 from ..core import paths as pathrules
 from ..core.applog import get_logger
 from ..core.sources import sources_index
-from . import crypto, ids, layer2, layer3, store, tree, treeconvert, treesync
+from . import crypto, ids, layer2, layer3, perf, store, tree, treeconvert, treesync
 from .builder import _drop_indexes, _refresh_paths
 from .physical import fill_paths_physical
 from .schema import init_schema
@@ -116,11 +116,22 @@ def _sync_tree(con, repo: str, srcs: dict, alloc, job: dict) -> dict:
         known_sql += " UNION SELECT c.content_id FROM _tdir_new n JOIN cid c USING (cid_id)"
     con.execute(f"CREATE OR REPLACE TABLE _known AS {known_sql}")
     job["phase"] = "tree sync"
-    res = treesync.sync(con, repo, roots, known_table="_known", alloc=alloc,
-                        progress=lambda **kw: job.update({"sync": kw}))
+    with perf.phase("tree/read from kopia"):
+        res = treesync.sync(con, repo, roots, known_table="_known", alloc=alloc,
+                            progress=lambda **kw: job.update({"sync": kw}))
     job.pop("seed", None)
-    mat = treesync.materialize(con, alloc, base_known="tdir")
+    with perf.phase("tree/merge"):
+        mat = treesync.materialize(con, alloc, base_known="tdir")
+        merged = _reach_and_merge(con, roots)
+    perf.count(tree_folders=merged.get("folders"), tree_entries=merged.get("entries"),
+               tree_parts=merged.get("parts"), tree_levels=res.levels,
+               folders_read=res.fetched, unreadable=len(res.unreadable))
+    return {"sync": res.as_dict(), "materialize": mat, "merge": merged,
+            "incomplete": sorted(set(res.unreadable))}
 
+
+def _reach_and_merge(con, roots: list[str]) -> dict:
+    """GC the tree to what the current snapshot roots reach, then merge it in walk order."""
     import pyarrow as pa
     con.register("_roots_arrow", pa.table({"content_id": pa.array(roots, pa.string())}))
     con.execute("CREATE OR REPLACE TABLE _root_cids AS SELECT c.cid_id FROM cid c "
@@ -131,8 +142,7 @@ def _sync_tree(con, repo: str, srcs: dict, alloc, job: dict) -> dict:
     for name in _TREE_TABLES:
         con.execute(f"DROP TABLE {name}")
         con.execute(f"ALTER TABLE {name}_final RENAME TO {name}")
-    return {"sync": res.as_dict(), "materialize": mat, "merge": merged,
-            "incomplete": sorted(set(res.unreadable))}
+    return merged
 
 
 def _empty_previous(con) -> None:
@@ -324,7 +334,9 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
     staging = os.path.join(root, "_staging")
     os.makedirs(staging, exist_ok=True)
     t0 = time.perf_counter()
+    perf.lap("listing")
     srcs = sources_index(repo)
+    perf.set_inputs(srcs)
     prev_sources = set((prev or {}).get("sources") or ())
     if not srcs and prev_sources:
         raise RuntimeError(
@@ -353,6 +365,7 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         log.warning("repo=%s %d folder object(s) are still unreadable and were already retried - "
                     "not forcing another full rebuild. e.g. %s",
                     repo, len(unread_prev), unread_prev[:3])
+    perf.lap("load previous")
     scratch, con = _scratch(staging)
     prev_art = (prev or {}).get("artifacts", {})
     moves: list[tuple[str, str]] = []
@@ -449,7 +462,9 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         hw0 = alloc.counters()
 
         # Layer 1: bring the tree up to date, then merge and GC it.
+        perf.lap("tree")
         tree_stats = _sync_tree(con, repo, srcs, alloc, job)
+        perf.lap("rebuild sources")
 
         # Rebuild what changed, from the TREE. One level pass over whole sets replaces the
         # per-folder walk AND the oldest-first first_seen backfill - the two stages that used
@@ -487,6 +502,7 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         # references", i.e. freeable.
         job["current_source"] = "(maps from the tree)"
         job["phase"] = "maps"
+        perf.lap("maps")
         t_phys = time.perf_counter()
         layer3.snapshots(con, repo, srcs)
         l2 = layer2.build(con, repo, alloc)
@@ -535,6 +551,7 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         per_source: dict[str, dict] = {}
         t_map = time.perf_counter()
         job["phase"] = "sources"
+        perf.lap("per-source mapping")
         for key, mode, ap in targets:
             S = int(src_of[key])
             sep = pathrules.sep(key)
@@ -675,6 +692,7 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         log.info("repo=%s index per-source mapping (%d source(s)) in %.1fs",
                  repo, len(targets), time.perf_counter() - t_map)
         job["phase"] = "writing"
+        perf.lap("write + verify")
         t_tail = time.perf_counter()
 
         # Small tables and maps. isnaps: a previous row survives only while its snapshot still
@@ -798,6 +816,10 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
             f"SELECT count(*) FROM read_parquet({crypto.parquet_read_list(fl)})").fetchone()[0]
         stats = {"paths": n_paths, "file_versions": n_filev}
         checks["stats"] = stats
+        perf.count(sources=len(srcs), rebuilt_sources=len(targets), paths=n_paths,
+                   file_versions=n_filev, dirs=con.execute("SELECT count(*) FROM dir").fetchone()[0],
+                   content_ids=con.execute("SELECT count(*) FROM cid").fetchone()[0],
+                   snapshots=con.execute("SELECT count(*) FROM snap").fetchone()[0])
 
         # Encryption self-check, before anything is published: every file this generation will
         # name must be in the state the manifest is about to declare. A writer that missed the

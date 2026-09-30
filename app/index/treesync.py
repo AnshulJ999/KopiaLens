@@ -29,7 +29,7 @@ import time
 
 from ..core.applog import get_logger
 from ..core.kopia import kopia
-from . import ids, tree
+from . import ids, perf, tree
 
 log = get_logger("tree")
 
@@ -54,6 +54,7 @@ def timed(label: str, out: dict | None = None):
 
 BATCH = 800                     # kopia CLI overhead is 0.42 s/call, so batching is near-perfect
 MAX_SKIPS = 50                  # dead objects to step over in one batch before giving the rest up
+DEFAULT_PARALLEL = 1            # kopia reads in flight while the tree is read
 _KNOWN = ("name", "type", "mode", "size", "mtime", "obj", "summ")
 _SUMM_KNOWN = ("size", "files", "symlinks", "dirs", "maxTime", "numFailed", "incomplete",
                "numIgnoredErrors", "errors")
@@ -71,6 +72,7 @@ class SyncResult:
         self.levels = 0
         self.unreadable: list[str] = []   # objects kopia refused; their subtrees are INCOMPLETE
         self.parts = 0
+        self.indirect = 0           # indirect directories, each a serial `kopia show`
         self.seconds = 0.0
 
     @property
@@ -202,15 +204,68 @@ def _skip_dead(repo: str, pending: list[str], answered: int, res, result: SyncRe
     return rest, skips + 1
 
 
+def kopia_parallel() -> int:
+    """How many kopia reads run at once while the tree is read (setting, default DEFAULT_PARALLEL)."""
+    try:
+        from ..settings import load_settings
+        n = int(load_settings()["kopialens"].get("index_kopia_parallel") or 0)
+    except Exception:  # noqa: BLE001 - a settings problem must not stop an index
+        n = 0
+    return max(1, min(n or DEFAULT_PARALLEL, 16))
+
+
+def _answered(stdout: str) -> int:
+    """Non-blank lines, counted the way ``_lines_table`` counts them."""
+    return sum(1 for ln in (stdout or "").split("\n") if ln.strip())
+
+
+def _read_batch(repo: str, batch: list[str], result: SyncResult, what: str,
+                to_arg=lambda o: o) -> list[tuple[list[str], str]]:
+    """``content show`` one batch, stepping over dead objects. Returns (answered ids, stdout)
+    pieces in order. Runs on a worker thread when reads are parallel: kopia only, no DuckDB."""
+    pieces: list[tuple[list[str], str]] = []
+    pending, skips = batch, 0
+    while pending:
+        res = kopia(repo, ["content", "show"] + [to_arg(o) for o in pending])
+        answered = _answered(res.stdout)
+        if answered:
+            pieces.append((pending[:answered], res.stdout))
+        if answered >= len(pending):
+            break
+        pending, skips = _skip_dead(repo, pending, answered, res, result, skips, what)
+    return pieces
+
+
+def _in_order(fn, items: list, workers: int):
+    """Yield ``fn(item)`` in input order, with at most ``workers`` calls in flight."""
+    if workers <= 1 or len(items) <= 1:
+        for item in items:
+            yield fn(item)
+        return
+    from collections import deque
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="kopia-read") as pool:
+        it = iter(items)
+        window: deque = deque(pool.submit(fn, item) for _, item in zip(range(workers), it))
+        while window:
+            done = window.popleft().result()
+            for nxt in it:
+                window.append(pool.submit(fn, nxt))
+                break
+            yield done
+
+
 def _fetch_dirs(con, repo: str, oids: list[str], result: SyncResult, out: str) -> None:
     """Fetch one level's folders and append their entries to ``out``.
 
     Normal objects go through batched ``content show``; indirect directories need ``kopia show``
-    one at a time. Both paths refuse to record a failed read.
+    one at a time. Both paths refuse to record a failed read. kopia calls may run in parallel;
+    parsing stays on this thread, in request order.
     """
     normal = [o for o in oids if not o.startswith("I")]
     indirect = [o for o in oids if o.startswith("I")]
     con.execute(f"CREATE TABLE IF NOT EXISTS {out} AS SELECT * FROM _ent_shape WHERE false")
+    workers = kopia_parallel()
 
     def _read(group: list[str]) -> None:
         """Record folders we really did read. An EMPTY folder produces no entry rows, so a tree
@@ -220,23 +275,19 @@ def _fetch_dirs(con, repo: str, oids: list[str], result: SyncResult, out: str) -
             _register_oids(con, group, "_read_ok")
             con.execute("INSERT INTO _fetched SELECT oid FROM _read_ok")
 
-    for i in range(0, len(normal), BATCH):
-        pending, skips = normal[i:i + BATCH], 0
-        while pending:
-            res = kopia(repo, ["content", "show"] + pending)
-            answered = _lines_table(con, res.stdout, "_lines")
-            if answered:
-                _register_oids(con, pending[:answered], "_oids")
-                _entries_from_lines(con, "_lines", "_oids", "_ent_new")
-                con.execute(f"INSERT INTO {out} SELECT * FROM _ent_new")
-                _read(pending[:answered])
-                result.fetched += answered
-            if answered >= len(pending):
-                break
-            pending, skips = _skip_dead(repo, pending, answered, res, result, skips, "folder")
+    batches = [normal[i:i + BATCH] for i in range(0, len(normal), BATCH)]
+    for pieces in _in_order(lambda b: _read_batch(repo, b, result, "folder"), batches, workers):
+        for got, stdout in pieces:
+            got = got[:_lines_table(con, stdout, "_lines")]
+            if not got:
+                continue
+            _register_oids(con, got, "_oids")
+            _entries_from_lines(con, "_lines", "_oids", "_ent_new")
+            con.execute(f"INSERT INTO {out} SELECT * FROM _ent_new")
+            _read(got)
+            result.fetched += len(got)
 
-    for oid in indirect:
-        res = kopia(repo, ["show", oid])
+    for oid, res in _in_order(lambda o: (o, kopia(repo, ["show", o])), indirect, workers):
         if res.returncode != 0:
             result.unreadable.append(oid)
             log.warning("repo=%s kopia show %s failed (rc=%d): %s - left unread",
@@ -256,36 +307,43 @@ def _fetch_dirs(con, repo: str, oids: list[str], result: SyncResult, out: str) -
 def _fetch_parts(con, repo: str, iobjs: list[str], result: SyncResult, out: str) -> None:
     """Piece lists of split objects. ``Ix...`` -> ``content show x...``; the index object itself
     is a piece, so it leads the list and its ordinal is 0."""
+    import pyarrow as pa
     con.execute(f"""CREATE TABLE IF NOT EXISTS {out} (
         iobj VARCHAR, part VARCHAR, ord INTEGER)""")
-    for oid in iobjs:                       # the object's own index content always counts
-        con.execute(f"INSERT INTO {out} VALUES (?, ?, 0)", [oid, oid[1:]])
-    for i in range(0, len(iobjs), BATCH):
-        pending, skips = iobjs[i:i + BATCH], 0
-        while pending:
-            res = kopia(repo, ["content", "show"] + [o[1:] for o in pending])
-            answered = _lines_table(con, res.stdout, "_lines")
-            if answered:
-                _register_oids(con, pending[:answered], "_oids")
-                # Parse ONCE into its own table, for the same reason _entries_from_lines does:
-                # referencing from_json twice (unnest needs the list, generate_subscripts needs it
-                # again) parses every line twice, and a piece list of a multi-gigabyte file is long.
-                con.execute(f"""CREATE OR REPLACE TEMP TABLE _pparsed AS
-                    SELECT o.oid, from_json(l.line, '{_SHAPE}').entries AS es
-                    FROM _lines l JOIN _oids o ON o.pos = l.pos""")
-                con.execute(f"""INSERT INTO {out}
-                    SELECT p.oid, json_extract_string(x.e, '$.o'), x.i
-                    FROM _pparsed p,
-                    LATERAL (SELECT unnest(p.es) AS e, generate_subscripts(p.es, 1) AS i) x
-                    WHERE json_extract_string(x.e, '$.o') IS NOT NULL""")
-                con.execute("DROP TABLE _pparsed")
-            if answered >= len(pending):
-                break
-            before = set(pending[answered:])
-            pending, skips = _skip_dead(repo, pending, answered, res, result, skips, "split object")
-            # Drop the seed rows of the objects we gave up on: a piece list of only the index
-            # object would undercount that file's physical size forever.
-            gone = sorted(before - set(pending))
+    # the object's own index content always counts
+    con.register("_seed_arrow", pa.table({"iobj": pa.array(iobjs, pa.string()),
+                                          "part": pa.array([o[1:] for o in iobjs], pa.string())}))
+    con.execute(f"INSERT INTO {out} SELECT iobj, part, 0 FROM _seed_arrow")
+    con.unregister("_seed_arrow")
+    batches = [iobjs[i:i + BATCH] for i in range(0, len(iobjs), BATCH)]
+
+    def read(batch: list[str]):
+        return batch, _read_batch(repo, batch, result, "split object", to_arg=lambda o: o[1:])
+
+    for batch, pieces in _in_order(read, batches, kopia_parallel()):
+        answered_all: set[str] = set()
+        for got, stdout in pieces:
+            got = got[:_lines_table(con, stdout, "_lines")]
+            if not got:
+                continue
+            answered_all.update(got)
+            _register_oids(con, got, "_oids")
+            # Parse ONCE into its own table, for the same reason _entries_from_lines does:
+            # referencing from_json twice (unnest needs the list, generate_subscripts needs it
+            # again) parses every line twice, and a piece list of a multi-gigabyte file is long.
+            con.execute(f"""CREATE OR REPLACE TEMP TABLE _pparsed AS
+                SELECT o.oid, from_json(l.line, '{_SHAPE}').entries AS es
+                FROM _lines l JOIN _oids o ON o.pos = l.pos""")
+            con.execute(f"""INSERT INTO {out}
+                SELECT p.oid, json_extract_string(x.e, '$.o'), x.i
+                FROM _pparsed p,
+                LATERAL (SELECT unnest(p.es) AS e, generate_subscripts(p.es, 1) AS i) x
+                WHERE json_extract_string(x.e, '$.o') IS NOT NULL""")
+            con.execute("DROP TABLE _pparsed")
+        # Drop the seed rows of the objects we gave up on: a piece list of only the index
+        # object would undercount that file's physical size forever.
+        gone = sorted(set(batch) - answered_all)
+        if gone:
             con.execute(f"DELETE FROM {out} WHERE iobj IN ({','.join('?' * len(gone))})", gone)
     result.parts = con.execute(f"SELECT count(*) FROM {out}").fetchone()[0]
 
@@ -346,7 +404,9 @@ def sync(con, repo: str, roots: list[str], *, known_table: str | None = None,
         if progress:
             progress(level=level + 1, folders=len(todo), fetched=result.fetched)
         con.execute("INSERT INTO _seen SELECT oid FROM _frontier")
+        t_lvl, (c_lvl, k_lvl) = time.perf_counter(), perf.kopia_now()
         _fetch_dirs(con, repo, todo, result, "_sync_ent")
+        t_read = time.perf_counter()
         # Next level: child directory objects this level revealed that we have not seen. One
         # anti-join, not a Python set difference over millions of ids. Computed BEFORE any
         # segment flush, because the flush clears the rows it reads.
@@ -360,6 +420,13 @@ def sync(con, repo: str, roots: list[str], *, known_table: str | None = None,
               AND e.obj NOT IN (SELECT oid FROM _iobj_all)""")
         if alloc is not None:
             materialize(con, alloc, base_known="tdir", segment=True)
+        c_now, k_now = perf.kopia_now()
+        indirect = sum(1 for o in todo if o.startswith("I"))
+        result.indirect += indirect
+        perf.level(level=level + 1, folders=len(todo), indirect=indirect,
+                   kopia_calls=c_now - c_lvl, kopia_secs=round(k_now - k_lvl, 2),
+                   read_secs=round(t_read - t_lvl, 2),
+                   materialize_secs=round(time.perf_counter() - t_read, 2))
     else:
         raise RuntimeError(f"repo {repo}: tree deeper than {max_levels} levels - refusing to loop")
 
@@ -382,10 +449,13 @@ def sync(con, repo: str, roots: list[str], *, known_table: str | None = None,
         WHERE c.content_id IS NOT NULL
           AND c.content_id NOT IN (SELECT oid FROM _iobj_all)""")
     iobjs = [r[0] for r in con.execute("SELECT oid FROM _iobj_all ORDER BY oid").fetchall()]
+    perf.count(split_files=len(iobjs))
     if iobjs:
-        _fetch_parts(con, repo, iobjs, result, "_sync_part")
-        if alloc is not None:
-            materialize(con, alloc, base_known="tdir", segment=True)
+        with perf.phase("tree/split-file pieces"):
+            _fetch_parts(con, repo, iobjs, result, "_sync_part")
+            if alloc is not None:
+                materialize(con, alloc, base_known="tdir", segment=True)
+    perf.count(indirect_dirs=result.indirect)
     result.seconds = time.perf_counter() - started
     log.info("repo=%s tree sync: %s", repo, result.as_dict())
     return result

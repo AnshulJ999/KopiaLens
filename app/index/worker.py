@@ -184,6 +184,8 @@ def index_stage(repo: str, full: bool = False) -> None:
     with publish.WriterLock(repo):
         body = artifacts.build_repo(repo, root, gen=gen, job=job, full=full)
         publish.publish(root, body)
+    from . import perf
+    perf.set_outputs(root, body.get("artifacts") or {})
     logging.info("published generation %s: %s", gen, body.get("stats"))
     # Loud, because it is the one condition that silently under-counts the index. The next build
     # reads the same flag off the manifest and rebuilds every source from the repaired tree.
@@ -212,6 +214,10 @@ def run(repo: str, full: bool = False) -> dict:
     half-updated index, so those are skipped rather than cached wrong."""
     rep = _Reporter(repo, full)
     rep.start()
+    from config import DATA_DIR
+    from . import perf, store as _store
+    perf.start(repo, [os.path.join(_store.repo_dir(repo), "_staging", "tmp"),
+                      os.path.join(DATA_DIR, f"duck_tmp_repo{repo}")])
     summary: dict = {"repo": repo, "ok": True, "full": full, "stages": {},
                      "errors": {}, "skipped": []}
     started = time.time()
@@ -220,7 +226,8 @@ def run(repo: str, full: bool = False) -> dict:
         rep.set_stage(name)
         t0 = time.time()
         try:
-            fn()
+            with perf.phase(name):
+                fn()
             summary["stages"][name] = round(time.time() - t0, 1)
             return True
         except Exception as exc:  # noqa: BLE001 - one stage failing must not abort the rest
@@ -369,6 +376,7 @@ def run(repo: str, full: bool = False) -> dict:
         clear_progress(repo)
 
     summary["elapsed"] = round(time.time() - started, 1)
+    perf.finish({**summary, "trigger": trigger()})
     return summary
 
 
