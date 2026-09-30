@@ -296,8 +296,8 @@ def index_status_with_summary(repo: str) -> dict:
     schema change) blocks. Persisted to disk so a cold app restart also serves instantly instead
     of every browser tab blocking on its own synchronous recompute."""
     status = index_status(repo)
-    if status.get("building"):
-        return status  # building already short-circuits before any DB query; summary would be moot
+    if status.get("building") or status.get("never_indexed"):
+        return status  # no generation to summarise: building, or no index yet
     cached = _read_status_cache(repo)
     if cached is not None:
         status["summary"] = cached["summary"]

@@ -85,7 +85,7 @@ document.addEventListener("alpine:init", () => {
     // Backblaze settings. Defaults mirror app/settings.py; each control saves its own key into
     // the nested "backblaze" dict (KL_FIELDS in settings.js).
     bzDataPath: "C:\\ProgramData\\Backblaze\\bzdata", bzReindexMinGap: 21600, bzHistoryDays: 90,
-    bzCollapsePrefixes: "E:\\Kopia, I:\\Kopia Big Backup", bzEventlogArchive: "", bzStore: "parquet",
+    bzCollapsePrefixes: "", bzEventlogArchive: "", bzStore: "parquet",
     analyzingAll: false, showDelete: false, deletePlan: null, _autoRefresh: null,
     // detail-panel layout ("classic" | "tabbed"), persisted server-side, default Classic.
     panelLayout: "classic",
@@ -206,7 +206,12 @@ document.addEventListener("alpine:init", () => {
         // browser tabs can hold different repos without the last_repo setting flip-flopping.
         const urlRepo = new URLSearchParams(location.search).get("repo");
         if (urlRepo && data.repos.some((r) => r.id === urlRepo)) { this.repo = urlRepo; this.repoPinned = true; }
-        else this.repo = data.settings?.last_repo || "1";
+        else {
+          // A saved repo that no longer exists (or none saved) falls back to the first real repo.
+          const saved = data.settings?.last_repo;
+          const first = data.repos.find((r) => r.kind !== "backblaze") || data.repos[0];
+          this.repo = data.repos.some((r) => r.id === saved) ? saved : (first ? first.id : "1");
+        }
         this.repoKind = (data.repos.find((r) => r.id === this.repo) || {}).kind || "kopia";
         this.backend = data.settings?.listing_backend || "subprocess";
         const _ps = String(kl.page_size || 500);  // snap to a valid <option> so the select can't visually revert to 100

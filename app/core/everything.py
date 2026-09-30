@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import csv
 import io
+import os
+import shutil
 import subprocess
 
 from ..core.applog import get_logger
@@ -19,8 +21,22 @@ log = get_logger("everything")
 _NOWINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
+def _install_locations() -> list[str]:
+    roots = {os.environ.get(v) for v in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432")}
+    return [os.path.join(r, "Everything", "es.exe") for r in sorted(filter(None, roots))]
+
+
 def es_path() -> str:
-    return load_settings().get("kopialens", {}).get("es_path") or "es"
+    """The configured es.exe, else one on PATH, else the Everything install folder, else "es"."""
+    configured = load_settings().get("kopialens", {}).get("es_path")
+    if configured:
+        return configured
+    if shutil.which("es"):
+        return "es"
+    for candidate in _install_locations():
+        if os.path.isfile(candidate):
+            return candidate
+    return "es"
 
 
 def _run(args: list[str]) -> str:

@@ -79,7 +79,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         #   "data"  = KopiaLens's data folder (a container's data folder is the mounted volume)
         # KOPIALENS_KOPIA_CONFIG_LOCATION overrides it. See core/repoconnect.config_location().
         "kopia_config_location": "",
-        "es_path": r"G:\Apps\CLI Tools\es.exe",  # Everything CLI for the Excluded browser (local disk side)
+        "es_path": "",               # Everything CLI for the Excluded browser; "" = find it (core/everything.es_path)
         "disk_lookup": "auto",       # what answers disk questions: auto | everything | scan | off
         "disk_scan_budget": 15,      # seconds one folder scan may take before it answers "not measured"
         "excluded_tolerance": 0.05,  # folder counts as "backed" when excluded fraction is below this (cuts partial noise)
@@ -136,9 +136,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "bz_reindex_min_gap": 21600,
         # folder-rollup views (Queue/Churn/by-folder) roll these prefixes up to a single row instead
         # of splitting their (chunk-named) subfolders. Toggle per-request from the UI.
-        "collapse_prefixes": [r"E:\Kopia", r"I:\Kopia Big Backup"],
+        "collapse_prefixes": [],
         # copied (readable) rotated eventlog folder for the one-time session-history import
-        "eventlog_archive_path": r"H:\Excluded\BackblazeData\bzlogs\bzreports_eventlog",
+        "eventlog_archive_path": "",
     },
 }
 

@@ -24,6 +24,7 @@ from __future__ import annotations
 import atexit
 import os
 import secrets
+import socket
 import subprocess
 import threading
 import time
@@ -40,7 +41,6 @@ from .kopia import _kopia_exe, _repo_args
 log = get_logger("server")
 
 _NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW - no console flash
-BASE_PORT = int(os.environ.get("KOPIALENS_KOPIA_BASE_PORT") or 51830)  # repo "1" -> 51831, repo "2" -> 51832
 USERNAME = "kopialens"
 READY_TIMEOUT = 40.0
 
@@ -98,13 +98,19 @@ class KopiaServers:
         self._lock = threading.Lock()
         self._password = _password()
 
-    def port(self, repo: str) -> int:
-        return BASE_PORT + int(repo)
+    @staticmethod
+    def _free_port() -> int:
+        """A loopback port the OS reports free. The server lives only as long as this process,
+        so the port never needs to be stable; a lost race fails readiness and the next call
+        respawns on a new port."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            return s.getsockname()[1]
 
     def _spawn(self, repo: str) -> _Server:
         if repo not in REPOS:
             raise ValueError(f"unknown repo: {repo}")
-        port = self.port(repo)
+        port = self._free_port()
         args = (
             [_kopia_exe()]
             + _repo_args(repo)   # never the raw args: a non-kopia repo would launch against the default

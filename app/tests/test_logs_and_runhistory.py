@@ -109,6 +109,22 @@ def test_index_status_reports_a_never_indexed_repo(monkeypatch):
     assert out["error"] is None
 
 
+def test_status_with_summary_skips_the_summary_for_a_never_indexed_repo(monkeypatch):
+    """/api/index/status goes through index_status_with_summary; a repo with no index must not
+    reach index_summary (no generation to open - it answered 500 on a fresh install)."""
+    from app.index import builder
+    monkeypatch.setattr(builder, "sources_index", lambda repo: {"u@h:C:": []})
+    monkeypatch.setattr(builder, "_has_index", lambda repo: False)
+    monkeypatch.setattr(builder, "_read_status_cache", lambda repo: None)
+
+    def _no_generation(repo):
+        raise FileNotFoundError(f"repo {repo!r} has no index (no manifest.json)")
+    monkeypatch.setattr("app.index.queries.index_summary", _no_generation)
+    out = builder.index_status_with_summary("3")
+    assert out["never_indexed"] is True
+    assert "summary" not in out
+
+
 def test_index_status_normal_repo_is_not_flagged(monkeypatch):
     from app.index import builder
 
