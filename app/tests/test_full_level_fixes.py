@@ -91,6 +91,15 @@ def test_plain_operational_files_are_never_covered(full):
     assert "index_progress_detail_repo1.json" in covered
 
 
+def test_files_read_before_unlock_stay_plain_at_full(full):
+    """Sign-in and the table layouts are read before the index is unlocked: an encrypted
+    users.json read as "no accounts" and quietly switched sign-in off."""
+    for name in ("users.json", "ui_state.json", "settings.json", "repos.json", "keystore.json"):
+        (full / name).write_text("{}", encoding="utf-8")
+    covered = {os.path.basename(p) for p in filecrypto.covered_paths()}
+    assert not covered & {"users.json", "ui_state.json", "settings.json", "repos.json", "keystore.json"}
+
+
 def test_a_past_jobs_log_decrypts(full, monkeypatch):
     from app.core import jobs
     monkeypatch.setattr(jobs, "_history_path", lambda: str(full / "jobs_history.jsonl"))

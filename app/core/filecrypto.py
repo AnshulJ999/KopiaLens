@@ -63,6 +63,8 @@ _OPEN: dict[str, "CryptoStream"] = {}        # streams this process holds open, 
 # Plain on purpose: the version stamp is read before anything can unlock, and the worker status
 # file (pid, stage, counts - no paths) is read by the keyless tray and by Stop.
 _NEVER_COVERED = re.compile(r"^(data_version\.json|index_progress_repo[^_]*\.json)$")
+# Config read before an unlock (sign-in, repo list, key, table layouts): plain at every level.
+_PLAIN_CONFIG = ("settings.json", "repos.json", "keystore.json", "users.json", "ui_state.json")
 _WORKER_LOG = re.compile(r"^index_worker_repo(\w+)\.log(\.\d+)?$")
 
 
@@ -517,7 +519,7 @@ def covered_paths() -> dict[str, str]:
                 continue
             if name.endswith(".jsonl"):
                 out[path] = "lines"
-            elif name.endswith(".json") and name not in ("settings.json", "repos.json", "keystore.json"):
+            elif name.endswith(".json") and name not in _PLAIN_CONFIG:
                 out[path] = "json"
     except OSError:
         pass
