@@ -179,7 +179,9 @@ def test_summary_counts_sources_computers_and_snapshots(monkeypatch):
     monkeypatch.setattr(repos, "exists", lambda r: True)
     monkeypatch.setattr(sources, "all_snapshots", lambda r: snaps)
     out = repoconnect.summary("4")
+    est = out.pop("estimate")
     assert out == {"repo": "4", "snapshots": 3, "sources": 2, "hosts": 2, "newest": "2026-09-30T00:00:00Z"}
+    assert est["seconds"][0] <= est["seconds"][1] and est["bytes"][0] <= est["bytes"][1]
 
 
 def test_backblaze_takes_a_name_and_short_name(records, monkeypatch):

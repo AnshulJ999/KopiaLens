@@ -179,3 +179,21 @@ def test_the_paths_aggregate_takes_the_older_of_index_and_tree_dates(con, monkey
     layer3.refresh_paths(con, "1", [SRC])
     fs = con.execute("SELECT first_seen FROM paths WHERE name = 'a.txt'").fetchone()[0]
     assert str(fs).startswith("2019-01-01"), "a known date must never move forward"
+
+
+def test_a_source_larger_than_the_budget_is_split_without_changing_paths(con, monkeypatch):
+    files = [_f(f"f{i}.txt", f"c{i}") for i in range(12)]
+    build_tree(con, monkeypatch, {"r1": files, "r2": files[:8] + [_f("new.txt", "cn")]},
+               ["r1", "r2"])
+    layer3.build(con, "1", {SRC: [snap("s1", "2026-01-01T00:00:00Z", "r1"),
+                                  snap("s2", "2026-01-02T00:00:00Z", "r2")]})
+    con.execute("INSERT INTO paths (repo, source, full_path, first_seen) "
+                "VALUES ('1', ?, 'C:\\data\\f1.txt', TIMESTAMP '2019-01-01 00:00:00')", [SRC])
+    q = ("SELECT full_path, size, versions, first_seen, last_seen, in_latest, content_id "
+         "FROM paths ORDER BY full_path")
+    layer3.refresh_paths(con, "1", [SRC])
+    whole = con.execute(q).fetchall()
+    monkeypatch.setattr(layer3, "_paths_batch_rows", lambda: 4)     # ~21 file rows -> 6 parts
+    layer3.refresh_paths(con, "1", [SRC])
+    assert con.execute(q).fetchall() == whole and len(whole) == 13
+    assert str(dict((r[0], r[3]) for r in whole)["C:\\data\\f1.txt"]).startswith("2019-01-01")

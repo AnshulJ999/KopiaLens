@@ -20,6 +20,7 @@ def test_attach_found_repository_protect_and_index(fresh_server, open_page):
     page.locator("label", has_text="repository.config").locator("input[type=checkbox]").check()
     page.get_by_role("button", name="Use this repository").click()
     expect(page.get_by_text("1 source · 3 snapshots", exact=False)).to_be_visible(timeout=60_000)
+    expect(page.get_by_text("First index: under a minute", exact=False)).to_be_visible()
     _footer(page, "Continue").click()
 
     expect(page.get_by_role("textbox", name="Username")).to_have_value(h.USERNAME)
@@ -34,6 +35,7 @@ def test_attach_found_repository_protect_and_index(fresh_server, open_page):
     page.get_by_label("I've saved my recovery key").check()
     continue_btn.click()
 
+    expect(page.get_by_text("Under a minute")).to_be_visible()
     page.get_by_role("button", name="Start indexing").click()
     expect(page.get_by_text("Building the first index…")).to_be_visible(timeout=30_000)
     # The app lands on the dashboard and fills it in by itself once the first index is published.

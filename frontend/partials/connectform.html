@@ -13,6 +13,7 @@
                       <button type="button" @click="cxRemoveAdded(a)" class="text-xs text-muted hover:text-fg">Remove</button>
                     </div>
                     <p x-show="a.summary" class="text-xs" x-text="cxSummaryLine(a)"></p>
+                    <p x-show="cxEstimateLine(a)" class="text-xs text-muted" x-text="cxEstimateLine(a)"></p>
                     <p x-show="a.summary && !a.summary.snapshots" class="kl-note">No snapshots yet. A source shows up after its first backup.</p>
                     <template x-if="a.error">
                       <div class="space-y-2">

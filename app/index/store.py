@@ -45,6 +45,14 @@ log = get_logger("store")
 # (max GB, memory_limit, threads) - the FIRST tier whose ceiling this machine is under wins;
 # 0 is the catch-all. Named as a ceiling because that is how it is compared.
 _TIERS = ((8, "512MB", 4), (24, "1GB", 8), (0, "3GB", 16))
+WORKER_THREADS = 4      # the index worker's cap: the build measured slower with more threads
+_in_worker = False
+
+
+def mark_worker() -> None:
+    """This process is the index worker: cap DuckDB threads at WORKER_THREADS."""
+    global _in_worker
+    _in_worker = True
 
 
 def resolve_limits() -> tuple[str, int]:
@@ -65,9 +73,20 @@ def resolve_limits() -> tuple[str, int]:
         if total_gb <= max_gb or max_gb == 0:
             limit, threads = mem, thr
             break
+    if _in_worker:
+        threads = min(threads, WORKER_THREADS)
     limit = (kl.get("duckdb_memory") or os.environ.get("KOPIALENS_DUCKDB_MEMORY") or limit)
     threads = int(kl.get("duckdb_threads") or threads)
     return str(limit), max(1, threads)
+
+
+def memory_limit_bytes() -> int:
+    """The resolved DuckDB memory limit in bytes (512 MB if it cannot be parsed)."""
+    import re
+    limit, _threads = resolve_limits()
+    m = re.fullmatch(r"\s*([\d.]+)\s*([KMGT]?)i?B?\s*", str(limit).upper())
+    mult = {"": 1, "K": 2**10, "M": 2**20, "G": 2**30, "T": 2**40}
+    return int(float(m.group(1)) * mult[m.group(2)]) if m else 512 * 2**20
 
 
 # (The old module-level MEMORY_LIMIT constant is gone: nothing read it once resolve_limits()

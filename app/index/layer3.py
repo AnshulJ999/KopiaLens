@@ -25,7 +25,6 @@ aggregate, the transform, the per-source incremental mapping - is the code that 
 
 from __future__ import annotations
 
-import re
 import time
 
 from ..core import paths as pathrules
@@ -186,12 +185,8 @@ _BYTES_PER_PATH_ROW = 400       # memory budget per file row in the paths aggreg
 
 def _paths_batch_rows() -> int:
     """File rows per paths-aggregate statement, from the DuckDB memory limit (1 GB -> ~2.6M)."""
-    from .store import resolve_limits
-    limit, _threads = resolve_limits()
-    m = re.fullmatch(r"\s*([\d.]+)\s*([KMGT]?)i?B?\s*", str(limit).upper())
-    mult = {"": 1, "K": 2**10, "M": 2**20, "G": 2**30, "T": 2**40}
-    total = float(m.group(1)) * mult[m.group(2)] if m else 512 * 2**20
-    return max(250_000, int(total // _BYTES_PER_PATH_ROW))
+    from .store import memory_limit_bytes
+    return max(250_000, memory_limit_bytes() // _BYTES_PER_PATH_ROW)
 
 
 def refresh_paths(con, repo: str, keys: list[str]) -> None:
@@ -215,15 +210,20 @@ def refresh_paths(con, repo: str, keys: list[str]) -> None:
     size = 0
     for key in sorted(keys):
         n = rows.get(key, 0)
+        if n > budget:
+            # one source larger than the budget: split it by path, each path in exactly one part
+            _refresh_paths_batch(con, repo, [key], parts=-(-n // budget))
+            continue
         if batch and size + n > budget:
             _refresh_paths_batch(con, repo, batch)
             batch, size = [], 0
         batch.append(key)
         size += n
-    _refresh_paths_batch(con, repo, batch)
+    if batch:
+        _refresh_paths_batch(con, repo, batch)
 
 
-def _refresh_paths_batch(con, repo: str, keys: list[str]) -> None:
+def _refresh_paths_batch(con, repo: str, keys: list[str], parts: int = 1) -> None:
     import pyarrow as pa
     con.register("_rk_arrow", pa.table({
         "source": pa.array(keys, pa.string()),
@@ -248,6 +248,13 @@ def _refresh_paths_batch(con, repo: str, keys: list[str]) -> None:
         SELECT source, arg_max(snapshot_id, start_time) AS sid FROM indexed_snapshots
         WHERE repo = ? AND source IN (SELECT source FROM _rk) GROUP BY source""", [repo])
     con.execute("DELETE FROM paths WHERE repo = ? AND source IN (SELECT source FROM _rk)", [repo])
+    for part in range(parts):
+        _insert_paths(con, repo, ident, f"AND hash(f.full_path) % {parts} = {part}" if parts > 1 else "")
+    for t in ("_rk", "_old_seen_all", "_latest"):
+        con.execute(f"DROP TABLE IF EXISTS {t}")
+
+
+def _insert_paths(con, repo: str, ident, part_filter: str) -> None:
     con.execute(f"""INSERT INTO paths (repo, source, full_path, name, ext, size, versions,
                                        first_seen, last_seen, in_latest, content_id, physical, path_lc)
         SELECT t.repo, t.source, t.full_path, t.name,
@@ -267,13 +274,11 @@ def _refresh_paths_batch(con, repo: str, keys: list[str]) -> None:
                    arg_max(f.content_id, f.start_time) AS content_id
             FROM files f
             LEFT JOIN _latest l ON l.source = f.source
-            WHERE f.repo = ? AND f.source IN (SELECT source FROM _rk)
+            WHERE f.repo = ? AND f.source IN (SELECT source FROM _rk) {part_filter}
             GROUP BY f.repo, f.source, f.full_path) t
         JOIN _rk k ON k.source = t.source
         LEFT JOIN _old_seen_all o ON o.source = t.source AND o.ident = {ident('t.full_path')}""",
                 [repo])
-    for t in ("_rk", "_old_seen_all", "_latest"):
-        con.execute(f"DROP TABLE IF EXISTS {t}")
 
 
 def indexed_snapshots(con, repo: str) -> None:

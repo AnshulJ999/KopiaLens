@@ -382,6 +382,18 @@ def test_explicit_settings_beat_the_detected_tier(monkeypatch):
     assert store.resolve_limits() == ("7GB", 2)
 
 
+def test_the_index_worker_caps_threads_but_an_explicit_setting_wins(monkeypatch):
+    import psutil
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: type("m", (), {"total": 64 * 1024 ** 3})())
+    monkeypatch.delenv("KOPIALENS_DUCKDB_MEMORY", raising=False)
+    monkeypatch.setattr(store, "_in_worker", True)
+    settings = {"kopialens": {"duckdb_memory": "", "duckdb_threads": 0}}
+    monkeypatch.setattr("app.settings.load_settings", lambda: settings)
+    assert store.resolve_limits() == ("3GB", store.WORKER_THREADS)
+    settings["kopialens"]["duckdb_threads"] = 12
+    assert store.resolve_limits() == ("3GB", 12)
+
+
 def test_threads_are_never_left_at_the_duckdb_default():
     # Every tier pins a thread count on purpose: the machine default tracks core count, and a
     # high count inflates hash-aggregate memory enough to OOM the small tier.

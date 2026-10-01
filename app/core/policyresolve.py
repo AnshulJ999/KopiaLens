@@ -594,7 +594,8 @@ def check(repo: str, defined: dict, targets: list[str]) -> dict:
             return None
 
     # One kopia process per target is mostly startup time, so a few run at once.
-    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="policy-check") as pool:
+    from ..index.treesync import kopia_parallel
+    with ThreadPoolExecutor(max_workers=kopia_parallel(), thread_name_prefix="policy-check") as pool:
         shown = list(pool.map(show, targets))
     for key, res in zip(targets, shown):
         if res is None or res.returncode != 0:

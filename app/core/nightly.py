@@ -218,6 +218,9 @@ def run_progress(repo: str, prog: dict | None = None) -> dict:
     prog = prog or {}
     stage = str(prog.get("stage") or "")
     weights = _stage_weights(repo, bool(prog.get("full")))
+    first = False
+    if not weights and (prog.get("estimate") or {}).get("stage_seconds"):
+        weights, first = dict(prog["estimate"]["stage_seconds"]), True   # a first index
     total = sum(weights.values())
     stages = [{"name": n, "seconds": weights.get(n), "state": "pending"} for n in STAGE_ORDER]
     if stage not in STAGE_ORDER or not total:
@@ -237,7 +240,7 @@ def run_progress(repo: str, prog: dict | None = None) -> dict:
     overall = (done + cur_w * frac) / total if total else 0.0
     return {"stage": stage, "pct": int(max(0.0, min(0.99, overall)) * 100),
             "eta_seconds": int(max(0.0, total - done - cur_w * frac)),
-            "estimated": True, "stages": stages}
+            "estimated": True, "first_estimate": first, "stages": stages}
 
 
 def stop_index_pass(repo: str) -> dict:

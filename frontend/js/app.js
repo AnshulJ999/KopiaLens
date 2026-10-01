@@ -493,9 +493,17 @@ document.addEventListener("alpine:init", () => {
     pollIndex() {
       if (this._poll) clearInterval(this._poll);
       const firstIndex = !!(this.indexStatus && this.indexStatus.never_indexed);
+      let loadedEarly = false;
       this._poll = setInterval(async () => {
         try {
           this.indexStatus = await getJson(`/api/index/status?repo=${encodeURIComponent(this.repo)}`);
+          // A first index is usable once it is published; the later stages fill in after.
+          if (firstIndex && !loadedEarly && this.indexStatus.building && !this.indexStatus.never_indexed) {
+            loadedEarly = true;
+            this.error = "";
+            await this.refreshBase(true);
+            this.activate();
+          }
           if (!this.indexStatus.building) {
             clearInterval(this._poll); this._poll = null;
             // A repo's FIRST index: the views still show "not indexed yet" - clear it and load the

@@ -336,7 +336,7 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
     t0 = time.perf_counter()
     perf.lap("listing")
     srcs = sources_index(repo)
-    perf.set_inputs(srcs)
+    perf.set_inputs(srcs, first=prev is None)
     prev_sources = set((prev or {}).get("sources") or ())
     if not srcs and prev_sources:
         raise RuntimeError(

@@ -154,7 +154,9 @@ const searchPart = {
           const noticeKey = this.repo + "|" + this.searchSort;
           if (!this._rankedNotice[noticeKey]) {   // once per repo and column per session
             this._rankedNotice[noticeKey] = 1;
-            this.klNotify("That list is built by the nightly index. Sorted by Physical (latest) until then.", "warn");
+            this.klNotify(this.indexStatus && this.indexStatus.building
+              ? "That list is still being built. Sorted by Physical (latest) until it's ready."
+              : "That list is built by the nightly index. Sorted by Physical (latest) until then.", "warn");
           }
         }
         const cols = [

@@ -40,8 +40,9 @@ def test_line_positions_survive_preserve_insertion_order_off(preserve):
         con.execute("SET preserve_insertion_order=%s" % ("true" if preserve else "false"))
         # Enough lines, and wide enough, that a reordering executor has room to reorder.
         lines = ["{\"n\": %d, \"pad\": \"%s\"}" % (i, "x" * 500) for i in range(5000)]
-        n = treesync._lines_table(con, "\n".join(lines) + "\n\n", "_lines")
-        assert n == 5000
+        parsed = treesync._split_lines("\n".join(lines) + "\n\n")
+        treesync._lines_table(con, parsed, "_lines")
+        assert len(parsed) == 5000
         got = con.execute(
             "SELECT count(*) FROM _lines WHERE json_extract(line, '$.n')::BIGINT <> pos - 1"
         ).fetchone()[0]
@@ -54,9 +55,9 @@ def test_blank_lines_are_dropped_before_positions_are_assigned():
     """A blank line must not consume a position, or every object after it pairs one place off."""
     con = duckdb.connect()
     try:
-        n = treesync._lines_table(con, "\n".join(["{\"n\":0}", "", "{\"n\":1}", "  ", "{\"n\":2}"]),
-                                  "_lines")
-        assert n == 3
+        parsed = treesync._split_lines("\n".join(["{\"n\":0}", "", "{\"n\":1}", "  ", "{\"n\":2}"]))
+        treesync._lines_table(con, parsed, "_lines")
+        assert len(parsed) == 3
         rows = con.execute("SELECT pos, line FROM _lines ORDER BY pos").fetchall()
         assert [p for p, _ in rows] == [1, 2, 3]
         assert [json_n(line) for _, line in rows] == [0, 1, 2]
@@ -299,3 +300,14 @@ def keystore(tmp_path, monkeypatch):
     crypto.lock()
     yield tmp_path
     crypto.lock()
+
+
+def test_parse_chunks_cover_every_line_once_in_order():
+    """Chunked parsing pairs answers to objects by (start + offset); a gap, overlap or wrong start
+    puts entries under the wrong folder silently."""
+    lines = ["x" * n for n in (5, 40, 3, 3, 3, 100, 1, 60, 2)]
+    chunks = list(treesync._chunks(lines, 50))
+    assert [ln for _, c in chunks for ln in c] == lines
+    assert [s for s, _ in chunks] == [sum(len(c) for _, c in chunks[:k]) for k in range(len(chunks))]
+    assert all(sum(map(len, c)) <= 50 or len(c) == 1 for _, c in chunks)
+    assert list(treesync._chunks([], 50)) == []

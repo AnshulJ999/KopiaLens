@@ -89,6 +89,7 @@ class Run:
         self.counts: dict = {}
         self.inputs: dict = {}
         self.outputs: dict = {}
+        self.estimate: dict | None = None     # first index only: size and time ranges
         self.spill_dirs: list[str] = []
         self.peak_rss = self.peak_kids = self.peak_spill = 0
         self._open: list[_Phase] = []
@@ -190,6 +191,10 @@ def lap(name: str) -> None:
 def count(**kw) -> None:
     if _RUN is not None:
         _RUN.counts.update({k: v for k, v in kw.items() if v is not None})
+        if _RUN.estimate is not None and kw.get("tree_entries") is not None:
+            from .estimate import from_entries    # the tree is read: the entry count is exact
+            n = int(kw["tree_entries"])
+            _RUN.estimate = from_entries(n, n, exact=True)
 
 
 def level(**kw) -> None:
@@ -226,9 +231,12 @@ def inputs_from_listing(srcs: dict) -> dict:
     return out
 
 
-def set_inputs(srcs: dict) -> None:
+def set_inputs(srcs: dict, first: bool = False) -> None:
     if _RUN is not None and not _RUN.inputs:
         _RUN.inputs = inputs_from_listing(srcs)
+        if first:
+            from .estimate import from_listing
+            _RUN.estimate = from_listing(srcs)
 
 
 def outputs_from_manifest(root: str, artifacts: dict) -> dict:

@@ -39,6 +39,8 @@ On a server or Docker install, setup is open for 30 minutes after KopiaLens star
 
 KopiaLens reads your snapshots once to build its index. After that, it only reads what changed. You can keep using KopiaLens while it runs; with several repositories, they're indexed one after another.
 
+This screen shows an estimate of how long the first index takes and how much disk space it uses. It's a range, because the snapshot list doesn't say how much your files changed between snapshots; repositories on cloud storage can take longer. Once indexing starts, the progress bar narrows the estimate, and the pages open as soon as the index is ready. A few figures, such as the space each snapshot uses, fill in a few minutes later.
+
 - **Update automatically every day at**: keeps the index current with one update a day. Change the time, or turn it off, here or in Settings → Indexing.
 - **Start indexing** builds the index now.
 - **Skip for now** leaves it for later. If automatic updates are on, indexing starts at the next scheduled time; otherwise, start it with **Index** in the top bar.

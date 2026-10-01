@@ -91,7 +91,7 @@ def convert(con, repo: str, *, progress=None, alloc=None,
         # The stored value is the entries ARRAY; the shared parser reads kopia's object shape,
         # so wrap it. String concatenation only - nothing is parsed twice.
         blob = "\n".join('{"entries":' + t + "}" for t in texts)
-        treesync._lines_table(con, blob, "_lines")
+        treesync._lines_table(con, treesync._split_lines(blob), "_lines")
         answered = con.execute("SELECT count(*) FROM _lines").fetchone()[0]
         if answered != len(oids):
             # A cached listing contained a newline, so POSITION no longer pairs answers to
@@ -150,7 +150,8 @@ def convert(con, repo: str, *, progress=None, alloc=None,
         con.execute("INSERT INTO _sync_part SELECT iobj, part, 0 FROM _seed")
         # The cached piece list is an array of chunk id STRINGS, not kopia's {"o": ...} objects -
         # walk.py stored the extracted ids. Parsed once into its own table, same reason as above.
-        treesync._lines_table(con, "\n".join('{"entries":' + t + "}" for t in texts), "_lines")
+        treesync._lines_table(con, treesync._split_lines(
+            "\n".join('{"entries":' + t + "}" for t in texts)), "_lines")
         treesync._register_oids(con, oids, "_oids")
         con.execute("""CREATE OR REPLACE TEMP TABLE _pparsed AS
             SELECT o.oid, from_json(l.line, '{"entries":["VARCHAR"]}').entries AS es

@@ -159,6 +159,12 @@ const reposPart = {
       if (s.newest) parts.push(`newest ${fmtRel(s.newest)}`);
       return parts.join(" · ");
     },
+    cxEstimateLine(a) {
+      const e = a.summary && a.summary.estimate;
+      if (!e || a.server || !a.summary.snapshots) return "";
+      const cloud = a.type && a.type !== "filesystem" ? " Cloud storage can take longer." : "";
+      return `First index: ${fmtDurRange(e.seconds)}, ${fmtBytesRange(e.bytes)} of disk space.${cloud}`;
+    },
     async cxUnlock(a) {
       if (!a.pw || a.unlocking) return;
       a.unlocking = true; a.error = "";

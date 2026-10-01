@@ -35,6 +35,22 @@ const fmtDur = (sec) => {
   if (n < 3600) return `${Math.floor(n / 60)} m ${String(Math.floor(n % 60)).padStart(2, "0")} s`;
   return `${Math.floor(n / 3600)} h ${String(Math.floor((n % 3600) / 60)).padStart(2, "0")} m`;
 };
+// Estimated ranges: "under a minute", "about 4–12 min", "about 1–3 h"; "about 2.0 MB",
+// "about 340 MB – 1.01 GB".
+const fmtDurRange = ([lo, hi]) => {
+  if (hi < 60) return "under a minute";
+  if (hi < 2 * 3600) return `about ${Math.max(1, Math.round(lo / 60))}–${Math.ceil(hi / 60)} min`;
+  return `about ${Math.max(1, Math.round(lo / 3600))}–${Math.ceil(hi / 3600)} h`;
+};
+const fmtBytesRange = ([lo, hi]) => {
+  const a = fmtBytes(lo), b = fmtBytes(hi);
+  return a === b ? `about ${a}` : `about ${a} – ${b}`;
+};
+const capFirst = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+// Sum of several first-index estimates (repositories are indexed one after another).
+const sumEstimates = (list) => list.reduce((t, e) => ({
+  seconds: [t.seconds[0] + e.seconds[0], t.seconds[1] + e.seconds[1]],
+  bytes: [t.bytes[0] + e.bytes[0], t.bytes[1] + e.bytes[1]] }), { seconds: [0, 0], bytes: [0, 0] });
 const fmtRel = (s) => {
   if (!s) return "";
   const d = toDate(s);

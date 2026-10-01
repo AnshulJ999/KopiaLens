@@ -712,7 +712,8 @@ def probe(config_file: str | None = None, repo: str | None = None) -> dict:
 
 def summary(repo: str) -> dict:
     """What a connected repository holds, from one snapshot listing (an explicit user action):
-    source, computer and snapshot counts, and when the newest snapshot finished."""
+    source, computer and snapshot counts, when the newest snapshot finished, and the first-index
+    size and time estimate."""
     from .sources import ListingFailed, _key_of, all_snapshots
     if not repos.exists(repo):
         raise ValueError(f"unknown repo: {repo}")
@@ -720,13 +721,18 @@ def summary(repo: str) -> dict:
         snaps = all_snapshots(repo)
     except ListingFailed as exc:
         raise ValueError(str(exc)) from exc
+    from ..index.estimate import from_listing
     srcs = [s.get("source") or {} for s in snaps]
+    by_source: dict[str, list[dict]] = {}
+    for snap, src in zip(snaps, srcs):
+        by_source.setdefault(_key_of(src), []).append(snap)
     return {
         "repo": repo,
         "snapshots": len(snaps),
-        "sources": len({_key_of(s) for s in srcs}),
+        "sources": len(by_source),
         "hosts": len({s.get("host") for s in srcs if s.get("host")}),
         "newest": max((s.get("endTime") or s.get("startTime") or "" for s in snaps), default=""),
+        "estimate": from_listing(by_source),
     }
 
 

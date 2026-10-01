@@ -183,8 +183,9 @@
                     <h1 class="text-lg font-semibold">Build the index</h1>
                     <p class="text-muted">KopiaLens reads your snapshots once to build its index. After that it only reads what changed.</p>
                   </div>
-                  <div class="rounded-md border border-bd p-3 flex items-center justify-between gap-3 opacity-60" data-placeholder="index-eta" title="Coming soon">
-                    <span>Time estimate</span><span class="text-xs text-muted">Coming soon</span>
+                  <div class="kl-facts" x-show="obEstimate()">
+                    <div class="r"><span class="k">Estimated time</span><span x-text="obEstimate() ? capFirst(fmtDurRange(obEstimate().seconds)) : ''"></span></div>
+                    <div class="r"><span class="k">Index size</span><span x-text="obEstimate() ? capFirst(fmtBytesRange(obEstimate().bytes)) : ''"></span></div>
                   </div>
                   <p class="kl-note -mt-3">You can keep using KopiaLens while it runs. With several repositories, they're indexed one after another.</p>
 

@@ -55,6 +55,7 @@ def timed(label: str, out: dict | None = None):
 BATCH = 800                     # kopia CLI overhead is 0.42 s/call, so batching is near-perfect
 MAX_SKIPS = 50                  # dead objects to step over in one batch before giving the rest up
 DEFAULT_PARALLEL = 4            # kopia reads in flight while the tree is read (above 8 GB RAM)
+_PARSE_SHARE = 16               # one parse gets at most this fraction of the DuckDB memory limit
 _KNOWN = ("name", "type", "mode", "size", "mtime", "obj", "summ")
 _SUMM_KNOWN = ("size", "files", "symlinks", "dirs", "maxTime", "numFailed", "incomplete",
                "numIgnoredErrors", "errors")
@@ -85,30 +86,39 @@ class SyncResult:
                 "seconds": round(self.seconds, 1)}
 
 
-def _lines_table(con, blob: str, table: str) -> int:
-    """kopia's stdout -> one row per non-blank line, in order.
+def _split_lines(stdout: str) -> list[str]:
+    """kopia's stdout -> its non-blank lines, in order, counted the way ``_answered`` counts."""
+    return [ln.strip("\r") for ln in (stdout or "").split("\n") if ln.strip()]
 
-    The split happens ONCE into a materialized table. Calling ``string_split`` twice on a large
-    parameter took 142 s against 4 s for the same work done once - the parameter is re-scanned
-    per reference, so this is not a micro-optimisation.
 
-    ``pos`` is numbered over the line's own index, never over an unordered window: position is
-    the ONLY mapping from a kopia answer back to the object it was requested for, and
-    ``row_number() OVER ()`` inherits whatever order the executor happened to produce. That is
-    stable only while the connection keeps ``preserve_insertion_order`` on - which the encrypted
-    session deliberately turns off - and the failure is silent, wrong entries under wrong folders.
-    Blank lines are filtered before numbering (WHERE runs ahead of the window function), so the
-    positions match the objects kopia actually answered for.
-    """
-    con.execute("CREATE OR REPLACE TEMP TABLE _blob AS SELECT string_split(?, chr(10)) AS parts",
-                [blob])
-    con.execute(f"""CREATE OR REPLACE TEMP TABLE {table} AS
-        SELECT row_number() OVER (ORDER BY src_i) AS pos, line FROM (
-            SELECT g.i AS src_i, trim(b.parts[g.i], chr(13)) AS line
-            FROM _blob b, generate_series(1, len(b.parts)) AS g(i))
-        WHERE length(trim(line)) > 0""")
-    con.execute("DROP TABLE _blob")
-    return con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+def _chunks(lines: list[str], budget: int):
+    """(start, lines) runs of consecutive lines holding at most ``budget`` characters; a longer
+    single line stands alone. Bounds what one parse holds in memory, which cannot spill."""
+    start, size = 0, 0
+    for i, ln in enumerate(lines):
+        if i > start and size + len(ln) > budget:
+            yield start, lines[start:i]
+            start, size = i, 0
+        size += len(ln)
+    if start < len(lines):
+        yield start, lines[start:]
+
+
+def _parse_budget() -> int:
+    """Characters of kopia output per parse: 1/16 of the DuckDB memory limit, at least 4 MB."""
+    from .store import memory_limit_bytes
+    return max(4 * 2**20, memory_limit_bytes() // _PARSE_SHARE)
+
+
+def _lines_table(con, lines: list[str], table: str) -> None:
+    """Lines -> a table numbered 1..n. ``pos`` is the ONLY mapping from a kopia answer back to
+    the object it was requested for, so it is assigned here, never by a window function (whose
+    order is not stable once ``preserve_insertion_order`` is off, as in the encrypted session)."""
+    import pyarrow as pa
+    con.register("_line_arrow", pa.table({"pos": pa.array(range(1, len(lines) + 1), pa.int64()),
+                                          "line": pa.array(lines, pa.string())}))
+    con.execute(f"CREATE OR REPLACE TEMP TABLE {table} AS SELECT pos, line FROM _line_arrow")
+    con.unregister("_line_arrow")
 
 
 def _entries_from_lines(con, lines: str, oid_table: str, out: str) -> None:
@@ -223,7 +233,7 @@ def kopia_parallel() -> int:
 
 
 def _answered(stdout: str) -> int:
-    """Non-blank lines, counted the way ``_lines_table`` counts them."""
+    """Non-blank lines, counted the way ``_split_lines`` counts them."""
     return sum(1 for ln in (stdout or "").split("\n") if ln.strip())
 
 
@@ -283,15 +293,19 @@ def _fetch_dirs(con, repo: str, oids: list[str], result: SyncResult, out: str) -
             _register_oids(con, group, "_read_ok")
             con.execute("INSERT INTO _fetched SELECT oid FROM _read_ok")
 
+    budget = _parse_budget()
     batches = [normal[i:i + BATCH] for i in range(0, len(normal), BATCH)]
     for pieces in _in_order(lambda b: _read_batch(repo, b, result, "folder"), batches, workers):
         for got, stdout in pieces:
-            got = got[:_lines_table(con, stdout, "_lines")]
+            lines = _split_lines(stdout)
+            got = got[:len(lines)]
             if not got:
                 continue
-            _register_oids(con, got, "_oids")
-            _entries_from_lines(con, "_lines", "_oids", "_ent_new")
-            con.execute(f"INSERT INTO {out} SELECT * FROM _ent_new")
+            for first, chunk in _chunks(lines[:len(got)], budget):
+                _lines_table(con, chunk, "_lines")
+                _register_oids(con, got[first:first + len(chunk)], "_oids")
+                _entries_from_lines(con, "_lines", "_oids", "_ent_new")
+                con.execute(f"INSERT INTO {out} SELECT * FROM _ent_new")
             _read(got)
             result.fetched += len(got)
 
@@ -301,10 +315,12 @@ def _fetch_dirs(con, repo: str, oids: list[str], result: SyncResult, out: str) -
             log.warning("repo=%s kopia show %s failed (rc=%d): %s - left unread",
                         repo, oid, res.returncode, (res.stderr or "").strip()[:200])
             continue
-        if _lines_table(con, res.stdout, "_lines") != 1:
+        lines = _split_lines(res.stdout)
+        if len(lines) != 1:
             result.unreadable.append(oid)
             log.warning("repo=%s kopia show %s returned no usable object - left unread", repo, oid)
             continue
+        _lines_table(con, lines, "_lines")
         _register_oids(con, [oid], "_oids")
         _entries_from_lines(con, "_lines", "_oids", "_ent_new")
         con.execute(f"INSERT INTO {out} SELECT * FROM _ent_new")
@@ -328,26 +344,29 @@ def _fetch_parts(con, repo: str, iobjs: list[str], result: SyncResult, out: str)
     def read(batch: list[str]):
         return batch, _read_batch(repo, batch, result, "split object", to_arg=lambda o: o[1:])
 
+    budget = _parse_budget()
     for batch, pieces in _in_order(read, batches, kopia_parallel()):
         answered_all: set[str] = set()
         for got, stdout in pieces:
-            got = got[:_lines_table(con, stdout, "_lines")]
+            lines = _split_lines(stdout)
+            got = got[:len(lines)]
             if not got:
                 continue
             answered_all.update(got)
-            _register_oids(con, got, "_oids")
-            # Parse ONCE into its own table, for the same reason _entries_from_lines does:
-            # referencing from_json twice (unnest needs the list, generate_subscripts needs it
-            # again) parses every line twice, and a piece list of a multi-gigabyte file is long.
-            con.execute(f"""CREATE OR REPLACE TEMP TABLE _pparsed AS
-                SELECT o.oid, from_json(l.line, '{_SHAPE}').entries AS es
-                FROM _lines l JOIN _oids o ON o.pos = l.pos""")
-            con.execute(f"""INSERT INTO {out}
-                SELECT p.oid, json_extract_string(x.e, '$.o'), x.i
-                FROM _pparsed p,
-                LATERAL (SELECT unnest(p.es) AS e, generate_subscripts(p.es, 1) AS i) x
-                WHERE json_extract_string(x.e, '$.o') IS NOT NULL""")
-            con.execute("DROP TABLE _pparsed")
+            for first, chunk in _chunks(lines[:len(got)], budget):
+                _lines_table(con, chunk, "_lines")
+                _register_oids(con, got[first:first + len(chunk)], "_oids")
+                # Parse ONCE into its own table, for the same reason _entries_from_lines does:
+                # referencing from_json twice parses every line twice.
+                con.execute(f"""CREATE OR REPLACE TEMP TABLE _pparsed AS
+                    SELECT o.oid, from_json(l.line, '{_SHAPE}').entries AS es
+                    FROM _lines l JOIN _oids o ON o.pos = l.pos""")
+                con.execute(f"""INSERT INTO {out}
+                    SELECT p.oid, json_extract_string(x.e, '$.o'), x.i
+                    FROM _pparsed p,
+                    LATERAL (SELECT unnest(p.es) AS e, generate_subscripts(p.es, 1) AS i) x
+                    WHERE json_extract_string(x.e, '$.o') IS NOT NULL""")
+                con.execute("DROP TABLE _pparsed")
         # Drop the seed rows of the objects we gave up on: a piece list of only the index
         # object would undercount that file's physical size forever.
         gone = sorted(set(batch) - answered_all)

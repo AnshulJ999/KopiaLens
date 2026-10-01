@@ -33,6 +33,8 @@ _FILE_INDEXES = (
     ("files_repo_source_path", "files(repo, source, full_path)"),
     ("files_snapshot", "files(repo, snapshot_id)"),
     ("paths_repo_source", "paths(repo, source)"),
+    ("paths_content", "paths(repo, content_id)"),
+    ("paths_path_lc", "paths(repo, path_lc)"),
 )
 
 
@@ -57,6 +59,7 @@ def _nightly_progress_block(repo: str, prog: dict) -> dict:
         pct = prog.get("pct")          # no estimate: the index stage's own REAL fraction
     return {"stage": run.get("stage") or prog.get("stage"), "pct": pct,
             "eta_seconds": run.get("eta_seconds"), "estimated": bool(run.get("estimated")),
+            "first_estimate": bool(run.get("first_estimate")), "estimate": prog.get("estimate"),
             "stages": run.get("stages"), "phase": prog.get("phase"), "sync": prog.get("sync"),
             "seed": prog.get("seed"), "current_source": prog.get("current_source")}
 

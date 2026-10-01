@@ -113,6 +113,12 @@ def _pct(job: dict) -> int | None:
     return None
 
 
+def _estimate() -> dict | None:
+    from . import perf
+    run = perf.active()
+    return run.estimate if run is not None else None
+
+
 class _Reporter:
     """Mirrors the builder's in-process job dict out to a file every couple of seconds, so the
     app (which cannot touch the DuckDB right now) can still render a live progress badge."""
@@ -141,6 +147,7 @@ class _Reporter:
             # count, and a percentage only where a denominator genuinely exists.
             "phase": job.get("phase"), "sync": job.get("sync"), "seed": job.get("seed"),
             "pct": _pct(job),
+            "estimate": _estimate(),
         }
 
     def set_stage(self, stage: str) -> None:
@@ -383,6 +390,8 @@ def run(repo: str, full: bool = False) -> dict:
 def main(argv: list) -> int:
     from ..core.applog import setup_worker_logging
     setup_worker_logging(os.environ.get("KOPIALENS_WORKER_LOG"))
+    from .store import mark_worker
+    mark_worker()
     from ..core.sources import pin_for_run
     pin_for_run()  # one snapshot listing per run; the stages are minutes apart, the TTL is 45s
     # Run-scoped memo for the refcount join: the analysis and folder stages each ask for it, and

@@ -139,6 +139,12 @@ const onboardingPart = {
         ["Encryption", o.recoveryKey ? `${this.encLevelLabel(o.level)}${o.remember ? ", unlocks automatically" : ""}` : (o.protected === "account" && o.level === "off" ? "Off" : (o.state.encryption_level && o.state.encryption_level !== "off" ? this.encLevelLabel(o.state.encryption_level) : "Unchanged"))],
       ];
     },
+    obEstimate() {
+      const list = ((this.cx && this.cx.added) || [])
+        .filter((a) => !a.server && a.summary && a.summary.snapshots && a.summary.estimate)
+        .map((a) => a.summary.estimate);
+      return list.length ? sumEstimates(list) : null;
+    },
     obInterval() { return this.ob.state.index_mode === "interval"; },
     obNextRun() {
       const o = this.ob;
