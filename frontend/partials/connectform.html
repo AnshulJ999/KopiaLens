@@ -45,7 +45,7 @@
                           <input type="checkbox" class="mt-0.5" x-model="cx.picked[c.config_file]">
                           <span class="min-w-0 flex-1">
                             <span class="block font-medium truncate" x-text="c.filename"></span>
-                            <span class="block text-xs text-muted truncate" :title="cxWhere(c)" x-text="[cxTypeLabel(c.type), cxWhere(c)].filter(Boolean).join(' · ') + (c.folder === 'kopia' && !c.is_default ? ' · also used by KopiaUI' : '')"></span>
+                            <span class="block text-xs text-muted truncate" :title="cxWhere(c)" x-text="[cxTypeLabel(c.type), cxWhere(c)].filter(Boolean).join(' · ') + (c.folder === 'kopia' ? ' · also used by KopiaUI' : '')"></span>
                             <template x-if="c.type === 'server'">
                               <span class="block text-xs mt-1" style="color:var(--warn)">Through a kopia server: browse-only. Space analysis and cleanup need direct access to the storage.</span>
                             </template>
