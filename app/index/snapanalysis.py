@@ -315,7 +315,36 @@ def _ranked(snaps: list[dict]) -> list[tuple[int, str, str | None]]:
             for r, s in enumerate(ordered, 1)]
 
 
-def _analyse(repo: str, snaps: list[dict], heavy: bool) -> tuple[dict, dict, dict]:
+@contextlib.contextmanager
+def prepared(repo: str):
+    """One read cursor for a whole analysis stage, holding what every source's analysis re-derived
+    from the 20M-row ``tent``: the folder->subfolder links (scanned once per tree LEVEL per source
+    otherwise) and each folder's own file bytes. Both are small next to ``tent``."""
+    f = tree.TYPES.index("f")
+    cur = read_cursor(repo)
+    try:
+        cur.execute("CREATE OR REPLACE TEMP TABLE _sa_link AS "
+                    "SELECT dir_id, child FROM tent WHERE child IS NOT NULL")
+        cur.execute(f"""CREATE OR REPLACE TEMP TABLE _sa_own AS
+            SELECT e.dir_id,
+                   sum(coalesce(CASE WHEN e.ind THEN ip.packed ELSE cs.packed END, 0))::HUGEINT AS own
+            FROM tent e
+            LEFT JOIN csize cs ON cs.cid_id = e.cid_id
+            LEFT JOIN iphys ip ON ip.cid_id = e.cid_id
+            WHERE e.etype = {f} AND e.cid_id IS NOT NULL
+            GROUP BY e.dir_id""")
+        yield {"cur": cur, "link": "_sa_link", "own": "_sa_own"}
+    finally:
+        for t in ("_sa_link", "_sa_own"):
+            try:
+                cur.execute(f"DROP TABLE IF EXISTS {t}")
+            except Exception:  # noqa: BLE001 - cleanup must never mask the stage result
+                pass
+        cur.close()
+
+
+def _analyse(repo: str, snaps: list[dict], heavy: bool,
+             prep: dict | None = None) -> tuple[dict, dict, dict]:
     """Churn, physical and reclaimable for EVERY snapshot of one source, as set operations.
 
     One recursive pass records which snapshots reach which folders; the rest are group-bys over
@@ -346,7 +375,8 @@ def _analyse(repo: str, snaps: list[dict], heavy: bool) -> tuple[dict, dict, dic
     # and fixed names let one run's `_sa_dir` overwrite the other's mid-query - silently wrong
     # numbers rather than an error.
     ns = f"_sa{uuid.uuid4().hex[:8]}_"
-    cur = read_cursor(repo)
+    cur = prep["cur"] if prep else read_cursor(repo)
+    link = prep["link"] if prep else "(SELECT dir_id, child FROM tent WHERE child IS NOT NULL)"
     try:
         cur.register(ns + "roots", pa.table({
             "rank": pa.array([r for r, _o in live], pa.int32()),
@@ -362,8 +392,7 @@ def _analyse(repo: str, snaps: list[dict], heavy: bool) -> tuple[dict, dict, dic
                   JOIN cid c ON c.content_id = a.obj
                   JOIN tdir t ON t.cid_id = c.cid_id
                 UNION
-                SELECT r.rank, e.child FROM r JOIN tent e ON e.dir_id = r.dir_id
-                WHERE e.child IS NOT NULL)
+                SELECT r.rank, l.child FROM r JOIN {link} l ON l.dir_id = r.dir_id)
             SELECT rank, dir_id FROM r""")
         cur.unregister(ns + "roots")
         # One row per folder: the newest rank reaching it and the oldest. A folder's snapshot
@@ -410,7 +439,10 @@ def _analyse(repo: str, snaps: list[dict], heavy: bool) -> tuple[dict, dict, dic
         # Physical: each folder's own file bytes once, then summed over the folders each snapshot
         # reaches. A folder sitting at two paths in one snapshot is counted ONCE - kopia stores it
         # once, and the walk this replaces counted it per path.
-        cur.execute(f"""CREATE OR REPLACE TEMP TABLE {ns}own AS
+        own_sql = (f"SELECT dir_id, own FROM {prep['own']} WHERE dir_id IN (SELECT dir_id FROM {ns}dir)"
+                   if prep else None)
+        cur.execute(f"""CREATE OR REPLACE TEMP TABLE {ns}own AS {own_sql}""" if own_sql else f"""
+            CREATE OR REPLACE TEMP TABLE {ns}own AS
             SELECT e.dir_id,
                    sum(coalesce(CASE WHEN e.ind THEN ip.packed ELSE cs.packed END, 0))::HUGEINT
                        AS own
@@ -438,17 +470,19 @@ def _analyse(repo: str, snaps: list[dict], heavy: bool) -> tuple[dict, dict, dic
                 cur.execute(f"DROP TABLE IF EXISTS {name}")
             except Exception:  # noqa: BLE001 - cleanup must never mask the analysis result
                 pass
-        cur.close()
+        if not prep:
+            cur.close()
     return churn, physical, reclaim
 
 
-def compute_source(repo: str, source: str, with_reclaim: bool = True) -> dict:
+def compute_source(repo: str, source: str, with_reclaim: bool = True,
+                   prep: dict | None = None) -> dict:
     """Per-snapshot churn for a source. ``with_reclaim`` ALSO computes the heavy fields - absolute
     per-snapshot physical + reclaimable; the light (churn-only) pass PRESERVES the
     previously-computed physical/reclaimable rather than wiping them. Persisted to DuckDB."""
     key, srcs = resolve_source(repo, source=source)
     snaps = sorted(srcs[key], key=lambda s: s.get("startTime", ""))  # oldest -> newest
-    churn, phys, recl = _analyse(repo, snaps, heavy=with_reclaim)
+    churn, phys, recl = _analyse(repo, snaps, heavy=with_reclaim, prep=prep)
 
     physical: dict[str, int] = {sid: 0 for sid in churn}      # 0 = not yet computed
     reclaim: dict[str, int | None] = {sid: None for sid in churn}  # None = not computed (shows "—")
@@ -515,7 +549,7 @@ def prewarm(repo: str, with_reclaim: bool = False) -> dict | None:
     recomputed = 0
     compute_secs = 0.0
     t_stage = time.perf_counter()
-    with batched(repo):  # ONE published generation per stage, not one per source
+    with batched(repo), prepared(repo) as prep:  # ONE published generation per stage
         srcs = sources_index(repo)
         for key in sorted(srcs):
             try:
@@ -525,7 +559,7 @@ def prewarm(repo: str, with_reclaim: bool = False) -> dict | None:
                     continue
                 # Per-source timing: only these lines show which source ate the stage.
                 t_src = time.perf_counter()
-                compute_source(repo, key, with_reclaim=with_reclaim)
+                compute_source(repo, key, with_reclaim=with_reclaim, prep=prep)
                 dt = time.perf_counter() - t_src
                 recomputed += 1
                 compute_secs += dt

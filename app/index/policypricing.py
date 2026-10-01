@@ -49,7 +49,7 @@ _CACHE_MAX = 4096
 _CACHE: dict[tuple, tuple[float, list[dict]]] = {}
 _CACHE_LOCK = threading.Lock()
 
-_BATCH = 40                   # patterns per FILTER-batched scan (one pathx + one dir scan each)
+_BATCH = 20                   # patterns per FILTER-batched scan (one pathx + one dir scan each)
 _LIVE_PRICE_CAP = 32          # above this, live pricing is refused - read the nightly numbers
 
 # Single-flight for expensive multi-source rollups (metrics.py's build-lock shape): concurrent
@@ -186,11 +186,59 @@ def _price_batch_with_regex(cur, src: int, entries: list[list],
     """Price a batch of patterns in ONE pathx scan + ONE dir scan, writing files/bytes/dirs
     into ``entries`` ([pattern, rx, fragments, [files, bytes, dirs]]) in place.
 
+    One combined pattern (every rule as an alternative) first keeps only the rows ANY rule
+    matches - usually a small fraction - and each rule's own condition runs once per remaining
+    row. Falls back to ``_price_batch_plain`` if the combined pattern is refused. ``anchor``
+    restricts the scan to one folder's subtree AND makes the matched text relative to it
+    (``root_len`` is the anchor's length then)."""
+    import duckdb
+    any_rx = "|".join(f"(?:{e[1]})" for e in entries)
+    px_sql, px_ap, dr_sql, dr_ap = _anchor_conds(cur, anchor, px_table, dir_table)
+    flags, fparams = [], []
+    for i, (_pat, rx, frags, _acc) in enumerate(entries):
+        parts = ["full_path LIKE ? ESCAPE '!'"] * len(frags) + ["regexp_full_match(rel, ?)"]
+        fparams.extend("%" + like_literal(f.replace("/", sep)) + "%" for f in frags)
+        fparams.append(rx)
+        flags.append("(" + " AND ".join(f"({c})" for c in parts) + f") AS m{i}")
+    agg = ", ".join(f"count(*) FILTER (WHERE m{i}), coalesce(sum(size) FILTER (WHERE m{i}), 0)"
+                    for i in range(len(entries)))
+    where = "src_id = ? AND in_latest" + (f" AND {px_sql}" if px_sql else "")
+    dflags = ", ".join(f"(length(rel) > 1 AND regexp_full_match(rel, ?)) AS d{i}"
+                       for i in range(len(entries)))
+    dagg = ", ".join(f"count(*) FILTER (WHERE d{i})" for i in range(len(entries)))
+    dwhere = "src_id = ?" + (f" AND {dr_sql}" if dr_sql else "")
+    rel_p = [root_len + 1, sep, '/']
+    try:
+        # Positional params follow the SQL text: the rule flags precede the inner scan.
+        row = cur.execute(
+            f"SELECT {agg} FROM (SELECT size, {', '.join(flags)} FROM ("
+            f"SELECT * FROM (SELECT size, full_path, {_rel_expr()} AS rel FROM {px_table} "
+            f"WHERE {where}) WHERE regexp_full_match(rel, ?)))",
+            fparams + rel_p + [src] + px_ap + [any_rx]).fetchone()
+        drow = cur.execute(
+            f"SELECT {dagg} FROM (SELECT {dflags} FROM ("
+            f"SELECT * FROM (SELECT {_dir_rel_expr()} AS rel FROM {dir_table} WHERE {dwhere}) "
+            f"WHERE regexp_full_match(rel, ?)))",
+            [e[1] for e in entries] + rel_p + [src] + dr_ap + [any_rx]).fetchone()
+    except duckdb.Error as exc:
+        log.warning("pricing: combined pattern refused (%s) - pricing this batch rule by rule",
+                    str(exc)[:200])
+        _price_batch_plain(cur, src, entries, root_len, sep, px_table, dir_table, anchor)
+        return
+    for i, entry in enumerate(entries):
+        entry[3][0] = int(row[i * 2] or 0)
+        entry[3][1] = int(row[i * 2 + 1] or 0)
+        entry[3][2] = int(drow[i] or 0)
+
+
+def _price_batch_plain(cur, src: int, entries: list[list], root_len: int, sep: str,
+                       px_table: str = "pathx", dir_table: str = "dir",
+                       anchor: str | None = None) -> None:
+    """Every rule's condition over every row - the fallback for ``_price_batch_with_regex``.
+
     Each pattern's condition appears TWICE in the pathx SELECT (count + sum FILTER pairs) and
     the FILTER aggregates come BEFORE the WHERE clause in the SQL text - so per-pattern params
-    are passed twice and ``src_id``'s param lands LAST. Both orderings are pinned by
-    test_filter_batch_matches_per_pattern. ``anchor`` restricts the scan to one folder's subtree
-    AND makes the matched text relative to it (``root_len`` is the anchor's length then)."""
+    are passed twice and ``src_id``'s param lands LAST."""
     rel = _rel_expr()
     drel = _dir_rel_expr()
     px_sql, px_ap, dr_sql, dr_ap = _anchor_conds(cur, anchor, px_table, dir_table)

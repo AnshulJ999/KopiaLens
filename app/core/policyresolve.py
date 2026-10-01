@@ -580,17 +580,24 @@ def _kind(path: str) -> str:
 def check(repo: str, defined: dict, targets: list[str]) -> dict:
     """Compare the resolver with plain `kopia policy show` for each target (read-only kopia calls).
     Returns {checked, mismatches: [{target, diff}], failed: [target]}."""
+    from concurrent.futures import ThreadPoolExecutor
+
     from .kopia import kopia
     out: dict = {"checked": 0, "mismatches": [], "failed": []}
-    for key in targets:
+
+    def show(key: str):
         args = ["policy", "show", "--global"] if key in (GLOBAL, "global") else ["policy", "show", key]
         try:
-            res = kopia(repo, args)
+            return kopia(repo, args)
         except Exception as exc:  # noqa: BLE001 - one bad target must not stop the check
             log.debug("repo=%s policy check: show failed for %s: %s", repo, key, exc)
-            out["failed"].append(key)
-            continue
-        if res.returncode != 0:
+            return None
+
+    # One kopia process per target is mostly startup time, so a few run at once.
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="policy-check") as pool:
+        shown = list(pool.map(show, targets))
+    for key, res in zip(targets, shown):
+        if res is None or res.returncode != 0:
             out["failed"].append(key)
             continue
         eff, df = resolve(defined, key)

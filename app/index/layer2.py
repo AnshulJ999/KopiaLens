@@ -28,18 +28,44 @@ from .store import read_cursor
 log = get_logger("index")
 
 
-def source_reach(con, out: str = "_reach_src") -> int:
+def source_reach(con, out: str = "_reach_src", weights: dict | None = None) -> int:
     """(src, cid_id) for every object each source can reach - the basis of the refcount.
 
-    One recursive query for ALL sources at once. The app does this today by walking each source
-    separately in Python and unioning sets, at 67 seconds and 3.3 GB on repo 1; the same answer
-    as a set operation measured 2.7 seconds.
+    One recursive query per GROUP of sources (a recursive query holds its whole result in memory;
+    all of repo 2's sources at once ran out at 1 GB). ``weights`` maps source -> a size estimate
+    (files in its latest snapshot); groups are sized to the memory limit. Walking each source
+    separately in Python cost 67 s and 3.3 GB on repo 1.
     """
+    from .layer3 import _paths_batch_rows
     tree.links(con, if_missing=True)   # layer 3 built it from the same tent moments ago
+    srcs = con.execute("SELECT DISTINCT src, source FROM _reach_roots ORDER BY src").fetchall()
+    budget, groups, cur, size = _paths_batch_rows(), [], [], 0
+    for sid, source in srcs:
+        n = int((weights or {}).get(source) or 0)
+        if cur and size + n > budget:
+            groups.append(cur)
+            cur, size = [], 0
+        cur.append(sid)
+        size += n
+    if cur:
+        groups.append(cur)
+    con.execute(f"DROP TABLE IF EXISTS {out}")
+    for i, group in enumerate(groups):
+        con.execute("CREATE OR REPLACE TABLE _reach_group AS SELECT unnest(?::BIGINT[]) AS src",
+                    [group])
+        _reach_group_into(con, out, create=(i == 0))
+    con.execute("DROP TABLE IF EXISTS _reach_group")
+    if not groups:
+        con.execute(f"CREATE TABLE {out} (src BIGINT, cid_id INTEGER)")
+    return con.execute(f"SELECT count(*) FROM {out}").fetchone()[0]
+
+
+def _reach_group_into(con, out: str, create: bool) -> None:
     f, d = tree.TYPES.index("f"), tree.TYPES.index("d")
-    con.execute(f"""CREATE OR REPLACE TABLE {out} AS
+    head = f"CREATE TABLE {out} AS" if create else f"INSERT INTO {out}"
+    con.execute(f"""{head}
         WITH RECURSIVE r(src, dir_id) AS (
-            SELECT src, dir_id FROM _reach_roots
+            SELECT src, dir_id FROM _reach_roots WHERE src IN (SELECT src FROM _reach_group)
             UNION
             SELECT r.src, g.child FROM r JOIN tlink g USING (dir_id)),
         objs AS (
@@ -55,9 +81,9 @@ def source_reach(con, out: str = "_reach_src") -> int:
             UNION ALL SELECT o.src, p.part_cid FROM objs o
                       JOIN tpart p ON p.iobj_cid = o.cid_id WHERE o.ind
             -- and the snapshot roots themselves, which no entry points at
-            UNION ALL SELECT src, cid_id FROM _reach_roots)
+            UNION ALL SELECT src, cid_id FROM _reach_roots
+                      WHERE src IN (SELECT src FROM _reach_group))
         WHERE cid_id IS NOT NULL""")
-    return con.execute(f"SELECT count(*) FROM {out}").fetchone()[0]
 
 
 def refcount(con, out: str = "crefs_new") -> int:
@@ -378,18 +404,28 @@ def source_refcounts(repo: str) -> dict[str, int]:
 def roots_table(con, out: str = "_reach_roots") -> None:
     """(src, cid_id, dir_id) per source root, from ``_rsnap`` - the input to the reach query."""
     con.execute(f"""CREATE OR REPLACE TABLE {out} AS
-        SELECT DISTINCT dense_rank() OVER (ORDER BY sn.source) AS src, d.cid_id, sn.dir_id
+        SELECT DISTINCT dense_rank() OVER (ORDER BY sn.source) AS src, sn.source, d.cid_id, sn.dir_id
         FROM _rsnap sn JOIN tdir d ON d.dir_id = sn.dir_id""")
 
 
-def build(con, repo: str, alloc, *, with_sizes: bool = True) -> dict:
-    """The three maps, in dependency order. ``_rsnap`` must already exist (layer3.snapshots)."""
+def build(con, repo: str, alloc, *, with_sizes: bool = True, srcs: dict | None = None) -> dict:
+    """The three maps, in dependency order. ``_rsnap`` must already exist (layer3.snapshots).
+    ``srcs`` (the snapshot listing) sizes the reach groups; without it the reach is one group."""
     t0 = time.perf_counter()
     stats: dict = {}
     if with_sizes:
         stats["csize"] = chunk_sizes(con, repo, alloc)
     roots_table(con)
-    stats["reach_pairs"] = source_reach(con)
+    # Group weight: the source's file-version rows when it was rebuilt this run, else 3x its
+    # latest snapshot's entries (a carried source has no rows in the scratch `files` table).
+    rows = dict(con.execute("SELECT source, count(*) FROM files GROUP BY source").fetchall())
+    weights = {}
+    for key, snaps in (srcs or {}).items():
+        latest = max(snaps, key=lambda s: str(s.get("startTime") or ""), default=None)
+        summ = ((latest or {}).get("rootEntry") or {}).get("summ") or {}
+        weights[key] = max(int(rows.get(key) or 0),
+                           3 * (int(summ.get("files") or 0) + int(summ.get("dirs") or 0)))
+    stats["reach_pairs"] = source_reach(con, weights=weights)
     stats["crefs"] = refcount(con)
     stats["iphys"] = indirect_phys(con)
     stats["seconds"] = round(time.perf_counter() - t0, 1)

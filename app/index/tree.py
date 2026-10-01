@@ -48,11 +48,7 @@ TPART_COLS = "iobj_cid, part_cid, ord"
 # kopia writes Go RFC3339Nano (UTC, trailing fraction zeros trimmed). Stored as int64
 # nanoseconds and rendered back identically - a round trip the bench verified rather than
 # assumed, which is why the formatting is spelled out here instead of using strftime.
-TS_TO_NS = (
-    "CASE WHEN {s} IS NULL THEN NULL "
-    "WHEN try_strptime({s}, ['%Y-%m-%dT%H:%M:%S.%nZ', '%Y-%m-%dT%H:%M:%SZ']) IS NULL THEN NULL "
-    "ELSE epoch_ns(try_strptime({s}, ['%Y-%m-%dT%H:%M:%S.%nZ', '%Y-%m-%dT%H:%M:%SZ'])) END"
-)
+TS_TO_NS = "epoch_ns(try_strptime({s}, ['%Y-%m-%dT%H:%M:%S.%nZ', '%Y-%m-%dT%H:%M:%SZ']))"
 
 
 def ts_to_ns(expr: str) -> str:

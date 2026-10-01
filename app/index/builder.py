@@ -7,8 +7,7 @@ append path and the backfill have no caller.
 
 What remains:
   * ``_JOBS`` - the in-process job dict the worker's progress reporter reads.
-  * ``_drop_indexes`` / ``_refresh_paths`` - reused by ``artifacts._build_incremental``, which owns
-    the build now.
+  * ``_drop_indexes`` - reused by ``artifacts._build_incremental``, which owns the build now.
   * ``index_status`` / ``index_status_with_summary`` - the API's status reads.
 """
 
@@ -23,7 +22,6 @@ from config import CACHEDIR
 
 from .store import read_cursor          # status reads come from the published generation
 from .schema import offline_status
-from ..core import paths as pathrules
 from ..core.applog import get_logger
 from ..core.sources import sources_index
 
@@ -36,76 +34,11 @@ _FILE_INDEXES = (
     ("files_snapshot", "files(repo, snapshot_id)"),
     ("paths_repo_source", "paths(repo, source)"),
 )
-# Recompute the paths aggregate (1 row per distinct path) for one source. content_id =
-# the latest version's object id; physical is filled from the generation's maps.
-# first_seen is STICKY: merged with the pre-rewrite values captured in the _old_seen temp
-# table (least of old/new), because min(start_time) over the DELTA-built files table is NOT
-# "first backed up" - an unchanged file only has a latest-snapshot row, so without the merge
-# its first_seen would roll forward to "now" on every rebuild (the broken recently-backed-up
-# filter). _old_seen must exist before this runs (artifacts builds it, or _refresh_paths with
-# captured=False).
-#
-# `size` is the LATEST version's size (arg_max by start_time), matching content_id and the
-# physical figure derived from it; max(size) across versions mis-ranked a file that shrank.
-# The _old_seen join key is the SOURCE's identity expression, not an unconditional lower():
-# on a case-sensitive source two case-distinct files are two paths and must not share a date.
-def _paths_sql(ident: str) -> str:
-    return f"""
-INSERT INTO paths (repo, source, full_path, name, ext, size, versions, first_seen, last_seen, in_latest, content_id, physical, path_lc)
-SELECT t.repo, t.source, t.full_path, t.name,
-       CASE WHEN contains(t.name, '.') THEN lower(list_extract(string_split(t.name, '.'), -1)) ELSE '' END AS ext,
-       t.size, t.versions,
-       least(coalesce(o.first_seen, t.first_seen), t.first_seen) AS first_seen,
-       t.last_seen, t.in_latest, t.content_id, 0, lower(t.full_path)
-FROM (
-  SELECT repo, source, full_path, any_value(name) AS name, arg_max(size, start_time) AS size,
-         count(DISTINCT snapshot_id) AS versions, min(start_time) AS first_seen,
-         max(start_time) AS last_seen, bool_or(snapshot_id = ?) AS in_latest,
-         arg_max(content_id, start_time) AS content_id
-  FROM files WHERE repo=? AND source=? GROUP BY repo, source, full_path
-) t
-LEFT JOIN _old_seen o ON o.ident = {ident}
-"""
-
-
-
-def _capture_old_seen(con, repo: str, key: str) -> None:
-    """Snapshot the source's known first-seen dates BEFORE its paths rows are rewritten, so
-    first_seen stays sticky (never moves forward once known). min() also collapses any
-    duplicate rows from the pre-fix append path. Grouped by the source's identity expression -
-    on a case-insensitive source that is lower(full_path), i.e. the old path_lc behaviour."""
-    ident = pathrules.ident_sql(key)
-    con.execute(
-        f"CREATE OR REPLACE TEMPORARY TABLE _old_seen AS "
-        f"SELECT {ident} AS ident, min(first_seen) AS first_seen FROM paths "
-        f"WHERE repo=? AND source=? AND first_seen IS NOT NULL GROUP BY {ident}",
-        [repo, key],
-    )
-
 
 
 def _drop_indexes(con) -> None:
     for name, _cols in _FILE_INDEXES:
         con.execute(f"DROP INDEX IF EXISTS {name}")
-
-
-def _refresh_paths(con, repo: str, key: str, captured: bool = False) -> None:
-    """Rewrite the paths aggregate for one source: capture old first_seen (unless the caller
-    already did), DELETE the source's rows, re-INSERT merged with the captured dates.
-    The DELETE here is essential: the append fast-path used to skip it, so every append
-    INSERTed a full extra copy of the source's paths (rows duplicated up to ~18x in the wild).
-    Per-source DELETE against paths' ART indexes is the same pattern _delete_source has always
-    run daily (never hit the DuckDB index-delete bug, unlike the full-table map rewrites)."""
-    if not captured:
-        _capture_old_seen(con, repo, key)
-    row = con.execute(
-        "SELECT snapshot_id FROM indexed_snapshots WHERE repo=? AND source=? ORDER BY start_time DESC LIMIT 1",
-        [repo, key],
-    ).fetchone()
-    latest_id = row[0] if row else ""
-    con.execute("DELETE FROM paths WHERE repo=? AND source=?", [repo, key])
-    con.execute(_paths_sql(pathrules.ident_sql(key, "t.full_path")), [latest_id, repo, key])
-    con.execute("DROP TABLE IF EXISTS _old_seen")
 
 
 def _has_index(repo: str) -> bool:

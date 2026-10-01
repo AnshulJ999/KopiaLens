@@ -54,7 +54,7 @@ def timed(label: str, out: dict | None = None):
 
 BATCH = 800                     # kopia CLI overhead is 0.42 s/call, so batching is near-perfect
 MAX_SKIPS = 50                  # dead objects to step over in one batch before giving the rest up
-DEFAULT_PARALLEL = 1            # kopia reads in flight while the tree is read
+DEFAULT_PARALLEL = 4            # kopia reads in flight while the tree is read (above 8 GB RAM)
 _KNOWN = ("name", "type", "mode", "size", "mtime", "obj", "summ")
 _SUMM_KNOWN = ("size", "files", "symlinks", "dirs", "maxTime", "numFailed", "incomplete",
                "numIgnoredErrors", "errors")
@@ -205,13 +205,21 @@ def _skip_dead(repo: str, pending: list[str], answered: int, res, result: SyncRe
 
 
 def kopia_parallel() -> int:
-    """How many kopia reads run at once while the tree is read (setting, default DEFAULT_PARALLEL)."""
+    """How many kopia reads run at once while the tree is read: the setting, else 4 (2 at 8 GB of
+    RAM or less - each kopia process holds ~170 MB). Measured on repo 2: 1 -> 4 halves the tree
+    read; 8 adds nothing because parsing on this side becomes the limit."""
     try:
         from ..settings import load_settings
         n = int(load_settings()["kopialens"].get("index_kopia_parallel") or 0)
     except Exception:  # noqa: BLE001 - a settings problem must not stop an index
         n = 0
-    return max(1, min(n or DEFAULT_PARALLEL, 16))
+    if not n:
+        try:
+            import psutil
+            n = 2 if psutil.virtual_memory().total <= 8.5 * 2**30 else DEFAULT_PARALLEL
+        except Exception:  # noqa: BLE001 - unknown RAM: the cautious default
+            n = 2
+    return max(1, min(n, 16))
 
 
 def _answered(stdout: str) -> int:

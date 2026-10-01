@@ -176,6 +176,6 @@ def test_the_paths_aggregate_takes_the_older_of_index_and_tree_dates(con, monkey
     layer3.build(con, "1", {SRC: [snap("s1", "2026-06-01T00:00:00Z", "r1")]})
     con.execute("INSERT INTO paths (repo, source, full_path, first_seen) "
                 "VALUES ('1', ?, 'C:\\data\\a.txt', TIMESTAMP '2019-01-01 00:00:00')", [SRC])
-    layer3.merge_old_seen(con, "1", SRC)
-    fs = con.execute("SELECT first_seen FROM _old_seen").fetchone()[0]
+    layer3.refresh_paths(con, "1", [SRC])
+    fs = con.execute("SELECT first_seen FROM paths WHERE name = 'a.txt'").fetchone()[0]
     assert str(fs).startswith("2019-01-01"), "a known date must never move forward"

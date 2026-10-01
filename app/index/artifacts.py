@@ -31,7 +31,7 @@ from ..core import paths as pathrules
 from ..core.applog import get_logger
 from ..core.sources import sources_index
 from . import crypto, ids, layer2, layer3, perf, store, tree, treeconvert, treesync
-from .builder import _drop_indexes, _refresh_paths
+from .builder import _drop_indexes
 from .physical import fill_paths_physical
 from .schema import init_schema
 from .upgrade import MANIFEST_VERSION as _MANIFEST_VERSION, IndexVersionMismatch
@@ -474,11 +474,9 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
             job["phase"] = "rebuilding sources"
             job["current_source"] = "(rebuilding from the tree)"
             layer3.build(con, repo, {k: srcs[k] for k, _m, _a in targets})
-            for key, _m, _a in targets:
-                # first_seen merges what the published index knew with what the tree says, and
-                # takes the older - stickiness and correctness at once.
-                layer3.merge_old_seen(con, repo, key)
-                _refresh_paths(con, repo, key, captured=True)
+            # first_seen merges what the published index knew with what the tree says, and
+            # takes the older - stickiness and correctness at once.
+            layer3.refresh_paths(con, repo, [k for k, _m, _a in targets])
             log.info("repo=%s index rebuilt %d source(s) from the tree in %.1fs",
                      repo, len(targets), time.perf_counter() - t_walk)
 
@@ -505,7 +503,7 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         perf.lap("maps")
         t_phys = time.perf_counter()
         layer3.snapshots(con, repo, srcs)
-        l2 = layer2.build(con, repo, alloc)
+        l2 = layer2.build(con, repo, alloc, srcs=srcs)
         fill_paths_physical(con, repo)
         log.info("repo=%s index maps (layer 2) in %.1fs: %s", repo,
                  time.perf_counter() - t_phys, l2)
@@ -550,6 +548,17 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         new_entries: dict[int, tuple[str, str]] = {}
         per_source: dict[str, dict] = {}
         t_map = time.perf_counter()
+        # Every per-source statement below reads only its own source. Copies ordered by the
+        # integer src_id let row-group statistics skip the other sources; filtering the unordered
+        # tables by source string rescanned all of them once per source (~2 billion rows on repo 2).
+        con.execute("SET preserve_insertion_order=true")
+        try:
+            for t in ("paths", "files"):
+                con.execute(f"CREATE OR REPLACE TABLE _{t}_s AS SELECT sr.src_id, x.* FROM {t} x "
+                            f"JOIN src_rev sr ON sr.source = x.source WHERE x.repo = ? "
+                            f"ORDER BY sr.src_id", [repo])
+        finally:
+            con.execute("SET preserve_insertion_order=false")
         job["phase"] = "sources"
         perf.lap("per-source mapping")
         for key, mode, ap in targets:
@@ -568,17 +577,26 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
                     SELECT p.full_path, p.name, p.ext, p.size, p.versions,
                            least(coalesce(o.fs, p.first_seen), p.first_seen) AS first_seen,
                            p.last_seen, p.in_latest, p.content_id, p.physical
-                    FROM paths p
+                    FROM _paths_s p
                     LEFT JOIN _old_seen o ON o.ident = {pathrules.ident_sql(key, 'p.full_path')}
-                    WHERE p.repo = ? AND p.source = ?""", [repo, key])
+                    WHERE p.src_id = ?""", [S])
 
+            # A path's parent is its full path minus "<sep><name>"; the per-source check below
+            # (d.dir_path || sep || name = full_path) fails the build if that ever disagrees.
+            # Every folder is a prefix of some parent, so prefixes come from DISTINCT parents only.
+            con.execute(
+                f"""CREATE OR REPLACE TEMPORARY TABLE _pxp AS
+                    SELECT DISTINCT full_path,
+                           left(full_path, length(full_path) - length(name) - {len(sep)}) AS parent
+                    FROM _px""")
             con.execute(
                 f"""CREATE OR REPLACE TEMPORARY TABLE _dseg AS
                     SELECT DISTINCT CAST(? AS SMALLINT) AS src_id,
                            array_to_string(t.parts[1:g.k], '{sep}') AS dir_path,
                            g.k::SMALLINT AS depth
-                    FROM (SELECT string_split(full_path, '{sep}') AS parts FROM _px) t,
-                         unnest(generate_series(1, len(t.parts) - 1)) AS g(k)""", [S])
+                    FROM (SELECT string_split(parent, '{sep}') AS parts
+                          FROM (SELECT DISTINCT parent FROM _pxp)) t,
+                         unnest(generate_series(1, len(t.parts))) AS g(k)""", [S])
             ids.anti_join(con, "_dirs_new", "SELECT src_id, dir_path, depth FROM _dseg",
                           "SELECT src_id, dir_path FROM dir", ["src_id", "dir_path"])
             alloc.assign(con, "_dirs_alloc", "SELECT src_id, dir_path, depth FROM _dirs_new",
@@ -623,11 +641,10 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
                            px.in_latest, cr.cid_id, px.physical,
                            CAST(NULL AS UBIGINT) AS exclusive, px.full_path
                     FROM _px px
+                    JOIN _pxp pp ON pp.full_path = px.full_path
                     LEFT JOIN _px_carry ca ON ca.full_path = px.full_path
                     LEFT JOIN _px_alloc al ON al.full_path = px.full_path
-                    JOIN dir d ON d.src_id = ? AND d.dir_path = array_to_string(
-                         string_split(px.full_path, '{sep}')
-                             [1:len(string_split(px.full_path, '{sep}')) - 1], '{sep}')
+                    JOIN dir d ON d.src_id = ? AND d.dir_path = pp.parent
                     LEFT JOIN cid_rev cr ON cr.content_id = px.content_id""", [S, S])
 
             # The scratch `files` table already holds the source's COMPLETE history - the
@@ -637,11 +654,11 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
                 f"""CREATE OR REPLACE TEMPORARY TABLE _fv_final AS
                     SELECT CAST(? AS SMALLINT) AS src_id, m.path_id, sm.snap_id, cr.cid_id,
                            f.size, f.mtime, f.ordinal
-                    FROM files f
+                    FROM _files_s f
                     JOIN _px_final m ON m.full_path = f.full_path
                     JOIN snap_rev sm ON sm.snapshot_id = f.snapshot_id
                     LEFT JOIN cid_rev cr ON cr.content_id = f.content_id
-                    WHERE f.repo = ? AND f.source = ?""", [S, repo, key])
+                    WHERE f.src_id = ?""", [S, S])
 
             # Per-source acceptance - the same checks the old full rebuild ran, plus
             # path-id uniqueness and the sticky-first_seen guarantee, before anything is
@@ -659,12 +676,12 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
                     f"""SELECT count(*) FROM _px_final f JOIN _old_seen o
                         ON o.ident = {pathrules.ident_sql(key, 'f.full_path')}
                         WHERE f.first_seen > o.fs""").fetchone()[0],
-                "files": con.execute("SELECT count(*) FROM files WHERE repo=? AND source=?",
-                                     [repo, key]).fetchone()[0],
+                "files": con.execute("SELECT count(*) FROM _files_s WHERE src_id = ?",
+                                     [S]).fetchone()[0],
                 "filev": con.execute("SELECT count(*) FROM _fv_final").fetchone()[0],
                 "size_files": int(con.execute(
-                    "SELECT COALESCE(sum(size), 0) FROM files WHERE repo=? AND source=?",
-                    [repo, key]).fetchone()[0]),
+                    "SELECT COALESCE(sum(size), 0) FROM _files_s WHERE src_id = ?",
+                    [S]).fetchone()[0]),
                 "size_filev": int(con.execute(
                     "SELECT COALESCE(sum(size), 0) FROM _fv_final").fetchone()[0]),
             }
@@ -689,6 +706,8 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
             new_entries[S] = (hrel, prel)
             moves.append((staged_h, hrel))
             moves.append((staged_p, prel))
+        con.execute("DROP TABLE IF EXISTS _paths_s")
+        con.execute("DROP TABLE IF EXISTS _files_s")
         log.info("repo=%s index per-source mapping (%d source(s)) in %.1fs",
                  repo, len(targets), time.perf_counter() - t_map)
         job["phase"] = "writing"

@@ -25,6 +25,7 @@ aggregate, the transform, the per-source incremental mapping - is the code that 
 
 from __future__ import annotations
 
+import re
 import time
 
 from ..core import paths as pathrules
@@ -180,26 +181,99 @@ def tree_first_seen(con) -> None:
         GROUP BY ALL""")
 
 
-def merge_old_seen(con, repo: str, key: str) -> None:
-    """Build ``_old_seen`` for the paths aggregate: the OLDEST date known from either side.
+_BYTES_PER_PATH_ROW = 400       # memory budget per file row in the paths aggregate
 
-    Two sources of truth meet here - what the published index already recorded (sticky: a date
-    never moves forward once known) and what the tree now says. Taking the minimum keeps both
-    guarantees at once. Keyed on the SOURCE's identity expression, never a bare lower(): on a
-    case-sensitive source two case-distinct files are two different paths and must not share a
-    date.
+
+def _paths_batch_rows() -> int:
+    """File rows per paths-aggregate statement, from the DuckDB memory limit (1 GB -> ~2.6M)."""
+    from .store import resolve_limits
+    limit, _threads = resolve_limits()
+    m = re.fullmatch(r"\s*([\d.]+)\s*([KMGT]?)i?B?\s*", str(limit).upper())
+    mult = {"": 1, "K": 2**10, "M": 2**20, "G": 2**30, "T": 2**40}
+    total = float(m.group(1)) * mult[m.group(2)] if m else 512 * 2**20
+    return max(250_000, int(total // _BYTES_PER_PATH_ROW))
+
+
+def refresh_paths(con, repo: str, keys: list[str]) -> None:
+    """Rewrite the ``paths`` aggregate (one row per distinct path) for the rebuilt sources, a
+    group of sources per statement. One source per statement rescanned the whole ``files`` table
+    per source; all sources in one statement ran repo 2 out of memory at 3 GB.
+
+    first_seen is STICKY: the older of the published date and the tree's, so a known date never
+    moves forward. ``size``/``content_id`` are the LATEST version's. Dates are keyed on each
+    source's identity expression: on a case-sensitive source two case-distinct files are two
+    paths and must not share a date.
     """
-    ident = pathrules.ident_sql(key)
-    ident_t = pathrules.ident_sql(key, "t.full_path")
-    con.execute(
-        f"""CREATE OR REPLACE TEMPORARY TABLE _old_seen AS
-            SELECT ident, min(first_seen) AS first_seen FROM (
-                SELECT {ident} AS ident, first_seen FROM paths
-                WHERE repo = ? AND source = ? AND first_seen IS NOT NULL
-                UNION ALL
-                SELECT {ident_t} AS ident, t.first_seen FROM _tree_seen t
-                WHERE t.source = ? AND t.first_seen IS NOT NULL)
-            GROUP BY ident""", [repo, key, key])
+    if not keys:
+        return
+    wanted = set(keys)
+    rows = {s: n for s, n in con.execute(
+        "SELECT source, count(*) FROM files WHERE repo = ? GROUP BY source", [repo]).fetchall()
+        if s in wanted}
+    budget = _paths_batch_rows()
+    batch: list[str] = []
+    size = 0
+    for key in sorted(keys):
+        n = rows.get(key, 0)
+        if batch and size + n > budget:
+            _refresh_paths_batch(con, repo, batch)
+            batch, size = [], 0
+        batch.append(key)
+        size += n
+    _refresh_paths_batch(con, repo, batch)
+
+
+def _refresh_paths_batch(con, repo: str, keys: list[str]) -> None:
+    import pyarrow as pa
+    con.register("_rk_arrow", pa.table({
+        "source": pa.array(keys, pa.string()),
+        "cs": pa.array([pathrules.case_sensitive(k) for k in keys], pa.bool_())}))
+    con.execute("CREATE OR REPLACE TEMP TABLE _rk AS SELECT source, cs FROM _rk_arrow")
+    con.unregister("_rk_arrow")
+
+    def ident(col: str) -> str:
+        return f"CASE WHEN k.cs THEN {col} ELSE lower({col}) END"
+
+    con.execute(f"""CREATE OR REPLACE TABLE _old_seen_all AS
+        SELECT source, ident, min(first_seen) AS first_seen FROM (
+            SELECT p.source, {ident('p.full_path')} AS ident, p.first_seen
+            FROM paths p JOIN _rk k USING (source)
+            WHERE p.repo = ? AND p.first_seen IS NOT NULL
+            UNION ALL
+            SELECT t.source, {ident('t.full_path')} AS ident, t.first_seen
+            FROM _tree_seen t JOIN _rk k USING (source)
+            WHERE t.first_seen IS NOT NULL)
+        GROUP BY source, ident""", [repo])
+    con.execute("""CREATE OR REPLACE TABLE _latest AS
+        SELECT source, arg_max(snapshot_id, start_time) AS sid FROM indexed_snapshots
+        WHERE repo = ? AND source IN (SELECT source FROM _rk) GROUP BY source""", [repo])
+    con.execute("DELETE FROM paths WHERE repo = ? AND source IN (SELECT source FROM _rk)", [repo])
+    con.execute(f"""INSERT INTO paths (repo, source, full_path, name, ext, size, versions,
+                                       first_seen, last_seen, in_latest, content_id, physical, path_lc)
+        SELECT t.repo, t.source, t.full_path, t.name,
+               CASE WHEN contains(t.name, '.')
+                    THEN lower(list_extract(string_split(t.name, '.'), -1)) ELSE '' END AS ext,
+               t.size, t.versions,
+               least(coalesce(o.first_seen, t.first_seen), t.first_seen) AS first_seen,
+               t.last_seen, t.in_latest, t.content_id, 0, lower(t.full_path)
+        FROM (
+            SELECT f.repo, f.source, f.full_path, any_value(f.name) AS name,
+                   arg_max(f.size, f.start_time) AS size,
+                   -- a path has at most one row per snapshot (one entry per name per folder),
+                   -- so count(*) is the version count; a DISTINCT aggregate cannot spill
+                   count(*) AS versions, min(f.start_time) AS first_seen,
+                   max(f.start_time) AS last_seen,
+                   bool_or(f.snapshot_id = coalesce(l.sid, '')) AS in_latest,
+                   arg_max(f.content_id, f.start_time) AS content_id
+            FROM files f
+            LEFT JOIN _latest l ON l.source = f.source
+            WHERE f.repo = ? AND f.source IN (SELECT source FROM _rk)
+            GROUP BY f.repo, f.source, f.full_path) t
+        JOIN _rk k ON k.source = t.source
+        LEFT JOIN _old_seen_all o ON o.source = t.source AND o.ident = {ident('t.full_path')}""",
+                [repo])
+    for t in ("_rk", "_old_seen_all", "_latest"):
+        con.execute(f"DROP TABLE IF EXISTS {t}")
 
 
 def indexed_snapshots(con, repo: str) -> None:

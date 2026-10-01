@@ -226,12 +226,12 @@ def test_invalidate_clears_the_cache(priced, monkeypatch):
 # ---- FILTER-batched fast path + the nightly stored stage ------------------------
 
 def test_filter_batch_matches_known_counts_across_a_batch_boundary(priced):
-    """One scan per _BATCH patterns: 45 patterns forces two batches, and the known-count
-    patterns must stay exact across the boundary."""
+    """One scan per _BATCH patterns: 44 patterns force several batches, and the known-count
+    patterns must stay exact across the boundaries."""
     known = {"*.tmp": (4, 950), "/Temp/**": (4, 950), "node_modules": (1, 500),
              "*.TMP": (0, 0), "other/": (1, 500)}
     filler = [f"zzz_nonexistent_{i}.bin" for i in range(39)]
-    pats = list(known) + filler           # 44 patterns -> crosses the 40-pattern batch edge
+    pats = list(known) + filler           # 44 patterns -> crosses at least one batch edge
     out = policypricing.price_patterns("1", SRC, pats, limit=0, use_cache=False)
     by = {r["pattern"]: r for r in out["results"]}
     for pat, (files, byts) in known.items():
@@ -239,6 +239,43 @@ def test_filter_batch_matches_known_counts_across_a_batch_boundary(priced):
     for pat in filler:
         assert by[pat]["files"] == 0, pat
     assert out["slow_path"] is False
+
+
+def _batch_entries(pats):
+    from app.core.ignorematch import file_match_regex
+    return [[p, file_match_regex(p), policypricing._literal_fragments(p), [0, 0, 0]] for p in pats]
+
+
+_BATCH_PATS = ["*.tmp", "/Temp/**", "node_modules", "*.TMP", "other/", "Temp/nested", "keep.*"]
+
+
+def test_combined_pattern_batch_matches_rule_by_rule(priced):
+    """The any-rule prefilter must give exactly the per-rule numbers of the plain scan."""
+    cur = policypricing.read_cursor("1")
+    fast, plain = _batch_entries(_BATCH_PATS), _batch_entries(_BATCH_PATS)
+    policypricing._price_batch_with_regex(cur, 1, fast, len(f"C:{SEP}Src"), SEP)
+    policypricing._price_batch_plain(cur, 1, plain, len(f"C:{SEP}Src"), SEP)
+    assert [e[3] for e in fast] == [e[3] for e in plain]
+    assert fast[0][3][:2] == [4, 950]
+
+
+def test_refused_combined_pattern_falls_back_to_rule_by_rule(priced):
+    import duckdb
+    cur = policypricing.read_cursor("1")
+
+    class Refusing:
+        def __init__(self, inner):
+            self.inner, self.generation = inner, getattr(inner, "generation", None)
+
+        def execute(self, sql, *a, **kw):
+            if "WHERE regexp_full_match(rel, ?)" in sql:
+                raise duckdb.InvalidInputException("pattern too large")
+            return self.inner.execute(sql, *a, **kw)
+
+    got, want = _batch_entries(_BATCH_PATS), _batch_entries(_BATCH_PATS)
+    policypricing._price_batch_with_regex(Refusing(cur), 1, got, len(f"C:{SEP}Src"), SEP)
+    policypricing._price_batch_plain(cur, 1, want, len(f"C:{SEP}Src"), SEP)
+    assert [e[3] for e in got] == [e[3] for e in want]
 
 
 def test_precompute_stores_per_source_and_global_rollup(priced, tmp_path, monkeypatch):
