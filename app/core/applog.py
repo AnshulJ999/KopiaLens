@@ -177,6 +177,11 @@ def debug_log_wanted(settings: dict | None) -> bool:
     return bool(((settings or {}).get("kopialens") or {}).get("debug_log", False))
 
 
+def debug_on() -> bool:
+    """True while the debug log is attached (the switch for every extra diagnostic)."""
+    return _debug_handler is not None
+
+
 def apply_logging_settings(settings: dict | None) -> None:
     """Attach or detach the debug log file to match the current settings. Safe to call on every
     settings save; the app log is untouched."""

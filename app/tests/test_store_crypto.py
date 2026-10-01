@@ -363,8 +363,9 @@ def test_ready_is_true_when_encryption_is_off(monkeypatch):
 # ---------------------------------------------------------------------------- RAM tiers
 
 @pytest.mark.parametrize("total_gb, expect", [(8, ("512MB", 4)), (7.6, ("512MB", 4)),
-                                              (16, ("1GB", 8)), (32, ("3GB", 16)),
-                                              (64, ("3GB", 16))])
+                                              (15.8, ("1GB", 8)), (16, ("1GB", 8)),
+                                              (24, ("2GB", 8)), (31.8, ("2GB", 8)),
+                                              (32, ("2GB", 8)), (64, ("3GB", 16))])
 def test_ram_tiers_follow_total_memory(total_gb, expect, monkeypatch):
     import psutil
     monkeypatch.setattr(psutil, "virtual_memory",
@@ -379,6 +380,16 @@ def test_ram_tiers_follow_total_memory(total_gb, expect, monkeypatch):
 def test_explicit_settings_beat_the_detected_tier(monkeypatch):
     monkeypatch.setattr("app.settings.load_settings",
                         lambda: {"kopialens": {"duckdb_memory": "7GB", "duckdb_threads": 2}})
+    assert store.resolve_limits() == ("7GB", 2)
+
+
+def test_auto_limits_ignore_the_override(monkeypatch):
+    # Settings shows "Automatic (<tier>)", which must not echo the user's own override back.
+    import psutil
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: type("m", (), {"total": 16 * 1024 ** 3})())
+    monkeypatch.setattr("app.settings.load_settings",
+                        lambda: {"kopialens": {"duckdb_memory": "7GB", "duckdb_threads": 2}})
+    assert store.auto_limits() == ("1GB", 8)
     assert store.resolve_limits() == ("7GB", 2)
 
 

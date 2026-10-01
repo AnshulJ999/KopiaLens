@@ -63,6 +63,8 @@ def repos() -> dict:
     # server - anyone holding it could mint valid sessions. The UI only needs yes/no.
     kl.pop("auth_password_hash", None)
     kl["auth_protected"] = auth.enabled()
+    from ..index.store import auto_limits
+    kl["memory_auto"] = auto_limits()[0]  # what "Automatic" means on this PC
     return {
         # Every record, with the fields the repo UI needs: short label, connection source,
         # "counts as a backup", and the cached storage facts (no kopia call on a polled route).

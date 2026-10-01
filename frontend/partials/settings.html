@@ -148,6 +148,16 @@
             <section x-show="settingsTab==='advanced'" class="space-y-4">
               <p class="text-[11px] text-muted">Sensible defaults; change them when you have a reason.</p>
 
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Memory limit <span class="text-[10px] text-warn">restart</span></span>
+                  <select x-model="duckdbMemory" @change="saveKl('duckdb_memory')" class="fld border border-bd bg-surface2 w-40" data-testid="memory-limit">
+                    <option value="" x-text="memoryAuto ? 'Automatic (' + fmtLimit(memoryAuto) + ')' : 'Automatic'"></option>
+                    <template x-for="m in MEMORY_CHOICES" :key="m"><option :value="m" x-text="fmtLimit(m)" :selected="m === duckdbMemory"></option></template>
+                    <template x-if="duckdbMemory && !MEMORY_CHOICES.includes(duckdbMemory)"><option :value="duckdbMemory" x-text="fmtLimit(duckdbMemory)" selected></option></template>
+                  </select></div>
+                <p class="text-[11px] text-muted mt-1">The most memory each repository's index can use, in the app and while indexing. Automatic is based on this PC's memory.</p>
+              </div>
+
               <div class="flex items-center justify-between gap-3"><span>Heavy-pass hard timeout</span>
                 <div class="flex items-center gap-2">
                   <input type="number" min="600" step="600" x-model.number="indexWorkerTimeout" @change="saveKl('index_worker_timeout')" class="fld border border-bd bg-surface2 w-28">

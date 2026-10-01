@@ -92,6 +92,7 @@ document.addEventListener("alpine:init", () => {
     // change them was to edit the file by hand. Defaults here mirror app/settings.py.
     lightInterval: 1800, dashboardInterval: 14400,
     debugLog: false,
+    duckdbMemory: "", memoryAuto: "",  // memory limit override ("" = automatic) and what automatic resolves to
     indexWorkerTimeout: 14400, indexRetryDelay: 900, indexMaxRetries: 1, reindexAfterDeleteDelay: 300, quitIndexing: "finish",
     folderPrewarmBudget: 900, startupDelay: 300, logCleanupDays: 90, rankCount: 10000,
     repoLabels: "short",  // repo chips and columns: "short" (Repo 1) | "full" (the name from repos.json)

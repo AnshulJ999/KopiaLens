@@ -94,6 +94,15 @@ def test_an_open_setup_window_needs_no_code(closed_setup, monkeypatch):
     assert client.get("/api/repos").status_code == 200
 
 
+def test_settings_carry_the_automatic_memory_limit(closed_setup, monkeypatch):
+    from starlette.testclient import TestClient
+    from app.index import store
+    monkeypatch.setattr(auth, "_STARTED", time.time())
+    monkeypatch.setattr(store, "auto_limits", lambda: ("2GB", 8))
+    client = TestClient(m.app, base_url="http://127.0.0.1")
+    assert client.get("/api/repos").json()["settings"]["kopialens"]["memory_auto"] == "2GB"
+
+
 # ---- scheduling -----------------------------------------------------------------------------------
 
 @pytest.fixture

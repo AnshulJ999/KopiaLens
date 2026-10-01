@@ -1,5 +1,7 @@
 // Settings modal: every control in it saves itself on change (one key per save, never a full
 // payload of browser-side defaults - that is what stamped values the user never chose).
+const MEMORY_CHOICES = ["512MB", "1GB", "2GB", "3GB", "4GB", "6GB", "8GB"];
+
 const settingsPart = {
 
     async openSettings() {  // re-read the live settings file each open so the modal can't show stale state
@@ -47,7 +49,11 @@ const settingsPart = {
       this.debugLog = kl.debug_log === true;
       this.logCleanupDays = Number(kl.log_cleanup_days ?? 90);
       this.rankCount = Number(kl.rank_count ?? 10000);
+      this.duckdbMemory = String(kl.duckdb_memory || "").toUpperCase();
+      this.memoryAuto = kl.memory_auto || "";
     },
+    MEMORY_CHOICES,
+    fmtLimit(v) { return String(v || "").replace(/(\d)\s*([KMGT]B)$/i, "$1 $2"); },
     _readBackblaze(bz) {
       this.bzDataPath = bz.bzdata_path || "C:\\ProgramData\\Backblaze\\bzdata";
       this.bzReindexMinGap = Number(bz.bz_reindex_min_gap || 21600);
@@ -81,6 +87,7 @@ const settingsPart = {
       reindex_interval: { s: "reindexInterval", t: "int", min: 300 },
       startup_delay: { s: "startupDelay", t: "int", min: 0, restart: true },
       debug_log: { s: "debugLog", t: "bool" },
+      duckdb_memory: { s: "duckdbMemory", t: "choice", of: ["", ...MEMORY_CHOICES], restart: true },
       log_cleanup_days: { s: "logCleanupDays", t: "int", min: 0 },
       rank_count: { s: "rankCount", t: "int", min: 0 },
       repo_labels: { s: "repoLabels", t: "choice", of: ["short", "full"] },

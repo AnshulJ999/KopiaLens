@@ -44,7 +44,7 @@ log = get_logger("store")
 # OOM the small tier. Measured at 512 MB, 4 threads was as fast or faster than 24.
 # (max GB, memory_limit, threads) - the FIRST tier whose ceiling this machine is under wins;
 # 0 is the catch-all. Named as a ceiling because that is how it is compared.
-_TIERS = ((8, "512MB", 4), (24, "1GB", 8), (0, "3GB", 16))
+_TIERS = ((8, "512MB", 4), (16, "1GB", 8), (32, "2GB", 8), (0, "3GB", 16))
 WORKER_THREADS = 4      # the index worker's cap: the build measured slower with more threads
 _in_worker = False
 
@@ -55,6 +55,20 @@ def mark_worker() -> None:
     _in_worker = True
 
 
+def auto_limits() -> tuple[str, int]:
+    """(memory_limit, threads) from this machine's RAM tier, ignoring any override."""
+    total_gb = 0.0
+    try:
+        import psutil
+        total_gb = psutil.virtual_memory().total / (1024 ** 3)
+    except Exception:  # noqa: BLE001 - unknown RAM falls through to the smallest tier
+        pass
+    for max_gb, mem, thr in _TIERS:
+        if total_gb <= max_gb or max_gb == 0:
+            return mem, thr
+    return _TIERS[-1][1], _TIERS[-1][2]
+
+
 def resolve_limits() -> tuple[str, int]:
     """(memory_limit, threads) for this machine: explicit settings win, then env, then the tier."""
     try:
@@ -62,17 +76,7 @@ def resolve_limits() -> tuple[str, int]:
         kl = load_settings()["kopialens"]
     except Exception:  # noqa: BLE001 - a settings problem must not stop the store opening
         kl = {}
-    total_gb = 0.0
-    try:
-        import psutil
-        total_gb = psutil.virtual_memory().total / (1024 ** 3)
-    except Exception:  # noqa: BLE001 - unknown RAM falls through to the smallest tier
-        pass
-    limit, threads = _TIERS[-1][1], _TIERS[-1][2]
-    for max_gb, mem, thr in _TIERS:
-        if total_gb <= max_gb or max_gb == 0:
-            limit, threads = mem, thr
-            break
+    limit, threads = auto_limits()
     if _in_worker:
         threads = min(threads, WORKER_THREADS)
     limit = (kl.get("duckdb_memory") or os.environ.get("KOPIALENS_DUCKDB_MEMORY") or limit)
@@ -317,6 +321,12 @@ def current(repo: str) -> Generation:
         return fresh
 
 
+# Per-request [queries, seconds] slot, set by the request timing middleware.
+REQUEST_DB: contextvars.ContextVar = contextvars.ContextVar("kopialens_db_time", default=None)
+_TIMED = frozenset({"execute", "executemany", "fetchall", "fetchone", "fetchmany", "fetchdf", "df",
+                    "fetchnumpy", "arrow", "fetch_arrow_table", "pl"})
+
+
 class _PinnedCursor:
     """Curser off a generation that releases the handle on close (schema._PooledCursor's contract)."""
 
@@ -331,7 +341,21 @@ class _PinnedCursor:
         return self._gen
 
     def __getattr__(self, name):
-        return getattr(self._cur, name)
+        attr = getattr(self._cur, name)
+        if name in _TIMED and REQUEST_DB.get() is not None:
+            return lambda *a, **kw: self._timed(attr, name, a, kw)
+        return attr
+
+    def _timed(self, fn, name, args, kwargs):
+        slot = REQUEST_DB.get()
+        start = time.perf_counter()
+        try:
+            out = fn(*args, **kwargs)
+        finally:
+            slot[1] += time.perf_counter() - start
+            if name.startswith("execute"):
+                slot[0] += 1
+        return self if out is self._cur else out  # keep chained fetches timed
 
     def close(self) -> None:
         if self._closed:

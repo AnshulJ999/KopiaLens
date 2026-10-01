@@ -31,7 +31,7 @@ from .index import crypto as crypto_mod
 from .core import kopia as kopia_mod
 from .core import nightly
 from .core import repos as repos_store
-from .core.applog import RequestStats, apply_logging_settings, get_logger, setup_logging
+from .core.applog import RequestStats, apply_logging_settings, debug_on, get_logger, setup_logging
 from .core.instrument import log_memory, memory_snapshot
 from .core.metrics import table_rows
 from .core.schedule import compute_next_snapshots
@@ -884,26 +884,34 @@ _request_stats = RequestStats()
 async def timing_middleware(request: Request, call_next):
     start = time.perf_counter()
     slot = [0, 0.0]                                  # this request's own spawns
+    db = [0, 0.0]                                    # this request's index queries
     token = kopia_mod.REQUEST_CALLS.set(slot)
+    db_token = store.REQUEST_DB.set(db)
     try:
         response = await call_next(request)
     finally:
         kopia_mod.REQUEST_CALLS.reset(token)
+        store.REQUEST_DB.reset(db_token)
     path = request.url.path
     if path.startswith("/api"):
         ms = (time.perf_counter() - start) * 1000
         kc, kms = slot[0], slot[1] * 1000
-        args = (request.method, path, response.status_code, ms, kc, kms)
+        args = (request.method, path, response.status_code, ms, db[0], db[1] * 1000, kc, kms)
+        line = "%s %s -> %s  %.0fms  db=%d/%.0fms  kopia_subproc=%d/%.0fms"
         if response.status_code >= 500:
-            log.warning("%s %s -> %s  %.0fms  kopia_subproc=%d/%.0fms", *args)
+            log.warning(line, *args)
         elif ms >= _SLOW_REQUEST_MS:
-            log.info("slow request: %s %s -> %s  %.0fms  kopia_subproc=%d/%.0fms", *args)
+            log.info("slow request: " + line, *args)
         elif path in _POLL_PATHS:
             summary = _request_stats.add(path, ms)
             if summary:
                 log.debug(summary)
         else:
-            log.debug("%s %s -> %s  %.0fms  kopia_subproc=%d/%.0fms", *args)
+            log.debug(line, *args)
+        if debug_on():
+            response.headers["Server-Timing"] = (
+                f"app;dur={ms:.1f}, db;dur={db[1] * 1000:.1f};desc=\"{db[0]} queries\", "
+                f"kopia;dur={kms:.1f};desc=\"{kc} calls\"")
     return response
 
 

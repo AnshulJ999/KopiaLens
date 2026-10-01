@@ -96,3 +96,46 @@ def test_spawns_are_charged_to_the_current_request():
     k._count_spawn(0.1)                          # outside a request: nothing is charged to one
     assert slot == [2, 0.5]
     assert k.KOPIA_CALLS == before + 3
+
+
+# ---- index query time per request ---------------------------------------------------------------
+
+class _FakeCursor:
+    def execute(self, sql):
+        time.sleep(0.01)
+        return self
+
+    def fetchall(self):
+        return [(1,)]
+
+    def close(self):
+        pass
+
+
+class _FakeGen:
+    def release(self):
+        pass
+
+
+def test_index_queries_are_charged_to_the_current_request():
+    from app.index import store
+
+    cur = store._PinnedCursor(_FakeGen(), _FakeCursor())
+    assert cur.execute("x") is cur._cur              # outside a request: the raw cursor, untimed
+    slot = [0, 0.0]
+    token = store.REQUEST_DB.set(slot)
+    try:
+        assert cur.execute("x").fetchall() == [(1,)]  # chained fetch still goes through the wrapper
+    finally:
+        store.REQUEST_DB.reset(token)
+    assert slot[0] == 1 and slot[1] >= 0.01
+
+
+@pytest.mark.parametrize("debug", [False, True])
+def test_the_timing_header_follows_the_debug_log_switch(debug, monkeypatch):
+    from starlette.testclient import TestClient
+    from app import main as m
+
+    monkeypatch.setattr(m, "debug_on", lambda: debug)
+    resp = TestClient(m.app, base_url="http://127.0.0.1").get("/api/no-such-route")
+    assert ("db;dur=" in resp.headers.get("server-timing", "")) is debug
