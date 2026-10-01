@@ -57,7 +57,7 @@ document.addEventListener("alpine:init", () => {
     acct: null, encStatus: null, acctDialog: null, locked: null, sessionDays: 30,
     // Settings backups, the damaged-file notice, pausing indexing and About (appconfig.js).
     cfg: null, cfgNotices: [], cfgDlg: null, cfgBusy: "", cfgExportAccounts: false, cfgExportKeys: false,
-    indexPause: { paused: false }, about: null, controlApi: true,
+    indexPause: { paused: false }, about: null, controlApi: true, trayClick: "window", trayDoubleClick: "window", notifyLevel: "warnings",
     // Onboarding (onboarding.js) and repositories (repos.js): the shared connect form is `cx`.
     ob: null, cx: null, repoMenu: false, repoAdd: false, repoDlg: null, repoChecks: {}, kopiaInfo: null, repoKopiaEdit: null,
     policyKeys: ["latest", "hourly", "daily", "weekly", "monthly", "annual"],

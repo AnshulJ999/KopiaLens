@@ -315,6 +315,24 @@ def exempt(path: str) -> bool:
                     "/api/auth/logout")
 
 
+# The desktop shell's per-launch secret (env KOPIALENS_SHELL_TOKEN, set by the shell that started
+# this server) opens only these paths, and only from this computer.
+SHELL_HEADER = "x-kopialens-shell"
+SHELL_PATHS = frozenset({"/api/shell/state", "/api/shell/prefs", "/api/index/build",
+                         "/api/index/stop", "/api/index/pause", "/api/index/resume"})
+
+
+def shell_request_ok(path: str, header: str | None, client_host: str | None) -> bool:
+    token = _env("KOPIALENS_SHELL_TOKEN")
+    if not token or not header or path not in SHELL_PATHS:
+        return False
+    try:
+        local = ipaddress.ip_address(client_host or "").is_loopback
+    except ValueError:
+        return False
+    return local and hmac.compare_digest(header.encode(), token.encode())
+
+
 LOGIN_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Sign in - KopiaLens</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">

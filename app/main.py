@@ -24,7 +24,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from config import APP_VERSION, DATA_DIR, REPOS, repo_kind
 
 from .api import (account, actions, appconfig, audit, backblaze, dashboard, deleteplan, encryption, excluded, insights,
-                  jobs, logs, onboarding, policies, restore, search, setup, simulate, snapshots, stats, tree)
+                  jobs, logs, onboarding, policies, restore, search, setup, shell, simulate, snapshots, stats, tree)
 from .core import auth, pause
 from .core import jobs as jobrunner
 from .index.crypto import StoreLocked
@@ -735,6 +735,13 @@ async def access_middleware(request: Request, call_next):
             "detail": f"Host {request.headers.get('host', '')!r} is not allowed. Add it to "
                       "settings.kopialens.allowed_hosts if you reach KopiaLens by that name."})
     path = request.url.path
+    if auth.shell_request_ok(path, request.headers.get(auth.SHELL_HEADER),
+                             request.client.host if request.client else None):
+        token = auth.set_actor("desktop app")
+        try:
+            return await call_next(request)
+        finally:
+            auth._ACTOR.reset(token)
     # Setup closed with no protection chosen: the API needs the setup code (entered once, kept in
     # a cookie). Pages and static files carry no data and stay reachable to ask for it.
     if (path.startswith("/api/") and auth.first_run_state()["needs_code"]
@@ -906,7 +913,7 @@ async def generation_pin_middleware(request: Request, call_next):
 _POLL_PATHS = frozenset({
     "/api/jobs/list", "/api/jobs/status", "/api/index/freshness", "/api/index/status",
     "/api/backblaze/status", "/api/settings/table", "/api/settings/tables", "/api/repos",
-    "/api/index/runs", "/api/logs/app", "/api/audit", "/api/index/pending",
+    "/api/index/runs", "/api/logs/app", "/api/audit", "/api/index/pending", "/api/shell/state",
 })
 _SLOW_REQUEST_MS = 3000.0
 _request_stats = RequestStats()
@@ -1079,6 +1086,7 @@ app.include_router(setup.router, prefix="/api")
 app.include_router(account.router, prefix="/api")
 app.include_router(onboarding.router, prefix="/api")
 app.include_router(appconfig.router, prefix="/api")
+app.include_router(shell.router, prefix="/api")
 app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
 
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")

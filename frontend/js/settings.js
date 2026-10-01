@@ -50,6 +50,9 @@ const settingsPart = {
       this.startupDelay = Number(kl.startup_delay ?? 300);
       this.debugLog = kl.debug_log === true;
       this.controlApi = kl.control_api !== false;
+      this.trayClick = kl.tray_click === "menu" ? "menu" : "window";
+      this.trayDoubleClick = kl.tray_double_click === "none" ? "none" : "window";
+      this.notifyLevel = ["all", "off"].includes(kl.notifications) ? kl.notifications : "warnings";
       this.logCleanupDays = Number(kl.log_cleanup_days ?? 90);
       this.rankCount = Number(kl.rank_count ?? 10000);
       this.duckdbMemory = String(kl.duckdb_memory || "").toUpperCase();
@@ -91,6 +94,9 @@ const settingsPart = {
       startup_delay: { s: "startupDelay", t: "int", min: 0, restart: true },
       debug_log: { s: "debugLog", t: "bool" },
       control_api: { s: "controlApi", t: "bool", restart: true },
+      tray_click: { s: "trayClick", t: "choice", of: ["window", "menu"] },
+      tray_double_click: { s: "trayDoubleClick", t: "choice", of: ["window", "none"] },
+      notifications: { s: "notifyLevel", t: "choice", of: ["all", "warnings", "off"] },
       duckdb_memory: { s: "duckdbMemory", t: "choice", of: ["", ...MEMORY_CHOICES], restart: true },
       log_cleanup_days: { s: "logCleanupDays", t: "int", min: 0 },
       rank_count: { s: "rankCount", t: "int", min: 0 },

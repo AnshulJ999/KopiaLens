@@ -59,3 +59,18 @@ def test_back_up_restore_pause_and_recover_a_damaged_file(fresh_server, fixture_
     page.get_by_role("button", name="Dismiss").click()
     expect(notice).to_be_hidden()
     assert srv.get("/api/config-backups")["notices"] == []
+
+
+def test_desktop_app_tray_settings_save(fresh_server, fixture_repo, open_page):
+    srv = fresh_server
+    _arrange(srv, fixture_repo)
+    page = open_page(srv)
+
+    _settings_tab(page, "Desktop app")
+    page.get_by_test_id("tray-click").select_option("menu")
+    page.get_by_test_id("tray-double-click").select_option("none")
+    page.get_by_test_id("notify-level").select_option("warnings")
+    expect(page.get_by_text("Right-clicking always shows the menu.")).to_be_visible()
+    page.wait_for_timeout(500)
+    kl = srv.get("/api/repos")["settings"]["kopialens"]
+    assert (kl["tray_click"], kl["tray_double_click"], kl["notifications"]) == ("menu", "none", "warnings")

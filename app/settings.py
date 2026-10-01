@@ -84,6 +84,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "repo_labels": "short",      # repo chips/columns: "short" (Repo 1) | "full" (the name from repos.json)
         "debug_log": False,          # also write data/logs/kopialens-debug.log at DEBUG (env KOPIALENS_DEBUG_LOG overrides)
         "control_api": True,         # the tray's local control port (restart/quit/status for scripts); read at tray start
+        "tray_click": "window",      # desktop app tray icon click: window | menu (right-click always shows the menu)
+        "tray_double_click": "window",  # tray icon double-click (Windows): window | none
+        "notifications": "warnings",  # desktop app toasts: all | warnings | off
         # ---- unified store () ---------------------------------------------------------
         # Encryption at rest (). Three levels, decided in onboarding ():
         #   "off"        nothing

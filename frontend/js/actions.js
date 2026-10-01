@@ -211,8 +211,17 @@ const actionsPart = {
     },
 
     async browseFolder() {
-      const r = await getJson("/api/actions/browse-folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial: this.restore && this.restore.target || null }) }).catch(() => null);
-      if (r && r.path && this.restore) { this.restore.target = r.path; this.restoreLoad(false); }
+      const initial = this.restore && this.restore.target || null;
+      let path = null;
+      const dialog = window.__TAURI__ && window.__TAURI__.dialog;
+      if (dialog) {
+        // Inside the desktop app: the system folder picker, on every OS.
+        path = await dialog.open({ directory: true, defaultPath: initial || undefined }).catch(() => null);
+      } else {
+        const r = await getJson("/api/actions/browse-folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial }) }).catch(() => null);
+        path = r && r.path;
+      }
+      if (path && this.restore) { this.restore.target = path; this.restoreLoad(false); }
     },
     restoreFromDetail() { if (this.detail) this.openRestore([{ source: this.detail.source, full_path: this.detail.title }]); },
     restoreVersion(v) {
