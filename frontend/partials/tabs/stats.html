@@ -2,6 +2,7 @@
         <div class="flex items-center gap-2">
           <span class="font-medium">Repository</span>
           <button @click="loadStats(true)" class="h-7 rounded border border-bd px-2 text-xs">⟳ Refresh</button>
+          <span class="text-[11px] text-muted" x-show="statsData && statsData.computed_at" x-text="statsData && statsData.computed_at ? 'Updated ' + humanTime(statsData.computed_at) : ''"></span>
           <!-- the nightly retention self-check; silent while it agrees with kopia -->
           <span class="kl-note text-warn" x-show="retentionIssueText()" x-text="retentionIssueText()"></span>
         </div>

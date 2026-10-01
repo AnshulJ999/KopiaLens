@@ -63,10 +63,12 @@ def auto_limits() -> tuple[str, int]:
         total_gb = psutil.virtual_memory().total / (1024 ** 3)
     except Exception:  # noqa: BLE001 - unknown RAM falls through to the smallest tier
         pass
-    for max_gb, mem, thr in _TIERS:
+    mem, thr = _TIERS[-1][1], _TIERS[-1][2]
+    for max_gb, tier_mem, tier_thr in _TIERS:
         if total_gb <= max_gb or max_gb == 0:
-            return mem, thr
-    return _TIERS[-1][1], _TIERS[-1][2]
+            mem, thr = tier_mem, tier_thr
+            break
+    return mem, min(thr, os.cpu_count() or thr)   # more threads than processors only adds overhead
 
 
 def resolve_limits() -> tuple[str, int]:

@@ -111,3 +111,39 @@ def test_automatic_compaction_is_audited_as_system_not_as_the_user():
 
     assert audit.SYSTEM == "system"
     assert auth.current_actor() != audit.SYSTEM
+
+
+def _fresh_stats_state(monkeypatch):
+    monkeypatch.setattr(stats_api, "_stats_cache", {})
+    monkeypatch.setattr(stats_api, "_stats_ts", {})
+    monkeypatch.setattr(stats_api, "refresh_stats", lambda repo: None)
+
+
+def test_saved_stats_are_served_after_a_restart_without_asking_kopia(monkeypatch):
+    _fresh_stats_state(monkeypatch)
+    saved = {"stats_repo1": {"at": 1000.0, "data": {"repo": "1", "health": []}}}
+    monkeypatch.setattr(stats_api.sidecache, "read", lambda name: saved.get(name))
+
+    def no_kopia(repo):
+        raise AssertionError("must not compute while saved stats exist")
+
+    monkeypatch.setattr(stats_api, "_compute_stats", no_kopia)
+    out = stats_api.stats("1")
+    assert out["repo"] == "1" and out["computed_at"] == 1000.0
+
+
+def test_refresh_recomputes_even_when_stats_are_cached(monkeypatch):
+    _fresh_stats_state(monkeypatch)
+    calls = []
+
+    def compute(repo):
+        calls.append(repo)
+        stats_api._stats_cache[repo] = {"repo": repo, "n": len(calls)}
+        stats_api._stats_ts[repo] = 2000.0 + len(calls)
+        return stats_api._stats_cache[repo]
+
+    monkeypatch.setattr(stats_api, "_compute_stats", compute)
+    monkeypatch.setattr(stats_api.sidecache, "read", lambda name: None)
+    assert stats_api.stats("1")["n"] == 1          # nothing saved: computed once
+    assert stats_api.stats("1")["n"] == 1          # cached
+    assert stats_api.stats("1", refresh=True)["n"] == 2

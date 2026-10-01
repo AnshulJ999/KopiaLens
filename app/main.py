@@ -19,6 +19,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, RedirectResponse,
                                Response)
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 
 from config import DATA_DIR, REPOS, repo_kind
 
@@ -688,6 +689,26 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="KopiaLens", version="0.1.0", lifespan=lifespan)
+
+
+class _ApiGZip:
+    """Compress API replies over 1 KB; file downloads pass through untouched."""
+
+    _SKIP = ("/api/restore/download",)
+
+    def __init__(self, app):
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=1024, compresslevel=5)
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "") if scope["type"] == "http" else ""
+        if path.startswith("/api/") and not path.startswith(self._SKIP):
+            await self.gzip(scope, receive, send)
+        else:
+            await self.app(scope, receive, send)
+
+
+app.add_middleware(_ApiGZip)
 
 
 @app.middleware("http")

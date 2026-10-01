@@ -264,3 +264,58 @@ def test_prewarm_skipped_unchanged_count_is_reported(monkeypatch):
 
     summary = " ".join(lines)
     assert "1 skipped (unchanged)" in summary and "0 computed" in summary
+
+
+# ---- folder panel: all-versions chunk union, freeable vs shared --------------------------------
+
+@pytest.fixture
+def folder_index(monkeypatch):
+    """Folder A holds a plain file, a split file (pieces c1, c2) and a split file whose pieces are
+    not in the tree yet. Folder B holds c2 as a plain file, so c2 is shared with A."""
+    import duckdb
+
+    con = duckdb.connect()
+    con.execute("CREATE TABLE src(src_id INTEGER, source VARCHAR)")
+    con.execute("INSERT INTO src VALUES (1, 'src')")
+    con.execute("CREATE TABLE cid(cid_id INTEGER, content_id VARCHAR)")
+    con.execute("INSERT INTO cid VALUES (1,'pA'),(2,'Isplit'),(3,'c1'),(4,'c2'),(5,'Imissing'),(6,'pOld')")
+    con.execute("CREATE TABLE tpart(iobj_cid INTEGER, part_cid INTEGER)")
+    con.execute("INSERT INTO tpart VALUES (2, 3), (2, 4)")
+    con.execute("CREATE TABLE crefs(cid_id INTEGER, refs INTEGER)")
+    con.execute("INSERT INTO crefs VALUES (1, 1), (3, 1), (4, 2), (6, 1)")
+    con.execute("CREATE TABLE csize(cid_id INTEGER, packed UBIGINT)")
+    con.execute("INSERT INTO csize VALUES (1, 100), (3, 10), (4, 20), (6, 5)")
+    con.execute("CREATE TABLE pathx(path_id INTEGER, src_id INTEGER, full_path VARCHAR, cid_id INTEGER, size BIGINT)")
+    a, b = "C:" + SEP + "A" + SEP, "C:" + SEP + "B" + SEP
+    con.execute("INSERT INTO pathx VALUES (1, 1, ?, 1, 1000), (2, 1, ?, 2, 3000), (3, 1, ?, 5, 400), "
+                "(4, 1, ?, 4, 2000)", [a + "plain", a + "split", a + "missing", b + "c2"])
+    con.execute("CREATE TABLE filev(path_id INTEGER, snap_id INTEGER, cid_id INTEGER, size BIGINT)")
+    # A's plain file had an older version with its own chunk pOld.
+    con.execute("INSERT INTO filev VALUES (1, 2, 1, 1000), (1, 1, 6, 900), (2, 2, 2, 3000), "
+                "(3, 2, 5, 400), (4, 2, 4, 2000)")
+    monkeypatch.setattr(physical, "read_cursor", lambda repo: con.cursor())
+    monkeypatch.setattr(physical, "scope_sql", lambda cur, prefix, include_path=True: (
+        "lower(p.full_path) LIKE ?", [prefix.lower().rstrip(SEP) + SEP + "%"]))
+    return a, b
+
+
+def test_folder_detail_prices_every_version_and_splits_free_from_shared(folder_index):
+    a, _b = folder_index
+    out = physical.folder_detail("1", None, a)
+    # pA 100 + pOld 5 + c1 10 + c2 20; c2 is also held by folder B, so it is shared, not freeable.
+    assert out == {"logical": 4400, "physical": 135, "freeable": 115, "files": 3, "shared": 20,
+                   "objects": 4, "all_versions": True}
+
+
+def test_folder_detail_latest_only_skips_old_versions(folder_index):
+    a, _b = folder_index
+    out = physical.folder_detail("1", None, a, all_versions=False)
+    assert (out["physical"], out["freeable"], out["objects"]) == (130, 110, 3)
+
+
+def test_a_folder_holding_all_of_a_shared_chunk_frees_it(folder_index):
+    _a, b = folder_index
+    out = physical.folder_detail("1", None, b)
+    # B alone holds one of c2's two references: nothing frees.
+    assert (out["physical"], out["freeable"], out["files"]) == (20, 0, 1)
+    assert physical.folder_detail("1", None, "C:" + SEP)["freeable"] == 135

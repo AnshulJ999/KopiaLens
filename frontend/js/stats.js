@@ -8,8 +8,8 @@ const statsPart = {
       this._statsLoading = true;
       try {
         await this.wrap(async () => {
-          this.statsData = await getJson(`/api/stats?repo=${encodeURIComponent(this.repo)}`);
-        }, "Loading stats...");
+          this.statsData = await getJson(`/api/stats?repo=${encodeURIComponent(this.repo)}${refresh ? "&refresh=true" : ""}`);
+        }, refresh ? "Reading from kopia..." : "Loading stats...");
       } finally { this._statsLoading = false; }
     },
     async loadBlobStats() {

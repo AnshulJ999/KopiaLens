@@ -383,6 +383,13 @@ def test_explicit_settings_beat_the_detected_tier(monkeypatch):
     assert store.resolve_limits() == ("7GB", 2)
 
 
+def test_auto_threads_never_exceed_the_processor_count(monkeypatch):
+    import psutil
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: type("m", (), {"total": 64 * 1024 ** 3})())
+    monkeypatch.setattr(store.os, "cpu_count", lambda: 6)
+    assert store.auto_limits() == ("3GB", 6)
+
+
 def test_auto_limits_ignore_the_override(monkeypatch):
     # Settings shows "Automatic (<tier>)", which must not echo the user's own override back.
     import psutil

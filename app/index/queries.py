@@ -1065,16 +1065,13 @@ def folder_file_types(repo: str, prefix: str, source: str | None = None, limit: 
     cur = read_cursor(repo)
     try:
         where, params = _folder_scope(cur, prefix, source)
-        base = f"list_extract(string_split(p.full_path, ?), -1)"
         rows = _rows(
             cur,
-            f"SELECT ext, count(*) AS files, COALESCE(sum(physical), 0) AS physical, "
-            f"  COALESCE(sum(size), 0) AS logical "
-            f"FROM (SELECT CASE WHEN len(string_split({base}, '.')) > 1 "
-            f"        THEN lower(list_extract(string_split({base}, '.'), -1)) ELSE '' END AS ext, "
-            f"        p.physical, p.size FROM pathx p WHERE {where}) "
-            f"GROUP BY ext ORDER BY physical DESC, ext",
-            [_SEP, _SEP, *params],
+            f"SELECT COALESCE(p.ext, '') AS ext, count(*) AS files, "
+            f"  COALESCE(sum(p.physical), 0) AS physical, COALESCE(sum(p.size), 0) AS logical "
+            f"FROM pathx p WHERE {where} "
+            f"GROUP BY 1 ORDER BY physical DESC, ext",
+            params,
         )
     finally:
         cur.close()

@@ -139,3 +139,28 @@ def test_the_timing_header_follows_the_debug_log_switch(debug, monkeypatch):
     monkeypatch.setattr(m, "debug_on", lambda: debug)
     resp = TestClient(m.app, base_url="http://127.0.0.1").get("/api/no-such-route")
     assert ("db;dur=" in resp.headers.get("server-timing", "")) is debug
+
+
+# ---- compressed API replies ---------------------------------------------------------------------
+
+@pytest.mark.parametrize("path, size, gzipped", [
+    ("/api/snapshots", 50_000, True),
+    ("/api/repos", 200, False),                     # small replies are not worth compressing
+    ("/api/restore/download", 50_000, False),       # file downloads pass through untouched
+    ("/static/app.js", 50_000, False),
+])
+def test_only_large_api_replies_are_compressed(path, size, gzipped):
+    from starlette.applications import Starlette
+    from starlette.responses import Response
+    from starlette.routing import Route
+    from starlette.testclient import TestClient
+    from app import main as m
+
+    async def body(request):
+        return Response("x" * size, media_type="application/json")
+
+    inner = Starlette(routes=[Route(path, body)])
+    client = TestClient(m._ApiGZip(inner))
+    resp = client.get(path, headers={"Accept-Encoding": "gzip"})
+    assert resp.status_code == 200 and len(resp.text) == size
+    assert (resp.headers.get("content-encoding") == "gzip") is gzipped

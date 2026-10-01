@@ -22,6 +22,7 @@ from config import DATA_DIR
 from ..core.applog import get_logger
 from ..core import audit
 from ..core.kopia import kopia
+from ..index import sidecache
 
 router = APIRouter(tags=["stats"])
 log = get_logger("stats")
@@ -306,11 +307,28 @@ def _compute_stats(repo: str) -> dict:
                                "fix_command": None})
     data["health"] = health
     data["audit_size"] = audit.size_bytes()
+    at = time.time()
     with _stats_lock:
         _stats_cache[repo] = data
-        _stats_ts[repo] = time.time()
+        _stats_ts[repo] = at
         _stats_refreshing.discard(repo)
+    sidecache.write(_saved_name(repo), {"at": at, "data": data})
     return data
+
+
+def _saved_name(repo: str) -> str:
+    return f"stats_repo{repo}"
+
+
+def _load_saved(repo: str) -> dict | None:
+    """The last computed stats from disk (survives a restart), or None."""
+    saved = sidecache.read(_saved_name(repo))
+    if not isinstance(saved, dict) or not isinstance(saved.get("data"), dict):
+        return None
+    with _stats_lock:
+        _stats_cache.setdefault(repo, saved["data"])
+        _stats_ts.setdefault(repo, float(saved.get("at") or 0))
+        return _stats_cache[repo]
 
 
 def refresh_stats(repo: str) -> None:
@@ -328,18 +346,23 @@ def refresh_stats(repo: str) -> None:
 
 
 @router.get("/stats")
-def stats(repo: str) -> dict:
-    """Fast read-only repo-level info for the Stats tab. Served from cache (serve-stale); a stale
-    cache is refreshed in the background. ``blob stats`` is on-demand via /stats/blob."""
+def stats(repo: str, refresh: bool = False) -> dict:
+    """Fast read-only repo-level info for the Stats tab. Served from cache (serve-stale, saved
+    across restarts); a stale cache is refreshed in the background. ``refresh`` recomputes now.
+    ``blob stats`` is on-demand via /stats/blob."""
     with _stats_lock:
         cached = _stats_cache.get(repo)
-        age = time.time() - _stats_ts.get(repo, 0)
-    if cached is None:
-        cached = _compute_stats(repo)  # first ever: must compute synchronously
-    elif age > _STATS_TTL:             # stale: serve now, refresh in background
+    if cached is None and not refresh:
+        cached = _load_saved(repo)
+    if cached is None or refresh:
+        cached = _compute_stats(repo)  # nothing saved yet, or asked for: compute synchronously
+    with _stats_lock:
+        at = _stats_ts.get(repo, 0)
+    if time.time() - at > _STATS_TTL:  # stale: serve now, refresh in background
         threading.Thread(target=refresh_stats, args=(repo,), daemon=True).start()
     out = dict(cached)
     out["blob_stats"] = _blob_cache.get(repo)
+    out["computed_at"] = at
     return out
 
 

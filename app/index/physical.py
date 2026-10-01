@@ -481,6 +481,7 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500, fetch: bool =
 
         chunk_memo = _chunks_for_objs(
             repo, [o for hs in objs_of.values() for o in hs], cursor=cur)
+        per_cid: dict[str, dict[str, int]] = {}
         for cid in misses:
             this_refs: dict[str, int] = {}
             unknown = False
@@ -494,15 +495,18 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500, fetch: bool =
                         this_refs[c] = this_refs.get(c, 0) + 1
                 if unknown:
                     break
-            if unknown:
-                continue
-            refs = _refcount_for(repo, this_refs.keys()) or {}
-            sizes = _sizes_for(repo, this_refs)
-            reclaim = sum(sizes.get(c, 0) for c in this_refs if refs.get(c, 0) <= this_refs[c])
-            _reclaim_cache_put((repo, cid), reclaim)
-            out[cid] = reclaim
+            if not unknown:
+                per_cid[cid] = this_refs
     finally:
         cur.close()
+    # One refcount and one size lookup for the whole request, not one pair per content id.
+    every = {c for refs in per_cid.values() for c in refs}
+    refs = _refcount_for(repo, every) or {}
+    sizes = _sizes_for(repo, every)
+    for cid, this_refs in per_cid.items():
+        reclaim = sum(sizes.get(c, 0) for c in this_refs if refs.get(c, 0) <= this_refs[c])
+        _reclaim_cache_put((repo, cid), reclaim)
+        out[cid] = reclaim
     return out
 
 
@@ -538,9 +542,8 @@ def folder_detail(repo: str, source: str | None, prefix: str, all_versions: bool
             else:
                 where += " AND p.src_id = ?"
                 params.append(sid)
-        objs: list = []
         agg = (0, 0)
-        cstr: dict[int, str] = {}
+        priced = (0, 0, 0, 0)
         if run:
             # `filev` carries every version; `pathx` carries one row per path at its latest object. The
             # delete panel can be set to latest-only, and then the reclaim figure must match THAT, not the
@@ -551,12 +554,6 @@ def folder_detail(repo: str, source: str | None, prefix: str, all_versions: bool
             else:
                 sel = ("SELECT DISTINCT p.src_id, p.full_path, p.cid_id, p.size "
                        "FROM pathx p WHERE " + where)
-            # Aggregate in DuckDB, not Python: one row per DISTINCT object with how many (source, path)
-            # pairs reference it. Pulling every version row into Python would be tens of millions of
-            # rows on a big folder; this is the same information in a fraction of the memory.
-            objs = cur.execute(
-                f"SELECT cid_id, count(*) AS refs FROM ({sel}) GROUP BY cid_id", params
-            ).fetchall()
             agg = cur.execute(
                 f"SELECT count(*), COALESCE(sum(size), 0) FROM ("
                 f"  SELECT DISTINCT src_id, full_path, max(size) AS size FROM ({sel})"
@@ -564,39 +561,43 @@ def folder_detail(repo: str, source: str | None, prefix: str, all_versions: bool
                 f")",
                 params,
             ).fetchone() or (0, 0)
-            # Object names come back from the result set (output side), never a whole-table join.
-            cstr = resolve.content_ids(cur, sorted({c for c, _ in objs if c is not None}))
+            run = bool(agg[0])
+        if run:
+            # The whole chunk union in one query: each object counted once per (source, path) that
+            # holds it, split objects expanded through `tpart`, then priced against the global
+            # refcount. A split object with no piece list is not in the tree yet: counted as
+            # unknown and left out (understated, never zeroed).
+            priced = cur.execute(f"""
+                WITH objs AS (SELECT cid_id, count(*) AS n FROM ({sel}) GROUP BY cid_id),
+                kinds AS (SELECT o.cid_id, o.n, c.content_id LIKE 'I%' AS split
+                          FROM objs o JOIN cid c ON c.cid_id = o.cid_id),
+                parts AS (SELECT DISTINCT k.cid_id, t.part_cid FROM kinds k
+                          JOIN tpart t ON t.iobj_cid = k.cid_id WHERE k.split),
+                chunks AS (SELECT cid_id AS chunk, n FROM kinds WHERE NOT split
+                           UNION ALL
+                           SELECT p.part_cid, k.n FROM parts p JOIN kinds k ON k.cid_id = p.cid_id),
+                mine AS (SELECT chunk, sum(n) AS refs FROM chunks GROUP BY chunk),
+                sized AS (SELECT m.refs AS mine, COALESCE(r.refs, 0) AS total,
+                                 COALESCE(s.packed, 0) AS packed
+                          FROM mine m LEFT JOIN crefs r ON r.cid_id = m.chunk
+                          LEFT JOIN csize s ON s.cid_id = m.chunk)
+                SELECT (SELECT count(*) FROM objs),
+                       (SELECT count(*) FROM kinds k WHERE k.split AND NOT EXISTS
+                          (SELECT 1 FROM tpart t WHERE t.iobj_cid = k.cid_id)),
+                       COALESCE(sum(packed), 0),
+                       COALESCE(sum(packed) FILTER (WHERE total <= mine), 0)
+                FROM sized""", params).fetchone() or (0, 0, 0, 0)
     finally:
         cur.close()
 
-    this_refs: dict[str, int] = {}
-    unknown = 0
-    # One batched lookup for every object in the folder. No kopia fetch: an aggregate can hold
-    # thousands of objects, and one call each is the per-item shape this store exists to remove.
-    # An object the tree has not reached is left out and counted - understated, loudly, rather
-    # than crashing or silently zeroed.
-    obj_chunks = _chunks_for_objs(repo, [cstr[c] for c, _n in objs if c])
-    for cid_id, n in objs:
-        if not cid_id:
-            continue
-        cid = cstr[cid_id]
-        chunks = obj_chunks.get(cid)
-        if chunks is None:
-            unknown += 1
-            continue
-        for c in chunks:
-            this_refs[c] = this_refs.get(c, 0) + int(n)
+    objects, unknown, physical, freeable = (int(v or 0) for v in priced)
     if unknown:
         log.warning("repo=%s folder detail: %d object(s) are not in the tree yet - their bytes are "
                     "not counted until the next index", repo, unknown)
-    refs = _refcount_for(repo, this_refs.keys()) or {}
-    sizes = _sizes_for(repo, this_refs)
-    physical = sum(sizes.get(c, 0) for c in this_refs)
-    freeable = sum(sizes.get(c, 0) for c in this_refs if refs.get(c, 0) <= this_refs[c])
     return {
         "logical": int(agg[1] or 0), "physical": physical, "freeable": freeable,
         "files": int(agg[0] or 0), "shared": physical - freeable,
-        "objects": len(objs), "all_versions": all_versions,
+        "objects": objects, "all_versions": all_versions,
     }
 
 
