@@ -38,6 +38,35 @@ def user_data_root() -> str:
     return os.path.join(base, "kopialens")
 
 
+# A portable copy keeps its data in data\ beside the app. The marker sits next to the desktop
+# app, one level above the server folder (the desktop app also passes KOPIALENS_DATA_DIR).
+PORTABLE_MARKER = "KopiaLens-portable.txt"
+
+
+def portable_data_dir() -> str | None:
+    if not COMPILED:
+        return None
+    app_dir = os.path.dirname(HERE)
+    if os.path.isfile(os.path.join(app_dir, PORTABLE_MARKER)):
+        return os.path.join(app_dir, "data")
+    return None
+
+
+def _env_port(name: str, default: int) -> int:
+    """A port from the environment; a bad value falls back to the default instead of crashing."""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        port = int(raw)
+    except ValueError:
+        port = 0
+    if 1 <= port <= 65535:
+        return port
+    print(f"KopiaLens: ignoring {name}={raw!r} (not a port number), using {default}", file=sys.stderr)
+    return default
+
+
 # Everything KopiaLens writes lives under one data folder: index, cache (cache/), logs, audit,
 # backups, settings.json, repos.json. KOPIALENS_DATA_DIR relocates all of it; the finer env
 # overrides below still win for their own part.
@@ -51,7 +80,7 @@ if _LEGACY:
     _DEFAULT_CONFIG_DIR = HERE
     _DEFAULT_CACHE_DIR = os.path.join(os.path.dirname(HERE), ".cache")
 else:
-    _DEFAULT_DATA_DIR = os.environ.get("KOPIALENS_DATA_DIR") or user_data_root()
+    _DEFAULT_DATA_DIR = os.environ.get("KOPIALENS_DATA_DIR") or portable_data_dir() or user_data_root()
     _DEFAULT_CONFIG_DIR = _DEFAULT_DATA_DIR
     _DEFAULT_CACHE_DIR = os.path.join(_DEFAULT_DATA_DIR, "cache")
 
@@ -62,13 +91,12 @@ REPOS_FILE = os.environ.get("KOPIALENS_REPOS_FILE") or os.path.join(CONFIG_DIR, 
 # Loopback by DEFAULT: reaching KopiaLens from another machine is a deliberate choice, not the
 # out-of-the-box state (it browses and can delete from a backup repository). The actual bind comes
 # from settings.kopialens.bind_host - see app.core.auth.bind_host - with this as the fallback.
-HOST, PORT = "127.0.0.1", int(os.environ.get("KOPIALENS_PORT") or 7123)
+HOST, PORT = "127.0.0.1", _env_port("KOPIALENS_PORT", 7123)
 GUARD_HOST = "127.0.0.1"                                                # single-instance guard probes loopback (a 0.0.0.0 bind includes it; connecting to 0.0.0.0 is unreliable on Windows)
 
-# Tray control API (kopialens_tray.py). Restart/quit live in the TRAY, not the server: a process
-# cannot kill itself and still answer the request that asked it to. Loopback ONLY and unauthenticated
-# - fine for a personal tool on this machine, revisit before any public release.
-TRAY_CONTROL_HOST, TRAY_CONTROL_PORT = "127.0.0.1", int(os.environ.get("KOPIALENS_TRAY_PORT") or 7124)
+# Control API of the desktop app (shell/). Restart/quit live there, not in the server: a process
+# cannot kill itself and still answer the request that asked it to. Loopback only.
+TRAY_CONTROL_HOST, TRAY_CONTROL_PORT = "127.0.0.1", _env_port("KOPIALENS_TRAY_PORT", 7124)
 
 def save_records(store: dict, strict: bool = False) -> None:
     """Persist the record store (see app.core.repos). ``strict`` raises OSError instead of

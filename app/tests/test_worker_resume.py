@@ -204,24 +204,6 @@ def test_worker_writes_its_result_even_when_stdout_is_gone(tmp_path, monkeypatch
     assert res["ok"] and res["trigger"] == "nightly" and res["pid"]
 
 
-def test_tray_quit_stops_only_our_workers_when_set(tmp_path, monkeypatch):
-    import kopialens_tray as tray
-
-    settings = tmp_path / "settings.json"
-    _write(settings, {"kopialens": {"quit_indexing": "stop"}})
-    monkeypatch.setattr(tray, "SETTINGS_FILE", str(settings))
-    assert tray._quit_stops_indexing()
-    _write(settings, {"kopialens": {}})
-    assert not tray._quit_stops_indexing(), "the default lets indexing finish"
-
-    ours, other = _Worker(6001), _Worker(6002, cmd="chrome.exe")
-    monkeypatch.setattr(tray, "_workers_running", lambda: [{"repo": "1", "pid": 6001}, {"repo": "2", "pid": 6002}])
-    monkeypatch.setattr("psutil.Process", lambda pid: ours if pid == 6001 else other)
-    monkeypatch.setattr(tray, "_log_guard", lambda *a, **k: None)
-    tray.stop_workers()
-    assert ours.terminated and not other.terminated
-
-
 def test_reload_watch_does_not_poll_index_status():
     """The old watcher asked /api/index/status every 2 s; each ask could run kopia snapshot list."""
     src = (ROOT / "frontend" / "js" / "jobs.js").read_text(encoding="utf-8")

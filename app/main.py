@@ -6,6 +6,7 @@ import datetime as dt
 import gc
 import json
 import os
+import re
 import threading
 import time
 import traceback
@@ -591,6 +592,9 @@ async def lifespan(_app: FastAPI):
     except Exception as exc:  # noqa: BLE001 - a settings problem must not block startup
         log.warning("debug log setting could not be applied: %s", exc)
     log.info("KopiaLens starting up")
+    _missing = missing_partials()
+    if _missing:
+        log.error("INCOMPLETE INSTALL - page files missing: %s. Reinstall KopiaLens.", ", ".join(_missing))
     import config as _config
     if _config.LEGACY_LAYOUT:
         log.warning("Old folder layout: data and settings sit next to the app. Move them into "
@@ -1129,11 +1133,49 @@ def _compose_html() -> str:
     )
 
 
+_INCLUDE_RE = re.compile(r'\{%-?\s*include\s+"([^"]+)"')
+
+_BROKEN_INSTALL_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>KopiaLens can't start</title>
+<style>body{{font:15px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 16px;color:#1f2933;background:#fff}}
+@media (prefers-color-scheme:dark){{body{{color:#e4e7eb;background:#16191d}}}}code{{font-size:13px;word-break:break-all}}</style>
+</head><body><h1>Some KopiaLens files are missing</h1>
+<p>This page can't load because the installation is incomplete. Reinstall KopiaLens to fix it. Your settings and index are kept.</p>
+<p>Missing: <code>{files}</code></p></body></html>"""
+
+
+def missing_partials() -> list[str]:
+    """Every {% include %} target reachable from index.html that is not on disk."""
+    missing: list[str] = []
+    seen: set[str] = set()
+    todo = ["index.html"]
+    while todo:
+        name = todo.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        try:
+            text = (FRONTEND / name).read_text(encoding="utf-8")
+        except OSError:
+            missing.append(name)
+            continue
+        todo.extend(_INCLUDE_RE.findall(text))
+    return sorted(missing)
+
+
 @app.get("/")
 def index() -> Response:
     # no-store on the shell itself: a cached index.html would keep pointing at the old asset
     # stamp, which is exactly how stale JS survived a reload before.
-    return HTMLResponse(_compose_html(), headers={"Cache-Control": "no-store"})
+    try:
+        page = _compose_html()
+    except jinja2.TemplateNotFound as exc:
+        log.error("page file missing: %s (incomplete install)", exc.name)
+        import html as _html
+        files = _html.escape(", ".join(missing_partials()) or str(exc.name))
+        return HTMLResponse(_BROKEN_INSTALL_PAGE.format(files=files), status_code=500,
+                            headers={"Cache-Control": "no-store"})
+    return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/health")

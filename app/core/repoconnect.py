@@ -635,6 +635,7 @@ def detect_configs() -> list[dict]:
         path = rec.get("config_file") or default_cfg
         known[os.path.normcase(os.path.abspath(path))] = str(rec.get("id"))
 
+    kopiaui = kopiabin.kopiaui_uses_kopia_folder()
     out: list[dict] = []
     for folder in (base, ours):
         if not os.path.isdir(folder):
@@ -647,10 +648,12 @@ def detect_configs() -> list[dict]:
                 continue
             info = describe_config(path)
             key = os.path.normcase(os.path.abspath(path))
+            in_kopia = os.path.normcase(folder) == os.path.normcase(base)
             out.append({
                 "config_file": path,
                 "filename": name,
-                "folder": "kopia" if os.path.normcase(folder) == os.path.normcase(base) else "data",
+                "folder": "kopia" if in_kopia else "data",
+                "kopiaui": in_kopia and kopiaui,
                 "is_default": key == os.path.normcase(os.path.abspath(default_cfg)),
                 "managed": is_managed_config(path),
                 "type": info["type"], "kind": info["kind"], "label": info["label"],

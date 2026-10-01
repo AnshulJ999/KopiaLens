@@ -68,6 +68,25 @@ def _kopiaui_bundles() -> list[str]:
     return out
 
 
+def kopiaui_uses_kopia_folder() -> bool:
+    """True when an installed KopiaUI reads kopia's own config folder. A KopiaUI with a
+    ``repositories`` folder beside it is in portable mode and reads that folder instead."""
+    for bundled in _kopiaui_bundles():
+        if not os.path.isfile(bundled):
+            continue
+        resources = os.path.dirname(os.path.dirname(bundled))
+        if sys.platform == "darwin":
+            app_bundle = os.path.dirname(os.path.dirname(resources))
+            portable = [os.path.join(os.path.dirname(app_bundle), "repositories")]
+        else:
+            exe_dir = os.path.dirname(resources)
+            portable = [os.path.join(exe_dir, "repositories"),
+                        os.path.join(os.path.dirname(exe_dir), "repositories")]
+        if not any(os.path.isdir(p) for p in portable):
+            return True
+    return False
+
+
 def _usual_locations() -> list[str]:
     if os.name == "nt":
         return [

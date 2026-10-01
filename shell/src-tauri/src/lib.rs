@@ -73,7 +73,12 @@ pub fn open_window(app: &AppHandle, repo: Option<String>) {
     let Ok(parsed) = Url::parse(&url) else { return };
     let port = sh.server.port;
     let (app2, label2) = (app.clone(), label.clone());
-    let built = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(parsed))
+    let mut builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(parsed));
+    if let Some(p) = &sh.server.portable {
+        // A portable copy keeps its sign-in cookies with its data, not in the user profile.
+        builder = builder.data_directory(p.join("webview"));
+    }
+    let built = builder
         .title(title)
         .inner_size(1440.0, 900.0)
         .min_inner_size(820.0, 560.0)
@@ -110,12 +115,12 @@ fn quit_stops_indexing(sh: &Shell) -> bool {
 }
 
 /// Stops the server (and, per Settings, running index workers) and exits. With `confirm`, asks
-/// first when an index is running.
-pub fn quit(app: &AppHandle, confirm: bool) {
+/// first when an index is running; `stop_all` always ends the workers (installer upgrades).
+pub fn quit(app: &AppHandle, confirm: bool, stop_all: bool) {
     let app = app.clone();
     thread::spawn(move || {
         let sh = shell(&app);
-        let stop = quit_stops_indexing(&sh);
+        let stop = stop_all || quit_stops_indexing(&sh);
         if confirm {
             let running: Vec<String> = sh.state.lock().unwrap().as_ref()
                 .and_then(|st| st.get("repos")?.as_array().cloned()).unwrap_or_default().iter()
@@ -201,7 +206,7 @@ pub fn on_menu(app: &AppHandle, id: &str) {
                 poll_once(&app);
             });
         }
-        ["quit"] => quit(app, true),
+        ["quit"] => quit(app, true, false),
         _ => {}
     }
 }
@@ -235,12 +240,32 @@ fn tray_note_once(app: &AppHandle) {
     tray::toast(app, "KopiaLens is still running", "Open it again from the tray icon. Scheduled indexing keeps running.");
 }
 
+fn env_flag_off(name: &str) -> bool {
+    std::env::var(name).map(|v| v.trim() == "0").unwrap_or(false)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let hidden = std::env::args().any(|a| a == "--hidden");
-    let app = tauri::Builder::default()
-        // Must be first: a second launch opens the window instead of starting another app.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| open_window(app, None)))
+    // `--quit` closes a running KopiaLens (the installer uses it before replacing files).
+    let quit_only = std::env::args().any(|a| a == "--quit");
+    let mut builder = tauri::Builder::default();
+    // Must be first: a second launch opens the window instead of starting another app.
+    // KOPIALENS_SINGLE_INSTANCE=0 lets an isolated test copy run beside the real one.
+    if env_flag_off("KOPIALENS_SINGLE_INSTANCE") {
+        if quit_only {
+            return;
+        }
+    } else {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if args.iter().any(|a| a == "--quit") {
+                quit(app, false, true);
+            } else {
+                open_window(app, None);
+            }
+        }));
+    }
+    let app = builder
         .plugin(
             tauri_plugin_window_state::Builder::new()
                 .with_state_flags(
@@ -264,8 +289,12 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            if quit_only {
+                // Nothing was running, so there is nothing to close.
+                std::process::exit(0);
+            }
             let handle = app.handle().clone();
-            let Some(server) = Server::locate() else {
+            let Some(server) = Server::locate(app.path().resource_dir().ok()) else {
                 app.dialog()
                     .message("Couldn't find the KopiaLens server next to this app. Reinstall KopiaLens, or set KOPIALENS_HOME to its folder.")
                     .title("KopiaLens can't start")

@@ -1,7 +1,8 @@
 // Starting, stopping and talking to the KopiaLens server.
 //
-// Two layouts: an install ships `kopialens(.exe)` next to this program and runs it with
-// `--server`; a source checkout runs `python main.py` from the KopiaLens folder.
+// Two layouts: an install or portable copy ships the compiled server in `server/` beside this
+// program (Tauri's resource folder) and runs it with `--server`; a source checkout runs
+// `python main.py` from the KopiaLens folder.
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
@@ -26,6 +27,8 @@ pub enum Layout {
 
 pub struct Server {
     pub layout: Layout,
+    /// `data/` beside the app when the portable marker is present.
+    pub portable: Option<PathBuf>,
     pub root: PathBuf,
     pub data_dir: PathBuf,
     pub settings_file: PathBuf,
@@ -45,23 +48,32 @@ fn env_port(name: &str, default: u16) -> u16 {
 }
 
 fn server_exe_name() -> &'static str {
-    if cfg!(windows) { "kopialens.exe" } else { "kopialens" }
+    if cfg!(windows) { "kopialens-server.exe" } else { "kopialens-server" }
 }
 
-fn find_layout() -> Option<(Layout, PathBuf)> {
+/// Same name as config.PORTABLE_MARKER.
+const PORTABLE_MARKER: &str = "KopiaLens-portable.txt";
+
+fn installed_in(dir: &Path) -> Option<(Layout, PathBuf)> {
+    let root = dir.join("server");
+    let exe = root.join(server_exe_name());
+    exe.is_file().then(|| (Layout::Installed { exe }, root))
+}
+
+fn find_layout(resource_dir: Option<PathBuf>) -> Option<(Layout, PathBuf)> {
     if let Some(home) = env("KOPIALENS_HOME") {
         let root = PathBuf::from(home);
-        let exe = root.join(server_exe_name());
-        if exe.is_file() {
-            return Some((Layout::Installed { exe }, root));
+        if let Some(found) = installed_in(&root) {
+            return Some(found);
         }
         return Some((Layout::Source { root: root.clone(), python: python() }, root));
     }
     let me = std::env::current_exe().ok()?;
     let dir = me.parent()?.to_path_buf();
-    let exe = dir.join(server_exe_name());
-    if exe.is_file() {
-        return Some((Layout::Installed { exe }, dir));
+    for base in resource_dir.iter().chain(std::iter::once(&dir)) {
+        if let Some(found) = installed_in(base) {
+            return Some(found);
+        }
     }
     // Source checkout: the shell is built inside KopiaLens/shell/, so walk up to main.py.
     for anc in dir.ancestors() {
@@ -79,9 +91,8 @@ fn python() -> String {
 
 // Mirrors config.py: KOPIALENS_DATA_DIR, else the old layout (repos.json next to the code), else
 // the per-user data folder.
-fn data_dirs(root: &Path) -> (PathBuf, PathBuf) {
-    if let Some(d) = env("KOPIALENS_DATA_DIR") {
-        let d = PathBuf::from(d);
+fn data_dirs(root: &Path, portable: Option<&PathBuf>) -> (PathBuf, PathBuf) {
+    if let Some(d) = env("KOPIALENS_DATA_DIR").map(PathBuf::from).or_else(|| portable.cloned()) {
         let cfg = env("KOPIALENS_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| d.clone());
         return (d, cfg);
     }
@@ -134,11 +145,14 @@ pub enum ApiError {
 }
 
 impl Server {
-    pub fn locate() -> Option<Server> {
-        let (layout, root) = find_layout()?;
-        let (data_dir, cfg_dir) = data_dirs(&root);
+    pub fn locate(resource_dir: Option<PathBuf>) -> Option<Server> {
+        let (layout, root) = find_layout(resource_dir)?;
+        let app_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+        let portable = app_dir.join(PORTABLE_MARKER).is_file().then(|| app_dir.join("data"));
+        let (data_dir, cfg_dir) = data_dirs(&root, portable.as_ref());
         Some(Server {
             layout,
+            portable,
             root,
             settings_file: cfg_dir.join("settings.json"),
             data_dir,
@@ -200,6 +214,9 @@ impl Server {
                 c
             }
         };
+        if let (Some(p), None) = (&self.portable, env("KOPIALENS_DATA_DIR")) {
+            cmd.env("KOPIALENS_DATA_DIR", p);
+        }
         cmd.current_dir(&self.root)
             .env("KOPIALENS_PROFILE", "desktop")
             .env("KOPIALENS_SHELL_TOKEN", &self.token)

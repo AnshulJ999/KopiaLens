@@ -48,7 +48,7 @@ pub fn spawn(app: AppHandle, shell: Arc<Shell>) {
                 (Method::Post, "/quit") => {
                     shell.server.log("control port: quit");
                     reply(req, 200, json!({"ok": true}));
-                    crate::quit(&app, false);
+                    crate::quit(&app, false, false);
                 }
                 _ => reply(req, 404, json!({"ok": false, "detail": "not found"})),
             }
