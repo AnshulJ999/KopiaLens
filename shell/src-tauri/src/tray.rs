@@ -28,44 +28,29 @@ pub enum Health {
     Error,
 }
 
-fn color(h: Health) -> [u8; 3] {
-    match h {
-        Health::Ok => [15, 118, 110],
-        Health::Busy => [37, 99, 235],
-        Health::Paused => [180, 110, 10],
-        Health::Error => [220, 38, 38],
-        Health::Starting | Health::Down | Health::Limited => [120, 113, 108],
-    }
-}
-
-/// A lens: a ring with a handle, anti-aliased by 4x4 supersampling.
-fn icon(h: Health) -> Image<'static> {
-    const N: usize = 32;
-    let [r, g, b] = color(h);
+/// The original KopiaLens mark (a "Q" on a light tile), kept until the real logo exists.
+fn icon() -> Image<'static> {
+    const N: usize = 64;
+    let (bg, teal) = ([250u8, 250, 249], [15u8, 118, 110]);
     let mut px = vec![0u8; N * N * 4];
-    let (cx, cy, r_out, r_in) = (13.0f32, 13.0f32, 11.5f32, 6.5f32);
-    let (ax, ay, bx, by, half_w) = (21.0f32, 21.0f32, 29.5f32, 29.5f32, 3.0f32);
     for y in 0..N {
         for x in 0..N {
-            let mut hit = 0;
+            let (mut r, mut g, mut b) = (0u32, 0u32, 0u32);
             for sy in 0..4 {
                 for sx in 0..4 {
-                    let px_ = x as f32 + (sx as f32 + 0.5) / 4.0;
-                    let py_ = y as f32 + (sy as f32 + 0.5) / 4.0;
-                    let d = ((px_ - cx).powi(2) + (py_ - cy).powi(2)).sqrt();
-                    let ring = d <= r_out && d >= r_in;
-                    let t = (((px_ - ax) * (bx - ax) + (py_ - ay) * (by - ay))
-                        / ((bx - ax).powi(2) + (by - ay).powi(2)))
-                    .clamp(0.0, 1.0);
-                    let (qx, qy) = (ax + t * (bx - ax), ay + t * (by - ay));
-                    let handle = ((px_ - qx).powi(2) + (py_ - qy).powi(2)).sqrt() <= half_w;
-                    if ring || handle {
-                        hit += 1;
-                    }
+                    let fx = x as f32 + (sx as f32 + 0.5) / 4.0;
+                    let fy = y as f32 + (sy as f32 + 0.5) / 4.0;
+                    let d = ((fx - 32.0).powi(2) + (fy - 32.0).powi(2)).sqrt();
+                    let ring = d <= 24.0 && d >= 10.0;
+                    let tail = (42.0..=58.0).contains(&fx) && (42.0..=50.0).contains(&fy);
+                    let c = if ring || tail { teal } else { bg };
+                    r += c[0] as u32;
+                    g += c[1] as u32;
+                    b += c[2] as u32;
                 }
             }
             let i = (y * N + x) * 4;
-            px[i..i + 4].copy_from_slice(&[r, g, b, (hit * 255 / 16) as u8]);
+            px[i..i + 4].copy_from_slice(&[(r / 16) as u8, (g / 16) as u8, (b / 16) as u8, 255]);
         }
     }
     Image::new_owned(px, N as u32, N as u32)
@@ -260,7 +245,7 @@ pub fn create(app: &AppHandle, shell: &Arc<Shell>) -> tauri::Result<()> {
     let menu = build_menu(app, h, state.as_ref())?;
     drop(app.remove_tray_by_id(TRAY_ID));
     TrayIconBuilder::with_id(TRAY_ID)
-        .icon(icon(h))
+        .icon(icon())
         .tooltip(tooltip(h, state.as_ref()))
         .menu(&menu)
         .show_menu_on_left_click(click == "menu")
@@ -306,12 +291,7 @@ pub fn refresh(app: &AppHandle, shell: &Arc<Shell>, h: Health) {
     });
     let autostart = app.autolaunch().is_enabled().unwrap_or(false);
     let sig = format!("{:?}|{}|{}", menu_view, h as u8, autostart);
-    let mut prev_h = shell.health.lock().unwrap();
-    if *prev_h != h {
-        let _ = tray.set_icon(Some(icon(h)));
-        *prev_h = h;
-    }
-    drop(prev_h);
+    *shell.health.lock().unwrap() = h;
     let _ = tray.set_tooltip(Some(tip));
     let mut prev = shell.menu_sig.lock().unwrap();
     if *prev != sig {
