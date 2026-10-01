@@ -164,3 +164,20 @@ def test_only_large_api_replies_are_compressed(path, size, gzipped):
     resp = client.get(path, headers={"Accept-Encoding": "gzip"})
     assert resp.status_code == 200 and len(resp.text) == size
     assert (resp.headers.get("content-encoding") == "gzip") is gzipped
+
+
+@pytest.mark.parametrize("client, gzipped", [("192.168.1.20", True), ("127.0.0.1", False), ("::1", False)])
+def test_replies_to_a_browser_on_the_same_pc_are_not_compressed(client, gzipped):
+    from starlette.applications import Starlette
+    from starlette.responses import Response
+    from starlette.routing import Route
+    from starlette.testclient import TestClient
+    from app import main as m
+
+    async def body(request):
+        return Response("x" * 50_000, media_type="application/json")
+
+    inner = Starlette(routes=[Route("/api/snapshots", body)])
+    resp = TestClient(m._ApiGZip(inner), client=(client, 50000)).get(
+        "/api/snapshots", headers={"Accept-Encoding": "gzip"})
+    assert (resp.headers.get("content-encoding") == "gzip") is gzipped

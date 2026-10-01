@@ -692,7 +692,8 @@ app = FastAPI(title="KopiaLens", version="0.1.0", lifespan=lifespan)
 
 
 class _ApiGZip:
-    """Compress API replies over 1 KB; file downloads pass through untouched."""
+    """Compress API replies over 1 KB for browsers on another machine; same-PC browsers and file
+    downloads pass through untouched (on loopback compression only costs time)."""
 
     _SKIP = ("/api/restore/download",)
 
@@ -702,7 +703,9 @@ class _ApiGZip:
 
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "") if scope["type"] == "http" else ""
-        if path.startswith("/api/") and not path.startswith(self._SKIP):
+        host = (scope.get("client") or ("",))[0] or ""
+        local = host == "::1" or host.startswith("127.")
+        if path.startswith("/api/") and not path.startswith(self._SKIP) and not local:
             await self.gzip(scope, receive, send)
         else:
             await self.app(scope, receive, send)
