@@ -18,9 +18,8 @@ from ..settings import load_settings, mutate_settings
 router = APIRouter(tags=["dashboard"])
 
 # /api/repos serves the whole settings file to the UI (the Settings modal reads it). Nothing in it
-# may ever carry a credential - the known case is kopialens.server.password (the loopback token
-# KopiaLens generates for the optional server listing backend). Scrubbed recursively so a secret
-# added under a future block cannot leak by accident. Safe to strip: saveSettings() merges a
+# may ever carry a credential; it is scrubbed recursively so a secret added under a future block
+# cannot leak by accident. Safe to strip: saveSettings() merges a
 # hand-picked subset back, so removing a key from the response can never erase the stored value.
 _SECRET_KEY_NAMES = {"password", "password_hash", "secret", "token", "api_key", "api_key_hash"}
 
@@ -207,7 +206,8 @@ def index_freshness() -> dict:
         if row["running"]:
             row["progress"] = worker_progress(key)
         out.append(row)
-    return {"repos": out, "now": time.time()}
+    from ..core import pause
+    return {"repos": out, "now": time.time(), "pause": pause.state()}
 
 
 @router.post("/settings")
@@ -233,15 +233,16 @@ def post_settings(payload: dict) -> dict:
 
 @router.get("/settings/tables")
 def get_table_prefs() -> dict:
-    return load_settings().get("kopialens", {}).get("tables", {})
+    from ..core import uistate
+    return uistate.tables()
 
 
 @router.post("/settings/table")
 def post_table_pref(payload: dict) -> dict:
-    """Persist one table's Tabulator config (columns/sort) in the backend settings file."""
+    """Persist one table's Tabulator config (columns/sort) in ui_state.json."""
+    from ..core import uistate
     table_id = payload.get("id")
     if not table_id:
         return {"ok": False}
-    mutate_settings(lambda s: s.setdefault("kopialens", {}).setdefault("tables", {}).__setitem__(
-        table_id, payload.get("config")))
+    uistate.set_table(table_id, payload.get("config"))
     return {"ok": True}

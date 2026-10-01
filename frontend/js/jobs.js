@@ -345,6 +345,7 @@ const jobsPart = {
       const f = await getJson("/api/index/freshness").catch(() => null);
       if (!f) return;
       this.freshness = f.repos || [];
+      this.indexPause = f.pause || this.indexPause;
       for (const r of waiting) {
         const w = this._reindexWatch[r];
         if (!w) continue;

@@ -13,7 +13,7 @@
         <div class="flex min-h-0 flex-1">
           <nav class="w-36 sm:w-40 shrink-0 overflow-y-auto border-r border-bd p-2 space-y-1 text-sm">
 
-            <template x-for="s in [['general','General'],['repositories','Repositories'],['account','Account'],['encryption','Encryption'],['appearance','Appearance'],['indexing','Indexing'],['refresh','Refresh'],['advanced','Advanced'],['backblaze','Backblaze']]" :key="s[0]">
+            <template x-for="s in [['general','General'],['repositories','Repositories'],['account','Account'],['encryption','Encryption'],['appearance','Appearance'],['indexing','Indexing'],['refresh','Refresh'],['advanced','Advanced'],['backblaze','Backblaze'],['backups','Settings backups'],['about','About']]" :key="s[0]">
               <button @click="settingsTab=s[0]"
                       :class="settingsTab===s[0] ? 'w-full text-left rounded px-2 py-1.5 bg-sel text-fg font-medium' : 'w-full text-left rounded px-2 py-1.5 hover:bg-head'"
                       x-text="s[1]"></button>
@@ -74,6 +74,7 @@
 {% include "partials/appearance.html" %}
 {% include "partials/repos.html" %}
 {% include "partials/account.html" %}
+{% include "partials/appconfig.html" %}
 
             <section x-show="settingsTab==='indexing'" class="space-y-4">
               <div>
@@ -93,6 +94,20 @@
                     <option value="86400">24 hours</option>
                   </select></div>
                 <p class="text-[11px] text-muted mt-1">Indexing, snapshot analysis, reclaimable, the dashboard rebuild and folder pre-compute run together in a separate process that exits afterwards, so this app never holds on to the memory. One repo at a time. If the PC was off at the scheduled time it catches up at the next opportunity. The app stays usable while a repo indexes; a heavy pass just isn't included in that repo's numbers until it finishes. Backblaze has its own schedule; this setting doesn't change it.</p>
+              </div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Pause indexing</span>
+                  <div x-show="!indexPause.paused" class="flex flex-wrap justify-end gap-1">
+                    <button @click="pauseIndexing(4)" class="kl-btn">4 hours</button>
+                    <button @click="pauseIndexing(8)" class="kl-btn">8 hours</button>
+                    <button @click="pauseIndexing(12)" class="kl-btn">12 hours</button>
+                    <button @click="pauseIndexing(0)" class="kl-btn">Until I resume</button>
+                  </div>
+                  <div x-show="indexPause.paused" class="flex items-center gap-2">
+                    <span class="text-xs" style="color:var(--warn)" x-text="pauseText()"></span>
+                    <button @click="resumeIndexing()" class="kl-btn">Resume</button>
+                  </div></div>
+                <p class="text-[11px] text-muted mt-1">Automatic indexing waits, including the update after deletes. Index still runs when you start it. A pause ends when KopiaLens restarts; anything that came due runs when it ends.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Dashboard numbers</span>
@@ -217,6 +232,11 @@
                 <div class="flex items-center justify-between gap-3"><span>Debug log</span>
                   <button @click="debugLog = !debugLog; saveKl('debug_log')" class="h-8 rounded border border-bd px-3" x-text="debugLog ? 'On' : 'Off'"></button></div>
                 <p class="text-[11px] text-muted mt-1">Writes detailed diagnostics to <code>data/logs/kopialens-debug.log</code>, alongside the normal app log. Useful when troubleshooting; leave it off otherwise. Applies immediately.</p>
+              </div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Local control port <span class="text-[10px] text-warn">restart</span></span>
+                  <button @click="controlApi = !controlApi; saveKl('control_api')" class="h-8 rounded border border-bd px-3" x-text="controlApi ? 'On' : 'Off'"></button></div>
+                <p class="text-[11px] text-muted mt-1">Lets scripts on this computer restart or quit KopiaLens through the tray. Nothing else can reach it. Turn it off if nothing uses it.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Log cleanup</span>

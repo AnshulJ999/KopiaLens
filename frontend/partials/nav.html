@@ -77,6 +77,10 @@
         <button class="tab" @click="active=t.id; activate()" :class="active===t.id ? 'bg-sel font-medium' : 'hover:bg-head'" x-text="t.label"></button>
       </template>
       <div class="ml-auto flex items-center gap-2 text-xs pr-2">
+        <span x-show="indexPause.paused" class="rounded px-1.5 py-0.5 border border-warn-bd text-warn whitespace-nowrap"
+              :title="pauseText() + '. Automatic indexing waits; Index still runs when you start it.'">
+          Indexing paused · <button @click="resumeIndexing()" class="underline">Resume</button>
+        </span>
         <template x-for="f in freshness" :key="f.repo">
           <span class="rounded px-1.5 py-0.5 border"
                 :class="freshStale(f) ? 'border-warn-bd text-warn' : 'border-bd-soft text-muted'"

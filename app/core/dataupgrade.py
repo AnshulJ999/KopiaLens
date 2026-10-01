@@ -42,7 +42,7 @@ log = get_logger("dataupgrade")
 
 # The folder format THIS app writes. Bump it in the release that changes a file layout, together
 # with a registered step that migrates the previous version.
-DATA_VERSION = 3
+DATA_VERSION = 4
 
 VERSION_FILE = os.path.join(DATA_DIR, "data_version.json")
 
@@ -50,11 +50,17 @@ VERSION_FILE = os.path.join(DATA_DIR, "data_version.json")
 # hand-edited or long-lived settings.json cannot accumulate keys nothing reads. Add a pair
 # ("block", "key") in the release that removes the key - this list is version-independent on
 # purpose: a dead key costs nothing to skip, so it needs no folder-version dance.
-DEAD_SETTINGS_KEYS: tuple[tuple[str, str], ...] = ()
+DEAD_SETTINGS_KEYS: tuple[tuple[str, str], ...] = (
+    ("kopialens", "auto_compact"), ("kopialens", "compact_ratio"), ("kopialens", "compact_min_interval"),
+    ("kopialens", "dir_memo_max_mb"), ("kopialens", "walk_cache_compression"),
+    ("", "laptop_mode"), ("", "verbose"),
+    ("", "server"),                     # the kopia-server helper's token now lives in memory only
+)
 
 # Modules that register upgrade steps at import time (a step needs the app's own code, so the
 # registry cannot know them statically - this is the ONE line a new step's author edits).
-_STEP_MODULES: tuple[str, ...] = ("app.core.encryption_upgrade", "app.core.users_upgrade")
+_STEP_MODULES: tuple[str, ...] = ("app.core.encryption_upgrade", "app.core.users_upgrade",
+                                  "app.core.uistate_upgrade")
 
 _STEPS: dict[int, dict] = {}
 _LOCK = threading.Lock()
@@ -185,6 +191,9 @@ def run_pending() -> dict:
         _write_version(info["version"])
         log.info("data folder stamped at version %s (it predates the version stamp)", info["version"])
     ran = []
+    if info["version"] < DATA_VERSION:
+        from . import configbackup
+        configbackup.before_upgrade(f"before data format {info['version']} -> {DATA_VERSION}")
     with _LOCK:
         _STATE.update({"running": True, "error": ""})
     try:

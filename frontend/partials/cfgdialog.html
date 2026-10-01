@@ -1,0 +1,62 @@
+    <!-- Restore a settings backup / import an export (appconfig.js). Choose what to put back,
+         see what changes, then the result with a restart. -->
+    <template x-if="cfgDlg">
+      <div class="fixed inset-0 z-[58] bg-black/40 flex items-center justify-center p-4 sm:p-6"
+           @click.self="cfgDlg.busy || (cfgDlg = null)">
+        <div role="dialog" aria-modal="true" class="w-[32rem] max-w-full rounded-lg border border-bd bg-surface shadow-xl flex flex-col text-sm">
+          <div class="p-4 space-y-3 overflow-auto max-h-[80vh]">
+            <template x-if="!cfgDlg.done">
+              <div class="space-y-3">
+                <h3 class="text-[15px] font-semibold leading-snug"
+                    x-text="cfgDlg.mode === 'restore' ? 'Restore from ' + fmtAbs(cfgDlg.backup.at) + '?' : 'Import settings from this file?'"></h3>
+                <template x-if="cfgDlg.mode === 'restore'">
+                  <p class="text-xs text-muted" x-text="cfgKind(cfgDlg.backup) + (cfgDlg.backup.app_version ? ' · KopiaLens ' + cfgDlg.backup.app_version : '')"></p>
+                </template>
+                <template x-if="cfgDlg.mode === 'import'">
+                  <p class="text-xs text-muted" x-text="'Exported ' + fmtAbs(cfgDlg.preview.exported_at) + (cfgDlg.preview.version ? ' · KopiaLens ' + cfgDlg.preview.version : '')"></p>
+                </template>
+                <div class="space-y-2">
+                  <template x-for="g in CFG_GROUPS.filter((x) => cfgDlg.available.includes(x[0]))" :key="g[0]">
+                    <div>
+                      <label class="flex items-center gap-2 text-xs font-medium"><input type="checkbox" x-model="cfgDlg.groups[g[0]]"><span x-text="g[1]"></span></label>
+                      <template x-if="cfgDlg.mode === 'import'">
+                        <div class="ml-6">
+                          <template x-for="f in cfgDlg.preview.files.filter((f) => (g[0] === 'settings' && /settings|ui_state/.test(f.file)) || (g[0] === 'repos' && f.file === 'repos.json') || (g[0] === 'accounts' && f.file === 'users.json'))" :key="f.file">
+                            <p class="text-[11px] text-muted" :title="(f.changed || []).join(', ')" x-text="cfgFileSummary(f)"></p>
+                          </template>
+                        </div>
+                      </template>
+                      <p x-show="CFG_GROUP_NOTE[g[0]] && cfgDlg.groups[g[0]]" class="ml-6 text-[11px]" style="color:var(--warn)" x-text="CFG_GROUP_NOTE[g[0]]"></p>
+                    </div>
+                  </template>
+                </div>
+                <p class="text-[11px] text-muted">Your current files are backed up first, so this can be undone.</p>
+                <p class="text-xs" style="color:var(--danger)" x-show="cfgDlg.error" x-text="cfgDlg.error"></p>
+              </div>
+            </template>
+            <template x-if="cfgDlg.done">
+              <div class="space-y-3">
+                <h3 class="text-[15px] font-semibold leading-snug" x-text="cfgDlg.mode === 'restore' ? 'Restored' : 'Imported'"></h3>
+                <p class="text-xs" x-text="cfgDlg.done.label + ' ' + (cfgDlg.mode === 'restore' ? 'restored' : 'imported') + '. Restart KopiaLens to use them.'"></p>
+                <p class="text-xs" style="color:var(--danger)" x-show="cfgDlg.error" x-text="cfgDlg.error"></p>
+              </div>
+            </template>
+          </div>
+          <div class="flex justify-end gap-2 border-t border-bd px-4 py-3">
+            <template x-if="!cfgDlg.done">
+              <div class="flex gap-2">
+                <button type="button" @click="cfgDlg = null" :disabled="cfgDlg.busy" class="kl-btn">Cancel</button>
+                <button type="button" @click="cfgApply()" :disabled="cfgDlg.busy || !cfgChosen().length" class="kl-btn primary"
+                        x-text="cfgDlg.busy ? (cfgDlg.mode === 'restore' ? 'Restoring…' : 'Importing…') : (cfgDlg.mode === 'restore' ? 'Restore' : 'Import')"></button>
+              </div>
+            </template>
+            <template x-if="cfgDlg.done">
+              <div class="flex gap-2">
+                <button type="button" @click="cfgDlg = null" class="kl-btn">Later</button>
+                <button type="button" @click="cfgRestart()" class="kl-btn primary">Restart now</button>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </template>

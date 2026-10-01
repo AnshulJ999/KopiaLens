@@ -5,23 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>KopiaLens</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <script src="/static/vendor/tailwindcdn-3.4.17.js"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: { extend: { colors: {
-        canvas: 'var(--canvas)', surface: 'var(--surface)', surface2: 'var(--surface2)', head: 'var(--head)',
-        sel: 'var(--sel)',
-        bd: 'var(--bd)', 'bd-soft': 'var(--bd-soft)',
-        fg: 'var(--fg)', muted: 'var(--muted)', faint: 'var(--faint)',
-        ok: 'var(--ok)', 'ok-bd': 'var(--ok-bd)', 'ok-bg': 'var(--ok-bg)', 'ok-solid': 'var(--ok-solid)',
-        danger: 'var(--danger)', 'danger-bd': 'var(--danger-bd)', 'danger-bg': 'var(--danger-bg)',
-        warn: 'var(--warn)', 'warn-bd': 'var(--warn-bd)', 'warn-bg': 'var(--warn-bg)',
-        link: 'var(--link)',
-        accent: 'var(--accent)', 'accent-bd': 'var(--accent-bd)', 'accent-bg': 'var(--accent-bg)', 'accent-solid': 'var(--accent-solid)',
-      } } }
-    };
-  </script>
   <script>
     // Resolve the Tailwind dark variant before first paint. data-theme is stamped by the
     // server; only "system" needs the media query, so no flash on any path.
@@ -38,11 +21,24 @@
   <script src="/static/vendor/tabulator-6.3.1.min.js"></script>
   <link href="/static/css/tokens.css?v={{ asset_v }}" rel="stylesheet">
   <link href="/static/css/app.css?v={{ asset_v }}" rel="stylesheet">
+  <!-- Built by packaging/build_css.py. Last on purpose: utilities override app.css. -->
+  <link href="/static/css/tailwind.css?v={{ asset_v }}" rel="stylesheet">
 </head>
 <body class="bg-canvas text-fg">
   <div id="app" x-data="kopiaLens()" x-init="init()" x-cloak class="h-screen flex flex-col" :class="ob ? 'overflow-hidden' : ''">
 {% include "partials/nav.html" %}
     <main class="min-w-0 flex-1 overflow-auto p-4">
+      <!-- A config file was damaged and restored (or reset) at startup: say so until dismissed. -->
+      <template x-for="n in cfgNotices" :key="n.id">
+        <div class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm">
+          <div class="min-w-0 flex-1">
+            <div class="font-medium" x-text="cfgNoticeText(n)"></div>
+            <div class="text-xs text-muted" x-show="n.kept_as" x-text="'The damaged file was kept as ' + n.kept_as + '.'"></div>
+          </div>
+          <button @click="cfgOpenBackups()" class="kl-btn">Settings backups</button>
+          <button @click="cfgDismiss(n)" class="kl-btn quiet">Dismiss</button>
+        </div>
+      </template>
       <!-- A repository with no index yet: say so once, with the way to start, instead of blank pages. -->
       <div x-show="repoKind !== 'backblaze' && indexStatus && indexStatus.never_indexed" x-cloak
            class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm">
@@ -90,6 +86,7 @@
 {% include "partials/repodialogs.html" %}
 {% include "partials/onboarding.html" %}
 {% include "partials/lock.html" %}
+{% include "partials/cfgdialog.html" %}
 {% include "partials/confirm.html" %}
 {% include "partials/jobs.html" %}
 {% include "partials/maintenance.html" %}
@@ -122,6 +119,7 @@
   <script src="/static/js/runbar.js?v={{ asset_v }}"></script>
   <script src="/static/js/settings.js?v={{ asset_v }}"></script>
   <script src="/static/js/account.js?v={{ asset_v }}"></script>
+  <script src="/static/js/appconfig.js?v={{ asset_v }}"></script>
   <script src="/static/js/repos.js?v={{ asset_v }}"></script>
   <script src="/static/js/onboarding.js?v={{ asset_v }}"></script>
   <script src="/static/js/theme.js?v={{ asset_v }}"></script>

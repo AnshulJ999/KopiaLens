@@ -55,6 +55,9 @@ document.addEventListener("alpine:init", () => {
     showRestore: false, restore: null, showDiff: false, diffText: "", diffBusy: false,
     // Settings Account + Encryption sections, their shared dialog, and the unlock box (lock.html).
     acct: null, encStatus: null, acctDialog: null, locked: null, sessionDays: 30,
+    // Settings backups, the damaged-file notice, pausing indexing and About (appconfig.js).
+    cfg: null, cfgNotices: [], cfgDlg: null, cfgBusy: "", cfgExportAccounts: false, cfgExportKeys: false,
+    indexPause: { paused: false }, about: null, controlApi: true,
     // Onboarding (onboarding.js) and repositories (repos.js): the shared connect form is `cx`.
     ob: null, cx: null, repoMenu: false, repoAdd: false, repoDlg: null, repoChecks: {}, kopiaInfo: null, repoKopiaEdit: null,
     policyKeys: ["latest", "hourly", "daily", "weekly", "monthly", "annual"],
@@ -167,6 +170,7 @@ document.addEventListener("alpine:init", () => {
     async escClose() {
       if (this.confirmBox) { this.confirmResolve(false); return; }
       if (this.acctDialog) { if (this.acctDialog.mode !== "showkey") this.acctDialog = null; return; }
+      if (this.cfgDlg) { if (!this.cfgDlg.busy) this.cfgDlg = null; return; }
       if (this.locked) return;    // the unlock box has no close: nothing behind it has data
       if (this.ob) return;        // onboarding is the whole page
       if (this.repoMenu) { this.repoMenu = false; return; }
@@ -252,6 +256,7 @@ document.addEventListener("alpine:init", () => {
         this.repoKind = this.kindOf(this.repo);
         // A locked index shows the unlock box on load, not only once a view happens to read it.
         getJson("/api/encryption/status").then((s) => { if (s.enabled && !s.unlocked) this.showLock({}); }).catch(() => {});
+        this.loadCfg();   // a damaged settings file restored at startup shows its notice
         this.backend = data.settings?.listing_backend || "subprocess";
         const _ps = String(kl.page_size || 500);  // snap to a valid <option> so the select can't visually revert to 100
         this.searchPageSize = this.pageSizes.includes(_ps) ? _ps : "500";
@@ -364,7 +369,11 @@ document.addEventListener("alpine:init", () => {
 
     // ---- Freshness strip: how current each repo's data is (one call covers all three) ----
     async loadFreshness() {
-      try { this.freshness = (await getJson("/api/index/freshness")).repos || []; } catch (e) { /* non-critical */ }
+      try {
+        const f = await getJson("/api/index/freshness");
+        this.freshness = f.repos || [];
+        this.indexPause = f.pause || { paused: false };
+      } catch (e) { /* non-critical */ }
     },
     freshAge(row) {
       if (row.via_server) return "browse-only";
@@ -555,13 +564,13 @@ document.addEventListener("alpine:init", () => {
     csv(id, name) { downloadTable(id, name); },
     };
     // Duplicate-key guard: two parts declaring the same key would compose silently last-wins.
-    const parts = [["core", core], ["toastPart", toastPart], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["browsePart", browsePart], ["treePart", treePart], ["searchPart", searchPart], ["indexPanelPart", indexPanelPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["accountPart", accountPart], ["reposPart", reposPart], ["onboardingPart", onboardingPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart]];
+    const parts = [["core", core], ["toastPart", toastPart], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["browsePart", browsePart], ["treePart", treePart], ["searchPart", searchPart], ["indexPanelPart", indexPanelPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["accountPart", accountPart], ["appConfigPart", appConfigPart], ["reposPart", reposPart], ["onboardingPart", onboardingPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart]];
     const seen = new Map();
     for (const [owner, part] of parts)
       for (const k of Object.keys(part)) {
         if (seen.has(k)) console.error(`kopiaLens: duplicate key "${k}" declared in both ${seen.get(k)} and ${owner}`);
         else seen.set(k, owner);
       }
-    return Object.assign(core, toastPart, indexPanelPart, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, browsePart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, diffviewPart, jobsPart, maintenancePart, settingsPart, accountPart, reposPart, onboardingPart, themePart, policiesPart, policyEditPart);
+    return Object.assign(core, toastPart, indexPanelPart, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, browsePart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, diffviewPart, jobsPart, maintenancePart, settingsPart, accountPart, appConfigPart, reposPart, onboardingPart, themePart, policiesPart, policyEditPart);
   });
 });

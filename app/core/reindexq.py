@@ -122,6 +122,9 @@ def _try_start(repo: str, force: bool = False) -> dict:
         return {"started": False, "reason": "already up to date"}
     if not force and time.time() < rec["due"]:
         return {"started": False, "reason": "waiting"}
+    from . import pause
+    if not force and rec.get("reason") != "first" and pause.active():
+        return {"started": False, "reason": "indexing is paused"}
     busy = any(j["state"] == "running" and j["mutating"] and j["repo"] == repo for j in jobs.list_jobs())
     if busy:
         return {"started": False, "reason": "a delete is still running"}

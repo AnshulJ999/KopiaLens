@@ -106,13 +106,18 @@ def _workers_running() -> list[dict]:
     return out
 
 
-def _quit_stops_indexing() -> bool:
-    """Settings "When quitting KopiaLens": stop a running index worker, or let it finish (default)."""
+def _kl_setting(key: str, default):
+    """One kopialens setting straight from the file (the tray does not import the app)."""
     try:
         with open(SETTINGS_FILE, encoding="utf-8") as fh:
-            return (json.load(fh).get("kopialens") or {}).get("quit_indexing") == "stop"
+            return (json.load(fh).get("kopialens") or {}).get(key, default)
     except Exception:  # noqa: BLE001 - unreadable settings keep the default
-        return False
+        return default
+
+
+def _quit_stops_indexing() -> bool:
+    """Settings "When quitting KopiaLens": stop a running index worker, or let it finish (default)."""
+    return _kl_setting("quit_indexing", "finish") == "stop"
 
 
 def stop_workers() -> None:
@@ -329,6 +334,9 @@ class _ControlHandler(BaseHTTPRequestHandler):
 
 
 def _start_control_server() -> None:
+    if _kl_setting("control_api", True) is False:
+        _log_guard("tray control API is off (Settings > Advanced)", "INFO")
+        return
     try:
         srv = HTTPServer((TRAY_CONTROL_HOST, TRAY_CONTROL_PORT), _ControlHandler)
     except OSError as exc:

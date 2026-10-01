@@ -181,3 +181,13 @@ def test_tick_starts_the_bz_reindex_through_the_global_slot(monkeypatch):
 
 def test_tick_skips_bz_when_not_due(monkeypatch):
     assert _tick_with(monkeypatch, bz_due=False) == []
+
+
+def test_a_pause_holds_every_scheduled_run(monkeypatch):
+    from app.core import pause
+    pause.pause(0)
+    try:
+        assert _tick_with(monkeypatch, bz_due=True) == []
+    finally:
+        pause.resume()
+    assert _tick_with(monkeypatch, bz_due=True) == ["bz"]   # due work starts once it ends

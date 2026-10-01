@@ -66,8 +66,17 @@ def _read() -> dict:
         except OSError as exc:           # transient (a lock held by antivirus or backup): never cached
             return _last_good(exc)
         except ValueError as exc:
-            log.error("users.json unreadable (%s); treating as no accounts", exc)
+            # Damaged: put back the newest good backup rather than silently switching sign-in off.
+            from . import configbackup
+            log.error("users.json unreadable (%s)", exc)
             data = _empty()
+            if configbackup.recover("users.json"):
+                try:
+                    with open(path, encoding="utf-8") as fh:
+                        data = json.load(fh)
+                    mtime = os.stat(path).st_mtime_ns
+                except (OSError, ValueError):
+                    data = _empty()
         if not isinstance(data, dict) or not isinstance(data.get("users"), list):
             data = _empty()
         _CACHE.update(mtime=mtime, data=data)
@@ -89,10 +98,15 @@ def _write(data: dict) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     atomic_json(path, data)
     _CACHE.update(mtime=os.stat(path).st_mtime_ns, data=data)
+    from . import configbackup
+    configbackup.remember("users.json")
 
 
 def _mutate(fn) -> dict:
-    with _LOCK:
+    from . import configbackup
+    from .filelock import locked
+    with _LOCK, locked(_path()):
+        configbackup.before_write()
         data = copy.deepcopy(_read())
         if not data.get("secret"):
             data["secret"] = secrets.token_hex(32)

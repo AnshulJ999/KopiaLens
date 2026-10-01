@@ -34,7 +34,6 @@ import httpx
 
 from config import REPOS, kopia_repos
 
-from ..settings import load_settings, save_settings
 from .applog import APP_LOG_DIR, get_logger
 from .kopia import _kopia_exe, _repo_args
 
@@ -46,14 +45,9 @@ READY_TIMEOUT = 40.0
 
 
 def _password() -> str:
-    settings = load_settings()
-    srv = settings.get("server") or {}
-    pw = srv.get("password")
-    if not pw:
-        pw = secrets.token_urlsafe(24)
-        settings["server"] = {**srv, "password": pw}
-        save_settings(settings)
-    return pw
+    """A fresh token per app run: the helper servers live and die with this process, so nothing
+    needs to remember it."""
+    return secrets.token_urlsafe(24)
 
 
 def parse_source(source: str) -> tuple[str, str, str]:

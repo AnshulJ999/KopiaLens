@@ -31,6 +31,8 @@ const settingsPart = {
         this.panelLayout = kl.panel_layout === "tabbed" ? "tabbed" : "classic";  //
         this._readAdvanced(kl);
         this._readBackblaze(data.settings?.backblaze || {});
+        this.loadCfg();
+        this.loadAbout();
       } catch (e) { /* keep last-known state on fetch failure */ }
       this.showSettings = true;
     },
@@ -47,6 +49,7 @@ const settingsPart = {
       this.folderPrewarmBudget = Number(kl.folder_prewarm_budget ?? 900);
       this.startupDelay = Number(kl.startup_delay ?? 300);
       this.debugLog = kl.debug_log === true;
+      this.controlApi = kl.control_api !== false;
       this.logCleanupDays = Number(kl.log_cleanup_days ?? 90);
       this.rankCount = Number(kl.rank_count ?? 10000);
       this.duckdbMemory = String(kl.duckdb_memory || "").toUpperCase();
@@ -87,6 +90,7 @@ const settingsPart = {
       reindex_interval: { s: "reindexInterval", t: "int", min: 300 },
       startup_delay: { s: "startupDelay", t: "int", min: 0, restart: true },
       debug_log: { s: "debugLog", t: "bool" },
+      control_api: { s: "controlApi", t: "bool", restart: true },
       duckdb_memory: { s: "duckdbMemory", t: "choice", of: ["", ...MEMORY_CHOICES], restart: true },
       log_cleanup_days: { s: "logCleanupDays", t: "int", min: 0 },
       rank_count: { s: "rankCount", t: "int", min: 0 },

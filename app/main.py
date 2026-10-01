@@ -21,11 +21,11 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, Redirec
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
-from config import DATA_DIR, REPOS, repo_kind
+from config import APP_VERSION, DATA_DIR, REPOS, repo_kind
 
-from .api import (account, actions, audit, backblaze, dashboard, deleteplan, encryption, excluded, insights,
+from .api import (account, actions, appconfig, audit, backblaze, dashboard, deleteplan, encryption, excluded, insights,
                   jobs, logs, onboarding, policies, restore, search, setup, simulate, snapshots, stats, tree)
-from .core import auth
+from .core import auth, pause
 from .core import jobs as jobrunner
 from .index.crypto import StoreLocked
 from .index import crypto as crypto_mod
@@ -364,7 +364,7 @@ def _warm(repo: str) -> None:
         warm_landing(repo)
     except Exception as exc:  # noqa: BLE001
         log.error("warm search-landing repo=%s failed: %s", repo, exc)
-    if not _dashboard_nightly_only():  # opt-in: rebuild the dashboard during the day as well
+    if not _dashboard_nightly_only() and not pause.active():  # opt-in daytime rebuild
         now = time.time()
         if now - _last_dashboard.get(repo, 0.0) >= _dashboard_interval():
             _last_dashboard[repo] = now
@@ -378,6 +378,8 @@ def _light_pass() -> None:
         cleanup_jobs()          # log_cleanup_days; OFF (0) does nothing
     except Exception as exc:  # noqa: BLE001 - housekeeping must never stop the warm pass
         log.warning("log cleanup failed: %s", exc)
+    from .core import configbackup
+    configbackup.maybe_weekly()   # never raises
     from .index import crypto
     locked = crypto.enabled() and not crypto.unlocked()
     if locked:
@@ -510,8 +512,9 @@ def _tick() -> None:
     now_ts = time.time()
     now_dt = dt.datetime.now()
     # User actions outrank indexing: while a user-started maintenance runs (hours, exclusive
-    # kopia lock), the nightly waits for a later tick instead of contending with it.
-    if not nightly.any_running() and not jobrunner.maintenance_running():
+    # kopia lock), the nightly waits for a later tick instead of contending with it. A pause
+    # holds every scheduled run; a slot that came due meanwhile runs once it ends.
+    if not nightly.any_running() and not jobrunner.maintenance_running() and not pause.active():
         for repo in REPOS:
             if _bg_stop.is_set():
                 return
@@ -593,6 +596,11 @@ async def lifespan(_app: FastAPI):
         log.warning("Old folder layout: data and settings sit next to the app. Move them into "
                     "one data folder and set KOPIALENS_DATA_DIR.")
         log.debug("old layout data dir: %s", _config.DATA_DIR)
+    try:  # config backups: before a new app version's first run, and the weekly copy
+        from .core import configbackup
+        configbackup.on_startup()
+    except Exception as exc:  # noqa: BLE001 - a backup problem must not block startup
+        log.warning("config backup at startup failed: %s", exc)
     try:  # the folder's own version stamp + any registered migration step (background)
         from .core import dataupgrade
         dataupgrade.start_background()
@@ -688,7 +696,7 @@ async def lifespan(_app: FastAPI):
         pass
 
 
-app = FastAPI(title="KopiaLens", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="KopiaLens", version=APP_VERSION, lifespan=lifespan)
 
 
 class _ApiGZip:
@@ -1070,6 +1078,7 @@ app.include_router(encryption.router, prefix="/api")
 app.include_router(setup.router, prefix="/api")
 app.include_router(account.router, prefix="/api")
 app.include_router(onboarding.router, prefix="/api")
+app.include_router(appconfig.router, prefix="/api")
 app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
 
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
@@ -1121,7 +1130,7 @@ def index() -> Response:
 
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True}
+    return {"ok": True, "version": APP_VERSION}
 
 
 @app.get("/debug/memory")

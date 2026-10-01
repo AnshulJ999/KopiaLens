@@ -15,6 +15,18 @@ COMPILED = "__compiled__" in globals()
 SELF_EXE = os.path.abspath(sys.argv[0]) if COMPILED else sys.executable
 
 
+def _read_app_version() -> str:
+    """The app version from the VERSION file (one place; the release build reads it too)."""
+    try:
+        with open(os.path.join(HERE, "VERSION"), encoding="utf-8") as fh:
+            return fh.read().strip() or "0.0.0"
+    except OSError:
+        return "0.0.0"
+
+
+APP_VERSION = _read_app_version()
+
+
 def user_data_root() -> str:
     """The per-user data folder for an installed app."""
     if sys.platform == "win32":
@@ -65,34 +77,44 @@ def save_records(store: dict, strict: bool = False) -> None:
 
 
 def _write_records(store: dict, strict: bool = False) -> None:
-    """Atomic, and never fatal at startup: a read-only config dir must not stop the app."""
+    """Atomic, cross-process locked, and never fatal at startup: a read-only config dir must not
+    stop the app."""
+    from app.core import configbackup
+    from app.core.filelock import locked
     try:
         os.makedirs(os.path.dirname(REPOS_FILE), exist_ok=True)
-        tmp = REPOS_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(store, fh, indent=2)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, REPOS_FILE)
+        with locked(REPOS_FILE):
+            configbackup.before_write()
+            tmp = REPOS_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(store, fh, indent=2)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, REPOS_FILE)
+        configbackup.remember("repos.json")
     except OSError:
         if strict:
             raise
 
 
 def _load_records() -> dict:
-    try:
-        with open(REPOS_FILE, encoding="utf-8") as fh:
-            store = json.load(fh)
-        if isinstance(store, dict) and isinstance(store.get("repos"), list):
-            return store
-    except FileNotFoundError:
-        pass
-    except (OSError, ValueError):
-        # Present but unreadable: keep the bad copy rather than overwrite it with a seed.
+    """The record store. A damaged file is moved aside and the newest good backup put back; a file
+    that cannot be opened right now is left alone (nothing is written over it)."""
+    from app.core import configbackup
+    for attempt in range(2):
         try:
-            os.replace(REPOS_FILE, REPOS_FILE + ".corrupt")
-        except OSError:
+            with open(REPOS_FILE, encoding="utf-8") as fh:
+                store = json.load(fh)
+            if isinstance(store, dict) and isinstance(store.get("repos"), list):
+                return store
+        except FileNotFoundError:
+            break
+        except ValueError:
             pass
+        except OSError:
+            return {"version": 1, "cache_dir": None, "repos": []}
+        if attempt == 0 and not configbackup.recover("repos.json"):
+            break
     # A fresh install starts with no repositories; guessing someone's drive letters is worse.
     store = {"version": 1, "cache_dir": None, "repos": []}
     _write_records(store)

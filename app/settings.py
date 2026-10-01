@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from copy import deepcopy
 from typing import Any
 
@@ -13,8 +14,6 @@ from config import SETTINGS_FILE
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "last_repo": "1",
-    "laptop_mode": "all",
-    "verbose": False,
     "recent": "",
     "listing_backend": "subprocess",  # "subprocess" (default, no bg activity) | "server" (persistent kopia server)
     "kopialens": {
@@ -31,7 +30,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "sort_arrows": "sorted",     # sorted|all - table header sort arrows
         "light_theme": "daylight",   # remembered light slot for the quick switch
         "dark_theme": "ember",       # remembered dark slot for the quick switch
-        "tables": {},          # per-table Tabulator persistence (columns + sort), keyed by table id
         "page_size": 500,      # search default page size (may be "Infinite")
         # ---- heavy-pass scheduling -------------------------------------------------------------
         # Everything expensive (index build, snapshot analysis, reclaimable, churn rollup, dashboard
@@ -85,6 +83,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "excluded_tolerance": 0.05,  # folder counts as "backed" when excluded fraction is below this (cuts partial noise)
         "repo_labels": "short",      # repo chips/columns: "short" (Repo 1) | "full" (the name from repos.json)
         "debug_log": False,          # also write data/logs/kopialens-debug.log at DEBUG (env KOPIALENS_DEBUG_LOG overrides)
+        "control_api": True,         # the tray's local control port (restart/quit/status for scripts); read at tray start
         # ---- unified store () ---------------------------------------------------------
         # Encryption at rest (). Three levels, decided in onboarding ():
         #   "off"        nothing
@@ -148,24 +147,40 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 _SETTINGS_LOCK = threading.RLock()
 
 
-def _read_settings_file() -> dict[str, Any]:
+def _read_settings_file(strict: bool = False) -> dict[str, Any]:
     """The file exactly as written - defaults do NOT fill absent keys. That distinction is the
     only way to tell an explicit user choice from an absent one, which both the profile-aware
-    bind default and the save path need. A corrupt file is preserved for recovery and treated
-    as empty, so a following save can never wipe it silently."""
+    bind default and the save path need.
+
+    A damaged file is moved aside and the newest good backup put back (core/configbackup). A file
+    that cannot be OPENED (briefly held by another program) is not damaged: reads fall back to
+    defaults, and ``strict`` (the save path) raises instead, so a save never writes a near-empty
+    file over settings it could not read."""
+    from .core import configbackup
     with _SETTINGS_LOCK:
-        if not os.path.exists(SETTINGS_FILE):
-            return {}
-        try:
-            with open(SETTINGS_FILE, encoding="utf-8") as handle:
-                loaded = json.load(handle)
-            return loaded if isinstance(loaded, dict) else {}
-        except Exception:
+        for attempt in range(2):
+            if not os.path.exists(SETTINGS_FILE):
+                return {}
+            for _ in range(3):
+                try:
+                    with open(SETTINGS_FILE, encoding="utf-8") as handle:
+                        raw = handle.read()
+                    break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                if strict:
+                    raise OSError(f"settings file could not be read: {SETTINGS_FILE}")
+                return {}
             try:
-                os.replace(SETTINGS_FILE, SETTINGS_FILE + ".corrupt")
-            except Exception:
+                loaded = json.loads(raw)
+                if isinstance(loaded, dict):
+                    return loaded
+            except ValueError:
                 pass
-            return {}
+            if attempt == 0 and not configbackup.recover("settings.json"):
+                return {}
+        return {}
 
 
 def raw_kopialens_settings() -> dict[str, Any]:
@@ -199,6 +214,8 @@ def save_settings(settings: dict[str, Any]) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp, SETTINGS_FILE)
+    from .core import configbackup
+    configbackup.remember("settings.json")
 
 
 def mutate_settings(mutator) -> dict[str, Any]:
@@ -208,8 +225,11 @@ def mutate_settings(mutator) -> dict[str, Any]:
     The write is based on the FILE's own content, never the defaults-merged view: persisting
     merged defaults is what stamped values the user never chose - a server install that saved
     anything wrote the desktop loopback bind into settings.json and lost its address on restart."""
-    with _SETTINGS_LOCK:
-        settings = _read_settings_file()
+    from .core import configbackup
+    from .core.filelock import locked
+    with _SETTINGS_LOCK, locked(SETTINGS_FILE):
+        settings = _read_settings_file(strict=True)
+        configbackup.before_write()
         mutator(settings)
         save_settings(settings)
         return load_settings()
