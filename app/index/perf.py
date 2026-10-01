@@ -192,9 +192,9 @@ def count(**kw) -> None:
     if _RUN is not None:
         _RUN.counts.update({k: v for k, v in kw.items() if v is not None})
         if _RUN.estimate is not None and kw.get("tree_entries") is not None:
-            from .estimate import from_entries    # the tree is read: the entry count is exact
-            n = int(kw["tree_entries"])
-            _RUN.estimate = from_entries(n, n, exact=True)
+            from .estimate import from_tree       # the tree is read: its size is exact
+            n, f = int(kw["tree_entries"]), int(kw.get("tree_folders") or 0)
+            _RUN.estimate = from_tree([n, n], [f, f], exact=True)
 
 
 def level(**kw) -> None:
