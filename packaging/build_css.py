@@ -1,9 +1,9 @@
-"""Build frontend/css/tailwind.css with the Tailwind standalone CLI (v3.4.17).
+"""Build frontend/css/tailwind.css with the Tailwind standalone CLI (v3.4.19).
 
     python packaging/build_css.py           build
     python packaging/build_css.py --check   exit 1 if the built file is older than its inputs
 
-The CLI is one download per OS from github.com/tailwindlabs/tailwindcss/releases (v3.4.17),
+The CLI is one download per OS from github.com/tailwindlabs/tailwindcss/releases (v3.4.19),
 kept in tools/ (gitignored). KOPIALENS_TAILWIND points at another copy. The built file starts
 with a digest of every input, so a test can tell when a UI edit needs a rebuild.
 """
@@ -66,8 +66,8 @@ def cli_path() -> str:
 def build() -> int:
     cli = cli_path()
     if not os.path.exists(cli):
-        print(f"Tailwind CLI not found: {cli}\nDownload v3.4.17 from "
-              "https://github.com/tailwindlabs/tailwindcss/releases/tag/v3.4.17 into tools/.")
+        print(f"Tailwind CLI not found: {cli}\nDownload v3.4.19 from "
+              "https://github.com/tailwindlabs/tailwindcss/releases/tag/v3.4.19 into tools/.")
         return 2
     digest = input_digest()
     tmp = OUTPUT + ".tmp"

@@ -269,6 +269,7 @@ def main() -> int:
             fh.write(f"{sha256(os.path.join(dest, name))}  {name}\n")
     for name in (setup_name, zip_name):
         log(f"  {name}  {os.path.getsize(os.path.join(dest, name)) / 1e6:.0f} MB")
+    shutil.rmtree(STAGE, ignore_errors=True)  # ~200 MB copy inside the repo folder, rebuilt each run
     log(f"DONE: {dest}")
     return 0
 

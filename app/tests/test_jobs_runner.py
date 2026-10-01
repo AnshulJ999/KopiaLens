@@ -379,7 +379,7 @@ def test_maintenance_running_is_scoped_and_state_gated(monkeypatch, isolated):
 
 def test_the_job_routes_are_registered():
     from app.main import app
-    paths = {getattr(r, "path", "") for r in app.routes}
+    paths = set(app.openapi()["paths"])  # FastAPI >= 0.142 keeps included routers nested in app.routes
     assert {"/api/jobs/start", "/api/jobs/status", "/api/jobs/stop", "/api/jobs/list"} <= paths
 
 
