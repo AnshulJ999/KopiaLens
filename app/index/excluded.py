@@ -2,9 +2,10 @@
 
 "Backed up" = the path is present in `pathx(in_latest=true)` of any repo that counts as a backup
 (`coverage_repos()` - a repo with the record's `counts_as_backup` off is a test/junk repository and
-must not make a folder look covered; case-insensitive, via inline `lower(full_path)`). Disk side =
-Everything (`es.exe`). For each folder you open we do ONE indexed range scan per repo (bounded to
-that subtree), aggregated by immediate child segment.
+must not make a folder look covered). Disk side = this computer's disk lookup (Everything, or a
+folder scan). The folder is a path on THIS computer, so its own shape decides the separator and
+case rule: Windows paths fold case, POSIX paths match exactly. For each folder you open we do ONE
+range scan per repo (bounded to that subtree), aggregated by immediate child segment.
 """
 
 from __future__ import annotations
@@ -26,7 +27,6 @@ def coverage_repos() -> list:
     junk repository) still shows its own tabs, but it must not make a folder look backed up here."""
     return [r for r in kopia_repos() if REPOS.get(r, {}).get("counts_as_backup", True)]
 
-_SEP = chr(92)  # backslash
 # (folder_lc, tolerance) -> (ts, result); TTL so repeated nav is instant. LRU-bounded (matches the
 # _RECLAIM_CACHE/_RECL_FILES_CACHE style) - was TTL-only with no count cap, so a long session
 # browsing many distinct folders grew this unbounded (Pass D6 footgun fix).
@@ -53,13 +53,29 @@ def _list_cache_put(ckey: tuple, val: tuple) -> None:
             _LIST_CACHE.popitem(last=False)
 
 
+def _rules(folder: str) -> tuple[str, bool]:
+    """(separator, fold case) for a path on this computer."""
+    sep = pathrules.path_sep(folder)
+    return sep, sep == pathrules.WIN_SEP
+
+
+def _key(name: str, fold: bool) -> str:
+    return name.lower() if fold else name
+
+
 def _prefix_bounds(folder: str) -> tuple[str, str, int]:
-    """Lowercased [lo, hi) range that captures everything under `folder`, plus the prefix length
-    (chars to strip to get the path relative to the folder). the bound comes from
-    ``paths.prefix_bounds`` - ``lo + U+FFFF`` dropped every child whose name starts above U+FFFF."""
-    lo = folder.lower().rstrip(_SEP) + _SEP
+    """[lo, hi) range (case-folded for Windows paths) that captures everything under `folder`,
+    plus the prefix length (chars to strip to get the path relative to the folder). the
+    bound comes from ``paths.prefix_bounds`` - ``lo + U+FFFF`` dropped every child whose name
+    starts above U+FFFF."""
+    sep, fold = _rules(folder)
+    lo = _key(folder, fold).rstrip(sep) + sep
     _, hi = pathrules.prefix_bounds(lo)
     return lo, hi, len(lo)
+
+
+def _path_sql(fold: bool) -> str:
+    return "lower(p.full_path)" if fold else "p.full_path"
 
 
 def kopia_backed_children(folder: str) -> dict[str, dict]:
@@ -67,29 +83,31 @@ def kopia_backed_children(folder: str) -> dict[str, dict]:
     kopia repos combined: {seg_lower: {logical bytes, files, has_file, last_seen, repos:set}}.
     `logical` = kopia's stored file size (exact backed size, comparable to Everything's disk size)."""
     lo, hi, plen = _prefix_bounds(folder)
+    sep, fold = _rules(folder)
+    path = _path_sql(fold)
     agg: dict[str, dict] = {}
     for repo in coverage_repos():
         cur = read_cursor(repo)
         try:
-            # Dedupe by path FIRST (GROUP BY path_lc): a file backed by several overlapping sources
-            # (e.g. the C:\ source AND a granular C:\Users\... source) must count ONCE, not per-source
-            # - else backed size inflates past disk size and the folder wrongly reads fully-backed.
+            # Dedupe by path FIRST: a file backed by several overlapping sources (e.g. the C:\
+            # source AND a granular C:\Users\... source) must count ONCE, not per-source - else
+            # backed size inflates past disk size and the folder wrongly reads fully-backed.
             rows = cur.execute(
-                """
+                f"""
                 SELECT seg, bool_or(is_file) AS has_file, sum(sz) AS logical, count(*) AS cnt,
                        max(ls) AS last_seen
                 FROM (
-                    SELECT lower(p.full_path) AS path_lc,
-                           any_value(split_part(substr(lower(p.full_path), ?), ?, 1)) AS seg,
-                           any_value(instr(substr(lower(p.full_path), ?), ?) = 0) AS is_file,
+                    SELECT {path} AS path_key,
+                           any_value(split_part(substr({path}, ?), ?, 1)) AS seg,
+                           any_value(instr(substr({path}, ?), ?) = 0) AS is_file,
                            max(p.size) AS sz, max(p.last_seen) AS ls
                     FROM pathx p
-                    WHERE p.in_latest AND lower(p.full_path) >= ? AND lower(p.full_path) < ?
-                    GROUP BY lower(p.full_path)
+                    WHERE p.in_latest AND {path} >= ? AND {path} < ?
+                    GROUP BY {path}
                 )
                 GROUP BY seg
                 """,
-                [plen + 1, _SEP, plen + 1, _SEP, lo, hi],
+                [plen + 1, sep, plen + 1, sep, lo, hi],
             ).fetchall()
         finally:
             cur.close()
@@ -171,7 +189,8 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
     are exact (index sum of in_latest sizes). EXCLUDED bytes are disk - backed (approximate by the
     changed/deleted-file drift; the backed-file COUNT helps tell drift from real exclusion). A
     folder counts as 'backed' when its excluded fraction is below `tolerance` (cuts partial noise)."""
-    ckey = (folder.lower(), tolerance)
+    sep, fold = _rules(folder)
+    ckey = (_key(folder, fold), tolerance)
     cached = _list_cache_get(ckey)
     if cached and time.time() - cached[0] < _LIST_TTL:
         return cached[1]  # repeated navigation is instant (within TTL)
@@ -180,7 +199,7 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
     newest = _newest_snapshot()
     items: list[dict] = []
     for d in disk:
-        seg = d["name"].lower()
+        seg = _key(d["name"], fold)
         b = backed.get(seg)
         repos = sorted(b["repos"]) if b else []
         repo_label = "+".join(repos) if repos else ""  # N backends: e.g. "1", "1+2", "bz", "1+2+bz"
@@ -215,7 +234,6 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
             })
     # Recursive FILE counts: direct files = 1; child folders via parallel Everything count-queries
     # (instant, index-computed). total_size = disk_bytes; excluded_files = total - backed.
-    sep = _SEP
     base = folder.rstrip(sep)
     dirs = [it for it in items if it["is_dir"]]
 
@@ -258,16 +276,15 @@ def drive_stats() -> list[dict]:
     def _one(d: dict) -> dict:
         p = d["path"]
         ts, tc = recursive_size(p), recursive_count(p)
-        lo = p.lower().rstrip(_SEP) + _SEP
-        _, hi = pathrules.prefix_bounds(lo)
+        lo, hi, _plen = _prefix_bounds(p)
+        path = _path_sql(_rules(p)[1])
         bs = bc = 0
         for repo in coverage_repos():
             cur = read_cursor(repo)
             try:
                 row = cur.execute(
-                    "SELECT sum(sz), count(*) FROM (SELECT max(p.size) AS sz FROM pathx p "
-                    "WHERE p.in_latest AND lower(p.full_path) >= ? AND lower(p.full_path) < ? "
-                    "GROUP BY lower(p.full_path))",
+                    f"SELECT sum(sz), count(*) FROM (SELECT max(p.size) AS sz FROM pathx p "
+                    f"WHERE p.in_latest AND {path} >= ? AND {path} < ? GROUP BY {path})",
                     [lo, hi],
                 ).fetchone()
             finally:

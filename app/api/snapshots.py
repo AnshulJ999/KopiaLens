@@ -207,13 +207,13 @@ def browse(repo: str, source: str, snapshot_id: str, path: str = "") -> dict:
     snap = next((s for s in sources_index(repo).get(source, []) if s.get("id") == snapshot_id), None)
     if snap is None:
         raise HTTPException(status_code=404, detail="That snapshot no longer exists.")
-    root = pathrules.source_root(source).rstrip("\\/")
-    full = (path or root).rstrip("\\/") or root
+    sep = pathrules.sep(source)
+    root = pathrules.source_root(source).rstrip(sep)
+    full = (path or root).rstrip(sep) or root
     segs = _segments(source, full)
     if segs is None:
         raise HTTPException(status_code=400, detail="That folder is not inside this snapshot's source.")
     fold = not pathrules.case_sensitive(source)
-    sep = pathrules.sep(source)
     oid = (snap.get("rootEntry") or {}).get("obj") or ""
     crumbs = [{"name": root or sep, "path": root}]
     try:

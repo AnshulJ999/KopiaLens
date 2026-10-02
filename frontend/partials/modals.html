@@ -237,7 +237,7 @@
                 <span x-show="removePlanDryChecked()" class="pill ok">dry run checked</span>
                 <span class="grow"></span>
                 <button class="kl-btn quiet" @click="copyText(removePlan.commit)">Copy command</button>
-                <button class="kl-btn quiet" @click="removeSaveBat()" title="A .bat that runs the same commands and logs kopia's output">Save .bat</button>
+                <button class="kl-btn quiet" @click="removeSaveBat()" title="Runs the same commands and logs kopia's output">Save script</button>
                 <button class="kl-btn quiet" @click="removePlan.showCmd = !removePlan.showCmd" x-text="removePlan.showCmd ? 'Hide command' : 'Show command'"></button>
               </div>
               <div class="kl-note mt-1" x-show="removePlan.batSaved" x-text="removePlan.batSaved && ('Downloaded: ' + removePlan.batSaved.filename)"></div>
@@ -354,6 +354,17 @@
                     <div class="h" x-text="restore.options.overwrite_files ? 'Replaced' : 'Different on disk (kept)'"></div>
                     <div class="kl-list" style="max-height:150px">
                       <template x-for="(p, i) in restore.plan.items.flatMap((it) => it.different_paths || [])" :key="'d' + i">
+                        <div class="li"><span class="font-mono break-all" x-text="p"></span></div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+                <template x-if="restore.plan.totals.bad_names">
+                  <div class="kl-sec">
+                    <div class="h" x-text="countOf(restore.plan.totals.bad_names, 'name') + ' this computer can\'t use'"></div>
+                    <div class="kl-note">Restoring these may fail or write them to a different path.</div>
+                    <div class="kl-list" style="max-height:150px">
+                      <template x-for="(p, i) in restore.plan.items.flatMap((it) => it.bad_paths || [])" :key="'b' + i">
                         <div class="li"><span class="font-mono break-all" x-text="p"></span></div>
                       </template>
                     </div>

@@ -20,7 +20,7 @@ import re
 from . import paths as pathrules
 from . import rulelayers
 from .applog import get_logger
-from .ignorematch import compile_pattern
+from .ignorematch import compile_pattern, escape_name
 from .policy import _GLOBAL_TARGET, effective_ignore_origin, global_ignores
 from .sources import sources_index
 
@@ -76,17 +76,31 @@ def _rel(path: str, root: str, sep: str, fold: bool) -> str:
     return path.replace(sep, "/").rstrip("/")[len(nroot) + 1:]
 
 
+_STAR = object()
+
+
 def similar_leaf(name: str, is_folder: bool = False) -> str:
     """A name pattern for names like this one: digit runs become '*' and stars joined only by
-    separators collapse ("ws-2026-09-21.log" -> "ws-*.log"). No digits: '*' before the extension."""
+    separators collapse ("ws-2026-09-21.log" -> "ws-*.log"). No digits: '*' before the extension.
+    The literal parts are escaped, so a name holding '[' or '*' stays literal there."""
     stem, ext = name, ""
     if not is_folder and "." in name.lstrip("."):
         stem, ext = name.rsplit(".", 1)
         ext = "." + ext
-    out = re.sub(r"\*(?:[-_.: ]*\*)+", "*", re.sub(r"\d+", "*", stem))
-    if out == stem:
-        out = stem + "*"
-    return out + ext
+    parts = re.split(r"\d+", stem)
+    if len(parts) == 1:
+        return escape_name(stem, end=False) + "*" + escape_name(ext, start=False)
+    toks: list = [parts[0]]
+    for lit in parts[1:]:
+        if len(toks) >= 2 and toks[-2] is _STAR and re.fullmatch(r"[-_.: ]*", toks[-1]):
+            toks.pop()                      # only separators between two stars: one star
+        else:
+            toks.append(_STAR)
+        toks.append(lit)
+    last = len(toks) - 1
+    body = "".join("*" if t is _STAR else escape_name(t, start=i == 0, end=i == last and not ext)
+                   for i, t in enumerate(toks))
+    return body + escape_name(ext, start=False)
 
 
 def _pattern_for_shape(shape: str, rel: str, is_folder: bool, level: int = 0,
@@ -100,6 +114,7 @@ def _pattern_for_shape(shape: str, rel: str, is_folder: bool, level: int = 0,
     if where not in _WHERES:
         raise TargetError(f"unknown scope {where!r} (expected one of {_WHERES})")
     segs = [s for s in rel.split("/") if s]
+    lit = [escape_name(s) for s in segs]
     if shape == "parent":
         if len(segs) < 2:
             return None  # already at the target root: there is no level up
@@ -108,10 +123,10 @@ def _pattern_for_shape(shape: str, rel: str, is_folder: bool, level: int = 0,
         if level <= 0:
             if not segs:
                 return "/**" if is_folder else None  # the target root itself: only a folder rule exists
-            return "/" + "/".join(segs) + ("/**" if is_folder else "")
+            return "/" + "/".join(lit) + ("/**" if is_folder else "")
         if level > len(segs):
             return None
-        anc = segs[:len(segs) - level]
+        anc = lit[:len(segs) - level]
         return "/" + "/".join(anc) + "/**" if anc else "/**"
 
     base = segs[-1] if segs else ""
@@ -120,11 +135,11 @@ def _pattern_for_shape(shape: str, rel: str, is_folder: bool, level: int = 0,
     if shape == "name":
         # A folder name rule is directory-only ("Name/"): it matches at any depth and prunes the
         # subtree. "Name/**" would be rooted and miss nested folders.
-        tail = base
+        tail = escape_name(base)
     elif shape == "extension":
         if is_folder or "." not in base.lstrip("."):
             return None
-        tail = "*." + base.rsplit(".", 1)[-1]
+        tail = "*." + escape_name(base.rsplit(".", 1)[-1])
     else:
         tail = (leaf or "").strip().strip("/") or similar_leaf(base, is_folder)
         if "/" in tail:
@@ -134,12 +149,12 @@ def _pattern_for_shape(shape: str, rel: str, is_folder: bool, level: int = 0,
     if where == "any":
         return tail
     if where == "here":
-        anc = segs[:-1]
+        anc = lit[:-1]
         return ("/" + "/".join(anc) if anc else "") + "/" + tail
     k = max(level, 1)
     if k > len(segs):
         return None
-    anc = segs[:len(segs) - k]
+    anc = lit[:len(segs) - k]
     return ("/" + "/".join(anc) if anc else "") + "/**/" + tail
 
 
@@ -196,7 +211,8 @@ def _smart_rank(t: dict) -> tuple:
         return (0, 0)
     if ":" not in key:
         return (1, 0)
-    return (2, len([s for s in re.split(r"[\\/]+", pathrules.source_root(key)) if s]))
+    root = pathrules.source_root(key)
+    return (2, len([s for s in root.split(pathrules.path_sep(root)) if s]))
 
 
 def _evaluate(repo: str, path: str, covering: list[str], source: str | None, is_folder: bool,
@@ -414,7 +430,7 @@ def resolve_targets(repo: str, path: str, source: str | None = None,
                                       -len(t["covers"]), t["target"]))
     sources = [{"source": i["source"], "root": i["root"], "origin": i["origin"], "owner": i["owner"],
                 "already_excluded": i["before"]} for i in ev["sources"]]
-    base = [s for s in re.split(r"[\\/]+", path) if s][-1:] or [path]
+    base = [pathrules.basename(path) or path]
     return {"repo": repo, "path": path, "shape": shape, "sources": sources,
             "targets": ev["targets"], "smart_shape": smart_shape,
             "levels": _levels(path, anchor_key, is_folder),

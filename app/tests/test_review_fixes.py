@@ -270,7 +270,7 @@ def test_exclusive_offline_fast_path_hands_over_and_reopens(tmp_path, monkeypatc
         def release(self):
             pass
 
-    monkeypatch.setattr("app.core.metrics._build_lock", lambda repo, mode: _NoLock())
+    monkeypatch.setattr("app.core.metrics._build_lock", lambda repo: _NoLock())
 
     inside = {}
     with schema.exclusive_offline("1", reason="indexing"):
@@ -291,7 +291,7 @@ def test_exclusive_offline_reports_what_is_blocking_on_timeout(monkeypatch):
         def release(self):
             pass
 
-    monkeypatch.setattr("app.core.metrics._build_lock", lambda repo, mode: _NoLock())
+    monkeypatch.setattr("app.core.metrics._build_lock", lambda repo: _NoLock())
     monkeypatch.setitem(schema._active_reads, "9", 3)   # pretend three queries are stuck
     try:
         with pytest.raises(TimeoutError) as err:

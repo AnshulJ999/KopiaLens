@@ -340,7 +340,7 @@ def _refresh_dashboard(repo: str) -> None:
     rewrites content_refs) ONLY when something changed - not every cycle. That removes the biggest
     DuckDB churn source (the content_refs rewrite was happening every 30 min regardless)."""
     try:
-        data = table_rows(repo, refresh=False, mode="all")
+        data = table_rows(repo, refresh=False)
         log.info("dashboard refreshed repo=%s in %.1fs", repo, float(data.get("elapsed") or 0))
     except Exception as exc:  # noqa: BLE001
         log.error("dashboard refresh repo=%s failed: %s", repo, exc)

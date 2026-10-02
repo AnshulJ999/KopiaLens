@@ -44,7 +44,8 @@ class PlanBody(BaseModel):
 
 
 def _basename(source: str, full_path: str) -> str:
-    return full_path.rstrip("\\/").rsplit(pathrules.sep(source), 1)[-1]
+    sep = pathrules.sep(source)
+    return full_path.rstrip(sep).rsplit(sep, 1)[-1]
 
 
 def _machine(source: str) -> str:

@@ -57,7 +57,7 @@ def ran(monkeypatch):
     monkeypatch.setattr("app.index.rankpaths.precompute",
                         lambda repo: executed.append("rank_paths"))
     monkeypatch.setattr("app.core.metrics.table_rows",
-                        lambda repo, refresh=False, mode="all": executed.append("dashboard"))
+                        lambda repo, refresh=False: executed.append("dashboard"))
     return executed
 
 

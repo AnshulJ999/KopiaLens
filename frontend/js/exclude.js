@@ -213,7 +213,8 @@ const excludePart = {
       const rank = (target) => {
         if (target === "global") return [2, 0];
         if (!target.includes(":")) return [1, 0];
-        return [0, -target.split(":").slice(1).join(":").split(/[/\\]/).length];
+        const tp = target.split(":").slice(1).join(":");
+        return [0, -tp.split(pathSep(tp)).length];
       };
       return this.exTargets()
         .filter((t) => d.ticked[t.target] && this.exPatternOf(t))
@@ -473,9 +474,10 @@ const excludePart = {
     exToSearch() {
       const d = this.exDialog;
       if (!d) return;
-      // The index stores raw paths: a Windows source keeps backslashes.
+      // The index stores raw paths: a Windows source keeps backslashes. Rule escapes come off.
       const first = this.exWritePlan()[0];
-      const pat = (first ? first.pattern : "").replace(/\*\*/g, "").replace(/^\//, "").replace(/^\*/, "").replace(/\//g, "\\");
+      const raw = (first ? first.pattern : "").replace(/\*\*/g, "").replace(/^\//, "").replace(/^\*/, "").replace(/\\(.)/g, "$1");
+      const pat = pathSep(d.path || "") === "/" ? raw : raw.replace(/\//g, "\\");
       this.showExclude = false;
       this.query = pat; this.searchSource = ""; this.searchPage = 1;
       this.active = "search";
@@ -648,7 +650,7 @@ const excludePart = {
         command: "", confirmLabel: n === 1 ? "Add rule" : `Add ${n} rules`, danger: !!drops.length,
       });
       if (!ok) return;
-      const label = d.multi ? `${d.items.filter((i) => i.on).length} items` : d.path.split(/[\\/]/).pop();
+      const label = d.multi ? `${d.items.filter((i) => i.on).length} items` : baseName(d.path);
       const started = await this.startJob("policy_write", { writes }, label);
       if (started) { this.showExclude = false; this.exDialog = null; this.exVariants = null; }
     },
@@ -771,7 +773,8 @@ const excludePart = {
       const rank = (target) => {
         if (target === "global") return [2, 0];
         if (!target.includes(":")) return [1, 0];
-        return [0, -target.split(":").slice(1).join(":").split(/[/\\]/).length];
+        const tp = target.split(":").slice(1).join(":");
+        return [0, -tp.split(pathSep(tp)).length];
       };
       return [...byTarget.entries()]
         .sort((a, b) => { const ra = rank(a[0]), rb = rank(b[0]); return ra[0] - rb[0] || ra[1] - rb[1]; })

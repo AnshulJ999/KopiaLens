@@ -8,6 +8,7 @@ import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ..core import paths as pathrules
 from ..core.sources import sources_index
 from ..index.holding import holding_snapshots
 from .errors import PASS_THROUGH
@@ -190,7 +191,7 @@ def tree(
                                         over_gb, ext, ext_exclude)
             elif mode == "reclaimable":  # option (b): only ALREADY-CACHED reclaimable (never walks)
                 from ..index.snapanalysis import cached_reclaimable_files
-                b = prefix.rstrip("\\")
+                b, bsep = pathrules.folder_key(prefix)
                 acc: list[dict] = []
                 for snaps in sources_index(repo).values():
                     if not snaps:
@@ -198,8 +199,8 @@ def tree(
                     sid = max(snaps, key=lambda x: x.get("startTime", "")).get("id")
                     for f in (cached_reclaimable_files(repo, sid) or []):
                         fp = f["full_path"]
-                        if (not b) or fp.startswith(b):
-                            acc.append({"path": fp, "name": fp.split("\\")[-1].split("/")[-1],
+                        if bsep is None or fp.startswith(b + bsep):
+                            acc.append({"path": fp, "name": pathrules.basename(fp),
                                         "size": f["size"], "physical": f["size"], "files": 1,
                                         "modified": "", "type": "file"})
                 acc.sort(key=lambda x: x["size"], reverse=True)
@@ -227,7 +228,7 @@ def tree(
                 raise HTTPException(status_code=400, detail="snapshot_id is required")
             from ..index.snapanalysis import reclaimable_files  # accurate exclusive-content list (flat)
             rfs = reclaimable_files(repo, source, snapshot_id, limit=500)
-            children = [{"path": f["full_path"], "name": f["full_path"].split("\\")[-1].split("/")[-1],
+            children = [{"path": f["full_path"], "name": pathrules.basename(f["full_path"]),
                          "size": f["size"], "physical": f["size"], "files": 1, "modified": "", "type": "file"}
                         for f in rfs]
         else:

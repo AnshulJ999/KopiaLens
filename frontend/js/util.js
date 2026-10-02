@@ -72,6 +72,20 @@ const timeCell = (s) => {
 
 const sourcePath = (s) => (s && s.includes(":") ? s.split(":").slice(1).join(":") : (s || ""));
 const isUnc = (p) => p.startsWith("\\\\");
+// A full path's own separator: POSIX paths start with "/", everything else is a Windows path.
+// A POSIX name may hold a backslash, so paths are never split on both.
+const pathSep = (p) => ((p || "").startsWith("/") ? "/" : "\\");
+const trimSep = (p) => { const s = pathSep(p); let t = p || ""; while (t.length > 1 && t.endsWith(s)) t = t.slice(0, -1); return t; };
+const joinPath = (base, name) => { const s = pathSep(base); const b = trimSep(base); return (b === s ? "" : b) + s + name; };
+const baseName = (p) => { const s = pathSep(p); const t = trimSep(p); return t.slice(t.lastIndexOf(s) + 1); };
+// The folder above a path, or null at a top-level node ("C:", "\\\\host\\share", "/").
+const parentPath = (p) => {
+  const t = trimSep(p);
+  const s = pathSep(t);
+  if (s === "/") return t === "/" ? null : (t.lastIndexOf("/") <= 0 ? "/" : t.slice(0, t.lastIndexOf("/")));
+  if (isUnc(t) ? t.slice(2).split("\\").length <= 2 : !t.includes("\\")) return null;
+  return t.slice(0, t.lastIndexOf("\\"));
+};
 const srcSortKey = (s) => { const p = sourcePath(s); return (isUnc(p) ? "1" : "0") + "|" + p.toLowerCase(); };
 const srcSorter = (a, b) => srcSortKey(a).localeCompare(srcSortKey(b));
 

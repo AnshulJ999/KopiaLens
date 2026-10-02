@@ -4,7 +4,7 @@ const simulatePart = {
     // ---------- Simulate (all sources or one) ----------
     async runSimulate(refresh = false) {
       await this.wrap(async () => {
-        const body = { repo: this.repo, mode: "all", refresh, policy: this.policy };
+        const body = { repo: this.repo, refresh, policy: this.policy };
         if (this.simMode === "one") body.source = this.selectedSource;
         const r = await getJson("/api/simulate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
         if (this.simMode === "one") {

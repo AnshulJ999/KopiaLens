@@ -80,10 +80,10 @@ def repos() -> dict:
 
 
 @router.get("/dashboard")
-def dashboard(repo: str, mode: str = "all", refresh: bool = False) -> dict:
+def dashboard(repo: str, refresh: bool = False) -> dict:
     _require_kopia(repo)
     try:
-        return table_rows(repo, refresh=refresh, mode=mode)
+        return table_rows(repo, refresh=refresh)
     except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:

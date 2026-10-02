@@ -16,9 +16,10 @@ still re-qualified every rewrite older than the window nightly (measured 2026-09
 correction, because it reasons about how the indexer builds ``filev`` - if that walk ever
 changes, this file must fail loudly rather than let the tab go quietly wrong again.
 
-The fixture builds the RAW artifacts (src/snap/pathx/filev/csize/iphys), which is what the
-rewritten SQL reads; the helper mirrors the indexer's own pathx maintenance (first_seen =
-min over versions, versions = count of DISTINCT snapshots).
+The fixture builds the RAW artifacts (src/snap/pathx/filev/csize/iphys/dir/anc), which is what
+the rewritten SQL reads; the helper mirrors the indexer's own pathx maintenance (first_seen =
+min over versions, versions = count of DISTINCT snapshots) and folder tree (one ``dir`` row per
+folder prefix, ``anc`` = every ancestor with its depth).
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ _st: dict = {}
 @pytest.fixture
 def con():
     _st.clear()
-    _st.update({"snap": 100, "pid": 0, "srcs": {}, "paths": {}, "cids": {}})
+    _st.update({"snap": 100, "pid": 0, "srcs": {}, "paths": {}, "cids": {}, "dirs": {}})
     c = duckdb.connect()
     c.execute("CREATE TABLE src(src_id SMALLINT, source VARCHAR)")
     c.execute("CREATE TABLE snap(snap_id INTEGER, snapshot_id VARCHAR, start_time TIMESTAMP, "
@@ -52,7 +53,27 @@ def con():
               "cid_id INTEGER, size UBIGINT, mtime TIMESTAMP, ordinal BIGINT)")
     c.execute("CREATE TABLE csize(cid_id INTEGER, packed UBIGINT)")
     c.execute("CREATE TABLE iphys(cid_id INTEGER, packed UBIGINT)")
+    c.execute("CREATE TABLE dir(dir_id INTEGER, src_id SMALLINT, dir_path VARCHAR, depth SMALLINT, "
+              "name VARCHAR, parent_id INTEGER)")
+    c.execute("CREATE TABLE anc(dir_id INTEGER, depth SMALLINT, anc_id INTEGER)")
     return c
+
+
+def _dir_id(con, src: int, path: str, sep: str) -> int:
+    """The folder holding ``path``, creating it and its ancestors like the indexer does."""
+    parts = path.split(sep)[:-1]
+    ids: list[int] = []
+    for k in range(1, len(parts) + 1):
+        key = (src, sep.join(parts[:k]))
+        d = _st["dirs"].get(key)
+        if d is None:
+            d = _st["dirs"][key] = len(_st["dirs"]) + 1
+            con.execute("INSERT INTO dir VALUES(?, ?, ?, ?, ?, ?)",
+                        [d, src, key[1], k, parts[k - 1], ids[-1] if ids else None])
+            for depth, a in enumerate(ids + [d], 1):
+                con.execute("INSERT INTO anc VALUES(?, ?, ?)", [d, depth, a])
+        ids.append(d)
+    return ids[-1]
 
 
 def add_file(con, path: str, cid: str, ts: str, source: str = SRC) -> None:
@@ -76,9 +97,10 @@ def add_file(con, path: str, cid: str, ts: str, source: str = SRC) -> None:
     if pid is None:
         _st["pid"] += 1
         pid = _st["paths"][key] = _st["pid"]
+        sep = "/" if path.startswith("/") else SEP
         con.execute(
-            "INSERT INTO pathx VALUES(?, ?, NULL, ?, NULL, 0, 0, ?, ?, true, ?, 0, NULL, ?)",
-            [pid, src, path.rsplit(SEP, 1)[-1], ts, ts, c, path])
+            "INSERT INTO pathx VALUES(?, ?, ?, ?, NULL, 0, 0, ?, ?, true, ?, 0, NULL, ?)",
+            [pid, src, _dir_id(con, src, path, sep), path.rsplit(sep, 1)[-1], ts, ts, c, path])
     con.execute("INSERT INTO filev VALUES(?, ?, ?, ?, 0, NULL, 0)", [src, pid, snap, c])
     con.execute(
         """
@@ -119,8 +141,7 @@ def _materialize(con) -> str:
 
 
 def base_rows(con, depth: int = 4) -> list[tuple]:
-    return con.execute(
-        _base_sql(_materialize(con)), [SEP, depth, SEP, SEP, SEP, SEP]).fetchall()
+    return con.execute(_base_sql(_materialize(con), depth, "_fd.dir_path")).fetchall()
 
 
 def deduped(con) -> int:

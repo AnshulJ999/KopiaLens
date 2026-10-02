@@ -13,7 +13,7 @@ from config import CACHEDIR
 
 from .applog import get_logger
 from .schedule import load_next_snapshots
-from .sources import logical_stats, roots_of, sources_index, sources_meta, split_sources
+from .sources import logical_stats, roots_of, sources_index, sources_meta
 
 log = get_logger("metrics")
 
@@ -21,7 +21,7 @@ log = get_logger("metrics")
 # (the cache used to be served verbatim, which is how added columns silently went blank).
 TABLE_CACHE_VERSION = 2
 
-# Single-flight: only ONE dashboard build per (repo, mode) may run at a time. Concurrent callers
+# Single-flight: only ONE dashboard build per repo may run at a time. Concurrent callers
 # (two browser tabs + the auto-refresh timer + the background warm pass) serve the existing cache
 # instead of each launching their own 80s+ build_global - that pile-up was the 18 GB / 3-min storm.
 _BUILD_LOCKS: dict[str, threading.Lock] = {}
@@ -29,12 +29,11 @@ _LOCKS_GUARD = threading.Lock()
 # Serializes the content_refs reinsert so concurrent builds can't collide (the DuckDB
 # "Conflict on tuple deletion" we saw).
 _REFCOUNT_WRITE_LOCK = threading.Lock()
-def _build_lock(repo: str, mode: str) -> threading.Lock:
-    key = f"{repo}|{mode}"
+def _build_lock(repo: str) -> threading.Lock:
     with _LOCKS_GUARD:
-        lk = _BUILD_LOCKS.get(key)
+        lk = _BUILD_LOCKS.get(repo)
         if lk is None:
-            lk = _BUILD_LOCKS[key] = threading.Lock()
+            lk = _BUILD_LOCKS[repo] = threading.Lock()
         return lk
 
 
@@ -42,28 +41,7 @@ def gb(value: int | float) -> float:
     return value / 1_000_000_000
 
 
-def src_snaphash(snaps: list[dict], recent: int | str | None) -> str:
-    digest = hashlib.md5()
-    digest.update(str(recent).encode())
-    for snap in snaps:
-        digest.update(snap.get("id", "").encode())
-    return digest.hexdigest()
-
-
-def snaphash(srcs: dict[str, list[dict]], keys: list[str], recent: int | str | None, mode: str) -> str:
-    digest = hashlib.md5()
-    digest.update(f"v2|{recent}|{mode}".encode())
-    for key in keys:
-        for snap in srcs[key]:
-            digest.update(snap.get("id", "").encode())
-    return digest.hexdigest()
-
-
-def build_global(
-    repo: str,
-    recent: int | str | None = None,
-    mode: str = "all",
-) -> tuple[dict[str, dict], float, int]:
+def build_global(repo: str) -> tuple[dict[str, dict], float, int]:
     """Per-source physical/freeable for the dashboard, from ONE pass over the tree.
 
     This is's dashboard headline. What it replaces walked every source separately in
@@ -79,22 +57,16 @@ def build_global(
     the last index contributes 0 rather than triggering a live re-read from kopia. Every other
     number on this page is already generation-bound, and the nightly rebuilds the dashboard
     immediately after the index.
-
-    ``mode`` other than "all" is not reachable from the UI (the laptop filters);
-    it still selects which sources are DISPLAYED, but ``free`` is counted across every indexed
-    source either way.
     """
     srcs = sources_index(repo)
-    _membership, display = split_sources(srcs, mode)
-    rec = int(recent) if recent else None
     start = time.time()
 
     from ..index import layer2  # lazy: avoids core<-index import cycle on load
-    totals, union_total = layer2.source_totals(repo, rec)
+    totals, union_total = layer2.source_totals(repo, None)
 
     rows: dict[str, dict] = {}
-    for key in display:
-        snaps = srcs[key][-rec:] if rec else srcs[key]
+    for key in sorted(srcs):
+        snaps = srcs[key]
         got = totals.get(key) or {}
         rows[key] = {
             "st": logical_stats(snaps),
@@ -147,16 +119,15 @@ def physical_report(repo: str, source: str, recent: int | str | None = None, ref
     }
 
 
-def _table_cache_name(repo: str, mode: str) -> str:
-    return f"table_cache_repo{repo}_{mode}"
+def _table_cache_name(repo: str) -> str:
+    return f"table_cache_repo{repo}"
 
 
-def _table_snaphash(repo: str, mode: str, recent) -> str:
+def _table_snaphash(repo: str) -> str:
     srcs = sources_index(repo)
-    membership, _ = split_sources(srcs, mode)
     h = hashlib.md5()
-    h.update(f"v1|{recent}|{mode}".encode())
-    for key in membership:
+    h.update(b"v2")
+    for key in sorted(srcs):
         for snap in srcs[key]:
             h.update((snap.get("id", "")).encode())
     return h.hexdigest()
@@ -189,12 +160,12 @@ def _file_counts(repo: str) -> dict[str, dict[str, int]]:
     return out
 
 
-def _read_cache(repo: str, mode: str, want_hash: str | None) -> dict | None:
+def _read_cache(repo: str, want_hash: str | None) -> dict | None:
     """Return the cached dashboard data. If ``want_hash`` is given, only return it when the
     version + snaphash still match (a valid serve); if None, return whatever is on disk (a
     best-effort stale serve while a build is in progress)."""
     from ..index import sidecache  # lazy: avoids core<-index import cycle on load
-    blob = sidecache.read(_table_cache_name(repo, mode))
+    blob = sidecache.read(_table_cache_name(repo))
     if not isinstance(blob, dict):
         return None
     if blob.get("version") != TABLE_CACHE_VERSION:
@@ -213,16 +184,16 @@ def _read_cache(repo: str, mode: str, want_hash: str | None) -> dict | None:
     return data
 
 
-def _kick_bg_recompute(repo: str, recent: int | str | None, mode: str) -> None:
+def _kick_bg_recompute(repo: str) -> None:
     """Recompute the dashboard cache in the background (single-flight). Used by serve-stale."""
     def run() -> None:
-        lock = _build_lock(repo, mode)
+        lock = _build_lock(repo)
         if not lock.acquire(blocking=False):
             return  # a build is already running
         try:
-            want = _table_snaphash(repo, mode, recent)
-            if _read_cache(repo, mode, want) is None:  # still stale
-                _compute_table_rows(repo, recent, mode, want)
+            want = _table_snaphash(repo)
+            if _read_cache(repo, want) is None:  # still stale
+                _compute_table_rows(repo, want)
         except Exception as exc:  # noqa: BLE001
             log.warning("bg dashboard recompute repo=%s failed: %s", repo, exc)
         finally:
@@ -230,27 +201,27 @@ def _kick_bg_recompute(repo: str, recent: int | str | None, mode: str) -> None:
     threading.Thread(target=run, daemon=True).start()
 
 
-def table_rows(repo: str, recent: int | str | None = None, refresh: bool = False, mode: str = "all") -> dict:
+def table_rows(repo: str, refresh: bool = False) -> dict:
     """Single-flight + serve-stale-while-revalidate dashboard build. A hash-valid cache serves
     instantly; a hash-STALE (but schema-valid) cache also serves instantly and triggers a
     background recompute - so the dashboard is never slow, freshness arrives in the background.
     Only a total cache miss (or refresh=True) computes synchronously, and even then exactly one
-    thread runs build_global per (repo, mode) (concurrent callers serve cache)."""
-    want_hash = _table_snaphash(repo, mode, recent)
+    thread runs build_global per repo (concurrent callers serve cache)."""
+    want_hash = _table_snaphash(repo)
     if not refresh:
-        valid = _read_cache(repo, mode, want_hash)
+        valid = _read_cache(repo, want_hash)
         if valid is not None:
             return valid
-        stale = _read_cache(repo, mode, None)  # any schema-valid cache -> serve + revalidate
+        stale = _read_cache(repo, None)  # any schema-valid cache -> serve + revalidate
         if stale is not None:
-            _kick_bg_recompute(repo, recent, mode)
+            _kick_bg_recompute(repo)
             stale["stale"] = True
             return stale
 
-    lock = _build_lock(repo, mode)
+    lock = _build_lock(repo)
     if not lock.acquire(blocking=False):
         # a build is already running: don't start another. Serve the best cache we have right now.
-        existing = _read_cache(repo, mode, want_hash) or _read_cache(repo, mode, None)
+        existing = _read_cache(repo, want_hash) or _read_cache(repo, None)
         if existing is not None:
             existing["stale_build_in_progress"] = True
             return existing
@@ -258,22 +229,22 @@ def table_rows(repo: str, recent: int | str | None = None, refresh: bool = False
     try:
         # We hold the lock. A concurrent build may have finished while we waited - reuse it.
         if not refresh:
-            valid = _read_cache(repo, mode, want_hash)
+            valid = _read_cache(repo, want_hash)
             if valid is not None:
                 return valid
-        return _compute_table_rows(repo, recent, mode, want_hash)
+        return _compute_table_rows(repo, want_hash)
     finally:
         lock.release()
 
 
-def _compute_table_rows(repo: str, recent: int | str | None, mode: str, want_hash: str) -> dict:
-    cache_name = _table_cache_name(repo, mode)
+def _compute_table_rows(repo: str, want_hash: str) -> dict:
+    cache_name = _table_cache_name(repo)
     # No size map is built here any more: build_global prices straight out of the generation's
     # csize, so the multi-million-entry dict this used to materialize per dashboard build is gone.
     meta = sources_meta(repo)
     nexts = load_next_snapshots(repo)  # computed next-snapshot times (subprocess mode)
     fcounts = _file_counts(repo)
-    rows, elapsed, union_total = build_global(repo, recent=recent, mode=mode)
+    rows, elapsed, union_total = build_global(repo)
     ordered = []
     for index, key in enumerate(sorted(rows, key=lambda item: rows[item]["total"], reverse=True)):
         row = rows[key]
@@ -303,8 +274,8 @@ def _compute_table_rows(repo: str, recent: int | str | None, mode: str, want_has
                 "files_distinct": (fcounts.get(key) or {}).get("distinct", 0),
             }
         )
-    data = {"rows": ordered, "elapsed": elapsed, "union_total": union_total, "mode": mode,
-            "recent": recent, "cached": False, "hash": want_hash,
+    data = {"rows": ordered, "elapsed": elapsed, "union_total": union_total,
+            "cached": False, "hash": want_hash,
             # computed_at covers same-hash rebuilds (e.g. a nightly rebuild that only moved
             # next_snapshot times) - the hash alone only flips when snapshot membership changes.
             "computed_at": time.time()}

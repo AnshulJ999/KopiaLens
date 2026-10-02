@@ -6,6 +6,7 @@ preview) runs first and the execute path is confirmed in-app before anything mut
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 import uuid
@@ -14,6 +15,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..core import audit
+from ..core import paths as pathrules
 from ..core.kopia import (
     MountError,
     list_mounts,
@@ -23,7 +25,7 @@ from ..core.kopia import (
     next_free_drive,
     open_in_explorer,
     pick_folder,
-    remove_files_bat_text,
+    remove_files_script,
     remove_files_chunked_commands,
     remove_files_command,
     remove_files_dry_run,
@@ -40,7 +42,6 @@ from ..settings import load_settings
 
 router = APIRouter(tags=["actions"])
 
-_SEP = chr(92)  # backslash
 _FILENAME_SAMPLE = 500   # collateral paths listed for a filename-mode plan (the count is exact)
 
 # Previewed plans, by token. The panel's job start passes the token back, so the delete runs
@@ -184,9 +185,11 @@ def mount_open(payload: MountOpenRequest) -> dict:
         raise HTTPException(status_code=409, detail="no free drive letter for an auto mount; unmount something first")
     in_mount_target = None
     if payload.full_path:
-        root = _source_root(payload.source).rstrip(_SEP)
-        rel = payload.full_path[len(root):].lstrip(_SEP) if payload.full_path.startswith(root) else ""
-        in_mount_target = (mountpoint + _SEP + rel) if rel else (mountpoint + _SEP)
+        sep = pathrules.sep(payload.source)
+        root = _source_root(payload.source).rstrip(sep)
+        rel = payload.full_path[len(root):] if payload.full_path.startswith(root) else ""
+        mount_root = mountpoint if mountpoint.endswith(("\\", "/")) else mountpoint + os.sep
+        in_mount_target = os.path.join(mount_root, *[s for s in rel.split(sep) if s])
     try:
         proc = mount_and_browse(payload.repo, payload.snapshot_id, mountpoint, in_mount_target=in_mount_target,
                                 info={**_snapshot_info(payload.repo, payload.snapshot_id, payload.source),
@@ -230,7 +233,8 @@ def _rf_preview(repo: str, items: list[str], flag: str, scope, by: str) -> dict:
     large selections without sharing the folder-delete plan machinery."""
     commit_cmds = remove_files_chunked_commands(repo, items, source=scope, commit=True, max_chars=8000, flag=flag)
     dry_cmds = remove_files_chunked_commands(repo, items, source=scope, commit=False, max_chars=8000, flag=flag)
-    ts = time.strftime("%Y%m%d_%H%M%S")
+    stem = f"kopialens_remove_repo{repo}_{time.strftime('%Y%m%d_%H%M%S')}"
+    ext, script = remove_files_script(commit_cmds, stem)
     audit.audit("generated", "remove-files-commands", repo=repo,
                 summary={"items": len(items), "by": by, "batches": len(commit_cmds),
                          "sources": scope or [], "everywhere": scope is None})
@@ -239,8 +243,8 @@ def _rf_preview(repo: str, items: list[str], flag: str, scope, by: str) -> dict:
         "sources": scope or [], "batches": len(commit_cmds),
         "dry_run": "\n".join(_fmt_cmd(c) for c in dry_cmds),
         "commit": "\n".join(_fmt_cmd(c) for c in commit_cmds),
-        "bat_name": f"kopialens_remove_repo{repo}_{ts}.bat",
-        "bat": remove_files_bat_text(commit_cmds, f"kopialens_remove_repo{repo}_{ts}.log"),
+        "bat_name": stem + ext,
+        "bat": script,
     }
 
 
@@ -343,17 +347,22 @@ def _remove_parts(parts: list[dict]) -> list[tuple[str | None, str]]:
     """Distinct (source, prefix) parts; a part inside another selected folder is dropped."""
     clean = []
     for part in parts or []:
-        prefix = (part.get("prefix") or "").rstrip("\\/")
-        if prefix:
-            clean.append((part.get("source") or None, prefix))
+        raw = part.get("prefix") or ""
+        base, sep = pathrules.folder_key(raw)
+        if sep is not None:
+            clean.append((part.get("source") or None, base or raw))
     clean = list(dict.fromkeys(clean))
 
     def covers(outer, inner) -> bool:
         (osrc, opre), (isrc, ipre) = outer, inner
         if outer == inner or (osrc is not None and osrc != isrc):
             return False
-        o, i = opre.lower(), ipre.lower()
-        return i == o or i.startswith(o + _SEP) or i.startswith(o + "/")
+        sep = pathrules.path_sep(opre)
+        if pathrules.path_sep(ipre) != sep:
+            return False
+        o, i = (opre.lower(), ipre.lower()) if sep == pathrules.WIN_SEP else (opre, ipre)
+        o = pathrules.folder_key(o)[0]
+        return i == o or i.startswith(o + sep)
 
     return [p for p in clean if not any(covers(o, p) for o in clean if o != p)]
 
@@ -602,9 +611,9 @@ def remove_bat(payload: RemovePlanRequest) -> dict:
         raise HTTPException(status_code=404, detail="no matching files")
     scope = _remove_scope(payload.everywhere, t["sources"])
     cmds = remove_files_chunked_commands(payload.repo, items, source=scope, commit=True, max_chars=8000, flag=flag)
-    ts = time.strftime("%Y%m%d_%H%M%S")
-    fname = f"kopialens_remove_repo{payload.repo}_{ts}.bat"
-    content = remove_files_bat_text(cmds, f"kopialens_remove_repo{payload.repo}_{ts}.log")
+    stem = f"kopialens_remove_repo{payload.repo}_{time.strftime('%Y%m%d_%H%M%S')}"
+    ext, content = remove_files_script(cmds, stem)
+    fname = stem + ext
     audit.audit("generated", "remove-bat", repo=payload.repo,
                 summary={"items": len(items), "batches": len(cmds), "filename": fname,
                          "sources": scope or [], "everywhere": scope is None})

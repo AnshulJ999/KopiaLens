@@ -9,14 +9,15 @@ from __future__ import annotations
 import os
 import threading
 import time
+import unicodedata
 import uuid
+from typing import NamedTuple
 
 from config import DEMO_INSTANCE
 
+from ..core import paths as pathrules
 from . import entries, resolve
 from .store import read_cursor
-
-_SEP = chr(92)  # backslash path separator (avoids source-literal escaping)
 
 # LIKE wildcard escaping. `_` matches ANY single character and `%` matches anything, so a literal
 # one in a user's query or folder name silently broadens the match: `Backup_2024` also matches
@@ -35,6 +36,14 @@ def like_literal(value: str) -> str:
     for ch in (_LIKE_ESC, "%", "_"):
         value = value.replace(ch, _LIKE_ESC + ch)
     return value
+
+
+def _text_match(query: str, alias: str = "p") -> tuple[str, list]:
+    """``(sql, params)``: the path contains ``query``, case-insensitively, in either Unicode form -
+    "café" typed as one character also finds a name stored decomposed (macOS), and back."""
+    forms = list(dict.fromkeys(unicodedata.normalize(f, query) for f in ("NFC", "NFD")))
+    sql = " OR ".join([f"{alias}.full_path ILIKE ?{_ESC}"] * len(forms))
+    return f"({sql})", [f"%{like_literal(f)}%" for f in forms]
 
 
 def _rows(cur, sql: str, params: list | None = None) -> list[dict]:
@@ -133,8 +142,9 @@ def _search_where(cur, query: str, deleted_only: bool, min_size: int,
     where: list[str] = []
     params: list = []
     if query:
-        where.append("p.full_path ILIKE ?" + _ESC)
-        params.append(f"%{like_literal(query)}%")
+        cond, qp = _text_match(query)
+        where.append(cond)
+        params.extend(qp)
     if min_size:
         where.append("p.size >= ?")
         params.append(int(min_size))
@@ -459,7 +469,6 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "",
     """Immediate children under ``prefix`` for one snapshot, aggregated in SQL. reclaimable_only
     keeps only files whose content is exclusive to this source (global refcount <= 1) = the
     Reclaimable tree mode (what is freed if this snapshot is deleted)."""
-    base = prefix.rstrip(_SEP)
     recl = " AND f.cid_id IN (SELECT m.cid_id FROM crefs m WHERE m.refs <= 1)" if reclaimable_only else ""
     cur = read_cursor(repo)
     try:
@@ -467,30 +476,24 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "",
         snid = resolve.snap_id(cur, snapshot_id)
         if sid is None or snid is None:  # unknown source/snapshot: no rows before, none now
             return []
-        scope, sp = scope_sql(cur, prefix, include_path=False)
-        cond = f" AND {scope}" if scope else ""
+        ch = _child_sql(cur, prefix)
+        cond = f" AND {ch.scope}" if ch.scope else ""
         rows = _rows(
             cur,
             f"""
-            WITH sub AS (
-                SELECT f.size, f.mtime,
-                       CASE WHEN ? = '' THEN p.full_path
-                            ELSE substr(p.full_path, length(?) + 2) END AS remainder
-                FROM filev f
-                JOIN pathx p ON p.path_id = f.path_id
-                WHERE p.src_id = ? AND f.snap_id = ?{cond}{recl}
-            )
-            SELECT split_part(remainder, ?, 1) AS name,
-                   sum(size) AS size,
+            SELECT {ch.name} AS name,
+                   sum(f.size) AS size,
                    count(*) AS files,
-                   max(mtime) AS modified,
-                   max(CASE WHEN position(? IN remainder) > 0 THEN 1 ELSE 0 END) AS is_folder
-            FROM sub
-            WHERE remainder <> ''
-            GROUP BY name
+                   max(f.mtime) AS modified,
+                   max(CASE WHEN {ch.folder} THEN 1 ELSE 0 END) AS is_folder
+            FROM filev f
+            JOIN pathx p ON p.path_id = f.path_id
+            {ch.join}
+            WHERE p.src_id = ? AND f.snap_id = ?{cond}{recl}
+            GROUP BY 1
             ORDER BY size DESC, name
             """,
-            [base, base, sid, snid, *sp, _SEP, _SEP],
+            [sid, snid],
         )
     finally:
         cur.close()
@@ -499,7 +502,7 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "",
         name = r["name"]
         children.append(
             {
-                "path": (base + _SEP + name) if base else name,
+                "path": pathrules.child_path(ch.base, ch.sep, name),
                 "name": name,
                 "size": r["size"] or 0,
                 "files": r["files"],
@@ -558,29 +561,32 @@ def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | No
         if deleted_only:
             conds.append("p.in_latest=false")
         if query:
-            conds.append("p.full_path ILIKE ?" + _ESC)
-            params.append(f"%{like_literal(query)}%")
+            cond, qp = _text_match(query)
+            conds.append(cond)
+            params.extend(qp)
         where = _where(conds)
         order = {"physical": "phys", "logical": "logical", "files": "files"}.get(sort, "phys")
         dirn = "ASC" if direction == "asc" else "DESC"
         d = max(1, int(depth))
-        # Group by the file's PARENT folder (drop the filename) capped at depth, so individual files
-        # never masquerade as folders and `depth` means folder depth. + deleted-ratio & last-seen.
+        # Group by the file's folder capped at depth (its ancestor `d` levels down, or its own
+        # folder when shallower), so individual files never masquerade as folders and `depth`
+        # means folder depth. + deleted-ratio & last-seen.
         rows = _rows(
             cur,
             f"""
-            SELECT array_to_string(list_slice(string_split(p.full_path, ?), 1,
-                       least({d}, len(string_split(p.full_path, ?)) - 1)), ?) AS folder,
+            SELECT {_folder_name_sql(cur, 'g')} AS folder,
                    sum(p.physical) AS phys, sum(coalesce(p.exclusive, 0)) AS excl,
                    sum(p.size) AS logical, count(*) AS files,
                    count(*) FILTER (WHERE NOT p.in_latest) AS deleted_files,
                    max(p.last_seen) AS last_seen
-            FROM pathx p WHERE {where}
+            FROM pathx p
+            {_rollup_join('p', d, 'g')}
+            WHERE {where}
             GROUP BY folder
             HAVING sum(p.physical) >= {int(min_size)} AND count(*) >= {int(min_files)}
             ORDER BY {order} {dirn}, folder LIMIT {int(limit)}
             """,
-            [_SEP, _SEP, _SEP, *params],
+            params,
         )
     finally:
         cur.close()
@@ -716,7 +722,7 @@ def _remove_where(cur, *, query: str, deleted_only: bool, min_size: int, source:
     where, params = _search_where(cur, query, deleted_only, min_size, source, ext, max_size,
                                   date_from, date_to, min_versions, shared_min, ext_exclude,
                                   first_from=first_from)
-    if prefix and prefix.rstrip(_SEP):
+    if prefix:
         scope, sp = scope_sql(cur, prefix, include_path=True)
         if scope:
             where.append(scope)
@@ -753,7 +759,7 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
         total_file_count, total_physical, total_logical = int(trow[0]), int(trow[1]), int(trow[2])
         files = _rows(
             cur,
-            f"SELECT s.source AS source, p.full_path, c.content_id, p.size, p.physical FROM pathx p "
+            f"SELECT s.source AS source, p.full_path, p.name, c.content_id, p.size, p.physical FROM pathx p "
             f"JOIN src s ON s.src_id = p.src_id LEFT JOIN cid c ON c.cid_id = p.cid_id "
             f"WHERE {where_sql} "
             f"ORDER BY p.physical DESC NULLS LAST, p.size DESC, s.source, p.full_path LIMIT {int(cap)}",
@@ -800,7 +806,7 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
         names: list[str] = []
         seenn: set[str] = set()
         for f in files:
-            nm = f["full_path"].rsplit(_SEP, 1)[-1].rsplit("/", 1)[-1]
+            nm = f.pop("name")
             if nm and nm not in seenn:
                 seenn.add(nm)
                 names.append(nm)
@@ -872,21 +878,100 @@ def remove_targets_summary(repo: str, *, query: str = "", deleted_only: bool = F
     }
 
 
-def _src_rule_ids(cur) -> tuple[list[int], list[int]]:
-    """(case-insensitive src_ids, case-sensitive src_ids).
+def _src_rules(cur) -> dict[int, tuple[str, bool]]:
+    """``{src_id: (separator, case_sensitive)}``.
 
     Read from the generation's own ``src`` table, not ``sources_index``: this runs inside SQL
     helpers, and a listing call there could spawn kopia on a cold cache."""
-    from ..core import paths
+    out: dict[int, tuple[str, bool]] = {}
+    for src_id, key in cur.execute("SELECT src_id, source FROM src").fetchall():
+        out[int(src_id)] = (pathrules.sep(str(key)), pathrules.case_sensitive(str(key)))
+    return out
+
+
+def _src_rule_ids(cur, sep: str | None = None) -> tuple[list[int], list[int]]:
+    """(case-insensitive src_ids, case-sensitive src_ids), optionally only the sources whose
+    paths are written with ``sep``."""
     ci: list[int] = []
     cs: list[int] = []
-    for src_id, key in cur.execute("SELECT src_id, source FROM src").fetchall():
-        (cs if paths.case_sensitive(str(key)) else ci).append(int(src_id))
+    for src_id, (s, sensitive) in _src_rules(cur).items():
+        if sep is None or s == sep:
+            (cs if sensitive else ci).append(src_id)
     return ci, cs
 
 
 def _id_list(ids: list[int]) -> str:
     return ",".join(str(i) for i in ids)
+
+
+def _in_ids(column: str, ids: list[int]) -> str:
+    return f"{column} IN ({_id_list(ids)})" if ids else "false"
+
+
+def _folder_dirs(cur, prefix: str) -> tuple[list[int], str, str | None]:
+    """``(dir ids, stored path, separator)`` of the folder a prefix names. Only sources whose
+    paths use the prefix's own separator are searched, each by its own case rule, so a POSIX
+    ``case/`` never matches ``Case/``. The top of the tree is ``([], "", None)``."""
+    base, sep = pathrules.folder_key(prefix)
+    if sep is None or (not base and sep != pathrules.POSIX_SEP):
+        return [], base, sep
+    ci, cs = _src_rule_ids(cur, sep)
+    return _match_dirs(cur, base, ci, cs), base, sep
+
+
+_UNC_LEAD = "'" + pathrules.WIN_SEP * 2 + "'"     # SQL literal: a UNC path's leading separators
+
+
+class _Children(NamedTuple):
+    scope: str          # rows under the folder ("" = no restriction)
+    join: str           # the joins `name` and `folder` read
+    name: str           # SQL: the row's child name inside the folder
+    folder: str         # SQL: true when that child is a folder
+    base: str
+    sep: str | None
+
+
+def _child_sql(cur, prefix: str, scope_alias: str = "p", row_alias: str | None = None) -> _Children:
+    """How rows under ``prefix`` group into its immediate children - from the folder tree, never
+    by cutting ``full_path``. A row's child is its ancestor folder one level below ``prefix``, or
+    the row's own file when it sits directly inside. ``row_alias`` names the relation carrying
+    ``dir_id``/``src_id``/``name`` when that differs from the scoped one (a deduping CTE).
+
+    At the top of the tree that level is each source's root: a drive ("C:"), a UNC share
+    ("\\\\host\\share", four levels down in ``dir``) or the POSIX root ("/")."""
+    a = row_alias or scope_alias
+    ids, base, sep = _folder_dirs(cur, prefix)
+    if sep is None:
+        depth = f"CASE WHEN starts_with({a}.full_path, {_UNC_LEAD}) THEN 4 ELSE 1 END"
+        name = f"coalesce(CASE WHEN _cd.dir_path = '' THEN '/' ELSE _cd.dir_path END, {a}.name)"
+        scope = ""
+    elif not ids:
+        return _Children("1 = 0", "", f"{a}.name", "false", base, sep)
+    else:
+        depth = str(int(cur.execute(
+            f"SELECT max(depth) FROM dir WHERE dir_id IN ({_id_list(ids)})").fetchone()[0]) + 1)
+        name = f"coalesce(_cd.name, {a}.name)"
+        scope = (f"{scope_alias}.dir_id IN (SELECT x.dir_id FROM anc x WHERE x.anc_id IN "
+                 f"({_id_list(ids)}))")
+    join = (f"LEFT JOIN anc _ca ON _ca.dir_id = {a}.dir_id AND _ca.depth = {depth} "
+            f"LEFT JOIN dir _cd ON _cd.dir_id = _ca.anc_id")
+    return _Children(scope, join, name, "_cd.dir_id IS NOT NULL", base, sep)
+
+
+def _rollup_join(alias: str, depth: int, tag: str) -> str:
+    """Join ``_<tag>d``: each row's folder capped at ``depth`` (its ancestor that many levels
+    down, or its own folder when shallower) - a folder rollup with no path cutting."""
+    return (f"LEFT JOIN anc _{tag}a ON _{tag}a.dir_id = {alias}.dir_id AND _{tag}a.depth = {int(depth)} "
+            f"JOIN dir _{tag}d ON _{tag}d.dir_id = coalesce(_{tag}a.anc_id, {alias}.dir_id)")
+
+
+def _folder_name_sql(cur, tag: str) -> str:
+    """The display path of a ``_rollup_join`` folder; the POSIX root is stored as ''."""
+    posix = [sid for sid, (s, _c) in _src_rules(cur).items() if s == pathrules.POSIX_SEP]
+    if not posix:
+        return f"_{tag}d.dir_path"
+    return (f"CASE WHEN _{tag}d.dir_path = '' AND {_in_ids(f'_{tag}d.src_id', posix)} "
+            f"THEN '/' ELSE _{tag}d.dir_path END")
 
 
 def _match_dirs(cur, path: str, ci: list[int], cs: list[int]) -> list[int]:
@@ -926,11 +1011,9 @@ def dir_scope_sql(cur, prefix: str, alias: str = "p") -> tuple[str, list]:
     ~110 ms against ~205-360 ms for ``lower(full_path) LIKE 'prefix%'`` on a 125k-row subtree,
     and the folder panel asks five of these per open. Case follows each SOURCE's rule
     (``core.paths``): folded where the source folds, exact where it does not."""
-    base = prefix.rstrip("\\/")
-    if not base:
+    ids, _base, sep = _folder_dirs(cur, prefix)
+    if sep is None:
         return "", []
-    ci, cs = _src_rule_ids(cur)
-    ids = _match_dirs(cur, base, ci, cs)
     if not ids:
         return "1 = 0", []          # no such folder in this repo: nothing is under it
     return (f"{alias}.dir_id IN (SELECT a.dir_id FROM anc a WHERE a.anc_id IN ({_id_list(ids)}))",
@@ -947,27 +1030,20 @@ def scope_sql(cur, prefix: str, *, include_path: bool = True,
     else is matched as (parent folder, name). Keeping them as ONE branch is deliberate - an OR of
     the two costs a full ``pathx`` scan (~500 ms) for an answer that cannot differ otherwise. A
     file at the same path as a folder can only exist ACROSS sources and is not covered; no repo
-    has that shape (checked), and the folder answer is the one a folder panel wants.
-
-    POSIX prefixes stay on the old scan shape: the build stores POSIX ``dir`` paths without their
-    leading separator, so the closure table cannot identify them yet (```` is the
-    cross-platform pass)."""
-    base = prefix.rstrip("\\/")
-    if not base:
+    has that shape (checked), and the folder answer is the one a folder panel wants."""
+    folder_ids, base, sep = _folder_dirs(cur, prefix)
+    if sep is None:
         return "", []
-    if base.startswith("/"):
-        like = like_literal(base.lower()) + "/" + "%"
-        return (f"((lower({alias}.full_path) = ? OR lower({alias}.full_path) LIKE ?{_ESC}))",
-                [base.lower(), like])
-    ci, cs = _src_rule_ids(cur)
-    folder_ids = _match_dirs(cur, base, ci, cs)
     if folder_ids:
         return (f"{alias}.dir_id IN (SELECT a.dir_id FROM anc a WHERE a.anc_id IN "
                 f"({_id_list(folder_ids)}))", [])
     if not include_path:
         return "1 = 0", []
-    parent, _, name = base.rpartition(_SEP)
-    parent_ids = _match_dirs(cur, parent, ci, cs) if parent and name else []
+    parent, _, name = base.rpartition(sep)
+    if not name or (not parent and sep != pathrules.POSIX_SEP):
+        return "1 = 0", []
+    ci, cs = _src_rule_ids(cur, sep)
+    parent_ids = _match_dirs(cur, parent, ci, cs)
     if not parent_ids:
         return "1 = 0", []
     name_sql, name_params = _name_match(alias, name, ci, cs)
@@ -1030,43 +1106,38 @@ def folder_summary(repo: str, prefix: str, source: str | None = None) -> dict:
 def folder_top_children(repo: str, prefix: str, limit: int = 5, source: str | None = None) -> list[dict]:
     """The biggest immediate children of a folder, by physical - answers "what is actually big in
     here" without making the user drill down."""
-    base = prefix.rstrip(_SEP)
     cur = read_cursor(repo)
     try:
-        scope, params = scope_sql(cur, prefix, include_path=False)
-        conds = [scope] if scope else []
-        if source:
-            cond, sp = _src_cond_exact(cur, source)
-            conds.append(cond)
-            params.extend(sp)
-        where = _where(conds)
+        ch, where, params = _folder_scope(cur, prefix, source)
         return _rows(
             cur,
-            f"SELECT list_extract(string_split(substr(p.full_path, ?), ?), 1) AS child, "
+            f"SELECT {ch.name} AS child, "
             f"  COALESCE(sum(p.physical), 0) AS physical, count(*) AS files "
-            f"FROM pathx p WHERE {where} GROUP BY child "
+            f"FROM pathx p {ch.join} WHERE {where} GROUP BY child "
             f"ORDER BY physical DESC, child LIMIT {int(limit)}",
-            [len(base) + 2, _SEP, *params],
+            params,
         )
     finally:
         cur.close()
 
 
-def _folder_scope(cur, prefix: str, source: str | None) -> tuple[str, list]:
-    scope, params = scope_sql(cur, prefix, include_path=False)
-    conds = [scope] if scope else []
+def _folder_scope(cur, prefix: str, source: str | None) -> tuple[_Children, str, list]:
+    """(children grouping, WHERE, params) for the rows under a folder, optionally one source."""
+    ch = _child_sql(cur, prefix)
+    conds = [ch.scope] if ch.scope else []
+    params: list = []
     if source:
         cond, sp = _src_cond_exact(cur, source)
         conds.append(cond)
         params.extend(sp)
-    return _where(conds), params
+    return ch, _where(conds), params
 
 
 def folder_file_types(repo: str, prefix: str, source: str | None = None, limit: int = 8) -> list[dict]:
     """Files under a folder grouped by extension, biggest first; the rest rolled into ``other``."""
     cur = read_cursor(repo)
     try:
-        where, params = _folder_scope(cur, prefix, source)
+        _ch, where, params = _folder_scope(cur, prefix, source)
         rows = _rows(
             cur,
             f"SELECT COALESCE(p.ext, '') AS ext, count(*) AS files, "
@@ -1088,22 +1159,20 @@ def folder_file_types(repo: str, prefix: str, source: str | None = None, limit: 
 def folder_contents(repo: str, prefix: str, source: str | None = None, limit: int = 500) -> list[dict]:
     """Everything directly inside a folder: one row per child folder or file, folders first,
     each with size, file count, versions, last backup and a source to open it from."""
-    base = prefix.rstrip(_SEP)
     cur = read_cursor(repo)
     try:
-        where, params = _folder_scope(cur, prefix, source)
+        ch, where, params = _folder_scope(cur, prefix, source)
         return _rows(
             cur,
-            f"SELECT child, bool_or(strpos(rest, ?) > 0) AS is_folder, count(*) AS files, "
+            f"SELECT child, bool_or(is_dir) AS is_folder, count(*) AS files, "
             f"  COALESCE(sum(physical), 0) AS physical, COALESCE(sum(size), 0) AS logical, "
             f"  COALESCE(sum(versions), 0) AS versions, max(last_seen) AS last_seen, "
             f"  count(*) FILTER (WHERE NOT in_latest) AS deleted_files, min(source) AS source "
-            f"FROM (SELECT substr(p.full_path, ?) AS rest, "
-            f"        list_extract(string_split(substr(p.full_path, ?), ?), 1) AS child, "
+            f"FROM (SELECT {ch.name} AS child, {ch.folder} AS is_dir, "
             f"        p.physical, p.size, p.versions, p.last_seen, p.in_latest, s.source "
-            f"      FROM pathx p JOIN src s ON s.src_id = p.src_id WHERE {where}) "
+            f"      FROM pathx p JOIN src s ON s.src_id = p.src_id {ch.join} WHERE {where}) "
             f"GROUP BY child ORDER BY is_folder DESC, physical DESC, child LIMIT {int(limit)}",
-            [_SEP, len(base) + 2, len(base) + 2, _SEP, *params],
+            params,
         )
     finally:
         cur.close()
@@ -1120,7 +1189,7 @@ def flat_files(repo: str, source: str, prefix: str = "", deleted_only: bool = Fa
     try:
         where, params = _search_where(cur, "", deleted_only, min_size, source, ext, 0,
                                       None, None, 0, 0, ext_exclude)
-        if prefix.rstrip(_SEP):
+        if prefix:
             scope, sp = scope_sql(cur, prefix, include_path=True)
             if scope:
                 where.append(scope)
@@ -1181,9 +1250,10 @@ def tree_children_live(repo: str, source: str, root_obj: str, prefix: str) -> li
     complete - not the delta index). Folder sizes come from each entry's own summary (no deep
     walk); per-file physical comes from the generation's `csize`/`iphys` maps."""
     root = _source_root_path(source)
+    sep = pathrules.sep(source)
     rel = prefix[len(root):] if prefix.startswith(root) else prefix
     oid = root_obj
-    for seg in [s for s in rel.split(_SEP) if s]:
+    for seg in [s for s in rel.split(sep) if s]:
         kids = entries.children_of(repo, [oid]).get(oid, [])
         match = next((e for e in kids if e.get("type") == "d" and e.get("name") == seg), None)
         if not match:
@@ -1193,11 +1263,11 @@ def tree_children_live(repo: str, source: str, root_obj: str, prefix: str) -> li
     phys = _physical_for_objects(repo, [e.get("obj") for e in kids
                                         if e.get("type") == "f" and e.get("obj")])
 
-    base = prefix.rstrip(_SEP)
+    base = prefix.rstrip(sep)
     children: list[dict] = []
     for e in kids:
         name = e.get("name", "")
-        path = (base + _SEP + name) if base else name
+        path = pathrules.child_path(base, sep, name) if prefix else name
         if e.get("type") == "d":
             summ = e.get("summ", {}) or {}
             children.append({
@@ -1215,64 +1285,55 @@ def tree_children_live(repo: str, source: str, root_obj: str, prefix: str) -> li
     return children
 
 
+def _tree_rows(rows: list[dict], ch: _Children, physical: bool) -> list[dict]:
+    out = []
+    for r in rows:
+        name = r["name"]
+        out.append({
+            "path": pathrules.child_path(ch.base, ch.sep, name), "name": name,
+            "size": r["size"] or 0, "physical": (r["physical"] or 0) if physical else None,
+            "files": r["files"],
+            "modified": str(r["modified"]) if r["modified"] else "",
+            "type": "folder" if r["is_folder"] else "file",
+        })
+    return out
+
+
 def tree_children_all(repo: str, prefix: str, latest_only: bool = False, deleted_only: bool = False,
                       min_size: int = 0, ext: str | None = None, ext_exclude: str | None = None) -> list[dict]:
     """ALL-SOURCES aggregate tree: every source's paths merged under a prefix, **DEDUPED by
     full_path** (a path backed by several sources counts once). ``latest_only`` keeps only paths in
     their source's latest snapshot (= 'latest snapshot of each source' view, A#2); else all-snapshots
     aggregate (A#1). Node sizes are per-location; the true repo-wide deduped total is the dashboard's
-    `union_total` (siblings can overlap on shared content). Top level = merged drive roots."""
+    `union_total` (siblings can overlap on shared content). Top level = merged source roots."""
     cur = read_cursor(repo)
     try:
         where, params = _search_where(cur, "", deleted_only, min_size, None, ext, 0, None, None, 0, 0, ext_exclude)
         if latest_only:
             where.append("p.in_latest = true")
-        base = prefix.rstrip(_SEP)
-        if base:
-            scope, sp = scope_sql(cur, prefix, include_path=False)
-            if scope:
-                where.append(scope)
-                params.extend(sp)
-        where_sql = _where(where)
+        ch = _child_sql(cur, prefix, row_alias="dp")
+        if ch.scope:
+            where.append(ch.scope)
         rows = _rows(
             cur,
             f"""
             WITH dp AS (
-                SELECT p.full_path, max(p.size) AS size, max(p.physical) AS physical, max(p.last_seen) AS last_seen
-                FROM pathx p WHERE {where_sql} GROUP BY p.full_path
-            ), sub AS (
-                SELECT size, physical, last_seen,
-                       CASE WHEN ? = '' THEN full_path ELSE substr(full_path, length(?) + 2) END AS remainder
-                FROM dp
+                SELECT p.full_path, any_value(p.dir_id) AS dir_id, any_value(p.src_id) AS src_id,
+                       any_value(p.name) AS name, max(p.size) AS size, max(p.physical) AS physical,
+                       max(p.last_seen) AS last_seen
+                FROM pathx p WHERE {_where(where)} GROUP BY p.full_path
             )
-            SELECT CASE
-                     -- UNC root: split_part returns an empty name before the leading separator,
-                     -- which used to lump every UNC source into one blank-named top node. Name it
-                     -- by its first two segments (host + share) instead.
-                     WHEN starts_with(remainder, ?) THEN
-                       ? || split_part(substr(remainder, 3), ?, 1) || ? || split_part(substr(remainder, 3), ?, 2)
-                     ELSE split_part(remainder, ?, 1)
-                   END AS name,
-                   sum(size) AS size, sum(physical) AS physical,
-                   count(*) AS files, max(last_seen) AS modified,
-                   max(CASE WHEN position(? IN remainder) > 0 THEN 1 ELSE 0 END) AS is_folder
-            FROM sub WHERE remainder <> '' GROUP BY name ORDER BY size DESC, name
+            SELECT {ch.name} AS name,
+                   sum(dp.size) AS size, sum(dp.physical) AS physical,
+                   count(*) AS files, max(dp.last_seen) AS modified,
+                   max(CASE WHEN {ch.folder} THEN 1 ELSE 0 END) AS is_folder
+            FROM dp {ch.join} GROUP BY 1 ORDER BY size DESC, name
             """,
-            [*params, base, base,
-             _SEP * 2, _SEP * 2, _SEP, _SEP, _SEP, _SEP, _SEP],
+            params,
         )
     finally:
         cur.close()
-    out = []
-    for r in rows:
-        name = r["name"]
-        out.append({
-            "path": (base + _SEP + name) if base else name, "name": name,
-            "size": r["size"] or 0, "physical": r["physical"] or 0, "files": r["files"],
-            "modified": str(r["modified"]) if r["modified"] else "",
-            "type": "folder" if r["is_folder"] else "file",
-        })
-    return out
+    return _tree_rows(rows, ch, physical=True)
 
 
 def tree_children_snaps(repo: str, snapshot_ids: list[str], prefix: str = "") -> list[dict]:
@@ -1280,56 +1341,35 @@ def tree_children_snaps(repo: str, snapshot_ids: list[str], prefix: str = "") ->
     the delta `files` table, deduped by full_path. Powers the all-sources 'changed' view."""
     if not snapshot_ids:
         return []
-    base = prefix.rstrip(_SEP)
     cur = read_cursor(repo)
     try:
         sids = [i for i in (resolve.snap_id(cur, s) for s in snapshot_ids) if i is not None]
         if not sids:  # none of the given snapshot ids exist: no rows before, none now
             return []
         ph = ",".join("?" * len(sids))
-        scope, sp = scope_sql(cur, prefix, include_path=False)
-        cond = f" AND {scope}" if scope else ""
+        ch = _child_sql(cur, prefix, row_alias="dp")
+        cond = f" AND {ch.scope}" if ch.scope else ""
         rows = _rows(
             cur,
             f"""
             WITH dp AS (
-                SELECT p.full_path, max(f.size) AS size, max(f.mtime) AS mtime
+                SELECT p.full_path, any_value(p.dir_id) AS dir_id, any_value(p.src_id) AS src_id,
+                       any_value(p.name) AS name, max(f.size) AS size, max(f.mtime) AS mtime
                 FROM filev f
                 JOIN pathx p ON p.path_id = f.path_id
                 WHERE f.snap_id IN ({ph}){cond}
                 GROUP BY p.full_path
-            ), sub AS (
-                SELECT size, mtime,
-                       CASE WHEN ? = '' THEN full_path ELSE substr(full_path, length(?) + 2) END AS remainder
-                FROM dp
             )
-            SELECT CASE
-                     -- UNC root: split_part returns an empty name before the leading separator,
-                     -- which used to lump every UNC source into one blank-named node (same fix
-                     -- as tree_children_all). Name it by host + share instead.
-                     WHEN starts_with(remainder, ?) THEN
-                       ? || split_part(substr(remainder, 3), ?, 1) || ? || split_part(substr(remainder, 3), ?, 2)
-                     ELSE split_part(remainder, ?, 1)
-                   END AS name, sum(size) AS size, count(*) AS files,
-                   max(mtime) AS modified,
-                   max(CASE WHEN position(? IN remainder) > 0 THEN 1 ELSE 0 END) AS is_folder
-            FROM sub WHERE remainder <> '' GROUP BY name ORDER BY size DESC, name
+            SELECT {ch.name} AS name, sum(dp.size) AS size, count(*) AS files,
+                   max(dp.mtime) AS modified,
+                   max(CASE WHEN {ch.folder} THEN 1 ELSE 0 END) AS is_folder
+            FROM dp {ch.join} GROUP BY 1 ORDER BY size DESC, name
             """,
-            [*sids, *sp, base, base,
-             _SEP * 2, _SEP * 2, _SEP, _SEP, _SEP, _SEP, _SEP],
+            sids,
         )
     finally:
         cur.close()
-    out = []
-    for r in rows:
-        name = r["name"]
-        out.append({
-            "path": (base + _SEP + name) if base else name, "name": name,
-            "size": r["size"] or 0, "physical": None, "files": r["files"],
-            "modified": str(r["modified"]) if r["modified"] else "",
-            "type": "folder" if r["is_folder"] else "file",
-        })
-    return out
+    return _tree_rows(rows, ch, physical=False)
 
 
 def tree_children_paths(repo: str, source: str, prefix: str, deleted_only: bool = False,
@@ -1339,15 +1379,14 @@ def tree_children_paths(repo: str, source: str, prefix: str, deleted_only: bool 
     prefix - the source's total file set across every snapshot, not a point-in-time view. Optional
     filters (deleted-from-disk / >= size / ext include+exclude) keep only matching descendants, so
     folders with no match drop out (e.g. 'folders containing deleted files')."""
-    base = prefix.rstrip(_SEP)
     cur = read_cursor(repo)
     try:
         sid = resolve.src_id(cur, source)
         if sid is None:  # unknown source: no rows before, none now
             return []
-        scope, sp = scope_sql(cur, prefix, include_path=False)
-        conds = ["p.src_id = ?"] + ([scope] if scope else [])
-        params: list = [sid, *sp]
+        ch = _child_sql(cur, prefix)
+        conds = ["p.src_id = ?"] + ([ch.scope] if ch.scope else [])
+        params: list = [sid]
         if deleted_only:
             conds.append("p.in_latest = false")
         if min_size:
@@ -1363,47 +1402,23 @@ def tree_children_paths(repo: str, source: str, prefix: str, deleted_only: bool 
             if exx:
                 conds.append("(p.ext IS NULL OR p.ext NOT IN (%s))" % ",".join("?" * len(exx)))
                 params.extend(exx)
-        where_sql = _where(conds)
         rows = _rows(
             cur,
             f"""
-            WITH sub AS (
-                SELECT p.size, p.physical, p.last_seen,
-                       CASE WHEN ? = '' THEN p.full_path
-                            ELSE substr(p.full_path, length(?) + 2) END AS remainder
-                FROM pathx p
-                WHERE {where_sql}
-            )
-            SELECT CASE
-                     -- UNC root: name it by host + share (same fix as tree_children_all).
-                     WHEN starts_with(remainder, ?) THEN
-                       ? || split_part(substr(remainder, 3), ?, 1) || ? || split_part(substr(remainder, 3), ?, 2)
-                     ELSE split_part(remainder, ?, 1)
-                   END AS name,
-                   sum(size) AS size,
-                   sum(physical) AS physical,
+            SELECT {ch.name} AS name,
+                   sum(p.size) AS size,
+                   sum(p.physical) AS physical,
                    count(*) AS files,
-                   max(last_seen) AS modified,
-                   max(CASE WHEN position(? IN remainder) > 0 THEN 1 ELSE 0 END) AS is_folder
-            FROM sub
-            WHERE remainder <> ''
-            GROUP BY name
+                   max(p.last_seen) AS modified,
+                   max(CASE WHEN {ch.folder} THEN 1 ELSE 0 END) AS is_folder
+            FROM pathx p
+            {ch.join}
+            WHERE {_where(conds)}
+            GROUP BY 1
             ORDER BY size DESC, name
             """,
-            [base, base, *params, _SEP * 2, _SEP * 2, _SEP, _SEP, _SEP, _SEP, _SEP],
+            params,
         )
     finally:
         cur.close()
-    children = []
-    for r in rows:
-        name = r["name"]
-        children.append({
-            "path": (base + _SEP + name) if base else name,
-            "name": name,
-            "size": r["size"] or 0,
-            "physical": r["physical"] or 0,
-            "files": r["files"],
-            "modified": str(r["modified"]) if r["modified"] else "",
-            "type": "folder" if r["is_folder"] else "file",
-        })
-    return children
+    return _tree_rows(rows, ch, physical=True)

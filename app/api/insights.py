@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from config import REPOS, repo_kind
 
+from ..core import paths as pathrules
 from ..core.policy import effective_for_path, source_summaries, summarize
 from .errors import PASS_THROUGH
 from ..index.churnview import cached_folder_window, churn_rollup
@@ -32,12 +33,10 @@ from ..index.queries import (
     folder_top_children,
 )
 
-_SEP = chr(92)
-
-
 def _root_of(source_key: str) -> str:
-    """The filesystem path a source is rooted at, lowercased, no trailing separator."""
-    return source_key.split(":", 1)[-1].rstrip(_SEP).lower()
+    """The path a source is rooted at, no trailing separator, under its own case rule."""
+    sep = pathrules.sep(source_key)
+    return pathrules.ident(source_key, pathrules.source_root(source_key).rstrip(sep))
 
 
 def classify_folder_sources(prefix: str, rows: list[dict], all_sources: list[str]) -> None:
@@ -56,14 +55,16 @@ def classify_folder_sources(prefix: str, rows: list[dict], all_sources: list[str
     source's root, counting the nested parents above it. On this repo that runs 2-4, not 24.
     """
     roots = {src: _root_of(src) for src in all_sources}
-    base = prefix.rstrip(_SEP).lower()
+    folder, _sep = pathrules.folder_key(prefix)
     for row in rows:
         src = row["source"]
+        sep = pathrules.sep(src)
         root = roots.get(src, _root_of(src))
-        row["relation"] = "covers" if (base == root or base.startswith(root + _SEP)) else "inside"
+        base = pathrules.ident(src, folder)
+        row["relation"] = "covers" if (base == root or base.startswith(root + sep)) else "inside"
         row["overlap"] = 1 + sum(
             1 for other, oroot in roots.items()
-            if other != src and oroot and root.startswith(oroot + _SEP)
+            if other != src and pathrules.sep(other) == sep and root.startswith(oroot + sep)
         )
 
 
@@ -81,7 +82,7 @@ def _with_source_physical(repo: str, out: dict) -> dict:
     """Each source's all-versions physical, read from the dashboard's cached table (never
     computed here). Missing when the dashboard has not been built yet."""
     from ..core.metrics import _read_cache
-    dash = _read_cache(repo, "all", None) or {}
+    dash = _read_cache(repo, None) or {}
     phys = {r["source"]: r.get("physical") for r in dash.get("rows") or []}
     if phys:
         out = {**out, "by_source": [{**r, "physical_all": phys.get(r["source"])}

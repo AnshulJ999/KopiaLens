@@ -116,6 +116,35 @@ def ident(source_key: str, path: str) -> str:
     return path if case_sensitive(source_key) else path.lower()
 
 
+def path_sep(path: str) -> str:
+    """The separator a full path is written with, from its shape alone: POSIX paths start with
+    "/", everything else (drive letter, UNC) is a Windows path. For when no source is at hand."""
+    return POSIX_SEP if path.startswith(POSIX_SEP) else WIN_SEP
+
+
+def folder_key(prefix: str) -> tuple[str, str | None]:
+    """``(stored folder path, separator)`` for a Tree/folder prefix, matching ``dir.dir_path``.
+
+    "" is the top of the tree (separator None). Only the path's OWN separator is trimmed, so a
+    POSIX name ending in a backslash survives. The POSIX root "/" is stored as ""; a drive root
+    "C:\\" as "C:"."""
+    if not prefix:
+        return "", None
+    s = path_sep(prefix)
+    return prefix.rstrip(s), s
+
+
+def child_path(base: str, sep: str | None, name: str) -> str:
+    """The path of ``name`` inside the folder ``folder_key`` returned (top level: the name)."""
+    return name if sep is None else base + sep + name
+
+
+def basename(path: str) -> str:
+    """The last name in a full path, split by the path's own separator."""
+    s = path_sep(path)
+    return path.rstrip(s).rsplit(s, 1)[-1]
+
+
 def join(source_key: str, root: str, relative: str) -> str:
     """Join a source root and a walk-relative path using the source's own separator."""
     s = sep(source_key)

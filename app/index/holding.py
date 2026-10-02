@@ -14,13 +14,13 @@ from . import entries
 
 
 def _segments(source: str, full_path: str) -> list[str] | None:
-    root = pathrules.source_root(source).rstrip("\\/")
     sep = pathrules.sep(source)
+    root = pathrules.source_root(source).rstrip(sep)
     fold = not pathrules.case_sensitive(source)
     a, b = (full_path.lower(), root.lower()) if fold else (full_path, root)
     if not a.startswith(b):
         return None
-    rel = full_path[len(root):].strip("\\/")
+    rel = full_path[len(root):].strip(sep)
     return [s for s in rel.split(sep) if s] if rel else []
 
 

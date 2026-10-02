@@ -273,6 +273,22 @@ def _parse_seq(p: _RuneScanner, pattern: str) -> _Seq:
     return _Seq(tuple(items), negated_seq)
 
 
+def escape_name(name: str, start: bool = True, end: bool = True) -> str:
+    """A real file or folder name as ignore-rule text that matches exactly that name: wildcard
+    and escape characters are escaped, plus whitespace at either end (the parser skips leading
+    and trims trailing whitespace) and a leading ``!``/``#``. ``start``/``end`` False marks a
+    piece from the middle of a name, whose edges are not the rule's edges."""
+    lead = len(name) - len(name.lstrip()) if start else 0
+    trail = len(name) - len(name.rstrip()) if end else 0
+    out = []
+    for i, ch in enumerate(name):
+        if (ch in "\\*?[]" or (start and i == 0 and ch in "!#")
+                or (ch.isspace() and (i < lead or i >= len(name) - trail))):
+            out.append("\\")
+        out.append(ch)
+    return "".join(out)
+
+
 def compile_pattern(pattern: str, base_dir: str = "") -> WildcardPattern:
     """Port of wcmatch.NewWildcardMatcher(rule, IgnoreCase(false), BaseDir(base_dir)).
 

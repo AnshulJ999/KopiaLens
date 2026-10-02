@@ -24,13 +24,13 @@ import threading
 import time
 import uuid
 
+from ..core import paths as pathrules
 from ..core.applog import get_logger
 from . import sidecache
+from .queries import _folder_name_sql, _rollup_join
 from .store import read_cursor
 
 log = get_logger("churnview")
-
-_SEP = chr(92)
 
 _CACHE: dict[tuple, dict] = {}
 _CACHE_MAX = 12
@@ -42,15 +42,11 @@ _MAX_LIMIT = 2000  # rows retained per view in the cache; requests slice this do
 
 # Bumped whenever the qualifying rule changes semantics, so on-disk rollups built by the old
 # rule cannot be served as current (the index stamp alone does not change on a code fix).
-_CACHE_VERSION = 3
+_CACHE_VERSION = 4
 
-# Last path segment, then its extension - built from string_split only, so the SQL text carries no
-# backslash literal (the separator is always bound as a parameter).
-_BASENAME = "list_extract(string_split(full_path, ?), -1)"
-_EXT = (f"CASE WHEN len(string_split({_BASENAME}, '.')) > 1 "
-        f"THEN lower(list_extract(string_split({_BASENAME}, '.'), -1)) ELSE '' END")
-_FOLDER = ("array_to_string(list_slice(string_split(full_path, ?), 1, "
-           "least(?, len(string_split(full_path, ?)) - 1)), ?)")
+# A file's extension, from its own name column (never by cutting the path).
+_EXT = ("CASE WHEN len(string_split(t.name, '.')) > 1 "
+        "THEN lower(list_extract(string_split(t.name, '.'), -1)) ELSE '' END")
 
 # The qualifying set: (path, content) pairs that genuinely entered the repo inside the window.
 #
@@ -88,7 +84,7 @@ WITH pc AS (
          lag(last_ts) OVER (PARTITION BY path_id ORDER BY last_ts, cid_id) AS prev_last
   FROM pc
 ), newc AS (
-  SELECT s.source, p.full_path, hist.cid_id, COALESCE(hist.size, 0) AS size,
+  SELECT s.source, p.full_path, p.dir_id, p.src_id, p.name, hist.cid_id, COALESCE(hist.size, 0) AS size,
          COALESCE(cs.packed, ip.packed, 0) AS packed
   FROM hist
   LEFT JOIN pathx p ON p.path_id = hist.path_id
@@ -119,36 +115,33 @@ def _qualify_params(cutoff: str) -> list:
 _MATERIALIZE_SQL = f"CREATE OR REPLACE TEMPORARY TABLE {{tmp}} AS {_QUALIFY_CTE} SELECT * FROM newc"
 
 
-def _base_sql(tmp: str) -> str:
+def _base_sql(tmp: str, depth: int, folder: str) -> str:
     return f"""
-SELECT source, {_FOLDER} AS folder, {_EXT} AS ext,
-       sum(packed) AS bytes, count(*) AS versions, count(DISTINCT full_path) AS files,
-       sum(size) AS logical
-FROM {tmp}
-GROUP BY source, folder, ext
+SELECT t.source, {folder} AS folder, {_EXT} AS ext,
+       sum(t.packed) AS bytes, count(*) AS versions, count(DISTINCT t.full_path) AS files,
+       sum(t.size) AS logical
+FROM {tmp} t
+{_rollup_join('t', depth, 'f')}
+GROUP BY t.source, folder, ext
 """
 
 
-# What each source / folder / file type holds NOW (latest snapshot), for the size columns next to
-# the churn figures. Same folder/ext expressions as the rollup, so the keys line up.
-_CURRENT_SQL = {
-    "source": ("SELECT s.source, sum(x.size), sum(x.physical) FROM pathx x "
-               "JOIN src s ON s.src_id = x.src_id WHERE x.in_latest GROUP BY 1", lambda depth: []),
-    "folder": (f"SELECT {_FOLDER}, sum(size), sum(physical) FROM pathx WHERE in_latest GROUP BY 1",
-               lambda depth: [_SEP, int(depth), _SEP, _SEP]),
-    "ext": (f"SELECT {_EXT}, sum(size), sum(physical) FROM pathx WHERE in_latest GROUP BY 1",
-            lambda depth: [_SEP, _SEP]),
-}
-
-
 def _current(repo: str, depth: int) -> dict[str, dict]:
-    """{view: {key: (logical, physical_latest)}} over the latest snapshot. ~1 s on repo 1."""
+    """{view: {key: (logical, physical_latest)}} over the latest snapshot, for the size columns
+    next to the churn figures. Same folder/ext expressions as the rollup, so the keys line up.
+    ~1 s on repo 1."""
     out: dict[str, dict] = {}
     cur = read_cursor(repo)
     try:
-        for view, (sql, params) in _CURRENT_SQL.items():
-            out[view] = {r[0]: (int(r[1] or 0), int(r[2] or 0))
-                         for r in cur.execute(sql, params(depth)).fetchall()}
+        sqls = {
+            "source": ("SELECT s.source, sum(t.size), sum(t.physical) FROM pathx t "
+                       "JOIN src s ON s.src_id = t.src_id WHERE t.in_latest GROUP BY 1"),
+            "folder": (f"SELECT {_folder_name_sql(cur, 'f')}, sum(t.size), sum(t.physical) FROM pathx t "
+                       f"{_rollup_join('t', depth, 'f')} WHERE t.in_latest GROUP BY 1"),
+            "ext": f"SELECT {_EXT}, sum(t.size), sum(t.physical) FROM pathx t WHERE t.in_latest GROUP BY 1",
+        }
+        for view, sql in sqls.items():
+            out[view] = {r[0]: (int(r[1] or 0), int(r[2] or 0)) for r in cur.execute(sql).fetchall()}
     finally:
         cur.close()
     return out
@@ -162,8 +155,9 @@ def _deduped_sql(tmp: str) -> str:
 
 
 def _source_path(source_key: str) -> str:
-    """Strip the ``user@host:`` prefix off a source key, lowercased, no trailing separator."""
-    return source_key.split(":", 1)[-1].rstrip(_SEP).lower()
+    """A source key's root path, no trailing separator, under the source's own case rule."""
+    sep = pathrules.sep(source_key)
+    return pathrules.ident(source_key, pathrules.source_root(source_key).rstrip(sep))
 
 
 def nested_map(source_keys) -> dict[str, str]:
@@ -174,10 +168,11 @@ def nested_map(source_keys) -> dict[str, str]:
     out: dict[str, str] = {}
     for key, path in paths.items():
         best = None
+        sep = pathrules.sep(key)
         for other, opath in paths.items():
-            if other == key or not opath or opath == path:
+            if other == key or opath == path or pathrules.sep(other) != sep:
                 continue
-            if path.startswith(opath + _SEP) and (best is None or len(opath) > len(paths[best])):
+            if path.startswith(opath + sep) and (best is None or len(opath) > len(paths[best])):
                 best = other
         if best:
             out[key] = best
@@ -258,7 +253,7 @@ def _compute(repo: str, depth: int, cutoff: str) -> tuple[list[dict], int]:
              "bytes": int(r[3] or 0), "versions": int(r[4] or 0), "files": int(r[5] or 0),
              "logical": int(r[6] or 0)}
             for r in cur.execute(
-                _base_sql(tmp), [_SEP, int(depth), _SEP, _SEP, _SEP, _SEP],
+                _base_sql(tmp, depth, _folder_name_sql(cur, 'f')),
             ).fetchall()
         ]
         deduped = int(cur.execute(_deduped_sql(tmp)).fetchone()[0] or 0)
@@ -389,18 +384,21 @@ def churn_rollup(repo: str, days: int = 30, depth: int = 4, limit: int = 400,
 def cached_folder_window(repo: str, folder: str, days: int = 30, depth: int = 4) -> dict | None:
     """New data under one folder (its whole subtree) from an already-built rollup. None when the
     rollup is not cached or the folder is deeper than the rollup's ``depth``. Never computes."""
-    want = folder.rstrip("\\/")
-    sep = "\\" if "\\" in want or "/" not in want else "/"
-    if len([s for s in want.split(sep) if s]) > depth:
+    want, sep = pathrules.folder_key(folder)
+    if sep is None or len(want.split(sep)) > depth:   # a stored folder's depth = its part count
         return None
     hit = _cache_get((repo, days, depth), _index_hash(repo))
     if hit is None:
         return None
-    want = want.lower()
+    fold = sep == pathrules.WIN_SEP
+    want = want.lower() if fold else want
     total = {"bytes": 0, "files": 0, "versions": 0, "days": days}
     found = False
     for row in hit.get("by_folder") or []:
-        key = str(row.get("folder", "")).rstrip("\\/").lower()
+        key, ksep = pathrules.folder_key(str(row.get("folder", "")))
+        if ksep != sep:
+            continue
+        key = key.lower() if fold else key
         if key == want or key.startswith(want + sep):
             found = True
             for k in ("bytes", "files", "versions"):

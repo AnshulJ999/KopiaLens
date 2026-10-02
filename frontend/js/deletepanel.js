@@ -100,7 +100,7 @@ const deletePart = {
       const p = this.delPanel;
       if (!p) return "";
       if (p.files.length > 1) return `${p.files.length} files`;
-      return p.files[0].full_path.split(/[\\/]/).pop();
+      return baseName(p.files[0].full_path);
     },
 
     delRowTag(r) {

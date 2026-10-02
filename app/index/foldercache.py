@@ -20,6 +20,7 @@ import os
 import threading
 import time
 
+from ..core import paths as pathrules
 from ..core.applog import get_logger
 from . import sidecache
 from .physical import folder_detail
@@ -28,7 +29,6 @@ from .store import read_cursor
 
 log = get_logger("foldercache")
 
-_SEP = chr(92)
 _MAX_ENTRIES = 4000          # plenty for every folder the UI realistically browses
 _PREWARM_TOP = 40            # biggest folders per depth, by physical
 # Depths are DERIVED from what the user actually browses (see _prewarm_depths), not hardcoded.
@@ -92,7 +92,8 @@ def _name(repo: str) -> str:
 
 
 def _key(prefix: str, source: str | None) -> str:
-    return (prefix.rstrip(_SEP).lower() + "|" + (source or "*"))
+    base, sep = pathrules.folder_key(prefix)
+    return ((base.lower() if sep != pathrules.POSIX_SEP else base) + "|" + (source or "*"))
 
 
 def _load(repo: str) -> dict:

@@ -68,6 +68,5 @@ class RetentionPolicy(BaseModel):
 class SimRequest(BaseModel):
     repo: str
     source: str | None = None
-    mode: str = "all"
     refresh: bool = False
     policy: RetentionPolicy = Field(default_factory=RetentionPolicy)

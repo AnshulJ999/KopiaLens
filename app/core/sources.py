@@ -198,20 +198,6 @@ def invalidate(repo: str | None = None) -> None:
             _CACHE.pop(repo, None)
 
 
-def is_laptop(key: str) -> bool:
-    return "laptop" in key.lower()
-
-
-def split_sources(srcs: dict[str, list[dict]], mode: str) -> tuple[list[str], list[str]]:
-    keys = sorted(srcs)
-    non_laptop = [key for key in keys if not is_laptop(key)]
-    if mode == "ignore":
-        return non_laptop, non_laptop
-    if mode == "hide":
-        return keys, non_laptop
-    return keys, keys
-
-
 def logical_stats(snaps: list[dict]) -> dict:
     sizes = [snap.get("stats", {}).get("totalSize", 0) for snap in snaps]
     dates = [snap.get("startTime", "")[:10] for snap in snaps if snap.get("startTime")]

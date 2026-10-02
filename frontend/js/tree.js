@@ -24,18 +24,17 @@ const treePart = {
 
     treeCrumbs() {
       const root = this.sourceRoot();
-      const rootTrim = root.replace(/[\\/]+$/, "");
-      const crumbs = [{ label: rootTrim || "root", prefix: root }];
-      const cur = this.treePrefix || "";
-      if (cur.length > root.length) {
-        const tail = cur.slice(root.length).replace(/^[\\/]+/, "");
-        let acc = rootTrim;
-        for (const seg of tail.split("\\").filter(Boolean)) {
-          acc = acc + "\\" + seg;
-          crumbs.push({ label: seg, prefix: acc });
-        }
+      const top = root ? trimSep(root) : "";
+      const crumbs = [{ label: top || "root", prefix: root }];
+      const chain = [];
+      let cur = this.treePrefix || "";
+      for (let i = 0; cur && trimSep(cur) !== top && i < 500; i++) {
+        const up = parentPath(cur);
+        chain.unshift({ label: up === null ? trimSep(cur) : baseName(cur), prefix: cur });
+        if (up === null) break;
+        cur = up;
       }
-      return crumbs;
+      return crumbs.concat(chain);
     },
 
     // ---------- Tree ----------
@@ -147,9 +146,8 @@ const treePart = {
     toggleTreeFlat() { this.treeFlat = !this.treeFlat; this.loadTree(); },
     jumpToTree(item) {
       this.selectedSource = item.source; this.treeMode = "all";
-      const root = sourcePath(item.source).replace(/[\\/]+$/, "");
-      const parent = item.full_path.includes("\\") ? item.full_path.slice(0, item.full_path.lastIndexOf("\\")) : root;
-      this.treePrefix = parent || root; this.active = "tree"; this.loadTree();
+      const root = trimSep(sourcePath(item.source));
+      this.treePrefix = parentPath(item.full_path) || root; this.active = "tree"; this.loadTree();
     },
     toggleTreeDedupe() { this.treeDedupe = !this.treeDedupe; this.klSet({ tree_dedupe: this.treeDedupe }); this.loadTree(); },
 };

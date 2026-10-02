@@ -21,6 +21,7 @@ import hashlib
 import threading
 import time
 
+from ..core import paths as pathrules
 from ..core.applog import get_logger
 from ..core.sources import resolve_source
 from . import entries, layer2, tree
@@ -78,6 +79,7 @@ def reclaimable_files(repo: str, source: str, snapshot_id: str, limit: int = 200
         _recl_cache_put(ck, [])
         return []
     root_path = key.split(":", 1)[1] if ":" in key else key
+    sep = pathrules.sep(key)
     files: list[dict] = []
     unknown = 0
 
@@ -94,7 +96,7 @@ def reclaimable_files(repo: str, source: str, snapshot_id: str, limit: int = 200
             repo, [e.get("obj", "") for e in kids if e.get("type") == "f"], cursor=cur)
         for entry in kids:
             name = entry.get("name", "")
-            rel = (parent + "\\" + name).lstrip("\\")
+            rel = parent + sep + name if parent else name
             if entry.get("type") == "d" and entry.get("obj"):
                 visit(entry["obj"], rel, cur)
             elif entry.get("type") == "f":
@@ -106,7 +108,7 @@ def reclaimable_files(repo: str, source: str, snapshot_id: str, limit: int = 200
                     continue
                 excl = chunks & exclusive
                 if excl:
-                    files.append({"full_path": root_path.rstrip("\\") + "\\" + rel,
+                    files.append({"full_path": root_path.rstrip(sep) + sep + rel,
                                   "size": sum(smap.get(c, 0) for c in excl)})
 
     cur = read_cursor(repo)

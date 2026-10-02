@@ -146,8 +146,7 @@ const detailPart = {
     folderOpenChild(r) {
       const d = this.detail;
       if (!d) return;
-      const sep = d.title.includes("\\") || !d.title.includes("/") ? "\\" : "/";
-      const path = d.title.replace(/[\\/]+$/, "") + sep + r.child;
+      const path = joinPath(d.title, r.child);
       if (r.is_folder) this.openFolderPanel(path, d.source || null);
       else this.openFileDetail({ source: r.source, full_path: path });
     },
@@ -262,7 +261,7 @@ const detailPart = {
       const plan = (this.detail && this.detail.removeFiles) || await this.rfEnsurePlan();
       if (!plan || !this.detail) return;
       const ok = await this.klConfirm({
-        title: `Remove ${this.detail.title.split(/[\\/]/).pop()} from snapshots?`,
+        title: `Remove ${baseName(this.detail.title)} from snapshots?`,
         facts: [
           ["File", this.detail.title],
           ["Match", plan.by === "object-id" ? `Exact content · ${plan.count} version${plan.count === 1 ? "" : "s"}` : "File name · every file with this name"],
@@ -270,7 +269,7 @@ const detailPart = {
         ],
         callout: plan.by === "object-id"
           ? (this.copyCount() ? `${this.copyCount()} identical cop${this.copyCount() === 1 ? "y" : "ies"} at other paths go too.` : "")
-          : `Every file named ${this.detail.title.split(/[\\/]/).pop()} in these backups goes.`,
+          : `Every file named ${baseName(this.detail.title)} in these backups goes.`,
         note: (this.rfDryChecked() ? "" : "No dry run yet. ") + "Snapshots stay. Space frees after the next full maintenance.",
         command: plan.commit, confirmLabel: "Remove from snapshots", danger: true,
       });

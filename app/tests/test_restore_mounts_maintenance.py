@@ -89,7 +89,7 @@ def test_compare_counts_new_identical_and_different(tmp_path, monkeypatch):
     (tmp_path / "diff.txt").write_bytes(b"1")
     (tmp_path / "extra.txt").write_bytes(b"1")
     listing = [("same.txt", 5, "2023-11-14T22:13:20Z"), ("diff.txt", 9, ""), ("new.txt", 3, "")]
-    monkeypatch.setattr(restore, "_listing", lambda repo, obj, kind, size, mtime: iter(listing))
+    monkeypatch.setattr(restore, "_listing", lambda repo, obj, kind, size, mtime, bad=None: iter(listing))
     out = restore._compare("3", {"obj": "k1", "type": "d", "size": 0, "mtime": ""}, str(tmp_path), delete_extra=True)
     assert (out["new"], out["identical"], out["different"], out["extra"]) == (1, 1, 1, 1)
     assert out["extra_paths"] == [str(tmp_path / "extra.txt")]

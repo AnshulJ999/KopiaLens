@@ -13,24 +13,7 @@ from config import CACHEDIR
 
 from .kopia import kopia
 from .metrics import gb
-from .sources import resolve_source, roots_of, sources_index, split_sources
-
-def _refcount_for_mode(repo: str, srcs: dict, mode: str) -> dict[str, int]:
-    """The per-source content refcount over the sources a mode selects.
-
-    ``mode="all"`` reads the generation's published `crefs` map. Any other mode counts the selected
-    sources' tree reach - the same Counter the walk-based path built, now sourced from the tree
-    instead of the walk cache. ````: the walk is gone, the numbers are not.
-    """
-    from ..index import layer2                      # lazy: core must not import index at load
-    from ..index.physical import _refcount_map
-    if mode == "all":
-        return _refcount_map(repo)
-    membership, _ = split_sources(srcs, mode)
-    count: collections.Counter = collections.Counter()
-    for key in membership:
-        count.update(layer2.reach_content_ids(repo, roots_of(srcs[key])))
-    return count
+from .sources import resolve_source, roots_of, sources_index
 
 
 _MAX_INT = 2 ** 62                # kopia's EffectiveKeepLatest returns MaxInt when all six are 0
@@ -204,7 +187,6 @@ def simulate(
     repo: str,
     source: str,
     policy: dict[str, int],
-    mode: str = "all",
     refresh: bool = False,
 ) -> dict:
     key, srcs = resolve_source(repo, source=source)
@@ -217,9 +199,7 @@ def simulate(
     keep_snaps = [snap for snap in snaps if snap["id"] in keep_ids]
     del_snaps = [snap for snap in snaps if snap["id"] not in keep_ids]
     smap = _size_map(repo, refresh=refresh)
-    membership, _ = split_sources(srcs, mode)
-    count_mode = mode if key in membership else "all"
-    count = _refcount_for_mode(repo, srcs, count_mode)
+    count = _refcount_map(repo)
 
     def contents(items: list[dict]) -> set[str]:
         roots = [snap["rootEntry"]["obj"] for snap in items if snap.get("rootEntry", {}).get("obj")]
@@ -249,8 +229,8 @@ def simulate(
 _SIMALL_CACHE_VERSION = 2   # bump on any retention_keep rule change: old payloads assume old rules
 
 
-def _simall_cache(repo: str, policy: dict, mode: str) -> str:
-    h = hashlib.md5(f"v{_SIMALL_CACHE_VERSION}|{sorted(policy.items())}|{mode}".encode())
+def _simall_cache(repo: str, policy: dict) -> str:
+    h = hashlib.md5(f"v{_SIMALL_CACHE_VERSION}|{sorted(policy.items())}".encode())
     srcs = sources_index(repo)
     for key in sorted(srcs):
         for snap in srcs[key]:
@@ -258,17 +238,17 @@ def _simall_cache(repo: str, policy: dict, mode: str) -> str:
     return f"simall_repo{repo}_{h.hexdigest()}"
 
 
-def simulate_all(repo: str, policy: dict[str, int], mode: str = "all", refresh: bool = False) -> dict:
+def simulate_all(repo: str, policy: dict[str, int], refresh: bool = False) -> dict:
     """Simulate retention across EVERY source in one combined pass. Per-source reclaim is the
     content freed and attributable to that source alone (global refcount == 1); the combined
     total is the true union (content that leaves no kept snapshot anywhere) - NOT the per-source
-    sum, which double-counts content shared between sources. Cached by policy+mode+snapshot-set."""
+    sum, which double-counts content shared between sources. Cached by policy+snapshot-set."""
     # lazy: core must not import index at module load - every neighbour here does the
     # same, and one eager import is all it takes to make the cycle real.
     from ..index import layer2
     from ..index.physical import _refcount_map, _size_map
     from ..index import sidecache
-    cache_name = _simall_cache(repo, policy, mode)
+    cache_name = _simall_cache(repo, policy)
     if not refresh:
         data = sidecache.read(cache_name)
         if data is not None:
@@ -277,8 +257,8 @@ def simulate_all(repo: str, policy: dict[str, int], mode: str = "all", refresh: 
 
     srcs = sources_index(repo)
     smap = _size_map(repo)
-    _, display = split_sources(srcs, mode)
-    count = _refcount_for_mode(repo, srcs, mode)
+    display = sorted(srcs)
+    count = _refcount_map(repo)
 
     union_del: set[str] = set()
     global_kept: set[str] = set()
@@ -325,7 +305,6 @@ def simulate_all(repo: str, policy: dict[str, int], mode: str = "all", refresh: 
         "shared_between_sources": combined - sum_per,
         "shared_between_sources_gb": gb(combined - sum_per),
         "policy": policy,
-        "mode": mode,
         "cached": False,
         "note": keep_all_note(policy),
     }

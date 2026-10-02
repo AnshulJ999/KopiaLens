@@ -13,6 +13,7 @@ import contextvars
 import os
 import queue
 import re
+import shlex
 import string
 import subprocess
 import threading
@@ -547,6 +548,13 @@ def snapshot_delete_execute(repo: str, snapshot_ids: list[str]) -> dict:
     }
 
 
+def filename_arg(name: str) -> str:
+    """A real file name as a ``--filename`` value. kopia matches it with Go's ``path.Match``, where
+    ``* ? [ ]`` are wildcards and ``\\`` escapes on every OS, so they are escaped: the delete then
+    removes exactly the files the preview listed by name."""
+    return "".join("\\" + c if c in "\\*?[]" else c for c in name)
+
+
 def remove_files_command(repo: str, object_ids: list[str] | None = None, filenames: list[str] | None = None,
                          source: str | list[str] | None = None, commit: bool = False) -> list[str]:
     """Build a ``kopia snapshot fix remove-files`` command (NEVER executed here). Removes file
@@ -559,7 +567,7 @@ def remove_files_command(repo: str, object_ids: list[str] | None = None, filenam
     for oid in object_ids or []:
         cmd += ["--object-id", oid]
     for fn in filenames or []:
-        cmd += ["--filename", fn]
+        cmd += ["--filename", filename_arg(fn)]
     for s in (source if isinstance(source, list) else ([source] if source else [])):
         cmd += ["--source", s]
     if commit:
@@ -597,11 +605,72 @@ def _quote_arg(a: str) -> str:
     return f'"{a}"' if (not a or " " in a) else a
 
 
-def _bat_line(cmd: list[str]) -> str:
-    """Render a command for a .bat file. Doubles every % - in BATCH context cmd.exe expands
-    %...% even inside double quotes and DROPS an unmatched %, silently mangling filenames like
-    'Backup 100%.txt' into a non-matching string (kopia would then quietly remove nothing)."""
-    return " ".join(_quote_arg(a) for a in cmd).replace("%", "%%")
+_CMD_OPERATORS = "&|<>^()"
+
+
+def _bat_arg(a: str) -> str | None:
+    """One argument for a .bat line, or None when cmd.exe cannot carry it (a line break).
+
+    Quoted by the Microsoft C runtime rules kopia's Go runtime uses to split its command line
+    (backslashes double only before a quote). cmd.exe reads the line first and toggles quoting at
+    every ``"``, so an operator that lands outside quotes is caret-escaped. Every % is doubled:
+    in BATCH context cmd.exe expands %...% even inside quotes and DROPS an unmatched %, which
+    would turn 'Backup 100%.txt' into a name that matches nothing."""
+    if "\n" in a or "\r" in a:
+        return None
+    if a and not any(c in a for c in ' \t"' + _CMD_OPERATORS):
+        return a.replace("%", "%%")
+    out = ['"']
+    slashes = 0
+    for c in a:
+        if c == "\\":
+            slashes += 1
+            continue
+        out.append("\\" * (2 * slashes + 1) + '"' if c == '"' else "\\" * slashes + c)
+        slashes = 0
+    out.append("\\" * (2 * slashes) + '"')
+    line = []
+    quoted = False
+    for c in "".join(out):
+        if c == '"':
+            quoted = not quoted
+        elif not quoted and c in _CMD_OPERATORS:
+            line.append("^")
+        line.append(c)
+    return "".join(line).replace("%", "%%")
+
+
+def _bat_line(cmd: list[str]) -> str | None:
+    """Render a command for a .bat file, or None when an argument cannot be carried."""
+    args = [_bat_arg(a) for a in cmd]
+    return None if any(a is None for a in args) else " ".join(args)
+
+
+def _scriptable(commands: list[list[str]]) -> tuple[list[list[str]], int]:
+    """The commands without the (flag, value) pairs a .bat cannot carry (names holding a line
+    break), plus how many were left out; a command left with nothing to remove is dropped."""
+    out: list[list[str]] = []
+    skipped = 0
+    for cmd in commands:
+        keep: list[str] = []
+        items = dropped = 0
+        i = 0
+        while i < len(cmd):
+            a = cmd[i]
+            if a in ("--filename", "--object-id") and i + 1 < len(cmd):
+                if _bat_arg(cmd[i + 1]) is None:
+                    dropped += 1
+                else:
+                    keep += [a, cmd[i + 1]]
+                    items += 1
+                i += 2
+                continue
+            keep.append(a)
+            i += 1
+        skipped += dropped
+        if items or not dropped:
+            out.append(keep)
+    return out, skipped
 
 
 def _source_args(source: str | list[str] | None) -> list[str]:
@@ -619,7 +688,7 @@ def remove_files_chunked_commands(repo: str, items: list[str], source: str | lis
     base = [_kopia_exe()] + _repo_args(repo) + ["snapshot", "fix", "remove-files"]
     src_args = _source_args(source)
     tail = ["--commit"] if commit else []
-    fixed_len = sum(len(_quote_arg(a)) + 1 for a in base + src_args + tail) + 16  # safety margin
+    fixed_len = sum(len(_bat_arg(a) or a) + 1 for a in base + src_args + tail) + 16  # safety margin
     if fixed_len + 2000 > max_chars:  # scope list alone nearly fills the line budget
         log.warning("remove-files fixed prefix is %d chars (%d sources) vs max_chars=%d - "
                     "generated commands may exceed the target line length", fixed_len,
@@ -628,8 +697,10 @@ def remove_files_chunked_commands(repo: str, items: list[str], source: str | lis
     cmds: list[list[str]] = []
     cur: list[str] = []
     cur_len = 0
+    if flag == "--filename":
+        items = [filename_arg(it) for it in items]
     for it in items:
-        add = len(flag) + 1 + len(_quote_arg(it)) + 1
+        add = len(flag) + 1 + len(_bat_arg(it) or it) + 1
         if cur and cur_len + add > budget:
             cmds.append(base + [x for v in cur for x in (flag, v)] + src_args + tail)
             cur, cur_len = [], 0
@@ -672,6 +743,7 @@ def _remove_bat_lines(commands: list[list[str]], log_setter: str) -> list[str]:
     Batch counters are pre-zeroed per batch: an empty slice leaves the ``for /f`` loops unset, and
     an unset var in ``%VAR%`` expansion stays literal text where ``!VAR!`` printed empty.
     """
+    commands, skipped = _scriptable(commands)
     n = len(commands)
     find = "%SystemRoot%\\System32\\find.exe"
     findstr = "%SystemRoot%\\System32\\findstr.exe"
@@ -690,8 +762,16 @@ def _remove_bat_lines(commands: list[list[str]], log_setter: str) -> list[str]:
         "echo Aborting (Ctrl+C) between batches is safe - rewrites are per-snapshot atomic.",
         "echo.",
     ]
+    if skipped:
+        what = "1 name contains" if skipped == 1 else f"{skipped} names contain"
+        lines.insert(len(lines) - 1, f"echo {what} a line break, which a script cannot pass on. "
+                                     "Remove those from inside KopiaLens.")
     for i, cmd in enumerate(commands, 1):
         s = _bat_line(cmd)  # %-escaped for batch context (filenames containing % stay intact)
+        if s is None:       # a --source path with a line break: nothing in cmd.exe can pass it
+            lines.append(f"echo [batch {i}/{n}] skipped: a backup path contains a line break. "
+                         "Run this batch from inside KopiaLens.")
+            continue
         lines += [
             f"echo [batch {i}/{n}] %TIME% - working (this walks every snapshot in scope)...",
             f'echo === batch {i}/{n} ===>> "%LOG%"',
@@ -745,6 +825,66 @@ def remove_files_bat_text(commands: list[list[str]], log_name: str) -> str:
     """Return the .bat text (for browser download - no server file). It logs kopia output to
     ``log_name`` NEXT TO the .bat (`%~dp0`) so the run is self-contained + inspectable."""
     return "\r\n".join(_remove_bat_lines(commands, f'set "LOG=%~dp0{log_name}"'))
+
+
+def _remove_sh_lines(commands: list[list[str]], log_name: str) -> list[str]:
+    """The .sh twin of ``_remove_bat_lines`` for Linux and macOS: same batches, same per-batch
+    summary, kopia's full output appended to a log next to the script. Arguments are quoted with
+    ``shlex.quote``, which carries every name, line breaks included."""
+    n = len(commands)
+    problems = '-e "error" -e "failed" -e "unable"'
+    lines = [
+        "#!/bin/sh",
+        f'LOG="$(dirname "$0")/{log_name}"',
+        'SLICE="$(mktemp)"',
+        "FAILED=0",
+        "REMOVED=0",
+        "ERRORS=0",
+        'echo "KopiaLens chunked remove-files - $(date)" > "$LOG"',
+        f'echo "KopiaLens chunked remove-files: {n} batch(es)."',
+        'echo "Full kopia output is written to $LOG."',
+        'echo "Aborting (Ctrl+C) between batches is safe - rewrites are per-snapshot atomic."',
+        "echo",
+    ]
+    for i, cmd in enumerate(commands, 1):
+        lines += [
+            f'echo "[batch {i}/{n}] $(date +%T) - working (this walks every snapshot in scope)..."',
+            f'echo "=== batch {i}/{n} ===" >> "$LOG"',
+            " ".join(shlex.quote(a) for a in cmd) + ' > "$SLICE" 2>&1',
+            "RC=$?",
+            'cat "$SLICE" >> "$LOG"',
+            'RM=$(grep -c -i -e "removed" -e "will remove" "$SLICE")',
+            f'ER=$(grep -c -i {problems} "$SLICE")',
+            "REMOVED=$((REMOVED + RM))",
+            "ERRORS=$((ERRORS + ER))",
+            f'echo "    batch {i}/{n} done: $RM removal line(s), $ER problem line(s)"',
+            f'if [ "$ER" != "0" ]; then echo "    > problems reported in batch {i}/{n}:"; '
+            f'grep -i {problems} "$SLICE"; fi',
+            f'if [ "$RC" != "0" ]; then FAILED=$((FAILED + 1)); '
+            f'echo "    > WARNING: batch {i}/{n} exited with code $RC"; fi',
+        ]
+    lines += [
+        "echo",
+        'echo "================ summary ================"',
+        f'echo "Batches run     : {n}    failed: $FAILED"',
+        'echo "Removal lines   : $REMOVED"',
+        'echo "Problem lines   : $ERRORS"',
+        'echo "Full log        : $LOG"',
+        'echo "Summary: batches=$FAILED failed, removal lines=$REMOVED, problem lines=$ERRORS" >> "$LOG"',
+        "echo",
+        'echo "Space is NOT reclaimed yet. Now run:  kopia maintenance run --full"',
+        'rm -f "$SLICE"',
+    ]
+    return lines
+
+
+def remove_files_script(commands: list[list[str]], log_stem: str) -> tuple[str, str]:
+    """``(file name extension, text)`` of the remove script for the computer KopiaLens runs on -
+    the commands name this computer's kopia and config, so the script runs here: .bat on
+    Windows, .sh on Linux and macOS."""
+    if os.name == "nt":
+        return ".bat", remove_files_bat_text(commands, log_stem + ".log")
+    return ".sh", "\n".join(_remove_sh_lines(commands, log_stem + ".log")) + "\n"
 
 
 _REMOVE_JOBS: dict[str, dict] = {}

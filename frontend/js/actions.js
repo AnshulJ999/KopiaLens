@@ -66,7 +66,7 @@ const actionsPart = {
       if (!list.length) { this.error = "Nothing to restore."; return; }
       this.restore = {
         items: list, mode: "folder", target: "", preset: "safe", plan: null, loading: false, error: "",
-        label: opts.label || (list.length === 1 ? list[0].full_path.split(/[\\/]/).pop() : `${list.length} items`),
+        label: opts.label || (list.length === 1 ? baseName(list[0].full_path) : `${list.length} items`),
         options: {
           restore_owners: true, restore_permissions: true, restore_times: true, ignore_errors: false,
           write_files_atomically: false, write_sparse_files: false, ignore_permission_errors: true,

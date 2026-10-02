@@ -249,7 +249,7 @@ def run(repo: str, full: bool = False, skip_index: bool = False) -> dict:
     try:
         def _dashboard() -> None:
             from ..core.metrics import table_rows
-            table_rows(repo, refresh=True, mode="all")   # rebuilds content_refs
+            table_rows(repo, refresh=True)   # rebuilds content_refs
 
         def _analysis() -> None:
             from .snapanalysis import prewarm

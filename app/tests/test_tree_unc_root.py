@@ -31,11 +31,14 @@ def _tree_children_all(repo: str, rows: list[tuple], prefix: str = "") -> list[d
 
 
 def _rows():
+    c_root = "me@pc:C:" + SEP
+    share1 = "me@pc:" + SEP * 2 + "srv1" + SEP + "media"
+    share2 = "me@pc:" + SEP * 2 + "other" + SEP + "stuff"
     return [
-        ("1", "C:/x", "C:" + SEP + "Users" + SEP + "a.txt", 10, 5, None, True),
-        ("1", "U:/h", SEP * 2 + "srv1" + SEP + "media" + SEP + "v1.mkv", 30, 9, None, True),
-        ("1", "U:/h", SEP * 2 + "srv1" + SEP + "media" + SEP + "sub" + SEP + "v2.mkv", 40, 9, None, True),
-        ("1", "U:/h2", SEP * 2 + "other" + SEP + "stuff" + SEP + "c.doc", 50, 9, None, True),
+        ("1", c_root, "C:" + SEP + "Users" + SEP + "a.txt", 10, 5, None, True),
+        ("1", share1, SEP * 2 + "srv1" + SEP + "media" + SEP + "v1.mkv", 30, 9, None, True),
+        ("1", share1, SEP * 2 + "srv1" + SEP + "media" + SEP + "sub" + SEP + "v2.mkv", 40, 9, None, True),
+        ("1", share2, SEP * 2 + "other" + SEP + "stuff" + SEP + "c.doc", 50, 9, None, True),
     ]
 
 

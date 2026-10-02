@@ -319,7 +319,6 @@ _REFCOUNT_MEMO: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 REFCOUNT_MEMO_ENABLED = False
 
 
-_SEP = chr(92)
 # (repo, content_id) -> reclaim-everywhere bytes. LRU-bounded (values are small ints, but the key
 # set was unbounded - grew with every distinct content viewed via the ∑Reclaim button).
 _RECLAIM_CACHE: collections.OrderedDict[tuple, int] = collections.OrderedDict()

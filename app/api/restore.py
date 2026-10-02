@@ -64,7 +64,8 @@ class OpenBody(BaseModel):
 
 
 def _name(source: str, full_path: str) -> str:
-    return full_path.rstrip("\\/").rsplit(pathrules.sep(source), 1)[-1]
+    sep = pathrules.sep(source)
+    return full_path.rstrip(sep).rsplit(sep, 1)[-1]
 
 
 def _ts(value) -> float | None:
@@ -109,8 +110,9 @@ def resolve_item(repo: str, it: RestoreItem) -> dict:
                 "source_id": _source_id(it.source, it.full_path, snap_id) if live else it.content_id}
     if it.snapshot_id:
         snaps = [s for s in snaps if s.get("id") == it.snapshot_id]
-    root = pathrules.source_root(it.source).rstrip("\\/")
-    if it.full_path.rstrip("\\/").lower() == root.lower():
+    sep = pathrules.sep(it.source)
+    root = pathrules.source_root(it.source).rstrip(sep)
+    if pathrules.ident(it.source, it.full_path.rstrip(sep)) == pathrules.ident(it.source, root):
         if not snaps:
             raise HTTPException(status_code=404, detail="That snapshot no longer exists.")
         sn = max(snaps, key=lambda s: s.get("startTime", ""))
@@ -150,6 +152,19 @@ def _writable_here(path: str) -> bool:
     return path.startswith("/")
 
 
+_WIN_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
+                 *(f"LPT{i}" for i in range(1, 10))}
+
+
+def _bad_here(name: str) -> bool:
+    """Whether this computer cannot create a file or folder with this name (a backup from another
+    OS can hold names Windows refuses; a backslash in one would turn into a subfolder)."""
+    if os.name != "nt":
+        return "/" in name or "\x00" in name
+    return (any(c in '<>:"/\\|?*' or ord(c) < 32 for c in name) or name.endswith((" ", "."))
+            or name.split(".", 1)[0].upper() in _WIN_RESERVED)
+
+
 def _flat_names(names: list[str]) -> list[str]:
     """Unique file names for a flat restore of several items into one folder."""
     seen: dict[str, int] = {}
@@ -166,8 +181,9 @@ def _flat_names(names: list[str]) -> list[str]:
     return out
 
 
-def _listing(repo: str, obj: str, kind: str, size: int, mtime: str):
-    """(relative path, size, mtime) for every file the object restores, capped at LIST_CAP."""
+def _listing(repo: str, obj: str, kind: str, size: int, mtime: str, bad: list | None = None):
+    """(relative path, size, mtime) for every file the object restores, capped at LIST_CAP.
+    ``bad`` collects the relative paths of entries whose own name this computer cannot create."""
     if kind != "d":
         yield "", size, mtime
         return
@@ -179,6 +195,8 @@ def _listing(repo: str, obj: str, kind: str, size: int, mtime: str):
         for oid, rel in level:
             for e in children.get(oid, []):
                 path = os.path.join(rel, e.get("name", "")) if rel else e.get("name", "")
+                if bad is not None and _bad_here(e.get("name", "")):
+                    bad.append(path)
                 if e.get("type") == "d" and e.get("obj"):
                     nxt.append((e["obj"], path))
                 elif e.get("type") != "d":
@@ -190,13 +208,14 @@ def _listing(repo: str, obj: str, kind: str, size: int, mtime: str):
 
 
 def _compare(repo: str, r: dict, target: str, delete_extra: bool) -> dict:
-    out = {"new": 0, "identical": 0, "different": 0, "extra": 0, "listed": 0,
-           "different_paths": [], "extra_paths": [], "capped": False}
+    out = {"new": 0, "identical": 0, "different": 0, "extra": 0, "listed": 0, "bad_names": 0,
+           "different_paths": [], "extra_paths": [], "bad_paths": [], "capped": False}
     if target.lower().endswith(ARCHIVE_EXT):
         out["archive"] = True
         return out
+    bad: list[str] = [target] if _bad_here(r.get("name") or "") else []
     wanted: set[str] = set()
-    for rel, size, mtime in _listing(repo, r["obj"], r["type"], r["size"], r["mtime"]):
+    for rel, size, mtime in _listing(repo, r["obj"], r["type"], r["size"], r["mtime"], bad):
         out["listed"] += 1
         path = os.path.join(target, rel) if rel else target
         if delete_extra:
@@ -215,6 +234,8 @@ def _compare(repo: str, r: dict, target: str, delete_extra: bool) -> dict:
             if len(out["different_paths"]) < PATHS_SHOWN:
                 out["different_paths"].append(path)
     out["capped"] = out["listed"] >= LIST_CAP
+    out["bad_names"] = len(bad)
+    out["bad_paths"] = bad[:PATHS_SHOWN]
     if delete_extra and r["type"] == "d" and os.path.isdir(target) and not out["capped"]:
         for root, _dirs, files in os.walk(target):
             for f in files:
@@ -260,7 +281,8 @@ def restore_plan(body: PlanBody) -> dict:
         if body.preview:
             row.update(_compare(body.repo, r, target, bool(body.options.get("delete_extra"))))
         items.append(row)
-    totals = {k: sum(i.get(k, 0) for i in items) for k in ("files", "size", "new", "identical", "different", "extra")}
+    totals = {k: sum(i.get(k, 0) for i in items)
+              for k in ("files", "size", "new", "identical", "different", "extra", "bad_names")}
     return {"repo": body.repo, "target_mode": mode, "items": items, "totals": totals}
 
 

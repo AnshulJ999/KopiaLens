@@ -37,20 +37,26 @@ const excludedPart = {
     excludedRowOpen(row) {
       if (row.status === "drive") return this.listExcluded(row.path);
       if (!row.is_dir) return;
-      const base = this.excludedPath.replace(/[\\/]+$/, "");
-      this.listExcluded(base + "\\" + row.name);
+      this.listExcluded(joinPath(this.excludedPath, row.name));
     },
     excludedUp() {
-      const p = (this.excludedPath || "").replace(/[\\/]+$/, "");
+      const p = trimSep(this.excludedPath || "");
       if (!p) return;
-      if (/^[A-Za-z]:$/.test(p)) return this.renderExcludedDrives();
+      if (/^[A-Za-z]:$/.test(p) || p === "/") return this.renderExcludedDrives();
+      if (pathSep(p) === "/") return this.listExcluded(parentPath(p));
       const idx = p.lastIndexOf("\\");
       this.listExcluded(idx <= 2 ? p.slice(0, 2) + "\\" : p.slice(0, idx));
     },
     excludedCrumbs() {
       const out = [{ label: "This PC", path: "" }];
       if (!this.excludedPath) return out;
-      const p = this.excludedPath.replace(/[\\/]+$/, "");
+      const p = trimSep(this.excludedPath);
+      if (pathSep(p) === "/") {
+        out.push({ label: "/", path: "/" });
+        let at = "";
+        p.split("/").filter(Boolean).forEach((seg) => { at += "/" + seg; out.push({ label: seg, path: at }); });
+        return out;
+      }
       let acc = "";
       p.split("\\").forEach((seg, i) => {
         acc = i === 0 ? seg + "\\" : acc + (acc.endsWith("\\") ? "" : "\\") + seg;

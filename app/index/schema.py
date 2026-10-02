@@ -252,7 +252,7 @@ def exclusive_offline(repo: str, reason: str = "indexing", drain_timeout: float 
 
     if drain_timeout is None:
         drain_timeout = _drain_timeout_default()
-    blk = _build_lock(repo, "all")
+    blk = _build_lock(repo)
     if not blk.acquire(timeout=drain_timeout):
         raise RuntimeError(f"repo {repo}: dashboard build still running, not taking it offline")
     try:

@@ -16,8 +16,8 @@ def post_simulate(payload: SimRequest) -> dict:
     """Single-source simulate when ``source`` is given; otherwise the combined all-sources pass."""
     try:
         if payload.source:
-            return simulate(payload.repo, payload.source, payload.policy.model_dump(), mode=payload.mode)
-        return simulate_all(payload.repo, payload.policy.model_dump(), mode=payload.mode, refresh=payload.refresh)
+            return simulate(payload.repo, payload.source, payload.policy.model_dump())
+        return simulate_all(payload.repo, payload.policy.model_dump(), refresh=payload.refresh)
     except PASS_THROUGH:
         raise
     except Exception as exc:
@@ -27,7 +27,7 @@ def post_simulate(payload: SimRequest) -> dict:
 @router.post("/simulate/all")
 def post_simulate_all(payload: SimRequest) -> dict:
     try:
-        return simulate_all(payload.repo, payload.policy.model_dump(), mode=payload.mode, refresh=payload.refresh)
+        return simulate_all(payload.repo, payload.policy.model_dump(), refresh=payload.refresh)
     except PASS_THROUGH:
         raise
     except Exception as exc:
