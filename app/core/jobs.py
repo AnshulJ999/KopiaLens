@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -71,6 +72,8 @@ KINDS = {
     # Install-wide level change: every repo's generation, the file layer, Backblaze. Mutating,
     # but tolerant - a busy repo is deferred and reported rather than failing the job.
     "encryption_level": {"label": "Changing encryption level", "mutating": True},
+    # Read-only but heavy: lists every blob in storage. Started only by the user, never on a timer.
+    "blob_stats": {"label": "Reading blob stats", "mutating": False},
 }
 
 AUDIT_ACTION = {
@@ -82,6 +85,7 @@ AUDIT_ACTION = {
     "snapshot_create": "snapshot-create",
     "snapshot_pin": "snapshot-pin",
     "encryption_level": "encryption-level",
+    "blob_stats": "blob-stats",
 }
 
 
@@ -91,6 +95,11 @@ def say(job: dict, lf, text: str) -> None:
     job["line_count"] += 1
     lf.write(text + "\n")
     lf.flush()
+
+
+def job_lines(job: dict) -> list[str]:
+    """A job's buffered output lines without their time stamps."""
+    return [re.sub(r"^\d\d:\d\d:\d\d ", "", ln) for ln in job["buffer"]]
 
 # Dry-run jobs build the same summary the synchronous dry-run endpoints report; the parsers
 # are shared with them (one home in kopia.py, fed per streamed line here).
@@ -202,6 +211,8 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
     elif kind == "snapshot_create":
         cmds = [snapshot_create_command(repo, params["path"], params.get("description") or "")]
         meta = {"path": params["path"], "dry": False}
+    elif kind == "blob_stats":
+        cmds, meta = [[_kopia_exe()] + _repo_args(repo) + ["blob", "stats"]], {"dry": False}
     elif kind == "snapshot_pin":
         ids = params.get("snapshot_ids") or []
         cmds = [snapshot_pin_command(repo, ids, remove=bool(params.get("remove")))] if ids else []
@@ -284,6 +295,8 @@ def _default_label(kind: str, params: dict, meta: dict) -> str:
         return base + (", then delete" if meta.get("then") else "")
     if kind == "encryption_level":
         return f"encryption level -> {meta.get('level')}"
+    if kind == "blob_stats":
+        return "blob stats"
     return kind
 
 

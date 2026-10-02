@@ -15,7 +15,7 @@ import re
 import threading
 import time
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from config import DATA_DIR
 
@@ -27,8 +27,7 @@ from ..index import sidecache
 router = APIRouter(tags=["stats"])
 log = get_logger("stats")
 
-_blob_lock = threading.Lock()  # serialize the slow blob-stats scan so it can never pile up
-_blob_cache: dict[str, str] = {}
+_blob_cache: dict[str, str] = {}   # the last `blob stats` job's output per repo
 
 # Repo stats change rarely but cost 4 kopia subprocess calls (~4.5s). Cache + serve-stale:
 # return the cached blocks instantly and refresh in the background (also driven by the bg warm
@@ -349,7 +348,7 @@ def refresh_stats(repo: str) -> None:
 def stats(repo: str, refresh: bool = False) -> dict:
     """Fast read-only repo-level info for the Stats tab. Served from cache (serve-stale, saved
     across restarts); a stale cache is refreshed in the background. ``refresh`` recomputes now.
-    ``blob stats`` is on-demand via /stats/blob."""
+    ``blob stats`` runs only as a job (kind ``blob_stats``), started by the user."""
     with _stats_lock:
         cached = _stats_cache.get(repo)
     if cached is None and not refresh:
@@ -366,13 +365,6 @@ def stats(repo: str, refresh: bool = False) -> dict:
     return out
 
 
-@router.get("/stats/blob")
-def blob_stats(repo: str) -> dict:
-    """On-demand `blob stats` (slow). Serialized + cached so it can never spawn duplicates."""
-    if not _blob_lock.acquire(blocking=False):
-        raise HTTPException(status_code=409, detail="blob stats already running")
-    try:
-        _blob_cache[repo] = _text(repo, ["blob", "stats"])
-        return {"blob_stats": _blob_cache[repo]}
-    finally:
-        _blob_lock.release()
+def set_blob_stats(repo: str, text: str) -> None:
+    """Keep a finished `blob stats` job's output for the Stats tab."""
+    _blob_cache[repo] = text

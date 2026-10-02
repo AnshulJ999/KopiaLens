@@ -129,6 +129,11 @@ def _resolve_params(kind: str, repo: str, params: dict) -> dict:
         if not os.path.isdir(path):
             raise jobs.JobRefused(f"{path} is not on this computer")
         return {"path": path, "description": (params.get("description") or "").strip()}
+    if kind == "blob_stats":
+        if any(j["kind"] == "blob_stats" and j["repo"] == repo and j["state"] == "running"
+               for j in jobs.list_jobs()):
+            raise jobs.JobRefused("blob stats is already running for this repository")
+        return {}
     if kind == "snapshot_pin":
         ids = [i for i in (params.get("snapshot_ids") or []) if i]
         if not ids:
@@ -202,6 +207,12 @@ def _on_done(job: dict) -> None:
             refresh_stats(job["repo"])
         except Exception:  # noqa: BLE001
             pass
+        return
+    if job.get("kind") == "blob_stats":
+        if job.get("state") == "done":
+            from .stats import set_blob_stats
+            lines = jobs.job_lines(job)
+            set_blob_stats(job["repo"], "\n".join(lines) or "(empty)")
         return
     if job.get("kind") in ("snapshot_create", "snapshot_pin") and job.get("state") == "done":
         invalidate_sources(job["repo"])  # the snapshot list reads kopia's own listing

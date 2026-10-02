@@ -82,9 +82,9 @@
                 </template>
                 <div class="rounded border border-bd-soft p-2">
                   <div class="mb-1 flex items-center gap-2"><span class="text-xs text-muted">Blob stats</span>
-                    <button @click="loadBlobStats()" :disabled="blobLoading" class="h-6 rounded border border-bd px-2 text-[10px] disabled:opacity-50" x-text="blobLoading ? 'Running… (slow)' : 'Load blob stats'"></button>
-                    <span class="text-[10px] text-muted">scans all storage blobs — slow on big repos</span></div>
-                  <pre x-show="blobStats" class="text-[11px] whitespace-pre-wrap overflow-auto max-h-72 bg-surface2 rounded p-2" x-text="blobStats"></pre>
+                    <button @click="loadBlobStats()" :disabled="blobLoading" class="h-6 rounded border border-bd px-2 text-[10px] disabled:opacity-50" x-text="blobLoading ? 'Running…' : 'Run blob stats…'"></button>
+                    <span class="text-[10px] text-muted">Slow on large repositories</span></div>
+                  <pre x-show="blobStats || statsData.blob_stats" class="text-[11px] whitespace-pre-wrap overflow-auto max-h-72 bg-surface2 rounded p-2" x-text="blobStats || statsData.blob_stats"></pre>
                 </div>
               </div>
             </details>

@@ -14,12 +14,26 @@ const statsPart = {
     },
     async loadBlobStats() {
       if (this.blobLoading) return;
+      const ok = await this.klConfirm({
+        title: "Run blob stats?",
+        note: "Lists every file in the repository's storage. On a large repository this takes a long time and keeps the disk busy. You can stop it from the progress panel.",
+        confirmLabel: "Run blob stats",
+      });
+      if (!ok) return;
+      const repo = this.repo;
+      const jobId = await this.startJob("blob_stats", {}, "blob stats", repo);
+      if (!jobId) return;
       this.blobLoading = true;
       try {
-        await this.wrap(async () => {
-          const r = await getJson(`/api/stats/blob?repo=${encodeURIComponent(this.repo)}`);
-          this.blobStats = r.blob_stats || "(empty)";
-        }, "Running blob stats (slow, one-off)...");
+        // The job panel shows progress and Stop; the card fills in when the job ends.
+        for (;;) {
+          await new Promise((r) => setTimeout(r, 3000));
+          const s = await getJson(`/api/jobs/status?job_id=${encodeURIComponent(jobId)}&after=1000000`).catch(() => null);
+          if (!s || s.state !== "running") break;
+        }
+        if (this.repo !== repo) return;
+        const d = await getJson(`/api/stats?repo=${encodeURIComponent(repo)}`).catch(() => null);
+        if (d && d.blob_stats) this.blobStats = d.blob_stats;
       } finally { this.blobLoading = false; }
     },
     statsBlock(v) { return typeof v === "string" ? v : JSON.stringify(v, null, 2); },
