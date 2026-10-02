@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from config import DATA_DIR
+from config import DATA_DIR, is_demo
 
 from ..core import audit
 from ..core import paths as pathrules
@@ -272,6 +272,9 @@ def _content_disposition(name: str) -> str:
 @router.get("/restore/download")
 def restore_download(repo: str, source: str, full_path: str, snapshot_id: str | None = None,
                      content_id: str | None = None):
+    if is_demo(repo):
+        from ..core.demoreplies import UNAVAILABLE
+        raise HTTPException(status_code=400, detail=UNAVAILABLE)
     r = resolve_item(repo, RestoreItem(source=source, full_path=full_path, snapshot_id=snapshot_id,
                                        content_id=content_id))
     audit.audit("executed", "download", repo=repo,

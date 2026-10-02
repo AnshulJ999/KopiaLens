@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass
 from typing import Iterable
 
-from config import DATA_DIR, REPOS
+from config import DATA_DIR, DEMO_INSTANCE, REPOS, is_demo
 
 from . import audit, kopiabin
 from .applog import get_logger
@@ -113,7 +113,23 @@ def _repo_args(repo: str) -> list[str]:
         raise ValueError(f"unknown repo: {repo}")
     if REPOS[repo].get("kind", "kopia") != "kopia":
         raise ValueError(f"repo {repo!r} is not a kopia repo - refusing to build a kopia command")
+    if is_demo(repo):
+        from .demoreplies import DISPLAY_CONFIG
+        return ["--config-file", DISPLAY_CONFIG]
     return list(REPOS[repo]["args"])
+
+
+def _demo_args(cmd: list[str]) -> list[str] | None:
+    """The subcommand of a command built for a demo repo, or None for a real repo."""
+    from .demoreplies import DISPLAY_CONFIG
+    if DISPLAY_CONFIG not in cmd:
+        return None
+    return [a for a in cmd[cmd.index(DISPLAY_CONFIG) + 1:] if a != "--no-progress"]
+
+
+def _refuse_demo(cmd: list[str]) -> None:
+    if _demo_args(cmd) is not None:
+        raise PermissionError("a demo repo never runs kopia")
 
 
 def _base_command(repo: str, args: list[str], progress: bool = False) -> list[str]:
@@ -139,6 +155,8 @@ def _timeout() -> float:
 def _kopia_exe() -> str:
     """The resolved kopia program. Every command prefix goes through here - a bare ``"kopia"``
     string is what ``test_kopia_binary_guard.py`` fails on."""
+    if DEMO_INSTANCE:
+        return "kopia"   # display only: a demo repo's commands are never run
     return kopiabin.exe()
 
 
@@ -163,6 +181,10 @@ def kopia(repo: str, args: list[str], ro: bool = True, timeout: float | None = N
     if ro:
         check_readonly(args)
     full = _base_command(repo, args)
+    if is_demo(repo):
+        from . import demoreplies
+        rc, out, err = demoreplies.reply(repo, args)
+        return KopiaResult(args=full, returncode=rc, stdout=out, stderr=err, elapsed=0.0)
     limit = _timeout() if timeout is None else timeout
     start = time.time()
     try:
@@ -217,6 +239,13 @@ def kopia_lines(repo: str, args: list[str], ro: bool = True, timeout: float | No
     if ro:
         check_readonly(args)
     full = _base_command(repo, args)
+    if is_demo(repo):
+        from . import demoreplies
+        rc, out, err = demoreplies.reply(repo, args)
+        if rc != 0:
+            raise RuntimeError(err)
+        yield from out.splitlines()
+        return
     limit = _timeout() if timeout is None else timeout
     start = time.time()
     try:
@@ -295,6 +324,10 @@ def kopia_job_stream(repo: str, args: list[str], result: dict):
     """
     # progress=True: a job exists to stream kopia's live output (per-snapshot detail, progress
     # updates); --no-progress would ask kopia to be quiet.
+    if is_demo(repo):
+        from . import demosim
+        yield from demosim.stream(repo, args, result)
+        return
     full = _base_command(repo, args, progress=True)
     # CREATE_NEW_PROCESS_GROUP so a console event, if one ever becomes deliverable, can be
     # addressed to the child; CREATE_NO_WINDOW is the standing pythonw rule.
@@ -390,6 +423,9 @@ def mount_snapshot(repo: str, snapshot_id: str, mountpoint: str, info: dict | No
     """
     from . import mounts
 
+    if is_demo(repo):
+        from .demoreplies import UNAVAILABLE
+        raise MountError(UNAVAILABLE)
     args = ["mount", snapshot_id, mountpoint]
     full = _base_command(repo, args)
     from .applog import JOB_LOG_DIR, ensure_dirs
@@ -480,6 +516,7 @@ def snapshot_delete_execute(repo: str, snapshot_ids: list[str]) -> dict:
     deleted, rc, outs, errs, first_cmd = 0, 0, [], [], None
     for ci, chunk in enumerate(chunks, 1):
         full = prefix + chunk + ["--delete", "--no-progress"]
+        _refuse_demo(full)
         if first_cmd is None:
             first_cmd = full
         res = subprocess.run(
@@ -537,6 +574,7 @@ def remove_files_execute(repo: str, object_ids: list[str] | None = None, filenam
     if not object_ids and not filenames:
         return {"returncode": 1, "stdout": "", "stderr": "nothing specified (object_ids or filenames required)"}
     full = remove_files_command(repo, object_ids, filenames, source, commit=True) + ["--no-progress"]
+    _refuse_demo(full)
     log.warning("EXECUTING remove-files repo=%s filenames=%d object_ids=%d",
                 repo, len(filenames or []), len(object_ids or []))
     log.debug("remove-files scope source=%r", source)
@@ -732,6 +770,7 @@ def remove_files_chunked_execute(repo: str, items: list[str], source: str | list
             lf.flush()
             for i, cmd in enumerate(cmds, 1):
                 lf.write(f"\n--- batch {i}/{len(cmds)} ---\n"); lf.flush()
+                _refuse_demo(cmd)
                 res = subprocess.run(
                     cmd + ["--no-progress"], capture_output=True, text=True,
                     encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
@@ -808,12 +847,17 @@ def _run_dry_commands(repo: str, cmds: list[list[str]], kind: str, expect_flag: 
 
     for i, cmd in enumerate(cmds, 1):
         _log(f"\n--- batch {i}/{len(cmds)} ---\n")
+        sim = _demo_args(cmd)
         try:
-            res = subprocess.run(
-                cmd + ["--no-progress"], capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=limit, stdin=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
+            if sim is not None:
+                from . import demosim
+                res = subprocess.CompletedProcess(cmd, *demosim.run(repo, sim))
+            else:
+                res = subprocess.run(
+                    cmd + ["--no-progress"], capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=limit, stdin=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
         except subprocess.TimeoutExpired as exc:
             rc = TIMEOUT_RC
             error = f"kopia timed out after {limit:.0f}s"
@@ -987,11 +1031,16 @@ def _run_policy_write(repo: str, cmd: list[str], action: str, summary: dict) -> 
     applies. Returns the raw result - the caller decides ok/fail from the returncode."""
     log.warning("EXECUTING %s repo=%s cmd=%s", action, repo, " ".join(cmd[:8]))
     t0 = time.time()
+    sim = _demo_args(cmd)
     try:
-        res = subprocess.run(
-            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=_timeout(), stdin=subprocess.DEVNULL,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if sim is not None:
+            from . import demosim
+            res = subprocess.CompletedProcess(cmd, *demosim.run(repo, sim))
+        else:
+            res = subprocess.run(
+                cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=_timeout(), stdin=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         rc, out, err = res.returncode, res.stdout, res.stderr
     except subprocess.TimeoutExpired:
         rc, out, err = TIMEOUT_RC, "", f"kopia timed out after {_timeout():.0f}s"
@@ -1127,6 +1176,7 @@ def restore_execute(repo: str, source_id: str, target: str, options: dict | None
     full = restore_command_full(repo, source_id, target, options) + ["--no-progress"]
     log.warning("EXECUTING restore repo=%s snapshot=%s", repo, source_id)
     log.debug("restore target %s", target)
+    _refuse_demo(full)
     t0 = time.time()
     res = subprocess.run(
         full, capture_output=True, text=True, encoding="utf-8", errors="replace",

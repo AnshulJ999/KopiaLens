@@ -20,7 +20,7 @@ import subprocess
 import threading
 import time
 
-from config import DATA_DIR, HERE as _KL_ROOT, REPOS, SELF_EXE, repo_kind
+from config import DATA_DIR, HERE as _KL_ROOT, REPOS, SELF_EXE, is_demo, repo_kind
 
 from .applog import get_logger
 from ..settings import load_settings
@@ -617,6 +617,10 @@ def run_index_pass(repo: str, full: bool = False, _owned: bool = False,
         if _owned:
             _release(repo)   # the caller reserved for us; bailing must not strand the slot
         return {"ok": False, "skipped": True, "reason": f"unknown repo {repo}"}
+    if is_demo(repo):
+        if _owned:
+            _release(repo)
+        return {"ok": False, "skipped": True, "reason": "a demo copy is not indexed"}
     if not _owned and not _reserve(repo):
         busy = reserved_repo()
         return {"ok": False, "skipped": True, "repo": repo,
@@ -657,6 +661,8 @@ def start_index_pass_async(repo: str, full: bool = False, on_done=None,
     if repo_store.via_server(repo):
         return {"started": False, "repo": repo,
                 "reason": "reached through a kopia server, which cannot be indexed"}
+    if is_demo(repo):
+        return {"started": False, "repo": repo, "reason": "a demo copy is not indexed"}
     if not _reserve(repo):    # synchronous, so a "started" answer is never a guess
         busy = reserved_repo()
         return {"started": False, "repo": repo,

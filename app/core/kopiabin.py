@@ -310,6 +310,10 @@ def info(with_version: bool = True, with_candidates: bool = False) -> dict:
     full search list - off by default because /api/repos is polled and building that list reads
     the settings file. It is always included when the binary is missing: that is the message.
     ``inventory()`` (every kopia found, with versions) is a separate call - it spawns per copy."""
+    from config import DEMO_INSTANCE
+    if DEMO_INSTANCE:   # a demo runs no kopia and shows nothing about this machine's
+        return {"available": True, "path": "kopia", "source": "demo", "version": "",
+                "tested": TESTED_VERSION, "bundled": False, "searched": [], "detail": ""}
     path = resolve()
     ver = version() if (with_version and path) else _version
     searched = [{"path": p, "source": s} for p, s in candidates()] if (with_candidates or not path) else []

@@ -7,6 +7,8 @@
           <span class="truncate" x-text="repoName(repo)"></span>
           <svg class="h-3.5 w-3.5 shrink-0 text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
         </button>
+        <span x-show="isDemo()" x-cloak class="absolute -top-1.5 -right-2 rounded border border-warn-bd bg-warn-bg text-warn px-1 text-[10px] font-medium leading-4"
+              title="Invented names, real numbers. Actions are simulated and change nothing.">Demo</span>
         <div x-show="repoMenu" x-cloak role="menu" class="absolute left-0 top-full mt-1 z-50 w-64 rounded-md border border-bd bg-surface shadow-lg py-1 text-sm">
           <template x-for="item in repos" :key="item.id">
             <button type="button" role="menuitemradio" :aria-checked="item.id === repo" @click="pickRepo(item.id)"
@@ -53,7 +55,7 @@
         </span>
         <!-- Index status: click for the panel. While a pass runs it carries the live percentage
              (only when one honestly exists - the tree sync reports counters instead). -->
-        <button x-show="repoKind!=='backblaze'" @click="openIndexPanel()"
+        <button x-show="repoKind!=='backblaze' && !isDemo()" @click="openIndexPanel()"
                 class="h-8 rounded border px-2 flex items-center gap-1.5"
                 :class="indexStatus.building ? 'border-warn-bd bg-warn-bg text-warn' : 'border-bd bg-surface2'"
                 :title="indexTooltip()">
@@ -61,7 +63,7 @@
                 :class="indexPct(indexStatus) == null ? 'bg-warn' : 'bg-ok'"></span>
           <span x-text="indexLine()"></span>
         </button>
-        <button x-show="repoKind==='kopia'" @click="buildIndex()" :disabled="!!indexStatus.building" class="h-8 rounded bg-fg px-3 text-surface disabled:opacity-50" :title="indexStatus.never_indexed ? 'Build the first index for this repo' : 'Update index (incremental)'" x-text="indexStatus.never_indexed ? 'Index now' : 'Index'">Index</button>
+        <button x-show="repoKind==='kopia' && !isDemo()" @click="buildIndex()" :disabled="!!indexStatus.building" class="h-8 rounded bg-fg px-3 text-surface disabled:opacity-50" :title="indexStatus.never_indexed ? 'Build the first index for this repo' : 'Update index (incremental)'" x-text="indexStatus.never_indexed ? 'Index now' : 'Index'">Index</button>
         <span x-show="repoKind==='backblaze'" class="rounded border border-bd bg-surface2 px-2 py-1" x-text="bzStatusLine()" :title="bzStatusTitle()"></span>
         <span x-show="repoKind==='backblaze' && bzRefreshResult" class="text-xs px-2 py-1 rounded" :class="bzRefreshResult.includes('FAILED') ? 'bg-danger-bg text-danger' : 'bg-ok-bg text-ok'" x-text="bzRefreshResult"></span>
         <button x-show="repoKind==='backblaze'" @click="bzRefresh()" class="h-8 rounded bg-fg px-3 text-surface" title="Re-scan the read-only Backblaze index">↻ Index BZ</button>
@@ -81,7 +83,7 @@
               :title="pauseText() + '. Automatic indexing waits; Index still runs when you start it.'">
           Indexing paused · <button @click="resumeIndexing()" class="underline">Resume</button>
         </span>
-        <template x-for="f in freshness" :key="f.repo">
+        <template x-for="f in freshness.filter((x) => !isDemo(x.repo))" :key="f.repo">
           <span class="rounded px-1.5 py-0.5 border"
                 :class="freshStale(f) ? 'border-warn-bd text-warn' : 'border-bd-soft text-muted'"
                 :title="freshTitle(f)">

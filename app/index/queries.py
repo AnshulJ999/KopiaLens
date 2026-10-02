@@ -11,6 +11,8 @@ import threading
 import time
 import uuid
 
+from config import DEMO_INSTANCE
+
 from . import entries, resolve
 from .store import read_cursor
 
@@ -307,7 +309,7 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
             except Exception:  # noqa: BLE001 - already gone / connection closing
                 pass
         cur.close()
-    if confirm_exists:
+    if confirm_exists and not DEMO_INSTANCE:
         for row in rows:
             row["on_disk"] = os.path.exists(row["full_path"])
     return {"rows": rows, "total": total, "offset": offset, "limit": limit, "ranked": ranked_meta}

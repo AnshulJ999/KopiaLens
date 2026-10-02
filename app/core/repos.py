@@ -243,6 +243,7 @@ def detail(record: dict) -> dict:
         "unique_id": record.get("unique_id") or "",
         "storage": info,
         "via_server": via_server(rid),
+        "demo": bool(record.get("demo")),
     }
 
 

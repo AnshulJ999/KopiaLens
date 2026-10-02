@@ -36,7 +36,7 @@ def test_worker_rebuilds_the_dashboard_before_analysis():
     import inspect
     from app.index import worker
     src = inspect.getsource(worker.run)
-    body = src[src.index('if stage("index"'):]
+    body = src[src.index('stage("index"'):]
     assert body.index('"dashboard"') < body.index('"analysis"'), "analysis must not precede dashboard"
 
 

@@ -208,7 +208,7 @@ def trigger() -> str:
     return os.environ.get("KOPIALENS_INDEX_TRIGGER") or "manual"
 
 
-def run(repo: str, full: bool = False) -> dict:
+def run(repo: str, full: bool = False, skip_index: bool = False) -> dict:
     """The nightly pass for one repo.
 
     STAGE ORDER MATTERS. The dashboard stage is what rebuilds the global content refcount, and the
@@ -218,7 +218,10 @@ def run(repo: str, full: bool = False) -> dict:
 
     Stages after the index are otherwise independent: a failed churn rollup should not cost us the
     index. But if the INDEX itself fails, everything downstream would be computed over a
-    half-updated index, so those are skipped rather than cached wrong."""
+    half-updated index, so those are skipped rather than cached wrong.
+
+    ``skip_index`` runs every stage after the index over the generation already in place (a demo
+    copy is written whole, then given its caches this way)."""
     rep = _Reporter(repo, full)
     rep.start()
     from config import DATA_DIR
@@ -278,6 +281,9 @@ def run(repo: str, full: bool = False) -> dict:
             from ..core import policybackup
             from ..core.policy import refresh_policies
             refresh_policies(repo, force=True)
+            from config import is_demo
+            if is_demo(repo):
+                return   # no real policies to back up; the checks compare against kopia itself
             # Fail-closed is not the nightly's job: a failed export here is logged loudly and the
             # next nightly retries, while a pre-WRITE backup (the API path) refuses the write.
             try:
@@ -328,7 +334,7 @@ def run(repo: str, full: bool = False) -> dict:
             from ..core.schedule import compute_next_snapshots
             compute_next_snapshots(repo)
 
-        if stage("index", lambda: index_stage(repo, full)):
+        if skip_index or stage("index", lambda: index_stage(repo, full)):
             # Ordering alone is not the dependency - the dashboard stage has to SUCCEED. It rebuilds
             # the global content refcount, and the stages flagged below price delete-safety numbers
             # against it. Letting them run after a failed rebuild computes tonight's freeable and

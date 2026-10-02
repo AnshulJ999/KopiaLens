@@ -168,6 +168,8 @@ def _to_entry(rec: dict) -> dict:
         # display + policy fields the legacy callers may not need but must not drop:
         "short_name": rec.get("short_name") or "",
         "counts_as_backup": rec.get("counts_as_backup", True),
+        # A demo copy: an index with faked names and no kopia behind it (app.core.demo).
+        "demo": bool(rec.get("demo")),
     }
 
 
@@ -208,6 +210,15 @@ def repo_record(repo: str) -> dict:
 
 def repo_kind(repo: str) -> str:
     return REPOS.get(repo, {}).get("kind", "kopia")
+
+
+def is_demo(repo: str) -> bool:
+    return bool(REPOS.get(repo, {}).get("demo"))
+
+
+# A data folder written by app.core.demo: every repo in it is a demo copy and the local disk is
+# never read (a realistic fake path can exist on this machine).
+DEMO_INSTANCE = os.path.isfile(os.path.join(DATA_DIR, "demo.json"))
 
 
 def kopia_repos() -> list:

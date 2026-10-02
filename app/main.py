@@ -22,7 +22,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, Redirec
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
-from config import APP_VERSION, DATA_DIR, REPOS, repo_kind
+from config import APP_VERSION, DATA_DIR, DEMO_INSTANCE, REPOS, is_demo, repo_kind
 
 from .api import (account, actions, appconfig, audit, backblaze, dashboard, deleteplan, encryption, excluded, insights,
                   jobs, logs, onboarding, policies, restore, search, setup, shell, simulate, snapshots, stats, tree)
@@ -429,7 +429,7 @@ def _bz_reindex_due(now_ts: float) -> bool:
     has flagged a change no successful refresh has absorbed yet, the min-gap since the last real
     reindex has opened, and a FAILED attempt has had its retry window (a failing worker must not
     be relaunched every tick)."""
-    if _bz_kv_float("reindex_pending") != 1.0:
+    if DEMO_INSTANCE or _bz_kv_float("reindex_pending") != 1.0:
         return False
     try:
         from .backblaze import indexer as bz_indexer
@@ -447,6 +447,8 @@ def _bz_detect_pass() -> None:
     (chunked I/O, GIL released) - never the ~4 min reindex, which stays a worker subprocess behind
     the global heavy-pass slot. Skipped while a BZ refresh runs: the worker owns the same SQLite
     file right now and its success re-derives everything the detect would have learned."""
+    if DEMO_INSTANCE:
+        return   # a demo never reads this machine's Backblaze data
     try:
         from .backblaze import indexer as bz_indexer
         if bz_indexer.state().get("building"):
@@ -464,6 +466,8 @@ def _bz_transmit_pass() -> None:
     remaining/totalbackup kv - the Backblaze files that move every ~10 min independent of the
     filelists, so the pill/Queue/dashboard cards cannot go stale for a whole reindex gap.
     refresh_transmit_side() carries its own building guard and never raises."""
+    if DEMO_INSTANCE:
+        return
     try:
         from .backblaze import indexer as bz_indexer
         out = bz_indexer.refresh_transmit_side()
@@ -523,6 +527,8 @@ def _tick() -> None:
                 continue  # BZ left the daily slot () - its detect-driven check runs below
             if repos_store.via_server(repo):
                 continue  # browse-only: kopia refuses the reads an index needs
+            if is_demo(repo):
+                continue  # a demo copy has no kopia to index from
             if _index_due(repo, now_dt, now_ts):
                 slot = _current_slot(now_dt, now_ts)
                 log.info("heavy pass due for repo=%s (mode=%s, slot=%s)", repo, _index_mode(), int(slot))
@@ -1091,7 +1097,8 @@ app.include_router(account.router, prefix="/api")
 app.include_router(onboarding.router, prefix="/api")
 app.include_router(appconfig.router, prefix="/api")
 app.include_router(shell.router, prefix="/api")
-app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
+if not DEMO_INSTANCE:   # a demo never reads this machine's Backblaze data
+    app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
 
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
 

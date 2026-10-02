@@ -32,7 +32,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from config import REPOS, kopia_repos
+from config import REPOS, is_demo, kopia_repos
 
 from .applog import APP_LOG_DIR, get_logger
 from .kopia import _kopia_exe, _repo_args
@@ -104,6 +104,8 @@ class KopiaServers:
     def _spawn(self, repo: str) -> _Server:
         if repo not in REPOS:
             raise ValueError(f"unknown repo: {repo}")
+        if is_demo(repo):
+            raise ValueError(f"repo {repo} is a demo copy with no kopia behind it")
         port = self._free_port()
         args = (
             [_kopia_exe()]
@@ -198,6 +200,8 @@ class KopiaServers:
     def warmup(self) -> None:
         """Pre-start servers for all configured repos (called at app startup)."""
         for repo in kopia_repos():  # the persistent-server backend is kopia-only
+            if is_demo(repo):
+                continue
             try:
                 self._get(repo)
             except Exception as exc:  # noqa: BLE001 - log and continue; lazy spawn retries later

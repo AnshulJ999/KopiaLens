@@ -33,7 +33,7 @@ import time
 import uuid
 from collections import deque
 
-from config import DATA_DIR
+from config import DATA_DIR, is_demo
 
 from . import audit, filecrypto
 from .applog import get_logger
@@ -346,7 +346,7 @@ def start_job(kind: str, repo: str, params: dict, label: str | None = None,
                     f"{clash['kind_label']} is already running on repo {repo} - "
                     "one write at a time per repo.")
         _JOBS[job["job_id"]] = job
-    if job["mutating"] and kind != "encryption_level":
+    if job["mutating"] and kind != "encryption_level" and not is_demo(repo):
         # An encryption rewrite is not a delete: the index's CONTENT is unchanged, so an
         # incremental pass would burn a nightly for nothing.
         from . import reindexq  # lazy: reindexq reads the job registry

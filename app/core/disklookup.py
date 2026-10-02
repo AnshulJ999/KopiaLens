@@ -15,6 +15,8 @@ import sys
 import threading
 import time
 
+from config import DEMO_INSTANCE
+
 from ..settings import load_settings
 from .applog import get_logger
 
@@ -34,6 +36,8 @@ def _kl() -> dict:
 
 
 def mode() -> str:
+    if DEMO_INSTANCE:
+        return "off"   # fake paths can exist on this machine; a demo never reads the disk
     m = str(_kl().get("disk_lookup", "auto")).lower()
     return m if m in MODES else "auto"
 
@@ -157,6 +161,8 @@ def recursive_count(path: str) -> int | None:
 
 def list_drives() -> list[dict]:
     """Local fixed drives (Windows) or mounted filesystems, with used/total bytes."""
+    if DEMO_INSTANCE:
+        return []
     import psutil
     out: list[dict] = []
     for part in psutil.disk_partitions(all=False):

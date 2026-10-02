@@ -40,6 +40,9 @@ _CONNECT_LOCK = threading.Lock()   # id allocation + record insert must not inte
 def kopia_config_dir() -> str:
     """Where kopia itself keeps config files (``kopia --config-file`` with a bare name and
     KopiaUI's per-connection files both live here)."""
+    if config.DEMO_INSTANCE:
+        from .demoreplies import DISPLAY_CONFIG
+        return os.path.dirname(DISPLAY_CONFIG)
     if os.name == "nt":
         base = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
         return os.path.join(base, "kopia")
@@ -624,6 +627,8 @@ def detect_configs() -> list[dict]:
     default) and KopiaLens's data folder for connections WE created there. Filesystem only (no
     spawn), reading the config JSON directly and scrubbing every credential out of it (see
     `describe_config`); it marks the ones already in the store."""
+    if config.DEMO_INSTANCE:
+        return []
     base = kopia_config_dir()
     ours = os.path.join(config.DATA_DIR, "configs")
     default_cfg = os.path.join(base, "repository.config")

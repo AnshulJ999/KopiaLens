@@ -13,6 +13,7 @@ const actionsPart = {
       this.mountOpen(null, item.source, item.full_path);
     },
     mountOpen(snapshotId, source, fullPath) {
+      if (this.isDemo()) { this.klNotify("Mounting isn't available in the demo.", "warn"); return; }
       this.wrap(async () => {
         const r = await getJson("/api/actions/mount-open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_id: snapshotId || null, source, full_path: fullPath || null }) });
         this.actionText = `Mounted at ${r.mountpoint}. Opening Explorer.`;
@@ -242,6 +243,7 @@ const actionsPart = {
     // ---- Download through the browser ----
     // item: {source, full_path, snapshot_id?, content_id?}; size/kind known from a plan when available.
     async downloadItem(item) {
+      if (this.isDemo()) { this.klNotify("Downloading isn't available in the demo.", "warn"); return; }
       let info = null;
       try {
         const plan = await getJson("/api/restore/plan", { method: "POST", headers: { "Content-Type": "application/json" },

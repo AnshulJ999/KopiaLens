@@ -155,6 +155,10 @@ document.addEventListener("alpine:init", () => {
 
     // ---- Repo labels: ids stay the internal form; chips and columns show a short name unless
     // the "Repo labels" setting asks for the full one. Pickers and tooltips always show the full name.
+    isDemo(id) {
+      const r = (this.repos || []).find((x) => x.id === (id || this.repo));
+      return !!(r && r.demo);
+    },
     repoName(id) {
       const r = this.repos.find((x) => x.id === id);
       return (r && r.name) || (id === "bz" ? "Backblaze Personal Backup" : "Repo " + id);
