@@ -529,6 +529,37 @@ def create(provider: str, fields: dict, password: str, name: str = "", short_nam
                       options)
 
 
+def unreadable_entries(path: str, budget: float = 2.0) -> int:
+    """Linux/macOS, not root: how many items in the repository folder's top two levels this user
+    can't read. Without this, kopia retries "permission denied" for minutes before failing.
+    Time-boxed; 0 also when the folder is missing (kopia reports that itself)."""
+    if os.name == "nt" or os.geteuid() == 0 or not os.path.isdir(path):
+        return 0
+    deadline = time.time() + budget
+    blocked = 0
+
+    def check(entry: os.DirEntry) -> bool:
+        nonlocal blocked
+        is_dir = entry.is_dir(follow_symlinks=False)
+        if not os.access(entry.path, os.R_OK | (os.X_OK if is_dir else 0)):
+            blocked += 1
+            return False
+        return is_dir
+
+    try:
+        with os.scandir(path) as top:
+            subdirs = [e.path for e in top if check(e)]
+        for sub in subdirs:
+            if time.time() > deadline:
+                break
+            with os.scandir(sub) as it:
+                for e in it:
+                    check(e)
+    except OSError:
+        pass
+    return blocked
+
+
 def _establish(verb: str, provider: str, fields: dict, password: str, name: str, short_name: str,
                counts_as_backup: bool, options: dict | None = None) -> dict:
     """The shared connect/create path: validate, allocate an id + managed config, run kopia, record.
@@ -542,6 +573,13 @@ def _establish(verb: str, provider: str, fields: dict, password: str, name: str,
     spec = _spec(provider)
     if spec.get("password", True) and not (password or "").strip():
         raise ValueError("The repository password is required.")
+    if verb == "connect" and provider == "filesystem":
+        blocked = unreadable_entries(str(fields.get("path") or ""))
+        if blocked:
+            raise ValueError(
+                f"KopiaLens (user {os.getuid()}) can't read {blocked} item(s) in this repository "
+                "folder. Run KopiaLens as the user that writes the repository. In Docker, set "
+                "PUID/PGID to that user, or leave them unset if kopia runs as root.")
     # The id + the managed config path are RESERVED before the kopia call: two overlapping
     # connects must never share an identity or a file (a failed connect just burns a number).
     with _CONNECT_LOCK:

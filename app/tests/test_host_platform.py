@@ -89,6 +89,23 @@ def test_drive_list_skips_files_system_paths_and_the_data_folder(monkeypatch, tm
     assert not disklookup._user_folder("/proc")
 
 
+@POSIX
+def test_unreadable_repository_folders_are_counted_before_kopia_runs(monkeypatch, tmp_path):
+    from app.core import repoconnect
+    if os.geteuid() == 0:
+        pytest.skip("root reads everything")
+    (tmp_path / "p2a").mkdir()
+    locked = tmp_path / "xn2" / "_5d"
+    locked.mkdir(parents=True)
+    (tmp_path / "kopia.repository.f").write_text("x")
+    locked.chmod(0o000)
+    try:
+        assert repoconnect.unreadable_entries(str(tmp_path)) == 1
+    finally:
+        locked.chmod(0o755)
+    assert repoconnect.unreadable_entries(str(tmp_path)) == 0
+
+
 def test_folder_browser_lists_folders_only(tmp_path):
     (tmp_path / "b").mkdir()
     (tmp_path / "A").mkdir()
@@ -98,6 +115,16 @@ def test_folder_browser_lists_folders_only(tmp_path):
     assert out["parent"] == str(tmp_path.parent)
     with pytest.raises(FileNotFoundError):
         host.list_folders(str(tmp_path / "missing"))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows file attributes")
+def test_folder_browser_hides_windows_hidden_and_system_folders(tmp_path):
+    import ctypes
+    (tmp_path / "shown").mkdir()
+    secret = tmp_path / "$RECYCLE.BIN"
+    secret.mkdir()
+    ctypes.windll.kernel32.SetFileAttributesW(str(secret), 0x2 | 0x4)
+    assert [f["name"] for f in host.list_folders(str(tmp_path))["folders"]] == ["shown"]
 
 
 def test_restart_without_a_tray_exits_only_in_docker(monkeypatch):

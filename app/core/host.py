@@ -101,11 +101,15 @@ def list_folders(path: str, limit: int = 5000) -> dict:
     if not os.path.isdir(path):
         raise FileNotFoundError(path)
     folders = []
+    hidden = 0x2 | 0x4   # FILE_ATTRIBUTE_HIDDEN | SYSTEM: what Explorer hides by default
     with os.scandir(path) as it:
         for entry in it:
             try:
-                if entry.is_dir():
-                    folders.append({"name": entry.name, "path": entry.path})
+                if not entry.is_dir():
+                    continue
+                if os.name == "nt" and getattr(entry.stat(), "st_file_attributes", 0) & hidden:
+                    continue
+                folders.append({"name": entry.name, "path": entry.path})
             except OSError:
                 continue
     folders.sort(key=lambda f: f["name"].casefold())

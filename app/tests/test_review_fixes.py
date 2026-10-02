@@ -74,7 +74,7 @@ def _due(now):
 
 def test_failed_run_is_retried_once_after_the_delay(sched):
     now = _at(2026, 8, 21, 23, 40)
-    slot = m._current_slot(now, now.timestamp())
+    slot = m._current_slot(now)
     _write(sched, {"nightly": {"1": slot + 60},
                    "attempts": {"1": {"slot": slot, "at": slot + 60, "finished": slot + 120,
                                       "retries": 0, "ok": False}}})
@@ -86,7 +86,7 @@ def test_failed_run_is_retried_once_after_the_delay(sched):
 
 def test_retry_happens_only_once(sched):
     now = _at(2026, 8, 21, 23, 40)
-    slot = m._current_slot(now, now.timestamp())
+    slot = m._current_slot(now)
     _write(sched, {"nightly": {"1": slot + 60},
                    "attempts": {"1": {"slot": slot, "at": slot + 60, "finished": slot + 120,
                                       "retries": 1, "ok": False}}})
@@ -95,7 +95,7 @@ def test_retry_happens_only_once(sched):
 
 def test_successful_run_is_never_retried(sched):
     now = _at(2026, 8, 21, 23, 40)
-    slot = m._current_slot(now, now.timestamp())
+    slot = m._current_slot(now)
     _write(sched, {"nightly": {"1": slot + 60},
                    "attempts": {"1": {"slot": slot, "at": slot + 60, "finished": slot + 120,
                                       "retries": 0, "ok": True}}})
@@ -105,7 +105,7 @@ def test_successful_run_is_never_retried(sched):
 def test_a_run_still_in_flight_is_not_restarted(sched):
     """ok is None while the pass is running - that must not read as a failure to retry."""
     now = _at(2026, 8, 21, 23, 40)
-    slot = m._current_slot(now, now.timestamp())
+    slot = m._current_slot(now)
     _write(sched, {"nightly": {"1": slot + 60},
                    "attempts": {"1": {"slot": slot, "at": slot + 60, "retries": 0, "ok": None}}})
     assert _due(dt.datetime.fromtimestamp(slot + 5000)) is False

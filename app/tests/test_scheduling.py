@@ -78,6 +78,21 @@ def test_interval_mode_uses_elapsed_time(monkeypatch):
     assert _due(now) is True
 
 
+def test_interval_mode_retries_a_failed_pass_under_its_own_slot(monkeypatch):
+    monkeypatch.setattr(m, "_index_mode", lambda: "interval")
+    monkeypatch.setattr(m, "_index_interval", lambda: 3600.0)
+    monkeypatch.setattr(m, "_retry_delay", lambda: 600.0)
+    monkeypatch.setattr(m, "_max_retries", lambda: 2)
+    now = _at(2026, 8, 21, 12, 0)
+    started = (now - dt.timedelta(minutes=20)).timestamp()
+    monkeypatch.setattr(m, "nightly_ts", lambda repo: started)
+    rec = {"slot": started, "at": started, "finished": started + 60, "retries": 0, "ok": False}
+    monkeypatch.setattr(m, "_attempt_record", lambda repo: rec)
+    assert m._due_slot("1", now, now.timestamp()) == started
+    rec["ok"] = True
+    assert m._due_slot("1", now, now.timestamp()) is None
+
+
 @pytest.mark.parametrize("raw,expected", [
     ("23:00", (23, 0)),
     ("07:05", (7, 5)),
@@ -155,7 +170,7 @@ def _tick_with(monkeypatch, *, bz_due):
     started = []
     monkeypatch.setattr(m.nightly, "any_running", lambda: False)
     monkeypatch.setattr(m.jobrunner, "maintenance_running", lambda: False)
-    monkeypatch.setattr(m, "_index_due", lambda repo, nd, ts: False)
+    monkeypatch.setattr(m, "_due_slot", lambda repo, nd, ts: None)
     monkeypatch.setattr(m, "_bz_reindex_due", lambda ts: bz_due)
     monkeypatch.setattr(m.nightly, "start_index_pass_async",
                         lambda repo, on_done=None, full=False: started.append(repo) or {"started": True})
@@ -168,7 +183,7 @@ def test_tick_never_gives_bz_the_daily_slot(monkeypatch):
     seen = []
     monkeypatch.setattr(m.nightly, "any_running", lambda: False)
     monkeypatch.setattr(m.jobrunner, "maintenance_running", lambda: False)
-    monkeypatch.setattr(m, "_index_due", lambda repo, nd, ts: seen.append(repo) or False)
+    monkeypatch.setattr(m, "_due_slot", lambda repo, nd, ts: seen.append(repo) or None)
     monkeypatch.setattr(m, "_bz_reindex_due", lambda ts: False)
     monkeypatch.setattr(m, "_last_light", time.time())
     m._tick()

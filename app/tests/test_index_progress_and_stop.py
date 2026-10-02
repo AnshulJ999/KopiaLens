@@ -67,7 +67,7 @@ def _due(monkeypatch, record):
 
     now_ts = time.time()
     now_dt = dt.datetime.now()
-    slot = main._current_slot(now_dt, now_ts)
+    slot = main._current_slot(now_dt)
     state = {"attempts": {"3": {"slot": slot, "finished": now_ts - 10_000, **record}},
              "nightly": {"3": slot}}
     monkeypatch.setattr(main, "_read_state", lambda: state)

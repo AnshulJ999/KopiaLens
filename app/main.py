@@ -482,38 +482,49 @@ def _bz_transmit_pass() -> None:
         log.error("BZ transmit refresh failed: %s", exc)
 
 
-def _current_slot(now_dt: dt.datetime, now_ts: float) -> float:
-    """The scheduled run this moment belongs to. In daily mode that is the most recent occurrence
-    of the configured time - which is also what gives catch-up for free: if the PC was off at
-    23:00, that occurrence is still in the past on the next boot, so the pass runs then."""
-    if _index_mode() == "interval":
-        iv = _index_interval()
-        return (now_ts // iv) * iv
+def _current_slot(now_dt: dt.datetime) -> float:
+    """Daily mode: the scheduled run this moment belongs to, the most recent occurrence of the
+    configured time - which is also what gives catch-up for free: if the PC was off at 23:00, that
+    occurrence is still in the past on the next boot, so the pass runs then."""
     hh, mm = _index_time()
     today = now_dt.replace(hour=hh, minute=mm, second=0, microsecond=0)
     due = today if today <= now_dt else today - dt.timedelta(days=1)
     return due.timestamp()
 
 
-def _index_due(repo: str, now_dt: dt.datetime, now_ts: float) -> bool:
-    """Due when this slot has not been attempted yet - or when the attempt FAILED and the retry
-    window has opened. Without the retry arm, a single crashed worker costs a whole day: exactly
-    what would have happened on the first night, when the worker could not start at all."""
-    if _index_mode() == "off":
-        return False
-    slot = _current_slot(now_dt, now_ts)
-    # A repo added after this slot waits for the next one: adding a repo never starts an index
-    # the user did not ask for.
-    if max(nightly_ts(repo), _repo_created(repo)) < slot:
-        return True
-    rec = _attempt_record(repo)
-    if rec.get("slot") != slot or rec.get("ok") is not False:
-        return False       # different slot, still running (ok is None), or it succeeded
-    if rec.get("stopped"):
-        return False       # a deliberate stop: this slot stays closed
+def _retry_open(rec: dict, now_ts: float) -> bool:
+    """A FAILED attempt whose retry window has opened. Without the retry arm, a single crashed
+    worker costs a whole slot: exactly what happened on the first night, when the worker could
+    not start at all."""
+    if rec.get("ok") is not False or rec.get("stopped"):
+        return False       # still running (ok is None), succeeded, or a deliberate stop
     if int(rec.get("retries", 0)) >= _max_retries():
         return False
     return now_ts - float(rec.get("finished") or rec.get("at") or 0) >= _retry_delay()
+
+
+def _due_slot(repo: str, now_dt: dt.datetime, now_ts: float) -> float | None:
+    """The slot a heavy pass is due for now, or None. A retry keeps the failed attempt's slot, so
+    retries are counted per slot. Adding a repo never starts an index the user did not ask for."""
+    mode = _index_mode()
+    if mode == "off":
+        return None
+    rec = _attempt_record(repo)
+    last = max(nightly_ts(repo), _repo_created(repo))
+    if mode == "interval":
+        # Every N hours, counted from when the last pass started (or the repo was added).
+        if now_ts - last >= _index_interval():
+            return now_ts
+        slot = rec.get("slot")
+        return slot if slot is not None and _retry_open(rec, now_ts) else None
+    slot = _current_slot(now_dt)
+    if last < slot:
+        return slot
+    return slot if rec.get("slot") == slot and _retry_open(rec, now_ts) else None
+
+
+def _index_due(repo: str, now_dt: dt.datetime, now_ts: float) -> bool:
+    return _due_slot(repo, now_dt, now_ts) is not None
 
 
 def _tick() -> None:
@@ -534,8 +545,8 @@ def _tick() -> None:
                 continue  # browse-only: kopia refuses the reads an index needs
             if is_demo(repo):
                 continue  # a demo copy has no kopia to index from
-            if _index_due(repo, now_dt, now_ts):
-                slot = _current_slot(now_dt, now_ts)
+            slot = _due_slot(repo, now_dt, now_ts)
+            if slot is not None:
                 log.info("heavy pass due for repo=%s (mode=%s, slot=%s)", repo, _index_mode(), int(slot))
                 # Launch FIRST, record second. Recording before reserving meant a manual Index
                 # winning the race left the slot marked attempted but never completed, so that

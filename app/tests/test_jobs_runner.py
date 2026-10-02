@@ -450,7 +450,7 @@ def test_the_nightly_waits_while_a_maintenance_job_runs(monkeypatch):
     monkeypatch.setattr(m.jobrunner, "maintenance_running", lambda repo=None: True)
     monkeypatch.setattr(m.nightly, "start_index_pass_async",
                         lambda repo, on_done=None: started.append(repo) or {"started": True})
-    monkeypatch.setattr(m, "_index_due", lambda repo, now_dt, now_ts: True)
+    monkeypatch.setattr(m, "_due_slot", lambda repo, now_dt, now_ts: now_ts)
     monkeypatch.setattr(m, "_light_interval", lambda: 10 ** 9)
     m._last_light = time.time()
     m._tick()
