@@ -242,6 +242,7 @@ pub fn create(app: &AppHandle, shell: &Arc<Shell>) -> tauri::Result<()> {
     let click = pref(state.as_ref(), "tray_click", "window");
     *shell.tray_click.lock().unwrap() = click.clone();
     let h = *shell.health.lock().unwrap();
+    shell.server.log(&format!("start at logon: {:?}", app.autolaunch().is_enabled()));
     let menu = build_menu(app, h, state.as_ref())?;
     drop(app.remove_tray_by_id(TRAY_ID));
     TrayIconBuilder::with_id(TRAY_ID)

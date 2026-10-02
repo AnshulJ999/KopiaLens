@@ -258,11 +258,15 @@ pub fn run() {
         }
     } else {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if args.iter().any(|a| a == "--quit") {
-                quit(app, false, true);
-            } else {
-                open_window(app, None);
-            }
+            // Off the main thread: building a webview inside the cross-process hand-off deadlocks both copies.
+            let (app, quit_now) = (app.clone(), args.iter().any(|a| a == "--quit"));
+            thread::spawn(move || {
+                if quit_now {
+                    quit(&app, false, true);
+                } else {
+                    open_window(&app, None);
+                }
+            });
         }));
     }
     let app = builder
