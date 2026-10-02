@@ -4,6 +4,10 @@ The registry is saved to disk so mounts survive an app restart. On Windows kopia
 snapshot over WebDAV on 127.0.0.1 and maps it with ``net use``; it removes that mapping only on
 Ctrl-C, which a background process never receives. Stopping the process therefore leaves the
 drive letter behind, so unmount and cleanup remove our own mappings explicitly.
+
+On Linux/macOS kopia mounts with FUSE into a folder under ``host.mount_dir()`` and unmounts on
+SIGTERM. A process that died (a container restart) leaves a dead FUSE mount behind, so cleanup
+unmounts our own folders lazily and removes them once empty.
 """
 
 from __future__ import annotations
@@ -101,6 +105,59 @@ def drop_mapping(mountpoint: str) -> bool:
     return False
 
 
+def _ours(mountpoint: str) -> bool:
+    """A folder KopiaLens created under its mount folder (never anything else)."""
+    from . import host
+    root = host.mount_dir()
+    if not root or not mountpoint:
+        return False
+    root = os.path.realpath(root)
+    return os.path.dirname(os.path.realpath(mountpoint)) == root
+
+
+def auto_mountpoint(repo: str, snapshot_id: str) -> str | None:
+    """A drive letter on Windows; elsewhere a new folder name under the mount folder."""
+    from . import host
+    root = host.mount_dir()
+    if root is None:
+        from .kopia import next_free_drive
+        return next_free_drive()
+    os.makedirs(root, exist_ok=True)
+    base = os.path.join(root, f"repo{repo}-{snapshot_id[:8]}")
+    path, n = base, 1
+    while os.path.lexists(path) and (os.path.ismount(path) or os.listdir(path)):
+        n += 1
+        path = f"{base}-{n}"
+    return path
+
+
+def release_folder(mountpoint: str) -> None:
+    """POSIX: unmount a leftover FUSE mount in one of our folders, then remove the empty folder."""
+    if os.name == "nt" or not _ours(mountpoint):
+        return
+    from . import host
+    fm = host.fusermount()
+    if fm:
+        # Lazy: a dead mount ("transport endpoint is not connected") or a busy one goes now.
+        subprocess.run([fm, "-u", "-z", mountpoint], capture_output=True, timeout=15)
+    try:
+        os.rmdir(mountpoint)
+    except OSError:
+        pass   # not empty, or still mounted: leave it
+
+
+def _cleanup(mountpoint: str) -> None:
+    if os.name == "nt":
+        drop_mapping(mountpoint)
+    else:
+        release_folder(mountpoint)
+
+
+def _shown(rec: dict) -> dict:
+    from . import host
+    return {**rec, "shown": host.shown_path(rec.get("mountpoint", ""))}
+
+
 def add(proc: subprocess.Popen, record: dict) -> None:
     with _LOCK:
         _load()
@@ -119,12 +176,12 @@ def active() -> list[dict]:
             rec = _RECORDS.pop(pid)
             _PROCS.pop(pid, None)
             try:
-                drop_mapping(rec.get("mountpoint", ""))
+                _cleanup(rec.get("mountpoint", ""))
             except Exception as exc:  # noqa: BLE001
-                log.debug("mapping cleanup for %s failed: %s", rec.get("mountpoint"), exc)
+                log.debug("mount cleanup for %s failed: %s", rec.get("mountpoint"), exc)
         if dead:
             _save()
-        return sorted((dict(r) for r in _RECORDS.values()), key=lambda r: r.get("started", 0))
+        return sorted((_shown(r) for r in _RECORDS.values()), key=lambda r: r.get("started", 0))
 
 
 def unmount(pid: int) -> bool:
@@ -149,7 +206,7 @@ def unmount(pid: int) -> bool:
                 p.wait(timeout=5)
         except Exception as exc:  # noqa: BLE001 - still try to clear the mapping
             log.warning("stopping mount pid=%s failed: %s", pid, exc)
-        drop_mapping(rec.get("mountpoint", ""))
+        _cleanup(rec.get("mountpoint", ""))
         _RECORDS.pop(pid, None)
         _PROCS.pop(pid, None)
         _save()
@@ -165,7 +222,7 @@ def get(pid: int) -> dict | None:
     with _LOCK:
         _load()
         rec = _RECORDS.get(pid)
-        return dict(rec) if rec else None
+        return _shown(rec) if rec else None
 
 
 def startup_cleanup() -> None:

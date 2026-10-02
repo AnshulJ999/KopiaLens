@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
+import signal
 import sys
 import threading
 import time
@@ -18,7 +20,9 @@ from pydantic import BaseModel
 import config
 
 from ..core import audit, configbackup, pause
+from ..core.applog import get_logger
 
+log = get_logger("app")
 router = APIRouter(tags=["app"])
 
 
@@ -51,12 +55,30 @@ def _tray(path: str, method: str = "GET", timeout: float = 2.0) -> dict | None:
         return None
 
 
+@router.get("/app/host")
+def host_info(request: Request) -> dict:
+    """What this machine can do for the person using it (open folders, picker, mounts)."""
+    from ..core import host
+    return host.info(request.client.host if request.client else None)
+
+
 @router.post("/app/restart")
 def restart() -> dict:
     """Ask the tray to restart KopiaLens. The tray answers only once the new server is up, so the
-    call is made after this reply has gone out."""
+    call is made after this reply has gone out. In Docker the server exits and the container's
+    restart rule starts it again."""
+    from ..core import host
     if _tray("/status") is None:
-        return {"ok": False, "reason": "no-tray"}
+        if not host.in_docker():
+            return {"ok": False, "reason": "no-tray"}
+
+        def _exit() -> None:
+            time.sleep(0.5)
+            log.warning("restart requested: exiting for the container to restart")
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        threading.Thread(target=_exit, name="restart-request", daemon=True).start()
+        return {"ok": True, "how": "container"}
 
     def _later() -> None:
         time.sleep(0.5)

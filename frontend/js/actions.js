@@ -8,7 +8,8 @@ const DOWNLOAD_WARN_BYTES = 5 * 1024 ** 3;
 
 const actionsPart = {
 
-    // ---- Mount + open in Explorer (auto drive letter) ----
+    // ---- Mount + open in the file manager (auto drive letter / mount folder) ----
+    mountOpenLabel() { return this.host.can_open ? `Mount + open in ${this.host.file_manager}` : "Mount"; },
     mountFileOpen(item) {  // the newest snapshot holding the path
       this.mountOpen(null, item.source, item.full_path);
     },
@@ -16,8 +17,9 @@ const actionsPart = {
       if (this.isDemo()) { this.klNotify("Mounting isn't available in the demo.", "warn"); return; }
       this.wrap(async () => {
         const r = await getJson("/api/actions/mount-open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, snapshot_id: snapshotId || null, source, full_path: fullPath || null }) });
-        this.actionText = `Mounted at ${r.mountpoint}. Opening Explorer.`;
-        this.klNotify(`Mounted at ${r.mountpoint}. Opening Explorer.`);
+        const msg = `Mounted at ${r.shown || r.mountpoint}.` + (this.host.can_open ? ` Opening ${this.host.file_manager}.` : "");
+        this.actionText = msg;
+        this.klNotify(msg);
         this.loadMounts();
       }, "Mounting…");
     },
@@ -45,7 +47,7 @@ const actionsPart = {
       if (!n) return;
       const ok = await this.klConfirm({
         title: `Unmount ${n} snapshot${n === 1 ? "" : "s"}?`,
-        facts: this.mounts.map((m) => [m.mountpoint, this.mountLabel(m) + (m.snap_time ? " · " + this.humanTime(m.snap_time) : "")]),
+        facts: this.mounts.map((m) => [m.shown || m.mountpoint, this.mountLabel(m) + (m.snap_time ? " · " + this.humanTime(m.snap_time) : "")]),
         confirmLabel: `Unmount ${n}`,
       });
       if (!ok) return;
@@ -218,11 +220,38 @@ const actionsPart = {
       if (dialog) {
         // Inside the desktop app: the system folder picker, on every OS.
         path = await dialog.open({ directory: true, defaultPath: initial || undefined }).catch(() => null);
-      } else {
+      } else if (this.host.folder_picker === "native") {
         const r = await getJson("/api/actions/browse-folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial }) }).catch(() => null);
         path = r && r.path;
+      } else {
+        path = await this.fbOpen(initial);
       }
       if (path && this.restore) { this.restore.target = path; this.restoreLoad(false); }
+    },
+
+    // ---- In-app folder browser: the server's folders, for a browser on another machine or in Docker ----
+    fbOpen(initial) {
+      return new Promise((resolve) => {
+        this.fb = { path: "", input: "", parent: "", folders: [], truncated: false, loading: false, error: "", resolve };
+        this.fbGo(initial || "");
+      });
+    },
+    async fbGo(path) {
+      const fb = this.fb;
+      if (!fb) return;
+      fb.loading = true; fb.error = "";
+      try {
+        const r = await getJson("/api/actions/folders?path=" + encodeURIComponent(path || ""));
+        Object.assign(fb, { path: r.path, input: r.path, parent: r.parent, folders: r.folders, truncated: r.truncated });
+      } catch (e) {
+        fb.error = e.message || String(e);
+        if (!fb.path && path) { fb.input = path; }
+      } finally { fb.loading = false; }
+    },
+    fbClose(path) {
+      const fb = this.fb;
+      this.fb = null;
+      if (fb) fb.resolve(path || null);
     },
     restoreFromDetail() { if (this.detail) this.openRestore([{ source: this.detail.source, full_path: this.detail.title }]); },
     restoreVersion(v) {

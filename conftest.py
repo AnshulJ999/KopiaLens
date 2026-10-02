@@ -55,6 +55,14 @@ if os.path.isfile(_settings_src):
     shutil.copy2(_settings_src, os.path.join(_DATA_SANDBOX, "settings.json"))
 
 
+_STANDIN_STORE = {"version": 1, "data_dir": None, "cache_dir": None, "repos": [
+    {"id": "1", "name": "Test repo 1", "kind": "kopia", "config_file": None},
+    {"id": "2", "name": "Test repo 2", "kind": "kopia", "config_file": None},
+    {"id": "3", "name": "Test repo 3", "kind": "kopia", "config_file": None},
+    {"id": "bz", "name": "Backblaze Personal Backup", "kind": "backblaze", "config_file": None},
+]}
+
+
 def _sandbox_repo_records() -> None:
     """The real repo ids and names, but every kopia connection points at a config file that does
     not exist: an unmocked kopia call in a test fails at once instead of reaching a real
@@ -64,8 +72,8 @@ def _sandbox_repo_records() -> None:
         with open(src, encoding="utf-8") as fh:
             store = json.load(fh)
     except (OSError, ValueError):
-        return
-    dead = os.path.join(_DATA_SANDBOX, "no-such-kopia-config")
+        store = _STANDIN_STORE   # a fresh checkout (CI, a Linux container) has no records of its own
+    dead =os.path.join(_DATA_SANDBOX, "no-such-kopia-config")
     for rec in store.get("repos") or []:
         if rec.get("kind", "kopia") == "kopia":
             rec["config_file"] = os.path.join(dead, f"repo{rec.get('id')}.config")

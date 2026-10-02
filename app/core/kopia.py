@@ -427,6 +427,13 @@ def mount_snapshot(repo: str, snapshot_id: str, mountpoint: str, info: dict | No
     if is_demo(repo):
         from .demoreplies import UNAVAILABLE
         raise MountError(UNAVAILABLE)
+    posix = os.name != "nt"
+    if posix:
+        from . import host
+        support = host.mount_support()
+        if not support["ok"]:
+            raise MountError(support["reason"])
+        os.makedirs(mountpoint, exist_ok=True)   # FUSE mounts over an existing empty folder
     args = ["mount", snapshot_id, mountpoint]
     full = _base_command(repo, args)
     from .applog import JOB_LOG_DIR, ensure_dirs
@@ -437,7 +444,8 @@ def mount_snapshot(repo: str, snapshot_id: str, mountpoint: str, info: dict | No
         proc = subprocess.Popen(full, stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                 creationflags=creationflags)
     deadline = time.time() + wait
-    while time.time() < deadline and proc.poll() is None and not os.path.exists(mountpoint):
+    while time.time() < deadline and proc.poll() is None and not (
+            os.path.ismount(mountpoint) if posix else os.path.exists(mountpoint)):
         time.sleep(0.25)
     if proc.poll() is not None:
         try:
@@ -445,6 +453,8 @@ def mount_snapshot(repo: str, snapshot_id: str, mountpoint: str, info: dict | No
                 tail = [ln.strip() for ln in fh if ln.strip()][-3:]
         except OSError:
             tail = []
+        if posix:
+            mounts.release_folder(mountpoint)
         raise MountError(" ".join(tail) or f"kopia mount exited with {proc.returncode}")
     mounts.add(proc, {"repo": repo, "snapshot_id": snapshot_id, "mountpoint": mountpoint,
                       "log": log_path, **(info or {})})
@@ -1336,6 +1346,9 @@ def restore_execute(repo: str, source_id: str, target: str, options: dict | None
 def pick_folder(initial: str | None = None) -> str | None:
     """Open the native Windows folder picker (on the user's desktop, since the server is local)
     and return the chosen path. Blocks until the user picks or cancels."""
+    from . import host
+    if not host.native_picker_possible():
+        return None
     ps = (
         "Add-Type -AssemblyName System.Windows.Forms; "
         "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
@@ -1378,15 +1391,10 @@ def _mapped_letters() -> set[str]:
 
 
 def open_in_explorer(target: str) -> None:
-    """Open Windows Explorer at ``target`` (selecting it if it's a file). Localhost-only app, so
-    launching the shell here is safe; failures are swallowed (best-effort convenience)."""
-    try:
-        if os.path.isdir(target):
-            subprocess.Popen(["explorer", target], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        else:
-            subprocess.Popen(["explorer", "/select,", target], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except Exception as exc:  # noqa: BLE001
-        log.debug("open_in_explorer failed for %s: %s", target, exc)
+    """Show ``target`` in this machine's file manager (selecting it if it's a file). Best effort:
+    nothing happens where the server has no screen (Docker, a headless Linux box)."""
+    from . import host
+    host.open_folder(target)
 
 
 def mount_and_browse(repo: str, snapshot_id: str, mountpoint: str, in_mount_target: str | None = None,
@@ -1394,7 +1402,8 @@ def mount_and_browse(repo: str, snapshot_id: str, mountpoint: str, in_mount_targ
     """Mount a snapshot, then (in the background) wait for the filesystem to become ready and open
     Explorer at the requested in-mount path."""
     proc = mount_snapshot(repo, snapshot_id, mountpoint, info={**(info or {}), "open": in_mount_target})
-    if browse:
+    from . import host
+    if browse and host.has_desktop():
         target = in_mount_target or mountpoint
 
         def _wait_and_open() -> None:

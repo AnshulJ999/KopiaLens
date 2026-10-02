@@ -53,6 +53,11 @@ document.addEventListener("alpine:init", () => {
     showFilters: false, minGb: "", maxGb: "", dateFrom: "", dateTo: "", minVersions: "", sharedMin: "", recentBackup: "",
     dedupe: false, treeDedupe: false, reclaimMap: {},
     showRestore: false, restore: null, showDiff: false, diffText: "", diffBusy: false,
+    fb: null,   // in-app folder browser (actions.js)
+    folderPicker: "auto", mountDir: "", mountHostPath: "",
+    // What the machine running KopiaLens can do (/api/app/host); Windows-on-this-PC until it answers.
+    host: { os: "windows", docker: false, can_open: true, file_manager: "Explorer", folder_picker: "native",
+            native_picker_possible: true, mount: { ok: true, reason: "", dir: null, host_dir: "" }, data_persistent: true },
     // Settings Account + Encryption sections, their shared dialog, and the unlock box (lock.html).
     acct: null, encStatus: null, acctDialog: null, locked: null, sessionDays: 30,
     // Settings backups, the damaged-file notice, pausing indexing and About (appconfig.js).
@@ -173,6 +178,7 @@ document.addEventListener("alpine:init", () => {
     // a panel that holds edits asks before dropping them, and Settings needs no ask (it autosaves).
     async escClose() {
       if (this.confirmBox) { this.confirmResolve(false); return; }
+      if (this.fb) { this.fbClose(null); return; }
       if (this.acctDialog) { if (this.acctDialog.mode !== "showkey") this.acctDialog = null; return; }
       if (this.cfgDlg) { if (!this.cfgDlg.busy) this.cfgDlg = null; return; }
       if (this.locked) return;    // the unlock box has no close: nothing behind it has data
@@ -258,6 +264,10 @@ document.addEventListener("alpine:init", () => {
           this.repo = data.repos.some((r) => r.id === saved) ? saved : (first ? first.id : "1");
         }
         this.repoKind = this.kindOf(this.repo);
+        getJson("/api/app/host").then((h) => {
+          this.host = h;
+          if (!h.data_persistent) this.klNotify("The data folder isn't on a Docker volume. The index and settings are lost when the container is recreated.", "warn");
+        }).catch(() => {});
         // A locked index shows the unlock box on load, not only once a view happens to read it.
         getJson("/api/encryption/status").then((s) => { if (s.enabled && !s.unlocked) this.showLock({}); }).catch(() => {});
         this.loadCfg();   // a damaged settings file restored at startup shows its notice

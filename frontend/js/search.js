@@ -200,7 +200,7 @@ const searchPart = {
             rowMenu: [
               { label: "File detail (physical / reclaim / dedup)", action: (_e, row) => this.openFileDetail(row.getData()) },
               { label: "Version history", action: (_e, row) => this.openFileDetail(row.getData()) },
-              { label: "Mount + open in Explorer (latest)", action: (_e, row) => this.mountFileOpen(row.getData()) },
+              { label: () => this.mountOpenLabel() + " (latest)", action: (_e, row) => this.mountFileOpen(row.getData()) },
               { label: "Restore…", action: (_e, row) => { const d = row.getData(); this.openRestore([{ source: d.source, full_path: d.full_path }]); } },
               { label: "Download", action: (_e, row) => { const d = row.getData(); this.downloadItem({ source: d.source, full_path: d.full_path }); } },
               { label: "Jump to it in tree", action: (_e, row) => this.jumpToTree(row.getData()) },

@@ -1,10 +1,10 @@
-"""Build the KopiaLens server as a Nuitka standalone folder.
+"""Build the KopiaLens server as a Nuitka standalone folder (Windows, Linux, macOS).
 
 Run with the build venv's Python (it holds requirements.txt + Nuitka):
-    J:\\Excluded\\KopiaLens-Build\\venv\\Scripts\\python.exe packaging\\build_windows.py
+    J:\\Excluded\\KopiaLens-Build\\venv\\Scripts\\python.exe packaging\\build_server.py
 
-Output: <OUT_DIR>\\kopialens.dist\\kopialens-server.exe, plus build.log and a compilation report.
-packaging/release.py runs this as its first build step.
+Output: <OUT_DIR>/kopialens.dist/kopialens-server(.exe), plus build.log and a compilation report.
+packaging/release.py runs this as its first build step; the Docker image runs it in its build stage.
 """
 import ast
 import os
@@ -16,7 +16,8 @@ from importlib import metadata
 
 KL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.environ.get("KOPIALENS_BUILD_OUT") or r"J:\Excluded\KopiaLens-Build\out"
-SERVER_EXE = "kopialens-server.exe"
+WINDOWS = os.name == "nt"
+SERVER_EXE = "kopialens-server.exe" if WINDOWS else "kopialens-server"
 
 
 def app_version() -> str:
@@ -59,13 +60,21 @@ def nuitka_args() -> list[str]:
     version = app_version()
     # Opt-in: Nuitka's own tool downloads (Dependency Walker; one-time, cached per user).
     downloads = ["--assume-yes-for-downloads"] if os.environ.get("KOPIALENS_BUILD_ALLOW_DOWNLOADS") else []
+    windows = [
+        "--windows-console-mode=attach",
+        f"--windows-icon-from-ico={os.path.join(KL_ROOT, 'shell', 'src-tauri', 'icons', 'icon.ico')}",
+        "--product-name=KopiaLens",
+        "--file-description=KopiaLens server",
+        f"--file-version={version}",
+        f"--product-version={version}",
+    ] if WINDOWS else []
     return [
         sys.executable, "-m", "nuitka",
         *downloads,
         "--standalone",
         f"--output-dir={OUT_DIR}",
         f"--output-filename={SERVER_EXE}",
-        "--windows-console-mode=attach",
+        *windows,
         # kopialens.py dispatches "-m app.index.worker" itself; Nuitka blocks self "-m" calls by default.
         "--no-deployment-flag=self-execution",
         "--python-flag=no_docstrings",
@@ -76,11 +85,6 @@ def nuitka_args() -> list[str]:
         "--nofollow-import-to=app.tests",
         "--nofollow-import-to=app.backblaze.tests",
         "--nofollow-import-to=pytest",
-        f"--windows-icon-from-ico={os.path.join(KL_ROOT, 'shell', 'src-tauri', 'icons', 'icon.ico')}",
-        "--product-name=KopiaLens",
-        "--file-description=KopiaLens server",
-        f"--file-version={version}",
-        f"--product-version={version}",
         f"--report={os.path.join(OUT_DIR, 'compilation-report.xml')}",
         os.path.join(KL_ROOT, "kopialens.py"),
     ]

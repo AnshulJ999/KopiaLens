@@ -24,6 +24,9 @@ const settingsPart = {
         this.repoLabels = kl.repo_labels === "full" ? "full" : "short";
         this.diskLookupMode = ["auto", "everything", "scan", "off"].includes(kl.disk_lookup) ? kl.disk_lookup : "auto";
         this.diskScanBudget = Number(kl.disk_scan_budget || 15);
+        this.folderPicker = ["auto", "native", "browser"].includes(kl.folder_picker) ? kl.folder_picker : "auto";
+        this.mountDir = kl.mount_dir || "";
+        this.mountHostPath = kl.mount_host_path || "";
         getJson("/api/disk-lookup?refresh=true").then((s) => { this.diskLookup = s; }).catch(() => {});
         this.sessionDays = Number(kl.session_days || 30);
         this.loadAccount();
@@ -75,6 +78,9 @@ const settingsPart = {
       listing_backend: { s: "backend", top: true, t: "choice", of: ["subprocess", "server"], restart: true },
       disk_lookup: { s: "diskLookupMode", t: "choice", of: ["auto", "everything", "scan", "off"] },
       disk_scan_budget: { s: "diskScanBudget", t: "int", min: 1 },
+      folder_picker: { s: "folderPicker", t: "choice", of: ["auto", "native", "browser"] },
+      mount_dir: { s: "mountDir", t: "str" },
+      mount_host_path: { s: "mountHostPath", t: "str" },
       es_path: { s: "esPath", t: "str" },
       excluded_tolerance: { s: "excludedTolerance", t: "num" },
       index_mode: { s: "indexMode", t: "choice", of: ["daily", "interval", "off"] },

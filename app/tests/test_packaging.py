@@ -35,7 +35,7 @@ def test_version_is_the_same_everywhere():
 
 
 def test_build_compiles_in_every_upgrade_step():
-    build = _load("packaging/build_windows.py")
+    build = _load("packaging/build_server.py")
     assert build.upgrade_step_modules() == list(dataupgrade._STEP_MODULES)
     args = build.nuitka_args()
     for mod in dataupgrade._STEP_MODULES:

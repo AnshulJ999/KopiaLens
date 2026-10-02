@@ -23,7 +23,7 @@
             <template x-for="sn in snapshots" :key="sn.id"><option :value="sn.id" x-text="humanTime(sn.start_time)"></option></template>
           </select>
           <button @click="treeUp()" class="h-8 rounded border border-bd px-3 text-sm" title="Up one level">⬆ Up</button>
-          <button x-show="treeMode!=='all' && selectedSource!=='*ALL*'" @click="mountTreeSnapshot()" class="h-8 rounded border border-bd px-3 text-sm" title="Mount this snapshot (read-only) and open the current folder in Explorer">⤓ Mount &amp; browse</button>
+          <button x-show="treeMode!=='all' && selectedSource!=='*ALL*'" @click="mountTreeSnapshot()" class="h-8 rounded border border-bd px-3 text-sm" :title="host.can_open ? 'Mount this snapshot (read-only) and open the current folder in ' + host.file_manager : 'Mount this snapshot (read-only)'" x-text="host.can_open ? '⤓ Mount &amp; browse' : '⤓ Mount'"></button>
           <button @click="selRestore('tree')" class="h-8 rounded border border-bd px-2 text-sm" title="Restore the selected items">Restore…</button>
           <button @click="selExclude('tree')" class="h-8 rounded border border-bd px-2 text-sm" title="Add exclusion rules for the selected files and folders">Exclude…</button>
           <button @click="selDelete('tree')" class="h-8 rounded border border-danger-bd text-danger px-2 text-sm" title="Delete the selected files, or one folder (respects filters)">Delete…</button>

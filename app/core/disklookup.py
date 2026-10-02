@@ -159,6 +159,20 @@ def recursive_count(path: str) -> int | None:
     return _scan_total(path, scan_budget())[1] if p == "scan" else None
 
 
+_SYSTEM_ROOTS = ("/proc", "/sys", "/dev", "/run", "/etc", "/boot", "/snap", "/var/lib/docker")
+
+
+def _user_folder(mp: str) -> bool:
+    """Linux/macOS: a mounted folder a user could back up - not a single file Docker mounts in
+    (/etc/hosts), not system plumbing, not KopiaLens's own data folder."""
+    from config import DATA_DIR
+    if not os.path.isdir(mp) or any(mp == r or mp.startswith(r + "/") for r in _SYSTEM_ROOTS):
+        return False
+    data = os.path.realpath(DATA_DIR)
+    real = os.path.realpath(mp)
+    return not (real == data or real.startswith(data + "/"))
+
+
 def list_drives() -> list[dict]:
     """Local fixed drives (Windows) or mounted filesystems, with used/total bytes."""
     if DEMO_INSTANCE:
@@ -171,6 +185,8 @@ def list_drives() -> list[dict]:
             if "fixed" not in (part.opts or "").lower() or ":" not in mp:
                 continue
             mp = mp if mp.endswith("\\") else mp + "\\"
+        elif not _user_folder(mp):
+            continue
         try:
             u = psutil.disk_usage(mp)
             out.append({"path": mp, "used": int(u.used), "total": int(u.total)})

@@ -10,6 +10,7 @@ and the builder's own refusal to treat an empty list as a mass removal.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 
@@ -532,6 +533,7 @@ def test_the_bat_never_uses_delayed_expansion():
     assert "!ERRORLEVEL!" not in text
 
 
+@pytest.mark.skipif(os.name != "nt", reason="runs the .bat through cmd.exe")
 def test_the_bat_keeps_bang_filenames_intact_when_run(tmp_path):
     """End-to-end on the real cmd.exe: the kopia command is swapped for an echo of `!`-bearing
     names, the generated script is executed verbatim, and the text must survive intact while the

@@ -38,6 +38,7 @@ def test_no_module_builds_a_bare_kopia_command():
 def _stub(tmp_path, name: str):
     path = tmp_path / name
     path.write_text("stub", encoding="utf-8")
+    path.chmod(0o755)   # POSIX: the resolver takes executables only
     return path
 
 

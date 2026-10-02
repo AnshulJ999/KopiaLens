@@ -17,12 +17,18 @@ from config import DATA_DIR, HERE
 
 # Shown in commands generated for a demo repo. It does not exist, and kopia.py refuses any
 # command that carries it.
-DISPLAY_CONFIG = r"C:\Users\demo\AppData\Roaming\kopia\repository.config"
 UNAVAILABLE = "Not available in the demo."
-# Stand-ins for this PC's own folders in a demo instance's replies.
-_DISPLAY = ((DATA_DIR, r"C:\Users\demo\AppData\Local\KopiaLens"),
-            (HERE, r"C:\Program Files\KopiaLens"),
-            (os.path.expanduser("~"), r"C:\Users\demo"))
+# Stand-ins for this PC's own folders in a demo instance's replies, in this OS's path style.
+if os.name == "nt":
+    DISPLAY_CONFIG = r"C:\Users\demo\AppData\Roaming\kopia\repository.config"
+    _DISPLAY = ((DATA_DIR, r"C:\Users\demo\AppData\Local\KopiaLens"),
+                (HERE, r"C:\Program Files\KopiaLens"),
+                (os.path.expanduser("~"), r"C:\Users\demo"))
+else:
+    DISPLAY_CONFIG = "/home/demo/.config/kopia/repository.config"
+    _DISPLAY = ((DATA_DIR, "/home/demo/.local/share/kopialens"),
+                (HERE, "/opt/kopialens"),
+                (os.path.expanduser("~"), "/home/demo"))
 
 _LOCK = threading.Lock()
 _CACHE: dict[str, dict] = {}
@@ -45,7 +51,7 @@ def _variants() -> tuple[tuple[str, str], ...]:
         for n in (4, 2, 1):
             out.append((real.replace("\\", "\\" * n), shown.replace("\\", "\\" * n)))
         out.append((real.replace("\\", "/"), shown.replace("\\", "/")))
-    return tuple(out)
+    return tuple(dict.fromkeys(out))
 
 
 def scrub(body: bytes) -> bytes:

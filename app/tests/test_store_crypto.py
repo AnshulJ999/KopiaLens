@@ -315,6 +315,7 @@ def test_sweep_removes_session_databases_a_crash_left_behind(tmp_path):
 
 def test_sweep_all_walks_the_read_and_staging_temp_dirs(tmp_path, monkeypatch):
     monkeypatch.setattr(crypto, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(crypto, "_owner_alive", lambda fn: False)   # pids 1/2 are alive on Linux
     read = tmp_path / "duck_tmp_repo1"
     read.mkdir()
     (read / "session_1_aa.db").write_bytes(b"x")

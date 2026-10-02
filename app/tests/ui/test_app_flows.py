@@ -158,7 +158,8 @@ def test_restart_keeps_settings_and_signing_in_unlocks_the_index(indexed_server,
     assert indexed_server.get("/api/encryption/status")["unlocked"] is False
     # A tab left open across the restart asks for the unlock box, not a raw error.
     page.kl_allow.append("status of 423")
-    page.get_by_role("button", name="⟳ Refresh").click()
+    # force: a background poll may open the unlock box first, and it then covers the button.
+    page.get_by_role("button", name="⟳ Refresh").click(force=True)
     expect(page.get_by_text("Unlock the index")).to_be_visible(timeout=30_000)
     page.context.close()
 

@@ -35,7 +35,7 @@ const snapshotsPart = {
         const rowMenu = server ? [
           pick("Browse files", (_e, row) => this.browseSnapshot(row.getData())),
           pick("Restore this snapshot…", (_e, row) => { const d = row.getData(); this.openRestore([{ source: d.source, full_path: sourcePath(d.source), snapshot_id: d.id }], { label: "snapshot " + this.humanTime(d.start_time) }); }),
-          pick("Mount + open in Explorer", (_e, row) => { const d = row.getData(); this.mountOpen(d.id, d.source, sourcePath(d.source)); }),
+          pick(() => this.mountOpenLabel(), (_e, row) => { const d = row.getData(); this.mountOpen(d.id, d.source, sourcePath(d.source)); }),
           pick("Pin selected (protect)", () => this.pinSelected(false)),
           pick("Unpin selected", () => this.pinSelected(true)),
           pick("Diff selected (pick 2)", () => this.diffSelected()),
@@ -48,7 +48,7 @@ const snapshotsPart = {
           rowMenu: rowMenu || [
             { label: "Browse files", action: (_e, row) => this.browseSnapshot(row.getData()) },
             { label: "Restore this snapshot…", action: (_e, row) => { const d = row.getData(); this.openRestore([{ source: d.source, full_path: sourcePath(d.source), snapshot_id: d.id }], { label: "snapshot " + this.humanTime(d.start_time) }); } },
-            { label: "Mount + open in Explorer", action: (_e, row) => { const d = row.getData(); this.mountOpen(d.id, d.source, sourcePath(d.source)); } },
+            { label: () => this.mountOpenLabel(), action: (_e, row) => { const d = row.getData(); this.mountOpen(d.id, d.source, sourcePath(d.source)); } },
             { label: "Select all unretained (no retention/pin)", action: () => this.selectUnretained() },
             { label: "Select identical duplicates (keep oldest+newest per content)", action: () => this.selectIdenticalDuplicates() },
             { label: "Delete selected…", action: () => this.planDelete() },

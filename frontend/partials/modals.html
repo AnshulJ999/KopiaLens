@@ -296,7 +296,7 @@
               </span>
               <div class="flex items-center gap-2 mt-2" x-show="restore.mode === 'folder'">
                 <input x-model="restore.target" @input="restoreTargetInput()" class="fld flex-1 border border-bd bg-surface2 font-mono" placeholder="D:\Restored   or   D:\out.zip">
-                <button @click="browseFolder()" class="kl-btn" title="Opens the folder picker on the computer running KopiaLens">Browse…</button>
+                <button @click="browseFolder()" class="kl-btn" title="Pick a folder on the computer running KopiaLens">Browse…</button>
               </div>
               <div class="kl-note mt-1" x-show="restore.mode === 'folder' && restore.items.length > 1">Files go straight into this folder. Same names get a number.</div>
               <div class="kl-note mt-1 break-all" x-show="restore.mode !== 'folder' && restore.plan && restore.plan.items.length === 1 && restore.plan.items[0].target"
@@ -397,6 +397,37 @@
     </div>
 
     <!-- snapshot diff -->
+    <!-- In-app folder browser (actions.js fbOpen): folders on the computer running KopiaLens. -->
+    <template x-if="fb">
+      <div class="fixed inset-0 z-[62] bg-black/40 flex items-center justify-center p-4 sm:p-6" @click.self="fbClose(null)">
+        <div role="dialog" aria-modal="true" aria-label="Choose a folder" class="w-[36rem] max-w-full max-h-[80vh] rounded-lg border border-bd bg-surface shadow-xl flex flex-col text-sm">
+          <div class="p-4 pb-2 space-y-2">
+            <h3 class="text-[15px] font-semibold leading-snug">Choose a folder</h3>
+            <form class="flex items-center gap-2" @submit.prevent="fbGo(fb.input)">
+              <button type="button" class="kl-btn shrink-0" :disabled="!fb.path" @click="fbGo(fb.parent)" title="Up one folder">Up</button>
+              <input x-model="fb.input" class="fld flex-1 min-w-0 border border-bd bg-surface2 font-mono" aria-label="Folder path"
+                     :placeholder="host.os === 'windows' ? 'D:\\Restored' : '/data/restored'">
+              <button type="submit" class="kl-btn shrink-0">Go</button>
+            </form>
+            <p class="text-xs" style="color:var(--danger)" x-show="fb.error" x-text="fb.error"></p>
+          </div>
+          <div class="flex-1 min-h-[12rem] overflow-auto border-y border-bd">
+            <p class="kl-note p-3" x-show="fb.loading">Loading…</p>
+            <p class="kl-note p-3" x-show="!fb.loading && !fb.error && !fb.folders.length" x-text="fb.path ? 'No folders inside this one.' : 'No drives found.'"></p>
+            <template x-for="f in fb.folders" :key="f.path">
+              <button type="button" class="w-full text-left px-3 py-1.5 font-mono break-all hover:bg-surface2 focus:bg-surface2"
+                      @click="fbGo(f.path)" x-text="f.name"></button>
+            </template>
+            <p class="kl-note p-3" x-show="fb.truncated">Showing the first 5,000 folders. Type a path to go further.</p>
+          </div>
+          <div class="p-4 pt-3 flex items-center justify-end gap-2">
+            <button type="button" class="kl-btn" @click="fbClose(null)">Cancel</button>
+            <button type="button" class="kl-btn primary" :disabled="!fb.path" @click="fbClose(fb.path)">Choose this folder</button>
+          </div>
+        </div>
+      </div>
+    </template>
+
     <div x-show="showDiff" @click.self="showDiff=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
       <div class="w-[52rem] max-w-full max-h-[85vh] overflow-auto rounded-lg border border-bd bg-surface p-4 text-sm">
         <div class="flex items-center gap-2"><div class="font-medium">Snapshot diff</div><span class="text-xs text-warn" x-show="diffBusy">running…</span><button @click="showDiff=false" class="ml-auto text-muted text-lg leading-none">&times;</button></div>

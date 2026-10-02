@@ -89,7 +89,7 @@
           <div class="kl-footer">
             <span class="kl-note" x-text="jobFooterNote()"></span>
             <span class="spacer"></span>
-            <button class="kl-btn quiet" x-show="jobPanel.kind === 'restore' && jobPanel.state === 'done' && jobPanel.target" @click="openRestoredPath(jobPanel.target)">Open folder</button>
+            <button class="kl-btn quiet" x-show="host.can_open && jobPanel.kind === 'restore' && jobPanel.state === 'done' && jobPanel.target" @click="openRestoredPath(jobPanel.target)">Open folder</button>
             <button class="kl-btn quiet" x-show="jobPanel.commands_text" @click="jobCopyCommand()">Copy command</button>
           </div>
         </div>

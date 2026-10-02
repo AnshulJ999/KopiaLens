@@ -39,7 +39,7 @@ from .kopia import _kopia_exe, _repo_args
 
 log = get_logger("server")
 
-_NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW - no console flash
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # no console flash; 0 off Windows
 USERNAME = "kopialens"
 READY_TIMEOUT = 40.0
 

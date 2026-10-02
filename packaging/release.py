@@ -223,7 +223,7 @@ def main() -> int:
              "-p", "no:cacheprovider"], REPO_ROOT, "tests.log")
 
     log("2/6 server build (Nuitka)")
-    run([BUILD_PYTHON, os.path.join(KL_ROOT, "packaging", "build_windows.py")], KL_ROOT, "nuitka.log",
+    run([BUILD_PYTHON, os.path.join(KL_ROOT, "packaging", "build_server.py")], KL_ROOT, "nuitka.log",
         {"KOPIALENS_BUILD_OUT": OUT_DIR})
 
     log("3/6 stage server + bundled kopia")

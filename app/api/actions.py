@@ -11,7 +11,7 @@ import threading
 import time
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from ..core import audit
@@ -22,7 +22,6 @@ from ..core.kopia import (
     maintenance_run_command,
     mount_and_browse,
     mount_snapshot,
-    next_free_drive,
     open_in_explorer,
     pick_folder,
     remove_files_script,
@@ -180,7 +179,8 @@ def mount_open(payload: MountOpenRequest) -> dict:
         r = resolve_item(payload.repo, RestoreItem(source=payload.source,
                                                    full_path=payload.full_path or _source_root(payload.source)))
         payload.snapshot_id = r["snapshot_id"]
-    mountpoint = payload.mountpoint or next_free_drive()
+    from ..core import host, mounts as mount_registry
+    mountpoint = payload.mountpoint or mount_registry.auto_mountpoint(payload.repo, payload.snapshot_id)
     if not mountpoint:
         raise HTTPException(status_code=409, detail="no free drive letter for an auto mount; unmount something first")
     in_mount_target = None
@@ -194,7 +194,8 @@ def mount_open(payload: MountOpenRequest) -> dict:
         proc = mount_and_browse(payload.repo, payload.snapshot_id, mountpoint, in_mount_target=in_mount_target,
                                 info={**_snapshot_info(payload.repo, payload.snapshot_id, payload.source),
                                       "path": payload.full_path or ""})
-        return {"pid": proc.pid, "command": proc.args, "mountpoint": mountpoint, "opening": in_mount_target}
+        return {"pid": proc.pid, "command": proc.args, "mountpoint": mountpoint,
+                "shown": host.shown_path(mountpoint), "opening": in_mount_target}
     except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except MountError as exc:
@@ -649,6 +650,20 @@ def snapshot_delete_dry_run_route(payload: SnapshotDeleteRequest) -> dict:
 def browse_folder(payload: dict) -> dict:
     """Open the native Windows folder picker and return the chosen path (server is local)."""
     return {"path": pick_folder(payload.get("initial"))}
+
+
+@router.get("/actions/folders")
+def folders(path: str = "") -> dict:
+    """The in-app folder browser: the folders inside ``path`` on this machine, or the roots."""
+    from ..core import host
+    if not path:
+        return {"path": "", "parent": "", "folders": host.folder_roots(), "truncated": False}
+    try:
+        return host.list_folders(path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="That folder doesn't exist.") from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="KopiaLens isn't allowed to open that folder.") from exc
 
 
 @router.post("/actions/folder-reclaim")

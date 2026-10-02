@@ -1,0 +1,13 @@
+*
+!requirements.txt
+!VERSION
+!kopialens.py
+!main.py
+!config.py
+!app/
+!frontend/
+!packaging/build_server.py
+!packaging/docker/entrypoint.sh
+app/tests
+app/backblaze/tests
+**/__pycache__

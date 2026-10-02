@@ -58,6 +58,25 @@
                   <input x-model="esPath" @change="saveKl('es_path')" class="fld border border-bd bg-surface2 min-w-[18rem]" placeholder="es.exe path"></div>
                 <p class="text-[11px] text-muted mt-1">Everything is a free Windows file index by voidtools (voidtools.com). es.exe is its command-line tool; Everything itself must be running.</p>
               </div>
+              <div x-show="host.native_picker_possible">
+                <div class="flex items-center justify-between gap-3"><span>Folder picker</span>
+                  <select x-model="folderPicker" @change="saveKl('folder_picker')" class="fld border border-bd bg-surface2">
+                    <option value="auto">Automatic</option>
+                    <option value="native">Windows dialog</option>
+                    <option value="browser">KopiaLens folder list</option>
+                  </select></div>
+                <p class="text-[11px] text-muted mt-1">What Browse… opens. Automatic uses the Windows dialog when your browser runs on this PC, and the folder list from anywhere else.</p>
+              </div>
+              <div x-show="host.os !== 'windows' && !host.docker">
+                <div class="flex items-center justify-between gap-3"><span>Snapshot mount folder</span>
+                  <input x-model="mountDir" @change="saveKl('mount_dir')" class="fld border border-bd bg-surface2 min-w-[18rem] font-mono" :placeholder="host.mount.dir || ''"></div>
+                <p class="text-[11px] text-muted mt-1">Mounted snapshots appear in folders inside this one.</p>
+              </div>
+              <div x-show="host.docker">
+                <div class="flex items-center justify-between gap-3"><span>Mount folder on the host</span>
+                  <input x-model="mountHostPath" @change="saveKl('mount_host_path')" class="fld border border-bd bg-surface2 min-w-[18rem] font-mono" placeholder="/mnt/kopialens"></div>
+                <p class="text-[11px] text-muted mt-1" x-text="'The host folder mapped to ' + (host.mount.dir || '/mounts') + ' in the container. Mount paths are shown as this folder.'"></p>
+              </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Excluded-folder tolerance</span>
                   <select x-model.number="excludedTolerance" @change="saveKl('excluded_tolerance')" class="fld border border-bd bg-surface2">

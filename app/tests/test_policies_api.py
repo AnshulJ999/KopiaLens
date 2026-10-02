@@ -7,6 +7,8 @@ rule is NOT removable on the source - the global policy owns it).
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from app.api import policies as api
@@ -127,7 +129,7 @@ def test_diff_impact_and_command(wired):
     assert [r["pattern"] for r in out["impact"]["removed"]] == ["/Temp/**"]
     assert "--add-ignore" in out["command"] and "--remove-ignore" in out["command"]
     assert out["will_create_policy"] is False
-    assert out["backup_dir"].endswith("policy-backups" + SEP + "repo1")
+    assert out["backup_dir"].endswith(os.path.join("policy-backups", "repo1"))
 
 
 def test_save_refuses_without_confirmation(wired):

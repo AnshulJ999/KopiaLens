@@ -119,7 +119,7 @@ const treePart = {
               const s = await this.treeSourceFor(d.path);
               if (s) this.downloadItem({ source: s, full_path: d.path, snapshot_id: this.treeMode === "full" ? this.selectedSnapshot || null : null });
             } },
-            { label: "Mount + open in Explorer", action: async (_e, row) => {
+            { label: () => this.mountOpenLabel(), action: async (_e, row) => {
               const d = row.getData();
               const s = await this.treeSourceFor(d.path);
               if (s) this.mountOpen(this.selectedSnapshot, s, d.path);

@@ -327,4 +327,4 @@ def test_demo_replies_never_show_this_pcs_folders():
                        "detail": str(FileNotFoundError(2, "missing", os.path.join(config.DATA_DIR, "app.log")))}).encode()
     out = demoreplies.scrub(body).decode().lower()
     assert not any(m in out for m in demoreplies.machine_paths())
-    assert json.loads(out)["dir"].startswith(r"c:\users\demo\appdata\local\kopialens")
+    assert json.loads(out)["dir"].startswith(demoreplies._DISPLAY[0][1].lower())

@@ -209,6 +209,20 @@ def test_sh_script_quotes_every_name():
     assert shlex.split(full) == cmd
 
 
+@pytest.mark.skipif(os.name == "nt", reason="runs the generated .sh through /bin/sh")
+def test_sh_script_passes_every_name_to_the_program_intact(tmp_path):
+    import json
+    from app.core.kopia import _remove_sh_lines
+    names = SCRIPT_NAMES + ["a\nb", "$HOME `x` 'q'.txt"]
+    out = tmp_path / "argv.json"
+    record = [sys.executable, "-c", f"import json, sys; open({str(out)!r}, 'w').write(json.dumps(sys.argv[1:]))"]
+    script = tmp_path / "r.sh"
+    script.write_text("\n".join(_remove_sh_lines([record + names], "r.log")) + "\n", encoding="utf-8")
+    res = subprocess.run(["/bin/sh", str(script)], capture_output=True, text=True, timeout=60)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert json.loads(out.read_text(encoding="utf-8")) == names
+
+
 # ---- restore onto this computer --------------------------------------------------------------
 
 def test_restore_flags_names_this_computer_cannot_create():

@@ -424,12 +424,17 @@ def _bz_kv_float(key: str) -> float:
         return 0.0
 
 
+def _bz_present() -> bool:
+    """A Backblaze record exists. Without one (Linux, Docker, a PC without Backblaze) no BZ pass runs."""
+    return any(repo_kind(r) == "backblaze" for r in REPOS)
+
+
 def _bz_reindex_due(now_ts: float) -> bool:
     """BZ's own due check () - the daily slot never applies to it. Due when the 30-min detect
     has flagged a change no successful refresh has absorbed yet, the min-gap since the last real
     reindex has opened, and a FAILED attempt has had its retry window (a failing worker must not
     be relaunched every tick)."""
-    if DEMO_INSTANCE or _bz_kv_float("reindex_pending") != 1.0:
+    if DEMO_INSTANCE or not _bz_present() or _bz_kv_float("reindex_pending") != 1.0:
         return False
     try:
         from .backblaze import indexer as bz_indexer
@@ -447,7 +452,7 @@ def _bz_detect_pass() -> None:
     (chunked I/O, GIL released) - never the ~4 min reindex, which stays a worker subprocess behind
     the global heavy-pass slot. Skipped while a BZ refresh runs: the worker owns the same SQLite
     file right now and its success re-derives everything the detect would have learned."""
-    if DEMO_INSTANCE:
+    if DEMO_INSTANCE or not _bz_present():
         return   # a demo never reads this machine's Backblaze data
     try:
         from .backblaze import indexer as bz_indexer
@@ -466,7 +471,7 @@ def _bz_transmit_pass() -> None:
     remaining/totalbackup kv - the Backblaze files that move every ~10 min independent of the
     filelists, so the pill/Queue/dashboard cards cannot go stale for a whole reindex gap.
     refresh_transmit_side() carries its own building guard and never raises."""
-    if DEMO_INSTANCE:
+    if DEMO_INSTANCE or not _bz_present():
         return
     try:
         from .backblaze import indexer as bz_indexer
@@ -602,6 +607,10 @@ async def lifespan(_app: FastAPI):
     if _missing:
         log.error("INCOMPLETE INSTALL - page files missing: %s. Reinstall KopiaLens.", ", ".join(_missing))
     import config as _config
+    from .core import host as _host
+    if not _host.data_persistent():
+        log.warning("The data folder %s is inside the container, so the index and settings are lost "
+                    "when the container is recreated. Mount a volume there.", _config.DATA_DIR)
     if _config.LEGACY_LAYOUT:
         log.warning("Old folder layout: data and settings sit next to the app. Move them into "
                     "one data folder and set KOPIALENS_DATA_DIR.")
@@ -695,6 +704,9 @@ async def lifespan(_app: FastAPI):
     log.info("KopiaLens shutting down")
     _bg_stop.set()
     jobrunner.terminate_all()    # a running action must not outlive the registry as an orphan
+    if _host.in_docker():
+        from .core import mounts as _mounts
+        _mounts.unmount_all()    # the container is going away: no dead FUSE mount left on the host
     # A running index worker is left to finish; the next start takes it over (resume_workers).
     SERVERS.shutdown()
     store.close_all()            # the live and retired generations; the index reads come from here
