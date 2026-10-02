@@ -33,6 +33,7 @@ FILES = [  # dir_id, name, size
     (3, "zebra_parser.py", 10), (3, "zebra_models.py", 11), (3, "zebra_routes.py", 12),
     (3, "zebra_utils.py", 13), (3, "zebra_views.py", 14), (3, "zebra_forms.py", 15),
     (7, "Zebra.txt", 5), (7, "zebra.txt", 6), (7, "notes.md", 7),
+    (7, "budget.secret-pc", 8),   # the computer name as an "extension" (sync-conflict copies)
 ]
 
 
@@ -234,6 +235,31 @@ def test_same_key_gives_the_same_copy(live):
     assert a == b
 
 
+def test_two_repos_make_one_demo_holding_both(live, monkeypatch):
+    _write(str(live / "repo8"))
+    result = demo.make_copy("7,8", "generic", finish=False)
+    copy_root = result["path"]
+    assert os.path.basename(copy_root) == "repo7+8-generic"
+    assert result["rows"]["8"]["pathx"] == len(FILES)
+    with open(os.path.join(copy_root, "repos.json"), encoding="utf-8") as fh:
+        records = json.load(fh)["repos"]
+    assert [(r["id"], r["name"], r["demo"]) for r in records] == [("1", "Demo 1", True),
+                                                                   ("2", "Demo 2", True)]
+    blob = _folder_text(copy_root)
+    for word in PRIVATE:
+        assert word not in blob, word
+    for demo_id in ("1", "2"):
+        assert os.path.isfile(os.path.join(copy_root, f"demo_replies_repo{demo_id}.json"))
+        monkeypatch.setattr(store, "DATA_DIR", copy_root)
+        gen = store.open_generation(demo_id)
+        try:
+            cur = gen.cursor()
+            assert cur.execute("SELECT count(*) FROM pathx").fetchone()[0] == len(FILES)
+            assert {r[0] for r in cur.execute("SELECT repo FROM isnaps").fetchall()} == {demo_id}
+        finally:
+            gen.close()
+
+
 @pytest.fixture
 def demo_repo(live, monkeypatch):
     """A finished copy served as repo "1" (a demo repo), with every process launch failing."""
@@ -289,3 +315,16 @@ def test_simulated_runs_follow_the_index(demo_repo):
     lines = [t for _s, t in k.kopia_job_stream("1", ["restore", "kRootA", "D:/out"], result)]
     assert result["returncode"] == 0 and lines[-1] == demosim.DONE_NOTE
     assert "Restored 8 files" in lines[-2]
+
+
+def test_demo_replies_never_show_this_pcs_folders():
+    import config
+    from app.core import demoreplies
+    body = json.dumps({"dir": os.path.join(config.DATA_DIR, "policy-backups", "repo1"),
+                       "home": os.path.join(os.path.expanduser("~"), "notes"),
+                       "app": config.HERE.replace(BS, "/"),
+                       # an error message carries the path escaped once already
+                       "detail": str(FileNotFoundError(2, "missing", os.path.join(config.DATA_DIR, "app.log")))}).encode()
+    out = demoreplies.scrub(body).decode().lower()
+    assert not any(m in out for m in demoreplies.machine_paths())
+    assert json.loads(out)["dir"].startswith(r"c:\users\demo\appdata\local\kopialens")

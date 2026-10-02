@@ -61,6 +61,26 @@ def test_attempt_gives_a_different_name():
     assert n.folder("Photos", "Photos", 1).startswith("Photos ")
 
 
+def test_thousands_of_same_named_siblings_settle_in_few_rounds():
+    """Re-rolling must make 5,000 siblings that share one fake name unique within a few rounds."""
+    n = Namer(KEY_A, "generic")
+    attempt = {f"real {i}": 0 for i in range(5000)}
+    for rounds in range(1, 11):
+        seen: dict[str, str] = {}
+        losers = []
+        for real in sorted(attempt):
+            fake = n._bump("Photos", real, attempt[real], " ").lower()
+            if fake in seen:
+                losers.append(real)
+            else:
+                seen[fake] = real
+        if not losers:
+            break
+        for real in losers:
+            attempt[real] += 1
+    assert not losers, f"{len(losers)} siblings still collide after {rounds} rounds"
+
+
 def test_category_needs_a_majority():
     assert fakenames.category_of({"jpg": 8, "txt": 2}) == "Photos"
     assert fakenames.category_of({"jpg": 3, "mp3": 3, "exe": 4}) == "Mixed"

@@ -7,19 +7,52 @@ answers a demo repo from this file and never starts a process.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
+import re
 import threading
 
-from config import DATA_DIR
+from config import DATA_DIR, HERE
 
 # Shown in commands generated for a demo repo. It does not exist, and kopia.py refuses any
 # command that carries it.
 DISPLAY_CONFIG = r"C:\Users\demo\AppData\Roaming\kopia\repository.config"
 UNAVAILABLE = "Not available in the demo."
+# Stand-ins for this PC's own folders in a demo instance's replies.
+_DISPLAY = ((DATA_DIR, r"C:\Users\demo\AppData\Local\KopiaLens"),
+            (HERE, r"C:\Program Files\KopiaLens"),
+            (os.path.expanduser("~"), r"C:\Users\demo"))
 
 _LOCK = threading.Lock()
 _CACHE: dict[str, dict] = {}
+
+
+def machine_paths() -> list[str]:
+    """This PC's own folders in every spelling a reply can carry (raw, escaped once or twice,
+    forward slashes), lowercased, longest first."""
+    return [p.lower() for p, _d in _variants()]
+
+
+@functools.lru_cache(maxsize=1)
+def _variants() -> tuple[tuple[str, str], ...]:
+    out = []
+    for real, shown in sorted(_DISPLAY, key=lambda p: -len(p[0])):
+        real = os.path.normpath(real)
+        if len(real) <= 3:   # never rewrite a bare drive
+            continue
+        # Backslashes x4 (a path in an error message, then JSON), x2 (JSON), x1, and forward.
+        for n in (4, 2, 1):
+            out.append((real.replace("\\", "\\" * n), shown.replace("\\", "\\" * n)))
+        out.append((real.replace("\\", "/"), shown.replace("\\", "/")))
+    return tuple(out)
+
+
+def scrub(body: bytes) -> bytes:
+    """Replace this PC's own folders with stand-ins (a demo instance's replies)."""
+    for real, shown in _variants():
+        body = re.sub(re.escape(real.encode()), lambda _m, s=shown.encode(): s, body, flags=re.I)
+    return body
 
 
 def replies_path(repo: str, base: str | None = None) -> str:

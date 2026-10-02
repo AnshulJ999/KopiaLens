@@ -1,8 +1,9 @@
 """Demo copies: a repo's index with every name already faked.
 
-The copy is a self-contained KopiaLens data folder (``<data>/demo/repo<N>-<style>/``): one plain
-(unencrypted) generation as ``repo1``, the kopia replies its screens need (recorded once from the
-real repo, faked), its caches, and settings that keep it off the local disk. Real names never
+The copy is a self-contained KopiaLens data folder (``<data>/demo/repo<N>[+<M>...]-<style>/``):
+one plain (unencrypted) generation per source repo as ``repo1``, ``repo2``..., the kopia replies
+its screens need (recorded once from each real repo, faked), its caches, and settings that keep it
+off the local disk. All repos share one name key. Real names never
 exist in it, so nothing that reads it can leak one. Sizes, counts, dates and ids stay real.
 
 Names map by name alone (see ``fakenames``). Sibling collisions are resolved globally: a real
@@ -44,19 +45,26 @@ _SEG_SPLIT = r"[\\/@:]"
 _TEXT_SPLIT = r"[\\/@:\r\n\t\",]"
 _KEPT_COLUMNS = {"ext", "repo"}
 # What a finished demo folder holds; everything else the cache build wrote is removed.
-_KEEP = {"repo1", "cache", "demo.json", "demo_replies_repo1.json", "repos.json", "settings.json",
-         "data_version.json"}
+_KEEP = {"cache", "demo.json", "repos.json", "settings.json", "data_version.json"}
 _DOT_IGNORE_KEPT = {".kopiaignore", ".gitignore", ".nobackup", ".backupignore"}
 # kopia's own words in its replies (cache report, stats); never data.
 _KOPIA_WORDS = {"content", "contents", "indexes", "metadata", "own-writes", "blob-list",
-                "server-contents", "blobs", "packs", "kopia"}
+                "server-contents", "blobs", "packs", "kopia", "kopia.exe", "repository.config"}
+# Dates and long hex ids (kopia cache folders, run dates) also appear as generated values.
+_GENERATED = re.compile(r"[0-9a-f]{12,}|\d{4}-\d{2}-\d{2}")
 _DEMO_SETTINGS = {"kopialens": {"onboarded": True, "auth_enabled": False, "index_mode": "off",
                                 "disk_lookup": "off", "encryption_level": "off"}}
 _SWEEP_SKIP = ("pick", "open", "browse", "download", "restart", "quit", "shutdown", "mount")
 
 
-def copy_dir(repo: str, style: str) -> str:
-    return os.path.join(DATA_DIR, DEMO_DIR, f"repo{repo}-{style}")
+def _repo_ids(repos: str | list[str]) -> list[str]:
+    """Accept "1", "1,2" or ["1", "2"]; return ["1", "2"]."""
+    items = repos.split(",") if isinstance(repos, str) else repos
+    return [r.strip() for r in items if r.strip()]
+
+
+def copy_dir(repos: str | list[str], style: str) -> str:
+    return os.path.join(DATA_DIR, DEMO_DIR, f"repo{'+'.join(_repo_ids(repos))}-{style}")
 
 
 def _source_parts(source: str) -> tuple[str, str, str]:
@@ -441,9 +449,10 @@ def _record(repo: str, fk: _Faker, cur, tables: set[str]) -> dict:
     res = run(["maintenance", "info", "--json"])
     body = json.loads(res.stdout) if res.returncode == 0 and res.stdout.strip() else {}
     put(["maintenance", "info", "--json"], res.returncode, json.dumps(fk.maintenance(body)))
-    for args in (["content", "stats"], ["blob", "stats"]):
-        res = run(args)
-        put(args, res.returncode, res.stdout if res.returncode == 0 else "")
+    # Not `blob stats`: it lists every blob in the repository (many minutes on a big one), and
+    # its screen is on-demand only. A demo answers it "not available".
+    res = run(["content", "stats"])
+    put(["content", "stats"], res.returncode, res.stdout if res.returncode == 0 else "")
     res = run(["cache", "info"])
     put(["cache", "info"], res.returncode, fk.cache_info(res.stdout) if res.returncode == 0 else "")
 
@@ -470,21 +479,85 @@ def _write(cur, sql: str, out_path: str) -> int:
     return rows
 
 
-def make_copy(repo: str, style: str, finish: bool = True) -> dict:
-    """Write a demo copy of ``repo``'s current generation. Returns counts only, never names."""
+def make_copy(repos: str | list[str], style: str, finish: bool = True) -> dict:
+    """Write a demo copy of one or more repos (demo ids 1, 2, ... in the given order).
+    Returns counts only, never names."""
+    ids = _repo_ids(repos)
     namer = fakenames.Namer(fakenames.load_key(DATA_DIR), style)
-    target = copy_dir(repo, style)
+    target = copy_dir(ids, style)
     building = target + ".building"
     if os.path.isdir(building):
         shutil.rmtree(building)
-    pool = os.path.join(building, "repo1", "pool")
+    os.makedirs(building)
+    records, forbidden, per_repo = [], set(), {}
+    allowed: set[str] = set()   # every repo's fake names and extensions
+    identity: set[str] = set()  # user and computer names: never allowed
+    for n, repo in enumerate(ids, 1):
+        demo_id = str(n)
+        if len(ids) > 1:
+            _step(f"repo {repo} as demo repo {demo_id}")
+        part = _copy_repo(repo, demo_id, building, namer)
+        records.append(_demo_record(part.pop("replies"), demo_id,
+                                    "Demo" if len(ids) == 1 else f"Demo {demo_id}"))
+        forbidden |= part.pop("forbidden")
+        allowed |= part.pop("allowed")
+        identity |= part.pop("identity")
+        per_repo[repo] = part
+    # One repo's fake name or extension may equal another repo's real name.
+    forbidden -= allowed - identity
+
+    _dump(os.path.join(building, "repos.json"), {"version": 1, "cache_dir": None, "repos": records})
+    from .dataupgrade import DATA_VERSION
+    _dump(os.path.join(building, "data_version.json"),
+          {"version": DATA_VERSION, "app": DATA_VERSION, "at": _dt.datetime.now().timestamp()})
+    _dump(os.path.join(building, "settings.json"), _DEMO_SETTINGS)
+    _dump(os.path.join(building, "demo.json"),
+          {"style": style, "source_repos": ids, "app_version": APP_VERSION,
+           "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")})
+
+    _step("building caches and checking screens")
+    finished = _finish(building, forbidden) if finish else {}
+    keep = _KEEP | {f"repo{r['id']}" for r in records} | {
+        os.path.basename(demoreplies.replies_path(r["id"], building)) for r in records}
+    for entry in os.listdir(building):
+        if entry not in keep:
+            path = os.path.join(building, entry)
+            shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
+
+    _step("checking files for real names")
+    leaks = leak_check(building, forbidden, demoreplies.machine_paths())
+    if leaks["leaked"] or finished.get("leaked"):
+        raise RuntimeError(f"demo copy failed its leak check: {leaks['leaked']} in files "
+                           f"({leaks['files']}), {finished.get('leaked', 0)} in screens "
+                           f"({finished.get('routes')})")
+    if os.path.isdir(target):
+        shutil.rmtree(target)
+    os.replace(building, target)
+    totals = {k: sum(p[k] for p in per_repo.values())
+              for k in ("renamed", "re_rolled", "kept_by_design", "recorded")}
+    result = {"path": target, "rows": per_repo[ids[0]]["rows"] if len(ids) == 1 else
+              {r: p["rows"] for r, p in per_repo.items()},
+              **totals, "checked_names": len(forbidden),
+              "caches": finished.get("stages"), "cache_errors": finished.get("errors"),
+              "screens_checked": finished.get("swept"), "screens_failed": finished.get("failed")}
+    log.info("demo copy of repos %s (%s): %s names, %s re-rolled", ",".join(ids), style,
+             totals["renamed"], totals["re_rolled"])
+    return result
+
+
+def _copy_repo(repo: str, demo_id: str, building: str, namer: fakenames.Namer) -> dict:
+    """One repo's faked index, manifest, recorded replies and size map as ``repo<demo_id>``."""
+    pool = os.path.join(building, f"repo{demo_id}", "pool")
     os.makedirs(pool)
     gen = store.current(repo)
     try:
         cur = gen.cursor()
+        cur.execute("SET threads = 4")   # the index worker's cap; more threads multiply hash memory
+        # A one-off CLI run on the developer's machine: a quarter of RAM, never below the store's tier.
+        import psutil
+        cur.execute(f"SET memory_limit = '{max(store.memory_limit_bytes(), psutil.virtual_memory().total // 4)}B'")
         tables = _tables(gen)
         names = _Names(namer, _categories(cur, tables))
-        cur.execute("SET threads = 4")   # the index worker's cap; more threads multiply hash memory
         _step("resolving name collisions")
         bumped = _resolve_collisions(cur, names, tables)
 
@@ -522,13 +595,18 @@ def make_copy(repo: str, style: str, finish: bool = True) -> dict:
         written: dict[str, int] = {}
         selects = {
             "src": "SELECT t.src_id, m.fake AS source FROM src t JOIN _demo_src m ON m.real = t.source",
-            "isnaps": "SELECT t.* REPLACE ('1' AS repo, m.fake AS source) FROM isnaps t "
+            "isnaps": f"SELECT t.* REPLACE ('{demo_id}' AS repo, m.fake AS source) FROM isnaps t "
                       "JOIN _demo_src m ON m.real = t.source",
-            "sanalysis": "SELECT t.* REPLACE ('1' AS repo, m.fake AS source) FROM sanalysis t "
+            "sanalysis": f"SELECT t.* REPLACE ('{demo_id}' AS repo, m.fake AS source) FROM sanalysis t "
                          "JOIN _demo_src m ON m.real = t.source",
             "dir": "SELECT t.* REPLACE (f.dir_path AS dir_path, f.name AS name) FROM dir t "
                    "JOIN _demo_dir f USING (dir_id) ORDER BY t.dir_id",
-            "pathx": """SELECT t.* REPLACE (n.fake AS name, CASE
+            # ext is re-derived from the fake name with the indexer's rule: the real column
+            # keeps anything after the last dot (a computer name in "file.Some-PC", say).
+            "pathx": """SELECT t.* REPLACE (n.fake AS name,
+                            CASE WHEN contains(n.fake, '.')
+                                 THEN lower(list_extract(string_split(n.fake, '.'), -1)) ELSE '' END AS ext,
+                            CASE
                             WHEN f.dir_path = '' THEN f.sep || n.fake
                             WHEN right(f.dir_path, 1) = f.sep THEN f.dir_path || n.fake
                             ELSE f.dir_path || f.sep || n.fake END AS full_path)
@@ -551,7 +629,8 @@ def make_copy(repo: str, style: str, finish: bool = True) -> dict:
                      for name in tables}
         _step("recording kopia replies")
         replies = _record(repo, _Faker(names, src_map), cur, tables)
-        exts = ({r[0].lower() for r in cur.execute("SELECT DISTINCT ext FROM pathx").fetchall() if r[0]}
+        exts = ({r[0] for r in cur.execute("SELECT DISTINCT ext FROM read_parquet(?)",
+                                             [os.path.join(pool, "pathx.parquet")]).fetchall() if r[0]}
                 if "pathx" in tables else set())
     finally:
         gen.release()
@@ -562,7 +641,7 @@ def make_copy(repo: str, style: str, finish: bool = True) -> dict:
 
     m = gen.manifest
     manifest = {
-        "generation": m.get("generation"), "repo": "1", "schema_version": m.get("schema_version"),
+        "generation": m.get("generation"), "repo": demo_id, "schema_version": m.get("schema_version"),
         "counters": m.get("counters", {}), "stats": m.get("stats", {}), "encrypted": False,
         "sources": {src_map[k]: dict(v, key=src_map[k]) if isinstance(v, dict) and "key" in v else v
                     for k, v in m.get("sources", {}).items()},
@@ -570,53 +649,22 @@ def make_copy(repo: str, style: str, finish: bool = True) -> dict:
         "tree_forced_for": [src_map[s] for s in m.get("tree_forced_for", []) if s in src_map],
         "artifacts": {name: [f"pool/{name}.parquet"] for name in sorted(tables)},
     }
-    _dump(os.path.join(building, "repo1", "manifest.json"), manifest)
-    _dump(demoreplies.replies_path("1", building), replies)
-    _dump(os.path.join(building, "repos.json"),
-          {"version": 1, "cache_dir": None, "repos": [_demo_record(replies)]})
-    from .dataupgrade import DATA_VERSION
-    _dump(os.path.join(building, "data_version.json"),
-          {"version": DATA_VERSION, "app": DATA_VERSION, "at": _dt.datetime.now().timestamp()})
-    _dump(os.path.join(building, "settings.json"), _DEMO_SETTINGS)
+    _dump(os.path.join(building, f"repo{demo_id}", "manifest.json"), manifest)
+    _dump(demoreplies.replies_path(demo_id, building), replies)
     sizemap = os.path.join(CACHEDIR, f"sizemap_repo{repo}.pkl")
     if os.path.isfile(sizemap):   # content ids and sizes only
         os.makedirs(os.path.join(building, "cache"), exist_ok=True)
-        shutil.copyfile(sizemap, os.path.join(building, "cache", "sizemap_repo1.pkl"))
-    _dump(os.path.join(building, "demo.json"),
-          {"style": style, "source_repo": repo, "app_version": APP_VERSION,
-           "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")})
-
-    forbidden = forbidden_names(names, src_map, exts)
-    _step("building caches and checking screens")
-    finished = _finish(building, forbidden) if finish else {}
-    for entry in os.listdir(building):
-        if entry not in _KEEP:
-            path = os.path.join(building, entry)
-            shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
-
-    _step("checking files for real names")
-    leaks = leak_check(building, forbidden)
-    if leaks["leaked"] or finished.get("leaked"):
-        raise RuntimeError(f"demo copy failed its leak check: {leaks['leaked']} in files "
-                           f"({leaks['files']}), {finished.get('leaked', 0)} in screens "
-                           f"({finished.get('routes')})")
-    if os.path.isdir(target):
-        shutil.rmtree(target)
-    os.replace(building, target)
-    result = {"path": target, "rows": written, "renamed": len(names.fake), "re_rolled": bumped,
-              "kept_by_design": sum(1 for k in names.fake if names.kept(*k)),
-              "checked_names": len(forbidden), "replies": len(replies),
-              "caches": finished.get("stages"), "cache_errors": finished.get("errors"),
-              "screens_checked": finished.get("swept"), "screens_failed": finished.get("failed")}
-    log.info("demo copy of repo %s (%s): %s names, %s re-rolled", repo, style,
-             result["renamed"], bumped)
-    return result
+        shutil.copyfile(sizemap, os.path.join(building, "cache", f"sizemap_repo{demo_id}.pkl"))
+    return {"rows": written, "renamed": len(names.fake), "re_rolled": bumped,
+            "kept_by_design": sum(1 for k in names.fake if names.kept(*k)), "recorded": len(replies),
+            "replies": replies, "forbidden": forbidden_names(names, src_map, exts),
+            "allowed": {f.lower() for f in names.fake.values()} | exts, "identity": _identity(src_map)}
 
 
-def _demo_record(replies: dict) -> dict:
+def _demo_record(replies: dict, demo_id: str, name: str) -> dict:
     """The demo's repos.json record, with storage facts from the faked repository status."""
     from .repos import scrub_storage_config
-    rec = {"id": "1", "name": "Demo", "short_name": "Demo", "kind": "kopia", "demo": True}
+    rec = {"id": demo_id, "name": name, "short_name": name, "kind": "kopia", "demo": True}
     raw = replies.get(demoreplies.key(["repository", "status", "--json"]), {}).get("out") or "{}"
     status = json.loads(raw)
     storage, volume = status.get("storage") or {}, status.get("volume") or {}
@@ -641,7 +689,13 @@ def _app_vocabulary() -> set[str]:
             for f in files:
                 if f.endswith(exts):
                     with open(os.path.join(dirpath, f), encoding="utf-8", errors="replace") as fh:
-                        words.update(re.findall(r"[a-z][a-z0-9]{2,}", fh.read().lower()))
+                        text = fh.read().lower()
+                        # Plain words, and joined ones whole ("own-writes", "sizemap_repo").
+                        words.update(re.findall(r"[a-z][a-z0-9]{2,}", text))
+                        words.update(re.findall(r"[a-z][a-z0-9._-]{2,}[a-z0-9]", text))
+    # The connect form's field labels and flags are app text too, phrases included.
+    from .repoconnect import provider_list
+    words.update(seg for text in _json_strings(json.dumps(provider_list())) for seg in _segments(text))
     return words
 
 
@@ -659,19 +713,26 @@ def forbidden_names(names: _Names, real_sources, exts: set[str] = frozenset()) -
     """Every real name that must never appear in a copy, lowercased. A name equal to a file
     extension in the data, or a standard ignore-file name, stays real by design."""
     forbidden = {real.lower() for (kind, real) in names.fake if not names.kept(kind, real)}
-    identity: set[str] = set()
     for s in real_sources:
-        user, host, path = _source_parts(s)
-        identity.update({user.lower(), host.lower()})
+        path = _source_parts(s)[2]
         forbidden.update(seg.lower() for seg in path.replace("\\", "/").split("/")
                          if not _is_root_segment(seg) and not names.kept("d", seg))
-    # Names under 3 characters or all digits identify nothing and collide with drive letters,
-    # extensions and ids.
-    forbidden = {f for f in forbidden if len(f) >= 3 and not f.isdigit()}
+    # Names under 3 characters, all digits, dates or hex ids identify nothing and collide with
+    # drive letters, extensions, run dates and kopia ids.
+    forbidden = {f for f in forbidden if len(f) >= 3 and not f.isdigit() and not _GENERATED.fullmatch(f)}
     forbidden -= set(exts) | _DOT_IGNORE_KEPT | _KOPIA_WORDS | _app_vocabulary()
     # A fake name that equals a real name elsewhere comes from the word lists, not from the data.
     forbidden -= {fake.lower() for fake in names.fake.values()}
-    return forbidden | {i for i in identity if len(i) >= 3}
+    return forbidden | _identity(real_sources)
+
+
+def _identity(real_sources) -> set[str]:
+    """The user and computer names in the real sources, lowercased."""
+    out: set[str] = set()
+    for s in real_sources:
+        user, host, _path = _source_parts(s)
+        out.update({user.lower(), host.lower()})
+    return {i for i in out if len(i) >= 3}
 
 
 def _segments(text: str, split: str = _TEXT_SPLIT):
@@ -691,8 +752,9 @@ def _json_strings(value: str):
     yield value
 
 
-def leak_check(copy_root: str, forbidden: set[str]) -> dict:
-    """Count real names found as whole path segments in any file of the copy. Counts only."""
+def leak_check(copy_root: str, forbidden: set[str], machine: list[str] = ()) -> dict:
+    """Count real names found as whole path segments in any file of the copy, and this PC's own
+    folders (``machine``, lowercased) anywhere outside the faked index. Counts only."""
     leaked, files = 0, []
     con = duckdb.connect()
     con.register("_forbidden", pa.table({"seg": sorted(forbidden)}))
@@ -717,11 +779,13 @@ def leak_check(copy_root: str, forbidden: set[str]) -> dict:
                         for (value,) in con.execute(f'SELECT "{col}" FROM read_parquet(\'{fwd}\')').fetchall():
                             hits += sum(1 for text in _json_strings(value or "")
                                         for seg in _segments(text) if seg in forbidden)
+                            hits += sum((value or "").lower().count(m) for m in machine)
             else:
                 with open(path, "rb") as fh:
                     text = fh.read().decode("utf-8", "replace")
                 strings = list(_json_strings(text)) if fname.endswith(".json") else [text]
                 hits = sum(1 for t in strings for seg in _segments(t) if seg in forbidden)
+                hits += sum(text.lower().count(m) for m in machine)
             if hits:
                 leaked += hits
                 files.append(os.path.relpath(path, copy_root))
@@ -779,23 +843,31 @@ def _finish(folder: str, forbidden: set[str]) -> dict:
 
 
 def _finish_child() -> None:
-    """Runs inside the copy: every index stage after "index", then a sweep of every screen."""
+    """Runs inside the copy: every index stage after "index" for each repo, then a sweep of
+    every screen."""
+    from config import REPOS
+
     from ..index import worker
-    summary = worker.run("1", skip_index=True)
-    sweep = _sweep(os.environ["KOPIALENS_DEMO_SALT"], os.environ["KOPIALENS_DEMO_CHECK"])
-    print(json.dumps({"stages": sorted(summary.get("stages") or {}), "errors": summary.get("errors"),
-                      **sweep}))
+    stages, errors = set(), {}
+    for repo in REPOS:
+        summary = worker.run(repo, skip_index=True)
+        stages |= set(summary.get("stages") or {})
+        if summary.get("errors"):
+            errors[repo] = summary["errors"]
+    sweep = _sweep(os.environ["KOPIALENS_DEMO_SALT"], os.environ["KOPIALENS_DEMO_CHECK"], list(REPOS))
+    print(json.dumps({"stages": sorted(stages), "errors": errors or None, **sweep}))
 
 
-def _sweep(salt: str, check_path: str) -> dict:
-    """GET every API route that needs no input and count forbidden names in the replies."""
+def _sweep(salt: str, check_path: str, repos: list[str]) -> dict:
+    """GET every API route that needs no input, for each repo, and count forbidden names in the
+    replies."""
     from fastapi.testclient import TestClient
 
     from .. import main as app_main
     with open(check_path, encoding="utf-8") as fh:
         hashes = set(json.load(fh))
     client = TestClient(app_main.app, base_url="http://127.0.0.1")
-    swept, leaked, routes, failed = 0, 0, [], []
+    calls: list[tuple[str, dict | None, str]] = []
     for path, ops in app_main.app.openapi()["paths"].items():
         get = ops.get("get")
         if not get or not path.startswith("/api/") or "{" in path or any(w in path for w in _SWEEP_SKIP):
@@ -803,38 +875,36 @@ def _sweep(salt: str, check_path: str) -> dict:
         params = {p["name"]: p for p in get.get("parameters", []) if p.get("in") == "query"}
         if any(p.get("required") and name != "repo" for name, p in params.items()):
             continue
+        if "repo" in params:
+            calls += [(path, {"repo": r}, "") for r in repos]
+        else:
+            calls.append((path, None, ""))
+    for r in repos:
+        calls += [(path, {"repo": r, **params}, " (with input)") for path, params in _sample_calls(r)]
+    machine = demoreplies.machine_paths()
+    swept, leaked, routes, failed = 0, 0, [], []
+    for path, params, note in calls:
         try:
-            resp = client.get(path, params={"repo": "1"} if "repo" in params else None)
+            resp = client.get(path, params=params)
         except Exception:  # noqa: BLE001 - a route that crashes leaks nothing; it is counted
             continue
         swept += 1
         if resp.status_code >= 400:
-            failed.append(f"{path} {resp.status_code}")
+            failed.append(f"{path} {resp.status_code}{note}")
         hits = sum(1 for text in _json_strings(resp.text) for seg in _segments(text)
                    if _hash(salt, seg) in hashes)
-        if hits:
-            leaked += hits
-            routes.append(path)
-    for path, params in _sample_calls():
-        try:
-            resp = client.get(path, params={"repo": "1", **params})
-        except Exception:  # noqa: BLE001
-            continue
-        swept += 1
-        if resp.status_code >= 400:
-            failed.append(f"{path} {resp.status_code} (with input)")
-        hits = sum(1 for text in _json_strings(resp.text) for seg in _segments(text)
-                   if _hash(salt, seg) in hashes)
+        low = resp.text.lower()
+        hits += sum(low.count(m) for m in machine)
         if hits:
             leaked += hits
             routes.append(path)
     return {"swept": swept, "leaked": leaked, "routes": routes, "failed": failed}
 
 
-def _sample_calls() -> list[tuple[str, dict]]:
+def _sample_calls(repo: str) -> list[tuple[str, dict]]:
     """The main screens that need input, called with a real source, folder, file and snapshots
     from the copy itself."""
-    gen = store.current("1")
+    gen = store.current(repo)
     try:
         cur = gen.cursor()
         row = cur.execute("""SELECT sr.source, d.dir_path, p.full_path FROM pathx p
@@ -903,11 +973,14 @@ def menu() -> None:
             open_copy(name, 7323)
     elif action == "Make a demo copy":
         real = [r for r, c in REPOS.items() if c.get("kind", "kopia") == "kopia" and not c.get("demo")]
-        repo = _choose("Which repository", [f"{r} - {REPOS[r]['name']}" for r in real])
+        options = {f"{r} - {REPOS[r]['name']}": r for r in real}
+        if len(real) > 1:
+            options[f"{' + '.join(real)} - all of them in one demo"] = ",".join(real)
+        repo = _choose("Which repository", list(options))
         style = _choose("Which name style", list(fakenames.STYLES)) if repo else None
         if repo and style:
             print("Working - this reads the index and kopia once, then builds the demo's caches.")
-            r = make_copy(repo.split(" - ", 1)[0], style)
+            r = make_copy(options[repo], style)
             print(f"Done: {r['renamed']} names faked, {r['screens_checked']} screens checked, "
                   f"no real names found.\n{r['path']}")
     input("\nPress Enter to close.")
@@ -916,7 +989,7 @@ def menu() -> None:
 def main() -> None:
     import argparse
     ap = argparse.ArgumentParser(description="Demo copies of a repo's index.")
-    ap.add_argument("--repo")
+    ap.add_argument("--repo", help='a repo id, or several in one demo: "1,2"')
     ap.add_argument("--style", choices=fakenames.STYLES, default="generic")
     ap.add_argument("--open", metavar="COPY", help="run KopiaLens on a demo copy")
     ap.add_argument("--port", type=int, default=7323)

@@ -709,6 +709,21 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="KopiaLens", version=APP_VERSION, lifespan=lifespan)
 
 
+if DEMO_INSTANCE:
+    @app.middleware("http")
+    async def demo_paths_middleware(request: Request, call_next):
+        """A demo never shows this PC's own folders: API replies carry stand-ins instead.
+        Registered before the gzip wrapper so it sees plain bodies."""
+        response = await call_next(request)
+        if not request.url.path.startswith("/api/"):
+            return response
+        from .core.demoreplies import scrub
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
+        return Response(scrub(body), status_code=response.status_code, headers=headers,
+                        media_type=response.media_type)
+
+
 class _ApiGZip:
     """Compress API replies over 1 KB for browsers on another machine; same-PC browsers and file
     downloads pass through untouched (on loopback compression only costs time)."""

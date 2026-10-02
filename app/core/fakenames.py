@@ -191,7 +191,8 @@ class Namer:
     def _bump(self, stem: str, seed: str, attempt: int, sep: str = "-") -> str:
         if not attempt:
             return stem
-        return f"{stem}{sep}{2 + self._pick(seed, 'again', attempt, n=10 * attempt)}"
+        # Range grows x10 per attempt so a folder with thousands of same-named children settles.
+        return f"{stem}{sep}{2 + self._pick(seed, 'again', attempt, n=10 ** min(attempt, 7))}"
 
     def folder(self, name: str, category: str = "Mixed", attempt: int = 0) -> str:
         if name.lower() in TECHNICAL:
