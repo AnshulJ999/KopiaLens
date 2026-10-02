@@ -12,6 +12,7 @@ Search, the Tree and every path.
 
 from __future__ import annotations
 
+import collections
 import copy
 import datetime as _dt
 import hashlib
@@ -138,41 +139,71 @@ def _categories(cur, tables: set[str]) -> dict[str, str]:
     return {name: fakenames.category_of(c) for name, c in counts.items()}
 
 
-def _sibling_sql(tables: set[str]) -> str:
-    parts = []
-    if "dir" in tables:
-        parts.append("SELECT 'p' || parent_id AS g, 'd' AS kind, name AS real FROM dir "
-                     "WHERE parent_id IS NOT NULL")
-    if "pathx" in tables:
-        parts.append("SELECT 'p' || dir_id, 'f', name FROM pathx")
-    if "tent" in tables:
-        parts.append("SELECT 't' || dir_id, CASE WHEN etype = 1 THEN 'd' ELSE 'f' END, name FROM tent")
-    return " UNION ".join(parts)
+_SIBLINGS = {  # (tree, folder, kind, name) per table: tree 0 = paths, 1 = the Tree
+    "dir": "SELECT 0, parent_id, 'd', name FROM dir WHERE parent_id IS NOT NULL",
+    "pathx": "SELECT 0, dir_id, 'f', name FROM pathx",
+    "tent": "SELECT 1, dir_id, CASE WHEN etype = 1 THEN 'd' ELSE 'f' END, name FROM tent",
+}
 
 
 def _resolve_collisions(cur, names: _Names, tables: set[str]) -> int:
-    """Re-roll colliding names until every folder's children are unique (case-insensitive)."""
-    sql = _sibling_sql(tables)
-    if not sql:
+    """Re-roll colliding names until every folder's children are unique (case-insensitive).
+
+    Works on integer keys (name id, fake-name id) so a repo with millions of paths fits the
+    store's memory limit; members are fetched only for the folders that actually collide."""
+    parts = [sql for t, sql in _SIBLINGS.items() if t in tables]
+    if not parts:
         return 0
-    cur.execute(f"CREATE OR REPLACE TEMP TABLE _demo_sib AS SELECT DISTINCT * FROM ({sql})")
-    for kind, real in cur.execute("SELECT DISTINCT kind, real FROM _demo_sib").fetchall():
+    for kind, real in cur.execute(
+            "SELECT DISTINCT kind, real FROM (" + " UNION ALL ".join(
+                f"SELECT k AS kind, n AS real FROM ({p}) s(t, g, k, n)" for p in parts) + ")").fetchall():
         names.get(kind, real)
+    keys = list(names.fake)
+    cur.register("_demo_nid", pa.table({"kind": [k for k, _ in keys], "real": [r for _, r in keys],
+                                        "nid": list(range(len(keys)))}))
+    cur.execute("CREATE OR REPLACE TEMP TABLE _demo_sib AS SELECT DISTINCT s.t, s.g, n.nid FROM ("
+                + " UNION ALL ".join(f"SELECT * FROM ({p}) x(t, g, k, n)" for p in parts)
+                + ") s JOIN _demo_nid n ON n.kind = s.k AND n.real = s.n")
+    cur.unregister("_demo_nid")
     bumped = 0
     for _ in range(_MAX_ROUNDS):
-        cur.register("_demo_names", names.table())
-        groups = cur.execute("""
-            SELECT list(DISTINCT {'kind': s.kind, 'real': s.real}) FROM _demo_sib s
-            JOIN _demo_names n ON n.kind = s.kind AND n.real = s.real
-            GROUP BY s.g, lower(n.fake) HAVING count(DISTINCT (s.kind, s.real)) > 1""").fetchall()
-        cur.unregister("_demo_names")
-        if not groups:
+        fid: dict[str, int] = {}
+        fids = [fid.setdefault(names.fake[k].lower(), len(fid)) for k in keys]
+        uses = collections.Counter(fids)
+        # Only a fake name that two real names share can collide anywhere.
+        shared = [i for i, f in enumerate(fids) if uses[f] > 1]
+        if not shared:
             return bumped
+        cur.register("_demo_fid", pa.table({"nid": shared, "fid": [fids[i] for i in shared]}))
+        cur.execute("""CREATE OR REPLACE TEMP TABLE _demo_j AS
+                       SELECT s.t, s.g, f.fid, s.nid FROM _demo_sib s JOIN _demo_fid f USING (nid)""")
+        cur.unregister("_demo_fid")
+        # Sorted rows streamed in batches: a list per colliding folder does not fit the memory
+        # limit on a large repo (millions of folders collide in the generic style).
+        reader = cur.execute("""
+            SELECT j.t, j.g, j.fid, j.nid FROM _demo_j j
+            JOIN (SELECT t, g, fid FROM _demo_j GROUP BY ALL HAVING min(nid) <> max(nid)) c
+              USING (t, g, fid) ORDER BY j.t, j.g, j.fid""").to_arrow_reader(200_000)
         losers: set[tuple[str, str]] = set()
-        for (members,) in groups:
-            ranked = sorted(((m["kind"], m["real"]) for m in members),
+
+        def settle(members: set[int]) -> None:
+            ranked = sorted((keys[m] for m in members),
                             key=lambda k: names.namer._pick(k[0], k[1], "order", n=1 << 62))
             losers.update(ranked[1:])
+
+        group, members = None, set()
+        for batch in reader:
+            cols = batch.to_pydict()
+            for t, g, f, n in zip(cols["t"], cols["g"], cols["fid"], cols["nid"]):
+                if (t, g, f) != group:
+                    if len(members) > 1:
+                        settle(members)
+                    group, members = (t, g, f), set()
+                members.add(n)
+        if len(members) > 1:
+            settle(members)
+        if not losers:
+            return bumped
         for key in losers:
             names.bump(key)
         bumped += len(losers)
@@ -453,6 +484,8 @@ def make_copy(repo: str, style: str, finish: bool = True) -> dict:
         cur = gen.cursor()
         tables = _tables(gen)
         names = _Names(namer, _categories(cur, tables))
+        cur.execute("SET threads = 4")   # the index worker's cap; more threads multiply hash memory
+        _step("resolving name collisions")
         bumped = _resolve_collisions(cur, names, tables)
 
         sources = dict(cur.execute("SELECT src_id, source FROM src").fetchall()) if "src" in tables else {}
@@ -512,9 +545,11 @@ def make_copy(repo: str, style: str, finish: bool = True) -> dict:
         }
         for name in sorted(tables):
             sql = selects.get(name, f"SELECT * FROM {name}")
+            _step(f"writing {name}")
             written[name] = _write(cur, sql, os.path.join(pool, f"{name}.parquet"))
         real_rows = {name: cur.execute(f"SELECT count(*) FROM {name}").fetchone()[0]
                      for name in tables}
+        _step("recording kopia replies")
         replies = _record(repo, _Faker(names, src_map), cur, tables)
         exts = ({r[0].lower() for r in cur.execute("SELECT DISTINCT ext FROM pathx").fetchall() if r[0]}
                 if "pathx" in tables else set())
@@ -552,12 +587,14 @@ def make_copy(repo: str, style: str, finish: bool = True) -> dict:
            "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")})
 
     forbidden = forbidden_names(names, src_map, exts)
+    _step("building caches and checking screens")
     finished = _finish(building, forbidden) if finish else {}
     for entry in os.listdir(building):
         if entry not in _KEEP:
             path = os.path.join(building, entry)
             shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
 
+    _step("checking files for real names")
     leaks = leak_check(building, forbidden)
     if leaks["leaked"] or finished.get("leaked"):
         raise RuntimeError(f"demo copy failed its leak check: {leaks['leaked']} in files "
@@ -606,6 +643,11 @@ def _app_vocabulary() -> set[str]:
                     with open(os.path.join(dirpath, f), encoding="utf-8", errors="replace") as fh:
                         words.update(re.findall(r"[a-z][a-z0-9]{2,}", fh.read().lower()))
     return words
+
+
+def _step(text: str) -> None:
+    log.info("demo copy: %s", text)
+    print(f"{_dt.datetime.now():%H:%M:%S} {text}", flush=True)
 
 
 def _dump(path: str, data) -> None:
