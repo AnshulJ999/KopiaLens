@@ -1,0 +1,18 @@
+<div id="kl-web-loading" data-state="loading" role="dialog" aria-modal="true" aria-labelledby="kl-web-title">
+  <div class="kl-web-card">
+    <h1 id="kl-web-title">Loading the KopiaLens demo</h1>
+    <div class="kl-web-loading-only">
+      <div class="kl-web-track" role="progressbar" aria-label="Loading" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="kl-web-bar"></div></div>
+      <div class="kl-web-meta"><span id="kl-web-size"></span><span id="kl-web-time"></span></div>
+      <ol class="kl-web-steps">
+        {steps}
+      </ol>
+      <p class="kl-web-note">The first visit downloads about {total_mb} MB. Later visits load from your browser's cache.</p>
+    </div>
+    <div class="kl-web-error-only">
+      <p>The demo couldn't load. Check your connection and try again.</p>
+      <button type="button" id="kl-web-retry" class="kl-btn primary">Try again</button>
+      <details><summary>Details</summary><pre id="kl-web-error-detail"></pre></details>
+    </div>
+  </div>
+</div>

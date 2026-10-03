@@ -48,7 +48,7 @@ const treePart = {
       if (this.selectedSource === "*ALL*" || this.treeMode === "all") { this.treePrefix = this.sourceRoot(); return this.loadTree(); }
       // Ensure this.snapshots belong to THIS source - the snapshots view loads snapSource (e.g. *ALL*),
       // which would leave a selectedSnapshot that isn't in this source -> "snapshot root not found".
-      const haveForSource = this.snapshots.length && this.snapshots[0].source === this.selectedSource;
+      const haveForSource = this.snapshots.length && this.snapshots.every((s) => s.source === this.selectedSource);
       const ensure = (haveForSource && this.snapshots.find((s) => s.id === this.selectedSnapshot)) ? Promise.resolve() : this._treeSnapshots();
       return Promise.resolve(ensure).then(() => {
         if ((!this.selectedSnapshot || !this.snapshots.find((s) => s.id === this.selectedSnapshot)) && this.snapshots.length) this.selectedSnapshot = this.snapshots[this.snapshots.length - 1].id;

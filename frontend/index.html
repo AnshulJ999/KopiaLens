@@ -31,7 +31,7 @@
       <!-- The sample data is open: say so, with the way to a real repository. -->
       <div x-show="!ob && isSample()" x-cloak class="mb-4 rounded-md border border-bd bg-surface2 px-4 py-2 flex flex-wrap items-center gap-3 text-sm">
         <div class="min-w-0 flex-1">You're looking at sample data. Actions here change nothing.</div>
-        <button @click="openAddRepo()" class="kl-btn primary">Connect your repository</button>
+        <button x-show="!window.KL_WEB_DEMO" @click="openAddRepo()" class="kl-btn primary">Connect your repository</button>
       </div>
       <!-- A config file was damaged and restored (or reset) at startup: say so until dismissed. -->
       <template x-for="n in cfgNotices" :key="n.id">
