@@ -46,6 +46,8 @@ _TEXT_SPLIT = r"[\\/@:\r\n\t\",]"
 _KEPT_COLUMNS = {"ext", "repo"}
 # What a finished demo folder holds; everything else the cache build wrote is removed.
 _KEEP = {"cache", "demo.json", "repos.json", "settings.json", "data_version.json"}
+# A demo with Backblaze also keeps its generated bzdata, the BZ index (and kopialens_bz.sqlite*).
+BZ_KEEP = {"bzdata", "bz"}
 _DOT_IGNORE_KEPT = {".kopiaignore", ".gitignore", ".nobackup", ".backupignore"}
 # kopia's own words in its replies (cache report, stats); never data.
 _KOPIA_WORDS = {"content", "contents", "indexes", "metadata", "own-writes", "blob-list",
@@ -506,21 +508,23 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True) -> dict:
     # One repo's fake name or extension may equal another repo's real name.
     forbidden -= allowed - identity
 
-    _dump(os.path.join(building, "repos.json"), {"version": 1, "cache_dir": None, "repos": records})
+    from .demobz import BZ_RECORD
+    _dump(os.path.join(building, "repos.json"), {"version": 1, "cache_dir": None,
+                                                 "repos": records + [BZ_RECORD]})
     from .dataupgrade import DATA_VERSION
     _dump(os.path.join(building, "data_version.json"),
           {"version": DATA_VERSION, "app": DATA_VERSION, "at": _dt.datetime.now().timestamp()})
     _dump(os.path.join(building, "settings.json"), _DEMO_SETTINGS)
     _dump(os.path.join(building, "demo.json"),
-          {"style": style, "source_repos": ids, "app_version": APP_VERSION,
+          {"style": style, "source_repos": ids, "app_version": APP_VERSION, "backblaze": True,
            "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")})
 
     _step("building caches and checking screens")
     finished = _finish(building, forbidden) if finish else {}
-    keep = _KEEP | {f"repo{r['id']}" for r in records} | {
+    keep = _KEEP | BZ_KEEP | {f"repo{r['id']}" for r in records} | {
         os.path.basename(demoreplies.replies_path(r["id"], building)) for r in records}
     for entry in os.listdir(building):
-        if entry not in keep:
+        if entry not in keep and not entry.startswith("kopialens_bz.sqlite"):
             path = os.path.join(building, entry)
             shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
 
@@ -844,18 +848,45 @@ def _finish(folder: str, forbidden: set[str]) -> dict:
 
 def _finish_child() -> None:
     """Runs inside the copy: every index stage after "index" for each repo, then a sweep of
-    every screen."""
-    from config import REPOS
+    every screen, Backblaze included."""
+    from config import kopia_repos
 
     from ..index import worker
     stages, errors = set(), {}
-    for repo in REPOS:
+    for repo in kopia_repos():
         summary = worker.run(repo, skip_index=True)
         stages |= set(summary.get("stages") or {})
         if summary.get("errors"):
             errors[repo] = summary["errors"]
-    sweep = _sweep(os.environ["KOPIALENS_DEMO_SALT"], os.environ["KOPIALENS_DEMO_CHECK"], list(REPOS))
+    try:
+        _demo_backblaze(kopia_repos())
+        stages.add("backblaze")
+    except Exception as exc:  # noqa: BLE001 - the copy is still a full kopia demo without it
+        errors["bz"] = str(exc)[:300]
+    sweep = _sweep(os.environ["KOPIALENS_DEMO_SALT"], os.environ["KOPIALENS_DEMO_CHECK"], kopia_repos())
     print(json.dumps({"stages": sorted(stages), "errors": errors or None, **sweep}))
+
+
+def _demo_backblaze(repos: list[str]) -> None:
+    """Fake Backblaze data from the copy's own latest files (already faked), then indexed."""
+    from . import demobz
+    files, user, host = [], "demo", "DEMO-PC"
+    for repo in repos:
+        gen = store.current(repo)
+        try:
+            cur = gen.cursor()
+            files += cur.execute("SELECT full_path, size::BIGINT, epoch(last_seen) FROM pathx "
+                                 "WHERE in_latest").fetchall()
+            row = cur.execute("SELECT source FROM src LIMIT 1").fetchone()
+        finally:
+            gen.release()
+        if row:
+            user, host, _path = _source_parts(row[0])
+    root = os.path.join(DATA_DIR, "bzdata")
+    demobz.write(root, files, user=user, host=host)
+    out = demobz.index(root)
+    if not out.get("ok", True):
+        raise RuntimeError(f"Backblaze index: {out.get('reason')}")
 
 
 def _sweep(salt: str, check_path: str, repos: list[str]) -> dict:
@@ -964,7 +995,14 @@ def _choose(prompt: str, options: list[str]) -> str | None:
 def menu() -> None:
     from config import REPOS
     print("KopiaLens demo copies\n")
-    action = _choose("What would you like to do", ["Open a demo copy", "Make a demo copy"])
+    action = _choose("What would you like to do", ["Open a demo copy", "Make a demo copy",
+                                                   "Make sample data (invented, no repo needed)"])
+    if action and action.startswith("Make sample data"):
+        from . import sampledata
+        print("Working - this generates a made-up repository and indexes it (under a minute).")
+        r = sampledata.build()
+        print(f"Done: {r['files']} files in {r['snapshots']} snapshots, {r['bytes'] / 1e6:.0f} MB, "
+              f"{r['swept']} screens checked.\n{r['path']}\nOpen it as the demo copy 'sample'.")
     if action == "Open a demo copy":
         copies = _copies()
         if not copies:

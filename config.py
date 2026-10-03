@@ -221,6 +221,18 @@ def is_demo(repo: str) -> bool:
 DEMO_INSTANCE = os.path.isfile(os.path.join(DATA_DIR, "demo.json"))
 
 
+def _demo_meta() -> dict:
+    try:
+        with open(os.path.join(DATA_DIR, "demo.json"), encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+# A demo folder with its own generated bzdata shows the Backblaze screens (app.core.demobz).
+DEMO_BACKBLAZE = DEMO_INSTANCE and bool(_demo_meta().get("backblaze"))
+
+
 def kopia_repos() -> list:
     """Repo ids backed by kopia/DuckDB. Use this (NOT `REPOS`) in any loop that opens a
     DuckDB cursor or runs kopia - so the Backblaze repo is never dragged through kopia code."""

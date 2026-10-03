@@ -243,8 +243,8 @@ def test_two_repos_make_one_demo_holding_both(live, monkeypatch):
     assert result["rows"]["8"]["pathx"] == len(FILES)
     with open(os.path.join(copy_root, "repos.json"), encoding="utf-8") as fh:
         records = json.load(fh)["repos"]
-    assert [(r["id"], r["name"], r["demo"]) for r in records] == [("1", "Demo 1", True),
-                                                                   ("2", "Demo 2", True)]
+    assert [(r["id"], r["name"], r.get("demo"), r["kind"]) for r in records] == [
+        ("1", "Demo 1", True, "kopia"), ("2", "Demo 2", True, "kopia"), ("bz", "Backblaze", None, "backblaze")]
     blob = _folder_text(copy_root)
     for word in PRIVATE:
         assert word not in blob, word

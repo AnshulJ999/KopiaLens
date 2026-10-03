@@ -93,15 +93,28 @@ def _load(repo: str) -> dict:
         return _CACHE[repo]
 
 
+_BACKEND = None
+
+
+def set_backend(fn) -> None:
+    """Answer demo repos with ``fn(repo, args) -> (rc, out, err)`` instead of the recordings
+    (the sample-data build, where a generated model plays kopia); ``None`` restores them."""
+    global _BACKEND
+    _BACKEND = fn
+
+
 def reply(repo: str, args: list[str]) -> tuple[int, str, str]:
     """(returncode, stdout, stderr) for one recorded command."""
-    rec = _load(repo).get(key(args))
-    if rec is None:
-        return 1, "", UNAVAILABLE
-    out = rec.get("out", "")
+    if _BACKEND is not None:
+        rc, out, err = _BACKEND(repo, args)
+    else:
+        rec = _load(repo).get(key(args))
+        if rec is None:
+            return 1, "", UNAVAILABLE
+        rc, out, err = int(rec.get("rc", 0)), rec.get("out", ""), rec.get("err", "")
     if "--to-file" in args:
         target = args[args.index("--to-file") + 1]
         with open(target, "w", encoding="utf-8") as fh:
             fh.write(out)
         out = ""
-    return int(rec.get("rc", 0)), out, rec.get("err", "")
+    return rc, out, err

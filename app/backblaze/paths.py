@@ -14,12 +14,19 @@ from dataclasses import dataclass, field
 
 # Default install location. Overridable by callers (e.g. a settings value) via set_bzdata_root.
 DEFAULT_BZDATA = r"C:\ProgramData\Backblaze\bzdata"
-_bzdata_root = DEFAULT_BZDATA
+try:
+    from config import DATA_DIR, DEMO_INSTANCE
+except ImportError:   # standalone tooling outside the app
+    DATA_DIR, DEMO_INSTANCE = "", False
+# A demo data folder only ever reads its own generated bzdata, never this machine's.
+DEMO_BZDATA = os.path.join(DATA_DIR, "bzdata") if DEMO_INSTANCE else None
+_bzdata_root = DEMO_BZDATA or DEFAULT_BZDATA
 
 
 def set_bzdata_root(path: str) -> None:
     global _bzdata_root
-    _bzdata_root = path
+    if DEMO_BZDATA is None:
+        _bzdata_root = path
 
 
 def bzdata_root() -> str:

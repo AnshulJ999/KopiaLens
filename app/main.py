@@ -22,7 +22,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, Redirec
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
-from config import APP_VERSION, DATA_DIR, DEMO_INSTANCE, REPOS, is_demo, repo_kind
+from config import APP_VERSION, DATA_DIR, DEMO_BACKBLAZE, DEMO_INSTANCE, REPOS, is_demo, repo_kind
 
 from .api import (account, actions, appconfig, audit, backblaze, dashboard, deleteplan, encryption, excluded, insights,
                   jobs, logs, onboarding, policies, restore, search, setup, shell, simulate, snapshots, stats, tree)
@@ -1135,7 +1135,7 @@ app.include_router(account.router, prefix="/api")
 app.include_router(onboarding.router, prefix="/api")
 app.include_router(appconfig.router, prefix="/api")
 app.include_router(shell.router, prefix="/api")
-if not DEMO_INSTANCE:   # a demo never reads this machine's Backblaze data
+if not DEMO_INSTANCE or DEMO_BACKBLAZE:   # a demo reads only its own generated bzdata
     app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
 
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
