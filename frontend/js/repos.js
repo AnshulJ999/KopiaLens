@@ -28,6 +28,36 @@ const REPO_TYPE_LABELS = {
 };
 
 const reposPart = {
+    sampleBusy: false,
+
+    // ---- Sample data: an invented repository made on this computer (backend: sampledata.py) --
+    hasSample() { return (this.repos || []).some((r) => r.sample); },
+    isSample(id) {
+      const r = (this.repos || []).find((x) => x.id === (id || this.repo));
+      return !!(r && r.sample);
+    },
+    async addSampleData() {
+      await _setupPost("/api/setup/sample");
+      for (;;) {
+        await new Promise((ok) => setTimeout(ok, 1500));
+        const st = await getJson("/api/setup/sample");
+        if (st.state === "error") throw new Error(st.error || "The sample data couldn't be made.");
+        if (st.state === "done") {
+          await this._cxRefreshRepos();
+          return (this.repos || []).find((r) => r.id === st.repo) || { id: st.repo, name: st.name, sample: true };
+        }
+      }
+    },
+    async raAddSample() {
+      if (this.sampleBusy) return;
+      this.sampleBusy = true;
+      try {
+        const r = await this.addSampleData();
+        this.klNotify(`${r.name} added`);
+        this.raLoad();
+      } catch (e) { this.klNotify(e.message || String(e), "warn"); }
+      this.sampleBusy = false;
+    },
 
     // ---- The connect form (partials/connectform.html) ---------------------------------------
     async cxOpen(existing) {
@@ -50,7 +80,7 @@ const reposPart = {
       return { id: r.id, name: r.name || "", short_name: r.short_name || "", type: st.type || "",
                where: repoWhereOf(st.type, st.config), summary: null, loading: false, error: "",
                pw: "", unlocking: false, managed: r.source === "connected" || r.source === "created",
-               server: !!r.via_server || st.type === "server" };
+               server: !!r.via_server || st.type === "server", sample: !!r.sample };
     },
     cxCandidates() { return ((this.cx && this.cx.detected) || []).filter((c) => !c.in_store); },
     cxPickedCount() { return this.cxCandidates().filter((c) => this.cx.picked[c.config_file]).length; },
@@ -161,7 +191,7 @@ const reposPart = {
     },
     cxEstimateLine(a) {
       const e = a.summary && a.summary.estimate;
-      if (!e || a.server || !a.summary.snapshots) return "";
+      if (!e || a.server || a.sample || !a.summary.snapshots) return "";
       const cloud = a.type && a.type !== "filesystem" ? " Cloud storage can take longer." : "";
       return `First index: ${fmtDurRange(e.seconds)}, ${fmtBytesRange(e.bytes)} of disk space.${cloud}`;
     },
@@ -234,6 +264,7 @@ const reposPart = {
     },
     raIndexLine(r) {
       if (r.kind === "backblaze") return "Backblaze's own index, read-only";
+      if (r.sample) return "Sample data, not a backup";
       if (r.via_server) return "No index through a kopia server";
       const f = (this.freshness || []).find((x) => x.repo === r.id);
       if (!f) return "";
@@ -242,6 +273,7 @@ const reposPart = {
       return f.last_index ? `Indexed ${fmtRel(f.last_index)}` : "Not indexed yet";
     },
     raWhere(r) {
+      if (r.sample) return "Made on this computer";
       const st = r.storage || {};
       const where = repoWhereOf(st.type, st.config);
       return [this.cxTypeLabel(st.type), where].filter(Boolean).join(" · ");

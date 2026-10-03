@@ -80,6 +80,7 @@ def nuitka_args() -> list[str]:
         "--python-flag=no_docstrings",
         f"--include-data-dir={os.path.join(KL_ROOT, 'frontend')}=frontend",
         f"--include-data-files={os.path.join(KL_ROOT, 'VERSION')}=VERSION",
+        f"--include-data-files={os.path.join(KL_ROOT, 'app', 'core', 'sample_profile.json')}=app/core/sample_profile.json",
         *[f"--include-module={m}" for m in upgrade_step_modules()],
         # Our own test packages only - a *.tests wildcard also drops jinja2.tests, which jinja2 needs.
         "--nofollow-import-to=app.tests",

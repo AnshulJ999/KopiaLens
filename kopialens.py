@@ -4,6 +4,7 @@
     kopialens-server.exe --reset-password              set a new sign-in password (local reset)
     kopialens-server.exe -m app.index.worker <repo>    index worker
     kopialens-server.exe -m app.backblaze.worker       Backblaze worker
+    kopialens-server.exe -m app.core.sampledata ...   sample data build
 
 The desktop app (shell/) starts it with ``--server``. The ``-m`` form mirrors how the app spawns
 workers from source, so the spawn sites and the command-line checks that find running workers work
@@ -22,6 +23,9 @@ def run() -> int:
     if argv[:2] == ["-m", "app.backblaze.worker"]:
         from app.backblaze import worker
         return worker.main(argv[2:])
+    if argv[:2] == ["-m", "app.core.sampledata"]:
+        from app.core import sampledata
+        return sampledata.main(argv[2:])
     if argv[:1] == ["--reset-password"]:
         from app.core import resetpw
         return resetpw.main()

@@ -767,6 +767,21 @@ class _ApiGZip:
             await self.app(scope, receive, send)
 
 
+@app.middleware("http")
+async def demo_repo_disk_middleware(request: Request, call_next):
+    """A request about a demo repo (the sample data in a normal install) never reads this
+    computer's disk: its fake paths can exist here."""
+    rid = request.query_params.get("repo")
+    if not rid or not is_demo(rid):
+        return await call_next(request)
+    from .core import disklookup
+    token = disklookup.demo_request(True)
+    try:
+        return await call_next(request)
+    finally:
+        disklookup.end_demo_request(token)
+
+
 app.add_middleware(_ApiGZip)
 
 

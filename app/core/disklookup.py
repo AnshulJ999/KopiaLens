@@ -8,6 +8,7 @@ auto picks Everything when it answers, else the scan. Every answer that may be i
 
 from __future__ import annotations
 
+import contextvars
 import fnmatch
 import os
 import shutil
@@ -26,6 +27,17 @@ MODES = ("auto", "everything", "scan", "off")
 _STATUS_TTL = 30.0
 _status_cache: tuple[float, dict] | None = None
 _status_lock = threading.Lock()
+# Set for the length of one API request about a demo repo (main.demo_repo_disk_middleware): a
+# demo repo inside a normal install has fake paths that may exist here, so it never reads the disk.
+_DEMO_REQUEST = contextvars.ContextVar("disklookup_demo_request", default=False)
+
+
+def demo_request(on: bool) -> contextvars.Token:
+    return _DEMO_REQUEST.set(on)
+
+
+def end_demo_request(token: contextvars.Token) -> None:
+    _DEMO_REQUEST.reset(token)
 
 
 def _kl() -> dict:
@@ -36,7 +48,7 @@ def _kl() -> dict:
 
 
 def mode() -> str:
-    if DEMO_INSTANCE:
+    if DEMO_INSTANCE or _DEMO_REQUEST.get():
         return "off"   # fake paths can exist on this machine; a demo never reads the disk
     m = str(_kl().get("disk_lookup", "auto")).lower()
     return m if m in MODES else "auto"
@@ -61,6 +73,10 @@ def everything_state() -> dict:
 def status(refresh: bool = False) -> dict:
     """Which provider answers, and why. Cached briefly: the Everything probe is a subprocess."""
     global _status_cache
+    if _DEMO_REQUEST.get():   # never cached: the shared cache answers for the real repos
+        return {"mode": "off", "provider": None, "available": False,
+                "everything": {"supported": sys.platform == "win32", "installed": None, "running": None},
+                "note": "Sample data isn't on this computer's disk.", "scan_budget": scan_budget()}
     with _status_lock:
         if not refresh and _status_cache and time.time() - _status_cache[0] < _STATUS_TTL:
             return _status_cache[1]
@@ -175,7 +191,7 @@ def _user_folder(mp: str) -> bool:
 
 def list_drives() -> list[dict]:
     """Local fixed drives (Windows) or mounted filesystems, with used/total bytes."""
-    if DEMO_INSTANCE:
+    if DEMO_INSTANCE or _DEMO_REQUEST.get():
         return []
     import psutil
     out: list[dict] = []

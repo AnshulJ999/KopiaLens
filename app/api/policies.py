@@ -13,7 +13,7 @@ import threading
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from config import kopia_repos, repo_kind
+from config import is_demo, kopia_repos, repo_kind
 
 from ..core import policybackup, policyresolve, policytargets, rulelayers
 from ..core.kopia import (
@@ -445,6 +445,9 @@ def preview(body: PreviewBody) -> dict:
         return out
     if anchor is not None:
         out["note"] = "Disk preview runs from the backups that use this policy's rules directly."
+        return out
+    if is_demo(body.repo):
+        out["note"] = "Sample data isn't on this computer's disk."
         return out
     user, host, _path = policyresolve.parse_key(source)
     client = client_options(body.repo)

@@ -26,8 +26,10 @@ import secrets
 import shutil
 import subprocess
 import sys
+import threading
+import time
 
-from config import APP_VERSION, DATA_DIR, HERE
+from config import APP_VERSION, CACHEDIR, DATA_DIR, HERE, SELF_EXE
 
 from . import demoreplies, fakenames
 from .applog import get_logger
@@ -243,11 +245,11 @@ class Sample:
     """The whole made-up repository, generated up front from the profile and a seed."""
 
     def __init__(self, profile: dict, files: int = DEFAULT_FILES, seed: int = DEFAULT_SEED,
-                 now: float | None = None):
+                 now: float | None = None, taken=None):
         self.p = profile
         self.rng = random.Random(seed)
         self.now = now if now is not None else _dt.datetime.now(_dt.timezone.utc).timestamp()
-        self.identity = identity(seed)
+        self.identity = identity(seed, taken)
         self.objects: dict[str, str] = {}               # k... folders and x... split-object indexes
         self.contents: dict[str, tuple[int, int, float]] = {}   # id -> (original, packed, written)
         self.texts: dict[str, str] = {}                 # ignore-file contents, for `kopia show`
@@ -897,10 +899,14 @@ def _human(n: float) -> str:
     return f"{int(n)} B"
 
 
-def identity(seed: int) -> dict:
-    """The sample's invented user, computer and storage, fixed by the seed alone."""
+def identity(seed: int, taken=None) -> dict:
+    """The sample's invented user, computer and storage, fixed by the seed. ``taken(name)`` says
+    a name belongs to this install's real repos; those are skipped."""
     r = random.Random(f"identity-{seed}")
-    return {"user": r.choice(fakenames.FIRST_NAMES), "host": r.choice(_HOSTS),
+    free = (lambda n: not taken(n.lower())) if taken else (lambda n: True)
+    users = [u for u in fakenames.FIRST_NAMES if free(u)] or ["demo"]
+    hosts = [h for h in _HOSTS if free(h)] or ["DEMO-PC"]
+    return {"user": r.choice(users), "host": r.choice(hosts),
             "storage": r"E:\Kopia", "unique_id": _hex(r, 256), "cache": _hex(r, 64)[:16],
             "capacity": 4_000_787_030_016}
 
@@ -959,17 +965,17 @@ def sample_dir(base: str | None = None) -> str:
     return os.path.join(base or DATA_DIR, "demo", SAMPLE_DIR)
 
 
-def _record(seed: int, repo: str = REPO_ID) -> dict:
-    ident = identity(seed)
-    return {"id": repo, "name": "Sample", "short_name": "Sample", "kind": "kopia", "demo": True,
-            "sample": True, "unique_id": ident["unique_id"],
+def _record(seed: int, repo: str = REPO_ID, name: str = "Sample") -> dict:
+    ident = identity(seed)   # storage facts only; they do not depend on the names
+    return {"id": repo, "name": name, "short_name": "Sample", "kind": "kopia", "demo": True,
+            "sample": True, "counts_as_backup": False, "source": "sample", "unique_id": ident["unique_id"],
             "storage": {"type": "filesystem", "config": {"path": ident["storage"]}},
             "capacity": {"capacity": ident["capacity"], "available": ident["capacity"] // 2},
             "status_at": _dt.datetime.now().timestamp()}
 
 
 def build(out: str | None = None, *, files: int = DEFAULT_FILES, seed: int = DEFAULT_SEED,
-          repo: str = REPO_ID) -> dict:
+          repo: str = REPO_ID, backblaze: bool = True) -> dict:
     """Write a complete sample data folder: index, caches and recorded replies."""
     from . import demo
     from .dataupgrade import DATA_VERSION
@@ -980,13 +986,13 @@ def build(out: str | None = None, *, files: int = DEFAULT_FILES, seed: int = DEF
     os.makedirs(building)
     from .demobz import BZ_RECORD
     demo._dump(os.path.join(building, "repos.json"), {"version": 1, "cache_dir": None,
-                                                      "repos": [_record(seed, repo), BZ_RECORD]})
+                                                      "repos": [_record(seed, repo)] + ([BZ_RECORD] if backblaze else [])})
     demo._dump(os.path.join(building, "data_version.json"),
                {"version": DATA_VERSION, "app": DATA_VERSION, "at": _dt.datetime.now().timestamp()})
     demo._dump(os.path.join(building, "settings.json"), demo._DEMO_SETTINGS)
     demo._dump(os.path.join(building, "demo.json"),
                {"kind": "sample", "seed": seed, "files": files, "app_version": APP_VERSION,
-                "backblaze": True,
+                "backblaze": backblaze,
                 "profile_version": load_profile().get("version"),
                 "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")})
     forbidden = _real_identity()
@@ -997,9 +1003,9 @@ def build(out: str | None = None, *, files: int = DEFAULT_FILES, seed: int = DEF
     env = demo._child_env(building)
     env.update(KOPIALENS_DEMO_CHECK=check, KOPIALENS_DEMO_SALT=salt,
                KOPIALENS_SAMPLE_SEED=str(seed), KOPIALENS_SAMPLE_FILES=str(files),
-               KOPIALENS_SAMPLE_REPO=repo)
+               KOPIALENS_SAMPLE_REPO=repo, KOPIALENS_SAMPLE_BZ="1" if backblaze else "0")
     try:
-        res = subprocess.run([sys.executable, "-m", "app.core.sampledata", "--child"], cwd=HERE,
+        res = subprocess.run([SELF_EXE, "-m", "app.core.sampledata", "--child"], cwd=HERE,
                              env=env, capture_output=True, text=True, encoding="utf-8",
                              errors="replace", timeout=3600)
     finally:
@@ -1008,11 +1014,7 @@ def build(out: str | None = None, *, files: int = DEFAULT_FILES, seed: int = DEF
     if res.returncode != 0 or not lines:
         raise RuntimeError(f"sample build failed (exit {res.returncode}): {(res.stderr or '')[-800:]}")
     child = json.loads(lines[-1])
-    keep = demo._KEEP | demo.BZ_KEEP | {f"repo{repo}", os.path.basename(demoreplies.replies_path(repo, building))}
-    for entry in os.listdir(building):
-        if entry not in keep and not entry.startswith("kopialens_bz.sqlite"):
-            path = os.path.join(building, entry)
-            shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
+    demo.prune(building, [repo])
     demo._step("checking names")
     names = check_names(building, repo)
     leaks = demo.leak_check(building, forbidden, demoreplies.machine_paths())
@@ -1029,6 +1031,61 @@ def build(out: str | None = None, *, files: int = DEFAULT_FILES, seed: int = DEF
     return {"path": target, "bytes": size, **{k: child.get(k) for k in (
         "files", "folders", "snapshots", "contents", "stored", "stages", "errors", "backblaze",
         "swept", "failed")}}
+
+
+SAMPLE_NAME = "Sample data"
+_INSTALL: dict = {"state": "idle"}
+_INSTALL_LOCK = threading.Lock()
+
+
+def install_state() -> dict:
+    return dict(_INSTALL)
+
+
+def start_install() -> dict:
+    """Build the sample on this computer in the background and add it as a demo repo."""
+    with _INSTALL_LOCK:
+        if _INSTALL.get("state") == "building":
+            return install_state()
+        _INSTALL.clear()
+        _INSTALL.update(state="building", started=time.time())
+    threading.Thread(target=_install_thread, name="sample-data", daemon=True).start()
+    return install_state()
+
+
+def _install_thread() -> None:
+    try:
+        rec = install()
+        _INSTALL.update(state="done", repo=rec["id"], name=rec["name"])
+    except Exception as exc:  # noqa: BLE001 - reported to the screen that started it
+        log.exception("sample data could not be added")
+        _INSTALL.update(state="error", error=str(exc)[:300])
+
+
+def install(*, files: int = DEFAULT_FILES, seed: int = DEFAULT_SEED) -> dict:
+    """Generate the sample under a fresh repo id, move its index, caches and replies into this
+    install, and add the record (a demo repo that is not counted as a backup). No Backblaze:
+    a normal install's Backblaze is the computer's own."""
+    from ..index import store
+    from . import repos
+    rid = repos.reserve_id()
+    tmp = os.path.join(DATA_DIR, "demo", f"sample-build-{rid}")
+    try:
+        build(tmp, files=files, seed=seed, repo=rid, backblaze=False)
+        for entry in os.listdir(tmp):
+            src = os.path.join(tmp, entry)
+            if entry == f"repo{rid}":
+                shutil.move(src, store.repo_dir(rid))
+            elif entry == "cache":
+                os.makedirs(CACHEDIR, exist_ok=True)
+                for name in os.listdir(src):
+                    if repos._belongs_to(name, rid):
+                        shutil.move(os.path.join(src, name), os.path.join(CACHEDIR, name))
+            elif repos._belongs_to(entry, rid):
+                shutil.move(src, os.path.join(DATA_DIR, entry))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return repos.add_record(_record(seed, rid, name=SAMPLE_NAME))
 
 
 def _real_identity() -> set[str]:
@@ -1058,8 +1115,12 @@ def _child() -> None:
     """Inside the sample folder: generate, index with the real worker, record replies, sweep."""
     from ..index import worker
     from . import demo
+    salt = os.environ["KOPIALENS_DEMO_SALT"]
+    with open(os.environ["KOPIALENS_DEMO_CHECK"], encoding="utf-8") as fh:
+        real = set(json.load(fh))   # salted hashes of this install's real user and computer names
     sample = Sample(load_profile(), files=int(os.environ["KOPIALENS_SAMPLE_FILES"]),
-                    seed=int(os.environ["KOPIALENS_SAMPLE_SEED"]))
+                    seed=int(os.environ["KOPIALENS_SAMPLE_SEED"]),
+                    taken=lambda name: demo._hash(salt, name) in real)
     repo = os.environ.get("KOPIALENS_SAMPLE_REPO", REPO_ID)
     demoreplies.set_backend(sample.answer)
     try:
@@ -1067,11 +1128,14 @@ def _child() -> None:
     finally:
         demoreplies.set_backend(None)
     demo._dump(demoreplies.replies_path(repo), sample.replies())
-    from . import demobz
-    bz_root = os.path.join(DATA_DIR, "bzdata")
-    bz = demobz.write(bz_root, sample.latest_files(), user=sample.identity["user"],
-                      host=sample.identity["host"], now=sample.now, seed=int(os.environ["KOPIALENS_SAMPLE_SEED"]))
-    bz_index = demobz.index(bz_root)
+    bz, bz_index = {"files": 0, "backed": 0}, {}
+    if os.environ.get("KOPIALENS_SAMPLE_BZ") == "1":
+        from . import demobz
+        bz_root = os.path.join(DATA_DIR, "bzdata")
+        bz = demobz.write(bz_root, sample.latest_files(), user=sample.identity["user"],
+                          host=sample.identity["host"], now=sample.now,
+                          seed=int(os.environ["KOPIALENS_SAMPLE_SEED"]))
+        bz_index = demobz.index(bz_root)
     sweep = demo._sweep(os.environ["KOPIALENS_DEMO_SALT"], os.environ["KOPIALENS_DEMO_CHECK"], [repo])
     print(json.dumps({
         "files": sum(len(s.files) for s in sample.sources),
@@ -1083,21 +1147,22 @@ def _child() -> None:
         **sweep}))
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     import argparse
     ap = argparse.ArgumentParser(description="Build the sample data folder.")
     ap.add_argument("--files", type=int, default=DEFAULT_FILES)
     ap.add_argument("--seed", type=int, default=DEFAULT_SEED)
     ap.add_argument("--out", help="target folder (default: <data>/demo/sample)")
     ap.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     if args.child:
         _child()
-        return
+        return 0
     r = build(args.out, files=args.files, seed=args.seed)
     print(json.dumps({k: v for k, v in r.items() if k != "path"}, indent=1))
     print("written to", r["path"])
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

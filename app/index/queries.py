@@ -13,7 +13,7 @@ import unicodedata
 import uuid
 from typing import NamedTuple
 
-from config import DEMO_INSTANCE
+from config import DEMO_INSTANCE, is_demo
 
 from ..core import paths as pathrules
 from . import entries, resolve
@@ -319,7 +319,7 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
             except Exception:  # noqa: BLE001 - already gone / connection closing
                 pass
         cur.close()
-    if confirm_exists and not DEMO_INSTANCE:
+    if confirm_exists and not DEMO_INSTANCE and not is_demo(repo):
         for row in rows:
             row["on_disk"] = os.path.exists(row["full_path"])
     return {"rows": rows, "total": total, "offset": offset, "limit": limit, "ranked": ranked_meta}

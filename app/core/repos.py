@@ -114,8 +114,8 @@ def via_server(repo: str) -> bool:
     kopia refuses the direct-only commands the index is built from over such a connection
     (content/blob/index reads), so the repo is browse-only. Read from the config file itself, so
     records written before this existed answer correctly; cached per file mtime."""
-    if config.repo_kind(repo) != "kopia" or not exists(repo):
-        return False
+    if config.repo_kind(repo) != "kopia" or config.is_demo(repo) or not exists(repo):
+        return False   # a demo repo has no kopia connection (its missing config is not the default)
     path = config_path_for(repo)
     if not path:
         from .repoconnect import kopia_config_dir   # lazy: repoconnect imports this module
@@ -244,6 +244,7 @@ def detail(record: dict) -> dict:
         "storage": info,
         "via_server": via_server(rid),
         "demo": bool(record.get("demo")),
+        "sample": bool(record.get("sample")),
     }
 
 

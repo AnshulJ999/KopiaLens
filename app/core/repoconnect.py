@@ -672,8 +672,8 @@ def detect_configs() -> list[dict]:
     default_cfg = os.path.join(base, "repository.config")
     known: dict[str, str] = {}
     for rec in repos.all_records():
-        if rec.get("kind", "kopia") != "kopia":
-            continue
+        if rec.get("kind", "kopia") != "kopia" or rec.get("demo"):
+            continue   # a demo repo (the sample data) has no kopia connection at all
         # no config_file = kopia's own default connection
         path = rec.get("config_file") or default_cfg
         known[os.path.normcase(os.path.abspath(path))] = str(rec.get("id"))
@@ -717,6 +717,8 @@ def probe(config_file: str | None = None, repo: str | None = None) -> dict:
     if repo:
         if not repos.exists(repo):
             raise ValueError(f"unknown repo: {repo}")
+        if config.is_demo(repo):   # no config file here does not mean kopia's default connection
+            raise ValueError("Sample data has no kopia connection to check.")
         config_file = repos.config_path_for(repo)
     args = [kopiabin.exe()]
     if config_file:
@@ -830,6 +832,8 @@ def unlock(repo: str, password: str) -> dict:
         raise ValueError(f"unknown repo: {repo}")
     if rec.get("kind", "kopia") != "kopia":
         raise ValueError(f"repo {repo} is not a kopia repository")
+    if rec.get("demo"):   # its missing config file is not kopia's default connection
+        raise ValueError("Sample data has no kopia connection to unlock.")
     if not (password or "").strip():
         raise ValueError("Enter the repository password.")
     cfg = rec.get("config_file")

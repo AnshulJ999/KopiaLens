@@ -3,7 +3,10 @@
             <section x-show="settingsTab==='repositories'" class="space-y-3">
               <div class="flex items-center gap-3">
                 <span class="font-medium">Repositories</span>
-                <button @click="openAddRepo()" class="ml-auto kl-btn primary">Add repository…</button>
+                <button x-show="!hasSample()" @click="raAddSample()" :disabled="sampleBusy" class="ml-auto kl-btn"
+                        title="An invented repository, made on this computer, to look around"
+                        x-text="sampleBusy ? 'Making sample data…' : 'Add sample data'">Add sample data</button>
+                <button @click="openAddRepo()" class="kl-btn primary" :class="hasSample() ? 'ml-auto' : ''">Add repository…</button>
               </div>
               <p class="kl-note">The order here is the order in the repository menu.</p>
               <template x-for="(r, i) in repos" :key="r.id">
@@ -25,8 +28,8 @@
                     <div class="flex flex-wrap justify-end gap-1.5 shrink-0">
                       <template x-if="r.kind !== 'backblaze'">
                         <div class="flex flex-wrap justify-end gap-1.5">
-                          <button @click="raCheck(r)" class="h-8 rounded border border-bd px-2.5 text-xs">Check connection</button>
-                          <button x-show="!r.via_server" @click="raIndex(r)" class="h-8 rounded border border-bd px-2.5 text-xs">Index now</button>
+                          <button x-show="!r.demo" @click="raCheck(r)" class="h-8 rounded border border-bd px-2.5 text-xs">Check connection</button>
+                          <button x-show="!r.via_server && !r.demo" @click="raIndex(r)" class="h-8 rounded border border-bd px-2.5 text-xs">Index now</button>
                           <button @click="raEdit(r)" class="h-8 rounded border border-bd px-2.5 text-xs">Edit…</button>
                           <button @click="raRemove(r)" class="h-8 rounded border px-2.5 text-xs" style="color:var(--danger);border-color:var(--danger-bd)">Remove…</button>
                         </div>

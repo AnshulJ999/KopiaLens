@@ -221,6 +221,23 @@ def remove(repo: str, confirm: bool = False, delete_config: bool = False) -> dic
         raise _bad(exc) from exc
 
 
+@router.get("/setup/sample")
+def sample_state() -> dict:
+    """Progress of adding the sample data: idle, building, done (with the new repo) or error."""
+    from ..core import sampledata
+    return sampledata.install_state()
+
+
+@router.post("/setup/sample")
+def sample_add() -> dict:
+    """Make the sample data on this computer (well under a minute here) and add it as a demo
+    repository. It runs in the background; poll ``GET /setup/sample``."""
+    from ..core import sampledata
+    if any(r.get("sample") for r in repos.all_records()):
+        raise HTTPException(status_code=400, detail="The sample data is already added.")
+    return sampledata.start_install()
+
+
 class IndexRebuildRequest(BaseModel):
     repo: str
     confirm: bool = False

@@ -10,7 +10,7 @@ const onboardingPart = {
         kopiaPath: "", kopiaError: "",
         username: "admin", pw: "", confirm: "", level: "index", usePw: true, encPw: "", encConfirm: "",
         remember: true, hosts: (state.allowed_hosts || []).join(", "), busy: false, error: "",
-        recoveryKey: "", keySaved: false, keyNote: "", protected: "",
+        recoveryKey: "", keySaved: false, keyNote: "", protected: "", sampleBusy: false, sampleError: "",
         auto: state.index_mode !== "off", time: state.index_time || "23:00",
       };
       if (this.ob.needsCode) return;
@@ -59,7 +59,23 @@ const onboardingPart = {
         o.state.kopia = await _setupPost("/api/setup/kopia", { path: o.kopiaPath.trim() });
       } catch (e) { o.kopiaError = e.message || String(e); }
     },
-    obConnectReady() { return !!(this.cx && this.cx.added.length) && !this.obKopiaMissing(); },
+    obConnectReady() {
+      const added = (this.cx && this.cx.added) || [];
+      return !!added.length && (!this.obKopiaMissing() || added.every((a) => a.sample));
+    },
+    obHasSample() { return !!(this.cx && this.cx.added.some((a) => a.sample)); },
+    obSampleOnly() { return !!(this.cx && this.cx.added.length) && this.cx.added.every((a) => a.sample); },
+    async obSample() {
+      const o = this.ob;
+      if (o.sampleBusy || this.obHasSample()) return;
+      o.sampleBusy = true; o.sampleError = "";
+      try {
+        const r = await this.addSampleData();
+        this.cx.added.push(this._cxEntry(r));
+        this.cxSummary(this.cx.added[this.cx.added.length - 1]);   // the tracked copy
+      } catch (e) { o.sampleError = e.message || String(e); }
+      o.sampleBusy = false;
+    },
 
     // ---- Protect ----------------------------------------------------------------------------
     _obProtectCheck() {
@@ -141,7 +157,7 @@ const onboardingPart = {
     },
     obEstimate() {
       const list = ((this.cx && this.cx.added) || [])
-        .filter((a) => !a.server && a.summary && a.summary.snapshots && a.summary.estimate)
+        .filter((a) => !a.server && !a.sample && a.summary && a.summary.snapshots && a.summary.estimate)
         .map((a) => a.summary.estimate);
       return list.length ? sumEstimates(list) : null;
     },
@@ -171,13 +187,15 @@ const onboardingPart = {
       const o = this.ob;
       if (o.busy) return;
       o.busy = true; o.error = "";
-      const ids = ((this.cx && this.cx.added) || []).map((a) => a.id);
+      const added = (this.cx && this.cx.added) || [];
+      const ids = added.map((a) => a.id);
+      const toIndex = added.filter((a) => !a.sample).map((a) => a.id);   // the sample is ready-made
       try {
         const kl = { index_mode: o.auto ? (this.obInterval() ? "interval" : "daily") : "off" };
         if (o.auto && !this.obInterval()) kl.index_time = o.time || "23:00";
         await _setupPost("/api/settings", { kopialens: kl, last_repo: ids[0] || "" });
         await _setupPost("/api/onboarding/finish");
-        if (index && ids.length) await _setupPost("/api/onboarding/start-indexing", { repos: ids });
+        if (index && toIndex.length) await _setupPost("/api/onboarding/start-indexing", { repos: toIndex });
         location.reload();
       } catch (e) {
         o.error = e.message || String(e);

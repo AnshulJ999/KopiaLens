@@ -53,7 +53,10 @@ _DOT_IGNORE_KEPT = {".kopiaignore", ".gitignore", ".nobackup", ".backupignore"}
 _KOPIA_WORDS = {"content", "contents", "indexes", "metadata", "own-writes", "blob-list",
                 "server-contents", "blobs", "packs", "kopia", "kopia.exe", "repository.config"}
 # Dates and long hex ids (kopia cache folders, run dates) also appear as generated values.
-_GENERATED = re.compile(r"[0-9a-f]{12,}|\d{4}-\d{2}-\d{2}")
+# Generated text that identifies nothing: long hex ids, dates, version numbers ("1.0"), and
+# shorter hex codes mixing digits and letters ("433a5c"; a plain word like "facade" stays).
+_GENERATED = re.compile(r"[0-9a-f]{12,}|\d{4}-\d{2}-\d{2}|v?\d+(\.\d+)+|"
+                        r"(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{6,}")
 _DEMO_SETTINGS = {"kopialens": {"onboarded": True, "auth_enabled": False, "index_mode": "off",
                                 "disk_lookup": "off", "encryption_level": "off"}}
 _SWEEP_SKIP = ("pick", "open", "browse", "download", "restart", "quit", "shutdown", "mount")
@@ -521,12 +524,7 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True) -> dict:
 
     _step("building caches and checking screens")
     finished = _finish(building, forbidden) if finish else {}
-    keep = _KEEP | BZ_KEEP | {f"repo{r['id']}" for r in records} | {
-        os.path.basename(demoreplies.replies_path(r["id"], building)) for r in records}
-    for entry in os.listdir(building):
-        if entry not in keep and not entry.startswith("kopialens_bz.sqlite"):
-            path = os.path.join(building, entry)
-            shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
+    prune(building, [r["id"] for r in records])
 
     _step("checking files for real names")
     leaks = leak_check(building, forbidden, demoreplies.machine_paths())
@@ -663,6 +661,19 @@ def _copy_repo(repo: str, demo_id: str, building: str, namer: fakenames.Namer) -
             "kept_by_design": sum(1 for k in names.fake if names.kept(*k)), "recorded": len(replies),
             "replies": replies, "forbidden": forbidden_names(names, src_map, exts),
             "allowed": {f.lower() for f in names.fake.values()} | exts, "identity": _identity(src_map)}
+
+
+def prune(folder: str, repo_ids: list[str]) -> None:
+    """Remove what the cache build wrote that a finished demo does not need. Kept: the fixed
+    files, the Backblaze data, and every file that belongs to one of the demo's repos (stage
+    outputs such as ignore_files_repo<N>.parquet live next to the index); temp folders go."""
+    from .repos import _belongs_to
+    for entry in os.listdir(folder):
+        own = any(_belongs_to(entry, r) for r in repo_ids) and not entry.startswith("duck_tmp")
+        if own or entry in _KEEP | BZ_KEEP or entry.startswith("kopialens_bz.sqlite"):
+            continue
+        path = os.path.join(folder, entry)
+        shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
 
 
 def _demo_record(replies: dict, demo_id: str, name: str) -> dict:

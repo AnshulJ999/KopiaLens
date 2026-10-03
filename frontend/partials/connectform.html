@@ -8,8 +8,8 @@
                 <template x-for="a in cx.added" :key="a.id">
                   <div class="rounded-md border p-3 space-y-2" :class="a.error ? 'border-warn-bd' : 'border-ok-bd'">
                     <div class="flex items-start gap-2">
-                      <span class="pill" :class="a.error ? 'warn' : (a.summary ? 'ok' : '')" x-text="a.error ? 'Needs attention' : (a.summary ? 'Connected' : 'Checking…')"></span>
-                      <span class="min-w-0 flex-1 text-xs text-muted truncate" :title="a.where" x-text="[cxTypeLabel(a.type), a.where].filter(Boolean).join(' · ')"></span>
+                      <span class="pill" :class="a.error ? 'warn' : (a.summary ? 'ok' : '')" x-text="a.error ? 'Needs attention' : (a.summary ? (a.sample ? 'Ready' : 'Connected') : 'Checking…')"></span>
+                      <span class="min-w-0 flex-1 text-xs text-muted truncate" :title="a.where" x-text="a.sample ? 'Made on this computer' : [cxTypeLabel(a.type), a.where].filter(Boolean).join(' · ')"></span>
                       <button type="button" @click="cxRemoveAdded(a)" class="text-xs text-muted hover:text-fg">Remove</button>
                     </div>
                     <p x-show="a.summary" class="text-xs" x-text="cxSummaryLine(a)"></p>
