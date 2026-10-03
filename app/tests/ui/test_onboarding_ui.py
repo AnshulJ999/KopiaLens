@@ -16,7 +16,7 @@ def test_attach_found_repository_protect_and_index(fresh_server, open_page):
     page = open_page(fresh_server, signed_in=False)
     page.goto(fresh_server.url + "/")
 
-    expect(page.get_by_role("button", name="Try with sample data")).to_be_disabled()
+    expect(page.get_by_role("button", name="Try with sample data")).to_be_enabled()
     page.locator("label", has_text="repository.config").locator("input[type=checkbox]").check()
     page.get_by_role("button", name="Use this repository").click()
     expect(page.get_by_text("1 source · 3 snapshots", exact=False)).to_be_visible(timeout=60_000)

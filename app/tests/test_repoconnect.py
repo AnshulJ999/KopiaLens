@@ -336,6 +336,27 @@ def test_detect_configs_marks_what_is_already_in_the_store(store, monkeypatch):
     assert default["in_store"] is True and default["repo_id"] == "1"
 
 
+def test_a_demo_repo_is_never_taken_for_kopias_default_connection(store, fixed_binary, monkeypatch):
+    """The sample data has no config file, which for a real record means kopia's default
+    connection. For a demo it must not: the default stays offered, is not read as browse-only,
+    and is never probed or unlocked on the sample's behalf."""
+    from app.core import repoconnect, repos
+    cfgdir = store / "kopia"
+    cfgdir.mkdir()
+    (cfgdir / "repository.config").write_text(json.dumps({"apiServer": {"url": "https://nas:51515"}}),
+                                              encoding="utf-8")
+    monkeypatch.setattr(repoconnect, "kopia_config_dir", lambda: str(cfgdir))
+    monkeypatch.setattr(repoconnect, "_run", lambda *a, **k: pytest.fail("kopia ran for a demo repo"))
+    rid = repos.add_record({"name": "Sample data", "demo": True, "sample": True})["id"]
+    default = next(f for f in repoconnect.detect_configs() if f["is_default"])
+    assert default["in_store"] is False
+    assert repos.via_server(rid) is False
+    with pytest.raises(ValueError, match="Sample data"):
+        repoconnect.probe(repo=rid)
+    with pytest.raises(ValueError, match="Sample data"):
+        repoconnect.unlock(rid, "password")
+
+
 def test_probe_parses_status_and_falls_back_to_the_config_for_a_server(store, fixed_binary, monkeypatch):
     from app.core import repoconnect
     status = {"uniqueIDHex": "a" * 64, "storage": {"type": "s3", "config": {"bucket": "b"}},

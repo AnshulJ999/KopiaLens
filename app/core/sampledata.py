@@ -1018,17 +1018,16 @@ def build(out: str | None = None, *, files: int = DEFAULT_FILES, seed: int = DEF
     demo._step("checking names")
     names = check_names(building, repo)
     leaks = demo.leak_check(building, forbidden, demoreplies.machine_paths())
-    if names["unknown_words"] or leaks["leaked"] or child.get("leaked"):
+    warnings = demo._leak_warnings(leaks, child) or {}
+    if names["unknown_words"]:
         # The flagged words come from this generator, never from a real repo, so naming them is safe.
-        raise RuntimeError(f"sample failed its checks: {names['unknown_words']} unknown words "
-                           f"{names['examples']}, "
-                           f"{leaks['leaked']} identity or machine-path hits in files "
-                           f"({leaks['files']}), {child.get('leaked', 0)} in screens ({child.get('routes')})")
+        warnings["unknown_words"] = names["examples"]
+        log.warning("sample data: words outside the generator's lists: %s", names["examples"])
     if os.path.isdir(target):
         shutil.rmtree(target)
     os.replace(building, target)
     size = sum(os.path.getsize(os.path.join(dp, f)) for dp, _d, fs in os.walk(target) for f in fs)
-    return {"path": target, "bytes": size, **{k: child.get(k) for k in (
+    return {"path": target, "bytes": size, "warnings": warnings or None, **{k: child.get(k) for k in (
         "files", "folders", "snapshots", "contents", "stored", "stages", "errors", "backblaze",
         "swept", "failed")}}
 
@@ -1136,6 +1135,7 @@ def _child() -> None:
                           host=sample.identity["host"], now=sample.now,
                           seed=int(os.environ["KOPIALENS_SAMPLE_SEED"]))
         bz_index = demobz.index(bz_root)
+        demobz.trim(bz_root)
     sweep = demo._sweep(os.environ["KOPIALENS_DEMO_SALT"], os.environ["KOPIALENS_DEMO_CHECK"], [repo])
     print(json.dumps({
         "files": sum(len(s.files) for s in sample.sources),

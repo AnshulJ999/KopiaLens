@@ -208,6 +208,41 @@ def _rules(root: str, user: str, host: str, excluded_dirs: list[str]) -> None:
           '<do_backup>'] + [f'<bzdirfilter dir="{d}" whichfiles="none" />' for d in excluded_dirs] + ['</do_backup>'])
 
 
+def trim(root: str) -> int:
+    """After indexing, drop what only the indexer reads: per-day upload records, file-list bodies
+    (the screens use only their names; a header-only list reads as an aborted scan, so a manual
+    re-index keeps the index) and all but the tail of the file ids the churn view scans.
+    Returns bytes freed."""
+    from ..backblaze.queries import _CHURN_TAIL
+    freed = 0
+    dc = os.path.join(root, "bzbackup", "bzdatacenter")
+    for name in os.listdir(dc):
+        if name.startswith("bz_done_"):
+            freed += os.path.getsize(os.path.join(dc, name))
+            os.remove(os.path.join(dc, name))
+    lists = os.path.join(root, "bzfilelists")
+    for name in os.listdir(lists):
+        if name.endswith("filelist.dat"):
+            path = os.path.join(lists, name)
+            before = os.path.getsize(path)
+            with open(path, encoding="utf-8") as fh:
+                head = [next(fh, "") for _ in range(4)]
+            with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write("".join(head))
+            freed += before - os.path.getsize(path)
+    ids = os.path.join(root, "bzbackup", "bzfileids.dat")
+    size = os.path.getsize(ids)
+    if size > _CHURN_TAIL:
+        with open(ids, "rb") as fh:
+            fh.seek(size - _CHURN_TAIL)
+            fh.readline()   # a partial first line
+            tail = fh.read()
+        with open(ids, "wb") as fh:
+            fh.write(tail)
+        freed += size - len(tail)
+    return freed
+
+
 def index(root: str) -> dict:
     """Build the demo folder's Backblaze index from ``root`` with the real indexer."""
     from ..backblaze import indexer, paths

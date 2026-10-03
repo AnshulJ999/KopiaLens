@@ -528,10 +528,7 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True) -> dict:
 
     _step("checking files for real names")
     leaks = leak_check(building, forbidden, demoreplies.machine_paths())
-    if leaks["leaked"] or finished.get("leaked"):
-        raise RuntimeError(f"demo copy failed its leak check: {leaks['leaked']} in files "
-                           f"({leaks['files']}), {finished.get('leaked', 0)} in screens "
-                           f"({finished.get('routes')})")
+    warnings = _leak_warnings(leaks, finished)
     if os.path.isdir(target):
         shutil.rmtree(target)
     os.replace(building, target)
@@ -541,7 +538,8 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True) -> dict:
               {r: p["rows"] for r, p in per_repo.items()},
               **totals, "checked_names": len(forbidden),
               "caches": finished.get("stages"), "cache_errors": finished.get("errors"),
-              "screens_checked": finished.get("swept"), "screens_failed": finished.get("failed")}
+              "screens_checked": finished.get("swept"), "screens_failed": finished.get("failed"),
+              "leak_warnings": warnings}
     log.info("demo copy of repos %s (%s): %s names, %s re-rolled", ",".join(ids), style,
              totals["renamed"], totals["re_rolled"])
     return result
@@ -767,15 +765,33 @@ def _json_strings(value: str):
     yield value
 
 
+_DERIVED_DIRS = {"bz", "bzdata"}   # built only from the already-faked index
+
+
+def _leak_warnings(leaks: dict, finished: dict) -> dict | None:
+    """Possible leaks are reported, not fatal: a hit is usually an ordinary word that is also a
+    real folder name somewhere, and the copy is reviewed before it is shown anywhere."""
+    if not (leaks.get("leaked") or finished.get("leaked")):
+        return None
+    out = {"files": leaks.get("files"), "file_hits": leaks.get("leaked", 0),
+           "screens": finished.get("routes"), "screen_hits": finished.get("leaked", 0)}
+    log.warning("demo copy: possible real names to review: %s", out)
+    _step(f"warning - possible real names to review: {out}")
+    return out
+
+
 def leak_check(copy_root: str, forbidden: set[str], machine: list[str] = ()) -> dict:
-    """Count real names found as whole path segments in any file of the copy, and this PC's own
-    folders (``machine``, lowercased) anywhere outside the faked index. Counts only."""
+    """Count real names found as whole path segments in the copy's files, and this PC's own
+    folders (``machine``, lowercased) anywhere outside the faked index. Counts only. Files built
+    from the already-faked data (Backblaze data, manifests) are not checked."""
     leaked, files = 0, []
     con = duckdb.connect()
     con.register("_forbidden", pa.table({"seg": sorted(forbidden)}))
     for dirpath, _dirs, fnames in os.walk(copy_root):
+        if os.path.relpath(dirpath, copy_root).split(os.sep)[0] in _DERIVED_DIRS:
+            continue
         for fname in fnames:
-            if fname == "demo.json":   # the copy's own fixed bookkeeping
+            if fname in ("demo.json", "manifest.json") or fname.startswith("kopialens_bz.sqlite"):
                 continue
             path = os.path.join(dirpath, fname)
             hits = 0
@@ -896,6 +912,7 @@ def _demo_backblaze(repos: list[str]) -> None:
     root = os.path.join(DATA_DIR, "bzdata")
     demobz.write(root, files, user=user, host=host)
     out = demobz.index(root)
+    demobz.trim(root)
     if not out.get("ok", True):
         raise RuntimeError(f"Backblaze index: {out.get('reason')}")
 
@@ -933,6 +950,8 @@ def _sweep(salt: str, check_path: str, repos: list[str]) -> dict:
         swept += 1
         if resp.status_code >= 400:
             failed.append(f"{path} {resp.status_code}{note}")
+        if path.startswith("/api/backblaze/"):
+            continue   # built from the already-faked index; swept for errors only
         hits = sum(1 for text in _json_strings(resp.text) for seg in _segments(text)
                    if _hash(salt, seg) in hashes)
         low = resp.text.lower()
@@ -1030,8 +1049,10 @@ def menu() -> None:
         if repo and style:
             print("Working - this reads the index and kopia once, then builds the demo's caches.")
             r = make_copy(options[repo], style)
+            note = (f"Possible real names to review: {r['leak_warnings']}" if r["leak_warnings"]
+                    else "no real names found")
             print(f"Done: {r['renamed']} names faked, {r['screens_checked']} screens checked, "
-                  f"no real names found.\n{r['path']}")
+                  f"{note}.\n{r['path']}")
     input("\nPress Enter to close.")
 
 

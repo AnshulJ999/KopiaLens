@@ -218,12 +218,13 @@ def test_copy_fakes_every_name_and_keeps_numbers(live, monkeypatch, style):
         gen.close()
 
 
-def test_leak_check_refuses_a_copy_with_a_real_name(live, monkeypatch):
+def test_leak_check_reports_a_real_name_and_the_copy_still_finishes(live, monkeypatch):
     # Content stats are passed through unfaked (numbers only), so a path there is a real leak.
     monkeypatch.setitem(REPLIES, "content stats", f"Count: 3 in {ACME}")
-    with pytest.raises(RuntimeError, match="leak check"):
-        demo.make_copy("7", "codename", finish=False)
-    assert not os.path.isdir(demo.copy_dir("7", "codename"))
+    r = demo.make_copy("7", "codename", finish=False)
+    assert r["leak_warnings"]["file_hits"] >= 1
+    assert r["leak_warnings"]["files"] == ["demo_replies_repo1.json"]
+    assert os.path.isdir(demo.copy_dir("7", "codename"))
 
 
 def test_same_key_gives_the_same_copy(live):
