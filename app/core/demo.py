@@ -1026,7 +1026,12 @@ def menu() -> None:
     from config import REPOS
     print("KopiaLens demo copies\n")
     action = _choose("What would you like to do", ["Open a demo copy", "Make a demo copy",
-                                                   "Make sample data (invented, no repo needed)"])
+                                                   "Make sample data (invented, no repo needed)",
+                                                   "Open the web demo (in your browser)"])
+    if action and action.startswith("Open the web demo"):
+        print("Building the web demo if anything changed, then opening it. Close this window to stop it.")
+        subprocess.run([sys.executable, os.path.join(HERE, "packaging", "build_webdemo.py"),
+                        "--reuse", "--serve", "7850", "--open"], cwd=HERE)
     if action and action.startswith("Make sample data"):
         from . import sampledata
         print("Working - this generates a made-up repository and indexes it (under a minute).")

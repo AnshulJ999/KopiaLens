@@ -1,5 +1,5 @@
-// KopiaLens web demo: runs the real backend in the page (Pyodide) and answers every /api/
-// call from it. Loaded in <head>, before the app's own scripts, so their first fetch waits here.
+// KopiaLens web demo: the real backend runs in a worker (worker.js, Pyodide) and answers every
+// /api/ call. Loaded in <head>, before the app's own scripts, so their first fetch waits here.
 (function () {
   "use strict";
   const cfg = window.KL_WEB_DEMO;
@@ -7,9 +7,11 @@
   const stateKey = "kl-webdemo:" + cfg.version;
   const debug = new URLSearchParams(location.search).has("debug");
 
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(stateKey) || "null"); } catch (e) { saved = null; }
+
   // The server stamps the saved appearance onto <html>; a static page does it here instead.
   try {
-    const saved = JSON.parse(localStorage.getItem(stateKey) || "null");
     const kl = (saved && saved["settings.json"] && JSON.parse(saved["settings.json"]).kopialens) || {};
     const root = document.documentElement;
     if (kl.theme) root.dataset.theme = kl.theme;
@@ -20,7 +22,7 @@
       : window.matchMedia("(prefers-color-scheme: dark)").matches;
     root.classList.toggle("dark", dark);
   } catch (e) { /* no saved appearance: the page default stands */ }
-  let web = null;
+
   let resolveReady, rejectReady;
   const ready = new Promise((res, rej) => { resolveReady = res; rejectReady = rej; });
   ready.catch(() => {});
@@ -38,102 +40,69 @@
     if (!box) return;
     const total = steps.reduce((n, s) => n + s.mb, 0);
     const got = steps.reduce((n, s) => n + Math.min(s.mb, doneMb[s.id] || 0), 0);
-    el("kl-web-bar").style.width = Math.round((100 * got) / total) + "%";
-    el("kl-web-bar").parentElement.setAttribute("aria-valuenow", String(Math.round((100 * got) / total)));
+    const pct = Math.round((100 * got) / total);
+    el("kl-web-bar").style.width = pct + "%";
+    el("kl-web-bar").parentElement.setAttribute("aria-valuenow", String(pct));
     el("kl-web-size").textContent = `${mb(got)} of about ${mb(total)}`;
     el("kl-web-time").textContent = Math.round((Date.now() - t0) / 1000) + " s";
     for (const s of steps) {
-      const row = el("kl-web-step-" + s.id);
-      const state = (doneMb[s.id] || 0) >= s.mb ? "done" : s.active ? "active" : "wait";
-      row.dataset.state = state;
+      el("kl-web-step-" + s.id).dataset.state = (doneMb[s.id] || 0) >= s.mb ? "done" : s.active ? "active" : "wait";
     }
   }
   const timer = setInterval(() => { if (!failed) render(); }, 500);
-  function begin(id) { steps.find((s) => s.id === id).active = true; render(); }
-  function finish(id) { const s = steps.find((x) => x.id === id); doneMb[id] = s.mb; s.active = false; render(); }
+  const step = (id) => steps.find((s) => s.id === id);
+  function begin(id) { step(id).active = true; render(); }
+  function finish(id) { doneMb[id] = step(id).mb; step(id).active = false; render(); }
 
-  function showError(err) {
+  function showError(message) {
     failed = true;
     clearInterval(timer);
+    rejectReady(new Error(message));
     const box = el("kl-web-loading");
     if (!box) return;
     box.dataset.state = "error";
-    el("kl-web-error-detail").textContent = String((err && err.message) || err);
+    el("kl-web-error-detail").textContent = message;
   }
 
-  async function fetchBytes(url, id) {
-    const res = await realFetch(url);
-    if (!res.ok) throw new Error(`${url}: ${res.status} ${res.statusText}`);
-    const len = Number(res.headers.get("content-length")) || 0;
-    const reader = res.body.getReader();
-    const parts = [];
-    let got = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      parts.push(value);
-      got += value.length;
-      if (id && len) doneMb[id] = (steps.find((s) => s.id === id).mb * got) / len;
-    }
-    const out = new Uint8Array(got);
-    let at = 0;
-    for (const p of parts) { out.set(p, at); at += p.length; }
-    return out;
-  }
+  // ---- the worker ----
+  const worker = new Worker(cfg.base + "worker.js?v=" + encodeURIComponent(cfg.version), { type: "module" });
+  const pending = new Map();
+  let nextId = 1;
 
-  function loadScript(src) {
-    return new Promise((res, rej) => {
-      const s = document.createElement("script");
-      s.src = src;
-      s.onload = res;
-      s.onerror = () => rej(new Error("Couldn't load " + src));
-      document.head.appendChild(s);
-    });
-  }
-
-  async function boot() {
-    begin("runtime");
-    await loadScript(cfg.pyodide + "pyodide.js");
-    const py = await window.loadPyodide({ indexURL: cfg.pyodide });
-    finish("runtime");
-    begin("libraries");
-    begin("data");
-    // Each library file counts as it arrives (cached files report 0 bytes and count at the end).
-    let libBytes = 0;
-    const libSeen = new PerformanceObserver((list) => {
-      for (const e of list.getEntries()) {
-        if (e.name.startsWith(cfg.pyodide) && /\.(whl|zip)$/.test(e.name)) libBytes += e.encodedBodySize || e.transferSize || 0;
+  worker.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === "reply") {
+      const p = pending.get(m.id);
+      pending.delete(m.id);
+      if (!p) return;
+      if (m.state) {
+        try { localStorage.setItem(stateKey, JSON.stringify(m.state)); } catch (err) { /* storage off: settings last until reload */ }
       }
-      doneMb.libraries = Math.min(libBytes / 1e6, steps.find((s) => s.id === "libraries").mb * 0.98);
-    });
-    try { libSeen.observe({ type: "resource", buffered: true }); } catch (e) { /* older browser: step counts when done */ }
-    const libs = py.loadPackage(cfg.packages, { messageCallback: () => {} })
-      .then(() => { libSeen.disconnect(); finish("libraries"); });
-    const code = fetchBytes(cfg.base + "app.zip");
-    const data = fetchBytes(cfg.base + "data.zip", "data").then((b) => { finish("data"); return b; });
-    const [, codeZip, dataZip] = await Promise.all([libs, code, data]);
-    begin("start");
-    py.unpackArchive(codeZip, "zip", { extractDir: "/kl" });
-    py.unpackArchive(dataZip, "zip", { extractDir: "/data" });
-    py.runPython("import sys; sys.path.insert(0, '/kl')");
-    web = py.pyimport("kl_web");
-    let saved = null;
-    try { saved = JSON.parse(localStorage.getItem(stateKey) || "null"); } catch (e) { saved = null; }
-    if (saved) web.restore_state(py.toPy(saved));
-    web.boot();
-    window.klWebPy = py;
-    finish("start");
-    clearInterval(timer);
-    const box = el("kl-web-loading");
-    if (box) box.remove();
-    resolveReady();
-  }
+      if (m.error) p.reject(new Error(m.error)); else p.resolve(m);
+    } else if (m.type === "progress") {
+      doneMb[m.id] = m.mb;
+    } else if (m.type === "done") {
+      finish(m.id);
+    } else if (m.type === "begin") {
+      begin(m.id);
+    } else if (m.type === "ready") {
+      finish("start");
+      clearInterval(timer);
+      const box = el("kl-web-loading");
+      if (box) box.remove();
+      resolveReady();
+    } else if (m.type === "error") {
+      console.error(m.message);
+      showError(m.message);
+    }
+  };
+  worker.onerror = (e) => { console.error(e); showError(e.message || "The demo's worker stopped."); };
 
-  function saveState() {
-    try { localStorage.setItem(stateKey, JSON.stringify(web.state().toJs({ dict_converter: Object.fromEntries }))); } catch (e) { /* storage off: settings last until reload */ }
-  }
+  ["runtime", "libraries", "data"].forEach((id) => { step(id).active = true; });
+  // Absolute: inside the worker, relative paths resolve from the worker's own folder.
+  worker.postMessage({ type: "init", cfg: { ...cfg, base: new URL(cfg.base, location.href).href }, saved });
 
-  // ---- the API, answered in the page ----
+  // ---- the API, answered by the worker ----
   const apiPath = (input) => {
     const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const u = new URL(raw, location.href);
@@ -145,16 +114,17 @@
     const req = new Request(new URL(path, location.origin), typeof input === "string" || input instanceof URL ? init : new Request(input, init));
     const headers = {};
     req.headers.forEach((v, k) => { headers[k] = v; });
-    // undefined, not null: Pyodide turns null into JsNull rather than None.
     const body = req.method === "GET" || req.method === "HEAD" ? undefined : new Uint8Array(await req.arrayBuffer());
     const t = performance.now();
     if (debug) console.debug("[kl-web] >", req.method, path);
-    const out = await web.handle(req.method, path, window.klWebPy.toPy(headers), body);
-    const [status, hdrs, content, changed] = out;
-    if (debug) console.debug("[kl-web] <", status, req.method, path, Math.round(performance.now() - t) + " ms");
-    if (changed) saveState();
-    const noBody = status === 204 || status === 304 || req.method === "HEAD";
-    return new Response(noBody ? null : content, { status, headers: hdrs });
+    const id = nextId++;
+    const out = await new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      worker.postMessage({ type: "call", id, method: req.method, path, headers, body });
+    });
+    if (debug) console.debug("[kl-web] <", out.status, req.method, path, Math.round(performance.now() - t) + " ms");
+    const noBody = out.status === 204 || out.status === 304 || req.method === "HEAD";
+    return new Response(noBody ? null : out.body, { status: out.status, headers: out.headers });
   }
 
   window.fetch = function (input, init) {
@@ -183,6 +153,4 @@
     const retry = el("kl-web-retry");
     if (retry) retry.addEventListener("click", () => location.reload());
   });
-
-  boot().catch((err) => { console.error(err); showError(err); rejectReady(err); });
 })();

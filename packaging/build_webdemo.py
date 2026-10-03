@@ -119,7 +119,7 @@ def build(out: str, files: int) -> None:
         f.write(page(version, steps))
     shutil.copytree(os.path.join(KL_ROOT, "frontend"), os.path.join(site, "static"),
                     ignore=shutil.ignore_patterns("partials", "index.html"))
-    for name in ("bridge.js", "webdemo.css"):
+    for name in ("bridge.js", "worker.js", "webdemo.css"):
         shutil.copy2(os.path.join(WEBDEMO, name), os.path.join(site, "webdemo", name))
 
     if os.path.isdir(out):
@@ -130,10 +130,32 @@ def build(out: str, files: int) -> None:
         f"first visit also loads about {RUNTIME_MB + LIBRARIES_MB:.0f} MB of Pyodide from the CDN")
 
 
-def serve(root: str, port: int) -> None:
+def current(out: str) -> bool:
+    """The built site is newer than every source file it is made from."""
+    try:
+        built = os.path.getmtime(os.path.join(out, "site", "index.html"))
+    except OSError:
+        return False
+    for top in ("app", "frontend", "webdemo"):
+        for dirpath, dirs, files in os.walk(os.path.join(KL_ROOT, top)):
+            dirs[:] = [d for d in dirs if d not in ("__pycache__", "tests")]
+            if any(os.path.getmtime(os.path.join(dirpath, f)) > built for f in files):
+                return False
+    return True
+
+
+def serve(root: str, port: int, open_browser: bool = False) -> None:
     os.chdir(root)
-    log(f"serving http://127.0.0.1:{port}/ (Ctrl+C to stop)")
-    http.server.ThreadingHTTPServer(("127.0.0.1", port), http.server.SimpleHTTPRequestHandler).serve_forever()
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), http.server.SimpleHTTPRequestHandler)
+    url = f"http://127.0.0.1:{port}/"
+    log(f"serving {url} (Ctrl+C to stop)")
+    if open_browser:
+        import webbrowser
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        log("stopped")
 
 
 def main() -> None:
@@ -141,13 +163,18 @@ def main() -> None:
     ap.add_argument("--out", help="output folder (default: <BUILD_ROOT>\\webdemo\\<version>)")
     ap.add_argument("--files", type=int, default=SAMPLE_FILES, help="sample size in files")
     ap.add_argument("--serve", type=int, metavar="PORT", help="serve the built site afterwards")
+    ap.add_argument("--reuse", action="store_true", help="skip the build when the site is up to date")
+    ap.add_argument("--open", action="store_true", help="open the browser when serving")
     args = ap.parse_args()
     with open(os.path.join(KL_ROOT, "VERSION"), encoding="utf-8") as f:
         version = f.read().strip()
     out = args.out or os.path.join(BUILD_ROOT, "webdemo", version)
-    build(out, args.files)
+    if args.reuse and current(out):
+        log(f"up to date: {os.path.join(out, 'site')}")
+    else:
+        build(out, args.files)
     if args.serve:
-        serve(os.path.join(out, "site"), args.serve)
+        serve(os.path.join(out, "site"), args.serve, args.open)
 
 
 if __name__ == "__main__":
