@@ -22,7 +22,7 @@ def _body(filename: str, name: str) -> str:
 
 
 def test_the_remove_plan_delete_sends_the_ticket():
-    body = _body("detail.js", "async removeRun()")
+    body = _body("detail.js", "async removeRun(")
     assert "plan_token: this.removePlan.plan_token" in body, (
         "a mutating plan delete must carry the preview's ticket - the server refuses without one")
     assert "this._fetchRemovePlan()" in body, (
@@ -36,5 +36,5 @@ def test_the_folder_flow_delete_step_sends_the_ticket():
 
 
 def test_the_dry_run_sends_the_ticket_when_it_has_one():
-    body = _body("detail.js", "removePlanDry()")
+    body = _body("detail.js", "removePlanDry(ev)")
     assert "plan_token" in body

@@ -11,3 +11,6 @@ jinja2==3.1.6
 argon2-cffi==25.1.0
 cryptography==50.0.2
 keyring==25.7.0
+pyseto==1.10.0
+iso8601==2.1.0
+pycryptodomex==3.23.0

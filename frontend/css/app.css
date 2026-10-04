@@ -114,6 +114,14 @@ body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", 
 .kl-note { font-size: var(--fs-xs); color: var(--muted); line-height: 1.45; }
 .kl-callout { border: 1px solid var(--warn-bd); background: var(--warn-bg); color: var(--warn); border-radius: var(--r-md); padding: 6px 9px; font-size: 11.5px; }
 
+/* Pro: the tag on a locked button (and the header badge), and the notice it opens. */
+.protag { display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: .05em; line-height: 1.3; padding: 1px 5px; border-radius: 5px; color: var(--accent); background: var(--accent-bg); border: 1px solid var(--accent-bd); }
+.kl-btn.danger .protag, .kl-btn.primary .protag { color: #fff; background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.4); }
+.kl-pronotice { position: fixed; width: 300px; max-width: calc(100vw - 32px); background: var(--surface); color: var(--fg); border: 1px solid var(--bd); border-radius: var(--r-lg); box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 12px; }
+.kl-pronotice .t { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: var(--fs-sm); }
+.kl-pronotice p { margin: 4px 0 10px; font-size: var(--fs-sm); color: var(--muted); }
+.kl-pronotice .acts { display: flex; justify-content: flex-end; gap: 6px; }
+
 /* Confirm dialog's detailed shape: the what / how many / where / how table. */
 .kl-facts { border: 1px solid var(--bd); border-radius: var(--r-md); overflow: hidden; }
 .kl-facts .r { display: flex; gap: 10px; padding: 5px 9px; font-size: var(--fs-sm); border-bottom: 1px solid var(--bd); }

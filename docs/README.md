@@ -13,4 +13,8 @@ KopiaLens is a web app for exploring, analysing and managing [Kopia](https://kop
 - [Sign-in and your account](sign-in.md): the KopiaLens password, staying signed in, signing out other devices, and resetting a forgotten password.
 - [Encryption](encryption.md): encrypting what KopiaLens stores on disk, the recovery key, and unlocking after a restart.
 
+## Pro
+
+- [Free and Pro](licensing.md): what Pro adds, adding your licence, renewals, and licences in Docker.
+
 More pages are added as features are documented.

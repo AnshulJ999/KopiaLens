@@ -189,9 +189,10 @@ const detailPart = {
           getJson(`/api/actions/purge-plan?${base}`),
         ]);
         if (seq !== this._detailSeq) return;  // a newer file was opened meanwhile - drop this result
-        const items = purge.items || [];
-        const purgeRows = (purge.commands || []).map((c, i) => {
-          const it = items[i] || {};
+        // A Free install gets the snapshots without ids or commands (the purge plan is Pro).
+        const cmds = purge.commands || [];
+        const purgeRows = (purge.items || []).map((it, i) => {
+          const c = cmds[i] || "";
           return { cmd: Array.isArray(c) ? c.join(" ") : c, time: it.start_time, tag: it.pinned ? "pinned" : ((it.retention && it.retention.length) ? `kept: ${it.retention.join(", ")}` : ""), id: it.id };
         });
         Object.assign(this.detail, {   // merge (not replace) so a command built meanwhile (removeFiles) survives
@@ -235,7 +236,7 @@ const detailPart = {
       this.rfEnsurePlan();
     },
     async rfEnsurePlan() {  // counts + chunked command text for the current params (index-only, fast)
-      if (!this.detail) return null;
+      if (!this.detail || !this.proOk("remove")) return null;
       const seq = ++this._rfPlanSeq;  // two rapid switches: the slower stale response must not win
       try {
         const r = await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.detail.source, full_path: this.detail.title, by: this.detail.rfBy || "object-id", everywhere: !!this.detail.rfEverywhere, confirm: false }) });
@@ -247,8 +248,8 @@ const detailPart = {
         return null;
       }
     },
-    rfDry() {  // RUN remove-files without --commit; kopia reports what it would rewrite
-      if (!this.detail) return;
+    rfDry(ev) {  // RUN remove-files without --commit; kopia reports what it would rewrite
+      if (!this.detail || !this.proGate("remove", ev)) return;
       const st = this.detail.rfDry = (this.detail.rfDry || this.klDryState());
       return this.klDry("/api/actions/remove-files-dry-run",
         { repo: this.repo, source: this.detail.source, full_path: this.detail.title, by: this.detail.rfBy || "object-id", everywhere: !!this.detail.rfEverywhere }, st);
@@ -257,7 +258,8 @@ const detailPart = {
       const st = this.detail && this.detail.rfDry;
       return !!(st && st.done && st.ok && !st.running);
     },
-    async executeRemoveFiles() {
+    async executeRemoveFiles(ev) {
+      if (!this.proGate("remove", ev)) return;
       const plan = (this.detail && this.detail.removeFiles) || await this.rfEnsurePlan();
       if (!plan || !this.detail) return;
       const ok = await this.klConfirm({
@@ -284,8 +286,8 @@ const detailPart = {
 
     // ---- Purge plan (path-scoped): delete the whole snapshots carrying this path ----
     purgeIds() { return ((this.detail && this.detail.purge) || []).map((r) => r.id).filter(Boolean); },
-    purgeDry() {
-      if (!this.detail) return;
+    purgeDry(ev) {
+      if (!this.detail || !this.proGate("purge", ev)) return;
       const ids = this.purgeIds();
       if (!ids.length) { this.error = "No snapshots to purge."; return; }
       const st = this.detail.purgeDry = (this.detail.purgeDry || this.klDryState());
@@ -295,7 +297,9 @@ const detailPart = {
       const st = this.detail && this.detail.purgeDry;
       return !!(st && st.done && st.ok && !st.running);
     },
-    async executePurge() {
+    copyPurge(ev) { if (this.proGate("purge", ev)) this.copyText(this.detail.purgeCmds); },
+    async executePurge(ev) {
+      if (!this.proGate("purge", ev)) return;
       const ids = this.purgeIds();
       if (!ids.length || !this.detail) return;
       const rows = this.detail.purge || [];
@@ -423,8 +427,8 @@ const detailPart = {
       this.klDryClear(this.removePlan.dry);
       this._fetchRemovePlan();
     },
-    removePlanDry() {  // run the whole matched plan's real kopia dry run
-      if (!this.removePlan) return;
+    removePlanDry(ev) {  // run the whole matched plan's real kopia dry run
+      if (!this.removePlan || !this.proGate("remove", ev)) return;
       const st = this.removePlan.dry = (this.removePlan.dry || this.klDryState());
       // The ticket is optional for a dry run, but sending it keeps the dry run on the previewed
       // list too (an expired one simply falls back to the filter - nothing mutates).
@@ -465,7 +469,9 @@ const detailPart = {
       if (!p || !p.total_physical) return null;
       return Math.round((p.physical / p.total_physical) * 100);
     },
-    async removeSaveBat() {
+    copyRemoveCommand(ev) { if (this.proGate("remove", ev)) this.copyText(this.removePlan.commit); },
+    async removeSaveBat(ev) {
+      if (!this.proGate("remove", ev)) return;
       const r = await getJson("/api/actions/remove-bat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
       if (!r || !this.removePlan) return;
       this._downloadText(r.filename, r.content);
@@ -473,8 +479,8 @@ const detailPart = {
       this.actionText = `Downloaded ${r.filename} (${r.batches} batches). Run it; kopia output logs next to it.`;
       this.klNotify(`Downloaded ${r.filename} (${r.batches} batches). Run it - kopia's output logs next to it.`);
     },
-    async removeRun() {
-      if (!this.removePlan) return;
+    async removeRun(ev) {
+      if (!this.removePlan || !this.proGate("remove", ev)) return;
       const p = this.removePlan;
       const files = countOf(this.removeFileTotal(), "file");
       const share = p.capped && this.removeCoverage() != null ? ` · ${this.removeCoverage()}% of the match` : "";

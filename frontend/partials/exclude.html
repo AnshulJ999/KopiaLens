@@ -23,9 +23,9 @@
               <span class="kl-seg">
                 <span :class="exDialog.shape === 'exact' ? 'on' : ''" @click="exMultiSetShape('exact')" title="Smart may switch an item to Same name so the rule reaches every backup">This item</span>
                 <span :class="exDialog.shape === 'parent' ? 'on' : ''" @click="exMultiSetShape('parent')">Its folder</span>
-                <span :class="exDialog.shape === 'name' ? 'on' : ''" @click="exMultiSetShape('name')">Same name</span>
-                <span :class="exDialog.shape === 'extension' ? 'on' : ''" @click="exMultiSetShape('extension')" title="Folders keep This item">Same extension</span>
-                <span :class="exDialog.shape === 'similar' ? 'on' : ''" @click="exMultiSetShape('similar')">Similar names</span>
+                <span :class="exDialog.shape === 'name' ? 'on' : ''" @click="exMultiSetShape('name')">Same name<span class="protag ml-1" x-show="!proOk('exclude_smart')">PRO</span></span>
+                <span :class="exDialog.shape === 'extension' ? 'on' : ''" @click="exMultiSetShape('extension')" title="Folders keep This item">Same extension<span class="protag ml-1" x-show="!proOk('exclude_smart')">PRO</span></span>
+                <span :class="exDialog.shape === 'similar' ? 'on' : ''" @click="exMultiSetShape('similar')">Similar names<span class="protag ml-1" x-show="!proOk('exclude_smart')">PRO</span></span>
               </span>
               <template x-if="['name', 'extension', 'similar'].includes(exDialog.shape)">
                 <div class="mt-2">
@@ -85,9 +85,9 @@
               <div class="text-xs font-medium mb-1">Match</div>
               <span class="kl-seg">
                 <span :class="exDialog.shape === 'exact' ? 'on' : ''" @click="exSelectShape('exact')">This item</span>
-                <span :class="exDialog.shape === 'name' ? 'on' : ''" @click="exSelectShape('name')">Same name</span>
-                <span x-show="exDialog.kind === 'file'" :class="exDialog.shape === 'extension' ? 'on' : ''" @click="exSelectShape('extension')">Same extension</span>
-                <span :class="exDialog.shape === 'similar' ? 'on' : ''" @click="exSelectShape('similar')">Similar names</span>
+                <span :class="exDialog.shape === 'name' ? 'on' : ''" @click="exSelectShape('name')">Same name<span class="protag ml-1" x-show="!proOk('exclude_smart')">PRO</span></span>
+                <span x-show="exDialog.kind === 'file'" :class="exDialog.shape === 'extension' ? 'on' : ''" @click="exSelectShape('extension')">Same extension<span class="protag ml-1" x-show="!proOk('exclude_smart')">PRO</span></span>
+                <span :class="exDialog.shape === 'similar' ? 'on' : ''" @click="exSelectShape('similar')">Similar names<span class="protag ml-1" x-show="!proOk('exclude_smart')">PRO</span></span>
                 <span :class="exDialog.shape === 'custom' ? 'on' : ''" @click="exSelectShape('custom')">Custom</span>
               </span>
               <div class="kl-note mt-1" x-show="exShapeLabel()" x-text="exShapeLabel()"></div>
@@ -120,7 +120,7 @@
               </template>
               <template x-if="exDialog.shape === 'custom'">
                 <div class="mt-2">
-                  <input x-model="exDialog.custom" @input="exCustomInput()" @keydown.enter="exConfirm()"
+                  <input x-model="exDialog.custom" @input="exCustomInput()" @keydown.enter="exConfirm($event)"
                          class="fld w-full border border-bd bg-surface2 font-mono text-xs" placeholder="kopia ignore pattern, e.g. /Users/*/Cache/**">
                   <div class="kl-note mt-1">Written as-is to every ticked policy. A leading / starts from each backup's own folder.</div>
                 </div>
@@ -232,9 +232,9 @@
             <span class="kl-note" x-show="!exAlreadyExcluded()">A policy backup is taken first.</span>
             <span class="spacer"></span>
             <button class="kl-btn" @click="exClose()">Cancel</button>
-            <button class="kl-btn primary" x-show="exDialog.mode === 'exclude'" @click="exConfirm()"
-                    :disabled="!exCanCommit()">Exclude…</button>
-            <button class="kl-btn primary" x-show="exDialog.mode === 'delete' && !exAlreadyExcluded()" @click="exConfirm()"
+            <button class="kl-btn primary" x-show="exDialog.mode === 'exclude'" @click="exConfirm($event)"
+                    :disabled="!exCanCommit()">Exclude… <span class="protag" x-show="exSmartLocked()">PRO</span></button>
+            <button class="kl-btn primary" x-show="exDialog.mode === 'delete' && !exAlreadyExcluded()" @click="exConfirm($event)"
                     :disabled="!exCanCommit()">Next: delete</button>
             <button class="kl-btn danger" x-show="exAlreadyExcluded()" @click="exJustDelete()">Delete…</button>
           </div>

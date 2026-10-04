@@ -91,11 +91,11 @@
 {%- if kind == 'file' -%}
 <button class="kl-btn" @click="openExclude({kind: 'file', path: detail.title, source: detail.source}, 'exclude')">Exclude…</button>
 <button class="kl-btn danger" @click="openDeletePanel([{source: detail.source, full_path: detail.title}])">Delete…</button>
-<button class="kl-btn danger" @click="openExclude({kind: 'file', path: detail.title, source: detail.source}, 'delete')">Exclude &amp; delete…</button>
+<button class="kl-btn danger" @click="openExclude({kind: 'file', path: detail.title, source: detail.source}, 'delete', $event)">Exclude &amp; delete… <span class="protag" x-show="!proOk('exclude_delete')">PRO</span></button>
 {%- else -%}
 <button class="kl-btn" @click="openExclude({kind: 'folder', path: detail.title, source: detail.source}, 'exclude')">Exclude…</button>
 <button class="kl-btn danger" @click="folderDeleteFromPanel()">Delete folder…</button>
-<button class="kl-btn danger" @click="openExclude({kind: 'folder', path: detail.title, source: detail.source}, 'delete')">Exclude &amp; delete…</button>
+<button class="kl-btn danger" @click="openExclude({kind: 'folder', path: detail.title, source: detail.source}, 'delete', $event)">Exclude &amp; delete… <span class="protag" x-show="!proOk('exclude_delete')">PRO</span></button>
 {%- endif -%}
 {%- endmacro -%}
 
@@ -191,13 +191,13 @@
     </template>
   </div>
   <div class="kl-runbar">
-    <button class="kl-btn" @click="purgeDry()" :disabled="detail.purgeDry.running">
-      <span x-text="detail.purgeDry.done ? 'Dry run again' : 'Dry run'"></span>
+    <button class="kl-btn" @click="purgeDry($event)" :disabled="detail.purgeDry.running">
+      <span x-text="detail.purgeDry.done ? 'Dry run again' : 'Dry run'"></span> <span class="protag" x-show="!proOk('purge')">PRO</span>
     </button>
-    <button class="kl-btn danger" @click="executePurge()" :disabled="detail.purgeDry.running" x-text="'Delete ' + countOf(purgeIds().length, 'snapshot')"></button>
+    <button class="kl-btn danger" @click="executePurge($event)" :disabled="detail.purgeDry.running"><span x-text="'Delete ' + countOf(detail.purge.length, 'snapshot')"></span> <span class="protag" x-show="!proOk('purge')">PRO</span></button>
     <span x-show="purgeDryChecked()" class="pill ok">dry run checked</span>
     <span class="grow"></span>
-    <button class="kl-btn quiet" @click="copyText(detail.purgeCmds)">Copy command</button>
+    <button class="kl-btn quiet" @click="copyPurge($event)">Copy command <span class="protag" x-show="!proOk('purge')">PRO</span></button>
   </div>
   {{ dryresult('detail.purgeDry') }}
 </div>
@@ -217,11 +217,11 @@
     </label>
   </div>
   <div class="kl-runbar">
-    <button class="kl-btn" @click="rfDry()" :disabled="detail.rfDry.running">
-      <span x-text="detail.rfDry.done ? 'Dry run again' : 'Dry run'"></span>
+    <button class="kl-btn" @click="rfDry($event)" :disabled="detail.rfDry.running">
+      <span x-text="detail.rfDry.done ? 'Dry run again' : 'Dry run'"></span> <span class="protag" x-show="!proOk('remove')">PRO</span>
     </button>
-    <button class="kl-btn danger" @click="executeRemoveFiles()" :disabled="detail.rfDry.running"
-            x-text="detail.removeFiles ? ('Remove ' + countOf(detail.removeFiles.count, detail.removeFiles.by === 'object-id' ? 'version' : 'name')) : 'Remove from snapshots'"></button>
+    <button class="kl-btn danger" @click="executeRemoveFiles($event)" :disabled="detail.rfDry.running"><span
+            x-text="detail.removeFiles ? ('Remove ' + countOf(detail.removeFiles.count, detail.removeFiles.by === 'object-id' ? 'version' : 'name')) : 'Remove from snapshots'"></span> <span class="protag" x-show="!proOk('remove')">PRO</span></button>
     <span x-show="rfDryChecked()" class="pill ok">dry run checked</span>
     <span class="grow"></span>
     <button class="kl-btn quiet" x-show="detail.removeFiles" @click="detail.showCmd = !detail.showCmd" x-text="detail.showCmd ? 'Hide command' : 'Show command'"></button>
@@ -242,7 +242,7 @@
   <div class="li" x-show="exVariants && exVariants.error"><span class="kl-note" x-text="exVariants ? exVariants.error : ''"></span></div>
   <template x-for="(v, i) in exVariantRows()" :key="i">
     <div class="li">
-      <span style="color:var(--muted);width:170px;flex:none" x-text="v.label"></span>
+      <span style="color:var(--muted);width:170px;flex:none"><span x-text="v.label"></span> <span class="protag" x-show="exSmartShape(v.spec.shape) && !proOk('exclude_smart')">PRO</span></span>
       <span class="font-mono break-all grow" x-text="v.patterns.join('   ')"></span>
       <span class="shrink-0" style="color:var(--muted)" x-text="'in ' + exLabel(v.target)" :title="'Smart puts this rule in ' + exLabel(v.target)"></span>
       <span class="pill shrink-0" x-show="v.already_excluded">already excluded</span>
@@ -256,7 +256,7 @@
 {%- macro file_exclude() -%}
 <div class="kl-sec">
   <div class="h">Stop backing this up <span class="count" x-text="exVariantRows().length + ' rules'"></span>
-    <span class="acts"><button class="kl-btn" style="height:24px" @click="openExclude({kind: 'file', path: detail.title, source: detail.source}, 'delete')">Exclude and delete…</button></span>
+    <span class="acts"><button class="kl-btn" style="height:24px" @click="openExclude({kind: 'file', path: detail.title, source: detail.source}, 'delete', $event)">Exclude and delete… <span class="protag" x-show="!proOk('exclude_delete')">PRO</span></button></span>
   </div>
   {{ exclude_variants('file') }}
 </div>
@@ -266,7 +266,7 @@
 <div class="kl-sec">
   <div class="h">Stop backing this up
     <span class="acts">
-      <button class="kl-btn" style="height:24px" @click="openExclude({kind: 'folder', path: detail.title, source: detail.source}, 'delete')">Exclude and delete…</button>
+      <button class="kl-btn" style="height:24px" @click="openExclude({kind: 'folder', path: detail.title, source: detail.source}, 'delete', $event)">Exclude and delete… <span class="protag" x-show="!proOk('exclude_delete')">PRO</span></button>
       <button class="kl-btn quiet" style="height:24px" @click="openExclude({kind: 'folder', path: detail.title, source: detail.source}, 'exclude')">Exclude…</button>
     </span>
   </div>

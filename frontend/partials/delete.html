@@ -122,8 +122,8 @@
                 </template>
 
                 <div class="kl-runbar">
-                  <button class="kl-btn" @click="delDry()" :disabled="delPanel.dry.running || !delReady()">
-                    <span x-text="delPanel.dry.done ? 'Dry run again' : 'Dry run'"></span>
+                  <button class="kl-btn" @click="delDry($event)" :disabled="delPanel.dry.running || !delReady()">
+                    <span x-text="delPanel.dry.done ? 'Dry run again' : 'Dry run'"></span> <span class="protag" x-show="!proOk(delFeature())">PRO</span>
                   </button>
                   <span x-show="delDryChecked()" class="pill ok">dry run checked</span>
                   <span class="grow"></span>
@@ -144,7 +144,7 @@
             <template x-if="!delPanel.flow">
               <span class="flex items-center gap-2">
                 <button class="kl-btn" @click="closeDelete()">Cancel</button>
-                <button class="kl-btn danger" @click="delExecute()" :disabled="!delReady() || delPanel.dry.running" x-text="delConfirmLabel() + '…'"></button>
+                <button class="kl-btn danger" @click="delExecute($event)" :disabled="!delReady() || delPanel.dry.running"><span x-text="delConfirmLabel() + '…'"></span> <span class="protag" x-show="!proOk(delFeature())">PRO</span></button>
               </span>
             </template>
             <template x-if="delPanel.flow">

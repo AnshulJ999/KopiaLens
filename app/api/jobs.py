@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from ..core import jobs
 from ..core.sources import invalidate as invalidate_sources
+from ..licensing import features
 
 router = APIRouter(tags=["jobs"])
 
@@ -232,10 +233,22 @@ def _on_done(job: dict) -> None:
         pass
 
 
+def _require_pro(kind: str, repo: str, params: dict) -> None:
+    """The Pro job kinds (features.PRO). Dry runs too: their output lists the plan."""
+    if kind == "remove_files":
+        features.require("remove", repo)
+    elif kind == "policy_write":
+        if params.get("then"):
+            features.require("exclude_delete", repo)
+        if params.get("shape") in features.SMART_SHAPES:
+            features.require("exclude_smart", repo)
+
+
 @router.post("/jobs/start")
 def start(payload: JobStartRequest) -> dict:
     if payload.kind not in jobs.KINDS:
         raise HTTPException(status_code=409, detail=f"unknown job kind: {payload.kind}")
+    _require_pro(payload.kind, payload.repo, payload.params)
     try:
         params = _resolve_params(payload.kind, payload.repo, payload.params)
         job = jobs.start_job(payload.kind, payload.repo, params, payload.label,

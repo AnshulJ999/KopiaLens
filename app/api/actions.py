@@ -37,6 +37,7 @@ from ..core.nightly import start_index_pass_async
 from ..index.holding import snapshots_for_path
 from ..index.physical import batch_detail, folder_detail
 from ..index.queries import paths_named, remove_targets, remove_targets_summary
+from ..licensing import features
 from ..settings import load_settings
 
 router = APIRouter(tags=["actions"])
@@ -273,6 +274,7 @@ def remove_files(payload: RemoveFilesRequest) -> dict:
     """The dry-run + commit commands for removing file(s) from ALL snapshots (nothing runs),
     via `kopia snapshot fix remove-files`. by="object-id" removes the exact content everywhere
     (no --source); by="filename" is scoped per source. Executing is the job runner's."""
+    features.require("remove", payload.repo)
     oids, names, scope = _rf_resolve(payload)
 
     if payload.by == "filename":
@@ -293,6 +295,7 @@ def _dry_response(r: dict) -> dict:
 def remove_files_dry_run_route(payload: RemoveFilesRequest) -> dict:
     """RUN remove-files without --commit: kopia walks every snapshot in scope and reports what it
     would rewrite, changing nothing. Synchronous (spinner); the shared job runner streams it later."""
+    features.require("remove", payload.repo)
     oids, names, scope = _rf_resolve(payload)
     if payload.by == "filename":
         if not names:
@@ -467,8 +470,10 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
                 "filename_extra_physical": 0}
     scope = _remove_scope(payload.everywhere, t["sources"])
     generation = index_generation(payload.repo)
+    # Free installs see the whole preview, but never the commands or ids that rebuild the delete.
+    pro = features.allowed("remove", payload.repo)
     plan_token = _remember_plan({"items": items, "flag": flag, "source": scope, "by": payload.by,
-                                 "repo": payload.repo, "generation": generation})
+                                 "repo": payload.repo, "generation": generation}) if pro else None
     # 8k per command so the copied lines are pasteable into a terminal (cmd.exe line cap ~8191).
     # The background executor uses larger 32k batches (fewer kopia invocations).
     commit_cmds = remove_files_chunked_commands(payload.repo, items, source=scope, commit=True, max_chars=8000, flag=flag)
@@ -503,9 +508,10 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
         "total_logical": t["total_logical"], "capped": t["capped"],
         "sources_scope": scope or [], "everywhere": scope is None,
         "sources_matched": t["sources"], "batches": len(commit_cmds),
-        "preview": t["files"], "all_versions": payload.all_versions,
-        "commit": "\n".join(_fmt_cmd(c) for c in commit_cmds),
-        "dry_run": "\n".join(_fmt_cmd(c) for c in dry_cmds),
+        "preview": t["files"] if pro else [{k: v for k, v in f.items() if k != "content_id"} for f in t["files"]],
+        "all_versions": payload.all_versions,
+        "commit": "\n".join(_fmt_cmd(c) for c in commit_cmds) if pro else "",
+        "dry_run": "\n".join(_fmt_cmd(c) for c in dry_cmds) if pro else "",
         "filename_match_total": None, "filename_extra_count": 0, "filename_extra": [],
         "filename_extra_capped": False, "filename_extra_logical": 0, "filename_extra_physical": 0,
         **extra,
@@ -606,6 +612,7 @@ def remove_detail(payload: RemovePlanRequest) -> dict:
 def remove_bat(payload: RemovePlanRequest) -> dict:
     """Write the chunked commit commands to a timestamped .bat (each batch logs kopia's output to a
     .log next to it) so the user can run + monitor it themselves. Returns the file paths."""
+    features.require("remove", payload.repo)
     t = _remove_targets(payload)
     items, flag = _remove_items(t, payload.by)
     if not items:
@@ -625,6 +632,7 @@ def remove_bat(payload: RemovePlanRequest) -> dict:
 def remove_plan_dry_run(payload: RemovePlanRequest) -> dict:
     """RUN the chunked plan's dry run (remove-files without --commit) over the matched set.
     Synchronous; output capped, full text logged to data/logs."""
+    features.require("remove", payload.repo)
     t = _remove_targets(payload)
     items, flag = _remove_items(t, payload.by)
     if not items:
@@ -745,8 +753,9 @@ def purge_plan(repo: str, source: str | None = None, full_path: str | None = Non
     if not source or not full_path:
         raise HTTPException(status_code=400, detail="source and full_path are required")
     held = snapshots_for_path(repo, source, full_path)
-    snapshot_ids = [r["snapshot_id"] for r in held]
-    items = [{"id": r["snapshot_id"], "retention": r["retention"], "pinned": r["pinned"],
+    pro = features.allowed("purge", repo)   # Free: which snapshots and when, without their ids
+    snapshot_ids = [r["snapshot_id"] for r in held] if pro else []
+    items = [{"id": r["snapshot_id"] if pro else "", "retention": r["retention"], "pinned": r["pinned"],
               "start_time": r["start_time"]} for r in held]
     return {
         "repo": repo,
@@ -754,6 +763,6 @@ def purge_plan(repo: str, source: str | None = None, full_path: str | None = Non
         "full_path": full_path,
         "snapshot_ids": snapshot_ids,
         "items": items,  # per-snapshot retention/pin status (don't purge a kept one)
-        "commands": snapshot_delete_commands(repo, snapshot_ids),
+        "commands": snapshot_delete_commands(repo, snapshot_ids) if pro else [],
         "executes": False,
     }

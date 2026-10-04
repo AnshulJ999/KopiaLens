@@ -230,15 +230,15 @@
 
             <div class="mt-3 border-t border-bd pt-2">
               <div class="kl-runbar">
-                <button class="kl-btn" @click="removePlanDry()" :disabled="removePlan.dry.running || !removePlan.file_count">
-                  <span x-text="removePlan.dry.done ? 'Dry run again' : 'Dry run'"></span>
+                <button class="kl-btn" @click="removePlanDry($event)" :disabled="removePlan.dry.running || !removePlan.file_count">
+                  <span x-text="removePlan.dry.done ? 'Dry run again' : 'Dry run'"></span> <span class="protag" x-show="!proOk('remove')">PRO</span>
                 </button>
-                <button class="kl-btn danger" x-show="!removePlan.flow" @click="removeRun()" :disabled="removePlan.dry.running || !removePlan.file_count">Delete…</button>
+                <button class="kl-btn danger" x-show="!removePlan.flow" @click="removeRun($event)" :disabled="removePlan.dry.running || !removePlan.file_count">Delete… <span class="protag" x-show="!proOk('remove')">PRO</span></button>
                 <span x-show="removePlanDryChecked()" class="pill ok">dry run checked</span>
                 <span class="grow"></span>
-                <button class="kl-btn quiet" @click="copyText(removePlan.commit)">Copy command</button>
-                <button class="kl-btn quiet" @click="removeSaveBat()" title="Runs the same commands and logs kopia's output">Save script</button>
-                <button class="kl-btn quiet" @click="removePlan.showCmd = !removePlan.showCmd" x-text="removePlan.showCmd ? 'Hide command' : 'Show command'"></button>
+                <button class="kl-btn quiet" @click="copyRemoveCommand($event)">Copy command <span class="protag" x-show="!proOk('remove')">PRO</span></button>
+                <button class="kl-btn quiet" @click="removeSaveBat($event)" title="Runs the same commands and logs kopia's output">Save script <span class="protag" x-show="!proOk('remove')">PRO</span></button>
+                <button class="kl-btn quiet" x-show="removePlan.commit" @click="removePlan.showCmd = !removePlan.showCmd" x-text="removePlan.showCmd ? 'Hide command' : 'Show command'"></button>
               </div>
               <div class="kl-note mt-1" x-show="removePlan.batSaved" x-text="removePlan.batSaved && ('Downloaded: ' + removePlan.batSaved.filename)"></div>
               <template x-if="removePlan.showCmd">

@@ -25,7 +25,8 @@ from starlette.middleware.gzip import GZipMiddleware
 from config import APP_VERSION, DATA_DIR, DEMO_BACKBLAZE, DEMO_INSTANCE, REPOS, is_demo, repo_kind
 
 from .api import (account, actions, appconfig, audit, backblaze, dashboard, deleteplan, encryption, excluded, insights,
-                  jobs, logs, onboarding, policies, restore, search, setup, shell, simulate, snapshots, stats, tree)
+                  jobs, licence, logs, onboarding, policies, restore, search, setup, shell, simulate, snapshots, stats,
+                  tree)
 from .core import auth, pause
 from .core import jobs as jobrunner
 from .index.crypto import StoreLocked
@@ -711,6 +712,11 @@ async def lifespan(_app: FastAPI):
     # After the keychain unlock above: a migration step that rewrites Parquet needs the key.
     threading.Thread(target=_upgrade_indexes, name="index-upgrade", daemon=True).start()
     threading.Thread(target=_bg_worker, daemon=True).start()
+    try:  # subscription and Patreon licences renew quietly before they end
+        from .licensing import licence as _licence
+        _licence.start_renewal()
+    except Exception as exc:  # noqa: BLE001 - licensing must never block startup
+        log.warning("licence renewal not started: %s", exc)
     yield
     log.info("KopiaLens shutting down")
     _bg_stop.set()
@@ -1150,6 +1156,7 @@ app.include_router(account.router, prefix="/api")
 app.include_router(onboarding.router, prefix="/api")
 app.include_router(appconfig.router, prefix="/api")
 app.include_router(shell.router, prefix="/api")
+app.include_router(licence.router, prefix="/api")
 if not DEMO_INSTANCE or DEMO_BACKBLAZE:   # a demo reads only its own generated bzdata
     app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
 

@@ -16,7 +16,8 @@ const excludePart = {
 
     // ctx: {kind: "file"|"folder", path, source?, spec?: {shape, level, where, leaf}, preset?} or
     // {items: [{kind, path, source}]}; mode: "exclude"|"delete".
-    async openExclude(ctx, mode = "exclude") {
+    async openExclude(ctx, mode = "exclude", ev = null) {
+      if (mode === "delete" && !this.proGate("exclude_delete", ev)) return;
       if (this.flow) this.flowCancel();
       const items = (ctx.items || []).filter((i) => i && i.path);
       if (items.length > 1) return this.exOpenMulti(items, mode);
@@ -77,7 +78,8 @@ const excludePart = {
       const seq = ++this._exTargetsSeq;
       this._exClearPrice();
       d.loading = true;
-      const suggest = d.reach === "smart" && !d.userShape && !d.autoShaped && d.shape !== "custom";
+      // Smart may switch to a name/extension rule; a Free install keeps the exact item (smart rules are Pro).
+      const suggest = d.reach === "smart" && !d.userShape && !d.autoShaped && d.shape !== "custom" && this.proOk("exclude_smart");
       try {
         // Custom text has no backend shape: resolve targets with a neutral one.
         const r = await getJson("/api/policies/exclusion-targets", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -223,6 +225,12 @@ const excludePart = {
           const patterns = this.exPatternsOf(t);
           return { target: t.target, pattern: patterns[0], patterns, key: patterns.join("\n"), t, is_child: t.role === "child" };
         });
+    },
+
+    exSmartShape(shape) { return ["name", "extension", "similar"].includes(shape); },
+    exSmartLocked() {
+      const d = this.exDialog;
+      return !!d && this.exSmartShape(d.shape) && !this.proOk("exclude_smart");
     },
 
     exShapeLabel() {
@@ -615,9 +623,10 @@ const excludePart = {
       return d.multi ? this.exMultiReady() : (!d.pricing && this.exPriceReady());
     },
 
-    async exConfirm() {
+    async exConfirm(ev) {
       const d = this.exDialog;
       if (!d) return;
+      if (this.exSmartShape(d.shape) && !this.proGate("exclude_smart", ev)) return;
       const writes = this.exWrites();
       if (!writes.length) { this.error = "Pick where the rule goes."; return; }
       if (!this.exCanCommit()) {
@@ -651,7 +660,7 @@ const excludePart = {
       });
       if (!ok) return;
       const label = d.multi ? `${d.items.filter((i) => i.on).length} items` : baseName(d.path);
-      const started = await this.startJob("policy_write", { writes }, label);
+      const started = await this.startJob("policy_write", { writes, shape: d.shape }, label);
       if (started) { this.showExclude = false; this.exDialog = null; this.exVariants = null; }
     },
 
@@ -710,7 +719,7 @@ const excludePart = {
           it.loading = true; it.error = "";
           try {
             const body = { repo: this.repo, path: it.path, source: it.src || null, is_folder: it.kind === "folder",
-                           shape, where, level: where === "under" ? 1 : 0, refresh, suggest: d.shape === "exact" };
+                           shape, where, level: where === "under" ? 1 : 0, refresh, suggest: d.shape === "exact" && this.proOk("exclude_smart") };
             refresh = false;
             let r = await getJson("/api/policies/exclusion-targets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
             if (r.smart_shape && r.smart_shape !== shape) {

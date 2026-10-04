@@ -54,3 +54,10 @@ def isolate_disk_side_channels(tmp_path, monkeypatch):
     monkeypatch.setattr(applog, "JOB_LOG_DIR", str(log_dir / "jobs"))
     monkeypatch.setattr(applog, "LOG_FILE", str(log_dir / "app" / "kopialens.log"))
     monkeypatch.setattr(applog, "DEBUG_LOG_FILE", str(log_dir / "app" / "kopialens-debug.log"))
+    # Licences: a per-test licence folder, and Pro unlocked so the delete paths stay testable.
+    # The Free tests (test_licensing) put NO_LICENCE back.
+    from app.licensing import licence
+    from app.licensing.licensekit import Licence, State
+    monkeypatch.setattr(licence, "LICENCE_DIR", str(tmp_path / "licence"))
+    pro = Licence(State.ACTIVE, id="TEST-PRO", name="Test", plan="Pro", capabilities=frozenset({"reclaim"}))
+    monkeypatch.setattr(licence, "current", lambda: pro)

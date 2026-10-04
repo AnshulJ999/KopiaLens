@@ -1,6 +1,7 @@
 
     <header class="h-14 shrink-0 border-b border-bd bg-surface flex items-center gap-3 px-4">
       <button @click="active='dashboard'; loadDashboard()" class="font-semibold text-lg shrink-0">Kopia<span class="text-ok">Lens</span></button>
+      <span x-show="lic.state === 'active'" x-cloak class="protag shrink-0" :title="lic.plan + (lic.name ? ', licensed to ' + lic.name : '')">PRO</span>
       <div class="relative shrink-0" @click.outside="repoMenu = false">
         <button type="button" @click="repoMenu = !repoMenu" class="fld border border-bd bg-surface flex items-center gap-2 max-w-[16rem]"
                 aria-haspopup="menu" :aria-expanded="repoMenu" title="Switch repository">

@@ -1,0 +1,69 @@
+
+            <section x-show="settingsTab==='licence'" class="space-y-4" data-testid="settings-licence">
+              <div class="flex items-center gap-2">
+                <span class="font-medium">Licence</span>
+                <span class="pill" :class="licPillClass()" x-text="licPillText()"></span>
+              </div>
+
+              <template x-if="lic.state === 'none'">
+                <div class="rounded-md border border-bd bg-surface2 px-3 py-2 text-xs text-muted">
+                  Everything you can see is free. Pro adds removing files from snapshots, deleting the snapshots that hold a file, smart exclude rules and exclude &amp; delete.
+                  <button class="text-link underline" @click="proSeePlans()">See plans</button>
+                </div>
+              </template>
+
+              <div x-show="licProblem()" class="kl-callout" x-text="licProblem()"></div>
+
+              <template x-if="lic.state !== 'none'">
+                <div class="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1 text-sm">
+                  <span class="text-muted">Plan</span><span x-text="lic.plan"></span>
+                  <span class="text-muted">Licensed to</span><span class="break-all" x-text="lic.name + (lic.email ? ' · ' + lic.email : '')"></span>
+                  <template x-if="lic.source !== 'patreon' || !lic.renewable">
+                    <span class="contents"><span class="text-muted">Ends</span><span x-text="licExpiresText() + (lic.renewable && lic.state === 'active' ? ' · renews automatically' : '')"></span></span>
+                  </template>
+                  <template x-if="lic.source === 'patreon' && lic.renewable">
+                    <span class="contents"><span class="text-muted">Renews</span><span>Automatically while you're a patron</span></span>
+                  </template>
+                </div>
+              </template>
+
+              <template x-if="licProgress()">
+                <div>
+                  <div class="flex justify-between text-sm"><span>Lifetime licence</span><span class="text-muted" x-text="licProgress().text"></span></div>
+                  <div class="h-1.5 rounded bg-sel overflow-hidden mt-1" role="progressbar" :aria-valuenow="licProgress().pct" aria-valuemax="100" aria-label="Towards a lifetime licence">
+                    <div class="h-full bg-accent-solid" :style="`width:${licProgress().pct}%`"></div>
+                  </div>
+                  <div class="text-[11px] text-muted mt-1">At $60 of support you get Pro for life.</div>
+                </div>
+              </template>
+
+              <template x-if="lic.state !== 'active'">
+                <div class="space-y-3">
+                  <div>
+                    <label for="kl-lic-key" class="block text-xs font-medium mb-1" x-text="lic.state === 'none' ? 'Licence key' : 'New licence key'"></label>
+                    <div class="flex gap-2">
+                      <input id="kl-lic-key" x-model="licKey" @keydown.enter="licActivate()" class="fld border border-bd bg-surface flex-1 min-w-0 font-mono" placeholder="Paste the key from your purchase email" autocomplete="off" spellcheck="false">
+                      <button class="kl-btn primary" @click="licActivate()" :disabled="licBusy" x-text="licBusy && !licPatreonWaiting ? 'Activating…' : 'Activate'"></button>
+                    </div>
+                  </div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-[11px] uppercase tracking-wide text-faint">or</span>
+                    <button class="kl-btn" @click="licPickFile()" :disabled="licBusy">Import licence file…</button>
+                    <input id="kl-lic-file" type="file" accept=".license,.key,.txt" class="hidden" @change="licImportFile($event)">
+                    <button class="kl-btn" @click="licPatreon()" :disabled="licBusy" x-show="!licPatreonWaiting">Sign in with Patreon</button>
+                    <span x-show="licPatreonWaiting" class="text-xs text-muted">Finish signing in in your browser…</span>
+                    <button x-show="licPatreonWaiting" class="kl-btn quiet" @click="licPatreonCancel()">Cancel</button>
+                  </div>
+                  <div class="text-[11px] text-muted">No internet on this computer? On another device, open <span class="font-mono select-all" x-text="lic.offline_url"></span>, enter your key, then import the file here.</div>
+                </div>
+              </template>
+
+              <div x-show="licError" class="kl-callout" x-text="licError"></div>
+
+              <template x-if="lic.state !== 'none'">
+                <div>
+                  <button x-show="lic.stored" class="kl-btn quiet" @click="licRemove()" :disabled="licBusy">Remove licence…</button>
+                  <div x-show="!lic.stored" class="text-[11px] text-muted" x-text="licOriginText()"></div>
+                </div>
+              </template>
+            </section>

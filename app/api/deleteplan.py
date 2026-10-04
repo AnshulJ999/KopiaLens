@@ -21,6 +21,7 @@ from ..core.sources import sources_index
 from ..index.holding import holding_snapshots
 from ..index.queries import (holders_for_paths, paths_for_contents, paths_named,
                              sources_for_content, versions_many)
+from ..licensing import features
 from .actions import _fmt_cmd
 
 router = APIRouter(tags=["delete"])
@@ -128,8 +129,10 @@ def delete_plan(body: PlanBody) -> dict:
             found = paths_for_contents(repo, facts["oids"], sources=scope, cap=LIST_CAP)
             items, flag = facts["oids"], "--object-id"
         rows = [{**r, "selected": r["full_path"] in selected} for r in found["rows"]]
+        # Free installs get the full preview, never the command that runs it.
+        pro = features.allowed("remove", repo)
         cmds = remove_files_chunked_commands(repo, items, source=scope, commit=True,
-                                             max_chars=8000, flag=flag) if items else []
+                                             max_chars=8000, flag=flag) if items and pro else []
         out.update({
             "scope": scope,
             "matches": rows, "match_total": found["total"],
@@ -167,6 +170,9 @@ def delete_plan(body: PlanBody) -> dict:
                     snap["paths"].append(fp)
     snaps = sorted(by_id.values(), key=lambda s: s["start_time"], reverse=True)
     ids = [s["snapshot_id"] for s in snaps]
+    if not features.allowed("purge", repo):   # Free: which snapshots and when, without their ids
+        snaps = [{**s, "snapshot_id": ""} for s in snaps]
+        ids = []
     cmds = snapshot_delete_commands(repo, ids, batch=True) if ids else []
     out.update({
         "scope": scope,

@@ -128,9 +128,11 @@ const deletePart = {
         && !(p.method === "snapshots" && p.plan.capped));
     },
 
-    delDry() {
+    // Remove = Pro "remove"; deleting the snapshots that hold the files = Pro "purge".
+    delFeature() { return this.delPanel && this.delPanel.method === "snapshots" ? "purge" : "remove"; },
+    delDry(ev) {
       const p = this.delPanel;
-      if (!this.delReady()) return;
+      if (!this.delReady() || !this.proGate(this.delFeature(), ev)) return;
       if (p.method === "remove") {
         return this.klDry("/api/actions/remove-files-dry-run",
           { repo: this.repo, files: p.files, by: p.by, sources: p.plan.scope }, p.dry);
@@ -197,9 +199,9 @@ const deletePart = {
       return `Delete ${n} snapshot${n === 1 ? "" : "s"}`;
     },
 
-    async delExecute() {
+    async delExecute(ev) {
       const p = this.delPanel;
-      if (!this.delReady()) return;
+      if (!this.delReady() || !this.proGate(this.delFeature(), ev)) return;
       const ok = await this.klConfirm({
         title: p.method === "remove" ? `Remove ${this.delFileLabel()} from snapshots?` : `Delete ${countOf(p.plan.snapshots.length, "snapshot")}?`,
         facts: this.delFacts(), callout: this.delCallout(),
@@ -221,10 +223,10 @@ const deletePart = {
       })).filter((i) => i.path);
     },
 
-    selExclude(scope, mode = "exclude") {
+    selExclude(scope, mode = "exclude", ev = null) {
       const items = this._selItems(scope);
       if (!items.length) { this.error = "Select one or more rows first."; return; }
-      this.openExclude({ items }, mode);
+      this.openExclude({ items }, mode, ev);
     },
 
     selDelete(scope) {
