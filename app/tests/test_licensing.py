@@ -223,3 +223,59 @@ def test_vendored_licensekit_matches_licensekit():
     names = sorted(p.name for p in src.glob("*.py"))
     assert names == sorted(p.name for p in dst.glob("*.py"))
     assert [n for n in names if not filecmp.cmp(src / n, dst / n, shallow=False)] == []
+
+
+def _signed(**payload) -> str:
+    """A licence signed with LicenseKit's public test key (t1)."""
+    import hashlib
+    import json as _json
+    from datetime import datetime, timezone
+    import pyseto
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    seed = hashlib.sha256(b"licensekit test key - never use for real licences").digest()
+    pem = Ed25519PrivateKey.from_private_bytes(seed).private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    body = {"v": 1, "to": "Test Buyer", "em": "buyer@example.com", "p": {"kopialens": ["reclaim"]},
+            "plan": "Pro", "iat": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "src": "manual", **payload}
+    return pyseto.encode(pyseto.Key.new(4, "public", pem), _json.dumps(body).encode(),
+                         footer=b'{"kid":"t1"}').decode()
+
+
+def _in_days(days: int) -> str:
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_a_gift_licence_sits_beside_a_store_licence(monkeypatch, tmp_path):
+    """Extend/reward: both stay stored, the longer one is shown, the store one still renews with its key."""
+    monkeypatch.setattr(licence, "current", REAL_CURRENT)
+    monkeypatch.setattr(licence, "PUBLIC_KEYS", TEST_KEY)
+    monkeypatch.setattr(licence, "SHARED_DIR", tmp_path / "shared")
+    store = _signed(id="STOR-0000-0001", src="polar", rn=True, exp=_in_days(5), plan="Pro · Yearly")
+    licence._save(store, {"key": "KLENS-KEY", "activation_id": "act-1"})
+    licence.add(_signed(id="GIFT-0000-0001", exp=_in_days(90)))
+    assert licence.status()["id"] == "GIFT-0000-0001"
+
+    calls = []
+
+    class FakeService:
+        def renew(self, token, key="", activation_id=""):
+            calls.append((key, activation_id))
+            return type("R", (), {"ok": False, "error": "unavailable", "status": 503, "message": ""})()
+
+    monkeypatch.setattr(licence, "_service", lambda: FakeService())
+    licence.renew_if_due()
+    assert calls == [("KLENS-KEY", "act-1")]
+
+    licence.remove()
+    assert licence.status()["id"] == "STOR-0000-0001"
+    assert licence._meta_for("STOR-0000-0001") == {"key": "KLENS-KEY", "activation_id": "act-1"}
+
+
+def test_renewal_details_from_the_single_licence_layout_still_read(monkeypatch, tmp_path):
+    import json as _json
+    (tmp_path / "licence").mkdir(exist_ok=True)
+    (tmp_path / "licence" / licence.META_FILE).write_text(
+        _json.dumps({"key": "K", "activation_id": "A", "licence_id": "OLD-0000-0001"}), encoding="utf-8")
+    assert licence._meta_for("OLD-0000-0001") == {"key": "K", "activation_id": "A"}

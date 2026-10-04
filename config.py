@@ -27,7 +27,8 @@ def _read_app_version() -> str:
 APP_VERSION = _read_app_version()
 
 # Online addresses baked into every shipped copy. Final values before the first public build.
-LICENCE_SERVICE_URL = os.environ.get("KOPIALENS_LICENCE_SERVICE") or "https://licensekit.anshuljain.workers.dev"
+# Sandbox (Polar test purchases) until the production switch; never ship this default.
+LICENCE_SERVICE_URL = os.environ.get("KOPIALENS_LICENCE_SERVICE") or "https://licensekit-sandbox.anshuljain.workers.dev"
 PRICING_URL = os.environ.get("KOPIALENS_PRICING_URL") or "https://kopialens.com/#pricing"
 
 

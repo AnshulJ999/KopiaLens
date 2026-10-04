@@ -1,8 +1,9 @@
 """The stored licence: read, add, activate online, Patreon sign-in, quiet renewal.
 
 Every failure leaves the current licence untouched; the worst case is Free, never locked out.
-The licence lives in <data>/licence/license.key (LicenseKit's own format); online.json beside it
-keeps what renewal needs (the store key and activation id, or the Patreon link)."""
+Licences live in <data>/licence/licences/<id>.license (several can be kept; the best one counts);
+online.json beside them keeps, per licence id, what renewal needs (store key and activation id,
+or the Patreon link)."""
 from __future__ import annotations
 
 import json
@@ -95,12 +96,31 @@ def _forget() -> None:
 
 
 def _read_meta() -> dict:
+    """{licence id: renewal details}. Reads the older single-licence shape too."""
     try:
         with open(os.path.join(LICENCE_DIR, META_FILE), encoding="utf-8") as fh:
             data = json.load(fh)
-        return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
+    if not isinstance(data, dict):
+        return {}
+    if "licence_id" in data:
+        old = dict(data)
+        return {old.pop("licence_id"): old}
+    return {k: v for k, v in data.get("licences", {}).items() if isinstance(v, dict)}
+
+
+def _meta_for(lic_id: str) -> dict:
+    return _read_meta().get(lic_id, {})
+
+
+def _set_meta(lic_id: str, meta: dict | None) -> None:
+    metas = _read_meta()
+    if meta:
+        metas[lic_id] = meta
+    else:
+        metas.pop(lic_id, None)
+    _write_meta({"licences": metas})
 
 
 def _write_meta(meta: dict) -> None:
@@ -110,13 +130,6 @@ def _write_meta(meta: dict) -> None:
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2)
     os.replace(tmp, path)
-
-
-def _clear_meta() -> None:
-    try:
-        os.remove(os.path.join(LICENCE_DIR, META_FILE))
-    except OSError:
-        pass
 
 
 def _iso(dt) -> str | None:
@@ -133,8 +146,8 @@ def status() -> dict:
             "expires": _iso(lic.expires), "renewable": lic.renewable, "source": lic.source,
             "origin": lic.origin, "stored": lic.origin == "app folder",
         })
-        meta = _read_meta()
-        if lic.source == "patreon" and meta.get("licence_id") == lic.id and meta.get("threshold_cents"):
+        meta = _meta_for(lic.id)
+        if lic.source == "patreon" and meta.get("threshold_cents"):
             out["patreon"] = {"support_cents": int(meta.get("support_cents") or 0),
                               "threshold_cents": int(meta["threshold_cents"])}
     return out
@@ -152,9 +165,7 @@ def _save(token: str, meta: dict):
         raise LicenceError(_REASONS.get(lic.reason, "That isn't a valid KopiaLens licence."))
     kit.save(token)
     if meta:
-        _write_meta({**meta, "licence_id": lic.id})
-    else:
-        _clear_meta()
+        _set_meta(lic.id, meta)   # a pasted copy of the same licence keeps its renewal details
     _forget()
     log.info(f"licence {lic.id} stored ({lic.plan})")
     return lic
@@ -211,27 +222,35 @@ def _progress(extra: dict) -> dict:
 
 
 def remove() -> None:
+    """Remove the licence in use from this computer; another stored licence may take over."""
+    lic = current()
     kit = _kit()
-    if kit is not None:
-        kit.clear()
-    _clear_meta()
+    if kit is not None and getattr(lic, "origin", "") == "app folder":
+        kit.remove(lic.id)
+        _set_meta(lic.id, None)
+        log.info(f"licence {lic.id} removed")
     _forget()
-    log.info("licence removed")
 
 
 def renew_if_due() -> bool:
-    """Renew a renewable licence close to its end. True when a new licence was stored."""
-    lic = current()
-    if not getattr(lic, "renew_due", False):
+    """Renew every stored renewable licence close to its end. True when one was stored."""
+    kit = _kit()
+    if kit is None:
         return False
-    meta = _read_meta()
-    mine = meta.get("licence_id") == lic.id
-    res = _service().renew(lic.token, key=meta.get("key", "") if mine else "",
-                           activation_id=meta.get("activation_id", "") if mine else "")
+    renewed = False
+    for lic in kit.stored():
+        if lic.renew_due:
+            renewed = _renew(lic) or renewed
+    return renewed
+
+
+def _renew(lic) -> bool:
+    meta = _meta_for(lic.id)
+    res = _service().renew(lic.token, key=meta.get("key", ""), activation_id=meta.get("activation_id", ""))
     if not res.ok:
-        log.info(f"licence renewal not done: {res.error or res.status} {res.message}")
+        log.info(f"licence {lic.id} renewal not done: {res.error or res.status} {res.message}")
         return False
-    keep = {k: v for k, v in meta.items() if k in ("key", "activation_id", "patreon")} if mine else {}
+    keep = {k: v for k, v in meta.items() if k in ("key", "activation_id", "patreon")}
     try:
         _save(res.licence, {**keep, **_progress(res.extra)} if keep.get("patreon") else keep)
     except LicenceError as exc:
