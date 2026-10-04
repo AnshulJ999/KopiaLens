@@ -71,6 +71,6 @@ def patreon_claim(body: SessionBody) -> dict:
 
 
 @router.delete("/licence")
-def remove_licence() -> dict:
-    licence.remove()
+def remove_licence(id: str = "") -> dict:
+    licence.remove(id)
     return _state()

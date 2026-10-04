@@ -96,7 +96,7 @@ document.addEventListener("alpine:init", () => {
     excludedDrives: [], excludedOk: true, excludedPath: "", excludedFilter: "excluded", excludedMeta: "", _excludedItems: [], _excludedSeq: 0, excludedDetail: null, showExcludedDetail: false,
     // Free/Pro (licence.js): GET /api/licence; proNotice = the open upgrade notice.
     lic: { state: "none", locked: [], features: {}, pricing_url: "" }, proNotice: null,
-    licKey: "", licBusy: false, licError: "", licPatreonWaiting: false,
+    licKey: "", licBusy: false, licError: "", licPatreonWaiting: false, licAdding: false,
     showSettings: false, settingsTab: "general", backend: "subprocess", repoPinned: false, reindexInterval: 1800, dashRefresh: 900,
     excludedTolerance: 0.05, esPath: "",
     // Advanced settings. These existed in settings.json all along and had no UI, so the only way to

@@ -7,7 +7,7 @@
 //   POST   /api/licence {text}          paste or file content
 //   POST   /api/licence/activate {key}  store key -> licence (online, once)
 //   POST   /api/licence/patreon/start   -> {url, session};  POST /api/licence/patreon/claim {session}
-//   DELETE /api/licence
+//   DELETE /api/licence[?id=]             the licence in use, or another stored one (lic.others)
 const LIC_PATREON_POLL_MS = 2500;
 const LIC_PATREON_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -94,6 +94,7 @@ const licencePart = {
       this.licBusy = true; this.licError = "";
       try {
         this.lic = await getJson(url, opts);
+        this.licAdding = false;
         if (done) this.klNotify(done);
         return true;
       } catch (e) {
@@ -133,7 +134,7 @@ const licencePart = {
         try {
           const r = await getJson("/api/licence/patreon/claim", { method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ session: start.session }) });
-          if (!r.pending) { this.lic = r; this.klNotify("Pro is active."); break; }
+          if (!r.pending) { this.lic = r; this.licAdding = false; this.klNotify("Pro is active."); break; }
         } catch (e) {
           this.licError = e.message || String(e); break;
         }
@@ -143,12 +144,27 @@ const licencePart = {
     },
     licPatreonCancel() { this.licPatreonWaiting = false; },
     async licRemove() {
+      const next = (this.lic.others || []).find((o) => o.state === "active");
       const ok = await this.klConfirm({
         title: "Remove the licence from this computer?",
         facts: [["Plan", this.lic.plan || ""], ["Licensed to", this.lic.name || ""]],
-        note: "KopiaLens runs as Free until you add it again.",
+        note: next ? `Your ${next.plan} licence takes over.` : "KopiaLens runs as Free until you add it again.",
         confirmLabel: "Remove licence", danger: true,
       });
       if (ok) await this._licCall("/api/licence", { method: "DELETE" }, "Licence removed.");
+    },
+    licOtherWhen(o) {
+      return { active: o.expires ? `Ends ${fmtDate(o.expires)}` : "Never ends",
+               expired: `Ended ${fmtDate(o.expires)}`, banned: "Withdrawn", invalid: "Not valid",
+               not_covered: "Older version" }[o.state] || o.state;
+    },
+    licOtherText(o) { const w = this.licOtherWhen(o); return `${o.plan || "Licence"} · ${w[0].toLowerCase()}${w.slice(1)}`; },
+    async licRemoveOther(o) {
+      const ok = await this.klConfirm({
+        title: "Remove this licence from this computer?",
+        facts: [["Plan", o.plan || ""], ["Status", this.licOtherWhen(o)]],
+        confirmLabel: "Remove licence", danger: true,
+      });
+      if (ok) await this._licCall(`/api/licence?id=${encodeURIComponent(o.id)}`, { method: "DELETE" }, "Licence removed.");
     },
 };

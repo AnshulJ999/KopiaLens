@@ -17,13 +17,27 @@
               <template x-if="lic.state !== 'none'">
                 <div class="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1 text-sm">
                   <span class="text-muted">Plan</span><span x-text="lic.plan"></span>
-                  <span class="text-muted">Licensed to</span><span class="break-all" x-text="lic.name + (lic.email ? ' · ' + lic.email : '')"></span>
+                  <span class="text-muted">Licensed to</span><span class="break-all" x-text="lic.name + (lic.email && lic.email !== lic.name ? ' · ' + lic.email : '')"></span>
                   <template x-if="lic.source !== 'patreon' || !lic.renewable">
                     <span class="contents"><span class="text-muted">Ends</span><span x-text="licExpiresText() + (lic.renewable && lic.state === 'active' ? ' · renews automatically' : '')"></span></span>
                   </template>
                   <template x-if="lic.source === 'patreon' && lic.renewable">
                     <span class="contents"><span class="text-muted">Renews</span><span>Automatically while you're a patron</span></span>
                   </template>
+                </div>
+              </template>
+
+              <template x-if="(lic.others || []).length">
+                <div>
+                  <div class="text-xs font-medium mb-1">Also on this computer</div>
+                  <ul class="space-y-1">
+                    <template x-for="o in lic.others" :key="o.id">
+                      <li class="flex items-center gap-2 text-sm">
+                        <span class="flex-1 min-w-0 truncate" x-text="licOtherText(o)" :title="licOtherText(o)"></span>
+                        <button class="kl-btn quiet" @click="licRemoveOther(o)" :disabled="licBusy">Remove…</button>
+                      </li>
+                    </template>
+                  </ul>
                 </div>
               </template>
 
@@ -37,10 +51,10 @@
                 </div>
               </template>
 
-              <template x-if="lic.state !== 'active'">
+              <template x-if="lic.state !== 'active' || licAdding">
                 <div class="space-y-3">
                   <div>
-                    <label for="kl-lic-key" class="block text-xs font-medium mb-1" x-text="lic.state === 'none' ? 'Licence key' : 'New licence key'"></label>
+                    <label for="kl-lic-key" class="block text-xs font-medium mb-1" x-text="lic.state === 'none' ? 'Licence key' : lic.state === 'active' ? 'Another licence key' : 'New licence key'"></label>
                     <div class="flex gap-2">
                       <input id="kl-lic-key" x-model="licKey" @keydown.enter="licActivate()" class="fld border border-bd bg-surface flex-1 min-w-0 font-mono" placeholder="Paste your licence key or licence" autocomplete="off" spellcheck="false">
                       <button class="kl-btn primary" @click="licActivate()" :disabled="licBusy" x-text="licBusy && !licPatreonWaiting ? 'Activating…' : 'Activate'"></button>
@@ -61,7 +75,9 @@
               <div x-show="licError" class="kl-callout" x-text="licError"></div>
 
               <template x-if="lic.state !== 'none'">
-                <div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <button x-show="lic.state === 'active' && !licAdding" class="kl-btn quiet" @click="licAdding = true">Add another licence…</button>
+                  <button x-show="lic.state === 'active' && licAdding" class="kl-btn quiet" @click="licAdding = false; licError = ''">Cancel</button>
                   <button x-show="lic.stored" class="kl-btn quiet" @click="licRemove()" :disabled="licBusy">Remove licence…</button>
                   <div x-show="!lic.stored" class="text-[11px] text-muted" x-text="licOriginText()"></div>
                 </div>

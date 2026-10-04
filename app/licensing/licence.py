@@ -146,11 +146,21 @@ def status() -> dict:
             "expires": _iso(lic.expires), "renewable": lic.renewable, "source": lic.source,
             "origin": lic.origin, "stored": lic.origin == "app folder",
         })
+        out["others"] = _others(lic.id)
         meta = _meta_for(lic.id)
         if lic.source == "patreon" and meta.get("threshold_cents"):
             out["patreon"] = {"support_cents": int(meta.get("support_cents") or 0),
                               "threshold_cents": int(meta["threshold_cents"])}
     return out
+
+
+def _others(in_use: str) -> list:
+    """Licences stored on this computer besides the one in use."""
+    kit = _kit()
+    if kit is None:
+        return []
+    return [{"id": o.id, "plan": o.plan, "state": o.state.value, "expires": _iso(o.expires)}
+            for o in kit.stored() if o.id != in_use]
 
 
 def _save(token: str, meta: dict):
@@ -221,14 +231,20 @@ def _progress(extra: dict) -> dict:
         return {}
 
 
-def remove() -> None:
-    """Remove the licence in use from this computer; another stored licence may take over."""
-    lic = current()
+def remove(lic_id: str = "") -> None:
+    """Remove one stored licence (default: the one in use); another stored licence may take over."""
     kit = _kit()
-    if kit is not None and getattr(lic, "origin", "") == "app folder":
-        kit.remove(lic.id)
-        _set_meta(lic.id, None)
-        log.info(f"licence {lic.id} removed")
+    if kit is None:
+        return
+    if not lic_id:
+        lic = current()
+        if getattr(lic, "origin", "") != "app folder":
+            return
+        lic_id = lic.id
+    if any(o.id == lic_id for o in kit.stored()):
+        kit.remove(lic_id)
+        _set_meta(lic_id, None)
+        log.info(f"licence {lic_id} removed")
     _forget()
 
 

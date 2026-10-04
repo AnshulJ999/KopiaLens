@@ -279,3 +279,19 @@ def test_renewal_details_from_the_single_licence_layout_still_read(monkeypatch, 
     (tmp_path / "licence" / licence.META_FILE).write_text(
         _json.dumps({"key": "K", "activation_id": "A", "licence_id": "OLD-0000-0001"}), encoding="utf-8")
     assert licence._meta_for("OLD-0000-0001") == {"key": "K", "activation_id": "A"}
+
+
+def test_other_stored_licences_are_listed_and_removable(monkeypatch, tmp_path):
+    monkeypatch.setattr(licence, "current", REAL_CURRENT)
+    monkeypatch.setattr(licence, "PUBLIC_KEYS", TEST_KEY)
+    monkeypatch.setattr(licence, "SHARED_DIR", tmp_path / "shared")
+    licence.add(_signed(id="YEAR-0000-0001", exp=_in_days(30), plan="Pro · Yearly"))
+    licence.add(_signed(id="LIFE-0000-0001", plan="Pro · Lifetime"))
+    st = licence.status()
+    assert st["id"] == "LIFE-0000-0001"
+    assert [(o["id"], o["plan"], o["state"]) for o in st["others"]] == [("YEAR-0000-0001", "Pro · Yearly", "active")]
+    licence.remove("YEAR-0000-0001")
+    st = licence.status()
+    assert st["id"] == "LIFE-0000-0001" and st["others"] == []
+    licence.remove("NOT-STORED")   # unknown id: nothing happens
+    assert licence.status()["id"] == "LIFE-0000-0001"

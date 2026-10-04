@@ -17,12 +17,17 @@ MAX_TOKEN_LEN = 8192
 
 
 def normalise(text) -> str:
-    """Strip what pasting adds: BOM, whitespace, line breaks, '#' comment lines."""
+    """Strip what pasting adds: BOM, whitespace, line breaks, '#' comment lines, and anything before
+    the licence (a one-line input box joins a .license file's header lines onto the licence)."""
     if isinstance(text, bytes):
         text = text.decode("utf-8", "replace")
     if not isinstance(text, str):
         return ""
-    lines = [ln for ln in text.replace("﻿", "").splitlines() if not ln.lstrip().startswith("#")]
+    text = text.replace("﻿", "")
+    start = text.find("v4.public.")
+    if start > 0:
+        text = text[start:]
+    lines = [ln for ln in text.splitlines() if not ln.lstrip().startswith("#")]
     return re.sub(r"\s+", "", "".join(lines))
 
 
