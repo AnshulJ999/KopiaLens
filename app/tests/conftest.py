@@ -59,5 +59,6 @@ def isolate_disk_side_channels(tmp_path, monkeypatch):
     from app.licensing import licence
     from app.licensing.licensekit import Licence, State
     monkeypatch.setattr(licence, "LICENCE_DIR", str(tmp_path / "licence"))
+    monkeypatch.setattr(licence, "_cache", {"at": 0.0, "lic": None})
     pro = Licence(State.ACTIVE, id="TEST-PRO", name="Test", plan="Pro", capabilities=frozenset({"reclaim"}))
     monkeypatch.setattr(licence, "current", lambda: pro)

@@ -70,7 +70,7 @@ def _service():
         from .licensekit import LicenseService
     except Exception as exc:  # noqa: BLE001
         raise LicenceError("Licences can't be checked in this copy of KopiaLens.") from exc
-    return LicenseService(LICENCE_SERVICE_URL, PRODUCT)
+    return LicenseService(LICENCE_SERVICE_URL, PRODUCT, user_agent=f"KopiaLens/{APP_VERSION}")
 
 
 def current():
@@ -174,10 +174,12 @@ def add(text: str):
 
 
 def activate(key: str):
-    """Exchange a store key for a licence (once, online)."""
+    """Exchange a store key for a licence (once, online). A pasted licence is stored as is."""
     key = (key or "").strip()
     if not key:
         raise LicenceError("Enter your licence key.")
+    if "v4.public." in key:
+        return add(key)
     res = _service().activate(key, label=socket.gethostname()[:100])
     if not res.ok:
         raise LicenceError(res.message or "Couldn't activate that key.")

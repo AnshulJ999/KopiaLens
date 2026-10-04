@@ -9,6 +9,10 @@ from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
 OFFLINE_MESSAGE = "Couldn't reach the licence service. Check your connection and try again."
+UNAVAILABLE_MESSAGE = "The licence service isn't available right now. Try again later."
+# Replies that mean the service itself is missing or blocked (Cloudflare edge errors, outages),
+# not a judgement on the key.
+UNAVAILABLE_STATUS = frozenset({403, 404, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 530})
 
 
 @dataclass(frozen=True)
@@ -30,10 +34,12 @@ class OnlineResult:
 
 
 class LicenseService:
-    def __init__(self, base_url: str, product: str, timeout: float = 15):
+    def __init__(self, base_url: str, product: str, timeout: float = 15, user_agent: str = ""):
         self.base_url = base_url.rstrip("/")
         self.product = product
         self.timeout = timeout
+        # Cloudflare refuses Python's default "Python-urllib" agent (error 1010).
+        self.user_agent = user_agent or f"LicenseKit ({product})"
 
     def activate(self, key: str, label: str = "") -> OnlineResult:
         body = {"product": self.product, "key": (key or "").strip()}
@@ -63,7 +69,8 @@ class LicenseService:
             req = urllib.request.Request(
                 self.base_url + path,
                 data=json.dumps(body).encode("utf-8"),
-                headers={"Content-Type": "application/json", "Accept": "application/json"},
+                headers={"Content-Type": "application/json", "Accept": "application/json",
+                         "User-Agent": self.user_agent},
                 method="POST",
             )
             try:
@@ -81,11 +88,16 @@ def _result(status: int, raw: bytes) -> OnlineResult:
         if not isinstance(data, dict):
             raise ValueError
     except ValueError:
-        return OnlineResult(ok=False, status=status, error="bad_response", message="The licence service sent an unexpected reply.")
+        message = UNAVAILABLE_MESSAGE if status in UNAVAILABLE_STATUS else "The licence service sent an unexpected reply."
+        return OnlineResult(ok=False, status=status, error="bad_response", message=message)
     known = {"licence", "licence_id", "plan", "expires", "activation_id", "error", "message"}
     licence = data.get("licence") if isinstance(data.get("licence"), str) else ""
+    ok = status == 200 and bool(licence)
+    message = str(data.get("message") or "")
+    if not ok and not message and status != 202:
+        message = UNAVAILABLE_MESSAGE if status in UNAVAILABLE_STATUS else f"The licence service refused the request (error {status})."
     return OnlineResult(
-        ok=status == 200 and bool(licence),
+        ok=ok,
         status=status,
         licence=licence,
         licence_id=str(data.get("licence_id") or ""),
@@ -93,6 +105,6 @@ def _result(status: int, raw: bytes) -> OnlineResult:
         expires=data.get("expires") if isinstance(data.get("expires"), str) else None,
         activation_id=str(data.get("activation_id") or ""),
         error=str(data.get("error") or ""),
-        message=str(data.get("message") or ""),
+        message=message,
         extra={k: v for k, v in data.items() if k not in known},
     )

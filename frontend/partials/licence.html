@@ -42,7 +42,7 @@
                   <div>
                     <label for="kl-lic-key" class="block text-xs font-medium mb-1" x-text="lic.state === 'none' ? 'Licence key' : 'New licence key'"></label>
                     <div class="flex gap-2">
-                      <input id="kl-lic-key" x-model="licKey" @keydown.enter="licActivate()" class="fld border border-bd bg-surface flex-1 min-w-0 font-mono" placeholder="Paste the key from your purchase email" autocomplete="off" spellcheck="false">
+                      <input id="kl-lic-key" x-model="licKey" @keydown.enter="licActivate()" class="fld border border-bd bg-surface flex-1 min-w-0 font-mono" placeholder="Paste your licence key or licence" autocomplete="off" spellcheck="false">
                       <button class="kl-btn primary" @click="licActivate()" :disabled="licBusy" x-text="licBusy && !licPatreonWaiting ? 'Activating…' : 'Activate'"></button>
                     </div>
                   </div>

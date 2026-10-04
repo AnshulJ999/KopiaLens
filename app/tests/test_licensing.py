@@ -160,6 +160,15 @@ def test_adding_and_removing_a_licence(monkeypatch, tmp_path):
     assert licence.status()["state"] == "none" and not features.allowed("remove", "1")
 
 
+def test_a_licence_pasted_into_the_key_box_is_stored_offline(monkeypatch, tmp_path):
+    monkeypatch.setattr(licence, "current", REAL_CURRENT)
+    monkeypatch.setattr(licence, "PUBLIC_KEYS", TEST_KEY)
+    monkeypatch.setattr(licence, "SHARED_DIR", tmp_path / "shared")
+    monkeypatch.setattr(licence, "_service", lambda: pytest.fail("a pasted licence must not go online"))
+    licence.activate(" " + LIFETIME + "\n")
+    assert licence.status()["state"] == "active"
+
+
 def test_licence_from_an_unknown_key_is_refused(monkeypatch, tmp_path):
     """The shipped build trusts only its own keys: a validly signed licence from another key is not Pro."""
     monkeypatch.setattr(licence, "current", REAL_CURRENT)
