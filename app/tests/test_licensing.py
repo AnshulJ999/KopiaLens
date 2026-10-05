@@ -55,6 +55,7 @@ def test_free_is_refused_every_remove_route(free, route, body):
     ("policy_write", {"writes": [{"target": "global", "add": ["*.tmp"]}],
                       "then": {"kind": "remove_files", "params": {}}}, "exclude_delete"),
     ("policy_write", {"writes": [{"target": "global", "add": ["*.tmp"]}], "shape": "extension"}, "exclude_smart"),
+    ("prune_versions", {"items": [{"obj": "kabc", "snapshot_ids": ["s1"]}], "dry": True}, "prune"),
 ])
 def test_free_cannot_start_pro_jobs(free, kind, params, feature):
     body = jobs_api.JobStartRequest(kind=kind, repo="1", params=params)

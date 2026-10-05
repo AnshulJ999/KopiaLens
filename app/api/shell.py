@@ -10,7 +10,7 @@ import sys
 from fastapi import APIRouter, HTTPException
 
 from config import APP_VERSION, DATA_DIR
-from ..core import jobs
+from ..core import jobs, netaccess
 from ..core.applog import LOG_DIR
 from ..settings import load_settings, mutate_settings
 
@@ -46,7 +46,14 @@ def state() -> dict:
         "data_dir": DATA_DIR, "log_dir": LOG_DIR,
         "prefs": _prefs(kl), "last_repo": settings.get("last_repo"),
         "repos": fresh["repos"], "pause": fresh["pause"], "jobs": recent,
+        "access": netaccess.STARTED.get("mode") or netaccess.mode(),
     }
+
+
+@router.post("/open-code")
+def open_code() -> dict:
+    """A one-time code for the app's window (``/shell/open``); the window-only mode needs it."""
+    return {"code": netaccess.issue_code()}
 
 
 @router.post("/prefs")

@@ -70,6 +70,41 @@
 
             <!-- the audit trail moved to the Logs tab (); its size stays a repository fact -->
 
+            <div class="rounded border border-bd bg-surface p-3">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-medium">Versions worth pruning</span>
+                <span class="text-[11px] text-muted">Old versions of big files that free the most on their own</span>
+                <button @click="loadPruneOutliers()" :disabled="pruneOutliers && pruneOutliers.loading" class="ml-auto h-7 rounded border border-bd px-2 text-xs"
+                        x-text="pruneOutliers ? 'Refresh' : 'Find them'"></button>
+              </div>
+              <template x-if="pruneOutliers">
+                <div class="mt-2">
+                  <div x-show="pruneOutliers.loading" class="text-[11px] text-muted">Looking…</div>
+                  <div x-show="pruneOutliers.error" class="text-[11px] text-danger" x-text="pruneOutliers.error"></div>
+                  <div x-show="!pruneOutliers.loading && !pruneOutliers.ready" class="text-[11px] text-muted">Available after the next index.</div>
+                  <div x-show="!pruneOutliers.loading && pruneOutliers.ready && !pruneOutliers.rows.length && !pruneOutliers.error" class="text-[11px] text-muted">No old version frees much on its own.</div>
+                  <table x-show="pruneOutliers.rows.length" class="w-full text-xs mt-1">
+                    <thead><tr class="text-left text-muted">
+                      <th class="px-2 py-1 font-medium">File</th><th class="px-2 py-1 font-medium">Version from</th>
+                      <th class="px-2 py-1 font-medium text-right">Size</th><th class="px-2 py-1 font-medium text-right">Frees on its own</th>
+                      <th class="px-2 py-1 font-medium text-right">Versions</th><th></th></tr></thead>
+                    <tbody>
+                      <template x-for="(r, i) in pruneOutliers.rows" :key="i">
+                        <tr class="border-t border-bd-soft">
+                          <td class="px-2 py-1 font-mono break-all" x-text="r.full_path"></td>
+                          <td class="px-2 py-1 whitespace-nowrap" x-text="fmtDate(r.first)"></td>
+                          <td class="px-2 py-1 text-right whitespace-nowrap" x-text="fmtB(r.size)"></td>
+                          <td class="px-2 py-1 text-right whitespace-nowrap font-medium" style="color:var(--ok)" x-text="fmtPhys(r.frees)"></td>
+                          <td class="px-2 py-1 text-right" x-text="r.versions"></td>
+                          <td class="px-2 py-1 text-right"><button class="kl-btn" style="height:22px" @click="openPrune(r.full_path, r.source)">Prune… <span class="protag" x-show="!proOk('prune')">PRO</span></button></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
+            </div>
+
             <!-- raw kopia output, kept for the power-user view -->
             <details class="rounded border border-bd bg-surface p-3">
               <summary class="text-sm font-medium cursor-pointer select-none">Raw kopia output</summary>

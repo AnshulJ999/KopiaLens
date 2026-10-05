@@ -35,6 +35,9 @@ def _build(tmp_path, monkeypatch):
     con.execute("CREATE TABLE crefs AS SELECT * FROM (VALUES (1::INTEGER, 1::INTEGER), "
                 "(4::INTEGER, 1::INTEGER), (5::INTEGER, 1::INTEGER), (6::INTEGER, 1::INTEGER), "
                 "(7::INTEGER, 1::INTEGER)) t(cid_id, refs)")
+    # crefo: piece 4 is used by both of b.bin's split objects (two (source, object) pairs)
+    con.execute("CREATE TABLE crefo AS SELECT * FROM (VALUES (4::INTEGER, 2::INTEGER), "
+                "(5::INTEGER, 1::INTEGER), (6::INTEGER, 1::INTEGER)) t(cid_id, refs)")
     # b.bin's two versions: split objects 2 and 3, sharing piece 4 -> stored 15, bound 20
     con.execute("CREATE TABLE tpart AS SELECT * FROM (VALUES (2::INTEGER, 4::INTEGER), "
                 "(2::INTEGER, 5::INTEGER), (3::INTEGER, 4::INTEGER), (3::INTEGER, 6::INTEGER)) "

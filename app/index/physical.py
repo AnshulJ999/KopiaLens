@@ -208,6 +208,22 @@ def _refcount_for(repo: str, cids) -> dict[str, int] | None:
     return out
 
 
+def _objrefs_for(repo: str, cids) -> dict[str, int]:
+    """How many distinct (source, split object) pairs use each piece (``crefo``). A piece with no
+    row is a plain object, or the generation predates the map: one object, so ``crefs`` decides."""
+    cur = read_cursor(repo)
+    try:
+        return _values_by_content_id(cur, [c for c in dict.fromkeys(cids) if c], "crefo", "refs")
+    finally:
+        cur.close()
+
+
+def _freed(c: str, refs: dict, objrefs: dict, sources: int, pairs: int) -> bool:
+    """A piece is freed when every source reaching it and every (source, object) pair using it is
+    inside the deletion. Comparing sources with path or version counts was the [C1] overstatement."""
+    return refs.get(c, 0) <= sources and objrefs.get(c, 0) <= pairs
+
+
 def _sizes_for(repo: str, cids) -> dict[str, int]:
     """Targeted packed sizes for just these chunks, from the generation's `csize` map.
 
@@ -480,9 +496,9 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500, fetch: bool =
 
         chunk_memo = _chunks_for_objs(
             repo, [o for hs in objs_of.values() for o in hs], cursor=cur)
-        per_cid: dict[str, dict[str, int]] = {}
+        per_cid: dict[str, dict[str, tuple[set, set]]] = {}
         for cid in misses:
-            this_refs: dict[str, int] = {}
+            mine: dict[str, tuple[set, set]] = {}   # piece -> (sources, (source, object) pairs)
             unknown = False
             for src, fp in shares.get(cid, []):
                 for obj in objs_of.get((src, fp), []):
@@ -491,19 +507,23 @@ def reclaim_for(repo: str, content_ids: list[str], cap: int = 500, fetch: bool =
                         unknown = True
                         break
                     for c in chunks:
-                        this_refs[c] = this_refs.get(c, 0) + 1
+                        srcs, pairs = mine.setdefault(c, (set(), set()))
+                        srcs.add(src)
+                        pairs.add((src, obj))
                 if unknown:
                     break
             if not unknown:
-                per_cid[cid] = this_refs
+                per_cid[cid] = mine
     finally:
         cur.close()
     # One refcount and one size lookup for the whole request, not one pair per content id.
     every = {c for refs in per_cid.values() for c in refs}
     refs = _refcount_for(repo, every) or {}
+    objrefs = _objrefs_for(repo, every)
     sizes = _sizes_for(repo, every)
-    for cid, this_refs in per_cid.items():
-        reclaim = sum(sizes.get(c, 0) for c in this_refs if refs.get(c, 0) <= this_refs[c])
+    for cid, mine in per_cid.items():
+        reclaim = sum(sizes.get(c, 0) for c, (srcs, pairs) in mine.items()
+                      if _freed(c, refs, objrefs, len(srcs), len(pairs)))
         _reclaim_cache_put((repo, cid), reclaim)
         out[cid] = reclaim
     return out
@@ -562,29 +582,31 @@ def folder_detail(repo: str, source: str | None, prefix: str, all_versions: bool
             ).fetchone() or (0, 0)
             run = bool(agg[0])
         if run:
-            # The whole chunk union in one query: each object counted once per (source, path) that
-            # holds it, split objects expanded through `tpart`, then priced against the global
-            # refcount. A split object with no piece list is not in the tree yet: counted as
-            # unknown and left out (understated, never zeroed).
+            # The whole chunk union in one query: split objects expanded through `tpart`, each
+            # piece priced against the sources (crefs) and (source, object) pairs (crefo) inside the
+            # folder. A split object with no piece list is not in the tree yet: counted as unknown
+            # and left out (understated, never zeroed).
             priced = cur.execute(f"""
-                WITH objs AS (SELECT cid_id, count(*) AS n FROM ({sel}) GROUP BY cid_id),
-                kinds AS (SELECT o.cid_id, o.n, c.content_id LIKE 'I%' AS split
+                WITH objs AS (SELECT DISTINCT src_id, cid_id FROM ({sel})),
+                kinds AS (SELECT o.src_id, o.cid_id, c.content_id LIKE 'I%' AS split
                           FROM objs o JOIN cid c ON c.cid_id = o.cid_id),
-                parts AS (SELECT DISTINCT k.cid_id, t.part_cid FROM kinds k
-                          JOIN tpart t ON t.iobj_cid = k.cid_id WHERE k.split),
-                chunks AS (SELECT cid_id AS chunk, n FROM kinds WHERE NOT split
+                chunks AS (SELECT src_id, cid_id AS obj, cid_id AS chunk FROM kinds WHERE NOT split
                            UNION ALL
-                           SELECT p.part_cid, k.n FROM parts p JOIN kinds k ON k.cid_id = p.cid_id),
-                mine AS (SELECT chunk, sum(n) AS refs FROM chunks GROUP BY chunk),
-                sized AS (SELECT m.refs AS mine, COALESCE(r.refs, 0) AS total,
-                                 COALESCE(s.packed, 0) AS packed
+                           SELECT k.src_id, k.cid_id, t.part_cid FROM kinds k
+                           JOIN tpart t ON t.iobj_cid = k.cid_id WHERE k.split),
+                mine AS (SELECT chunk, count(DISTINCT src_id) AS nsrc,
+                                count(DISTINCT (src_id, obj)) AS npair
+                         FROM chunks GROUP BY chunk),
+                sized AS (SELECT m.nsrc, m.npair, COALESCE(r.refs, 0) AS total,
+                                 COALESCE(o.refs, 0) AS orefs, COALESCE(s.packed, 0) AS packed
                           FROM mine m LEFT JOIN crefs r ON r.cid_id = m.chunk
+                          LEFT JOIN crefo o ON o.cid_id = m.chunk
                           LEFT JOIN csize s ON s.cid_id = m.chunk)
-                SELECT (SELECT count(*) FROM objs),
-                       (SELECT count(*) FROM kinds k WHERE k.split AND NOT EXISTS
+                SELECT (SELECT count(DISTINCT cid_id) FROM objs),
+                       (SELECT count(DISTINCT k.cid_id) FROM kinds k WHERE k.split AND NOT EXISTS
                           (SELECT 1 FROM tpart t WHERE t.iobj_cid = k.cid_id)),
                        COALESCE(sum(packed), 0),
-                       COALESCE(sum(packed) FILTER (WHERE total <= mine), 0)
+                       COALESCE(sum(packed) FILTER (WHERE total <= nsrc AND orefs <= npair), 0)
                 FROM sized""", params).fetchone() or (0, 0, 0, 0)
     finally:
         cur.close()
@@ -615,7 +637,7 @@ def batch_detail(repo: str, files: list[dict], all_versions: bool = True) -> dic
     if not pairs:
         return {"found": False}
     obj_chunks: dict[str, set[str]] = {}
-    this_refs: dict[str, int] = {}     # references the selection contributes per chunk (all versions)
+    mine: dict[str, tuple[set, set]] = {}   # piece -> (sources, (source, object) pairs) selected
     latest: dict[tuple, tuple] = {}    # (source,fp) -> (latest content_id, latest size)
     versions = 0
     unknown = 0                        # objects the tree has not reached; counted, never zeroed
@@ -658,7 +680,9 @@ def batch_detail(repo: str, files: list[dict], all_versions: bool = True) -> dic
                     unknown += 1
                     continue
                 for c in chunks:
-                    this_refs[c] = this_refs.get(c, 0) + 1
+                    srcs, objs = mine.setdefault(c, (set(), set()))
+                    srcs.add(key[0])
+                    objs.add((key[0], obj))
     finally:
         cur.close()
     if not latest:
@@ -667,13 +691,15 @@ def batch_detail(repo: str, files: list[dict], all_versions: bool = True) -> dic
         log.warning("repo=%s batch detail: %d version object(s) are not in the tree yet - their "
                     "bytes are not counted until the next index", repo, unknown)
 
-    union_chunks = set(this_refs)
+    union_chunks = set(mine)
     refs = _refcount_for(repo, union_chunks)
     if refs is None:
         refs = _refcount_map(repo)
+    objrefs = _objrefs_for(repo, union_chunks)
     sizes = _sizes_for(repo, union_chunks)
     physical = sum(sizes.get(c, 0) for c in union_chunks)
-    freeable = sum(sizes.get(c, 0) for c in union_chunks if refs.get(c, 0) <= this_refs.get(c, 0))
+    freeable = sum(sizes.get(c, 0) for c, (srcs, pairs) in mine.items()
+                   if _freed(c, refs, objrefs, len(srcs), len(pairs)))
 
     seen_cid: set[str] = set()
     logical = 0
@@ -706,8 +732,8 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
     The same path held by several sources on one machine (nested backups such as a drive and a
     folder on it) is ONE file: ``freeable`` prices removing it, every version, from every one of
     those holders - the delete panel's default scope. Identical content at OTHER paths keeps its
-    bytes. ``crefs`` counts sources, so a chunk is freed when every source reaching it is a holder
-    whose versions of this path use it, and no other path in the repo holds that object."""
+    bytes. A piece is freed when every source and every (source, object) pair using it belongs to
+    this file's versions in its holders, and no other path in the repo holds that object."""
     cur = read_cursor(repo)
     try:
         sid = resolve.src_id(cur, source)
@@ -767,6 +793,7 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
         if got is None and obj.startswith("I"):
             obj_chunks[obj] = _chunks_from_kopia(repo, obj)
     holder_refs: dict[str, set[str]] = {}   # chunk -> holders whose versions of this path use it
+    pair_refs: dict[str, set[tuple]] = {}    # chunk -> (holder, object) pairs using it
     for h, objs in objs_by_holder.items():
         for obj in objs:
             chunks = obj_chunks.get(obj)
@@ -775,6 +802,7 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
                 continue
             for c in chunks:
                 holder_refs.setdefault(c, set()).add(h)
+                pair_refs.setdefault(c, set()).add((h, obj))
     if unknown:
         log.warning("repo=%s file detail: %d version(s) could not be measured", repo, unknown)
         log.debug("repo=%s file detail path %s", repo, full_path)
@@ -788,8 +816,11 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
     if refs is None:
         refs = _refcount_map(repo)            # cold-start fallback (full map / rebuild)
 
+    objrefs = _objrefs_for(repo, union_chunks)
+
     def freed(c: str) -> bool:
-        return c not in kept_chunks and refs.get(c, 0) <= len(holder_refs.get(c, ()))
+        return c not in kept_chunks and _freed(c, refs, objrefs, len(holder_refs.get(c, ())),
+                                               len(pair_refs.get(c, ())))
 
     sizes = _sizes_for(repo, union_chunks)
     physical_latest = sum(sizes.get(c, 0) for c in latest_chunks)

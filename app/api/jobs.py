@@ -223,7 +223,7 @@ def _on_done(job: dict) -> None:
     kind = job.get("kind")
     if kind == "policy_write":
         kind = (job.get("detail") or {}).get("then")
-    if kind not in ("remove_files", "snapshot_delete"):
+    if kind not in ("remove_files", "snapshot_delete", "prune_versions"):
         return
     invalidate_sources(job["repo"])
     try:
@@ -237,6 +237,8 @@ def _require_pro(kind: str, repo: str, params: dict) -> None:
     """The Pro job kinds (features.PRO). Dry runs too: their output lists the plan."""
     if kind == "remove_files":
         features.require("remove", repo)
+    elif kind == "prune_versions":
+        features.require("prune", repo)
     elif kind == "policy_write":
         if params.get("then"):
             features.require("exclude_delete", repo)

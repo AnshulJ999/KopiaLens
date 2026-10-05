@@ -18,8 +18,11 @@ OTHER_PC = "me@laptop:H:" + SEP
 FILE = "H:" + SEP + "Games" + SEP + "big.cso"
 
 
-def _store(monkeypatch, rows: list[tuple[str, str, str, int]], refs: dict[str, int]):
-    """rows: (source, full_path, content_id, snap_no). Plain objects are their own chunk."""
+def _store(monkeypatch, rows: list[tuple[str, str, str, int]], refs: dict[str, int],
+           objrefs: dict[str, int] | None = None, chunks: dict[str, set[str]] | None = None):
+    """rows: (source, full_path, content_id, snap_no). Plain objects are their own chunk unless
+    ``chunks`` maps them to pieces (split objects); ``objrefs`` is the crefo map."""
+    objrefs, chunks = objrefs or {}, chunks or {}
     physical._RECLAIM_CACHE.clear()
     con = duckdb.connect()
     sources = sorted({r[0] for r in rows})
@@ -53,6 +56,9 @@ def _store(monkeypatch, rows: list[tuple[str, str, str, int]], refs: dict[str, i
     monkeypatch.setattr(physical, "read_cursor", lambda repo: _Cur())
     monkeypatch.setattr(physical, "_sizes_for", lambda repo, cs: {c: 10 for c in cs})
     monkeypatch.setattr(physical, "_refcount_for", lambda repo, cs: {c: refs.get(c, 0) for c in cs})
+    monkeypatch.setattr(physical, "_objrefs_for", lambda repo, cs: {c: objrefs[c] for c in cs if c in objrefs})
+    monkeypatch.setattr(physical, "_chunks_for_objs",
+                        lambda repo, objs, **kw: {o: set(chunks.get(o, {o})) for o in objs if o})
 
 
 def test_the_same_path_in_nested_sources_is_one_file(monkeypatch):
@@ -103,3 +109,36 @@ def test_many_versions_in_one_source_do_not_outvote_a_second_source(monkeypatch)
 def test_unknown_source_or_path_is_not_found(monkeypatch, missing):
     _store(monkeypatch, [(DRIVE, FILE, "A", 1)], refs={"A": 1})
     assert physical.file_detail("1", *missing) == {"found": False}
+
+
+def test_a_piece_another_files_version_still_uses_is_not_freed(monkeypatch):
+    # [C1] Two different big files (split objects) share piece p in ONE source: crefs says one
+    # source, but crefo says two objects, so deleting this file leaves p stored.
+    other = "H:" + SEP + "Games" + SEP + "copy-then-edited.cso"
+    _store(monkeypatch, [(DRIVE, FILE, "Ia", 1), (DRIVE, other, "Ib", 1)],
+           refs={"p": 1, "a": 1, "b": 1}, objrefs={"p": 2, "a": 1, "b": 1},
+           chunks={"Ia": {"p", "a"}, "Ib": {"p", "b"}})
+    d = physical.file_detail("1", DRIVE, FILE)
+    assert d["freeable"] == 10           # only piece a; p stays with the other file
+    assert d["physical_all_versions"] == 20
+
+
+def test_versions_sharing_pieces_free_them_together(monkeypatch):
+    # Two versions of one big file share piece p: removing the file (every version) frees it.
+    _store(monkeypatch, [(DRIVE, FILE, "Iv1", 1), (DRIVE, FILE, "Iv2", 2)],
+           refs={"p": 1, "a": 1, "b": 1}, objrefs={"p": 2, "a": 1, "b": 1},
+           chunks={"Iv1": {"p", "a"}, "Iv2": {"p", "b"}})
+    assert physical.file_detail("1", DRIVE, FILE)["freeable"] == 30
+
+
+def test_object_refcount_counts_source_object_pairs_per_piece():
+    from app.index import layer2
+    con = duckdb.connect()
+    con.execute("CREATE TABLE filev(src_id INTEGER, cid_id INTEGER)")
+    # source 1 holds split objects 10 and 11 (twice: two versions of a path), source 2 holds 10
+    # and a whole file 5 whose bytes equal piece 5
+    con.execute("INSERT INTO filev VALUES (1, 10), (1, 10), (1, 11), (2, 10), (2, 5)")
+    con.execute("CREATE TABLE tpart(iobj_cid INTEGER, part_cid INTEGER)")
+    con.execute("INSERT INTO tpart VALUES (10, 5), (10, 6), (11, 5), (11, 7)")
+    layer2.object_refcount(con, "filev", out="m")
+    assert dict(con.execute("SELECT cid_id, refs FROM m").fetchall()) == {5: 4, 6: 2, 7: 1}

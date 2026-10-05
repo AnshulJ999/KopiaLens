@@ -5,6 +5,8 @@ Three maps, all keyed on ``cid_id`` against the generation's shared dictionary:
     csize   packed size per content, streamed from ``kopia content list -l``
     crefs   how many SOURCES reach each content - the delete-safety number
     iphys   packed footprint of a split object (the sum of its pieces)
+    crefo   how many distinct (source, split object) pairs use each piece - the version-level
+            delete-safety number (successive versions of a big file share most pieces)
 
 These replace the pickles (``sizemap_repoN.pkl``, ``refcount_repoN_all.pkl``, ``srcsets_repoN/``),
 which loaded whole at 400-500 MB of RAM each and duplicated what the index already held.
@@ -90,6 +92,23 @@ def refcount(con, out: str = "crefs_new") -> int:
     """``crefs``: how many sources reach each content id."""
     con.execute(f"""CREATE OR REPLACE TABLE {out} AS
         SELECT cid_id, count(*)::INTEGER AS refs FROM _reach_src GROUP BY cid_id""")
+    return con.execute(f"SELECT count(*) FROM {out}").fetchone()[0]
+
+
+def object_refcount(con, filev_sql: str, out: str = "crefo_final") -> int:
+    """``crefo``: for every piece of a split object, how many distinct (source, object) pairs use
+    it, over the generation's final file history. Removing one version of a big file frees a piece
+    only when no other object in any source still uses it; ``crefs`` alone cannot tell, because it
+    counts sources. Only pieces are listed; a whole file whose bytes equal a piece counts as one more
+    pair on that piece. A missing row means a plain object used by one object."""
+    con.execute(f"""CREATE OR REPLACE TABLE {out} AS
+        WITH o AS (SELECT DISTINCT src_id, cid_id FROM {filev_sql} WHERE cid_id IS NOT NULL)
+        SELECT chunk AS cid_id, count(*)::INTEGER AS refs FROM (
+            SELECT o.src_id, o.cid_id, t.part_cid AS chunk FROM o JOIN tpart t ON t.iobj_cid = o.cid_id
+            UNION
+            SELECT o.src_id, o.cid_id, o.cid_id FROM o
+            WHERE o.cid_id IN (SELECT part_cid FROM tpart))
+        GROUP BY chunk""")
     return con.execute(f"SELECT count(*) FROM {out}").fetchone()[0]
 
 

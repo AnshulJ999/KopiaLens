@@ -96,6 +96,7 @@ def priced(monkeypatch):
                         lambda repo, objs, **kw: {o: set(chunks[o]) for o in objs if o})
     # Nothing outside the selection references these chunks, so everything found is freeable.
     monkeypatch.setattr(physical, "_refcount_for", lambda repo, cids: {c: 1 for c in cids})
+    monkeypatch.setattr(physical, "_objrefs_for", lambda repo, cids: {})
     return [{"source": "src", "full_path": "C:" + SEP + "f.dat"}]
 
 
@@ -282,7 +283,10 @@ def folder_index(monkeypatch):
     con.execute("CREATE TABLE tpart(iobj_cid INTEGER, part_cid INTEGER)")
     con.execute("INSERT INTO tpart VALUES (2, 3), (2, 4)")
     con.execute("CREATE TABLE crefs(cid_id INTEGER, refs INTEGER)")
-    con.execute("INSERT INTO crefs VALUES (1, 1), (3, 1), (4, 2), (6, 1)")
+    con.execute("INSERT INTO crefs VALUES (1, 1), (3, 1), (4, 1), (6, 1)")   # one source
+    con.execute("CREATE TABLE crefo(cid_id INTEGER, refs INTEGER)")
+    # c2 is a piece of Isplit AND B's whole file: two (source, object) pairs
+    con.execute("INSERT INTO crefo VALUES (3, 1), (4, 2)")
     con.execute("CREATE TABLE csize(cid_id INTEGER, packed UBIGINT)")
     con.execute("INSERT INTO csize VALUES (1, 100), (3, 10), (4, 20), (6, 5)")
     con.execute("CREATE TABLE pathx(path_id INTEGER, src_id INTEGER, full_path VARCHAR, cid_id INTEGER, size BIGINT)")
@@ -316,6 +320,6 @@ def test_folder_detail_latest_only_skips_old_versions(folder_index):
 def test_a_folder_holding_all_of_a_shared_chunk_frees_it(folder_index):
     _a, b = folder_index
     out = physical.folder_detail("1", None, b)
-    # B alone holds one of c2's two references: nothing frees.
+    # B alone holds one of c2's two objects: nothing frees.
     assert (out["physical"], out["freeable"], out["files"]) == (20, 0, 1)
     assert physical.folder_detail("1", None, "C:" + SEP)["freeable"] == 135

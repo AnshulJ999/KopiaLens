@@ -6,7 +6,9 @@ KopiaLens runs as a single container with kopia built in. You open it in a brows
 
 1. Copy `packaging/docker/compose.example.yml` to a folder of your own as `compose.yml`.
 2. Change the paths under `volumes` (see below).
-3. Run `docker compose up -d` and open `http://<server address>:7123`.
+3. Run `docker compose up -d` and open `https://<server address>:7123`.
+
+KopiaLens serves HTTPS with a certificate it makes itself, so the browser warns about the certificate once. Accept it, or use your own certificate or a reverse proxy instead (see [Remote access and HTTPS](remote-access.md)). To serve plain HTTP, set `KOPIALENS_HTTPS=off`.
 
 The first run shows setup: connect your repositories, choose a password, and start the first index (see [First-time setup](getting-started.md)). For the first 30 minutes after a start, setup is open to anyone who can reach the port. After that it asks for a **setup code**, printed in the container log (`docker logs kopialens`).
 
@@ -52,6 +54,10 @@ Docker Desktop (Windows and macOS) runs containers inside a hidden Linux machine
 - **Restart** in Settings stops the container, and Docker starts it again through `restart: unless-stopped`.
 - `docker compose stop` stops KopiaLens cleanly. An index pass that was running is picked up again later; the previous index stays usable.
 - To update, pull or build the new image and run `docker compose up -d`. Your `/config` folder carries everything over.
+
+## Who can reach it
+
+By default anyone who can reach the port can open KopiaLens, so turn on sign-in. To limit it to some addresses, set `KOPIALENS_ACCESS=addresses` and `KOPIALENS_ACCESS_ADDRESSES` (for example `192.168.1.0/24`), or choose **These addresses** in **Settings → Remote access**. Behind a reverse proxy, list the proxy under **Trusted proxy addresses**. Details: [Remote access and HTTPS](remote-access.md).
 
 ## Settings that differ in Docker
 

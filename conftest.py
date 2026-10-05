@@ -47,6 +47,10 @@ def _real_config_dir() -> str:
 _CACHE_SANDBOX = tempfile.mkdtemp(prefix="kopialens-test-cache-")
 os.environ["KOPIALENS_CACHE_DIR"] = _CACHE_SANDBOX
 
+# No test may read or write the real OS keyring (Windows Credential Manager, macOS Keychain, the
+# Secret Service): unpatched keyring calls fail, and the code under test takes its no-keyring path.
+os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
+
 # A test must never write into the live data folder; every write lands in the sandbox.
 _DATA_SANDBOX = tempfile.mkdtemp(prefix="kopialens-test-data-")
 _REAL_CONFIG_DIR = _real_config_dir()

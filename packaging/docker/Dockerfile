@@ -55,6 +55,6 @@ ENV LANG=C.UTF-8 \
     KOPIA_CHECK_FOR_UPDATES=false \
     TZ=UTC
 EXPOSE 7123
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s CMD curl -fsS http://127.0.0.1:7123/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s CMD curl -fsSk https://127.0.0.1:7123/health || curl -fsS http://127.0.0.1:7123/health || exit 1
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
 CMD ["/app/kopialens-server", "--server"]

@@ -295,16 +295,18 @@ def host_allowed(host_header: str) -> bool:
 
 
 def bind_host() -> str:
-    """Interface to listen on. Env beats an explicit settings value, which beats the launch
-    profile: desktop = loopback only, server = all interfaces. Only an explicit choice in the
-    settings FILE counts here - the merged default would be indistinguishable from one."""
+    """Interface to listen on. Env beats an explicit settings value, which beats the access mode
+    (whose own default follows the launch profile: desktop = loopback, server = all interfaces).
+    Only an explicit choice in the settings FILE counts here - the merged default would be
+    indistinguishable from one."""
     env = _env("KOPIALENS_BIND_HOST")
     if env:
         return env
     raw = raw_kopialens_settings()
     if str(raw.get("bind_host") or "").strip():
         return str(raw["bind_host"]).strip()
-    return "127.0.0.1" if profile() == "desktop" else "0.0.0.0"
+    from . import netaccess
+    return netaccess.bind_for_mode(netaccess.mode())
 
 
 def exempt(path: str) -> bool:
@@ -312,13 +314,13 @@ def exempt(path: str) -> bool:
     targets, logout, and the health probe (used by supervisors that hold no cookie). Deliberately
     EXACT matches - a prefix rule here would leave account routes open to unauthenticated callers."""
     return path in ("/login", "/login/recover", "/health", "/api/auth/login", "/api/auth/recover",
-                    "/api/auth/logout")
+                    "/api/auth/logout", "/shell/open")
 
 
 # The desktop shell's per-launch secret (env KOPIALENS_SHELL_TOKEN, set by the shell that started
 # this server) opens only these paths, and only from this computer.
 SHELL_HEADER = "x-kopialens-shell"
-SHELL_PATHS = frozenset({"/api/shell/state", "/api/shell/prefs", "/api/index/build",
+SHELL_PATHS = frozenset({"/api/shell/state", "/api/shell/prefs", "/api/shell/open-code", "/api/index/build",
                          "/api/index/stop", "/api/index/pause", "/api/index/resume"})
 
 
@@ -432,11 +434,24 @@ def recover_page(error: str = "", with_key: bool = False) -> str:
                         "<title>Reset password - KopiaLens</title>") + body + "</body></html>"
 
 
+# Whether the current request arrived over HTTPS (built-in, or a trusted proxy's X-Forwarded-Proto);
+# set by the access middleware so every cookie writer marks its cookie secure without a request.
+_SECURE: contextvars.ContextVar[bool] = contextvars.ContextVar("kopialens_https", default=False)
+
+
+def set_secure(on: bool):
+    return _SECURE.set(bool(on))
+
+
+def request_secure() -> bool:
+    return _SECURE.get()
+
+
 def cookie_kwargs(persist: bool = True) -> dict:
-    """Session cookie flags. Not ``secure``: the app is commonly reached over plain HTTP on a LAN,
-    and a secure-only cookie would silently never be sent there. Without ``persist`` it is a
-    browser-session cookie; the server enforces the session length either way."""
-    kwargs = {"httponly": True, "samesite": "lax", "path": "/"}
+    """Session cookie flags. ``secure`` only for a request that came over HTTPS: on plain HTTP a
+    secure-only cookie would silently never be sent. Without ``persist`` it is a browser-session
+    cookie; the server enforces the session length either way."""
+    kwargs = {"httponly": True, "samesite": "lax", "path": "/", "secure": request_secure()}
     if persist:
         kwargs["max_age"] = session_days() * 86400
     return kwargs
@@ -449,7 +464,7 @@ def cookie_kwargs(persist: bool = True) -> dict:
 # forgives everything, and a quiet period forgets too.
 #
 # Behind a reverse proxy every request arrives from the proxy, so all proxy users share one
-# bucket. Correct for the common single-user install; a trusted-proxy mode is's.
+# bucket - unless the proxy is listed as trusted, which makes the client address the real one.
 _THROTTLE_AFTER = 5                    # failures before the first wait
 _THROTTLE_MAX = 30.0                   # seconds; the wait never exceeds this
 _THROTTLE_FORGET = 900.0               # a quiet period this long clears the record

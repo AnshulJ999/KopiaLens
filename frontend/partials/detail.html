@@ -94,6 +94,7 @@
 <button class="kl-btn danger" @click="openExclude({kind: 'file', path: detail.title, source: detail.source}, 'delete', $event)">Exclude &amp; delete… <span class="protag" x-show="!proOk('exclude_delete')">PRO</span></button>
 {%- else -%}
 <button class="kl-btn" @click="openExclude({kind: 'folder', path: detail.title, source: detail.source}, 'exclude')">Exclude…</button>
+<button class="kl-btn" @click="openPrune(detail.title, detail.source || null)">Prune snapshots… <span class="protag" x-show="!proOk('prune')">PRO</span></button>
 <button class="kl-btn danger" @click="folderDeleteFromPanel()">Delete folder…</button>
 <button class="kl-btn danger" @click="openExclude({kind: 'folder', path: detail.title, source: detail.source}, 'delete', $event)">Exclude &amp; delete… <span class="protag" x-show="!proOk('exclude_delete')">PRO</span></button>
 {%- endif -%}
@@ -161,7 +162,8 @@
 
 {%- macro file_versions() -%}
 <div class="kl-sec" x-show="detail.versions && detail.versions.length">
-  <div class="h">Versions <span class="count" x-text="detail.versions.length + ', newest first'"></span></div>
+  <div class="h">Versions <span class="count" x-text="detail.versions.length + ', newest first'"></span>
+    <span class="acts" x-show="detail.versions.length > 1"><button class="kl-btn" style="height:22px" @click="openPrune(detail.title, detail.source)">Prune versions… <span class="protag" x-show="!proOk('prune')">PRO</span></button></span></div>
   <div class="kl-list">
     <template x-for="(v, i) in detail.versions" :key="i">
       <div class="li">
@@ -529,6 +531,11 @@
                 <template x-if="detail.kind === 'folder' && detail.panelTab === 'actions'">
                   <div class="space-y-4">
                     {{ folder_exclude() }}
+                    <div class="kl-sec">
+                      <div class="h">Prune this folder's snapshots</div>
+                      <div class="kl-note">Keep the snapshots you want and remove the folder from the rest, with what each one frees.</div>
+                      <div><button class="kl-btn" @click="openPrune(detail.title, detail.source || null)">Prune snapshots… <span class="protag" x-show="!proOk('prune')">PRO</span></button></div>
+                    </div>
                     <div class="kl-sec">
                       <div class="h">Delete this folder</div>
                       <div class="kl-note">Opens the chunked delete plan for everything under this folder, with a dry run before anything happens.</div>

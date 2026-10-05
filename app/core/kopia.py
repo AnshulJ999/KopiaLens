@@ -721,6 +721,34 @@ def remove_files_chunked_commands(repo: str, items: list[str], source: str | lis
     return cmds
 
 
+_ID_RE = re.compile(r"^[0-9A-Za-z]+$")
+
+
+def prune_commands(repo: str, items: list[dict], commit: bool = False,
+                   max_chars: int = 32000) -> list[list[str]]:
+    """Prune versions: one remove-files command per object, scoped to exactly the snapshots that
+    lose it (``--manifest-id``). kopia applies every listed object to every listed snapshot, so
+    two objects never share a command - that would also strip the other object from snapshots
+    that keep it at another path."""
+    base = [_kopia_exe()] + _repo_args(repo) + ["snapshot", "fix", "remove-files"]
+    tail = ["--commit"] if commit else []
+    cmds: list[list[str]] = []
+    for it in items:
+        obj, ids = str(it.get("obj") or ""), [str(i) for i in it.get("snapshot_ids") or []]
+        if not _ID_RE.match(obj) or not ids or not all(_ID_RE.match(i) for i in ids):
+            raise ValueError("prune: bad object or snapshot id")
+        head = base + ["--object-id", obj]
+        fixed = sum(len(a) + 1 for a in head + tail)
+        cur: list[str] = []
+        for sid in ids:
+            if cur and fixed + sum(len(a) + 1 for a in cur) + len(sid) + 16 > max_chars:
+                cmds.append(head + cur + tail)
+                cur = []
+            cur += ["--manifest-id", sid]
+        cmds.append(head + cur + tail)
+    return cmds
+
+
 def remove_log_path(name: str) -> str:
     from .applog import JOB_LOG_DIR
     d = JOB_LOG_DIR

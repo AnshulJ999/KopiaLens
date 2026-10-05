@@ -58,7 +58,7 @@ def _bounds(cur) -> None:
         FROM cid c LEFT JOIN iphys i ON i.cid_id = c.cid_id
         LEFT JOIN csize s ON s.cid_id = c.cid_id""")
     cur.execute("CREATE OR REPLACE TABLE _rank_pair AS "
-                "SELECT DISTINCT path_id, cid_id FROM filev")
+                "SELECT DISTINCT src_id, path_id, cid_id FROM filev")
     cur.execute("""
         CREATE OR REPLACE TABLE _rank_est AS
         SELECT p.path_id, sum(pr.packed)::UBIGINT AS est
@@ -105,18 +105,20 @@ def _exact_stored(cur, out: str = "_rank_bst") -> None:
 
 def _exact_frees(cur, out: str = "_rank_gf") -> None:
     """Exact Frees per CONTENT for the contents in ``_rank_batch``, mirroring the shipped
-    on-demand maths: a chunk counts when its global source refcount is fully explained by the
-    group's (path, object) occurrences. Contents with an unreadable split object are dropped."""
+    on-demand maths (``physical._freed``): a chunk counts when every source (crefs) and every
+    (source, object) pair (crefo) using it is in the group. Contents with an unreadable split
+    object are dropped."""
     cur.execute("CREATE OR REPLACE TABLE _rank_tgt AS SELECT key AS target FROM _rank_batch")
     cur.execute("""
         CREATE OR REPLACE TABLE _rank_grp AS
-        SELECT DISTINCT g.target, p2.path_id, p2.cid_id AS obj
+        SELECT DISTINCT g.target, p2.src_id, p2.path_id, p2.cid_id AS obj
         FROM _rank_tgt g JOIN _rank_pair h ON h.cid_id = g.target
         JOIN _rank_pair p2 ON p2.path_id = h.path_id""")
     cur.execute("""
         CREATE OR REPLACE TABLE _rank_gt AS
-        SELECT target, chunk, count(*)::INTEGER AS n FROM (
-            SELECT DISTINCT g.target, g.path_id, g.obj,
+        SELECT target, chunk, count(DISTINCT src_id)::INTEGER AS nsrc,
+               count(DISTINCT (src_id, obj))::INTEGER AS npair FROM (
+            SELECT DISTINCT g.target, g.src_id, g.obj,
                    coalesce(tp.part_cid, g.obj) AS chunk,
                    (c.content_id LIKE 'I%' AND tp.part_cid IS NULL) AS unknown
             FROM _rank_grp g JOIN cid c ON c.cid_id = g.obj
@@ -131,8 +133,9 @@ def _exact_frees(cur, out: str = "_rank_gf") -> None:
         SELECT gt.target AS key, sum(coalesce(pr.packed, 0))::UBIGINT AS value
         FROM _rank_gt gt
         LEFT JOIN crefs r ON r.cid_id = gt.chunk
+        LEFT JOIN crefo o ON o.cid_id = gt.chunk
         LEFT JOIN _rank_price pr ON pr.cid_id = gt.chunk
-        WHERE coalesce(r.refs, 0) <= gt.n
+        WHERE coalesce(r.refs, 0) <= gt.nsrc AND coalesce(o.refs, 0) <= gt.npair
         GROUP BY gt.target""")
 
 

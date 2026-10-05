@@ -1,0 +1,111 @@
+{% from "partials/_macros.html" import dryresult %}
+
+    <!-- Prune versions (file) / snapshots (folder). Stacks over the detail modal, under the confirm. -->
+    <div x-show="showPrune" @click.self="closePrune()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+      <template x-if="prune">
+        <div class="w-[56rem] max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
+          <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
+            <div class="flex items-center gap-2">
+              <div class="font-medium" x-text="pruneTitle()"></div>
+              <span class="protag" x-show="!proOk('prune')">PRO</span>
+              <button @click="closePrune()" class="ml-auto kl-btn quiet" title="Close">&times;</button>
+            </div>
+            <div class="kl-note mt-0.5 break-all font-mono" x-text="prune.full_path || prune.fullPath"></div>
+            <div class="kl-note mt-0.5" x-show="prune.rows.length" x-text="pruneSubtitle()"></div>
+          </div>
+
+          <div class="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+            <div x-show="prune.loading" class="kl-note">Reading every snapshot that holds it…</div>
+            <div x-show="prune.error" class="kl-callout" x-text="prune.error"></div>
+
+            <template x-if="!prune.loading && prune.rows.length">
+              <div class="space-y-4">
+                <div>
+                  <div class="text-xs font-medium mb-1">Size per <span x-text="pruneNoun()"></span> <span class="kl-note">oldest to newest · green kept, red removed</span></div>
+                  <div class="flex items-end gap-px h-12 rounded border border-bd-soft px-1 pt-1 bg-surface2">
+                    <template x-for="r in prune.rows" :key="r.id">
+                      <div class="flex-1 min-w-[2px] rounded-t cursor-pointer" @click="pruneToggle(r.id)"
+                           :style="'height:' + pruneBarHeight(r) + '%;background:' + (prune.tick[r.id] ? 'var(--danger)' : 'var(--ok)')"
+                           :title="humanTime(r.first) + ' · ' + fmtB(r.size) + ' · frees ' + fmtPhys(r.frees)"></div>
+                    </template>
+                  </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-xs font-medium">Keep</span>
+                  <button class="kl-btn" :class="prune.keep.firstLast ? 'bg-sel' : ''" @click="pruneKeep('firstLast')">First and last</button>
+                  <span class="flex items-center gap-1">
+                    <button class="kl-btn" :class="prune.keep.newest ? 'bg-sel' : ''" @click="pruneKeep('newest')">Newest</button>
+                    <input type="number" min="1" x-model.number="prune.newestN" @change="pruneApplyKeep()" class="fld w-14 border border-bd bg-surface2 text-xs" aria-label="How many of the newest to keep">
+                  </span>
+                  <button class="kl-btn" :class="prune.keep.monthly ? 'bg-sel' : ''" @click="pruneKeep('monthly')">One per month</button>
+                  <button class="kl-btn" :class="prune.keep.pinned ? 'bg-sel' : ''" @click="pruneKeep('pinned')" title="Pinned snapshots stay whatever else is picked">Pinned snapshots</button>
+                  <span class="mx-1 text-faint">|</span>
+                  <span class="text-xs font-medium">Remove</span>
+                  <span class="flex items-center gap-1">
+                    <button class="kl-btn" @click="pruneBiggest()" title="The ones that free the most on their own">Biggest savers</button>
+                    <input type="number" min="1" x-model.number="prune.biggestN" class="fld w-14 border border-bd bg-surface2 text-xs" aria-label="How many to remove">
+                  </span>
+                  <button class="kl-btn quiet" @click="pruneClear()">Clear ticks</button>
+                </div>
+
+                <div class="kl-sec">
+                  <div class="h"><span x-text="capFirst(pruneNoun()) + 's'"></span>
+                    <span class="count" x-text="pruneTickCount() + ' of ' + prune.rows.length + ' ticked to remove'"></span></div>
+                  <div class="kl-list" style="max-height:18rem">
+                    <template x-for="r in pruneRowsNewestFirst()" :key="r.id">
+                      <label class="li cursor-pointer" :class="prune.tick[r.id] ? 'bg-danger-bg' : ''">
+                        <input type="checkbox" :checked="!!prune.tick[r.id]" @change="pruneToggle(r.id)" class="shrink-0">
+                        <span class="num shrink-0" style="width:11rem" x-text="pruneWhen(r)"></span>
+                        <span class="num shrink-0 text-right" style="width:5.5rem;color:var(--muted)" x-text="fmtB(r.size)"></span>
+                        <span class="num shrink-0 text-right" style="width:6rem" :title="'Frees on its own' + (r.since_index ? ' (pieces newer than the last index are not counted yet)' : '')"
+                              x-text="(r.since_index ? '≈ ' : '') + (r.frees ? fmtPhys(r.frees) : '-')"></span>
+                        <span class="grow flex flex-wrap gap-1">
+                          <span class="pill" x-show="r.id === prune.rows.length - 1">newest</span>
+                          <span class="pill" x-show="r.id === 0">first</span>
+                          <span class="pill warn" x-show="r.pinned">pinned</span>
+                          <span class="pill" x-show="pruneIsBiggest(r)">biggest saver</span>
+                          <span class="pill" x-show="r.elsewhere" title="Identical content sits at another path too; it stays stored there">also elsewhere</span>
+                          <span class="pill" x-show="r.whole_snapshot" title="The folder is this source's whole backup: removing it deletes the snapshot">whole snapshot</span>
+                          <span class="pill warn" x-show="r.unreadable">couldn't read</span>
+                        </span>
+                        <span class="shrink-0 text-xs font-medium" :style="'color:' + (prune.tick[r.id] ? 'var(--danger)' : 'var(--ok)')" x-text="prune.tick[r.id] ? 'Remove' : 'Keep'"></span>
+                      </label>
+                    </template>
+                  </div>
+                </div>
+
+                <div class="kl-cards">
+                  <div class="kl-card"><div class="k">Keep</div><div class="v" x-text="countOf(prune.rows.length - pruneTickCount(), pruneNoun())"></div></div>
+                  <div class="kl-card"><div class="k">Remove</div><div class="v" x-text="countOf(pruneTickCount(), pruneNoun())"></div></div>
+                  <div class="kl-card good"><div class="k">Frees</div><div class="v" x-text="prune.priceLoading ? '…' : (prune.price ? fmtPhys(prune.price.frees) : '-')"></div></div>
+                  <div class="kl-card"><div class="k">Stays stored</div><div class="v" x-text="prune.priceLoading ? '…' : (prune.price ? fmtPhys(prune.price.stays) : fmtPhys(prune.stored))"></div></div>
+                </div>
+
+                <div class="space-y-1">
+                  <div class="kl-note" x-show="pruneElsewhereTicked()" x-text="countOf(pruneElsewhereTicked(), 'ticked version') + ' also sit at another path in the same snapshots. They are removed there too.'"></div>
+                  <div class="kl-note" x-show="prune.holders.length > 1" x-text="'Backed up by ' + prune.holders.length + ' sources. Removal covers all of them.'"></div>
+                  <div class="kl-note" x-show="(prune.other_machines || []).length" x-text="'Only this computer’s backups. ' + countOf(prune.other_machines.length, 'source') + ' on other computers stay as they are.'"></div>
+                  <div class="kl-note" x-show="prune.price && prune.price.uncertain">Some snapshots could not be read, so these numbers may be off.</div>
+                  <div class="kl-note">Space comes back after the next full maintenance.</div>
+                </div>
+
+                <div class="kl-runbar">
+                  <button class="kl-btn" @click="pruneDry($event)" :disabled="prune.dry.running || !pruneCanRun()">
+                    <span x-text="prune.dry.done ? 'Dry run again' : 'Dry run'"></span> <span class="protag" x-show="!proOk('prune')">PRO</span>
+                  </button>
+                  <button class="kl-btn danger" @click="pruneExecute($event)" :disabled="prune.dry.running || !pruneCanRun()" :title="pruneBlockReason()">
+                    <span x-text="'Remove ' + countOf(pruneTickCount(), pruneNoun()) + '…'"></span> <span class="protag" x-show="!proOk('prune')">PRO</span>
+                  </button>
+                  <span x-show="pruneDryChecked()" class="pill ok">dry run checked</span>
+                  <span class="grow"></span>
+                  <span class="kl-note" x-show="pruneBlockReason()" x-text="pruneBlockReason()"></span>
+                  <button class="kl-btn quiet" @click="closePrune()">Cancel</button>
+                </div>
+                {{ dryresult('prune.dry') }}
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>

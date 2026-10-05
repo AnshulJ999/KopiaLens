@@ -1,0 +1,77 @@
+            <!-- Settings: Remote access - who can open KopiaLens, HTTPS, reverse proxies. Read at start. -->
+            <section x-show="settingsTab==='remote'" x-effect="settingsTab==='remote' && !acc && loadAccess()" class="space-y-4" data-testid="settings-remote">
+              <p x-show="!acc" class="kl-note">Loading…</p>
+              <template x-if="acc">
+                <div class="space-y-5">
+                  <div class="kl-callout" x-show="acc.restart_needed">Restart KopiaLens to apply these changes (tray menu > Restart).</div>
+                  <div class="kl-callout" x-show="accErr" x-text="accErr"></div>
+                  <div class="kl-note" x-show="acc.env.length" x-text="'Set by the environment, so changes here wait until it is removed: ' + acc.env.join(', ')"></div>
+
+                  <div>
+                    <div class="text-sm font-medium mb-1">Who can open KopiaLens</div>
+                    <div class="space-y-1.5">
+                      <template x-for="m in acc.modes" :key="m">
+                        <label class="flex items-start gap-2 cursor-pointer">
+                          <input type="radio" name="kl-access" :value="m" :checked="acc.access === m" @change="saveAccess({access: m})" class="mt-1">
+                          <span><span class="font-medium" x-text="accessLabel(m)"></span>
+                            <span class="block text-[11px] text-muted" x-text="accessHint(m)"></span></span>
+                        </label>
+                      </template>
+                    </div>
+                    <div class="mt-2" x-show="acc.access === 'addresses'">
+                      <label class="text-xs font-medium" for="kl-acc-addr">Allowed addresses</label>
+                      <textarea id="kl-acc-addr" rows="3" class="fld w-full border border-bd bg-surface2 font-mono text-xs mt-1"
+                                placeholder="192.168.1.20&#10;192.168.1.0/24" x-text="acc.access_addresses.join('\n')"
+                                @change="saveAccess({access_addresses: $event.target.value.split(/[\s,]+/)})"></textarea>
+                      <p class="text-[11px] text-muted mt-1">One address or network per line. This computer is always allowed.</p>
+                    </div>
+                    <p class="kl-note mt-2" x-show="acc.you_are_remote && (acc.access === 'computer' || acc.access === 'window')">
+                      You're using KopiaLens from another computer. After the restart, this browser can't reach it.</p>
+                    <p class="kl-note mt-2" x-show="acc.bind_override" x-text="'A listening address set in Advanced (' + acc.bind_override + ') decides which network cards KopiaLens listens on.'"></p>
+                  </div>
+
+                  <div>
+                    <div class="text-sm font-medium mb-1">HTTPS</div>
+                    <template x-if="acc.https_allowed">
+                      <div class="space-y-2">
+                        <select class="fld border border-bd bg-surface2" :value="acc.https" @change="saveAccess({https: $event.target.value})">
+                          <option value="auto">Certificate made by KopiaLens</option>
+                          <option value="files">My own certificate files</option>
+                          <option value="off">Off (plain HTTP)</option>
+                        </select>
+                        <p class="text-[11px] text-muted" x-show="acc.https === 'auto'">Browsers warn once, because no public authority signed it. Accept it, or use your own certificate.</p>
+                        <div x-show="acc.https === 'files'" class="grid grid-cols-[8rem_1fr] gap-2 items-center">
+                          <label class="text-xs" for="kl-acc-cert">Certificate file</label>
+                          <input id="kl-acc-cert" class="fld border border-bd bg-surface2 font-mono text-xs" :value="acc.https_cert" placeholder="/certs/fullchain.pem"
+                                 @change="saveAccess({https_cert: $event.target.value})">
+                          <label class="text-xs" for="kl-acc-key">Key file</label>
+                          <input id="kl-acc-key" class="fld border border-bd bg-surface2 font-mono text-xs" :value="acc.https_key" placeholder="/certs/privkey.pem"
+                                 @change="saveAccess({https_key: $event.target.value})">
+                        </div>
+                      </div>
+                    </template>
+                    <p x-show="!acc.https_allowed" class="text-[11px] text-muted">The desktop app serves plain HTTP. To reach it from elsewhere over HTTPS, put a reverse proxy in front.</p>
+                    <div class="text-[11px] text-muted mt-1" x-show="acc.running.cert_info && !acc.running.cert_info.error">
+                      In use: expires <span x-text="acc.running.cert_info && fmtDate(acc.running.cert_info.expires)"></span>,
+                      fingerprint <span class="font-mono break-all" x-text="acc.running.cert_info && acc.running.cert_info.sha256"></span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div class="text-sm font-medium mb-1">Behind a reverse proxy</div>
+                    <label class="text-xs font-medium" for="kl-acc-proxy">Trusted proxy addresses</label>
+                    <textarea id="kl-acc-proxy" rows="2" class="fld w-full border border-bd bg-surface2 font-mono text-xs mt-1"
+                              placeholder="192.168.1.5" x-text="acc.trusted_proxies.join('\n')"
+                              @change="saveAccess({trusted_proxies: $event.target.value.split(/[\s,]+/)})"></textarea>
+                    <p class="text-[11px] text-muted mt-1">Requests from these addresses carry the visitor's real address, so sign-in limits apply per visitor and cookies are marked secure over HTTPS.</p>
+                    <label class="text-xs font-medium mt-2 block" for="kl-acc-hosts">Hostnames</label>
+                    <input id="kl-acc-hosts" class="fld w-full border border-bd bg-surface2 font-mono text-xs mt-1" :value="acc.allowed_hosts.join(', ')"
+                           placeholder="kopia.example.com" @change="saveAccess({allowed_hosts: $event.target.value.split(/[\s,]+/)})">
+                    <p class="text-[11px] text-muted mt-1">Names you reach KopiaLens by, besides addresses and localhost.</p>
+                  </div>
+
+                  <div class="text-[11px] text-muted" x-show="acc.running.bind"
+                       x-text="'Running now: ' + (acc.running.https ? 'https' : 'http') + ' on ' + acc.running.bind + ', ' + accessLabel(acc.running.mode).toLowerCase() + (acc.running.proxies && acc.running.proxies.length ? ', trusting ' + acc.running.proxies.join(', ') : '') + '.'"></div>
+                </div>
+              </template>
+            </section>

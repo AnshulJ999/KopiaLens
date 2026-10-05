@@ -6,7 +6,7 @@ online.json beside them keeps, per licence id, what renewal needs (store key and
 or the Patreon link)."""
 from __future__ import annotations
 
-import json
+import hashlib
 import os
 import socket
 import sys
@@ -95,19 +95,59 @@ def _forget() -> None:
         _cache.update(at=0.0, lic=None)
 
 
-def _read_meta() -> dict:
-    """{licence id: renewal details}. Reads the older single-licence shape too."""
+# The store licence key is a secret: it lives in the OS keyring where there is one (desktop), and
+# in online.json otherwise (Docker, headless Linux) - a file the encryption Full level covers.
+_KEYRING_SERVICE = "KopiaLens"
+
+
+def _keyring_account(lic_id: str) -> str:
+    """Scoped to the data folder, so two installs on one machine never share an entry."""
+    digest = hashlib.sha256(DATA_DIR.encode("utf-8")).hexdigest()[:12]
+    return f"licence-key:{digest}:{lic_id}"
+
+
+def _keyring_get(lic_id: str) -> str:
     try:
-        with open(os.path.join(LICENCE_DIR, META_FILE), encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError):
-        return {}
+        import keyring
+        return keyring.get_password(_KEYRING_SERVICE, _keyring_account(lic_id)) or ""
+    except Exception as exc:  # noqa: BLE001 - no backend, locked keyring, DBus absent
+        log.info("keyring unavailable for the licence key: %s", exc)
+        return ""
+
+
+def _keyring_set(lic_id: str, key: str) -> bool:
+    try:
+        import keyring
+        keyring.set_password(_KEYRING_SERVICE, _keyring_account(lic_id), key)
+        return True
+    except Exception:  # noqa: BLE001 - the file keeps it instead
+        return False
+
+
+def _keyring_delete(lic_id: str) -> None:
+    try:
+        import keyring
+        keyring.delete_password(_KEYRING_SERVICE, _keyring_account(lic_id))
+    except Exception:  # noqa: BLE001 - nothing stored is a successful delete
+        pass
+
+
+def _read_meta() -> dict:
+    """{licence id: renewal details}, with the store key filled in from the keyring. Reads the
+    older single-licence shape too."""
+    from ..core import filecrypto
+    data = filecrypto.read_json(os.path.join(LICENCE_DIR, META_FILE), default={})
     if not isinstance(data, dict):
         return {}
     if "licence_id" in data:
         old = dict(data)
-        return {old.pop("licence_id"): old}
-    return {k: v for k, v in data.get("licences", {}).items() if isinstance(v, dict)}
+        metas = {old.pop("licence_id"): old}
+    else:
+        metas = {k: dict(v) for k, v in data.get("licences", {}).items() if isinstance(v, dict)}
+    for lic_id, meta in metas.items():
+        if meta.pop("key_in", "") == "keyring":
+            meta["key"] = _keyring_get(lic_id)
+    return metas
 
 
 def _meta_for(lic_id: str) -> dict:
@@ -120,16 +160,22 @@ def _set_meta(lic_id: str, meta: dict | None) -> None:
         metas[lic_id] = meta
     else:
         metas.pop(lic_id, None)
+        _keyring_delete(lic_id)
     _write_meta({"licences": metas})
 
 
 def _write_meta(meta: dict) -> None:
+    """Every store key goes to the keyring when one works; the file then records only where it is."""
+    from ..core import filecrypto
     os.makedirs(LICENCE_DIR, exist_ok=True)
-    path = os.path.join(LICENCE_DIR, META_FILE)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(meta, fh, indent=2)
-    os.replace(tmp, path)
+    out = {}
+    for lic_id, m in meta.get("licences", {}).items():
+        m = dict(m)
+        if m.get("key") and _keyring_set(lic_id, m["key"]):
+            m.pop("key")
+            m["key_in"] = "keyring"
+        out[lic_id] = m
+    filecrypto.write_json(os.path.join(LICENCE_DIR, META_FILE), {"licences": out})
 
 
 def _iso(dt) -> str | None:

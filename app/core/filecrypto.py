@@ -531,6 +531,9 @@ def covered_paths() -> dict[str, str]:
                     out[path] = "lines"      # every log is per-line encrypted
         except OSError:
             pass
+    meta = os.path.join(DATA_DIR, "licence", "online.json")   # the store key where no keyring exists
+    if os.path.isfile(meta):
+        out[meta] = "json"
     try:
         runs = os.path.join(DATA_DIR, "runs")
         for name in os.listdir(runs):

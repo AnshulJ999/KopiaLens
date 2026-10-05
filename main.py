@@ -28,14 +28,26 @@ def run() -> None:
         log.warning("single-instance guard: KopiaLens already listening on %s:%s - this instance is exiting", GUARD_HOST, PORT)
         print(f"KopiaLens already running on {GUARD_HOST}:{PORT} - exiting (single-instance guard).")
         sys.exit(0)
+    from app.core import netaccess
     host = auth.bind_host()
-    if host != "127.0.0.1" and not auth.enabled():
+    mode = netaccess.mode()
+    if host != "127.0.0.1" and not auth.enabled() and mode != "addresses":
         log.warning("listening on %s with authentication DISABLED - anything that can reach "
                     "port %s can browse and delete from the backup repositories", host, PORT)
-    log.info("starting KopiaLens on %s:%s (auth %s)", host, PORT,
-             "on" if auth.enabled() else "off")
+    tls = netaccess.tls_files()
+    proxies = netaccess.trusted_proxies()
+    opts: dict = {"proxy_headers": bool(proxies)}
+    if proxies:
+        opts["forwarded_allow_ips"] = ",".join(proxies)
+    if tls:
+        opts.update(ssl_certfile=tls[0], ssl_keyfile=tls[1])
+    netaccess.STARTED.update(bind=host, mode=mode, https=bool(tls), cert=tls[0] if tls else None,
+                             proxies=proxies)
+    log.info("starting KopiaLens on %s://%s:%s (access %s, auth %s%s)", "https" if tls else "http",
+             host, PORT, mode, "on" if auth.enabled() else "off",
+             f", trusting proxies {', '.join(proxies)}" if proxies else "")
     from app.main import app  # the app object, not "app.main:app": import strings fail when compiled
-    uvicorn.run(app, host=host, port=PORT, reload=False)
+    uvicorn.run(app, host=host, port=PORT, reload=False, **opts)
 
 
 if __name__ == "__main__":

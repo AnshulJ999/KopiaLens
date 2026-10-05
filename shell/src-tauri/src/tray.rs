@@ -174,7 +174,10 @@ fn build_menu(app: &AppHandle, h: Health, state: Option<&Value>) -> tauri::Resul
     let menu = Menu::new(app)?;
     let sep = || PredefinedMenuItem::separator(app);
     menu.append(&MenuItem::with_id(app, "open", "Open KopiaLens", true, None::<&str>)?)?;
-    menu.append(&MenuItem::with_id(app, "browser", "Open in browser", h != Health::Down, None::<&str>)?)?;
+    // "This window only" turns browsers away, so the menu does not offer one.
+    if state.and_then(|v| v.get("access")).and_then(Value::as_str) != Some("window") {
+        menu.append(&MenuItem::with_id(app, "browser", "Open in browser", h != Health::Down, None::<&str>)?)?;
+    }
     menu.append(&sep()?)?;
 
     match state {
@@ -288,7 +291,7 @@ pub fn refresh(app: &AppHandle, shell: &Arc<Shell>, h: Health) {
     let tip = tooltip(h, state.as_ref());
     let menu_view = state.as_ref().map(|st| {
         let rows: Vec<String> = repos(st).iter().map(|r| format!("{}|{}|{}", repo_key(r), s(r, "name"), repo_status(r))).collect();
-        json!([rows, paused(st).map(|u| pause_text(u)), pref(Some(st), "notifications", "warnings"), s(st, "version")]).to_string()
+        json!([rows, paused(st).map(|u| pause_text(u)), pref(Some(st), "notifications", "warnings"), s(st, "version"), s(st, "access")]).to_string()
     });
     let autostart = app.autolaunch().is_enabled().unwrap_or(false);
     let sig = format!("{:?}|{}|{}", menu_view, h as u8, autostart);

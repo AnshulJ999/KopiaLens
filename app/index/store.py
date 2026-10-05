@@ -116,7 +116,7 @@ _LOCK = threading.Lock()
 # maps; layer 3 is the index schema. Some are a list of files (pathx/filev are per-source).
 _ARTIFACT_TABLES = ("tdir", "tent", "tpart",
                     "filev", "pathx", "dir", "anc", "src", "cid", "snap",
-                    "csize", "crefs", "iphys", "sanalysis", "isnaps")
+                    "csize", "crefs", "iphys", "crefo", "sanalysis", "isnaps")
 
 
 class Generation:
@@ -219,6 +219,9 @@ def _bind_generation(con, repo: str, artifacts: dict[str, list[str]], encrypted:
     for name in _ARTIFACT_TABLES:
         if name in artifacts:
             _one_table(con, name, artifacts[name], encrypted)
+    if "crefo" not in artifacts:
+        # Generations built before the piece-sharing map: empty, so every piece reads as one object.
+        con.execute("CREATE VIEW crefo AS SELECT NULL::INTEGER AS cid_id, NULL::INTEGER AS refs WHERE false")
 
     # Read-only stubs: these are builder-only tables (rewrite/backfill tracking). Empty but
     # correctly typed so any accidental read returns nothing instead of raising.

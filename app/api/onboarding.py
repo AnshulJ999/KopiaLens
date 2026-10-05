@@ -75,7 +75,7 @@ def setup_code(payload: CodeRequest) -> JSONResponse:
         raise HTTPException(status_code=403, detail="That setup code is wrong. It's in the KopiaLens log.")
     resp = JSONResponse({"ok": True})
     resp.set_cookie(auth.SETUP_COOKIE, auth.setup_cookie_value(), httponly=True, samesite="strict",
-                    max_age=auth.SETUP_WINDOW * 4)
+                    max_age=auth.SETUP_WINDOW * 4, secure=auth.request_secure())
     return resp
 
 

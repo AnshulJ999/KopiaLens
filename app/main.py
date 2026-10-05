@@ -24,10 +24,10 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from config import APP_VERSION, DATA_DIR, DEMO_BACKBLAZE, DEMO_INSTANCE, REPOS, is_demo, repo_kind
 
-from .api import (account, actions, appconfig, audit, backblaze, dashboard, deleteplan, encryption, excluded, insights,
-                  jobs, licence, logs, onboarding, policies, restore, search, setup, shell, simulate, snapshots, stats,
-                  tree)
-from .core import auth, pause
+from .api import (access, account, actions, appconfig, audit, backblaze, dashboard, deleteplan, encryption, excluded,
+                  insights, jobs, licence, logs, onboarding, policies, prune, restore, search, setup, shell, simulate,
+                  snapshots, stats, tree)
+from .core import auth, netaccess, pause
 from .core import jobs as jobrunner
 from .index.crypto import StoreLocked
 from .index import crypto as crypto_mod
@@ -791,19 +791,80 @@ async def demo_repo_disk_middleware(request: Request, call_next):
 app.add_middleware(_ApiGZip)
 
 
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+}
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Standard safe headers. No frame blocking on purpose: Home Assistant shows add-ons inside its
+    own page, and sign-in plus the Host check already cover what framing protection would."""
+    response = await call_next(request)
+    for k, v in _SECURITY_HEADERS.items():
+        response.headers.setdefault(k, v)
+    return response
+
+
+def _blocked_page(text: str) -> HTMLResponse:
+    from html import escape
+    return HTMLResponse("<!doctype html><meta charset=utf-8><title>KopiaLens</title>"
+                        '<body style="font:14px system-ui;margin:3rem"><p>' + escape(text) + "</p></body>",
+                        status_code=403)
+
+
+@app.get("/shell/open")
+def shell_open(code: str = "", next: str = "/") -> Response:
+    """The desktop app's window opens through here: a one-time code becomes the window cookie
+    that the "This window only" access mode asks for."""
+    token = netaccess.redeem(code)
+    target = next if next.startswith("/") and not next.startswith("//") else "/"
+    resp = RedirectResponse(target, status_code=303)
+    if token:
+        resp.set_cookie(netaccess.WINDOW_COOKIE, token, httponly=True, samesite="strict", path="/",
+                        secure=auth.request_secure())
+    return resp
+
+
 @app.middleware("http")
 async def access_middleware(request: Request, call_next):
-    """Host validation + the shared-password gate, in that order.
+    """Host validation, the access mode, then the shared-password gate, in that order.
 
     Host first: a request whose Host header we do not recognise is rejected before anything else
     looks at it, because that is the DNS-rebinding case and a valid session cookie would not make
-    it safe. Both checks are no-ops when auth is disabled, which is the state for anyone who
-    fronts KopiaLens with their own reverse proxy."""
+    it safe. The address list and the window-only mode come next; sign-in last. Sign-in is a no-op
+    when auth is disabled, which is the state for anyone who fronts KopiaLens with their own
+    reverse proxy."""
+    secure = auth.set_secure(request.url.scheme == "https")
+    try:
+        return await _access(request, call_next)
+    finally:
+        auth._SECURE.reset(secure)
+
+
+async def _access(request: Request, call_next):
     if not auth.host_allowed(request.headers.get("host", "")):
         return JSONResponse(status_code=421, content={
             "detail": f"Host {request.headers.get('host', '')!r} is not allowed. Add it to "
                       "settings.kopialens.allowed_hosts if you reach KopiaLens by that name."})
     path = request.url.path
+    client = request.client.host if request.client else None
+    mode = netaccess.STARTED.get("mode") or netaccess.mode()
+    if not netaccess.client_allowed(client, mode):
+        log.info("refused a request from %s (not in the allowed addresses)", client)
+        if path.startswith("/api/"):
+            return JSONResponse(status_code=403, content={"detail": "This address may not open KopiaLens."})
+        return _blocked_page("This address may not open KopiaLens. Ask whoever runs it to add it in "
+                             "Settings > Remote access.")
+    if (mode == "window" and path not in ("/shell/open", "/health")
+            and not auth.shell_request_ok(path, request.headers.get(auth.SHELL_HEADER), client)
+            and not netaccess.window_ok(request.cookies.get(netaccess.WINDOW_COOKIE))):
+        if path.startswith("/api/"):
+            return JSONResponse(status_code=403, content={"detail": "KopiaLens opens only in its own window."})
+        return _blocked_page("KopiaLens is set to open only in its own window. Open it from the "
+                             "tray icon, or change this in Settings > Remote access.")
     if auth.shell_request_ok(path, request.headers.get(auth.SHELL_HEADER),
                              request.client.host if request.client else None):
         token = auth.set_actor("desktop app")
@@ -1142,6 +1203,8 @@ app.include_router(search.router, prefix="/api")
 app.include_router(simulate.router, prefix="/api")
 app.include_router(actions.router, prefix="/api")
 app.include_router(deleteplan.router, prefix="/api")
+app.include_router(prune.router, prefix="/api")
+app.include_router(access.router, prefix="/api")
 app.include_router(restore.router, prefix="/api")
 app.include_router(jobs.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")

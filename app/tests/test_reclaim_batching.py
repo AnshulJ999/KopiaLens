@@ -54,7 +54,8 @@ def batched(monkeypatch):
     con.execute("INSERT INTO filev VALUES (1, 1), (1, 2), (2, 1), (3, 3)")
     chunks = {"A": {"a1", "a2"}, "A2": {"a2", "a3"}, "B": {"b1"}}
     sizes = {"a1": 10, "a2": 20, "a3": 30, "b1": 5}
-    refs = {"a1": 1, "a2": 2, "a3": 1, "b1": 1}
+    refs = {"a1": 1, "a2": 1, "a3": 1, "b1": 1}   # crefs counts sources: everything is in s1
+    objrefs = {"a2": 2}                             # a2 sits in objects A and A2
 
     counter = _CountingCursor(con)
     monkeypatch.setattr(physical, "read_cursor", lambda repo: counter)
@@ -62,14 +63,16 @@ def batched(monkeypatch):
                         lambda repo, cids: {c: sizes[c] for c in set(cids) if c in sizes})
     monkeypatch.setattr(physical, "_chunks_for_objs",
                         lambda repo, objs, **kw: {o: set(chunks[o]) for o in objs if o})
-    # Nothing outside the selection references these chunks beyond what this_refs already counts.
+    # Nothing outside the selection references these chunks.
     monkeypatch.setattr(physical, "_refcount_for", lambda repo, cids: dict(refs))
+    monkeypatch.setattr(physical, "_objrefs_for",
+                        lambda repo, cids: {c: objrefs[c] for c in cids if c in objrefs})
     return counter
 
 
 def test_reclaim_batched_matches_per_id(batched):
-    # A: f1(A)=+a1,a2  f1(A2)=+a2,a3  f2(A)=+a1,a2  -> a1:2 a2:3 a3:1 -> free a1(1<=2)+a2(2<=3)+a3(1<=1)
-    # B: f3(B)=+b1 -> b1:1 -> free b1(1<=1)
+    # A: f1 holds A and A2, f2 holds A -> every source (s1) and both objects using a2 are in the
+    #    group, so a1+a2+a3 free. B: b1 frees.
     # C: nothing -> 0
     out = physical.reclaim_for("1", ["A", "B", "C"], cap=10)
     assert out == {"A": 60, "B": 5, "C": 0}

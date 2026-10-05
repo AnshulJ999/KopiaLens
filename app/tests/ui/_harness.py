@@ -222,7 +222,8 @@ class Server:
         self.data = root / f"data-{name}"
         self.log = root / f"server-{name}.log"
         self.env = {**env, "KOPIALENS_DATA_DIR": str(self.data), "KOPIALENS_PROFILE": "server",
-                    "KOPIALENS_BIND_HOST": "127.0.0.1", "KOPIALENS_PORT": str(_free_port())}
+                    "KOPIALENS_BIND_HOST": "127.0.0.1", "KOPIALENS_PORT": str(_free_port()),
+                    "KOPIALENS_HTTPS": "off"}   # a server install serves HTTPS by default; the flows test HTTP
         self.url = f"http://127.0.0.1:{self.env['KOPIALENS_PORT']}"
         self.proc: subprocess.Popen | None = None
         self._http = urllib.request.build_opener(

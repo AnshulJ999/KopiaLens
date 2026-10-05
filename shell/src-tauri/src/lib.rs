@@ -60,16 +60,22 @@ pub fn open_window(app: &AppHandle, repo: Option<String>) {
         let _ = w.set_focus();
         return;
     }
-    let mut url = format!("{}/", sh.server.url());
+    let mut next = "/".to_string();
     let mut title = "KopiaLens".to_string();
     if let Some(r) = &repo {
-        url.push_str(&format!("?repo={}", encode(r)));
+        next.push_str(&format!("?repo={}", encode(r)));
         let name = sh.state.lock().unwrap().as_ref()
             .and_then(|st| st.get("repos")?.as_array()?.iter()
                 .find(|x| x.get("repo").and_then(Value::as_str) == Some(r.as_str()))?
                 .get("name")?.as_str().map(str::to_string));
         title = format!("KopiaLens - {}", name.unwrap_or_else(|| format!("Repo {r}")));
     }
+    // A one-time code turns into the window cookie the "This window only" access mode asks for.
+    let url = match sh.server.post("/api/shell/open-code", json!({})).ok()
+        .and_then(|v| v.get("code").and_then(Value::as_str).map(str::to_string)) {
+        Some(code) => format!("{}/shell/open?code={}&next={}", sh.server.url(), encode(&code), encode(&next)),
+        None => format!("{}{next}", sh.server.url()),
+    };
     let Ok(parsed) = Url::parse(&url) else { return };
     let port = sh.server.port;
     let (app2, label2) = (app.clone(), label.clone());

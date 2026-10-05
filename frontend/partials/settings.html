@@ -13,7 +13,7 @@
         <div class="flex min-h-0 flex-1">
           <nav class="w-36 sm:w-40 shrink-0 overflow-y-auto border-r border-bd p-2 space-y-1 text-sm">
 
-            <template x-for="s in [['general','General'],['repositories','Repositories'],['account','Account'],['encryption','Encryption'],['appearance','Appearance'],['desktop','Desktop app'],['indexing','Indexing'],['refresh','Refresh'],['advanced','Advanced'],['backblaze','Backblaze'],['backups','Settings backups'],['licence','Licence'],['about','About']]" :key="s[0]">
+            <template x-for="s in [['general','General'],['repositories','Repositories'],['account','Account'],['remote','Remote access'],['encryption','Encryption'],['appearance','Appearance'],['desktop','Desktop app'],['indexing','Indexing'],['refresh','Refresh'],['advanced','Advanced'],['backblaze','Backblaze'],['backups','Settings backups'],['licence','Licence'],['about','About']]" :key="s[0]">
               <button @click="settingsTab=s[0]"
                       :class="settingsTab===s[0] ? 'w-full text-left rounded px-2 py-1.5 bg-sel text-fg font-medium' : 'w-full text-left rounded px-2 py-1.5 hover:bg-head'"
                       x-text="s[1]"></button>
@@ -93,6 +93,7 @@
 {% include "partials/appearance.html" %}
 {% include "partials/repos.html" %}
 {% include "partials/account.html" %}
+{% include "partials/remoteaccess.html" %}
 {% include "partials/appconfig.html" %}
 {% include "partials/licence.html" %}
 

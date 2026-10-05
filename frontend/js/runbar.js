@@ -26,6 +26,8 @@ const runbarPart = {
         return { kind: "remove_files", params: { ...body, dry: true, form: "files" } };
       if (url === "/api/actions/remove-plan-dry-run")
         return { kind: "remove_files", params: { ...body, dry: true, form: "plan" } };
+      if (url === "/api/prune/dry-run")
+        return { kind: "prune_versions", params: { ...body, dry: true } };
       if (url === "/api/actions/snapshot-delete-dry-run")
         return { kind: "snapshot_delete", params: { ...body, dry: true } };
       return null;

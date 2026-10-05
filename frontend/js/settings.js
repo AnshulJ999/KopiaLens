@@ -5,6 +5,7 @@ const MEMORY_CHOICES = ["512MB", "1GB", "2GB", "3GB", "4GB", "6GB", "8GB"];
 const settingsPart = {
 
     async openSettings() {  // re-read the live settings file each open so the modal can't show stale state
+      this.acc = null; this.accErr = "";
       try {
         const data = await getJson("/api/repos");
         const kl = data.settings?.kopialens || {};
@@ -116,6 +117,32 @@ const settingsPart = {
       collapse_prefixes: { s: "bzCollapsePrefixes", t: "list", block: "backblaze" },
       eventlog_archive_path: { s: "bzEventlogArchive", t: "str", block: "backblaze" },
       session_days: { s: "sessionDays", t: "int", min: 1, max: 365 },
+    },
+
+    // ---- Remote access (read at start: a change needs a restart) ----
+    async loadAccess() {
+      try { this.acc = await getJson("/api/access"); } catch (e) { this.accErr = e.message || String(e); }
+    },
+    async saveAccess(change) {
+      this.accErr = "";
+      try {
+        this.acc = await getJson("/api/access", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(change) });
+        this.klNotify("Saved - restart KopiaLens to apply");
+      } catch (e) {
+        this.accErr = e.message || String(e);
+        this.loadAccess();   // put the form back to what is stored
+      }
+    },
+    accessLabel(m) {
+      return { window: "This window only", computer: "This computer", addresses: "These addresses",
+               network: "Anyone on the network" }[m] || m;
+    },
+    accessHint(m) {
+      return { window: "Only the KopiaLens app window. Browsers, even on this computer, are turned away.",
+               computer: "Any browser on this computer.",
+               addresses: "This computer, plus the addresses and networks you list.",
+               network: "Anyone who can reach this computer on the network. Turn on sign-in." }[m] || "";
     },
 
     // Save ONE key on change. The payload never carries a value the user did not touch, so a

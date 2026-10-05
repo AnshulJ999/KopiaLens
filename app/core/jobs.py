@@ -46,6 +46,7 @@ from .kopia import (
     _repo_args,
     kopia_job_stream,
     maintenance_run_command,
+    prune_commands,
     remove_files_chunked_commands,
     restore_command_full,
     snapshot_create_command,
@@ -62,6 +63,7 @@ EVENT_FORCE_AFTER = 300.0  # seconds a delivered Ctrl+Break gets before Stop for
 
 KINDS = {
     "remove_files": {"label": "Removing files", "mutating": True},
+    "prune_versions": {"label": "Pruning versions", "mutating": True},
     "snapshot_delete": {"label": "Deleting snapshots", "mutating": True},
     "maintenance": {"label": "Running maintenance", "mutating": True},
     "restore": {"label": "Restoring", "mutating": False},
@@ -78,6 +80,7 @@ KINDS = {
 
 AUDIT_ACTION = {
     "remove_files": "remove-files",
+    "prune_versions": "prune-versions",
     "snapshot_delete": "snapshot-delete",
     "maintenance": "maintenance",
     "restore": "restore",
@@ -105,6 +108,7 @@ def job_lines(job: dict) -> list[str]:
 # are shared with them (one home in kopia.py, fed per streamed line here).
 DRY_PARSERS = {
     "remove_files": _parse_remove_line,
+    "prune_versions": _parse_remove_line,
     "snapshot_delete": _parse_delete_line,
 }
 
@@ -183,6 +187,15 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
             meta["index_changed"] = True
         if params.get("note"):
             meta["note"] = params["note"]
+    elif kind == "prune_versions":
+        items = params.get("items") or []
+        cmds = prune_commands(repo, [it for it in items if it.get("obj")], commit=not dry)
+        whole = [i for it in items if not it.get("obj") for i in it.get("snapshot_ids") or []]
+        if whole:  # the folder is the source's root there: delete those snapshots
+            dels = snapshot_delete_commands(repo, whole, batch=True)
+            cmds += [c[:-1] for c in dels] if dry else dels
+        meta = {"versions": len(items), "path": params.get("full_path") or "",
+                "snapshots": sum(len(it.get("snapshot_ids") or []) for it in items), "dry": dry}
     elif kind == "snapshot_delete":
         ids = params.get("snapshot_ids") or []
         cmds = snapshot_delete_commands(repo, ids, batch=True)
@@ -279,6 +292,9 @@ def _default_label(kind: str, params: dict, meta: dict) -> str:
         return f"{_count(meta['items'], what)} - {scope}" + (" - dry run" if meta["dry"] else "")
     if kind == "snapshot_delete":
         return _count(meta["snapshots"], "snapshot") + (" - dry run" if meta["dry"] else "")
+    if kind == "prune_versions":
+        return (f"{_count(meta['versions'], 'version')} from {_count(meta['snapshots'], 'snapshot')}"
+                + (" - dry run" if meta["dry"] else ""))
     if kind == "maintenance":
         return ("full maintenance" if meta["full"] else "quick maintenance") + (
             ", safety none" if meta.get("safety") == "none" else "")

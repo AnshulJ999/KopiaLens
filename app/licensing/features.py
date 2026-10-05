@@ -16,6 +16,7 @@ CAPABILITY = "reclaim"   # the licence capability every KopiaLens Pro feature ne
 PRO = {
     "remove": "Removing files from snapshots needs Pro.",
     "purge": "Deleting every snapshot that holds a file needs Pro.",
+    "prune": "Pruning versions needs Pro.",
     "exclude_smart": "Smart exclude rules need Pro.",
     "exclude_delete": "Exclude & delete needs Pro.",
 }

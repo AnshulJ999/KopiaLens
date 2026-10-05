@@ -163,7 +163,7 @@ const jobsPart = {
     jobFreesLater() {
       const p = this.jobPanel;
       if (!p || p.dry || p.state !== "done" || p.held) return false;
-      return p.kind === "remove_files" || p.kind === "snapshot_delete"
+      return p.kind === "remove_files" || p.kind === "prune_versions" || p.kind === "snapshot_delete"
         || (p.kind === "policy_write" && p.kind_label === "Excluding and deleting");
     },
 
@@ -318,7 +318,7 @@ const jobsPart = {
       if (j.kind === "policy_write" && this.polData) this.loadPolicies(true);
       // A pin rewrites the snapshot record under a new id; a new snapshot adds a row.
       if ((j.kind === "snapshot_pin" || j.kind === "snapshot_create") && this.active === "snapshots") this.loadSnapshots(true);
-      const deleted = j.kind === "remove_files" || j.kind === "snapshot_delete"
+      const deleted = j.kind === "remove_files" || j.kind === "prune_versions" || j.kind === "snapshot_delete"
         || (j.kind === "policy_write" && j.kind_label === "Excluding and deleting" && !j.held);
       if (deleted && this.active === "snapshots") this.loadSnapshots(true);
       if (deleted) this._armReindexReload(j.repo, j.finished || j.created || Date.now() / 1000);

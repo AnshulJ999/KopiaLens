@@ -835,6 +835,15 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
             f"SELECT count(*) FROM read_parquet({crypto.parquet_read_list(fl)})").fetchone()[0]
         stats = {"paths": n_paths, "file_versions": n_filev}
         checks["stats"] = stats
+        # Version-level piece sharing over the FINAL history (carried sources included).
+        t_crefo = time.perf_counter()
+        n_crefo = layer2.object_refcount(con, f"read_parquet({crypto.parquet_read_list(fl)})")
+        staged = os.path.join(staging, "crefo.parquet")
+        con.execute(f"COPY (SELECT * FROM crefo_final ORDER BY cid_id) TO '{_fwd(staged)}' ({_copy_opts()})")
+        artifacts_out["crefo"] = [f"pool/maps/crefo/g{gen}.parquet"]
+        moves.append((staged, artifacts_out["crefo"][0]))
+        log.info("repo=%s piece-sharing map (crefo) %d rows in %.1fs", repo, n_crefo,
+                 time.perf_counter() - t_crefo)
         perf.count(sources=len(srcs), rebuilt_sources=len(targets), paths=n_paths,
                    file_versions=n_filev, dirs=con.execute("SELECT count(*) FROM dir").fetchone()[0],
                    content_ids=con.execute("SELECT count(*) FROM cid").fetchone()[0],
