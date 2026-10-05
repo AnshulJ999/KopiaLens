@@ -13,18 +13,19 @@ const countOf = (n, one, many = one + "s") => `${Number(n || 0).toLocaleString()
 // Accepts an ISO / "YYYY-MM-DD HH:MM:SS" string, a Date, or an epoch number. Epoch SECONDS (the
 // backend's time.time()) are told apart from milliseconds by magnitude.
 const toDate = (s) => (typeof s === "number" ? new Date(s < 1e12 ? s * 1000 : s) : new Date(s));
+// One formatter each: toLocaleString builds a new one per call, which is ~15x slower on long lists.
+const _absFmt = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
+const _dateFmt = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" });
 const fmtAbs = (s) => {
   if (!s) return "";
   const d = toDate(s);
-  return isNaN(d.getTime()) ? String(s).slice(0, 19)
-    : d.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
+  return isNaN(d.getTime()) ? String(s).slice(0, 19) : _absFmt.format(d);
 };
 // Date only ("20 Jul 2024") - for day-granularity values and "first backed up" style labels.
 const fmtDate = (s) => {
   if (!s) return "";
   const d = /^\d{4}-\d{2}-\d{2}$/.test(String(s)) ? new Date(`${s}T00:00:00`) : toDate(s);
-  return isNaN(d.getTime()) ? String(s).slice(0, 10)
-    : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  return isNaN(d.getTime()) ? String(s).slice(0, 10) : _dateFmt.format(d);
 };
 // A DURATION in seconds ("0.4 s", "42 s", "6 m 12 s", "1 h 05 m") - never pass one to humanTime.
 const fmtDur = (sec) => {

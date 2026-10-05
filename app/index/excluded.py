@@ -11,6 +11,7 @@ range scan per repo (bounded to that subtree), aggregated by immediate child seg
 from __future__ import annotations
 
 import collections
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -19,7 +20,7 @@ from config import REPOS, kopia_repos
 
 from ..core import paths as pathrules
 from ..core.disklookup import children as es_children, list_drives, recursive_count, recursive_size
-from .store import read_cursor
+from .store import manifest_path, read_cursor
 
 
 def coverage_repos() -> list:
@@ -260,6 +261,45 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
     return result
 
 
+# drive -> (generation key, (backed bytes, backed files)). The index side of a drive total only
+# changes when a new index is published; the disk side is read fresh on every call.
+_DRIVE_BACKED: dict[str, tuple] = {}
+
+
+def _generation_key() -> tuple:
+    out = []
+    for repo in coverage_repos():
+        try:
+            out.append((repo, os.stat(manifest_path(repo)).st_mtime_ns))
+        except OSError:
+            out.append((repo, None))
+    return tuple(out)
+
+
+def _drive_backed(p: str, gen: tuple) -> tuple[int, int]:
+    hit = _DRIVE_BACKED.get(p)
+    if hit and hit[0] == gen:
+        return hit[1]
+    lo, hi, _plen = _prefix_bounds(p)
+    path = _path_sql(_rules(p)[1])
+    bs = bc = 0
+    for repo in coverage_repos():
+        cur = read_cursor(repo)
+        try:
+            row = cur.execute(
+                f"SELECT sum(sz), count(*) FROM (SELECT max(p.size) AS sz FROM pathx p "
+                f"WHERE p.in_latest AND {path} >= ? AND {path} < ? GROUP BY {path})",
+                [lo, hi],
+            ).fetchone()
+        finally:
+            cur.close()
+        bs += int(row[0] or 0)
+        bc += int(row[1] or 0)
+    if all(mt is not None for _r, mt in gen):
+        _DRIVE_BACKED[p] = (gen, (bs, bc))
+    return bs, bc
+
+
 def drive_stats() -> list[dict]:
     """Per local drive: total (Everything) vs backed (index, deduped) → excluded size + file count.
     Parallel es calls. Used by the drives ('This PC') view so each drive shows its REAL excluded
@@ -273,24 +313,12 @@ def drive_stats() -> list[dict]:
     except Exception:  # bzdata missing / BZ index not built - drive view still works without it
         pass
 
+    gen = _generation_key()
+
     def _one(d: dict) -> dict:
         p = d["path"]
         ts, tc = recursive_size(p), recursive_count(p)
-        lo, hi, _plen = _prefix_bounds(p)
-        path = _path_sql(_rules(p)[1])
-        bs = bc = 0
-        for repo in coverage_repos():
-            cur = read_cursor(repo)
-            try:
-                row = cur.execute(
-                    f"SELECT sum(sz), count(*) FROM (SELECT max(p.size) AS sz FROM pathx p "
-                    f"WHERE p.in_latest AND {path} >= ? AND {path} < ? GROUP BY {path})",
-                    [lo, hi],
-                ).fetchone()
-            finally:
-                cur.close()
-            bs += int(row[0] or 0)
-            bc += int(row[1] or 0)
+        bs, bc = _drive_backed(p, gen)
         bzf, bzb = bz_by_letter.get(p[:1].upper(), (0, 0))
         return {
             "path": p, "used": d["used"], "total_size": ts, "total_files": tc,

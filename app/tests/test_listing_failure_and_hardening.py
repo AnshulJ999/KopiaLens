@@ -444,8 +444,11 @@ def test_an_unlisted_domain_name_is_rejected(monkeypatch):
 def test_the_bind_default_follows_the_launch_profile(monkeypatch):
     """No profile declared = a server start = all interfaces (the container convention: the user's
     port mapping decides exposure). The tray declares its child desktop, which binds loopback."""
+    from app.core import netaccess
     monkeypatch.setattr(auth, "_env", lambda name: "")
     monkeypatch.setattr(auth, "raw_kopialens_settings", lambda: {})
+    monkeypatch.setattr(netaccess, "_env", lambda name: "")
+    monkeypatch.setattr(netaccess, "_raw", lambda: {})
     assert auth.bind_host() == "0.0.0.0"
     monkeypatch.setattr(auth, "_env",
                         lambda name: "desktop" if name == "KOPIALENS_PROFILE" else "")

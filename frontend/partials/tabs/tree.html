@@ -20,7 +20,8 @@
           <input x-model="treeExt" @input.debounce.400ms="treeFilterChanged()" class="fld w-32 border border-bd bg-surface text-xs" placeholder="ext: iso,7z">
           <button @click="toggleTreeFlat()" class="h-8 rounded border border-bd px-2 text-sm" :class="treeFlat ? 'bg-sel' : ''" title="Flat: collapse folders, list all files under here (multi-select to remove)">☰ Flat</button>
           <select x-show="treeMode!=='all' && selectedSource!=='*ALL*'" x-model="selectedSnapshot" @change="treePrefix=sourceRoot(); loadTree()" class="fld border border-bd bg-surface min-w-[18rem]">
-            <template x-for="sn in snapshots" :key="sn.id"><option :value="sn.id" x-text="humanTime(sn.start_time)"></option></template>
+            <!-- Built only while shown: the Snapshots tab fills the same list with every source. -->
+            <template x-for="sn in (active === 'tree' && treeMode !== 'all' && selectedSource !== '*ALL*' ? snapshots : [])" :key="sn.id"><option :value="sn.id" x-text="humanTime(sn.start_time)"></option></template>
           </select>
           <button @click="treeUp()" class="h-8 rounded border border-bd px-3 text-sm" title="Up one level">⬆ Up</button>
           <button x-show="treeMode!=='all' && selectedSource!=='*ALL*'" @click="mountTreeSnapshot()" class="h-8 rounded border border-bd px-3 text-sm" :title="host.can_open ? 'Mount this snapshot (read-only) and open the current folder in ' + host.file_manager : 'Mount this snapshot (read-only)'" x-text="host.can_open ? '⤓ Mount &amp; browse' : '⤓ Mount'"></button>
