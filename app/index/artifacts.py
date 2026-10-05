@@ -842,6 +842,7 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         con.execute(f"COPY (SELECT * FROM crefo_final ORDER BY cid_id) TO '{_fwd(staged)}' ({_copy_opts()})")
         artifacts_out["crefo"] = [f"pool/maps/crefo/g{gen}.parquet"]
         moves.append((staged, artifacts_out["crefo"][0]))
+        staged_of_rel[artifacts_out["crefo"][0]] = staged
         log.info("repo=%s piece-sharing map (crefo) %d rows in %.1fs", repo, n_crefo,
                  time.perf_counter() - t_crefo)
         perf.count(sources=len(srcs), rebuilt_sources=len(targets), paths=n_paths,
