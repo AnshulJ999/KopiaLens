@@ -85,6 +85,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "mount_host_path": "",       # Docker: the host folder mapped to mount_dir, shown instead of the container path
         "excluded_tolerance": 0.05,  # folder counts as "backed" when excluded fraction is below this (cuts partial noise)
         "repo_labels": "short",      # repo chips/columns: "short" (Repo 1) | "full" (the name from repos.json)
+        "show_pro_badge": True,      # the small Pro mark next to the logo while a licence is active
         "debug_log": False,          # also write data/logs/kopialens-debug.log at DEBUG (env KOPIALENS_DEBUG_LOG overrides)
         "control_api": True,         # the tray's local control port (restart/quit/status for scripts); read at tray start
         "tray_click": "window",      # desktop app tray icon click: window | menu (right-click always shows the menu)

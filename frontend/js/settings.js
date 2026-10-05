@@ -22,6 +22,7 @@ const settingsPart = {
         this.excludedTolerance = Number(kl.excluded_tolerance ?? 0.05);
         this.esPath = kl.es_path || "";
         this.repoLabels = kl.repo_labels === "full" ? "full" : "short";
+        this.showProBadge = kl.show_pro_badge !== false;
         this.diskLookupMode = ["auto", "everything", "scan", "off"].includes(kl.disk_lookup) ? kl.disk_lookup : "auto";
         this.diskScanBudget = Number(kl.disk_scan_budget || 15);
         this.folderPicker = ["auto", "native", "browser"].includes(kl.folder_picker) ? kl.folder_picker : "auto";
@@ -107,6 +108,7 @@ const settingsPart = {
       log_cleanup_days: { s: "logCleanupDays", t: "int", min: 0 },
       rank_count: { s: "rankCount", t: "int", min: 0 },
       repo_labels: { s: "repoLabels", t: "choice", of: ["short", "full"] },
+      show_pro_badge: { s: "showProBadge", t: "bool" },
       bzdata_path: { s: "bzDataPath", t: "str", block: "backblaze", restart: true },
       store: { s: "bzStore", t: "choice", of: ["parquet", "sqlite"], block: "backblaze" },
       bz_reindex_min_gap: { s: "bzReindexMinGap", t: "int", min: 300, block: "backblaze" },

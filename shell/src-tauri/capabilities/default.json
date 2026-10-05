@@ -1,13 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The KopiaLens page is served by the local KopiaLens server, which Tauri treats as a remote origin; this grants that loopback origin the folder picker and nothing else.",
+  "description": "The KopiaLens page is served by the local KopiaLens server, which Tauri treats as a remote origin; this grants that loopback origin the folder picker and page zoom, nothing else.",
   "windows": ["*"],
   "remote": {
     "urls": ["http://127.0.0.1:*/*", "http://localhost:*/*"]
   },
   "permissions": [
     "core:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "core:webview:allow-set-webview-zoom"
   ]
 }

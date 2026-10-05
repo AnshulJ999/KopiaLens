@@ -12,7 +12,7 @@ document.addEventListener("alpine:init", () => {
       { id: "dashboard", label: "Dashboard" }, { id: "snapshots", label: "Snapshots" },
       { id: "tree", label: "Tree" }, { id: "search", label: "Search" },
       { id: "churn", label: "Churn" }, { id: "simulate", label: "Simulate" },
-      { id: "stats", label: "Stats" }, { id: "logs", label: "Logs" },
+      { id: "stats", label: "Repository" }, { id: "logs", label: "Logs" },
       { id: "excluded", label: "Excluded" },
       { id: "policies", label: "Policies" }, { id: "actions", label: "Actions" },
     ],
@@ -106,6 +106,7 @@ document.addEventListener("alpine:init", () => {
     duckdbMemory: "", memoryAuto: "",  // memory limit override ("" = automatic) and what automatic resolves to
     indexWorkerTimeout: 14400, indexRetryDelay: 900, indexMaxRetries: 1, reindexAfterDeleteDelay: 300, quitIndexing: "finish",
     folderPrewarmBudget: 900, startupDelay: 300, logCleanupDays: 90, rankCount: 10000,
+    showProBadge: true,   // the small Pro mark next to the logo while a licence is active
     repoLabels: "short",  // repo chips and columns: "short" (Repo 1) | "full" (the name from repos.json)
     // Backblaze settings. Defaults mirror app/settings.py; each control saves its own key into
     // the nested "backblaze" dict (KL_FIELDS in settings.js).
@@ -284,6 +285,7 @@ document.addEventListener("alpine:init", () => {
         this.polLayout = kl.policy_layout === "scroll" ? "scroll" : "tabs";
         this.polLeave = kl.policy_leave === "keep" ? "keep" : "ask";
         this.repoLabels = kl.repo_labels === "full" ? "full" : "short";
+        this.showProBadge = kl.show_pro_badge !== false;
         this.searchSort = kl.search_sort || "size";
         this.searchDir = kl.search_dir || "desc";
         this.dedupe = !!kl.search_dedupe;
@@ -480,6 +482,11 @@ document.addEventListener("alpine:init", () => {
       if (this.active === "actions") return this.loadMounts();
       if (this.active === "excluded") return this.loadExcluded();
       if (this.active === "policies") return this.loadPolicies();
+    },
+
+    goHome() {  // the logo: first tab of whatever kind of repo is open (Backblaze and server repos have no Dashboard)
+      this.active = this.currentTabs()[0].id;
+      return this.activate();
     },
 
     headerSearch() {  // top search box (Option B): drives BZ search when a Backblaze repo is active

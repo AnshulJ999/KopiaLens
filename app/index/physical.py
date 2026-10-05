@@ -701,7 +701,13 @@ def batch_detail(repo: str, files: list[dict], all_versions: bool = True) -> dic
 
 def file_detail(repo: str, source: str, full_path: str) -> dict:
     """Accurate per-file footprint: logical/physical/freeable + dedup chunk breakdown +
-    other paths sharing the same content object."""
+    other paths sharing the same content object.
+
+    The same path held by several sources on one machine (nested backups such as a drive and a
+    folder on it) is ONE file: ``freeable`` prices removing it, every version, from every one of
+    those holders - the delete panel's default scope. Identical content at OTHER paths keeps its
+    bytes. ``crefs`` counts sources, so a chunk is freed when every source reaching it is a holder
+    whose versions of this path use it, and no other path in the repo holds that object."""
     cur = read_cursor(repo)
     try:
         sid = resolve.src_id(cur, source)
@@ -715,84 +721,110 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
             "WHERE f.path_id = ? ORDER BY sn.start_time DESC, sn.snapshot_id DESC",
             [pid],
         ).fetchall()
-    finally:
-        cur.close()
-    if not versions:
-        return {"found": False}
-
-    this_refs: dict[str, int] = {}  # references this file contributes per chunk (across versions)
-    unknown = 0
-    # One batched lookup for the file's versions, then - and only here - kopia for anything the
-    # tree has not reached. A file backed up since the last index is exactly what a user opens
-    # this panel to look at, and "-" where a size belongs is the least useful honest answer.
-    obj_chunks = _chunks_for_objs(repo, [o for _s, _t, _z, o in versions])
-    for obj, got in list(obj_chunks.items()):
-        if got is None and obj.startswith("I"):
-            obj_chunks[obj] = _chunks_from_kopia(repo, obj)
-    for _sid, _start, _size, obj in versions:
-        chunks = obj_chunks.get(obj)
-        if chunks is None:
-            unknown += 1
-            continue
-        for c in chunks:
-            this_refs[c] = this_refs.get(c, 0) + 1
-    if unknown:
-        log.warning("repo=%s file detail: %d version(s) could not be measured", repo, unknown)
-        log.debug("repo=%s file detail path %s", repo, full_path)
-
-    latest_obj = versions[0][3]
-    latest_chunks = obj_chunks.get(latest_obj, set())
-    union_chunks = set(this_refs)
-
-    refs = _refcount_for(repo, union_chunks)  # targeted (fast); None => content_refs not built yet
-    if refs is None:
-        refs = _refcount_map(repo)            # cold-start fallback (full map / rebuild)
-
-    sizes = _sizes_for(repo, union_chunks)
-    physical_latest = sum(sizes.get(c, 0) for c in latest_chunks)
-    physical_total = sum(sizes.get(c, 0) for c in union_chunks)
-    freeable = sum(sizes.get(c, 0) for c in union_chunks if refs.get(c, 0) <= this_refs.get(c, 0))
-    shared = physical_total - freeable
-
-    chunk_rows = []
-    for c in sorted(latest_chunks, key=lambda x: sizes.get(x, 0), reverse=True)[:200]:
-        g = refs.get(c, 0)
-        chunk_rows.append({
-            "cid": c, "packed": sizes.get(c, 0), "refs": g,
-            "exclusive": g <= this_refs.get(c, 0),
-        })
-
-    # Other paths sharing this exact content object (the dominant dedup case = identical files).
-    cur = read_cursor(repo)
-    try:
-        latest_cid = resolve.cid_id(cur, latest_obj) if latest_obj else None
-        others: list = []
-        if latest_cid is not None:
-            others = cur.execute(
-                "SELECT DISTINCT s.source, p.full_path FROM filev f "
-                "JOIN pathx p ON p.path_id = f.path_id "
-                "JOIN src s ON s.src_id = p.src_id "
-                "WHERE f.cid_id=? AND NOT (p.src_id=? AND p.full_path=?) LIMIT 500",
-                [latest_cid, sid, full_path],
-            ).fetchall()
-        # the SOURCES holding this exact PATH (raw-exact identity) - what the file panel's
-        # "Backed up by" list renders. Distinct from `others` (other PATHS with the same bytes)
-        # and from `instances` (distinct paths): one concept per field, never conflated.
-        machine = source.split(":", 1)[0]   # another machine's identical path is a different file
+        # the SOURCES holding this exact PATH (raw-exact identity) on this machine; another
+        # machine's identical path is a different file.
+        machine = source.split(":", 1)[0]
         holders = [source] + [r[0] for r in cur.execute(
             "SELECT DISTINCT s.source FROM pathx p JOIN src s ON s.src_id = p.src_id "
             "WHERE p.full_path = ? AND s.source <> ? ORDER BY s.source",
             [full_path, source],
         ).fetchall() if r[0].split(":", 1)[0] == machine]
+        sids = resolve.src_map(cur)
+        holder_sids = [sids[h] for h in holders if h in sids]
+        objs_by_holder: dict[str, set[str]] = {source: {r[3] for r in versions if r[3]}}
+        if len(holders) > 1:
+            rev = {v: k for k, v in sids.items()}
+            pids = resolve.path_ids(cur, [(sids[h], full_path) for h in holders[1:] if h in sids])
+            for (hsid, _fp), hpid in pids.items():
+                objs_by_holder[rev[hsid]] = {r[0] for r in cur.execute(
+                    "SELECT DISTINCT c.content_id FROM filev f JOIN cid c ON c.cid_id = f.cid_id "
+                    "WHERE f.path_id = ?", [hpid]).fetchall() if r[0]}
+        all_objs = sorted({o for objs in objs_by_holder.values() for o in objs})
+        # Objects this file shares with any OTHER path (or another machine) stay stored.
+        oid_of = resolve.cid_ids(cur, all_objs)
+        kept_objs: set[str] = set()
+        if oid_of and holder_sids:
+            rev_c = {v: k for k, v in oid_of.items()}
+            ids = sorted(oid_of.values())
+            hold = ",".join("?" * len(holder_sids))
+            for i in range(0, len(ids), 900):
+                grp = ids[i:i + 900]
+                q = ("SELECT DISTINCT f.cid_id FROM filev f JOIN pathx p ON p.path_id = f.path_id "
+                     "WHERE f.cid_id IN (%s) AND NOT (p.full_path = ? AND p.src_id IN (%s))"
+                     % (",".join("?" * len(grp)), hold))
+                kept_objs |= {rev_c[r[0]] for r in cur.execute(q, grp + [full_path] + holder_sids).fetchall()}
     finally:
         cur.close()
+    if not versions:
+        return {"found": False}
 
-    # Content-centric reclaim: what is freed if this content is removed from every location. Per-path
-    # `freeable` reads ~0 for a multi-copy file (the copies keep it alive). A chunk is freed iff its
-    # global source-refcount is fully attributable to the duplicate-holding sources. The snapshots
-    # holding it come from /api/delete/plan (the delta index cannot list them).
-    dup_sources = {source} | {s for s, _ in others}
-    n_dup = len(dup_sources)
+    unknown = 0
+    # One batched lookup for every holder's versions, then - and only here - kopia for anything the
+    # tree has not reached. A file backed up since the last index is exactly what a user opens
+    # this panel to look at, and "-" where a size belongs is the least useful honest answer.
+    obj_chunks = _chunks_for_objs(repo, all_objs)
+    for obj, got in list(obj_chunks.items()):
+        if got is None and obj.startswith("I"):
+            obj_chunks[obj] = _chunks_from_kopia(repo, obj)
+    holder_refs: dict[str, set[str]] = {}   # chunk -> holders whose versions of this path use it
+    for h, objs in objs_by_holder.items():
+        for obj in objs:
+            chunks = obj_chunks.get(obj)
+            if chunks is None:
+                unknown += 1
+                continue
+            for c in chunks:
+                holder_refs.setdefault(c, set()).add(h)
+    if unknown:
+        log.warning("repo=%s file detail: %d version(s) could not be measured", repo, unknown)
+        log.debug("repo=%s file detail path %s", repo, full_path)
+    kept_chunks = {c for o in kept_objs for c in (obj_chunks.get(o) or ())}
+
+    latest_obj = versions[0][3]
+    latest_chunks = obj_chunks.get(latest_obj) or set()
+    union_chunks = set(holder_refs)
+
+    refs = _refcount_for(repo, union_chunks)  # targeted (fast); None => content_refs not built yet
+    if refs is None:
+        refs = _refcount_map(repo)            # cold-start fallback (full map / rebuild)
+
+    def freed(c: str) -> bool:
+        return c not in kept_chunks and refs.get(c, 0) <= len(holder_refs.get(c, ()))
+
+    sizes = _sizes_for(repo, union_chunks)
+    physical_latest = sum(sizes.get(c, 0) for c in latest_chunks)
+    physical_total = sum(sizes.get(c, 0) for c in union_chunks)
+    freeable = sum(sizes.get(c, 0) for c in union_chunks if freed(c))
+    shared = physical_total - freeable
+
+    chunk_rows = []
+    for c in sorted(latest_chunks, key=lambda x: sizes.get(x, 0), reverse=True)[:200]:
+        chunk_rows.append({
+            "cid": c, "packed": sizes.get(c, 0), "refs": refs.get(c, 0), "exclusive": freed(c),
+        })
+
+    # Every location of the latest content; the same path in a holder is this file, not a copy.
+    rows: list = []
+    latest_cid = oid_of.get(latest_obj) if latest_obj else None
+    if latest_cid is not None:
+        cur = read_cursor(repo)
+        try:
+            rows = cur.execute(
+                "SELECT DISTINCT s.source, p.full_path FROM filev f "
+                "JOIN pathx p ON p.path_id = f.path_id "
+                "JOIN src s ON s.src_id = p.src_id "
+                "WHERE f.cid_id=? LIMIT 500",
+                [latest_cid],
+            ).fetchall()
+        finally:
+            cur.close()
+    holder_set = set(holders)
+    others = [(s, p) for s, p in rows if not (p == full_path and s in holder_set)]
+
+    # Content-centric reclaim: what is freed if this content is removed from every location. A chunk
+    # is freed iff its global source-refcount is fully attributable to the sources holding it. The
+    # snapshots holding it come from /api/delete/plan (the delta index cannot list them).
+    n_dup = len({source} | {s for s, _ in rows})
     reclaim_everywhere = sum(sizes.get(c, 0) for c in latest_chunks if refs.get(c, 0) <= n_dup)
 
     return {
@@ -815,6 +847,7 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
         "holders": holders,                       # every source backing up this exact path
         # content-centric / purge-everywhere
         "locations": n_dup,                       # distinct sources holding this exact content
-        "instances": len(others) + 1,             # distinct paths holding it (this one + others)
+        # distinct files holding it: one per (machine, path), this one included
+        "instances": len({(s.split(":", 1)[0], p) for s, p in others} - {(machine, full_path)}) + 1,
         "reclaim_everywhere": reclaim_everywhere,  # bytes freed if purged from every location
     }

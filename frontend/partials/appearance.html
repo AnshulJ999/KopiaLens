@@ -64,4 +64,9 @@
       </select></div>
     <p class="text-[11px] text-muted mt-1">How repositories are labelled in chips, headers and log columns. Pickers always show the full name.</p>
   </div>
+  <div>
+    <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Pro badge</span>
+      <button @click="showProBadge = !showProBadge; saveKl('show_pro_badge')" class="h-8 rounded border border-bd px-3" x-text="showProBadge ? 'Shown' : 'Hidden'"></button></div>
+    <p class="text-[11px] text-muted mt-1">The small Pro mark next to the KopiaLens name while a licence is active.</p>
+  </div>
 </section>

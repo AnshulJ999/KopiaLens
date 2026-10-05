@@ -34,6 +34,10 @@
     <span x-text="{{ st }}.running ? 'Running…' : 'Result'"></span>
     <span class="count" x-show="{{ st }}.done && {{ st }}.elapsed"
           x-text="({{ st }}.snapshots != null ? {{ st }}.snapshots + ' snapshots · ' : '') + {{ st }}.elapsed + 's'"></span>
+    <span class="acts" x-show="{{ st }}.running && {{ st }}.jobId">
+      <button type="button" class="kl-btn danger" style="height:22px" @click="klDryStop({{ st }})" :disabled="{{ st }}.stopping === true"
+              x-text="{{ st }}.stopping ? 'Stopping…' : 'Stop'"></button>
+    </span>
     <span class="acts" x-show="{{ st }}.done">
       <span class="kl-seg">
         <span :class="{{ st }}.mode==='clean' ? 'on' : ''" @click="{{ st }}.mode='clean'">Clean</span>

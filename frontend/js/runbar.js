@@ -16,7 +16,7 @@ const runbarPart = {
     // permanently disabled (found live in the browser).
     klDryState() {
       return { mode: "clean", running: false, done: false, ok: false, output: "", error: "",
-               lines: [], cursor: 0, truncated: false };
+               lines: [], cursor: 0, truncated: false, jobId: "", stopping: false };
     },
 
     // The dry-run routes the run bar uses, mapped to runner jobs. The legacy endpoints
@@ -39,13 +39,14 @@ const runbarPart = {
       if (!spec) return this._klDrySync(url, body, st);
       const seq = (st.seq = (st.seq || 0) + 1);
       st.running = true; st.error = ""; st.done = false; st.output = "";
-      st.lines = []; st.cursor = 0; st.truncated = false;
+      st.lines = []; st.cursor = 0; st.truncated = false; st.jobId = ""; st.stopping = false;
       let jobId;
       try {
         const r = await getJson("/api/jobs/start", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ kind: spec.kind, repo: body.repo, params: spec.params }) });
         if (seq !== st.seq) return;  // the selection changed while this was in flight
         jobId = r.job_id;
+        st.jobId = jobId;
       } catch (e) {
         if (seq !== st.seq) return;
         st.running = false; st.error = e.message || String(e);
@@ -75,8 +76,18 @@ const runbarPart = {
           final_line: s.summary ? (s.summary.final_line || "") : "",
           doneAt: Date.now(), mode: st.mode || "clean",
         });
-        if (!st.ok) st.error = s.error || "kopia exited non-zero - see the output below";
+        if (s.state === "stopped") st.error = "Stopped. A dry run writes nothing.";
+        else if (!st.ok) st.error = s.error || "kopia exited non-zero - see the output below";
+        st.stopping = false;
       }, 1000);
+    },
+
+    // A dry run only reads, so stopping it is always safe and needs no confirm.
+    async klDryStop(st) {
+      if (!st || !st.running || !st.jobId || st.stopping) return;
+      st.stopping = true;
+      await getJson("/api/jobs/stop", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job_id: st.jobId }) }).catch((e) => { st.stopping = false; st.error = e.message || String(e); });
     },
 
     // The pre-runner path, kept for any dry-run url not mapped above.

@@ -10,7 +10,7 @@ from playwright.sync_api import expect
 
 from . import _harness as h
 
-TABS = ["Dashboard", "Snapshots", "Tree", "Search", "Churn", "Simulate", "Stats", "Logs",
+TABS = ["Dashboard", "Snapshots", "Tree", "Search", "Churn", "Simulate", "Repository", "Logs",
         "Excluded", "Policies", "Actions"]
 
 

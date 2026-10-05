@@ -111,7 +111,7 @@
   <span x-text="copyCount() + (copyCount() === 1 ? ' identical copy' : ' identical copies') + ' at other paths keep it stored.'"></span>
   Removing every copy frees <b style="color:var(--ok)" x-text="fmtPhys(detail.reclaim_everywhere)"></b>.
 </div>
-<div class="kl-note" x-show="copyCount() === 0 && (detail.holders || []).length > 1" x-text="'Held by ' + (detail.holders || []).length + ' backups. Removing it from one keeps it stored in the others.'"></div>
+<div class="kl-note" x-show="(detail.holders || []).length > 1" x-text="'Backed up by ' + (detail.holders || []).length + ' sources. Frees on its own counts removing it from ' + ((detail.holders || []).length === 2 ? 'both.' : 'all of them.')"></div>
 </div>
 {%- endmacro -%}
 

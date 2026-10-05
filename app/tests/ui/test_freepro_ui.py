@@ -14,7 +14,7 @@ def test_free_sees_pro_tags_and_the_upgrade_notice(app_server, open_page):
     page.get_by_placeholder("Search paths (matches the full path)").fill("needle")
     page.get_by_role("row", name="needle-report.txt", exact=False).dblclick()
 
-    remove = page.locator("#kl-file-remove button.kl-btn.danger")
+    remove = page.locator("#kl-file-remove").get_by_role("button", name="Remove from snapshots")
     expect(remove).to_contain_text("PRO")
     remove.click()
     notice = page.get_by_role("dialog", name="Part of KopiaLens Pro")
@@ -30,4 +30,4 @@ def test_free_sees_pro_tags_and_the_upgrade_notice(app_server, open_page):
     section = page.get_by_test_id("settings-licence")
     expect(section).to_contain_text("Free")
     expect(section.get_by_role("button", name="Activate")).to_be_visible()
-    expect(page.locator("header .protag")).to_be_hidden()
+    expect(page.locator("header .pro-mark")).to_be_hidden()
