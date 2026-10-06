@@ -9,12 +9,15 @@ import pytest
 
 from app.core import checkin
 
+_real_stats_ready = checkin.stats_ready
+
 
 @pytest.fixture
 def sent(monkeypatch, tmp_path):
     monkeypatch.setattr(checkin, "STATE_FILE", str(tmp_path / "checkin.json"))
     monkeypatch.setattr(checkin, "DEMO_INSTANCE", False)
     monkeypatch.setattr(checkin, "_tier", lambda: "free")
+    monkeypatch.setattr(checkin, "stats_ready", lambda: True)
     monkeypatch.delenv("KOPIALENS_NO_UPDATE_CHECK", raising=False)
     monkeypatch.delenv("KOPIALENS_NO_USAGE_STATS", raising=False)
     out = []
@@ -70,3 +73,20 @@ def test_an_update_the_licence_does_not_cover_names_the_newest_covered_version(m
     st = checkin.status()
     assert st["available"] and st["latest"] == "3.0.1"
     assert st["licence"] == {"covers_through": 2, "latest_covered": "2.9.3"}
+
+
+def test_usage_stats_wait_for_a_day_old_persistent_install(monkeypatch, sent):
+    """A container recreated without a data volume gets a new id each time; it must never count."""
+    from app.core import host
+    monkeypatch.setattr(checkin, "stats_ready", _real_stats_ready)
+    monkeypatch.setattr(host, "data_persistent", lambda: True)
+    _switches(monkeypatch, True, True)
+    checkin.check_now()
+    assert "install_id" not in sent[-1]                       # first day: update check only
+    checkin._write_state(install_created_at=time.time() - checkin.STATS_AFTER - 1)
+    checkin.check_now()
+    assert "install_id" in sent[-1]
+    monkeypatch.setattr(host, "data_persistent", lambda: False)
+    checkin.check_now()
+    assert "install_id" not in sent[-1]
+

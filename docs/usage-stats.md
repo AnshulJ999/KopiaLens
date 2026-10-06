@@ -20,7 +20,7 @@ KopiaLens never installs anything by itself. When a newer version is out, it say
 
 | Field | Example |
 |---|---|
-| Install ID | A random ID created by KopiaLens and kept in its data folder (`checkin.json`). It counts this install once instead of once a day. It isn't linked to you, your computer or your licence. |
+| Install ID | A random ID created by KopiaLens and kept in its data folder (`checkin.json`). It counts this install once instead of once a day. It isn't linked to you, your computer or your licence. Usage stats start on an install's second day, and never from a Docker container whose data folder isn't on a volume. |
 | CPU type | `amd64`, `arm64` |
 | Licence | `free`, or the licence plan (`pro`, `lifetime`, `business`) |
 | Repositories | How many kopia repositories KopiaLens has |

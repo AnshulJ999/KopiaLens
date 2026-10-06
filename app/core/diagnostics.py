@@ -27,10 +27,15 @@ from config import APP_VERSION, DATA_DIR, REPOS
 
 from .applog import INDEX_LOG_DIR, LOG_FILE
 
-SECTIONS = ("app_log", "index_logs", "history", "settings")
+SECTIONS = ("problems", "app_log", "index_logs", "history", "settings", "kopia_status")
 LOG_LINES = 1500
 INDEX_LOG_LINES = 300
 HISTORY_ENTRIES = 300
+JOB_ENTRIES = 100
+PROBLEM_GROUPS = 300
+FAILED_RUNS = 3
+
+_PROBLEM_LINE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+\s+(WARNING|ERROR|CRITICAL)\s+(\S+) \| (.*)$")
 
 # Setting keys whose values never leave the computer.
 _SECRET_KEYS = re.compile(r"(password|hash|secret|token|key|salt|cert)", re.I)
@@ -48,7 +53,7 @@ class _Anon:
         ("path", re.compile(r"\b[A-Za-z]:\\{1,2}(?:[^\\\r\n\"'<>|:*?]+\\{0,2})*")),
         ("path", re.compile(r"\\\\[^\s\"'<>|]+")),                        # UNC
         ("path", re.compile(r"(?<![\w:/.])/(?!api/|static/|v1/|health\b)(?:[^/\s\"'<>|]+/)+[^\s\"'<>|]*")),
-        ("ip", re.compile(r"\b(?!127\.0\.0\.1\b)(?!0\.0\.0\.0\b)(?:\d{1,3}\.){3}\d{1,3}\b")),
+        ("ip", re.compile(r"(?<![/\w.])(?!127\.0\.0\.1\b)(?!0\.0\.0\.0\b)(?:\d{1,3}\.){3}\d{1,3}\b")),
     )
 
     def __init__(self, salt: str):
@@ -63,7 +68,8 @@ class _Anon:
         return f"<{kind}-{digest}>"
 
     # Free text the user typed or named: replaced whole, whatever it looks like.
-    _TEXT_KEYS = {"query": "text", "filename": "name", "actor": "user"}
+    _TEXT_KEYS = {"query": "text", "filename": "name", "actor": "user",
+                  "allowed_hosts": "host", "trusted_proxies": "ip"}
 
     def walk(self, obj):
         """Anonymise every string (keys included) of parsed JSON data."""
@@ -73,6 +79,8 @@ class _Anon:
                 kind = self._TEXT_KEYS.get(k)
                 if kind and isinstance(v, str) and v and v != "admin":
                     out[k] = self.token(kind, v)
+                elif kind and isinstance(v, list):
+                    out[k] = [self.token(kind, x) if isinstance(x, str) and x else x for x in v]
                 else:
                     out[self(k) if isinstance(k, str) else k] = self.walk(v)
             return out
@@ -134,9 +142,18 @@ def _system_lines() -> list[str]:
     return lines
 
 
+def _index_sizes() -> dict:
+    try:
+        from .instrument import memory_snapshot
+        return memory_snapshot().get("repos", {})
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _repo_lines() -> list[str]:
     from . import repos as repos_mod
     from .runhistory import read_tail
+    sizes = _index_sizes()
     lines = []
     for rid, rec in REPOS.items():
         kind = rec.get("kind", "kopia")
@@ -149,13 +166,104 @@ def _repo_lines() -> list[str]:
             line += ", through a kopia server"
         if rec.get("demo"):
             line += ", sample data"
-        runs = read_tail(1, repos=[rid])
+        runs = read_tail(200, repos=[rid])
         if runs:
-            r = runs[0]
+            r = runs[0]                                   # newest first
             line += (f", last index {r.get('ts', '?')} {'ok' if r.get('ok') else 'failed'}"
                      f" ({r.get('trigger', '?')}, {float(r.get('elapsed') or 0):.0f} s)")
         lines.append(line)
+        cap = info.get("capacity") or {}
+        if cap.get("capacity"):
+            lines.append(f"  Storage: {(cap.get('available') or 0) // 1024 ** 3} GB free of {cap['capacity'] // 1024 ** 3} GB")
+        s = sizes.get(rid) or {}
+        if "files" in s:
+            lines.append(f"  Index: {s['files']} file versions, {s['paths']} paths, {s.get('content_refs')} content refs")
+        for r in [r for r in runs if not r.get("ok")][:FAILED_RUNS]:
+            why = r.get("reason") or r.get("errors") or "?"
+            lines.append(f"  Failed index {r.get('ts', '?')} ({r.get('trigger', '?')}): {str(why)[:300]}")
     return lines
+
+
+def _changed_settings(anon=None) -> list[str]:
+    from ..settings import DEFAULT_SETTINGS, load_settings
+    current, defaults = load_settings(), DEFAULT_SETTINGS
+    out = []
+
+    def show(v):
+        return v if isinstance(v, str) else json.dumps(v)
+    for key in sorted(set(current) | set(defaults)):
+        cur, dflt = current.get(key), defaults.get(key)
+        if isinstance(cur, dict) and isinstance(dflt, dict):
+            for sub in sorted(set(cur) | set(dflt)):
+                if cur.get(sub) != dflt.get(sub):
+                    val = "(set)" if _SECRET_KEYS.search(sub) else show(
+                        anon.walk({sub: cur.get(sub)})[sub] if anon else cur.get(sub))
+                    out.append(f"  {key}.{sub}: {val}")
+        elif cur != dflt:
+            out.append(f"  {key}: {'(set)' if _SECRET_KEYS.search(key) else show(cur)}")
+    return out
+
+
+def _problems(days: int) -> str:
+    """Warnings and errors since ``days`` ago, repeats grouped (digits ignored), newest first."""
+    from . import filecrypto
+    cutoff = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - days * 86400))
+    groups: dict[tuple, dict] = {}
+    paths = [LOG_FILE] + [f"{LOG_FILE}.{i}" for i in range(1, 20)]
+    for path in paths:
+        if not os.path.exists(path):
+            continue
+        for line in filecrypto.read_lines(path):
+            m = _PROBLEM_LINE.match(line)
+            if not m or m.group(1) < cutoff:
+                continue
+            ts, level, logger, msg = m.groups()
+            key = (level, logger, re.sub(r"\d+", "#", msg)[:200])
+            g = groups.setdefault(key, {"count": 0, "first": ts, "last": ts, "msg": msg})
+            g["count"] += 1
+            g["first"], g["last"] = min(g["first"], ts), max(g["last"], ts)
+            if ts >= g["last"]:
+                g["msg"] = msg
+    head = f"Warnings and errors since {cutoff} ({days} day{'' if days == 1 else 's'})"
+    if not groups:
+        return head + "\nNone.\n"
+    rows = sorted(groups.items(), key=lambda kv: kv[1]["last"], reverse=True)[:PROBLEM_GROUPS]
+    body = [f"{g['count']}x {level} last {g['last']} first {g['first']} {logger} | {g['msg'][:500]}"
+            for (level, logger, _k), g in rows]
+    return "\n".join([head, f"{sum(g['count'] for g in groups.values())} lines, {len(groups)} kinds", ""] + body) + "\n"
+
+
+def _jobs() -> list[dict]:
+    from .jobs import read_job_history
+    keep = ("kind", "repo", "state", "dry", "rc", "elapsed", "total", "done", "errors", "error")
+    out = []
+    for j in read_job_history(JOB_ENTRIES):
+        row = {k: j.get(k) for k in keep}
+        row["finished"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(j["finished"])) if j.get("finished") else None
+        if isinstance(row.get("error"), str):
+            row["error"] = row["error"][-300:]
+        out.append(row)
+    return out
+
+
+def _kopia_status() -> str:
+    from . import repos as repos_mod
+    lines = []
+    for rid, rec in REPOS.items():
+        if rec.get("kind", "kopia") != "kopia" or rec.get("demo") or repos_mod.via_server(rid):
+            continue
+        st = repos_mod.read_status(rid)
+        if not st:
+            lines.append(f"Repository {rid}: kopia could not read its status")
+            continue
+        cf, of = st.get("contentFormat") or {}, st.get("objectFormat") or {}
+        ret = st.get("blobRetention") or {}
+        lines.append(f"Repository {rid}: format {cf.get('version')}, index {cf.get('indexVersion')}, hash {cf.get('hash')},"
+                     f" encryption {cf.get('encryption')}, ecc {cf.get('ecc') or 'none'}, splitter {of.get('splitter')},"
+                     f" max pack {(cf.get('maxPackSize') or 0) // 1024 ** 2} MB,"
+                     f" epochs {'on' if (cf.get('epochParameters') or {}).get('Enabled') else 'off'},"
+                     f" retention {ret.get('mode') or 'none'}")
+    return "\n".join(lines) + "\n"
 
 
 _LINE_START = re.compile(r"^\d{2,4}[-:]\d{2}")
@@ -184,23 +292,31 @@ def _settings_data() -> dict:
     return scrub(load_settings())
 
 
-def build(sections, anonymise: bool = True, bundle_id: str | None = None) -> dict:
+def build(sections, anonymise: bool = True, bundle_id: str | None = None, days: int = 7,
+          browser: str = "") -> dict:
     """{"id", "files": {name: text}} for the chosen sections; the summary is always first."""
     from . import checkin
     bundle_id = bundle_id if bundle_id and re.fullmatch(r"[0-9a-f]{8}", bundle_id) else secrets.token_hex(4)
     stamp = time.strftime("%Y-%m-%d %H:%M:%S %z")
     head = [f"KopiaLens diagnostics bundle {bundle_id}, created {stamp}",
             f"Anonymised: {'yes' if anonymise else 'no'}", ""]
-    summary = "\n".join(head + _licence_lines() + [""] + _system_lines() + [""] + _repo_lines()) + "\n"
+    system = _system_lines() + ([f"Browser: {browser[:300]}"] if browser else [])
+    anon = _Anon(checkin.install_id()) if anonymise else None
+    changed = _changed_settings(anon)
+    summary = "\n".join(head + _licence_lines() + [""] + system + [""] + _repo_lines() + [""]
+                        + [f"Settings changed from defaults: {len(changed) or 'none'}"] + changed) + "\n"
     files = {"summary.txt": summary}
     chosen = [s for s in SECTIONS if s in set(sections or ())]
+    if "problems" in chosen:
+        files["problems.txt"] = _problems(days)
     if "app_log" in chosen:
         files["app-log.txt"] = _tail(LOG_FILE, LOG_LINES)
     if "index_logs" in chosen and os.path.isdir(INDEX_LOG_DIR):
         for name in sorted(os.listdir(INDEX_LOG_DIR)):
             if name.endswith(".log"):
                 files[f"index-{name.removesuffix('.log').removeprefix('index_worker_')}.txt"] = _tail(os.path.join(INDEX_LOG_DIR, name), INDEX_LOG_LINES)
-    anon = _Anon(checkin.install_id()) if anonymise else None
+    if "kopia_status" in chosen:
+        files["kopia-status.txt"] = _kopia_status()
     if anon:
         files = {name: anon(text) for name, text in files.items()}
     # JSON is anonymised before it is written: as text its backslashes are escaped, which splits
@@ -209,6 +325,7 @@ def build(sections, anonymise: bool = True, bundle_id: str | None = None) -> dic
     if "history" in chosen:
         from .audit import read_tail as audit_tail
         files["history.jsonl"] = "\n".join(json.dumps(keep(e)) for e in audit_tail(HISTORY_ENTRIES))
+        files["jobs.jsonl"] = "\n".join(json.dumps(keep(j)) for j in _jobs())
     if "settings" in chosen:
         files["settings.json"] = json.dumps(keep(_settings_data()), indent=2)
     if anon:

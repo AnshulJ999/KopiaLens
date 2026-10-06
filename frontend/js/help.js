@@ -67,15 +67,15 @@ const helpPart = {
     // ---- Diagnostics bundle ----
     openDiagnostics(report = false) {
       this.helpMenu = false;
-      this.diag = { report, anonymise: true, loading: false, error: "", id: "", files: null, file: "summary.txt",
-                    sections: { app_log: true, index_logs: true, history: true, settings: true } };
+      this.diag = { report, anonymise: true, loading: false, error: "", id: "", files: null, file: "summary.txt", days: 7,
+                    sections: { problems: true, app_log: true, index_logs: true, history: true, settings: true, kopia_status: true } };
       this.showDiag = true;
       this.diagPreview();
     },
     _diagQuery() {
       const d = this.diag;
       const sections = Object.keys(d.sections).filter((k) => d.sections[k]).join(",");
-      return new URLSearchParams({ sections, anonymise: d.anonymise ? "true" : "false" });
+      return new URLSearchParams({ sections, anonymise: d.anonymise ? "true" : "false", days: String(d.days || 7) });
     },
     async diagPreview() {
       const seq = ++this._diagSeq;

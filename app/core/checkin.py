@@ -107,7 +107,23 @@ def install_id() -> str:
     iid = _read_state().get("install_id")
     if isinstance(iid, str) and re.fullmatch(r"[0-9a-f]{32}", iid):
         return iid
-    return _write_state(install_id=secrets.token_hex(16))["install_id"]
+    return _write_state(install_id=secrets.token_hex(16), install_created_at=time.time())["install_id"]
+
+
+STATS_AFTER = 24 * 3600
+
+
+def stats_ready() -> bool:
+    """Usage stats start once the install id is a day old and the data folder survives a restart,
+    so a container recreated without a volume (a new id each time) is never counted."""
+    from .host import data_persistent
+    if not data_persistent():
+        return False
+    install_id()
+    created = _read_state().get("install_created_at")
+    if not isinstance(created, (int, float)):
+        created = _write_state(install_created_at=time.time())["install_created_at"]
+    return time.time() - created >= STATS_AFTER
 
 
 def install_type() -> str:
@@ -180,7 +196,7 @@ def _clean_reply(data: dict) -> dict:
 def check_now() -> bool:
     """One check-in when either setting is on. True on success."""
     global _opened
-    want_updates, want_stats = updates_enabled(), stats_enabled()
+    want_updates, want_stats = updates_enabled(), stats_enabled() and stats_ready()
     if not (want_updates or want_stats) or DEMO_INSTANCE:
         return False
     try:

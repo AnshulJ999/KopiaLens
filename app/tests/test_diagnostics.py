@@ -43,3 +43,19 @@ def test_json_paths_with_spaces_and_typed_text_are_hidden_whole():
     repr_text = "moved " + repr({"p": path})                 # doubled separators, as in a log line
     assert "Stuff" not in anon(repr_text)
 
+
+
+def test_recent_problems_group_repeats_and_respect_the_period(monkeypatch, tmp_path):
+    import time as _t
+    log = tmp_path / "kopialens.log"
+    now = _t.strftime("%Y-%m-%d %H:%M:%S")
+    old = _t.strftime("%Y-%m-%d %H:%M:%S", _t.localtime(_t.time() - 10 * 86400))
+    log.write_text("\n".join([
+        f"{now},1 ERROR kopialens.app | repo 1 failed after 12 s",
+        f"{now},2 ERROR kopialens.app | repo 1 failed after 30 s",
+        f"{now},3 INFO  kopialens.app | fine",
+        f"{old},4 WARNING kopialens.app | too old",
+    ]) + "\n", encoding="utf-8")
+    monkeypatch.setattr(diagnostics, "LOG_FILE", str(log))
+    out = diagnostics._problems(7)
+    assert "2x ERROR" in out and "fine" not in out and "too old" not in out

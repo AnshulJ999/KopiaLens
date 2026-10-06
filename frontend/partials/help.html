@@ -36,14 +36,22 @@
             <div class="sm:w-60 shrink-0 p-4 space-y-3 border-b sm:border-b-0 sm:border-r border-bd overflow-auto">
               <div>
                 <div class="text-xs font-medium mb-1">Always included</div>
-                <div class="kl-note">Version, system, licence (Free or Pro) and repository types. Never passwords, keys or licence codes.</div>
+                <div class="kl-note">Version, system, browser, licence (Free or Pro), repositories with index size and failed index runs, changed settings. Never passwords, keys or licence codes.</div>
               </div>
               <div class="space-y-1.5">
                 <div class="text-xs font-medium">Also include</div>
+                <div class="flex items-center gap-2">
+                  <label class="flex items-center gap-2"><input type="checkbox" x-model="diag.sections.problems" @change="diagPreview()"> Recent problems</label>
+                  <select class="fld border border-bd bg-surface2 text-xs" style="height:24px;width:auto" x-model.number="diag.days" :disabled="!diag.sections.problems"
+                          @change="diagPreview()" aria-label="Period for recent problems">
+                    <option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option>
+                  </select>
+                </div>
                 <label class="flex items-center gap-2"><input type="checkbox" x-model="diag.sections.app_log" @change="diagPreview()"> App log</label>
                 <label class="flex items-center gap-2"><input type="checkbox" x-model="diag.sections.index_logs" @change="diagPreview()"> Indexing logs</label>
-                <label class="flex items-center gap-2"><input type="checkbox" x-model="diag.sections.history" @change="diagPreview()"> Action history</label>
+                <label class="flex items-center gap-2"><input type="checkbox" x-model="diag.sections.history" @change="diagPreview()"> Action and job history</label>
                 <label class="flex items-center gap-2"><input type="checkbox" x-model="diag.sections.settings" @change="diagPreview()"> Settings</label>
+                <label class="flex items-center gap-2"><input type="checkbox" x-model="diag.sections.kopia_status" @change="diagPreview()"> Repository format (asks kopia)</label>
               </div>
               <label class="flex items-start gap-2">
                 <input type="checkbox" class="mt-0.5" x-model="diag.anonymise" @change="diagPreview()">
