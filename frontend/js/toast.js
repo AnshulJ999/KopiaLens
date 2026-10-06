@@ -4,10 +4,11 @@ const toastPart = {
 
     // kind: "ok" (default) | "warn" | "info". Warn stays longer (it usually carries a decision);
     // info is a neutral note (neither success nor failure) and keeps the warn lifetime.
-    klNotify(msg, kind = "ok") {
+    // action: optional { label, run } shown as a button on the notice.
+    klNotify(msg, kind = "ok", action = null) {
       if (!msg) return;
       const id = ++this._toastSeq;
-      this.toasts = [...this.toasts, { id, msg: String(msg), kind }].slice(-3);
+      this.toasts = [...this.toasts, { id, msg: String(msg), kind, action }].slice(-3);
       setTimeout(() => this.klToastDismiss(id), kind === "ok" ? 5000 : 9000);
     },
 

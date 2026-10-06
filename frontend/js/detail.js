@@ -74,6 +74,18 @@ const detailPart = {
     breakdownLabel() {
       return this.breakdownSegments().map((s) => s.title).join(", ");
     },
+    chunkTip(ck) {
+      if (ck.exclusive) return "Only this file uses this chunk";
+      const b = this.detail && this.detail.breakdown;
+      const p = b && b.found && b.pieces ? b.pieces[ck.cid] : null;
+      if (!p) return "Also used by other data";
+      const names = p.files.map((f) => { const s = pathSep(f); return trimSep(f).split(s).slice(-2).join(s); });
+      const lines = names.length === 1 ? ["Also used by " + names[0]]
+        : names.length ? [`Also used by ${names.length} files: ` + names.slice(0, 3).join(", ") + (names.length > 3 ? ", …" : "")]
+        : [];
+      if (p.copy) lines.push("Also in an identical copy at another path");
+      return lines.join("\n");
+    },
     breakdownTogether() {
       const t = this.detail && this.detail.breakdown && this.detail.breakdown.together;
       if (!t) return "";

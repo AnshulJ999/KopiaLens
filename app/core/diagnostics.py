@@ -44,8 +44,9 @@ class _Anon:
         ("url", re.compile(r"https?://[^\s\"'<>]+")),
         ("user", re.compile(r"[\w.-]+(?=@[\w.-]+:)")),                   # user@host:path sources
         ("host", re.compile(r"(?<=@)[\w.-]+(?=:)")),
+        # Windows, spaces included; also doubled separators (paths inside repr'd or escaped text).
+        ("path", re.compile(r"\b[A-Za-z]:\\{1,2}(?:[^\\\r\n\"'<>|:*?]+\\{0,2})*")),
         ("path", re.compile(r"\\\\[^\s\"'<>|]+")),                        # UNC
-        ("path", re.compile(r"\b[A-Za-z]:\\(?:[^\\\r\n\"'<>|:*?]+\\?)*")),  # Windows, spaces included
         ("path", re.compile(r"(?<![\w:/.])/(?!api/|static/|v1/|health\b)(?:[^/\s\"'<>|]+/)+[^\s\"'<>|]*")),
         ("ip", re.compile(r"\b(?!127\.0\.0\.1\b)(?!0\.0\.0\.0\b)(?:\d{1,3}\.){3}\d{1,3}\b")),
     )
@@ -60,6 +61,24 @@ class _Anon:
     def token(self, kind: str, value: str) -> str:
         digest = hmac.new(self.salt, value.lower().encode("utf-8"), hashlib.sha256).hexdigest()[:6]
         return f"<{kind}-{digest}>"
+
+    # Free text the user typed or named: replaced whole, whatever it looks like.
+    _TEXT_KEYS = {"query": "text", "filename": "name", "actor": "user"}
+
+    def walk(self, obj):
+        """Anonymise every string (keys included) of parsed JSON data."""
+        if isinstance(obj, dict):
+            out = {}
+            for k, v in obj.items():
+                kind = self._TEXT_KEYS.get(k)
+                if kind and isinstance(v, str) and v and v != "admin":
+                    out[k] = self.token(kind, v)
+                else:
+                    out[self(k) if isinstance(k, str) else k] = self.walk(v)
+            return out
+        if isinstance(obj, list):
+            return [self.walk(v) for v in obj]
+        return self(obj) if isinstance(obj, str) else obj
 
     def __call__(self, text: str) -> str:
         for kind, rx in self._PATTERNS:
@@ -139,12 +158,20 @@ def _repo_lines() -> list[str]:
     return lines
 
 
+_LINE_START = re.compile(r"^\d{2,4}[-:]\d{2}")
+
+
 def _tail(path: str, n: int) -> str:
+    """The last ``n`` lines, starting at a whole log entry rather than mid-traceback."""
     from . import filecrypto
-    return "\n".join(filecrypto.read_log_tail(path, n)) if os.path.exists(path) else ""
+    if not os.path.exists(path):
+        return ""
+    lines = filecrypto.read_log_tail(path, n)
+    first = next((i for i, line in enumerate(lines) if _LINE_START.match(line)), 0)
+    return "\n".join(lines[first:])
 
 
-def _settings_text() -> str:
+def _settings_data() -> dict:
     from ..settings import load_settings
 
     def scrub(obj):
@@ -154,7 +181,7 @@ def _settings_text() -> str:
         if isinstance(obj, list):
             return [scrub(v) for v in obj]
         return obj
-    return json.dumps(scrub(load_settings()), indent=2)
+    return scrub(load_settings())
 
 
 def build(sections, anonymise: bool = True, bundle_id: str | None = None) -> dict:
@@ -173,14 +200,18 @@ def build(sections, anonymise: bool = True, bundle_id: str | None = None) -> dic
         for name in sorted(os.listdir(INDEX_LOG_DIR)):
             if name.endswith(".log"):
                 files[f"index-{name.removesuffix('.log').removeprefix('index_worker_')}.txt"] = _tail(os.path.join(INDEX_LOG_DIR, name), INDEX_LOG_LINES)
+    anon = _Anon(checkin.install_id()) if anonymise else None
+    if anon:
+        files = {name: anon(text) for name, text in files.items()}
+    # JSON is anonymised before it is written: as text its backslashes are escaped, which splits
+    # Windows paths for the text rules.
+    keep = anon.walk if anon else (lambda o: o)
     if "history" in chosen:
         from .audit import read_tail as audit_tail
-        files["history.jsonl"] = "\n".join(json.dumps(e) for e in audit_tail(HISTORY_ENTRIES))
+        files["history.jsonl"] = "\n".join(json.dumps(keep(e)) for e in audit_tail(HISTORY_ENTRIES))
     if "settings" in chosen:
-        files["settings.json"] = _settings_text()
-    if anonymise:
-        anon = _Anon(checkin.install_id())
-        files = {name: anon(text) for name, text in files.items()}
+        files["settings.json"] = json.dumps(keep(_settings_data()), indent=2)
+    if anon:
         files["summary.txt"] = re.sub(r"(?m)^(Licence id: )(.+)$", lambda m: m.group(1) + anon.token("licence", m.group(2)),
                                       files["summary.txt"])
     return {"id": bundle_id, "files": files}

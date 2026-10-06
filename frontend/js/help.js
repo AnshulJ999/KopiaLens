@@ -10,6 +10,13 @@ const helpPart = {
     },
     initHelp() {
       window.addEventListener("kl-zoom", (e) => { this.zoomLevel = e.detail; });
+      // The desktop app reports finished downloads; a browser shows its own download bar.
+      window.addEventListener("kl-downloaded", (e) => {
+        const d = e.detail || {};
+        if (!d.ok) { this.klNotify(`Couldn't save ${d.name || "the download"}`, "warn"); return; }
+        this.klNotify(`Saved ${d.name} to ${d.folder}`, "ok",
+          { label: "Show in folder", run: () => { location.href = "/?kl-reveal-download=1"; } });
+      });
       setTimeout(() => this.loadHelp(), 5000);   // after the first screen; the check itself runs server-side
     },
     toggleHelpMenu() {

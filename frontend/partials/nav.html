@@ -93,9 +93,9 @@
                 <div class="my-1 border-t border-bd"></div>
                 <div class="flex items-center gap-1 px-3 py-1">
                   <span class="flex-1">Zoom</span>
-                  <button type="button" @click="zoomStep(-1)" class="kl-btn" style="height:24px;width:28px;padding:0" title="Zoom out (Ctrl -)" aria-label="Zoom out">−</button>
+                  <button type="button" @click="zoomStep(-1)" class="kl-btn" style="height:24px;width:28px;padding:0;justify-content:center" title="Zoom out (Ctrl -)" aria-label="Zoom out">−</button>
                   <span class="num w-11 text-center" x-text="Math.round((zoomLevel || 1) * 100) + '%'"></span>
-                  <button type="button" @click="zoomStep(1)" class="kl-btn" style="height:24px;width:28px;padding:0" title="Zoom in (Ctrl +)" aria-label="Zoom in">+</button>
+                  <button type="button" @click="zoomStep(1)" class="kl-btn" style="height:24px;width:28px;padding:0;justify-content:center" title="Zoom in (Ctrl +)" aria-label="Zoom in">+</button>
                   <button type="button" @click="zoomReset()" class="kl-btn quiet" style="height:24px" :disabled="(zoomLevel || 1) === 1" title="Back to 100% (Ctrl 0)">Reset</button>
                 </div>
                 <button type="button" role="menuitem" x-show="canOpenInBrowser()" @click="openInBrowser()" class="w-full text-left px-3 py-1.5 hover:bg-head">Open in browser</button>

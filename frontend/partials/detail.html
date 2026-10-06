@@ -125,8 +125,8 @@
         <span class="font-mono" style="color:var(--muted)" x-text="ck.cid.slice(0,16)"></span>
         <span class="num" x-text="fmtB(ck.packed)"></span>
         <span class="grow"></span>
-        <span class="pill" :class="ck.exclusive ? 'ok' : ''" x-text="ck.exclusive ? 'freed' : 'stays'"
-              :title="ck.exclusive ? 'Deleting this file frees this piece' : 'Other data still uses this piece'"></span>
+        <span class="pill" :class="ck.exclusive ? 'ok' : ''" x-text="ck.exclusive ? 'exclusive' : 'shared'"
+              :title="chunkTip(ck)"></span>
       </div>
     </template>
   </div>

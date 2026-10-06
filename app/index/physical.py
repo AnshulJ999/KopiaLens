@@ -1032,6 +1032,17 @@ def storage_breakdown(repo: str, source: str, full_path: str, limit: int = 10,
         return sum(sizes.get(c, 0) for c in chunks)
 
     matched = set().union(*by_path.values()) if by_path else set()
+    # Who else uses each shared piece in the panel's chunk list (the latest version's 200 largest).
+    latest = st.obj_chunks.get(st.versions[0][3]) or set()
+    listed = set(sorted(latest, key=lambda c: sizes.get(c, 0), reverse=True)[:200])
+    pieces: dict[str, dict] = {}
+    for (_s, fp), cs in sorted(by_path.items(), key=lambda kv: kv[0][1]):
+        for c in cs & listed:
+            names = pieces.setdefault(c, {"files": []})["files"]
+            if fp not in names:
+                names.append(fp)
+    for c in listed & st.kept_chunks:
+        pieces.setdefault(c, {"files": []})["copy"] = True
     files = sorted(({"source": s, "full_path": fp, "bytes": nbytes(cs)} for (s, fp), cs in by_path.items()),
                    key=lambda r: (-r["bytes"], r["full_path"], r["source"]))
     return {
@@ -1043,4 +1054,5 @@ def storage_breakdown(repo: str, source: str, full_path: str, limit: int = 10,
         "shared": {"bytes": nbytes(matched & set(shared)), "count": len(files), "files": files[:limit]},
         "unmatched": nbytes(set(shared) - matched),   # pieces whose other user the index has not mapped
         "together": together,
+        "pieces": pieces,
     }

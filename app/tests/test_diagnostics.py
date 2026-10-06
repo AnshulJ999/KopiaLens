@@ -3,6 +3,8 @@ settings never carry secrets."""
 
 from __future__ import annotations
 
+import json
+
 from app.core import diagnostics
 
 SEP = chr(92)
@@ -25,6 +27,19 @@ def test_settings_lose_their_secrets(monkeypatch):
     from app import settings
     monkeypatch.setattr(settings, "load_settings", lambda: {"kopialens": {
         "auth_password_hash": "pbkdf2$abc", "https_key": "C:/k.pem", "theme": "midnight", "update_check": True}})
-    text = diagnostics._settings_text()
+    text = json.dumps(diagnostics._settings_data())
     assert "pbkdf2" not in text and "k.pem" not in text
     assert "midnight" in text
+
+
+def test_json_paths_with_spaces_and_typed_text_are_hidden_whole():
+    """Escaped JSON text splits a Windows path at its spaces, so JSON is anonymised as data."""
+    anon = diagnostics._Anon("salt")
+    path = "D:" + SEP + "Personal Stuff" + SEP + "Borderlands 3 Mods"
+    entry = {"actor": "carol", "summary": {"path": path, "query": "tax return 2025", "sources": [path]}}
+    out = json.dumps(anon.walk(entry))
+    for private in ("Stuff", "Mods", "tax return", "carol"):
+        assert private not in out
+    repr_text = "moved " + repr({"p": path})                 # doubled separators, as in a log line
+    assert "Stuff" not in anon(repr_text)
+

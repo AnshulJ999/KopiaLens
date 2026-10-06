@@ -5,12 +5,13 @@ mod server;
 mod tray;
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use tauri::webview::NewWindowResponse;
+use tauri::webview::{DownloadEvent, NewWindowResponse};
 use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as _};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -45,6 +46,24 @@ fn same_origin(url: &Url, port: u16) -> bool {
 
 fn open_external(url: &str) {
     let _ = tauri_plugin_opener::open_url(url, None::<&str>);
+}
+
+// The newest finished download, for the page's "Show in folder" button.
+static LAST_DOWNLOAD: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+fn on_download(webview: tauri::Webview, event: DownloadEvent<'_>) -> bool {
+    if let DownloadEvent::Finished { path, success, .. } = event {
+        let name = path.as_ref().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned());
+        let folder = path.as_ref().and_then(|p| p.parent()).and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned());
+        if success {
+            *LAST_DOWNLOAD.lock().unwrap() = path.clone();
+        }
+        let detail = json!({ "ok": success, "name": name, "folder": folder.unwrap_or_else(|| "Downloads".into()) });
+        let _ = webview.eval(&format!(
+            "window.dispatchEvent(new CustomEvent('kl-downloaded', {{ detail: {detail} }}))"));
+    }
+    true
 }
 
 /// Opens (or focuses) the main window, or one repository's own window.
@@ -88,7 +107,14 @@ pub fn open_window(app: &AppHandle, repo: Option<String>) {
         .title(title)
         .inner_size(1440.0, 900.0)
         .min_inner_size(820.0, 560.0)
+        .on_download(on_download)
         .on_navigation(move |u| {
+            if same_origin(u, port) && u.query_pairs().any(|(k, _)| k == "kl-reveal-download") {
+                if let Some(p) = LAST_DOWNLOAD.lock().unwrap().clone() {
+                    let _ = tauri_plugin_opener::reveal_item_in_dir(p);
+                }
+                return false;
+            }
             if same_origin(u, port) || u.scheme() == "about" {
                 return true;
             }
