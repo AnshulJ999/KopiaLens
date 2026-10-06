@@ -570,7 +570,7 @@ def test_a_cancelled_csv_export_closes_its_cursor():
     class FakeCursor:
         def __init__(self):
             self.closed = False
-            self.rows = [[f"r{i}"] * len(search_api._EXPORT_COLS) for i in range(20000)]
+            self.rows = [[f"r{i}"] * len(search_api.EXPORT_HEADER) for i in range(20000)]
 
         def fetchmany(self, n):
             batch, self.rows = self.rows[:n], self.rows[n:]

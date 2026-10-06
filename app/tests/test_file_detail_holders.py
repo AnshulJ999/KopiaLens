@@ -27,7 +27,7 @@ def _store(monkeypatch, rows: list[tuple[str, str, str, int]], refs: dict[str, i
     con = duckdb.connect()
     sources = sorted({r[0] for r in rows})
     paths = sorted({(r[0], r[1]) for r in rows})
-    cids = sorted({r[2] for r in rows})
+    cids = sorted({r[2] for r in rows} | {c for parts in chunks.values() for c in parts})
     con.execute("CREATE TABLE src(src_id INTEGER, source VARCHAR)")
     con.executemany("INSERT INTO src VALUES (?, ?)", [(i + 1, s) for i, s in enumerate(sources)])
     con.execute("CREATE TABLE pathx(path_id INTEGER, src_id INTEGER, full_path VARCHAR)")
@@ -35,6 +35,10 @@ def _store(monkeypatch, rows: list[tuple[str, str, str, int]], refs: dict[str, i
                     [(i + 1, sources.index(s) + 1, p) for i, (s, p) in enumerate(paths)])
     con.execute("CREATE TABLE cid(cid_id INTEGER, content_id VARCHAR)")
     con.executemany("INSERT INTO cid VALUES (?, ?)", [(i + 1, c) for i, c in enumerate(cids)])
+    con.execute("CREATE TABLE tpart(iobj_cid INTEGER, part_cid INTEGER)")
+    for o, parts in chunks.items():
+        for c in parts:
+            con.execute("INSERT INTO tpart VALUES (?, ?)", [cids.index(o) + 1, cids.index(c) + 1])
     con.execute("CREATE TABLE snap(snap_id INTEGER, snapshot_id VARCHAR, start_time TIMESTAMP)")
     con.execute("CREATE TABLE filev(path_id INTEGER, cid_id INTEGER, snap_id INTEGER, size BIGINT)")
     for n, (s, p, c, snap) in enumerate(rows):
@@ -142,3 +146,23 @@ def test_object_refcount_counts_source_object_pairs_per_piece():
     con.execute("INSERT INTO tpart VALUES (10, 5), (10, 6), (11, 5), (11, 7)")
     layer2.object_refcount(con, "filev", out="m")
     assert dict(con.execute("SELECT cid_id, refs FROM m").fetchall()) == {5: 4, 6: 2, 7: 1}
+
+
+def test_the_breakdown_names_the_other_file_keeping_a_shared_piece(monkeypatch):
+    other = "H:" + SEP + "Games" + SEP + "copy-then-edited.cso"
+    _store(monkeypatch, [(DRIVE, FILE, "Ia", 1), (DRIVE, other, "Ib", 1)],
+           refs={"p": 1, "a": 1, "b": 1}, objrefs={"p": 2, "a": 1, "b": 1},
+           chunks={"Ia": {"p", "a"}, "Ib": {"p", "b"}})
+    b = physical.storage_breakdown("1", DRIVE, FILE)
+    assert (b["all_versions"], b["frees"], b["shared"]["bytes"], b["unmatched"]) == (20, 10, 10, 0)
+    assert b["shared"]["files"] == [{"source": DRIVE, "full_path": other, "bytes": 10}]
+    assert b["together"] == {"files": 1, "physical": 30, "frees": 30}
+
+
+def test_the_breakdown_counts_an_identical_copy_separately(monkeypatch):
+    other = "H:" + SEP + "Backup" + SEP + "big.cso"
+    _store(monkeypatch, [(DRIVE, FILE, "A", 1), (DRIVE, other, "A", 1)], refs={"A": 1})
+    b = physical.storage_breakdown("1", DRIVE, FILE)
+    assert (b["frees"], b["copies"]["bytes"], b["shared"]["bytes"]) == (0, 10, 0)
+    assert b["copies"]["paths"] == [{"source": DRIVE, "full_path": other}]
+    assert b["together"]["frees"] == 10   # deleting both copies frees it

@@ -356,6 +356,8 @@ def start_job(kind: str, repo: str, params: dict, label: str | None = None,
         raise JobRefused(str(exc)) from exc
     if not cmds:
         raise JobRefused("nothing to run for this job")
+    from . import checkin
+    checkin.note_feature(kind)
     if (KINDS[kind]["mutating"] or meta.get("then")) and not meta.get("dry"):
         from . import nightly  # lazy: avoids an import cycle at module load
         if nightly.is_running(repo):

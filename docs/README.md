@@ -14,6 +14,11 @@ KopiaLens is a web app for exploring, analysing and managing [Kopia](https://kop
 - [Encryption](encryption.md): encrypting what KopiaLens stores on disk, the recovery key, and unlocking after a restart.
 - [Remote access and HTTPS](remote-access.md): who can open KopiaLens, HTTPS certificates, and running it behind a reverse proxy.
 
+## Help and privacy
+
+- [Getting help](getting-help.md): reporting a problem, the diagnostics bundle, checking for updates, and the desktop app's zoom.
+- [Update checks and usage stats](usage-stats.md): what the daily check sends, what's never sent, and how to turn it off.
+
 ## Pro
 
 - [Free and Pro](licensing.md): what Pro adds, adding your licence, renewals, and licences in Docker.

@@ -25,9 +25,9 @@ from starlette.middleware.gzip import GZipMiddleware
 from config import APP_VERSION, DATA_DIR, DEMO_BACKBLAZE, DEMO_INSTANCE, REPOS, is_demo, repo_kind
 
 from .api import (access, account, actions, appconfig, audit, backblaze, dashboard, deleteplan, encryption, excluded,
-                  insights, jobs, licence, logs, onboarding, policies, prune, restore, search, setup, shell, simulate,
+                  help, insights, jobs, licence, logs, onboarding, policies, prune, restore, search, setup, shell, simulate,
                   snapshots, stats, tree)
-from .core import auth, netaccess, pause
+from .core import auth, checkin, netaccess, pause
 from .core import jobs as jobrunner
 from .index.crypto import StoreLocked
 from .index import crypto as crypto_mod
@@ -363,7 +363,10 @@ def _warm(repo: str) -> None:
         log.error("warm stats repo=%s failed: %s", repo, exc)
     try:
         from .index.queries import warm_landing
-        warm_landing(repo)
+        kl = load_settings().get("kopialens", {}) or {}
+        size = str(kl.get("page_size", 500))   # saved as the picker's text; "Infinite" is not cached
+        warm_landing(repo, limit=int(size) if size.isdigit() else 500,
+                     sort=kl.get("search_sort") or "size", direction=kl.get("search_dir") or "desc")
     except Exception as exc:  # noqa: BLE001
         log.error("warm search-landing repo=%s failed: %s", repo, exc)
     if not _dashboard_nightly_only() and not pause.active():  # opt-in daytime rebuild
@@ -717,6 +720,7 @@ async def lifespan(_app: FastAPI):
         _licence.start_renewal()
     except Exception as exc:  # noqa: BLE001 - licensing must never block startup
         log.warning("licence renewal not started: %s", exc)
+    checkin.start()              # daily update check + usage stats, weekly revoked-licence list
     yield
     log.info("KopiaLens shutting down")
     _bg_stop.set()
@@ -1063,6 +1067,8 @@ async def timing_middleware(request: Request, call_next):
         store.REQUEST_DB.reset(db_token)
     path = request.url.path
     if path.startswith("/api"):
+        if response.status_code < 400:
+            checkin.note_request(path)
         ms = (time.perf_counter() - start) * 1000
         kc, kms = slot[0], slot[1] * 1000
         args = (request.method, path, response.status_code, ms, db[0], db[1] * 1000, kc, kms)
@@ -1220,6 +1226,7 @@ app.include_router(onboarding.router, prefix="/api")
 app.include_router(appconfig.router, prefix="/api")
 app.include_router(shell.router, prefix="/api")
 app.include_router(licence.router, prefix="/api")
+app.include_router(help.router, prefix="/api")
 if not DEMO_INSTANCE or DEMO_BACKBLAZE:   # a demo reads only its own generated bzdata
     app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
 

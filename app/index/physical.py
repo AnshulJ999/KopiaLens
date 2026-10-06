@@ -14,6 +14,7 @@ import collections
 import json
 import threading
 import weakref
+from types import SimpleNamespace
 
 from ..core.applog import get_logger
 from ..core.sizemap import load_sizemap
@@ -189,6 +190,23 @@ def _values_by_content_id(cur, cids: list[str], table: str, col: str) -> dict[st
     finally:
         cur.unregister("_want_cids")
     return dict(rows)
+
+
+def _path_pairs(cur, objs) -> dict[str, int]:
+    """{object: (source, path) pairs holding it in the history}, only where above one. One targeted
+    count; a precomputed map measured no faster."""
+    import pyarrow as pa
+
+    if not objs:
+        return {}
+    cur.register("_want_objs", pa.table({"content_id": pa.array(list(objs), pa.string())}))
+    try:
+        return dict(cur.execute(
+            "SELECT c.content_id, count(DISTINCT f.path_id) FROM _want_objs w "      # a path id is per source
+            "JOIN cid c ON c.content_id = w.content_id JOIN filev f ON f.cid_id = c.cid_id "
+            "GROUP BY c.content_id HAVING count(DISTINCT f.path_id) > 1").fetchall())
+    finally:
+        cur.unregister("_want_objs")
 
 
 def _refcount_for(repo: str, cids) -> dict[str, int] | None:
@@ -725,21 +743,16 @@ def batch_detail(repo: str, files: list[dict], all_versions: bool = True) -> dic
     }
 
 
-def file_detail(repo: str, source: str, full_path: str) -> dict:
-    """Accurate per-file footprint: logical/physical/freeable + dedup chunk breakdown +
-    other paths sharing the same content object.
-
-    The same path held by several sources on one machine (nested backups such as a drive and a
-    folder on it) is ONE file: ``freeable`` prices removing it, every version, from every one of
-    those holders - the delete panel's default scope. Identical content at OTHER paths keeps its
-    bytes. A piece is freed when every source and every (source, object) pair using it belongs to
-    this file's versions in its holders, and no other path in the repo holds that object."""
+def _price_file(repo: str, source: str, full_path: str):
+    """One file's pricing state, shared by the file panel and its storage breakdown: every version
+    in every holder, the pieces they use, and which of those pieces deleting the file frees.
+    None when the path is unknown."""
     cur = read_cursor(repo)
     try:
         sid = resolve.src_id(cur, source)
         pid = resolve.path_id(cur, sid, full_path) if sid is not None else None
         if pid is None:  # unknown source or path: nothing was found before, none now
-            return {"found": False}
+            return None
         versions = cur.execute(
             "SELECT sn.snapshot_id, sn.start_time, f.size, c.content_id FROM filev f "
             "JOIN snap sn ON sn.snap_id = f.snap_id "
@@ -756,7 +769,6 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
             [full_path, source],
         ).fetchall() if r[0].split(":", 1)[0] == machine]
         sids = resolve.src_map(cur)
-        holder_sids = [sids[h] for h in holders if h in sids]
         objs_by_holder: dict[str, set[str]] = {source: {r[3] for r in versions if r[3]}}
         if len(holders) > 1:
             rev = {v: k for k, v in sids.items()}
@@ -768,21 +780,14 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
         all_objs = sorted({o for objs in objs_by_holder.values() for o in objs})
         # Objects this file shares with any OTHER path (or another machine) stay stored.
         oid_of = resolve.cid_ids(cur, all_objs)
-        kept_objs: set[str] = set()
-        if oid_of and holder_sids:
-            rev_c = {v: k for k, v in oid_of.items()}
-            ids = sorted(oid_of.values())
-            hold = ",".join("?" * len(holder_sids))
-            for i in range(0, len(ids), 900):
-                grp = ids[i:i + 900]
-                q = ("SELECT DISTINCT f.cid_id FROM filev f JOIN pathx p ON p.path_id = f.path_id "
-                     "WHERE f.cid_id IN (%s) AND NOT (p.full_path = ? AND p.src_id IN (%s))"
-                     % (",".join("?" * len(grp)), hold))
-                kept_objs |= {rev_c[r[0]] for r in cur.execute(q, grp + [full_path] + holder_sids).fetchall()}
+        # An object held by more (source, path) pairs than this file's own holders lives elsewhere too.
+        pairs = _path_pairs(cur, all_objs)
+        own = {o: sum(o in objs for objs in objs_by_holder.values()) for o in all_objs}
+        kept_objs = {o for o in all_objs if o in oid_of and pairs.get(o, 1) > own[o]}
     finally:
         cur.close()
     if not versions:
-        return {"found": False}
+        return None
 
     unknown = 0
     # One batched lookup for every holder's versions, then - and only here - kopia for anything the
@@ -807,9 +812,6 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
         log.warning("repo=%s file detail: %d version(s) could not be measured", repo, unknown)
         log.debug("repo=%s file detail path %s", repo, full_path)
     kept_chunks = {c for o in kept_objs for c in (obj_chunks.get(o) or ())}
-
-    latest_obj = versions[0][3]
-    latest_chunks = obj_chunks.get(latest_obj) or set()
     union_chunks = set(holder_refs)
 
     refs = _refcount_for(repo, union_chunks)  # targeted (fast); None => content_refs not built yet
@@ -822,7 +824,31 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
         return c not in kept_chunks and _freed(c, refs, objrefs, len(holder_refs.get(c, ())),
                                                len(pair_refs.get(c, ())))
 
-    sizes = _sizes_for(repo, union_chunks)
+    return SimpleNamespace(
+        versions=versions, holders=holders, objs_by_holder=objs_by_holder, all_objs=all_objs,
+        oid_of=oid_of, kept_objs=kept_objs, obj_chunks=obj_chunks, kept_chunks=kept_chunks,
+        holder_refs=holder_refs, pair_refs=pair_refs, union_chunks=union_chunks, refs=refs,
+        objrefs=objrefs, freed=freed, sizes=_sizes_for(repo, union_chunks))
+
+
+def file_detail(repo: str, source: str, full_path: str) -> dict:
+    """Accurate per-file footprint: logical/physical/freeable + dedup chunk breakdown +
+    other paths sharing the same content object.
+
+    The same path held by several sources on one machine (nested backups such as a drive and a
+    folder on it) is ONE file: ``freeable`` prices removing it, every version, from every one of
+    those holders - the delete panel's default scope. Identical content at OTHER paths keeps its
+    bytes. A piece is freed when every source and every (source, object) pair using it belongs to
+    this file's versions in its holders, and no other path in the repo holds that object."""
+    st = _price_file(repo, source, full_path)
+    if st is None:
+        return {"found": False}
+    versions, holders, objs_by_holder = st.versions, st.holders, st.objs_by_holder
+    oid_of, kept_objs, obj_chunks, refs = st.oid_of, st.kept_objs, st.obj_chunks, st.refs
+    union_chunks, freed, sizes = st.union_chunks, st.freed, st.sizes
+    machine = source.split(":", 1)[0]
+    latest_obj = versions[0][3]
+    latest_chunks = obj_chunks.get(latest_obj) or set()
     physical_latest = sum(sizes.get(c, 0) for c in latest_chunks)
     physical_total = sum(sizes.get(c, 0) for c in union_chunks)
     freeable = sum(sizes.get(c, 0) for c in union_chunks if freed(c))
@@ -837,7 +863,9 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
     # Every location of the latest content; the same path in a holder is this file, not a copy.
     rows: list = []
     latest_cid = oid_of.get(latest_obj) if latest_obj else None
-    if latest_cid is not None:
+    if latest_cid is not None and latest_obj not in kept_objs:
+        rows = [(h, full_path) for h, objs in objs_by_holder.items() if latest_obj in objs]
+    elif latest_cid is not None:
         cur = read_cursor(repo)
         try:
             rows = cur.execute(
@@ -881,4 +909,138 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
         # distinct files holding it: one per (machine, path), this one included
         "instances": len({(s.split(":", 1)[0], p) for s, p in others} - {(machine, full_path)}) + 1,
         "reclaim_everywhere": reclaim_everywhere,  # bytes freed if purged from every location
+    }
+
+
+def _register_ids(cur, ids) -> str:
+    """Register a set of integer ids as a one-column view for a hash join (trap 29)."""
+    import uuid
+
+    import pyarrow as pa
+    name = f"_ids_{uuid.uuid4().hex[:8]}"
+    cur.register(name, pa.table({"c": pa.array(sorted(set(ids)), pa.int64())}))
+    return name
+
+
+def _price_pairs(repo: str, cur, pairs: set[tuple[str, str]]) -> tuple[int, int]:
+    """(physical, freeable) of deleting every version of every (source, path) in ``pairs``. Same rule
+    as the file panel: an object also held outside the set keeps its pieces, and a piece is freed
+    only when every source and (source, object) pair using it is inside the set."""
+    sids = resolve.src_map(cur)
+    rev_sid = {v: k for k, v in sids.items()}
+    pid_of = resolve.path_ids(cur, [(sids[s], fp) for s, fp in pairs if s in sids])
+    objs_of: dict[tuple, set[str]] = {}
+    if pid_of:
+        key_of = {pid: (rev_sid[sid], fp) for (sid, fp), pid in pid_of.items()}
+        name = _register_ids(cur, key_of)
+        try:
+            for pid, obj in cur.execute(
+                    f"SELECT DISTINCT f.path_id, c.content_id FROM filev f JOIN {name} w ON w.c = f.path_id "
+                    "JOIN cid c ON c.cid_id = f.cid_id").fetchall():
+                objs_of.setdefault(key_of[pid], set()).add(obj)
+        finally:
+            cur.unregister(name)
+    all_objs = sorted({o for objs in objs_of.values() for o in objs})
+    held = _path_pairs(cur, all_objs)
+    inside = collections.Counter(o for objs in objs_of.values() for o in objs)
+    kept_objs = {o for o in all_objs if held.get(o, 1) > inside[o]}
+    obj_chunks = _chunks_for_objs(repo, all_objs, cursor=cur)
+    srcs: dict[str, set] = {}
+    obj_pairs: dict[str, set] = {}
+    for (s, _fp), objs in objs_of.items():
+        for o in objs:
+            for c in obj_chunks.get(o) or ():
+                srcs.setdefault(c, set()).add(s)
+                obj_pairs.setdefault(c, set()).add((s, o))
+    kept_chunks = {c for o in kept_objs for c in (obj_chunks.get(o) or ())}
+    union = set(srcs)
+    refs = _refcount_for(repo, union)
+    if refs is None:
+        refs = _refcount_map(repo)
+    objrefs = _objrefs_for(repo, union)
+    sizes = _sizes_for(repo, union)
+    freeable = sum(sizes.get(c, 0) for c in union
+                   if c not in kept_chunks and _freed(c, refs, objrefs, len(srcs[c]), len(obj_pairs[c])))
+    return sum(sizes.get(c, 0) for c in union), freeable
+
+
+def storage_breakdown(repo: str, source: str, full_path: str, limit: int = 10,
+                      together_cap: int = 50) -> dict:
+    """Where a file's all-versions storage goes if it is deleted: what comes back, and for the rest
+    the identical copies and other files that keep it stored. ``together`` prices deleting the file
+    together with those files (every version), when there are at most ``together_cap`` of them."""
+    st = _price_file(repo, source, full_path)
+    if st is None:
+        return {"found": False}
+    sizes = st.sizes
+    kept = [c for c in st.union_chunks if not st.freed(c)]
+    shared = [c for c in kept if c not in st.kept_chunks]
+    own_pairs = {(h, full_path) for h in st.holders}
+    mine = set(st.oid_of.values())
+    copy_paths: set[tuple] = set()
+    by_path: dict[tuple, set[str]] = {}
+    cur = read_cursor(repo)
+    try:
+        kept_ids = [st.oid_of[o] for o in st.kept_objs if o in st.oid_of]
+        if kept_ids:
+            name = _register_ids(cur, kept_ids)
+            try:
+                copy_paths = {tuple(r) for r in cur.execute(
+                    f"SELECT DISTINCT s.source, p.full_path FROM filev f JOIN {name} w ON w.c = f.cid_id "
+                    "JOIN pathx p ON p.path_id = f.path_id JOIN src s ON s.src_id = p.src_id").fetchall()}
+            finally:
+                cur.unregister(name)
+            copy_paths -= own_pairs
+        piece_id = resolve.cid_ids(cur, shared) if shared else {}
+        if piece_id:
+            piece_of = {v: k for k, v in piece_id.items()}
+            pieces = _register_ids(cur, piece_id.values())
+            try:
+                # Other files using these pieces: split objects listing them as parts, and plain
+                # objects that are the piece itself.
+                users: dict[int, set[str]] = {}
+                for obj, part in cur.execute(
+                        f"SELECT t.iobj_cid, t.part_cid FROM tpart t JOIN {pieces} w ON w.c = t.part_cid").fetchall():
+                    if obj not in mine:
+                        users.setdefault(obj, set()).add(piece_of[part])
+                for (obj,) in cur.execute(
+                        f"SELECT DISTINCT f.cid_id FROM filev f JOIN {pieces} w ON w.c = f.cid_id").fetchall():
+                    if obj not in mine:
+                        users.setdefault(obj, set()).add(piece_of[obj])
+            finally:
+                cur.unregister(pieces)
+            if users:
+                objs = _register_ids(cur, users)
+                try:
+                    for obj, src, fp in cur.execute(
+                            f"SELECT DISTINCT f.cid_id, s.source, p.full_path FROM filev f "
+                            f"JOIN {objs} w ON w.c = f.cid_id JOIN pathx p ON p.path_id = f.path_id "
+                            "JOIN src s ON s.src_id = p.src_id").fetchall():
+                        if (src, fp) not in own_pairs:
+                            by_path.setdefault((src, fp), set()).update(users[obj])
+                finally:
+                    cur.unregister(objs)
+        together = None
+        others = set(by_path) | copy_paths
+        if others and len(others) <= together_cap:
+            phys, frees = _price_pairs(repo, cur, own_pairs | others)
+            together = {"files": len({fp for _s, fp in others}), "physical": phys, "frees": frees}
+    finally:
+        cur.close()
+
+    def nbytes(chunks) -> int:
+        return sum(sizes.get(c, 0) for c in chunks)
+
+    matched = set().union(*by_path.values()) if by_path else set()
+    files = sorted(({"source": s, "full_path": fp, "bytes": nbytes(cs)} for (s, fp), cs in by_path.items()),
+                   key=lambda r: (-r["bytes"], r["full_path"], r["source"]))
+    return {
+        "found": True,
+        "all_versions": nbytes(st.union_chunks),
+        "frees": nbytes(c for c in st.union_chunks if st.freed(c)),
+        "copies": {"bytes": nbytes(c for c in kept if c in st.kept_chunks), "count": len(copy_paths),
+                   "paths": [{"source": s, "full_path": fp} for s, fp in sorted(copy_paths)[:limit]]},
+        "shared": {"bytes": nbytes(matched & set(shared)), "count": len(files), "files": files[:limit]},
+        "unmatched": nbytes(set(shared) - matched),   # pieces whose other user the index has not mapped
+        "together": together,
     }

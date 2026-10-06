@@ -125,10 +125,51 @@
         <span class="font-mono" style="color:var(--muted)" x-text="ck.cid.slice(0,16)"></span>
         <span class="num" x-text="fmtB(ck.packed)"></span>
         <span class="grow"></span>
-        <span class="pill" :class="ck.exclusive ? 'ok' : ''" x-text="ck.exclusive ? 'exclusive' : ('shared by ' + ck.refs)"></span>
+        <span class="pill" :class="ck.exclusive ? 'ok' : ''" x-text="ck.exclusive ? 'freed' : 'stays'"
+              :title="ck.exclusive ? 'Deleting this file frees this piece' : 'Other data still uses this piece'"></span>
       </div>
     </template>
   </div>
+</div>
+{%- endmacro -%}
+
+{%- macro file_breakdown() -%}
+<div class="kl-sec">
+  <div class="h">Where the storage goes
+    <span class="count" x-show="detail.breakdown && detail.breakdown.found" x-text="detail.breakdown && detail.breakdown.found ? fmtPhys(detail.breakdown.all_versions) + ' across all versions' : ''"></span></div>
+  <div class="kl-note" x-show="!detail.breakdown || detail.breakdown === 'pending'">Working it out…</div>
+  <div class="kl-note" x-show="detail.breakdown === 'error'">Couldn't work this out. Reopen the panel to try again.</div>
+  <template x-if="detail.breakdown && detail.breakdown.found">
+    <div class="space-y-2">
+      <div class="kl-split" role="img" :aria-label="breakdownLabel()">
+        <template x-for="seg in breakdownSegments()" :key="seg.cls"><i :class="seg.cls" :style="'width:' + seg.pct + '%'" :title="seg.title"></i></template>
+      </div>
+      <div class="kl-list" style="max-height:none">
+        <div class="li"><span class="kl-key ok"></span><span>Frees</span><span class="grow"></span><span class="num" x-text="fmtPhys(detail.breakdown.frees)"></span></div>
+        <template x-if="detail.breakdown.shared.bytes > 0">
+          <div class="li"><span class="kl-key warn"></span><span x-text="'Shared with ' + countOf(detail.breakdown.shared.count, 'other file')"></span><span class="grow"></span><span class="num" x-text="fmtPhys(detail.breakdown.shared.bytes)"></span></div>
+        </template>
+        <template x-for="f in detail.breakdown.shared.files" :key="f.source + '|' + f.full_path">
+          <div class="li cursor-pointer hover:bg-head" style="padding-left:22px" @click="openFileDetail({source: f.source, full_path: f.full_path})" title="Open this file">
+            <span class="break-all" style="color:var(--muted)" x-text="f.full_path"></span><span class="grow"></span>
+            <span class="num" style="color:var(--muted)" title="Data it shares with this file" x-text="fmtPhys(f.bytes)"></span>
+          </div>
+        </template>
+        <div class="li" x-show="detail.breakdown.shared.count > detail.breakdown.shared.files.length" style="padding-left:22px;color:var(--muted)"
+             x-text="'and ' + countOf(detail.breakdown.shared.count - detail.breakdown.shared.files.length, 'more file')"></div>
+        <template x-if="detail.breakdown.copies.bytes > 0">
+          <div class="li"><span class="kl-key info"></span><span x-text="'Identical copies at ' + countOf(detail.breakdown.copies.count, 'other path')"></span><span class="grow"></span><span class="num" x-text="fmtPhys(detail.breakdown.copies.bytes)"></span></div>
+        </template>
+        <template x-if="detail.breakdown.unmatched > 0">
+          <div class="li" title="The next index run matches this to the files using it"><span class="kl-key"></span><span>Shared with data not indexed yet</span><span class="grow"></span><span class="num" x-text="fmtPhys(detail.breakdown.unmatched)"></span></div>
+        </template>
+      </div>
+      <div class="kl-note" x-show="detail.breakdown.together">
+        <span x-text="breakdownTogether()"></span>
+        <b style="color:var(--ok)" x-text="detail.breakdown.together ? fmtPhys(detail.breakdown.together.frees) : ''"></b>.
+      </div>
+    </div>
+  </template>
 </div>
 {%- endmacro -%}
 
@@ -358,7 +399,7 @@
   Removing all of them frees <b style="color:var(--ok)" x-text="fmtPhys(detail.reclaim_everywhere)"></b>.
 </div>
 <div class="kl-note" style="font-size:12.5px;color:var(--fg)" x-show="copyCount() === 0">
-  Removing every snapshot carrying this file frees <b style="color:var(--ok)" x-text="fmtPhys(detail.freeable)"></b>; the packed footprint across all versions is <span x-text="fmtPhys(detail.physical_all)"></span>.
+  Removing it from every snapshot frees <b style="color:var(--ok)" x-text="fmtPhys(detail.freeable)"></b> of the <span x-text="fmtPhys(detail.physical_all)"></span> its versions take.
 </div>
 {{ history_rows('fileHistoryRows()') }}
 <div class="kl-sec">
@@ -419,6 +460,7 @@
                   <div class="space-y-4">
                     {{ file_cards() }}
                     {{ history_rows('fileHistoryRows()') }}
+                    {{ file_breakdown() }}
                     {{ file_chunks() }}
                     {{ file_others() }}
                     {{ file_dup() }}
@@ -498,6 +540,7 @@
                 <template x-if="detail.kind === 'file' && detail.panelTab === 'overview'">{{ file_overview() }}</template>
                 <template x-if="detail.kind === 'file' && detail.panelTab === 'storage'">
                   <div class="space-y-4">
+                    {{ file_breakdown() }}
                     {{ file_chunks() }}
                     {{ file_others() }}
                     {{ file_dup() }}

@@ -234,6 +234,9 @@ fn build_menu(app: &AppHandle, h: Health, state: Option<&Value>) -> tauri::Resul
     if let Some(v) = state.map(|st| s(st, "version")).filter(|v| !v.is_empty()) {
         menu.append(&MenuItem::with_id(app, "status:version", format!("KopiaLens {v}"), false, None::<&str>)?)?;
     }
+    if let Some(latest) = state.and_then(|st| st.get("update")).and_then(|u| u.get("latest")).and_then(Value::as_str) {
+        menu.append(&MenuItem::with_id(app, "update", format!("Update available: {latest}"), true, None::<&str>)?)?;
+    }
     menu.append(&MenuItem::with_id(app, "restart", "Restart", true, None::<&str>)?)?;
     menu.append(&MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?)?;
     Ok(menu)
@@ -291,7 +294,7 @@ pub fn refresh(app: &AppHandle, shell: &Arc<Shell>, h: Health) {
     let tip = tooltip(h, state.as_ref());
     let menu_view = state.as_ref().map(|st| {
         let rows: Vec<String> = repos(st).iter().map(|r| format!("{}|{}|{}", repo_key(r), s(r, "name"), repo_status(r))).collect();
-        json!([rows, paused(st).map(|u| pause_text(u)), pref(Some(st), "notifications", "warnings"), s(st, "version"), s(st, "access")]).to_string()
+        json!([rows, paused(st).map(|u| pause_text(u)), pref(Some(st), "notifications", "warnings"), s(st, "version"), s(st, "access"), st.get("update").cloned()]).to_string()
     });
     let autostart = app.autolaunch().is_enabled().unwrap_or(false);
     let sig = format!("{:?}|{}|{}", menu_view, h as u8, autostart);

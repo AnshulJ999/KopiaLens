@@ -55,8 +55,15 @@
                   <div class="flex items-center justify-between gap-3"><span>Data folder</span><span class="text-xs text-right min-w-0 truncate" :title="about.data_dir" x-text="about.data_dir"></span></div>
                   <div class="flex items-center justify-between gap-3"><span>Data format</span><span class="text-xs" x-text="about.data_format"></span></div>
                   <div class="flex items-center justify-between gap-3"><span>System</span><span class="text-xs" x-text="about.os + ' · Python ' + about.python"></span></div>
+                  <div class="flex items-center justify-between gap-3"><span>Updates</span>
+                    <span class="flex items-center gap-2 text-xs">
+                      <span x-text="update().available ? update().latest + ' is out' : (update().checked_at ? 'Up to date' : 'Not checked yet')"></span>
+                      <button class="kl-btn" @click="update().available ? (showUpdate = true) : checkUpdatesNow()" :disabled="checkingUpdates"
+                              x-text="update().available ? 'See update' : (checkingUpdates ? 'Checking…' : 'Check now')"></button></span></div>
                   <div class="flex items-center justify-between gap-3 pt-2"><span class="text-[11px] text-muted">For bug reports.</span>
-                    <button @click="copyAbout()" class="kl-btn">Copy details</button></div>
+                    <span class="flex items-center gap-2">
+                      <button @click="copyAbout()" class="kl-btn">Copy details</button>
+                      <button @click="openDiagnostics(false)" class="kl-btn">Create diagnostics bundle…</button></span></div>
                 </div>
               </template>
             </section>

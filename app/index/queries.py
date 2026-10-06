@@ -326,24 +326,31 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
 
 
 # ---- Search "landing view" cache (default empty-query view) — serve-stale + bg revalidate ----
-_LANDING: dict[str, dict] = {}
+# Keyed by sort as well as repo: the tab opens on the user's saved sort, not always on size.
+_LANDING: dict[tuple, dict] = {}
 _LANDING_TTL = 300.0
 
 
-def warm_landing(repo: str, limit: int = 500) -> dict:
-    res = search_paths(repo, limit=limit, sort="size", direction="desc")
-    _LANDING[repo] = {"result": res, "ts": time.time(), "limit": limit}
+def warm_landing(repo: str, limit: int = 500, sort: str = "size", direction: str = "desc") -> dict:
+    res = search_paths(repo, limit=limit, sort=sort, direction=direction)
+    _LANDING[(repo, sort, direction)] = {"result": res, "ts": time.time(), "limit": limit}
     return res
 
 
-def landing(repo: str, limit: int = 500) -> dict:
-    c = _LANDING.get(repo)
+def landing(repo: str, limit: int = 500, sort: str = "size", direction: str = "desc") -> dict:
+    c = _LANDING.get((repo, sort, direction))
     if c and c.get("limit") == limit:
         if time.time() - c["ts"] < _LANDING_TTL:
             return c["result"]
-        threading.Thread(target=warm_landing, args=(repo, limit), daemon=True).start()  # serve-stale
+        threading.Thread(target=warm_landing, args=(repo, limit, sort, direction), daemon=True).start()
         return c["result"]
-    return warm_landing(repo, limit)
+    return warm_landing(repo, limit, sort, direction)
+
+
+# The Search table's columns, in its order and with its titles (CSV export header).
+EXPORT_HEADER = ["Path", "Size", "Physical (latest)", "Src", "Stored (all versions)",
+                 "Frees (all versions)", "Ext", "Versions", "Copies", "Last seen", "First seen",
+                 "On disk", "Source"]
 
 
 def search_export(repo: str, query: str = "", deleted_only: bool = False, min_size: int = 0,
@@ -351,20 +358,91 @@ def search_export(repo: str, query: str = "", deleted_only: bool = False, min_si
                   sort: str = "size", direction: str = "desc", cap: int = 2_000_000,
                   max_size: int = 0, date_from: str | None = None, date_to: str | None = None,
                   min_versions: int = 0, shared_min: int = 0, ext_exclude: str | None = None,
-                  first_from: str | None = None):
-    """Yield every matching row (full filtered set) for CSV export - not limited to a page."""
+                  first_from: str | None = None, dedupe: bool = False):
+    """Every matching row (the full filtered set, not a page) in ``EXPORT_HEADER`` order.
+
+    Stored/Frees come from the nightly ranked lists; a row outside them is left empty. Returns
+    ``(cursor, registered)``: the caller unregisters those names and closes the cursor."""
+    import pyarrow as pa
+
+    from . import rankpaths
     cur = read_cursor(repo)
-    where, params = _search_where(cur, query, deleted_only, min_size, source, ext, max_size,
-                                  date_from, date_to, min_versions, shared_min, ext_exclude, first_from)
-    where_sql = _where(where)
-    cur.execute(
-        f"SELECT s.source AS source, p.full_path, p.name, p.ext, p.size, p.physical, "
-        f"p.versions, p.first_seen, p.last_seen, p.in_latest "
-        f"FROM pathx p JOIN src s ON s.src_id = p.src_id "
-        f"WHERE {where_sql} {_order_clause(sort, direction)} LIMIT {int(cap)}",
-        params,
-    )
-    return cur
+    registered: list[str] = []
+    try:
+        tag = uuid.uuid4().hex[:8]
+        lists: dict[str, str] = {}
+        for kind in _RANK_SORTS:
+            values = rankpaths.ranked_values(repo, kind)
+            if values:
+                name = f"_export_{kind}_{tag}"
+                cur.register(name, pa.table({
+                    "key": pa.array(list(values), pa.int64()),
+                    "value": pa.array(list(values.values()), pa.uint64())}))
+                registered.append(name)
+                lists[kind] = name
+        if sort in _RANK_SORTS and sort not in lists:
+            sort = "physical"      # the screen's own fallback when no ranked list exists yet
+        where, params = _search_where(cur, query, deleted_only, min_size, source, ext, max_size,
+                                      date_from, date_to, min_versions, shared_min, ext_exclude, first_from)
+        where_sql = _where(where)
+        st, fr = lists.get("stored"), lists.get("frees")
+        st_join = f"LEFT JOIN {st} rs ON rs.key = p.path_id" if st else ""
+        fr_join = f"LEFT JOIN {fr} rf ON rf.key = m.cid_id" if fr else ""
+        fr_val = "rf.value" if fr else "NULL::UBIGINT"
+        st_val = "max(rs.value)" if st else "NULL::UBIGINT"
+        if dedupe:
+            base = f"""
+                SELECT p.cid_id, arg_max(s.source, p.last_seen) AS source,
+                       arg_max(p.full_path, p.last_seen) AS full_path, arg_max(p.ext, p.last_seen) AS ext,
+                       max(p.size) AS size, max(p.physical) AS physical, max(p.versions) AS versions,
+                       min(p.first_seen) AS first_seen, max(p.last_seen) AS last_seen,
+                       bool_or(p.in_latest) AS in_latest, {st_val} AS stored_all,
+                       count(DISTINCT p.src_id) AS sources, count(DISTINCT p.full_path) AS copies
+                FROM pathx p JOIN src s ON s.src_id = p.src_id {st_join}
+                WHERE {where_sql} AND p.cid_id IS NOT NULL
+                GROUP BY p.cid_id"""
+            counts, counts_join, src_col, copies_col = "", "", "m.sources", "m.copies"
+        else:
+            base = f"""
+                SELECT p.cid_id, s.source, p.full_path, p.ext, p.size, p.physical, p.versions,
+                       p.first_seen, p.last_seen, p.in_latest, {"rs.value" if st else "NULL::UBIGINT"} AS stored_all
+                FROM pathx p JOIN src s ON s.src_id = p.src_id {st_join}
+                WHERE {where_sql}"""
+            # Src / Copies exactly as the table counts them: distinct sources and distinct paths
+            # holding the same content anywhere in the repo.
+            counts = """, cc AS (
+                SELECT p2.cid_id, count(DISTINCT p2.src_id) AS sources, count(DISTINCT p2.full_path) AS copies
+                FROM pathx p2 WHERE p2.cid_id IN (SELECT cid_id FROM m WHERE cid_id IS NOT NULL)
+                GROUP BY p2.cid_id)"""
+            counts_join = "LEFT JOIN cc ON cc.cid_id = m.cid_id"
+            src_col, copies_col = "coalesce(cc.sources, 1)", "coalesce(cc.copies, 1)"
+        order_col = {"stored": "stored_all", "frees": "frees_all"}.get(sort) or _SEARCH_SORT.get(sort, "size")
+        if order_col == "name":
+            order_col = "full_path"     # name is not an export column
+        dirn = "ASC" if str(direction).lower() == "asc" else "DESC"
+        nulls = " NULLS LAST" if sort in _RANK_SORTS else ""
+        cur.execute(
+            f"""
+            WITH m AS ({base}){counts}
+            SELECT m.full_path, m.size, m.physical, {src_col} AS sources, m.stored_all,
+                   {fr_val} AS frees_all, m.ext, m.versions, {copies_col} AS copies,
+                   m.last_seen, m.first_seen,
+                   CASE WHEN m.in_latest THEN 'yes' ELSE 'deleted' END AS on_disk, m.source
+            FROM m {counts_join} {fr_join}
+            ORDER BY {order_col} {dirn}{nulls}, last_seen DESC, source, full_path
+            LIMIT {int(cap)}
+            """,
+            params,
+        )
+    except Exception:
+        for name in registered:
+            try:
+                cur.unregister(name)
+            except Exception:  # noqa: BLE001 - already gone
+                pass
+        cur.close()
+        raise
+    return cur, registered
 
 
 def versions(repo: str, source: str, full_path: str) -> list[dict]:

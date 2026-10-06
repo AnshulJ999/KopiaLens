@@ -32,7 +32,7 @@ const dashboardPart = {
           { title: "Last snapshot", field: "last_time", width: 165, formatter: (c) => timeCell(c.getValue()) },
           { title: "Next snapshot", field: "next_snapshot", width: 165, formatter: (c) => timeCell(c.getValue()) },
           { title: "Pins", field: "pins", width: 64, hozAlign: "right" },
-          { title: "", field: "_actions", headerSort: false, width: 170, hozAlign: "center",
+          { title: "", field: "_actions", download: false, headerSort: false, width: 170, hozAlign: "center",
             formatter: () => "<button class='kl-btn quiet' data-act='snap' style='height:22px'>Snapshot now</button><button class='kl-btn quiet' data-act='policy' style='height:22px'>Policy</button>" },
         ], {
           initialSort: [{ column: "source", dir: "asc" }],

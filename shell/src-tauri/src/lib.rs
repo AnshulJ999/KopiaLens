@@ -96,8 +96,11 @@ pub fn open_window(app: &AppHandle, repo: Option<String>) {
             false
         })
         .on_new_window(move |u, _features| {
-            // Same-origin popups are exports: load them in place, where they download.
-            if same_origin(&u, port) {
+            // Same-origin popups are exports: load them in place, where they download. The Help
+            // menu's "Open in browser" marks its link to leave the window instead.
+            if same_origin(&u, port) && u.query_pairs().any(|(k, _)| k == "open-in-browser") {
+                open_external(u.as_str());
+            } else if same_origin(&u, port) {
                 if let Some(w) = app2.get_webview_window(&label2) {
                     let _ = w.navigate(u);
                 }
@@ -184,6 +187,15 @@ pub fn on_menu(app: &AppHandle, id: &str) {
     match parts.as_slice() {
         ["open"] => open_window(app, None),
         ["browser"] => open_external(&format!("{}/", sh.server.url())),
+        ["update"] => {
+            let app = app.clone();
+            thread::spawn(move || {
+                let st = shell(&app).server.get("/api/shell/state").ok();
+                if let Some(url) = st.as_ref().and_then(|v| v.get("update")).and_then(|u| u.get("url")).and_then(Value::as_str) {
+                    open_external(url);
+                }
+            });
+        }
         ["repo", "open", key] => open_window(app, Some(key.to_string())),
         ["repo", "index", key] => act(app, "Couldn't start indexing", format!("/api/index/build?repo={}", encode(key)), json!({})),
         ["repo", "stop", key] => act(app, "Couldn't stop indexing", format!("/api/index/stop?repo={}", encode(key)), json!({})),

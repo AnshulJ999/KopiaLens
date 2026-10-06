@@ -11,8 +11,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .errors import PASS_THROUGH
-from ..index.physical import file_detail, reclaim_for, stored_all_versions
-from ..index.queries import group_by_folder, landing, search_export, search_paths, versions
+from ..index.physical import file_detail, reclaim_for, storage_breakdown, stored_all_versions
+from ..index.queries import (_SEARCH_SORT, EXPORT_HEADER, group_by_folder, landing, search_export,
+                             search_paths, versions)
 
 router = APIRouter(tags=["search"])
 
@@ -40,10 +41,6 @@ class ReclaimRequest(BaseModel):
     repo: str
     content_ids: list[str] = []
     cap: int = 500
-
-_EXPORT_COLS = ["source", "full_path", "name", "ext", "size", "physical", "versions",
-                "first_seen", "last_seen", "in_latest"]
-
 
 def _bounds(over_gb: float, largest: bool, min_gb: float, max_gb: float) -> tuple[int, int]:
     min_size = int(min_gb * 1_000_000_000) if min_gb else (int(over_gb * 1_000_000_000) if over_gb else 0)
@@ -83,10 +80,10 @@ def search(
     is_landing = (not q and not deleted_only and not largest and not over_gb and not source and not ext
                   and not ext_exclude and not min_gb and not max_gb and not date_from and not date_to
                   and not first_from and not min_versions and not shared_min and not dedupe
-                  and not confirm_exists and offset == 0 and sort == "size" and dir == "desc")
+                  and not confirm_exists and offset == 0 and sort in _SEARCH_SORT and dir in ("asc", "desc"))
     try:
         if is_landing:
-            res = landing(repo, limit=limit)
+            res = landing(repo, limit=limit, sort=sort, direction=dir)
         else:
             res = search_paths(
                 repo, query=q, deleted_only=deleted_only, min_size=min_size,
@@ -145,7 +142,7 @@ def search_versions(payload: VersionsRequest) -> dict:
                       "frees": frees.get(r.content_id) if r.content_id else None} for r in rows]}
 
 
-def _csv_rows(cur):
+def _csv_rows(cur, registered=()):
     """Stream the export, always closing the read cursor.
 
     try/finally rather than a close() after the loop: a cancelled download (the client goes away,
@@ -154,7 +151,7 @@ def _csv_rows(cur):
     try:
         buf = io.StringIO()
         writer = csv.writer(buf)
-        writer.writerow(_EXPORT_COLS)
+        writer.writerow(EXPORT_HEADER)
         yield buf.getvalue(); buf.seek(0); buf.truncate(0)
         while True:
             batch = cur.fetchmany(5000)
@@ -164,6 +161,11 @@ def _csv_rows(cur):
                 writer.writerow(row)
             yield buf.getvalue(); buf.seek(0); buf.truncate(0)
     finally:
+        for name in registered:
+            try:
+                cur.unregister(name)
+            except Exception:  # noqa: BLE001 - already gone
+                pass
         try:
             cur.close()
         except Exception:  # noqa: BLE001 - already closed / connection gone
@@ -176,18 +178,18 @@ def export(
     over_gb: float = 0, source: str | None = None, ext: str | None = None,
     ext_exclude: str | None = None, sort: str = "size", dir: str = "desc",
     min_gb: float = 0, max_gb: float = 0, date_from: str | None = None, date_to: str | None = None,
-    first_from: str | None = None, min_versions: int = 0, shared_min: int = 0,
+    first_from: str | None = None, min_versions: int = 0, shared_min: int = 0, dedupe: bool = False,
 ) -> StreamingResponse:
     min_size, max_size = _bounds(over_gb, largest, min_gb, max_gb)
-    cur = search_export(repo, query=q, deleted_only=deleted_only, min_size=min_size,
+    cur, registered = search_export(repo, query=q, deleted_only=deleted_only, min_size=min_size,
                         source=source or None, ext=ext or None, ext_exclude=ext_exclude or None,
                         sort=sort, direction=dir,
                         max_size=max_size, date_from=date_from or None, date_to=date_to or None,
                         first_from=first_from or None,
-                        min_versions=min_versions, shared_min=shared_min)
+                        min_versions=min_versions, shared_min=shared_min, dedupe=dedupe)
 
     return StreamingResponse(
-        _csv_rows(cur), media_type="text/csv",
+        _csv_rows(cur, registered), media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="kopialens_search_repo{repo}.csv"'},
     )
 
@@ -208,5 +210,19 @@ def detail(repo: str, source: str | None = None, full_path: str | None = None) -
         return file_detail(repo, source, full_path)
     except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/search/breakdown")
+def breakdown(repo: str, source: str | None = None, full_path: str | None = None) -> dict:
+    """Where a file's storage goes if it is deleted: freed bytes, identical copies, and the other
+    files sharing its data."""
+    if not source or not full_path:
+        raise HTTPException(status_code=400, detail="source and full_path are required")
+    try:
+        return storage_breakdown(repo, source, full_path)
+    except PASS_THROUGH:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

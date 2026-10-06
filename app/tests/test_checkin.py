@@ -1,0 +1,72 @@
+"""Daily check-in: the switches decide what is sent, the update answer warns a lifetime licence
+before a version it does not cover, and feature names come from what was used."""
+
+from __future__ import annotations
+
+import time
+
+import pytest
+
+from app.core import checkin
+
+
+@pytest.fixture
+def sent(monkeypatch, tmp_path):
+    monkeypatch.setattr(checkin, "STATE_FILE", str(tmp_path / "checkin.json"))
+    monkeypatch.setattr(checkin, "DEMO_INSTANCE", False)
+    monkeypatch.setattr(checkin, "_tier", lambda: "free")
+    monkeypatch.delenv("KOPIALENS_NO_UPDATE_CHECK", raising=False)
+    monkeypatch.delenv("KOPIALENS_NO_USAGE_STATS", raising=False)
+    out = []
+    monkeypatch.setattr(checkin, "_post", lambda payload: out.append(payload) or {"latest": "9.0.0"})
+    return out
+
+
+def _switches(monkeypatch, update_check, usage_stats):
+    monkeypatch.setattr(checkin, "_kl", lambda: {"update_check": update_check, "usage_stats": usage_stats})
+
+
+def test_with_both_switches_off_nothing_is_sent(monkeypatch, sent):
+    _switches(monkeypatch, False, False)
+    assert checkin.check_now() is False
+    assert sent == []
+
+
+def test_the_update_check_alone_sends_no_install_id(monkeypatch, sent):
+    _switches(monkeypatch, True, False)
+    checkin.check_now()
+    assert set(sent[0]) == {"schema", "version", "install_type", "os"}
+
+
+def test_usage_stats_send_feature_names_once(monkeypatch, sent):
+    _switches(monkeypatch, True, True)
+    checkin.note_request("/api/search/export")
+    checkin.note_request("/api/prune/plan")
+    checkin.note_feature("restore")
+    checkin.check_now()
+    checkin.check_now()
+    assert sent[0]["features_used"] == ["csv_export", "prune", "restore"] and sent[0]["opened"] is True
+    assert sent[1]["features_used"] == [] and sent[1]["opened"] is False
+    assert sent[0]["install_id"] == sent[1]["install_id"]
+
+
+def test_tray_polling_does_not_count_as_opening_the_app(monkeypatch, sent):
+    _switches(monkeypatch, False, True)
+    checkin.note_request("/api/shell/state")
+    checkin.check_now()
+    assert sent[0]["opened"] is False
+
+
+def test_an_update_the_licence_does_not_cover_names_the_newest_covered_version(monkeypatch, sent):
+    _switches(monkeypatch, True, False)
+    monkeypatch.setattr(checkin, "APP_VERSION", "2.5.0")
+    checkin._write_state(update_info={"latest": "3.0.1", "url": "https://x/3", "checked_at": time.time(),
+                                      "latest_by_major": {"2": "2.9.3", "3": "3.0.1"}})
+    from app.licensing import licence
+
+    class Lifetime:
+        updates_through = 2
+    monkeypatch.setattr(licence, "current", lambda: Lifetime())
+    st = checkin.status()
+    assert st["available"] and st["latest"] == "3.0.1"
+    assert st["licence"] == {"covers_through": 2, "latest_covered": "2.9.3"}

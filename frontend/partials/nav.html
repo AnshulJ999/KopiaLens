@@ -73,6 +73,36 @@
         <button @click="refreshAll()" class="h-8 rounded border border-bd px-3" title="Refresh current view + sources">⟳ Refresh</button>
         <button @click="toggleTimeFmt()" class="h-8 rounded border border-bd px-2" :title="timeFmt==='relative' ? 'Times: relative (click for absolute 12h)' : 'Times: absolute 12h (click for relative)'" x-text="timeFmt==='relative' ? '⏱ rel' : '🕒 abs'"></button>
         <button @click="quickTheme()" class="h-8 w-8 rounded border border-bd" title="Quick switch between your light and dark theme (pick themes in Settings)" x-text="dark ? '☀' : '☽'"></button>
+        <button x-show="update().available" x-cloak @click="showUpdate = true" class="h-8 rounded border border-ok-bd bg-ok-bg text-ok px-2"
+                :title="'KopiaLens ' + update().latest + ' is out'">Update available</button>
+        <div class="relative" @click.outside="helpMenu = false">
+          <button @click="toggleHelpMenu()" class="h-8 w-8 rounded border border-bd" title="Help" aria-haspopup="menu" :aria-expanded="helpMenu">?</button>
+          <div x-show="helpMenu" x-cloak role="menu" class="absolute right-0 top-full mt-1 z-50 w-64 rounded-md border border-bd bg-surface shadow-lg py-1 text-sm">
+            <button type="button" role="menuitem" @click="helpLink('docs')" class="w-full text-left px-3 py-1.5 hover:bg-head">Documentation</button>
+            <button type="button" role="menuitem" @click="openDiagnostics(true)" class="w-full text-left px-3 py-1.5 hover:bg-head">Report a problem…</button>
+            <button type="button" role="menuitem" @click="openDiagnostics(false)" class="w-full text-left px-3 py-1.5 hover:bg-head">Create diagnostics bundle…</button>
+            <button type="button" role="menuitem" @click="helpLink('discord')" :disabled="!(help && help.links && help.links.discord)"
+                    data-placeholder="discord" :title="help && help.links && help.links.discord ? '' : 'Coming soon'"
+                    class="w-full text-left px-3 py-1.5 hover:bg-head disabled:opacity-50 disabled:hover:bg-transparent">Discord</button>
+            <div class="my-1 border-t border-bd"></div>
+            <button type="button" role="menuitem" @click="checkUpdatesNow()" :disabled="checkingUpdates" class="w-full text-left px-3 py-1.5 hover:bg-head"
+                    x-text="checkingUpdates ? 'Checking for updates…' : 'Check for updates'"></button>
+            <button type="button" role="menuitem" @click="helpMenu = false; settingsTab = 'about'; openSettings()" class="w-full text-left px-3 py-1.5 hover:bg-head">About KopiaLens</button>
+            <template x-if="isDesktopWindow()">
+              <div>
+                <div class="my-1 border-t border-bd"></div>
+                <div class="flex items-center gap-1 px-3 py-1">
+                  <span class="flex-1">Zoom</span>
+                  <button type="button" @click="zoomStep(-1)" class="kl-btn" style="height:24px;width:28px;padding:0" title="Zoom out (Ctrl -)" aria-label="Zoom out">−</button>
+                  <span class="num w-11 text-center" x-text="Math.round((zoomLevel || 1) * 100) + '%'"></span>
+                  <button type="button" @click="zoomStep(1)" class="kl-btn" style="height:24px;width:28px;padding:0" title="Zoom in (Ctrl +)" aria-label="Zoom in">+</button>
+                  <button type="button" @click="zoomReset()" class="kl-btn quiet" style="height:24px" :disabled="(zoomLevel || 1) === 1" title="Back to 100% (Ctrl 0)">Reset</button>
+                </div>
+                <button type="button" role="menuitem" x-show="canOpenInBrowser()" @click="openInBrowser()" class="w-full text-left px-3 py-1.5 hover:bg-head">Open in browser</button>
+              </div>
+            </template>
+          </div>
+        </div>
         <button @click="openSettings()" class="h-8 w-8 rounded border border-bd" title="Settings">⚙</button>
       </div>
     </header>

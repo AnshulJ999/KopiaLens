@@ -53,6 +53,32 @@ const detailPart = {
       }
     },
 
+    // Fills in after the panel opens: a second pass over the same pieces, so it never delays the cards.
+    _loadBreakdown(seq, base) {
+      this.detail.breakdown = "pending";
+      getJson(`/api/search/breakdown?${base}`)
+        .then((r) => { if (seq === this._detailSeq && this.detail) this.detail.breakdown = r; })
+        .catch(() => { if (seq === this._detailSeq && this.detail) this.detail.breakdown = "error"; });
+    },
+    breakdownSegments() {
+      const b = this.detail && this.detail.breakdown;
+      if (!b || !b.found || !b.all_versions) return [];
+      const pct = (v) => Math.max(0, (v / b.all_versions) * 100);
+      return [
+        { cls: "ok", pct: pct(b.frees), title: "Frees " + fmtPhys(b.frees) },
+        { cls: "warn", pct: pct(b.shared.bytes), title: "Shared with other files " + fmtPhys(b.shared.bytes) },
+        { cls: "info", pct: pct(b.copies.bytes), title: "Identical copies " + fmtPhys(b.copies.bytes) },
+        { cls: "rest", pct: pct(b.unmatched), title: "Not indexed yet " + fmtPhys(b.unmatched) },
+      ].filter((s) => s.pct > 0);
+    },
+    breakdownLabel() {
+      return this.breakdownSegments().map((s) => s.title).join(", ");
+    },
+    breakdownTogether() {
+      const t = this.detail && this.detail.breakdown && this.detail.breakdown.together;
+      if (!t) return "";
+      return "Deleting it with " + (t.files === 1 ? "that file" : `those ${t.files} files`) + " frees";
+    },
     _loadPathStatus(seq, source, path, isFolder) {
       const p = new URLSearchParams({ repo: this.repo, source, path, is_folder: isFolder ? "true" : "false" });
       getJson(`/api/policies/path-status?${p.toString()}`)
@@ -176,6 +202,7 @@ const detailPart = {
         kind: "file", loading: true, title: item.full_path, source: item.source,
         on_disk: item.in_latest, logical: item.size, physical: item.physical,
         freeable: null, shared: null, chunks: [], others: [], versions: [], purge: [],
+        breakdown: null,
         panelTab: "overview",
         // run-bar states, initialised so the markup can deref them freely
         rfBy: "object-id", rfEverywhere: false, rfDry: this.klDryState(),
@@ -212,6 +239,7 @@ const detailPart = {
           purgeCmds: purgeRows.map((r) => r.cmd).join("\n"),
         });
         this._loadPathStatus(seq, this.detail.source, item.full_path, false);
+        this._loadBreakdown(seq, base);
       } catch (err) {
         if (seq === this._detailSeq) this.error = err.message || String(err);
       }

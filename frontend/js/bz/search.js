@@ -69,5 +69,8 @@ const bzSearchPart = {
         });
       }, "Grouping folders…");
     },
-    bzExportSearch() { window.open(`/api/backblaze/export?${this.bzSearchUrl().toString()}`, "_blank"); },
+    bzExportSearch() {
+      if (this.bzGroupByFolder) return downloadTable("#bzGroupTable", "backblaze_folders");
+      window.open(`/api/backblaze/export?${this.bzSearchUrl().toString()}`, "_blank");
+    },
 };

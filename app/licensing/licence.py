@@ -62,7 +62,8 @@ def _kit():
     except Exception as exc:  # noqa: BLE001 - a missing crypto library means Free, not a crash
         log.warning(f"licence library unavailable: {exc}")
         return None
-    return LicenseKit(product=PRODUCT, public_keys=PUBLIC_KEYS, banned_ids=BANNED_IDS,
+    from . import revoked
+    return LicenseKit(product=PRODUCT, public_keys=PUBLIC_KEYS, banned_ids=BANNED_IDS | revoked.banned(),
                       app_major=_app_major(), app_dir=LICENCE_DIR, shared_dir=SHARED_DIR)
 
 

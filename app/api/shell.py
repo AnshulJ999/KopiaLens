@@ -47,7 +47,14 @@ def state() -> dict:
         "prefs": _prefs(kl), "last_repo": settings.get("last_repo"),
         "repos": fresh["repos"], "pause": fresh["pause"], "jobs": recent,
         "access": netaccess.STARTED.get("mode") or netaccess.mode(),
+        "update": _update(),
     }
+
+
+def _update() -> dict | None:
+    from ..core import checkin
+    st = checkin.status()
+    return {"latest": st["latest"], "url": st["url"]} if st["available"] and st["url"] else None
 
 
 @router.post("/open-code")

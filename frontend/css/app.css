@@ -101,6 +101,15 @@ body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", 
 .kl-term .g { color: var(--ok); }
 .kl-term .w { color: var(--warn); }
 
+/* Stacked split of one total (file panel storage breakdown); each value is labelled beside it. */
+.kl-split { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--bd); }
+.kl-split > i { display: block; height: 100%; }
+.kl-split > i.ok, .kl-key.ok { background: var(--ok); }
+.kl-split > i.warn, .kl-key.warn { background: var(--warn); }
+.kl-split > i.info, .kl-key.info { background: var(--accent); }
+.kl-split > i.rest, .kl-key { background: var(--faint); }
+.kl-key { display: inline-block; width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+
 /* Progress. */
 .kl-bar { height: 6px; border-radius: 3px; background: var(--bd); overflow: hidden; }
 .kl-bar > i { display: block; height: 100%; background: var(--fg); border-radius: 3px; }

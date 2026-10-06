@@ -64,3 +64,4 @@ By default anyone who can reach the port can open KopiaLens, so turn on sign-in.
 - **Browse…** shows KopiaLens's own folder list (folders inside the container), since there is no desktop to open a dialog on.
 - **Open folder** and **Open in Explorer** buttons are hidden: there is no screen in the container.
 - **Disk lookup** uses a folder scan. Everything (es.exe) is Windows-only.
+- **Update checks and usage stats** are on, as on the desktop. Set `KOPIALENS_NO_UPDATE_CHECK=1` and/or `KOPIALENS_NO_USAGE_STATS=1` to turn them off. Details: [Update checks and usage stats](usage-stats.md).

@@ -75,11 +75,14 @@ const searchPart = {
           // Excl column hidden here too - same reason as the Search table ().
           { title: "Files", field: "files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
           { title: "Deleted #", field: "deleted_files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
-          { title: "Deleted %", field: "deleted_pct", width: 90, headerSort: false, hozAlign: "right", formatter: (c) => { const d = c.getRow().getData(); return d.files ? Math.round((d.deleted_files / d.files) * 100) + "%" : ""; } },
-          { title: "Avg size", field: "avg_size", width: 95, headerSort: false, hozAlign: "right", formatter: (c) => { const d = c.getRow().getData(); return d.files ? fmtBytes(Math.round(d.phys / d.files)) : ""; } },
+          { title: "Deleted %", field: "deleted_pct", width: 90, headerSort: false, hozAlign: "right",
+            accessorDownload: (_v, d) => (d.files ? Math.round((d.deleted_files / d.files) * 100) : ""), formatter: (c) => { const d = c.getRow().getData(); return d.files ? Math.round((d.deleted_files / d.files) * 100) + "%" : ""; } },
+          { title: "Avg size", field: "avg_size", width: 95, headerSort: false, hozAlign: "right",
+            accessorDownload: (_v, d) => (d.files ? Math.round(d.phys / d.files) : ""), formatter: (c) => { const d = c.getRow().getData(); return d.files ? fmtBytes(Math.round(d.phys / d.files)) : ""; } },
           // per-folder freeable, computed on demand (right-click) - a chunk walk per folder.
           // "≥" marks a partial result: the backend caps the walk at the first 5,000 files.
           { title: "∑ Reclaim", field: "reclaim_val", headerSort: false, width: 105, hozAlign: "right",
+            accessorDownload: (_v, d) => { const v = this.groupReclaim[this.repo + ":" + d.folder]; return v && v.v != null ? v.v : ""; },
             formatter: (c) => {
               const v = this.groupReclaim[this.repo + ":" + c.getRow().getData().folder];
               if (v === "pending") return "<span style='color:var(--faint)'>…</span>";
@@ -220,6 +223,7 @@ const searchPart = {
     },
 
     exportSearch() {
+      if (this.groupByFolder) return downloadTable("#groupTable", "kopialens_folders_repo" + this.repo);
       const p = this.searchParams();
       window.open(`/api/search/export?${p.toString()}`, "_blank");
     },

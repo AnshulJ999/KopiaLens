@@ -13,6 +13,7 @@
     level = next;
     view.setZoom(level).catch(() => {});
     try { localStorage.setItem(key, String(level)); } catch (e) { /* zoom still applies this session */ }
+    window.dispatchEvent(new CustomEvent("kl-zoom", { detail: level }));
     if (!announce) return;
     const el = document.getElementById("app");
     const app = el && window.Alpine && Alpine.$data(el);
@@ -26,6 +27,7 @@
     if (next !== level) apply(next, true);
   };
 
+  window.klZoom = { level: () => level, step, reset: () => { if (level !== 1) apply(1, true); } };   // the Help menu's zoom row
   if (level !== 1) apply(level, false);
   document.addEventListener("keydown", (e) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
