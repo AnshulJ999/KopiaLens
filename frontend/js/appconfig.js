@@ -20,11 +20,12 @@ const appConfigPart = {
 
     // ---- backups --------------------------------------------------------------------------
     async loadCfg() {
+      this.cfgError = false;
       try {
         const d = await getJson("/api/config-backups");
         this.cfg = d;
         this.cfgNotices = d.notices || [];
-      } catch (e) { /* the notice banner and the list simply stay empty */ }
+      } catch (e) { this.cfgError = true; }
     },
     cfgKind(b) {
       if (b.kind === "safety" && /import/.test(b.note || "")) return "Before import";

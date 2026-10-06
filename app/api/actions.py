@@ -18,6 +18,7 @@ from ..core import audit
 from ..core import paths as pathrules
 from ..core.kopia import (
     MountError,
+    docker_exec,
     list_mounts,
     maintenance_run_command,
     mount_and_browse,
@@ -100,7 +101,7 @@ def _start_index_run(repo: str) -> dict:
 def _fmt_cmd(cmd: list[str]) -> str:
     """Render a kopia arg-list as a shell-pasteable string, double-quoting args with spaces
     (sources/filenames like 'C:\\Program Files\\Apollo' would otherwise split on paste)."""
-    return " ".join(f'"{a}"' if (not a or " " in a) else a for a in cmd)
+    return " ".join(f'"{a}"' if (not a or " " in a) else a for a in docker_exec() + cmd)
 
 
 class MountRequest(BaseModel):

@@ -248,12 +248,12 @@ def detail(record: dict) -> dict:
     }
 
 
-def read_status(repo: str) -> dict:
+def read_status(repo: str, timeout: float | None = None) -> dict:
     """LIVE `repository status --json` for a repo. Returns {} when it cannot be read (offline
     storage, a server connection, no kopia) - never raises, because every caller of this is either
     a background capture or an explicit probe that reports the failure itself."""
     try:
-        res = kopia(repo, ["repository", "status", "--json"])
+        res = kopia(repo, ["repository", "status", "--json"], timeout=timeout)
         if res.returncode != 0:
             log.warning("repo=%s repository status failed: %s", repo, (res.stderr or "").strip()[:300])
             return {}

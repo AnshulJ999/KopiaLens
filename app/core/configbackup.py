@@ -25,6 +25,7 @@ import shutil
 import threading
 import time
 import zipfile
+import zlib
 
 log = logging.getLogger("kopialens.configbackup")
 
@@ -442,8 +443,13 @@ def import_preview(data: bytes) -> dict:
     """Read an exported file and say what importing it would change. Nothing is written."""
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
-    except zipfile.BadZipFile as exc:
+        return _import_preview(zf)
+    except (zipfile.BadZipFile, RuntimeError, NotImplementedError, zlib.error) as exc:
+        # Damaged, password-protected or unusually compressed: none of these is our export.
         raise ValueError("not a KopiaLens settings export") from exc
+
+
+def _import_preview(zf: zipfile.ZipFile) -> dict:
     files: dict[str, bytes] = {}
     with zf:
         names = zf.namelist()

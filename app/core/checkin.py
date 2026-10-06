@@ -193,10 +193,11 @@ def _clean_reply(data: dict) -> dict:
     }
 
 
-def check_now() -> bool:
-    """One check-in when either setting is on. True on success."""
+def check_now(manual: bool = False) -> bool:
+    """One check-in when either setting is on. ``manual`` (Check now) always checks for updates:
+    the setting only switches the daily automatic check. True on success."""
     global _opened
-    want_updates, want_stats = updates_enabled(), stats_enabled() and stats_ready()
+    want_updates, want_stats = updates_enabled() or manual, stats_enabled() and stats_ready()
     if not (want_updates or want_stats) or DEMO_INSTANCE:
         return False
     try:
@@ -208,7 +209,7 @@ def check_now() -> bool:
     if data is None:
         _write_state(retry_at=now + RETRY_AFTER_FAILURE)
         return False
-    _write_state(last_checkin_at=now, retry_at=0, update_info=_clean_reply(data))
+    _write_state(last_checkin_at=now, retry_at=0, update_info={**_clean_reply(data), "manual": manual})
     if want_stats:
         with _lock:
             _used.clear()
@@ -235,7 +236,9 @@ def status() -> dict:
     state = _read_state()
     info = state.get("update_info") if isinstance(state.get("update_info"), dict) else {}
     latest = info.get("latest")
-    available = bool(enabled and _newer(latest, APP_VERSION))
+    # With automatic checks off, only an answer the user asked for (Check now) is shown.
+    shown = enabled or bool(info.get("manual"))
+    available = bool(shown and _newer(latest, APP_VERSION))
     out = {
         "version": APP_VERSION,
         "checks_enabled": enabled,
@@ -243,7 +246,7 @@ def status() -> dict:
         "available": available,
         "latest": latest if available else None,
         "url": info.get("url") if available else None,
-        "notice": info.get("notice") if enabled else None,
+        "notice": info.get("notice") if shown else None,
         "checked_at": info.get("checked_at"),
         "licence": None,
     }

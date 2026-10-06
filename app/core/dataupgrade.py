@@ -129,21 +129,24 @@ def prune_dead_settings() -> list[str]:
     Reads the FILE as written, so nothing a user never chose gets stamped back."""
     if not DEAD_SETTINGS_KEYS:
         return []
-    try:
-        with open(SETTINGS_FILE, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError):
-        return []
-    if not isinstance(data, dict):
-        return []
-    removed = []
-    for block, key in DEAD_SETTINGS_KEYS:
-        target = data.get(block) if block else data
-        if isinstance(target, dict) and key in target:
-            target.pop(key, None)
-            removed.append(f"{block}.{key}" if block else key)
+    from .filelock import locked
+    with locked(SETTINGS_FILE):          # the same lock every settings writer holds
+        try:
+            with open(SETTINGS_FILE, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return []
+        if not isinstance(data, dict):
+            return []
+        removed = []
+        for block, key in DEAD_SETTINGS_KEYS:
+            target = data.get(block) if block else data
+            if isinstance(target, dict) and key in target:
+                target.pop(key, None)
+                removed.append(f"{block}.{key}" if block else key)
+        if removed:
+            atomic_json(SETTINGS_FILE, data)
     if removed:
-        atomic_json(SETTINGS_FILE, data)
         log.warning("settings: removed dead key(s) %s", ", ".join(removed))
     return removed
 

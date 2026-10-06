@@ -92,6 +92,8 @@ def memory_snapshot() -> dict:
                     paths = cur.execute("SELECT count(*) FROM pathx").fetchone()[0]
                     crefs = cur.execute("SELECT count(*) FROM crefs").fetchone()[0]
                     csizes = cur.execute("SELECT count(*) FROM csize").fetchone()[0]
+                    snaps = cur.execute("SELECT count(*) FROM snap").fetchone()[0]
+                    srcs = cur.execute("SELECT count(*) FROM src").fetchone()[0]
                     try:  # DuckDB's own memory breakdown by internal tag (BASE_TABLE/ART_INDEX/ALLOCATOR/...)
                         dmem_rows = cur.execute(
                             "SELECT tag, SUM(memory_usage_bytes) FROM duckdb_memory() GROUP BY tag"
@@ -103,6 +105,7 @@ def memory_snapshot() -> dict:
                     cur.close()
                 snap["repos"][repo] = {
                     "files": files, "paths": paths, "content_refs": crefs, "content_sizes": csizes,
+                    "snapshots": snaps, "sources": srcs,
                     "duckdb_mb": duckdb_mb,
                     "duckdb_total_mb": round(sum(duckdb_mb.values()), 1) if duckdb_mb else None,
                 }

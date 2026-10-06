@@ -150,3 +150,31 @@ def test_mount_support_names_what_is_missing(monkeypatch):
     monkeypatch.setattr(host, "in_docker", lambda: True)
     out = host.mount_support()
     assert out["ok"] is False and "FUSE" in out["reason"]
+
+
+@POSIX
+def test_an_unreadable_repository_folder_or_parent_is_counted(tmp_path):
+    from app.core import repoconnect
+    if os.geteuid() == 0:
+        pytest.skip("root reads everything")
+    parent = tmp_path / "parent"
+    repo = parent / "repo"
+    repo.mkdir(parents=True)
+    for blocked in (repo, parent):
+        blocked.chmod(0o000)
+        try:
+            assert repoconnect.unreadable_entries(str(repo)) == 1
+        finally:
+            blocked.chmod(0o755)
+    assert repoconnect.unreadable_entries(str(repo)) == 0
+
+
+@POSIX
+def test_in_docker_the_remove_script_runs_kopia_inside_the_container(monkeypatch):
+    from app.core import kopia as k
+    monkeypatch.setattr(host, "in_docker", lambda: True)
+    text = "\n".join(k._remove_sh_lines([["/app/kopia/kopia", "snapshot", "fix"]], "x.log"))
+    assert 'CONTAINER="${KOPIALENS_CONTAINER:-kopialens}"' in text
+    assert f'docker exec -u {os.getuid()}:{os.getgid()} "$CONTAINER" /app/kopia/kopia snapshot fix' in text
+    monkeypatch.setattr(host, "in_docker", lambda: False)
+    assert "docker" not in "\n".join(k._remove_sh_lines([["kopia", "snapshot", "fix"]], "x.log"))

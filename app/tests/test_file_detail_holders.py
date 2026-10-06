@@ -166,3 +166,31 @@ def test_the_breakdown_counts_an_identical_copy_separately(monkeypatch):
     assert (b["frees"], b["copies"]["bytes"], b["shared"]["bytes"]) == (0, 10, 0)
     assert b["copies"]["paths"] == [{"source": DRIVE, "full_path": other}]
     assert b["together"]["frees"] == 10   # deleting both copies frees it
+
+
+def test_the_breakdown_counts_a_copy_under_nested_sources_once(monkeypatch):
+    other = "H:" + SEP + "Games" + SEP + "Backup" + SEP + "big.cso"     # held by DRIVE and NESTED
+    _store(monkeypatch, [(DRIVE, FILE, "A", 1), (DRIVE, other, "A", 1), (NESTED, other, "A", 2)],
+           refs={"A": 2})
+    b = physical.storage_breakdown("1", DRIVE, FILE)
+    assert b["copies"]["count"] == 1
+    assert [p["full_path"] for p in b["copies"]["paths"]] == [other]
+    assert b["together"]["files"] == 1
+
+
+def test_the_breakdown_lists_a_sharing_file_under_nested_sources_once(monkeypatch):
+    other = "H:" + SEP + "Games" + SEP + "edited.cso"
+    _store(monkeypatch, [(DRIVE, FILE, "Ia", 1), (DRIVE, other, "Ib", 1), (NESTED, other, "Ib", 2)],
+           refs={"p": 2, "a": 1, "b": 2}, objrefs={"p": 3, "a": 1, "b": 2},
+           chunks={"Ia": {"p", "a"}, "Ib": {"p", "b"}})
+    b = physical.storage_breakdown("1", DRIVE, FILE)
+    assert b["shared"]["count"] == 1
+    assert [(f["full_path"], f["bytes"]) for f in b["shared"]["files"]] == [(other, 10)]
+    assert b["together"]["files"] == 1
+
+
+def test_the_same_path_on_two_computers_is_two_files_in_the_breakdown(monkeypatch):
+    other = "H:" + SEP + "Backup" + SEP + "big.cso"
+    _store(monkeypatch, [(DRIVE, FILE, "A", 1), (DRIVE, other, "A", 1), (OTHER_PC, other, "A", 2)],
+           refs={"A": 2})
+    assert physical.storage_breakdown("1", DRIVE, FILE)["copies"]["count"] == 2

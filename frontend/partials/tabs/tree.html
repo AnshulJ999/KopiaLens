@@ -28,7 +28,7 @@
           <button @click="selRestore('tree')" class="h-8 rounded border border-bd px-2 text-sm" title="Restore the selected items">Restore…</button>
           <button @click="selExclude('tree')" class="h-8 rounded border border-bd px-2 text-sm" title="Add exclusion rules for the selected files and folders">Exclude…</button>
           <button @click="selDelete('tree')" class="h-8 rounded border border-danger-bd text-danger px-2 text-sm" title="Delete the selected files, or one folder (respects filters)">Delete…</button>
-          <button @click="selExclude('tree', 'delete', $event)" class="h-8 rounded border border-danger-bd text-danger px-2 text-sm" title="Exclude, then delete from backups">Exclude &amp; delete… <span class="protag" x-show="!proOk('exclude_delete')">PRO</span></button>
+          <button @click="selExclude('tree', 'delete', $event)" class="h-8 rounded border border-danger-bd text-danger px-2 text-sm" title="Exclude, then delete from backups">Exclude &amp; delete… <span class="protag" x-show="proTag('exclude_delete')" :title="proTagTitle()">PRO</span></button>
           <button @click="csv('#treeTable','tree')" class="h-8 rounded border border-bd px-3 text-sm" title="Export CSV">⬇ CSV</button>
         </div>
         <div class="flex items-center gap-1 text-sm flex-wrap px-1">

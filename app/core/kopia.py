@@ -865,14 +865,32 @@ def remove_files_bat_text(commands: list[list[str]], log_name: str) -> str:
     return "\r\n".join(_remove_bat_lines(commands, f'set "LOG=%~dp0{log_name}"'))
 
 
+DOCKER_CONTAINER = "kopialens"     # the name packaging/docker/compose.example.yml gives it
+
+
+def docker_exec(container: str = DOCKER_CONTAINER) -> list[str]:
+    """In Docker, a command the user runs from the host goes through ``docker exec``: the kopia
+    program and the repository config exist only inside the container. Runs as the app's own
+    user so kopia's cache and config stay theirs. Empty outside Docker."""
+    from .host import in_docker
+    if os.name == "nt" or not in_docker():
+        return []
+    return ["docker", "exec", "-u", f"{os.getuid()}:{os.getgid()}", container]
+
+
 def _remove_sh_lines(commands: list[list[str]], log_name: str) -> list[str]:
     """The .sh twin of ``_remove_bat_lines`` for Linux and macOS: same batches, same per-batch
     summary, kopia's full output appended to a log next to the script. Arguments are quoted with
     ``shlex.quote``, which carries every name, line breaks included."""
     n = len(commands)
     problems = '-e "error" -e "failed" -e "unable"'
-    lines = [
-        "#!/bin/sh",
+    via = docker_exec('"$CONTAINER"')
+    lines = ["#!/bin/sh"]
+    if via:
+        lines += ["# KopiaLens runs in Docker: each kopia command runs inside its container.",
+                  "# Change the name if yours differs (docker ps lists it).",
+                  f'CONTAINER="${{KOPIALENS_CONTAINER:-{DOCKER_CONTAINER}}}"']
+    lines += [
         f'LOG="$(dirname "$0")/{log_name}"',
         'SLICE="$(mktemp)"',
         "FAILED=0",
@@ -888,7 +906,7 @@ def _remove_sh_lines(commands: list[list[str]], log_name: str) -> list[str]:
         lines += [
             f'echo "[batch {i}/{n}] $(date +%T) - working (this walks every snapshot in scope)..."',
             f'echo "=== batch {i}/{n} ===" >> "$LOG"',
-            " ".join(shlex.quote(a) for a in cmd) + ' > "$SLICE" 2>&1',
+            " ".join(via + [shlex.quote(a) for a in cmd]) + ' > "$SLICE" 2>&1',
             "RC=$?",
             'cat "$SLICE" >> "$LOG"',
             'RM=$(grep -c -i -e "removed" -e "will remove" "$SLICE")',

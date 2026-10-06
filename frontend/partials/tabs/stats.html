@@ -96,7 +96,7 @@
                           <td class="px-2 py-1 text-right whitespace-nowrap" x-text="fmtB(r.size)"></td>
                           <td class="px-2 py-1 text-right whitespace-nowrap font-medium" style="color:var(--ok)" x-text="fmtPhys(r.frees)"></td>
                           <td class="px-2 py-1 text-right" x-text="r.versions"></td>
-                          <td class="px-2 py-1 text-right"><button class="kl-btn" style="height:22px" @click="openPrune(r.full_path, r.source)">Prune… <span class="protag" x-show="!proOk('prune')">PRO</span></button></td>
+                          <td class="px-2 py-1 text-right"><button class="kl-btn" style="height:22px" @click="openPrune(r.full_path, r.source)">Prune… <span class="protag" x-show="proTag('prune')" :title="proTagTitle()">PRO</span></button></td>
                         </tr>
                       </template>
                     </tbody>

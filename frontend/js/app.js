@@ -61,7 +61,7 @@ document.addEventListener("alpine:init", () => {
     // Settings Account + Encryption sections, their shared dialog, and the unlock box (lock.html).
     acct: null, encStatus: null, acctDialog: null, locked: null, sessionDays: 30,
     // Settings backups, the damaged-file notice, pausing indexing and About (appconfig.js).
-    cfg: null, cfgNotices: [], cfgDlg: null, cfgBusy: "", cfgExportAccounts: false, cfgExportKeys: false,
+    cfg: null, cfgError: false, cfgNotices: [], cfgDlg: null, cfgBusy: "", cfgExportAccounts: false, cfgExportKeys: false,
     indexPause: { paused: false }, about: null, controlApi: true, trayClick: "window", trayDoubleClick: "window", notifyLevel: "warnings",
     // Onboarding (onboarding.js) and repositories (repos.js): the shared connect form is `cx`.
     ob: null, cx: null, repoMenu: false, repoAdd: false, repoDlg: null, repoChecks: {}, kopiaInfo: null, repoKopiaEdit: null,
@@ -188,6 +188,9 @@ document.addEventListener("alpine:init", () => {
       if (this.fb) { this.fbClose(null); return; }
       if (this.acctDialog) { if (this.acctDialog.mode !== "showkey") this.acctDialog = null; return; }
       if (this.cfgDlg) { if (!this.cfgDlg.busy) this.cfgDlg = null; return; }
+      if (this.helpMenu) { this.helpMenu = false; return; }
+      if (this.showDiag) { this.showDiag = false; return; }
+      if (this.showUpdate) { this.showUpdate = false; return; }
       if (this.locked) return;    // the unlock box has no close: nothing behind it has data
       if (this.ob) return;        // onboarding is the whole page
       if (this.repoMenu) { this.repoMenu = false; return; }
@@ -208,6 +211,8 @@ document.addEventListener("alpine:init", () => {
       if (this.showPolBackups) { this.showPolBackups = false; return; }
       if (this.showPolDiff) { this.showPolDiff = false; return; }
       if (this.showExcludedDetail) { this.showExcludedDetail = false; return; }
+      if (this.bzShowGen) { this.bzShowGen = false; return; }
+      if (this.bzDetail) { this.bzDetail = null; return; }
       if (this.showSettings) {
         // Autosave rides @change (fires on blur), so a field still focused would be dropped here.
         if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
@@ -274,6 +279,8 @@ document.addEventListener("alpine:init", () => {
         }
         this.repoKind = this.kindOf(this.repo);
         this.loadLicence();
+        window.addEventListener("focus", () => this.refreshLicence());
+        window.addEventListener("kl-pro-denied", () => this.refreshLicence(true));
         getJson("/api/app/host").then((h) => {
           this.host = h;
           if (!h.data_persistent) this.klNotify("The data folder isn't on a Docker volume. The index and settings are lost when the container is recreated.", "warn");

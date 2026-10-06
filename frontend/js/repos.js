@@ -96,7 +96,9 @@ const reposPart = {
     },
     // Suggested chip label: the folder or bucket name when it fits in 12 characters, else the storage type.
     cxDefaultShort(type, config) {
-      const tail = repoWhereOf(type, config).replace(/[\\/:]+$/, "").split(/[\\/:]/).filter(Boolean).pop() || "";
+      // A URL's port is not a name: "https://nas:51515" suggests "nas".
+      const where = repoWhereOf(type, config).replace(/[\\/:]+$/, "").replace(/:\d+$/, "");
+      const tail = where.split(/[\\/:]/).filter(Boolean).pop() || "";
       const base = tail && tail.length <= 12 ? tail : (REPO_SHORT_TYPES[type] || "");
       if (!base) return "";
       const taken = new Set((this.repos || []).map((r) => r.short_name).concat(((this.cx && this.cx.added) || []).map((a) => a.short_name)));

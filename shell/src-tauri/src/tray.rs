@@ -263,11 +263,13 @@ pub fn create(app: &AppHandle, shell: &Arc<Shell>) -> tauri::Result<()> {
             let state = shell.state.lock().unwrap().clone();
             match event {
                 TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } => {
+                    crate::note_action(app, "tray click");
                     if pref(state.as_ref(), "tray_click", "window") == "window" {
                         crate::open_window(app, None);
                     }
                 }
                 TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => {
+                    crate::note_action(app, "tray double-click");
                     if pref(state.as_ref(), "tray_double_click", "window") == "window" {
                         crate::open_window(app, None);
                     }

@@ -8,7 +8,8 @@
                 </div>
                 <p class="text-[11px] text-muted mt-1">Your settings, repository list, sign-in accounts and encryption key files. Copies are made before changes, weekly and before upgrades. Your kopia backups aren't touched.</p>
               </div>
-              <p x-show="!cfg" class="kl-note">Loading…</p>
+              <p x-show="!cfg && !cfgError" class="kl-note">Loading…</p>
+              <div x-show="!cfg && cfgError" class="kl-callout flex items-center gap-3"><span>Couldn't load the backups.</span><button class="kl-btn quiet" @click="loadCfg()">Try again</button></div>
               <p x-show="cfg && !cfg.backups.length" class="text-xs text-muted">No backups yet. The first one is made before your next change.</p>
               <div x-show="cfg && cfg.backups.length" class="rounded border border-bd divide-y divide-bd-soft max-h-72 overflow-y-auto">
                 <template x-for="b in (cfg ? cfg.backups : [])" :key="b.id">

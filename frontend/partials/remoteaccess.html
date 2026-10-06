@@ -1,6 +1,7 @@
             <!-- Settings: Remote access - who can open KopiaLens, HTTPS, reverse proxies. Read at start. -->
             <section x-show="settingsTab==='remote'" x-effect="settingsTab==='remote' && !acc && loadAccess()" class="space-y-4" data-testid="settings-remote">
-              <p x-show="!acc" class="kl-note">Loading…</p>
+              <p x-show="!acc && !accErr" class="kl-note">Loading…</p>
+              <div x-show="!acc && accErr" class="kl-callout flex items-center gap-3"><span>Couldn't load these settings.</span><button class="kl-btn quiet" @click="loadAccess()">Try again</button></div>
               <template x-if="acc">
                 <div class="space-y-5">
                   <div class="kl-callout" x-show="acc.restart_needed">Restart KopiaLens to apply these changes (tray menu > Restart).</div>

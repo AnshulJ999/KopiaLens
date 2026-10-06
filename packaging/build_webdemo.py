@@ -136,6 +136,8 @@ def current(out: str) -> bool:
         built = os.path.getmtime(os.path.join(out, "site", "index.html"))
     except OSError:
         return False
+    if any(os.path.getmtime(os.path.join(KL_ROOT, f)) > built for f in ("config.py", os.path.join("packaging", "build_webdemo.py"))):
+        return False
     for top in ("app", "frontend", "webdemo"):
         for dirpath, dirs, files in os.walk(os.path.join(KL_ROOT, top)):
             dirs[:] = [d for d in dirs if d not in ("__pycache__", "tests")]

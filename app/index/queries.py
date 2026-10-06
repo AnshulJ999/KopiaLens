@@ -254,7 +254,8 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                        max(p.size) AS size, max(p.physical) AS physical, max(p.versions) AS versions,
                        max(p.exclusive) AS exclusive,
                        min(p.first_seen) AS first_seen, max(p.last_seen) AS last_seen,
-                       bool_or(p.in_latest) AS in_latest, c.content_id, count(DISTINCT p.full_path) AS copies
+                       bool_or(p.in_latest) AS in_latest, c.content_id, count(DISTINCT p.full_path) AS copies,
+                       count(DISTINCT p.src_id) AS sources
                        {", max(r.value) AS ranked_value" if mat else ""}
                 FROM pathx p
                 JOIN src s ON s.src_id = p.src_id

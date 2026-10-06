@@ -1007,7 +1007,8 @@ def build(out: str | None = None, *, files: int = DEFAULT_FILES, seed: int = DEF
     try:
         res = subprocess.run([SELF_EXE, "-m", "app.core.sampledata", "--child"], cwd=HERE,
                              env=env, capture_output=True, text=True, encoding="utf-8",
-                             errors="replace", timeout=3600)
+                             errors="replace", timeout=3600,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     finally:
         os.remove(check)
     lines = [ln for ln in (res.stdout or "").splitlines() if ln.startswith("{")]

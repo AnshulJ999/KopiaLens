@@ -171,3 +171,19 @@ def test_recovery_keeps_the_latest_saved_change(cfg):
     settings_mod.mutate_settings(lambda s: s.setdefault("kopialens", {}).update(theme="pine"))
     (cfg / "settings.json").write_text("{torn", encoding="utf-8")
     assert settings_mod.load_settings()["kopialens"]["theme"] == "pine"
+
+
+def test_an_encrypted_or_oddly_compressed_zip_is_not_an_export(cfg):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("manifest.json", "{}")
+        zf.writestr("settings.json", "{}")
+    data = bytearray(buf.getvalue())
+    # Compression method 99 (WinZip AES, password-protected) in every local and central header.
+    for sig, off in ((b"PK\x03\x04", 8), (b"PK\x01\x02", 10)):
+        i = data.find(sig)
+        while i != -1:
+            data[i + off:i + off + 2] = (99).to_bytes(2, "little")
+            i = data.find(sig, i + 4)
+    with pytest.raises(ValueError, match="not a KopiaLens settings export"):
+        configbackup.import_preview(bytes(data))

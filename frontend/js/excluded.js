@@ -111,7 +111,7 @@ const excludedPart = {
     },
     _excludedPath(row) {
       if (row.status === "drive") return row.path;
-      return this.excludedPath.replace(/[\\/]+$/, "") + "\\" + row.name;
+      return joinPath(this.excludedPath, row.name);
     },
     async excludedInclude(row) {
       const path = this._excludedPath(row);

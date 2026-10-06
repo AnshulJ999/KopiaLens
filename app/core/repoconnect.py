@@ -532,9 +532,20 @@ def create(provider: str, fields: dict, password: str, name: str = "", short_nam
 def unreadable_entries(path: str, budget: float = 2.0) -> int:
     """Linux/macOS, not root: how many items in the repository folder's top two levels this user
     can't read. Without this, kopia retries "permission denied" for minutes before failing.
-    Time-boxed; 0 also when the folder is missing (kopia reports that itself)."""
-    if os.name == "nt" or os.geteuid() == 0 or not os.path.isdir(path):
+    Time-boxed; 0 also when the folder is missing (kopia reports that itself). A folder this user
+    can't open, or can't reach through a parent, counts as one."""
+    if os.name == "nt" or os.geteuid() == 0:
         return 0
+    try:
+        os.stat(path)
+    except PermissionError:
+        return 1                      # a parent folder blocks the way
+    except OSError:
+        return 0
+    if not os.path.isdir(path):
+        return 0
+    if not os.access(path, os.R_OK | os.X_OK):
+        return 1
     deadline = time.time() + budget
     blocked = 0
 

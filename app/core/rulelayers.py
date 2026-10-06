@@ -131,7 +131,7 @@ def _nearest_field(repo: str, source_key: str, defined: dict, field: str) -> lis
     if own:
         return own
     if sep and path:
-        sep_char = "\\" if "\\" in path else "/"
+        sep_char = pathrules.path_sep(path)
         prefixes: list[str] = []
         cur = path.rstrip(sep_char)
         if sep_char in cur:

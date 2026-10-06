@@ -34,6 +34,55 @@ fn shell(app: &AppHandle) -> Arc<Shell> {
     app.state::<Arc<Shell>>().inner().clone()
 }
 
+// The user's last tray or window action, for the freeze watchdog's log line.
+static LAST_ACTION: Mutex<String> = Mutex::new(String::new());
+
+/// One shell.log line per user action (a few a day): the trail before a freeze.
+pub fn note_action(app: &AppHandle, what: &str) {
+    *LAST_ACTION.lock().unwrap() = what.to_string();
+    if let Some(sh) = app.try_state::<Arc<Shell>>() {
+        sh.server.log(&format!("action: {what}"));
+    }
+}
+
+/// Logs once when the window thread stops answering, and once when it answers again. Silent
+/// otherwise. A long gap in this thread's own sleep means the PC was asleep, not a freeze.
+fn spawn_watchdog(app: AppHandle) {
+    const PING: Duration = Duration::from_secs(2);
+    const AFTER: Duration = Duration::from_secs(10);
+    let pong = Arc::new(Mutex::new(Instant::now()));
+    thread::spawn(move || {
+        let mut stuck_since: Option<Instant> = None;
+        loop {
+            let p = pong.clone();
+            let _ = app.run_on_main_thread(move || *p.lock().unwrap() = Instant::now());
+            let tick = Instant::now();
+            thread::sleep(PING);
+            if tick.elapsed() > PING + Duration::from_secs(5) {
+                *pong.lock().unwrap() = Instant::now();
+                stuck_since = None;
+                continue;
+            }
+            let quiet = pong.lock().unwrap().elapsed();
+            match stuck_since {
+                None if quiet >= AFTER => {
+                    stuck_since = Some(Instant::now() - quiet);
+                    let last = LAST_ACTION.lock().unwrap().clone();
+                    shell(&app).server.log(&format!(
+                        "watchdog: window thread not responding for {}s (last action: {})",
+                        quiet.as_secs(), if last.is_empty() { "none" } else { last.as_str() }));
+                }
+                Some(since) if quiet < PING * 2 => {
+                    shell(&app).server.log(&format!(
+                        "watchdog: window thread responding again after {}s", since.elapsed().as_secs()));
+                    stuck_since = None;
+                }
+                _ => {}
+            }
+        }
+    });
+}
+
 fn encode(v: &str) -> String {
     v.bytes()
         .map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
@@ -209,6 +258,7 @@ fn act(app: &AppHandle, fail_title: &'static str, path: String, body: Value) {
 
 pub fn on_menu(app: &AppHandle, id: &str) {
     let sh = shell(app);
+    note_action(app, &format!("menu {id}"));
     let parts: Vec<&str> = id.splitn(3, ':').collect();
     match parts.as_slice() {
         ["open"] => open_window(app, None),
@@ -305,6 +355,7 @@ pub fn run() {
             // Off the main thread: building a webview inside the cross-process hand-off deadlocks both copies.
             let (app, quit_now) = (app.clone(), args.iter().any(|a| a == "--quit"));
             thread::spawn(move || {
+                note_action(&app, if quit_now { "second launch --quit" } else { "second launch" });
                 if quit_now {
                     quit(&app, false, true);
                 } else {
@@ -330,6 +381,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
                 let app = window.app_handle();
+                note_action(app, &format!("window closed {}", window.label()));
                 let others = app.webview_windows().keys().filter(|l| *l != window.label()).count();
                 if others == 0 {
                     tray_note_once(app);
@@ -365,6 +417,7 @@ pub fn run() {
             sh.server.start();
             tray::create(&handle, &sh)?;
             control::spawn(handle.clone(), sh.clone());
+            spawn_watchdog(handle.clone());
             let poll_app = handle.clone();
             thread::spawn(move || loop {
                 poll_once(&poll_app);

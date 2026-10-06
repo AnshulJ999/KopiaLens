@@ -329,3 +329,21 @@ def test_demo_replies_never_show_this_pcs_folders():
     out = demoreplies.scrub(body).decode().lower()
     assert not any(m in out for m in demoreplies.machine_paths())
     assert json.loads(out)["dir"].startswith(demoreplies._DISPLAY[0][1].lower())
+
+
+def test_a_user_or_computer_name_never_survives_as_an_extension():
+    from app.core import fakenames
+    names = demo._Names(fakenames.Namer(b"k" * 32, "generic"), {}, {"anshul", "pcbox"})
+    for real in ("notes.pcbox", "budget.ANSHUL"):
+        fake = names.get("f", real)
+        assert not fake.lower().endswith((".pcbox", ".anshul")), fake
+        assert not names.kept("f", real)
+    assert names.get("f", "photo.jpg").endswith(".jpg")      # a real extension stays
+
+
+def test_demo_blob_stats_look_like_kopias(demo_repo):
+    from app.core import kopia as k
+    result: dict = {}
+    lines = [t for _s, t in k.kopia_job_stream("1", ["blob", "stats"], result)]
+    assert result["returncode"] == 0 and lines[0].startswith("Count: ")
+    assert "Histogram:" in lines and any("between 10 MB and 100 MB" in ln for ln in lines)

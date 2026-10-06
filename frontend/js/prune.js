@@ -127,8 +127,12 @@ const prunePart = {
             body: JSON.stringify({ token: p.token, remove: ids }) });
           if (seq !== this._prunePriceSeq || !this.prune) return;
           this.prune.price = r;
+          if (this.prune.priceFailed) { this.prune.error = ""; this.prune.priceFailed = false; }
         } catch (e) {
-          if (seq === this._prunePriceSeq && this.prune) this.prune.error = e.message || String(e);
+          // The old price's commands describe the previous ticks: never leave them runnable.
+          if (seq === this._prunePriceSeq && this.prune) {
+            Object.assign(this.prune, { price: null, priceFailed: true, error: e.message || String(e) });
+          }
         } finally {
           if (seq === this._prunePriceSeq && this.prune) this.prune.priceLoading = false;
         }

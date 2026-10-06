@@ -27,7 +27,7 @@
             <button @click="selRestore('search')" class="h-8 rounded border border-bd px-2 text-xs" title="Restore the selected items">Restore…</button>
             <button @click="selExclude('search')" class="h-8 rounded border border-bd px-2 text-xs" title="Add exclusion rules for the selected files">Exclude…</button>
             <button @click="selDelete('search')" class="h-8 rounded border border-danger-bd text-danger px-2 text-xs" title="Delete the selected files from backups">Delete…</button>
-            <button @click="selExclude('search', 'delete', $event)" class="h-8 rounded border border-danger-bd text-danger px-2 text-xs" title="Exclude the selected files, then delete them from backups">Exclude &amp; delete… <span class="protag" x-show="!proOk('exclude_delete')">PRO</span></button>
+            <button @click="selExclude('search', 'delete', $event)" class="h-8 rounded border border-danger-bd text-danger px-2 text-xs" title="Exclude the selected files, then delete them from backups">Exclude &amp; delete… <span class="protag" x-show="proTag('exclude_delete')" :title="proTagTitle()">PRO</span></button>
           </span>
         </div>
         <div x-show="showFilters" class="flex flex-wrap items-center gap-2 text-xs rounded border border-bd-soft bg-surface2/40 p-2">

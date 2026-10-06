@@ -2,7 +2,7 @@
 
 Once a day, KopiaLens asks the KopiaLens update service whether a newer version is out. By default it also sends a few anonymous usage stats, so we know roughly how many people use KopiaLens and which features matter most.
 
-Both are on by default, and both can be turned off in **Settings > Updates**. With both off, KopiaLens sends nothing. The same page shows exactly what the next check sends.
+Both are on by default, and both can be turned off in **Settings > Updates**. With both off, KopiaLens sends nothing unless you click **Check now**, which sends the update-check details once. The same page shows exactly what the next check sends.
 
 KopiaLens never installs anything by itself. When a newer version is out, it says so and links to the download.
 

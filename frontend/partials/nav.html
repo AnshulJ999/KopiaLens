@@ -11,7 +11,7 @@
           <svg class="h-3.5 w-3.5 shrink-0 text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
         </button>
         <span x-show="isDemo()" x-cloak class="absolute -top-1.5 -right-2 rounded border border-warn-bd bg-warn-bg text-warn px-1 text-[10px] font-medium leading-4"
-              title="Invented names, real numbers. Actions are simulated and change nothing.">Demo</span>
+              title="Invented names, real numbers. Actions are simulated and change nothing. Pro features are unlocked.">Demo</span>
         <div x-show="repoMenu" x-cloak role="menu" class="absolute left-0 top-full mt-1 z-50 w-64 rounded-md border border-bd bg-surface shadow-lg py-1 text-sm">
           <template x-for="item in repos" :key="item.id">
             <button type="button" role="menuitemradio" :aria-checked="item.id === repo" @click="pickRepo(item.id)"

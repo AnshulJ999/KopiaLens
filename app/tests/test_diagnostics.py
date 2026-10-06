@@ -59,3 +59,13 @@ def test_recent_problems_group_repeats_and_respect_the_period(monkeypatch, tmp_p
     monkeypatch.setattr(diagnostics, "LOG_FILE", str(log))
     out = diagnostics._problems(7)
     assert "2x ERROR" in out and "fine" not in out and "too old" not in out
+
+
+def test_ipv6_addresses_are_hidden_and_clock_times_are_not():
+    anon = diagnostics._Anon("salt")
+    out = anon("allow fd00::/8 and 2001:db8:0:1:2:3:4:5 at 04:27:03,123 via tauri::Builder on ::1")
+    for private in ("fd00::", "2001:db8"):
+        assert private not in out
+    assert "04:27:03,123" in out and "tauri::Builder" in out and "::1" in out
+    walked = anon.walk({"access_addresses": ["fd00::/8", "192.168.1.0/24"]})
+    assert "fd00" not in json.dumps(walked) and "192.168" not in json.dumps(walked)

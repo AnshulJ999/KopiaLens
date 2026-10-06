@@ -19,6 +19,7 @@ from config import CACHEDIR
 
 from .applog import get_logger
 from .kopia import kopia
+from .paths import path_sep
 
 log = get_logger("policy")
 
@@ -427,7 +428,7 @@ def effective_ignore_origin(repo: str, source_key: str, defined: dict | None = N
     # sources read as global-inherited), and the POSIX root is "/".
     user_host, sep, path = source_key.partition(":")
     if sep and path:
-        sep_char = "\\" if "\\" in path else "/"
+        sep_char = path_sep(path)
         prefixes: list[str] = []
         cur = path.rstrip(sep_char)
         if sep_char in cur:

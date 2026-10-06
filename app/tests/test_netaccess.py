@@ -168,3 +168,32 @@ def test_without_a_keyring_the_store_key_stays_in_the_file(monkeypatch, tmp_path
     monkeypatch.setattr(licence, "LICENCE_DIR", str(tmp_path))     # the test keyring backend fails
     licence._set_meta("STOR-2", {"key": "SECRET", "activation_id": "act"})
     assert licence._meta_for("STOR-2") == {"key": "SECRET", "activation_id": "act"}
+
+
+def test_a_window_cookie_survives_a_server_restart_but_not_an_app_restart(monkeypatch):
+    monkeypatch.setenv("KOPIALENS_SHELL_TOKEN", "launch-1")
+    token = netaccess.redeem(netaccess.issue_code())
+    monkeypatch.setattr(netaccess, "_CODES", {})
+    monkeypatch.setattr(netaccess, "_WINDOWS", set())      # a restarted server remembers nothing
+    assert netaccess.window_ok(token)
+    assert not netaccess.window_ok(token.rpartition(".")[0] + ".forged")
+    monkeypatch.setenv("KOPIALENS_SHELL_TOKEN", "launch-2")  # the desktop app itself restarted
+    assert not netaccess.window_ok(token)
+
+
+def test_a_certificate_and_key_that_do_not_load_fall_back_to_plain_http(settings, monkeypatch, tmp_path):
+    monkeypatch.setattr(auth, "profile", lambda: "server")
+    monkeypatch.setattr(netaccess, "_tls_dir", lambda: str(tmp_path))
+    cert, key = netaccess.ensure_self_signed()
+    other = tmp_path / "other"
+    other.mkdir()
+    monkeypatch.setattr(netaccess, "_tls_dir", lambda: str(other))
+    _cert2, key2 = netaccess.ensure_self_signed()
+    settings.update(https="files", https_cert=cert, https_key=key2)
+    assert netaccess.tls_files() is None                     # the key belongs to another certificate
+    settings["https_key"] = key
+    assert netaccess.tls_files() == (cert, key)
+    bad = tmp_path / "bad.pem"
+    bad.write_text("not a certificate")
+    settings["https_cert"] = str(bad)
+    assert netaccess.tls_files() is None

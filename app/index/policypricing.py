@@ -792,7 +792,7 @@ def precompute_ignore_files(repo: str) -> dict:
     for entry in ignore_map.get("files") or []:
         path = entry.get("path") or ""
         source = entry.get("source") or ""
-        sep = "\\" if "\\" in path else "/"
+        sep = pathrules.path_sep(path)
         folder = path.rsplit(sep, 1)[0] if sep in path else path
         rules = list(entry.get("rules") or [])
         scope = rlayers.folder_scope(repo, folder, user_host=rlayers.user_host_of(source))
@@ -842,7 +842,7 @@ def ignore_files_for(repo: str, target: str | None = None) -> dict:
     if target:
         folder = target.split(":", 1)[1] if ":" in target else ""
         uh = rlayers.user_host_of(target)
-        sep = "\\" if "\\" in folder else "/"
+        sep = pathrules.path_sep(folder)
         fold = sep == "\\"
         files = [f for f in files
                  if rlayers.user_host_of(f.get("source") or "") == uh

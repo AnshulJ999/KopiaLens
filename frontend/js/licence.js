@@ -10,16 +10,31 @@
 //   DELETE /api/licence[?id=]             the licence in use, or another stored one (lic.others)
 const LIC_PATREON_POLL_MS = 2500;
 const LIC_PATREON_TIMEOUT_MS = 10 * 60 * 1000;
+const LIC_REFRESH_MS = 60 * 1000;
+// PRO tags on demo repos: the feature works there (simulated), the tag says it is paid. false hides them.
+const PRO_TAGS_ON_DEMO = true;
 
 const licencePart = {
 
     async loadLicence() {
+      this._licAt = Date.now();
       try { this.lic = await getJson("/api/licence"); } catch (e) { /* keep last-known state */ }
+    },
+    // A window stays open for days: re-read on focus (at most once a minute) and after a Pro refusal.
+    refreshLicence(force) {
+      if (force || Date.now() - (this._licAt || 0) > LIC_REFRESH_MS) this.loadLicence();
     },
 
     proOk(feature) {
       return !((this.lic && this.lic.locked) || []).includes(feature) || this.isDemo();
     },
+
+    // The PRO mark: shown for a feature this licence doesn't include, demo repos too (see PRO_TAGS_ON_DEMO).
+    proTag(feature) {
+      const locked = ((this.lic && this.lic.locked) || []).includes(feature);
+      return locked && (PRO_TAGS_ON_DEMO || !this.isDemo());
+    },
+    proTagTitle() { return this.isDemo() ? "Pro feature. Free to try in the demo." : null; },
 
     // Call first in every Pro action: true = go ahead; false = the notice opened by the button.
     proGate(feature, ev) {
@@ -79,8 +94,9 @@ const licencePart = {
     },
     licOriginText() {
       const o = this.lic.origin || "";
-      if (o.startsWith("env ")) return `Set by ${o.slice(4)}. Change it there.`;
-      if (o === "shared folder") return "From the shared licence folder (.licensekit in your home folder).";
+      const renew = this.lic.renewable ? " It won't renew automatically. Update it there after you renew." : "";
+      if (o.startsWith("env ")) return `Set by ${o.slice(4)}. Change it there.` + renew;
+      if (o === "shared folder") return "From the shared licence folder (.licensekit in your home folder)." + renew;
       return "";
     },
     licProgress() {

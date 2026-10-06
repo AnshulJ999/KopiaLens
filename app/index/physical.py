@@ -884,7 +884,9 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
     # is freed iff its global source-refcount is fully attributable to the sources holding it. The
     # snapshots holding it come from /api/delete/plan (the delta index cannot list them).
     n_dup = len({source} | {s for s, _ in rows})
-    reclaim_everywhere = sum(sizes.get(c, 0) for c in latest_chunks if refs.get(c, 0) <= n_dup)
+    # An estimate: it counts sources only, not the (source, object) pairs `_freed` uses, so a piece
+    # another file in the same source still holds can read as freed. See kopialens-tech-debt.md.
+    reclaim_everywhere =sum(sizes.get(c, 0) for c in latest_chunks if refs.get(c, 0) <= n_dup)
 
     return {
         "found": True,
@@ -964,6 +966,11 @@ def _price_pairs(repo: str, cur, pairs: set[tuple[str, str]]) -> tuple[int, int]
     return sum(sizes.get(c, 0) for c in union), freeable
 
 
+def _file_key(source: str, full_path: str) -> tuple[str, str]:
+    """One file = one (machine, path); a path under nested sources is still one file."""
+    return source.split(":", 1)[0], full_path
+
+
 def storage_breakdown(repo: str, source: str, full_path: str, limit: int = 10,
                       together_cap: int = 50) -> dict:
     """Where a file's all-versions storage goes if it is deleted: what comes back, and for the rest
@@ -1024,7 +1031,7 @@ def storage_breakdown(repo: str, source: str, full_path: str, limit: int = 10,
         others = set(by_path) | copy_paths
         if others and len(others) <= together_cap:
             phys, frees = _price_pairs(repo, cur, own_pairs | others)
-            together = {"files": len({fp for _s, fp in others}), "physical": phys, "frees": frees}
+            together = {"files": len({_file_key(s_, fp) for s_, fp in others}), "physical": phys, "frees": frees}
     finally:
         cur.close()
 
@@ -1043,14 +1050,23 @@ def storage_breakdown(repo: str, source: str, full_path: str, limit: int = 10,
                 names.append(fp)
     for c in listed & st.kept_chunks:
         pieces.setdefault(c, {"files": []})["copy"] = True
-    files = sorted(({"source": s, "full_path": fp, "bytes": nbytes(cs)} for (s, fp), cs in by_path.items()),
-                   key=lambda r: (-r["bytes"], r["full_path"], r["source"]))
+    # One entry per file: nested sources hold the same (machine, path) once each.
+    merged: dict[tuple, dict] = {}
+    for (src, fp), cs in sorted(by_path.items()):
+        row = merged.setdefault(_file_key(src, fp), {"source": src, "full_path": fp, "chunks": set()})
+        row["chunks"] |= cs
+    files = sorted(({"source": r["source"], "full_path": r["full_path"], "bytes": nbytes(r["chunks"])}
+                    for r in merged.values()), key=lambda r: (-r["bytes"], r["full_path"], r["source"]))
+    copies = {}
+    for src, fp in sorted(copy_paths):
+        copies.setdefault(_file_key(src, fp), {"source": src, "full_path": fp})
+    copy_list = sorted(copies.values(), key=lambda r: (r["full_path"], r["source"]))
     return {
         "found": True,
         "all_versions": nbytes(st.union_chunks),
         "frees": nbytes(c for c in st.union_chunks if st.freed(c)),
-        "copies": {"bytes": nbytes(c for c in kept if c in st.kept_chunks), "count": len(copy_paths),
-                   "paths": [{"source": s, "full_path": fp} for s, fp in sorted(copy_paths)[:limit]]},
+        "copies": {"bytes": nbytes(c for c in kept if c in st.kept_chunks), "count": len(copy_list),
+                   "paths": copy_list[:limit]},
         "shared": {"bytes": nbytes(matched & set(shared)), "count": len(files), "files": files[:limit]},
         "unmatched": nbytes(set(shared) - matched),   # pieces whose other user the index has not mapped
         "together": together,

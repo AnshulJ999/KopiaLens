@@ -38,9 +38,12 @@ def compile_css(out_path: str) -> int:
               "https://github.com/tailwindlabs/tailwindcss/releases/tag/v3.4.19 into tools/.")
         return 2
     env = {**os.environ, "BROWSERSLIST_IGNORE_OLD_DATA": "1"}
-    return subprocess.run([cli, "-c", CONFIG, "-i", SOURCE, "-o", out_path, "--minify"],
-                          cwd=KL_ROOT, env=env, stdin=subprocess.DEVNULL,
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+    res = subprocess.run([cli, "-c", CONFIG, "-i", SOURCE, "-o", out_path, "--minify"],
+                         cwd=KL_ROOT, env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                         text=True, encoding="utf-8", errors="replace")
+    if res.returncode:      # quiet on success; a failed build shows the compiler's reason
+        print((res.stderr or res.stdout or "").strip())
+    return res.returncode
 
 
 def _css(path: str) -> str | None:

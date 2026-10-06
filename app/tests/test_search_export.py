@@ -67,3 +67,9 @@ def test_the_first_list_is_cached_per_sort(monkeypatch):
     assert queries.landing("1", sort="stored")["sort"] == "stored"   # never the size-sorted list
     assert queries.landing("1", sort="stored")["sort"] == "stored"
     assert calls == ["size", "stored"]
+
+
+def test_deduped_rows_count_their_sources(monkeypatch):
+    big, _small = _store(monkeypatch, {})
+    rows = queries.search_paths("1", dedupe=True, sort="size")["rows"]
+    assert {r["full_path"]: r["sources"] for r in rows}[big] == 2   # the table read 1 here

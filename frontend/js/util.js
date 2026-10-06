@@ -107,6 +107,8 @@ const getJson = async (url, options = {}) => {
   if (res.status === 423 && data && data.locked) window.dispatchEvent(new CustomEvent("kl-locked", { detail: data }));
   // Setup closed mid-way on a server install: onboarding asks for the setup code.
   if (res.status === 403 && data && data.setup_code) window.dispatchEvent(new CustomEvent("kl-setup-code"));
+  // A Pro refusal means the screen's licence state is stale.
+  if (res.status === 403 && res.headers.get("X-KopiaLens-Pro")) window.dispatchEvent(new CustomEvent("kl-pro-denied"));
   if (!res.ok) throw new Error((data && (data.detail || data.error)) || text || res.statusText);
   return data;
 };

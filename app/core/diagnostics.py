@@ -37,6 +37,8 @@ FAILED_RUNS = 3
 
 _PROBLEM_LINE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+\s+(WARNING|ERROR|CRITICAL)\s+(\S+) \| (.*)$")
 
+STATUS_TIMEOUT = 20   # seconds per repo: an offline remote repository must not hold the bundle
+
 # Setting keys whose values never leave the computer.
 _SECRET_KEYS = re.compile(r"(password|hash|secret|token|key|salt|cert)", re.I)
 
@@ -54,6 +56,10 @@ class _Anon:
         ("path", re.compile(r"\\\\[^\s\"'<>|]+")),                        # UNC
         ("path", re.compile(r"(?<![\w:/.])/(?!api/|static/|v1/|health\b)(?:[^/\s\"'<>|]+/)+[^\s\"'<>|]*")),
         ("ip", re.compile(r"(?<![/\w.])(?!127\.0\.0\.1\b)(?!0\.0\.0\.0\b)(?:\d{1,3}\.){3}\d{1,3}\b")),
+        # IPv6, with an optional prefix length: needs "::" or 6+ groups, so clock times never match.
+        ("ip", re.compile(r"(?<![\w:.])(?!::1?(?![\w:]))(?:(?:[0-9A-Fa-f]{1,4}:)*[0-9A-Fa-f]{0,4}::"
+                          r"(?:[0-9A-Fa-f]{1,4}:)*[0-9A-Fa-f]{0,4}|(?:[0-9A-Fa-f]{1,4}:){5,7}[0-9A-Fa-f]{1,4})"
+                          r"(?:/\d{1,3})?(?![\w:])")),
     )
 
     def __init__(self, salt: str):
@@ -69,7 +75,7 @@ class _Anon:
 
     # Free text the user typed or named: replaced whole, whatever it looks like.
     _TEXT_KEYS = {"query": "text", "filename": "name", "actor": "user",
-                  "allowed_hosts": "host", "trusted_proxies": "ip"}
+                  "allowed_hosts": "host", "trusted_proxies": "ip", "access_addresses": "ip"}
 
     def walk(self, obj):
         """Anonymise every string (keys included) of parsed JSON data."""
@@ -177,7 +183,8 @@ def _repo_lines() -> list[str]:
             lines.append(f"  Storage: {(cap.get('available') or 0) // 1024 ** 3} GB free of {cap['capacity'] // 1024 ** 3} GB")
         s = sizes.get(rid) or {}
         if "files" in s:
-            lines.append(f"  Index: {s['files']} file versions, {s['paths']} paths, {s.get('content_refs')} content refs")
+            lines.append(f"  Index: {s.get('snapshots')} snapshots, {s.get('sources')} sources, {s['files']} file versions,"
+                         f" {s['paths']} paths, {s.get('content_refs')} content refs")
         for r in [r for r in runs if not r.get("ok")][:FAILED_RUNS]:
             why = r.get("reason") or r.get("errors") or "?"
             lines.append(f"  Failed index {r.get('ts', '?')} ({r.get('trigger', '?')}): {str(why)[:300]}")
@@ -252,7 +259,7 @@ def _kopia_status() -> str:
     for rid, rec in REPOS.items():
         if rec.get("kind", "kopia") != "kopia" or rec.get("demo") or repos_mod.via_server(rid):
             continue
-        st = repos_mod.read_status(rid)
+        st = repos_mod.read_status(rid, timeout=STATUS_TIMEOUT)
         if not st:
             lines.append(f"Repository {rid}: kopia could not read its status")
             continue

@@ -125,6 +125,7 @@ const settingsPart = {
 
     // ---- Remote access (read at start: a change needs a restart) ----
     async loadAccess() {
+      this.accErr = "";
       try { this.acc = await getJson("/api/access"); } catch (e) { this.accErr = e.message || String(e); }
     },
     async saveAccess(change) {

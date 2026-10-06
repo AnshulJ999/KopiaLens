@@ -23,10 +23,13 @@ All of it is read at start: a change needs a restart.
 from __future__ import annotations
 
 import datetime
+import hashlib
+import hmac
 import ipaddress
 import os
 import secrets
 import socket
+import ssl
 import threading
 import time
 
@@ -147,7 +150,7 @@ def trusted_proxies() -> list[str]:
 
 _LOCK = threading.Lock()
 _CODES: dict[str, float] = {}          # one-time code -> expiry
-_WINDOWS: set[str] = set()             # window cookies issued since this start
+_WINDOWS: set[str] = set()             # window cookies issued since this start (no desktop app secret)
 
 
 def issue_code() -> str:
@@ -168,14 +171,35 @@ def redeem(code: str) -> str | None:
         exp = _CODES.pop(code or "", None)
         if exp is None or exp < time.time():
             return None
-        token = secrets.token_urlsafe(32)
-        _WINDOWS.add(token)
-        return token
+    nonce = secrets.token_urlsafe(16)
+    key = _window_key()
+    if key:
+        return f"{nonce}.{_window_sig(key, nonce)}"
+    with _LOCK:
+        _WINDOWS.add(nonce)
+    return nonce
+
+
+def _window_key() -> bytes | None:
+    """The desktop app's per-launch secret. A cookie signed with it survives a server restart and
+    dies when the app itself is restarted."""
+    token = _env("KOPIALENS_SHELL_TOKEN")
+    return token.encode("utf-8") if token else None
+
+
+def _window_sig(key: bytes, nonce: str) -> str:
+    return hmac.new(key, b"window:" + nonce.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def window_ok(cookie: str | None) -> bool:
+    if not cookie:
+        return False
+    key = _window_key()
+    if key:
+        nonce, _, sig = cookie.rpartition(".")
+        return bool(nonce) and hmac.compare_digest(sig, _window_sig(key, nonce))
     with _LOCK:
-        return bool(cookie) and cookie in _WINDOWS
+        return cookie in _WINDOWS
 
 
 # ---------------------------------------------------------------------------- HTTPS
@@ -273,17 +297,28 @@ def tls_files() -> tuple[str, str] | None:
         return None
     if m == "auto":
         try:
-            return ensure_self_signed()
+            pair = ensure_self_signed()
         except Exception as exc:  # noqa: BLE001
             log.error("could not make an HTTPS certificate (%s) - serving plain HTTP", exc)
             return None
+        return pair if _loads(*pair) else None
     cert = _env("KOPIALENS_HTTPS_CERT") or str(_kl().get("https_cert") or "")
     key = _env("KOPIALENS_HTTPS_KEY") or str(_kl().get("https_key") or "")
     if cert and key and os.path.isfile(cert) and os.path.isfile(key):
-        return cert, key
+        return (cert, key) if _loads(cert, key) else None
     log.error("HTTPS is set to use certificate files, but %s - serving plain HTTP",
               "they are not set" if not (cert and key) else "a file is missing")
     return None
+
+
+def _loads(cert: str, key: str) -> bool:
+    """The server would refuse to start on a pair it can't load (bad file, key not matching)."""
+    try:
+        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cert, key)
+        return True
+    except (ssl.SSLError, OSError, ValueError) as exc:
+        log.error("can't use the HTTPS certificate %s with key %s (%s) - serving plain HTTP", cert, key, exc)
+        return False
 
 
 def cert_info(cert_path: str) -> dict:

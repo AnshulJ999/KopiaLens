@@ -29,7 +29,7 @@ def info() -> dict:
 @router.post("/help/check-updates")
 def check_updates() -> dict:
     """Check now (the Settings button). The daily schedule is unchanged."""
-    ok = checkin.check_now()
+    ok = checkin.check_now(manual=True)
     return {"ok": ok, "update": checkin.status()}
 
 

@@ -90,3 +90,10 @@ def test_usage_stats_wait_for_a_day_old_persistent_install(monkeypatch, sent):
     checkin.check_now()
     assert "install_id" not in sent[-1]
 
+
+def test_check_now_compares_even_with_automatic_checks_off(monkeypatch, sent):
+    _switches(monkeypatch, False, False)
+    assert checkin.check_now(manual=True) is True
+    assert set(sent[0]) == {"schema", "version", "install_type", "os"}
+    assert checkin.status()["available"] is True
+    assert checkin.check_now() is False and len(sent) == 1   # the daily check stays off

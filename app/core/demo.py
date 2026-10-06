@@ -95,9 +95,10 @@ def _is_root_segment(seg: str) -> bool:
 class _Names:
     """real name -> fake name, per kind ('d' folder, 'f' file)."""
 
-    def __init__(self, namer: fakenames.Namer, categories: dict[str, str]):
+    def __init__(self, namer: fakenames.Namer, categories: dict[str, str], identity=frozenset()):
         self.namer = namer
         self.categories = categories
+        self.identity = identity          # the real user and computer names, lowercased
         self.attempt: dict[tuple[str, str], int] = {}
         self.fake: dict[tuple[str, str], str] = {}
 
@@ -115,7 +116,14 @@ class _Names:
         elif kind == "d":
             self.fake[key] = self.namer.folder(real, self.categories.get(real.lower(), "Mixed"), n)
         else:
-            self.fake[key] = self.namer.file(real, n)
+            self.fake[key] = self.namer.file(real if not self._identity_ext(real) else
+                                             fakenames.split_ext(real)[0], n)
+
+    def _identity_ext(self, name: str) -> bool:
+        """A short user or computer name after the last dot reads as an extension ("notes.pcbox"):
+        it must not survive as one."""
+        ext = fakenames.split_ext(name)[1]
+        return bool(ext) and ext[1:].lower() in self.identity
 
     def bump(self, key: tuple[str, str]) -> None:
         self.attempt[key] = self.attempt.get(key, 0) + 1
@@ -125,7 +133,7 @@ class _Names:
         """Kept by design: a technical name, or (generic style) a name of common words only."""
         if _is_root_segment(real) or real.lower() in fakenames.TECHNICAL:
             return True
-        if self.namer.style != "generic":
+        if self.namer.style != "generic" or (kind == "f" and self._identity_ext(real)):
             return False
         stem = real if kind == "d" else fakenames.split_ext(real)[0]
         return fakenames.is_generic(stem)
@@ -557,7 +565,9 @@ def _copy_repo(repo: str, demo_id: str, building: str, namer: fakenames.Namer) -
         import psutil
         cur.execute(f"SET memory_limit = '{max(store.memory_limit_bytes(), psutil.virtual_memory().total // 4)}B'")
         tables = _tables(gen)
-        names = _Names(namer, _categories(cur, tables))
+        real_sources = [r[0] for r in cur.execute("SELECT source FROM src").fetchall()] if "src" in tables else []
+        names = _Names(namer, _categories(cur, tables),
+                       _identity(real_sources + list(gen.manifest.get("sources", {}))))
         _step("resolving name collisions")
         bumped = _resolve_collisions(cur, names, tables)
 

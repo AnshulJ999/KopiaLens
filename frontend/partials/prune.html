@@ -7,7 +7,7 @@
           <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
             <div class="flex items-center gap-2">
               <div class="font-medium" x-text="pruneTitle()"></div>
-              <span class="protag" x-show="!proOk('prune')">PRO</span>
+              <span class="protag" x-show="proTag('prune')" :title="proTagTitle()">PRO</span>
               <button @click="closePrune()" class="ml-auto kl-btn quiet" title="Close">&times;</button>
             </div>
             <div class="kl-note mt-0.5 break-all font-mono" x-text="prune.full_path || prune.fullPath"></div>
@@ -92,10 +92,10 @@
 
                 <div class="kl-runbar">
                   <button class="kl-btn" @click="pruneDry($event)" :disabled="prune.dry.running || !pruneCanRun()">
-                    <span x-text="prune.dry.done ? 'Dry run again' : 'Dry run'"></span> <span class="protag" x-show="!proOk('prune')">PRO</span>
+                    <span x-text="prune.dry.done ? 'Dry run again' : 'Dry run'"></span> <span class="protag" x-show="proTag('prune')" :title="proTagTitle()">PRO</span>
                   </button>
                   <button class="kl-btn danger" @click="pruneExecute($event)" :disabled="prune.dry.running || !pruneCanRun()" :title="pruneBlockReason()">
-                    <span x-text="'Remove ' + countOf(pruneTickCount(), pruneNoun()) + '…'"></span> <span class="protag" x-show="!proOk('prune')">PRO</span>
+                    <span x-text="'Remove ' + countOf(pruneTickCount(), pruneNoun()) + '…'"></span> <span class="protag" x-show="proTag('prune')" :title="proTagTitle()">PRO</span>
                   </button>
                   <span x-show="pruneDryChecked()" class="pill ok">dry run checked</span>
                   <span class="grow"></span>

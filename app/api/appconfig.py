@@ -37,7 +37,7 @@ def about() -> dict:
         "data_dir": config.DATA_DIR,
         "config_dir": config.CONFIG_DIR,
         "data_format": dataupgrade.status().get("version"),
-        "kopia": kopiabin.info(with_version=False),
+        "kopia": kopiabin.info(),        # one quick --version read per process, then cached
         "python": platform.python_version(),
         "os": f"{platform.system()} {platform.release()}",
         "compiled": config.COMPILED,

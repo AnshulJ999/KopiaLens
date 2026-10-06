@@ -1,5 +1,5 @@
             <section x-show="settingsTab==='updates'" x-effect="settingsTab==='updates' && loadUsagePreview()" class="space-y-4" data-testid="settings-updates">
-              <p class="text-[11px] text-muted">KopiaLens checks for a newer version once a day. Usage stats tell us how many people use it and which features matter. With both off, nothing is sent.</p>
+              <p class="text-[11px] text-muted">KopiaLens checks for a newer version once a day. Usage stats tell us how many people use it and which features matter. With both off, nothing is sent unless you click Check now.</p>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Check for updates</span>
                   <button @click="updateCheck = !updateCheck; saveKl('update_check')" class="h-8 rounded border border-bd px-3" x-text="updateCheck ? 'On' : 'Off'"></button></div>
@@ -19,6 +19,6 @@
               </div>
               <div class="flex items-center justify-between gap-3">
                 <span class="text-xs" x-text="update().checked_at ? 'Last checked ' + humanTime(new Date(update().checked_at * 1000).toISOString()) : 'Not checked yet'"></span>
-                <button class="kl-btn" @click="checkUpdatesNow()" :disabled="checkingUpdates || !updateCheck" x-text="checkingUpdates ? 'Checking…' : 'Check now'"></button>
+                <button class="kl-btn" @click="checkUpdatesNow()" :disabled="checkingUpdates" x-text="checkingUpdates ? 'Checking…' : 'Check now'"></button>
               </div>
             </section>

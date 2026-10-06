@@ -1,5 +1,5 @@
 
-            <section x-show="settingsTab==='licence'" class="space-y-4" data-testid="settings-licence">
+            <section x-show="settingsTab==='licence'" x-effect="settingsTab==='licence' && showSettings && refreshLicence()" class="space-y-4" data-testid="settings-licence">
               <div class="flex items-center gap-2">
                 <span class="font-medium">Licence</span>
                 <span class="pill" :class="licPillClass()" x-text="licPillText()"></span>
@@ -19,7 +19,7 @@
                   <span class="text-muted">Plan</span><span x-text="lic.plan"></span>
                   <span class="text-muted">Licensed to</span><span class="break-all" x-text="lic.name + (lic.email && lic.email !== lic.name ? ' · ' + lic.email : '')"></span>
                   <template x-if="lic.source !== 'patreon' || !lic.renewable">
-                    <span class="contents"><span class="text-muted">Ends</span><span x-text="licExpiresText() + (lic.renewable && lic.state === 'active' ? ' · renews automatically' : '')"></span></span>
+                    <span class="contents"><span class="text-muted">Ends</span><span x-text="licExpiresText() + (lic.renewable && lic.stored && lic.state === 'active' ? ' · renews automatically' : '')"></span></span>
                   </template>
                   <template x-if="lic.source === 'patreon' && lic.renewable">
                     <span class="contents"><span class="text-muted">Renews</span><span>Automatically while you're a patron</span></span>

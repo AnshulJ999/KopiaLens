@@ -296,3 +296,21 @@ def test_other_stored_licences_are_listed_and_removable(monkeypatch, tmp_path):
     assert st["id"] == "LIFE-0000-0001" and st["others"] == []
     licence.remove("NOT-STORED")   # unknown id: nothing happens
     assert licence.status()["id"] == "LIFE-0000-0001"
+
+
+def test_every_feature_name_in_a_pro_check_is_on_the_pro_list():
+    """A typo in a feature name would make that check pass for Free (unknown names are Free)."""
+    import re
+    from app.licensing import features
+    names = set()
+    for path in (Path(__file__).resolve().parents[1]).rglob("*.py"):
+        if "tests" in path.parts:
+            continue
+        for n in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (isinstance(n, ast.Call) and getattr(n.func, "attr", getattr(n.func, "id", "")) in ("require", "allowed")
+                    and n.args and isinstance(n.args[0], ast.Constant) and isinstance(n.args[0].value, str)):
+                names.add(n.args[0].value)
+    frontend = Path(__file__).resolve().parents[2] / "frontend"
+    for path in list(frontend.rglob("*.js")) + list(frontend.rglob("*.html")):
+        names |= set(re.findall(r"pro(?:Gate|Ok|Tag)\(['\"]([a-z_]+)['\"]", path.read_text(encoding="utf-8")))
+    assert names and names <= set(features.PRO), names - set(features.PRO)

@@ -380,7 +380,7 @@ const policyEditPart = {
       const d = this.polPreview && this.polPreview.data;
       if (!d || !(d.items || []).length) return [];
       const src = d.source || "";
-      const sep = sourcePath(src).includes("/") && !sourcePath(src).includes("\\") ? "/" : "\\";
+      const sep = pathSep(sourcePath(src));
       const groups = {};
       for (const it of d.items) {
         const i = it.path.lastIndexOf(sep);
@@ -391,8 +391,8 @@ const policyEditPart = {
       return Object.values(groups).sort((a, b) => b.bytes - a.bytes);
     },
     polPreviewName(it) {
-      const i = Math.max(it.path.lastIndexOf("\\"), it.path.lastIndexOf("/"));
-      return it.path.slice(i + 1) + (it.is_dir ? "\\" : "");
+      const sep = pathSep(it.path);
+      return it.path.slice(it.path.lastIndexOf(sep) + 1) + (it.is_dir ? sep : "");
     },
 
     // ---------- multi-policy editing ----------

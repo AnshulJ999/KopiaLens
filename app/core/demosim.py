@@ -95,6 +95,44 @@ class _Index:
             return int(files or 0), int(dirs or 0), int(s_size or 0)
         return 1, 0, int(size or 0)
 
+    def storage(self) -> tuple[int, int]:
+        """(stored bytes, snapshots) of the demo repo."""
+        try:
+            packed = self.cur.execute("SELECT coalesce(sum(packed), 0) FROM csize").fetchone()[0]
+        except Exception:  # noqa: BLE001 - a copy without the size map: the files' own sizes
+            packed = self.cur.execute("SELECT coalesce(sum(size), 0) FROM pathx").fetchone()[0]
+        snaps = self.cur.execute("SELECT count(*) FROM snap").fetchone()[0]
+        return int(packed), int(snaps)
+
+
+def _kopia_bytes(n: float) -> str:
+    """kopia's own byte format: "72 B", "8.5 KB", "1 KB", "2.4 GB"."""
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1000 or unit == "TB":
+            return f"{int(n)} B" if unit == "B" else f"{n:.1f}".rstrip("0").rstrip(".") + f" {unit}"
+        n /= 1000
+    return ""
+
+
+_PACK = 20_000_000      # kopia fills data packs to about 20 MB
+
+
+def blob_stats_lines(stored: int, snapshots: int) -> list[str]:
+    """``kopia blob stats`` output for a repo storing ``stored`` bytes: data packs of about 20 MB
+    plus the small index, manifest and log blobs (shape taken from a real repository)."""
+    packs = max(1, -(-stored // _PACK))
+    small = [(4, 18), (20, 430), (max(10, snapshots), 2_000), (packs // 14 + 1, 70_000), (1, 320_000),
+             (max(1, packs // 36), 6_000_000)]
+    blobs = [size for n, size in small for _ in range(n)] + [stored // packs] * packs
+    out = [f"Count: {len(blobs)}", f"Total: {_kopia_bytes(sum(blobs))}",
+           f"Average: {_kopia_bytes(sum(blobs) // len(blobs))}", "Histogram:", ""]
+    low = 0
+    for high in (10 ** e for e in range(1, 9)):
+        hits = [b for b in blobs if low <= b < high]
+        out.append(f"{len(hits):9d} between {_kopia_bytes(low)} and {_kopia_bytes(high)} (total {_kopia_bytes(sum(hits))})")
+        low = high
+    return out
+
 
 def _lines(repo: str, args: list[str]) -> tuple[list[tuple[str, str]], int]:
     """(stream, line) pairs and the exit code for one kopia command."""
@@ -158,6 +196,9 @@ def _lines(repo: str, args: list[str]) -> tuple[list[tuple[str, str]], int]:
             say(f"Snapshotting {path} ...", "stderr")
             say(" * 0 hashing, 0 hashed (0 B), 0 cached (0 B), uploaded 0 B, estimating...", "stderr")
             say("Created snapshot.", "stderr")
+        elif head[:2] == ["blob", "stats"]:
+            for line in blob_stats_lines(*idx.storage()):
+                say(line)
         elif head[:1] == ["policy"]:
             say(f"Policy {head[1] if len(head) > 1 else 'write'}: done.")
         else:

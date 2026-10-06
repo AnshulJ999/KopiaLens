@@ -228,10 +228,6 @@ const excludePart = {
     },
 
     exSmartShape(shape) { return ["name", "extension", "similar"].includes(shape); },
-    exSmartLocked() {
-      const d = this.exDialog;
-      return !!d && this.exSmartShape(d.shape) && !this.proOk("exclude_smart");
-    },
 
     exShapeLabel() {
       const d = this.exDialog;
