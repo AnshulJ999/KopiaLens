@@ -1,4 +1,5 @@
 """App-facing entry point: finds the stored licences and verifies them."""
+import dataclasses
 import os
 import re
 import tempfile
@@ -128,12 +129,19 @@ class LicenseKit:
 
 
 def best(licences) -> Licence:
-    """The most useful licence: best state, then the latest end (never ending counts as latest)."""
+    """The most useful licence: best state, then the latest end (never ending counts as latest).
+
+    When it is active, it carries the capabilities of every active licence, so holding two licences with
+    different capabilities grants both."""
     found = [lic for lic in licences if lic.state is not State.NONE]
     if not found:
         return NO_LICENCE
     far = datetime.max.replace(tzinfo=timezone.utc)
-    return max(found, key=lambda lic: (RANK[lic.state], lic.expires or far))
+    chosen = max(found, key=lambda lic: (RANK[lic.state], lic.expires or far))
+    if chosen.state is not State.ACTIVE:
+        return chosen
+    merged = frozenset().union(*(lic.capabilities for lic in found if lic.state is State.ACTIVE))
+    return chosen if merged == chosen.capabilities else dataclasses.replace(chosen, capabilities=merged)
 
 
 def _read(path: Path) -> str:

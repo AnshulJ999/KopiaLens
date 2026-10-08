@@ -6,6 +6,7 @@
 //                                           patreon?, locked: [feature], features: {feature: line}, pricing_url}
 //   POST   /api/licence {text}          paste or file content
 //   POST   /api/licence/activate {key}  store key -> licence (online, once)
+//   POST   /api/licence/renew           renew what is due now (renew_due); renew_error says why one didn't
 //   POST   /api/licence/patreon/start   -> {url, session};  POST /api/licence/patreon/claim {session}
 //   DELETE /api/licence[?id=]             the licence in use, or another stored one (lic.others)
 const LIC_PATREON_POLL_MS = 2500;
@@ -64,6 +65,11 @@ const licencePart = {
       this.proNotice = null;
       window.open(this.lic.pricing_url, "_blank", "noopener");
     },
+    // An ended subscription or Patreon licence renews from Settings; buying again is for the rest.
+    proRenewHere() { return this.lic.state === "expired" && this.lic.renewable; },
+    proPrimary() {
+      if (this.proRenewHere()) this.proEnterLicence(); else this.proSeePlans();
+    },
     proEnterLicence() {
       this.proNotice = null;
       this.settingsTab = "licence";
@@ -94,7 +100,7 @@ const licencePart = {
     },
     licOriginText() {
       const o = this.lic.origin || "";
-      const renew = this.lic.renewable ? " It won't renew automatically. Update it there after you renew." : "";
+      const renew = this.lic.renewable ? " Renewed copies are kept in KopiaLens's data folder." : "";
       if (o.startsWith("env ")) return `Set by ${o.slice(4)}. Change it there.` + renew;
       if (o === "shared folder") return "From the shared licence folder (.licensekit in your home folder)." + renew;
       return "";
@@ -124,6 +130,9 @@ const licencePart = {
       if (!this.licKey.trim()) { this.licError = "Enter your licence key."; return; }
       if (await this._licCall("/api/licence/activate", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key: this.licKey }) }, "Pro is active.")) this.licKey = "";
+    },
+    async licRenew() {
+      await this._licCall("/api/licence/renew", { method: "POST" }, "Licence renewed.");
     },
     licPickFile() { const el = document.getElementById("kl-lic-file"); if (el) { el.value = ""; el.click(); } },
     async licImportFile(ev) {

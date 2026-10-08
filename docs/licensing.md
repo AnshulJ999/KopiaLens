@@ -25,7 +25,11 @@ The licence shows the plan, who it's licensed to and when it ends.
 
 ## Renewals
 
-Subscription and Patreon licences renew on their own a few days before they end, when the computer is online. If renewal isn't possible for a while (no internet, or the service is down), Pro keeps working for 7 more days after the end date. When a licence ends, KopiaLens keeps working as the free version; nothing is locked or lost.
+Subscription and Patreon licences renew on their own a few days before they end, when the computer is online. If renewal isn't possible for a while (no internet, or the service is down), Pro keeps working for 7 more days after the end date. If KopiaLens wasn't running then, it renews the next time it starts, as long as the subscription or Patreon membership is still active. **Settings → Licence → Renew now** tries straight away and shows why when it can't.
+
+A subscription added from a licence file renews the same way once the computer is online. A computer that never goes online needs a new licence file after each yearly payment.
+
+When a licence ends, KopiaLens keeps working as the free version; nothing is locked or lost. Licences that are refunded stop working once KopiaLens next checks its list of withdrawn licences.
 
 ## Docker and servers
 
@@ -34,8 +38,8 @@ Set the licence in the environment instead of the screen:
 - `KOPIALENS_LICENSE`: the licence text itself.
 - `KOPIALENS_LICENSE_FILE`: the path of a licence file inside the container.
 
-A licence set this way shows in **Settings → Licence**, but can only be changed where it's set.
+A licence set this way shows in **Settings → Licence**, but can only be changed where it's set. A subscription or Patreon licence set this way still renews; the renewed copy is kept in KopiaLens's data folder.
 
 ## Remove a licence
 
-**Settings → Licence → Remove licence…** removes it from this computer. KopiaLens then runs as the free version until you add it again.
+**Settings → Licence → Remove licence…** removes it from this computer. KopiaLens then runs as the free version until you add it again. A licence activated with a key also frees its place, so the key can be activated on another computer.

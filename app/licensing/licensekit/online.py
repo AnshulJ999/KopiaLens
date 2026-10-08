@@ -1,6 +1,7 @@
 """Optional online client for the licence service. Never raises: every call returns an OnlineResult.
 
 It never touches the stored licence; the app saves a returned licence itself (LicenseKit.save)."""
+import dataclasses
 import json
 import secrets
 import urllib.error
@@ -47,7 +48,13 @@ class LicenseService:
             body["label"] = label[:100]
         return self._post("/v1/activate", body)
 
+    def deactivate(self, key: str, activation_id: str) -> OnlineResult:
+        """Free this install's activation at the store (ok when freed or already gone)."""
+        res = self._post("/v1/deactivate", {"key": (key or "").strip(), "activation_id": activation_id})
+        return dataclasses.replace(res, ok=res.status == 200)
+
     def renew(self, licence: str, key: str = "", activation_id: str = "") -> OnlineResult:
+        """A fresh copy of a renewable licence. The store key is optional: the service can look it up."""
         body = {"licence": (licence or "").strip()}
         if key:
             body["key"] = key.strip()
