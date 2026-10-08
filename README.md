@@ -54,4 +54,4 @@ KopiaLens is built by one independent developer. If you'd like to back its devel
 
 ---
 
-KopiaLens is an independent app for Kopia. It isn't made, endorsed or supported by the Kopia project.
+KopiaLens is an independent app for Kopia, not affiliated with the Kopia project
