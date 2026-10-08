@@ -2,6 +2,8 @@
 
 The first time you open KopiaLens, it walks you through three steps: **Connect**, **Protect** and **Start**. Everything you choose here can be changed later in Settings.
 
+**On Windows**, the first run may show a "Windows protected your PC" notice, which Windows shows for new apps. Choose **More info**, then **Run anyway**.
+
 ## 1. Connect your repositories
 
 KopiaLens looks for kopia connections already on this computer, including the ones KopiaUI and the kopia command line use. Tick the ones you want and select **Use this repository**. You can pick several at once.
