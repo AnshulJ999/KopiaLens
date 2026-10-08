@@ -341,6 +341,7 @@ def _real_licences(monkeypatch, tmp_path):
     monkeypatch.setattr(licence, "current", REAL_CURRENT)
     monkeypatch.setattr(licence, "PUBLIC_KEYS", TEST_KEY)
     monkeypatch.setattr(licence, "SHARED_DIR", tmp_path / "shared")
+    monkeypatch.setattr(licence, "_renew_wait", {})
     monkeypatch.delenv("KOPIALENS_LICENSE", raising=False)
     monkeypatch.delenv("KOPIALENS_LICENSE_FILE", raising=False)
 
@@ -376,14 +377,32 @@ def test_a_licence_set_by_environment_variable_renews_into_the_data_folder(monke
 def test_renew_now_says_why_it_could_not(monkeypatch, tmp_path):
     _real_licences(monkeypatch, tmp_path)
     licence._save(_signed(id="PATR-0000-0002", src="patreon", rn=True, exp=_in_days(2)), {"patreon": True})
-    svc = _RenewService((401, {"error": "sign_in_again", "message": "Sign in with Patreon again to keep Pro."}),
-                        (503, {"error": "unavailable", "message": "The licence service isn't available right now."}))
+    svc = _RenewService((503, {"error": "unavailable", "message": "The licence service isn't available right now."}),
+                        (401, {"error": "sign_in_again", "message": "Sign in with Patreon again to keep Pro."}))
     monkeypatch.setattr(licence, "_service", lambda: svc)
+    licence.renew_if_due()   # a passing outage on a still-active licence isn't worth showing
+    assert "renew_error" not in licence.status()
     with pytest.raises(licence.LicenceError, match="Sign in with Patreon again"):
         licence.renew_now()
     assert licence.status()["renew_error"] == "Sign in with Patreon again to keep Pro."
-    licence.renew_if_due()   # a passing outage on a still-active licence isn't worth showing
-    assert "renew_error" not in licence.status()
+
+
+def test_background_renewal_waits_a_day_when_nothing_changed(monkeypatch, tmp_path):
+    """Before the yearly charge the service hands back the same end date; asking every 6 hours is waste."""
+    _real_licences(monkeypatch, tmp_path)
+    end = _in_days(5)
+    licence._save(_signed(id="SUBS-0000-0009", src="polar", rn=True, exp=end), {"key": "K", "activation_id": "A"})
+    ended = (403, {"error": "revoked", "message": "Your subscription has ended."})
+    svc = _RenewService((200, _signed(id="SUBS-0000-0009", src="polar", rn=True, exp=end)), ended, ended)
+    monkeypatch.setattr(licence, "_service", lambda: svc)
+    licence.renew_if_due()
+    licence.renew_if_due()
+    assert len(svc.renewed) == 1
+    with pytest.raises(licence.LicenceError, match="Your subscription has ended"):
+        licence.renew_now()   # the button always asks
+    monkeypatch.setattr(licence.time, "monotonic", lambda: 10**12)
+    licence.renew_if_due()   # a day later it asks again
+    assert len(svc.renewed) == 3
 
 
 def test_renew_now_with_nothing_due(monkeypatch, tmp_path):

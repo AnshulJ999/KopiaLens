@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pyseto import Key
 
-from app.licensing import revoked
+from app.licensing import licence, revoked
 
 
 def _keypair():
@@ -45,8 +45,12 @@ def service(monkeypatch, tmp_path):
         def __exit__(self, *a):
             return False
 
-    monkeypatch.setattr(revoked.urllib.request, "urlopen",
-                        lambda req, timeout=None: _Resp(json.dumps({"token": serving["token"]}).encode()))
+    def urlopen(req, timeout=None):
+        serving["request"] = req
+        return _Resp(json.dumps({"token": serving["token"]}).encode())
+
+    monkeypatch.setattr(revoked.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(licence, "held_tokens", lambda: [])
     return key, serving
 
 
@@ -76,3 +80,18 @@ def test_an_untrusted_list_is_ignored(service, bad):
                         else _token(key, ["L9"], product="someapp"))
     assert revoked.refresh() is False
     assert revoked.banned() == {"L1"}
+
+
+def test_the_fetch_is_the_licence_check_in_only_when_licences_are_held(service, monkeypatch):
+    key, serving = service
+    serving["token"] = _token(key, [])
+    revoked.refresh()
+    assert serving["request"].get_method() == "GET" and serving["request"].data is None   # Free: nothing sent
+
+    monkeypatch.setattr(licence, "held_tokens", lambda: ["v4.public.A", "v4.public.B"])
+    monkeypatch.setattr(licence, "_install_id", lambda: "f" * 32)
+    revoked.refresh()
+    req = serving["request"]
+    assert req.get_method() == "POST" and req.full_url.endswith("/v1/revoked")
+    assert json.loads(req.data) == {"product": "kopialens", "licences": ["v4.public.A", "v4.public.B"], "install": "f" * 32}
+    assert revoked.last_check() is not None

@@ -236,14 +236,14 @@ def _on_done(job: dict) -> None:
 def _require_pro(kind: str, repo: str, params: dict) -> None:
     """The Pro job kinds (features.PRO). Dry runs too: their output lists the plan."""
     if kind == "remove_files":
-        features.require("remove", repo)
+        features.require("remove", repo)  # licence check: do not remove or bypass (KopiaLens License)
     elif kind == "prune_versions":
-        features.require("prune", repo)
+        features.require("prune", repo)  # licence check: do not remove or bypass (KopiaLens License)
     elif kind == "policy_write":
         if params.get("then"):
-            features.require("exclude_delete", repo)
+            features.require("exclude_delete", repo)  # licence check: do not remove or bypass (KopiaLens License)
         if params.get("shape") in features.SMART_SHAPES:
-            features.require("exclude_smart", repo)
+            features.require("exclude_smart", repo)  # licence check: do not remove or bypass (KopiaLens License)
 
 
 @router.post("/jobs/start")

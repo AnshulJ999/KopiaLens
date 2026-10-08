@@ -96,3 +96,13 @@ def test_delete_matching_removes_the_file_from_every_snapshot(pro_server, open_p
         assert time.monotonic() < deadline, f"big-video.mp4 is still in a snapshot\n{pro_server.tail()}"
         time.sleep(2)
     assert len(_snapshot_listings(kopia, own_repo)) == 3, "remove-files rewrites snapshots, never drops one"
+
+
+def test_settings_say_the_licence_is_checked_weekly(pro_server, open_page):
+    page = open_page(pro_server)
+    page.get_by_title("Settings", exact=True).click()
+    page.get_by_role("button", name="Licence", exact=True).click()
+    section = page.get_by_test_id("settings-licence")
+    expect(section).to_contain_text("Active")
+    expect(section).to_contain_text("KopiaLens checks this licence with")
+    expect(section).to_contain_text("once a week.")

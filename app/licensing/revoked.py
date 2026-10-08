@@ -4,6 +4,9 @@ A refunded or leaked licence stops working between releases. The list is a PASET
 service key this build trusts, carrying {"product", "revoked": [ids], "iat"}; the newest list seen
 is kept. Offline, or with no list published yet, nothing changes: this never locks anyone out by
 failing.
+
+The fetch is also the weekly licence check-in: an install holding licences sends them with its
+licensing install id, so the service can count installs per licence. Free installs send nothing.
 """
 from __future__ import annotations
 
@@ -11,6 +14,7 @@ import json
 import os
 import time
 import urllib.request
+from datetime import datetime, timezone
 
 from config import APP_VERSION, DATA_DIR, LICENCE_SERVICE_URL
 
@@ -74,14 +78,38 @@ def banned() -> frozenset:
     return _cache["ids"]
 
 
+def last_check() -> str | None:
+    """When the list was last fetched (the weekly check-in), as ISO time."""
+    at = _read().get("fetched_at")
+    if not at:
+        return None
+    return datetime.fromtimestamp(at, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _request() -> urllib.request.Request:
+    """A plain GET for Free installs; a check-in POST carrying the held licences otherwise."""
+    url = f"{LICENCE_SERVICE_URL.rstrip('/')}/v1/revoked"
+    headers = {"User-Agent": f"KopiaLens/{APP_VERSION}"}
+    try:
+        from . import licence
+        tokens, install = licence.held_tokens(), licence._install_id()
+    except Exception:  # noqa: BLE001 - the list itself matters more than the check-in
+        tokens, install = [], ""
+    if not tokens:
+        return urllib.request.Request(f"{url}?product={PRODUCT}", headers=headers)
+    body = {"product": PRODUCT, "licences": tokens}
+    if install:
+        body["install"] = install
+    return urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST",
+                                  headers={**headers, "Content-Type": "application/json"})
+
+
 def refresh() -> bool:
     """Fetch the list once. True when a newer, valid list was stored."""
     stored = _read()
-    url = f"{LICENCE_SERVICE_URL.rstrip('/')}/v1/revoked?product={PRODUCT}"
     now = time.time()
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": f"KopiaLens/{APP_VERSION}"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(_request(), timeout=10) as resp:
             token = (json.loads(resp.read(262144)) or {}).get("token") or ""
     except Exception as exc:  # noqa: BLE001 - offline, or no list published yet
         log.debug("revoked list not fetched: %s", exc)

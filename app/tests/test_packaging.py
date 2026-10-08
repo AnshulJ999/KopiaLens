@@ -49,6 +49,17 @@ def test_release_reads_the_pinned_kopia_version():
     assert release.versions()["kopia"] == kopiabin.TESTED_VERSION
 
 
+def test_release_builds_the_banned_list_into_keys_py():
+    """The release rewrites the real keys.py; the result must still be the module the app imports."""
+    release = _load("packaging/release.py")
+    text = (Path(release.KEYS_FILE)).read_text(encoding="utf-8")
+    for ids in ({"BBBB-0000-0002", "AAAA-0000-0001"}, set()):
+        scope: dict = {}
+        exec(compile(release.with_banned_ids(text, ids), "keys.py", "exec"), scope)
+        assert scope["BANNED_IDS"] == frozenset(ids)
+        assert release.with_banned_ids(release.with_banned_ids(text, ids), ids) == release.with_banned_ids(text, ids)
+
+
 @pytest.mark.parametrize("raw,expected", [
     ("", 7123), ("7200", 7200), (" 7200 ", 7200), ("abc", 7123), ("0", 7123), ("70000", 7123),
 ])

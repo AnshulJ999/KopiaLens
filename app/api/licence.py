@@ -5,6 +5,8 @@ unlocked, and each feature's upgrade line."""
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -30,6 +32,7 @@ class SessionBody(BaseModel):
 def _state() -> dict:
     return {**licence.status(), "locked": features.locked(), "features": features.PRO,
             "pricing_url": PRICING_URL, "offline_url": LICENCE_SERVICE_URL.rstrip("/") + "/offline",
+            "check_host": urlparse(LICENCE_SERVICE_URL).netloc,
             "demo": DEMO_INSTANCE}
 
 

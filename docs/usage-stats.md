@@ -46,7 +46,7 @@ The service also records the **country** the request came from (worked out by Cl
 
 ## Revoked licences
 
-Once a week, KopiaLens also fetches the list of licences that were refunded or misused, signed by the licence service. This sends nothing about you. It runs even with both switches off, so a refunded licence stops working on every copy. When KopiaLens can't reach the service, nothing changes.
+Once a week, KopiaLens also fetches the list of licences that were refunded or misused, signed by the licence service. Without a licence, this sends nothing about you. With one, the same request is the weekly licence check (see [Licensing](licensing.md)). It runs even with both switches off, so a refunded licence stops working on every copy. When KopiaLens can't reach the service, nothing changes.
 
 ## Turning it off
 

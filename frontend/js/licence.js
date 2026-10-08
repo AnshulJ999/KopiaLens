@@ -3,7 +3,7 @@
 // buttons. Demo repos unlock everything (their actions are simulated).
 //
 //   GET    /api/licence                 -> {state, plan, name, email, expires, renewable, stored, origin,
-//                                           patreon?, locked: [feature], features: {feature: line}, pricing_url}
+//                                           patreon?, checked_at, check_host, locked: [feature], features: {feature: line}, pricing_url}
 //   POST   /api/licence {text}          paste or file content
 //   POST   /api/licence/activate {key}  store key -> licence (online, once)
 //   POST   /api/licence/renew           renew what is due now (renew_due); renew_error says why one didn't
@@ -104,6 +104,10 @@ const licencePart = {
       if (o.startsWith("env ")) return `Set by ${o.slice(4)}. Change it there.` + renew;
       if (o === "shared folder") return "From the shared licence folder (.licensekit in your home folder)." + renew;
       return "";
+    },
+    licCheckText() {
+      const when = this.lic.checked_at ? ` Last check: ${fmtRel(this.lic.checked_at)}.` : "";
+      return `KopiaLens checks this licence with ${this.lic.check_host} once a week.${when}`;
     },
     licProgress() {
       const p = this.lic && this.lic.patreon;

@@ -1,5 +1,5 @@
-"""One command for a Windows release: tests, server build, bundled kopia, desktop app + installer,
-portable zip, a smoke test of the built app, checksums.
+"""One command for a Windows release: banned licence ids, tests, server build, bundled kopia, desktop
+app + installer, portable zip, a smoke test of the built app, checksums.
 
     python packaging\\release.py
 
@@ -19,6 +19,7 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
+from datetime import datetime, timezone
 
 KL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPO_ROOT = os.path.dirname(os.path.dirname(KL_ROOT))
@@ -30,6 +31,9 @@ OUT_DIR = os.path.join(BUILD_ROOT, "out")
 STAGE = os.path.join(SHELL, "release-stage")
 SHELL_TARGET = os.path.join(BUILD_ROOT, "shell-target")
 PORTABLE_MARKER = "KopiaLens-portable.txt"
+KEYS_FILE = os.path.join(KL_ROOT, "app", "licensing", "keys.py")
+LICENSEKIT_DIR = os.path.join(REPO_ROOT, "LicenseKit")
+SYNC_MAX_AGE_DAYS = 7
 
 _log_fh = None
 
@@ -72,6 +76,43 @@ def versions() -> dict:
     with open(os.path.join(KL_ROOT, "app", "core", "kopiabin.py"), encoding="utf-8") as fh:
         kopia = re.search(r'^TESTED_VERSION\s*=\s*"([^"]+)"', fh.read(), re.M).group(1)
     return {"app": app, "cargo": cargo, "tauri": tauri, "kopia": kopia}
+
+
+# ---------------------------------------------------------------- banned licences
+
+BANNED_LINE = re.compile(r"^BANNED_IDS: frozenset = frozenset\((?:\{[^}]*\})?\)$", re.M)
+
+
+def with_banned_ids(keys_text: str, ids) -> str:
+    """keys.py text with BANNED_IDS set to ids."""
+    body = "{\n" + "".join(f'    "{i}",\n' for i in sorted(ids)) + "}" if ids else ""
+    new, n = BANNED_LINE.subn(f"BANNED_IDS: frozenset = frozenset({body})", keys_text)
+    if n != 1:
+        fail("BANNED_IDS line not found in app/licensing/keys.py")
+    return new
+
+
+def bake_banned_ids() -> None:
+    """Builds the issuing tool's banned list (own bans + last service sync) into this release, for installs
+    that never fetch the revoked list."""
+    sys.path.insert(0, LICENSEKIT_DIR)
+    from issuer.core import Issuer
+    issuer = Issuer()
+    ids = issuer.banned_ids()
+    snap = issuer.service_snapshot() or {}
+    fetched = snap.get("fetched_at")
+    age = None
+    if fetched:
+        synced = datetime.strptime(fetched, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - synced).total_seconds() / 86400
+    if age is None or age > SYNC_MAX_AGE_DAYS:
+        log(f"  WARNING: licence service last synced {'never' if age is None else f'{age:.0f} days ago'}; "
+            "sync in the issuing tool first so recent refunds are included")
+    with open(KEYS_FILE, encoding="utf-8") as fh:
+        text = fh.read()
+    with open(KEYS_FILE, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(with_banned_ids(text, ids))
+    log(f"  {len(ids)} banned licence(s) built in (service: {snap.get('url') or 'not synced'})")
 
 
 # ---------------------------------------------------------------- kopia
@@ -214,6 +255,9 @@ def main() -> int:
 
     if len({v["app"], v["cargo"], v["tauri"]}) != 1:
         fail(f"versions differ: VERSION {v['app']}, Cargo.toml {v['cargo']}, tauri.conf.json {v['tauri']}")
+
+    log("0/6 banned licence ids")
+    bake_banned_ids()
 
     if os.environ.get("KOPIALENS_RELEASE_SKIP_TESTS"):
         log("1/6 tests SKIPPED (KOPIALENS_RELEASE_SKIP_TESTS)")

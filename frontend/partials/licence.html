@@ -86,4 +86,5 @@
                   <div x-show="!lic.stored" class="text-[11px] text-muted" x-text="licOriginText()"></div>
                 </div>
               </template>
+              <div x-show="lic.state !== 'none' && lic.check_host" class="text-[11px] text-muted" x-text="licCheckText()"></div>
             </section>

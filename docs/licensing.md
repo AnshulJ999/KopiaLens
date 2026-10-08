@@ -17,13 +17,13 @@ Demo repositories and sample data unlock everything, because nothing in them is 
 
 Open **Settings → Licence**.
 
-- **Licence key**: paste the key from your purchase email and select **Activate**. KopiaLens contacts the licence service once, then works offline.
+- **Licence key**: paste the key from your purchase email and select **Activate**. KopiaLens activates it online; after that, Pro works offline too.
 - **Import licence file…**: for computers without internet. On another device, open the licence page shown on this screen, enter your key, download the licence file and import it here.
 - **Sign in with Patreon**: your browser opens Patreon. Once you've signed in, Pro turns on while you're a patron.
 
 The licence shows the plan, who it's licensed to and when it ends.
 
-When KopiaLens contacts the licence service (activating, renewing, Patreon sign-in), it also sends a random install number kept in its licence folder, so we can see how many computers use each licence. It isn't the usage-stats ID, and it isn't sent from a Docker container whose data folder isn't on a volume.
+Once a week, when the computer is online, KopiaLens checks its licences with the licence service. It sends each licence and a random install number kept in its licence folder, so we can see how many computers use each licence and in which countries. Your IP address isn't kept. The same number goes with activating, renewing and Patreon sign-in. It isn't the usage-stats ID, and it isn't sent from a Docker container whose data folder isn't on a volume. If the check can't run, nothing changes and Pro keeps working. **Settings → Licence** shows when the last check ran.
 
 ## Renewals
 

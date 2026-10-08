@@ -130,7 +130,7 @@ def delete_plan(body: PlanBody) -> dict:
             items, flag = facts["oids"], "--object-id"
         rows = [{**r, "selected": r["full_path"] in selected} for r in found["rows"]]
         # Free installs get the full preview, never the command that runs it.
-        pro = features.allowed("remove", repo)
+        pro = features.allowed("remove", repo)  # licence check: do not remove or bypass (KopiaLens License)
         cmds = remove_files_chunked_commands(repo, items, source=scope, commit=True,
                                              max_chars=8000, flag=flag) if items and pro else []
         out.update({
@@ -170,6 +170,7 @@ def delete_plan(body: PlanBody) -> dict:
                     snap["paths"].append(fp)
     snaps = sorted(by_id.values(), key=lambda s: s["start_time"], reverse=True)
     ids = [s["snapshot_id"] for s in snaps]
+    # licence check: do not remove or bypass (KopiaLens License)
     if not features.allowed("purge", repo):   # Free: which snapshots and when, without their ids
         snaps = [{**s, "snapshot_id": ""} for s in snaps]
         ids = []
