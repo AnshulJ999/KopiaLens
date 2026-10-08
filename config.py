@@ -32,10 +32,10 @@ LICENCE_SERVICE_URL = os.environ.get("KOPIALENS_LICENCE_SERVICE") or "https://li
 PRICING_URL = os.environ.get("KOPIALENS_PRICING_URL") or "https://kopialens.com/#pricing"
 # Daily update check + usage stats (docs/usage-stats.md). Placeholder host until the domain exists.
 CHECKIN_URL = os.environ.get("KOPIALENS_CHECKIN_URL") or "https://kl.anshuljain.net/v1/checkin"
-# Help menu. All placeholders until release: domain, public repo and support address are not final.
+# Help menu.
 DOCS_URL = os.environ.get("KOPIALENS_DOCS_URL") or "https://kopialens.com/docs"
 REPO_URL = os.environ.get("KOPIALENS_REPO_URL") or "https://github.com/AnshulJ999/KopiaLens"
-SUPPORT_EMAIL = os.environ.get("KOPIALENS_SUPPORT_EMAIL") or "kopialens@anshuljain.net"
+SUPPORT_EMAIL = os.environ.get("KOPIALENS_SUPPORT_EMAIL") or "support@kopialens.com"
 DISCORD_URL = os.environ.get("KOPIALENS_DISCORD_URL") or ""   # no server yet: the menu shows "Coming soon"
 
 
