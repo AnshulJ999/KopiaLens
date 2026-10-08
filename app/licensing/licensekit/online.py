@@ -35,18 +35,20 @@ class OnlineResult:
 
 
 class LicenseService:
-    def __init__(self, base_url: str, product: str, timeout: float = 15, user_agent: str = ""):
+    def __init__(self, base_url: str, product: str, timeout: float = 15, user_agent: str = "", install: str = ""):
         self.base_url = base_url.rstrip("/")
         self.product = product
         self.timeout = timeout
         # Cloudflare refuses Python's default "Python-urllib" agent (error 1010).
         self.user_agent = user_agent or f"LicenseKit ({product})"
+        # The app's own random install id, if it has one: lets the service count installs per licence.
+        self.install = install
 
     def activate(self, key: str, label: str = "") -> OnlineResult:
         body = {"product": self.product, "key": (key or "").strip()}
         if label:
             body["label"] = label[:100]
-        return self._post("/v1/activate", body)
+        return self._post("/v1/activate", self._with_install(body))
 
     def deactivate(self, key: str, activation_id: str) -> OnlineResult:
         """Free this install's activation at the store (ok when freed or already gone)."""
@@ -60,7 +62,7 @@ class LicenseService:
             body["key"] = key.strip()
         if activation_id:
             body["activation_id"] = activation_id
-        return self._post("/v1/renew", body)
+        return self._post("/v1/renew", self._with_install(body))
 
     def patreon_start(self) -> tuple:
         """(url to open in the browser, session code to poll with patreon_claim)."""
@@ -69,7 +71,10 @@ class LicenseService:
 
     def patreon_claim(self, session: str) -> OnlineResult:
         """ok once signed in; .pending while the browser step is unfinished."""
-        return self._post("/v1/patreon/claim", {"session": session})
+        return self._post("/v1/patreon/claim", self._with_install({"session": session}))
+
+    def _with_install(self, body: dict) -> dict:
+        return {**body, "install": self.install} if self.install else body
 
     def _post(self, path: str, body: dict) -> OnlineResult:
         try:

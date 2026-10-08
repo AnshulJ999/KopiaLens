@@ -139,12 +139,15 @@ def _os_name() -> str:
 
 
 def _tier() -> str:
+    """The plan as a short label: "Pro · Yearly" -> pro-yearly; a Polar subscription adds -sub."""
     from ..licensing import licence
     st = licence.status()
     if st.get("state") != "active":
         return "free"
-    plan = str(st.get("plan") or "pro").lower()
-    return plan if re.fullmatch(r"[a-z0-9_-]{1,30}", plan) else "pro"
+    tier = re.sub(r"[^a-z0-9]+", "-", str(st.get("plan") or "pro").lower()).strip("-") or "pro"
+    if st.get("source") == "polar" and st.get("renewable"):
+        tier += "-sub"
+    return tier[:30]
 
 
 def build_payload(include_stats: bool) -> dict:

@@ -23,6 +23,8 @@ Open **Settings → Licence**.
 
 The licence shows the plan, who it's licensed to and when it ends.
 
+When KopiaLens contacts the licence service (activating, renewing, Patreon sign-in), it also sends a random install number kept in its licence folder, so we can see how many computers use each licence. It isn't the usage-stats ID, and it isn't sent from a Docker container whose data folder isn't on a volume.
+
 ## Renewals
 
 Subscription and Patreon licences renew on their own a few days before they end, when the computer is online. If renewal isn't possible for a while (no internet, or the service is down), Pro keeps working for 7 more days after the end date. If KopiaLens wasn't running then, it renews the next time it starts, as long as the subscription or Patreon membership is still active. **Settings → Licence → Renew now** tries straight away and shows why when it can't.

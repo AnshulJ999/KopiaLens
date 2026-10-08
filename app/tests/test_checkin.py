@@ -97,3 +97,21 @@ def test_check_now_compares_even_with_automatic_checks_off(monkeypatch, sent):
     assert set(sent[0]) == {"schema", "version", "install_type", "os"}
     assert checkin.status()["available"] is True
     assert checkin.check_now() is False and len(sent) == 1   # the daily check stays off
+
+
+@pytest.mark.parametrize("status,tier", [
+    ({"state": "none"}, "free"),
+    ({"state": "expired", "plan": "Pro · Yearly"}, "free"),
+    ({"state": "active", "plan": "Pro · Lifetime", "source": "polar"}, "pro-lifetime"),
+    ({"state": "active", "plan": "Pro · Yearly", "source": "polar", "renewable": False}, "pro-yearly"),
+    ({"state": "active", "plan": "Pro · Yearly", "source": "polar", "renewable": True}, "pro-yearly-sub"),
+    ({"state": "active", "plan": "Business · Yearly", "source": "polar", "renewable": True}, "business-yearly-sub"),
+    ({"state": "active", "plan": "Pro · Patreon", "source": "patreon", "renewable": True}, "pro-patreon"),
+    ({"state": "active", "plan": "", "source": "manual"}, "pro"),
+])
+def test_usage_stats_name_the_plan(monkeypatch, status, tier):
+    """Each plan reaches the stats as its own label, which the Worker's pattern accepts."""
+    import re
+    from app.licensing import licence
+    monkeypatch.setattr(licence, "status", lambda: status)
+    assert checkin._tier() == tier and re.fullmatch(r"[a-z0-9_-]{1,30}", tier)

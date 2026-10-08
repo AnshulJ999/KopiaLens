@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
+import secrets
 import socket
 import sys
 import threading
@@ -23,6 +25,7 @@ log = get_logger("licence")
 
 LICENCE_DIR = os.path.join(DATA_DIR, "licence")
 META_FILE = "online.json"
+INSTALL_FILE = "install-id"   # random, licensing only (see _install_id)
 SHARED_DIR = Path.home() / ".licensekit"   # one bundle licence serving several apps
 CACHE_SECONDS = 60           # expiry is re-checked at least this often
 RENEW_FIRST_DELAY = 30       # after startup: an ended licence comes back quickly
@@ -75,7 +78,31 @@ def _service():
         from .licensekit import LicenseService
     except Exception as exc:  # noqa: BLE001
         raise LicenceError("Licences can't be checked in this copy of KopiaLens.") from exc
-    return LicenseService(LICENCE_SERVICE_URL, PRODUCT, user_agent=f"KopiaLens/{APP_VERSION}")
+    return LicenseService(LICENCE_SERVICE_URL, PRODUCT, user_agent=f"KopiaLens/{APP_VERSION}", install=_install_id())
+
+
+def _install_id() -> str:
+    """A random id for this install, used only with the licence service so it can count installs per licence.
+    Separate from the usage-stats id on purpose, so usage stats stay unlinked to a licence. Not sent when the
+    data folder doesn't survive a restart (a container without a volume would make a new id each time)."""
+    try:
+        from ..core.host import data_persistent
+        if not data_persistent():
+            return ""
+        path = os.path.join(LICENCE_DIR, INSTALL_FILE)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                value = fh.read().strip()
+        except OSError:
+            value = ""
+        if not re.fullmatch(r"[0-9a-f]{32}", value):
+            value = secrets.token_hex(16)
+            os.makedirs(LICENCE_DIR, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(value + "\n")
+        return value
+    except Exception:  # noqa: BLE001 - counting installs never blocks a licence action
+        return ""
 
 
 def current():

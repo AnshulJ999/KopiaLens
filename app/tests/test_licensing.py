@@ -429,3 +429,15 @@ def test_activation_names_the_install(monkeypatch, tmp_path):
     with pytest.raises(licence.LicenceError):
         licence.activate("KLENS-ABC")
     assert seen["label"] == "KopiaLens on studio-pc"
+
+
+def test_the_licence_service_gets_its_own_install_id(monkeypatch, tmp_path):
+    """Kept apart from the usage-stats id, so usage stats can't be joined to a licence."""
+    from app.core import checkin, host
+    monkeypatch.setattr(checkin, "STATE_FILE", str(tmp_path / "checkin.json"))
+    monkeypatch.setattr(host, "data_persistent", lambda: True)
+    first = licence._install_id()
+    assert len(first) == 32 and first == licence._install_id() and first != checkin.install_id()
+    assert licence._service().install == first
+    monkeypatch.setattr(host, "data_persistent", lambda: False)
+    assert licence._install_id() == ""
