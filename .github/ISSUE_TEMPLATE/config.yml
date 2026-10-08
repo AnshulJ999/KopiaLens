@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Docs
+    url: https://kopialens.com/docs
+    about: Setup, repositories, Docker and remote access.
+  - name: Email support
+    url: mailto:support@kopialens.com
+    about: Questions about licences, purchases or anything private.

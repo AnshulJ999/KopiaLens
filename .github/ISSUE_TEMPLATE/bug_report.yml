@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in KopiaLens isn't working as it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the Tree view
+        2. Click on ...
+  - type: input
+    id: version
+    attributes:
+      label: KopiaLens version
+      placeholder: "1.0.0"
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where are you running it?
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Docker
+        - Home Assistant
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: storage
+    attributes:
+      label: Repository storage
+      description: Where your Kopia repository lives.
+      placeholder: Local disk, NAS, Backblaze B2, S3, SFTP...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Anything that helps. Remove private paths or names first.

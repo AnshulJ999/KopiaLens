@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <style>
+    .m { fill: #0f766e; } .a { fill: #f59e0b; }
+    @media (prefers-color-scheme: dark) { .m { fill: #2dd4bf; } .a { fill: #fbbf24; } }
+  </style>
+  <rect x="10" y="8" width="11" height="48" rx="2.5" class="m"/>
+  <polygon points="24,30 45,8 57,8 36,30" class="m"/>
+  <polygon points="28,35 40,35 60,56 48,56" class="a"/>
+</svg>
