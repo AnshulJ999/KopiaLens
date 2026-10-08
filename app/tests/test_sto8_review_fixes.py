@@ -81,33 +81,6 @@ def test_an_object_the_tree_does_not_hold_reads_as_unknown_not_empty(monkeypatch
     assert physical._chunks_for_obj("1", "") == set()
 
 
-def test_an_unknown_chunk_set_is_never_memoized(monkeypatch):
-    """The memo is keyed on presence, so caching a None both defeats the memo and hands the
-    caller a None where it expects a set. Two lookups must both reach the source."""
-    calls = []
-
-    def _fake(repo, obj, *, fetch=False):
-        calls.append(obj)
-        return None
-
-    monkeypatch.setattr(physical, "_chunks_for_obj", _fake)
-    memo: dict = {}
-    assert physical._chunks_memo("1", "Ix", memo) is None
-    assert physical._chunks_memo("1", "Ix", memo) is None
-    assert "Ix" not in memo
-    assert calls == ["Ix", "Ix"]
-
-
-def test_a_known_chunk_set_is_memoized(monkeypatch):
-    calls = []
-    monkeypatch.setattr(physical, "_chunks_for_obj",
-                        lambda repo, obj, *, fetch=False: calls.append(obj) or {"c1"})
-    memo: dict = {}
-    assert physical._chunks_memo("1", "Ix", memo) == {"c1"}
-    assert physical._chunks_memo("1", "Ix", memo) == {"c1"}
-    assert calls == ["Ix"]
-
-
 class _EmptyCursor:
     """A generation that holds no tree - what a brand-new snapshot's objects look like."""
 

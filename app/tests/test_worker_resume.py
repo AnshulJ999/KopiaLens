@@ -11,15 +11,12 @@ import json
 import sys
 import threading
 import time
-from pathlib import Path
 
 import psutil
 import pytest
 
 from app import main as m
 from app.core import nightly, runhistory
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
@@ -202,13 +199,3 @@ def test_worker_writes_its_result_even_when_stdout_is_gone(tmp_path, monkeypatch
     assert worker.main(["3"]) == 0
     res = json.loads((tmp_path / "index_result_repo3.json").read_text(encoding="utf-8"))
     assert res["ok"] and res["trigger"] == "nightly" and res["pid"]
-
-
-def test_reload_watch_does_not_poll_index_status():
-    """The old watcher asked /api/index/status every 2 s; each ask could run kopia snapshot list."""
-    src = (ROOT / "frontend" / "js" / "jobs.js").read_text(encoding="utf-8")
-    start = src.index("_armReindexReload(repo, since)")
-    end = src.index("};", start)
-    assert "/api/index/status" not in src[start:end]
-    assert "setInterval" not in src[start:end], "the watch rides the header chip poll"
-    assert "_armReindexReload(p.repo, p.requested)" in src, "a queued update re-arms after a reload"

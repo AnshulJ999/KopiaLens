@@ -4,6 +4,7 @@ visible text and on what kopia itself reports afterwards, never on pixels."""
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from playwright.sync_api import expect
@@ -47,6 +48,8 @@ def test_every_tab_renders_without_an_error(app_server, open_page):
         h.go_tab(page, label)
         _idle(page)
         expect(_error_line(page)).to_be_hidden()
+        # A zero or missing timestamp (or a duration sent through the date formatter) shows as 1970.
+        expect(page.locator("#app")).not_to_contain_text(re.compile(r"\b1970\b"))
 
 
 def test_snapshot_delete_dry_run_leaves_every_snapshot(app_server, open_page, kopia, fixture_repo):

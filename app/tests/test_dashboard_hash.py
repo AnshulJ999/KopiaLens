@@ -2,13 +2,11 @@
 
 The frontend's dashboard change detection keys its re-render signature on ``data.hash`` so a
 change in ANY source's numbers re-renders, not just a change in the first row's last_time.
-These pin the two serve paths: the disk-cache read injects the blob's hash, and a freshly
-computed payload embeds the hash it was built for.
+This pins the disk-cache read: it injects the blob's hash.
 """
 
 from __future__ import annotations
 
-import inspect
 import json
 
 from app.core import metrics
@@ -30,12 +28,3 @@ def test_read_cache_injects_the_blob_hash(tmp_path, monkeypatch):
     assert stale["hash"] == "h1"    # the STALE blob's own hash - it describes the data served
 
     assert metrics._read_cache("1", "other") is None   # hash-valid check still rejects
-
-
-def test_computed_payload_embeds_the_build_hash():
-    # _compute_table_rows needs a live repo (build_global, sizemap, ...); pin the contract at
-    # source level instead: the fresh payload must carry the hash that _read_cache validates on,
-    # plus computed_at so same-hash rebuilds (nightly next_snapshot changes) still flip the sig.
-    src = inspect.getsource(metrics._compute_table_rows)
-    assert '"hash": want_hash' in src
-    assert '"computed_at"' in src

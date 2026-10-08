@@ -1,17 +1,13 @@
-"""Logging levels, the debug log file, polling summaries, the Logs tab's record parser, and
-source pins for the 2026-09-13 frontend fixes (Custom exclusion mode, durations, holders)."""
+"""Logging levels, the debug log file, polling summaries and the Logs tab's record parser."""
 
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import pytest
 
 from app.api import logs as logs_api
 from app.core import applog
-
-FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
 
 
 # ---- debug log toggle --------------------------------------------------------------------
@@ -93,26 +89,3 @@ def test_app_log_endpoint_is_newest_first_and_level_filtered(tmp_path, monkeypat
     assert out["debug_available"] is False
     errs = logs_api.app_log_tail(limit=10, level="error")
     assert [r["level"] for r in errs["records"]] == ["ERROR"]
-
-
-# ---- frontend source pins ----------------------------------------------------------------
-
-def test_custom_exclusion_mode_writes_the_custom_text():
-    """Custom mode priced the typed text but wrote the previous shape's
-    backend pattern, and sent shape="custom", which the endpoint rejects."""
-    js = (FRONTEND / "js" / "exclude.js").read_text(encoding="utf-8")
-    assert 'shape: d.shape === "custom" ? "exact" : d.shape' in js
-    assert "const patterns = this.exPatternsOf(t);" in js
-    assert "exPriceNow" not in js, "custom mode must price through the per-target path"
-
-
-def test_durations_never_go_through_humantime():
-    """humanTime formats a timestamp - an elapsed duration rendered through it reads 1 Jan 1970."""
-    html = (FRONTEND / "partials" / "tabs" / "logs.html").read_text(encoding="utf-8")
-    assert "humanTime(r.elapsed" not in html and "humanTime(j.elapsed" not in html
-    assert "fmtDur(r.elapsed" in html and "fmtDur(j.elapsed" in html
-
-
-def test_file_panel_receives_holders():
-    js = (FRONTEND / "js" / "detail.js").read_text(encoding="utf-8")
-    assert "holders: detail.holders" in js

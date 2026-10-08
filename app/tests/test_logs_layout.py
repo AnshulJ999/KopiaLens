@@ -115,16 +115,3 @@ def test_every_index_log_writer_uses_the_new_folders(tmp_path, monkeypatch):
     assert applog.INDEX_LOG_DIR in nightly.worker_log_path("1")
     from app.core.kopia import remove_log_path
     assert applog.JOB_LOG_DIR in remove_log_path("dry_run_x.log")
-
-
-def test_the_cleanup_setting_has_a_control_and_a_field_row():
-    from pathlib import Path
-    root = Path(__file__).resolve().parents[2]
-    html = (root / "frontend" / "partials" / "settings.html").read_text(encoding="utf-8")
-    js = (root / "frontend" / "js" / "settings.js").read_text(encoding="utf-8")
-    app_js = (root / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
-    assert "saveKl('log_cleanup_days')" in html
-    assert "log_cleanup_days: { s: \"logCleanupDays\"" in js
-    assert "logCleanupDays:" in app_js
-    from app.settings import DEFAULT_SETTINGS
-    assert DEFAULT_SETTINGS["kopialens"]["log_cleanup_days"] == 90

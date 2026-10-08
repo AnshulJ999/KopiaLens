@@ -215,10 +215,24 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
-class Server:
-    """One KopiaLens process on a free loopback port with its own data folder."""
+KNOWN_ANSWERS = APP_ROOT.parents[1] / "LicenseKit" / "test-vectors" / "licensekit-known-answers.json"
 
-    def __init__(self, root: Path, env: dict, name: str = "app"):
+
+def known_answer_licence() -> dict | None:
+    """LicenseKit's public test key and its lifetime licence, or None without the LicenseKit folder."""
+    if not KNOWN_ANSWERS.is_file():
+        return None
+    data = json.loads(KNOWN_ANSWERS.read_text(encoding="utf-8"))
+    token = next(c["token"] for c in data["cases"] if c["name"] == "lifetime")
+    return {"kid": data["kid"], "public_key": data["public_key"], "token": token}
+
+
+class Server:
+    """One KopiaLens process on a free loopback port with its own data folder. ``pro`` starts it
+    through ``_pro_main.py``, which trusts the test key so ``activate_test_licence`` makes it Pro."""
+
+    def __init__(self, root: Path, env: dict, name: str = "app", pro: bool = False):
+        self.pro = pro
         self.data = root / f"data-{name}"
         self.log = root / f"server-{name}.log"
         self.env = {**env, "KOPIALENS_DATA_DIR": str(self.data), "KOPIALENS_PROFILE": "server",
@@ -231,7 +245,8 @@ class Server:
 
     def start(self, timeout: float = 60) -> "Server":
         self._out = open(self.log, "a", encoding="utf-8")
-        self.proc = contain(subprocess.Popen([sys.executable, "main.py"], cwd=APP_ROOT, env=self.env,
+        entry = str(Path(__file__).with_name("_pro_main.py")) if self.pro else "main.py"
+        self.proc = contain(subprocess.Popen([sys.executable, entry], cwd=APP_ROOT, env=self.env,
                                              stdout=self._out, stderr=subprocess.STDOUT))
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -279,6 +294,10 @@ class Server:
 
     def post(self, path: str, body: dict | None = None) -> dict:
         return self.request("POST", path, body or {})
+
+    def activate_test_licence(self) -> dict:
+        """Store LicenseKit's known-answer licence; only a ``pro`` server trusts its key."""
+        return self.post("/api/licence", {"text": known_answer_licence()["token"]})
 
     def sign_in(self, username: str, password: str) -> None:
         form = urllib.parse.urlencode({"username": username, "password": password}).encode()

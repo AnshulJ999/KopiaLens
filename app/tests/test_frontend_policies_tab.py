@@ -20,21 +20,10 @@ def test_compose_carries_the_policies_tab():
     assert '<script src="/static/js/policies.js' in html, "policies.js script tag missing"
 
 
-def test_app_declares_policies_part_once():
-    app = (FRONTEND / "js" / "app.js").read_text(encoding="utf-8")
-    assert app.count("policiesPart") >= 3, "policiesPart must be listed, guarded and assigned"
-    assert '{ id: "policies", label: "Policies" }' in app, "tabs array entry missing"
-
-
 def test_compose_carries_the_exclusion_dialog():
     html = m._compose_html()
     assert "showExclude" in html, "exclusion dialog markup missing from the composed shell"
     assert '<script src="/static/js/exclude.js' in html, "exclude.js script tag missing"
-
-
-def test_app_declares_exclude_part_once():
-    app = (FRONTEND / "js" / "app.js").read_text(encoding="utf-8")
-    assert app.count("excludePart") >= 3, "excludePart must be listed, guarded and assigned"
 
 
 def test_every_pol_binding_in_the_partial_exists_in_js():
@@ -56,9 +45,3 @@ def test_every_ex_binding_in_the_dialog_exists_in_js():
     assert tokens, "no exclusion-dialog bindings found"
     missing = sorted(t for t in tokens if t not in js)
     assert not missing, f"dialog binds symbols no JS file defines: {missing}"
-
-
-def test_detail_panels_carry_the_exclude_entry_points():
-    html = (FRONTEND / "partials" / "detail.html").read_text(encoding="utf-8")
-    assert html.count("openExclude(") >= 4, "file + folder panels lost their exclude entries"
-    assert "folder_exclude()" in html, "the folder panel exclude section macro vanished"

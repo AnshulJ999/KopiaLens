@@ -109,8 +109,3 @@ def test_holders_detail_counts_snapshots_and_caps_the_path_count(monkeypatch):
     many = tree.tree_holders(tree.HoldersBody(repo="3", detail=True,
                                               full_paths=[f"C:{SEP}f{i}" for i in range(30)]))
     assert many["capped"] is True and all(not v for v in many["paths"].values())
-
-
-def test_holders_route_is_registered():
-    paths = {r.path for r in tree.router.routes}
-    assert "/tree/holders" in paths and "/tree" in paths

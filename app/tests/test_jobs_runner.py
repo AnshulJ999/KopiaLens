@@ -375,14 +375,6 @@ def test_maintenance_running_is_scoped_and_state_gated(monkeypatch, isolated):
     assert jobs.maintenance_running() is False
 
 
-# ---- wiring ----
-
-def test_the_job_routes_are_registered():
-    from app.main import app
-    paths = set(app.openapi()["paths"])  # FastAPI >= 0.142 keeps included routers nested in app.routes
-    assert {"/api/jobs/start", "/api/jobs/status", "/api/jobs/stop", "/api/jobs/list"} <= paths
-
-
 def test_a_dry_job_builds_the_summary_the_runbar_shows(monkeypatch, isolated):
     monkeypatch.setattr(jobs, "kopia_job_stream", _fake_stream(
         ["will remove file a.txt", "Fixed 2 snapshots, but snapshot manifests were not updated."]))

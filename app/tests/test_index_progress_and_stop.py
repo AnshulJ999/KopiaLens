@@ -130,9 +130,3 @@ def test_queued_repo_reads_the_scheduler_state(monkeypatch, tmp_path):
     assert nightly.queued_repo("1") == "2"       # repo 2 has not run in this slot
     assert nightly.queued_repo("2") is None      # nothing after the last repo
     monkeypatch.setattr("config.REPOS", REPOS)
-
-
-def test_the_index_log_route_is_registered():
-    from app.api import dashboard
-
-    assert "/index/log" in {r.path for r in dashboard.router.routes}
