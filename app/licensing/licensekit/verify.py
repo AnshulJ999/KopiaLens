@@ -11,7 +11,8 @@ from .model import Licence, State
 
 FORMAT_VERSION = 1
 GRACE = timedelta(days=7)  # renewable licences only: covers payment retries and outages
-RENEW_WINDOW = timedelta(days=10)
+RENEW_WINDOW = timedelta(days=10)   # renewable licences ask for a fresh copy this close to their end...
+RENEW_GIVE_UP = timedelta(days=90)  # ...and keep asking after it ends (app not run in time), up to this long
 HEADER = "v4.public."
 MAX_TOKEN_LEN = 8192
 
@@ -152,9 +153,10 @@ def _verify(text, product, keys, banned, app_major, now, origin) -> Licence:
     )
     if lic_id in banned:
         return Licence(State.BANNED, reason="licence revoked", **base)
+    renew_due = bool(renewable and expires is not None and expires - now <= RENEW_WINDOW
+                     and now - expires <= RENEW_GIVE_UP)
     if expires is not None and now >= expires + (GRACE if renewable else timedelta(0)):
-        return Licence(State.EXPIRED, reason="licence ended", **base)
+        return Licence(State.EXPIRED, reason="licence ended", renew_due=renew_due, **base)
     if upd is not None and app_major is not None and app_major > upd:
         return Licence(State.NOT_COVERED, reason=f"licence covers up to version {upd}.x", **base)
-    renew_due = bool(renewable and expires is not None and expires - now <= RENEW_WINDOW)
     return Licence(State.ACTIVE, renew_due=renew_due, **base)

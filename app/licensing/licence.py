@@ -1,4 +1,4 @@
-"""The stored licence: read, add, activate online, Patreon sign-in, quiet renewal.
+"""The stored licence: read, add, activate online, Patreon sign-in, quiet renewal, freeing an install.
 
 Every failure leaves the current licence untouched; the worst case is Free, never locked out.
 Licences live in <data>/licence/licences/<id>.license (several can be kept; the best one counts);
@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
+import secrets
 import socket
 import sys
 import threading
@@ -23,13 +25,17 @@ log = get_logger("licence")
 
 LICENCE_DIR = os.path.join(DATA_DIR, "licence")
 META_FILE = "online.json"
+INSTALL_FILE = "install-id"   # random, licensing only (see _install_id)
 SHARED_DIR = Path.home() / ".licensekit"   # one bundle licence serving several apps
 CACHE_SECONDS = 60           # expiry is re-checked at least this often
-RENEW_FIRST_DELAY = 120      # after startup
+RENEW_FIRST_DELAY = 30       # after startup: an ended licence comes back quickly
 RENEW_EVERY = 6 * 3600
+# Service replies that won't change by retrying (signed out of Patreon, key withdrawn); shown in Settings.
+REFUSED_STATUS = frozenset({400, 401, 403, 404})
 
 _lock = threading.Lock()
 _cache: dict = {"at": 0.0, "lic": None}
+_renew_errors: dict = {}     # licence id -> (message, refused) from the last failed renewal
 
 
 class LicenceError(Exception):
@@ -72,7 +78,31 @@ def _service():
         from .licensekit import LicenseService
     except Exception as exc:  # noqa: BLE001
         raise LicenceError("Licences can't be checked in this copy of KopiaLens.") from exc
-    return LicenseService(LICENCE_SERVICE_URL, PRODUCT, user_agent=f"KopiaLens/{APP_VERSION}")
+    return LicenseService(LICENCE_SERVICE_URL, PRODUCT, user_agent=f"KopiaLens/{APP_VERSION}", install=_install_id())
+
+
+def _install_id() -> str:
+    """A random id for this install, used only with the licence service so it can count installs per licence.
+    Separate from the usage-stats id on purpose, so usage stats stay unlinked to a licence. Not sent when the
+    data folder doesn't survive a restart (a container without a volume would make a new id each time)."""
+    try:
+        from ..core.host import data_persistent
+        if not data_persistent():
+            return ""
+        path = os.path.join(LICENCE_DIR, INSTALL_FILE)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                value = fh.read().strip()
+        except OSError:
+            value = ""
+        if not re.fullmatch(r"[0-9a-f]{32}", value):
+            value = secrets.token_hex(16)
+            os.makedirs(LICENCE_DIR, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(value + "\n")
+        return value
+    except Exception:  # noqa: BLE001 - counting installs never blocks a licence action
+        return ""
 
 
 def current():
@@ -194,6 +224,10 @@ def status() -> dict:
             "origin": lic.origin, "stored": lic.origin == "app folder",
         })
         out["others"] = _others(lic.id)
+        out["renew_due"] = bool(lic.renew_due)
+        err = _renew_errors.get(lic.id)
+        if err and (err[1] or lic.state.value == "expired"):
+            out["renew_error"] = err[0]
         meta = _meta_for(lic.id)
         if lic.source == "patreon" and meta.get("threshold_cents"):
             out["patreon"] = {"support_cents": int(meta.get("support_cents") or 0),
@@ -248,7 +282,7 @@ def activate(key: str):
         raise LicenceError("Enter your licence key.")
     if "v4.public." in key:
         return add(key)
-    res = _service().activate(key, label=socket.gethostname()[:100])
+    res = _service().activate(key, label=f"KopiaLens on {socket.gethostname()}"[:100])
     if not res.ok:
         raise LicenceError(res.message or "Couldn't activate that key.")
     return _save(res.licence, {"key": key, "activation_id": res.activation_id})
@@ -289,22 +323,58 @@ def remove(lic_id: str = "") -> None:
             return
         lic_id = lic.id
     if any(o.id == lic_id for o in kit.stored()):
+        meta = _meta_for(lic_id)
         kit.remove(lic_id)
         _set_meta(lic_id, None)
+        _renew_errors.pop(lic_id, None)
         log.info(f"licence {lic_id} removed")
+        if meta.get("key") and meta.get("activation_id"):
+            threading.Thread(target=_deactivate, args=(lic_id, meta["key"], meta["activation_id"]),
+                             name="licence-deactivate", daemon=True).start()
     _forget()
 
 
-def renew_if_due() -> bool:
-    """Renew every stored renewable licence close to its end. True when one was stored."""
+def _deactivate(lic_id: str, key: str, activation_id: str) -> None:
+    """Give the install back to the store, so it doesn't count toward the key's limit. Best-effort."""
+    try:
+        res = _service().deactivate(key, activation_id)
+    except LicenceError:
+        return
+    if res.ok:
+        log.info(f"licence {lic_id}: install freed at the store")
+    else:
+        log.info(f"licence {lic_id}: install not freed ({res.error or res.status} {res.message})")
+
+
+def _due() -> list:
+    """Renewable licences close to their end, or ended recently: stored ones, plus the one in use when it
+    comes from an environment variable or the shared folder (its fresh copy is kept in the data folder)."""
     kit = _kit()
     if kit is None:
-        return False
+        return []
+    found = {lic.id: lic for lic in kit.stored() if lic.renew_due}
+    in_use = current()
+    if getattr(in_use, "renew_due", False) and in_use.id not in found:
+        found[in_use.id] = in_use
+    return list(found.values())
+
+
+def renew_if_due() -> bool:
+    """Renew every renewable licence that is due. True when one was stored."""
     renewed = False
-    for lic in kit.stored():
-        if lic.renew_due:
-            renewed = _renew(lic) or renewed
+    for lic in _due():
+        renewed = _renew(lic) or renewed
     return renewed
+
+
+def renew_now() -> None:
+    """Settings -> Licence "Renew now": renew what is due, and say why when nothing could be renewed."""
+    due = _due()
+    if not due:
+        raise LicenceError("There's nothing to renew right now.")
+    if not any([_renew(lic) for lic in due]):
+        raise LicenceError(next((_renew_errors[lic.id][0] for lic in due if lic.id in _renew_errors),
+                                "Couldn't renew the licence. Try again later."))
 
 
 def _renew(lic) -> bool:
@@ -312,13 +382,16 @@ def _renew(lic) -> bool:
     res = _service().renew(lic.token, key=meta.get("key", ""), activation_id=meta.get("activation_id", ""))
     if not res.ok:
         log.info(f"licence {lic.id} renewal not done: {res.error or res.status} {res.message}")
+        _renew_errors[lic.id] = (res.message or "Couldn't renew the licence.", res.status in REFUSED_STATUS)
         return False
     keep = {k: v for k, v in meta.items() if k in ("key", "activation_id", "patreon")}
     try:
         _save(res.licence, {**keep, **_progress(res.extra)} if keep.get("patreon") else keep)
     except LicenceError as exc:
         log.warning(f"renewed licence not stored: {exc}")
+        _renew_errors[lic.id] = (str(exc), True)
         return False
+    _renew_errors.pop(lic.id, None)
     return True
 
 

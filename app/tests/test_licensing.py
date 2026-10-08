@@ -314,3 +314,130 @@ def test_every_feature_name_in_a_pro_check_is_on_the_pro_list():
     for path in list(frontend.rglob("*.js")) + list(frontend.rglob("*.html")):
         names |= set(re.findall(r"pro(?:Gate|Ok|Tag)\(['\"]([a-z_]+)['\"]", path.read_text(encoding="utf-8")))
     assert names and names <= set(features.PRO), names - set(features.PRO)
+
+
+class _RenewService:
+    """Licence service stand-in: renew answers from a queue, deactivate is recorded."""
+
+    def __init__(self, *replies):
+        from app.licensing.licensekit import OnlineResult
+        self.result = OnlineResult
+        self.replies = list(replies)
+        self.renewed, self.deactivated = [], []
+
+    def renew(self, token, key="", activation_id=""):
+        self.renewed.append((token, key, activation_id))
+        status, body = self.replies.pop(0)
+        if status == 200:
+            return self.result(ok=True, status=200, licence=body)
+        return self.result(ok=False, status=status, error=body.get("error", ""), message=body.get("message", ""))
+
+    def deactivate(self, key, activation_id):
+        self.deactivated.append((key, activation_id))
+        return self.result(ok=True, status=200)
+
+
+def _real_licences(monkeypatch, tmp_path):
+    monkeypatch.setattr(licence, "current", REAL_CURRENT)
+    monkeypatch.setattr(licence, "PUBLIC_KEYS", TEST_KEY)
+    monkeypatch.setattr(licence, "SHARED_DIR", tmp_path / "shared")
+    monkeypatch.delenv("KOPIALENS_LICENSE", raising=False)
+    monkeypatch.delenv("KOPIALENS_LICENSE_FILE", raising=False)
+
+
+def test_an_ended_subscription_renews_when_kopialens_next_runs(monkeypatch, tmp_path):
+    """Not running around the renewal date must not leave a paying subscriber on Free."""
+    _real_licences(monkeypatch, tmp_path)
+    licence._save(_signed(id="SUBS-0000-0001", src="polar", rn=True, exp=_in_days(5)), {"key": "K", "activation_id": "A"})
+    ended = _signed(id="SUBS-0000-0001", src="polar", rn=True, exp=_in_days(-20))
+    licence._kit().save(ended)   # as if KopiaLens had been closed for weeks
+    licence._forget()
+    st = licence.status()
+    assert st["state"] == "expired" and st["renew_due"] is True
+    svc = _RenewService((200, _signed(id="SUBS-0000-0001", src="polar", rn=True, exp=_in_days(365))))
+    monkeypatch.setattr(licence, "_service", lambda: svc)
+    assert licence.renew_if_due() is True
+    assert svc.renewed[0][1:] == ("K", "A")
+    assert licence.status()["state"] == "active"
+
+
+def test_a_licence_set_by_environment_variable_renews_into_the_data_folder(monkeypatch, tmp_path):
+    _real_licences(monkeypatch, tmp_path)
+    monkeypatch.setenv("KOPIALENS_LICENSE", _signed(id="PATR-0000-0001", src="patreon", rn=True, exp=_in_days(3)))
+    svc = _RenewService((200, _signed(id="PATR-0000-0001", src="patreon", rn=True, exp=_in_days(40))))
+    monkeypatch.setattr(licence, "_service", lambda: svc)
+    assert licence.renew_if_due() is True
+    assert svc.renewed[0][1:] == ("", "")
+    licence._forget()
+    st = licence.status()
+    assert st["state"] == "active" and st["origin"] == "app folder" and st["renew_due"] is False
+
+
+def test_renew_now_says_why_it_could_not(monkeypatch, tmp_path):
+    _real_licences(monkeypatch, tmp_path)
+    licence._save(_signed(id="PATR-0000-0002", src="patreon", rn=True, exp=_in_days(2)), {"patreon": True})
+    svc = _RenewService((401, {"error": "sign_in_again", "message": "Sign in with Patreon again to keep Pro."}),
+                        (503, {"error": "unavailable", "message": "The licence service isn't available right now."}))
+    monkeypatch.setattr(licence, "_service", lambda: svc)
+    with pytest.raises(licence.LicenceError, match="Sign in with Patreon again"):
+        licence.renew_now()
+    assert licence.status()["renew_error"] == "Sign in with Patreon again to keep Pro."
+    licence.renew_if_due()   # a passing outage on a still-active licence isn't worth showing
+    assert "renew_error" not in licence.status()
+
+
+def test_renew_now_with_nothing_due(monkeypatch, tmp_path):
+    _real_licences(monkeypatch, tmp_path)
+    licence.add(_signed(id="LIFE-0000-0002", plan="Pro · Lifetime"))
+    with pytest.raises(licence.LicenceError, match="nothing to renew"):
+        licence.renew_now()
+
+
+def test_removing_an_activated_licence_frees_its_install(monkeypatch, tmp_path):
+    _real_licences(monkeypatch, tmp_path)
+    licence._save(_signed(id="LIFE-0000-0003", src="polar", plan="Pro · Lifetime"), {"key": "KLENS-1", "activation_id": "act-9"})
+    licence.add(_signed(id="GIFT-0000-0003", plan="Pro"))
+    svc = _RenewService()
+    monkeypatch.setattr(licence, "_service", lambda: svc)
+
+    class Now:
+        def __init__(self, target, args, **_):
+            self.target, self.args = target, args
+
+        def start(self):
+            self.target(*self.args)
+
+    monkeypatch.setattr(licence.threading, "Thread", Now)
+    licence.remove("GIFT-0000-0003")
+    assert svc.deactivated == []          # no key: nothing to free
+    licence.remove("LIFE-0000-0003")
+    assert svc.deactivated == [("KLENS-1", "act-9")]
+
+
+def test_activation_names_the_install(monkeypatch, tmp_path):
+    _real_licences(monkeypatch, tmp_path)
+    seen = {}
+
+    class Svc:
+        def activate(self, key, label=""):
+            seen["label"] = label
+            from app.licensing.licensekit import OnlineResult
+            return OnlineResult(ok=False, status=404, message="That key wasn't found.")
+
+    monkeypatch.setattr(licence, "_service", lambda: Svc())
+    monkeypatch.setattr(licence.socket, "gethostname", lambda: "studio-pc")
+    with pytest.raises(licence.LicenceError):
+        licence.activate("KLENS-ABC")
+    assert seen["label"] == "KopiaLens on studio-pc"
+
+
+def test_the_licence_service_gets_its_own_install_id(monkeypatch, tmp_path):
+    """Kept apart from the usage-stats id, so usage stats can't be joined to a licence."""
+    from app.core import checkin, host
+    monkeypatch.setattr(checkin, "STATE_FILE", str(tmp_path / "checkin.json"))
+    monkeypatch.setattr(host, "data_persistent", lambda: True)
+    first = licence._install_id()
+    assert len(first) == 32 and first == licence._install_id() and first != checkin.install_id()
+    assert licence._service().install == first
+    monkeypatch.setattr(host, "data_persistent", lambda: False)
+    assert licence._install_id() == ""

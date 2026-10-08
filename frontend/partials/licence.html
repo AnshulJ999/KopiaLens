@@ -19,7 +19,7 @@
                   <span class="text-muted">Plan</span><span x-text="lic.plan"></span>
                   <span class="text-muted">Licensed to</span><span class="break-all" x-text="lic.name + (lic.email && lic.email !== lic.name ? ' · ' + lic.email : '')"></span>
                   <template x-if="lic.source !== 'patreon' || !lic.renewable">
-                    <span class="contents"><span class="text-muted">Ends</span><span x-text="licExpiresText() + (lic.renewable && lic.stored && lic.state === 'active' ? ' · renews automatically' : '')"></span></span>
+                    <span class="contents"><span class="text-muted">Ends</span><span x-text="licExpiresText() + (lic.renewable && lic.state === 'active' ? ' · renews automatically' : '')"></span></span>
                   </template>
                   <template x-if="lic.source === 'patreon' && lic.renewable">
                     <span class="contents"><span class="text-muted">Renews</span><span>Automatically while you're a patron</span></span>
@@ -74,10 +74,12 @@
                 </div>
               </template>
 
+              <div x-show="lic.renew_error && !licError" class="kl-callout" x-text="lic.renew_error"></div>
               <div x-show="licError" class="kl-callout" x-text="licError"></div>
 
               <template x-if="lic.state !== 'none'">
                 <div class="flex flex-wrap items-center gap-2">
+                  <button x-show="lic.renew_due" class="kl-btn" @click="licRenew()" :disabled="licBusy" x-text="licBusy && !licPatreonWaiting ? 'Renewing…' : 'Renew now'"></button>
                   <button x-show="lic.state === 'active' && !licAdding" class="kl-btn quiet" @click="licAdding = true">Add another licence…</button>
                   <button x-show="lic.state === 'active' && licAdding" class="kl-btn quiet" @click="licAdding = false; licError = ''">Cancel</button>
                   <button x-show="lic.stored" class="kl-btn quiet" @click="licRemove()" :disabled="licBusy">Remove licence…</button>

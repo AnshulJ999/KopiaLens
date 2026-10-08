@@ -57,6 +57,12 @@ def activate(body: KeyBody) -> dict:
     return _state()
 
 
+@router.post("/licence/renew")
+def renew_licence() -> dict:
+    _run(licence.renew_now)
+    return _state()
+
+
 @router.post("/licence/patreon/start")
 def patreon_start() -> dict:
     return _run(licence.patreon_start)

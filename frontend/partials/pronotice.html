@@ -8,7 +8,7 @@
           <p x-text="proNotice.line + ' The preview stays free.'"></p>
           <div class="acts">
             <button class="kl-btn quiet" @click="proEnterLicence()">Enter licence…</button>
-            <button class="kl-btn primary" id="kl-pro-plans" @click="proSeePlans()" x-text="lic.state === 'expired' ? 'Renew' : 'See plans'"></button>
+            <button class="kl-btn primary" id="kl-pro-plans" @click="proPrimary()" x-text="lic.state === 'expired' ? 'Renew' : 'See plans'"></button>
           </div>
         </div>
       </div>
