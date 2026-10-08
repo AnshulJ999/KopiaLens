@@ -334,7 +334,9 @@ def remove(lic_id: str = "") -> None:
         _set_meta(lic_id, None)
         _renew_errors.pop(lic_id, None)
         log.info(f"licence {lic_id} removed")
-        if meta.get("key") and meta.get("activation_id"):
+        # A replaced licence shares its install with the new one; free it only when nothing else uses it.
+        shared = any(m.get("activation_id") == meta.get("activation_id") for m in _read_meta().values())
+        if meta.get("key") and meta.get("activation_id") and not shared:
             threading.Thread(target=_deactivate, args=(lic_id, meta["key"], meta["activation_id"]),
                              name="licence-deactivate", daemon=True).start()
     _forget()

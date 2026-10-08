@@ -415,6 +415,8 @@ def test_renew_now_with_nothing_due(monkeypatch, tmp_path):
 def test_removing_an_activated_licence_frees_its_install(monkeypatch, tmp_path):
     _real_licences(monkeypatch, tmp_path)
     licence._save(_signed(id="LIFE-0000-0003", src="polar", plan="Pro · Lifetime"), {"key": "KLENS-1", "activation_id": "act-9"})
+    # After a Replace the new licence comes back on the same install
+    licence._save(_signed(id="LIFE-0000-0004", src="polar", plan="Pro · Lifetime"), {"key": "KLENS-1", "activation_id": "act-9"})
     licence.add(_signed(id="GIFT-0000-0003", plan="Pro"))
     svc = _RenewService()
     monkeypatch.setattr(licence, "_service", lambda: svc)
@@ -430,6 +432,8 @@ def test_removing_an_activated_licence_frees_its_install(monkeypatch, tmp_path):
     licence.remove("GIFT-0000-0003")
     assert svc.deactivated == []          # no key: nothing to free
     licence.remove("LIFE-0000-0003")
+    assert svc.deactivated == []          # the replacement still uses this install
+    licence.remove("LIFE-0000-0004")
     assert svc.deactivated == [("KLENS-1", "act-9")]
 
 
