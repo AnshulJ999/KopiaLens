@@ -95,7 +95,8 @@ def isolated_env(root: Path, kopia: str) -> dict:
     # Python's user site-packages live under APPDATA on Windows: keep them where they are.
     env.setdefault("PYTHONUSERBASE", site.getuserbase())
     env.update(APPDATA=str(root / "appdata"), LOCALAPPDATA=str(root / "localappdata"),
-               KOPIALENS_KOPIA=kopia, KOPIA_CHECK_FOR_UPDATES="false")
+               KOPIALENS_KOPIA=kopia, KOPIA_CHECK_FOR_UPDATES="false",
+               KOPIALENS_DEV_ADDONS="")   # empty beats a developer's .env.dev: no dev add-ons in tests
     (root / "appdata").mkdir(parents=True, exist_ok=True)
     (root / "localappdata").mkdir(parents=True, exist_ok=True)
     return env

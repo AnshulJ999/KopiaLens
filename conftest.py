@@ -91,6 +91,7 @@ os.environ["KOPIA_CONFIG_PATH"] = os.path.join(_DATA_SANDBOX, "no-such-kopia-con
 os.environ["KOPIALENS_DATA_DIR"] = _DATA_SANDBOX
 os.environ["KOPIALENS_CONFIG_DIR"] = _DATA_SANDBOX
 os.environ["KOPIALENS_REPOS_FILE"] = os.path.join(_DATA_SANDBOX, "repos.json")
+os.environ["KOPIALENS_DEV_ADDONS"] = ""   # empty beats a developer's .env.dev: no dev add-ons in tests
 
 
 def pytest_sessionstart(session):
