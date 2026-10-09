@@ -1,5 +1,6 @@
 
-    <header class="h-14 shrink-0 border-b border-bd bg-surface flex items-center gap-3 px-4">
+    <!-- One row normally; when zoomed in or narrow, the buttons wrap to a second row instead of being cut off. -->
+    <header class="min-h-14 shrink-0 border-b border-bd bg-surface flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2">
       <div class="flex items-start shrink-0">
         <button @click="goHome()" class="font-semibold text-lg" title="Go to the first tab">Kopia<span class="text-ok">Lens</span></button>
         <span x-show="lic.state === 'active' && showProBadge" x-cloak class="pro-mark" :title="lic.plan + (lic.name ? ', licensed to ' + lic.name : '')">Pro</span>
@@ -26,7 +27,7 @@
           <button type="button" role="menuitem" @click="openRepoAdmin()" class="w-full text-left px-3 py-1.5 hover:bg-head pl-8">Manage repositories…</button>
         </div>
       </div>
-      <div class="relative flex-1 max-w-xl">
+      <div class="relative flex-1 max-w-xl min-w-[12rem]">
         <!-- No @focus: switching tab on focus left Search blank until the first keystroke. Typing
              switches and loads; clicking in only focuses. -->
         <input x-model="query" @input.debounce.300ms="headerSearch()"
@@ -127,11 +128,13 @@
       </div>
     </header>
 
-    <nav class="shrink-0 border-b border-bd-soft bg-surface px-3 py-1.5 flex items-center gap-1">
+    <!-- Tabs, then status chips. Chips never break inside; when there is no room the whole group
+         wraps to a second row (zoom, big text, many repos) instead of running off the edge. -->
+    <nav class="shrink-0 border-b border-bd-soft bg-surface px-3 py-1.5 flex flex-wrap items-center gap-1">
       <template x-for="t in currentTabs()" :key="t.id">
         <button class="tab" @click="active=t.id; activate()" :class="active===t.id ? 'bg-sel font-medium' : 'hover:bg-head'" x-text="t.label"></button>
       </template>
-      <div class="ml-auto flex items-center gap-2 text-xs pr-2">
+      <div class="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs pr-2 min-w-0 max-w-full">
         <span x-show="indexPause.paused" class="rounded px-1.5 py-0.5 border border-warn-bd text-warn whitespace-nowrap"
               :title="pauseText() + '. Automatic indexing waits; Index still runs when you start it.'">
           Indexing paused · <button @click="resumeIndexing()" class="underline">Resume</button>
@@ -149,7 +152,7 @@
         <span x-show="busy" class="text-warn" x-text="busy"></span>
         <!-- the full error on hover: the line itself must stay short, a long backend message must not -->
         <span x-show="error" class="text-danger max-w-md truncate" :title="error" x-text="error"></span>
-        <span class="text-muted whitespace-nowrap" x-show="navSource()" x-text="midTrunc(navSource(), 34)" :title="'Source: ' + navSource()"></span>
+        <span class="text-muted whitespace-nowrap truncate max-w-full" x-show="navSource()" x-text="midTrunc(navSource(), 34)" :title="'Source: ' + navSource()"></span>
       </div>
     </nav>
 
