@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 
 from playwright.sync_api import expect
@@ -86,6 +87,27 @@ def test_tree_opens_a_folder_and_goes_back_up(app_server, open_page):
     expect(page.get_by_role("row", name="needle-report.txt", exact=False)).to_be_visible()
     page.get_by_role("button", name="⬆ Up").click()
     expect(page.get_by_role("row", name="📁 Photos", exact=False)).to_be_visible()
+
+
+def test_restore_writes_the_file_into_the_chosen_folder(app_server, open_page, tmp_path, tmp_path_factory):
+    target = tmp_path / "restored"
+    assert h._inside(target, tmp_path_factory.getbasetemp())   # a restore never leaves the test folder
+    page = open_page(app_server)
+    h.go_tab(page, "Search")
+    page.get_by_placeholder("Search paths (matches the full path)").fill("needle")
+    page.get_by_role("row", name="needle-report.txt", exact=False).dblclick()
+    page.get_by_title("Restore this version").first.click()
+    page.get_by_placeholder("D:\\Restored   or   D:\\out.zip").fill(str(target))
+    page.locator("div[x-show='showRestore']").get_by_role("button", name="Restore…").click()
+    expect(page.get_by_text("Restore needle-report.txt?")).to_be_visible(timeout=30_000)
+    page.locator("button[x-text='confirmBox.confirmLabel']").click()
+
+    deadline = time.monotonic() + 60
+    while not list(target.rglob("needle-report.txt")):
+        assert time.monotonic() < deadline, f"nothing restored into {target}\n{app_server.tail()}"
+        time.sleep(1)
+    restored = list(target.rglob("needle-report.txt"))[0]
+    assert restored.read_bytes() == b"quarterly needle report\n" * 40
 
 
 def _save_staged(page) -> None:

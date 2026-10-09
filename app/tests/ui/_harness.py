@@ -2,6 +2,7 @@
 
 Everything lives under one temp root. ``APPDATA``/``LOCALAPPDATA`` point inside it, so neither
 kopia nor KopiaLens sees the developer's real kopia connections, caches or keyring entries.
+``assert_contained`` checks that before any flow runs, and no test server calls out to the internet.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import http.cookiejar
 import json
 import os
 import random
+import shutil
 import site
 import socket
 import ssl
@@ -23,7 +25,10 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import psutil
+
 APP_ROOT = Path(__file__).resolve().parents[3]
+DEAD_URL = "http://127.0.0.1:9"         # nothing listens: check-in and licence calls fail at once
 REPO_PASSWORD = "fixture repo pw"
 HOST, USER = "kltest", "tester"
 USERNAME, PASSWORD = "admin", "battery staple horse"   # the KopiaLens account
@@ -95,10 +100,49 @@ def isolated_env(root: Path, kopia: str) -> dict:
     # Python's user site-packages live under APPDATA on Windows: keep them where they are.
     env.setdefault("PYTHONUSERBASE", site.getuserbase())
     env.update(APPDATA=str(root / "appdata"), LOCALAPPDATA=str(root / "localappdata"),
-               KOPIALENS_KOPIA=kopia, KOPIA_CHECK_FOR_UPDATES="false")
+               KOPIALENS_KOPIA=kopia, KOPIA_CHECK_FOR_UPDATES="false",
+               KOPIALENS_NO_UPDATE_CHECK="1", KOPIALENS_NO_USAGE_STATS="1",
+               KOPIALENS_CHECKIN_URL=DEAD_URL, KOPIALENS_LICENCE_SERVICE=DEAD_URL)
     (root / "appdata").mkdir(parents=True, exist_ok=True)
     (root / "localappdata").mkdir(parents=True, exist_ok=True)
     return env
+
+
+def _inside(path, root: Path) -> bool:
+    try:
+        Path(path).resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def assert_contained(server: "Server", root: Path) -> None:
+    """Stop the run if the server could reach anything outside this test's temp root: its own
+    folders, every repository it lists, and where each of those stores its data."""
+    import pytest
+
+    def stop(what: str) -> None:
+        pytest.exit(f"UI suite stopped: {what} is outside the test folder", returncode=3)
+
+    for key in ("APPDATA", "LOCALAPPDATA", "KOPIALENS_DATA_DIR"):
+        if not _inside(server.env[key], root):
+            stop(f"{key} ({server.env[key]})")
+    repos_file = server.data / "repos.json"
+    records = json.loads(repos_file.read_text(encoding="utf-8")).get("repos", []) if repos_file.exists() else []
+    for rec in records:
+        config = Path(rec.get("config_file") or Path(server.env["APPDATA"]) / "kopia" / "repository.config")
+        if not _inside(config, root):
+            stop(f"repo {rec.get('id')} config ({config})")
+        conn = json.loads(config.read_text(encoding="utf-8"))
+        storage = conn.get("storage") or {}
+        if storage.get("type") == "filesystem":
+            path = (storage.get("config") or {}).get("path") or ""
+            if not path or not _inside(path, root):
+                stop(f"repo {rec.get('id')} storage ({path})")
+        else:   # a repository server or remote storage: only the loopback server a test started
+            url = (conn.get("apiServer") or {}).get("url") or (storage.get("config") or {}).get("url") or ""
+            if urllib.parse.urlparse(url).hostname != "127.0.0.1":
+                stop(f"repo {rec.get('id')} storage ({storage.get('type') or url})")
 
 
 # ---------------------------------------------------------------- fixture repository
@@ -164,6 +208,32 @@ def build_fixture_repo(root: Path, kopia: str) -> dict:
         kopia_run(kopia, env, config, "snapshot", "create", str(src),
                   "--start-time", when, "--end-time", when)
     return {"source": str(src), "repo": str(repo), "config": str(config), "env": env}
+
+
+# A flow that changes the repository starts from a saved copy of the whole temp root (repository,
+# kopia config and cache, the server's data folder), put back at the same paths, so nothing in it
+# needs rewriting and nothing needs indexing again.
+
+def _golden(root: Path) -> Path:
+    return root.with_name(root.name + "-golden")
+
+
+def save_state(root: Path) -> None:
+    shutil.copytree(root, _golden(root), ignore=shutil.ignore_patterns("server-*.log"))
+
+
+def restore_state(root: Path, base: Path) -> None:
+    """Put ``root`` back to the saved copy. Only ever inside pytest's own temp folder ``base``."""
+    if not _inside(root, base) or root.resolve() == base.resolve():
+        raise RuntimeError(f"refusing to reset {root}: not inside the pytest temp folder {base}")
+    for child in root.iterdir():
+        if child.name.startswith("server-") and child.suffix == ".log":
+            continue
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+    shutil.copytree(_golden(root), root, dirs_exist_ok=True)
 
 
 # ---------------------------------------------------------------- kopia repository server
@@ -260,12 +330,24 @@ class Server:
         raise RuntimeError(f"KopiaLens did not start within {timeout}s:\n{self.tail()}")
 
     def stop(self) -> None:
+        """Stop the server and everything it started (index worker, kopia), so no process keeps
+        a file in the temp root open."""
         if self.proc and self.proc.poll() is None:
+            try:
+                children = psutil.Process(self.proc.pid).children(recursive=True)
+            except psutil.Error:
+                children = []
             self.proc.terminate()
             try:
                 self.proc.wait(timeout=20)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+            for child in children:
+                try:
+                    child.kill()
+                except psutil.Error:
+                    pass
+            psutil.wait_procs(children, timeout=10)
         self.proc = None
         if getattr(self, "_out", None):
             self._out.close()
@@ -311,7 +393,7 @@ class Server:
             status = self.get(f"/api/index/status?repo={repo}")
             if not status.get("building") and not status.get("never_indexed"):
                 return status
-            time.sleep(1)
+            time.sleep(0.25)
         raise RuntimeError(f"repo {repo} not indexed after {timeout}s: {status}\n{self.tail()}")
 
 

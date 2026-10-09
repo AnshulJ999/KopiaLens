@@ -102,6 +102,7 @@ def arrange_indexed(srv: h.Server, fixture_repo: dict) -> str:
     srv.post("/api/onboarding/finish")
     srv.post("/api/onboarding/start-indexing", {"repos": [rid]})
     srv.wait_indexed(rid)
+    h.assert_contained(srv, fixture_repo["root"])
     return rid
 
 
