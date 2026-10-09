@@ -27,7 +27,7 @@ from config import APP_VERSION, DATA_DIR, DEMO_BACKBLAZE, DEMO_INSTANCE, REPOS, 
 from .api import (access, account, actions, appconfig, audit, backblaze, dashboard, deleteplan, encryption, excluded,
                   help, insights, jobs, licence, logs, onboarding, policies, prune, restore, search, setup, shell, simulate,
                   snapshots, stats, tree)
-from .core import auth, checkin, netaccess, pause
+from .core import auth, checkin, devaddons, netaccess, pause
 from .core import jobs as jobrunner
 from .index.crypto import StoreLocked
 from .index import crypto as crypto_mod
@@ -1229,6 +1229,7 @@ app.include_router(licence.router, prefix="/api")
 app.include_router(help.router, prefix="/api")
 if not DEMO_INSTANCE or DEMO_BACKBLAZE:   # a demo reads only its own generated bzdata
     app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
+devaddons.load(app, ROOT)
 
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
 
@@ -1262,12 +1263,15 @@ def _compose_html() -> str:
     kl = load_settings().get("kopialens", {})
     _THEMES = ("daylight", "parchment", "slate", "lilac", "ember", "midnight", "pine", "obsidian")
     _DENSITY = ("compact", "normal", "comfortable")
-    return _JINJA.get_template("index.html").render(
+    html = _JINJA.get_template("index.html").render(
         asset_v=_asset_version(),
         theme=kl.get("theme") if kl.get("theme") in _THEMES else "system",
         density=kl.get("density") if kl.get("density") in _DENSITY else "normal",
         sortarrows="all" if kl.get("sort_arrows") == "all" else "sorted",
     )
+    if devaddons.HTML:
+        html = html.replace("</body>", "\n".join(devaddons.HTML) + "\n</body>", 1)
+    return html
 
 
 _INCLUDE_RE = re.compile(r'\{%-?\s*include\s+"([^"]+)"')
