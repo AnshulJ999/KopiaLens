@@ -2,11 +2,11 @@
       <!-- ===================== BACKBLAZE (kind=backblaze) ===================== -->
       <section x-show="active==='bz-dashboard'" class="h-full flex flex-col gap-3 overflow-auto">
         <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2" x-show="bzStats">
-          <div class="rounded border border-bd-soft p-2"><div class="text-[10px] uppercase text-muted">Selected files</div><div class="font-medium" x-text="bzStats && Number(bzStats.grand_files||0).toLocaleString()"></div></div>
+          <div class="rounded border border-bd-soft p-2"><div class="text-[10px] uppercase text-muted">Selected files</div><div class="font-medium" x-text="bzStats && Number(bzStats.grand_files||0).toLocaleString(NUM_LOCALE)"></div></div>
           <div class="rounded border border-bd-soft p-2"><div class="text-[10px] uppercase text-muted">Selected size</div><div class="font-medium" x-text="bzStats && fmtB(bzStats.grand_bytes)"></div></div>
-          <div class="rounded border border-warn-bd p-2"><div class="text-[10px] uppercase text-muted">Remaining to upload</div><div class="font-medium" x-text="bzStats && bzStats.remaining ? Number(bzStats.remaining.remaining_files||0).toLocaleString() : '—'"></div></div>
-          <div class="rounded border border-bd-soft p-2"><div class="text-[10px] uppercase text-muted">Cumulative IDs</div><div class="font-medium" x-text="bzStats && bzStats.fileids_total != null ? Number(bzStats.fileids_total).toLocaleString() : '—'"></div></div>
-          <div class="rounded border border-bd-soft p-2"><div class="text-[10px] uppercase text-muted">Recent churn (IDs)</div><div class="font-medium" x-text="Number(bzChurnTotal||0).toLocaleString()"></div></div>
+          <div class="rounded border border-warn-bd p-2"><div class="text-[10px] uppercase text-muted">Remaining to upload</div><div class="font-medium" x-text="bzStats && bzStats.remaining ? Number(bzStats.remaining.remaining_files||0).toLocaleString(NUM_LOCALE) : '—'"></div></div>
+          <div class="rounded border border-bd-soft p-2"><div class="text-[10px] uppercase text-muted">Cumulative IDs</div><div class="font-medium" x-text="bzStats && bzStats.fileids_total != null ? Number(bzStats.fileids_total).toLocaleString(NUM_LOCALE) : '—'"></div></div>
+          <div class="rounded border border-bd-soft p-2"><div class="text-[10px] uppercase text-muted">Recent churn (IDs)</div><div class="font-medium" x-text="Number(bzChurnTotal||0).toLocaleString(NUM_LOCALE)"></div></div>
         </div>
         <div class="flex items-center gap-2 text-sm">
           <span class="font-medium">Per-drive coverage</span>
@@ -18,7 +18,7 @@
             <div class="mb-1 flex items-center gap-2"><span class="font-medium text-sm">Top recently-added folders (churn)</span><button @click="active='bz-churn'; bzLoadChurn()" class="text-xs text-link ml-auto">full churn →</button></div>
             <template x-for="(r,i) in bzChurnRows" :key="i">
               <div class="flex items-center gap-2 py-0.5 text-[12px] border-t border-bd-soft">
-                <span class="text-muted w-16 text-right" x-text="Number(r.count).toLocaleString()"></span>
+                <span class="text-muted w-16 text-right" x-text="Number(r.count).toLocaleString(NUM_LOCALE)"></span>
                 <span class="text-warn w-12 text-right" x-text="r.pct + '%'"></span>
                 <span class="break-all flex-1" x-text="r.folder"></span>
                 <span class="text-[10px] shrink-0" :class="r.status==='active' ? 'text-ok' : 'text-muted'" x-text="r.status"></span>
@@ -30,7 +30,7 @@
             <template x-for="(c,i) in bzCategories()" :key="i">
               <div @click="bzCatSearch(c.name)" class="flex items-center gap-2 py-0.5 text-[12px] border-t border-bd-soft cursor-pointer hover:bg-head rounded px-1" title="Search files in this category">
                 <span class="w-28 capitalize text-link" x-text="c.name"></span>
-                <span class="text-muted w-20 text-right" x-text="Number(c.num).toLocaleString()"></span>
+                <span class="text-muted w-20 text-right" x-text="Number(c.num).toLocaleString(NUM_LOCALE)"></span>
                 <span class="ml-auto" x-text="fmtB(c.bytes)"></span>
               </div>
             </template>
@@ -155,7 +155,7 @@
             <option value="">All drives</option>
             <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" x-text="d.drive + ':'"></option></template>
           </select>
-          <span class="text-muted text-xs">total recent IDs: <span x-text="Number(bzChurnTotal||0).toLocaleString()"></span></span>
+          <span class="text-muted text-xs">total recent IDs: <span x-text="Number(bzChurnTotal||0).toLocaleString(NUM_LOCALE)"></span></span>
         </div>
         <div id="bzChurnTable" class="flex-1 min-h-0"></div>
       </section>
@@ -170,12 +170,12 @@
         </div>
         <div class="flex flex-wrap items-center gap-3 text-sm" x-show="bzQueue">
           <span class="font-medium">Upload queue (scheduled for backup)</span>
-          <span x-text="bzQueue && (Number(bzQueue.total_files||0).toLocaleString() + ' files · ' + fmtB(bzQueue.total_bytes))"></span>
+          <span x-text="bzQueue && (Number(bzQueue.total_files||0).toLocaleString(NUM_LOCALE) + ' files · ' + fmtB(bzQueue.total_bytes))"></span>
           <span class="text-muted text-xs">Backblaze scans ~once/twice a day, so this changes roughly daily.</span>
         </div>
         <div class="flex flex-wrap gap-2 text-xs" x-show="bzQueue">
           <template x-for="(d,i) in (bzQueue ? bzQueue.by_drive : [])" :key="i">
-            <span class="rounded border border-bd-soft px-2 py-1" x-text="d.drive + ': ' + Number(d.files||0).toLocaleString() + ' · ' + fmtB(d.bytes)"></span>
+            <span class="rounded border border-bd-soft px-2 py-1" x-text="d.drive + ': ' + Number(d.files||0).toLocaleString(NUM_LOCALE) + ' · ' + fmtB(d.bytes)"></span>
           </template>
         </div>
         <div id="bzQueueTable" class="flex-1 min-h-0"></div>
@@ -186,7 +186,7 @@
           <div class="flex items-baseline gap-3 flex-wrap">
             <div class="text-sm font-medium">Backed up in the last 30 days</div>
             <div class="text-xl font-medium" x-text="bzSessions &amp;&amp; bzSessions.last_30d ? fmtB(bzSessions.last_30d.bytes) : '&mdash;'"></div>
-            <div class="text-xs text-muted" x-text="bzSessions &amp;&amp; bzSessions.last_30d ? (Number(bzSessions.last_30d.files||0).toLocaleString() + ' files') : ''"></div>
+            <div class="text-xs text-muted" x-text="bzSessions &amp;&amp; bzSessions.last_30d ? (Number(bzSessions.last_30d.files||0).toLocaleString(NUM_LOCALE) + ' files') : ''"></div>
           </div>
           <p class="text-[11px] text-muted mt-1">Counted from Backblaze's own per-file completion records, so it covers every session &mdash; including the many that never write a closing log line. These are source-file sizes, not network traffic.</p>
           <div id="bzBackupDaysTable" class="mt-2"></div>
@@ -224,6 +224,6 @@
             <div class="text-[12px] text-danger">• <span x-text="iss"></span></div>
           </template>
         </div>
-        <div class="text-[11px] text-muted px-1">The F: filelist bug signature: a drive showing 0 backed files, a stub filelist, or a recent &gt;100 MB bz_done (mass-deletion event). <span x-show="bzHealth && bzHealth.remaining && bzHealth.remaining.remaining_files">Files remaining to upload: <span class="font-medium" x-text="bzHealth && Number(bzHealth.remaining.remaining_files||0).toLocaleString()"></span>.</span></div>
+        <div class="text-[11px] text-muted px-1">The F: filelist bug signature: a drive showing 0 backed files, a stub filelist, or a recent &gt;100 MB bz_done (mass-deletion event). <span x-show="bzHealth && bzHealth.remaining && bzHealth.remaining.remaining_files">Files remaining to upload: <span class="font-medium" x-text="bzHealth && Number(bzHealth.remaining.remaining_files||0).toLocaleString(NUM_LOCALE)"></span>.</span></div>
         <div id="bzHealthTable" class="min-h-[14rem]"></div>
       </section>

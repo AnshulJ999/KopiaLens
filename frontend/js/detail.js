@@ -138,8 +138,8 @@ const detailPart = {
       const rows = [
         ["First backed up", d.first_seen ? fmtDate(d.first_seen) : "—"],
         ["Last backed up", d.last_seen ? humanTime(d.last_seen) : "—"],
-        ["Files", `${Number(d.files || 0).toLocaleString()} · ${Number(d.deleted_files || 0).toLocaleString()} deleted from disk`],
-        ["Versions", Number(d.versions || 0).toLocaleString()],
+        ["Files", `${Number(d.files || 0).toLocaleString(NUM_LOCALE)} · ${Number(d.deleted_files || 0).toLocaleString(NUM_LOCALE)} deleted from disk`],
+        ["Versions", Number(d.versions || 0).toLocaleString(NUM_LOCALE)],
       ];
       const w = d.last_30_days;
       if (w) rows.push(["Last 30 days", `+${fmtBytes(w.bytes)} new data · ${fmtBytes(w.bytes / 30)} a day`]);
@@ -502,7 +502,7 @@ const detailPart = {
     },
     removeFilesSplit() {  // "9 here + 8 with the same name elsewhere", or "" when nothing rides along
       const extra = this.removeExtra("filename_extra_count");
-      return extra ? `${Number(this.removePlan.file_count || 0).toLocaleString()} here + ${extra.toLocaleString()} with the same name elsewhere` : "";
+      return extra ? `${Number(this.removePlan.file_count || 0).toLocaleString(NUM_LOCALE)} here + ${extra.toLocaleString(NUM_LOCALE)} with the same name elsewhere` : "";
     },
     removeCoverage() {  // "these 100 files are 70% of the folder" - the number that makes top-N a decision
       const p = this.removePlan;

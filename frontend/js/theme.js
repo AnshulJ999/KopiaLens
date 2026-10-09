@@ -14,7 +14,7 @@ const themePart = {
     { id: "system", label: "System", dark: false, swatch: "linear-gradient(90deg, #ffffff 50%, #1c1917 50%)",
       title: "Follow the OS between your light and dark themes" },
   ],
-  DENSITIES: ["compact", "normal", "comfortable"],
+  DENSITIES: ["comfortable", "normal", "compact", "dense"],
   theme: "system", density: "normal", lightTheme: "daylight", darkTheme: "ember", sortArrows: "sorted",
 
   _themeIsDark(id) {

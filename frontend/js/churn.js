@@ -11,9 +11,9 @@ const churnPart = {
         const d = await getJson(`/api/churn?${p.toString()}`);
         if (seq !== this._churnSeq) return;   // a faster later request already won
         this.churnData = d;
-        this.churnMeta = `${fmtPhys(d.total_bytes)} attributed · ${fmtPhys(d.total_bytes_deduped)} after dedup · `
-          + `${Number(d.total_files || 0).toLocaleString()} files · ${Number(d.total_versions || 0).toLocaleString()} versions · `
-          + (d.cached ? `cached${d.computed_at ? ` ${fmtRel(d.computed_at * 1000)}` : ""}` : `computed in ${Number(d.elapsed || 0).toFixed(1)}s`);
+        this.churnMeta = `${fmtPhys(d.total_bytes_deduped)} new (${fmtPhys(d.total_bytes)} counted per path) · `
+          + `${countOf(d.total_files || 0, "file")} · ${countOf(d.total_versions || 0, "version")}`
+          + (d.cached && d.computed_at ? ` · as of ${fmtRel(d.computed_at * 1000)}` : "");
         this.renderChurn();
       }, "Computing churn…");
     },
@@ -29,12 +29,12 @@ const churnPart = {
       const rateCol = { title: "Per day", field: "per_day", width: 105, hozAlign: "right", sorter: "number",
         headerTooltip: "New data divided by the window length, so windows of different sizes compare fairly.",
         formatter: (c) => fmtPhys(c.getValue()) + "/d" };
-      const verCol = { title: "Versions", field: "versions", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(), headerTooltip: "How many file-versions were written. A big number against few files means the same files are being rewritten." };
+      const verCol = { title: "Versions", field: "versions", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE), headerTooltip: "How many file-versions were written. A big number against few files means the same files are being rewritten." };
       const rewriteCol = { title: "Rewrite", field: "rewrite", width: 90, hozAlign: "right", sorter: "number",
         headerTooltip: "Versions divided by files - how many times the average file here was rewritten.",
         formatter: (c) => { const v = Number(c.getValue() || 0);
-          return v >= 5 ? `<span style="color:var(--warn)" title="Heavily rewritten">${v.toFixed(1)}×</span>` : `${v.toFixed(1)}×`; } };
-      const fileCol = { title: "Files", field: "files", width: 90, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() };
+          return v >= 5 ? `<span style="color:var(--warn)" title="Heavily rewritten">${fmtFix(v, 1)}×</span>` : `${fmtFix(v, 1)}×`; } };
+      const fileCol = { title: "Files", field: "files", width: 90, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) };
       const size = (c) => { const v = c.getValue(); return v == null ? "" : fmtPhys(v); };
       const logicalCol = { title: "New (logical)", field: "logical", width: 115, hozAlign: "right", sorter: "number", formatter: size,
         headerTooltip: "The same new versions at their plain file size, before dedup and compression." };
@@ -70,9 +70,9 @@ const churnPart = {
             formatter: (c) => { const r = c.getRow().getData(); return r.top_folder ? `${r.top_folder} <span style="opacity:.6">(${fmtPhys(r.top_folder_bytes)})</span>` : ""; } },
         ];
         menu = [
-          { label: "Folder details for the top folder", action: (_e, row) => { const r = row.getData(); if (r.top_folder) this.openFolderPanel(r.top_folder); } },
-          { label: "Browse snapshots", action: (_e, row) => { this.selectedSource = row.getData().source; this.snapSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); } },
-          { label: "Browse files (tree)", action: (_e, row) => { this.selectedSource = row.getData().source; this.active = "tree"; this.openTree(); } },
+          { label: "Details of its top folder", action: (_e, row) => { const r = row.getData(); if (r.top_folder) this.openFolderPanel(r.top_folder); } },
+          { label: "Show snapshots", action: (_e, row) => this.showSourceSnapshots(row.getData().source) },
+          { label: "Show in Tree", action: (_e, row) => { this.selectedSource = row.getData().source; this.active = "tree"; this.openTree(); } },
           { label: "Search this source", action: (_e, row) => { this.active = "search"; this.searchSource = row.getData().source; this.query = ""; this.loadSearch(); } },
           { label: "Simulate this source", action: (_e, row) => { this.selectedSource = row.getData().source; this.simMode = "one"; this.active = "simulate"; this.runSimulate(); } },
           { label: "Copy source", action: (_e, row) => this.copyText(row.getData().source) },
@@ -88,11 +88,11 @@ const churnPart = {
               return n > 1 ? `<span title="${(r.sources || []).map(sourcePath).join(", ")}" >${n}</span>` : String(n); } },
         ];
         menu = [
-          { label: "Folder details", action: (_e, row) => this.openFolderPanel(row.getData().folder) },
-          { label: "Find in search", action: (_e, row) => { this.query = row.getData().folder; this.searchSource = ""; this.active = "search"; this.loadSearch(); } },
+          { label: "Details", action: (_e, row) => this.openFolderPanel(row.getData().folder) },
+          { label: "Show in Search", action: (_e, row) => { this.query = row.getData().folder; this.searchSource = ""; this.active = "search"; this.loadSearch(); } },
           { label: "Exclude & delete…", action: (_e, row) => this.openExclude({ kind: "folder", path: row.getData().folder }, "delete") },
           { label: "Copy path", action: (_e, row) => this.copyText(row.getData().folder) },
-          { label: "Delete folder (chunked)…", action: (_e, row) => this.openRemoveFolderPath(row.getData().folder) },
+          { label: "Delete folder from backups…", action: (_e, row) => this.openRemoveFolderPath(row.getData().folder) },
         ];
       } else {
         rows = (d.by_ext || []).map((r) => enrich({ ...r, ext: r.ext || "(no extension)" }));

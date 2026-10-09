@@ -21,12 +21,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "last_panel": "dashboard",
         "window": {},
         "time_format": "absolute",
+        "number_style": "system",    # system | en-US | de-DE | fr-FR | en-IN (shown by example)
+        "date_style": "system",      # system | dmy (9 Oct 2026) | mdy (Oct 9, 2026) | iso (2026-10-09)
+        "clock": "system",           # system | 12 | 24
         # ---- appearance (themes + density) ---------------------------------------------------
         # data-theme/data-density are stamped into the rendered page so it paints correctly
         # before any JS runs. light_theme/dark_theme are the two slots the nav quick switch
         # flips between. Values are validated against the known lists before use.
         "theme": "system",           # daylight|parchment|slate|lilac|ember|midnight|pine|obsidian|system
-        "density": "normal",         # compact|normal|comfortable
+        "density": "normal",         # comfortable|normal|compact|dense
         "sort_arrows": "sorted",     # sorted|all - table header sort arrows
         "light_theme": "daylight",   # remembered light slot for the quick switch
         "dark_theme": "ember",       # remembered dark slot for the quick switch
@@ -61,6 +64,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "search_sort": "size",     # persisted search sort column
         "search_dir": "desc",      # persisted search sort direction
         "search_dedupe": False,    # persisted dedupe toggle (search)
+        "search_dedupe_by": "path",  # what Dedupe merges: "path" (one row per file path) | "content" (identical bytes)
+        "header_search_only": False,  # Search tab uses the header search box instead of its own
+        "snap_source_by_repo": {},  # Snapshots tab source per repo id ("*ALL*" = all sources)
+        "tree_source_by_repo": {},  # Tree tab source per repo id
+        "sim_policy_by_repo": {},   # Simulate's last policy per repo id
         "recent_backup": "30",     # default "Backed up" filter in days ("" = Any); user changes persist
         "tree_dedupe": False,      # persisted dedupe toggle (tree)
         "panel_layout": "classic",  # detail-panel layout (): "classic" | "tabbed"

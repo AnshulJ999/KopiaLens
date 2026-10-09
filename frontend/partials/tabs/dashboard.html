@@ -1,8 +1,22 @@
       <section x-show="active==='dashboard'" class="h-full flex flex-col gap-2">
-        <div class="flex items-center gap-2 text-sm">
-          <span class="text-muted text-xs" x-text="dashboardMeta"></span>
-          <button @click="csv('#dashboardTable','dashboard')" class="h-7 rounded border border-bd px-2 text-xs ml-auto" title="Export CSV">⬇ CSV</button>
-          <span class="text-muted text-xs">double-click a row to drill · right-click for actions / column show-hide</span>
+        <div class="kl-toolbar" data-testid="dashboard-strip">
+          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
+            <button class="kl-btn" @click="open = !open" :aria-expanded="open">New snapshot ▾</button>
+            <div class="kl-menu max-h-80 overflow-y-auto" style="left:0;right:auto" x-show="open" x-cloak>
+              <div class="hd">Snapshot a source now</div>
+              <template x-for="s in sources" :key="s"><button @click="open = false; snapshotNow(s)" x-text="shortSource(s)"></button></template>
+            </div>
+          </span>
+          <button class="kl-btn" @click="loadDashboard(true)" title="Recompute these numbers now">↻ Refresh</button>
+          <span class="grow"></span>
+          <span class="text-xs text-muted" x-show="dashboardMeta" title="Everything this repository stores, with shared data counted once">Repository holds <b class="text-fg font-medium" x-text="dashboardMeta"></b></span>
+          <span class="kl-help" tabindex="0" title="Double-click a row to see its snapshots. Right-click a row for more; right-click a column header to show or hide columns.">?</span>
+          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false">
+            <button class="kl-btn icon" @click="open = !open" title="More">⋯</button>
+            <div class="kl-menu" x-show="open" x-cloak>
+              <button @click="open = false; csv('#dashboardTable','dashboard')">Export CSV</button>
+            </div>
+          </span>
         </div>
         <div id="dashboardTable" class="flex-1 min-h-0"></div>
       </section>

@@ -71,12 +71,25 @@
         <span x-show="repoKind==='backblaze' && bzRefreshResult" class="text-xs px-2 py-1 rounded" :class="bzRefreshResult.includes('FAILED') ? 'bg-danger-bg text-danger' : 'bg-ok-bg text-ok'" x-text="bzRefreshResult"></span>
         <button x-show="repoKind==='backblaze'" @click="bzRefresh()" class="h-8 rounded bg-fg px-3 text-surface" title="Re-scan the read-only Backblaze index">↻ Index BZ</button>
         <button @click="refreshAll()" class="h-8 rounded border border-bd px-3" title="Refresh current view + sources">⟳ Refresh</button>
-        <button @click="toggleTimeFmt()" class="h-8 rounded border border-bd px-2" :title="timeFmt==='relative' ? 'Times: relative (click for absolute 12h)' : 'Times: absolute 12h (click for relative)'" x-text="timeFmt==='relative' ? '⏱ rel' : '🕒 abs'"></button>
-        <button @click="quickTheme()" class="h-8 w-8 rounded border border-bd" title="Quick switch between your light and dark theme (pick themes in Settings)" x-text="dark ? '☀' : '☽'"></button>
+        <button @click="toggleTimeFmt()" class="h-8 rounded border border-bd px-2" :title="timeFmt==='relative' ? 'Times shown as how long ago. Click to show dates.' : 'Times shown as dates. Click to show how long ago.'" x-text="timeFmt==='relative' ? '⏱ rel' : '🕒 abs'"></button>
+        <div class="relative" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
+          <button @click="quickTheme()" @contextmenu.prevent="open = !open" class="h-8 w-8 rounded border border-bd" title="Switch between your light and dark theme. Right-click to pick a theme." x-text="dark ? '☀' : '☽'"></button>
+          <div x-show="open" x-cloak role="menu" class="kl-menu" data-testid="theme-picker">
+            <div class="hd">Theme</div>
+            <template x-for="t in THEMES" :key="t.id">
+              <button type="button" role="menuitemradio" :aria-checked="theme === t.id" @click="open = false; setTheme(t.id)" class="flex items-center gap-2" :title="t.title || ''">
+                <span class="inline-block w-3.5 h-3.5 rounded-full border border-bd shrink-0" :style="'background:' + t.swatch"></span>
+                <span class="flex-1" x-text="t.label"></span><span class="text-ok" x-text="theme === t.id ? '✓' : ''"></span>
+              </button>
+            </template>
+            <div class="sep"></div>
+            <button type="button" @click="open = false; settingsTab = 'appearance'; openSettings()">More in Settings…</button>
+          </div>
+        </div>
         <button x-show="update().available" x-cloak @click="showUpdate = true" class="h-8 rounded border border-ok-bd bg-ok-bg text-ok px-2"
                 :title="'KopiaLens ' + update().latest + ' is out'">Update available</button>
         <div class="relative" @click.outside="helpMenu = false">
-          <button @click="toggleHelpMenu()" class="h-8 w-8 rounded border border-bd" title="Help" aria-haspopup="menu" :aria-expanded="helpMenu">?</button>
+          <button @click="toggleHelpMenu()" class="h-8 w-8 rounded border border-bd" :title="acct && acct.sign_in_on ? 'Help and account' : 'Help'" aria-haspopup="menu" :aria-expanded="helpMenu">?</button>
           <div x-show="helpMenu" x-cloak role="menu" class="absolute right-0 top-full mt-1 z-50 w-64 rounded-md border border-bd bg-surface shadow-lg py-1 text-sm">
             <button type="button" role="menuitem" @click="helpLink('docs')" class="w-full text-left px-3 py-1.5 hover:bg-head">Documentation</button>
             <button type="button" role="menuitem" @click="openDiagnostics(true)" class="w-full text-left px-3 py-1.5 hover:bg-head">Report a problem…</button>
@@ -101,6 +114,13 @@
                 <button type="button" role="menuitem" x-show="canOpenInBrowser()" @click="openInBrowser()" class="w-full text-left px-3 py-1.5 hover:bg-head">Open in browser</button>
               </div>
             </template>
+            <template x-if="acct && acct.sign_in_on && acct.username">
+              <div data-testid="help-account">
+                <div class="my-1 border-t border-bd"></div>
+                <div class="px-3 py-1 text-xs text-muted">Signed in as <span class="text-fg font-medium" x-text="acct.username"></span></div>
+                <button type="button" role="menuitem" @click="helpMenu = false; signOutHere()" class="w-full text-left px-3 py-1.5 hover:bg-head">Sign out</button>
+              </div>
+            </template>
           </div>
         </div>
         <button @click="openSettings()" class="h-8 w-8 rounded border border-bd" title="Settings">⚙</button>
@@ -117,7 +137,7 @@
           Indexing paused · <button @click="resumeIndexing()" class="underline">Resume</button>
         </span>
         <template x-for="f in freshness.filter((x) => !isDemo(x.repo))" :key="f.repo">
-          <span class="rounded px-1.5 py-0.5 border"
+          <span class="rounded px-1.5 py-0.5 border whitespace-nowrap"
                 :class="freshStale(f) ? 'border-warn-bd text-warn' : 'border-bd-soft text-muted'"
                 :title="freshTitle(f)">
             <span x-text="repoLabel(f.repo)"></span>
@@ -129,7 +149,7 @@
         <span x-show="busy" class="text-warn" x-text="busy"></span>
         <!-- the full error on hover: the line itself must stay short, a long backend message must not -->
         <span x-show="error" class="text-danger max-w-md truncate" :title="error" x-text="error"></span>
-        <span class="text-muted" x-show="selectedSource" x-text="'· ' + shortSource(selectedSource)"></span>
+        <span class="text-muted whitespace-nowrap" x-show="navSource()" x-text="midTrunc(navSource(), 34)" :title="'Source: ' + navSource()"></span>
       </div>
     </nav>
 

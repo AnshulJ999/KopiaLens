@@ -102,6 +102,8 @@ const logsPart = {
     },
     logStamp(ts) {
       if (!ts) return "";
-      return new Date(ts * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true });
+      const d = new Date(ts * 1000);
+      if (_dateStyle === "iso") return `${_isoDay(d)} ${d.toLocaleTimeString(undefined, { hour12: _hour12() })}`;
+      return d.toLocaleString(dateLocale(), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", hour12: _hour12() });
     },
 };

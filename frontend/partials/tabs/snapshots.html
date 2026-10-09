@@ -1,15 +1,27 @@
       <section x-show="active==='snapshots'" class="h-full flex flex-col gap-2">
-        <div class="flex flex-wrap items-center gap-2">
-          <select x-model="snapSource" @change="changeSnapSource()" class="fld border border-bd bg-surface min-w-[34rem] max-w-full">
-            <option value="*ALL*" x-text="repoKind === 'server' ? '★ All sources' : '★ All sources (by reclaimable — run Analyze entire repo first)'"></option>
+        <div class="kl-toolbar">
+          <select x-model="snapSource" @change="changeSnapSource()" class="fld border border-bd bg-surface max-w-[22rem]" title="Source">
+            <option value="*ALL*">All sources</option>
             <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
           </select>
-          <button x-show="repoKind !== 'server'" @click="analyzeSnapshots()" :disabled="analyzing" class="h-8 rounded border border-bd px-3 text-sm disabled:opacity-50" title="Compute churn + reclaimable for this source (cached after)"><span x-text="analyzing ? 'Analyzing…' : 'Analyze this source'"></span></button>
-          <button x-show="repoKind !== 'server'" @click="analyzeAll()" :disabled="analyzingAll" class="h-8 rounded border border-bd px-3 text-sm disabled:opacity-50" title="Compute churn + reclaimable for EVERY source in the repo (cached)"><span x-text="analyzingAll ? 'Analyzing repo…' : 'Analyze entire repo'"></span></button>
-          <span x-show="snapStaleAnalysis" class="kl-callout">Churn and reclaimable numbers are from the previous index run - Analyze refreshes them.</span>
-          <button x-show="repoKind !== 'server'" @click="planDelete()" class="h-8 rounded border border-danger-bd text-danger px-3 text-sm" title="Delete the selected snapshots (select rows first)">🗑 Delete selected</button>
-          <button @click="csv('#snapshotsTable','snapshots')" class="h-8 rounded border border-bd px-3 text-sm" title="Export CSV">⬇ CSV</button>
-          <span class="text-xs text-muted" x-text="repoKind === 'server' ? 'Double-click a snapshot to browse its folders' : 'Select rows to delete · Churn = new data · Reclaimable = freed if deleted'"></span>
+          <button x-show="repoKind !== 'server'" @click="snapSource === '*ALL*' ? analyzeAll() : analyzeSnapshots()" :disabled="analyzing || analyzingAll" class="kl-btn"
+                  :title="snapSource === '*ALL*' ? 'Work out churn and reclaimable space for every source' : 'Work out churn and reclaimable space for this source'"
+                  x-text="(analyzing || analyzingAll) ? 'Analyzing…' : 'Analyze'"></button>
+          <span x-show="snapStaleAnalysis" class="pill warn" title="Churn and reclaimable numbers are from the previous index run. Analyze updates them.">Numbers from the last run</span>
+          <span class="grow"></span>
+          <button x-show="repoKind !== 'server'" @click="planDelete()" :disabled="!snapSelCount" class="kl-btn dangerline"
+                  x-text="snapSelCount > 1 ? 'Delete ' + snapSelCount + ' snapshots…' : 'Delete snapshot…'" title="Delete the selected snapshots"></button>
+          <span class="kl-help" tabindex="0"
+                :title="repoKind === 'server' ? 'Double-click a snapshot to browse its folders.' : 'Churn is the new data a snapshot added. Reclaimable is the space deleting it gives back. With all sources, the list is sorted by reclaimable space: Analyze fills it in. Select rows, then right-click for more.'">?</span>
+          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false">
+            <button class="kl-btn icon" @click="open = !open" title="More">⋯</button>
+            <div class="kl-menu" x-show="open" x-cloak>
+              <button @click="open = false; csv('#snapshotsTable','snapshots')">Export CSV</button>
+              <template x-if="repoKind !== 'server' && snapSource !== '*ALL*'">
+                <button @click="open = false; analyzeAll()">Analyze every source</button>
+              </template>
+            </div>
+          </span>
         </div>
         <div id="snapshotsTable" class="flex-1 min-h-0"></div>
       </section>

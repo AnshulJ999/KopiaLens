@@ -260,7 +260,7 @@
         <template x-if="!polPreview.busy && polPreview.data">
           <div class="space-y-3">
             <div class="flex items-center gap-3 text-xs">
-              <span class="font-medium" x-text="Number(polPreview.data.total || 0).toLocaleString() + ' item' + (polPreview.data.total === 1 ? '' : 's') + ' · ' + fmtB(polPreview.data.bytes || 0)"></span>
+              <span class="font-medium" x-text="Number(polPreview.data.total || 0).toLocaleString(NUM_LOCALE) + ' item' + (polPreview.data.total === 1 ? '' : 's') + ' · ' + fmtB(polPreview.data.bytes || 0)"></span>
               <span class="text-muted" x-show="polPreview.data.capped" x-text="'showing the ' + (polPreview.data.items || []).length + ' biggest'"></span>
               <span class="text-muted" x-show="polPreview.data.provider" x-text="'from ' + (polPreview.data.provider === 'everything' ? 'Everything' : 'a folder scan')"></span>
             </div>

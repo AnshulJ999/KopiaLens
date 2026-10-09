@@ -28,7 +28,7 @@ const bzSearchPart = {
         const data = await getJson(`/api/backblaze/search?${p.toString()}`);
         if (seq !== this._bzSearchSeq) return;  // a newer search superseded this one
         this.bzSearchTotal = data.total || 0;
-        this.bzSearchMeta = `${this.bzSearchTotal.toLocaleString()} results`;
+        this.bzSearchMeta = `${this.bzSearchTotal.toLocaleString(NUM_LOCALE)} results`;
         const arrow = (f) => (this.bzSearchSort === f ? (this.bzSearchDir === "desc" ? " ▼" : " ▲") : "");
         const self = this;
         const H = (title, field, extra) => Object.assign({ title: title + arrow(field), field, headerSort: false, headerClick: () => self.bzSetSearchSort(field) }, extra || {});
@@ -61,7 +61,7 @@ const bzSearchPart = {
         this.bzSearchMeta = `${rows.length} folders · depth ${data.depth}`;
         setTable("#bzGroupTable", rows, [
           { title: "Folder", field: "folder", widthGrow: 5, minWidth: 320 },
-          { title: "Files", field: "files", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+          { title: "Files", field: "files", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Size", field: "bytes", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
         ], {
           initialSort: [{ column: "bytes", dir: "desc" }],

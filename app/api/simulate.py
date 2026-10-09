@@ -17,7 +17,9 @@ def post_simulate(payload: SimRequest) -> dict:
     try:
         if payload.source:
             return simulate(payload.repo, payload.source, payload.policy.model_dump())
-        return simulate_all(payload.repo, payload.policy.model_dump(), refresh=payload.refresh)
+        result = simulate_all(payload.repo, payload.policy.model_dump(), refresh=payload.refresh,
+                              cached_only=payload.cached_only)
+        return result if result is not None else {"cached": False, "empty": True}
     except PASS_THROUGH:
         raise
     except Exception as exc:

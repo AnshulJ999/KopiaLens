@@ -69,4 +69,5 @@ class SimRequest(BaseModel):
     repo: str
     source: str | None = None
     refresh: bool = False
+    cached_only: bool = False
     policy: RetentionPolicy = Field(default_factory=RetentionPolicy)

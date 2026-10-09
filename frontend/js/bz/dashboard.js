@@ -15,12 +15,12 @@ const bzDashboardPart = {
         this.bzChurnTotal = ch.total_recent || 0;
         setTable("#bzDashTable", ov.rows || [], [
           { title: "Drive", field: "drive", width: 70, formatter: (c) => c.getValue() + ":" },
-          { title: "Backed files", field: "backed_files", hozAlign: "right", width: 120, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+          { title: "Backed files", field: "backed_files", hozAlign: "right", width: 120, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Backed size", field: "backed_bytes", hozAlign: "right", width: 120, sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
-          { title: "Excluded files", field: "excluded_files", hozAlign: "right", width: 120, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+          { title: "Excluded files", field: "excluded_files", hozAlign: "right", width: 120, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Excluded size", field: "excluded_bytes", hozAlign: "right", width: 120, sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
-          { title: "Scanned", field: "total", hozAlign: "right", width: 110, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
-          { title: "BZ authoritative", field: "auth_files", hozAlign: "right", width: 130, sorter: "number", formatter: (c) => c.getValue() == null ? "—" : Number(c.getValue()).toLocaleString() },
+          { title: "Scanned", field: "total", hozAlign: "right", width: 110, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
+          { title: "BZ authoritative", field: "auth_files", hozAlign: "right", width: 130, sorter: "number", formatter: (c) => c.getValue() == null ? "—" : Number(c.getValue()).toLocaleString(NUM_LOCALE) },
           { title: "Diff", field: "diff", hozAlign: "right", width: 80, formatter: (c) => { const v = c.getValue(); return v == null ? "—" : (v === 0 ? "<span style='color:#16a34a'>+0</span>" : `<span style='color:#dc2626'>${v > 0 ? "+" : ""}${v}</span>`); } },
         ], {
           initialSort: [{ column: "drive", dir: "asc" }],

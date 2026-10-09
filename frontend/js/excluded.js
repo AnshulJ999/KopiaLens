@@ -30,7 +30,7 @@ const excludedPart = {
       await this.wrap(async () => {
         const r = await getJson(`/api/excluded/list?path=${encodeURIComponent(path)}`);
         if (seq !== this._excludedSeq) return;  // a newer navigation superseded this one
-        this.excludedMeta = `${r.count} items · ${fmtBytes(r.total_excluded)} not backed up here`;
+        this.excludedMeta = `${countOf(r.count, "item")} · ${fmtBytes(r.total_excluded)} not backed up`;
         this.renderExcluded(r.items || []);
       }, "Listing (Everything)…");
     },
@@ -79,7 +79,7 @@ const excludedPart = {
         return `<span class="pill" style="background:${bg};color:${fg}">${label}</span>`;
       };
       const bytes = (c) => c.getValue() ? fmtBytes(c.getValue()) : "";
-      const num = (c) => c.getValue() ? Number(c.getValue()).toLocaleString() : "";
+      const num = (c) => c.getValue() ? Number(c.getValue()).toLocaleString(NUM_LOCALE) : "";
       const cols = [
         { title: "Name", field: "name", widthGrow: 4, minWidth: 220, formatter: (c) => (c.getRow().getData().is_dir ? "📁 " : "📄 ") + c.getValue() },
         { title: "Status", field: "status", width: 115, formatter: (c) => pill(c.getValue()) },
@@ -103,7 +103,7 @@ const excludedPart = {
         rowMenu: [
           { label: "Open", action: (_e, row) => this.excludedRowOpen(row.getData()) },
           { label: "Details", action: (_e, row) => this.openExcludedDetail(row.getData()) },
-          { label: "Include in Kopia… (copy commands)", action: (_e, row) => this.excludedInclude(row.getData()) },
+          { label: "Back this up…", action: (_e, row) => this.excludedInclude(row.getData()) },
           { label: "Exclude…", action: (_e, row) => this.excludedExclude(row.getData()) },
           { label: "Copy path", action: (_e, row) => this.copyText(this._excludedPath(row.getData())) },
         ],

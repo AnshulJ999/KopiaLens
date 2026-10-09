@@ -174,7 +174,7 @@ const actionsPart = {
         facts.push(["Restore", `${p.items.length} items`]);
         facts.push(["To", r.mode === "folder" ? r.target : r.mode === "original" ? "Where each came from" : "Next to each original"]);
       }
-      facts.push(["Files", `${Number(t.files).toLocaleString()} · ${fmtBytes(t.size)}`]);
+      facts.push(["Files", `${Number(t.files).toLocaleString(NUM_LOCALE)} · ${fmtBytes(t.size)}`]);
       const expired = p.items.filter((i) => i.expired).length;
       if (expired) {
         facts.push(["Modified time", p.items.length === 1 ? "Not restored: the snapshot has expired"
@@ -182,8 +182,8 @@ const actionsPart = {
       }
       facts.push(["Existing files", { safe: "Skipped", replace: "Replaced when different", exact: "Replaced when different", custom: "Custom options" }[r.preset]]);
       if (p.previewed) {
-        facts.push(["On disk now", `${t.new.toLocaleString()} new · ${t.identical.toLocaleString()} identical · ${t.different.toLocaleString()} different`]);
-        if (r.options.delete_extra) facts.push(["Deleted", `${t.extra.toLocaleString()} files not in the snapshot`]);
+        facts.push(["On disk now", `${t.new.toLocaleString(NUM_LOCALE)} new · ${t.identical.toLocaleString(NUM_LOCALE)} identical · ${t.different.toLocaleString(NUM_LOCALE)} different`]);
+        if (r.options.delete_extra) facts.push(["Deleted", `${t.extra.toLocaleString(NUM_LOCALE)} files not in the snapshot`]);
       }
       return facts;
     },
@@ -196,8 +196,8 @@ const actionsPart = {
       if (!this.restore || !r.plan || r.error) return;
       const t = r.plan.totals;
       let callout = "";
-      if (r.options.delete_extra && t.extra) callout = `${t.extra.toLocaleString()} files at the destination are not in the snapshot and will be deleted.`;
-      else if (r.options.overwrite_files && t.different) callout = `${t.different.toLocaleString()} existing files will be replaced.`;
+      if (r.options.delete_extra && t.extra) callout = `${t.extra.toLocaleString(NUM_LOCALE)} files at the destination are not in the snapshot and will be deleted.`;
+      else if (r.options.overwrite_files && t.different) callout = `${t.different.toLocaleString(NUM_LOCALE)} existing files will be replaced.`;
       else if (r.mode === "original") callout = "Restores over the original location.";
       const ok = await this.klConfirm({
         title: `Restore ${r.label}?`, facts: this.restoreFacts(), callout,
@@ -280,7 +280,7 @@ const actionsPart = {
         info = plan.items[0];
       } catch (e) { this.error = e.message || String(e); return; }
       if (info.size > DOWNLOAD_WARN_BYTES) {
-        const facts = [["Size", fmtBytes(info.size)], ["Files", Number(info.files).toLocaleString()], ["Snapshot", this.humanTime(info.snap_time)]];
+        const facts = [["Size", fmtBytes(info.size)], ["Files", Number(info.files).toLocaleString(NUM_LOCALE)], ["Snapshot", this.humanTime(info.snap_time)]];
         if (info.expired) facts.push(["Modified time", "Not restored: the snapshot has expired"]);
         const ok = await this.klConfirm({
           title: `Download ${info.name}?`, facts,

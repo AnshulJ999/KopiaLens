@@ -9,7 +9,7 @@ const bzHealthPart = {
         this.bzQueue = r;
         setTable("#bzQueueTable", r.by_folder || [], [
           { title: "Folder", field: "folder", widthGrow: 5, minWidth: 320 },
-          { title: "Files", field: "files", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+          { title: "Files", field: "files", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Size", field: "bytes", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
         ], { initialSort: [{ column: "bytes", dir: "desc" }] });
       }, "Loading upload queue…");
@@ -22,18 +22,18 @@ const bzHealthPart = {
         setTable("#bzSessionsTable", r.sessions || [], [
           { title: "Time", field: "ts", width: 190, formatter: (c) => timeCell(c.getValue()) },
           { title: "Event", field: "kind", width: 130, formatter: (c) => c.getValue() === "session_end" ? "<span style='color:#16a34a'>backup ended</span>" : "backup started" },
-          { title: "Files", field: "files", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? Number(c.getValue()).toLocaleString() : "" },
+          { title: "Files", field: "files", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? Number(c.getValue()).toLocaleString(NUM_LOCALE) : "" },
           { title: "Uploaded", field: "bytes", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? bzFmt(c.getValue()) : "" },
         ], { initialSort: [{ column: "ts", dir: "desc" }], height: "15rem" });
         setTable("#bzBackupDaysTable", r.backup_days || [], [
           { title: "Day", field: "day", width: 150, formatter: (c) => fmtDate(c.getValue()) },
-          { title: "Files backed up", field: "files", width: 150, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+          { title: "Files backed up", field: "files", width: 150, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Uploaded", field: "bytes", width: 140, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
         ], { initialSort: [{ column: "day", dir: "desc" }], height: "17rem" });
         setTable("#bzUploadsTable", r.uploads || [], [
           { title: "Date", field: "date", width: 170, formatter: (c) => fmtBzDate(c.getValue()) },
-          { title: "Uploaded OK", field: "success", width: 130, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
-          { title: "Failed", field: "fail", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => { const v = Number(c.getValue() || 0); return v ? `<span style='color:#dc2626'>${v.toLocaleString()}</span>` : "0"; } },
+          { title: "Uploaded OK", field: "success", width: 130, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
+          { title: "Failed", field: "fail", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => { const v = Number(c.getValue() || 0); return v ? `<span style='color:#dc2626'>${v.toLocaleString(NUM_LOCALE)}</span>` : "0"; } },
         ], { initialSort: [{ column: "date", dir: "desc" }], height: "17rem" });
       }, "Loading sessions…");
     },
@@ -49,8 +49,8 @@ const bzHealthPart = {
         this.bzHealth = await getJson("/api/backblaze/health");
         setTable("#bzHealthTable", this.bzHealth.drives || [], [
           { title: "Drive", field: "drive", width: 70, formatter: (c) => c.getValue() + ":" },
-          { title: "Backed files", field: "backed_files", hozAlign: "right", width: 130, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
-          { title: "BZ authoritative", field: "auth_files", hozAlign: "right", width: 140, sorter: "number", formatter: (c) => c.getValue() == null ? "—" : Number(c.getValue()).toLocaleString() },
+          { title: "Backed files", field: "backed_files", hozAlign: "right", width: 130, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
+          { title: "BZ authoritative", field: "auth_files", hozAlign: "right", width: 140, sorter: "number", formatter: (c) => c.getValue() == null ? "—" : Number(c.getValue()).toLocaleString(NUM_LOCALE) },
           { title: "Diff", field: "diff", hozAlign: "right", width: 90, formatter: (c) => { const v = c.getValue(); return v == null ? "—" : (v === 0 ? "<span style='color:#16a34a'>+0</span>" : `<span style='color:#dc2626'>${v}</span>`); } },
         ], { initialSort: [{ column: "drive", dir: "asc" }] });
       }, "Running health check…");

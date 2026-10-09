@@ -4,7 +4,6 @@ const snapshotsPart = {
     // ---------- Snapshots ----------
     async loadSnapshots(refresh = false) {
       if (!this.snapSource) this.snapSource = "*ALL*";
-      if (this.snapSource !== "*ALL*") this.selectedSource = this.snapSource;  // keep tree-drill/mount in sync
       const seq = ++this._snapSeq;
       await this.wrap(async () => {
         const data = await getJson(`/api/snapshots?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.snapSource)}`);
@@ -22,43 +21,48 @@ const snapshotsPart = {
           { title: "Start", field: "start_time", width: 185, formatter: (c) => timeCell(c.getValue()) },
           { title: "Logical", field: "logical", width: 100, sorter: "number", formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
           { title: "Physical", field: "physical", width: 100, sorter: "number", formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },
-          { title: "Accum", field: "accum", width: 72, sorter: "number", formatter: (c) => { const v = c.getValue(); return (v == null) ? "—" : `${Number(v).toFixed(2)}x`; }, hozAlign: "right" },
+          { title: "Accum", field: "accum", width: 72, sorter: "number", formatter: (c) => { const v = c.getValue(); return (v == null) ? "—" : `${fmtFix(v, 2)}x`; }, hozAlign: "right" },
           { title: "Churn (new)", field: "churn", width: 105, sorter: "number", formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },
-          { title: "Reclaimable", field: "reclaimable", width: 110, sorter: "number", formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },
-          { title: "Files", field: "files", width: 90, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
-          { title: "Dirs", field: "dirs", width: 80, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+          { title: term("reclaimable"), headerTooltip: termTip("reclaimable"), field: "reclaimable", width: 110, sorter: "number", formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },
+          { title: "Files", field: "files", width: 90, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
+          { title: "Dirs", field: "dirs", width: 80, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Retention", field: "retention", accessorDownload: (v) => (v || []).join(", "), widthGrow: 2, minWidth: 150, formatter: (c) => (c.getValue() || []).map((r) => `<span class="pill" style="background:#dbeafe;color:#1e40af">${r}</span>`).join("") },
           { title: "Pins", field: "pins", accessorDownload: (v) => (v || []).join(", "), widthGrow: 1, minWidth: 90, formatter: (c) => (c.getValue() || []).map((p) => `<span class="pill" style="background:#fef3c7;color:#92400e">${p}</span>`).join("") },
           { title: "ID", field: "id", width: 200 },
         ].filter((c) => !(server && spaceCols.includes(c.field)));
-        const pick = (label, fn) => ({ label, action: fn });
-        const rowMenu = server ? [
-          pick("Browse files", (_e, row) => this.browseSnapshot(row.getData())),
-          pick("Restore this snapshot…", (_e, row) => { const d = row.getData(); this.openRestore([{ source: d.source, full_path: sourcePath(d.source), snapshot_id: d.id }], { label: "snapshot " + this.humanTime(d.start_time) }); }),
-          pick(() => this.mountOpenLabel(), (_e, row) => { const d = row.getData(); this.mountOpen(d.id, d.source, sourcePath(d.source)); }),
-          pick("Pin selected (protect)", () => this.pinSelected(false)),
-          pick("Unpin selected", () => this.pinSelected(true)),
-          pick("Diff selected (pick 2)", () => this.diffSelected()),
-          pick("Copy snapshot ID", (_e, row) => this.copyText(row.getData().id)),
-        ] : null;
-        const stbl = setTable("#snapshotsTable", this.snapshots, cols, {
-          selectableRows: true,  // multi-select for bulk delete / pin / diff
+        // The menu acts on the selection (a right-click outside it selects that row first).
+        const rowMenu = (_e, row) => {
+          const n = this.snapSelected().length;
+          const many = (verb) => (n > 1 ? `${verb} ${countOf(n, "snapshot")}` : verb);
+          const d = row.getData();
+          const items = [];
+          if (n === 1) items.push(
+            { label: "Browse files", action: () => this.browseSnapshot(d) },
+            { label: "Restore this snapshot…", action: () => this.openRestore([{ source: d.source, full_path: sourcePath(d.source), snapshot_id: d.id }], { label: "snapshot " + this.humanTime(d.start_time) }) },
+            { label: this.mountOpenLabel(), action: () => this.mountOpen(d.id, d.source, sourcePath(d.source)) },
+            { separator: true });
+          if (n === 2) items.push({ label: "Compare 2 snapshots", action: () => this.diffSelected() });
+          items.push(
+            { label: many("Pin"), action: () => this.pinSelected(false) },
+            { label: many("Unpin"), action: () => this.pinSelected(true) });
+          if (!server) items.push(
+            { separator: true },
+            { label: "Select unretained snapshots", action: () => this.selectUnretained() },
+            { label: "Select identical duplicates", action: () => this.selectIdenticalDuplicates() },
+            { separator: true },
+            { label: many("Delete") + "…", action: () => this.planDelete() });
+          items.push({ separator: true },
+            { label: n === 1 ? "Copy snapshot ID" : "Copy snapshot IDs", action: () => this.copyText(this.snapSelected().map((x) => x.id).join("\n")) });
+          return items;
+        };
+        setTable("#snapshotsTable", this.snapshots, cols, {
+          selectableRows: true,  // multi-select for bulk delete / pin / compare
           initialSort: allSrc && !server ? [{ column: "reclaimable", dir: "desc" }] : [{ column: "start_time", dir: "desc" }],
           onRowDblClick: (_e, row) => this.browseSnapshot(row.getData()),
-          rowMenu: rowMenu || [
-            { label: "Browse files", action: (_e, row) => this.browseSnapshot(row.getData()) },
-            { label: "Restore this snapshot…", action: (_e, row) => { const d = row.getData(); this.openRestore([{ source: d.source, full_path: sourcePath(d.source), snapshot_id: d.id }], { label: "snapshot " + this.humanTime(d.start_time) }); } },
-            { label: () => this.mountOpenLabel(), action: (_e, row) => { const d = row.getData(); this.mountOpen(d.id, d.source, sourcePath(d.source)); } },
-            { label: "Select all unretained (no retention/pin)", action: () => this.selectUnretained() },
-            { label: "Select identical duplicates (keep oldest+newest per content)", action: () => this.selectIdenticalDuplicates() },
-            { label: "Delete selected…", action: () => this.planDelete() },
-            { label: "Pin selected (protect)", action: () => this.pinSelected(false) },
-            { label: "Unpin selected", action: () => this.pinSelected(true) },
-            { label: "Diff selected (pick 2)", action: () => this.diffSelected() },
-            { label: "Copy snapshot ID", action: (_e, row) => this.copyText(row.getData().id) },
-          ],
+          rowMenu,
+          onSelect: (rows) => { this.snapSelCount = rows.length; },
         });
-        if (stbl) stbl.on("rowClick", (e, row) => this._rangeClick(stbl, e, row));  // Shift+Click range select
+        this.snapSelCount = 0;
       }, "Loading snapshots...");
     },
 
@@ -75,8 +79,7 @@ const snapshotsPart = {
         const keep = (d.retention && d.retention.length) || (d.pins && d.pins.length);
         if (keep) r.deselect(); else { r.select(); n++; }
       });
-      this.actionText = `Selected ${countOf(n, "unretained snapshot")} (no retention, no pin). Use 'Delete selected…' to preview/copy the kopia command or delete.`;
-      this.klNotify(n ? `${n} unretained snapshot${n === 1 ? "" : "s"} selected - nothing keeps them.` : "No unretained snapshots to select - every one is pinned or kept by retention.", n ? "ok" : "warn");
+      this.klNotify(n ? `${countOf(n, "snapshot")} selected that no retention rule or pin keeps.` : "Every snapshot is pinned or kept by retention.", n ? "ok" : "warn");
     },
     selectIdenticalDuplicates() {  // HYBRID: group the source's snapshots by `root` (byte-identical
       const el = document.querySelector("#snapshotsTable");                       // content = same object),
@@ -99,19 +102,16 @@ const snapshotsPart = {
       }
       let n = 0;
       tbl.getRows().forEach((r) => { if (del.has(r.getData().id)) { r.select(); n++; } else r.deselect(); });
-      this.actionText = n
-        ? `Selected ${countOf(n, "identical-duplicate snapshot")} (kept oldest+newest per content; pinned kept; retained ARE included). Use 'Delete selected…'.`
-        : `No identical duplicates to collapse — no content has 3+ snapshots (or 'root' is missing on the rows).`;
-      this.klNotify(n ? `${n} duplicate snapshot${n === 1 ? "" : "s"} selected - the oldest and newest of each set are kept.` : "No identical duplicates to collapse.", n ? "ok" : "warn");
+      this.klNotify(n ? `${countOf(n, "duplicate snapshot")} selected. The oldest and newest of each identical set are kept.` : "No identical duplicates to collapse.", n ? "ok" : "warn");
     },
-    changeSnapSource() {  // persist scope; Tree mirrors it (incl. *ALL*) so the two views stay in parity
-      this.klSet({ snap_source: this.snapSource });
-      this.selectedSource = this.snapSource;
+    changeSnapSource() {  // remembered per repo; the Tree keeps its own choice
+      this.snapSourceByRepo = { ...this.snapSourceByRepo, [this.repo]: this.snapSource };
+      this.klSet({ snap_source_by_repo: this.snapSourceByRepo });
       this.loadSnapshots();
     },
     planDelete() {  // build a confirm plan from the currently-selected snapshot rows
       const rows = this.snapSelected();
-      if (!rows.length) { this.klNotify("Select one or more snapshots first - click rows or their checkboxes.", "warn"); return; }
+      if (!rows.length) { this.klNotify("Select one or more snapshots first.", "warn"); return; }
       const reclaimVals = rows.map((r) => r.reclaimable).filter((v) => v !== null && v !== undefined);
       this.deletePlan = {
         ids: rows.map((r) => r.id),
@@ -174,8 +174,8 @@ const snapshotsPart = {
         title: `Delete ${p.count} snapshot${p.count === 1 ? "" : "s"}?`,
         facts: [
           ["Snapshots", `${p.count}` + (p.times.length ? ` · ${humanTime(p.times[0])}` + (p.times.length > 1 ? ` to ${humanTime(p.times[p.times.length - 1])}` : "") : "")],
-          ["Backups", p.sources.length ? p.sources.map((s) => sourcePath(s)).join(", ") : sourcePath(this.snapSource)],
-          ["Frees", fmtPhys(p.combinedReclaim != null ? p.combinedReclaim : p.reclaim) + " after maintenance"],
+          [p.sources.length > 1 ? "Sources" : "Source", p.sources.length ? p.sources.map((s) => sourcePath(s)).join(", ") : sourcePath(this.snapSource)],
+          [term("reclaimable"), fmtPhys(p.combinedReclaim != null ? p.combinedReclaim : p.reclaim) + " after maintenance"],
           ["Kept", `${p.pinned} pinned · ${p.retained} kept by retention`],
         ],
         callout: warnN ? "Pinned and retained snapshots are restore points you chose to keep." : "",
@@ -199,7 +199,7 @@ const snapshotsPart = {
           const d = await getJson(`/api/snapshots/analyze-status?repo=${encodeURIComponent(this.repo)}`).catch(() => null);
           if (d && !d.analyzing_all) { clearInterval(poll); this.analyzingAll = false; if (this.active === "snapshots") this.loadSnapshots(); }
         }, 5000);
-      }, "Analyzing entire repo (churn + reclaimable)…");
+      }, "Analyzing every snapshot…");
     },
 
     async analyzeSnapshots() {
@@ -212,13 +212,13 @@ const snapshotsPart = {
           const d = await getJson(`/api/snapshots?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.snapSource)}`).catch(() => null);
           if (d && !d.analyzing) { clearInterval(poll); this.loadSnapshots(); }
         }, 4000);
-      }, "Analyzing snapshots (churn + reclaimable)...");
+      }, "Analyzing snapshots…");
     },
 
     // ---- Snapshots: pin / unpin / diff ----
     async pinSelected(remove) {
       const rows = this.snapSelected();
-      if (!rows.length) { this.klNotify("Select snapshots first - click rows or their checkboxes.", "warn"); return; }
+      if (!rows.length) { this.klNotify("Select one or more snapshots first.", "warn"); return; }
       const already = rows.filter((x) => (x.pins || []).includes("do-not-delete")).length;
       const n = rows.length;
       const ok = await this.klConfirm({
@@ -236,7 +236,7 @@ const snapshotsPart = {
     },
     async diffSelected() {
       const rows = this.snapSelected();
-      if (rows.length !== 2) { this.klNotify("Select exactly 2 snapshots to diff.", "warn"); return; }
+      if (rows.length !== 2) { this.klNotify("Select 2 snapshots to compare.", "warn"); return; }
       this.showDiff = true; this.diffText = "Running diff…"; this.diffBusy = true;
       try {
         const r = await getJson(`/api/snapshots/diff?repo=${encodeURIComponent(this.repo)}&id1=${encodeURIComponent(rows[0].id)}&id2=${encodeURIComponent(rows[1].id)}&run=true`);

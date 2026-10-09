@@ -116,7 +116,7 @@
                   <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-[11px] text-muted" x-text="countOf(polRuleRows().length, 'own rule')"></span>
                     <span class="text-[11px] text-ok" x-show="polKeepout().priced"
-                          x-text="'keeping out ' + polKeepout().files.toLocaleString() + ' files · ' + fmtB(polKeepout().bytes)"></span>
+                          x-text="'keeping out ' + polKeepout().files.toLocaleString(NUM_LOCALE) + ' files · ' + fmtB(polKeepout().bytes)"></span>
                     <span class="grow"></span>
                     <span class="text-[10px] text-danger" x-show="polPriceFailText()" x-text="polPriceFailText()"></span>
                     <span class="text-[10px]" style="color:var(--muted)" x-show="polPricingNote()" x-text="polPricingNote()"></span>

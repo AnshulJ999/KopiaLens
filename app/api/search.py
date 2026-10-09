@@ -73,6 +73,7 @@ def search(
     min_versions: int = 0,
     shared_min: int = 0,
     dedupe: bool = False,
+    dedupe_by: str = "path",
 ) -> dict:
     min_size, max_size = _bounds(over_gb, largest, min_gb, max_gb)
     # The default landing view (no query/filters, size-desc, first page) is served from a cached,
@@ -91,7 +92,7 @@ def search(
                 sort=sort, direction=dir, limit=limit, offset=offset, confirm_exists=confirm_exists,
                 max_size=max_size, date_from=date_from or None, date_to=date_to or None,
                 first_from=first_from or None,
-                min_versions=min_versions, shared_min=shared_min, dedupe=dedupe,
+                min_versions=min_versions, shared_min=shared_min, dedupe=dedupe, dedupe_by=dedupe_by,
             )
         return {"results": res["rows"], "total": res["total"], "offset": res["offset"],
                 "limit": res["limit"], "ranked": res.get("ranked")}
@@ -179,6 +180,7 @@ def export(
     ext_exclude: str | None = None, sort: str = "size", dir: str = "desc",
     min_gb: float = 0, max_gb: float = 0, date_from: str | None = None, date_to: str | None = None,
     first_from: str | None = None, min_versions: int = 0, shared_min: int = 0, dedupe: bool = False,
+    dedupe_by: str = "path",
 ) -> StreamingResponse:
     min_size, max_size = _bounds(over_gb, largest, min_gb, max_gb)
     cur, registered = search_export(repo, query=q, deleted_only=deleted_only, min_size=min_size,
@@ -186,7 +188,7 @@ def export(
                         sort=sort, direction=dir,
                         max_size=max_size, date_from=date_from or None, date_to=date_to or None,
                         first_from=first_from or None,
-                        min_versions=min_versions, shared_min=shared_min, dedupe=dedupe)
+                        min_versions=min_versions, shared_min=shared_min, dedupe=dedupe, dedupe_by=dedupe_by)
 
     return StreamingResponse(
         _csv_rows(cur, registered), media_type="text/csv",

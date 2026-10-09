@@ -1,37 +1,66 @@
+// ---- Number and date style (Settings > Appearance). undefined = the system's own style. ----
+let NUM_LOCALE;
+let _dateStyle = "system", _clock = "system";
+const _numFmts = {};
+// A fixed number of decimals in the chosen number style: fmtFix(1.5, 1) -> "1.5" or "1,5".
+const fmtFix = (n, d) => {
+  const key = (NUM_LOCALE || "") + "|" + d;
+  if (!_numFmts[key]) _numFmts[key] = new Intl.NumberFormat(NUM_LOCALE, { minimumFractionDigits: d, maximumFractionDigits: d });
+  return _numFmts[key].format(Number(n) || 0);
+};
 const fmtBytes = (value) => {
   const n = Number(value || 0);
-  if (n >= 1e12) return `${(n / 1e12).toFixed(2)} TB`;
-  if (n >= 1e9) return `${(n / 1e9).toFixed(2)} GB`;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1)} KB`;
+  if (n >= 1e12) return `${fmtFix(n / 1e12, 2)} TB`;
+  if (n >= 1e9) return `${fmtFix(n / 1e9, 2)} GB`;
+  if (n >= 1e6) return `${fmtFix(n / 1e6, 1)} MB`;
+  if (n >= 1e3) return `${fmtFix(n / 1e3, 1)} KB`;
   return `${n} B`;
 };
 const fmtPhys = (v) => (v === null || v === undefined ? "—" : fmtBytes(v));
 // A count with its noun: countOf(1, "file") -> "1 file", countOf(3, "file") -> "3 files".
-const countOf = (n, one, many = one + "s") => `${Number(n || 0).toLocaleString()} ${Number(n) === 1 ? one : many}`;
+const countOf = (n, one, many = one + "s") => `${Number(n || 0).toLocaleString(NUM_LOCALE)} ${Number(n) === 1 ? one : many}`;
 
 // Accepts an ISO / "YYYY-MM-DD HH:MM:SS" string, a Date, or an epoch number. Epoch SECONDS (the
 // backend's time.time()) are told apart from milliseconds by magnitude.
 const toDate = (s) => (typeof s === "number" ? new Date(s < 1e12 ? s * 1000 : s) : new Date(s));
-// One formatter each: toLocaleString builds a new one per call, which is ~15x slower on long lists.
-const _absFmt = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
-const _dateFmt = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" });
+// The locale dates are written in: day-month and month-day styles pin one; system and ISO use the system's.
+const dateLocale = () => ({ dmy: "en-GB", mdy: "en-US" })[_dateStyle];
+const _hour12 = () => (_clock === "12" ? true : _clock === "24" ? false : undefined);
+// One formatter each, rebuilt only when the style changes: toLocaleString builds a new one per
+// call, which is ~15x slower on long lists.
+let _absFmt, _dateFmt, _clockFmt;
+const _buildDateFmts = () => {
+  _absFmt = new Intl.DateTimeFormat(dateLocale(), { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: _hour12() });
+  _dateFmt = new Intl.DateTimeFormat(dateLocale(), { year: "numeric", month: "short", day: "numeric" });
+  _clockFmt = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: _hour12() });
+};
+_buildDateFmts();
+const _isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// Apply the saved styles; callers redraw what is on screen afterwards.
+const setFormatStyles = ({ number_style, date_style, clock } = {}) => {
+  NUM_LOCALE = ["en-US", "de-DE", "fr-FR", "en-IN"].includes(number_style) ? number_style : undefined;
+  _dateStyle = ["dmy", "mdy", "iso"].includes(date_style) ? date_style : "system";
+  _clock = ["12", "24"].includes(String(clock)) ? String(clock) : "system";
+  _buildDateFmts();
+};
 const fmtAbs = (s) => {
   if (!s) return "";
   const d = toDate(s);
-  return isNaN(d.getTime()) ? String(s).slice(0, 19) : _absFmt.format(d);
+  if (isNaN(d.getTime())) return String(s).slice(0, 19);
+  return _dateStyle === "iso" ? `${_isoDay(d)} ${_clockFmt.format(d)}` : _absFmt.format(d);
 };
 // Date only ("20 Jul 2024") - for day-granularity values and "first backed up" style labels.
 const fmtDate = (s) => {
   if (!s) return "";
   const d = /^\d{4}-\d{2}-\d{2}$/.test(String(s)) ? new Date(`${s}T00:00:00`) : toDate(s);
-  return isNaN(d.getTime()) ? String(s).slice(0, 10) : _dateFmt.format(d);
+  if (isNaN(d.getTime())) return String(s).slice(0, 10);
+  return _dateStyle === "iso" ? _isoDay(d) : _dateFmt.format(d);
 };
 // A DURATION in seconds ("0.4 s", "42 s", "6 m 12 s", "1 h 05 m") - never pass one to humanTime.
 const fmtDur = (sec) => {
   const n = Number(sec);
   if (!isFinite(n) || n < 0) return "";
-  if (n < 10) return `${n.toFixed(1)} s`;
+  if (n < 10) return `${fmtFix(n, 1)} s`;
   if (n < 60) return `${Math.round(n)} s`;
   if (n < 3600) return `${Math.floor(n / 60)} m ${String(Math.floor(n % 60)).padStart(2, "0")} s`;
   return `${Math.floor(n / 3600)} h ${String(Math.floor((n % 3600) / 60)).padStart(2, "0")} m`;
@@ -47,6 +76,8 @@ const fmtBytesRange = ([lo, hi]) => {
   const a = fmtBytes(lo), b = fmtBytes(hi);
   return a === b ? `about ${a}` : `about ${a} – ${b}`;
 };
+// Shorten a long path in the middle so both ends stay readable: midTrunc("C:\a\b\c", 9).
+const midTrunc = (s, n) => { s = String(s || ""); if (s.length <= n) return s; const k = Math.floor((n - 1) / 2); return s.slice(0, k) + "…" + s.slice(s.length - (n - 1 - k)); };
 const capFirst = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 // Sum of several first-index estimates (repositories are indexed one after another).
 const sumEstimates = (list) => list.reduce((t, e) => ({
@@ -148,8 +179,20 @@ function colVisibilityMenu(e, column) {
 const setTable = (id, data, columns, opts = {}) => {
   const el = document.querySelector(id);
   if (!el) return null;
-  const { onRowDblClick, rowMenu, initialSort, persistSort, ...rest } = opts;
+  const { onRowDblClick, rowMenu, initialSort, persistSort, onSelect, ...rest } = opts;
   if (el._tabulator) { try { el._tabulator.destroy(); } catch (e) {} el._tabulator = null; }
+  // Multi-select tables select the standard way: click = that row only, Ctrl/Cmd+click adds or
+  // removes one, Shift+click selects the range from the last clicked row.
+  const multi = rest.selectableRows === true;
+  if (multi && !rest.selectableRowsRangeMode) rest.selectableRowsRangeMode = "click";
+  // Right-click on a row outside the selection makes it the selection first, so the menu always
+  // acts on what is highlighted. A menu may be a list or a function of (event, row).
+  const menu = rowMenu && multi
+    ? (e, row) => {
+        if (!row.isSelected()) { row.getTable().deselectRow(); row.select(); }
+        return typeof rowMenu === "function" ? rowMenu(e, row) : rowMenu;
+      }
+    : rowMenu;
   columns.forEach((c) => {
     c.headerContextMenu = colVisibilityMenu;
     if (c.headerTooltip === undefined) c.headerTooltip = true;   // full title on hover when a header is clipped
@@ -167,16 +210,25 @@ const setTable = (id, data, columns, opts = {}) => {
     persistenceReaderFunc: persistReader,
     persistenceWriterFunc: persistWriter,
     initialSort: initialSort || undefined,
-    rowContextMenu: rowMenu || undefined,
+    rowContextMenu: menu || undefined,
     ...rest,
   });
   if (onRowDblClick) table.on("rowDblClick", onRowDblClick);
+  if (onSelect) table.on("rowSelectionChanged", (data) => onSelect(data));
   // A table built while its tab is hidden measures a zero-height container and lays out no
   // rows - it holds the data and shows nothing, with no error. One redraw once building
   // finishes re-measures against the real container.
   table.on("tableBuilt", () => table.redraw(true));
   el._tabulator = table;
   return table;
+};
+
+// Close an open table menu. Tabulator's own Escape check compares e.key with 27, so it never fires;
+// a mousedown on the page is the event its menus close on.
+const closeTableMenu = () => {
+  if (!document.querySelector(".tabulator-popup-container")) return false;
+  document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  return true;
 };
 
 const downloadTable = (id, name) => {

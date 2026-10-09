@@ -39,7 +39,7 @@
               </div>
               <div class="rounded border border-bd bg-surface p-3">
                 <div class="text-[10px] uppercase text-muted mb-1">Content</div>
-                <div class="text-sm font-medium" x-text="(statsData.parsed?.content?.count || 0).toLocaleString() + ' contents'"></div>
+                <div class="text-sm font-medium" x-text="(statsData.parsed?.content?.count || 0).toLocaleString(NUM_LOCALE) + ' contents'"></div>
                 <div class="text-xs text-muted" x-text="'logical ' + fmtBytes(statsData.parsed?.content?.total_bytes || 0)"></div>
                 <div class="text-xs" x-text="'packed ' + fmtBytes(statsData.parsed?.content?.packed_bytes || 0) + (statsData.parsed?.content?.compression_pct != null ? ' (' + statsData.parsed.content.compression_pct + '% saved)' : '')"></div>
                 <div class="text-[11px] mt-1" x-show="statsData.parsed?.growth_7d != null" :class="(statsData.parsed?.growth_7d || 0) > 0 ? 'text-muted' : 'text-ok'" x-text="'7-day change ' + (statsData.parsed?.growth_7d >= 0 ? '+' : '') + fmtBytes(statsData.parsed?.growth_7d || 0)"></div>

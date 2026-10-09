@@ -44,10 +44,10 @@ const bzTreePart = {
           { title: "Name", field: "name", widthGrow: 5, minWidth: 280, formatter: (c) => `${c.getRow().getData().is_dir ? "📁 " : "📄 "}${c.getValue()}` },
           { title: "Status", field: "status", width: 90, formatter: (c) => statusPill(c.getValue()) },
           { title: "Total", field: "total_bytes", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
-          { title: "%", field: "pct", width: 68, hozAlign: "right", sorter: "number", formatter: (c) => `${Number(c.getValue() || 0).toFixed(1)}%` },
+          { title: "%", field: "pct", width: 68, hozAlign: "right", sorter: "number", formatter: (c) => `${fmtFix(c.getValue() || 0, 1)}%` },
           { title: "Backed", field: "backed_bytes", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
           { title: "Excluded", field: "excluded_bytes", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
-          { title: "Files", field: "total_files", width: 85, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+          { title: "Files", field: "total_files", width: 85, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Excluded by", field: "excl_rule", widthGrow: 2, minWidth: 140, formatter: (c) => c.getValue() || "" },
         ], {
           initialSort: [{ column: atRoot ? "name" : "total_bytes", dir: atRoot ? "asc" : "desc" }],

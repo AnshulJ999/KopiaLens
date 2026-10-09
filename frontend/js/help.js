@@ -21,7 +21,7 @@ const helpPart = {
     },
     toggleHelpMenu() {
       this.helpMenu = !this.helpMenu;
-      if (this.helpMenu) this.loadHelp();
+      if (this.helpMenu) { this.loadHelp(); if (!this.acct) this.loadAccount(); }
     },
     helpLink(which) {
       this.helpMenu = false;

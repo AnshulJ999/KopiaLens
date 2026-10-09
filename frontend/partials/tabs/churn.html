@@ -1,27 +1,33 @@
       <section x-show="active==='churn'" class="h-full flex flex-col gap-2">
-        <div class="flex flex-wrap items-center gap-2">
+        <div class="kl-toolbar">
           <div class="inline-flex rounded border border-bd overflow-hidden">
-            <button @click="setChurnView('source')" class="px-3 h-8 text-xs" :class="churnView==='source' ? 'bg-sel font-medium' : ''">By source</button>
-            <button @click="setChurnView('folder')" class="px-3 h-8 text-xs border-l border-bd" :class="churnView==='folder' ? 'bg-sel font-medium' : ''">By folder</button>
-            <button @click="setChurnView('ext')" class="px-3 h-8 text-xs border-l border-bd" :class="churnView==='ext' ? 'bg-sel font-medium' : ''">By file type</button>
+            <button @click="setChurnView('source')" class="px-3 h-7 text-xs" :class="churnView==='source' ? 'bg-sel font-medium' : ''">By source</button>
+            <button @click="setChurnView('folder')" class="px-3 h-7 text-xs border-l border-bd" :class="churnView==='folder' ? 'bg-sel font-medium' : ''">By folder</button>
+            <button @click="setChurnView('ext')" class="px-3 h-7 text-xs border-l border-bd" :class="churnView==='ext' ? 'bg-sel font-medium' : ''">By file type</button>
           </div>
-          <label class="flex items-center gap-1 text-xs">Window
-            <select x-model="churnDays" @change="changeChurn()" class="fld h-8 border border-bd bg-surface">
-              <option value="1">Last 24 hours</option>
-              <option value="3">Last 3 days</option>
-              <option value="7">Last 7 days</option>
-              <option value="30">Last 30 days</option>
-              <option value="90">Last 90 days</option>
-              <option value="180">Last 6 months</option>
-              <option value="365">Last year</option>
-            </select></label>
-          <label class="flex items-center gap-1 text-xs" title="How many path segments deep to roll folders up">Depth
-            <select x-model.number="churnDepth" @change="changeChurn()" class="fld h-8 border border-bd bg-surface">
+          <select x-model="churnDays" @change="changeChurn()" class="fld border border-bd bg-surface" title="Time window">
+            <option value="1">Last 24 hours</option>
+            <option value="3">Last 3 days</option>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="90">Last 90 days</option>
+            <option value="180">Last 6 months</option>
+            <option value="365">Last year</option>
+          </select>
+          <label x-show="churnView==='folder'" title="How many folder levels deep to group by">Depth
+            <select x-model.number="churnDepth" @change="changeChurn()" class="fld border border-bd bg-surface">
               <template x-for="d in [2,3,4,5,6,7,8]" :key="d"><option :value="d" x-text="d"></option></template>
             </select></label>
-          <button @click="loadChurn(true)" class="h-8 rounded border border-bd px-3 text-xs" title="Recompute now instead of using the nightly result">⟳ Recompute</button>
+          <span class="grow"></span>
           <span class="text-xs text-muted" x-text="churnMeta"></span>
+          <span class="kl-help" tabindex="0" title="New data is content that first appeared in a snapshot during the window. Many versions of few files means the same files are rewritten again and again; they are often worth excluding. Data shared by two paths counts for both.">?</span>
+          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false">
+            <button class="kl-btn icon" @click="open = !open" title="More">⋯</button>
+            <div class="kl-menu" x-show="open" x-cloak>
+              <button @click="open = false; loadChurn(true)">Recompute now</button>
+              <button @click="open = false; csv('#churnTable','churn')">Export CSV</button>
+            </div>
+          </span>
         </div>
-        <p class="text-[11px] text-muted">New data = content whose first appearance in any snapshot falls inside the window. A high <b>Versions</b> count against few files means the same files are being rewritten over and over — usually the thing worth excluding. Bytes are counted per path, so content shared between two paths is charged to both; the deduped total above is the true repo growth.</p>
         <div id="churnTable" class="flex-1 min-h-0"></div>
       </section>

@@ -431,7 +431,7 @@ const excludePart = {
         files = seen.size;
         byts = [...seen.values()].reduce((a, b) => a + b, 0);
       }
-      return `${complete ? "" : "up to "}${files.toLocaleString()} file${files === 1 ? "" : "s"} · ${this.fmtB(byts)}`;
+      return `${complete ? "" : "up to "}${files.toLocaleString(NUM_LOCALE)} file${files === 1 ? "" : "s"} · ${this.fmtB(byts)}`;
     },
 
     exMatches() {
@@ -447,7 +447,7 @@ const excludePart = {
       if (!p || p.error || p.files == null) return "";
       const shown = (p.examples || []).length;
       if (!p.capped && shown >= p.files) return "";
-      return `Showing ${shown} of ${Number(p.total_examples != null ? p.total_examples : p.files).toLocaleString()}, biggest first`;
+      return `Showing ${shown} of ${Number(p.total_examples != null ? p.total_examples : p.files).toLocaleString(NUM_LOCALE)}, biggest first`;
     },
     exPriceNote() {
       const d = this.exDialog;
@@ -818,7 +818,7 @@ const excludePart = {
       const d = this.exDialog;
       let files = 0, bytes = 0;
       for (const p of Object.values(d.prices || {})) { files += p.files; bytes += p.bytes; }
-      return `up to ${files.toLocaleString()} file${files === 1 ? "" : "s"} · ${this.fmtB(bytes)}`;
+      return `up to ${files.toLocaleString(NUM_LOCALE)} file${files === 1 ? "" : "s"} · ${this.fmtB(bytes)}`;
     },
 
     exMultiCoverageText() {

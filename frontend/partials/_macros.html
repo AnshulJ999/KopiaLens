@@ -1,5 +1,24 @@
 {# Shared Jinja macros for the partials. Imported, not included - a macro emits only when called. #}
 
+{#- Selection bar for a multi-select table: `scope` is 'search' or 'tree', `count` the state
+    field holding how many rows are selected. Shown only while something is selected. -#}
+{% macro selbar(scope, count) -%}
+<span class="kl-selbar" x-show="{{ count }} > 0" x-cloak data-testid="{{ scope }}-selbar">
+  <b x-text="{{ count }} + ' selected'"></b>
+  <button class="kl-btn quiet" @click="openSelection('{{ scope }}')">Details</button>
+  <button class="kl-btn quiet" @click="selRestore('{{ scope }}')">Restore…</button>
+  <button class="kl-btn quiet" @click="selExclude('{{ scope }}')">Exclude…</button>
+  <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
+    <button class="kl-btn dangerline" @click="open = !open" :aria-expanded="open">Delete ▾</button>
+    <div class="kl-menu" x-show="open" x-cloak>
+      <button class="dg" @click="open = false; selDelete('{{ scope }}')">Delete from backups…</button>
+      <button class="dg" @click="open = false; selExclude('{{ scope }}', 'delete', $event)">Exclude &amp; delete… <span class="protag" x-show="proTag('exclude_delete')" :title="proTagTitle()">PRO</span></button>
+    </div>
+  </span>
+  <button class="kl-btn quiet" @click="clearSelection('{{ scope }}')" title="Clear the selection (Esc)">Clear</button>
+</span>
+{%- endmacro %}
+
 {#- The run bar's results area (dry run / preview output). `st` is the state expression,
     e.g. 'detail.rfDry' - the object carries {running, done, ok, output, truncated, log,
     elapsed, snapshots, final_line, mode, error} and is initialised with its owner. -#}

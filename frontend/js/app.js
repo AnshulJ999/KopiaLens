@@ -33,8 +33,12 @@ document.addEventListener("alpine:init", () => {
       return this.themeIsDark();
     },
     timeFmt: localStorage.getItem("kl-timefmt") || "absolute",
+    numberStyle: "system", dateStyle: "system", clock: "system",   // Settings > Appearance (util.js setFormatStyles)
     indexStatus: {},
     sources: [], selectedSource: "",
+    // Each tab remembers its own source per repo; "*ALL*" = all sources.
+    snapSourceByRepo: {}, treeSourceByRepo: {},
+    searchSelCount: 0, treeSelCount: 0, snapSelCount: 0,   // rows selected in Search / Tree (their selection bars)
     snapshots: [], selectedSnapshot: "",
     showChurn: localStorage.getItem("kl-churn") === "1",
     analyzing: false,
@@ -51,7 +55,7 @@ document.addEventListener("alpine:init", () => {
     searchTotal: 0, searchEmpty: false, searchPage: 1, searchPageSize: "500", searchSort: "size", searchDir: "desc",
     pageSizes: ["100", "200", "500", "1000", "2000", "5000", "10000", "Infinite"],
     showFilters: false, minGb: "", maxGb: "", dateFrom: "", dateTo: "", minVersions: "", sharedMin: "", recentBackup: "",
-    dedupe: false, treeDedupe: false, reclaimMap: {},
+    dedupe: false, dedupeBy: "path", headerSearchOnly: false, treeDedupe: false, reclaimMap: {},
     showRestore: false, restore: null, showDiff: false, diffText: "", diffBusy: false,
     fb: null,   // in-app folder browser (actions.js)
     folderPicker: "auto", mountDir: "", mountHostPath: "",
@@ -67,7 +71,7 @@ document.addEventListener("alpine:init", () => {
     ob: null, cx: null, repoMenu: false, repoAdd: false, repoDlg: null, repoChecks: {}, kopiaInfo: null, repoKopiaEdit: null,
     policyKeys: ["latest", "hourly", "daily", "weekly", "monthly", "annual"],
     policy: { latest: 100, hourly: 96, daily: 30, weekly: 52, monthly: 36, annual: 5 },
-    simMode: "all", simMeta: "", simText: "", actionText: "",
+    simMode: "all", simMeta: "", simText: "", actionText: "", simEmpty: true, simPolicyByRepo: {}, _simRepo: null,
     mounts: [],
     statsData: null, blobStats: "", blobLoading: false, _statsLoading: false,
     auditRows: [], auditSize: 0,
@@ -161,6 +165,12 @@ document.addEventListener("alpine:init", () => {
     fmtDate(s) { return fmtDate(s); },
     fmtDur(s) { return fmtDur(s); },
     shortSource(s) { return sourcePath(s); },
+    midTrunc(s, n) { return midTrunc(s, n); },
+    // The source the open tab is showing, for the tab bar ("" when the tab has none).
+    navSource() {
+      const s = { tree: this.selectedSource, snapshots: this.snapSource, search: this.searchSource }[this.active];
+      return s && s !== "*ALL*" ? sourcePath(s) : "";
+    },
     sourceRoot() { return this.selectedSource === "*ALL*" ? "" : sourcePath(this.selectedSource); },
     treePrefix: "",
 
@@ -183,6 +193,7 @@ document.addEventListener("alpine:init", () => {
     // Escape closes the topmost panel only. The confirm owns the first check (Cancel on Escape);
     // a panel that holds edits asks before dropping them, and Settings needs no ask (it autosaves).
     async escClose() {
+      if (closeTableMenu()) return;   // an open table menu sits above everything
       if (this.confirmBox) { this.confirmResolve(false); return; }
       if (this.proNotice) { this.proNotice = null; return; }
       if (this.fb) { this.fbClose(null); return; }
@@ -220,7 +231,27 @@ document.addEventListener("alpine:init", () => {
         return;
       }
       if (this.polLeaveBox) { this.polLeaveBox = null; return; }
+      if (this.polNewBox) { this.polNewBox = null; return; }
       if (this.detail) { this.detail = null; return; }
+      const t = this._activeTable();   // nothing open: Escape clears the table's selection
+      if (t) t.deselectRow();
+    },
+    // The multi-select table on the open tab, if any.
+    _activeTable() {
+      const id = { search: "#searchTable", tree: "#treeTable", snapshots: "#snapshotsTable" }[this.active];
+      const el = id && document.querySelector(id);
+      return el && el._tabulator ? el._tabulator : null;
+    },
+    // Ctrl+A in a table tab selects every row on the page (not inside a text field or a panel).
+    _selectAllKey(e) {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "a") return;
+      const tag = (e.target && e.target.tagName) || "";
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) || (e.target && e.target.isContentEditable)) return;
+      if (this.detail || this.showSettings || this.showDel || this.showRemove || this.showExclude || this.confirmBox) return;
+      const t = this._activeTable();
+      if (!t) return;
+      e.preventDefault();
+      t.selectRow("active");
     },
     async escCloseExclude() {
       if (this.flow) return this.flowCancel();
@@ -291,7 +322,14 @@ document.addEventListener("alpine:init", () => {
         this.backend = data.settings?.listing_backend || "subprocess";
         const _ps = String(kl.page_size || 500);  // snap to a valid <option> so the select can't visually revert to 100
         this.searchPageSize = this.pageSizes.includes(_ps) ? _ps : "500";
-        this.snapSource = kl.snap_source || "*ALL*";  // snapshots-view scope (persisted, default All sources)
+        this.snapSourceByRepo = kl.snap_source_by_repo || {};
+        this.treeSourceByRepo = kl.tree_source_by_repo || {};
+        this.simPolicyByRepo = kl.sim_policy_by_repo || {};
+        this.snapSource = this.snapSourceByRepo[this.repo] || kl.snap_source || "*ALL*";  // default All sources
+        this.numberStyle = kl.number_style || "system";
+        this.dateStyle = kl.date_style || "system";
+        this.clock = String(kl.clock || "system");
+        setFormatStyles(kl);
         this.panelLayout = kl.panel_layout === "tabbed" ? "tabbed" : "classic";  //
         this.polLayout = kl.policy_layout === "scroll" ? "scroll" : "tabs";
         this.polLeave = kl.policy_leave === "keep" ? "keep" : "ask";
@@ -300,6 +338,8 @@ document.addEventListener("alpine:init", () => {
         this.searchSort = kl.search_sort || "size";
         this.searchDir = kl.search_dir || "desc";
         this.dedupe = !!kl.search_dedupe;
+        this.dedupeBy = kl.search_dedupe_by === "content" ? "content" : "path";
+        this.headerSearchOnly = kl.header_search_only === true;
         this.recentBackup = kl.recent_backup || "";  // "recently backed up" preset (days; "" = Any)
         this.treeDedupe = !!kl.tree_dedupe;
         this.treeMode = kl.tree_mode || "full";
@@ -329,6 +369,7 @@ document.addEventListener("alpine:init", () => {
         } else {
           if (this.repoKind === "server") this.active = "snapshots";
           await this.refreshBase();
+          this.selectedSource = this._rememberedTreeSource();
           if (this.indexStatus.building) this.pollIndex();  // show progress for the auto-triggered (migration) rebuild
           if (this.repoKind === "server") await this.activate();
           else if (!this._neverIndexed()) await this.loadDashboard();
@@ -339,7 +380,7 @@ document.addEventListener("alpine:init", () => {
       this.armJobChip();
       // One Escape handler for every panel: it closes the TOPMOST one and nothing else, so a
       // confirm never resolves and closes the panel under it in the same keypress.
-      window.addEventListener("keydown", (e) => { if (e.key === "Escape") this.escClose(); });
+      window.addEventListener("keydown", (e) => { if (e.key === "Escape") this.escClose(); else this._selectAllKey(e); });
       window.addEventListener("beforeunload", (e) => {
         if (this.polStageCount()) { e.preventDefault(); e.returnValue = ""; }
       });
@@ -463,9 +504,21 @@ document.addEventListener("alpine:init", () => {
         if (String(this.active).startsWith("bz-")) this.active = "dashboard";  // coming back from BZ
         if (this.repoKind === "server" && !this.serverTabs.some((t) => t.id === this.active)) this.active = "snapshots";
         await this.refreshBase(true);
-        this.selectedSource = this.sources[0] || "";
+        this.selectedSource = this._rememberedTreeSource();
+        this.snapSource = this.snapSourceByRepo[this.repo] || "*ALL*";
         await this.activate();
       });
+    },
+    // The Tree's saved source for this repo when it still exists, else the first source.
+    _rememberedTreeSource() {
+      const saved = this.treeSourceByRepo[this.repo];
+      if (saved === "*ALL*" || (saved && this.sources.includes(saved))) return saved;
+      return this.sources[0] || "";
+    },
+    // Re-apply the number/date style and redraw the open tab.
+    applyFormats() {
+      setFormatStyles({ number_style: this.numberStyle, date_style: this.dateStyle, clock: this.clock });
+      this.activate();
     },
 
     async refreshBase(force = false) {
@@ -488,7 +541,7 @@ document.addEventListener("alpine:init", () => {
       if (this.active === "tree") return this.openTree();
       if (this.active === "search") return this.loadSearch();
       if (this.active === "churn") return this.loadChurn();
-      if (this.active === "simulate") return;  // heavy - user clicks Run
+      if (this.active === "simulate") return this.openSimulate();  // a saved result only; Run computes
       if (this.active === "stats") return this.statsData ? null : this.loadStats();
       if (this.active === "logs") return this.loadLogs();
       if (this.active === "actions") return this.loadMounts();
@@ -569,7 +622,7 @@ document.addEventListener("alpine:init", () => {
     // changed - the delta, not a full point-in-time tree. Value = the week's last-day ISO date.
     get treeWeekOptions() {
       const iso = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
-      const lbl = (d) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      const lbl = (d) => d.toLocaleDateString(dateLocale(), { month: "short", day: "numeric" });
       const out = [];
       const end = new Date();
       end.setDate(end.getDate() + ((7 - end.getDay()) % 7));  // this week's Sunday
@@ -587,16 +640,9 @@ document.addEventListener("alpine:init", () => {
       return (el && el._tabulator) ? el._tabulator.getSelectedData() : [];
     },
 
-    // ---- Range select (Shift+Click) — shared by search + snapshots tables ----
-    _rangeClick(table, e, row) {
-      const rows = table.getRows("active");                              // current display order
-      const idx = rows.findIndex((r) => r.getData() === row.getData());  // identity match (indexOf was unreliable)
-      if (idx < 0) return;
-      if (e.shiftKey && table._rangeAnchor != null && table._rangeAnchor >= 0) {
-        const a = Math.min(table._rangeAnchor, idx), b = Math.max(table._rangeAnchor, idx);
-        for (let k = a; k <= b; k++) rows[k].select();
-      }
-      table._rangeAnchor = idx;
+    clearSelection(scope) {
+      const el = document.querySelector(scope === "tree" ? "#treeTable" : "#searchTable");
+      if (el && el._tabulator) el._tabulator.deselectRow();
     },
 
     csv(id, name) { downloadTable(id, name); },

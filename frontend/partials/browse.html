@@ -43,7 +43,7 @@
                       <span x-show="e.type !== 'd'" class="pl-[1.375rem]" x-text="e.name"></span>
                     </td>
                     <td class="text-right px-2 tabular-nums whitespace-nowrap" x-text="fmtB(e.size)"></td>
-                    <td class="text-right px-2 tabular-nums hidden sm:table-cell" x-text="e.files == null ? '' : Number(e.files).toLocaleString()"></td>
+                    <td class="text-right px-2 tabular-nums hidden sm:table-cell" x-text="e.files == null ? '' : Number(e.files).toLocaleString(NUM_LOCALE)"></td>
                     <td class="px-2 whitespace-nowrap text-muted hidden sm:table-cell" x-text="e.mtime ? humanTime(e.mtime) : ''"></td>
                     <td class="px-2 text-right"><button type="button" class="kl-btn quiet" @click="browseRestore(e)">Restore…</button></td>
                   </tr>

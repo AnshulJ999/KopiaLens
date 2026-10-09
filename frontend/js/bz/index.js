@@ -30,7 +30,7 @@
     const m = s.match(/^(\d{4})(\d{2})(\d{2})/);
     if (!m) return s;
     const dt = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`);
-    return isNaN(dt.getTime()) ? s : dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    return isNaN(dt.getTime()) ? s : fmtDate(dt);
   };
 
 const bzIndexPart = {
@@ -98,14 +98,14 @@ const bzIndexPart = {
       const r = s.remaining || {};
       if (r.remaining_files == null && r.remaining_bytes == null) return "BZ";
       if (!Number(r.remaining_files) && !Number(r.remaining_bytes)) return "⬆ nothing pending";
-      return `⬆ ${fmtBytes(Number(r.remaining_bytes || 0))} · ${Number(r.remaining_files || 0).toLocaleString()} files left`;
+      return `⬆ ${fmtBytes(Number(r.remaining_bytes || 0))} · ${Number(r.remaining_files || 0).toLocaleString(NUM_LOCALE)} files left`;
     },
     bzStatusTitle() {
       const s = this.bzStatus;
       const parts = [];
       if (s.built) {
-        parts.push(`${Number(s.backed_files || 0).toLocaleString()} backed`);
-        parts.push(`${Number(s.total_files || 0).toLocaleString()} on disk`);
+        parts.push(`${Number(s.backed_files || 0).toLocaleString(NUM_LOCALE)} backed`);
+        parts.push(`${Number(s.total_files || 0).toLocaleString(NUM_LOCALE)} on disk`);
       }
       const ts = Number(s.last_check_ts || 0);
       if (ts) {

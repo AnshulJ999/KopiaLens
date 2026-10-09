@@ -36,7 +36,7 @@
     <template x-for="(ft, i) in (detail.file_types || [])" :key="i">
       <div class="li">
         <span class="font-mono trunc grow" x-text="ft.ext === null ? 'other' : (ft.ext ? '.' + ft.ext : 'no extension')"></span>
-        <span class="num" style="color:var(--muted)" x-text="fmtPhys(ft.physical) + ' · ' + Number(ft.files || 0).toLocaleString() + ' files'"></span>
+        <span class="num" style="color:var(--muted)" x-text="fmtPhys(ft.physical) + ' · ' + Number(ft.files || 0).toLocaleString(NUM_LOCALE) + ' files'"></span>
       </div>
     </template>
   </div>
@@ -75,8 +75,8 @@
               <span class="pill" x-show="!r.is_folder && r.deleted_files">deleted from disk</span>
             </td>
             <td class="px-2 py-1 text-right num" x-text="fmtPhys(r.physical)"></td>
-            <td class="px-2 py-1 text-right num" x-text="Number(r.files || 0).toLocaleString()"></td>
-            <td class="px-2 py-1 text-right num" x-text="Number(r.versions || 0).toLocaleString()"></td>
+            <td class="px-2 py-1 text-right num" x-text="Number(r.files || 0).toLocaleString(NUM_LOCALE)"></td>
+            <td class="px-2 py-1 text-right num" x-text="Number(r.versions || 0).toLocaleString(NUM_LOCALE)"></td>
             <td class="px-2 py-1 whitespace-nowrap" x-text="r.last_seen ? humanTime(r.last_seen) : '—'"></td>
           </tr>
         </template>
@@ -329,7 +329,7 @@
   <div class="kl-card"><div class="k" x-text="detail.physical_dedup != null ? 'Physical (deduped, all versions)' : 'Physical (approx)'"></div><div class="v" x-text="detail.heavyLoading ? '…' : fmtPhys((detail.physical_dedup != null) ? detail.physical_dedup : detail.physical)"></div></div>
   <div class="kl-card good"><div class="k">Frees if deleted</div><div class="v" x-text="detail.heavyLoading ? 'computing…' : fmtPhys(detail.freeable)"></div></div>
   <div class="kl-card"><div class="k">Shared elsewhere</div><div class="v" x-text="detail.heavyLoading ? '…' : fmtPhys(detail.shared)"></div></div>
-  <div class="kl-card"><div class="k">Versions</div><div class="v" x-text="Number(detail.versions || 0).toLocaleString()"></div></div>
+  <div class="kl-card"><div class="k">Versions</div><div class="v" x-text="Number(detail.versions || 0).toLocaleString(NUM_LOCALE)"></div></div>
 </div>
 <div class="kl-note" x-show="detail.physical_dedup == null">counting duplicates twice until the exact figure lands</div>
 <div class="kl-note">Frees if deleted = packed bytes that nothing else keeps alive. Shared bytes stay until every other copy goes too.</div>
@@ -360,7 +360,7 @@
         </div>
         <div class="ml-auto shrink-0 kl-note" style="text-align:right">
           <div x-text="fmtPhys(sc.physical)"></div>
-          <div x-text="Number(sc.files || 0).toLocaleString() + ' files'"></div>
+          <div x-text="Number(sc.files || 0).toLocaleString(NUM_LOCALE) + ' files'"></div>
         </div>
       </div>
     </template>
@@ -384,7 +384,7 @@
     <template x-for="ch in (detail.children || [])" :key="ch.child">
       <div class="li">
         <span class="font-mono trunc grow" x-text="ch.child"></span>
-        <span class="num" style="color:var(--muted)" x-text="fmtPhys(ch.physical) + ' · ' + Number(ch.files || 0).toLocaleString() + ' files'"></span>
+        <span class="num" style="color:var(--muted)" x-text="fmtPhys(ch.physical) + ' · ' + Number(ch.files || 0).toLocaleString(NUM_LOCALE) + ' files'"></span>
       </div>
     </template>
   </div>
@@ -442,8 +442,8 @@
               </template>
               <template x-if="detail.kind === 'folder'">
                 <span>
-                  <span class="num" x-text="Number(detail.files || 0).toLocaleString()"></span> files ·
-                  <span class="num" x-text="Number(detail.deleted_files || 0).toLocaleString()"></span> deleted from disk
+                  <span class="num" x-text="Number(detail.files || 0).toLocaleString(NUM_LOCALE)"></span> files ·
+                  <span class="num" x-text="Number(detail.deleted_files || 0).toLocaleString(NUM_LOCALE)"></span> deleted from disk
                   <span x-show="detail.first_seen"> · first backed up <span x-text="fmtDate(detail.first_seen)"></span></span>
                 </span>
               </template>

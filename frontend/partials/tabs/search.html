@@ -1,75 +1,99 @@
+{% from "partials/_macros.html" import selbar %}
       <section x-show="active==='search'" class="h-full flex flex-col gap-2">
-        <div class="flex flex-wrap items-center gap-2">
-          <input x-model="query" @input.debounce.300ms="loadSearch()" class="fld border border-bd bg-surface min-w-[22rem]" placeholder="Search paths (matches the full path)">
-          <select x-model="searchSource" @change="loadSearch()" class="fld border border-bd bg-surface max-w-[18rem]">
+        <div class="kl-toolbar">
+          <input x-show="!headerSearchOnly" x-model="query" @input.debounce.300ms="loadSearch()" class="fld border border-bd bg-surface min-w-[18rem] flex-1 max-w-[30rem]" placeholder="Search paths" title="Matches anywhere in the full path">
+          <select x-model="searchSource" @change="loadSearch()" class="fld border border-bd bg-surface max-w-[16rem]" title="Source">
             <option value="">All sources</option>
             <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
           </select>
-          <input x-model="searchExt" @input.debounce.300ms="loadSearch()" class="fld w-36 border border-bd bg-surface" placeholder="ext: vhdx,iso,7z">
-          <input x-model="searchExtExclude" @input.debounce.300ms="loadSearch()" class="fld w-36 border border-warn-bd bg-surface" placeholder="hide ext: mp4,mkv" title="Hide these extensions (focus on the rest)">
-          <label class="flex items-center gap-1 text-xs" title="Files first backed up (first appeared in a snapshot) within the chosen window - new/churning files">Backed up
-            <select x-model="recentBackup" @change="changeRecentBackup()" class="fld h-7 border border-bd bg-surface">
-              <option value="">Any</option>
-              <option value="1">Last 24h</option>
-              <option value="7">Last 7 days</option>
-              <option value="30">Last 30 days</option>
-            </select>
-          </label>
-          <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="deletedOnly" @change="loadSearch()"> Deleted from disk</label>
-          <label class="flex items-center gap-1.5 text-xs"><input type="checkbox" x-model="overOneGb" @change="loadSearch()"> &gt;1 GB</label>
-          <button @click="showFilters=!showFilters" class="h-8 rounded border border-bd px-2 text-xs" :class="showFilters ? 'bg-sel' : ''" title="More filters">⛃ Filters</button>
-          <button @click="toggleDedupe()" class="h-8 rounded border border-bd px-2 text-xs" :class="dedupe ? 'bg-sel' : ''" title="Dedupe: collapse path/source copies of the same content into one row">⧉ Dedupe</button>
-          <button @click="toggleGroupByFolder()" class="h-8 rounded border border-bd px-2 text-xs" :class="groupByFolder ? 'bg-sel' : ''" title="Group results by folder (find bloated folders), ranked by physical size">⊞ By folder</button>
-          <button @click="exportSearch()" class="h-8 rounded border border-bd px-2 text-xs" title="Export the FULL filtered set to CSV">⬇ CSV (all)</button>
-          <button x-show="!groupByFolder" @click="openRemoveFromSearch()" class="h-8 rounded border border-danger text-danger px-2 text-xs font-medium" title="Delete every file that matches this search">🗑 Delete matching…</button>
-          <span class="ml-2 flex items-center gap-1">
-            <span class="text-[11px] text-muted">selected:</span>
-            <button @click="selRestore('search')" class="h-8 rounded border border-bd px-2 text-xs" title="Restore the selected items">Restore…</button>
-            <button @click="selExclude('search')" class="h-8 rounded border border-bd px-2 text-xs" title="Add exclusion rules for the selected files">Exclude…</button>
-            <button @click="selDelete('search')" class="h-8 rounded border border-danger-bd text-danger px-2 text-xs" title="Delete the selected files from backups">Delete…</button>
-            <button @click="selExclude('search', 'delete', $event)" class="h-8 rounded border border-danger-bd text-danger px-2 text-xs" title="Exclude the selected files, then delete them from backups">Exclude &amp; delete… <span class="protag" x-show="proTag('exclude_delete')" :title="proTagTitle()">PRO</span></button>
+          <label title="Only files that are no longer on disk"><input type="checkbox" x-model="deletedOnly" @change="loadSearch()"> Deleted from disk</label>
+          <label title="Only files of 1 GB or more"><input type="checkbox" x-model="overOneGb" @change="loadSearch()"> Over 1 GB</label>
+          <template x-if="searchChips().length <= 3">
+            <span class="inline-flex flex-wrap gap-1">
+              <template x-for="c in searchChips()" :key="c.key">
+                <span class="kl-fchip"><b x-text="c.label"></b><span x-text="c.value"></span><button @click="clearChip(c.key)" :title="'Clear ' + c.label" aria-label="Clear filter">✕</button></span>
+              </template>
+            </span>
+          </template>
+          <template x-if="searchChips().length > 3">
+            <span class="kl-fchip" :title="searchChips().map((c) => c.label + ' ' + c.value).join(' · ')"><span x-text="searchChips().length + ' filters'"></span><button @click="clearFilters()" title="Clear all filters" aria-label="Clear all filters">✕</button></span>
+          </template>
+          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
+            <button class="kl-btn" :class="open ? 'on' : ''" @click="open = !open" :aria-expanded="open" data-testid="search-more-filters">More filters ▾</button>
+            <div class="kl-menu p-3 space-y-2 text-xs" style="left:0;right:auto;min-width:430px" x-show="open" x-cloak>
+              <div class="flex items-center gap-2"><span class="w-28 text-muted">Extensions</span>
+                <input x-model="searchExt" @input.debounce.300ms="loadSearch()" class="fld h-7 w-28 border border-bd bg-surface" placeholder="iso, 7z" title="Only these extensions">
+                <span class="text-muted">Hide</span>
+                <input x-model="searchExtExclude" @input.debounce.300ms="loadSearch()" class="fld h-7 w-28 border border-bd bg-surface" placeholder="mp4, mkv" title="Leave out these extensions"></div>
+              <div class="flex items-center gap-2"><span class="w-28 text-muted">First backed up</span>
+                <select x-model="recentBackup" @change="changeRecentBackup()" class="fld h-7 border border-bd bg-surface" title="When the file first appeared in a snapshot">
+                  <option value="">Any time</option>
+                  <option value="1">In the last 24 hours</option>
+                  <option value="7">In the last 7 days</option>
+                  <option value="30">In the last 30 days</option>
+                </select></div>
+              <div class="flex items-center gap-2"><span class="w-28 text-muted">Size (GB)</span>
+                <input type="number" min="0" step="0.1" x-model="minGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="min">
+                <span>–</span>
+                <input type="number" min="0" step="0.1" x-model="maxGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="max"></div>
+              <div class="flex items-center gap-2"><span class="w-28 text-muted">Last seen</span>
+                <input type="date" x-model="dateFrom" @change="loadSearch()" class="fld h-7 border border-bd bg-surface">
+                <span>–</span>
+                <input type="date" x-model="dateTo" @change="loadSearch()" class="fld h-7 border border-bd bg-surface"></div>
+              <div class="flex items-center gap-2"><span class="w-28 text-muted">At least</span>
+                <input type="number" min="0" x-model="minVersions" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-bd bg-surface" placeholder="0"> versions
+                <input type="number" min="0" x-model="sharedMin" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-bd bg-surface ml-2" placeholder="2" title="Files whose exact content sits at this many paths or more"> paths with the same content</div>
+              <div class="flex justify-end"><button @click="clearFilters()" class="kl-btn quiet">Clear filters</button></div>
+            </div>
+          </span>
+          <button @click="toggleDedupe()" class="kl-btn" :class="dedupe ? 'on' : ''" :title="dedupeBy === 'content' ? 'Show files with identical content once' : 'Show each file path once, even when several sources hold it'">Dedupe</button>
+          <button @click="toggleGroupByFolder()" class="kl-btn" :class="groupByFolder ? 'on' : ''" title="Group results by folder to find the biggest ones">By folder</button>
+          <span class="grow"></span>
+          {{ selbar('search', 'searchSelCount') }}
+          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
+            <button class="kl-btn icon" @click="open = !open" title="More" data-testid="search-more">⋯</button>
+            <div class="kl-menu" x-show="open" x-cloak>
+              <div class="hd">This search</div>
+              <button @click="open = false; exportSearch()" x-text="groupByFolder ? 'Export CSV' : 'Export CSV (all ' + searchTotal.toLocaleString(NUM_LOCALE) + ')'"></button>
+              <template x-if="!groupByFolder">
+                <div><div class="sep"></div>
+                  <button class="dg" @click="open = false; openRemoveFromSearch()" x-text="'Delete all ' + searchTotal.toLocaleString(NUM_LOCALE) + ' matching…'"></button></div>
+              </template>
+            </div>
           </span>
         </div>
-        <div x-show="showFilters" class="flex flex-wrap items-center gap-2 text-xs rounded border border-bd-soft bg-surface2/40 p-2">
-          <label class="flex items-center gap-1">Size GB <input type="number" min="0" step="0.1" x-model="minGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="min"></label>
-          <span>–</span>
-          <input type="number" min="0" step="0.1" x-model="maxGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="max">
-          <label class="flex items-center gap-1 ml-2">Last seen <input type="date" x-model="dateFrom" @change="loadSearch()" class="fld h-7 border border-bd bg-surface"></label>
-          <span>–</span>
-          <input type="date" x-model="dateTo" @change="loadSearch()" class="fld h-7 border border-bd bg-surface">
-          <label class="flex items-center gap-1 ml-2">Min versions <input type="number" min="0" x-model="minVersions" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-bd bg-surface" placeholder="0"></label>
-          <label class="flex items-center gap-1 ml-2" title="Files whose exact content backs at least N distinct paths (exact-duplicate candidates)">Shared ≥ <input type="number" min="0" x-model="sharedMin" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-bd bg-surface" placeholder="2"></label>
-          <button @click="clearFilters()" class="h-7 rounded border border-bd px-2 ml-1">Clear</button>
-        </div>
-        <div x-show="groupByFolder" class="flex flex-wrap items-center gap-2 text-xs rounded border border-warn-bd bg-warn-bg/20 p-2">
-          <span class="font-medium">Group by folder</span>
-          <label class="flex items-center gap-1">Depth <input type="number" min="1" max="20" x-model.number="groupDepth" @change="changeGroupDepth()" class="fld h-7 w-16 border border-bd bg-surface"></label>
-          <label class="flex items-center gap-1">Min GB <input type="number" min="0" step="0.1" x-model.number="groupMinGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>
-          <label class="flex items-center gap-1">Min files <input type="number" min="0" x-model.number="groupMinFiles" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>
-          <span class="text-muted">Double-click a folder → drill into its files → batch-remove.</span>
-        </div>
-        <div class="flex flex-wrap items-center gap-2 text-xs">
-          <span class="text-muted font-medium" x-text="omniMeta"></span>
-          <span class="ml-auto flex items-center gap-1.5" x-show="!groupByFolder">
-            <span class="text-muted">Per page</span>
-            <select x-model="searchPageSize" @change="changePageSize()" class="fld h-7 border border-bd bg-surface text-xs">
-              <template x-for="n in pageSizes" :key="n"><option :value="n" x-text="n"></option></template>
-            </select>
-            <template x-if="searchPageSize!=='Infinite'">
-              <span class="flex items-center gap-1">
-                <button @click="setSearchPage(1)" :disabled="searchPage<=1" class="h-7 px-2 rounded border border-bd disabled:opacity-40">«</button>
-                <button @click="setSearchPage(searchPage-1)" :disabled="searchPage<=1" class="h-7 px-2 rounded border border-bd disabled:opacity-40">‹</button>
-                <span class="px-1">Page <span x-text="searchPage"></span> / <span x-text="searchPages()"></span></span>
-                <button @click="setSearchPage(searchPage+1)" :disabled="searchPage>=searchPages()" class="h-7 px-2 rounded border border-bd disabled:opacity-40">›</button>
-                <button @click="setSearchPage(searchPages())" :disabled="searchPage>=searchPages()" class="h-7 px-2 rounded border border-bd disabled:opacity-40">»</button>
-              </span>
-            </template>
-          </span>
+        <div x-show="groupByFolder" class="kl-toolbar text-xs">
+          <span class="font-medium">By folder</span>
+          <label>Depth <input type="number" min="1" max="20" x-model.number="groupDepth" @change="changeGroupDepth()" class="fld h-7 w-16 border border-bd bg-surface"></label>
+          <label>Min GB <input type="number" min="0" step="0.1" x-model.number="groupMinGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>
+          <label>Min files <input type="number" min="0" x-model.number="groupMinFiles" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>
+          <span class="kl-help" tabindex="0" title="Folders ranked by physical size. Double-click a folder to open it; right-click to see its files or delete it.">?</span>
         </div>
         <div x-show="!groupByFolder && searchEmpty" class="flex flex-wrap items-center gap-2 text-sm text-muted">
           <span x-text="searchEmptyText()"></span>
-          <button x-show="searchFiltersOn()" @click="clearFilters()" class="h-7 rounded border border-bd px-2 text-xs">Clear filters</button>
+          <button x-show="searchFiltersOn()" @click="clearFilters()" class="kl-btn">Clear filters</button>
         </div>
         <div id="searchTable" class="flex-1 min-h-0" x-show="!groupByFolder"></div>
         <div id="groupTable" class="flex-1 min-h-0" x-show="groupByFolder"></div>
+        <div class="kl-tablefoot" x-show="omniMeta">
+          <b x-text="omniMeta"></b>
+          <span class="grow"></span>
+          <template x-if="!groupByFolder">
+            <span class="flex items-center gap-1.5">
+              <span>Per page</span>
+              <select x-model="searchPageSize" @change="changePageSize()" class="fld h-6 border border-bd bg-surface text-xs">
+                <template x-for="n in pageSizes" :key="n"><option :value="n" x-text="n"></option></template>
+              </select>
+              <template x-if="searchPageSize!=='Infinite' && searchPages() > 1">
+                <span class="flex items-center gap-1">
+                  <button @click="setSearchPage(1)" :disabled="searchPage<=1" class="h-6 px-2 rounded border border-bd disabled:opacity-40" title="First page">«</button>
+                  <button @click="setSearchPage(searchPage-1)" :disabled="searchPage<=1" class="h-6 px-2 rounded border border-bd disabled:opacity-40" title="Previous page">‹</button>
+                  <span class="px-1">Page <span x-text="searchPage"></span> of <span x-text="searchPages()"></span></span>
+                  <button @click="setSearchPage(searchPage+1)" :disabled="searchPage>=searchPages()" class="h-6 px-2 rounded border border-bd disabled:opacity-40" title="Next page">›</button>
+                  <button @click="setSearchPage(searchPages())" :disabled="searchPage>=searchPages()" class="h-6 px-2 rounded border border-bd disabled:opacity-40" title="Last page">»</button>
+                </span>
+              </template>
+            </span>
+          </template>
+        </div>
       </section>

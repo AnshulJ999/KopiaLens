@@ -238,7 +238,7 @@ def _simall_cache(repo: str, policy: dict) -> str:
     return f"simall_repo{repo}_{h.hexdigest()}"
 
 
-def simulate_all(repo: str, policy: dict[str, int], refresh: bool = False) -> dict:
+def simulate_all(repo: str, policy: dict[str, int], refresh: bool = False, cached_only: bool = False) -> dict | None:
     """Simulate retention across EVERY source in one combined pass. Per-source reclaim is the
     content freed and attributable to that source alone (global refcount == 1); the combined
     total is the true union (content that leaves no kept snapshot anywhere) - NOT the per-source
@@ -254,6 +254,8 @@ def simulate_all(repo: str, policy: dict[str, int], refresh: bool = False) -> di
         if data is not None:
             data["cached"] = True
             return data
+    if cached_only:        # opening the tab shows a saved result only; it never starts a run
+        return None
 
     srcs = sources_index(repo)
     smap = _size_map(repo)

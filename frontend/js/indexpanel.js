@@ -55,12 +55,12 @@ const indexPanelPart = {
       if (p.phase) bits.push(p.phase);
       const sync = p.sync || null;
       if (sync && (sync.snapshots || sync.folders || sync.done)) {
-        bits.push(`${Number(sync.done || 0).toLocaleString()} synced` +
-          (sync.snapshots ? ` · ${Number(sync.snapshots).toLocaleString()} snapshots` : "") +
-          (sync.folders ? ` · ${Number(sync.folders).toLocaleString()} folders` : ""));
+        bits.push(`${Number(sync.done || 0).toLocaleString(NUM_LOCALE)} synced` +
+          (sync.snapshots ? ` · ${Number(sync.snapshots).toLocaleString(NUM_LOCALE)} snapshots` : "") +
+          (sync.folders ? ` · ${Number(sync.folders).toLocaleString(NUM_LOCALE)} folders` : ""));
       }
       const seed = p.seed || null;
-      if (seed && seed.total) bits.push(`seed ${Number(seed.done || 0).toLocaleString()}/${Number(seed.total).toLocaleString()}`);
+      if (seed && seed.total) bits.push(`seed ${Number(seed.done || 0).toLocaleString(NUM_LOCALE)}/${Number(seed.total).toLocaleString(NUM_LOCALE)}`);
       if (p.current_source) bits.push(sourcePath(p.current_source));
       return bits.join(" · ");
     },
@@ -69,7 +69,7 @@ const indexPanelPart = {
       const s = st || this.ixs();
       const pct = this.indexPct(s);
       const counts = s.offline ? `Indexing ${s.indexed_snapshots || 0}/${s.snapshots || "?"}`
-        : s.building ? `${Number(s.indexed_snapshots || 0).toLocaleString()} of ${Number(s.snapshots || 0).toLocaleString()} snapshots`
+        : s.building ? `${Number(s.indexed_snapshots || 0).toLocaleString(NUM_LOCALE)} of ${Number(s.snapshots || 0).toLocaleString(NUM_LOCALE)} snapshots`
         : (s.never_indexed ? "Not indexed yet" : `Index ${s.indexed_snapshots || 0}/${s.snapshots || "?"}`);
       return counts + (pct == null ? "" : ` · ${pct}%`);
     },

@@ -207,10 +207,12 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                  sort: str = "size", direction: str = "desc", confirm_exists: bool = False,
                  max_size: int = 0, date_from: str | None = None, date_to: str | None = None,
                  min_versions: int = 0, shared_min: int = 0, dedupe: bool = False,
-                 ext_exclude: str | None = None, first_from: str | None = None) -> dict:
+                 ext_exclude: str | None = None, first_from: str | None = None,
+                 dedupe_by: str = "path") -> dict:
     """Search the pre-aggregated ``paths`` table. Returns the TRUE total count plus one page,
-    with sort + filters applied in SQL over the entire matched set. ``dedupe`` collapses all
-    path/source variations of the SAME content (group by content id) into one content-aware row.
+    with sort + filters applied in SQL over the entire matched set. ``dedupe`` merges rows:
+    ``dedupe_by="path"`` gives one row per file path (nested sources hold the same file; the
+    newest version's values are shown), ``"content"`` one row per identical content.
 
     Sorting by ``stored``/``frees`` uses the nightly ranked list (): ranked rows come first
     (each carrying its exact value in ``stored_all_versions``/``frees_all_versions``), unranked
@@ -240,7 +242,32 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
         where, params = _search_where(cur, query, deleted_only, min_size, source, ext, max_size,
                                       date_from, date_to, min_versions, shared_min, ext_exclude, first_from)
         where_sql = _where(where)
-        if dedupe:
+        by_path = dedupe and dedupe_by != "content"
+        if by_path:
+            total = cur.execute(
+                f"SELECT count(DISTINCT p.full_path) FROM pathx p WHERE {where_sql}", params).fetchone()[0]
+            rows = _rows(
+                cur,
+                f"""
+                SELECT arg_max(s.source, p.last_seen) AS source, p.full_path,
+                       arg_max(p.name, p.last_seen) AS name, arg_max(p.ext, p.last_seen) AS ext,
+                       arg_max(p.size, p.last_seen) AS size, arg_max(p.physical, p.last_seen) AS physical,
+                       max(p.exclusive) AS exclusive, max(p.versions) AS versions,
+                       min(p.first_seen) AS first_seen, max(p.last_seen) AS last_seen,
+                       bool_or(p.in_latest) AS in_latest, arg_max(c.content_id, p.last_seen) AS content_id
+                       {", max(r.value) AS ranked_value" if mat else ""}
+                FROM pathx p
+                JOIN src s ON s.src_id = p.src_id
+                LEFT JOIN cid c ON c.cid_id = p.cid_id
+                {join_sql}
+                WHERE {where_sql}
+                GROUP BY p.full_path
+                {_order_clause(sort, direction, "p.full_path", nulls_last=bool(mat))}
+                LIMIT ? OFFSET ?
+                """,
+                [*params, limit, offset],
+            )
+        elif dedupe:
             total = cur.execute(
                 f"SELECT count(DISTINCT p.cid_id) FROM pathx p "
                 f"WHERE {where_sql} AND p.cid_id IS NOT NULL",
@@ -286,6 +313,7 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                 """,
                 [*params, limit, offset],
             )
+        if not dedupe or by_path:
             # copies = how many distinct paths share each row's exact content (1 = unique); sources =
             # across how many SOURCES (KL10 - within-source copies keep nothing alive elsewhere). One
             # grouped query over just this page's content ids, then mapped back.
@@ -359,7 +387,7 @@ def search_export(repo: str, query: str = "", deleted_only: bool = False, min_si
                   sort: str = "size", direction: str = "desc", cap: int = 2_000_000,
                   max_size: int = 0, date_from: str | None = None, date_to: str | None = None,
                   min_versions: int = 0, shared_min: int = 0, ext_exclude: str | None = None,
-                  first_from: str | None = None, dedupe: bool = False):
+                  first_from: str | None = None, dedupe: bool = False, dedupe_by: str = "path"):
     """Every matching row (the full filtered set, not a page) in ``EXPORT_HEADER`` order.
 
     Stored/Frees come from the nightly ranked lists; a row outside them is left empty. Returns
@@ -391,7 +419,18 @@ def search_export(repo: str, query: str = "", deleted_only: bool = False, min_si
         fr_join = f"LEFT JOIN {fr} rf ON rf.key = m.cid_id" if fr else ""
         fr_val = "rf.value" if fr else "NULL::UBIGINT"
         st_val = "max(rs.value)" if st else "NULL::UBIGINT"
-        if dedupe:
+        by_path = dedupe and dedupe_by != "content"
+        if by_path:
+            base = f"""
+                SELECT arg_max(p.cid_id, p.last_seen) AS cid_id, arg_max(s.source, p.last_seen) AS source,
+                       p.full_path, arg_max(p.ext, p.last_seen) AS ext,
+                       arg_max(p.size, p.last_seen) AS size, arg_max(p.physical, p.last_seen) AS physical,
+                       max(p.versions) AS versions, min(p.first_seen) AS first_seen, max(p.last_seen) AS last_seen,
+                       bool_or(p.in_latest) AS in_latest, {st_val} AS stored_all
+                FROM pathx p JOIN src s ON s.src_id = p.src_id {st_join}
+                WHERE {where_sql}
+                GROUP BY p.full_path"""
+        elif dedupe:
             base = f"""
                 SELECT p.cid_id, arg_max(s.source, p.last_seen) AS source,
                        arg_max(p.full_path, p.last_seen) AS full_path, arg_max(p.ext, p.last_seen) AS ext,
@@ -403,12 +442,13 @@ def search_export(repo: str, query: str = "", deleted_only: bool = False, min_si
                 WHERE {where_sql} AND p.cid_id IS NOT NULL
                 GROUP BY p.cid_id"""
             counts, counts_join, src_col, copies_col = "", "", "m.sources", "m.copies"
-        else:
+        if not dedupe:
             base = f"""
                 SELECT p.cid_id, s.source, p.full_path, p.ext, p.size, p.physical, p.versions,
                        p.first_seen, p.last_seen, p.in_latest, {"rs.value" if st else "NULL::UBIGINT"} AS stored_all
                 FROM pathx p JOIN src s ON s.src_id = p.src_id {st_join}
                 WHERE {where_sql}"""
+        if not dedupe or by_path:
             # Src / Copies exactly as the table counts them: distinct sources and distinct paths
             # holding the same content anywhere in the repo.
             counts = """, cc AS (

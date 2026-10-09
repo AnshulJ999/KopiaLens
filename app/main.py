@@ -1262,7 +1262,7 @@ def _compose_html() -> str:
     are stamped onto <html> so the page paints in the saved theme before any JS runs."""
     kl = load_settings().get("kopialens", {})
     _THEMES = ("daylight", "parchment", "slate", "lilac", "ember", "midnight", "pine", "obsidian")
-    _DENSITY = ("compact", "normal", "comfortable")
+    _DENSITY = ("comfortable", "normal", "compact", "dense")
     html = _JINJA.get_template("index.html").render(
         asset_v=_asset_version(),
         theme=kl.get("theme") if kl.get("theme") in _THEMES else "system",

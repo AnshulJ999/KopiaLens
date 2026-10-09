@@ -166,7 +166,7 @@ const policiesPart = {
     polIgnoreFacts(f) {
       const rules = `${f.rule_count || 0} rule${f.rule_count === 1 ? "" : "s"}`;
       if (f.files == null) return rules;
-      return `${rules} · keeps out ${Number(f.files).toLocaleString()} files · ${this.fmtB(f.bytes || 0)}`;
+      return `${rules} · keeps out ${Number(f.files).toLocaleString(NUM_LOCALE)} files · ${this.fmtB(f.bytes || 0)}`;
     },
 
     // Own rules come from the detail payload (the DEFINED policy); empty until it lands.
@@ -341,12 +341,12 @@ const policiesPart = {
       if (r.error) return "error: " + r.error;
       if (r.files == null) return "unpriced";
       const dirs = r.dirs ? ` · ${r.dirs} dir${r.dirs === 1 ? "" : "s"}` : "";
-      return `${Number(r.files).toLocaleString()} files · ${fmtBytes(r.bytes || 0)}${dirs}`;
+      return `${Number(r.files).toLocaleString(NUM_LOCALE)} files · ${fmtBytes(r.bytes || 0)}${dirs}`;
     },
     polAddPreviewText() {
       const p = this.polAddPrice;
       if (!p || p.files == null) return "";
-      return "Would exclude " + Number(p.files).toLocaleString() + " files · " + fmtBytes(p.bytes || 0);
+      return "Would exclude " + Number(p.files).toLocaleString(NUM_LOCALE) + " files · " + fmtBytes(p.bytes || 0);
     },
     polAddExamplesText() {
       const p = this.polAddPrice;
@@ -357,7 +357,7 @@ const policiesPart = {
       if (!it || it.error) return it && it.error ? "error: " + it.error : "";
       if (it.files == null) return "";
       const dirs = it.dirs ? ` · ${it.dirs} dir${it.dirs === 1 ? "" : "s"}` : "";
-      return Number(it.files).toLocaleString() + " files · " + fmtBytes(it.bytes || 0) + dirs;
+      return Number(it.files).toLocaleString(NUM_LOCALE) + " files · " + fmtBytes(it.bytes || 0) + dirs;
     },
 
     // ---------- staging ----------

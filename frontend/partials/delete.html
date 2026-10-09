@@ -64,18 +64,18 @@
                 <template x-if="delPanel.method === 'remove'">
                   <div class="space-y-4">
                     <div class="kl-cards">
-                      <div class="kl-card"><div class="k">Paths removed</div><div class="v" x-text="Number(delPanel.plan.match_total || 0).toLocaleString()"></div></div>
-                      <div class="kl-card" :class="delPanel.plan.other_count ? 'warn' : ''"><div class="k" x-text="delPanel.by === 'filename' ? 'Other same-named' : 'Identical copies'"></div><div class="v" x-text="Number(delPanel.plan.other_count || 0).toLocaleString()"></div></div>
-                      <div class="kl-card"><div class="k">Versions</div><div class="v" x-text="Number(delPanel.plan.versions || 0).toLocaleString()"></div></div>
+                      <div class="kl-card"><div class="k">Paths removed</div><div class="v" x-text="Number(delPanel.plan.match_total || 0).toLocaleString(NUM_LOCALE)"></div></div>
+                      <div class="kl-card" :class="delPanel.plan.other_count ? 'warn' : ''"><div class="k" x-text="delPanel.by === 'filename' ? 'Other same-named' : 'Identical copies'"></div><div class="v" x-text="Number(delPanel.plan.other_count || 0).toLocaleString(NUM_LOCALE)"></div></div>
+                      <div class="kl-card"><div class="k">Versions</div><div class="v" x-text="Number(delPanel.plan.versions || 0).toLocaleString(NUM_LOCALE)"></div></div>
                       <div class="kl-card good"><div class="k" title="Freed after the next full maintenance">Frees</div><div class="v" x-text="delPanel.statsLoading ? '…' : (delPanel.stats ? fmtPhys(delPanel.stats.freeable) : '—')"></div></div>
                     </div>
                     <div class="kl-callout" x-show="delCallout()" x-text="delCallout()"></div>
                     <!-- File-name matching reaches every backup holding these names, so files outside
                          the selection can go too. The list below tags each one. -->
                     <div class="kl-note text-warn" x-show="delPanel.by === 'filename' && delPanel.plan.other_count"
-                         x-text="'Matched by file name: ' + Number(delPanel.plan.other_count).toLocaleString() + ' other file' + (delPanel.plan.other_count === 1 ? '' : 's') + ' with the same names also go - tagged “same name” below.'"></div>
+                         x-text="'Matched by file name: ' + Number(delPanel.plan.other_count).toLocaleString(NUM_LOCALE) + ' other file' + (delPanel.plan.other_count === 1 ? '' : 's') + ' with the same names also go - tagged “same name” below.'"></div>
                     <div class="kl-sec">
-                      <div class="h">What gets removed <span class="count" x-text="delPanel.plan.capped ? ('first ' + delPanel.plan.matches.length + ' of ' + Number(delPanel.plan.match_total).toLocaleString()) : countOf(delPanel.plan.matches.length, 'path')"></span></div>
+                      <div class="h">What gets removed <span class="count" x-text="delPanel.plan.capped ? ('first ' + delPanel.plan.matches.length + ' of ' + Number(delPanel.plan.match_total).toLocaleString(NUM_LOCALE)) : countOf(delPanel.plan.matches.length, 'path')"></span></div>
                       <div class="kl-list" style="max-height:220px">
                         <template x-for="(m, i) in delPanel.plan.matches" :key="i">
                           <div class="li">

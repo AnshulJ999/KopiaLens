@@ -15,8 +15,31 @@ const searchPart = {
       if (this.sharedMin !== "" && this.sharedMin != null) p.set("shared_min", this.sharedMin);
       const ff = this.recentBackupCutoff();
       if (ff) p.set("first_from", ff);
-      if (this.dedupe) p.set("dedupe", "1");
+      if (this.dedupe) { p.set("dedupe", "1"); p.set("dedupe_by", this.dedupeBy); }
       return p;
+    },
+    // Filters behind "More filters" that are on, as chips: [{key, label, value}].
+    searchChips() {
+      const out = [];
+      const range = (a, b, unit = "") => (a && b ? `${a}–${b}${unit}` : a ? `≥ ${a}${unit}` : `≤ ${b}${unit}`);
+      if (this.searchExt) out.push({ key: "ext", label: "ext", value: this.searchExt });
+      if (this.searchExtExclude) out.push({ key: "hide", label: "hide", value: this.searchExtExclude });
+      if (this.recentBackup) out.push({ key: "first", label: "first backed up", value: { 1: "24 hours", 7: "7 days", 30: "30 days" }[this.recentBackup] || this.recentBackup + " days" });
+      if (this.minGb || this.maxGb) out.push({ key: "size", label: "size", value: range(this.minGb, this.maxGb, " GB") });
+      if (this.dateFrom || this.dateTo) out.push({ key: "seen", label: "last seen", value: range(this.dateFrom && fmtDate(this.dateFrom), this.dateTo && fmtDate(this.dateTo)) });
+      if (this.minVersions) out.push({ key: "versions", label: "versions", value: "≥ " + this.minVersions });
+      if (this.sharedMin) out.push({ key: "shared", label: "same content", value: "≥ " + this.sharedMin + " paths" });
+      return out;
+    },
+    clearChip(key) {
+      if (key === "ext") this.searchExt = "";
+      if (key === "hide") this.searchExtExclude = "";
+      if (key === "first") { this.recentBackup = ""; this.klSet({ recent_backup: "" }); }
+      if (key === "size") { this.minGb = ""; this.maxGb = ""; }
+      if (key === "seen") { this.dateFrom = ""; this.dateTo = ""; }
+      if (key === "versions") this.minVersions = "";
+      if (key === "shared") this.sharedMin = "";
+      this.loadSearch();
     },
     recentBackupCutoff() {  // dropdown days -> YYYY-MM-DD cutoff for first_seen ("recently backed up")
       const days = parseInt(this.recentBackup, 10);
@@ -73,22 +96,22 @@ const searchPart = {
           { title: "Physical", field: "phys", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => fmtPhys(c.getValue()) },
           { title: "Logical", field: "logical", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => fmtBytes(c.getValue()) },
           // Excl column hidden here too - same reason as the Search table ().
-          { title: "Files", field: "files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
-          { title: "Deleted #", field: "deleted_files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString() },
+          { title: "Files", field: "files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
+          { title: "Deleted #", field: "deleted_files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Deleted %", field: "deleted_pct", width: 90, headerSort: false, hozAlign: "right",
             accessorDownload: (_v, d) => (d.files ? Math.round((d.deleted_files / d.files) * 100) : ""), formatter: (c) => { const d = c.getRow().getData(); return d.files ? Math.round((d.deleted_files / d.files) * 100) + "%" : ""; } },
           { title: "Avg size", field: "avg_size", width: 95, headerSort: false, hozAlign: "right",
             accessorDownload: (_v, d) => (d.files ? Math.round(d.phys / d.files) : ""), formatter: (c) => { const d = c.getRow().getData(); return d.files ? fmtBytes(Math.round(d.phys / d.files)) : ""; } },
           // per-folder freeable, computed on demand (right-click) - a chunk walk per folder.
           // "≥" marks a partial result: the backend caps the walk at the first 5,000 files.
-          { title: "∑ Reclaim", field: "reclaim_val", headerSort: false, width: 105, hozAlign: "right",
+          { title: term("reclaimable"), headerTooltip: termTip("reclaimable") + " Right-click a folder to work it out.", field: "reclaim_val", headerSort: false, width: 115, hozAlign: "right",
             accessorDownload: (_v, d) => { const v = this.groupReclaim[this.repo + ":" + d.folder]; return v && v.v != null ? v.v : ""; },
             formatter: (c) => {
               const v = this.groupReclaim[this.repo + ":" + c.getRow().getData().folder];
               if (v === "pending") return "<span style='color:var(--faint)'>…</span>";
-              if (v === "error") return "<span style='color:var(--danger)'>err</span>";
-              if (v == null) return "<span style='color:var(--faint)' title='Right-click > Compute reclaim'>—</span>";
-              const tip = v.capped ? ' title="Partial - first 5,000 files only"' : "";
+              if (v === "error") return "<span style='color:var(--danger)' title='Could not work this out'>error</span>";
+              if (v == null) return "<span style='color:var(--faint)' title='Right-click: Work out reclaimable space'>—</span>";
+              const tip = v.capped ? ' title="At least this much: only the biggest 5,000 files were checked"' : "";
               return `<span style="color:var(--ok)"${tip}>${v.capped ? "&ge; " : ""}${fmtPhys(v.v)}</span>`;
             } },
           { title: "Last seen", field: "last_seen", width: 155, formatter: (c) => timeCell(c.getValue()) },
@@ -96,10 +119,13 @@ const searchPart = {
         setTable("#groupTable", rows, cols, {
           onRowDblClick: (_e, row) => this.openFolderPanel(row.getData().folder),
           rowMenu: [
-            { label: "Folder details", action: (_e, row) => this.openFolderPanel(row.getData().folder) },
-            { label: "Compute reclaim for this folder", action: (_e, row) => this.computeGroupReclaim(row) },
-            { label: "Drill into files (then batch-remove)", action: (_e, row) => this.drillFolder(row.getData()) },
-            { label: "Delete folder (chunked)…", action: (_e, row) => this.openRemoveFolderPath(row.getData().folder) },
+            { label: "Details", action: (_e, row) => this.openFolderPanel(row.getData().folder) },
+            { label: "Show its files", action: (_e, row) => this.drillFolder(row.getData()) },
+            { label: "Work out reclaimable space", action: (_e, row) => this.computeGroupReclaim(row) },
+            { separator: true },
+            { label: "Delete folder from backups…", action: (_e, row) => this.openRemoveFolderPath(row.getData().folder) },
+            { separator: true },
+            { label: "Copy path", action: (_e, row) => this.copyText(row.getData().folder) },
           ],
         });
       }, "Grouping folders…");
@@ -142,7 +168,7 @@ const searchPart = {
         const shownFrom = this.searchTotal ? offset + 1 : 0;
         const shownTo = Math.min(offset + (data.results || []).length, this.searchTotal);
         this.omniMeta = this.searchEmpty ? ""
-          : countOf(this.searchTotal, "result") + (infinite ? "" : ` · showing ${shownFrom.toLocaleString()}-${shownTo.toLocaleString()}`);
+          : countOf(this.searchTotal, "result") + (infinite || this.searchTotal <= size ? "" : ` · showing ${shownFrom.toLocaleString(NUM_LOCALE)}–${shownTo.toLocaleString(NUM_LOCALE)}`);
         // Headers do NOT sort locally (headerSort:false) - a click re-queries the server so the
         // sort is always over the ENTIRE result set, never just the visible page. Active column
         // shows a ▼/▲ arrow.
@@ -170,17 +196,19 @@ const searchPart = {
           // wrong semantics for shared indirect content + write amplification) and its per-object
           // semantics overstated exclusivity. Returns with the proper implementation ().
           { title: "Src", field: "sources", headerSort: false, width: 62, hozAlign: "right",
-            formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="content is held by ${v} sources (within-source copies excluded)">${v}</span>` : "1"; } },
+            headerTooltip: "How many sources hold this content. Copies inside one source count once.",
+            formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="Held by ${v} sources">${v}</span>` : "1"; } },
           H("Stored (all versions)", "stored_all", { width: 140, hozAlign: "right",
             headerTooltip: "Space every version of this file takes. Data shared between its own versions counts once. Sorting uses the nightly top list; files outside it come after.",
             formatter: (c) => self.versionCell(c.getRow().getData(), "stored") }, "stored"),
-          H("Frees (all versions)", "frees_all", { width: 130, hozAlign: "right",
-            headerTooltip: "Space that comes back if every version of this content is removed from every backup. Sorting uses the nightly top list; files outside it come after.",
+          H(term("reclaimableAll"), "frees_all", { width: 165, hozAlign: "right",
+            headerTooltip: termTip("reclaimableAll") + " Sorting uses the nightly top list; files outside it come after.",
             formatter: (c) => self.versionCell(c.getRow().getData(), "frees") }, "frees"),
           H("Ext", "ext", { width: 70 }),
           H("Versions", "versions", { width: 80, hozAlign: "right" }),
           { title: "Copies", field: "copies", headerSort: false, width: 75, hozAlign: "right",
-            formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="this exact content is at ${v} paths (filter: Shared ≥ N)">${v}</span>` : "1"; } },
+            headerTooltip: "How many paths hold this exact content. More filters: same content in at least N paths.",
+            formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="This exact content is at ${v} paths">${v}</span>` : "1"; } },
           H("Last seen", "last_seen", { width: 160, formatter: (c) => timeCell(c.getValue()) }),
           H("First seen", "first_seen", { width: 160, formatter: (c) => timeCell(c.getValue()) }),
           H("On disk", "in_latest", { width: 90, formatter: (c) => c.getValue() ? "yes" : "<span style='color:var(--danger)'>deleted</span>" }),
@@ -193,33 +221,61 @@ const searchPart = {
           const t = sEl._tabulator;
           // pass the full def (keeps headerClick + formatter) so only the rows + sort arrow change
           cols.forEach((c) => { try { t.updateColumnDefinition(c.field, c); } catch (e) {} });
-          t.replaceData(data.results || []).then(() => this.fillVersionSizes());
+          t.replaceData(data.results || []).then(() => { this.searchSelCount = t.getSelectedData().length; this.fillVersionSizes(); });
         } else {
           const sStbl = setTable("#searchTable", data.results || [], cols, {
             persistSort: false,
             placeholder: false,   // the tab shows its own no-results line above the table
             selectableRows: true,
+            onSelect: (rows) => { this.searchSelCount = rows.length; },
             onRowDblClick: (_e, row) => this.openFileDetail(row.getData()),
-            rowMenu: [
-              { label: "File detail (physical / reclaim / dedup)", action: (_e, row) => this.openFileDetail(row.getData()) },
-              { label: "Version history", action: (_e, row) => this.openFileDetail(row.getData()) },
-              { label: () => this.mountOpenLabel() + " (latest)", action: (_e, row) => this.mountFileOpen(row.getData()) },
-              { label: "Restore…", action: (_e, row) => { const d = row.getData(); this.openRestore([{ source: d.source, full_path: d.full_path }]); } },
-              { label: "Download", action: (_e, row) => { const d = row.getData(); this.downloadItem({ source: d.source, full_path: d.full_path }); } },
-              { label: "Jump to it in tree", action: (_e, row) => this.jumpToTree(row.getData()) },
-              { label: "Browse this source", action: (_e, row) => { this.selectedSource = row.getData().source; this.snapSource = row.getData().source; this.active = "snapshots"; this.loadSnapshots(); } },
-              { label: "Delete all matching…", action: () => this.openRemoveFromSearch() },
-              { label: "Copy full path", action: (_e, row) => this.copyText(row.getData().full_path) },
-            ],
+            rowMenu: (_e, row) => this.searchRowMenu(row.getData()),
           });
           if (sStbl) {
-            sStbl.on("rowClick", (e, row) => this._rangeClick(sStbl, e, row));  // Shift+Click range select
             sStbl.on("scrollVertical", () => this.fillVersionSizes());
             sStbl.on("tableBuilt", () => this.fillVersionSizes());
           }
           this.fillVersionSizes();
         }
       }, "Searching...");
+    },
+
+    // Row menu: one file, or every selected file. Whole-result actions live in the toolbar's ⋯ menu.
+    searchRowMenu(d) {
+      const sel = this.selectedRows("search");
+      if (sel.length > 1) {
+        const what = countOf(sel.length, "file");
+        return [
+          { label: `Details of ${what}`, action: () => this.openSelection("search") },
+          { separator: true },
+          { label: `Restore ${what}…`, action: () => this.selRestore("search") },
+          { label: `Exclude ${what}…`, action: () => this.selExclude("search") },
+          { separator: true },
+          { label: `Delete ${what} from backups…`, action: () => this.selDelete("search") },
+          { label: `Exclude & delete ${what}…`, action: () => this.selExclude("search", "delete") },
+          { separator: true },
+          { label: `Copy ${sel.length} paths`, action: () => this.copyText(sel.map((r) => r.full_path).join("\n")) },
+          { label: "Clear selection", action: () => this.clearSelection("search") },
+        ];
+      }
+      const item = { source: d.source, full_path: d.full_path };
+      return [
+        { label: "Details", action: () => this.openFileDetail(d) },
+        { label: "Show in Tree", action: () => this.jumpToTree(d) },
+        { label: "Show source in Snapshots", action: () => { this.snapSource = d.source; this.active = "snapshots"; this.loadSnapshots(); } },
+        { separator: true },
+        { label: "Restore…", action: () => this.openRestore([item]) },
+        { label: "Download", action: () => this.downloadItem(item) },
+        { label: this.mountOpenLabel() + " (latest)", action: () => this.mountFileOpen(d) },
+        { label: "Exclude…", action: () => this.openExclude({ kind: "file", path: d.full_path, source: d.source }, "exclude") },
+        { label: "Prune versions…", action: () => this.openPrune(d.full_path, d.source) },
+        { separator: true },
+        { label: "Delete from backups…", action: () => this.openDeletePanel([item]) },
+        { label: "Exclude & delete…", action: () => this.openExclude({ kind: "file", path: d.full_path, source: d.source }, "delete") },
+        { separator: true },
+        { label: "Copy path", action: () => this.copyText(d.full_path) },
+        { label: "Copy source", action: () => this.copyText(d.source) },
+      ];
     },
 
     exportSearch() {

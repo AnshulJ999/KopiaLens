@@ -162,7 +162,7 @@ const deletePart = {
       if (p.method === "remove") {
         facts.push(["Match", p.by === "filename" ? `File name: ${plan.names.join(", ")}` : "Exact content, every version"]);
         facts.push(["Backups", backups]);
-        facts.push(["Removes", `${Number(plan.match_total).toLocaleString()} path${plan.match_total === 1 ? "" : "s"}`
+        facts.push(["Removes", `${Number(plan.match_total).toLocaleString(NUM_LOCALE)} path${plan.match_total === 1 ? "" : "s"}`
           + (plan.other_count ? ` · ${plan.other_count} not selected` : "")]);
         if (p.stats) facts.push(["Frees", fmtPhys(p.stats.freeable) + " after maintenance"]);
       } else {
