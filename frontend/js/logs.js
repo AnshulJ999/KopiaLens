@@ -29,9 +29,60 @@ const logsPart = {
       this.auditRows = aud.records || [];
       this.auditSize = aud.size || 0;
     },
-    auditSummary(r) {
+    // The raw record, for the tooltip.
+    auditRaw(r) {
       const s = r.summary || {};
       return Object.entries(s).map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`).join("  ");
+    },
+    auditEvent(r) {
+      if ((r.summary || {}).dry === true) return "Dry run";
+      return { executed: "Done", generated: "Prepared", "dry-run": "Dry run", mount: "Mounted", unmount: "Unmounted", config: "Settings" }[r.event] || capFirst(String(r.event || ""));
+    },
+    auditAction(r) {
+      const a = String(r.action || "");
+      return {
+        "remove-files": "Remove files", "remove-files-chunked": "Remove folder", "remove-files-commands": "Remove files (commands)",
+        "snapshot-delete": "Delete snapshots", "snapshot-delete-commands": "Delete snapshots (commands)", "remove-plan": "Removal plan",
+        "remove-bat": "Removal script", "prune-versions": "Prune versions", "policy-write": "Save policy", "policy-backup": "Back up policies",
+        "policy-restore": "Restore policies", "snapshot-create": "New snapshot", "snapshot-pin": "Pin snapshots", "encryption-level": "Encryption level",
+        "encryption-reset": "Reset encryption", "blob-stats": "Blob stats", "repo-attach": "Add repository", "repo-remove": "Remove repository",
+        "repo-unlock": "Unlock repository",
+      }[a] || capFirst(a.replace(/[-_]/g, " "));
+    },
+    // One readable line per record; anything without a template lists its facts plainly.
+    auditSummary(r) {
+      const s = r.summary || {}, n = (v) => Number(v || 0);
+      const done = r.event === "executed" && s.dry !== true;
+      const from = s.source ? ` from ${sourcePath(s.source)}` : "";
+      let line;
+      switch (r.action) {
+        case "prune-versions":
+          line = `${done ? "Removed" : "Would remove"} ${countOf(s.versions, "version")} of ${baseName(s.path || "") || "a file"} from ${countOf(s.snapshots, "snapshot")}`; break;
+        case "remove-files": case "remove-files-chunked":
+          line = `${done ? "Removed" : "Would remove"} ${countOf(s.items ?? n(s.filenames) + n(s.object_ids), "item")}${from}`
+            + (n(s.batches) > 1 ? ` in ${n(s.batches)} batches` : ""); break;
+        case "snapshot-delete":
+          line = `${done ? "Deleted" : "Would delete"} ${countOf(s.snapshots ?? s.deleted ?? s.would_delete ?? s.ids, "snapshot")}`; break;
+        case "restore":
+          line = `Restored to ${s.target || "?"}` + (n(s.items) > 1 ? ` (${countOf(s.items, "item")})` : ""); break;
+        case "maintenance":
+          line = `${s.full ? "Full" : "Quick"} maintenance` + (s.safety === "none" ? ", safety none" : ""); break;
+        case "policy-write":
+          line = `Saved ${countOf(s.writes, "policy", "policies")}`; break;
+        case "snapshot-create":
+          line = `Snapshot of ${s.path || "?"}`; break;
+        case "snapshot-pin":
+          line = `${s.remove ? "Unpinned" : "Pinned"} ${countOf(s.snapshots, "snapshot")}`; break;
+        default: {
+          const skip = (k, v) => v === null || v === "" || v === false || k === "dry" || (k === "errors" && !v) || (k === "batches" && n(v) <= 1);
+          line = Object.entries(s).filter(([k, v]) => !skip(k, v))
+            .map(([k, v]) => `${k.replace(/_/g, " ")}: ${typeof v === "object" ? JSON.stringify(v) : v}`).join(" · ");
+          return line;
+        }
+      }
+      if (n(s.errors)) line += ` · ${countOf(s.errors, "error")}`;
+      if (s.stopped) line += " · stopped early";
+      return line;
     },
     logsAudit() {
       // The API returns oldest first (the file's order); the tab shows newest first.

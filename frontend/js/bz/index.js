@@ -98,7 +98,7 @@ const bzIndexPart = {
       const r = s.remaining || {};
       if (r.remaining_files == null && r.remaining_bytes == null) return "BZ";
       if (!Number(r.remaining_files) && !Number(r.remaining_bytes)) return "⬆ nothing pending";
-      return `⬆ ${fmtBytes(Number(r.remaining_bytes || 0))} · ${Number(r.remaining_files || 0).toLocaleString(NUM_LOCALE)} files left`;
+      return `⬆ ${fmtBytes(Number(r.remaining_bytes || 0))} · ${countOf(r.remaining_files, "file")} left`;
     },
     bzStatusTitle() {
       const s = this.bzStatus;

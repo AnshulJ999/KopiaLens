@@ -13,14 +13,15 @@
               <div class="text-xs text-muted truncate font-mono" x-text="repoLabel(jobPanel.repo) + ' · ' + jobPanel.label + ' · job ' + jobPanel.job_id.slice(0, 6)"></div>
             </div>
             <button class="kl-btn danger" x-show="jobPanel.state === 'running'" @click="jobStop()">Stop</button>
-            <button class="kl-btn quiet" @click="closeJob()" x-text="jobPanel.state === 'running' ? 'Run in background' : 'Close'"></button>
+            <button class="kl-btn quiet" x-show="jobPanel.state === 'running'" @click="closeJob()">Run in background</button>
+            <button class="kl-btn quiet" x-show="jobPanel.state !== 'running'" @click="closeJob()" title="Close" aria-label="Close">&times;</button>
           </div>
           <div class="px-4 py-3 border-b border-bd flex flex-col gap-1.5">
             <div class="kl-bar" :class="jobIndeterminate() ? 'busy' : ''"><i :style="'width:' + (jobIndeterminate() ? 30 : (jobProgress() || 0)) + '%'"></i></div>
             <div class="flex items-center gap-2 text-xs text-muted">
               <span x-text="jobProgressLabel()"></span>
               <span class="grow"></span>
-              <span x-show="jobStateLine()" class="text-warn" x-text="jobStateLine()"></span>
+              <span x-show="jobStateLine()" :class="jobStateClass()" x-text="jobStateLine()"></span>
               <span x-text="'elapsed ' + jobElapsed()"></span>
             </div>
             <div x-show="jobPanel.error && jobPanel.state === 'failed'" class="text-xs text-danger break-all" x-text="jobPanel.error"></div>

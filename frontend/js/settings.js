@@ -2,6 +2,25 @@
 // payload of browser-side defaults - that is what stamped values the user never chose).
 const MEMORY_CHOICES = ["512MB", "1GB", "2GB", "3GB", "4GB", "6GB", "8GB"];
 
+// A duration setting shown as a free number plus a unit; the setting itself stays in seconds.
+// Changing the unit converts the shown number, it never changes the stored value.
+function klDur(prop, key) {
+  return {
+    n: 0, unit: "1",
+    init() { this._show(true); this.$watch(prop, () => this._show(true)); },
+    _show(pickUnit) {
+      const v = Number(this[prop]) || 0;
+      if (pickUnit) this.unit = v >= 3600 && v % 3600 === 0 ? "3600" : v >= 60 && v % 60 === 0 ? "60" : "1";
+      this.n = Math.round((v / Number(this.unit)) * 100) / 100;
+    },
+    relabel() { this._show(false); },
+    commit() {
+      this[prop] = Math.round(Number(this.n || 0) * Number(this.unit));
+      this.saveKl(key);
+    },
+  };
+}
+
 const settingsPart = {
 
     async openSettings() {  // re-read the live settings file each open so the modal can't show stale state
@@ -121,7 +140,14 @@ const settingsPart = {
       collapse_prefixes: { s: "bzCollapsePrefixes", t: "list", block: "backblaze" },
       eventlog_archive_path: { s: "bzEventlogArchive", t: "str", block: "backblaze" },
       session_days: { s: "sessionDays", t: "int", min: 1, max: 365 },
+      number_style: { s: "numberStyle", t: "choice", of: ["system", "en-US", "de-DE", "fr-FR", "en-IN"] },
+      date_style: { s: "dateStyle", t: "choice", of: ["system", "dmy", "mdy", "iso"] },
+      clock: { s: "clock", t: "choice", of: ["system", "12", "24"] },
+      search_dedupe_by: { s: "dedupeBy", t: "choice", of: ["path", "content"] },
+      header_search_only: { s: "headerSearchOnly", t: "bool" },
     },
+
+    setTimeFmt(v) { if (v !== TIME_FMT) this.toggleTimeFmt(); },
 
     // ---- Remote access (read at start: a change needs a restart) ----
     async loadAccess() {
@@ -174,6 +200,7 @@ const settingsPart = {
       } else {
         v = v == null ? "" : String(v);
       }
+      if (key === "number_style" || key === "date_style" || key === "clock") this.applyFormats();
       const body = f.top ? { [key]: v }
         : f.block === "backblaze" ? { backblaze: { [key]: v } }
         : { kopialens: { [key]: v } };

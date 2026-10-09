@@ -187,9 +187,9 @@ def _index_health(repo: str) -> list[dict]:
                    for d, _s, fs in os.walk(pool) for f in fs)
         stats = manifest.get("stats", {})
         return [{"id": "index-size", "status": "ok",
-                 "title": f"Index: {size / 10**9:.2f} GB (generation {manifest.get('generation')})",
+                 "title": f"Index: {size / 10**9:.2f} GB",
                  "detail": f"{stats.get('paths', 0):,} paths, {stats.get('file_versions', 0):,} "
-                           f"file versions. Immutable artifacts - nothing to compact."}]
+                           f"file versions."}]
     except Exception as exc:  # noqa: BLE001 - a health check must never break the panel
         log.warning("index health check failed: %s", exc)
         return []

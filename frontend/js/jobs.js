@@ -127,7 +127,7 @@ const jobsPart = {
       const unit = p.kind === "policy_write" ? "step" : "batch";
       if (p.total > 1) return `${p.done} of ${p.total} ${unit}s · ${this.jobProgress()}%` + (p.errors ? ` · ${p.errors} failed` : "");
       if (p.state === "running") return "Working…";
-      return p.errors ? "Failed" : "Done";
+      return "";
     },
 
     jobResultDiff(r) {
@@ -158,6 +158,13 @@ const jobsPart = {
       if (p.errors) return `Finished · ${p.errors} failed`;
       return "Finished";
     },
+    jobStateClass() {
+      const p = this.jobPanel;
+      if (!p || p.state === "running") return "text-warn";
+      if (p.state === "failed" || p.errors) return "text-danger";
+      if (p.state === "stopped") return "text-warn";
+      return "text-ok";
+    },
 
     // A finished real delete: offer the maintenance run that frees its space.
     jobFreesLater() {
@@ -170,6 +177,7 @@ const jobsPart = {
     jobFooterNote() {
       const p = this.jobPanel;
       if (!p) return "";
+      if (this.jobFreesLater()) return "";
       if (p.kind === "maintenance") return "Kopia reclaims space during this run.";
       if (p.kind === "restore") return p.target ? `Writes to ${p.target}` : "";
       if (p.kind === "policy_write" && p.kind_label !== "Excluding and deleting") return "Takes effect from each backup's next snapshot.";

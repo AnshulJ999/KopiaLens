@@ -5,7 +5,9 @@
     <template x-if="confirmBox">
       <div class="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4 sm:p-6"
            @click.self="confirmResolve(false)"
-           @keydown.enter.window="confirmEnter($event)">
+           @keydown.enter.window="confirmEnter($event)"
+           @keydown.tab.window="trapTab($event, $el)"
+           x-init="$nextTick(() => confirmFocus($el))" role="dialog" aria-modal="true">
         <div class="w-[34rem] max-w-full rounded-lg border bg-surface shadow-xl flex flex-col" style="border-color:var(--bd)">
           <div class="p-4 space-y-3 overflow-auto">
             <h3 class="text-[15px] font-semibold leading-snug" x-text="confirmBox.title"></h3>
@@ -27,8 +29,8 @@
           <div class="kl-footer">
             <button x-show="confirmBox.command" @click="copyText(confirmBox.command)" class="kl-btn quiet">Copy command</button>
             <span class="spacer"></span>
-            <button @click="confirmResolve(false)" class="kl-btn">Cancel</button>
-            <button @click="confirmResolve(true)" :class="confirmBox.danger ? 'kl-btn danger' : 'kl-btn primary'" x-text="confirmBox.confirmLabel"></button>
+            <button @click="confirmResolve(false)" class="kl-btn" data-cf="cancel">Cancel</button>
+            <button @click="confirmResolve(true)" data-cf="ok" :class="confirmBox.danger ? 'kl-btn danger' : 'kl-btn primary'" x-text="confirmBox.confirmLabel"></button>
           </div>
         </div>
       </div>

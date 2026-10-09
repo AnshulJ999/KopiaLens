@@ -171,7 +171,7 @@ const actionsPart = {
         if (i.snap_time) facts.push(["Snapshot", this.humanTime(i.snap_time)]);
         facts.push(["To", i.target]);
       } else {
-        facts.push(["Restore", `${p.items.length} items`]);
+        facts.push(["Restore", countOf(p.items.length, "item")]);
         facts.push(["To", r.mode === "folder" ? r.target : r.mode === "original" ? "Where each came from" : "Next to each original"]);
       }
       facts.push(["Files", `${Number(t.files).toLocaleString(NUM_LOCALE)} · ${fmtBytes(t.size)}`]);
@@ -183,7 +183,7 @@ const actionsPart = {
       facts.push(["Existing files", { safe: "Skipped", replace: "Replaced when different", exact: "Replaced when different", custom: "Custom options" }[r.preset]]);
       if (p.previewed) {
         facts.push(["On disk now", `${t.new.toLocaleString(NUM_LOCALE)} new · ${t.identical.toLocaleString(NUM_LOCALE)} identical · ${t.different.toLocaleString(NUM_LOCALE)} different`]);
-        if (r.options.delete_extra) facts.push(["Deleted", `${t.extra.toLocaleString(NUM_LOCALE)} files not in the snapshot`]);
+        if (r.options.delete_extra) facts.push(["Deleted", `${countOf(t.extra, "file")} not in the snapshot`]);
       }
       return facts;
     },
@@ -196,7 +196,7 @@ const actionsPart = {
       if (!this.restore || !r.plan || r.error) return;
       const t = r.plan.totals;
       let callout = "";
-      if (r.options.delete_extra && t.extra) callout = `${t.extra.toLocaleString(NUM_LOCALE)} files at the destination are not in the snapshot and will be deleted.`;
+      if (r.options.delete_extra && t.extra) callout = `${countOf(t.extra, "file")} at the destination ${t.extra === 1 ? "is" : "are"} not in the snapshot and will be deleted.`;
       else if (r.options.overwrite_files && t.different) callout = `${t.different.toLocaleString(NUM_LOCALE)} existing files will be replaced.`;
       else if (r.mode === "original") callout = "Restores over the original location.";
       const ok = await this.klConfirm({

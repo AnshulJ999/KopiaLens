@@ -11,7 +11,7 @@
             <!-- health checks -->
             <div class="rounded border border-bd bg-surface p-3">
               <div class="mb-2 flex items-center gap-2"><span class="font-medium text-sm">Health</span>
-                <span class="text-[11px] text-muted" x-text="(statsData.health||[]).filter(h => h.status==='warn').length ? countOf(statsData.health.filter(h => h.status==='warn').length, 'warning') : 'all clear'"></span></div>
+                <span class="text-[11px] text-muted" x-text="(statsData.health||[]).filter(h => h.status==='warn').length ? countOf(statsData.health.filter(h => h.status==='warn').length, 'warning') : ''"></span></div>
               <div class="space-y-1.5">
                 <template x-for="h in (statsData.health || [])" :key="h.id">
                   <div class="flex items-start gap-2 text-xs rounded p-2 border"
@@ -31,21 +31,21 @@
             <!-- cards -->
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
               <div class="rounded border border-bd bg-surface p-3">
-                <div class="text-[10px] uppercase text-muted mb-1">Storage</div>
+                <div class="text-[11px] text-muted mb-1">Storage</div>
                 <div class="text-sm font-medium break-all" x-text="statsData.parsed?.storage_type || '?'"></div>
                 <div class="text-[11px] text-muted break-all mb-1" x-text="statsData.parsed?.storage_path || ''"></div>
                 <div class="text-xs" x-show="statsData.parsed?.capacity" x-text="fmtBytes(statsData.parsed?.available || 0) + ' free of ' + fmtBytes(statsData.parsed?.capacity || 0)"></div>
                 <div class="text-[10px] text-muted" x-show="statsData.parsed?.unique_id" x-text="'id ' + statsData.parsed?.unique_id + '…'"></div>
               </div>
               <div class="rounded border border-bd bg-surface p-3">
-                <div class="text-[10px] uppercase text-muted mb-1">Content</div>
+                <div class="text-[11px] text-muted mb-1">Content</div>
                 <div class="text-sm font-medium" x-text="(statsData.parsed?.content?.count || 0).toLocaleString(NUM_LOCALE) + ' contents'"></div>
                 <div class="text-xs text-muted" x-text="'logical ' + fmtBytes(statsData.parsed?.content?.total_bytes || 0)"></div>
                 <div class="text-xs" x-text="'packed ' + fmtBytes(statsData.parsed?.content?.packed_bytes || 0) + (statsData.parsed?.content?.compression_pct != null ? ' (' + statsData.parsed.content.compression_pct + '% saved)' : '')"></div>
                 <div class="text-[11px] mt-1" x-show="statsData.parsed?.growth_7d != null" :class="(statsData.parsed?.growth_7d || 0) > 0 ? 'text-muted' : 'text-ok'" x-text="'7-day change ' + (statsData.parsed?.growth_7d >= 0 ? '+' : '') + fmtBytes(statsData.parsed?.growth_7d || 0)"></div>
               </div>
               <div class="rounded border border-bd bg-surface p-3">
-                <div class="text-[10px] uppercase text-muted mb-1">Maintenance</div>
+                <div class="text-[11px] text-muted mb-1">Maintenance</div>
                 <div class="text-xs flex items-center gap-1">
                   <span x-show="statsData.parsed?.maintenance?.owner_match === false" class="text-warn">⚠</span>
                   <span class="break-all" x-text="'owner ' + (statsData.parsed?.maintenance?.owner || '?')"></span></div>
@@ -55,7 +55,7 @@
                 <button class="kl-btn mt-2" style="height:24px" @click="openMaint()">Run maintenance…</button>
               </div>
               <div class="rounded border border-bd bg-surface p-3">
-                <div class="text-[10px] uppercase text-muted mb-1">KopiaLens index</div>
+                <div class="text-[11px] text-muted mb-1">KopiaLens index</div>
                 <!-- reads parsed.duckdb_health, NOT health: the health list carries only WARNINGS
                      (an entry in both renders twice), so a healthy index would leave this blank. -->
                 <template x-for="h in (statsData.parsed?.duckdb_health || [])" :key="h.id">
@@ -86,7 +86,7 @@
                   <table x-show="pruneOutliers.rows.length" class="w-full text-xs mt-1">
                     <thead><tr class="text-left text-muted">
                       <th class="px-2 py-1 font-medium">File</th><th class="px-2 py-1 font-medium">Version from</th>
-                      <th class="px-2 py-1 font-medium text-right">Size</th><th class="px-2 py-1 font-medium text-right">Frees on its own</th>
+                      <th class="px-2 py-1 font-medium text-right">Size</th><th class="px-2 py-1 font-medium text-right" :title="termTip('reclaimableOwn')" x-text="term('reclaimableOwn')"></th>
                       <th class="px-2 py-1 font-medium text-right">Versions</th><th></th></tr></thead>
                     <tbody>
                       <template x-for="(r, i) in pruneOutliers.rows" :key="i">

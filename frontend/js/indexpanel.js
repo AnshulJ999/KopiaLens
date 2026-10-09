@@ -4,16 +4,19 @@
 // progress pass-through and are simply omitted from the UI when absent (never faked).
 const INDEX_STAGES = [
   ["index", "Index snapshots"],
-  ["dashboard", "Dashboard + refcount"],
+  ["dashboard", "Dashboard numbers"],
   ["analysis", "Snapshot analysis"],
-  ["churn", "Churn rollup"],
-  ["folders", "Folder pre-compute"],
+  ["churn", "Churn"],
+  ["folders", "Folder sizes"],
   ["policies", "Policies"],
-  ["policy_prices", "Policy pricing"],
+  ["policy_prices", "Policy sizes"],
   ["ignore_files", "Ignore files"],
-  ["rank_paths", "Ranked sizes"],
-  ["next_snapshots", "Next-snapshot times"],
+  ["rank_paths", "Biggest files"],
+  ["next_snapshots", "Next snapshot times"],
 ];
+// Worker lines the Clean view hides: timings, per-target pricing and data dumps.
+const INDEX_LINE_NOISE = /^\s*(perf:|policy prices .* (target=|global rollup priced)|.*\{'[a-z_]+': )/;
+const INDEX_STAGE_LINE = /^\s*stage: ([a-z_]+)\s*$/;
 
 const indexPanelPart = {
 
@@ -56,8 +59,8 @@ const indexPanelPart = {
       const sync = p.sync || null;
       if (sync && (sync.snapshots || sync.folders || sync.done)) {
         bits.push(`${Number(sync.done || 0).toLocaleString(NUM_LOCALE)} synced` +
-          (sync.snapshots ? ` · ${Number(sync.snapshots).toLocaleString(NUM_LOCALE)} snapshots` : "") +
-          (sync.folders ? ` · ${Number(sync.folders).toLocaleString(NUM_LOCALE)} folders` : ""));
+          (sync.snapshots ? ` · ${countOf(sync.snapshots, "snapshot")}` : "") +
+          (sync.folders ? ` · ${countOf(sync.folders, "folder")}` : ""));
       }
       const seed = p.seed || null;
       if (seed && seed.total) bits.push(`seed ${Number(seed.done || 0).toLocaleString(NUM_LOCALE)}/${Number(seed.total).toLocaleString(NUM_LOCALE)}`);
@@ -68,9 +71,9 @@ const indexPanelPart = {
     indexPanelCounts(st) {
       const s = st || this.ixs();
       const pct = this.indexPct(s);
-      const counts = s.offline ? `Indexing ${s.indexed_snapshots || 0}/${s.snapshots || "?"}`
+      const counts = s.offline ? `${s.indexed_snapshots || 0} of ${countOf(s.snapshots, "snapshot")}`
         : s.building ? `${Number(s.indexed_snapshots || 0).toLocaleString(NUM_LOCALE)} of ${Number(s.snapshots || 0).toLocaleString(NUM_LOCALE)} snapshots`
-        : (s.never_indexed ? "Not indexed yet" : `Index ${s.indexed_snapshots || 0}/${s.snapshots || "?"}`);
+        : (s.never_indexed ? "Not indexed yet" : `${s.indexed_snapshots || 0} of ${countOf(s.snapshots, "snapshot")} indexed`);
       return counts + (pct == null ? "" : ` · ${pct}%`);
     },
 
@@ -168,8 +171,12 @@ const indexPanelPart = {
       const clean = this.indexLogMode === "clean";
       const kept = [];
       for (const ln of (this.indexLogLines || [])) {
-        if (clean && JOB_LINE_NOISE.test(ln)) continue;
-        kept.push(ln);
+        if (!clean) { kept.push(ln); continue; }
+        const body = ln.slice(9);
+        if (JOB_LINE_NOISE.test(body) || INDEX_LINE_NOISE.test(body)) continue;
+        const st = body.match(INDEX_STAGE_LINE);
+        const lbl = st && (INDEX_STAGES.find(([k]) => k === st[1]) || [])[1];
+        kept.push(lbl ? ln.slice(0, 9) + " " + lbl : ln);
       }
       return kept.slice(-400);
     },

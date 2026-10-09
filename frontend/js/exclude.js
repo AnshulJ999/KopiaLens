@@ -612,6 +612,10 @@ const excludePart = {
       const v = this.exVariants;
       return (v && !v.loading && v.rows) || [];
     },
+    // A rule matching everything under its policy's folder: at a source's top folder that is the whole source.
+    exMatchesAll(v) {
+      return (v.patterns || []).some((p) => ["/**", "/*", "**", "*", "/"].includes(String(p).trim()));
+    },
 
     exCanCommit() {
       const d = this.exDialog;
@@ -655,7 +659,7 @@ const excludePart = {
         command: "", confirmLabel: n === 1 ? "Add rule" : `Add ${n} rules`, danger: !!drops.length,
       });
       if (!ok) return;
-      const label = d.multi ? `${d.items.filter((i) => i.on).length} items` : baseName(d.path);
+      const label = d.multi ? countOf(d.items.filter((i) => i.on).length, "item") : baseName(d.path);
       const started = await this.startJob("policy_write", { writes, shape: d.shape }, label);
       if (started) { this.showExclude = false; this.exDialog = null; this.exVariants = null; }
     },
@@ -825,6 +829,6 @@ const excludePart = {
       const d = this.exDialog;
       const on = d.items.filter((i) => i.on);
       const done = on.filter((i) => !this._exItemStill(i).length).length;
-      return `${done} of ${on.length} items leave every backup that holds them.`;
+      return `${done} of ${countOf(on.length, "item")} leave every backup source that holds them.`;
     },
 };

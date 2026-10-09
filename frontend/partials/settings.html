@@ -1,62 +1,76 @@
-
+{% from "partials/_macros.html" import duration %}
     <div x-show="showSettings" @click.self="showSettings=false" x-cloak class="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4 sm:p-6">
-      <!-- Fixed-height flex column with a scrolling body; header, section nav and footer stay put.
-           Every control SAVES ITSELF on change (saveKl), so the footer carries no Save button and
-           closing the modal can never discard an edit. -->
-      <div class="w-[54rem] max-w-full max-h-[88vh] flex flex-col rounded-lg border border-bd bg-surface shadow-xl">
+      <!-- One fixed height with a scrolling body, so the section list never moves. Every control
+           SAVES ITSELF on change (saveKl), so the footer carries no Save button and closing the
+           modal can never discard an edit. -->
+      <div class="w-[60rem] max-w-full h-[min(82vh,48rem)] flex flex-col rounded-lg border border-bd bg-surface shadow-xl">
 
         <div class="flex items-center gap-2 shrink-0 border-b border-bd px-4 py-3">
           <div class="font-medium">Settings</div>
-          <button @click="showSettings=false" class="ml-auto text-muted text-lg leading-none">&times;</button>
+          <button @click="showSettings=false" class="ml-auto kl-btn quiet" title="Close" aria-label="Close">&times;</button>
         </div>
 
         <div class="flex min-h-0 flex-1">
-          <nav class="w-36 sm:w-40 shrink-0 overflow-y-auto border-r border-bd p-2 space-y-1 text-sm">
-
-            <template x-for="s in [['general','General'],['repositories','Repositories'],['account','Account'],['remote','Remote access'],['encryption','Encryption'],['appearance','Appearance'],['desktop','Desktop app'],['indexing','Indexing'],['refresh','Refresh'],['advanced','Advanced'],['backblaze','Backblaze'],['backups','Settings backups'],['licence','Licence'],['updates','Updates'],['about','About']]" :key="s[0]">
-              <button @click="settingsTab=s[0]"
-                      :class="settingsTab===s[0] ? 'w-full text-left rounded px-2 py-1.5 bg-sel text-fg font-medium' : 'w-full text-left rounded px-2 py-1.5 hover:bg-head'"
-                      x-text="s[1]"></button>
+          <nav class="w-36 sm:w-44 shrink-0 overflow-y-auto border-r border-bd p-2 text-sm">
+            <template x-for="g in [['App', [['general','General'],['appearance','Appearance'],['desktop','Desktop app']]],
+                                   ['Data', [['repositories','Repositories'],['indexing','Indexing'],['backblaze','Backblaze']]],
+                                   ['Access', [['account','Account'],['encryption','Encryption'],['remote','Remote access']]],
+                                   ['More', [['licence','Licence'],['updates','Updates'],['backups','Settings backups'],['advanced','Advanced'],['about','About']]]]" :key="g[0]">
+              <div class="mb-2">
+                <div class="px-2 pt-1 pb-0.5 text-[11px] text-faint" x-text="g[0]"></div>
+                <template x-for="s in g[1]" :key="s[0]">
+                  <button @click="settingsTab=s[0]"
+                          :class="(settingsTab===s[0] || (s[0]==='indexing' && settingsTab==='refresh')) ? 'w-full text-left rounded px-2 py-1.5 bg-sel text-fg font-medium' : 'w-full text-left rounded px-2 py-1.5 hover:bg-head'"
+                          x-text="s[1]"></button>
+                </template>
+              </div>
             </template>
           </nav>
 
           <div class="flex-1 min-w-0 overflow-y-auto p-4 text-sm">
 
             <section x-show="settingsTab==='general'" class="space-y-4">
-              <div class="flex items-center justify-between gap-3"><span>Time format</span>
-                <button @click="toggleTimeFmt()" class="h-8 rounded border border-bd px-3" x-text="timeFmt==='relative' ? 'Relative (3h ago)' : 'Absolute 12h'"></button></div>
               <div>
-                <div class="flex items-center justify-between gap-3"><span>Listing backend <span class="text-[10px] text-warn">restart</span></span>
-                  <select x-model="backend" @change="saveKl('listing_backend')" class="fld border border-bd bg-surface2">
-                    <option value="subprocess">Subprocess (default)</option>
-                    <option value="server">Kopia server</option>
+                <div class="flex items-center justify-between gap-3"><span>Numbers</span>
+                  <select x-model="numberStyle" @change="saveKl('number_style')" class="fld border border-bd bg-surface2 w-48">
+                    <option value="system" x-text="'System (' + (1234567.8).toLocaleString(undefined) + ')'"></option>
+                    <option value="en-US">1,234,567.8</option>
+                    <option value="de-DE">1.234.567,8</option>
+                    <option value="fr-FR">1 234 567,8</option>
+                    <option value="en-IN">12,34,567.8</option>
                   </select></div>
-                <p class="text-[11px] text-muted mt-1">Subprocess means zero background kopia activity. Server runs a persistent kopia server in the background.</p>
               </div>
               <div>
-                <div class="flex items-center justify-between gap-3"><span>Disk lookup</span>
-                  <select x-model="diskLookupMode" @change="saveKl('disk_lookup')" class="fld border border-bd bg-surface2">
-                    <option value="auto">Automatic</option>
-                    <option value="everything">Everything only</option>
-                    <option value="scan">Folder scan</option>
-                    <option value="off">Off</option>
+                <div class="flex items-center justify-between gap-3"><span>Dates</span>
+                  <select x-model="dateStyle" @change="saveKl('date_style')" class="fld border border-bd bg-surface2 w-48">
+                    <option value="system" x-text="'System (' + new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) + ')'"></option>
+                    <option value="dmy" x-text="new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })"></option>
+                    <option value="mdy" x-text="new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })"></option>
+                    <option value="iso" x-text="_isoDay(new Date())"></option>
                   </select></div>
-                <p class="text-[11px] text-muted mt-1">How KopiaLens reads what is on disk: the Excluded browser, rule Preview and space freed by maintenance. Automatic uses Everything when it is running, otherwise a folder scan.</p>
-                <p class="text-[11px] mt-1" x-show="diskLookup" :style="diskLookup && diskLookup.available ? 'color:var(--ok)' : 'color:var(--warn)'"
-                   x-text="diskLookupText()"></p>
               </div>
-              <div x-show="diskLookupMode !== 'off'">
-                <div class="flex items-center justify-between gap-3"><span>Folder scan time limit</span>
-                  <div class="flex items-center gap-2">
-                    <input type="number" min="1" step="1" x-model.number="diskScanBudget" @change="saveKl('disk_scan_budget')" class="fld border border-bd bg-surface2 w-24">
-                    <span class="text-[11px] text-muted">seconds</span>
-                  </div></div>
-                <p class="text-[11px] text-muted mt-1">A scan that takes longer answers "not measured" instead of making you wait.</p>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Times</span>
+                  <span class="flex items-center gap-2">
+                    <select x-model="clock" @change="saveKl('clock')" class="fld border border-bd bg-surface2">
+                      <option value="system">System clock</option>
+                      <option value="12">12-hour</option>
+                      <option value="24">24-hour</option>
+                    </select>
+                    <select :value="timeFmt" @change="setTimeFmt($event.target.value)" class="fld border border-bd bg-surface2">
+                      <option value="absolute">Exact (9:14 PM)</option>
+                      <option value="relative">Relative (5 min ago)</option>
+                    </select>
+                  </span></div>
+                <p class="text-[11px] text-muted mt-1">Changes every table at once. The header's clock button switches exact and relative too.</p>
               </div>
-              <div x-show="diskLookupMode === 'auto' || diskLookupMode === 'everything'">
-                <div class="flex items-center justify-between gap-3"><span>Everything (es.exe) path</span>
-                  <input x-model="esPath" @change="saveKl('es_path')" class="fld border border-bd bg-surface2 min-w-[18rem]" placeholder="es.exe path"></div>
-                <p class="text-[11px] text-muted mt-1">Everything is a free Windows file index by voidtools (voidtools.com). es.exe is its command-line tool; Everything itself must be running.</p>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Dedupe in Search merges</span>
+                  <select x-model="dedupeBy" @change="saveKl('search_dedupe_by')" class="fld border border-bd bg-surface2 w-48">
+                    <option value="path">Same path</option>
+                    <option value="content">Identical content</option>
+                  </select></div>
+                <p class="text-[11px] text-muted mt-1">Same path: one row per file, even when nested sources back it up. Identical content: one row for files with the same bytes, wherever they are.</p>
               </div>
               <div x-show="host.native_picker_possible">
                 <div class="flex items-center justify-between gap-3"><span>Folder picker</span>
@@ -77,17 +91,6 @@
                   <input x-model="mountHostPath" @change="saveKl('mount_host_path')" class="fld border border-bd bg-surface2 min-w-[18rem] font-mono" placeholder="/mnt/kopialens"></div>
                 <p class="text-[11px] text-muted mt-1" x-text="'The host folder mapped to ' + (host.mount.dir || '/mounts') + ' in the container. Mount paths are shown as this folder.'"></p>
               </div>
-              <div>
-                <div class="flex items-center justify-between gap-3"><span>Excluded-folder tolerance</span>
-                  <select x-model.number="excludedTolerance" @change="saveKl('excluded_tolerance')" class="fld border border-bd bg-surface2">
-                    <option value="0">0% (strict)</option>
-                    <option value="0.02">2%</option>
-                    <option value="0.05">5%</option>
-                    <option value="0.1">10%</option>
-                    <option value="0.15">15%</option>
-                  </select></div>
-                <p class="text-[11px] text-muted mt-1">In the Excluded browser a folder counts as backed up when less than this fraction of it is excluded. Cuts "partial" noise.</p>
-              </div>
             </section>
 
 {% include "partials/appearance.html" %}
@@ -98,7 +101,7 @@
 {% include "partials/updates.html" %}
 {% include "partials/licence.html" %}
 
-            <section x-show="settingsTab==='indexing'" class="space-y-4">
+            <section x-show="settingsTab==='indexing' || settingsTab==='refresh'" class="space-y-4">
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Kopia indexing</span>
                   <select x-model="indexMode" @change="saveKl('index_mode')" class="fld border border-bd bg-surface2">
@@ -115,7 +118,7 @@
                     <option value="43200">12 hours</option>
                     <option value="86400">24 hours</option>
                   </select></div>
-                <p class="text-[11px] text-muted mt-1">Indexing, snapshot analysis, reclaimable, the dashboard rebuild and folder pre-compute run together in a separate process that exits afterwards, so this app never holds on to the memory. One repo at a time. If the PC was off at the scheduled time it catches up at the next opportunity. The app stays usable while a repo indexes; a heavy pass just isn't included in that repo's numbers until it finishes. Backblaze has its own schedule; this setting doesn't change it.</p>
+                <p class="text-[11px] text-muted mt-1">Reads new snapshots so the numbers stay current. It runs separately, one repository at a time, so KopiaLens stays light, and catches up if the PC was off. Backblaze has its own schedule.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Pause indexing</span>
@@ -129,26 +132,25 @@
                     <span class="text-xs" style="color:var(--warn)" x-text="pauseText()"></span>
                     <button @click="resumeIndexing()" class="kl-btn">Resume</button>
                   </div></div>
-                <p class="text-[11px] text-muted mt-1">Automatic indexing waits, including the update after deletes. Index still runs when you start it. A pause ends when KopiaLens restarts; anything that came due runs when it ends.</p>
+                <p class="text-[11px] text-muted mt-1">Automatic indexing waits until the pause ends or KopiaLens restarts. Starting an index yourself still works.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Dashboard numbers</span>
                   <select x-model="dashboardMode" @change="saveKl('dashboard_mode')" class="fld border border-bd bg-surface2">
-                    <option value="nightly">Rebuild with the heavy pass</option>
+                    <option value="nightly">Rebuild with nightly indexing</option>
                     <option value="interval">Also rebuild during the day</option>
                   </select></div>
-                <p class="text-[11px] text-muted mt-1">The physical / freeable / dedup columns take about 80 seconds to recompute. Nightly keeps that out of your day; the &#8635; Refresh button rebuilds them on demand either way.</p>
+                <p class="text-[11px] text-muted mt-1">Rebuilding the Dashboard's size columns takes a while, so by default it happens with nightly indexing. &#8635; Refresh rebuilds them any time.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Full rebuild</span>
                   <button @click="rebuildIndex()" :disabled="!!indexStatus.building" class="h-8 rounded border border-bd px-3 disabled:opacity-50">Rebuild full index</button></div>
-                <p class="text-[11px] text-muted mt-1">Re-walks every snapshot in this repo from scratch instead of only what changed. Rarely needed; takes far longer than a normal pass.</p>
+                <p class="text-[11px] text-muted mt-1">Reads every snapshot again instead of only what changed. Rarely needed, and much slower.</p>
               </div>
-            </section>
 
-            <section x-show="settingsTab==='refresh'" class="space-y-4">
+              <div class="pt-2 border-t border-bd-soft text-xs font-medium">Refresh</div>
               <div>
-                <div class="flex items-center justify-between gap-3"><span>Background warm pass</span>
+                <div class="flex items-center justify-between gap-3"><span>Quick refresh</span>
                   <select x-model.number="lightInterval" @change="saveKl('light_interval')" class="fld border border-bd bg-surface2">
                     <option value="300">5 minutes</option>
                     <option value="600">10 minutes</option>
@@ -157,7 +159,7 @@
                     <option value="3600">1 hour</option>
                     <option value="7200">2 hours</option>
                   </select></div>
-                <p class="text-[11px] text-muted mt-1">The cheap in-process pass: next-snapshot times, repository stats and the search landing page. Everything expensive now rides with the heavy pass instead.</p>
+                <p class="text-[11px] text-muted mt-1">Keeps next snapshot times, repository details and the Search start page current.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Dashboard auto-refresh</span>
@@ -168,9 +170,9 @@
                     <option value="1800">30 minutes</option>
                     <option value="3600">1 hour</option>
                   </select></div>
-                <p class="text-[11px] text-muted mt-1">How often an open Dashboard re-fetches the cached numbers. Cheap: just a re-render when something changed.</p>
+                <p class="text-[11px] text-muted mt-1">How often an open Dashboard checks for new numbers.</p>
               </div>
-              <div>
+              <div x-show="dashboardMode === 'interval'">
                 <div class="flex items-center justify-between gap-3"><span>Dashboard rebuild interval</span>
                   <select x-model.number="dashboardInterval" @change="saveKl('dashboard_interval')" class="fld border border-bd bg-surface2">
                     <option value="3600">1 hour</option>
@@ -178,7 +180,7 @@
                     <option value="14400">4 hours</option>
                     <option value="28800">8 hours</option>
                   </select></div>
-                <p class="text-[11px] text-muted mt-1">Only used when Dashboard numbers is set to "Also rebuild during the day". Ignored otherwise.</p>
+                <p class="text-[11px] text-muted mt-1">How often the Dashboard's size columns are rebuilt during the day.</p>
               </div>
             </section>
 
@@ -215,6 +217,42 @@
             <section x-show="settingsTab==='advanced'" class="space-y-4">
               <p class="text-[11px] text-muted">Sensible defaults; change them when you have a reason.</p>
 
+              <div class="pt-1 text-xs font-medium">Files on disk</div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Disk lookup</span>
+                  <select x-model="diskLookupMode" @change="saveKl('disk_lookup')" class="fld border border-bd bg-surface2">
+                    <option value="auto">Automatic</option>
+                    <option value="everything">Everything only</option>
+                    <option value="scan">Folder scan</option>
+                    <option value="off">Off</option>
+                  </select></div>
+                <p class="text-[11px] text-muted mt-1">How KopiaLens reads what is on disk: the Excluded browser, rule Preview and space freed by maintenance. Automatic uses Everything when it is running, otherwise a folder scan.</p>
+                <p class="text-[11px] mt-1" x-show="diskLookup" :style="diskLookup && diskLookup.available ? 'color:var(--ok)' : 'color:var(--warn)'"
+                   x-text="diskLookupText()"></p>
+              </div>
+              <div x-show="diskLookupMode !== 'off'">
+                <div class="flex items-center justify-between gap-3"><span>Folder scan time limit</span>
+                  {{ duration('diskScanBudget', 'disk_scan_budget') }}</div>
+                <p class="text-[11px] text-muted mt-1">A scan that takes longer answers "not measured" instead of making you wait.</p>
+              </div>
+              <div x-show="diskLookupMode === 'auto' || diskLookupMode === 'everything'">
+                <div class="flex items-center justify-between gap-3"><span>Everything (es.exe) path</span>
+                  <input x-model="esPath" @change="saveKl('es_path')" class="fld border border-bd bg-surface2 min-w-[18rem]" placeholder="es.exe path"></div>
+                <p class="text-[11px] text-muted mt-1">Everything is a free Windows file index by voidtools (voidtools.com). es.exe is its command-line tool; Everything itself must be running.</p>
+              </div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Excluded-folder tolerance</span>
+                  <select x-model.number="excludedTolerance" @change="saveKl('excluded_tolerance')" class="fld border border-bd bg-surface2">
+                    <option value="0">0% (strict)</option>
+                    <option value="0.02">2%</option>
+                    <option value="0.05">5%</option>
+                    <option value="0.1">10%</option>
+                    <option value="0.15">15%</option>
+                  </select></div>
+                <p class="text-[11px] text-muted mt-1">In the Excluded browser a folder counts as backed up when less than this share of it is excluded. Cuts "partial" noise.</p>
+              </div>
+
+              <div class="pt-2 border-t border-bd-soft text-xs font-medium">Indexing</div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Memory limit <span class="text-[10px] text-warn">restart</span></span>
                   <select x-model="duckdbMemory" @change="saveKl('duckdb_memory')" class="fld border border-bd bg-surface2 w-40" data-testid="memory-limit">
@@ -224,29 +262,25 @@
                   </select></div>
                 <p class="text-[11px] text-muted mt-1">The most memory each repository's index can use, in the app and while indexing. Automatic is based on this PC's memory.</p>
               </div>
-
-              <div class="flex items-center justify-between gap-3"><span>Heavy-pass hard timeout</span>
-                <div class="flex items-center gap-2">
-                  <input type="number" min="600" step="600" x-model.number="indexWorkerTimeout" @change="saveKl('index_worker_timeout')" class="fld border border-bd bg-surface2 w-28">
-                  <span class="text-[11px] text-muted">seconds</span>
-                </div></div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Indexing time limit</span>
+                  {{ duration('indexWorkerTimeout', 'index_worker_timeout') }}</div>
+                <p class="text-[11px] text-muted mt-1">An indexing run that takes longer is stopped and tried again later.</p>
+              </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Update the index after deletes</span>
-                  <div class="flex items-center gap-2">
-                    <input type="number" min="0" step="30" x-model.number="reindexAfterDeleteDelay" @change="saveKl('reindex_after_delete_delay')" class="fld border border-bd bg-surface2 w-28">
-                    <span class="text-[11px] text-muted">seconds after the last delete</span>
-                  </div></div>
-                <p class="text-[11px] text-muted mt-1">Back-to-back deletes share one update.</p>
+                  {{ duration('reindexAfterDeleteDelay', 'reindex_after_delete_delay') }}</div>
+                <p class="text-[11px] text-muted mt-1">How long after the last delete. Back-to-back deletes share one update.</p>
               </div>
-              <div class="flex items-center justify-between gap-3"><span>Retry delay after a failed pass</span>
-                <div class="flex items-center gap-2">
-                  <input type="number" min="60" step="60" x-model.number="indexRetryDelay" @change="saveKl('index_retry_delay')" class="fld border border-bd bg-surface2 w-28">
-                  <span class="text-[11px] text-muted">seconds</span>
-                </div></div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Retry after a failed run</span>
+                  {{ duration('indexRetryDelay', 'index_retry_delay') }}</div>
+                <p class="text-[11px] text-muted mt-1">How long to wait before trying a failed indexing run again.</p>
+              </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Retries per scheduled slot</span>
                   <input type="number" min="0" max="5" x-model.number="indexMaxRetries" @change="saveKl('index_max_retries')" class="fld border border-bd bg-surface2 w-24"></div>
-                <p class="text-[11px] text-muted mt-1">0 means a failed pass waits for tomorrow's slot.</p>
+                <p class="text-[11px] text-muted mt-1">0 means a failed run waits for the next scheduled one.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>When quitting KopiaLens</span>
@@ -254,31 +288,48 @@
                     <option value="finish">Let indexing finish</option>
                     <option value="stop">Stop indexing</option>
                   </select></div>
-                <p class="text-[11px] text-muted mt-1">Restart always lets indexing finish. A stopped run is retried later.</p>
+                <p class="text-[11px] text-muted mt-1">Restart always lets indexing finish. A stopped run is tried again later.</p>
               </div>
               <div>
-                <div class="flex items-center justify-between gap-3"><span>Folder pre-compute budget</span>
-                  <div class="flex items-center gap-2">
-                    <input type="number" min="0" step="60" x-model.number="folderPrewarmBudget" @change="saveKl('folder_prewarm_budget')" class="fld border border-bd bg-surface2 w-28">
-                    <span class="text-[11px] text-muted">seconds</span>
-                  </div></div>
-                <p class="text-[11px] text-muted mt-1">Wall-clock cap on the nightly stage that pre-computes folder reclaim, biggest folders first. Anything it does not reach is computed when you open it. <strong>0 disables the stage</strong> (it never means "no limit"). The depths it works at follow the Churn tab and bloat-finder depths automatically.</p>
+                <div class="flex items-center justify-between gap-3"><span>Folder sizes ahead of time</span>
+                  {{ duration('folderPrewarmBudget', 'folder_prewarm_budget') }}</div>
+                <p class="text-[11px] text-muted mt-1">Nightly time limit for working out folder sizes ahead of time, biggest folders first. Folders it doesn't reach are worked out when you open them. <strong>0 turns it off.</strong></p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Quiet period after startup <span class="text-[10px] text-warn">restart</span></span>
-                  <div class="flex items-center gap-2">
-                    <input type="number" min="0" step="30" x-model.number="startupDelay" @change="saveKl('startup_delay')" class="fld border border-bd bg-surface2 w-28">
-                    <span class="text-[11px] text-muted">seconds</span>
-                  </div></div>
-                <p class="text-[11px] text-muted mt-1">How long after launch before any background work starts, so booting the PC is not immediately followed by a burst of disk and CPU.</p>
+                  {{ duration('startupDelay', 'startup_delay') }}</div>
+                <p class="text-[11px] text-muted mt-1">How long after launch before background work starts, so starting the PC isn't followed by a burst of disk and CPU.</p>
               </div>
               <div>
-                <div class="flex items-center justify-between gap-3"><span>Background cycle gap</span>
-                  <div class="flex items-center gap-2">
-                    <input type="number" min="300" step="300" x-model.number="reindexInterval" @change="saveKl('reindex_interval')" class="fld border border-bd bg-surface2 w-28">
-                    <span class="text-[11px] text-muted">seconds</span>
-                  </div></div>
-                <p class="text-[11px] text-muted mt-1">Sizes the quiet period after a restart, so restarting just after a cycle does not start another one. Only used when the heavy pass runs on an interval.</p>
+                <div class="flex items-center justify-between gap-3"><span>Gap between background runs</span>
+                  {{ duration('reindexInterval', 'reindex_interval') }}</div>
+                <p class="text-[11px] text-muted mt-1">With indexing set to every N hours: the least time between two runs, also right after a restart.</p>
+              </div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Ranked files</span>
+                  <select x-model.number="rankCount" @change="saveKl('rank_count')" class="fld border border-bd bg-surface2">
+                    <option value="1000">1,000</option>
+                    <option value="5000">5,000</option>
+                    <option value="10000">10,000</option>
+                    <option value="25000">25,000</option>
+                    <option value="50000">50,000</option>
+                  </select></div>
+                <p class="text-[11px] text-muted mt-1">How many of the biggest files are ranked exactly each night, for Search's Stored and Reclaimable sorting. More takes a little longer.</p>
+              </div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Listing backend <span class="text-[10px] text-warn">restart</span></span>
+                  <select x-model="backend" @change="saveKl('listing_backend')" class="fld border border-bd bg-surface2">
+                    <option value="subprocess">Run kopia when needed (default)</option>
+                    <option value="server">Keep a kopia server running</option>
+                  </select></div>
+                <p class="text-[11px] text-muted mt-1">How KopiaLens asks kopia for snapshot listings. The default only runs kopia when something needs it.</p>
+              </div>
+
+              <div class="pt-2 border-t border-bd-soft text-xs font-medium">App</div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>One search box</span>
+                  <button @click="headerSearchOnly = !headerSearchOnly; saveKl('header_search_only')" class="h-8 rounded border border-bd px-3" x-text="headerSearchOnly ? 'On' : 'Off'"></button></div>
+                <p class="text-[11px] text-muted mt-1">On: the Search tab uses the header's search box and drops its own.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Debug log</span>
@@ -302,17 +353,6 @@
                   </select></div>
                 <p class="text-[11px] text-muted mt-1">Removes old job, dry-run and mount logs from <code>data/logs/jobs</code>. The newest 100 are always kept.</p>
               </div>
-              <div>
-                <div class="flex items-center justify-between gap-3"><span>Ranked files</span>
-                  <select x-model.number="rankCount" @change="saveKl('rank_count')" class="fld border border-bd bg-surface2">
-                    <option value="1000">1,000</option>
-                    <option value="5000">5,000</option>
-                    <option value="10000">10,000</option>
-                    <option value="25000">25,000</option>
-                    <option value="50000">50,000</option>
-                  </select></div>
-                <p class="text-[11px] text-muted mt-1">How many files the nightly ranks exactly so Search can sort by Stored and Frees. Higher counts cost a few extra seconds per run.</p>
-              </div>
             </section>
 
             <section x-show="settingsTab==='backblaze'" class="space-y-4">
@@ -325,9 +365,9 @@
                 <div class="flex items-center justify-between gap-3"><span>File index format</span>
                   <select x-model="bzStore" @change="saveKl('store')" class="fld border border-bd bg-surface2">
                     <option value="parquet">Parquet (default)</option>
-                    <option value="sqlite">SQLite (legacy)</option>
+                    <option value="sqlite">SQLite (older)</option>
                   </select></div>
-                <p class="text-[11px] text-muted mt-1">Where the scanned file list is stored. Parquet is about 20x smaller and faster to query. SQLite is the legacy format, kept for rollback. Switching rebuilds the new store on the next Backblaze rescan; once the Parquet build succeeds, the space the old copy occupied is reclaimed automatically.</p>
+                <p class="text-[11px] text-muted mt-1">Parquet: smaller and faster. SQLite: the older format. Switching rebuilds it at the next Backblaze rescan.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Reindex minimum gap</span>
@@ -342,7 +382,7 @@
                     <option :value="43200">12 hours</option>
                     <option :value="86400">24 hours</option>
                   </select></div>
-                <p class="text-[11px] text-muted mt-1">Changes in Backblaze's own scans are detected within half an hour; this gap sets how long the reindex then waits. Smaller means fresher numbers and more reindexing.</p>
+                <p class="text-[11px] text-muted mt-1">How long to wait after Backblaze's own scan changes before reindexing. Shorter means fresher numbers and more work.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>History retention</span>
@@ -368,7 +408,7 @@
         </div>
 
         <div class="flex items-center gap-2 shrink-0 border-t border-bd px-4 py-3">
-          <div class="text-[11px] text-muted">Changes save as you make them. Scheduling and interval changes apply within a minute; items marked <span class="text-warn">restart</span> need one.</div>
+          <div class="text-[11px] text-muted">Changes save as you make them. Items marked <span class="text-warn">restart</span> need one.</div>
           <button @click="showSettings=false" class="ml-auto h-8 rounded border border-bd px-3">Close</button>
         </div>
 

@@ -2,13 +2,13 @@
 // Plan data: POST /api/delete/plan - exactly what each option touches, before anything runs.
 const deletePart = {
 
-    // files: [{source, full_path}]; opts: {method, copies, flow}
+    // files: [{source, full_path}]; opts: {method, by, every, copies, flow}
     openDeletePanel(files, opts = {}) {
       const list = (files || []).filter((f) => f && f.source && f.full_path);
-      if (!list.length) { this.error = "Select one or more files first."; return; }
+      if (!list.length) { this.klNotify("Select one or more files first.", "warn"); return; }
       this.delPanel = {
-        files: list, method: opts.method || "remove", by: "object-id", sources: null,
-        copies: !!opts.copies, plan: null, loading: true, error: "", stats: null,
+        files: list, method: opts.method || "remove", by: opts.by || "object-id", sources: null,
+        every: !!opts.every, copies: !!opts.copies, plan: null, loading: true, error: "", stats: null,
         statsLoading: false, dry: this.klDryState(), showCmd: false, flow: !!opts.flow,
       };
       this.showDel = true;
@@ -34,6 +34,11 @@ const deletePart = {
                                  sources: p.sources, copies: p.copies }) });
         if (seq !== this._delSeq || !this.delPanel) return;
         p.plan = r;
+        // "Every source" picked before the candidates were known: widen the scope once they are.
+        if (p.every && !p.sources && (r.candidates || []).length > (r.scope || []).length) {
+          p.sources = [...r.candidates].sort();
+          return this.delLoad();
+        }
       } catch (e) {
         if (seq !== this._delSeq || !this.delPanel) return;
         p.error = e.message || String(e);
@@ -59,14 +64,20 @@ const deletePart = {
     delSetMethod(m) {
       const p = this.delPanel;
       if (!p || p.method === m) return;
-      p.method = m; p.sources = null;
+      p.method = m; p.sources = null; p.every = false;
       this.delLoad();
     },
     delSetBy(by) {
       const p = this.delPanel;
       if (!p || p.by === by) return;
-      p.by = by; p.sources = null;
+      p.by = by; p.sources = null; p.every = false;
       this.delLoad();
+    },
+    delSetEvery(on) {
+      const p = this.delPanel;
+      if (!p || !p.plan || p.every === !!on) return;
+      p.every = !!on;
+      if (on) { p.sources = [...(p.plan.candidates || [])].sort(); this.delLoad(); }
     },
     delToggleCopies() {
       const p = this.delPanel;
@@ -87,7 +98,7 @@ const deletePart = {
       this.delLoad();
     },
 
-    // Backups the user can tick: holders of the selection, plus sources sharing its content.
+    // Sources the user can tick: holders of the selection, plus sources sharing its content.
     delCandidates() {
       const plan = this.delPanel && this.delPanel.plan;
       if (!plan) return [];
@@ -101,6 +112,16 @@ const deletePart = {
       if (!p) return "";
       if (p.files.length > 1) return `${p.files.length} files`;
       return baseName(p.files[0].full_path);
+    },
+    delTitle() {
+      const p = this.delPanel;
+      if (!p) return "";
+      return p.flow ? "Exclude and delete" : `Delete ${this.delFileLabel()} from backups`;
+    },
+    delPathLine() {
+      const f = (this.delPanel && this.delPanel.files) || [];
+      if (!f.length) return "";
+      return f.length === 1 ? f[0].full_path : `${f[0].full_path} and ${f.length - 1} more`;
     },
 
     delRowTag(r) {
@@ -156,18 +177,17 @@ const deletePart = {
 
     delFacts() {
       const p = this.delPanel, plan = p.plan;
-      const backups = this.delScopeSources().map((s) => sourcePath(s)).join(", ");
+      const sources = this.delScopeSources().map((s) => sourcePath(s)).join(", ");
       const facts = [[p.files.length > 1 ? "Files" : "File",
         p.files.length > 1 ? `${p.files.length} selected` : p.files[0].full_path]];
       if (p.method === "remove") {
         facts.push(["Match", p.by === "filename" ? `File name: ${plan.names.join(", ")}` : "Exact content, every version"]);
-        facts.push(["Backups", backups]);
-        facts.push(["Removes", `${Number(plan.match_total).toLocaleString(NUM_LOCALE)} path${plan.match_total === 1 ? "" : "s"}`
-          + (plan.other_count ? ` · ${plan.other_count} not selected` : "")]);
-        if (p.stats) facts.push(["Frees", fmtPhys(p.stats.freeable) + " after maintenance"]);
+        facts.push(["Sources", sources]);
+        facts.push(["Removes", countOf(plan.match_total, "path") + (plan.other_count ? ` · ${plan.other_count} not selected` : "")]);
+        if (p.stats) facts.push([term("reclaimable"), fmtPhys(p.stats.freeable) + " after maintenance"]);
       } else {
         const snaps = plan.snapshots || [];
-        facts.push(["Backups", backups]);
+        facts.push(["Sources", sources]);
         facts.push(["Snapshots", `${snaps.length} · ${fmtDate(snaps[snaps.length - 1].start_time)} to ${fmtDate(snaps[0].start_time)}`]);
         if (plan.pinned_count || plan.retained_count) {
           facts.push(["Kept", `${plan.pinned_count} pinned · ${plan.retained_count} kept by retention`]);
@@ -192,11 +212,9 @@ const deletePart = {
       const p = this.delPanel;
       if (!p || !p.plan) return "Delete";
       if (p.method === "remove") {
-        const n = this.delScopeSources().length;
-        return `Remove from ${n} backup${n === 1 ? "" : "s"}`;
+        return `Remove from ${countOf(this.delScopeSources().length, "source")}`;
       }
-      const n = (p.plan.snapshots || []).length;
-      return `Delete ${n} snapshot${n === 1 ? "" : "s"}`;
+      return `Delete ${countOf((p.plan.snapshots || []).length, "snapshot")}`;
     },
 
     async delExecute(ev) {
@@ -205,7 +223,7 @@ const deletePart = {
       const ok = await this.klConfirm({
         title: p.method === "remove" ? `Remove ${this.delFileLabel()} from snapshots?` : `Delete ${countOf(p.plan.snapshots.length, "snapshot")}?`,
         facts: this.delFacts(), callout: this.delCallout(),
-        note: (this.delDryChecked() ? "" : "No dry run yet. ") + "Space frees after the next full maintenance.",
+        note: (this.delDryChecked() ? "" : "No dry run yet. ") + "Space comes back after the next full maintenance.",
         command: p.plan.command, confirmLabel: this.delConfirmLabel(), danger: true,
       });
       if (!ok) return;
@@ -225,23 +243,44 @@ const deletePart = {
 
     selExclude(scope, mode = "exclude", ev = null) {
       const items = this._selItems(scope);
-      if (!items.length) { this.error = "Select one or more rows first."; return; }
+      if (!items.length) { this.klNotify("Select one or more rows first.", "warn"); return; }
       this.openExclude({ items }, mode, ev);
     },
 
-    selDelete(scope) {
+    // Files always go to the Delete panel, folders (or a mix) to the folder plan.
+    async selDelete(scope) {
       const rows = this.selectedRows(scope);
       const items = this._selItems(scope);
-      if (!items.length) { this.error = "Select one or more rows first."; return; }
+      if (!items.length) { this.klNotify("Select one or more rows first.", "warn"); return; }
       const folders = rows.filter((r) => r.type === "folder");
       if (folders.length === 1 && rows.length === 1) return this.openRemoveFolder(folders[0]);
       if (folders.length) {
         const filters = scope === "tree" ? { deleted_only: this.treeDeletedOnly, over_gb: this.treeOverGb ? 1 : 0, ext: this.treeExt } : {};
         return this.openRemoveParts(this._partsOf(items), this._partsLabel(items), filters);
       }
+      const missing = items.filter((i) => !i.source).map((i) => i.path);
+      if (missing.length) {
+        const held = await this._holdersOf(missing);
+        if (!held) return;
+        for (const i of items) if (!i.source) i.source = (held[i.path] || [])[0] || "";
+      }
       const files = items.filter((i) => i.source).map((i) => ({ source: i.source, full_path: i.path }));
-      if (files.length < items.length) { this.error = "Pick a source first to delete from Tree."; return; }
+      if (files.length < items.length) { const n = items.length - files.length; this.klNotify(`${countOf(n, "file")} ${n === 1 ? "isn't" : "aren't"} held by any indexed source, so ${n === 1 ? "it was" : "they were"} left out.`, "warn"); }
       this.openDeletePanel(files);
+    },
+
+    // Sources holding each path, for All-sources rows that carry none. One batched call.
+    async _holdersOf(paths) {
+      try {
+        const r = await getJson("/api/tree/holders", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo: this.repo, full_paths: paths }) });
+        const out = {};
+        for (const p of paths) out[p] = ((r && r.paths && r.paths[p]) || []).map((h) => h.source);
+        return out;
+      } catch (e) {
+        this.klNotify("Couldn't read which sources hold these files. Pick a source first.", "warn");
+        return null;
+      }
     },
 
     _partsOf(items) {
@@ -250,8 +289,7 @@ const deletePart = {
     _partsLabel(items) {
       const folders = items.filter((i) => i.kind === "folder").length;
       const files = items.length - folders;
-      return [folders && `${folders} folder${folders === 1 ? "" : "s"}`, files && `${files} file${files === 1 ? "" : "s"}`]
-        .filter(Boolean).join(" and ");
+      return [folders && countOf(folders, "folder"), files && countOf(files, "file")].filter(Boolean).join(" and ");
     },
 
     // ---- Exclude & delete flow ----
@@ -355,8 +393,8 @@ const deletePart = {
         ["Folder", p.label],
         ["Match", p.by === "filename" ? "File name" : "Exact content"],
         ["Removes", `${this.removeFilesSplit() || countOf(this.removeFileTotal(), "file")} · ${this.removeAllVersions() ? "every version" : "latest version"}`],
-        ["Backups", (p.sources_scope || []).map((s) => sourcePath(s)).join(", ")],
-        ["Frees", this.removeFreesText()],
+        ["Sources", p.everywhere ? "Every source in the repository" : (p.sources_scope || []).map((s) => sourcePath(s)).join(", ")],
+        [term("reclaimable"), this.removeFreesText()],
       ];
     },
 
@@ -376,7 +414,7 @@ const deletePart = {
       const still = this.flowStillBackedUp();
       const dry = this.flowDryState();
       const facts = [
-        ["Rules", this.flow.writes.map((w) => `${this.exLabel(w.target)}: ${w.add.length === 1 ? w.add[0] : w.add.length + " rules"}`).join(" · ")],
+        ["Rules", this.flow.writes.map((w) => `${this.exLabel(w.target)}: ${w.add.length === 1 ? w.add[0] : countOf(w.add.length, "rule")}`).join(" · ")],
         ...this.flowDeleteFacts(),
       ];
       const ok = await this.klConfirm({

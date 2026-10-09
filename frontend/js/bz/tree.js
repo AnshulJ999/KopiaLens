@@ -53,10 +53,10 @@ const bzTreePart = {
           initialSort: [{ column: atRoot ? "name" : "total_bytes", dir: atRoot ? "asc" : "desc" }],
           onRowDblClick: (_e, row) => { const d = row.getData(); if (d._root) return this.bzTreeNav(d._root); if (d.is_dir) this.bzTreeNav(this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); },
           rowMenu: [
-            { label: "Open / drill in", action: (_e, row) => { const d = row.getData(); if (d._root) return this.bzTreeNav(d._root); if (d.is_dir) this.bzTreeNav(this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); } },
+            { label: "Open", action: (_e, row) => { const d = row.getData(); if (d._root) return this.bzTreeNav(d._root); if (d.is_dir) this.bzTreeNav(this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); } },
             { label: "Generate exclusion (this folder)", action: (_e, row) => { const d = row.getData(); const full = d._root || (this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); const rel = full.length > 2 && full[1] === ":" ? full.slice(2) : full; this.bzOpenGen("folder", rel.replace(/\\+$/, "") + "\\"); } },
             { label: "Generate exclusion (any folder with this name)", action: (_e, row) => this.bzOpenGen("folder", "\\" + row.getData().name + "\\") },
-            { label: "Find in search", action: (_e, row) => { this.query = row.getData().name; this.active = "bz-search"; this.bzLoadSearch(); } },
+            { label: "Show in Search", action: (_e, row) => { this.query = row.getData().name; this.active = "bz-search"; this.bzLoadSearch(); } },
             { label: "Copy path", action: (_e, row) => this.copyText(row.getData()._root || (this.bzTreePrefix.replace(/\\+$/, "") + "\\" + row.getData().name)) },
           ],
         });

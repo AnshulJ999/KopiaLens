@@ -377,6 +377,18 @@ LOGIN_PAGE = """<!doctype html>
   <a href="/login/recover">Forgot password?</a>
 </form></body></html>"""
 
+def _read_pw_script() -> str:
+    """The show/hide password script, inlined so the sign-in pages need no static files."""
+    try:
+        from pathlib import Path
+        js = (Path(__file__).resolve().parents[2] / "frontend" / "js" / "pwreveal.js").read_text(encoding="utf-8")
+        return f"<script>{js}</script>"
+    except OSError:
+        return ""
+
+
+_PW_SCRIPT = _read_pw_script()
+
 _LOCAL_RESET = ("On the computer running KopiaLens, run <code>kopialens --reset-password</code> "
                 "(from source: <code>python main.py --reset-password</code>).")
 
@@ -400,7 +412,8 @@ def login_page(error: str = "", username: str = "", unlocks: bool = False) -> st
             .replace("__BAD__", 'class="bad"' if error else "")
             .replace("__ERROR__", f'<div class="err">{escape(error)}</div>' if error else "")
             .replace("__BUTTON__", "Sign in and unlock" if unlocks else "Sign in")
-            .replace("__REMEMBER_NOTE__", note))
+            .replace("__REMEMBER_NOTE__", note)
+            .replace("</body></html>", _PW_SCRIPT + "</body></html>"))
 
 
 def recover_page(error: str = "", with_key: bool = False) -> str:
@@ -431,7 +444,7 @@ def recover_page(error: str = "", with_key: bool = False) -> str:
                 f'<div class="note">{_LOCAL_RESET}</div>'
                 '<a href="/login">Back to sign in</a></form>')
     return head.replace("<title>Sign in - KopiaLens</title>",
-                        "<title>Reset password - KopiaLens</title>") + body + "</body></html>"
+                        "<title>Reset password - KopiaLens</title>") + body + _PW_SCRIPT + "</body></html>"
 
 
 # Whether the current request arrived over HTTPS (built-in, or a trusted proxy's X-Forwarded-Proto);

@@ -37,7 +37,7 @@ const snapshotsPart = {
           const d = row.getData();
           const items = [];
           if (n === 1) items.push(
-            { label: "Browse files", action: () => this.browseSnapshot(d) },
+            { label: "Show in Tree", action: () => this.browseSnapshot(d) },
             { label: "Restore this snapshot…", action: () => this.openRestore([{ source: d.source, full_path: sourcePath(d.source), snapshot_id: d.id }], { label: "snapshot " + this.humanTime(d.start_time) }) },
             { label: this.mountOpenLabel(), action: () => this.mountOpen(d.id, d.source, sourcePath(d.source)) },
             { separator: true });

@@ -29,8 +29,8 @@ const bzChurnPart = {
       ], {
         initialSort: [{ column: "count", dir: "desc" }],
         rowMenu: [
-          { label: "Generate exclusion for this folder", action: (_e, row) => { const f = row.getData().folder; const rel = f.length > 2 && f[1] === ":" ? f.slice(2) : f; this.bzOpenGen("folder", rel.replace(/\\+$/, "") + "\\"); } },
-          { label: "Find in search", action: (_e, row) => { this.query = row.getData().folder; this.active = "bz-search"; this.bzLoadSearch(); } },
+          { label: "Generate exclusion (this folder)", action: (_e, row) => { const f = row.getData().folder; const rel = f.length > 2 && f[1] === ":" ? f.slice(2) : f; this.bzOpenGen("folder", rel.replace(/\\+$/, "") + "\\"); } },
+          { label: "Show in Search", action: (_e, row) => { this.query = row.getData().folder; this.active = "bz-search"; this.bzLoadSearch(); } },
         ],
       });
     },

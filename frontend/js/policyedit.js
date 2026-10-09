@@ -260,9 +260,37 @@ const policyEditPart = {
       const r = this.polRes();
       if (!r) return "";
       const ret = r.effective.retention || {};
-      const parts = [["keepLatest", " latest"], ["keepHourly", "h"], ["keepDaily", "d"], ["keepWeekly", "w"], ["keepMonthly", "m"], ["keepAnnual", "y"]]
-        .filter(([k]) => ret[k]).map(([k, s]) => ret[k] + s);
-      return parts.length ? parts.join(" / ") : "Keeps everything";
+      const parts = [["keepLatest", "latest"], ["keepHourly", "hourly"], ["keepDaily", "daily"], ["keepWeekly", "weekly"], ["keepMonthly", "monthly"], ["keepAnnual", "yearly"]]
+        .filter(([k]) => ret[k]).map(([k, s]) => `${ret[k]} ${s}`);
+      return parts.length ? "Keeps " + parts.join(", ") : "Keeps everything";
+    },
+    // The summary under the policy name: retention, schedule, rules, compression.
+    polSummaryLine() {
+      const r = this.polRes();
+      if (!r) return "";
+      const inh = this.polInheritedRules().length;
+      const comp = (r.effective || {}).compression ? (r.effective.compression.compressorName || "no compression") : "";
+      return [this.polSummaryRetention(), this.polSummarySchedule(),
+        countOf(this.polRuleRows().length, "own rule") + (inh ? ` · ${inh} inherited` : ""), comp].filter(Boolean).join(" · ");
+    },
+    // A cron line's meaning with its times in the chosen clock style; "" when there is none.
+    polCronMeaning(c) {
+      const m = c && c.meaning && c.meaning !== "Custom schedule" ? c.meaning : "";
+      return m.replace(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g, (_, h, mi) => { const d = new Date(); d.setHours(+h, +mi, 0, 0); return _clockFmt.format(d); });
+    },
+    // "Today 10:00 PM", "Tomorrow 10:00 PM", "Sun 11 Oct, 10:00 PM".
+    polWhen(t) {
+      const d = toDate(t);
+      if (isNaN(d.getTime())) return humanTime(t);
+      const day = new Date(d); day.setHours(0, 0, 0, 0);
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const diff = Math.round((day - today) / 86400000);
+      const clock = _clockFmt.format(d);
+      if (diff === 0) return "Today " + clock;
+      if (diff === 1) return "Tomorrow " + clock;
+      const date = _dateStyle === "iso" ? `${d.toLocaleDateString(undefined, { weekday: "short" })} ${_isoDay(d)}`
+        : d.toLocaleDateString(dateLocale(), { weekday: "short", day: "numeric", month: "short" });
+      return `${date}, ${clock}`;
     },
     polSummarySchedule() {
       const r = this.polRes();
@@ -272,7 +300,7 @@ const policyEditPart = {
       const bits = [];
       if (s.intervalSeconds) bits.push(this.polIntervalText(s.intervalSeconds));
       if ((s.timeOfDay || []).length) bits.push("at " + this.polShow({ type: "tod" }, s.timeOfDay));
-      for (const c of (r.cron || [])) bits.push(c.meaning && c.meaning !== "Custom schedule" ? c.meaning : "cron " + c.line);
+      for (const c of (r.cron || [])) bits.push(this.polCronMeaning(c) || "cron " + c.line);
       if (!r.cron.length && (s.cron || []).length) bits.push("cron " + s.cron.join(", "));
       return bits.length ? bits.join(" · ") : "No schedule";
     },
@@ -281,7 +309,7 @@ const policyEditPart = {
       const r = this.polRes();
       if (!r) return "";
       if ((r.effective.scheduling || {}).manual) return "Manual only: no scheduled snapshots.";
-      return (r.next_snapshots || []).map((t) => humanTime(t)).join(" · ") || "No scheduled snapshots.";
+      return (r.next_snapshots || []).map((t) => this.polWhen(t)).join(" · ") || "No scheduled snapshots.";
     },
     polActionsOff() { return !!(this.polMeta && this.polMeta.client && this.polMeta.client.host && !this.polMeta.client.enable_actions); },
 
@@ -470,7 +498,7 @@ const policyEditPart = {
         confirmLabel: `Save ${writes.length} polic${writes.length === 1 ? "y" : "ies"}`, danger: false,
       });
       if (!ok) return;
-      const started = await this.startJob("policy_write", { writes }, `${writes.length} policies`);
+      const started = await this.startJob("policy_write", { writes }, countOf(writes.length, "policy", "policies"));
       if (started) this.polMulti = { on: false, picked: [], fields: {}, plan: null, ticks: {}, busy: false };
     },
 

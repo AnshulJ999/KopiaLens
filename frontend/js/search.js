@@ -90,7 +90,7 @@ const searchPart = {
         if (this.groupMinFiles) p.set("min_files", this.groupMinFiles);
         const data = await getJson(`/api/search/group-by-folder?${p.toString()}`);
         const rows = data.rows || [];
-        this.omniMeta = `${rows.length} folders · depth ${data.depth} · ranked by physical`;
+        this.omniMeta = `${countOf(rows.length, "folder")} · depth ${data.depth} · ranked by physical`;
         const cols = [
           { title: "Folder", field: "folder", widthGrow: 5, minWidth: 300 },
           { title: "Physical", field: "phys", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => fmtPhys(c.getValue()) },

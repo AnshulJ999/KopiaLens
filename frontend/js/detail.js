@@ -12,8 +12,9 @@ const detailPart = {
     // ---- Folder detail panel (reuses the file detail modal shell; folder-specific fields) ----
     // Renders instantly from indexed lookups, then patches in the expensive freeable/shared numbers
     // and the effective kopia policy - the same lazy pattern the file panel uses.
-    async openFolderPanel(prefix, source = null) {
+    async openFolderPanel(prefix, source = null, keepStack = false) {
       if (!prefix) return;
+      if (!keepStack) this.panelStack = [];
       const seq = ++this._detailSeq;
       this.detail = { kind: "folder", title: prefix, source, loading: true, heavyLoading: true, sources: [], children: [], panelTab: "overview" };
       try {
@@ -21,7 +22,7 @@ const detailPart = {
         if (source) p.set("source", source);
         const sum = await getJson(`/api/folder/summary?${p.toString()}`);
         if (seq !== this._detailSeq) return;
-        Object.assign(this.detail, sum, { loading: false });
+        Object.assign(this.detail, sum, { loading: false, notFound: !sum.files && !sum.source_count });
       } catch (e) {
         if (seq === this._detailSeq) { this.detail.loading = false; this.detail.error = e.message; }
         return;
@@ -65,7 +66,7 @@ const detailPart = {
       if (!b || !b.found || !b.all_versions) return [];
       const pct = (v) => Math.max(0, (v / b.all_versions) * 100);
       return [
-        { cls: "ok", pct: pct(b.frees), title: "Frees " + fmtPhys(b.frees) },
+        { cls: "ok", pct: pct(b.frees), title: term("reclaimable") + " " + fmtPhys(b.frees) },
         { cls: "warn", pct: pct(b.shared.bytes), title: "Shared with other files " + fmtPhys(b.shared.bytes) },
         { cls: "info", pct: pct(b.copies.bytes), title: "Identical copies " + fmtPhys(b.copies.bytes) },
         { cls: "rest", pct: pct(b.unmatched), title: "Not indexed yet " + fmtPhys(b.unmatched) },
@@ -81,7 +82,7 @@ const detailPart = {
       if (!p) return "Also used by other data";
       const names = p.files.map((f) => { const s = pathSep(f); return trimSep(f).split(s).slice(-2).join(s); });
       const lines = names.length === 1 ? ["Also used by " + names[0]]
-        : names.length ? [`Also used by ${names.length} files: ` + names.slice(0, 3).join(", ") + (names.length > 3 ? ", …" : "")]
+        : names.length ? [`Also used by ${countOf(names.length, "file")}: ` + names.slice(0, 3).join(", ") + (names.length > 3 ? ", …" : "")]
         : [];
       if (p.copy) lines.push("Also in an identical copy at another path");
       return lines.join("\n");
@@ -185,8 +186,95 @@ const detailPart = {
       const d = this.detail;
       if (!d) return;
       const path = joinPath(d.title, r.child);
-      if (r.is_folder) this.openFolderPanel(path, d.source || null);
-      else this.openFileDetail({ source: r.source, full_path: path });
+      this.panelPush();
+      if (r.is_folder) this.openFolderPanel(path, d.source || null, true);
+      else this.openFileDetail({ source: r.source, full_path: path }, true);
+    },
+
+    // ---- Panel trail: a panel opened from inside a panel keeps the way back ----
+    panelPush() {
+      if (!this.detail) return;
+      const sc = document.querySelector("[data-panel-scroll]");
+      this.panelStack.push({ detail: this.detail, scroll: sc ? sc.scrollTop : 0 });
+    },
+    // Back to stack entry i (default: the previous panel), with its tab and scroll as they were.
+    panelBack(i = this.panelStack.length - 1) {
+      if (i < 0 || i >= this.panelStack.length) return;
+      const entry = this.panelStack[i];
+      this.panelStack = this.panelStack.slice(0, i);
+      ++this._detailSeq;   // the child's loads must not land on the restored panel
+      const d = entry.detail;
+      if (d.kind !== "selection" && (d.loading || d.heavyLoading)) {
+        // Its own loads were dropped when the child opened: load it again.
+        return d.kind === "folder" ? this.openFolderPanel(d.title, d.source || null, true)
+          : this.openFileDetail({ source: d.source, full_path: d.title }, true);
+      }
+      if (d.kind === "selection") d.statsLoading = false;
+      if (d.contentsLoading) { d.contentsLoading = false; d.contents = null; }
+      this.detail = d;
+      if (d.kind === "folder" && d.panelTab === "contents") this.folderLoadContents();
+      this.$nextTick(() => { const sc = document.querySelector("[data-panel-scroll]"); if (sc) sc.scrollTop = entry.scroll; });
+    },
+    panelCrumbs() {
+      return this.panelStack.map((e, i) => ({ i, label: e.detail.kind === "selection" ? e.detail.title : (baseName(e.detail.title) || e.detail.title) }));
+    },
+    async panelOpenItem(it, push = true) {
+      if (push) this.panelPush();
+      if (it.kind === "folder") return this.openFolderPanel(it.path, it.source || null, push);
+      let src = it.source;
+      if (!src) {
+        const held = await this._holdersOf([it.path]);
+        src = held && (held[it.path] || [])[0];
+        if (!src) {
+          if (push) this.panelStack.pop();
+          if (held) this.klNotify("No indexed source holds this file.", "warn");
+          return;
+        }
+      }
+      return this.openFileDetail({ source: src, full_path: it.path }, push);
+    },
+
+    // ---- Several selected items: one panel for files, folders or a mix ----
+    async openSelection(scope) {
+      const rows = this.selectedRows(scope);
+      if (!rows.length) { this.klNotify("Select one or more rows first.", "warn"); return; }
+      if (rows.length === 1 && scope === "search" && rows[0].full_path) return this.openFileDetail(rows[0]);
+      const items = this._selItems(scope);
+      if (items.length === 1) return this.panelOpenItem(items[0], false);
+      const seq = ++this._detailSeq;
+      this.panelStack = [];
+      const byPath = new Map(rows.map((r) => [r.full_path || r.path, r]));
+      const list = items.map((it) => {
+        const r = byPath.get(it.path) || {};
+        const phys = r.physical != null ? r.physical : r.phys;
+        return { ...it, size: Number(r.size || r.logical || 0), physical: phys == null ? null : Number(phys) };
+      });
+      const files = list.filter((it) => it.kind === "file");
+      this.detail = {
+        kind: "selection", title: countOf(list.length, "item"), scope, items: list, loading: false,
+        files: files.length, folders: list.length - files.length,
+        sources: new Set(list.map((it) => it.source).filter(Boolean)).size,
+        size: list.reduce((a, it) => a + it.size, 0),
+        physical: list.every((it) => it.physical != null) ? list.reduce((a, it) => a + it.physical, 0) : null,
+        freeable: null, exact: false, statsLoading: false,
+      };
+      if (files.length !== list.length) return;   // folders: the delete plan works out what they free
+      const need = files.filter((f) => !f.source).map((f) => f.path);
+      const held = need.length ? (await this._holdersOf(need)) || {} : {};
+      const pairs = files.map((f) => ({ source: f.source || (held[f.path] || [])[0], full_path: f.path })).filter((f) => f.source);
+      if (seq !== this._detailSeq || !this.detail || this.detail.kind !== "selection" || !pairs.length) return;
+      this.detail.statsLoading = true;
+      const r = await getJson("/api/actions/batch-detail", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repo: this.repo, files: pairs, all_versions: true }) }).catch(() => null);
+      if (seq !== this._detailSeq || !this.detail || this.detail.kind !== "selection") return;
+      this.detail.statsLoading = false;
+      if (r && r.found) Object.assign(this.detail, { size: r.logical, physical: r.physical, freeable: r.freeable, exact: true });
+    },
+    selectionLine() {
+      const d = this.detail;
+      if (!d || d.kind !== "selection") return "";
+      return [d.files && countOf(d.files, "file"), d.folders && countOf(d.folders, "folder")].filter(Boolean).join(", ")
+        + (d.sources ? " · " + countOf(d.sources, "source") : "");
     },
 
     folderDeleteFromPanel() {
@@ -205,7 +293,8 @@ const detailPart = {
     },
 
     // ---------- File / folder detail ----------
-    async openFileDetail(item) {
+    async openFileDetail(item, keepStack = false) {
+      if (!keepStack) this.panelStack = [];
       const seq = ++this._detailSeq;
       // Render the panel immediately from the row we already have; the heavy fields (refcount,
       // dedup chunks, purge plan) fill in when they arrive. A second click bumps _detailSeq so a
@@ -216,9 +305,8 @@ const detailPart = {
         freeable: null, shared: null, chunks: [], others: [], versions: [], purge: [],
         breakdown: null,
         panelTab: "overview",
-        // run-bar states, initialised so the markup can deref them freely
-        rfBy: "object-id", rfEverywhere: false, rfDry: this.klDryState(),
-        purgeDry: this.klDryState(),
+        // the Actions tab's presets for the Delete panel
+        rfBy: "object-id", rfEverywhere: false,
       };
       const base = `repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(item.source)}&full_path=${encodeURIComponent(item.full_path)}`;
       try {
@@ -234,7 +322,7 @@ const detailPart = {
           const c = cmds[i] || "";
           return { cmd: Array.isArray(c) ? c.join(" ") : c, time: it.start_time, tag: it.pinned ? "pinned" : ((it.retention && it.retention.length) ? `kept: ${it.retention.join(", ")}` : ""), id: it.id };
         });
-        Object.assign(this.detail, {   // merge (not replace) so a command built meanwhile (removeFiles) survives
+        Object.assign(this.detail, {   // merge (not replace) so presets set meanwhile survive
           kind: "file", loading: false,
           title: item.full_path,
           source: detail.source || item.source,
@@ -248,7 +336,7 @@ const detailPart = {
           reclaim_everywhere: detail.reclaim_everywhere,
           versions: (vres.versions || []).map((x) => ({ time: humanTime(x.start_time), start: x.start_time, size: x.size, snapshot_id: x.snapshot_id, content_id: x.content_id })),
           purge: purgeRows,
-          purgeCmds: purgeRows.map((r) => r.cmd).join("\n"),
+          notFound: !(vres.versions || []).length && !detail.content_id,
         });
         this._loadPathStatus(seq, this.detail.source, item.full_path, false);
         this._loadBreakdown(seq, base);
@@ -257,116 +345,14 @@ const detailPart = {
       }
     },
 
-    // ---- Remove file from ALL snapshots (kopia snapshot fix remove-files) ----
-    // The run bar drives this section: params (mechanism + scope) rebuild the plan, Dry run
-    // runs kopia's real dry run, Execute confirms in-app then commits. Any param change
-    // clears the dry-run result - it no longer describes the selection.
-    rfSetBy(by) {
-      if (!this.detail) return;
-      this.detail.rfBy = by;
-      this.detail.removeFiles = null;  // the old plan describes the OLD mode - execute must never reuse it
-      this.klDryClear(this.detail.rfDry);
-      this.rfEnsurePlan();
-    },
-    rfToggleEverywhere() {
-      if (!this.detail) return;
-      this.detail.rfEverywhere = !this.detail.rfEverywhere;
-      this.detail.removeFiles = null;  // same staleness: scope changed, plan is void
-      this.klDryClear(this.detail.rfDry);
-      this.rfEnsurePlan();
-    },
-    async rfEnsurePlan() {  // counts + chunked command text for the current params (index-only, fast)
-      if (!this.detail || !this.proOk("remove")) return null;
-      const seq = ++this._rfPlanSeq;  // two rapid switches: the slower stale response must not win
-      try {
-        const r = await getJson("/api/actions/remove-files", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source: this.detail.source, full_path: this.detail.title, by: this.detail.rfBy || "object-id", everywhere: !!this.detail.rfEverywhere, confirm: false }) });
-        if (seq !== this._rfPlanSeq || !this.detail) return null;
-        this.detail.removeFiles = { by: this.detail.rfBy || "object-id", count: r.count, everywhere: r.everywhere, sources: r.sources || [], dry: r.dry_run, commit: r.commit, batches: r.batches };
-        return this.detail.removeFiles;
-      } catch (err) {
-        if (seq === this._rfPlanSeq) this.error = err.message || String(err);
-        return null;
-      }
-    },
-    rfDry(ev) {  // RUN remove-files without --commit; kopia reports what it would rewrite
-      if (!this.detail || !this.proGate("remove", ev)) return;
-      const st = this.detail.rfDry = (this.detail.rfDry || this.klDryState());
-      return this.klDry("/api/actions/remove-files-dry-run",
-        { repo: this.repo, source: this.detail.source, full_path: this.detail.title, by: this.detail.rfBy || "object-id", everywhere: !!this.detail.rfEverywhere }, st);
-    },
-    rfDryChecked() {  // the "dry run checked" pill state
-      const st = this.detail && this.detail.rfDry;
-      return !!(st && st.done && st.ok && !st.running);
-    },
-    async executeRemoveFiles(ev) {
-      if (!this.proGate("remove", ev)) return;
-      const plan = (this.detail && this.detail.removeFiles) || await this.rfEnsurePlan();
-      if (!plan || !this.detail) return;
-      const ok = await this.klConfirm({
-        title: `Remove ${baseName(this.detail.title)} from snapshots?`,
-        facts: [
-          ["File", this.detail.title],
-          ["Match", plan.by === "object-id" ? `Exact content · ${plan.count} version${plan.count === 1 ? "" : "s"}` : "File name · every file with this name"],
-          ["Backups", plan.everywhere ? "Every backup in the repo" : plan.sources.map((s) => sourcePath(s)).join(", ")],
-        ],
-        callout: plan.by === "object-id"
-          ? (this.copyCount() ? `${this.copyCount()} identical cop${this.copyCount() === 1 ? "y" : "ies"} at other paths go too.` : "")
-          : `Every file named ${baseName(this.detail.title)} in these backups goes.`,
-        note: (this.rfDryChecked() ? "" : "No dry run yet. ") + "Snapshots stay. Space frees after the next full maintenance.",
-        command: plan.commit, confirmLabel: "Remove from snapshots", danger: true,
-      });
-      if (!ok) return;
-      await this.wrap(async () => {
-        const started = await this.startJob("remove_files", { form: "files", source: this.detail.source, full_path: this.detail.title, by: plan.by, everywhere: !!this.detail.rfEverywhere });
-        if (started) {
-          this.detail = null;
-        }
-      }, "Removing file from all snapshots…");
-    },
-
-    // ---- Purge plan (path-scoped): delete the whole snapshots carrying this path ----
-    purgeIds() { return ((this.detail && this.detail.purge) || []).map((r) => r.id).filter(Boolean); },
-    purgeDry(ev) {
-      if (!this.detail || !this.proGate("purge", ev)) return;
-      const ids = this.purgeIds();
-      if (!ids.length) { this.error = "No snapshots to purge."; return; }
-      const st = this.detail.purgeDry = (this.detail.purgeDry || this.klDryState());
-      return this.klDry("/api/actions/snapshot-delete-dry-run", { repo: this.repo, snapshot_ids: ids }, st);
-    },
-    purgeDryChecked() {
-      const st = this.detail && this.detail.purgeDry;
-      return !!(st && st.done && st.ok && !st.running);
-    },
-    copyPurge(ev) { if (this.proGate("purge", ev)) this.copyText(this.detail.purgeCmds); },
-    async executePurge(ev) {
-      if (!this.proGate("purge", ev)) return;
-      const ids = this.purgeIds();
-      if (!ids.length || !this.detail) return;
-      const rows = this.detail.purge || [];
-      const warns = rows.filter((r) => r.tag).length;
-      const times = rows.map((r) => r.time).filter(Boolean).sort();
-      const ok = await this.klConfirm({
-        title: `Delete ${ids.length} snapshot${ids.length === 1 ? "" : "s"} holding this file?`,
-        facts: [
-          ["File", this.detail.title],
-          ["Backup", sourcePath(this.detail.source || "")],
-          ["Snapshots", `${ids.length}` + (times.length ? ` · ${humanTime(times[0])}` + (times.length > 1 ? ` to ${humanTime(times[times.length - 1])}` : "") : "")],
-          ["Kept", `${warns} pinned or kept by retention`],
-        ],
-        callout: "Every other file in these snapshots is deleted with them.",
-        note: (this.purgeDryChecked() ? "" : "No dry run yet. ") + "Space frees after the next full maintenance.",
-        command: this.detail.purgeCmds, confirmLabel: `Delete ${ids.length} snapshot${ids.length === 1 ? "" : "s"}`, danger: true,
-      });
-      if (!ok) return;
-      await this._deleteSnapsFromPanel(ids);
-    },
-    async _deleteSnapsFromPanel(ids) {
-      await this.wrap(async () => {
-        const started = await this.startJob("snapshot_delete", { snapshot_ids: ids });
-        if (started) {
-          this.detail = null;
-        }
-      }, "Deleting snapshots…");
+    // ---- Actions tab: each delete section opens the Delete panel, preset to its mode ----
+    rfSetBy(by) { if (this.detail) this.detail.rfBy = by; },
+    rfToggleEverywhere() { if (this.detail) this.detail.rfEverywhere = !this.detail.rfEverywhere; },
+    fileOpenDelete(method) {
+      const d = this.detail;
+      if (!d) return;
+      this.openDeletePanel([{ source: d.source, full_path: d.title }],
+        method === "snapshots" ? { method } : { method, by: d.rfBy || "object-id", every: !!d.rfEverywhere });
     },
 
     // ---- Chunked folder/filter delete (remove-files, respects the current view/filter) ----
@@ -420,6 +406,25 @@ const detailPart = {
                            over_gb: filters.over_gb || 0, ext: filters.ext || null };
       this._removeLabel = label;
       this.buildRemovePlan();
+    },
+    removeTitle() {
+      const b = this._removeBase || {}, p = this.removePlan;
+      if (p && p.flow) return "Exclude and delete";
+      if (b.parts) return `Delete ${this._removeLabel} from backups`;
+      if (b.prefix) return `Delete ${baseName(b.prefix) || b.prefix} from backups`;
+      return "Delete everything matching the search";
+    },
+    removePathLine() {
+      const b = this._removeBase || {};
+      const filtered = b.deleted_only || b.over_gb || b.ext ? " · Tree filters applied" : "";
+      if (b.prefix) return b.prefix + (b.source ? ` · in ${sourcePath(b.source)}` : "") + filtered;
+      if (b.parts) return b.parts.slice(0, 3).map((x) => x.prefix).join("  ·  ") + (b.parts.length > 3 ? ` and ${b.parts.length - 3} more` : "") + filtered;
+      return this._removeLabel || "";
+    },
+    removeConfirmLabel() {
+      const p = this.removePlan;
+      if (!p) return "Delete";
+      return p.everywhere ? "Remove from every source" : `Remove from ${countOf((p.sources_scope || []).length, "source")}`;
     },
     buildRemovePlan() {
       // Folder/file-context deletes (a Tree prefix) default to ALL versions: latest-only would
@@ -531,13 +536,13 @@ const detailPart = {
           ["What", p.label],
           ["Files", `${split || files} · ${this.removeAllVersions() ? "every version" : "latest version only"}${share}`],
           ["Match", p.by === "filename" ? `File name · ${countOf(p.name_count, "name")}` : "Exact content"],
-          ["Backups", p.everywhere ? "Every backup in the repo" : (p.sources_scope || []).map((s) => sourcePath(s)).join(", ")],
-          ["Frees", this.removeFreesText()],
+          ["Sources", p.everywhere ? "Every source in the repository" : (p.sources_scope || []).map((s) => sourcePath(s)).join(", ")],
+          [term("reclaimable"), this.removeFreesText()],
         ],
-        callout: p.everywhere ? "Not limited to these backups: removes this content from the whole repo."
-          : (p.by === "filename" ? "Every file with these names in these backups goes." : ""),
-        note: (this.removePlanDryChecked() ? "" : "No dry run yet. ") + "Snapshots stay. Space frees after the next full maintenance.",
-        command: p.commit, confirmLabel: `Delete ${files}`, danger: true,
+        callout: p.everywhere ? "Not limited to these sources: removes this content from the whole repository."
+          : (p.by === "filename" ? "Every file with these names in these sources goes." : ""),
+        note: (this.removePlanDryChecked() ? "" : "No dry run yet. ") + "Snapshots stay. Space comes back after the next full maintenance.",
+        command: p.commit, confirmLabel: this.removeConfirmLabel(), danger: true,
       });
       if (!ok) return;
       await this.wrap(async () => {

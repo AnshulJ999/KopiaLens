@@ -15,7 +15,7 @@
     <span x-text="{{ kind }}"></span>
   </span>
   <span class="pill warn shrink-0" x-show="!polMulti.on && polHasStaged(t.target)" x-text="polStageCountFor(t.target)"></span>
-  <span class="pill shrink-0" x-show="t.rule_count != null" x-text="(t.rule_count || 0) + ' rules'"></span>
+  <span class="pill shrink-0" x-show="t.rule_count != null" x-text="countOf(t.rule_count, 'rule')"></span>
 </div>
 {%- endmacro -%}
       <section x-show="active==='policies'" class="h-full flex flex-col gap-3 min-h-0">
@@ -36,31 +36,34 @@
                   x-text="polReviewLabel()"></button>
         </div>
 
-        <div class="flex-1 min-h-0 flex gap-3">
+        <div class="flex-1 min-h-0 flex gap-1.5">
           <!-- left rail -->
-          <div class="w-72 shrink-0 rounded border border-bd bg-surface overflow-auto py-1">
+          <div class="shrink-0 rounded border border-bd bg-surface overflow-auto py-1" :style="'width:' + polRailW + 'px'">
             <template x-for="t in polRail()" :key="t.isGlobal ? 'global' : t.target">{{ pol_rail_row('polRailLabel(t)') }}</template>
             <template x-if="polRailOthers('folder').length">
               <div>
-                <div class="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted">Folder policies</div>
+                <div class="px-2 pt-2 pb-1 text-[11px] text-muted">Folder policies</div>
                 <template x-for="t in polRailOthers('folder')" :key="t.target">{{ pol_rail_row('shortSource(t.target)') }}</template>
               </div>
             </template>
             <template x-if="polRailOthers('computer').length">
               <div>
-                <div class="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted">User and computer policies</div>
+                <div class="px-2 pt-2 pb-1 text-[11px] text-muted">User and computer policies</div>
                 <template x-for="t in polRailOthers('computer')" :key="t.target">{{ pol_rail_row('t.target') }}</template>
               </div>
             </template>
             <template x-if="polNewTargets.length">
               <div>
-                <div class="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wide text-muted">New, not saved</div>
+                <div class="px-2 pt-2 pb-1 text-[11px] text-muted">New, not saved</div>
                 <template x-for="t in polNewTargets.map((n) => ({ target: n, depth: 0 }))" :key="t.target">{{ pol_rail_row('shortSource(t.target)') }}</template>
               </div>
             </template>
             <div x-show="!polData" class="p-3 text-xs text-muted">Loading…</div>
             <div x-show="polData && !polRail().length" class="p-3 text-xs text-muted">No policies match.</div>
           </div>
+          <div class="kl-drag" role="separator" aria-orientation="vertical" aria-label="Resize the policy list" tabindex="0"
+               title="Drag to resize. Double-click for the default width." @mousedown.prevent="polDragStart($event)" @dblclick="polDragReset()"
+               @keydown.left.prevent="polRailNudge(-24)" @keydown.right.prevent="polRailNudge(24)"></div>
 
           <!-- right pane -->
           <div class="flex-1 min-w-0 overflow-auto" id="policy-pane" @scroll.passive="polScrollSpy($el)">
@@ -68,12 +71,9 @@
             <template x-if="!polMulti.on && polSelected()">
               <div class="space-y-3">
                 <!-- summary -->
-                <div class="rounded border border-bd bg-surface p-3">
-                  <div class="flex items-start gap-2 flex-wrap">
-                    <div class="min-w-0">
-                      <div class="font-medium break-all" x-text="polSelected().isGlobal ? 'Global policy' : shortSource(polSelected().target)"></div>
-                      <div class="kl-note break-all" x-show="!polSelected().isGlobal" x-text="polSelected().target"></div>
-                    </div>
+                <div class="rounded border border-bd bg-surface px-3 py-2">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <div class="font-medium break-all min-w-0" :title="polSelected().isGlobal ? '' : polSelected().target" x-text="polSelected().isGlobal ? 'Global policy' : shortSource(polSelected().target)"></div>
                     <span class="grow"></span>
                     <span class="pill" x-show="polSelected().isNew">new, not saved</span>
                     <span class="pill" x-show="polSelected().defined === false && !polSelected().isNew">no policy defined here</span>
@@ -84,12 +84,7 @@
                     <button class="kl-btn quiet" x-show="!polSelected().isGlobal && polDetail && polDetail.defined && Object.keys(polDetail.defined).length && !(polStaged[polSelected().target] && polStaged[polSelected().target].removePolicy)"
                             @click="polStageRemovePolicy()">Remove policy…</button>
                   </div>
-                  <div class="kl-facts mt-2">
-                    <div class="r"><span class="k">Retention</span><span x-text="polSummaryRetention()"></span></div>
-                    <div class="r"><span class="k">Schedule</span><span x-text="polSummarySchedule()"></span></div>
-                    <div class="r"><span class="k">Exclusions</span><span x-text="polRuleRows().length + ' own rules' + (polInheritedRules().length ? ' · ' + polInheritedRules().length + ' inherited' : '')"></span></div>
-                    <div class="r"><span class="k">Compression</span><span x-text="((polRes() || {}).effective || {}).compression ? (polRes().effective.compression.compressorName || 'none') : '—'"></span></div>
-                  </div>
+                  <div class="kl-note mt-0.5" x-text="polSummaryLine()"></div>
                   <div class="kl-callout mt-2" x-show="!polSelected().isGlobal && polHasStaged(polSelected().target) && polStaged[polSelected().target].removePolicy">
                     <span class="flex items-center gap-2">
                       <span>This whole policy is staged for removal.</span>
@@ -116,23 +111,23 @@
                   <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-[11px] text-muted" x-text="countOf(polRuleRows().length, 'own rule')"></span>
                     <span class="text-[11px] text-ok" x-show="polKeepout().priced"
-                          x-text="'keeping out ' + polKeepout().files.toLocaleString(NUM_LOCALE) + ' files · ' + fmtB(polKeepout().bytes)"></span>
+                          x-text="'keeping out ' + countOf(polKeepout().files, 'file') + ' · ' + fmtB(polKeepout().bytes)"></span>
                     <span class="grow"></span>
                     <span class="text-[10px] text-danger" x-show="polPriceFailText()" x-text="polPriceFailText()"></span>
                     <span class="text-[10px]" style="color:var(--muted)" x-show="polPricingNote()" x-text="polPricingNote()"></span>
                     <button x-show="polSel !== 'global' && polKeepout().priced < polKeepout().total"
-                            @click="polPriceRow()" class="h-6 rounded border border-bd px-2 text-[10px]">Price rules</button>
+                            @click="polPriceRow()" class="h-6 rounded border border-bd px-2 text-[10px]">Work out sizes</button>
                   </div>
                   <div class="kl-note" x-text="polTargetNote()"></div>
-                  <div class="kl-note" x-show="polGlobalShadowed()"
-                       x-text="'These own rules replace the Global list of ' + countOf(polData && polData.global ? polData.global.rule_count : 0, 'rule') + ' entirely - kopia never merges the two lists.'"></div>
-                  <div class="kl-list" style="max-height:calc(100vh - 26rem);min-height:10rem" x-show="polRuleRows().length">
+                  <div class="kl-callout" x-show="polGlobalShadowed()"
+                       x-text="'This policy\'s ' + countOf(polRuleRows().length, 'rule') + (polRuleRows().length === 1 ? ' replaces' : ' replace') + ' Global\'s ' + countOf(polData && polData.global ? polData.global.rule_count : 0, 'rule') + ' here.'"></div>
+                  <div class="kl-list" style="max-height:calc(100vh - 26rem)" x-show="polRuleRows().length">
                     <template x-for="r in polRuleRows()" :key="r.state + '|' + r.pattern">
                       <div class="li">
                         <span class="font-mono break-all grow" :class="r.state === 'staged-remove' ? 'line-through opacity-50' : ''" x-text="r.pattern"></span>
                         <span class="num shrink-0" style="color:var(--muted);font-size:10.5px"
                               :class="r.error ? 'text-danger' : ''" x-text="polPriceCell(r)"></span>
-                        <span class="pill warn shrink-0" x-show="r.state === 'staged-add'">staged add</span>
+                        <span class="pill warn shrink-0" x-show="r.state === 'staged-add'">not saved</span>
                         <button class="kl-btn quiet shrink-0" style="height:22px" @click="polOpenPreview(r.pattern, r.state)">Preview</button>
                         <button x-show="r.state === 'own'" class="kl-btn quiet shrink-0" style="height:22px" @click="polStageRemove(r.pattern)">Remove</button>
                         <button x-show="r.state !== 'own'" class="kl-btn quiet shrink-0" style="height:22px"
@@ -144,12 +139,12 @@
                   <div class="flex items-center gap-2">
                     <input x-model="polAddText" @input="polAddInput()" @keydown.enter="polStageAdd()"
                            class="fld flex-1 border border-bd bg-surface2 font-mono text-xs" placeholder="Add a pattern (kopia ignore syntax)…">
-                    <button class="kl-btn" @click="polStageAdd()" :disabled="!polAddText.trim()">Stage add</button>
+                    <button class="kl-btn" @click="polStageAdd()" :disabled="!polAddText.trim()" title="Added to the changes you review before saving">Add</button>
                   </div>
                   <div class="kl-note" x-show="polAddPreviewText()" x-text="polAddPreviewText()"></div>
                   <div class="kl-note font-mono" x-show="polAddExamplesText()" x-text="polAddExamplesText()"></div>
                   <div class="kl-note" x-show="polAddPrice && polAddPrice.files === 0">Matches nothing in the current index - it may simply not match anything on disk today.</div>
-                  <div class="kl-note" x-show="polSelected() && polSelected().isGlobal && polAddText.trim()">Pricing at Global is slow - the change's impact shows in the review diff.</div>
+                  <div class="kl-note" x-show="polSelected() && polSelected().isGlobal && polAddText.trim()">Sizes at Global take a while, so the review shows what this changes.</div>
                   <template x-if="polInheritedRules().length">
                     <div>
                       <div class="text-xs font-medium mb-1">Inherited rules <span class="count" style="color:var(--muted);font-weight:400"
@@ -261,7 +256,7 @@
                         </div>
                       </template>
                       <template x-for="ri in (g.retention_impact || []).slice(0, 6)" :key="ri.source">
-                        <div class="kl-note" x-text="shortSource(ri.source) + ': keeps ' + ri.kept_after + ' of ' + ri.total + ' snapshots (today ' + ri.kept_before + ')'"></div>
+                        <div class="kl-note" x-text="shortSource(ri.source) + ': keeps ' + ri.kept_after + ' of ' + countOf(ri.total, 'snapshot') + ' (today ' + ri.kept_before + ')'"></div>
                       </template>
                       <template x-if="(g.added || []).length || (g.removed || []).length">
                         <div class="space-y-1.5">

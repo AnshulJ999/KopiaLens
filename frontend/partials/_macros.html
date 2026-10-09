@@ -52,7 +52,7 @@
   <div class="h">
     <span x-text="{{ st }}.running ? 'Running…' : 'Result'"></span>
     <span class="count" x-show="{{ st }}.done && {{ st }}.elapsed"
-          x-text="({{ st }}.snapshots != null ? {{ st }}.snapshots + ' snapshots · ' : '') + {{ st }}.elapsed + 's'"></span>
+          x-text="({{ st }}.snapshots != null ? countOf({{ st }}.snapshots, 'snapshot') + ' · ' : '') + {{ st }}.elapsed + 's'"></span>
     <span class="acts" x-show="{{ st }}.running && {{ st }}.jobId">
       <button type="button" class="kl-btn danger" style="height:22px" @click="klDryStop({{ st }})" :disabled="{{ st }}.stopping === true"
               x-text="{{ st }}.stopping ? 'Stopping…' : 'Stop'"></button>
@@ -73,5 +73,26 @@
     Not every line is shown<span x-show="{{ st }}.log"> - the full text is in <span class="font-mono break-all" x-text="{{ st }}.log"></span></span>.
   </div>
   <div class="kl-note" x-show="{{ st }}.error" x-text="{{ st }}.error"></div>
+</div>
+{%- endmacro %}
+
+{#- Exclude & delete: where this step sits in the flow (1 Exclude, 2 Delete, 3 Review). -#}
+{% macro flowsteps(n) -%}
+<div class="kl-steps" aria-label="Step {{ n }} of 3">
+  <span class="{{ 'on' if n == 1 else 'done' }}">1 Exclude</span><span class="sep">›</span>
+  <span class="{{ 'on' if n == 2 else ('done' if n > 2 else '') }}">2 Delete</span><span class="sep">›</span>
+  <span class="{{ 'on' if n == 3 else '' }}">3 Review</span>
+</div>
+{%- endmacro %}
+
+{#- A duration setting: a free number plus a unit, stored in seconds (klDur in settings.js). -#}
+{% macro duration(prop, key) -%}
+<div class="flex items-center gap-2" x-data="klDur('{{ prop }}', '{{ key }}')">
+  <input type="number" min="0" step="any" x-model.number="n" @change="commit()" class="fld border border-bd bg-surface2 w-24" aria-label="Amount">
+  <select x-model="unit" @change="relabel()" class="fld border border-bd bg-surface2" aria-label="Unit">
+    <option value="1">seconds</option>
+    <option value="60">minutes</option>
+    <option value="3600">hours</option>
+  </select>
 </div>
 {%- endmacro %}

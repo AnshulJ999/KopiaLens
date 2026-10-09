@@ -75,8 +75,7 @@
       <template x-if="!polMulti.on">
         <div class="space-y-0.5">
           <template x-for="c in ((polRes() || {}).cron || [])" :key="c.line">
-            <div class="kl-note"><span class="font-mono" x-text="c.line"></span> ·
-              <span :style="c.error ? 'color:var(--danger)' : ''" x-text="c.error || (c.meaning + (c.next.length ? ' · next ' + c.next.map((t) => humanTime(t)).join(', ') : ''))"></span></div>
+            <div class="kl-note" :style="c.error ? 'color:var(--danger)' : ''" x-text="c.error ? c.line + ': ' + c.error : (polCronMeaning(c) || 'Custom schedule')"></div>
           </template>
         </div>
       </template>
@@ -128,7 +127,10 @@
 
 {%- macro pol_rows(section) -%}
 <div class="pe-rows">
-  <div class="pe-head"><span>Setting</span><span x-text="polMulti.on ? 'New value · blank = unchanged' : 'This policy · blank = inherit'"></span><span>In effect</span></div>
+  <div class="pe-head"><span>Setting</span>
+    <span class="flex items-center gap-1"><span x-text="polMulti.on ? 'New value' : 'This policy'"></span>
+      <span class="kl-help" tabindex="0" :title="polMulti.on ? 'Leave blank to keep each policy\'s own value.' : 'Leave blank to use the parent\'s value.'">?</span></span>
+    <span>In effect</span></div>
   <template x-for="f in polFields('{{ section }}')" :key="f.path">{{ pol_row() }}</template>
 </div>
 {%- endmacro -%}
@@ -145,7 +147,7 @@
       <template x-for="ri in polRes().retention_impact.slice(0, 8)" :key="ri.source">
         <div class="flex items-center gap-2 text-xs">
           <span class="truncate grow" x-text="shortSource(ri.source)"></span>
-          <span class="num" x-text="ri.kept_before + ' → ' + ri.kept_after + ' of ' + ri.total + ' snapshots'"></span>
+          <span class="num" x-text="ri.kept_before + ' → ' + ri.kept_after + ' of ' + countOf(ri.total, 'snapshot')"></span>
         </div>
       </template>
       <div class="kl-note">Counted with KopiaLens' copy of kopia's retention rules. Snapshots above the new counts are deleted at the next cleanup.</div>
@@ -172,6 +174,7 @@
         <summary class="cursor-pointer select-none text-sm font-medium py-1.5" x-text="g"></summary>
         <div class="kl-callout mb-2" x-show="g === 'Snapshot scripts' && polActionsOff()">Scripts are off on this computer: kopia was connected without actions enabled, so they won't run.</div>
         <div class="kl-callout mb-2" x-show="g === 'Splitter'">Changing the splitter makes new data dedupe badly against what is already stored. The repository's own splitter was chosen when it was created.</div>
+        <div class="kl-note mb-2" x-show="g === 'Logging'">Each is a detail level from 0 to 10.</div>
         <div class="kl-callout mb-2" x-show="g === 'Inheritance'">Turning this on stops every policy above this one, and kopia's defaults, from applying here.</div>
         <div class="pe-rows">
           <template x-for="f in polFields('advanced', g)" :key="f.path">{{ pol_row() }}</template>
@@ -288,13 +291,12 @@
 <div class="space-y-3">
   <div class="rounded border border-bd bg-surface p-3">
     <div class="flex items-center gap-2 flex-wrap">
-      <div class="font-medium" x-text="'Editing ' + polMulti.picked.length + ' policies together'"></div>
+      <div class="font-medium" x-text="polMulti.picked.length < 2 ? 'Pick two or more policies on the left to edit them together.' : 'Editing ' + countOf(polMulti.picked.length, 'policy', 'policies') + ' together'"></div>
       <span class="grow"></span>
       <button class="kl-btn" @click="polMultiToggle()">Done</button>
     </div>
-    <div class="kl-note mt-1">Tick policies in the list. Only settings you change are written. Exclusion rules can't be edited here: each policy's rule list replaces its parent's, so copying one list around is how backups lose rules.</div>
+    <div class="kl-note mt-1">Only settings you change are written. Exclusion rules stay per policy.</div>
   </div>
-  <template x-if="polMulti.picked.length < 2"><div class="kl-note p-2">Tick at least two policies in the list.</div></template>
   <template x-if="polMulti.picked.length >= 2">
     <div class="space-y-3">
       <template x-for="s in polSections().filter((x) => x.id !== 'exclusions')" :key="s.id">

@@ -1,16 +1,16 @@
-{% from "partials/_macros.html" import rulediff %}
+{% from "partials/_macros.html" import rulediff, flowsteps %}
 
     <!-- Exclude panel: stacks over the detail modal (z-50 above its z-40), under the shared
          confirm (z-60). Every write is priced against the index before Exclude is enabled. -->
     <div x-show="showExclude" @click.self="exClose()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
       <template x-if="exDialog">
-        <div class="w-[46rem] max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
+        <div class="max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col" :class="exDialog.mode === 'delete' ? 'w-[54rem]' : 'w-[46rem]'">
           <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
             <div class="flex items-center gap-2">
-              <span class="pill shrink-0" x-show="exDialog.mode === 'delete' && !exAlreadyExcluded()">Step 1 of 3</span>
-              <div class="font-medium" x-text="exDialog.mode === 'delete' ? 'Exclude & delete · Exclude' : 'Exclude'"></div>
-              <button @click="exClose()" class="ml-auto kl-btn quiet" title="Close">&times;</button>
+              <div class="font-medium" x-text="exDialog.mode === 'delete' ? 'Exclude and delete' : 'Exclude'"></div>
+              <button @click="exClose()" class="ml-auto kl-btn quiet" title="Close" aria-label="Close">&times;</button>
             </div>
+            <template x-if="exDialog.mode === 'delete' && !exAlreadyExcluded()">{{ flowsteps(1) }}</template>
             <div class="kl-note mt-0.5 break-all font-mono" x-show="!exDialog.multi" x-text="exDialog.path"></div>
             <div class="kl-note mt-0.5" x-show="exDialog.multi" x-text="exDialog.multi ? exDialog.items.length + ' items' : ''"></div>
           </div>

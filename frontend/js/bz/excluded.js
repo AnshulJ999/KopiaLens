@@ -28,7 +28,7 @@ const bzExcludedPart = {
       await this.wrap(async () => {
         const r = await getJson(`/api/backblaze/excluded/list?prefix=${encodeURIComponent(path)}`);
         if (seq !== this._bzExclSeq) return;
-        this.bzExclMeta = `${r.count} items`;
+        this.bzExclMeta = countOf(r.count, "item");
         // Render BZ-native instantly; the slower Kopia cross-coverage fills in lazily (5B).
         // kopia_backed_bytes=null renders as "…" until the second request patches it.
         this._bzExclItems = (r.items || []).map((it) => ({ ...it, kopia_backed_bytes: null, kopia_backed_files: 0, kopia_repos: [] }));

@@ -6,14 +6,14 @@
         <div class="flex items-center gap-3 px-4 py-3 border-b border-bd">
           <div class="min-w-0 grow">
             <div class="font-semibold flex items-center gap-2">
-              <span x-text="ixs().building ? 'Indexing' : 'Index'"></span>
-              <span x-text="repoLabel(indexLogRepo || repo)"></span>
+              <span x-text="(ixs().building ? 'Indexing ' : 'Index · ') + repoLabel(indexLogRepo || repo)"></span>
               <span x-show="ixs().building" class="w-2 h-2 rounded-full bg-warn animate-pulse"></span>
             </div>
             <div class="text-xs text-muted truncate" x-text="indexDetailText() || ixs().stage || ''"></div>
           </div>
           <button class="kl-btn danger" x-show="ixs().building" @click="indexStop()">Stop</button>
-          <button class="kl-btn quiet" @click="closeIndexPanel()" x-text="ixs().building ? 'Run in background' : 'Close'"></button>
+          <button class="kl-btn quiet" x-show="ixs().building" @click="closeIndexPanel()">Run in background</button>
+          <button class="kl-btn quiet" x-show="!ixs().building" @click="closeIndexPanel()" title="Close" aria-label="Close">&times;</button>
         </div>
 
         <div class="px-4 py-3 border-b border-bd flex flex-col gap-1.5">

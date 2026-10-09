@@ -48,11 +48,11 @@ const statsPart = {
       if (!c) return "";
       const at = c.at ? " · " + c.at : "";
       if (c.status === "failed") {
-        return `Retention check did not run: ${c.failed || 0} of ${c.checked || 0} sources failed${at}.`;
+        return `Retention check did not run: ${c.failed || 0} of ${countOf(c.checked, "source")} failed${at}.`;
       }
       if (c.status === "mismatch") {
         const detail = (c.detail || []).slice(0, 3).join("; ");
-        return `Retention check: ${c.mismatches} of ${c.checked} sources disagree with kopia${at}${detail ? " · " + detail : ""}.`;
+        return `Retention check: ${c.mismatches} of ${countOf(c.checked, "source")} disagree with kopia${at}${detail ? " · " + detail : ""}.`;
       }
       return "";
     },

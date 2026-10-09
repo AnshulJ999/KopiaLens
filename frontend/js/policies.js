@@ -166,7 +166,7 @@ const policiesPart = {
     polIgnoreFacts(f) {
       const rules = `${f.rule_count || 0} rule${f.rule_count === 1 ? "" : "s"}`;
       if (f.files == null) return rules;
-      return `${rules} · keeps out ${Number(f.files).toLocaleString(NUM_LOCALE)} files · ${this.fmtB(f.bytes || 0)}`;
+      return `${rules} · keeps out ${countOf(f.files, "file")} · ${this.fmtB(f.bytes || 0)}`;
     },
 
     // Own rules come from the detail payload (the DEFINED policy); empty until it lands.
@@ -293,9 +293,9 @@ const policiesPart = {
       if (ts) {
         const mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
         const age = mins < 60 ? mins + " min" : mins < 1440 ? Math.round(mins / 60) + " h" : Math.round(mins / 1440) + " d";
-        return "Priced " + age + " ago by the nightly run - a save re-prices at the next nightly.";
+        return "Sizes from " + age + " ago";
       }
-      if (this.polSel === "global") return "Whole-policy pricing runs in the nightly worker; numbers appear after the next index run.";
+      if (this.polSel === "global") return "Sizes appear after the next nightly index.";
       return "";
     },
 
@@ -314,6 +314,24 @@ const policiesPart = {
       const row = this.polSelected();
       return !!(row && !row.isGlobal && row.global_shadowed && this.polData && this.polData.global && this.polData.global.rule_count);
     },
+
+    // Drag the divider between the policy list and the editor; the width is remembered.
+    polDragStart(e) {
+      const x0 = e.clientX, w0 = this.polRailW;
+      const move = (ev) => { this.polRailW = Math.max(220, Math.min(720, w0 + ev.clientX - x0)); };
+      const up = () => {
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+        document.body.style.userSelect = "";
+        this._polRailSave();
+      };
+      document.body.style.userSelect = "none";
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+    },
+    polRailNudge(dx) { this.polRailW = Math.max(220, Math.min(720, this.polRailW + dx)); this._polRailSave(); },
+    polDragReset() { this.polRailW = 288; this._polRailSave(); },
+    _polRailSave() { try { localStorage.setItem("kl-pol-rail", String(this.polRailW)); } catch (err) { /* private mode */ } },
 
     polTargetNote() {
       if (!this.polDetail) return "";
@@ -339,14 +357,14 @@ const policiesPart = {
     },
     polPriceCell(r) {
       if (r.error) return "error: " + r.error;
-      if (r.files == null) return "unpriced";
-      const dirs = r.dirs ? ` · ${r.dirs} dir${r.dirs === 1 ? "" : "s"}` : "";
-      return `${Number(r.files).toLocaleString(NUM_LOCALE)} files · ${fmtBytes(r.bytes || 0)}${dirs}`;
+      if (r.files == null) return "not sized yet";
+      const dirs = r.dirs ? ` · ${countOf(r.dirs, "folder")}` : "";
+      return `${countOf(r.files, "file")} · ${fmtBytes(r.bytes || 0)}${dirs}`;
     },
     polAddPreviewText() {
       const p = this.polAddPrice;
       if (!p || p.files == null) return "";
-      return "Would exclude " + Number(p.files).toLocaleString(NUM_LOCALE) + " files · " + fmtBytes(p.bytes || 0);
+      return "Would exclude " + countOf(p.files, "file") + " · " + fmtBytes(p.bytes || 0);
     },
     polAddExamplesText() {
       const p = this.polAddPrice;
@@ -357,7 +375,7 @@ const policiesPart = {
       if (!it || it.error) return it && it.error ? "error: " + it.error : "";
       if (it.files == null) return "";
       const dirs = it.dirs ? ` · ${it.dirs} dir${it.dirs === 1 ? "" : "s"}` : "";
-      return Number(it.files).toLocaleString(NUM_LOCALE) + " files · " + fmtBytes(it.bytes || 0) + dirs;
+      return countOf(it.files, "file") + " · " + fmtBytes(it.bytes || 0) + dirs;
     },
 
     // ---------- staging ----------

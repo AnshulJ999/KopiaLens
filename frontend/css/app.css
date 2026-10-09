@@ -26,6 +26,7 @@ body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", 
 .pill { display: inline-block; font-size: 0.65625rem; padding: 1px 6px; border-radius: 9px; margin: 1px; border: 1px solid var(--bd); background: var(--surface2); color: var(--muted); }
 .pill.ok { color: var(--ok); border-color: var(--ok-bd); background: var(--ok-bg); }
 .pill.warn { color: var(--warn); border-color: var(--warn-bd); background: var(--warn-bg); }
+.pill.danger { color: var(--danger); border-color: var(--danger-bd, var(--danger)); background: var(--danger-bg, transparent); }
 .pill.bad { color: var(--danger); border-color: var(--danger-bd); background: var(--danger-bg); }
 .tab { padding: 0.375rem 0.875rem; font-size: var(--fs-md); border-radius: 0.4375rem; cursor: pointer; }
 .fld { height: 2.125rem; border-radius: var(--r-md); padding: 0 0.5rem; font-size: var(--fs-md); }
@@ -120,6 +121,14 @@ body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", 
 
 /* Run bar: dry run / execute / copy command, on every destructive action. */
 .kl-runbar { border: 1px solid var(--bd); border-radius: var(--r-md); background: var(--surface2); padding: 9px 10px; display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.kl-drag { width: 6px; flex: none; cursor: col-resize; border-radius: 3px; }
+.kl-drag:hover, .kl-drag:focus-visible { background: var(--bd); outline: none; }
+.kl-steps { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--faint); margin-top: 2px; }
+.kl-steps .on { color: var(--fg); font-weight: 600; }
+.kl-steps .done { color: var(--muted); }
+.kl-steps .sep { color: var(--faint); }
+.kl-choices { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--sp-4); }
+.kl-choices .lbl { font-size: var(--fs-xs); font-weight: 500; margin-bottom: 4px; }
 
 /* A note explains a number. A callout changes a decision. Nothing else gets a box. */
 .kl-note { font-size: var(--fs-xs); color: var(--muted); line-height: 1.45; }

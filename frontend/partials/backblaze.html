@@ -170,7 +170,7 @@
         </div>
         <div class="flex flex-wrap items-center gap-3 text-sm" x-show="bzQueue">
           <span class="font-medium">Upload queue (scheduled for backup)</span>
-          <span x-text="bzQueue && (Number(bzQueue.total_files||0).toLocaleString(NUM_LOCALE) + ' files · ' + fmtB(bzQueue.total_bytes))"></span>
+          <span x-text="bzQueue && (countOf(bzQueue.total_files, 'file') + ' · ' + fmtB(bzQueue.total_bytes))"></span>
           <span class="text-muted text-xs">Backblaze scans ~once/twice a day, so this changes roughly daily.</span>
         </div>
         <div class="flex flex-wrap gap-2 text-xs" x-show="bzQueue">
@@ -186,7 +186,7 @@
           <div class="flex items-baseline gap-3 flex-wrap">
             <div class="text-sm font-medium">Backed up in the last 30 days</div>
             <div class="text-xl font-medium" x-text="bzSessions &amp;&amp; bzSessions.last_30d ? fmtB(bzSessions.last_30d.bytes) : '&mdash;'"></div>
-            <div class="text-xs text-muted" x-text="bzSessions &amp;&amp; bzSessions.last_30d ? (Number(bzSessions.last_30d.files||0).toLocaleString(NUM_LOCALE) + ' files') : ''"></div>
+            <div class="text-xs text-muted" x-text="bzSessions &amp;&amp; bzSessions.last_30d ? (countOf(bzSessions.last_30d.files, 'file')) : ''"></div>
           </div>
           <p class="text-[11px] text-muted mt-1">Counted from Backblaze's own per-file completion records, so it covers every session &mdash; including the many that never write a closing log line. These are source-file sizes, not network traffic.</p>
           <div id="bzBackupDaysTable" class="mt-2"></div>

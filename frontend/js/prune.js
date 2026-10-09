@@ -38,6 +38,11 @@ const prunePart = {
       if (!p) return "";
       return (p.kind === "folder" ? "Prune snapshots of " : "Prune versions of ") + baseName(p.full_path || p.fullPath);
     },
+    // Folder prune removes the folder FROM snapshots; the snapshots themselves stay.
+    pruneConfirmLabel() {
+      const n = this.pruneTickCount();
+      return this.prune && this.prune.kind === "folder" ? `Remove from ${countOf(n, "snapshot")}` : `Remove ${countOf(n, "version")}`;
+    },
     pruneSubtitle() {
       const rows = (this.prune && this.prune.rows) || [];
       if (!rows.length) return "";
@@ -171,7 +176,7 @@ const prunePart = {
         [p.kind === "folder" ? "Folder" : "File", p.full_path],
         ["Keeps", countOf(kept.length, noun) + ": " + keptText],
         ["Removes", countOf(this.pruneTickCount(), noun) + " from " + countOf(price.snapshots, "snapshot")],
-        ["Frees", fmtPhys(price.frees) + ", after full maintenance"],
+        [term("reclaimable"), fmtPhys(price.frees) + ", after full maintenance"],
         [p.holders.length > 1 ? "Sources" : "Source", p.holders.map((s) => sourcePath(s)).join(", ")],
       ];
       const copies = this.pruneElsewhereTicked();
@@ -179,11 +184,12 @@ const prunePart = {
       const whole = p.rows.filter((r) => p.tick[r.id] && r.whole_snapshot).length;
       if (whole) facts.splice(3, 0, ["Whole snapshots", countOf(whole, "snapshot") + " where the folder is the whole backup"]);
       const ok = await this.klConfirm({
-        title: `Remove ${countOf(this.pruneTickCount(), noun)} of ${baseName(p.full_path)}?`,
+        title: p.kind === "folder" ? `Remove ${baseName(p.full_path)} from ${countOf(this.pruneTickCount(), "snapshot")}?`
+          : `Remove ${countOf(this.pruneTickCount(), noun)} of ${baseName(p.full_path)}?`,
         facts,
         callout: "This can't be undone. The removed " + noun + "s can't be restored afterwards.",
         note: this.pruneDryChecked() ? "" : "No dry run yet.",
-        confirmLabel: "Remove " + countOf(this.pruneTickCount(), noun), danger: true,
+        confirmLabel: this.pruneConfirmLabel(), danger: true,
       });
       if (!ok || !this.prune) return;
       await this.wrap(async () => {
