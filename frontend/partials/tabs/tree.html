@@ -5,6 +5,10 @@
             <option value="*ALL*">All sources</option>
             <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
           </select>
+          <span class="kl-seg" role="group" aria-label="View">
+            <button :class="treeView==='list' ? 'on' : ''" @click="setTreeView('list')" title="One folder at a time. Double-click a folder to open it.">List</button>
+            <button :class="treeView==='tree' ? 'on' : ''" @click="setTreeView('tree')" title="Expand folders in place with the arrow, like TreeSize">Tree</button>
+          </span>
           <span class="text-xs text-muted">Show</span>
           <select x-model="treeMode" @change="treeModeChanged()" class="fld border border-bd bg-surface" title="What the tree lists">
             <option value="full">Full snapshot</option>
@@ -30,13 +34,13 @@
           <label :class="(treeMode!=='all' && selectedSource!=='*ALL*') ? 'opacity-40' : ''" title="Only folders holding files deleted from disk (All snapshots or All sources)"><input type="checkbox" x-model="treeDeletedOnly" :disabled="treeMode!=='all' && selectedSource!=='*ALL*'" @change="treeFilterChanged()"> Deleted</label>
           <label title="Only files of 1 GB or more"><input type="checkbox" x-model="treeOverGb" @change="treeFilterChanged()"> Over 1 GB</label>
           <input x-model="treeExt" @input.debounce.400ms="treeFilterChanged()" class="fld w-28 border border-bd bg-surface text-xs" placeholder="ext: iso, 7z" title="Only these extensions">
-          <button @click="toggleTreeFlat()" class="kl-btn" :class="treeFlat ? 'on' : ''" title="List every file under this folder, without folders">Flat</button>
+          <button @click="toggleTreeFlat()" class="kl-btn" :class="treeFlat && treeView!=='tree' ? 'on' : ''" :disabled="treeView==='tree'" :title="treeView==='tree' ? 'Flat works in List view' : 'List every file under this folder, without folders'">Flat</button>
           <button @click="toggleTreeDedupe()" class="kl-btn" :class="treeDedupe ? 'on' : ''" title="Show files with identical content once">Dedupe</button>
-          <button x-show="treeMode!=='all' && selectedSource!=='*ALL*'" @click="mountTreeSnapshot()" class="kl-btn" :title="host.can_open ? 'Mount this snapshot (read-only) and open this folder in ' + host.file_manager : 'Mount this snapshot (read-only)'" x-text="host.can_open ? 'Mount &amp; browse' : 'Mount'"></button>
           {{ selbar('tree', 'treeSelCount') }}
           <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false">
             <button class="kl-btn icon" @click="open = !open" title="More">⋯</button>
             <div class="kl-menu" x-show="open" x-cloak>
+              <button x-show="treeMode!=='all' && selectedSource!=='*ALL*'" @click="open = false; mountTreeSnapshot()" :title="host.can_open ? 'Mount this snapshot (read-only) and open this folder in ' + host.file_manager : 'Mount this snapshot (read-only)'" x-text="host.can_open ? 'Mount this snapshot and browse' : 'Mount this snapshot'"></button>
               <button @click="open = false; csv('#treeTable','tree')">Export CSV</button>
             </div>
           </span>

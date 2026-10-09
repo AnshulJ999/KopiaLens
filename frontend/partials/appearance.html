@@ -13,7 +13,7 @@
         </button>
       </template>
     </div>
-    <p class="text-[11px] text-muted mt-1">System follows your OS light or dark preference, using the themes you picked for each. Saved on the server, so it follows you between browsers.</p>
+    <p class="text-[0.6875rem] text-muted mt-1">System follows your OS light or dark preference, using the themes you picked for each. Saved on the server, so it follows you between browsers.</p>
   </div>
   <div>
     <div class="text-sm font-medium mb-2">Density</div>
@@ -23,7 +23,25 @@
                 :class="density===d ? 'border-fg bg-sel font-medium' : 'border-bd'" x-text="d"></button>
       </template>
     </div>
-    <p class="text-[11px] text-muted mt-1">Row height and text size. Independent of theme.</p>
+    <div class="flex items-center gap-3 mt-2 text-xs">
+      <span class="text-muted">Custom</span>
+      <input type="range" :min="DENSITY_PCT.min" :max="DENSITY_PCT.max" step="2.5" :value="densityPct"
+             @input="slideDensity($event.target.value, false)" @change="slideDensity($event.target.value, true)"
+             class="w-48" aria-label="Custom density">
+      <span class="tabular-nums w-10" :class="density==='custom' ? 'font-medium' : 'text-muted'" x-text="densityPct + '%'"></span>
+    </div>
+    <p class="text-[0.6875rem] text-muted mt-1">Row height and text size. Independent of theme.</p>
+  </div>
+  <div>
+    <div class="text-sm font-medium mb-2">Font</div>
+    <div class="flex flex-wrap gap-1.5">
+      <template x-for="f in FONTS" :key="f.id">
+        <button @click="setFont(f.id)" class="h-8 rounded border px-3 text-xs" :title="f.title || ''"
+                :class="font===f.id ? 'border-fg bg-sel font-medium' : 'border-bd'"
+                :style="f.id==='system' ? 'font-family:ui-sans-serif,system-ui,sans-serif' : 'font-family:&quot;' + (f.id==='plex' ? 'IBM Plex Sans' : f.label) + '&quot;,sans-serif'"
+                x-text="f.label"></button>
+      </template>
+    </div>
   </div>
   <div>
     <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Sort arrows in table headers</span>
@@ -31,7 +49,7 @@
         <option value="sorted">Sorted column only</option>
         <option value="all">Every column</option>
       </select></div>
-    <p class="text-[11px] text-muted mt-1">With "Sorted column only", hovering a header still shows its arrow.</p>
+    <p class="text-[0.6875rem] text-muted mt-1">With "Sorted column only", hovering a header still shows its arrow.</p>
   </div>
   <div>
     <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Detail panel layout</span>
@@ -39,7 +57,7 @@
         <option value="classic">Classic - everything on one scroll</option>
         <option value="tabbed">Tabbed - grouped, summary always visible</option>
       </select></div>
-    <p class="text-[11px] text-muted mt-1">Applies to the file and folder detail panels. Classic shows every section in order; Tabbed keeps the summary cards on screen and groups the rest under Overview / Storage / Versions / Actions.</p>
+    <p class="text-[0.6875rem] text-muted mt-1">Applies to the file and folder detail panels. Classic shows every section in order; Tabbed keeps the summary cards on screen and groups the rest under Overview / Storage / Versions / Actions.</p>
   </div>
   <div>
     <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Policy editor layout</span>
@@ -54,7 +72,7 @@
         <option value="ask">Ask first</option>
         <option value="keep">Keep the changes as a draft</option>
       </select></div>
-    <p class="text-[11px] text-muted mt-1">Drafts are never saved on their own. Switching repo, Discard and closing the page always ask.</p>
+    <p class="text-[0.6875rem] text-muted mt-1">Drafts are never saved on their own. Switching repo, Discard and closing the page always ask.</p>
   </div>
   <div>
     <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Repo labels</span>
@@ -62,11 +80,11 @@
         <option value="short">Short - Repo 1, Repo 2, BZ</option>
         <option value="full">Full - the repository's name</option>
       </select></div>
-    <p class="text-[11px] text-muted mt-1">How repositories are labelled in chips, headers and log columns. Pickers always show the full name.</p>
+    <p class="text-[0.6875rem] text-muted mt-1">How repositories are labelled in chips, headers and log columns. Pickers always show the full name.</p>
   </div>
   <div>
     <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Pro badge</span>
       <button @click="showProBadge = !showProBadge; saveKl('show_pro_badge')" class="h-8 rounded border border-bd px-3" x-text="showProBadge ? 'Shown' : 'Hidden'"></button></div>
-    <p class="text-[11px] text-muted mt-1">The small Pro mark next to the KopiaLens name while a licence is active.</p>
+    <p class="text-[0.6875rem] text-muted mt-1">The small Pro mark next to the KopiaLens name while a licence is active.</p>
   </div>
 </section>

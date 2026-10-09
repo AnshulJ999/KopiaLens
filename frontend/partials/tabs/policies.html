@@ -22,7 +22,7 @@
         <!-- toolbar -->
         <div class="flex items-center gap-2 shrink-0 flex-wrap">
           <span class="font-medium">Policies</span>
-          <span class="text-[11px] text-muted" x-show="polData"
+          <span class="text-[0.6875rem] text-muted" x-show="polData"
                 x-text="((polData && polData.sources ? polData.sources.length : 0) + ' source policies' + ((polData && polData.global && polData.global.defined) ? ' + Global' : ''))"></span>
           <span class="pill warn" x-show="polData && polData.stale" title="The defined-policy export failed; an older cached copy is being shown.">stale export</span>
           <span class="grow"></span>
@@ -42,19 +42,19 @@
             <template x-for="t in polRail()" :key="t.isGlobal ? 'global' : t.target">{{ pol_rail_row('polRailLabel(t)') }}</template>
             <template x-if="polRailOthers('folder').length">
               <div>
-                <div class="px-2 pt-2 pb-1 text-[11px] text-muted">Folder policies</div>
+                <div class="px-2 pt-2 pb-1 text-[0.6875rem] text-muted">Folder policies</div>
                 <template x-for="t in polRailOthers('folder')" :key="t.target">{{ pol_rail_row('shortSource(t.target)') }}</template>
               </div>
             </template>
             <template x-if="polRailOthers('computer').length">
               <div>
-                <div class="px-2 pt-2 pb-1 text-[11px] text-muted">User and computer policies</div>
+                <div class="px-2 pt-2 pb-1 text-[0.6875rem] text-muted">User and computer policies</div>
                 <template x-for="t in polRailOthers('computer')" :key="t.target">{{ pol_rail_row('t.target') }}</template>
               </div>
             </template>
             <template x-if="polNewTargets.length">
               <div>
-                <div class="px-2 pt-2 pb-1 text-[11px] text-muted">New, not saved</div>
+                <div class="px-2 pt-2 pb-1 text-[0.6875rem] text-muted">New, not saved</div>
                 <template x-for="t in polNewTargets.map((n) => ({ target: n, depth: 0 }))" :key="t.target">{{ pol_rail_row('shortSource(t.target)') }}</template>
               </div>
             </template>
@@ -84,7 +84,7 @@
                     <button class="kl-btn quiet" x-show="!polSelected().isGlobal && polDetail && polDetail.defined && Object.keys(polDetail.defined).length && !(polStaged[polSelected().target] && polStaged[polSelected().target].removePolicy)"
                             @click="polStageRemovePolicy()">Remove policy…</button>
                   </div>
-                  <div class="kl-note mt-0.5" x-text="polSummaryLine()"></div>
+                  <div class="kl-note mt-0.5" x-text="polHeaderLine()"></div>
                   <div class="kl-callout mt-2" x-show="!polSelected().isGlobal && polHasStaged(polSelected().target) && polStaged[polSelected().target].removePolicy">
                     <span class="flex items-center gap-2">
                       <span>This whole policy is staged for removal.</span>
@@ -100,7 +100,7 @@
                     <template x-for="s in polSections()" :key="s.id">
                       <span class="t flex items-center gap-1.5" :class="polSection === s.id ? 'on' : ''" @click="polSetSection(s.id)">
                         <span x-text="s.label"></span>
-                        <span class="text-[10px] font-semibold" style="color:var(--warn)" x-show="polSecCount(s.id)" x-text="polSecCount(s.id)"></span>
+                        <span class="text-[0.625rem] font-semibold" style="color:var(--warn)" x-show="polSecCount(s.id)" x-text="polSecCount(s.id)"></span>
                       </span>
                     </template>
                   </div>
@@ -109,14 +109,14 @@
                 {%- macro exclusions_body() %}
                 <div class="space-y-2">
                   <div class="flex items-center gap-2 flex-wrap">
-                    <span class="text-[11px] text-muted" x-text="countOf(polRuleRows().length, 'own rule')"></span>
-                    <span class="text-[11px] text-ok" x-show="polKeepout().priced"
+                    <span class="text-[0.6875rem] text-muted" x-text="countOf(polRuleRows().length, 'own rule')"></span>
+                    <span class="text-[0.6875rem] text-ok" x-show="polKeepout().priced"
                           x-text="'keeping out ' + countOf(polKeepout().files, 'file') + ' · ' + fmtB(polKeepout().bytes)"></span>
                     <span class="grow"></span>
-                    <span class="text-[10px] text-danger" x-show="polPriceFailText()" x-text="polPriceFailText()"></span>
-                    <span class="text-[10px]" style="color:var(--muted)" x-show="polPricingNote()" x-text="polPricingNote()"></span>
+                    <span class="text-[0.625rem] text-danger" x-show="polPriceFailText()" x-text="polPriceFailText()"></span>
+                    <span class="text-[0.625rem]" style="color:var(--muted)" x-show="polPricingNote()" x-text="polPricingNote()"></span>
                     <button x-show="polSel !== 'global' && polKeepout().priced < polKeepout().total"
-                            @click="polPriceRow()" class="h-6 rounded border border-bd px-2 text-[10px]">Work out sizes</button>
+                            @click="polPriceRow()" class="h-6 rounded border border-bd px-2 text-[0.625rem]">Work out sizes</button>
                   </div>
                   <div class="kl-note" x-text="polTargetNote()"></div>
                   <div class="kl-callout" x-show="polGlobalShadowed()"
@@ -171,7 +171,7 @@
                               <span class="num shrink-0" style="color:var(--muted);font-size:10.5px" x-text="polIgnoreFacts(f)"></span>
                               <span class="pill shrink-0" x-show="f.in_effect === false" title="Kopia does not read this file here.">not in effect</span>
                               <span class="pill warn shrink-0" x-show="f.readable === false" :title="f.error || ''">not readable</span>
-                              <div class="w-full font-mono text-[11px] break-all" style="color:var(--muted)" x-show="(f.rules || []).length" x-text="(f.rules || []).join('  ·  ')"></div>
+                              <div class="w-full font-mono text-[0.6875rem] break-all" style="color:var(--muted)" x-show="(f.rules || []).length" x-text="(f.rules || []).join('  ·  ')"></div>
                             </div>
                           </template>
                         </div>
@@ -246,7 +246,7 @@
                       <template x-if="(g.field_changes || []).length">
                         <div class="space-y-0.5">
                           <template x-for="fc in g.field_changes" :key="fc.field">
-                            <div class="flex items-baseline gap-2 text-[12px] flex-wrap">
+                            <div class="flex items-baseline gap-2 text-[0.75rem] flex-wrap">
                               <span class="w-44 shrink-0" x-text="polFieldLine(fc).label"></span>
                               <span style="color:var(--danger)" class="line-through" x-text="polFieldLine(fc).before"></span>
                               <span class="text-faint">→</span>
@@ -262,13 +262,13 @@
                         <div class="space-y-1.5">
                           {{ rulediff('polDiffView(g)') }}
                           <template x-for="(pat, i) in (g.added || [])" :key="'a' + i">
-                            <div class="flex items-center gap-2 text-[11px]" x-show="polImpactText(((g.impact || {}).added || [])[i])">
+                            <div class="flex items-center gap-2 text-[0.6875rem]" x-show="polImpactText(((g.impact || {}).added || [])[i])">
                               <span class="font-mono break-all grow" style="color:var(--ok)" x-text="'+ ' + pat"></span>
                               <span class="num shrink-0" style="color:var(--muted)" x-text="polImpactText(((g.impact || {}).added || [])[i])"></span>
                             </div>
                           </template>
                           <template x-for="(pat, i) in (g.removed || [])" :key="'r' + i">
-                            <div class="flex items-center gap-2 text-[11px]" x-show="polImpactText(((g.impact || {}).removed || [])[i])">
+                            <div class="flex items-center gap-2 text-[0.6875rem]" x-show="polImpactText(((g.impact || {}).removed || [])[i])">
                               <span class="font-mono break-all grow" style="color:var(--danger)" x-text="'− ' + pat"></span>
                               <span class="num shrink-0" style="color:var(--muted)" x-text="polImpactText(((g.impact || {}).removed || [])[i])"></span>
                             </div>
@@ -344,7 +344,7 @@
             <div class="space-y-2">
               <div class="kl-callout" x-show="polBackups.error" x-text="polBackups.error"></div>
               <div class="overflow-auto max-h-[55vh] rounded border border-bd-soft">
-                <table class="w-full text-[11px]">
+                <table class="w-full text-[0.6875rem]">
                   <thead class="bg-surface2 text-left text-muted"><tr><th class="p-1.5">When</th><th class="p-1.5">Trigger</th><th class="p-1.5">Size</th><th class="p-1.5">File</th><th class="p-1.5"></th></tr></thead>
                   <tbody>
                     <template x-for="b in (polBackups.backups || [])" :key="b.name">

@@ -10,7 +10,7 @@
           <span class="truncate" x-text="repoName(repo)"></span>
           <svg class="h-3.5 w-3.5 shrink-0 text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
         </button>
-        <span x-show="isDemo()" x-cloak class="absolute -top-1.5 -right-2 rounded border border-warn-bd bg-warn-bg text-warn px-1 text-[10px] font-medium leading-4"
+        <span x-show="isDemo()" x-cloak class="absolute -top-1.5 -right-2 rounded border border-warn-bd bg-warn-bg text-warn px-1 text-[0.625rem] font-medium leading-4"
               title="Invented names, real numbers. Actions are simulated and change nothing. Pro features are unlocked.">Demo</span>
         <div x-show="repoMenu" x-cloak role="menu" class="absolute left-0 top-full mt-1 z-50 w-64 rounded-md border border-bd bg-surface shadow-lg py-1 text-sm">
           <template x-for="item in repos" :key="item.id">
@@ -18,7 +18,7 @@
                     class="w-full text-left px-3 py-1.5 hover:bg-head flex items-center gap-2">
               <span class="w-3 text-ok" x-text="item.id === repo ? '✓' : ''"></span>
               <span class="truncate flex-1" x-text="item.name"></span>
-              <span class="text-[11px] text-muted" x-text="item.kind === 'backblaze' ? 'Backblaze' : cxTypeLabel((item.storage || {}).type)"></span>
+              <span class="text-[0.6875rem] text-muted" x-text="item.kind === 'backblaze' ? 'Backblaze' : cxTypeLabel((item.storage || {}).type)"></span>
             </button>
           </template>
           <div class="my-1 border-t border-bd"></div>

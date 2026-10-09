@@ -158,7 +158,7 @@ const jobsPart = {
       if (p.errors) return `Finished · ${p.errors} failed`;
       return "Finished";
     },
-    jobStateClass() {
+    jobPanelStateClass() {
       const p = this.jobPanel;
       if (!p || p.state === "running") return "text-warn";
       if (p.state === "failed" || p.errors) return "text-danger";

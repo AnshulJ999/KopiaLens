@@ -27,14 +27,14 @@
 <div class="rounded border border-bd bg-surface2 p-2">
   <div class="flex items-center gap-2 mb-1">
     <span class="text-xs font-medium break-all" x-text="{{ d }}.label"></span>
-    <span class="count text-[11px]" style="color:var(--muted)" x-text="diffCounts({{ d }}.before, {{ d }}.after)"></span>
+    <span class="count text-[0.6875rem]" style="color:var(--muted)" x-text="diffCounts({{ d }}.before, {{ d }}.after)"></span>
     <span class="grow"></span>
     <span class="kl-seg" style="height:22px">
       <span :class="diffMode !== 'full' ? 'on' : ''" @click="diffSetMode('changes')" title="Added and removed rules">Changes only</span>
       <span :class="diffMode === 'full' ? 'on' : ''" @click="diffSetMode('full')" title="The whole list, in kopia's order">Full list</span>
     </span>
   </div>
-  <div class="kl-list font-mono text-[11.5px]" style="max-height:180px">
+  <div class="kl-list font-mono text-[0.71875rem]" style="max-height:180px">
     <template x-for="(r, i) in diffRows({{ d }}.before, {{ d }}.after, diffMode)" :key="i">
       <div class="li" :style="r.kind === 'add' ? 'color:var(--ok)' : r.kind === 'remove' ? 'color:var(--danger);text-decoration:line-through' : r.kind === 'moved' ? 'color:var(--warn)' : ''">
         <span class="shrink-0 text-right" style="width:2.2rem;color:var(--faint)" x-text="r.n || ''"></span>

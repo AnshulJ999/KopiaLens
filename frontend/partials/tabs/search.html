@@ -2,7 +2,8 @@
       <section x-show="active==='search'" class="h-full flex flex-col gap-2">
         <div class="kl-toolbar">
           <input x-show="!headerSearchOnly" x-model="query" @input.debounce.300ms="loadSearch()" class="fld border border-bd bg-surface min-w-[18rem] flex-1 max-w-[30rem]" placeholder="Search paths" title="Matches anywhere in the full path">
-          <select x-model="searchSource" @change="loadSearch()" class="fld border border-bd bg-surface max-w-[16rem]" title="Source">
+          <select x-model="searchSource" @change="searchSourceChanged()" class="fld border border-bd bg-surface max-w-[16rem]" title="Source">
+            <option value="*REPOS*">All repositories</option>
             <option value="">All sources</option>
             <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
           </select>
@@ -47,23 +48,27 @@
             </div>
           </span>
           <button @click="toggleDedupe()" class="kl-btn" :class="dedupe ? 'on' : ''" :title="dedupeBy === 'content' ? 'Show files with identical content once' : 'Show each file path once, even when several sources hold it'">Dedupe</button>
-          <button @click="toggleGroupByFolder()" class="kl-btn" :class="groupByFolder ? 'on' : ''" title="Group results by folder to find the biggest ones">By folder</button>
+          <span class="kl-seg" role="group" aria-label="List" :title="searchAllRepos() ? 'Folders work within one repository' : ''">
+            <button :class="searchKind==='files' ? 'on' : ''" @click="setSearchKind('files')">Files</button>
+            <button :class="searchKind==='folders' ? 'on' : ''" @click="setSearchKind('folders')" :disabled="searchAllRepos()" title="Folders ranked by size, to find the biggest ones">Folders</button>
+            <button :class="searchKind==='both' ? 'on' : ''" @click="setSearchKind('both')" :disabled="searchAllRepos()" title="Files and folders in one list">Both</button>
+          </span>
           <span class="grow"></span>
           {{ selbar('search', 'searchSelCount') }}
           <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
             <button class="kl-btn icon" @click="open = !open" title="More" data-testid="search-more">⋯</button>
             <div class="kl-menu" x-show="open" x-cloak>
               <div class="hd">This search</div>
-              <button @click="open = false; exportSearch()" x-text="groupByFolder ? 'Export CSV' : 'Export CSV (all ' + searchTotal.toLocaleString(NUM_LOCALE) + ')'"></button>
-              <template x-if="!groupByFolder">
+              <button @click="open = false; exportSearch()" x-text="groupByFolder ? 'Export CSV' : (searchAllRepos() || searchKind==='both') ? 'Export CSV (this page)' : 'Export CSV (all ' + searchTotal.toLocaleString(NUM_LOCALE) + ')'"></button>
+              <template x-if="searchKind==='files' && !searchAllRepos()">
                 <div><div class="sep"></div>
                   <button class="dg" @click="open = false; openRemoveFromSearch()" x-text="'Delete all ' + searchTotal.toLocaleString(NUM_LOCALE) + ' matching…'"></button></div>
               </template>
             </div>
           </span>
         </div>
-        <div x-show="groupByFolder" class="kl-toolbar text-xs">
-          <span class="font-medium">By folder</span>
+        <div x-show="searchKind!=='files' && !searchAllRepos()" class="kl-toolbar text-xs">
+          <span class="font-medium">Folders</span>
           <label>Depth <input type="number" min="1" max="20" x-model.number="groupDepth" @change="changeGroupDepth()" class="fld h-7 w-16 border border-bd bg-surface"></label>
           <label>Min GB <input type="number" min="0" step="0.1" x-model.number="groupMinGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>
           <label>Min files <input type="number" min="0" x-model.number="groupMinFiles" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>

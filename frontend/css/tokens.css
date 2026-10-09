@@ -55,7 +55,7 @@
   --bd: #cfc4ad;
   --bd-soft: #e0d8c5;
   --fg: #29241c;
-  --muted: #7d7462;
+  --muted: #686050;
   --faint: #a89e88;
 
   --ok: #3d6b4f;
@@ -65,7 +65,7 @@
   --danger: #a63d4e;
   --danger-bd: #e8a3ac;
   --danger-bg: #f9eef0;
-  --warn: #96650f;
+  --warn: #8a5c0c;
   --warn-bd: #d9b95c;
   --warn-bg: #f8f1de;
   --link: #22607e;
@@ -166,7 +166,8 @@
   --ok: #34d399;
   --ok-bd: #065f46;
   --ok-bg: #052e26;
-  --ok-solid: #059669;
+  --ok-solid: #047857;
+  --danger-solid: #be123c;
   --danger: #fb7185;
   --danger-bd: #881337;
   --danger-bg: #2a0d14;
@@ -201,7 +202,8 @@
   --ok: #4ade80;
   --ok-bd: #166534;
   --ok-bg: #0c2a1a;
-  --ok-solid: #059669;
+  --ok-solid: #047857;
+  --danger-solid: #be123c;
   --danger: #fb7185;
   --danger-bd: #9f1239;
   --danger-bg: #2e0d18;
@@ -212,7 +214,7 @@
   --accent: #93c5fd;
   --accent-bd: #1e40af;
   --accent-bg: #16233f;
-  --accent-solid: #3b82f6;
+  --accent-solid: #2563eb;
 
   --term-bg: #0d1421;
   --term-fg: #cdd6e4;
@@ -236,7 +238,8 @@
   --ok: #4ade80;
   --ok-bd: #166534;
   --ok-bg: #0d2b1c;
-  --ok-solid: #059669;
+  --ok-solid: #047857;
+  --danger-solid: #be123c;
   --danger: #fb7185;
   --danger-bd: #9f1239;
   --danger-bg: #2e0d15;
@@ -271,7 +274,8 @@
   --ok: #34d399;
   --ok-bd: #065f46;
   --ok-bg: #06251b;
-  --ok-solid: #059669;
+  --ok-solid: #047857;
+  --danger-solid: #be123c;
   --danger: #fb7185;
   --danger-bd: #881337;
   --danger-bg: #26090f;
@@ -287,6 +291,114 @@
   --term-bg: #0a0a0a;
   --term-fg: #d4d4d4;
   --term-dim: #6f6f6f;
+}
+
+/* ---- Lens (teal on near-black, matches the website) ---- */
+:root[data-theme="lens"] {
+  --canvas: #0a100f;
+  --surface: #101918;
+  --surface2: #0e1615;
+  --head: #152120;
+  --hover: #172625;
+  --sel: #1b302d;
+  --bd: #2c3e3b;
+  --bd-soft: #1e2c2a;
+  --fg: #f1f5f4;
+  --muted: #9aa8a5;
+  --faint: #7d8b88;
+
+  --ok: #4ade80;
+  --ok-bd: #14532d;
+  --ok-bg: #0b2418;
+  --ok-solid: #047857;
+  --danger-solid: #b91c1c;
+  --danger: #f87171;
+  --danger-bd: #7f1d1d;
+  --danger-bg: #2a1212;
+  --warn: #fbbf24;
+  --warn-bd: #78350f;
+  --warn-bg: #2a1c05;
+  --link: #5eead4;
+  --accent: #2dd4bf;
+  --accent-bd: #115e59;
+  --accent-bg: #0f2a27;
+  --accent-solid: #0f766e;
+
+  --term-bg: #0c1413;
+  --term-fg: #d3dedb;
+  --term-dim: #75837f;
+}
+
+/* ---- Graphite (neutral dark grey) ---- */
+:root[data-theme="graphite"] {
+  --canvas: #111214;
+  --surface: #18191c;
+  --surface2: #1d1f22;
+  --head: #222428;
+  --hover: #26292d;
+  --sel: #2f3238;
+  --bd: #3a3e45;
+  --bd-soft: #26292d;
+  --fg: #e7e8eb;
+  --muted: #9ca0a8;
+  --faint: #73787f;
+
+  --ok: #4ade80;
+  --ok-bd: #166534;
+  --ok-bg: #0e2318;
+  --ok-solid: #047857;
+  --danger-solid: #b91c1c;
+  --danger: #f87171;
+  --danger-bd: #7f1d1d;
+  --danger-bg: #2a1414;
+  --warn: #fbbf24;
+  --warn-bd: #78350f;
+  --warn-bg: #2a1f0a;
+  --link: #8ab4f8;
+  --accent: #8ab4f8;
+  --accent-bd: #2c4a7a;
+  --accent-bg: #1b2533;
+  --accent-solid: #2f64d6;
+
+  --term-bg: #141517;
+  --term-fg: #d4d6da;
+  --term-dim: #767a82;
+}
+
+/* ---- Ink (blue-black) ---- */
+:root[data-theme="ink"] {
+  --canvas: #0b0d12;
+  --surface: #11141b;
+  --surface2: #151923;
+  --head: #191e29;
+  --hover: #1e2431;
+  --sel: #252c3c;
+  --bd: #2f3748;
+  --bd-soft: #1c2230;
+  --fg: #e4e7ee;
+  --muted: #8d95a6;
+  --faint: #687082;
+
+  --ok: #4ade80;
+  --ok-bd: #14532d;
+  --ok-bg: #0c2016;
+  --ok-solid: #047857;
+  --danger-solid: #be123c;
+  --danger: #fb7185;
+  --danger-bd: #881337;
+  --danger-bg: #2a0d14;
+  --warn: #fbbf24;
+  --warn-bd: #78350f;
+  --warn-bg: #2a1c05;
+  --link: #93a8ff;
+  --accent: #7c9cff;
+  --accent-bd: #2f3f7a;
+  --accent-bg: #1a2140;
+  --accent-solid: #3d5ce0;
+
+  --term-bg: #0e1117;
+  --term-fg: #d0d5df;
+  --term-dim: #6c7486;
 }
 
 /* System: the paint before JS runs. theme.js resolves "system" to the user's remembered
@@ -309,7 +421,8 @@
     --ok: #34d399;
     --ok-bd: #065f46;
     --ok-bg: #052e26;
-    --ok-solid: #059669;
+    --ok-solid: #047857;
+    --danger-solid: #be123c;
     --danger: #fb7185;
     --danger-bd: #881337;
     --danger-bg: #2a0d14;
@@ -343,6 +456,11 @@
   --fs-md: 0.8125rem;
   --fs-lg: 0.9375rem;
   --ctl-h: 1.75rem;
+  --cell-py: 0.25rem;
+  --cell-px: 0.25rem;
 }
-html[data-density="compact"] { font-size: 93.75%; }
 html[data-density="comfortable"] { font-size: 106.25%; }
+html[data-density="compact"] { font-size: 93.75%; --ctl-h: 1.625rem; --cell-py: 0.1875rem; }
+html[data-density="dense"] { font-size: 87.5%; --ctl-h: 1.5rem; --cell-py: 0.125rem; --cell-px: 0.1875rem; }
+/* Custom: the root size comes from the Settings slider (percent, stamped on <html>). */
+html[data-density="custom"] { font-size: calc(var(--kl-density-pct, 100) * 1%); }

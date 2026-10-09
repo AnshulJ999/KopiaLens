@@ -24,7 +24,7 @@
       <div class="fixed inset-0 z-[46] bg-black/40 flex items-center justify-center p-4 sm:p-6" @click.self="repoDlg = null">
         <form @submit.prevent="repoDlgSubmit()" class="w-[28rem] max-w-full rounded-lg border border-bd bg-surface shadow-xl flex flex-col text-sm">
           <div class="p-4 space-y-3">
-            <h3 class="text-[15px] font-semibold leading-snug" x-text="repoDlg.mode === 'edit' ? 'Edit repository' : 'Remove ' + repoDlg.repo.name + ' from KopiaLens?'"></h3>
+            <h3 class="text-[0.9375rem] font-semibold leading-snug" x-text="repoDlg.mode === 'edit' ? 'Edit repository' : 'Remove ' + repoDlg.repo.name + ' from KopiaLens?'"></h3>
             <template x-if="repoDlg.mode === 'edit'">
               <div class="grid gap-2 sm:grid-cols-[1fr_9rem]">
                 <label class="flex flex-col gap-1 text-xs font-medium">Name

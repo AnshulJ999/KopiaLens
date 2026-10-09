@@ -48,7 +48,7 @@
                       <div class="font-mono text-xs break-all" x-text="it.path"></div>
                       <div class="kl-note" x-text="exItemStatus(it)"></div>
                       <template x-for="t in exItemTargets(it)" :key="t.target">
-                        <div class="font-mono text-[11px] break-all" style="color:var(--muted)" x-text="(t.patterns || [t.pattern]).join(',  ') + '  →  ' + exLabel(t.target)"></div>
+                        <div class="font-mono text-[0.6875rem] break-all" style="color:var(--muted)" x-text="(t.patterns || [t.pattern]).join(',  ') + '  →  ' + exLabel(t.target)"></div>
                       </template>
                     </div>
                   </label>
@@ -154,8 +154,8 @@
                         </div>
                         <div class="kl-note" x-text="exWhy(t)"></div>
                         <template x-for="pr in exPatternRows(t)" :key="pr.pattern">
-                          <div class="font-mono text-[11px] break-all" style="color:var(--muted)">
-                            <span x-text="pr.pattern"></span><span class="font-sans" style="color:var(--muted)" x-show="pr.note" x-text="'  ' + pr.note"></span>
+                          <div class="font-mono text-[0.6875rem] break-all" style="color:var(--muted)">
+                            <span x-text="pr.pattern"></span><span style="color:var(--muted);font-family:var(--font-sans)" x-show="pr.note" x-text="'  ' + pr.note"></span>
                           </div>
                         </template>
                       </div>

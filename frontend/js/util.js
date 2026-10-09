@@ -205,7 +205,8 @@ const setTable = (id, data, columns, opts = {}) => {
     movableColumns: true,
     selectableRows: 1,
     placeholder: "Nothing to show",
-    persistence: { columns: true, sort: persistSort !== false },
+    // Titles are not saved: a renamed column would keep its old title for anyone with a saved layout.
+    persistence: { columns: ["width", "visible"], sort: persistSort !== false },
     persistenceID: id.replace("#", ""),
     persistenceReaderFunc: persistReader,
     persistenceWriterFunc: persistWriter,

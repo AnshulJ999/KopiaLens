@@ -46,9 +46,9 @@ document.addEventListener("alpine:init", () => {
     snapStaleAnalysis: false,  // analysis rows exist but belong to the previous index run
     treeMode: "full",
     treeWeek: "",
-    treeDeletedOnly: false, treeOverGb: false, treeExt: "", treeFlat: false,
+    treeDeletedOnly: false, treeOverGb: false, treeExt: "", treeFlat: false, treeView: "list",
     query: "", deletedOnly: false, overOneGb: false, searchSource: "", searchExt: "", searchExtExclude: "", omniMeta: "",
-    groupByFolder: false, groupDepth: 3, groupMinGb: 0, groupMinFiles: 0,
+    groupByFolder: false, searchKind: "files", searchFolders: 0, searchSkipped: [], groupDepth: 3, groupMinGb: 0, groupMinFiles: 0,
     churnDays: "30", churnDepth: 4, churnView: "source", churnData: null, churnMeta: "", _churnSeq: 0,
     _churnPhysSeq: 0, _churnPhysCache: {}, _churnPhysTimer: null,   // folder view: on-screen all-versions physical
     indexMode: "daily", indexTime: "23:00", indexInterval: 86400, dashboardMode: "nightly",
@@ -340,10 +340,13 @@ document.addEventListener("alpine:init", () => {
         this.searchDir = kl.search_dir || "desc";
         this.dedupe = !!kl.search_dedupe;
         this.dedupeBy = kl.search_dedupe_by === "content" ? "content" : "path";
+        this.searchKind = ["files", "folders", "both"].includes(kl.search_kind) ? kl.search_kind : "files";
+        this.groupByFolder = this.searchKind === "folders";
         this.headerSearchOnly = kl.header_search_only === true;
         this.recentBackup = kl.recent_backup || "";  // "recently backed up" preset (days; "" = Any)
         this.treeDedupe = !!kl.tree_dedupe;
         this.treeMode = kl.tree_mode || "full";
+        this.treeView = kl.tree_view === "tree" ? "tree" : "list";
         this.reindexInterval = Number(kl.reindex_interval || 1800);
         this.groupDepth = Number(kl.group_depth || 3);
         this.churnDays = String(kl.churn_days || 30);

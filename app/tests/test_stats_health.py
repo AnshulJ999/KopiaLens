@@ -25,9 +25,9 @@ def test_maintenance_fix_commands_target_their_own_repo():
                for h in health1), health1
 
 
-def test_index_health_reports_the_published_generation(monkeypatch):
-    """Artifacts are immutable, so the useful facts are which generation is live and how big it
-    is - not bloat against a compaction baseline, which no longer exists."""
+def test_index_health_reports_the_index_size(monkeypatch):
+    """Artifacts are immutable, so the useful facts are how big the live index is - not bloat
+    against a compaction baseline, which no longer exists."""
     import app.index.store as store
 
     monkeypatch.setattr(store, "read_manifest", lambda repo: {
@@ -37,7 +37,7 @@ def test_index_health_reports_the_published_generation(monkeypatch):
     monkeypatch.setattr(stats_api.os.path, "getsize", lambda p: 378 * 10**6)
     entries = stats_api._index_health("1")
     assert entries[0]["status"] == "ok"
-    assert "generation 7" in entries[0]["title"]
+    assert "0.38 GB" in entries[0]["title"]
     assert "5,333,248 paths" in entries[0]["detail"]
 
 

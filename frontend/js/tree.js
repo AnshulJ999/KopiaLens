@@ -66,45 +66,92 @@ const treePart = {
     navTree(prefix) { this.treePrefix = prefix; this.loadTree(); },
     treeUp() { const c = this.treeCrumbs(); if (c.length > 1) this.navTree(c[c.length - 2].prefix); },
 
+    _treeUrl(prefix, flat) {
+      return `/api/tree?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.selectedSource)}`
+        + `&snapshot_id=${encodeURIComponent(this.selectedSnapshot)}&prefix=${encodeURIComponent(prefix)}&mode=${this.treeMode}`
+        + `&dedupe=${this.treeDedupe ? 1 : 0}`
+        + `&deleted_only=${this.treeDeletedOnly ? 1 : 0}&over_gb=${this.treeOverGb ? 1 : 0}`
+        + `&flat=${flat ? 1 : 0}`
+        + (this.selectedSource === "*ALL*" && this.treeWeek ? `&week=${encodeURIComponent(this.treeWeek)}` : "")
+        + (this.treeExt ? `&ext=${encodeURIComponent(this.treeExt)}` : "");
+    },
+    // One level of rows: share of their folder, and in Tree view a placeholder child under each
+    // folder (loaded on expand) plus a "more" row past the per-level cap.
+    _treeLevel(children, parent) {
+      const total = children.reduce((a, c) => a + (c.size || 0), 0) || 1;
+      children.forEach((c) => { c.pct = 100 * (c.size || 0) / total; });
+      if (this.treeView !== "tree") return children;
+      const CAP = 300;
+      const rows = children.length > CAP ? [...children].sort((a, b) => (b.size || 0) - (a.size || 0)).slice(0, CAP) : children;
+      rows.forEach((c) => { if (c.type === "folder") c._children = [{ _ph: true, name: "Loading…" }]; });
+      if (children.length > CAP) {
+        rows.push({ _ph: true, _open: parent, name: `${(children.length - CAP).toLocaleString(NUM_LOCALE)} more. Double-click to open this folder and see everything.` });
+      }
+      return rows;
+    },
+    async _treeExpand(row) {
+      const d = row.getData();
+      const kids = row.getTreeChildren();
+      if (d._loaded || !(kids.length === 1 && kids[0].getData()._ph)) return;
+      d._loaded = true;
+      let children;
+      try {
+        children = ((await getJson(this._treeUrl(d.path, false))).children) || [];
+      } catch (e) {
+        d._loaded = false;
+        kids[0].update({ name: "Couldn't load this folder. Collapse and expand to retry." });
+        return;
+      }
+      const rows = this._treeLevel(children, d.path);
+      kids[0].delete();
+      if (!rows.length) { row.addTreeChild({ _ph: true, name: "Empty" }); return; }
+      rows.forEach((r) => row.addTreeChild(r));
+    },
+    setTreeView(v) {
+      if (this.treeView === v) return;
+      this.treeView = v;
+      this.klSet({ tree_view: v });
+      this.loadTree();
+    },
+
     async loadTree() {
       if (!this.selectedSource) return;
       if (this.selectedSource !== "*ALL*" && this.treeMode !== "all" && !this.selectedSnapshot) return;
       const seq = ++this._treeSeq;
       await this.wrap(async () => {
-        const url = `/api/tree?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.selectedSource)}`
-          + `&snapshot_id=${encodeURIComponent(this.selectedSnapshot)}&prefix=${encodeURIComponent(this.treePrefix)}&mode=${this.treeMode}`
-          + `&dedupe=${this.treeDedupe ? 1 : 0}`
-          + `&deleted_only=${this.treeDeletedOnly ? 1 : 0}&over_gb=${this.treeOverGb ? 1 : 0}`
-          + `&flat=${this.treeFlat ? 1 : 0}`
-          + (this.selectedSource === "*ALL*" && this.treeWeek ? `&week=${encodeURIComponent(this.treeWeek)}` : "")
-          + (this.treeExt ? `&ext=${encodeURIComponent(this.treeExt)}` : "");
-        const data = await getJson(url);
+        const tree = this.treeView === "tree";
+        const data = await getJson(this._treeUrl(this.treePrefix, this.treeFlat && !tree));
         if (seq !== this._treeSeq) return;  // a newer navigation superseded this one
         const children = data.children || [];
         if (!children.length && !(this.indexStatus.indexed_snapshots > 0)) this.error = "Snapshot not indexed yet - click Index (top right).";
-        const total = children.reduce((a, c) => a + (c.size || 0), 0) || 1;
-        children.forEach((c) => { c.pct = 100 * (c.size || 0) / total; });
-        const ttbl = setTable("#treeTable", children, [
-          { title: "Name", field: "name", widthGrow: 4, minWidth: 260, formatter: (c) => `${c.getData().type === "folder" ? "📁 " : "📄 "}${c.getValue()}` },
-          { title: "Size", field: "size", width: 105, sorter: "number", formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
-          { title: "Physical", field: "physical", width: 100, sorter: "number", formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },
+        const rows = this._treeLevel(children, this.treePrefix);
+        const ph = (fn) => (c) => (c.getData()._ph ? "" : fn(c));
+        const ttbl = setTable("#treeTable", rows, [
+          { title: "Name", field: "name", widthGrow: 4, minWidth: 260,
+            formatter: (c) => { const d = c.getData(); return d._ph ? `<span class="text-muted">${c.getValue()}</span>` : `${d.type === "folder" ? "📁 " : "📄 "}${c.getValue()}`; } },
+          { title: "Size", field: "size", width: 105, sorter: "number", formatter: ph((c) => fmtBytes(c.getValue())), hozAlign: "right" },
+          { title: "Physical", field: "physical", width: 100, sorter: "number", formatter: ph((c) => fmtPhys(c.getValue())), hozAlign: "right" },
           { title: "Share of folder", field: "pct", width: 130, sorter: "number",
-            formatter: (c) => { const v = Number(c.getValue() || 0); return `<span class="kl-sharebar"><i style="width:${Math.min(100, v).toFixed(1)}%"></i></span>${fmtFix(v, 1)}%`; } },
-          { title: "Files", field: "files", width: 85, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
-          { title: "Modified", field: "modified", width: 165, formatter: (c) => timeCell(c.getValue()) },
+            formatter: ph((c) => { const v = Number(c.getValue() || 0); return `<span class="kl-sharebar"><i style="width:${Math.min(100, v).toFixed(1)}%"></i></span>${fmtFix(v, 1)}%`; }) },
+          { title: "Files", field: "files", width: 85, hozAlign: "right", formatter: ph((c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE)) },
+          { title: "Modified", field: "modified", width: 165, formatter: ph((c) => timeCell(c.getValue())) },
           { title: "Type", field: "type", width: 75, visible: false },
         ], {
           selectableRows: true,
+          ...(tree ? { dataTree: true, dataTreeElementColumn: "name", dataTreeStartExpanded: false, dataTreeChildIndent: 14,
+                       selectableRowsCheck: (r) => !r.getData()._ph } : {}),
           initialSort: [{ column: "size", dir: "desc" }],
           onSelect: (rows) => { this.treeSelCount = rows.length; },
           onRowDblClick: async (_e, row) => {
             const d = row.getData();
+            if (d._ph) { if (d._open) this.navTree(d._open); return; }
             if (d.type === "folder") return this.navTree(d.path);
             const s = await this.treeSourceFor(d.path);
             if (s) this.openFileDetail({ source: s, full_path: d.path });
           },
-          rowMenu: (_e, row) => this.treeRowMenu(row.getData()),
+          rowMenu: (_e, row) => (row.getData()._ph ? false : this.treeRowMenu(row.getData())),
         });
+        if (tree && ttbl) ttbl.on("dataTreeRowExpanded", (row) => this._treeExpand(row));
         this.treeSelCount = 0;
       }, "Loading tree...");
     },
@@ -161,7 +208,7 @@ const treePart = {
       this.openExclude({ kind: folder ? "folder" : "file", path: d.path, source }, mode);
     },
     treeFilterChanged() { this.loadTree(); },
-    toggleTreeFlat() { this.treeFlat = !this.treeFlat; this.loadTree(); },
+    toggleTreeFlat() { if (this.treeView === "tree") return; this.treeFlat = !this.treeFlat; this.loadTree(); },
     jumpToTree(item) {
       this.selectedSource = item.source; this.treeMode = "all";
       const root = trimSep(sourcePath(item.source));

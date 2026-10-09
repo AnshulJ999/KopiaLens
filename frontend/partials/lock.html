@@ -4,7 +4,7 @@
     <template x-if="locked">
       <div class="fixed inset-0 z-[55] bg-black/50 flex items-center justify-center p-4">
         <form @submit.prevent="unlockSubmit()" class="w-[22rem] max-w-full rounded-lg border border-bd bg-surface shadow-xl p-6 flex flex-col gap-3 text-sm">
-          <div class="font-semibold text-[15px]" x-text="locked.mode === 'recovery' ? 'Unlock with your recovery key' : 'Unlock the index'"></div>
+          <div class="font-semibold text-[0.9375rem]" x-text="locked.mode === 'recovery' ? 'Unlock with your recovery key' : 'Unlock the index'"></div>
           <p class="kl-note" x-text="lockIntro()"></p>
           <template x-if="locked.mode === 'password'">
             <label class="flex flex-col gap-1 text-xs font-medium"><span x-text="locked.shared ? 'Password' : 'Encryption password'"></span>
@@ -33,7 +33,7 @@
            @click.self="acctDialog.mode === 'showkey' || (acctDialog = null)">
         <form @submit.prevent="acctSubmit()" class="w-[30rem] max-w-full rounded-lg border border-bd bg-surface shadow-xl flex flex-col text-sm">
           <div class="p-4 space-y-3 overflow-auto max-h-[80vh]">
-            <h3 class="text-[15px] font-semibold leading-snug" x-text="acctTitle()"></h3>
+            <h3 class="text-[0.9375rem] font-semibold leading-snug" x-text="acctTitle()"></h3>
 
             <template x-if="acctDialog.mode === 'create' || acctDialog.mode === 'username'">
               <label class="flex flex-col gap-1 text-xs font-medium">Username

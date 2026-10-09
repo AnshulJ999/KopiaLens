@@ -63,7 +63,7 @@
                 <div class="flex items-center justify-between gap-3"><span>kopia program</span>
                   <span class="flex items-center gap-3"><span class="text-xs" :class="kopiaInfo && !kopiaInfo.available ? '' : 'text-muted'" :style="kopiaInfo && !kopiaInfo.available ? 'color:var(--danger)' : ''" x-text="raKopiaLine()"></span>
                     <button @click="repoKopiaEdit = {path: (kopiaInfo && kopiaInfo.path) || ''}" class="h-8 rounded border border-bd px-3 text-xs">Change…</button></span></div>
-                <p class="text-[11px] text-muted mt-1 break-all" x-show="kopiaInfo && kopiaInfo.path" x-text="kopiaInfo && kopiaInfo.path"></p>
+                <p class="text-[0.6875rem] text-muted mt-1 break-all" x-show="kopiaInfo && kopiaInfo.path" x-text="kopiaInfo && kopiaInfo.path"></p>
                 <template x-if="repoKopiaEdit">
                   <form @submit.prevent="raKopiaSave(repoKopiaEdit.path)" class="mt-2 space-y-2">
                     <label class="flex flex-col gap-1 text-xs font-medium">Path to kopia

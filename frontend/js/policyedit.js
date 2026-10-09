@@ -265,11 +265,12 @@ const policyEditPart = {
       return parts.length ? "Keeps " + parts.join(", ") : "Keeps everything";
     },
     // The summary under the policy name: retention, schedule, rules, compression.
-    polSummaryLine() {
+    polHeaderLine() {
       const r = this.polRes();
       if (!r) return "";
       const inh = this.polInheritedRules().length;
-      const comp = (r.effective || {}).compression ? (r.effective.compression.compressorName || "no compression") : "";
+      const cname = ((r.effective || {}).compression || {}).compressorName;
+      const comp = (r.effective || {}).compression ? (cname && cname !== "none" ? cname + " compression" : "no compression") : "";
       return [this.polSummaryRetention(), this.polSummarySchedule(),
         countOf(this.polRuleRows().length, "own rule") + (inh ? ` · ${inh} inherited` : ""), comp].filter(Boolean).join(" · ");
     },

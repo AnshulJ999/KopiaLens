@@ -18,11 +18,14 @@
     const b = document.createElement("button");
     b.type = "button";
     b.className = "kl-pw-eye";
+    // Inside a <label> the button's name would join the box's own name, so there it is mouse-only.
+    const inLabel = !!inp.closest("label");
+    if (inLabel) { b.tabIndex = -1; b.setAttribute("aria-hidden", "true"); }
     const sync = () => {
       const shown = inp.type === "text";
       b.innerHTML = shown ? EYE_OFF : EYE;
       b.title = shown ? "Hide password" : "Show password";
-      b.setAttribute("aria-label", b.title);
+      if (!inLabel) b.setAttribute("aria-label", b.title);
       b.setAttribute("aria-pressed", shown ? "true" : "false");
     };
     b.addEventListener("click", () => { inp.type = inp.type === "password" ? "text" : "password"; sync(); inp.focus(); });

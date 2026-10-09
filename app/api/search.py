@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import csv
 import io
+from functools import cmp_to_key
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from pydantic import BaseModel
 
+from config import REPOS, repo_kind
 from .errors import PASS_THROUGH
+from ..core import paths as pathrules
 from ..index.physical import file_detail, reclaim_for, storage_breakdown, stored_all_versions
-from ..index.queries import (_SEARCH_SORT, EXPORT_HEADER, group_by_folder, landing, search_export,
-                             search_paths, versions)
+from ..index.queries import (_RANK_SORTS, _SEARCH_SORT, EXPORT_HEADER, group_by_folder, landing,
+                             search_export, search_paths, versions)
 
 router = APIRouter(tags=["search"])
 
@@ -100,6 +103,127 @@ def search(
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+def _row_cmp(field: str, desc: bool):
+    """Comparator for result rows on one sort column: empty values last, then path as a tiebreak."""
+    def cmp(a: dict, b: dict) -> int:
+        va, vb = a.get(field), b.get(field)
+        if va is None or vb is None:
+            if va is None and vb is None:
+                return 0
+            return 1 if va is None else -1
+        if va != vb:
+            r = -1 if va < vb else 1
+            return -r if desc else r
+        pa, pb = a.get("full_path") or "", b.get("full_path") or ""
+        return (pa > pb) - (pa < pb)
+    return cmp
+
+
+# Columns folder rows have, in file-row field names; any other sort lists folders first.
+_FOLDER_SORT = {"size": "size", "physical": "physical", "full_path": "full_path", "name": "name",
+                "last_seen": "last_seen"}
+
+
+@router.get("/search/mixed")
+def search_mixed(
+    repo: str, depth: int = 3, folder_min_gb: float = 0, folder_min_files: int = 0,
+    q: str = "", deleted_only: bool = False, largest: bool = False, over_gb: float = 0,
+    source: str | None = None, ext: str | None = None, ext_exclude: str | None = None,
+    sort: str = "size", dir: str = "desc", limit: int = 500, offset: int = 0,
+    min_gb: float = 0, max_gb: float = 0, date_from: str | None = None, date_to: str | None = None,
+    first_from: str | None = None, min_versions: int = 0, shared_min: int = 0,
+    dedupe: bool = False, dedupe_by: str = "path",
+) -> dict:
+    """Files and folders in one list. Files page exactly as /search; the folder rollups (top 500)
+    are placed into the page their sort position falls in, so every folder appears once."""
+    min_size, max_size = _bounds(over_gb, largest, min_gb, max_gb)
+    kw = dict(query=q, deleted_only=deleted_only, min_size=min_size, source=source or None,
+              ext=ext or None, ext_exclude=ext_exclude or None, sort=sort, direction=dir,
+              max_size=max_size, date_from=date_from or None, date_to=date_to or None,
+              first_from=first_from or None, min_versions=min_versions, shared_min=shared_min,
+              dedupe=dedupe, dedupe_by=dedupe_by)
+    desc = dir != "asc"
+    try:
+        page = search_paths(repo, limit=limit, offset=offset, **kw)
+        groups = group_by_folder(
+            repo, depth=depth, query=q, source=source or None, ext=ext or None,
+            ext_exclude=ext_exclude or None, deleted_only=deleted_only,
+            min_size=int(folder_min_gb * 1_000_000_000), min_files=folder_min_files,
+            sort="logical" if sort == "size" else "physical", direction=dir, limit=500,
+        )["rows"]
+        field = _FOLDER_SORT.get(sort)
+        prev = (search_paths(repo, limit=1, offset=offset - 1, **kw)["rows"] or [None])[0] if offset and field else None
+    except PASS_THROUGH:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    files = page["rows"]
+    folders = [{"kind": "folder", "full_path": g["folder"], "name": pathrules.basename(g["folder"]),
+                "size": g["logical"], "physical": g["phys"], "files": g["files"],
+                "deleted_files": g["deleted_files"], "last_seen": g["last_seen"]} for g in groups]
+    if field is None:
+        merged = (folders if offset == 0 else []) + files
+    else:
+        cmp = _row_cmp(field, desc)
+        last = files[-1] if files else None
+        final = offset + len(files) >= page["total"]
+        pick = [f for f in folders
+                if (prev is None or cmp(f, prev) >= 0) and (final or last is None or cmp(f, last) < 0)]
+        merged = sorted(pick + files, key=cmp_to_key(cmp))
+    return {"results": merged, "total": page["total"], "folders": len(folders),
+            "offset": page["offset"], "limit": page["limit"]}
+
+
+_ALL_REPOS_DEPTH = 20_000
+
+
+@router.get("/search/all-repos")
+def search_all_repos(
+    q: str = "", deleted_only: bool = False, largest: bool = False, over_gb: float = 0,
+    ext: str | None = None, ext_exclude: str | None = None, sort: str = "size", dir: str = "desc",
+    limit: int = 500, offset: int = 0, min_gb: float = 0, max_gb: float = 0,
+    date_from: str | None = None, date_to: str | None = None, first_from: str | None = None,
+    min_versions: int = 0, shared_min: int = 0, dedupe: bool = False, dedupe_by: str = "path",
+) -> dict:
+    """One list across every kopia repository, sorted together. Each repo returns its top
+    offset+limit rows, so paging stops at a fixed depth; a repo whose index can't be read is
+    skipped and named."""
+    if offset + limit > _ALL_REPOS_DEPTH:
+        raise HTTPException(status_code=400, detail=f"Across all repositories, results stop at {_ALL_REPOS_DEPTH:,}. Narrow the search to see more.")
+    if sort in _RANK_SORTS or sort not in _SEARCH_SORT:
+        sort = "physical"
+    min_size, max_size = _bounds(over_gb, largest, min_gb, max_gb)
+    rows: list[dict] = []
+    total = 0
+    searched: list[str] = []
+    skipped: list[dict] = []
+    for rid in REPOS:
+        if repo_kind(rid) != "kopia":
+            continue
+        try:
+            res = search_paths(
+                rid, query=q, deleted_only=deleted_only, min_size=min_size, ext=ext or None,
+                ext_exclude=ext_exclude or None, sort=sort, direction=dir, limit=offset + limit, offset=0,
+                max_size=max_size, date_from=date_from or None, date_to=date_to or None,
+                first_from=first_from or None, min_versions=min_versions, shared_min=shared_min,
+                dedupe=dedupe, dedupe_by=dedupe_by,
+            )
+        except PASS_THROUGH as exc:
+            skipped.append({"repo": rid, "reason": type(exc).__name__})
+            continue
+        except Exception as exc:  # noqa: BLE001 - one broken index must not hide the others
+            skipped.append({"repo": rid, "reason": str(exc)})
+            continue
+        searched.append(rid)
+        total += res["total"]
+        for r in res["rows"]:
+            r["repo"] = rid
+        rows.extend(res["rows"])
+    rows.sort(key=cmp_to_key(_row_cmp(_SEARCH_SORT[sort], dir != "asc")))
+    return {"results": rows[offset:offset + limit], "total": total, "offset": offset, "limit": limit,
+            "sort": sort, "searched": searched, "skipped": skipped, "max_depth": _ALL_REPOS_DEPTH}
 
 
 @router.post("/search/reclaim")

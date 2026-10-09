@@ -40,7 +40,7 @@ def test_schedule_manual_and_empty():
 
 def test_retention_lists_only_the_buckets_in_use():
     out = describe_retention({"keepLatest": 200, "keepDaily": 360, "keepAnnual": 5, "keepWeekly": 0})
-    assert out == "200 latest / 360d / 5y"
+    assert out == "200 latest, 360 daily, 5 yearly"
     assert describe_retention({}) == "inherited"
 
 
@@ -54,7 +54,7 @@ def test_summarize_shape_matches_a_real_policy():
     }
     s = summarize(raw)
     assert s["schedule"] == "every 6h"
-    assert s["retention"] == "200 latest / 360h"
+    assert s["retention"] == "200 latest, 360 hourly"
     assert s["ignore"] == ["/NONE", "ComfyUI"]
     assert s["compression"] == "zstd"
     assert s["ignore_identical"] is True

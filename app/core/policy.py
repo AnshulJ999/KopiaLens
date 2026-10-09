@@ -186,21 +186,21 @@ def describe_schedule(sched: dict) -> str:
 
 
 _RETENTION_LABELS = (
-    ("keepLatest", "latest"), ("keepHourly", "h"), ("keepDaily", "d"),
-    ("keepWeekly", "w"), ("keepMonthly", "m"), ("keepAnnual", "y"),
+    ("keepLatest", "latest"), ("keepHourly", "hourly"), ("keepDaily", "daily"),
+    ("keepWeekly", "weekly"), ("keepMonthly", "monthly"), ("keepAnnual", "yearly"),
 )
 
 
 def describe_retention(ret: dict) -> str:
-    """``200 latest / 360h / 360d / 120w / 48m / 5y`` - the six fixed kopia count buckets."""
+    """``200 latest, 360 hourly, 5 yearly`` - the six fixed kopia count buckets that are set."""
     if not ret:
         return "inherited"
     parts = []
     for field, label in _RETENTION_LABELS:
         val = ret.get(field)
         if val:
-            parts.append(f"{int(val)} {label}" if label == "latest" else f"{int(val)}{label}")
-    return " / ".join(parts) if parts else "no retention"
+            parts.append(f"{int(val)} {label}")
+    return ", ".join(parts) if parts else "no retention"
 
 
 def summarize(pol: dict) -> dict:

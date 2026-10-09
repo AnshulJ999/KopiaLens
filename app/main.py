@@ -1261,12 +1261,20 @@ def _compose_html() -> str:
     """Render index.html with its ``{% include %}`` partials resolved. The appearance values
     are stamped onto <html> so the page paints in the saved theme before any JS runs."""
     kl = load_settings().get("kopialens", {})
-    _THEMES = ("daylight", "parchment", "slate", "lilac", "ember", "midnight", "pine", "obsidian")
-    _DENSITY = ("comfortable", "normal", "compact", "dense")
+    _THEMES = ("daylight", "parchment", "slate", "lilac", "ember", "midnight", "pine", "obsidian",
+               "lens", "graphite", "ink")
+    _DENSITY = ("comfortable", "normal", "compact", "dense", "custom")
+    _FONTS = ("inter", "geist", "plex", "system")
+    try:
+        pct = min(115, max(80, int(kl.get("density_pct", 100))))
+    except (TypeError, ValueError):
+        pct = 100
     html = _JINJA.get_template("index.html").render(
         asset_v=_asset_version(),
         theme=kl.get("theme") if kl.get("theme") in _THEMES else "system",
         density=kl.get("density") if kl.get("density") in _DENSITY else "normal",
+        density_pct=pct,
+        font=kl.get("font") if kl.get("font") in _FONTS else "inter",
         sortarrows="all" if kl.get("sort_arrows") == "all" else "sorted",
     )
     if devaddons.HTML:

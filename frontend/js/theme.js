@@ -11,11 +11,22 @@ const themePart = {
     { id: "midnight", label: "Midnight", dark: true, swatch: "#111827" },
     { id: "pine", label: "Pine", dark: true, swatch: "#0f1a17" },
     { id: "obsidian", label: "Obsidian", dark: true, swatch: "#000000" },
+    { id: "lens", label: "Lens", dark: true, swatch: "linear-gradient(135deg, #101918 60%, #2dd4bf 60%)" },
+    { id: "graphite", label: "Graphite", dark: true, swatch: "#18191c" },
+    { id: "ink", label: "Ink", dark: true, swatch: "#11141b" },
     { id: "system", label: "System", dark: false, swatch: "linear-gradient(90deg, #ffffff 50%, #1c1917 50%)",
       title: "Follow the OS between your light and dark themes" },
   ],
   DENSITIES: ["comfortable", "normal", "compact", "dense"],
-  theme: "system", density: "normal", lightTheme: "daylight", darkTheme: "ember", sortArrows: "sorted",
+  FONTS: [
+    { id: "inter", label: "Inter" },
+    { id: "geist", label: "Geist" },
+    { id: "plex", label: "IBM Plex Sans" },
+    { id: "system", label: "System", title: "Your operating system's own font" },
+  ],
+  DENSITY_PCT: { min: 80, max: 115 },
+  theme: "system", density: "normal", densityPct: 100, font: "inter",
+  lightTheme: "daylight", darkTheme: "ember", sortArrows: "sorted",
 
   _themeIsDark(id) {
     const t = this.THEMES.find((x) => x.id === id);
@@ -54,11 +65,45 @@ const themePart = {
 
   quickTheme() { this.setTheme(this.themeIsDark() ? this.lightTheme : this.darkTheme); },
 
+  // Row heights change with density, and Tabulator caches them.
+  _redrawTables() {
+    requestAnimationFrame(() => document.querySelectorAll(".tabulator").forEach((el) => {
+      const t = Tabulator.findTable(el);
+      if (t && t[0]) t[0].redraw(true);
+    }));
+  },
+
+  _applyDensity() {
+    const el = document.documentElement;
+    el.dataset.density = this.density;
+    if (this.density === "custom") el.style.setProperty("--kl-density-pct", this.densityPct);
+    else el.style.removeProperty("--kl-density-pct");
+    this._redrawTables();
+  },
+
   setDensity(d) {
     this.density = d;
-    document.documentElement.dataset.density = d;
+    this._applyDensity();
     localStorage.setItem("kl-density", d);
     this.klSet({ density: d });
+  },
+
+  // The Settings slider: any size between the presets. Saved once the slider is let go.
+  slideDensity(v, save) {
+    this.densityPct = Math.min(this.DENSITY_PCT.max, Math.max(this.DENSITY_PCT.min, Number(v) || 100));
+    this.density = "custom";
+    this._applyDensity();
+    if (save) {
+      localStorage.setItem("kl-density", "custom");
+      this.klSet({ density: "custom", density_pct: this.densityPct });
+    }
+  },
+
+  setFont(id) {
+    this.font = id;
+    document.documentElement.dataset.font = id;
+    this._redrawTables();
+    this.klSet({ font: id });
   },
 
   // Table header sort arrows: "sorted" shows one only on the sorted column (and on hover).
@@ -83,10 +128,16 @@ const themePart = {
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
       if (this.theme === "system") this.applyTheme("system");
     });
-    this.density = this.DENSITIES.includes(kl.density) ? kl.density
-      : this.DENSITIES.includes(localStorage.getItem("kl-density")) ? localStorage.getItem("kl-density")
+    const dens = [...this.DENSITIES, "custom"];
+    this.density = dens.includes(kl.density) ? kl.density
+      : dens.includes(localStorage.getItem("kl-density")) ? localStorage.getItem("kl-density")
       : "normal";
+    const pct = Number(kl.density_pct);
+    this.densityPct = pct >= this.DENSITY_PCT.min && pct <= this.DENSITY_PCT.max ? pct : 100;
     el.dataset.density = this.density;
+    if (this.density === "custom") el.style.setProperty("--kl-density-pct", this.densityPct);
+    this.font = this.FONTS.some((f) => f.id === kl.font) ? kl.font : "inter";
+    el.dataset.font = this.font;
     this.sortArrows = kl.sort_arrows === "all" ? "all" : "sorted";
     el.dataset.sortarrows = this.sortArrows;
   },

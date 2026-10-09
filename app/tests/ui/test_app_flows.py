@@ -59,7 +59,7 @@ def test_snapshot_delete_dry_run_leaves_every_snapshot(app_server, open_page, ko
     rows = page.locator("#snapshotsTable .tabulator-row")
     expect(rows).to_have_count(3)
     rows.filter(has_text="latest-3").click()
-    page.get_by_role("button", name="🗑 Delete selected").click()
+    page.get_by_role("button", name="Delete snapshot…", exact=True).click()
 
     page.get_by_role("button", name="Dry run", exact=True).click()
     expect(page.get_by_text("dry run checked")).to_be_visible(timeout=60_000)
@@ -71,7 +71,7 @@ def test_snapshot_delete_dry_run_leaves_every_snapshot(app_server, open_page, ko
 def test_search_finds_a_file_and_marks_one_deleted_from_disk(app_server, open_page):
     page = open_page(app_server)
     h.go_tab(page, "Search")
-    box = page.get_by_placeholder("Search paths (matches the full path)")
+    box = page.get_by_placeholder("Search paths", exact=True)
     box.fill("needle")
     expect(page.get_by_text("1 result", exact=False)).to_be_visible()
     expect(page.get_by_role("row", name="needle-report.txt", exact=False)).to_be_visible()
@@ -85,7 +85,7 @@ def test_tree_opens_a_folder_and_goes_back_up(app_server, open_page):
     h.go_tab(page, "Tree")
     page.get_by_role("row", name="📁 Documents", exact=False).dblclick()
     expect(page.get_by_role("row", name="needle-report.txt", exact=False)).to_be_visible()
-    page.get_by_role("button", name="⬆ Up").click()
+    page.get_by_test_id("tree-crumbs").get_by_title("Up one level").click()
     expect(page.get_by_role("row", name="📁 Photos", exact=False)).to_be_visible()
 
 
@@ -94,7 +94,7 @@ def test_restore_writes_the_file_into_the_chosen_folder(app_server, open_page, t
     assert h._inside(target, tmp_path_factory.getbasetemp())   # a restore never leaves the test folder
     page = open_page(app_server)
     h.go_tab(page, "Search")
-    page.get_by_placeholder("Search paths (matches the full path)").fill("needle")
+    page.get_by_placeholder("Search paths", exact=True).fill("needle")
     page.get_by_role("row", name="needle-report.txt", exact=False).dblclick()
     page.get_by_title("Restore this version").first.click()
     page.get_by_placeholder("D:\\Restored   or   D:\\out.zip").fill(str(target))
@@ -128,7 +128,7 @@ def test_global_rule_is_saved_to_kopia_and_removed_again(app_server, open_page, 
     h.go_tab(page, "Policies")
     expect(page.get_by_text("No exclusion rules defined here.")).to_be_visible()
     page.get_by_placeholder("Add a pattern (kopia ignore syntax)…").fill("*.bin")
-    page.get_by_role("button", name="Stage add").click()
+    page.get_by_role("button", name="Add", exact=True).click()
     _save_staged(page)
     assert ignore_rules() == ["*.bin"]
 

@@ -6,7 +6,7 @@
                   <span>Backups of these settings</span>
                   <button @click="cfgBackUpNow()" :disabled="cfgBusy==='backup'" class="kl-btn" x-text="cfgBusy==='backup' ? 'Backing up…' : 'Back up now'"></button>
                 </div>
-                <p class="text-[11px] text-muted mt-1">Your settings, repository list, sign-in accounts and encryption key files. Copies are made before changes, weekly and before upgrades. Your kopia backups aren't touched.</p>
+                <p class="text-[0.6875rem] text-muted mt-1">Your settings, repository list, sign-in accounts and encryption key files. Copies are made before changes, weekly and before upgrades. Your kopia backups aren't touched.</p>
               </div>
               <p x-show="!cfg && !cfgError" class="kl-note">Loading…</p>
               <div x-show="!cfg && cfgError" class="kl-callout flex items-center gap-3"><span>Couldn't load the backups.</span><button class="kl-btn quiet" @click="loadCfg()">Try again</button></div>
@@ -29,10 +29,10 @@
                   <span>Export to a file</span>
                   <a :href="cfgExportUrl()" class="kl-btn" download>Download export</a>
                 </div>
-                <p class="text-[11px] text-muted mt-1">Settings and repository list, for moving to another computer or keeping a copy off this disk.</p>
+                <p class="text-[0.6875rem] text-muted mt-1">Settings and repository list, for moving to another computer or keeping a copy off this disk.</p>
                 <label class="flex items-center gap-2 text-xs mt-2"><input type="checkbox" x-model="cfgExportAccounts">Include sign-in accounts</label>
                 <label class="flex items-center gap-2 text-xs mt-1"><input type="checkbox" x-model="cfgExportKeys">Include encryption key files</label>
-                <p x-show="cfgExportAccounts || cfgExportKeys" class="text-[11px] mt-1" style="color:var(--warn)">The file then holds password hashes or your locked encryption key. Keep it somewhere private.</p>
+                <p x-show="cfgExportAccounts || cfgExportKeys" class="text-[0.6875rem] mt-1" style="color:var(--warn)">The file then holds password hashes or your locked encryption key. Keep it somewhere private.</p>
               </div>
 
               <div>
@@ -41,7 +41,7 @@
                   <button @click="cfgPickImport()" :disabled="cfgBusy==='import'" class="kl-btn" x-text="cfgBusy==='import' ? 'Reading…' : 'Import…'"></button>
                   <input type="file" accept=".zip,application/zip" class="hidden" x-ref="cfgImportFile" @change="cfgImportFile($event)">
                 </div>
-                <p class="text-[11px] text-muted mt-1">You see what would change before anything is replaced.</p>
+                <p class="text-[0.6875rem] text-muted mt-1">You see what would change before anything is replaced.</p>
               </div>
             </section>
 
@@ -61,7 +61,7 @@
                       <span x-text="update().available ? update().latest + ' is out' : (update().checked_at ? 'Up to date' : 'Not checked yet')"></span>
                       <button class="kl-btn" @click="update().available ? (showUpdate = true) : checkUpdatesNow()" :disabled="checkingUpdates"
                               x-text="update().available ? 'See update' : (checkingUpdates ? 'Checking…' : 'Check now')"></button></span></div>
-                  <div class="flex items-center justify-between gap-3 pt-2"><span class="text-[11px] text-muted">For bug reports.</span>
+                  <div class="flex items-center justify-between gap-3 pt-2"><span class="text-[0.6875rem] text-muted">For bug reports.</span>
                     <span class="flex items-center gap-2">
                       <button @click="copyAbout()" class="kl-btn">Copy details</button>
                       <button @click="openDiagnostics(false)" class="kl-btn">Create diagnostics bundle…</button></span></div>

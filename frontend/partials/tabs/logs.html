@@ -35,7 +35,7 @@
         <!-- AUDIT -->
         <div x-show="logsTab === 'audit'" class="rounded border border-bd bg-surface p-3">
           <div class="overflow-auto max-h-[70vh] rounded border border-bd-soft">
-            <table class="w-full text-[11px]">
+            <table class="w-full text-[0.6875rem]">
               <thead class="bg-surface2 text-left text-muted"><tr><th class="p-1.5">When</th><th class="p-1.5">Event</th><th class="p-1.5">Action</th><th class="p-1.5">Repo</th><th class="p-1.5">Summary</th><th class="p-1.5">Exit code</th></tr></thead>
               <tbody>
                 <template x-for="(r, i) in logsAudit()" :key="i">
@@ -57,7 +57,7 @@
         <!-- ACTIVITY -->
         <div x-show="logsTab === 'activity'" class="rounded border border-bd bg-surface p-3">
           <div class="overflow-auto max-h-[70vh] rounded border border-bd-soft">
-            <table class="w-full text-[11px]">
+            <table class="w-full text-[0.6875rem]">
               <thead class="bg-surface2 text-left text-muted"><tr><th class="p-1.5">Started</th><th class="p-1.5">Kind</th><th class="p-1.5">Repo</th><th class="p-1.5">What</th><th class="p-1.5">State</th><th class="p-1.5">Progress</th><th class="p-1.5">Took</th></tr></thead>
               <tbody>
                 <template x-for="(j, i) in logsJobs()" :key="j.job_id || i">
@@ -80,7 +80,7 @@
         <!-- INDEXING -->
         <div x-show="logsTab === 'indexing'" class="rounded border border-bd bg-surface p-3">
           <div class="overflow-auto max-h-[70vh] rounded border border-bd-soft">
-            <table class="w-full text-[11px]">
+            <table class="w-full text-[0.6875rem]">
               <thead class="bg-surface2 text-left text-muted"><tr><th class="p-1.5">Finished</th><th class="p-1.5">Repo</th><th class="p-1.5">Trigger</th><th class="p-1.5">Result</th><th class="p-1.5">Took</th><th class="p-1.5">Stages</th><th class="p-1.5">Detail</th></tr></thead>
               <tbody>
                 <template x-for="(r, i) in logsRuns()" :key="i">
@@ -102,7 +102,7 @@
 
         <!-- APP LOG -->
         <div x-show="logsTab === 'app'" class="rounded border border-bd bg-surface p-3">
-          <div class="overflow-auto max-h-[70vh] rounded border border-bd-soft bg-surface2 font-mono text-[11px]">
+          <div class="overflow-auto max-h-[70vh] rounded border border-bd-soft bg-surface2 font-mono text-[0.6875rem]">
             <template x-for="(rec, i) in appLogRecords" :key="i">
               <div class="flex gap-2 px-2 py-0.5 border-b border-bd-soft">
                 <span class="shrink-0 whitespace-nowrap text-muted" style="width:9.5rem" x-text="logStamp(rec.ts)"></span>

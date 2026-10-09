@@ -28,8 +28,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         # data-theme/data-density are stamped into the rendered page so it paints correctly
         # before any JS runs. light_theme/dark_theme are the two slots the nav quick switch
         # flips between. Values are validated against the known lists before use.
-        "theme": "system",           # daylight|parchment|slate|lilac|ember|midnight|pine|obsidian|system
-        "density": "normal",         # comfortable|normal|compact|dense
+        "theme": "system",           # daylight|parchment|slate|lilac|ember|midnight|pine|obsidian|lens|graphite|ink|system
+        "density": "normal",         # comfortable|normal|compact|dense|custom
+        "density_pct": 100,          # density="custom": root text size in percent (80-115)
+        "font": "inter",             # inter|geist|plex|system (bundled in frontend/vendor/fonts)
         "sort_arrows": "sorted",     # sorted|all - table header sort arrows
         "light_theme": "daylight",   # remembered light slot for the quick switch
         "dark_theme": "ember",       # remembered dark slot for the quick switch
@@ -61,9 +63,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "delete_top_n": 0,           # folder delete: 0 = everything matched, else only the N biggest by physical
         "churn_default": False,      # show churn column by default
         "tree_mode": "full",       # default tree view mode
+        "tree_view": "list",       # Tree tab: "list" (drill in) | "tree" (expand folders in place)
         "search_sort": "size",     # persisted search sort column
         "search_dir": "desc",      # persisted search sort direction
         "search_dedupe": False,    # persisted dedupe toggle (search)
+        "search_kind": "files",    # Search lists "files" | "folders" (rolled up by depth) | "both"
         "search_dedupe_by": "path",  # what Dedupe merges: "path" (one row per file path) | "content" (identical bytes)
         "header_search_only": False,  # Search tab uses the header search box instead of its own
         "snap_source_by_repo": {},  # Snapshots tab source per repo id ("*ALL*" = all sources)

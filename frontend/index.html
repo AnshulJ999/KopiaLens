@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="{{ theme }}" data-density="{{ density }}" data-sortarrows="{{ sortarrows }}">
+<html lang="en" data-theme="{{ theme }}" data-density="{{ density }}" data-font="{{ font }}" data-sortarrows="{{ sortarrows }}"{% if density == "custom" %} style="--kl-density-pct:{{ density_pct }}"{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -11,7 +11,7 @@
     (function () {
       var t = document.documentElement.dataset.theme;
       var dark = t && t !== 'system'
-        ? ['ember', 'midnight', 'pine', 'obsidian'].indexOf(t) >= 0
+        ? ['ember', 'midnight', 'pine', 'obsidian', 'lens', 'graphite', 'ink'].indexOf(t) >= 0
         : window.matchMedia('(prefers-color-scheme: dark)').matches;
       document.documentElement.classList.toggle('dark', dark);
     })();

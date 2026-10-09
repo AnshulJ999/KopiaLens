@@ -56,7 +56,7 @@ def test_server_repository_is_browse_only(fresh_server, open_page, kopia_server)
     expect(browser).to_be_hidden()
 
     h.go_tab(page, "Policies")   # policies are read through the server as well
-    expect(page.get_by_text("10 latest / 48h / 7d / 4w / 24m / 3y").first).to_be_visible(timeout=30_000)
+    expect(page.get_by_text("Keeps 10 latest, 48 hourly, 7 daily, 4 weekly, 24 monthly, 3 yearly").first).to_be_visible(timeout=30_000)
 
     rid = fresh_server.get("/api/repos")["repos"][0]["id"]
     assert fresh_server.request("POST", f"/api/index/build?repo={rid}")["started"] is False

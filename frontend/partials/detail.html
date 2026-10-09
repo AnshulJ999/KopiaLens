@@ -316,7 +316,7 @@
 <div class="kl-sec">
   <div class="h">Backed up by <span class="count" x-text="countOf(detail.covers, 'source')"></span></div>
   <div class="kl-note">
-    <span x-text="detail.covers || 0"></span> source<span x-show="(detail.covers || 0) !== 1">s</span> back up this folder itself<span
+    <span x-text="detail.covers || 0"></span> <span x-text="(detail.covers || 0) === 1 ? 'source backs' : 'sources back'"></span> up this folder itself<span
       x-show="detail.sub_policies" x-text="', plus ' + detail.sub_policies + ' sub-folder polic' + (detail.sub_policies === 1 ? 'y' : 'ies') + ' inside it'"></span>.
   </div>
   <div class="space-y-1">

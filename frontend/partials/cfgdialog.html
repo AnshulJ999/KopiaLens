@@ -7,7 +7,7 @@
           <div class="p-4 space-y-3 overflow-auto max-h-[80vh]">
             <template x-if="!cfgDlg.done">
               <div class="space-y-3">
-                <h3 class="text-[15px] font-semibold leading-snug"
+                <h3 class="text-[0.9375rem] font-semibold leading-snug"
                     x-text="cfgDlg.mode === 'restore' ? 'Restore from ' + fmtAbs(cfgDlg.backup.at) + '?' : 'Import settings from this file?'"></h3>
                 <template x-if="cfgDlg.mode === 'restore'">
                   <p class="text-xs text-muted" x-text="cfgKind(cfgDlg.backup) + (cfgDlg.backup.app_version ? ' · KopiaLens ' + cfgDlg.backup.app_version : '')"></p>
@@ -22,21 +22,21 @@
                       <template x-if="cfgDlg.mode === 'import'">
                         <div class="ml-6">
                           <template x-for="f in cfgDlg.preview.files.filter((f) => (g[0] === 'settings' && /settings|ui_state/.test(f.file)) || (g[0] === 'repos' && f.file === 'repos.json') || (g[0] === 'accounts' && f.file === 'users.json'))" :key="f.file">
-                            <p class="text-[11px] text-muted" :title="(f.changed || []).join(', ')" x-text="cfgFileSummary(f)"></p>
+                            <p class="text-[0.6875rem] text-muted" :title="(f.changed || []).join(', ')" x-text="cfgFileSummary(f)"></p>
                           </template>
                         </div>
                       </template>
-                      <p x-show="CFG_GROUP_NOTE[g[0]] && cfgDlg.groups[g[0]]" class="ml-6 text-[11px]" style="color:var(--warn)" x-text="CFG_GROUP_NOTE[g[0]]"></p>
+                      <p x-show="CFG_GROUP_NOTE[g[0]] && cfgDlg.groups[g[0]]" class="ml-6 text-[0.6875rem]" style="color:var(--warn)" x-text="CFG_GROUP_NOTE[g[0]]"></p>
                     </div>
                   </template>
                 </div>
-                <p class="text-[11px] text-muted">Your current files are backed up first, so this can be undone.</p>
+                <p class="text-[0.6875rem] text-muted">Your current files are backed up first, so this can be undone.</p>
                 <p class="text-xs" style="color:var(--danger)" x-show="cfgDlg.error" x-text="cfgDlg.error"></p>
               </div>
             </template>
             <template x-if="cfgDlg.done">
               <div class="space-y-3">
-                <h3 class="text-[15px] font-semibold leading-snug" x-text="cfgDlg.mode === 'restore' ? 'Restored' : 'Imported'"></h3>
+                <h3 class="text-[0.9375rem] font-semibold leading-snug" x-text="cfgDlg.mode === 'restore' ? 'Restored' : 'Imported'"></h3>
                 <p class="text-xs" x-text="cfgDlg.done.label + ' ' + (cfgDlg.mode === 'restore' ? 'restored' : 'imported') + '. Restart KopiaLens to use them.'"></p>
                 <p class="text-xs" style="color:var(--danger)" x-show="cfgDlg.error" x-text="cfgDlg.error"></p>
               </div>

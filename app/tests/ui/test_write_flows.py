@@ -71,7 +71,7 @@ def _wait_for(check, what: str, server: h.Server, timeout: float = 120) -> None:
 
 def _open_file(page, query: str, name: str) -> None:
     h.go_tab(page, "Search")
-    page.get_by_placeholder("Search paths (matches the full path)").fill(query)
+    page.get_by_placeholder("Search paths", exact=True).fill(query)
     page.get_by_role("row", name=name, exact=False).dblclick()
 
 
@@ -89,9 +89,9 @@ def _confirm(page) -> None:
 def test_a_custom_exclusion_writes_exactly_the_typed_pattern(pro_server, open_page, kopia, own_repo):
     page = open_page(pro_server)
     h.go_tab(page, "Search")
-    page.get_by_placeholder("Search paths (matches the full path)").fill("needle")
+    page.get_by_placeholder("Search paths", exact=True).fill("needle")
     page.get_by_role("row", name="needle-report.txt", exact=False).dblclick()
-    page.locator("button.kl-btn", has_text="Exclude…").first.click()
+    page.locator("div[x-show='detail'] button.kl-btn", has_text="Exclude…").first.click()
 
     page.locator(".kl-seg span", has_text="Custom").click()
     page.get_by_placeholder("kopia ignore pattern, e.g. /Users/*/Cache/**").fill("/Documents/needle-*.txt")
@@ -113,13 +113,14 @@ def test_delete_matching_removes_the_file_from_every_snapshot(pro_server, open_p
 
     page = open_page(pro_server)
     h.go_tab(page, "Search")
-    page.get_by_placeholder("Search paths (matches the full path)").fill("big-video")
+    page.get_by_placeholder("Search paths", exact=True).fill("big-video")
     expect(page.get_by_role("row", name="big-video.mp4", exact=False)).to_be_visible()
-    page.get_by_role("button", name="🗑 Delete matching…").click()
+    page.get_by_test_id("search-more").click()
+    page.get_by_role("button", name="Delete all 1 matching…").click()
 
     page.get_by_role("button", name="Dry run", exact=True).click()
     expect(page.get_by_text("dry run checked")).to_be_visible(timeout=60_000)
-    page.locator("button.kl-btn.danger", has_text="Delete…").click()
+    page.locator("button.kl-btn.danger:visible", has_text="Remove from").click()
     expect(page.get_by_text("Delete 1 file?")).to_be_visible()
     _confirm(page)
 
@@ -147,8 +148,8 @@ def test_deleting_a_snapshot_removes_exactly_that_one(pro_server, open_page, kop
     rows = page.locator("#snapshotsTable .tabulator-row")
     expect(rows).to_have_count(3)
     rows.filter(has_text="latest-3").click()          # the oldest of the three
-    page.get_by_role("button", name="🗑 Delete selected").click()
-    page.get_by_role("button", name="Delete 1 snapshot", exact=True).click()
+    page.get_by_role("button", name="Delete snapshot…", exact=True).click()
+    page.get_by_role("button", name="Delete 1 snapshot…", exact=True).click()
     expect(page.get_by_text("Delete 1 snapshot?")).to_be_visible()
     _confirm(page)
 
@@ -160,8 +161,11 @@ def test_deleting_the_snapshots_that_hold_a_file_keeps_the_others(pro_server, op
     times = [s["startTime"] for s in _snapshots(kopia, own_repo)]
     page = open_page(pro_server)
     _open_file(page, "big-video", "big-video.mp4")
-    page.get_by_role("button", name="Delete 2 snapshots").click()
-    expect(page.get_by_text("Delete 2 snapshots holding this file?")).to_be_visible()
+    page.locator(".kl-sec", has_text="Delete the snapshots holding it").get_by_role("button", name="Open in Delete panel…").click()
+    run = page.locator("div[x-show='showDel'] button.kl-btn.danger", has_text="Delete 2 snapshots")
+    expect(run).to_be_enabled(timeout=30_000)
+    run.click()
+    expect(page.get_by_text("Delete 2 snapshots?")).to_be_visible()
     _confirm(page)
 
     _wait_for(lambda: len(_snapshots(kopia, own_repo)) == 1, "the snapshots were not deleted", pro_server)

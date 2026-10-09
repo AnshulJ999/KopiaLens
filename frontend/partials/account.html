@@ -7,7 +7,7 @@
                 <div>
                   <div class="flex items-center justify-between gap-3"><span>Sign-in</span>
                     <button @click="openAcct('create', {username: 'admin'})" class="h-8 rounded border border-bd px-3 text-xs">Create account…</button></div>
-                  <p class="text-[11px] mt-1" style="color:var(--warn)">Off. Anyone who can reach this address can browse and act on the repositories.</p>
+                  <p class="text-[0.6875rem] mt-1" style="color:var(--warn)">Off. Anyone who can reach this address can browse and act on the repositories.</p>
                 </div>
               </template>
               <template x-if="acct && acct.has_account">
@@ -15,7 +15,7 @@
                   <div>
                     <div class="flex items-center justify-between gap-3"><span>Sign-in</span>
                       <label class="flex items-center gap-2 text-xs"><input type="checkbox" :checked="acct.sign_in_on" @click.prevent="toggleSignIn(!acct.sign_in_on)">Require a password to open KopiaLens</label></div>
-                    <p class="text-[11px] mt-1" x-show="!acct.sign_in_on" style="color:var(--warn)">Anyone who can reach this address can browse and act on the repositories.</p>
+                    <p class="text-[0.6875rem] mt-1" x-show="!acct.sign_in_on" style="color:var(--warn)">Anyone who can reach this address can browse and act on the repositories.</p>
                   </div>
                   <div class="flex items-center justify-between gap-3"><span>Username</span>
                     <span class="flex items-center gap-3"><span class="text-xs" x-text="acct.username"></span>
@@ -23,7 +23,7 @@
                   <div>
                     <div class="flex items-center justify-between gap-3"><span>Password</span>
                       <button @click="openAcct('password')" class="h-8 rounded border border-bd px-3 text-xs">Change password…</button></div>
-                    <p class="text-[11px] text-muted mt-1" x-show="acctPasswordNote()" x-text="acctPasswordNote()"></p>
+                    <p class="text-[0.6875rem] text-muted mt-1" x-show="acctPasswordNote()" x-text="acctPasswordNote()"></p>
                   </div>
                   <template x-if="acct.sign_in_on">
                     <div class="space-y-4">
@@ -32,17 +32,17 @@
                       <div>
                         <div class="flex items-center justify-between gap-3"><span>Other devices</span>
                           <button @click="signOutAll()" class="h-8 rounded border border-bd px-3 text-xs">Sign out all devices…</button></div>
-                        <p class="text-[11px] text-muted mt-1">Signs out every browser, including this one.</p>
+                        <p class="text-[0.6875rem] text-muted mt-1">Signs out every browser, including this one.</p>
                       </div>
                     </div>
                   </template>
                   <div class="pt-3 border-t border-bd">
-                    <div class="text-[11px] uppercase tracking-wide text-muted mb-2">Advanced</div>
+                    <div class="text-[0.6875rem] uppercase tracking-wide text-muted mb-2">Advanced</div>
                     <div class="flex items-center justify-between gap-3"><span>Stay signed in for</span>
                       <select x-model.number="sessionDays" @change="saveKl('session_days')" class="fld border border-bd bg-surface2">
                         <template x-for="d in acct.session_choices" :key="d"><option :value="d" :selected="d === sessionDays" x-text="daysLabel(d)"></option></template>
                       </select></div>
-                    <p class="text-[11px] text-muted mt-1">Applies when "Keep me signed in" is ticked; unticked, sign-in ends when the browser closes. A shorter time also signs out browsers that signed in longer ago.</p>
+                    <p class="text-[0.6875rem] text-muted mt-1">Applies when "Keep me signed in" is ticked; unticked, sign-in ends when the browser closes. A shorter time also signs out browsers that signed in longer ago.</p>
                   </div>
                 </div>
               </template>
@@ -58,15 +58,15 @@
                     <div class="flex items-center justify-between gap-3"><span>Level</span>
                       <span class="flex items-center gap-3"><span class="text-xs" x-text="encLevelLabel(encOn() ? encStatus.level : 'off')"></span>
                         <button @click="encOn() ? openAcct('level') : encTurnOn()" class="h-8 rounded border border-bd px-3 text-xs" x-text="encOn() ? 'Change level…' : 'Turn on…'"></button></span></div>
-                    <p class="text-[11px] text-muted mt-1" x-text="encLevelNote(encOn() ? encStatus.level : 'off')"></p>
-                    <p class="text-[11px] mt-1" style="color:var(--warn)" x-show="encPendingText()" x-text="encPendingText()"></p>
+                    <p class="text-[0.6875rem] text-muted mt-1" x-text="encLevelNote(encOn() ? encStatus.level : 'off')"></p>
+                    <p class="text-[0.6875rem] mt-1" style="color:var(--warn)" x-show="encPendingText()" x-text="encPendingText()"></p>
                   </div>
                   <template x-if="encOn()">
                     <div class="space-y-4">
                       <div>
                         <div class="flex items-center justify-between gap-3"><span>Unlock automatically</span>
                           <label class="flex items-center gap-2 text-xs"><input type="checkbox" :checked="encStatus.remembered" @click.prevent="toggleRemember(!encStatus.remembered)">On this computer</label></div>
-                        <p class="text-[11px] text-muted mt-1">Off: someone enters the password after every restart.</p>
+                        <p class="text-[0.6875rem] text-muted mt-1">Off: someone enters the password after every restart.</p>
                       </div>
                       <div>
                         <div class="flex items-center justify-between gap-3"><span>Password</span>
@@ -75,27 +75,27 @@
                             <button x-show="!acctSharedPw()" @click="openAcct('encpw')" class="h-8 rounded border border-bd px-3 text-xs">Change…</button>
                             <button x-show="!acctSharedPw() && acct && acct.has_account" @click="openAcct('join')" class="h-8 rounded border border-bd px-3 text-xs">Use my sign-in password…</button>
                           </span></div>
-                        <p class="text-[11px] text-muted mt-1" x-show="encPasswordNote()" x-text="encPasswordNote()"></p>
+                        <p class="text-[0.6875rem] text-muted mt-1" x-show="encPasswordNote()" x-text="encPasswordNote()"></p>
                       </div>
                       <div>
                         <div class="flex items-center justify-between gap-3"><span>Recovery key</span>
                           <button @click="openAcct('recovery-new')" class="h-8 rounded border border-bd px-3 text-xs" x-text="encStatus.has_recovery ? 'New recovery key…' : 'Create recovery key…'"></button></div>
-                        <p class="text-[11px] mt-1" :class="encStatus.has_recovery ? 'text-muted' : ''" :style="encStatus.has_recovery ? '' : 'color:var(--warn)'"
+                        <p class="text-[0.6875rem] mt-1" :class="encStatus.has_recovery ? 'text-muted' : ''" :style="encStatus.has_recovery ? '' : 'color:var(--warn)'"
                            x-text="encStatus.has_recovery ? 'Unlocks the index if the password is lost.' : 'None. Without one, a lost password means starting over.'"></p>
                       </div>
                       <div>
                         <div class="flex items-center justify-between gap-3"><span>Lock now</span>
                           <button @click="lockNow()" class="h-8 rounded border border-bd px-3 text-xs">Lock</button></div>
-                        <p class="text-[11px] text-muted mt-1">KopiaLens shows no data until someone enters the password.</p>
+                        <p class="text-[0.6875rem] text-muted mt-1">KopiaLens shows no data until someone enters the password.</p>
                       </div>
                     </div>
                   </template>
                   <div x-show="encStatus.configured" class="pt-3 border-t border-bd">
                     <div class="flex items-center justify-between gap-3"><span>Start over</span>
                       <button @click="startOver()" class="h-8 rounded border px-3 text-xs" style="color:var(--danger);border-color:var(--danger-bd)">Start over…</button></div>
-                    <p class="text-[11px] text-muted mt-1">For a lost password and recovery key. Turns encryption off and re-indexes from kopia; encrypted history can't be recovered.</p>
+                    <p class="text-[0.6875rem] text-muted mt-1">For a lost password and recovery key. Turns encryption off and re-indexes from kopia; encrypted history can't be recovered.</p>
                   </div>
-                  <p class="text-[11px] break-all" style="color:var(--warn)" x-show="setAsideText()" x-text="setAsideText()"></p>
+                  <p class="text-[0.6875rem] break-all" style="color:var(--warn)" x-show="setAsideText()" x-text="setAsideText()"></p>
                 </div>
               </template>
             </section>

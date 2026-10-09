@@ -104,19 +104,19 @@
         <div class="flex items-center gap-2"><div class="font-medium" x-text="excludedDetail && ((excludedDetail.is_dir ? '📁 ' : '📄 ') + excludedDetail.name)"></div><button @click="showExcludedDetail=false" class="ml-auto text-muted text-lg leading-none">&times;</button></div>
         <div class="text-xs text-muted mt-1 break-all" x-text="excludedDetail && excludedDetail.full_path"></div>
         <div class="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2" x-show="excludedDetail">
-          <div class="rounded border border-bd p-2"><div class="text-[11px] text-muted">Total</div><div class="font-medium" x-text="excludedDetail && fmtBytes(excludedDetail.total_size)"></div></div>
-          <div class="rounded border border-ok-bd p-2"><div class="text-[11px] text-ok">Backed up</div><div class="font-medium" x-text="excludedDetail && fmtBytes(excludedDetail.backed_bytes)"></div></div>
-          <div class="rounded border border-danger-bd p-2"><div class="text-[11px] text-danger">Excluded</div><div class="font-medium" x-text="excludedDetail && fmtBytes(excludedDetail.excluded_bytes)"></div></div>
-          <div class="rounded border border-bd p-2"><div class="text-[11px] text-muted">Files (total / excluded)</div><div class="font-medium" x-text="excludedDetail && ((Number(excludedDetail.total_files||0)).toLocaleString(NUM_LOCALE) + ' / ' + (Number(excludedDetail.excluded_files||0)).toLocaleString(NUM_LOCALE))"></div></div>
-          <div class="rounded border border-bd p-2"><div class="text-[11px] text-muted">% Excluded</div><div class="font-medium" x-text="excludedDetail && (excludedDetail.pct_excluded != null ? excludedDetail.pct_excluded + '%' : '—')"></div></div>
-          <div class="rounded border border-bd p-2"><div class="text-[11px] text-muted">Backed by repo</div><div class="font-medium" x-text="excludedDetail && (excludedDetail.repo || '—')"></div></div>
+          <div class="rounded border border-bd p-2"><div class="text-[0.6875rem] text-muted">Total</div><div class="font-medium" x-text="excludedDetail && fmtBytes(excludedDetail.total_size)"></div></div>
+          <div class="rounded border border-ok-bd p-2"><div class="text-[0.6875rem] text-ok">Backed up</div><div class="font-medium" x-text="excludedDetail && fmtBytes(excludedDetail.backed_bytes)"></div></div>
+          <div class="rounded border border-danger-bd p-2"><div class="text-[0.6875rem] text-danger">Excluded</div><div class="font-medium" x-text="excludedDetail && fmtBytes(excludedDetail.excluded_bytes)"></div></div>
+          <div class="rounded border border-bd p-2"><div class="text-[0.6875rem] text-muted">Files (total / excluded)</div><div class="font-medium" x-text="excludedDetail && ((Number(excludedDetail.total_files||0)).toLocaleString(NUM_LOCALE) + ' / ' + (Number(excludedDetail.excluded_files||0)).toLocaleString(NUM_LOCALE))"></div></div>
+          <div class="rounded border border-bd p-2"><div class="text-[0.6875rem] text-muted">% Excluded</div><div class="font-medium" x-text="excludedDetail && (excludedDetail.pct_excluded != null ? excludedDetail.pct_excluded + '%' : '—')"></div></div>
+          <div class="rounded border border-bd p-2"><div class="text-[0.6875rem] text-muted">Backed by repo</div><div class="font-medium" x-text="excludedDetail && (excludedDetail.repo || '—')"></div></div>
         </div>
         <div class="mt-3 flex flex-wrap gap-2">
           <button @click="excludedInclude(excludedDetail)" class="h-8 rounded border border-ok-bd text-ok px-3 text-xs">Include in Kopia (copy commands)</button>
           <button @click="excludedExclude(excludedDetail)" class="h-8 rounded border border-bd px-3 text-xs">Exclude…</button>
           <button @click="copyText(excludedDetail.full_path)" class="h-8 rounded border border-bd px-3 text-xs">Copy path</button>
         </div>
-        <div class="text-[11px] text-muted mt-2 whitespace-pre-wrap break-all" x-show="actionText" x-text="actionText"></div>
+        <div class="text-[0.6875rem] text-muted mt-2 whitespace-pre-wrap break-all" x-show="actionText" x-text="actionText"></div>
       </div>
     </div>
 
@@ -427,7 +427,7 @@
       <div class="fixed inset-0 z-[62] bg-black/40 flex items-center justify-center p-4 sm:p-6" @click.self="fbClose(null)">
         <div role="dialog" aria-modal="true" aria-label="Choose a folder" class="w-[36rem] max-w-full max-h-[80vh] rounded-lg border border-bd bg-surface shadow-xl flex flex-col text-sm">
           <div class="p-4 pb-2 space-y-2">
-            <h3 class="text-[15px] font-semibold leading-snug">Choose a folder</h3>
+            <h3 class="text-[0.9375rem] font-semibold leading-snug">Choose a folder</h3>
             <form class="flex items-center gap-2" @submit.prevent="fbGo(fb.input)">
               <button type="button" class="kl-btn shrink-0" :disabled="!fb.path" @click="fbGo(fb.parent)" title="Up one folder">Up</button>
               <input x-model="fb.input" class="fld flex-1 min-w-0 border border-bd bg-surface2 font-mono" aria-label="Folder path"
@@ -456,7 +456,7 @@
     <div x-show="showDiff" @click.self="showDiff=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
       <div class="w-[52rem] max-w-full max-h-[85vh] overflow-auto rounded-lg border border-bd bg-surface p-4 text-sm">
         <div class="flex items-center gap-2"><div class="font-medium">Snapshot diff</div><span class="text-xs text-warn" x-show="diffBusy">running…</span><button @click="showDiff=false" class="ml-auto text-muted text-lg leading-none">&times;</button></div>
-        <pre class="mt-2 text-[11px] whitespace-pre-wrap bg-surface2 rounded p-2 max-h-[70vh] overflow-auto" x-text="diffText"></pre>
+        <pre class="mt-2 text-[0.6875rem] whitespace-pre-wrap bg-surface2 rounded p-2 max-h-[70vh] overflow-auto" x-text="diffText"></pre>
       </div>
     </div>
 
@@ -468,11 +468,11 @@
           <button @click="bzDetail=null" class="ml-auto shrink-0 text-muted text-lg leading-none">&times;</button>
         </div>
         <div class="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2" x-show="bzDetail">
-          <div class="rounded border border-bd p-2"><div class="text-[11px] text-muted">Size</div><div class="font-medium" x-text="bzDetail && fmtB(bzDetail.size)"></div></div>
-          <div class="rounded p-2" :class="bzDetail && bzDetail.excluded ? 'border border-danger-bd' : 'border border-ok-bd'"><div class="text-[11px] text-muted">Status</div><div class="font-medium" x-text="bzDetail && (bzDetail.excluded ? 'Excluded' : 'Backed up')"></div></div>
-          <div class="rounded border border-bd p-2"><div class="text-[11px] text-muted">Drive</div><div class="font-medium" x-text="bzDetail && (bzDetail.drive + ':')"></div></div>
+          <div class="rounded border border-bd p-2"><div class="text-[0.6875rem] text-muted">Size</div><div class="font-medium" x-text="bzDetail && fmtB(bzDetail.size)"></div></div>
+          <div class="rounded p-2" :class="bzDetail && bzDetail.excluded ? 'border border-danger-bd' : 'border border-ok-bd'"><div class="text-[0.6875rem] text-muted">Status</div><div class="font-medium" x-text="bzDetail && (bzDetail.excluded ? 'Excluded' : 'Backed up')"></div></div>
+          <div class="rounded border border-bd p-2"><div class="text-[0.6875rem] text-muted">Drive</div><div class="font-medium" x-text="bzDetail && (bzDetail.drive + ':')"></div></div>
         </div>
-        <div class="mt-2 text-[12px]" x-show="bzDetail && bzDetail.excl_rule"><span class="text-muted">Excluded by rule:</span> <span class="font-mono" x-text="bzDetail && bzDetail.excl_rule"></span></div>
+        <div class="mt-2 text-[0.75rem]" x-show="bzDetail && bzDetail.excl_rule"><span class="text-muted">Excluded by rule:</span> <span class="font-mono" x-text="bzDetail && bzDetail.excl_rule"></span></div>
         <div class="mt-3 flex flex-wrap gap-2">
           <button @click="bzJumpTree(bzDetail)" class="h-8 rounded border border-bd px-3 text-xs">Browse folder (Tree)</button>
           <button @click="bzOpenGen('editable_endswith', bzDetail.name)" class="h-8 rounded border border-bd px-3 text-xs">Generate exclusion (this file)</button>
@@ -487,9 +487,9 @@
       <template x-if="bzGen">
       <div class="w-[40rem] max-w-full rounded-lg border border-bd bg-surface p-4 text-sm">
         <div class="flex items-center gap-2"><div class="font-medium">Generate exclusion</div><button @click="bzShowGen=false" class="ml-auto text-muted text-lg leading-none">&times;</button></div>
-        <div class="mt-2 text-[12px] text-muted">KopiaLens never writes to Backblaze (read-only). This generates a paste-ready rule + how to apply it.</div>
+        <div class="mt-2 text-[0.75rem] text-muted">KopiaLens never writes to Backblaze (read-only). This generates a paste-ready rule + how to apply it.</div>
         <div class="mt-3 flex items-center gap-2">
-          <span class="text-[11px] uppercase text-muted">Kind</span>
+          <span class="text-[0.6875rem] uppercase text-muted">Kind</span>
           <select x-model="bzGen.kind" @change="bzDoGen()" class="fld border border-bd bg-surface2 text-xs">
             <option value="folder">Folder (relative, all drives)</option>
             <option value="editable_endswith">Ends with</option>
@@ -502,11 +502,11 @@
             <div x-show="bzGen.result.error" class="text-danger text-xs" x-text="bzGen.result.error"></div>
             <template x-if="bzGen.result.snippet">
               <div>
-                <div class="text-[11px] text-muted">Snippet</div>
-                <div class="flex items-center gap-2"><div class="font-mono break-all text-[12px] flex-1 bg-surface2 rounded p-2" x-text="bzGen.result.snippet"></div><button @click="copyText(bzGen.result.snippet)" class="text-ok text-xs shrink-0">copy</button></div>
+                <div class="text-[0.6875rem] text-muted">Snippet</div>
+                <div class="flex items-center gap-2"><div class="font-mono break-all text-[0.75rem] flex-1 bg-surface2 rounded p-2" x-text="bzGen.result.snippet"></div><button @click="copyText(bzGen.result.snippet)" class="text-ok text-xs shrink-0">copy</button></div>
               </div>
             </template>
-            <div x-show="bzGen.result.how" class="text-[12px] text-muted" x-text="bzGen.result.how"></div>
+            <div x-show="bzGen.result.how" class="text-[0.75rem] text-muted" x-text="bzGen.result.how"></div>
           </div>
         </template>
       </div>
