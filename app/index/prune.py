@@ -307,6 +307,12 @@ def price(token: str, remove: list[int]) -> dict | None:
     return out
 
 
+def plan_repo(token: str) -> str | None:
+    with _LOCK:
+        state = _PLANS.get(token)
+    return state["repo"] if state else None
+
+
 def items_for(state: dict, remove: set[int]) -> list[dict]:
     """The job's input: one entry per object, with exactly the snapshots it is removed from. A
     snapshot whose root IS the folder is deleted instead (``obj`` None)."""

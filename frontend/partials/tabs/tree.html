@@ -37,7 +37,7 @@
           <button @click="toggleTreeFlat()" class="kl-btn" :class="treeFlat && treeView!=='tree' ? 'on' : ''" :disabled="treeView==='tree'" :title="treeView==='tree' ? 'Flat works in List view' : 'List every file under this folder, without folders'">Flat</button>
           <button @click="toggleTreeDedupe()" class="kl-btn" :class="treeDedupe ? 'on' : ''" title="Show files with identical content once">Dedupe</button>
           {{ selbar('tree', 'treeSelCount') }}
-          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false">
+          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
             <button class="kl-btn icon" @click="open = !open" title="More">⋯</button>
             <div class="kl-menu" x-show="open" x-cloak>
               <button x-show="treeMode!=='all' && selectedSource!=='*ALL*'" @click="open = false; mountTreeSnapshot()" :title="host.can_open ? 'Mount this snapshot (read-only) and open this folder in ' + host.file_manager : 'Mount this snapshot (read-only)'" x-text="host.can_open ? 'Mount this snapshot and browse' : 'Mount this snapshot'"></button>

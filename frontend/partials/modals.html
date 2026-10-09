@@ -243,7 +243,7 @@
                 </button>
                 <span x-show="removePlanDryChecked()" class="pill ok">dry run checked</span>
                 <span class="grow"></span>
-                <button class="kl-btn quiet" @click="removePlan.showCmd = !removePlan.showCmd" x-text="removePlan.showCmd ? 'Hide command' : 'Show command'"></button>
+                <button class="kl-btn quiet" x-show="removePlan.commit" @click="removePlan.showCmd = !removePlan.showCmd" x-text="removePlan.showCmd ? 'Hide command' : 'Show command'"></button>
               </div>
               <template x-if="removePlan.showCmd">
                 <div class="kl-term" style="max-height:150px">

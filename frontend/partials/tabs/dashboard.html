@@ -11,7 +11,7 @@
           <span class="grow"></span>
           <span class="text-xs text-muted" x-show="dashboardMeta" title="Everything this repository stores, with shared data counted once">Repository holds <b class="text-fg font-medium" x-text="dashboardMeta"></b></span>
           <span class="kl-help" tabindex="0" title="Double-click a row to see its snapshots. Right-click a row for more; right-click a column header to show or hide columns.">?</span>
-          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false">
+          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
             <button class="kl-btn icon" @click="open = !open" title="More">⋯</button>
             <div class="kl-menu" x-show="open" x-cloak>
               <button @click="open = false; csv('#dashboardTable','dashboard')">Export CSV</button>

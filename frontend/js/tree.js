@@ -103,9 +103,11 @@ const treePart = {
         return;
       }
       const rows = this._treeLevel(children, d.path);
-      kids[0].delete();
-      if (!rows.length) { row.addTreeChild({ _ph: true, name: "Empty" }); return; }
+      // Add before removing the placeholder: a row left with no children is marked collapsed.
+      if (!rows.length) rows.push({ _ph: true, name: "Empty" });
       rows.forEach((r) => row.addTreeChild(r));
+      kids[0].delete();
+      if (!row.isTreeExpanded()) row.treeExpand();
     },
     setTreeView(v) {
       if (this.treeView === v) return;

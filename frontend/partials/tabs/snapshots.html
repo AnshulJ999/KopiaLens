@@ -13,7 +13,7 @@
                   x-text="snapSelCount > 1 ? 'Delete ' + snapSelCount + ' snapshots…' : 'Delete snapshot…'" title="Delete the selected snapshots"></button>
           <span class="kl-help" tabindex="0"
                 :title="repoKind === 'server' ? 'Double-click a snapshot to browse its folders.' : 'Churn is the new data a snapshot added. Reclaimable is the space deleting it gives back. With all sources, the list is sorted by reclaimable space: Analyze fills it in. Select rows, then right-click for more.'">?</span>
-          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false">
+          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
             <button class="kl-btn icon" @click="open = !open" title="More">⋯</button>
             <div class="kl-menu" x-show="open" x-cloak>
               <button @click="open = false; csv('#snapshotsTable','snapshots')">Export CSV</button>

@@ -8,9 +8,24 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..index import prune
+from ..licensing import features
 from .errors import PASS_THROUGH
 
 router = APIRouter(tags=["prune"])
+
+
+def _free(repo: str | None) -> bool:
+    # licence check: do not remove or bypass (KopiaLens License)
+    return not features.allowed("prune", repo)
+
+
+def _strip_plan(out: dict) -> dict:
+    """Free: sizes and dates, without the object and snapshot ids a remove command needs."""
+    for r in out.get("rows") or []:
+        r["obj"] = ""
+        for s in r.get("snapshots") or []:
+            s["id"] = ""
+    return out
 
 
 class PlanRequest(BaseModel):
@@ -29,7 +44,8 @@ def prune_plan(body: PlanRequest) -> dict:
     if not body.full_path:
         raise HTTPException(status_code=400, detail="full_path is required")
     try:
-        return prune.plan(body.repo, body.source or None, body.full_path)
+        out = prune.plan(body.repo, body.source or None, body.full_path)
+        return _strip_plan(out) if _free(body.repo) else out
     except PASS_THROUGH:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -41,12 +57,19 @@ def prune_price(body: PriceRequest) -> dict:
     out = prune.price(body.token, body.remove)
     if out is None:
         raise HTTPException(status_code=410, detail="This plan is out of date. Open Prune versions again.")
+    if _free(prune.plan_repo(body.token)):
+        # Same length, so the Pro buttons still show; no ids leave the server.
+        out["commands"] = [{"obj": "", "snapshot_ids": []} for _ in out.get("commands") or []]
     return out
 
 
 @router.get("/prune/outliers")
 def prune_outliers(repo: str, limit: int = 100) -> dict:
     try:
-        return prune.outliers(repo, max(1, min(limit, 500)))
+        out = prune.outliers(repo, max(1, min(limit, 500)))
+        if _free(repo):
+            for r in out.get("rows") or []:
+                r["obj"] = ""
+        return out
     except PASS_THROUGH:
         raise
