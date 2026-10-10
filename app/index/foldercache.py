@@ -138,6 +138,19 @@ def peek(repo: str, prefix: str, source: str | None = None, allow_stale: bool = 
     return {**entry, "stale": True} if allow_stale else None
 
 
+def saved_values(repo: str, prefixes: list[str]) -> dict[str, dict]:
+    """``{prefix: {physical, freeable, capped}}`` for folders with a saved all-sources result,
+    without the freshness check (a list shows last night's number; the panel refreshes it)."""
+    data = _load(repo)
+    out = {}
+    for prefix in prefixes:
+        entry = data.get(_key(prefix, None))
+        if entry and entry.get("physical") is not None:
+            out[prefix] = {"physical": entry.get("physical"), "freeable": entry.get("freeable"),
+                           "capped": bool(entry.get("capped"))}
+    return out
+
+
 def compute(repo: str, prefix: str, source: str | None = None, allow_stale: bool = True) -> dict:
     """All-versions reclaim for one folder.
 

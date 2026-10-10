@@ -90,6 +90,10 @@ _SEARCH_SORT = {
 }
 _RANK_SORTS = ("stored", "frees")
 
+# The computer part of a source ("user@host:path"), case-folded: kopia lowercases its default
+# hostname but older or other clients may not. Dedupe by path merges only within one computer.
+_HOST_SQL = "lower(regexp_extract(s.source, '^[^@]*@([^:]*)', 1))"
+
 
 def _split_exts(ext: str) -> list[str]:
     return [e.lower().lstrip(".") for e in (x.strip() for x in ext.split(",")) if e]
@@ -245,7 +249,8 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
         by_path = dedupe and dedupe_by != "content"
         if by_path:
             total = cur.execute(
-                f"SELECT count(DISTINCT p.full_path) FROM pathx p WHERE {where_sql}", params).fetchone()[0]
+                f"SELECT count(*) FROM (SELECT DISTINCT {_HOST_SQL}, p.full_path FROM pathx p "
+                f"JOIN src s ON s.src_id = p.src_id WHERE {where_sql})", params).fetchone()[0]
             rows = _rows(
                 cur,
                 f"""
@@ -261,7 +266,7 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                 LEFT JOIN cid c ON c.cid_id = p.cid_id
                 {join_sql}
                 WHERE {where_sql}
-                GROUP BY p.full_path
+                GROUP BY {_HOST_SQL}, p.full_path
                 {_order_clause(sort, direction, "p.full_path", nulls_last=bool(mat))}
                 LIMIT ? OFFSET ?
                 """,
@@ -429,7 +434,7 @@ def search_export(repo: str, query: str = "", deleted_only: bool = False, min_si
                        bool_or(p.in_latest) AS in_latest, {st_val} AS stored_all
                 FROM pathx p JOIN src s ON s.src_id = p.src_id {st_join}
                 WHERE {where_sql}
-                GROUP BY p.full_path"""
+                GROUP BY {_HOST_SQL}, p.full_path"""
         elif dedupe:
             base = f"""
                 SELECT p.cid_id, arg_max(s.source, p.last_seen) AS source,
@@ -655,7 +660,7 @@ def paths_for_content(repo: str, content_id: str) -> list[dict]:
 def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | None = None,
                     ext: str | None = None, deleted_only: bool = False, min_size: int = 0,
                     min_files: int = 0, sort: str = "physical", direction: str = "desc",
-                    limit: int = 500, ext_exclude: str | None = None) -> dict:
+                    limit: int = 500, ext_exclude: str | None = None, min_depth: int = 0) -> dict:
     """Bloat finder: roll the (filtered) `paths` up by the first `depth` path segments, summing
     physical + logical + file count per folder, ranked. Find backed-up folders that shouldn't be
     there. Reclaim (freeable) is computed on demand per folder (folder_detail), not here."""
@@ -683,6 +688,8 @@ def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | No
             cond, qp = _text_match(query)
             conds.append(cond)
             params.extend(qp)
+        if min_depth and int(min_depth) > 1:
+            conds.append(f"_gd.depth >= {int(min_depth)}")   # hides folders shallower than this
         where = _where(conds)
         order = {"physical": "phys", "logical": "logical", "files": "files"}.get(sort, "phys")
         dirn = "ASC" if direction == "asc" else "DESC"
@@ -883,7 +890,7 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
         total_file_count, total_physical, total_logical = int(trow[0]), int(trow[1]), int(trow[2])
         files = _rows(
             cur,
-            f"SELECT s.source AS source, p.full_path, p.name, c.content_id, p.size, p.physical FROM pathx p "
+            f"SELECT s.source AS source, p.full_path, p.name, p.ext, c.content_id, p.size, p.physical FROM pathx p "
             f"JOIN src s ON s.src_id = p.src_id LEFT JOIN cid c ON c.cid_id = p.cid_id "
             f"WHERE {where_sql} "
             f"ORDER BY p.physical DESC NULLS LAST, p.size DESC, s.source, p.full_path LIMIT {int(cap)}",
@@ -948,7 +955,7 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
         "object_ids": oids,             # deduped, biggest-files-first
         "names": names,                 # deduped basenames, biggest-files-first
         "pairs": pairs,                 # all (source, full_path) - server-side only (detail/batch)
-        "files": files[:200],           # preview (already physical-desc)
+        "files": files,                 # every matched file, physical-desc (callers slice previews)
         "sources": sorted({f["source"] for f in files}),
     }
 

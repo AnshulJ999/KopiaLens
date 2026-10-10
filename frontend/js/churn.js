@@ -75,7 +75,7 @@ const churnPart = {
           { label: "Show snapshots", action: (_e, row) => this.showSourceSnapshots(row.getData().source) },
           { label: "Show in Tree", action: (_e, row) => { this.selectedSource = row.getData().source; this.active = "tree"; this.openTree(); } },
           { label: "Search this source", action: (_e, row) => { this.active = "search"; this.searchSource = row.getData().source; this.query = ""; this.loadSearch(); } },
-          { label: "Simulate this source", action: (_e, row) => { this.selectedSource = row.getData().source; this.simMode = "one"; this.active = "simulate"; this.runSimulate(); } },
+          { label: "Simulate this source", action: (_e, row) => this.simulateSource(row.getData().source) },
           { label: "Copy source", action: (_e, row) => this.copyText(row.getData().source) },
         ];
       } else if (this.churnView === "folder") {
@@ -91,9 +91,9 @@ const churnPart = {
         menu = [
           { label: "Details", action: (_e, row) => this.openFolderPanel(row.getData().folder) },
           { label: "Show in Search", action: (_e, row) => { this.query = row.getData().folder; this.searchSource = ""; this.active = "search"; this.loadSearch(); } },
-          { label: "Exclude & delete…", action: (_e, row) => this.openExclude({ kind: "folder", path: row.getData().folder }, "delete") },
+          { label: "Exclude & delete…" + this.proMenuTag("exclude_delete"), action: (_e, row) => this.openExclude({ kind: "folder", path: row.getData().folder }, "delete") },
           { label: "Copy path", action: (_e, row) => this.copyText(row.getData().folder) },
-          { label: "Delete folder from backups…", action: (_e, row) => this.openRemoveFolderPath(row.getData().folder) },
+          { label: "Delete folder from backups…" + this.proMenuTag("remove"), action: (_e, row) => this.openRemoveFolderPath(row.getData().folder) },
         ];
       } else {
         rows = (d.by_ext || []).map((r) => enrich({ ...r, ext: r.ext || "(no extension)" }));

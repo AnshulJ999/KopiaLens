@@ -51,7 +51,9 @@ const searchPart = {
       return new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
     },
     changeRecentBackup() { this.searchPage = 1; this.klSet({ recent_backup: this.recentBackup }); this.loadSearch(); },
-    searchPages() { return Math.max(1, Math.ceil(this.searchTotal / (parseInt(this.searchPageSize, 10) || 500))); },
+    // All repositories stops at a fixed depth (the server merges each repo's top rows).
+    searchReachable() { return this.searchAllRepos() ? Math.min(this.searchTotal, this.searchMaxDepth) : this.searchTotal; },
+    searchPages() { return Math.max(1, Math.ceil(this.searchReachable() / (parseInt(this.searchPageSize, 10) || 500))); },
     setSearchPage(n) { this.searchPage = Math.min(Math.max(1, n), this.searchPages()); this.loadSearch(true); },
     setSearchSort(field, dir) { this.searchSort = field; this.searchDir = dir; this.searchPage = 1; this.klSet({ search_sort: field, search_dir: dir }); this.loadSearch(); },
     changePageSize() {
@@ -82,7 +84,9 @@ const searchPart = {
     },
     setSearchKind(k) {
       if (this.searchAllRepos() && k !== "files") return;
+      this.clearSelection("search");
       this.searchKind = k; this.groupByFolder = k === "folders"; this.searchPage = 1;
+      this.searchSelCount = 0;
       this.klSet({ search_kind: k });
       this.loadSearch();
     },
@@ -106,6 +110,7 @@ const searchPart = {
     async loadGroupByFolder() {
       await this.wrap(async () => {
         const p = new URLSearchParams({ repo: this.repo, depth: this.groupDepth, q: this.query || "", sort: "physical", direction: "desc", limit: 500 });
+        if (this.groupMinDepth) p.set("min_depth", this.groupMinDepth);
         if (this.searchSource) p.set("source", this.searchSource);
         if (this.searchExt) p.set("ext", this.searchExt);
         if (this.searchExtExclude) p.set("ext_exclude", this.searchExtExclude);
@@ -114,6 +119,7 @@ const searchPart = {
         if (this.groupMinFiles) p.set("min_files", this.groupMinFiles);
         const data = await getJson(`/api/search/group-by-folder?${p.toString()}`);
         const rows = data.rows || [];
+        this.searchSelCount = 0;   // the table is rebuilt, so its selection goes
         this.omniMeta = `${countOf(rows.length, "folder")} · depth ${data.depth} · ranked by physical`;
         const cols = [
           { title: "Folder", field: "folder", widthGrow: 5, minWidth: 300, formatter: (c) => `📁 ${c.getValue()}` },
@@ -141,16 +147,18 @@ const searchPart = {
           { title: "Last seen", field: "last_seen", width: 155, formatter: (c) => timeCell(c.getValue()) },
         ];
         const gt = setTable("#groupTable", rows, cols, {
+          selectableRows: true,
+          onSelect: (sel) => { this.searchSelCount = sel.length; },
           onRowDblClick: (_e, row) => this.openFolderPanel(row.getData().folder),
-          rowMenu: [
-            { label: "Details", action: (_e, row) => this.openFolderPanel(row.getData().folder) },
-            { label: "Show its files", action: (_e, row) => this.drillFolder(row.getData()) },
-            { label: "Work out reclaimable space again", action: (_e, row) => this.computeGroupReclaim(row) },
+          rowMenu: (_e, row) => (this.selectedRows("search").length > 1 ? this.searchRowMenu({}) : [
+            { label: "Details", action: () => this.openFolderPanel(row.getData().folder) },
+            { label: "Show its files", action: () => this.drillFolder(row.getData()) },
+            { label: "Work out reclaimable space again", action: () => this.computeGroupReclaim(row) },
             { separator: true },
-            { label: "Delete folder from backups…", action: (_e, row) => this.openRemoveFolderPath(row.getData().folder) },
+            { label: "Delete folder from backups…" + this.proMenuTag("remove"), action: () => this.openRemoveFolderPath(row.getData().folder) },
             { separator: true },
-            { label: "Copy path", action: (_e, row) => this.copyText(row.getData().folder) },
-          ],
+            { label: "Copy path", action: () => this.copyText(row.getData().folder) },
+          ]),
         });
         if (gt) {
           gt.on("tableBuilt", () => this.fillGroupReclaim());
@@ -179,9 +187,10 @@ const searchPart = {
     // freeable for one folder row of the By-folder view - the same on-demand walk the
     // remove-detail button uses, scoped to the folder prefix. Heavy, so it only runs when asked.
     // Keyed by repo: switching repos must never show the previous repo's number.
-    async computeGroupReclaim(row) {
+    async computeGroupReclaim(row, folder) {
       const d = row.getData();
-      const key = this.repo + ":" + d.folder;
+      folder = folder || d.folder;
+      const key = this.repo + ":" + folder;
       const cur = this.groupReclaim[key];
       if (cur === "pending") return;  // block repeats only while in flight; a deliberate
                                       // second pick recomputes - that pick IS the manual refresh
@@ -189,10 +198,10 @@ const searchPart = {
       row.reformat();
       try {
         const r = await getJson("/api/actions/remove-detail", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo: this.repo, prefix: d.folder, all_versions: true }) });
+          body: JSON.stringify({ repo: this.repo, prefix: folder, all_versions: true }) });
         this.groupReclaim[key] = (r.found === false)
-          ? { v: 0, capped: false }
-          : { v: r.freeable ?? 0, capped: !!r.capped };
+          ? { v: 0, p: 0, capped: false }
+          : { v: r.freeable ?? 0, p: r.physical ?? null, capped: !!r.capped };
       } catch (e) {
         this.groupReclaim[key] = "error";
       }
@@ -214,6 +223,7 @@ const searchPart = {
           p.set("depth", this.groupDepth);
           if (this.groupMinGb) p.set("folder_min_gb", this.groupMinGb);
           if (this.groupMinFiles) p.set("folder_min_files", this.groupMinFiles);
+          if (this.groupMinDepth) p.set("min_depth", this.groupMinDepth);
         }
         const url = allRepos ? "/api/search/all-repos" : both ? "/api/search/mixed" : "/api/search";
         const data = await getJson(`${url}?${p.toString()}`);
@@ -221,6 +231,7 @@ const searchPart = {
         this.searchTotal = data.total || 0;
         this.searchFolders = both ? (data.folders || 0) : 0;
         this.searchSkipped = allRepos ? (data.skipped || []) : [];
+        if (allRepos && data.max_depth) this.searchMaxDepth = data.max_depth;
         this.searchEmpty = this.searchTotal === 0 && !this.searchFolders;
         const fileRows = (data.results || []).filter((r) => r.kind !== "folder").length;
         const shownFrom = this.searchTotal ? offset + 1 : 0;
@@ -229,8 +240,9 @@ const searchPart = {
           : allRepos ? `${countOf(this.searchTotal, "result")} in ${countOf((data.searched || []).length, "repository", "repositories")}`
           : countOf(this.searchTotal, "result");
         const skipped = this.searchSkipped.length ? ` · not searched: ${this.searchSkipped.map((s) => this.repoLabel(s.repo)).join(", ")}` : "";
+        const depthNote = allRepos && this.searchTotal > this.searchMaxDepth ? ` · only the first ${this.searchMaxDepth.toLocaleString(NUM_LOCALE)} can be shown; narrow the search to see the rest` : "";
         this.omniMeta = this.searchEmpty ? ""
-          : head + (infinite || this.searchTotal <= size ? "" : ` · showing ${shownFrom.toLocaleString(NUM_LOCALE)}–${shownTo.toLocaleString(NUM_LOCALE)}`) + skipped;
+          : head + (infinite || this.searchTotal <= size ? "" : ` · showing ${shownFrom.toLocaleString(NUM_LOCALE)}–${shownTo.toLocaleString(NUM_LOCALE)}`) + depthNote + skipped;
         // Headers do NOT sort locally (headerSort:false) - a click re-queries the server so the
         // sort is always over the ENTIRE result set, never just the visible page. Active column
         // shows a ▼/▲ arrow.
@@ -250,14 +262,15 @@ const searchPart = {
               : "That list is built by the nightly index. Sorted by Physical until then.", "warn");
           }
         }
-        // Folder rows (Both view) have no per-file columns (ext, versions, copies, all-versions sizes).
+        // Folder rows (Both view) leave Versions and Copies blank; Physical (all) and Reclaimable come
+        // from the saved folder values or are worked out for the folders on screen.
         const nf = (fn) => (c) => (c.getRow().getData().kind === "folder" ? "" : fn(c));
         const isFolder = (c) => c.getRow().getData().kind === "folder";
         const cols = [
           { title: "Repo", field: "repo", headerSort: false, width: 90, visible: allRepos, formatter: (c) => (c.getValue() ? this.repoLabel(c.getValue()) : "") },
           H("Path", "full_path", { widthGrow: 5, minWidth: 320, formatter: (c) => {
             const d = c.getRow().getData();
-            return d.kind === "folder" ? `📁 ${c.getValue()} <span style="color:var(--muted)">· ${countOf(d.files || 0, "file")}</span>` : c.getValue();
+            return d.kind === "folder" ? `📁 ${c.getValue()} <span style="color:var(--muted)">· ${countOf(d.files || 0, "file")}</span>` : `📄 ${c.getValue()}`;
           } }),
           H("Size", "size", { width: 100, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" }),
           H(term("physical"), "physical", { width: 110, headerTooltip: termTip("physical"), formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" }),
@@ -269,11 +282,11 @@ const searchPart = {
             formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="Held by ${v} sources">${v}</span>` : "1"; } },
           H(term("physicalAll"), "stored_all", { width: 125, hozAlign: "right",
             headerTooltip: termTip("physicalAll") + " Sorting uses the nightly top list; files outside it come after.",
-            formatter: nf((c) => self.versionCell(c.getRow().getData(), "stored")) }, "stored"),
+            formatter: (c) => self.versionCell(c.getRow().getData(), "stored") }, "stored"),
           H(term("reclaimableAll"), "frees_all", { width: 120, hozAlign: "right",
             headerTooltip: termTip("reclaimableAll") + " Sorting uses the nightly top list; files outside it come after.",
-            formatter: nf((c) => self.versionCell(c.getRow().getData(), "frees")) }, "frees"),
-          H("Ext", "ext", { width: 70, formatter: nf((c) => c.getValue() || "") }),
+            formatter: (c) => self.versionCell(c.getRow().getData(), "frees") }, "frees"),
+          H("Ext", "ext", { width: 70, formatter: (c) => (isFolder(c) ? "<span style='color:var(--muted)'>Folder</span>" : c.getValue() || "") }),
           H("Versions", "versions", { width: 80, hozAlign: "right", formatter: nf((c) => c.getValue() ?? "") }),
           { title: "Copies", field: "copies", headerSort: false, width: 75, hozAlign: "right",
             headerTooltip: "How many paths hold this exact content. More filters: same content in at least N paths.",
@@ -319,7 +332,11 @@ const searchPart = {
           });
           if (sStbl) {
             sStbl.on("scrollVertical", () => this.fillVersionSizes());
-            sStbl.on("tableBuilt", () => this.fillVersionSizes());
+            sStbl.on("tableBuilt", () => {
+              // a saved layout can carry the Repo column's visibility over from an All-repositories search
+              try { if (this.searchAllRepos()) sStbl.showColumn("repo"); else sStbl.hideColumn("repo"); } catch (e) {}
+              this.fillVersionSizes();
+            });
           }
           this.fillVersionSizes();
         }
@@ -338,8 +355,8 @@ const searchPart = {
           { label: `Restore ${what}…`, action: () => this.selRestore("search") },
           { label: `Exclude ${what}…`, action: () => this.selExclude("search") },
           { separator: true },
-          { label: `Delete ${what} from backups…`, action: () => this.selDelete("search") },
-          { label: `Exclude & delete ${what}…`, action: () => this.selExclude("search", "delete") },
+          { label: `Delete ${what} from backups…` + this.proMenuTag("remove"), action: () => this.selDelete("search") },
+          { label: `Exclude & delete ${what}…` + this.proMenuTag("exclude_delete"), action: () => this.selExclude("search", "delete") },
           { separator: true },
           { label: `Copy ${sel.length} paths`, action: () => this.copyText(sel.map((r) => r.full_path).join("\n")) },
           { label: "Clear selection", action: () => this.clearSelection("search") },
@@ -350,7 +367,7 @@ const searchPart = {
           { label: "Details", action: () => this.openFolderPanel(d.full_path) },
           { label: "Show its files", action: () => this.drillFolder({ folder: d.full_path }) },
           { separator: true },
-          { label: "Delete folder from backups…", action: () => this.openRemoveFolderPath(d.full_path) },
+          { label: "Delete folder from backups…" + this.proMenuTag("remove"), action: () => this.openRemoveFolderPath(d.full_path) },
           { separator: true },
           { label: "Copy path", action: () => this.copyText(d.full_path) },
         ];
@@ -374,8 +391,8 @@ const searchPart = {
         { label: "Exclude…", action: () => this.openExclude({ kind: "file", path: d.full_path, source: d.source }, "exclude") },
         { label: "Prune versions…", action: () => this.openPrune(d.full_path, d.source) },
         { separator: true },
-        { label: "Delete from backups…", action: () => this.openDeletePanel([item]) },
-        { label: "Exclude & delete…", action: () => this.openExclude({ kind: "file", path: d.full_path, source: d.source }, "delete") },
+        { label: "Delete from backups…" + this.proMenuTag("remove"), action: () => this.openDeletePanel([item]) },
+        { label: "Exclude & delete…" + this.proMenuTag("exclude_delete"), action: () => this.openExclude({ kind: "file", path: d.full_path, source: d.source }, "delete") },
         { separator: true },
         { label: "Copy path", action: () => this.copyText(d.full_path) },
         { label: "Copy source", action: () => this.copyText(d.source) },
@@ -396,7 +413,16 @@ const searchPart = {
     // ---- All-versions sizes for the rows on screen ----
     _versionKey(d) { return (d.repo || this.repo) + "|" + d.source + "|" + d.full_path; },
     versionCell(d, which) {
-      const exact = d[which + "_all_versions"];   // present when sorted by this column
+      const exact = d[which + "_all_versions"];   // present when sorted by this column, or saved for a folder
+      if (d.kind === "folder") {
+        const g = this.groupReclaim[this.repo + ":" + d.full_path];
+        const v = exact != null ? exact : g && typeof g === "object" ? (which === "frees" ? g.v : g.p) : null;
+        const capped = which === "frees" && (exact != null ? !!d.frees_capped : !!(g && g.capped));
+        if (v != null) return (capped ? "&ge; " : "") + fmtPhys(v);
+        if (g === "pending") return "<span style='color:var(--faint)'>…</span>";
+        if (g === "error") return "<span style='color:var(--danger)' title='Could not work this out'>error</span>";
+        return "<span style='color:var(--faint)' title='Not worked out yet'>—</span>";
+      }
       if (exact != null) return fmtBytes(exact);
       const v = this.versionSizes[this._versionKey(d)];
       if (v === undefined) return "<span style='color:var(--faint)'>—</span>";
@@ -406,7 +432,28 @@ const searchPart = {
     },
     fillVersionSizes() {
       if (this._versionTimer) clearTimeout(this._versionTimer);
-      this._versionTimer = setTimeout(() => this._fillVersionSizes(), 250);
+      this._versionTimer = setTimeout(() => { this._fillVersionSizes(); this.fillBothFolders(); }, 250);
+    },
+    // Both view: work out Physical (all) and Reclaimable for the folders on screen that have no
+    // saved value, one at a time, top first (each takes a few seconds).
+    async fillBothFolders() {
+      if (this._bothFilling) return;
+      this._bothFilling = true;
+      try {
+        const el = document.querySelector("#searchTable");
+        const t = el && el._tabulator;
+        const repo = this.repo;
+        while (t && el._tabulator === t && this.active === "search" && this.searchKind === "both" && !this.groupByFolder && this.repo === repo) {
+          const row = t.getRows("visible").find((r) => {
+            const d = r.getData();
+            return d.kind === "folder" && d.stored_all_versions == null && this.groupReclaim[repo + ":" + d.full_path] === undefined;
+          });
+          if (!row) break;
+          await this.computeGroupReclaim(row, row.getData().full_path);
+        }
+      } finally {
+        this._bothFilling = false;
+      }
     },
     async _fillVersionSizes() {
       const el = document.querySelector("#searchTable");

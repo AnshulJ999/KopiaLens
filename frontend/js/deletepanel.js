@@ -118,6 +118,7 @@ const deletePart = {
       if (!p) return "";
       return p.flow ? "Exclude and delete" : `Delete ${this.delFileLabel()} from backups`;
     },
+    delCopyCommand(ev) { if (this.proGate(this.delFeature(), ev)) this.copyText(this.delPanel.plan.command); },
     delPathLine() {
       const f = (this.delPanel && this.delPanel.files) || [];
       if (!f.length) return "";
@@ -212,7 +213,7 @@ const deletePart = {
       const p = this.delPanel;
       if (!p || !p.plan) return "Delete";
       if (p.method === "remove") {
-        return `Remove from ${countOf(this.delScopeSources().length, "source")}`;
+        return `Remove ${countOf(p.plan.match_total || 0, "file")} from ${countOf(this.delScopeSources().length, "source")}`;
       }
       return `Delete ${countOf((p.plan.snapshots || []).length, "snapshot")}`;
     },

@@ -11,7 +11,7 @@
   <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
     <button class="kl-btn dangerline" @click="open = !open" :aria-expanded="open">Delete ▾</button>
     <div class="kl-menu" x-show="open" x-cloak>
-      <button class="dg" @click="open = false; selDelete('{{ scope }}')">Delete from backups…</button>
+      <button class="dg" @click="open = false; selDelete('{{ scope }}')">Delete from backups… <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
       <button class="dg" @click="open = false; selExclude('{{ scope }}', 'delete', $event)">Exclude &amp; delete… <span class="protag" x-show="proTag('exclude_delete')" :title="proTagTitle()">PRO</span></button>
     </div>
   </span>
@@ -86,9 +86,9 @@
 {%- endmacro %}
 
 {#- A duration setting: a free number plus a unit, stored in seconds (klDur in settings.js). -#}
-{% macro duration(prop, key) -%}
+{% macro duration(prop, key, min=0) -%}
 <div class="flex items-center gap-2" x-data="klDur('{{ prop }}', '{{ key }}')">
-  <input type="number" min="0" step="any" x-model.number="n" @change="commit()" class="fld border border-bd bg-surface2 w-24" aria-label="Amount">
+  <input type="number" :min="{{ min }} / Number(unit)" step="any" x-model.number="n" @change="commit()" class="fld border border-bd bg-surface2 w-24" aria-label="Amount">
   <select x-model="unit" @change="relabel()" class="fld border border-bd bg-surface2" aria-label="Unit">
     <option value="1">seconds</option>
     <option value="60">minutes</option>

@@ -48,7 +48,7 @@ document.addEventListener("alpine:init", () => {
     treeWeek: "",
     treeDeletedOnly: false, treeOverGb: false, treeExt: "", treeFlat: false, treeView: "list",
     query: "", deletedOnly: false, overOneGb: false, searchSource: "", searchExt: "", searchExtExclude: "", omniMeta: "",
-    groupByFolder: false, searchKind: "files", searchFolders: 0, searchSkipped: [], groupDepth: 3, groupMinGb: 0, groupMinFiles: 0,
+    groupByFolder: false, searchKind: "files", searchFolders: 0, searchSkipped: [], searchMaxDepth: 20000, groupDepth: 3, groupMinDepth: "", groupMinGb: 0, groupMinFiles: 0,
     churnDays: "30", churnDepth: 4, churnView: "source", churnData: null, churnMeta: "", _churnSeq: 0,
     _churnPhysSeq: 0, _churnPhysCache: {}, _churnPhysTimer: null,   // folder view: on-screen all-versions physical
     indexMode: "daily", indexTime: "23:00", indexInterval: 86400, dashboardMode: "nightly",
@@ -72,7 +72,7 @@ document.addEventListener("alpine:init", () => {
     ob: null, cx: null, repoMenu: false, repoAdd: false, repoDlg: null, repoChecks: {}, kopiaInfo: null, repoKopiaEdit: null,
     policyKeys: ["latest", "hourly", "daily", "weekly", "monthly", "annual"],
     policy: { latest: 100, hourly: 96, daily: 30, weekly: 52, monthly: 36, annual: 5 },
-    simMode: "all", simMeta: "", simText: "", actionText: "", simEmpty: true, simPolicyByRepo: {}, _simRepo: null,
+    simMode: "all", simMeta: "", simText: "", actionText: "", simEmpty: true, simPolicyByRepo: {}, _simRepo: null, _simRunOnOpen: false,
     mounts: [],
     statsData: null, blobStats: "", blobLoading: false, _statsLoading: false,
     auditRows: [], auditSize: 0,
@@ -640,16 +640,22 @@ document.addEventListener("alpine:init", () => {
     },
 
     // ---- Multi-select batch actions (Search + Tree) ----
+    // Search's Folders view is its own table; its rows are mapped to the Both view's folder shape.
+    _selTableId(scope) { return scope === "tree" ? "#treeTable" : this.groupByFolder ? "#groupTable" : "#searchTable"; },
     selectedRows(scope) {
-      const el = document.querySelector(scope === "tree" ? "#treeTable" : "#searchTable");
-      return (el && el._tabulator) ? el._tabulator.getSelectedData() : [];
+      const id = this._selTableId(scope);
+      const el = document.querySelector(id);
+      const rows = (el && el._tabulator) ? el._tabulator.getSelectedData() : [];
+      if (id !== "#groupTable") return rows;
+      return rows.map((r) => ({ kind: "folder", full_path: r.folder, source: r.source || null, sources: r.sources,
+                                size: r.logical, physical: r.phys, files: r.files }));
     },
 
     // Tree rows mark folders with type, Search rows (Both view) with kind.
     isFolderRow(r) { return r.type === "folder" || r.kind === "folder"; },
 
     clearSelection(scope) {
-      const el = document.querySelector(scope === "tree" ? "#treeTable" : "#searchTable");
+      const el = document.querySelector(this._selTableId(scope));
       if (el && el._tabulator) el._tabulator.deselectRow();
     },
 

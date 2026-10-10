@@ -6,6 +6,8 @@ preview) runs first and the execute path is confirmed in-app before anything mut
 
 from __future__ import annotations
 
+import csv
+import io
 import os
 import threading
 import time
@@ -44,6 +46,7 @@ from ..settings import load_settings
 router = APIRouter(tags=["actions"])
 
 _FILENAME_SAMPLE = 500   # collateral paths listed for a filename-mode plan (the count is exact)
+_PLAN_PREVIEW = 1000     # files a plan lists in the panel; the full list is the CSV download
 
 # Previewed plans, by token. The panel's job start passes the token back, so the delete runs
 # the exact list the user approved instead of re-deriving it from the filter (a reindex landing in
@@ -427,7 +430,7 @@ def _merge_targets(results: list[dict]) -> dict:
         "object_ids": oids,
         "names": names,
         "pairs": pairs,
-        "files": files[:200],
+        "files": files,
         "sources": sorted({s for t in results for s in t["sources"]}),
     }
 
@@ -449,6 +452,61 @@ def _filename_matches(repo: str, scope: list[str] | None, names: list[str], cap:
     return paths_named(repo, scope, names, cap=cap, biggest_first=biggest_first)
 
 
+def _plan_prefixes(p: RemovePlanRequest) -> list[str]:
+    if p.parts is not None:
+        return [x.get("prefix") or "" for x in p.parts]
+    return [p.prefix] if p.prefix else []
+
+
+def _plan_breakdown(files: list[dict], prefixes: list[str]) -> dict:
+    """The plan's files grouped three ways for the panel: by folder one level below each selected
+    folder (files directly inside count as the folder itself), by file type, and by source."""
+    bases = []
+    for pre in prefixes:
+        base, sep = pathrules.folder_key(pre)
+        if sep is not None:
+            bases.append((base, sep, sep == pathrules.WIN_SEP))
+    groups: dict[str, dict] = {"folder": {}, "ext": {}, "source": {}}
+
+    def add(kind: str, key: str, f: dict) -> None:
+        e = groups[kind].setdefault(key, [0, 0, 0])
+        e[0] += 1
+        e[1] += int(f.get("size") or 0)
+        e[2] += int(f.get("physical") or 0)
+
+    direct = set()
+    for f in files:
+        fp = f["full_path"]
+        folder = None
+        for base, sep, fold in bases:
+            a, b = (fp.lower(), base.lower()) if fold else (fp, base)
+            if a.startswith(b + sep):
+                rest = fp[len(base) + 1:]
+                cut = rest.find(sep)
+                folder = base + sep + rest[:cut] if cut > 0 else base
+                if cut <= 0:
+                    direct.add(base)
+                break
+        if folder is None:
+            s = pathrules.path_sep(fp)
+            cut = fp.rfind(s)
+            folder = fp[:cut] if cut > 0 else fp
+        add("folder", folder, f)
+        add("ext", (f.get("ext") or "").lower(), f)
+        add("source", f["source"], f)
+
+    def rows(kind: str, n: int) -> list[dict]:
+        top = sorted(groups[kind].items(), key=lambda kv: (-kv[1][2], -kv[1][1], kv[0]))[:n]
+        out = [{kind: k, "files": v[0], "size": v[1], "physical": v[2]} for k, v in top]
+        if kind == "folder":
+            for r in out:
+                r["direct"] = r["folder"] in direct
+        return out
+
+    return {"folders": rows("folder", 200), "types": rows("ext", 100), "sources": rows("source", 500),
+            "folder_count": len(groups["folder"]), "type_count": len(groups["ext"])}
+
+
 def _remove_items(t: dict, by: str) -> tuple[list[str], str]:
     """Return (items, flag) for the chosen mechanism: object-ids (exact content) or basenames."""
     return (t["names"], "--filename") if by == "filename" else (t["object_ids"], "--object-id")
@@ -468,7 +526,7 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
                 "total_logical": 0, "capped": False,
                 "filename_match_total": None, "filename_extra_count": 0, "filename_extra": [],
                 "filename_extra_capped": False, "filename_extra_logical": 0,
-                "filename_extra_physical": 0}
+                "filename_extra_physical": 0, "breakdown": _plan_breakdown([], [])}
     scope = _remove_scope(payload.everywhere, t["sources"])
     generation = index_generation(payload.repo)
     # Free installs see the whole preview, but never the commands or ids that rebuild the delete.
@@ -509,7 +567,9 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
         "total_logical": t["total_logical"], "capped": t["capped"],
         "sources_scope": scope or [], "everywhere": scope is None,
         "sources_matched": t["sources"], "batches": len(commit_cmds),
-        "preview": t["files"] if pro else [{k: v for k, v in f.items() if k != "content_id"} for f in t["files"]],
+        "preview": (t["files"][:_PLAN_PREVIEW] if pro else
+                    [{k: v for k, v in f.items() if k != "content_id"} for f in t["files"][:_PLAN_PREVIEW]]),
+        "breakdown": _plan_breakdown(t["files"], _plan_prefixes(payload)),
         "all_versions": payload.all_versions,
         "commit": "\n".join(_fmt_cmd(c) for c in commit_cmds) if pro else "",
         "dry_run": "\n".join(_fmt_cmd(c) for c in dry_cmds) if pro else "",
@@ -627,6 +687,29 @@ def remove_bat(payload: RemovePlanRequest) -> dict:
                 summary={"items": len(items), "batches": len(cmds), "filename": fname,
                          "sources": scope or [], "everywhere": scope is None})
     return {"filename": fname, "content": content, "batches": len(cmds), "items": len(items)}
+
+
+@router.post("/actions/remove-list")
+def remove_list(payload: RemovePlanRequest) -> dict:
+    """Every file the plan removes, as CSV (Pro). A file-name plan also lists the same-named files
+    outside the selection, since kopia removes those too."""
+    features.require("remove", payload.repo)  # licence check: do not remove or bypass (KopiaLens License)
+    t = _remove_targets(payload)
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(["Source", "Path", "Logical", "Physical", "Why"])
+    for f in t["files"]:
+        w.writerow([f["source"], f["full_path"], f.get("size") or 0, f.get("physical") or 0, "selected"])
+    rows = len(t["files"])
+    if payload.by == "filename" and t["names"]:
+        scope = _remove_scope(payload.everywhere, t["sources"])
+        planned = {(s, fp) for s, fp in t["pairs"]}
+        for r in _filename_matches(payload.repo, scope, t["names"], _plan_cap())["rows"]:
+            if (r["source"], r["full_path"]) not in planned:
+                w.writerow([r["source"], r["full_path"], r.get("size") or 0, r.get("physical") or 0, "same file name"])
+                rows += 1
+    fname = f"kopialens_delete_list_repo{payload.repo}_{time.strftime('%Y%m%d_%H%M%S')}.csv"
+    return {"filename": fname, "content": buf.getvalue(), "rows": rows}
 
 
 @router.post("/actions/remove-plan-dry-run")

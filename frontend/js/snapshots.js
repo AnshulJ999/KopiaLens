@@ -26,8 +26,8 @@ const snapshotsPart = {
           { title: term("reclaimable"), headerTooltip: termTip("reclaimable"), field: "reclaimable", width: 110, sorter: "number", formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },
           { title: "Files", field: "files", width: 90, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Dirs", field: "dirs", width: 80, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
-          { title: "Retention", field: "retention", sorter: listSorter, accessorDownload: (v) => (v || []).join(", "), widthGrow: 2, minWidth: 150, formatter: (c) => (c.getValue() || []).map((r) => `<span class="pill" style="background:#dbeafe;color:#1e40af">${r}</span>`).join("") },
-          { title: "Pins", field: "pins", sorter: listSorter, accessorDownload: (v) => (v || []).join(", "), widthGrow: 1, minWidth: 90, formatter: (c) => (c.getValue() || []).map((p) => `<span class="pill" style="background:#fef3c7;color:#92400e">${p}</span>`).join("") },
+          { title: "Retention", field: "retention", sorter: listSorter, headerSortStartingDir: "desc", accessorDownload: (v) => (v || []).join(", "), widthGrow: 2, minWidth: 150, formatter: (c) => (c.getValue() || []).map((r) => `<span class="pill" style="background:#dbeafe;color:#1e40af">${r}</span>`).join("") },
+          { title: "Pins", field: "pins", sorter: listSorter, headerSortStartingDir: "desc", accessorDownload: (v) => (v || []).join(", "), widthGrow: 1, minWidth: 90, formatter: (c) => (c.getValue() || []).map((p) => `<span class="pill" style="background:#fef3c7;color:#92400e">${p}</span>`).join("") },
           { title: "ID", field: "id", width: 200 },
         ].filter((c) => !(server && spaceCols.includes(c.field)));
         // The menu acts on the selection (a right-click outside it selects that row first).

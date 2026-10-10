@@ -40,7 +40,7 @@ const dashboardPart = {
           rowMenu: [
             { label: "Show snapshots", action: (_e, row) => this.showSourceSnapshots(row.getData().source) },
             { label: "Show in Tree", action: (_e, row) => { this.selectedSource = row.getData().source; this.active = "tree"; this.openTree(); } },
-            { label: "Simulate this source", action: (_e, row) => { this.selectedSource = row.getData().source; this.simMode = "one"; this.active = "simulate"; this.runSimulate(); } },
+            { label: "Simulate this source", action: (_e, row) => this.simulateSource(row.getData().source) },
             { separator: true },
             { label: "Snapshot now…", action: (_e, row) => this.snapshotNow(row.getData().source) },
             { label: "Open policy", action: (_e, row) => this.openSourcePolicy(row.getData().source) },

@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import time
 
 from config import CACHEDIR
 
@@ -308,6 +309,7 @@ def simulate_all(repo: str, policy: dict[str, int], refresh: bool = False, cache
         "shared_between_sources_gb": gb(combined - sum_per),
         "policy": policy,
         "cached": False,
+        "computed_at": time.time(),
         "note": keep_all_note(policy),
     }
     sidecache.write(cache_name, data)

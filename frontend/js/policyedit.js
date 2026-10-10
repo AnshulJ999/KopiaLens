@@ -279,19 +279,15 @@ const policyEditPart = {
       const m = c && c.meaning && c.meaning !== "Custom schedule" ? c.meaning : "";
       return m.replace(/\b([01]?\d|2[0-3]):([0-5]\d)\b/g, (_, h, mi) => { const d = new Date(); d.setHours(+h, +mi, 0, 0); return _clockFmt.format(d); });
     },
-    // "Today 10:00 PM", "Tomorrow 10:00 PM", "Sun 11 Oct, 10:00 PM".
-    polWhen(t) {
-      const d = toDate(t);
-      if (isNaN(d.getTime())) return humanTime(t);
-      const day = new Date(d); day.setHours(0, 0, 0, 0);
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      const diff = Math.round((day - today) / 86400000);
-      const clock = _clockFmt.format(d);
-      if (diff === 0) return "Today " + clock;
-      if (diff === 1) return "Tomorrow " + clock;
-      const date = _dateStyle === "iso" ? `${d.toLocaleDateString(undefined, { weekday: "short" })} ${_isoDay(d)}`
-        : d.toLocaleDateString(dateLocale(), { weekday: "short", day: "numeric", month: "short" });
-      return `${date}, ${clock}`;
+    // "in 21 hours", "in 2 days": rounded to the nearest unit, the way KopiaUI words it.
+    polRel(t) {
+      const mins = (toDate(t).getTime() - Date.now()) / 60000;
+      if (!(mins > 0)) return "now";
+      if (mins < 60) return `in ${countOf(Math.max(1, Math.round(mins)), "minute")}`;
+      const hours = mins / 60;
+      if (hours < 22) return `in ${countOf(Math.round(hours), "hour")}`;
+      if (hours < 36) return "in a day";
+      return `in ${countOf(Math.round(hours / 24), "day")}`;
     },
     polSummarySchedule() {
       const r = this.polRes();
@@ -306,11 +302,15 @@ const policyEditPart = {
       return bits.length ? bits.join(" · ") : "No schedule";
     },
     polParent() { const r = this.polRes(); return r && r.chain.length > 1 ? r.chain[1] : ""; },
-    polNextText() {
+    polNextRuns() {
+      const r = this.polRes();
+      if (!r || (r.effective.scheduling || {}).manual) return [];
+      return (r.next_snapshots || []).slice(0, 5).map((t) => ({ when: fmtAbs(t), rel: this.polRel(t) }));
+    },
+    polNextEmpty() {
       const r = this.polRes();
       if (!r) return "";
-      if ((r.effective.scheduling || {}).manual) return "Manual only: no scheduled snapshots.";
-      return (r.next_snapshots || []).map((t) => this.polWhen(t)).join(" · ") || "No scheduled snapshots.";
+      return (r.effective.scheduling || {}).manual ? "Manual only: no scheduled snapshots." : "No scheduled snapshots.";
     },
     polActionsOff() { return !!(this.polMeta && this.polMeta.client && this.polMeta.client.host && !this.polMeta.client.enable_actions); },
 

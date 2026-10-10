@@ -1,11 +1,26 @@
 // Simulate tab: retention-policy reclaim simulation (combined union, not the per-source sum).
+// Simulate and Snapshots share one source (snapSource); the Tree keeps its own.
 const simulatePart = {
-    // Simulate opens from Snapshots, for the source Snapshots is showing.
     openSimulateFromSnapshots() {
-      if (this.snapSource && this.snapSource !== "*ALL*") { this.selectedSource = this.snapSource; this.simMode = "one"; }
-      else this.simMode = "all";
       this.active = "simulate";
       this.activate();
+    },
+    // "Simulate this source" from the Dashboard or Churn: that source becomes Snapshots' too.
+    simulateSource(source) {
+      this.snapSource = source;
+      this.snapSourceByRepo = { ...this.snapSourceByRepo, [this.repo]: source };
+      this.klSet({ snap_source_by_repo: this.snapSourceByRepo });
+      this.simEmpty = true; this.simMeta = "";
+      this._simRunOnOpen = true;
+      this.active = "simulate";
+      this.activate();
+    },
+    simSourceChanged() {
+      this.snapSourceByRepo = { ...this.snapSourceByRepo, [this.repo]: this.snapSource };
+      this.klSet({ snap_source_by_repo: this.snapSourceByRepo });
+      this.simEmpty = true; this.simMeta = "";
+      setTable("#simulateTable", [], []);
+      this.openSimulate();
     },
 
 
@@ -13,6 +28,7 @@ const simulatePart = {
     // saved result for it when one exists. Nothing heavy runs until Run.
     async openSimulate() {
       const repo = this.repo;
+      this.simMode = this.snapSource && this.snapSource !== "*ALL*" ? "one" : "all";
       if (this._simRepo !== repo) {
         this._simRepo = repo;
         const saved = this.simPolicyByRepo[repo];
@@ -27,6 +43,7 @@ const simulatePart = {
         }
         this.simEmpty = true; this.simMeta = "";
       }
+      if (this._simRunOnOpen) { this._simRunOnOpen = false; return this.runSimulate(); }
       if (this.simMode === "all" && this.simEmpty) this.runSimulate(false, true);
     },
     simPolicyLabel(k) { return { latest: "Latest", hourly: "Hourly", daily: "Daily", weekly: "Weekly", monthly: "Monthly", annual: "Annual" }[k] || k; },
@@ -39,7 +56,7 @@ const simulatePart = {
       }
       await this.wrap(async () => {
         const body = { repo: this.repo, refresh, policy: this.policy, cached_only: cachedOnly };
-        if (this.simMode === "one") body.source = this.selectedSource;
+        if (this.simMode === "one") body.source = this.snapSource;
         const r = await getJson("/api/simulate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
         if (r && r.empty) return;   // no saved result for this policy yet
         this.simEmpty = false;
@@ -53,7 +70,8 @@ const simulatePart = {
             { title: term("reclaimable"), headerTooltip: termTip("reclaimable"), field: "reclaim", width: 120, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
           ], { initialSort: [{ column: "reclaim", dir: "desc" }] });
         } else {
-          this.simMeta = `Frees ${fmtBytes(r.combined_reclaim)} in total · ${fmtBytes(r.shared_between_sources)} of it is shared between sources`;
+          this.simMeta = `Frees ${fmtBytes(r.combined_reclaim)} in total · the sources' own figures add up to ${fmtBytes(r.sum_per_source)}; ${fmtBytes(r.shared_between_sources)} is shared between sources`
+            + (r.cached ? ` · saved result${r.computed_at ? " from " + humanTime(r.computed_at) : ""}` : "");
           setTable("#simulateTable", r.rows || [], [
             { title: "Source", field: "source", widthGrow: 4, minWidth: 240, sorter: srcSorter, formatter: (c) => sourcePath(c.getValue()) },
             { title: "Total", field: "total_snapshots", width: 80, hozAlign: "right" },

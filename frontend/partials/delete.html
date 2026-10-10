@@ -15,6 +15,11 @@
           </div>
 
           <div class="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+            <div class="kl-list" style="max-height:96px" x-show="delPanel.files.length > 1">
+              <template x-for="(f, i) in delPanel.files" :key="i">
+                <div class="li"><span class="font-mono break-all grow" x-text="f.full_path"></span><span class="kl-note shrink-0" x-text="shortSource(f.source)"></span></div>
+              </template>
+            </div>
             <div class="kl-choices">
               <div>
                 <div class="lbl">How</div>
@@ -64,8 +69,9 @@
                 <!-- remove from snapshots -->
                 <template x-if="delPanel.method === 'remove'">
                   <div class="space-y-4">
-                    <div class="kl-cards">
+                    <div class="kl-cards five">
                       <div class="kl-card"><div class="k">Files</div><div class="v" x-text="Number(delPanel.plan.match_total || 0).toLocaleString(NUM_LOCALE)"></div></div>
+                      <div class="kl-card" :class="delPanel.plan.other_count ? 'warn' : ''"><div class="k" :title="delPanel.by === 'filename' ? 'Files outside the selection with the same names, removed too' : 'The same content at other paths, removed too'" x-text="delPanel.by === 'filename' ? 'Other same-named' : 'Identical copies'"></div><div class="v" x-text="Number(delPanel.plan.other_count || 0).toLocaleString(NUM_LOCALE)"></div></div>
                       <div class="kl-card"><div class="k">Versions</div><div class="v" x-text="Number(delPanel.plan.versions || 0).toLocaleString(NUM_LOCALE)"></div></div>
                       <div class="kl-card good"><div class="k" :title="termTip('reclaimable')" x-text="term('reclaimable')"></div><div class="v" x-text="delPanel.statsLoading ? '…' : (delPanel.stats ? fmtPhys(delPanel.stats.freeable) : '—')"></div></div>
                       <div class="kl-card"><div class="k">Sources</div><div class="v" x-text="delScopeSources().length"></div></div>
@@ -125,6 +131,7 @@
                   </button>
                   <span x-show="delDryChecked()" class="pill ok">dry run checked</span>
                   <span class="grow"></span>
+                  <button class="kl-btn quiet" @click="delCopyCommand($event)" x-show="delPanel.plan.command || proTag(delFeature())">Copy command <span class="protag" x-show="proTag(delFeature())" :title="proTagTitle()">PRO</span></button>
                   <button class="kl-btn quiet" x-show="delPanel.plan.command" @click="delPanel.showCmd = !delPanel.showCmd" x-text="delPanel.showCmd ? 'Hide command' : 'Show command'"></button>
                 </div>
                 <template x-if="delPanel.showCmd">

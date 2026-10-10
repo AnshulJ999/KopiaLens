@@ -176,7 +176,7 @@ const treePart = {
           { label: `Restore ${what}…`, action: () => this.selRestore("tree") },
           { label: `Exclude ${what}…`, action: () => this.selExclude("tree") },
           { separator: true },
-          { label: `Delete ${what} from backups…`, action: () => this.selDelete("tree") },
+          { label: `Delete ${what} from backups…` + this.proMenuTag("remove"), action: () => this.selDelete("tree") },
           { label: `Exclude & delete ${what}…`, action: () => this.selExclude("tree", "delete") },
           { separator: true },
           { label: `Copy ${sel.length} paths`, action: () => this.copyText(sel.map((r) => r.path).join("\n")) },
@@ -186,7 +186,8 @@ const treePart = {
       const withSource = async (fn) => { const s = await this.treeSourceFor(d.path); if (s) fn(s); };
       const items = folder
         ? [{ label: "Open", action: () => this.navTree(d.path) },
-           { label: "Details", action: () => this.openRowDetail(d) }]
+           { label: "Details", action: () => this.openRowDetail(d) },
+           { label: "Show in Search", action: () => this.drillFolder({ folder: d.path }) }]
         : [{ label: "Details", action: () => withSource((s) => this.openFileDetail({ source: s, full_path: d.path })) },
            { label: "Show in Search", action: () => { this.query = d.name; this.searchSource = ""; this.active = "search"; this.loadSearch(); } }];
       items.push(
@@ -199,9 +200,9 @@ const treePart = {
                                                           : withSource((s) => this.openPrune(d.path, s))) },
         { separator: true },
         // Files go to the Delete panel, folders to the folder plan (which honours the Tree filters).
-        { label: folder ? "Delete folder from backups…" : "Delete from backups…",
+        { label: (folder ? "Delete folder from backups…" : "Delete from backups…") + this.proMenuTag("remove"),
           action: () => (folder ? this.openRemoveFolder(d) : withSource((s) => this.openDeletePanel([{ source: s, full_path: d.path }]))) },
-        { label: "Exclude & delete…", action: () => this.treeExcludeRow(d, "delete") },
+        { label: "Exclude & delete…" + this.proMenuTag("exclude_delete"), action: () => this.treeExcludeRow(d, "delete") },
         { separator: true },
         { label: "Copy path", action: () => this.copyText(d.path) });
       return items;

@@ -7,7 +7,7 @@ const INDEX_STAGES = [
   ["dashboard", "Dashboard numbers"],
   ["analysis", "Snapshot analysis"],
   ["churn", "Churn"],
-  ["folders", "Folder sizes"],
+  ["folders", "Folder reclaimable space"],
   ["policies", "Policies"],
   ["policy_prices", "Policy sizes"],
   ["ignore_files", "Ignore files"],

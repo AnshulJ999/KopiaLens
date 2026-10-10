@@ -240,7 +240,7 @@
               </div>
               <div x-show="diskLookupMode !== 'off'">
                 <div class="flex items-center justify-between gap-3"><span>Folder scan time limit</span>
-                  {{ duration('diskScanBudget', 'disk_scan_budget') }}</div>
+                  {{ duration('diskScanBudget', 'disk_scan_budget', 1) }}</div>
                 <p class="text-[0.6875rem] text-muted mt-1">A scan that takes longer answers "not measured" instead of making you wait.</p>
               </div>
               <div x-show="diskLookupMode === 'auto' || diskLookupMode === 'everything'">
@@ -272,7 +272,7 @@
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Indexing time limit</span>
-                  {{ duration('indexWorkerTimeout', 'index_worker_timeout') }}</div>
+                  {{ duration('indexWorkerTimeout', 'index_worker_timeout', 600) }}</div>
                 <p class="text-[0.6875rem] text-muted mt-1">An indexing run that takes longer is stopped and tried again later.</p>
               </div>
               <div>
@@ -282,7 +282,7 @@
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Retry after a failed run</span>
-                  {{ duration('indexRetryDelay', 'index_retry_delay') }}</div>
+                  {{ duration('indexRetryDelay', 'index_retry_delay', 60) }}</div>
                 <p class="text-[0.6875rem] text-muted mt-1">How long to wait before trying a failed indexing run again.</p>
               </div>
               <div>
@@ -299,7 +299,7 @@
                 <p class="text-[0.6875rem] text-muted mt-1">Restart always lets indexing finish. A stopped run is tried again later.</p>
               </div>
               <div>
-                <div class="flex items-center justify-between gap-3"><span>Folder sizes ahead of time</span>
+                <div class="flex items-center justify-between gap-3"><span>Folder reclaimable space ahead of time</span>
                   {{ duration('folderPrewarmBudget', 'folder_prewarm_budget') }}</div>
                 <p class="text-[0.6875rem] text-muted mt-1">Nightly time limit for working out folder sizes ahead of time, biggest folders first. Folders it doesn't reach are worked out when you open them. <strong>0 turns it off.</strong></p>
               </div>
@@ -310,7 +310,7 @@
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Gap between background runs</span>
-                  {{ duration('reindexInterval', 'reindex_interval') }}</div>
+                  {{ duration('reindexInterval', 'reindex_interval', 300) }}</div>
                 <p class="text-[0.6875rem] text-muted mt-1">With indexing set to every N hours: the least time between two runs, also right after a restart.</p>
               </div>
               <div>

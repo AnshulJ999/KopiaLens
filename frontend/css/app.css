@@ -66,11 +66,13 @@ body { font-family: var(--font-sans); }
 .kl-card { border: 1px solid var(--bd); border-radius: var(--r-md); padding: var(--sp-2) 0.625rem; background: var(--surface2); }
 .kl-card .k { font-size: var(--fs-xs); color: var(--muted); }
 .kl-card .v { font-size: var(--fs-lg); font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.kl-card .s { font-size: var(--fs-xs); color: var(--muted); margin-top: 1px; font-variant-numeric: tabular-nums; }
+.kl-cards.five { grid-template-columns: repeat(5, 1fr); }
 .kl-card.good { border-color: var(--ok-bd); background: var(--ok-bg); }
 .kl-card.good .k, .kl-card.good .v { color: var(--ok); }
 .kl-card.warn { border-color: var(--warn-bd); background: var(--warn-bg); }
 .kl-card.warn .k, .kl-card.warn .v { color: var(--warn); }
-@media (max-width: 640px) { .kl-cards { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px) { .kl-cards, .kl-cards.five { grid-template-columns: repeat(2, 1fr); } }
 
 /* Lists: one height, one row shape. A truncated list says so in .kl-listfoot. */
 .kl-list { border: 1px solid var(--bd); border-radius: var(--r-md); max-height: 8.25rem; overflow: auto; background: var(--surface); }

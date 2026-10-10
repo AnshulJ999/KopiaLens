@@ -158,7 +158,14 @@
   <template x-if="!polMulti.on">
     <div class="kl-sec mt-3">
       <div class="h">Next snapshots</div>
-      <div class="text-xs" x-text="polNextText()"></div>
+      <template x-if="polNextRuns().length">
+        <div class="text-xs space-y-0.5">
+          <template x-for="(n, i) in polNextRuns()" :key="i">
+            <div><span class="num" x-text="n.when"></span> <span class="text-muted" x-text="'(' + n.rel + ')'"></span></div>
+          </template>
+        </div>
+      </template>
+      <div class="text-xs" x-show="!polNextRuns().length" x-text="polNextEmpty()"></div>
       <div class="kl-note">Schedules run while KopiaUI or a kopia server is running.</div>
     </div>
   </template>

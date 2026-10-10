@@ -362,8 +362,8 @@ def resolve_draft(body: ResolveBody) -> dict:
         "effective": eff_a, "definition": def_a,
         "effective_before": eff_b, "definition_before": def_b,
         "errors": policyresolve.validate(key, draft),
-        "next_snapshots": policyresolve.next_snapshots(eff_a, last),
-        "next_snapshots_before": policyresolve.next_snapshots(eff_b, last),
+        "next_snapshots": policyresolve.next_snapshots(eff_a, last, count=5),
+        "next_snapshots_before": policyresolve.next_snapshots(eff_b, last, count=5),
         "inheritors": [s for s in _source_keys(body.repo)
                        if s != key and key in {k for k, _ in policyresolve.hierarchy(defined, s)}],
     }

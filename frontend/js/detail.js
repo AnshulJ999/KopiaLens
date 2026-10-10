@@ -111,6 +111,14 @@ const detailPart = {
       if (s.origin === "none") return list;
       return list + (s.excluded ? " · a rule leaves this out" : " · none match");
     },
+    // "All 53 versions take 12.58 GB. Removing every one of them frees 8.76 GB."
+    fileVersionsLine() {
+      const d = this.detail;
+      const n = ((d && d.versions) || []).length;
+      if (!n) return "";
+      return n === 1 ? `Its one version takes ${fmtPhys(d.physical_all)}. Removing it frees ${fmtPhys(d.freeable)}.`
+        : `All ${Number(n).toLocaleString(NUM_LOCALE)} versions take ${fmtPhys(d.physical_all)}. Removing every one of them frees ${fmtPhys(d.freeable)}.`;
+    },
     fileHistoryRows() {
       const d = this.detail;
       if (!d || d.kind !== "file" || !(d.versions || []).length) return [];
@@ -123,6 +131,7 @@ const detailPart = {
         ["First backed up", fmtDate(vs[vs.length - 1].start)],
         ["Last changed", humanTime(vs[0].start)],
         ["Changes", changes <= 1 ? "Unchanged since the first backup" : `Changed ${changes - 1} time${changes === 2 ? "" : "s"} in ${days} day${days === 1 ? "" : "s"}`],
+        ["Versions", Number(vs.length).toLocaleString(NUM_LOCALE)],
         ["Copies", copies > 0 ? `${copies} identical cop${copies === 1 ? "y" : "ies"} elsewhere` : "None elsewhere"],
         ["Rules", this._rulesRow()],
       ];
@@ -435,7 +444,8 @@ const detailPart = {
       const b = this._removeBase || {}, p = this.removePlan;
       if (p && p.flow) return "Exclude and delete";
       if (b.parts) return `Delete ${this._removeLabel} from backups`;
-      if (b.prefix) return `Delete ${baseName(b.prefix) || b.prefix} from backups`;
+      const name = baseName(b.prefix || "") || b.prefix;
+      if (b.prefix) return (this._removeLabel || "").startsWith("folder ") ? `Delete folder “${name}” from backups` : `Delete “${name}” from backups`;
       return "Delete everything matching the search";
     },
     removePathLine() {
@@ -448,7 +458,8 @@ const detailPart = {
     removeConfirmLabel() {
       const p = this.removePlan;
       if (!p) return "Delete";
-      return p.everywhere ? "Remove from every source" : `Remove from ${countOf((p.sources_scope || []).length, "source")}`;
+      const files = countOf(this.removeFileTotal(), "file");
+      return p.everywhere ? `Remove ${files} from every source` : `Remove ${files} from ${countOf((p.sources_scope || []).length, "source")}`;
     },
     buildRemovePlan() {
       // Folder/file-context deletes (a Tree prefix) default to ALL versions: latest-only would
@@ -469,6 +480,7 @@ const detailPart = {
       const r = await getJson("/api/actions/remove-plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
       if (seq !== this._removePlanSeq || !this.removePlan) return;  // a newer toggle superseded this fetch
       if (r) Object.assign(this.removePlan, r);
+      this.removePlan.shown = 100;
       this.removePlan.loading = false;
       // Auto-compute freeable/shared (like the file panel) unless the set is huge (avoid a long walk).
       if (r && (r.file_count || 0) <= 200000) this.removeComputeReclaim();
@@ -539,6 +551,27 @@ const detailPart = {
       return Math.round((p.physical / p.total_physical) * 100);
     },
     copyRemoveCommand(ev) { if (this.proGate("remove", ev)) this.copyText(this.removePlan.commit); },
+    // "What gets removed": the biggest files, or the plan grouped by folder or by file type.
+    removeListCount() {
+      const p = this.removePlan;
+      if (!p) return "";
+      const b = p.breakdown || {};
+      const total = this.removeFileTotal();
+      if (p.listView === "folders") return (b.folder_count || 0) > (b.folders || []).length ? `biggest ${(b.folders || []).length} of ${Number(b.folder_count).toLocaleString(NUM_LOCALE)} folders` : countOf((b.folders || []).length, "folder");
+      if (p.listView === "types") return countOf((b.types || []).length, "file type");
+      const shown = Math.min(p.shown || 100, (p.preview || []).length);
+      return shown < total ? `${shown.toLocaleString(NUM_LOCALE)} of ${countOf(total, "file")}, biggest first` : `${countOf(total, "file")}, biggest first`;
+    },
+    removeFolderLabel(f) {
+      return f.direct ? `Files directly in ${baseName(f.folder) || f.folder}` : f.folder;
+    },
+    async removeDownloadList(ev) {
+      if (!this.proGate("remove", ev)) return;
+      const r = await getJson("/api/actions/remove-list", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
+      if (!r) return;
+      this._downloadText(r.filename, r.content);
+      this.klNotify(`Downloaded ${r.filename} (${countOf(r.rows, "file")}).`);
+    },
     async removeSaveBat(ev) {
       if (!this.proGate("remove", ev)) return;
       const r = await getJson("/api/actions/remove-bat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });

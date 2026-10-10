@@ -23,8 +23,8 @@ const TERMS = {
     glossary: "The storage a delete gives back: data that nothing kept still uses. Kopia releases it during full maintenance.",
   },
   reclaimableOwn: {
-    label: "Reclaimable on its own",
-    tip: "Space only this uses. Pieces it shares with other files stay.",
+    label: "Reclaimable",
+    tip: "Space you get back if only this is deleted. Pieces it shares with other files stay.",
     glossary: "What deleting just this item gives back. Data it shares with other files stays, because they still need it.",
   },
   reclaimableAll: {

@@ -36,6 +36,8 @@ const licencePart = {
       return locked && (PRO_TAGS_ON_DEMO || !this.isDemo());
     },
     proTagTitle() { return this.isDemo() ? "Pro feature. Free to try in the demo." : null; },
+    // The same mark inside a table's right-click menu, whose labels are HTML.
+    proMenuTag(feature) { return this.proTag(feature) ? ' <span class="protag">PRO</span>' : ""; },
 
     // Call first in every Pro action: true = go ahead; false = the notice opened by the button.
     proGate(feature, ev) {

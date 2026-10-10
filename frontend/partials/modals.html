@@ -75,6 +75,7 @@
             </button>
             <span x-show="deleteDryChecked()" class="pill ok">dry run checked</span>
             <span class="grow"></span>
+            <button class="kl-btn quiet" x-show="deletePlan.commands" @click="copyText(deletePlan.commands)">Copy command</button>
             <button class="kl-btn quiet" x-show="deletePlan.commands" @click="deletePlan.showCmd = !deletePlan.showCmd" x-text="deletePlan.showCmd ? 'Hide command' : 'Show command'"></button>
           </div>
           <template x-if="deletePlan.showCmd">
@@ -184,8 +185,9 @@
                 <div class="kl-card"><div class="k">Sources</div><div class="v" x-text="removePlan.everywhere ? 'All' : (removePlan.sources_scope || []).length"></div></div>
               </div>
               <div class="kl-note">
-                <span x-text="'Size of the files: ' + fmtPhys(removePhysTotal())"></span><span
-                  x-show="removePlan.detail && removePlan.detail.found !== false && removePlan.detail.shared" x-text="' · shared with other files: ' + fmtPhys(removePlan.detail && removePlan.detail.shared)"></span><span
+                <span :title="termTip('logical')" x-text="term('logical') + ' ' + fmtB(Number(removePlan.logical || 0) + removeExtra('filename_extra_logical'))"></span><span
+                  :title="termTip('physical')" x-text="' · ' + term('physical') + ' ' + fmtPhys(removePhysTotal()) + ' (newest versions)'"></span><span
+                  x-show="removePlan.detail && removePlan.detail.found !== false && removePlan.detail.shared" x-text="' · shared with other files ' + fmtPhys(removePlan.detail && removePlan.detail.shared)"></span><span
                   x-show="removePlan.detail && removePlan.detail.capped" class="text-warn"> · biggest 5,000 files checked</span>
                 <button class="kl-btn quiet ml-2" style="height:22px" x-show="!removePlan.detail && !removePlan.detailLoading" @click="removeComputeReclaim()">Work out reclaimable space</button>
               </div>
@@ -194,7 +196,14 @@
                 <span x-text="removeCoverage() + '%'"></span> of everything matched (<span x-text="countOf(removePlan.total_file_count, 'file')"></span>, <span x-text="fmtPhys(removePlan.total_physical)"></span>).
               </div>
               <div class="kl-callout" x-show="removePlan.everywhere">Removes this content from every source in the repository.</div>
-              <div class="kl-note break-all" x-show="!removePlan.everywhere && (removePlan.sources_scope || []).length" x-text="'Sources: ' + (removePlan.sources_scope || []).map(shortSource).join('  ·  ')"></div>
+              <div class="kl-sec" x-show="!removePlan.everywhere && ((removePlan.breakdown || {}).sources || []).length">
+                <div class="h">Sources <span class="count" x-text="countOf(((removePlan.breakdown || {}).sources || []).length, 'source')"></span></div>
+                <div class="kl-list" style="max-height:132px">
+                  <template x-for="s in ((removePlan.breakdown || {}).sources || [])" :key="s.source">
+                    <div class="li"><span class="font-mono break-all grow" :title="s.source" x-text="shortSource(s.source)"></span><span class="kl-note shrink-0" x-text="countOf(s.files, 'file')"></span><span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtPhys(s.physical)"></span></div>
+                  </template>
+                </div>
+              </div>
 
               <template x-if="removePlan.parts">
                 <div class="kl-sec">
@@ -229,12 +238,44 @@
               </template>
 
               <div class="kl-sec" x-show="(removePlan.preview || []).length">
-                <div class="h">What gets removed <span class="count">biggest first</span></div>
-                <div class="kl-list" style="max-height:200px">
-                  <template x-for="(f, i) in (removePlan.preview || []).slice(0, 40)" :key="i">
-                    <div class="li"><span class="font-mono break-all grow" x-text="f.full_path"></span><span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtPhys(f.physical)"></span></div>
-                  </template>
+                <div class="h">What gets removed <span class="count" x-text="removeListCount()"></span>
+                  <span class="acts">
+                    <span class="kl-seg">
+                      <span :class="!removePlan.listView || removePlan.listView === 'files' ? 'on' : ''" @click="removePlan.listView = 'files'">Biggest files</span>
+                      <span :class="removePlan.listView === 'folders' ? 'on' : ''" @click="removePlan.listView = 'folders'">By folder</span>
+                      <span :class="removePlan.listView === 'types' ? 'on' : ''" @click="removePlan.listView = 'types'">By file type</span>
+                    </span>
+                    <button class="kl-btn quiet" style="height:22px" @click="removeDownloadList($event)" title="Every file this removes, as a CSV file">Download list <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
+                  </span>
                 </div>
+                <template x-if="!removePlan.listView || removePlan.listView === 'files'">
+                  <div>
+                    <div class="kl-list" style="max-height:240px">
+                      <template x-for="(f, i) in (removePlan.preview || []).slice(0, removePlan.shown || 100)" :key="i">
+                        <div class="li"><span class="font-mono break-all grow" x-text="f.full_path"></span><span class="kl-note shrink-0" x-show="(removePlan.sources_scope || []).length > 1" x-text="shortSource(f.source)"></span><span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtPhys(f.physical)"></span></div>
+                      </template>
+                    </div>
+                    <div class="flex items-center gap-2 mt-1">
+                      <button class="kl-btn quiet" style="height:22px" x-show="(removePlan.shown || 100) < (removePlan.preview || []).length" @click="removePlan.shown = (removePlan.shown || 100) + 100">Show 100 more</button>
+                      <span class="kl-note" x-show="(removePlan.shown || 100) >= (removePlan.preview || []).length && removeFileTotal() > (removePlan.preview || []).length"
+                            x-text="'The biggest ' + Number((removePlan.preview || []).length).toLocaleString(NUM_LOCALE) + ' are listed here. Download the list for all ' + countOf(removeFileTotal(), 'file') + '.'"></span>
+                    </div>
+                  </div>
+                </template>
+                <template x-if="removePlan.listView === 'folders'">
+                  <div class="kl-list" style="max-height:240px">
+                    <template x-for="f in ((removePlan.breakdown || {}).folders || [])" :key="f.folder">
+                      <div class="li"><span class="font-mono break-all grow" :title="f.folder" x-text="removeFolderLabel(f)"></span><span class="kl-note shrink-0" x-text="countOf(f.files, 'file')"></span><span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtPhys(f.physical)"></span></div>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="removePlan.listView === 'types'">
+                  <div class="kl-list" style="max-height:240px">
+                    <template x-for="f in ((removePlan.breakdown || {}).types || [])" :key="f.ext">
+                      <div class="li"><span class="font-mono grow" x-text="f.ext ? '.' + f.ext : 'no extension'"></span><span class="kl-note shrink-0" x-text="countOf(f.files, 'file')"></span><span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtPhys(f.physical)"></span></div>
+                    </template>
+                  </div>
+                </template>
               </div>
 
               <div class="kl-runbar">
@@ -243,14 +284,12 @@
                 </button>
                 <span x-show="removePlanDryChecked()" class="pill ok">dry run checked</span>
                 <span class="grow"></span>
+                <button class="kl-btn quiet" @click="copyRemoveCommand($event)" :disabled="!removePlan.file_count">Copy command <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
+                <button class="kl-btn quiet" @click="removeSaveBat($event)" :disabled="!removePlan.file_count" title="Runs the same commands and logs kopia's output">Save script <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
                 <button class="kl-btn quiet" x-show="removePlan.commit" @click="removePlan.showCmd = !removePlan.showCmd" x-text="removePlan.showCmd ? 'Hide command' : 'Show command'"></button>
               </div>
               <template x-if="removePlan.showCmd">
                 <div class="kl-term" style="max-height:150px">
-                  <div class="flex justify-end gap-2">
-                    <button class="kl-btn quiet" style="height:22px" @click="copyRemoveCommand($event)">Copy <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
-                    <button class="kl-btn quiet" style="height:22px" @click="removeSaveBat($event)" title="Runs the same commands and logs kopia's output">Save script <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
-                  </div>
                   <template x-if="removePlan.commit">
                     <div>
                       <div class="t">dry run</div><div class="break-all" x-text="removePlan.dry_run"></div>

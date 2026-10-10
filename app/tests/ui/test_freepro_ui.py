@@ -16,7 +16,7 @@ def test_free_sees_pro_tags_and_the_upgrade_notice(app_server, open_page):
 
     # The file panel hands off to the Delete panel, whose red button carries the Pro lock.
     page.locator("#kl-file-remove").get_by_role("button", name="Remove from snapshots…").click()
-    remove = page.locator("div[x-show='showDel'] button.kl-btn.danger", has_text="Remove from")
+    remove = page.locator("div[x-show='showDel'] button.kl-btn.danger", has_text="Remove 1 file from")
     expect(remove).to_contain_text("PRO")
     expect(remove).to_be_enabled(timeout=30_000)
     remove.click()

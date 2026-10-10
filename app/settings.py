@@ -23,7 +23,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "time_format": "absolute",
         "number_style": "system",    # system | en-US | de-DE | fr-FR | en-IN (shown by example)
         "date_style": "system",      # system | dmy (9 Oct 2026) | mdy (Oct 9, 2026) | iso (2026-10-09)
-        "clock": "system",           # system | 12 | 24
+        "clock": "12",               # system | 12 | 24
         # ---- appearance (themes + density) ---------------------------------------------------
         # data-theme/data-density are stamped into the rendered page so it paints correctly
         # before any JS runs. light_theme/dark_theme are the two slots the nav quick switch
@@ -34,7 +34,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "font": "inter",             # inter|geist|plex|system (bundled in frontend/vendor/fonts)
         "sort_arrows": "sorted",     # sorted|all - table header sort arrows
         "light_theme": "daylight",   # remembered light slot for the quick switch
-        "dark_theme": "ember",       # remembered dark slot for the quick switch
+        "dark_theme": "lens",        # remembered dark slot for the quick switch
         "page_size": 500,      # search default page size (may be "Infinite")
         # ---- heavy-pass scheduling -------------------------------------------------------------
         # Everything expensive (index build, snapshot analysis, reclaimable, churn rollup, dashboard

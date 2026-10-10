@@ -1,13 +1,9 @@
       <section x-show="active==='simulate'" class="h-full flex flex-col gap-2">
         <div class="kl-toolbar items-end">
           <button class="kl-btn" @click="active = 'snapshots'; activate()" title="Back to Snapshots">← Snapshots</button>
-          <label class="flex-col !items-start !gap-0.5 text-muted">Scope
-            <select x-model="simMode" @change="simEmpty = true; openSimulate()" class="fld border border-bd bg-surface text-fg">
-              <option value="all">All sources</option>
-              <option value="one">One source</option>
-            </select></label>
-          <label x-show="simMode==='one'" class="flex-col !items-start !gap-0.5 text-muted">Source
-            <select x-model="selectedSource" class="fld border border-bd bg-surface max-w-[22rem] text-fg">
+          <label class="flex-col !items-start !gap-0.5 text-muted" title="The same source as Snapshots">Source
+            <select x-model="snapSource" @change="simSourceChanged()" class="fld border border-bd bg-surface max-w-[22rem] text-fg">
+              <option value="*ALL*">All sources</option>
               <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
             </select></label>
           <template x-for="k in policyKeys" :key="k">

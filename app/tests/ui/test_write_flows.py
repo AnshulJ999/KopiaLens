@@ -120,7 +120,7 @@ def test_delete_matching_removes_the_file_from_every_snapshot(pro_server, open_p
 
     page.get_by_role("button", name="Dry run", exact=True).click()
     expect(page.get_by_text("dry run checked")).to_be_visible(timeout=60_000)
-    page.locator("button.kl-btn.danger:visible", has_text="Remove from").click()
+    page.locator("button.kl-btn.danger:visible", has_text="Remove 1 file from").click()
     expect(page.get_by_text("Delete 1 file?")).to_be_visible()
     _confirm(page)
 

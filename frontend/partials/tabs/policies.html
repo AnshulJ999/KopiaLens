@@ -84,6 +84,7 @@
                     <button class="kl-btn quiet" x-show="!polSelected().isGlobal && polDetail && polDetail.defined && Object.keys(polDetail.defined).length && !(polStaged[polSelected().target] && polStaged[polSelected().target].removePolicy)"
                             @click="polStageRemovePolicy()">Remove policy…</button>
                   </div>
+                  <div class="kl-note break-all" x-show="!polSelected().isGlobal" x-text="polSelected().target"></div>
                   <div class="kl-note mt-0.5" x-text="polHeaderLine()"></div>
                   <div class="kl-callout mt-2" x-show="!polSelected().isGlobal && polHasStaged(polSelected().target) && polStaged[polSelected().target].removePolicy">
                     <span class="flex items-center gap-2">

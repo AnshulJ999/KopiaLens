@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from config import REPOS, repo_kind
 from .errors import PASS_THROUGH
 from ..core import paths as pathrules
+from ..index import foldercache
 from ..index.physical import file_detail, reclaim_for, storage_breakdown, stored_all_versions
 from ..index.queries import (_RANK_SORTS, _SEARCH_SORT, EXPORT_HEADER, group_by_folder, landing,
                              search_export, search_paths, versions)
@@ -25,14 +26,14 @@ router = APIRouter(tags=["search"])
 def search_group_by_folder(
     repo: str, depth: int = 3, q: str = "", source: str | None = None, ext: str | None = None,
     ext_exclude: str | None = None, deleted_only: bool = False, min_gb: float = 0, min_files: int = 0,
-    sort: str = "physical", direction: str = "desc", limit: int = 500,
+    sort: str = "physical", direction: str = "desc", limit: int = 500, min_depth: int = 0,
 ) -> dict:
     """Bloat finder: backed-up folders rolled up to `depth` segments, ranked by physical."""
     try:
         return group_by_folder(
             repo, depth=depth, query=q, source=source, ext=ext, ext_exclude=ext_exclude,
             deleted_only=deleted_only, min_size=int(min_gb * 1_000_000_000), min_files=min_files,
-            sort=sort, direction=direction, limit=limit,
+            sort=sort, direction=direction, limit=limit, min_depth=min_depth,
         )
     except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
@@ -123,12 +124,32 @@ def _row_cmp(field: str, desc: bool):
 
 # Columns folder rows have, in file-row field names; any other sort lists folders first.
 _FOLDER_SORT = {"size": "size", "physical": "physical", "full_path": "full_path", "name": "name",
-                "last_seen": "last_seen", "first_seen": "first_seen", "source": "source"}
+                "last_seen": "last_seen", "first_seen": "first_seen", "source": "source",
+                "stored": "stored_all_versions", "frees": "frees_all_versions"}
+
+
+def _ranked_cmp(field: str, desc: bool, by_path: bool):
+    """Comparator matching the SQL order of a ranked sort: rows with a value first by value, the
+    rest by last seen (newest first), then source and path."""
+    def cmp(a: dict, b: dict) -> int:
+        va, vb = a.get(field), b.get(field)
+        if va is not None and vb is not None and va != vb:
+            r = -1 if va < vb else 1
+            return -r if desc else r
+        if (va is None) != (vb is None):
+            return 1 if va is None else -1
+        la, lb = a.get("last_seen") or "", b.get("last_seen") or ""
+        if la != lb:
+            return -1 if la > lb else 1
+        ka = (a.get("full_path") or "",) if by_path else (a.get("source") or "", a.get("full_path") or "")
+        kb = (b.get("full_path") or "",) if by_path else (b.get("source") or "", b.get("full_path") or "")
+        return (ka > kb) - (ka < kb)
+    return cmp
 
 
 @router.get("/search/mixed")
 def search_mixed(
-    repo: str, depth: int = 3, folder_min_gb: float = 0, folder_min_files: int = 0,
+    repo: str, depth: int = 3, folder_min_gb: float = 0, folder_min_files: int = 0, min_depth: int = 0,
     q: str = "", deleted_only: bool = False, largest: bool = False, over_gb: float = 0,
     source: str | None = None, ext: str | None = None, ext_exclude: str | None = None,
     sort: str = "size", dir: str = "desc", limit: int = 500, offset: int = 0,
@@ -151,7 +172,7 @@ def search_mixed(
             repo, depth=depth, query=q, source=source or None, ext=ext or None,
             ext_exclude=ext_exclude or None, deleted_only=deleted_only,
             min_size=int(folder_min_gb * 1_000_000_000), min_files=folder_min_files,
-            sort="logical" if sort == "size" else "physical", direction=dir, limit=500,
+            sort="logical" if sort == "size" else "physical", direction=dir, limit=500, min_depth=min_depth,
         )["rows"]
         field = _FOLDER_SORT.get(sort)
         prev = (search_paths(repo, limit=1, offset=offset - 1, **kw)["rows"] or [None])[0] if offset and field else None
@@ -160,15 +181,24 @@ def search_mixed(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     files = page["rows"]
-    folders = [{"kind": "folder", "full_path": g["folder"], "name": pathrules.basename(g["folder"]),
-                "size": g["logical"], "physical": g["phys"], "files": g["files"],
-                "deleted_files": g["deleted_files"], "last_seen": g["last_seen"],
-                "first_seen": g["first_seen"], "sources": g["sources"], "source": g["source"]}
-               for g in groups]
+    saved = foldercache.saved_values(repo, [g["folder"] for g in groups])
+    folders = []
+    for g in groups:
+        s = saved.get(g["folder"]) or {}
+        folders.append({"kind": "folder", "full_path": g["folder"], "name": pathrules.basename(g["folder"]),
+                        "size": g["logical"], "physical": g["phys"], "files": g["files"],
+                        "deleted_files": g["deleted_files"], "last_seen": g["last_seen"],
+                        "first_seen": g["first_seen"], "sources": g["sources"], "source": g["source"],
+                        "stored_all_versions": s.get("physical"), "frees_all_versions": s.get("freeable"),
+                        "frees_capped": s.get("capped", False)})
+    ranked = page.get("ranked") or {}
+    if sort in ("stored", "frees") and not ranked.get("available"):
+        field = "physical"     # no nightly list yet: files fell back to Physical, folders follow
     if field is None:
         merged = (folders if offset == 0 else []) + files
     else:
-        cmp = _row_cmp(field, desc)
+        cmp = (_ranked_cmp(field, desc, dedupe and dedupe_by != "content") if sort in ("stored", "frees")
+               and field != "physical" else _row_cmp(field, desc))
         last = files[-1] if files else None
         final = offset + len(files) >= page["total"]
         pick = [f for f in folders
