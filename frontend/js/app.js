@@ -170,7 +170,7 @@ document.addEventListener("alpine:init", () => {
     // The source the open tab is showing, for the tab bar ("" when the tab has none).
     navSource() {
       const s = { tree: this.selectedSource, snapshots: this.snapSource, search: this.searchSource }[this.active];
-      return s && s !== "*ALL*" ? sourcePath(s) : "";
+      return s && s !== "*ALL*" && s !== "*REPOS*" ? sourcePath(s) : "";
     },
     sourceRoot() { return this.selectedSource === "*ALL*" ? "" : sourcePath(this.selectedSource); },
     treePrefix: "",

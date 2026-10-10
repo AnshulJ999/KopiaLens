@@ -272,7 +272,7 @@ const searchPart = {
             const d = c.getRow().getData();
             return d.kind === "folder" ? `📁 ${c.getValue()} <span style="color:var(--muted)">· ${countOf(d.files || 0, "file")}</span>` : `📄 ${c.getValue()}`;
           } }),
-          H("Size", "size", { width: 100, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" }),
+          H(term("logical"), "size", { width: 100, headerTooltip: termTip("logical"), formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" }),
           H(term("physical"), "physical", { width: 110, headerTooltip: termTip("physical"), formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" }),
           // Excl column intentionally hidden: paths.exclusive is unfilled (the fill was removed -
           // wrong semantics for shared indirect content + write amplification) and its per-object

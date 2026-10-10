@@ -11,7 +11,7 @@
             <!-- health checks -->
             <div class="rounded border border-bd bg-surface p-3">
               <div class="mb-2 flex items-center gap-2"><span class="font-medium text-sm">Health</span>
-                <span class="text-[0.6875rem] text-muted" x-text="(statsData.health||[]).filter(h => h.status==='warn').length ? countOf(statsData.health.filter(h => h.status==='warn').length, 'warning') : 'all clear'"></span></div>
+                <span class="text-[0.6875rem] text-muted" x-text="(statsData.health||[]).filter(h => h.status==='warn').length ? countOf(statsData.health.filter(h => h.status==='warn').length, 'warning') : ''"></span></div>
               <div class="space-y-1.5">
                 <template x-for="h in (statsData.health || [])" :key="h.id">
                   <div class="flex items-start gap-2 text-xs rounded p-2 border"

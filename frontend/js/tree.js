@@ -134,7 +134,7 @@ const treePart = {
         const ttbl = setTable("#treeTable", rows, [
           { title: "Name", field: "name", widthGrow: 4, minWidth: 260,
             formatter: (c) => { const d = c.getData(); return d._ph ? `<span class="text-muted">${c.getValue()}</span>` : `${d.type === "folder" ? "📁 " : "📄 "}${c.getValue()}`; } },
-          { title: "Size", field: "size", width: 105, sorter: "number", formatter: ph((c) => fmtBytes(c.getValue())), hozAlign: "right" },
+          { title: term("logical"), headerTooltip: termTip("logical"), field: "size", width: 105, sorter: "number", formatter: ph((c) => fmtBytes(c.getValue())), hozAlign: "right" },
           { title: "Physical", field: "physical", width: 100, sorter: "number", formatter: ph((c) => fmtPhys(c.getValue())), hozAlign: "right" },
           { title: "Share of folder", field: "pct", width: 130, sorter: "number",
             formatter: ph((c) => { const v = Number(c.getValue() || 0); return `<span class="kl-sharebar"><i style="width:${Math.min(100, v).toFixed(1)}%"></i></span>${fmtFix(v, 1)}%`; }) },
