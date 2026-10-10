@@ -350,9 +350,11 @@ def path_status(repo: str, source: str, path: str, is_folder: bool = False) -> d
     if not _under(path, root, sep, fold):
         raise TargetError(f"path {path!r} is not under source {source!r}")
     rel = _rel(path, root, sep, fold)
+    excluded = _excluded_in(repo, source, rel, is_folder, defined)
+    why = rulelayers.why_excluded(repo, source, rel, is_folder, defined=defined) if excluded else None
     return {"source": source, "origin": origin,
             "owner": "global" if origin == "global" else owner,
-            "rule_count": len(rules), "excluded": _excluded_in(repo, source, rel, is_folder, defined)}
+            "rule_count": len(rules), "excluded": excluded, "why": why}
 
 
 def _levels(path: str, source_key: str, is_folder: bool) -> list[dict]:

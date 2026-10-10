@@ -501,7 +501,7 @@ def versions(repo: str, source: str, full_path: str) -> list[dict]:
         return _rows(
             cur,
             """
-            SELECT sn.snapshot_id, sn.start_time, f.size, c.content_id
+            SELECT sn.snapshot_id, sn.start_time, f.size, f.mtime, c.content_id
             FROM filev f
             JOIN snap sn ON sn.snap_id = f.snap_id
             LEFT JOIN cid c ON c.cid_id = f.cid_id

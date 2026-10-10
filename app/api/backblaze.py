@@ -126,6 +126,21 @@ def search(q: str = Query("", description="substring over the full path"),
                       min_size=min_size, sort=sort, direction=direction, limit=limit, offset=offset)
 
 
+@router.get("/path-status")
+def path_status(path: str) -> dict:
+    """Whether Backblaze backs up this exact path: {"found", "excluded", "rule", "size"}."""
+    if not path:
+        raise HTTPException(status_code=400, detail="path is required")
+    _require_data()
+    want = path.lower()
+    rows = bzq.search(query=path, limit=50)["rows"]
+    hit = next((r for r in rows if str(r.get("full_path") or "").lower() == want), None)
+    if not hit:
+        return {"found": False}
+    return {"found": True, "excluded": bool(hit.get("excluded")), "rule": hit.get("excl_rule"),
+            "size": hit.get("size")}
+
+
 @router.get("/export")
 def export(q: str = "", drive: str | None = None, ext: str | None = None, ext_exclude: str | None = None,
            status: str = "all", min_size: int = 0, sort: str = "size", direction: str = "desc") -> StreamingResponse:

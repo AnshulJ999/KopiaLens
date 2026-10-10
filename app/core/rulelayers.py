@@ -556,6 +556,42 @@ def excluded_in(repo: str, source_key: str, rel: str, is_folder: bool = False, *
     return decide(layers, item, False)
 
 
+def _decide_why(layers: list[dict], item_rel: str, is_dir: bool) -> dict | None:
+    """``decide`` that also names the rule and layer that left the item out (None when kept)."""
+    text = "/" + item_rel
+    ignored, why = False, None
+    for layer in _layers_at(layers, item_rel):
+        base = "/" + layer["rel"] if layer.get("rel") else ""
+        for rule in layer.get("rules") or []:
+            pat = _compiled(rule, base)
+            if (not ignored and not pat.negated) or (ignored and pat.negated):
+                hit = pat.match(text, is_dir)
+                if hit and not ignored:
+                    why = {"rule": rule, **{k: layer.get(k) for k in ("kind", "owner", "anchor", "name", "path")}}
+                ignored = hit
+    return why if ignored else None
+
+
+def why_excluded(repo: str, source_key: str, rel: str, is_folder: bool = False, *,
+                 defined: dict | None = None) -> dict | None:
+    """The rule that keeps this path out (same walk as ``excluded_in``), with ``via`` naming the
+    folder above it when that folder is what is left out. None when nothing does."""
+    if not rel and not is_folder:
+        return None
+    layers = layers_for_source(repo, source_key, defined=defined)
+    segs = [s for s in rel.strip("/").split("/") if s]
+    for i in range(1, len(segs)):
+        why = _decide_why(layers, "/".join(segs[:i]), True)
+        if why:
+            return {**why, "via": "/".join(segs[:i])}
+    if not segs:
+        return _decide_why(layers, "__kl_probe__", False)
+    item = "/".join(segs)
+    if is_folder:
+        return _decide_why(layers, item, True) or _decide_why(layers, item + "/__kl_probe__", False)
+    return _decide_why(layers, item, False)
+
+
 def applies_at(repo: str, source_key: str, folder_rel: str, *, defined: dict | None = None,
                ignore_map: dict | None = None) -> list[dict]:
     """The rule layers that apply to items INSIDE ``folder_rel`` of this source, with their rules -

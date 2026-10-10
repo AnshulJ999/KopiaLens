@@ -1,4 +1,9 @@
 // Detail panels + removal: file/folder panel, chunked remove plan.
+
+// The extra Backup history rows (compression, on disk, Backblaze). Off hides them; their place in
+// the panel is still being decided.
+const PANEL_EXTRA_FACTS = true;
+
 const detailPart = {
 
     openRowDetail(d, source = null) {
@@ -44,6 +49,11 @@ const detailPart = {
           });
         })
         .catch(() => { if (seq === this._detailSeq && this.detail) this.detail.heavyLoading = false; });
+      // Folder versions walk every snapshot, so they fill in after the panel opens.
+      this.detail.folderVersions = null;
+      getJson(`/api/folder/versions?${new URLSearchParams({ repo: this.repo, prefix, ...(source ? { source } : {}) })}`)
+        .then((r) => { if (seq === this._detailSeq && this.detail) this.detail.folderVersions = r; })
+        .catch(() => { if (seq === this._detailSeq && this.detail) this.detail.folderVersions = "error"; });
       // Effective policy for this exact folder (kopia resolves inheritance), via its main source.
       const main = (this.detail.sources || []).find((s) => s.relation === "covers") || (this.detail.sources || [])[0];
       if (main) {
@@ -109,7 +119,51 @@ const detailPart = {
         : s.origin === "own" ? `Own list of ${s.rule_count} rule${s.rule_count === 1 ? "" : "s"}`
         : `Inherits ${s.rule_count} rule${s.rule_count === 1 ? "" : "s"} from ${from}`;
       if (s.origin === "none") return list;
-      return list + (s.excluded ? " · a rule leaves this out" : " · none match");
+      if (!s.excluded) return list + " · none match";
+      const w = s.why;
+      if (!w) return list + " · a rule leaves this out";
+      const where = w.kind === "ignore_file" ? `${w.name || "an ignore file"} in ${w.anchor}`
+        : w.kind === "root" ? (s.owner === "global" ? "the Global policy" : `the policy of ${sourcePath(w.owner || "") || w.owner}`)
+        : `the policy of ${sourcePath(w.owner || "") || w.anchor}`;
+      return `Left out by ${w.rule} (${where})` + (w.via ? `, which leaves out the folder ${w.via.split("/").pop()}` : "")
+        + ". Not backed up any more; older snapshots still hold it.";
+    },
+    // Compressed + deduplicated size against the real size, newest version.
+    _compressionRow() {
+      const d = this.detail;
+      if (!d || !d.logical || d.physical == null) return "—";
+      const pct = Math.round((d.physical / d.logical) * 100);
+      return `${fmtPhys(d.physical)} stored for ${fmtBytes(d.logical)}: ${pct}% of its size (compression and deduplication)`;
+    },
+    _diskRow() {
+      const k = this.detail && this.detail.disk;
+      if (!k) return "…";
+      if (k.error || k.exists === null) return "Couldn't check";
+      if (!k.exists) return "Deleted from disk";
+      const v = (this.detail.versions || [])[0];
+      if (!v) return "On disk";
+      const same = Number(k.size) === Number(v.size)
+        && (!v.mtime || Math.abs(toDate(k.mtime) - toDate(v.mtime)) < 2000);
+      return same ? "On disk, unchanged since the last snapshot" : `On disk, changed since the last snapshot (now ${fmtBytes(k.size)}, modified ${humanTime(k.mtime)})`;
+    },
+    _bzRow() {
+      const b = this.detail && this.detail.bz;
+      if (!b) return "…";
+      if (b.error) return "Couldn't check";
+      if (!b.found) return "Not in Backblaze";
+      return b.excluded ? `Left out of Backblaze${b.rule ? " by " + b.rule : ""}` : "Backed up by Backblaze";
+    },
+    hasBackblaze() { return (this.repos || []).some((r) => r.kind === "backblaze"); },
+    // On disk and Backblaze fill in after the panel opens; each is a separate small lookup.
+    _loadExtraFacts(seq, source, path) {
+      if (!PANEL_EXTRA_FACTS) return;
+      const set = (k, v) => { if (seq === this._detailSeq && this.detail) this.detail[k] = v; };
+      getJson(`/api/path/disk?${new URLSearchParams({ source, path })}`)
+        .then((r) => set("disk", r)).catch(() => set("disk", { error: true }));
+      if (this.hasBackblaze()) {
+        getJson(`/api/backblaze/path-status?${new URLSearchParams({ path })}`)
+          .then((r) => set("bz", r)).catch(() => set("bz", { error: true }));
+      }
     },
     // "All 53 versions take 12.58 GB. Removing every one of them frees 8.76 GB."
     fileVersionsLine() {
@@ -134,6 +188,11 @@ const detailPart = {
         ["Versions", Number(vs.length).toLocaleString(NUM_LOCALE)],
         ["Copies", copies > 0 ? `${copies} identical cop${copies === 1 ? "y" : "ies"} elsewhere` : "None elsewhere"],
         ["Rules", this._rulesRow()],
+        ...(PANEL_EXTRA_FACTS ? [
+          ["Compression", this._compressionRow()],
+          ...(d.disk && d.disk.checked === false ? [] : [["On disk", this._diskRow()]]),
+          ...(this.hasBackblaze() ? [["Backblaze", this._bzRow()]] : []),
+        ] : []),
       ];
     },
     // Identical copies at OTHER paths. The same path held by nested backups is not a copy.
@@ -142,6 +201,13 @@ const detailPart = {
       if (!d || d.kind !== "file") return 0;
       return new Set((d.others || []).map((o) => o.full_path).filter((p) => p !== d.title)).size;
     },
+    // "48 across 270 snapshots": the folder's distinct states, each one a change inside it.
+    _folderVersionsText() {
+      const v = this.detail && this.detail.folderVersions;
+      if (v === "error") return "Couldn't work this out";
+      if (!v) return "…";
+      return `${Number(v.folder_versions).toLocaleString(NUM_LOCALE)} across ${countOf(v.snapshots, "snapshot")}`;
+    },
     folderHistoryRows() {
       const d = this.detail;
       if (!d || d.kind !== "folder") return [];
@@ -149,7 +215,8 @@ const detailPart = {
         ["First backed up", d.first_seen ? fmtDate(d.first_seen) : "—"],
         ["Last backed up", d.last_seen ? humanTime(d.last_seen) : "—"],
         ["Files", `${Number(d.files || 0).toLocaleString(NUM_LOCALE)} · ${Number(d.deleted_files || 0).toLocaleString(NUM_LOCALE)} deleted from disk`],
-        ["Versions", Number(d.versions || 0).toLocaleString(NUM_LOCALE)],
+        ["Folder versions", this._folderVersionsText()],
+        ["File versions", Number(d.versions || 0).toLocaleString(NUM_LOCALE)],
       ];
       const w = d.last_30_days;
       if (w) rows.push(["Last 30 days", `+${fmtBytes(w.bytes)} new data · ${fmtBytes(w.bytes / 30)} a day`]);
@@ -363,11 +430,12 @@ const detailPart = {
           others: detail.other_paths || [],
           locations: detail.locations, instances: detail.instances, holders: detail.holders || [],
           reclaim_everywhere: detail.reclaim_everywhere,
-          versions: (vres.versions || []).map((x) => ({ time: humanTime(x.start_time), start: x.start_time, size: x.size, snapshot_id: x.snapshot_id, content_id: x.content_id })),
+          versions: (vres.versions || []).map((x) => ({ time: humanTime(x.start_time), start: x.start_time, size: x.size, mtime: x.mtime, snapshot_id: x.snapshot_id, content_id: x.content_id })),
           purge: purgeRows,
           notFound: !(vres.versions || []).length && !detail.content_id,
         });
         this._loadPathStatus(seq, this.detail.source, item.full_path, false);
+        this._loadExtraFacts(seq, this.detail.source, item.full_path);
         this._loadBreakdown(seq, base);
       } catch (err) {
         if (seq === this._detailSeq) this.error = err.message || String(err);

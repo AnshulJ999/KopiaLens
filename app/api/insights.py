@@ -14,6 +14,10 @@ panel already uses.
 
 from __future__ import annotations
 
+import datetime as dt
+import os
+import socket
+
 from fastapi import APIRouter, HTTPException
 
 from pydantic import BaseModel
@@ -162,6 +166,60 @@ def folder_contents_route(repo: str, prefix: str = "", source: str | None = None
         for r in rows:
             r["last_seen"] = str(r["last_seen"]) if r.get("last_seen") else None
         return {"prefix": prefix, "rows": rows}
+    except PASS_THROUGH:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/path/disk")
+def path_on_disk(source: str, path: str) -> dict:
+    """The path on this computer's disk right now, for a source backed up from this computer.
+    ``checked`` is False when the source is another computer's (nothing to compare)."""
+    from ..index.holding import _segments
+    who = source.split(":", 1)[0]
+    host = who.split("@")[-1].lower() if "@" in who else ""
+    if not host or host != socket.gethostname().lower() or _segments(source, path) is None:
+        return {"checked": False}
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return {"checked": True, "exists": False}
+    except OSError as exc:
+        return {"checked": True, "exists": None, "error": str(exc)}
+    return {"checked": True, "exists": True, "is_dir": os.path.isdir(path), "size": st.st_size,
+            "mtime": dt.datetime.fromtimestamp(st.st_mtime, dt.timezone.utc).isoformat()}
+
+
+@router.get("/folder/versions")
+def folder_versions(repo: str, prefix: str = "", source: str | None = None) -> dict:
+    """How many distinct states the folder has had: the different folder objects at this path
+    across every snapshot of the sources that back the folder itself (one object per state, since
+    kopia stores an unchanged folder once). Walks the tree, so it is fetched after the panel opens."""
+    _require_kopia(repo)
+    if not prefix:
+        raise HTTPException(status_code=400, detail="prefix is required")
+    from ..core.sources import sources_index
+    from ..index.holding import _segments, holding_snapshots
+    try:
+        index = sources_index(repo)
+        objs: set[str] = set()
+        held = 0
+        used = 0
+        for src in ([source] if source else list(index)):
+            segs = _segments(src, prefix)
+            snaps = index.get(src, [])
+            if segs is None or not snaps:
+                continue
+            used += 1
+            if not segs:   # the source's own root
+                rows = [(s.get("rootEntry") or {}).get("obj") for s in snaps]
+            else:
+                rows = [r.get("obj") for r in holding_snapshots(repo, src, [prefix], snaps)[prefix]]
+            rows = [o for o in rows if o]
+            held += len(rows)
+            objs.update(rows)
+        return {"prefix": prefix, "folder_versions": len(objs), "snapshots": held, "sources": used}
     except PASS_THROUGH:
         raise
     except Exception as exc:
