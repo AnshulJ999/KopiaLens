@@ -160,8 +160,10 @@
                   <div x-effect="polLoadIgnoreFiles()">
                     <template x-if="polIgnoreShown()">
                       <div>
-                        <div class="text-xs font-medium mb-1">Ignore files <span class="count" style="color:var(--muted);font-weight:400"
-                              x-text="polIgnore.files.length + ' found, read-only'"></span></div>
+                        <button type="button" class="text-xs font-medium mb-1 flex items-center gap-1 text-left" @click="polFold('ignore')" :aria-expanded="!polFolded.ignore">
+                          <span class="text-muted w-3" x-text="polFolded.ignore ? '▸' : '▾'"></span>Ignore files <span class="count" style="color:var(--muted);font-weight:400"
+                              x-text="polIgnore.files.length + ' found, read-only'"></span></button>
+                        <div x-show="!polFolded.ignore">
                         <div class="kl-note" x-show="!polIgnore.stored">Not checked yet. The nightly index looks for them.</div>
                         <div class="kl-note" x-show="polIgnore.stored && !polIgnore.files.length">No ignore files in the folders this policy covers.</div>
                         <div class="kl-list" style="max-height:260px" x-show="polIgnore.files.length">
@@ -176,6 +178,7 @@
                           </template>
                         </div>
                         <div class="kl-note mt-1">Kopia also follows these files. Edit them on disk.</div>
+                        </div>
                       </div>
                     </template>
                   </div>
@@ -194,15 +197,22 @@
                   </div>
                 </template>
 
-                <!-- Scroll layout: every section stacked, the strip above jumps and follows -->
+                <!-- Scroll layout: every section stacked, the strip above jumps and follows; each one folds -->
+                {%- macro polsec(key, label) %}
+                <div id="polsec-{{ key }}" class="rounded border border-bd bg-surface p-3">
+                  <button type="button" class="font-medium text-sm flex items-center gap-1 w-full text-left" :class="polFolded.{{ key }} ? '' : 'mb-2'"
+                          @click="polFold('{{ key }}')" :aria-expanded="!polFolded.{{ key }}"><span class="text-muted w-3" x-text="polFolded.{{ key }} ? '▸' : '▾'"></span>{{ label }}</button>
+                  <div x-show="!polFolded.{{ key }}">{{ caller() }}</div>
+                </div>
+                {%- endmacro %}
                 <template x-if="polLayout === 'scroll'">
                   <div class="space-y-3">
-                    <div id="polsec-exclusions" class="rounded border border-bd bg-surface p-3"><div class="font-medium text-sm mb-2">Exclusions</div>{% call pol_section('exclusions') %}{{ exclusions_body() }}{% endcall %}</div>
-                    <div id="polsec-retention" class="rounded border border-bd bg-surface p-3"><div class="font-medium text-sm mb-2">Retention</div>{{ pol_section('retention') }}</div>
-                    <div id="polsec-schedule" class="rounded border border-bd bg-surface p-3"><div class="font-medium text-sm mb-2">Schedule</div>{{ pol_section('schedule') }}</div>
-                    <div id="polsec-files" class="rounded border border-bd bg-surface p-3"><div class="font-medium text-sm mb-2">Files</div>{{ pol_section('files') }}</div>
-                    <div id="polsec-compression" class="rounded border border-bd bg-surface p-3"><div class="font-medium text-sm mb-2">Compression</div>{{ pol_section('compression') }}</div>
-                    <div id="polsec-advanced" class="rounded border border-bd bg-surface p-3"><div class="font-medium text-sm mb-2">Advanced</div>{{ pol_section('advanced') }}</div>
+                    {% call polsec('exclusions', 'Exclusions') %}{% call pol_section('exclusions') %}{{ exclusions_body() }}{% endcall %}{% endcall %}
+                    {% call polsec('retention', 'Retention') %}{{ pol_section('retention') }}{% endcall %}
+                    {% call polsec('schedule', 'Schedule') %}{{ pol_section('schedule') }}{% endcall %}
+                    {% call polsec('files', 'Files') %}{{ pol_section('files') }}{% endcall %}
+                    {% call polsec('compression', 'Compression') %}{{ pol_section('compression') }}{% endcall %}
+                    {% call polsec('advanced', 'Advanced') %}{{ pol_section('advanced') }}{% endcall %}
                   </div>
                 </template>
               </div>

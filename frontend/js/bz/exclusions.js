@@ -21,9 +21,9 @@ const bzExclusionsPart = {
         setTable("#bzNamingTable", this.bzNamingRows, [
           { title: "Folder", field: "folder", widthGrow: 5, minWidth: 300 },
           { title: "Status", field: "status", width: 100, formatter: (c) => statusPill(c.getValue()) },
-          { title: "Backed #", field: "backed_files", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
-          { title: "Excluded #", field: "excluded_files", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
-          { title: "Backed size", field: "backed_bytes", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
+          { title: "Backed Files", field: "backed_files", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
+          { title: "Excl Files", field: "excluded_files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
+          { title: "Backed Size", field: "backed_bytes", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
         ], {
           initialSort: [{ column: "backed_bytes", dir: "desc" }],
           rowMenu: [

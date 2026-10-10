@@ -9,12 +9,11 @@ const themePart = {
     { id: "lilac", label: "Lilac", dark: false, swatch: "#f6f4f8" },
     { id: "ember", label: "Ember", dark: true, swatch: "#1c1917" },
     { id: "midnight", label: "Midnight", dark: true, swatch: "#111827" },
-    { id: "pine", label: "Pine", dark: true, swatch: "#0f1a17" },
     { id: "obsidian", label: "Obsidian", dark: true, swatch: "#000000" },
     { id: "lens", label: "Lens", dark: true, swatch: "linear-gradient(135deg, #101918 60%, #2dd4bf 60%)" },
     { id: "graphite", label: "Graphite", dark: true, swatch: "#18191c" },
     { id: "ink", label: "Ink", dark: true, swatch: "#11141b" },
-    { id: "system", label: "System", dark: false, swatch: "linear-gradient(90deg, #ffffff 50%, #1c1917 50%)",
+    { id: "system", label: "System", dark: false, swatch: "linear-gradient(90deg, #ffffff 50%, #101918 50%)",
       title: "Follow the OS between your light and dark themes" },
   ],
   DENSITIES: ["comfortable", "normal", "compact", "dense"],
@@ -26,7 +25,7 @@ const themePart = {
   ],
   DENSITY_PCT: { min: 80, max: 115 },
   theme: "system", density: "normal", densityPct: 100, font: "inter",
-  lightTheme: "daylight", darkTheme: "ember", sortArrows: "sorted",
+  lightTheme: "daylight", darkTheme: "lens", sortArrows: "sorted",
 
   _themeIsDark(id) {
     const t = this.THEMES.find((x) => x.id === id);
@@ -116,13 +115,14 @@ const themePart = {
   initTheme(kl) {
     const el = document.documentElement;
     const valid = (x) => this.THEMES.some((t) => t.id === x);
-    const stored = localStorage.getItem("kl-theme");
+    const moved = (x) => (x === "pine" ? "lens" : x);   // Pine was removed
+    const stored = moved(localStorage.getItem("kl-theme"));
     const id = valid(el.dataset.theme) ? el.dataset.theme
       : valid(stored) ? stored
       : localStorage.getItem("kl-dark") === "1" ? "ember"   // one-time kl-dark migration
       : "system";
     this.lightTheme = valid(kl.light_theme) ? kl.light_theme : "daylight";
-    this.darkTheme = valid(kl.dark_theme) ? kl.dark_theme : "ember";
+    this.darkTheme = valid(moved(kl.dark_theme)) ? moved(kl.dark_theme) : "lens";
     this.applyTheme(id);
     // While on System, an OS light/dark flip re-resolves immediately.
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {

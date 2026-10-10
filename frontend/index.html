@@ -11,7 +11,7 @@
     (function () {
       var t = document.documentElement.dataset.theme;
       var dark = t && t !== 'system'
-        ? ['ember', 'midnight', 'pine', 'obsidian', 'lens', 'graphite', 'ink'].indexOf(t) >= 0
+        ? ['ember', 'midnight', 'obsidian', 'lens', 'graphite', 'ink'].indexOf(t) >= 0
         : window.matchMedia('(prefers-color-scheme: dark)').matches;
       document.documentElement.classList.toggle('dark', dark);
     })();

@@ -234,9 +234,10 @@ const deletePart = {
 
     // ---- Selections (Search, Tree) ----
     _selItems(scope) {
-      const src = this.selectedSource !== "*ALL*" ? this.selectedSource : "";
+      const src = scope === "tree" ? (this.selectedSource !== "*ALL*" ? this.selectedSource : "")
+        : (this.searchAllRepos() ? "" : this.searchSource || "");
       return this.selectedRows(scope).map((r) => ({
-        kind: r.type === "folder" ? "folder" : "file",
+        kind: this.isFolderRow(r) ? "folder" : "file",
         path: r.full_path || r.path, source: r.source || src,
       })).filter((i) => i.path);
     },
@@ -252,8 +253,10 @@ const deletePart = {
       const rows = this.selectedRows(scope);
       const items = this._selItems(scope);
       if (!items.length) { this.klNotify("Select one or more rows first.", "warn"); return; }
-      const folders = rows.filter((r) => r.type === "folder");
-      if (folders.length === 1 && rows.length === 1) return this.openRemoveFolder(folders[0]);
+      const folders = rows.filter((r) => this.isFolderRow(r));
+      if (folders.length === 1 && rows.length === 1) {
+        return scope === "tree" ? this.openRemoveFolder(folders[0]) : this.openRemoveFolderPath(folders[0].full_path);
+      }
       if (folders.length) {
         const filters = scope === "tree" ? { deleted_only: this.treeDeletedOnly, over_gb: this.treeOverGb ? 1 : 0, ext: this.treeExt } : {};
         return this.openRemoveParts(this._partsOf(items), this._partsLabel(items), filters);

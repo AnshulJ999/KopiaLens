@@ -11,7 +11,7 @@ document.addEventListener("alpine:init", () => {
     tabs: [
       { id: "dashboard", label: "Dashboard" }, { id: "snapshots", label: "Snapshots" },
       { id: "tree", label: "Tree" }, { id: "search", label: "Search" },
-      { id: "churn", label: "Churn" }, { id: "simulate", label: "Simulate" },
+      { id: "churn", label: "Churn" },
       { id: "stats", label: "Repository" }, { id: "logs", label: "Logs" },
       { id: "excluded", label: "Excluded" },
       { id: "policies", label: "Policies" }, { id: "actions", label: "Actions" },
@@ -135,7 +135,7 @@ document.addEventListener("alpine:init", () => {
     // Policy editor: field catalogue, resolved previews per target, layout + leaving behaviour,
     // Preview / leave / new-policy boxes, and the multi-policy draft.
     polMeta: null, polResolved: {}, polResolveError: "", _polResolveSeq: 0, _polResolveTimer: null,
-    polLayout: "tabs", polLeave: "ask", polSection: "exclusions", polDiffOnly: null,
+    polLayout: "tabs", polLeave: "ask", polSection: "exclusions", polDiffOnly: null, polFolded: {},
     polLeaveBox: null, polNewBox: null, polNewTargets: [], polPreview: null, _polPreviewSeq: 0,
     polMulti: { on: false, picked: [], fields: {}, plan: null, ticks: {}, busy: false }, _polMultiSeq: 0, _polMultiTimer: null,
     versionSizes: {}, _versionSeq: 0, _versionTimer: null,
@@ -333,6 +333,7 @@ document.addEventListener("alpine:init", () => {
         setFormatStyles(kl);
         this.panelLayout = kl.panel_layout === "tabbed" ? "tabbed" : "classic";  //
         this.polLayout = kl.policy_layout === "scroll" ? "scroll" : "tabs";
+        this.polFolded = Object.fromEntries((kl.policy_folded || []).map((k) => [k, true]));
         this.polLeave = kl.policy_leave === "keep" ? "keep" : "ask";
         this.repoLabels = kl.repo_labels === "full" ? "full" : "short";
         this.showProBadge = kl.show_pro_badge !== false;
@@ -472,11 +473,11 @@ document.addEventListener("alpine:init", () => {
       const parts = [];
       if (row.last_check_ts) {
         const mins = Math.max(0, Math.round((Date.now() / 1000 - row.last_check_ts) / 60));
-        parts.push("checked " + (mins < 60 ? mins + "m ago" : mins < 1440 ? Math.round(mins / 60) + "h ago" : Math.round(mins / 1440) + "d ago"));
+        parts.push("checked for changes " + (mins < 60 ? mins + "m ago" : mins < 1440 ? Math.round(mins / 60) + "h ago" : Math.round(mins / 1440) + "d ago"));
       }
       if (row.pending) parts.push("new data queued");
       if (row.error) parts.push("last run failed: " + row.error);
-      return parts.join(" · ");
+      return row.name + (parts.length ? " - " + parts.join(" · ") : "");
     },
 
     async repoChanged() {
@@ -643,6 +644,9 @@ document.addEventListener("alpine:init", () => {
       const el = document.querySelector(scope === "tree" ? "#treeTable" : "#searchTable");
       return (el && el._tabulator) ? el._tabulator.getSelectedData() : [];
     },
+
+    // Tree rows mark folders with type, Search rows (Both view) with kind.
+    isFolderRow(r) { return r.type === "folder" || r.kind === "folder"; },
 
     clearSelection(scope) {
       const el = document.querySelector(scope === "tree" ? "#treeTable" : "#searchTable");

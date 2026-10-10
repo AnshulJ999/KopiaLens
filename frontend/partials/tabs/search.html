@@ -1,8 +1,8 @@
 {% from "partials/_macros.html" import selbar %}
       <section x-show="active==='search'" class="h-full flex flex-col gap-2">
         <div class="kl-toolbar">
-          <input x-show="!headerSearchOnly" x-model="query" @input.debounce.300ms="loadSearch()" class="fld border border-bd bg-surface min-w-[18rem] flex-1 max-w-[30rem]" placeholder="Search paths" title="Matches anywhere in the full path">
-          <select x-model="searchSource" @change="searchSourceChanged()" class="fld border border-bd bg-surface max-w-[16rem]" title="Source">
+          <input x-show="!headerSearchOnly" x-model="query" @input.debounce.300ms="loadSearch()" class="fld border border-bd bg-surface grow basis-36 min-w-[8rem] max-w-[30rem]" placeholder="Search paths" title="Matches anywhere in the full path">
+          <select x-model="searchSource" @change="searchSourceChanged()" class="fld border border-bd bg-surface grow-[0.5] basis-28 min-w-[7rem] max-w-[16rem]" title="Source">
             <option value="*REPOS*">All repositories</option>
             <option value="">All sources</option>
             <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
@@ -62,7 +62,8 @@
               <button @click="open = false; exportSearch()" x-text="groupByFolder ? 'Export CSV' : (searchAllRepos() || searchKind==='both') ? 'Export CSV (this page)' : 'Export CSV (all ' + searchTotal.toLocaleString(NUM_LOCALE) + ')'"></button>
               <template x-if="searchKind==='files' && !searchAllRepos()">
                 <div><div class="sep"></div>
-                  <button class="dg" @click="open = false; openRemoveFromSearch()" x-text="'Delete all ' + searchTotal.toLocaleString(NUM_LOCALE) + ' matching…'"></button></div>
+                  <button class="dg" @click="open = false; openRemoveFromSearch()" :disabled="searchDeleteTooBig()" x-text="'Delete all ' + searchTotal.toLocaleString(NUM_LOCALE) + ' matching…'"></button>
+                  <div class="kl-note px-3 pb-1" x-show="searchDeleteTooBig()" x-text="'Narrow the search to ' + SEARCH_DELETE_MAX.toLocaleString(NUM_LOCALE) + ' files or fewer to delete them all.'"></div></div>
               </template>
             </div>
           </span>
@@ -78,8 +79,6 @@
           <span x-text="searchEmptyText()"></span>
           <button x-show="searchFiltersOn()" @click="clearFilters()" class="kl-btn">Clear filters</button>
         </div>
-        <div id="searchTable" class="flex-1 min-h-0" x-show="!groupByFolder"></div>
-        <div id="groupTable" class="flex-1 min-h-0" x-show="groupByFolder"></div>
         <div class="kl-tablefoot" x-show="omniMeta">
           <b x-text="omniMeta"></b>
           <span class="grow"></span>
@@ -101,4 +100,6 @@
             </span>
           </template>
         </div>
+        <div id="searchTable" class="flex-1 min-h-0" x-show="!groupByFolder"></div>
+        <div id="groupTable" class="flex-1 min-h-0" x-show="groupByFolder"></div>
       </section>

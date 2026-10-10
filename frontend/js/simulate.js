@@ -1,5 +1,13 @@
 // Simulate tab: retention-policy reclaim simulation (combined union, not the per-source sum).
 const simulatePart = {
+    // Simulate opens from Snapshots, for the source Snapshots is showing.
+    openSimulateFromSnapshots() {
+      if (this.snapSource && this.snapSource !== "*ALL*") { this.selectedSource = this.snapSource; this.simMode = "one"; }
+      else this.simMode = "all";
+      this.active = "simulate";
+      this.activate();
+    },
+
 
     // Opening the tab: the policy last tried on this repo (else its Global retention), and the
     // saved result for it when one exists. Nothing heavy runs until Run.

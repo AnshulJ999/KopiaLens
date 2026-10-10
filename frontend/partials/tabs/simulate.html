@@ -1,5 +1,6 @@
       <section x-show="active==='simulate'" class="h-full flex flex-col gap-2">
         <div class="kl-toolbar items-end">
+          <button class="kl-btn" @click="active = 'snapshots'; activate()" title="Back to Snapshots">← Snapshots</button>
           <label class="flex-col !items-start !gap-0.5 text-muted">Scope
             <select x-model="simMode" @change="simEmpty = true; openSimulate()" class="fld border border-bd bg-surface text-fg">
               <option value="all">All sources</option>

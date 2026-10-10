@@ -12,7 +12,7 @@ from playwright.sync_api import expect
 
 from . import _harness as h
 
-TABS = ["Dashboard", "Snapshots", "Tree", "Search", "Churn", "Simulate", "Repository", "Logs",
+TABS = ["Dashboard", "Snapshots", "Tree", "Search", "Churn", "Repository", "Logs",
         "Excluded", "Policies", "Actions"]
 
 
@@ -45,12 +45,19 @@ def test_sign_in_rejects_a_wrong_password_then_signs_in(app_server, open_page):
 
 def test_every_tab_renders_without_an_error(app_server, open_page):
     page = open_page(app_server)
-    for label in TABS:
-        h.go_tab(page, label)
+    def check():
         _idle(page)
         expect(_error_line(page)).to_be_hidden()
         # A zero or missing timestamp (or a duration sent through the date formatter) shows as 1970.
         expect(page.locator("#app")).not_to_contain_text(re.compile(r"\b1970\b"))
+
+    for label in TABS:
+        h.go_tab(page, label)
+        check()
+    # Simulate opens from Snapshots.
+    h.go_tab(page, "Snapshots")
+    page.get_by_role("button", name="Simulate retention…").click()
+    check()
 
 
 def test_snapshot_delete_dry_run_leaves_every_snapshot(app_server, open_page, kopia, fixture_repo):

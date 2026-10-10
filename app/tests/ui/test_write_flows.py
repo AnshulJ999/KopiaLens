@@ -161,7 +161,7 @@ def test_deleting_the_snapshots_that_hold_a_file_keeps_the_others(pro_server, op
     times = [s["startTime"] for s in _snapshots(kopia, own_repo)]
     page = open_page(pro_server)
     _open_file(page, "big-video", "big-video.mp4")
-    page.locator(".kl-sec", has_text="Delete the snapshots holding it").get_by_role("button", name="Open in Delete panel…").click()
+    page.locator(".kl-sec", has_text="Delete the snapshots holding it").get_by_role("button", name="Delete 2 snapshots…").click()
     run = page.locator("div[x-show='showDel'] button.kl-btn.danger", has_text="Delete 2 snapshots")
     expect(run).to_be_enabled(timeout=30_000)
     run.click()

@@ -127,6 +127,9 @@ const treePart = {
         const children = data.children || [];
         if (!children.length && !(this.indexStatus.indexed_snapshots > 0)) this.error = "Snapshot not indexed yet - click Index (top right).";
         const rows = this._treeLevel(children, this.treePrefix);
+        // Inside a folder, a first row goes back up one level (the toolbar Up stays too).
+        const crumbs = this.treeCrumbs();
+        if (crumbs.length > 1) rows.unshift({ _ph: true, _up: true, name: `↑ Up to ${crumbs[crumbs.length - 2].label}` });
         const ph = (fn) => (c) => (c.getData()._ph ? "" : fn(c));
         const ttbl = setTable("#treeTable", rows, [
           { title: "Name", field: "name", widthGrow: 4, minWidth: 260,
@@ -140,13 +143,14 @@ const treePart = {
           { title: "Type", field: "type", width: 75, visible: false },
         ], {
           selectableRows: true,
-          ...(tree ? { dataTree: true, dataTreeElementColumn: "name", dataTreeStartExpanded: false, dataTreeChildIndent: 14,
-                       selectableRowsCheck: (r) => !r.getData()._ph } : {}),
+          selectableRowsCheck: (r) => !r.getData()._ph,
+          frozenRows: (r) => !!r.getData()._up,
+          ...(tree ? { dataTree: true, dataTreeElementColumn: "name", dataTreeStartExpanded: false, dataTreeChildIndent: 14 } : {}),
           initialSort: [{ column: "size", dir: "desc" }],
           onSelect: (rows) => { this.treeSelCount = rows.length; },
           onRowDblClick: async (_e, row) => {
             const d = row.getData();
-            if (d._ph) { if (d._open) this.navTree(d._open); return; }
+            if (d._ph) { if (d._open) this.navTree(d._open); return; }   // the Up row goes up on a single click
             if (d.type === "folder") return this.navTree(d.path);
             const s = await this.treeSourceFor(d.path);
             if (s) this.openFileDetail({ source: s, full_path: d.path });
@@ -154,6 +158,7 @@ const treePart = {
           rowMenu: (_e, row) => (row.getData()._ph ? false : this.treeRowMenu(row.getData())),
         });
         if (tree && ttbl) ttbl.on("dataTreeRowExpanded", (row) => this._treeExpand(row));
+        if (ttbl) ttbl.on("rowClick", (_e, row) => { if (row.getData()._up) this.treeUp(); });
         this.treeSelCount = 0;
       }, "Loading tree...");
     },

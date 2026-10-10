@@ -1,5 +1,9 @@
 // Search tab: server-side filtered search, dedupe, reclaim, by-folder bloat finder.
+const SEARCH_DELETE_MAX = 100000;   // "Delete all matching" is offered up to this many files
+
 const searchPart = {
+
+    searchDeleteTooBig() { return this.searchTotal > SEARCH_DELETE_MAX; },
 
     // ---------- Search (server-side count + sort + pagination) ----------
     searchParams() {
@@ -112,7 +116,7 @@ const searchPart = {
         const rows = data.rows || [];
         this.omniMeta = `${countOf(rows.length, "folder")} · depth ${data.depth} · ranked by physical`;
         const cols = [
-          { title: "Folder", field: "folder", widthGrow: 5, minWidth: 300 },
+          { title: "Folder", field: "folder", widthGrow: 5, minWidth: 300, formatter: (c) => `📁 ${c.getValue()}` },
           { title: "Physical", field: "phys", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => fmtPhys(c.getValue()) },
           { title: "Logical", field: "logical", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => fmtBytes(c.getValue()) },
           // Excl column hidden here too - same reason as the Search table ().
@@ -124,31 +128,53 @@ const searchPart = {
             accessorDownload: (_v, d) => (d.files ? Math.round(d.phys / d.files) : ""), formatter: (c) => { const d = c.getRow().getData(); return d.files ? fmtBytes(Math.round(d.phys / d.files)) : ""; } },
           // per-folder freeable, computed on demand (right-click) - a chunk walk per folder.
           // "≥" marks a partial result: the backend caps the walk at the first 5,000 files.
-          { title: term("reclaimable"), headerTooltip: termTip("reclaimable") + " Right-click a folder to work it out.", field: "reclaim_val", headerSort: false, width: 115, hozAlign: "right",
+          { title: term("reclaimable"), headerTooltip: termTip("reclaimable") + " Worked out for the folders on screen, one at a time.", field: "reclaim_val", headerSort: false, width: 115, hozAlign: "right",
             accessorDownload: (_v, d) => { const v = this.groupReclaim[this.repo + ":" + d.folder]; return v && v.v != null ? v.v : ""; },
             formatter: (c) => {
               const v = this.groupReclaim[this.repo + ":" + c.getRow().getData().folder];
               if (v === "pending") return "<span style='color:var(--faint)'>…</span>";
               if (v === "error") return "<span style='color:var(--danger)' title='Could not work this out'>error</span>";
-              if (v == null) return "<span style='color:var(--faint)' title='Right-click: Work out reclaimable space'>—</span>";
+              if (v == null) return "<span style='color:var(--faint)' title='Not worked out yet'>—</span>";
               const tip = v.capped ? ' title="At least this much: only the biggest 5,000 files were checked"' : "";
               return `<span style="color:var(--ok)"${tip}>${v.capped ? "&ge; " : ""}${fmtPhys(v.v)}</span>`;
             } },
           { title: "Last seen", field: "last_seen", width: 155, formatter: (c) => timeCell(c.getValue()) },
         ];
-        setTable("#groupTable", rows, cols, {
+        const gt = setTable("#groupTable", rows, cols, {
           onRowDblClick: (_e, row) => this.openFolderPanel(row.getData().folder),
           rowMenu: [
             { label: "Details", action: (_e, row) => this.openFolderPanel(row.getData().folder) },
             { label: "Show its files", action: (_e, row) => this.drillFolder(row.getData()) },
-            { label: "Work out reclaimable space", action: (_e, row) => this.computeGroupReclaim(row) },
+            { label: "Work out reclaimable space again", action: (_e, row) => this.computeGroupReclaim(row) },
             { separator: true },
             { label: "Delete folder from backups…", action: (_e, row) => this.openRemoveFolderPath(row.getData().folder) },
             { separator: true },
             { label: "Copy path", action: (_e, row) => this.copyText(row.getData().folder) },
           ],
         });
+        if (gt) {
+          gt.on("tableBuilt", () => this.fillGroupReclaim());
+          gt.on("scrollVertical", () => this.fillGroupReclaim());
+        }
       }, "Grouping folders…");
+    },
+    // Work out Reclaimable for the folders on screen, one at a time, top first (each takes a few
+    // seconds). Stops when the view, repo or table changes; scrolling picks up the new rows.
+    async fillGroupReclaim() {
+      if (this._groupFilling) return;
+      this._groupFilling = true;
+      try {
+        const el = document.querySelector("#groupTable");
+        const t = el && el._tabulator;
+        const repo = this.repo;
+        while (t && el._tabulator === t && this.active === "search" && this.groupByFolder && this.repo === repo) {
+          const row = t.getRows("visible").find((r) => this.groupReclaim[repo + ":" + r.getData().folder] === undefined);
+          if (!row) break;
+          await this.computeGroupReclaim(row);
+        }
+      } finally {
+        this._groupFilling = false;
+      }
     },
     // freeable for one folder row of the By-folder view - the same on-demand walk the
     // remove-detail button uses, scoped to the folder prefix. Heavy, so it only runs when asked.
@@ -170,7 +196,7 @@ const searchPart = {
       } catch (e) {
         this.groupReclaim[key] = "error";
       }
-      row.reformat();
+      try { row.reformat(); } catch (e) { /* the table was rebuilt meanwhile; the cache has the value */ }
     },
     async loadSearch(keepPage = false) {
       if (this.groupByFolder) return this.loadGroupByFolder();
@@ -220,30 +246,31 @@ const searchPart = {
           if (!this._rankedNotice[noticeKey]) {   // once per repo and column per session
             this._rankedNotice[noticeKey] = 1;
             this.klNotify(this.indexStatus && this.indexStatus.building
-              ? "That list is still being built. Sorted by Physical (latest) until it's ready."
-              : "That list is built by the nightly index. Sorted by Physical (latest) until then.", "warn");
+              ? "That list is still being built. Sorted by Physical until it's ready."
+              : "That list is built by the nightly index. Sorted by Physical until then.", "warn");
           }
         }
-        // Folder rows (Both view) carry only sizes, file count and last seen.
+        // Folder rows (Both view) have no per-file columns (ext, versions, copies, all-versions sizes).
         const nf = (fn) => (c) => (c.getRow().getData().kind === "folder" ? "" : fn(c));
+        const isFolder = (c) => c.getRow().getData().kind === "folder";
         const cols = [
-          { title: "Repo", field: "repo", headerSort: false, width: 90, visible: allRepos, formatter: (c) => this.repoLabel(c.getValue()) },
+          { title: "Repo", field: "repo", headerSort: false, width: 90, visible: allRepos, formatter: (c) => (c.getValue() ? this.repoLabel(c.getValue()) : "") },
           H("Path", "full_path", { widthGrow: 5, minWidth: 320, formatter: (c) => {
             const d = c.getRow().getData();
             return d.kind === "folder" ? `📁 ${c.getValue()} <span style="color:var(--muted)">· ${countOf(d.files || 0, "file")}</span>` : c.getValue();
           } }),
           H("Size", "size", { width: 100, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" }),
-          H("Physical (latest)", "physical", { width: 120, formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" }),
+          H(term("physical"), "physical", { width: 110, headerTooltip: termTip("physical"), formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" }),
           // Excl column intentionally hidden: paths.exclusive is unfilled (the fill was removed -
           // wrong semantics for shared indirect content + write amplification) and its per-object
           // semantics overstated exclusivity. Returns with the proper implementation ().
           { title: "Src", field: "sources", headerSort: false, width: 62, hozAlign: "right",
             headerTooltip: "How many sources hold this content. Copies inside one source count once.",
-            formatter: nf((c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="Held by ${v} sources">${v}</span>` : "1"; }) },
-          H("Stored (all versions)", "stored_all", { width: 140, hozAlign: "right",
-            headerTooltip: "Space every version of this file takes. Data shared between its own versions counts once. Sorting uses the nightly top list; files outside it come after.",
+            formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="Held by ${v} sources">${v}</span>` : "1"; } },
+          H(term("physicalAll"), "stored_all", { width: 125, hozAlign: "right",
+            headerTooltip: termTip("physicalAll") + " Sorting uses the nightly top list; files outside it come after.",
             formatter: nf((c) => self.versionCell(c.getRow().getData(), "stored")) }, "stored"),
-          H(term("reclaimableAll"), "frees_all", { width: 190, hozAlign: "right",
+          H(term("reclaimableAll"), "frees_all", { width: 120, hozAlign: "right",
             headerTooltip: termTip("reclaimableAll") + " Sorting uses the nightly top list; files outside it come after.",
             formatter: nf((c) => self.versionCell(c.getRow().getData(), "frees")) }, "frees"),
           H("Ext", "ext", { width: 70, formatter: nf((c) => c.getValue() || "") }),
@@ -252,9 +279,18 @@ const searchPart = {
             headerTooltip: "How many paths hold this exact content. More filters: same content in at least N paths.",
             formatter: nf((c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="This exact content is at ${v} paths">${v}</span>` : "1"; }) },
           H("Last seen", "last_seen", { width: 160, formatter: (c) => timeCell(c.getValue()) }),
-          H("First seen", "first_seen", { width: 160, formatter: nf((c) => timeCell(c.getValue())) }),
-          H("On disk", "in_latest", { width: 90, formatter: nf((c) => c.getValue() ? "yes" : "<span style='color:var(--danger)'>deleted</span>") }),
-          H("Source", "source", { widthGrow: 2, minWidth: 180, formatter: nf((c) => sourcePath(c.getValue())) }),
+          H("First seen", "first_seen", { width: 160, formatter: (c) => timeCell(c.getValue()) }),
+          H("On disk", "in_latest", { width: 90, formatter: (c) => {
+            const d = c.getRow().getData();
+            const gone = "<span style='color:var(--danger)'>deleted</span>";
+            if (!isFolder(c)) return c.getValue() ? "yes" : gone;
+            if (!d.deleted_files) return "yes";
+            return d.deleted_files >= d.files ? gone : `<span style='color:var(--warn)'>${Number(d.deleted_files).toLocaleString(NUM_LOCALE)} deleted</span>`;
+          } }),
+          H("Source", "source", { widthGrow: 2, minWidth: 180, formatter: (c) => {
+            const d = c.getRow().getData();
+            return isFolder(c) && !d.source ? `<span style="color:var(--muted)">${countOf(d.sources || 0, "source")}</span>` : sourcePath(c.getValue());
+          } }),
         ];
         // Reuse the existing Tabulator (replaceData + header-title update) rather than
         // destroy+recreate, so re-querying on sort/filter no longer flickers the whole table.
@@ -270,8 +306,8 @@ const searchPart = {
             persistSort: false,
             placeholder: false,   // the tab shows its own no-results line above the table
             selectableRows: true,
-            // Folder rows and rows of other repositories have their own menu, not the selection actions.
-            selectableRowsCheck: (row) => row.getData().kind !== "folder" && !this.searchAllRepos(),
+            // Rows of other repositories have their own menu, not the selection actions.
+            selectableRowsCheck: () => !this.searchAllRepos(),
             onSelect: (rows) => { this.searchSelCount = rows.length; },
             onRowDblClick: (_e, row) => {
               const d = row.getData();
@@ -292,6 +328,23 @@ const searchPart = {
 
     // Row menu: one file, or every selected file. Whole-result actions live in the toolbar's ⋯ menu.
     searchRowMenu(d) {
+      const sel = this.selectedRows("search");
+      if (sel.length > 1) {
+        const folders = sel.filter((r) => this.isFolderRow(r)).length;
+        const what = countOf(sel.length, folders ? "item" : "file");
+        return [
+          { label: `Details of ${what}`, action: () => this.openSelection("search") },
+          { separator: true },
+          { label: `Restore ${what}…`, action: () => this.selRestore("search") },
+          { label: `Exclude ${what}…`, action: () => this.selExclude("search") },
+          { separator: true },
+          { label: `Delete ${what} from backups…`, action: () => this.selDelete("search") },
+          { label: `Exclude & delete ${what}…`, action: () => this.selExclude("search", "delete") },
+          { separator: true },
+          { label: `Copy ${sel.length} paths`, action: () => this.copyText(sel.map((r) => r.full_path).join("\n")) },
+          { label: "Clear selection", action: () => this.clearSelection("search") },
+        ];
+      }
       if (d.kind === "folder") {
         return [
           { label: "Details", action: () => this.openFolderPanel(d.full_path) },
@@ -307,22 +360,6 @@ const searchPart = {
           { label: `Open in ${this.repoLabel(d.repo)}`, action: () => this.openInRepo(d) },
           { separator: true },
           { label: "Copy path", action: () => this.copyText(d.full_path) },
-        ];
-      }
-      const sel = this.selectedRows("search");
-      if (sel.length > 1) {
-        const what = countOf(sel.length, "file");
-        return [
-          { label: `Details of ${what}`, action: () => this.openSelection("search") },
-          { separator: true },
-          { label: `Restore ${what}…`, action: () => this.selRestore("search") },
-          { label: `Exclude ${what}…`, action: () => this.selExclude("search") },
-          { separator: true },
-          { label: `Delete ${what} from backups…`, action: () => this.selDelete("search") },
-          { label: `Exclude & delete ${what}…`, action: () => this.selExclude("search", "delete") },
-          { separator: true },
-          { label: `Copy ${sel.length} paths`, action: () => this.copyText(sel.map((r) => r.full_path).join("\n")) },
-          { label: "Clear selection", action: () => this.clearSelection("search") },
         ];
       }
       const item = { source: d.source, full_path: d.full_path };

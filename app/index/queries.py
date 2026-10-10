@@ -697,7 +697,8 @@ def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | No
                    sum(p.physical) AS phys, sum(coalesce(p.exclusive, 0)) AS excl,
                    sum(p.size) AS logical, count(*) AS files,
                    count(*) FILTER (WHERE NOT p.in_latest) AS deleted_files,
-                   max(p.last_seen) AS last_seen
+                   max(p.last_seen) AS last_seen, min(p.first_seen) AS first_seen,
+                   count(DISTINCT p.src_id) AS sources, min(p.src_id) AS src_one
             FROM pathx p
             {_rollup_join('p', d, 'g')}
             WHERE {where}
@@ -707,6 +708,10 @@ def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | No
             """,
             params,
         )
+        names = dict(cur.execute("SELECT src_id, source FROM src").fetchall())
+        for r in rows:
+            one = r.pop("src_one")
+            r["source"] = names.get(one) if r["sources"] == 1 else None
     finally:
         cur.close()
     return {"rows": rows, "depth": d}
@@ -1231,7 +1236,8 @@ def folder_top_children(repo: str, prefix: str, limit: int = 5, source: str | No
         return _rows(
             cur,
             f"SELECT {ch.name} AS child, "
-            f"  COALESCE(sum(p.physical), 0) AS physical, count(*) AS files "
+            f"  COALESCE(sum(p.physical), 0) AS physical, count(*) AS files, "
+            f"  bool_or({ch.folder}) AS is_folder "
             f"FROM pathx p {ch.join} WHERE {where} GROUP BY child "
             f"ORDER BY physical DESC, child LIMIT {int(limit)}",
             params,

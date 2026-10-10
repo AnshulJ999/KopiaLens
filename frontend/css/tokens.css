@@ -149,7 +149,7 @@
   --term-dim: #9992ab;
 }
 
-/* ---- Ember (default dark) ---- */
+/* ---- Ember (warm dark) ---- */
 :root[data-theme="ember"] {
   --canvas: #0c0a09;
   --surface: #1c1917;
@@ -221,42 +221,6 @@
   --term-dim: #6d7a8c;
 }
 
-/* ---- Pine (deep green dark) ---- */
-:root[data-theme="pine"] {
-  --canvas: #0a100e;
-  --surface: #0f1a17;
-  --surface2: #14231e;
-  --head: #182a24;
-  --hover: #1d332b;
-  --sel: #244036;
-  --bd: #35544a;
-  --bd-soft: #182a24;
-  --fg: #e3ece7;
-  --muted: #9ab5a9;
-  --faint: #6d8a7c;
-
-  --ok: #4ade80;
-  --ok-bd: #166534;
-  --ok-bg: #0d2b1c;
-  --ok-solid: #047857;
-  --danger-solid: #be123c;
-  --danger: #fb7185;
-  --danger-bd: #9f1239;
-  --danger-bg: #2e0d15;
-  --warn: #fbbf24;
-  --warn-bd: #92400e;
-  --warn-bg: #2b1d05;
-  --link: #38bdf8;
-  --accent: #a5b4fc;
-  --accent-bd: #3730a3;
-  --accent-bg: #1c2b3e;
-  --accent-solid: #4f46e5;
-
-  --term-bg: #0c1512;
-  --term-fg: #cfe0d8;
-  --term-dim: #68827a;
-}
-
 /* ---- Obsidian (true black) ---- */
 :root[data-theme="obsidian"] {
   --canvas: #000000;
@@ -293,7 +257,7 @@
   --term-dim: #6f6f6f;
 }
 
-/* ---- Lens (teal on near-black, matches the website) ---- */
+/* ---- Lens (default dark: teal on near-black, matches the website) ---- */
 :root[data-theme="lens"] {
   --canvas: #0a100f;
   --surface: #101918;
@@ -406,38 +370,38 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]),
   :root[data-theme="system"] {
-    --canvas: #0c0a09;
-    --surface: #1c1917;
-    --surface2: #242120;
-    --head: #292524;
-    --hover: #332f2c;
-    --sel: #3f3a36;
-    --bd: #44403c;
-    --bd-soft: #292524;
-    --fg: #e7e5e4;
-    --muted: #a8a29e;
-    --faint: #78716c;
+    --canvas: #0a100f;
+    --surface: #101918;
+    --surface2: #0e1615;
+    --head: #152120;
+    --hover: #172625;
+    --sel: #1b302d;
+    --bd: #2c3e3b;
+    --bd-soft: #1e2c2a;
+    --fg: #f1f5f4;
+    --muted: #9aa8a5;
+    --faint: #7d8b88;
 
-    --ok: #34d399;
-    --ok-bd: #065f46;
-    --ok-bg: #052e26;
+    --ok: #4ade80;
+    --ok-bd: #14532d;
+    --ok-bg: #0b2418;
     --ok-solid: #047857;
-    --danger-solid: #be123c;
-    --danger: #fb7185;
-    --danger-bd: #881337;
-    --danger-bg: #2a0d14;
+    --danger-solid: #b91c1c;
+    --danger: #f87171;
+    --danger-bd: #7f1d1d;
+    --danger-bg: #2a1212;
     --warn: #fbbf24;
     --warn-bd: #78350f;
     --warn-bg: #2a1c05;
-    --link: #38bdf8;
-    --accent: #a5b4fc;
-    --accent-bd: #3730a3;
-    --accent-bg: #26244a;
-    --accent-solid: #4f46e5;
+    --link: #5eead4;
+    --accent: #2dd4bf;
+    --accent-bd: #115e59;
+    --accent-bg: #0f2a27;
+    --accent-solid: #0f766e;
 
-    --term-bg: #141210;
-    --term-fg: #d6d0c8;
-    --term-dim: #7b746b;
+    --term-bg: #0c1413;
+    --term-fg: #d3dedb;
+    --term-dim: #75837f;
   }
 }
 

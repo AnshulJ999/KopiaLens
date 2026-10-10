@@ -188,6 +188,7 @@ def _index_health(repo: str) -> list[dict]:
         stats = manifest.get("stats", {})
         return [{"id": "index-size", "status": "ok",
                  "title": f"Index: {size / 10**9:.2f} GB",
+                 "tip": f"Index generation {manifest.get('generation')}",
                  "detail": f"{stats.get('paths', 0):,} paths, {stats.get('file_versions', 0):,} "
                            f"file versions."}]
     except Exception as exc:  # noqa: BLE001 - a health check must never break the panel

@@ -60,7 +60,7 @@
                      (an entry in both renders twice), so a healthy index would leave this blank. -->
                 <template x-for="h in (statsData.parsed?.duckdb_health || [])" :key="h.id">
                   <div>
-                    <div class="text-sm font-medium" x-text="h.title.replace('Index database: ', '').replace('Index database ', '')"></div>
+                    <div class="text-sm font-medium" :title="h.tip || ''" x-text="h.title.replace('Index database: ', '').replace('Index database ', '')"></div>
                     <div class="text-[0.6875rem] text-muted" x-text="h.detail"></div>
                   </div>
                 </template>

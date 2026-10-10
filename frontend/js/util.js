@@ -176,6 +176,12 @@ function colVisibilityMenu(e, column) {
   }));
 }
 
+// Tabulator sorter for list cells (pins, retention reasons): by how many entries, then by their text.
+const listSorter = (a, b) => {
+  const la = (a || []).length, lb = (b || []).length;
+  return la !== lb ? la - lb : (a || []).join(",").localeCompare((b || []).join(","));
+};
+
 const setTable = (id, data, columns, opts = {}) => {
   const el = document.querySelector(id);
   if (!el) return null;
@@ -214,6 +220,11 @@ const setTable = (id, data, columns, opts = {}) => {
     rowContextMenu: menu || undefined,
     ...rest,
   });
+  // Shift+click selects a range of rows; stop the browser also selecting the text in between.
+  if (multi && !el._shiftGuard) {
+    el._shiftGuard = true;
+    el.addEventListener("mousedown", (e) => { if (e.shiftKey && e.target.closest(".tabulator-row")) e.preventDefault(); });
+  }
   if (onRowDblClick) table.on("rowDblClick", onRowDblClick);
   if (onSelect) table.on("rowSelectionChanged", (data) => onSelect(data));
   // A table built while its tab is hidden measures a zero-height container and lays out no

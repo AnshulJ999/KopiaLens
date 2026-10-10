@@ -33,7 +33,7 @@
   <div class="h">File types</div>
   <div class="kl-list">
     <template x-for="(ft, i) in (detail.file_types || [])" :key="i">
-      <div class="li">
+      <div class="li" :class="ft.ext ? 'cursor-pointer hover:bg-head' : ''" @click="ft.ext && folderTypeInSearch(ft.ext)" :title="ft.ext ? 'Show these files in Search' : ''">
         <span class="font-mono trunc grow" x-text="ft.ext === null ? 'other' : (ft.ext ? '.' + ft.ext : 'no extension')"></span>
         <span class="num" style="color:var(--muted)" x-text="fmtPhys(ft.physical) + ' · ' + countOf(ft.files, 'file')"></span>
       </div>
@@ -199,11 +199,11 @@
 </div>
 {%- endmacro -%}
 
-{%- macro file_versions() -%}
+{%- macro file_versions(fill=False) -%}
 <div class="kl-sec" x-show="detail.versions && detail.versions.length">
   <div class="h">Versions <span class="count" x-text="detail.versions.length + ', newest first'"></span>
     <span class="acts" x-show="detail.versions.length > 1"><button class="kl-btn" style="height:22px" @click="openPrune(detail.title, detail.source)">Prune versions… <span class="protag" x-show="proTag('prune')" :title="proTagTitle()">PRO</span></button></span></div>
-  <div class="kl-list">
+  <div class="kl-list"{% if fill %} style="max-height:none"{% endif %}>
     <template x-for="(v, i) in detail.versions" :key="i">
       <div class="li">
         <span class="num" style="width:120px" x-text="v.time"></span>
@@ -231,7 +231,7 @@
       </div>
     </template>
   </div>
-  <div class="flex justify-end"><button class="kl-btn danger" @click="fileOpenDelete('snapshots')">Open in Delete panel…</button></div>
+  <div class="flex justify-end"><button class="kl-btn danger" @click="fileOpenDelete('snapshots')"><span x-text="'Delete ' + countOf(detail.purge.length, 'snapshot') + '…'"></span> <span class="protag" x-show="proTag('purge')" :title="proTagTitle()">PRO</span></button></div>
 </div>
 {%- endmacro -%}
 
@@ -249,7 +249,7 @@
       <span :class="detail.rfEverywhere ? 'on' : ''" @click="!detail.rfEverywhere && rfToggleEverywhere()" title="Every source holding this file or the same content">Every source</span>
     </span>
     <span class="grow"></span>
-    <button class="kl-btn danger" @click="fileOpenDelete('remove')">Open in Delete panel…</button>
+    <button class="kl-btn danger" @click="fileOpenDelete('remove')">Remove from snapshots… <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
   </div>
 </div>
 {%- endmacro -%}
@@ -353,8 +353,8 @@
   <div class="h">Biggest inside</div>
   <div class="kl-list">
     <template x-for="ch in (detail.children || [])" :key="ch.child">
-      <div class="li">
-        <span class="font-mono trunc grow" x-text="ch.child"></span>
+      <div class="li cursor-pointer hover:bg-head" @click="folderOpenChild(ch)" :title="'Open ' + ch.child">
+        <span class="font-mono trunc grow" x-text="ch.child + (ch.is_folder ? '\\' : '')"></span>
         <span class="num" style="color:var(--muted)" x-text="fmtPhys(ch.physical) + ' · ' + countOf(ch.files, 'file')"></span>
       </div>
     </template>
@@ -556,7 +556,7 @@
                 <template x-if="detail.kind === 'file' && detail.panelTab === 'versions'">
                   <div class="space-y-4">
                     {{ version_strip() }}
-                    {{ file_versions() }}
+                    {{ file_versions(fill=True) }}
                   </div>
                 </template>
                 <template x-if="detail.kind === 'file' && detail.panelTab === 'actions'">

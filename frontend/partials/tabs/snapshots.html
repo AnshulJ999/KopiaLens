@@ -7,6 +7,7 @@
           <button x-show="repoKind !== 'server'" @click="snapSource === '*ALL*' ? analyzeAll() : analyzeSnapshots()" :disabled="analyzing || analyzingAll" class="kl-btn"
                   :title="snapSource === '*ALL*' ? 'Work out churn and reclaimable space for every source' : 'Work out churn and reclaimable space for this source'"
                   x-text="(analyzing || analyzingAll) ? 'Analyzing…' : 'Analyze'"></button>
+          <button x-show="repoKind !== 'server'" @click="openSimulateFromSnapshots()" class="kl-btn" title="Try a retention policy and see what it would keep and free">Simulate retention…</button>
           <span x-show="snapStaleAnalysis" class="pill warn" title="Churn and reclaimable numbers are from the previous index run. Analyze updates them.">Numbers from the last run</span>
           <span class="grow"></span>
           <button x-show="repoKind !== 'server'" @click="planDelete()" :disabled="!snapSelCount" class="kl-btn dangerline"

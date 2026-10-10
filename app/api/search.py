@@ -123,7 +123,7 @@ def _row_cmp(field: str, desc: bool):
 
 # Columns folder rows have, in file-row field names; any other sort lists folders first.
 _FOLDER_SORT = {"size": "size", "physical": "physical", "full_path": "full_path", "name": "name",
-                "last_seen": "last_seen"}
+                "last_seen": "last_seen", "first_seen": "first_seen", "source": "source"}
 
 
 @router.get("/search/mixed")
@@ -162,7 +162,9 @@ def search_mixed(
     files = page["rows"]
     folders = [{"kind": "folder", "full_path": g["folder"], "name": pathrules.basename(g["folder"]),
                 "size": g["logical"], "physical": g["phys"], "files": g["files"],
-                "deleted_files": g["deleted_files"], "last_seen": g["last_seen"]} for g in groups]
+                "deleted_files": g["deleted_files"], "last_seen": g["last_seen"],
+                "first_seen": g["first_seen"], "sources": g["sources"], "source": g["source"]}
+               for g in groups]
     if field is None:
         merged = (folders if offset == 0 else []) + files
     else:

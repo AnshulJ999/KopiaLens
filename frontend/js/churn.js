@@ -25,7 +25,8 @@ const churnPart = {
       if (!d) return;
       const days = Math.max(1, Number(this.churnDays) || 30);
       const enrich = (r) => ({ ...r, per_day: (r.bytes || 0) / days, rewrite: r.files ? (r.versions || 0) / r.files : 0 });
-      const bytesCol = { title: "New data", field: "bytes", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => fmtPhys(c.getValue()) };
+      const bytesCol = { title: "New data", field: "bytes", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => fmtPhys(c.getValue()),
+        headerTooltip: "Content first stored during the window. Data shared by two paths counts for both." };
       const rateCol = { title: "Per day", field: "per_day", width: 105, hozAlign: "right", sorter: "number",
         headerTooltip: "New data divided by the window length, so windows of different sizes compare fairly.",
         formatter: (c) => fmtPhys(c.getValue()) + "/d" };
@@ -40,8 +41,8 @@ const churnPart = {
         headerTooltip: "The same new versions at their plain file size, before dedup and compression." };
       const nowCol = { title: "Size now", field: "size_now", width: 100, hozAlign: "right", sorter: "number", formatter: size,
         headerTooltip: "Plain size of everything here in the latest backup." };
-      const physLatestCol = { title: "Physical (latest)", field: "physical_latest", width: 125, hozAlign: "right", sorter: "number", formatter: size,
-        headerTooltip: "Stored size of the latest versions." };
+      const physLatestCol = { title: term("physical"), field: "physical_latest", width: 105, hozAlign: "right", sorter: "number", formatter: size,
+        headerTooltip: termTip("physical") };
       // Rows without a number yet (folder view fills as you scroll) always sort to the bottom.
       const missingLast = (a, b, _ar, _br, _col, dir) => {
         const ma = typeof a !== "number", mb = typeof b !== "number";

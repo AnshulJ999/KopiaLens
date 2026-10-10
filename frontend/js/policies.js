@@ -350,6 +350,11 @@ const policiesPart = {
       if (s.max_file_size) bits.push("files over " + fmtBytes(s.max_file_size));
       return bits.join(" · ");
     },
+    // Fold or unfold a policy editor section; remembered across sessions.
+    polFold(key) {
+      this.polFolded[key] = !this.polFolded[key];
+      this.klSet({ policy_folded: Object.keys(this.polFolded).filter((k) => this.polFolded[k]) });
+    },
     polSummaryLine() {
       const s = this.polDetail && this.polDetail.summarized;
       if (!s) return "";

@@ -182,13 +182,33 @@ const detailPart = {
       if (d && d.contentsSort === "largest") rows.sort((a, b) => b.physical - a.physical);
       return rows;
     },
-    folderOpenChild(r) {
+    // A row inside the folder panel. "Biggest inside" rows carry no source: a file then takes the
+    // panel's source, or the first source that backs it up.
+    async folderOpenChild(r) {
       const d = this.detail;
       if (!d) return;
       const path = joinPath(d.title, r.child);
+      if (r.is_folder) { this.panelPush(); return this.openFolderPanel(path, d.source || null, true); }
+      let source = r.source || d.source;
+      if (!source) {
+        const held = await this._holdersOf([path]);
+        source = held && (held[path] || [])[0];
+        if (!source) { if (held) this.klNotify("No indexed source holds this file.", "warn"); return; }
+      }
       this.panelPush();
-      if (r.is_folder) this.openFolderPanel(path, d.source || null, true);
-      else this.openFileDetail({ source: r.source, full_path: path }, true);
+      this.openFileDetail({ source, full_path: path }, true);
+    },
+
+    // A file type in the folder panel: Search, filtered to this folder and type.
+    folderTypeInSearch(ext) {
+      const d = this.detail;
+      if (!d) return;
+      this.detail = null;
+      this.searchKind = "files"; this.groupByFolder = false;
+      if (this.searchAllRepos()) this.searchSource = "";
+      this.query = d.title; this.searchExt = ext; this.searchExtExclude = "";
+      this.active = "search";
+      this.loadSearch();
     },
 
     // ---- Panel trail: a panel opened from inside a panel keeps the way back ----
@@ -238,7 +258,7 @@ const detailPart = {
     async openSelection(scope) {
       const rows = this.selectedRows(scope);
       if (!rows.length) { this.klNotify("Select one or more rows first.", "warn"); return; }
-      if (rows.length === 1 && scope === "search" && rows[0].full_path) return this.openFileDetail(rows[0]);
+      if (rows.length === 1 && scope === "search" && rows[0].full_path && !this.isFolderRow(rows[0])) return this.openFileDetail(rows[0]);
       const items = this._selItems(scope);
       if (items.length === 1) return this.panelOpenItem(items[0], false);
       const seq = ++this._detailSeq;
@@ -357,6 +377,10 @@ const detailPart = {
 
     // ---- Chunked folder/filter delete (remove-files, respects the current view/filter) ----
     openRemoveFromSearch() {  // delete EVERY file matching the current Search filter (not just selected)
+      if (this.searchDeleteTooBig()) {
+        this.klNotify(`Narrow the search to ${SEARCH_DELETE_MAX.toLocaleString(NUM_LOCALE)} files or fewer to delete them all.`, "warn");
+        return;
+      }
       // No filter = "the whole repo": the backend refuses it, so say why instead of opening a
       // panel that can never plan anything.
       const filtered = !!(this.query || this.searchSource || this.searchExt || this.searchExtExclude
