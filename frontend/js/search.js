@@ -93,6 +93,7 @@ const searchPart = {
 
     // ---- Bloat finder: group backed-up paths by folder, ranked by physical (own #groupTable) ----
     changeGroupDepth() { this.klSet({ group_depth: Number(this.groupDepth) || 3 }); this.loadSearch(); },
+    changeGroupMinDepth() { this.klSet({ group_min_depth: Number(this.groupMinDepth) || 0 }); this.loadSearch(); },
     drillFolder(row) { this.searchKind = "files"; this.groupByFolder = false; this.klSet({ search_kind: "files" }); this.query = row.folder; this.searchPage = 1; this.loadSearch(); },
     // A row from another repository opens there: switch repo, then its panel.
     async openInRepo(d) {

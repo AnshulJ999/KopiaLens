@@ -70,7 +70,7 @@
         </div>
         <div x-show="searchKind!=='files' && !searchAllRepos()" class="kl-toolbar text-xs">
           <span class="font-medium">Folders</span>
-          <label title="Hide folders shallower than this, to focus on deep ones">Min depth <input type="number" min="1" max="20" x-model.number="groupMinDepth" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-bd bg-surface" placeholder="1"></label>
+          <label title="Hide folders shallower than this, to focus on deep ones">Min depth <input type="number" min="1" max="20" x-model.number="groupMinDepth" @input.debounce.400ms="changeGroupMinDepth()" class="fld h-7 w-16 border border-bd bg-surface" placeholder="1"></label>
           <label>Max depth <input type="number" min="1" max="20" x-model.number="groupDepth" @change="changeGroupDepth()" class="fld h-7 w-16 border border-bd bg-surface"></label>
           <label>Min GB <input type="number" min="0" step="0.1" x-model.number="groupMinGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>
           <label>Min files <input type="number" min="0" x-model.number="groupMinFiles" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>

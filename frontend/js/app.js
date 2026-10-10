@@ -350,6 +350,7 @@ document.addEventListener("alpine:init", () => {
         this.treeView = kl.tree_view === "tree" ? "tree" : "list";
         this.reindexInterval = Number(kl.reindex_interval || 1800);
         this.groupDepth = Number(kl.group_depth || 3);
+        this.groupMinDepth = Number(kl.group_min_depth) > 1 ? Number(kl.group_min_depth) : "";
         this.churnDays = String(kl.churn_days || 30);
         this.churnDepth = Number(kl.churn_depth || 4);
         this.churnView = kl.churn_view || "source";
