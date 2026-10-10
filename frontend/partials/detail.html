@@ -375,8 +375,6 @@
        to open the same file from that source's point of view. -->
   <div class="flex items-center gap-2" x-show="(detail.holders || []).length > 1">
     <span class="kl-note grow" x-text="'Stored in every one of these until removed from all ' + (detail.holders || []).length + '.'"></span>
-    <button class="kl-btn danger" style="height:24px" @click="openDeletePanel([{source: detail.source, full_path: detail.title}])"><span
-            x-text="'Remove from all ' + (detail.holders || []).length + '…'"></span> <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
   </div>
   <div class="kl-list" style="max-height:96px">
     <template x-for="h in (detail.holders && detail.holders.length ? detail.holders : [detail.source])" :key="h">
