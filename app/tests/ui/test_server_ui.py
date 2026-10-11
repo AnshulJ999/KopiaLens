@@ -35,7 +35,7 @@ def test_server_repository_is_browse_only(fresh_server, open_page, kopia_server)
     page.get_by_role("button", name="Skip for now").last.click()
 
     expect(page.get_by_text("Browse-only: this repository is reached through a kopia server")).to_be_visible(timeout=30_000)
-    expect(page.locator("button.tab")).to_have_text(["Snapshots", "Policies", "Logs"])
+    expect(page.locator("button.tab")).to_have_text(["Snapshots", "Policies", "Tasks", "Logs"])
     expect(page.get_by_role("button", name="Index now")).to_have_count(0)
     rows = page.locator("#snapshotsTable .tabulator-row")
     expect(rows).to_have_count(3, timeout=30_000)

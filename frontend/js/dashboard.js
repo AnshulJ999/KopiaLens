@@ -18,7 +18,7 @@ const dashboardPart = {
         if (!refresh && dEl && dEl._tabulator && sig === this._dashSig) return;
         this._dashSig = sig;
         setTable("#dashboardTable", data.rows || [], [
-          { title: "Source", field: "source", widthGrow: 4, minWidth: 240, sorter: srcSorter, formatter: (c) => sourcePath(c.getValue()) },
+          { title: "Source", field: "source", widthGrow: 4, minWidth: 240, sorter: srcSorter, formatter: (c) => this.shortSource(c.getValue()) },
           { title: "Snaps", field: "snaps", width: 70, hozAlign: "right" },
           { title: "Files (latest)", field: "files_latest", width: 100, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Paths (all)", field: "files_distinct", width: 95, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
@@ -30,10 +30,17 @@ const dashboardPart = {
           { title: "Latest size", field: "logical_latest", width: 100, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
           { title: "Latest physical", field: "physical_latest", width: 110, formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },
           { title: "Last snapshot", field: "last_time", width: 165, formatter: (c) => timeCell(c.getValue()) },
-          { title: "Next snapshot", field: "next_snapshot", width: 165, formatter: (c) => timeCell(c.getValue()) },
+          { title: "Next snapshot", field: "next_snapshot", width: 190, formatter: (c) => this.nextCellHtml(c.getRow().getData()) },
           { title: "Pins", field: "pins", width: 64, hozAlign: "right" },
-          { title: "", field: "_actions", download: false, headerSort: false, width: 170, hozAlign: "center",
-            formatter: () => "<button class='kl-btn quiet' data-act='snap' style='height:22px'>Snapshot now</button><button class='kl-btn quiet' data-act='policy' style='height:22px'>Policy</button>" },
+          { title: "", field: "_actions", download: false, headerSort: false, width: 200, hozAlign: "center",
+            formatter: (c) => {
+              const src = c.getRow().getData().source;
+              const live = this.sourceStatusHtml(src);
+              if (live && this.engineSrc[src] && this.engineSrc[src].status === "UPLOADING")
+                return live + " <button class='kl-btn quiet' data-act='cancel' style='height:22px'>Cancel</button>";
+              if (live) return live;
+              return "<button class='kl-btn quiet' data-act='snap' style='height:22px'>Snapshot now</button><button class='kl-btn quiet' data-act='policy' style='height:22px'>Policy</button>";
+            } },
         ], {
           initialSort: [{ column: "source", dir: "asc" }],
           onRowDblClick: (_e, row) => this.showSourceSnapshots(row.getData().source),
@@ -42,12 +49,13 @@ const dashboardPart = {
             { label: "Show in Tree", action: (_e, row) => { this.selectedSource = row.getData().source; this.active = "tree"; this.openTree(); } },
             { label: "Simulate this source", action: (_e, row) => this.simulateSource(row.getData().source) },
             { separator: true },
-            { label: "Snapshot now…", action: (_e, row) => this.snapshotNow(row.getData().source) },
+            { label: "Snapshot now…", action: (_e, row) => this.snapshotNowAny(row.getData().source) },
             { label: "Open policy", action: (_e, row) => this.openSourcePolicy(row.getData().source) },
             { separator: true },
             { label: "Copy source", action: (_e, row) => this.copyText(row.getData().source) },
           ],
         });
+        this.loadEngineSources();
         const dt = document.querySelector("#dashboardTable");
         if (dt && dt._tabulator && !dt._tabulator._klActions) {
           dt._tabulator._klActions = true;
@@ -55,11 +63,17 @@ const dashboardPart = {
             const act = e.target && e.target.closest && e.target.closest("[data-act]");
             if (!act) return;
             const src = cell.getRow().getData().source;
-            if (act.dataset.act === "snap") this.snapshotNow(src); else this.openSourcePolicy(src);
+            if (act.dataset.act === "snap") this.snapshotNowAny(src);
+            else if (act.dataset.act === "cancel") this.engineCancel(src);
+            else this.openSourcePolicy(src);
           });
         }
       }, "Loading dashboard...");
     },
+
+    // Through KopiaLens's kopia server when it runs this repository's backups (live progress in
+    // the table, a task in Tasks), otherwise as a job on the command line.
+    snapshotNowAny(source) { return this.engineRuns() ? this.engineSnapshotNow(source) : this.snapshotNow(source); },
 
     async snapshotNow(source) {
       const r = await this.klConfirm({

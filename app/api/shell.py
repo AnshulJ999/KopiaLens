@@ -10,7 +10,7 @@ import sys
 from fastapi import APIRouter, HTTPException
 
 from config import APP_VERSION, DATA_DIR
-from ..core import jobs, netaccess
+from ..core import engine, jobs, netaccess
 from ..core.applog import LOG_DIR
 from ..settings import load_settings, mutate_settings
 
@@ -48,7 +48,27 @@ def state() -> dict:
         "repos": fresh["repos"], "pause": fresh["pause"], "jobs": recent,
         "access": netaccess.STARTED.get("mode") or netaccess.mode(),
         "update": _update(),
+        "backups": _backups(),
+        "alerts": engine.alerts()[-20:],
     }
+
+
+def _backups() -> dict:
+    """Per repository: who runs its backups, KopiaLens's state, the next scheduled snapshot."""
+    import config
+    out = {}
+    for repo in config.REPOS:
+        if config.repo_kind(repo) != "kopia" or config.is_demo(repo):
+            continue
+        try:
+            st = engine.repo_status(repo)
+        except Exception:  # noqa: BLE001 - the tray must still get its state
+            continue
+        row = {k: st.get(k) for k in ("choice", "state", "engine", "conflict")}
+        row["next_ts"] = engine._ts(st.get("next"))
+        row["paused"] = bool((st.get("pause") or {}).get("on"))
+        out[str(repo)] = row
+    return {"pause": engine.pause_state(None), "repos": out}
 
 
 def _update() -> dict | None:

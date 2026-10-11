@@ -321,7 +321,8 @@ def exempt(path: str) -> bool:
 # this server) opens only these paths, and only from this computer.
 SHELL_HEADER = "x-kopialens-shell"
 SHELL_PATHS = frozenset({"/api/shell/state", "/api/shell/prefs", "/api/shell/open-code", "/api/index/build",
-                         "/api/index/stop", "/api/index/pause", "/api/index/resume"})
+                         "/api/index/stop", "/api/index/pause", "/api/index/resume",
+                         "/api/engine/pause", "/api/engine/resume"})
 
 
 def shell_request_ok(path: str, header: str | None, client_host: str | None) -> bool:

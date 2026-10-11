@@ -166,7 +166,7 @@
         </div>
       </template>
       <div class="text-xs" x-show="!polNextRuns().length" x-text="polNextEmpty()"></div>
-      <div class="kl-note">Schedules run while KopiaUI or a kopia server is running.</div>
+      <div class="kl-note"><span x-text="schedulesNote()"></span> <button type="button" class="underline" @click="openEngineDlg()" x-show="engineFor()">Who runs backups…</button></div>
     </div>
   </template>
 {%- elif id == 'files' %}

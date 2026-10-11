@@ -54,6 +54,16 @@
         <button x-show="!indexStatus.building" @click="buildIndex()" class="kl-btn primary">Start indexing</button>
         <button x-show="indexStatus.building" @click="openIndexPanel()" class="kl-btn">Show progress</button>
       </div>
+      <!-- KopiaLens runs this repository's backups but can't right now: another app took over, or an error. -->
+      <template x-if="repoKind !== 'backblaze' && engineFor() && engineFor().choice === 'kopialens' && ['blocked', 'failed'].includes(engineFor().state)">
+        <div class="mb-4 rounded-md border border-danger bg-danger-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm" data-testid="engine-banner">
+          <div class="min-w-0 flex-1">
+            <div class="font-medium" x-text="engineFor().state === 'blocked' ? engineFor().conflict + ' KopiaLens stopped its own backups here.' : 'KopiaLens stopped running backups for this repository.'"></div>
+            <div class="text-xs text-muted break-all" x-text="engineFor().state === 'blocked' ? 'Close the other app, or hand the backups back to it.' : (engineFor().error || '') + (engineFor().retry_at ? ' Trying again ' + humanTime(engineFor().retry_at) + '.' : '')"></div>
+          </div>
+          <button @click="openEngineDlg()" class="kl-btn">Who runs backups…</button>
+        </div>
+      </template>
       <!-- Reached through a kopia server: say once what works, and where the full analysis lives. -->
       <div x-show="repoKind === 'server'" x-cloak class="mb-4 rounded-md border border-bd bg-surface2 px-4 py-3 text-sm">
         <div class="font-medium">Browse-only: this repository is reached through a kopia server</div>
@@ -79,6 +89,8 @@
 
 {% include "partials/tabs/policies.html" %}
 
+{% include "partials/tabs/tasks.html" %}
+
 {% include "partials/tabs/actions.html" %}
 {% include "partials/backblaze.html" %}
     </main>
@@ -90,6 +102,7 @@
 {% include "partials/modals.html" %}
 {% include "partials/browse.html" %}
 {% include "partials/repodialogs.html" %}
+{% include "partials/engine.html" %}
 {% include "partials/onboarding.html" %}
 {% include "partials/lock.html" %}
 {% include "partials/cfgdialog.html" %}
@@ -145,6 +158,8 @@
   <script src="/static/js/policyedit.js?v={{ asset_v }}"></script>
   <script src="/static/js/policies.js?v={{ asset_v }}"></script>
   <script src="/static/js/licence.js?v={{ asset_v }}"></script>
+  <script src="/static/js/tasks.js?v={{ asset_v }}"></script>
+  <script src="/static/js/engine.js?v={{ asset_v }}"></script>
   <script src="/static/js/app.js?v={{ asset_v }}"></script>
 </body>
 </html>

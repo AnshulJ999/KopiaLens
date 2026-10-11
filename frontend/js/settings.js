@@ -80,6 +80,7 @@ const settingsPart = {
       this.trayDoubleClick = kl.tray_double_click === "none" ? "none" : "window";
       this.notifyLevel = ["all", "off"].includes(kl.notifications) ? kl.notifications : "warnings";
       this.logCleanupDays = Number(kl.log_cleanup_days ?? 90);
+      this.taskHistoryKeep = Number(kl.task_history_days ?? 90);
       this.rankCount = Number(kl.rank_count ?? 10000);
       this.duckdbMemory = String(kl.duckdb_memory || "").toUpperCase();
       this.memoryAuto = kl.memory_auto || "";
@@ -128,6 +129,7 @@ const settingsPart = {
       notifications: { s: "notifyLevel", t: "choice", of: ["all", "warnings", "off"] },
       duckdb_memory: { s: "duckdbMemory", t: "choice", of: ["", ...MEMORY_CHOICES], restart: true },
       log_cleanup_days: { s: "logCleanupDays", t: "int", min: 0 },
+      task_history_days: { s: "taskHistoryKeep", t: "int", min: 0 },
       rank_count: { s: "rankCount", t: "int", min: 0 },
       repo_labels: { s: "repoLabels", t: "choice", of: ["short", "full"] },
       show_pro_badge: { s: "showProBadge", t: "bool" },

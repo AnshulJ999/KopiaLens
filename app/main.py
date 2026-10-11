@@ -24,10 +24,11 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from config import APP_VERSION, DATA_DIR, DEMO_BACKBLAZE, DEMO_INSTANCE, REPOS, is_demo, repo_kind
 
-from .api import (access, account, actions, appconfig, audit, backblaze, dashboard, deleteplan, encryption, excluded,
+from .api import (access, account, actions, appconfig, audit, backblaze, dashboard, deleteplan, encryption, engine, excluded,
                   help, insights, jobs, licence, logs, onboarding, policies, prune, restore, search, setup, shell, simulate,
                   snapshots, stats, tree)
 from .core import auth, checkin, devaddons, netaccess, pause
+from .core import engine as backup_engine
 from .core import jobs as jobrunner
 from .index.crypto import StoreLocked
 from .index import crypto as crypto_mod
@@ -715,6 +716,7 @@ async def lifespan(_app: FastAPI):
     # After the keychain unlock above: a migration step that rewrites Parquet needs the key.
     threading.Thread(target=_upgrade_indexes, name="index-upgrade", daemon=True).start()
     threading.Thread(target=_bg_worker, daemon=True).start()
+    backup_engine.start()        # KopiaLens's kopia servers for the repositories it runs backups for
     try:  # subscription and Patreon licences renew quietly before they end
         from .licensing import licence as _licence
         _licence.start_renewal()
@@ -724,6 +726,7 @@ async def lifespan(_app: FastAPI):
     yield
     log.info("KopiaLens shutting down")
     _bg_stop.set()
+    backup_engine.shutdown()     # KopiaLens closed = no scheduled backups from it
     jobrunner.terminate_all()    # a running action must not outlive the registry as an orphan
     if _host.in_docker():
         from .core import mounts as _mounts
@@ -1213,6 +1216,7 @@ app.include_router(prune.router, prefix="/api")
 app.include_router(access.router, prefix="/api")
 app.include_router(restore.router, prefix="/api")
 app.include_router(jobs.router, prefix="/api")
+app.include_router(engine.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
 app.include_router(logs.router, prefix="/api")

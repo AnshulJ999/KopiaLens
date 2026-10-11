@@ -117,6 +117,13 @@ TEST_TIMEOUT = 60
 
 
 @pytest.fixture(autouse=True)
+def _no_real_blinkdisk(monkeypatch, tmp_path):
+    """Detection reads BlinkDisk's vault folder in the real profile; tests get an empty one."""
+    from app.core import coexist
+    monkeypatch.setattr(coexist, "blinkdisk_vault_dir", lambda: str(tmp_path / "blinkdisk-vaults"))
+
+
+@pytest.fixture(autouse=True)
 def _bound_duckdb(request, monkeypatch):
     """Cap threads as well as memory. Threads are not env-readable, and DuckDB otherwise takes
     one per core (24 here) per connection, which inflates hash-aggregate memory for no gain on

@@ -108,7 +108,10 @@ const reposPart = {
     },
     async cxUseSelected() {
       const cx = this.cx;
-      const chosen = this.cxCandidates().filter((c) => cx.picked[c.config_file]);
+      const picked = this.cxCandidates().filter((c) => cx.picked[c.config_file]);
+      const vault = picked.find((c) => c.folder === "blinkdisk");
+      const chosen = picked.filter((c) => c.folder !== "blinkdisk");
+      if (vault && !chosen.length) return this.cxFromVault(vault);
       if (!chosen.length || cx.busy) return;
       cx.busy = true; cx.error = "";
       for (const c of chosen) {
@@ -123,6 +126,17 @@ const reposPart = {
       }
       cx.busy = false;
       await this._cxRefreshRepos();
+      if (vault) this.cxFromVault(vault);
+    },
+    // A BlinkDisk vault: KopiaLens makes its own connection (the vault password lives in BlinkDisk's
+    // store), so the connect form opens with the vault's location filled in.
+    cxFromVault(c) {
+      const cx = this.cx;
+      delete cx.picked[c.config_file];
+      this.cxStart("connect");
+      this.cxSetProvider(c.type);
+      for (const [k, v] of Object.entries(c.config || {})) if (k in cx.fields && v !== "***") cx.fields[k] = v;
+      cx.name = "BlinkDisk";
     },
     cxStart(mode) {
       const cx = this.cx;

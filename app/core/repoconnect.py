@@ -681,17 +681,23 @@ def detect_configs() -> list[dict]:
     base = kopia_config_dir()
     ours = os.path.join(config.DATA_DIR, "configs")
     default_cfg = os.path.join(base, "repository.config")
+    from . import coexist
     known: dict[str, str] = {}
+    known_storage: dict[str, str] = {}
     for rec in repos.all_records():
         if rec.get("kind", "kopia") != "kopia" or rec.get("demo"):
             continue   # a demo repo (the sample data) has no kopia connection at all
         # no config_file = kopia's own default connection
         path = rec.get("config_file") or default_cfg
         known[os.path.normcase(os.path.abspath(path))] = str(rec.get("id"))
+        skey = coexist.storage_key(coexist.read_config(path))
+        if skey:
+            known_storage[skey] = str(rec.get("id"))
 
     kopiaui = kopiabin.kopiaui_uses_kopia_folder()
+    blinkdisk = coexist.blinkdisk_vault_dir()
     out: list[dict] = []
-    for folder in (base, ours):
+    for folder in (base, ours, blinkdisk):
         if not os.path.isdir(folder):
             continue
         for name in sorted(os.listdir(folder)):
@@ -703,10 +709,17 @@ def detect_configs() -> list[dict]:
             info = describe_config(path)
             key = os.path.normcase(os.path.abspath(path))
             in_kopia = os.path.normcase(folder) == os.path.normcase(base)
+            is_vault = os.path.normcase(folder) == os.path.normcase(blinkdisk)
+            if is_vault and not known.get(key):
+                # A BlinkDisk vault is joined with KopiaLens's own connection (its password lives in
+                # BlinkDisk's store), so "already added" means the same storage, not the same file.
+                skey = coexist.storage_key(coexist.read_config(path))
+                if skey and known_storage.get(skey):
+                    known[key] = known_storage[skey]
             out.append({
                 "config_file": path,
                 "filename": name,
-                "folder": "kopia" if in_kopia else "data",
+                "folder": "blinkdisk" if is_vault else ("kopia" if in_kopia else "data"),
                 "kopiaui": in_kopia and kopiaui,
                 "is_default": key == os.path.normcase(os.path.abspath(default_cfg)),
                 "managed": is_managed_config(path),

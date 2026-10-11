@@ -424,6 +424,27 @@ def update_record(repo: str, fields: dict) -> dict:
     return rec
 
 
+ENGINE_FIELDS = frozenset({"engine", "engine_since", "engine_moved_from", "config_file"})
+
+
+def set_engine_fields(repo: str, fields: dict) -> dict:
+    """Who runs backups for the repo (core/engine.set_choice). An empty value removes the key."""
+    bad = set(fields) - ENGINE_FIELDS
+    if bad:
+        raise ValueError(f"not an engine field: {', '.join(sorted(bad))}")
+    rec = next((r for r in all_records() if str(r.get("id")) == str(repo)), None)
+    if rec is None:
+        raise ValueError(f"unknown repo: {repo}")
+    for key, value in fields.items():
+        if value in (None, "", 0):
+            rec.pop(key, None)
+        else:
+            rec[key] = value
+    config.save_records(config.RECORDS, strict=True)
+    config.reload_repos()
+    return rec
+
+
 def remove_record(repo: str) -> dict:
     """Drop the record from the store. The caller deletes the app's derived files (data_paths);
     the kopia repository itself is never touched."""

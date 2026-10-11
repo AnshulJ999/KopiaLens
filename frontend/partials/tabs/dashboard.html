@@ -4,7 +4,26 @@
             <button class="kl-btn" @click="open = !open" :aria-expanded="open">New snapshot ▾</button>
             <div class="kl-menu max-h-80 overflow-y-auto" style="left:0;right:auto" x-show="open" x-cloak>
               <div class="hd">Snapshot a source now</div>
-              <template x-for="s in sources" :key="s"><button @click="open = false; snapshotNow(s)" x-text="shortSource(s)"></button></template>
+              <template x-for="s in sources" :key="s"><button @click="open = false; snapshotNowAny(s)" x-text="shortSource(s)"></button></template>
+            </div>
+          </span>
+          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false" x-show="engineFor() && !isDemo()" x-cloak>
+            <button class="kl-btn" :class="backupsClass()" @click="open = !open" :aria-expanded="open" data-testid="backups-chip"
+                    title="Who runs this repository's backups"><span x-text="backupsLine()"></span> ▾</button>
+            <div class="kl-menu" style="left:0;right:auto" x-show="open" x-cloak>
+              <button @click="open = false; openEngineDlg()">Who runs backups…</button>
+              <button @click="open = false; openTasksFor(repo)">Show tasks</button>
+              <div class="sep"></div>
+              <template x-if="engine && engine.pause && engine.pause.on"><button @click="open = false; engineResume(null)">Resume all backups</button></template>
+              <template x-if="!(engine && engine.pause && engine.pause.on)">
+                <div>
+                  <div class="hd">Pause all backups</div>
+                  <button @click="open = false; enginePause(null, 1)">For 1 hour</button>
+                  <button @click="open = false; enginePause(null, 4)">For 4 hours</button>
+                  <button @click="open = false; enginePause(null, 24)">For 24 hours</button>
+                  <button @click="open = false; enginePause(null, 0)">Until I resume</button>
+                </div>
+              </template>
             </div>
           </span>
           <button class="kl-btn" @click="loadDashboard(true)" title="Recompute these numbers now">↻ Refresh</button>

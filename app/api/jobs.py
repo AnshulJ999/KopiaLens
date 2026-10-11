@@ -201,7 +201,14 @@ def _local_storage_path(repo: str) -> str | None:
 
 def _on_done(job: dict) -> None:
     """A completed remove/delete refreshes the source listing and queues the incremental
-    reindex so the UI reflects reality. A maintenance run refreshes the Stats figures."""
+    reindex so the UI reflects reality. A maintenance run refreshes the Stats figures. Any write
+    tells KopiaLens's kopia server (when it runs this repository's backups) to re-read the repo."""
+    if job.get("mutating") or job.get("kind") in ("snapshot_create", "snapshot_pin", "policy_write"):
+        try:
+            from ..core import engine
+            engine.refresh(job["repo"])
+        except Exception:  # noqa: BLE001 - the server refreshes on its own interval anyway
+            pass
     if job.get("kind") == "maintenance" and not job.get("dry"):
         try:
             from .stats import refresh_stats

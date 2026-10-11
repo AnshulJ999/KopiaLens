@@ -277,6 +277,10 @@ pub fn on_menu(app: &AppHandle, id: &str) {
         ["repo", "stop", key] => act(app, "Couldn't stop indexing", format!("/api/index/stop?repo={}", encode(key)), json!({})),
         ["pause", hours] => act(app, "Couldn't pause indexing", "/api/index/pause".into(), json!({"hours": hours.parse::<u32>().unwrap_or(0)})),
         ["resume"] => act(app, "Couldn't resume indexing", "/api/index/resume".into(), json!({})),
+        ["bpause", hours] => act(app, "Couldn't pause backups", "/api/engine/pause".into(), json!({"hours": hours.parse::<f64>().unwrap_or(0.0)})),
+        ["bresume"] => act(app, "Couldn't resume backups", "/api/engine/resume".into(), json!({})),
+        ["repo", "bpause", key] => act(app, "Couldn't pause backups", "/api/engine/pause".into(), json!({"repo": key, "hours": 0})),
+        ["repo", "bresume", key] => act(app, "Couldn't resume backups", "/api/engine/resume".into(), json!({"repo": key})),
         ["notify", level] => act(app, "Couldn't change notifications", "/api/shell/prefs".into(), json!({"notifications": level})),
         ["autostart"] => {
             let auto = app.autolaunch();

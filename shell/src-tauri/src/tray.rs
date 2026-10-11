@@ -111,6 +111,46 @@ fn repo_status(r: &Value) -> String {
     ago(r.get("last_index").and_then(Value::as_f64))
 }
 
+/// The repo's backups line: who runs them, and KopiaLens's own state when it does.
+fn backups(state: &Value, key: &str) -> Option<Value> {
+    state.get("backups")?.get("repos")?.get(key).cloned()
+}
+
+fn app_name(id: &str) -> &str {
+    match id {
+        "kopiaui" => "KopiaUI",
+        "blinkdisk" => "BlinkDisk",
+        "kopia" => "a kopia server",
+        "kopialens" => "KopiaLens",
+        _ => "nothing",
+    }
+}
+
+fn backups_text(b: &Value) -> String {
+    if s(b, "choice") == "kopialens" {
+        return match s(b, "state") {
+            "running" => match b.get("next_ts").and_then(Value::as_f64) {
+                Some(t) if t > now() => format!("Backups: KopiaLens, next in {}", span(t - now())),
+                _ => "Backups: KopiaLens".into(),
+            },
+            "starting" => "Backups: KopiaLens, starting".into(),
+            "paused" => "Backups: paused".into(),
+            "blocked" => format!("Backups: {} is running them", app_name(s(b, "engine"))),
+            "failed" => "Backups: stopped by an error".into(),
+            _ => "Backups: KopiaLens".into(),
+        };
+    }
+    format!("Backups: {}", app_name(s(b, "engine")))
+}
+
+fn backups_paused(state: &Value) -> Option<Option<f64>> {
+    let p = state.get("backups")?.get("pause")?;
+    if !p.get("on").and_then(Value::as_bool).unwrap_or(false) {
+        return None;
+    }
+    Some(p.get("until").and_then(Value::as_f64))
+}
+
 fn paused(state: &Value) -> Option<Option<f64>> {
     let p = state.get("pause")?;
     if !p.get("paused").and_then(Value::as_bool).unwrap_or(false) {
@@ -192,6 +232,17 @@ fn build_menu(app: &AppHandle, h: Health, state: Option<&Value>) -> tauri::Resul
                     } else {
                         sub.append(&MenuItem::with_id(app, format!("repo:index:{key}"), "Index now", true, None::<&str>)?)?;
                     }
+                    if let Some(b) = backups(st, &key) {
+                        sub.append(&PredefinedMenuItem::separator(app)?)?;
+                        sub.append(&MenuItem::with_id(app, format!("status:backups:{key}"), backups_text(&b), false, None::<&str>)?)?;
+                        if s(&b, "choice") == "kopialens" {
+                            if b.get("paused").and_then(Value::as_bool).unwrap_or(false) {
+                                sub.append(&MenuItem::with_id(app, format!("repo:bresume:{key}"), "Resume backups", true, None::<&str>)?)?;
+                            } else {
+                                sub.append(&MenuItem::with_id(app, format!("repo:bpause:{key}"), "Pause backups until I resume", true, None::<&str>)?)?;
+                            }
+                        }
+                    }
                 }
                 menu.append(&sub)?;
             }
@@ -204,6 +255,23 @@ fn build_menu(app: &AppHandle, h: Health, state: Option<&Value>) -> tauri::Resul
                 None => {
                     let sub = Submenu::new(app, "Pause indexing", true)?;
                     for (id, label) in [("pause:4", "For 4 hours"), ("pause:8", "For 8 hours"), ("pause:12", "For 12 hours"), ("pause:0", "Until I resume")] {
+                        sub.append(&MenuItem::with_id(app, id, label, true, None::<&str>)?)?;
+                    }
+                    menu.append(&sub)?;
+                }
+            }
+            match backups_paused(st) {
+                Some(until) => {
+                    let text = match until {
+                        Some(u) => format!("Backups paused, {} left", span(u - now())),
+                        None => "Backups paused until you resume".into(),
+                    };
+                    menu.append(&MenuItem::with_id(app, "status:bpaused", text, false, None::<&str>)?)?;
+                    menu.append(&MenuItem::with_id(app, "bresume", "Resume backups", true, None::<&str>)?)?;
+                }
+                None => {
+                    let sub = Submenu::new(app, "Pause backups", true)?;
+                    for (id, label) in [("bpause:1", "For 1 hour"), ("bpause:4", "For 4 hours"), ("bpause:24", "For 24 hours"), ("bpause:0", "Until I resume")] {
                         sub.append(&MenuItem::with_id(app, id, label, true, None::<&str>)?)?;
                     }
                     menu.append(&sub)?;
@@ -295,8 +363,13 @@ pub fn refresh(app: &AppHandle, shell: &Arc<Shell>, h: Health) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
     let tip = tooltip(h, state.as_ref());
     let menu_view = state.as_ref().map(|st| {
-        let rows: Vec<String> = repos(st).iter().map(|r| format!("{}|{}|{}", repo_key(r), s(r, "name"), repo_status(r))).collect();
-        json!([rows, paused(st).map(|u| pause_text(u)), pref(Some(st), "notifications", "warnings"), s(st, "version"), s(st, "access"), st.get("update").cloned()]).to_string()
+        let rows: Vec<String> = repos(st).iter().map(|r| {
+            let key = repo_key(r);
+            let b = backups(st, &key).map(|b| format!("{}|{}", backups_text(&b), b.get("paused").and_then(Value::as_bool).unwrap_or(false))).unwrap_or_default();
+            format!("{}|{}|{}|{}", key, s(r, "name"), repo_status(r), b)
+        }).collect();
+        let bp = backups_paused(st).map(|u| u.map(|t| ((t - now()) / 60.0).round() as i64));
+        json!([rows, paused(st).map(|u| pause_text(u)), bp, pref(Some(st), "notifications", "warnings"), s(st, "version"), s(st, "access"), st.get("update").cloned()]).to_string()
     });
     let autostart = app.autolaunch().is_enabled().unwrap_or(false);
     let sig = format!("{:?}|{}|{}", menu_view, h as u8, autostart);
@@ -319,6 +392,7 @@ pub struct Seen {
     ready: bool,
     running: HashMap<String, bool>,
     jobs: HashMap<String, String>,
+    alert: i64,
 }
 
 pub fn toast(app: &AppHandle, title: &str, body: &str) {
@@ -363,6 +437,17 @@ pub fn notify_changes(app: &AppHandle, shell: &Arc<Shell>, state: &Value) {
             }
         }
         seen.jobs.insert(id, st);
+    }
+    // Backup engine alerts (backup failed, another app took over, KopiaLens's server stopped).
+    for a in state.get("alerts").and_then(Value::as_array).cloned().unwrap_or_default() {
+        let id = a.get("id").and_then(Value::as_i64).unwrap_or(0);
+        if id <= seen.alert {
+            continue;
+        }
+        if seen.ready {
+            out.push((s(&a, "level") != "info", s(&a, "title").to_string(), short(s(&a, "body"))));
+        }
+        seen.alert = id;
     }
     seen.ready = true;
     drop(seen);

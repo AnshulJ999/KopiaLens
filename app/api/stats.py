@@ -128,17 +128,32 @@ def _maintenance_health(repo: str, maint: dict, status: dict) -> tuple[dict, lis
 
     # Owner check: the owner that actually runs maintenance is user@host of whichever client was
     # first. A mismatch means THIS machine will never run it - GC dies silently (5.5 months once).
-    this_host = str((status.get("clientOptions") or {}).get("hostname") or "")
-    owner_host = str(card["owner"] or "").split("@", 1)[-1]
-    card["owner_match"] = (not owner_host or not this_host
-                           or owner_host.lower() == this_host.lower())
+    client = status.get("clientOptions") or {}
+    this_host = str(client.get("hostname") or "")
+    this_id = f"{client.get('username') or ''}@{this_host}" if this_host else ""
+    card["owner_match"] = not card["owner"] or not this_id or card["owner"] == this_id
     if not card["owner_match"]:
         health.append({
             "id": "maintenance-owner", "status": "warn",
-            "title": "Maintenance is owned by another machine",
-            "detail": f"Owner is {card['owner']!r}, this machine is {this_host!r}. Garbage collection "
+            "title": "This connection can't run maintenance",
+            "detail": f"Owner is {card['owner']!r}, this connection is {this_id!r}. Garbage collection "
                       "never runs from here - deleted data keeps consuming space until it is fixed.",
             "fix_command": _kopia_cmd(repo, ["maintenance", "info"]),
+        })
+    try:
+        from ..core import coexist
+        idc = coexist.identity_check(repo)
+    except Exception:  # noqa: BLE001 - the check is optional
+        idc = None
+    if idc:
+        health.append({
+            "id": "identity-case", "status": "warn",
+            "title": "Snapshots here use a different spelling of this computer's name",
+            "detail": (f"Snapshots were made as {idc['suggested']}; this connection is {idc['current']}. "
+                       "A snapshot from here starts a separate history. Fix it under Who runs backups "
+                       "on the Dashboard."),
+            "fix_command": _kopia_cmd(repo, ["repository", "set-client", f"--hostname={idc['host']}",
+                                             f"--username={idc['user']}"]),
         })
     if not card["full_enabled"]:
         health.append({

@@ -1,0 +1,69 @@
+      <section x-show="active==='tasks'" class="h-full flex flex-col gap-2 min-h-0" data-testid="tasks-tab">
+        <div class="kl-toolbar flex-wrap">
+          <span class="kl-seg">
+            <span :class="taskFilter.status === 'all' ? 'on' : ''" @click="taskFilter.status = 'all'; renderTasks()">All</span>
+            <span :class="taskFilter.status === 'running' ? 'on' : ''" @click="taskFilter.status = 'running'; renderTasks()">Running</span>
+            <span :class="taskFilter.status === 'failed' ? 'on' : ''" @click="taskFilter.status = 'failed'; renderTasks()">Failed</span>
+          </span>
+          <select x-model="taskFilter.kind" @change="renderTasks()" class="fld h-7 border border-bd bg-surface text-xs" style="width:auto" aria-label="Kind">
+            <option value="all">All kinds</option>
+            <template x-for="k in taskKinds()" :key="k"><option :value="k" x-text="k"></option></template>
+          </select>
+          <select x-model="taskFilter.repo" @change="renderTasks()" class="fld h-7 border border-bd bg-surface text-xs" style="width:auto" aria-label="Repository">
+            <option value="all">All repositories</option>
+            <template x-for="r in repos.filter((x) => x.kind !== 'backblaze')" :key="r.id"><option :value="r.id" x-text="r.name"></option></template>
+          </select>
+          <input x-model="taskFilter.text" @input.debounce.200ms="renderTasks()" placeholder="Filter by folder or text"
+                 class="fld h-7 border border-bd bg-surface2 text-xs w-56" aria-label="Filter tasks">
+          <span class="grow"></span>
+          <span class="text-xs text-muted" x-show="taskHistoryDays" x-text="'Kept ' + taskHistoryDays + ' days'"
+                title="How long finished backups and maintenance stay here. Change it in Settings, Advanced."></span>
+          <button class="kl-btn" @click="loadTasks()" title="Reload the list">↻ Refresh</button>
+        </div>
+        <div class="min-h-0 flex-1 flex flex-col gap-2">
+          <div id="tasksTable" class="min-h-[12rem] flex-1"></div>
+          <template x-if="taskSel">
+            <div class="shrink-0 rounded-md border border-bd bg-surface flex flex-col max-h-[55%]" data-testid="task-panel">
+              <div class="flex items-center gap-3 px-3 py-2 border-b border-bd">
+                <div class="min-w-0 grow">
+                  <div class="font-medium flex items-center gap-2">
+                    <span x-text="taskSel.kind"></span>
+                    <span x-show="taskSel.status === 'running'" class="w-2 h-2 rounded-full bg-warn animate-pulse"></span>
+                  </div>
+                  <div class="text-xs text-muted truncate" :title="taskSel.description"
+                       x-text="repoLabel(taskSel.repo) + ' · ' + taskWhat(taskSel)"></div>
+                </div>
+                <button class="kl-btn danger" x-show="taskSel.status === 'running'" @click="stopTask()">Stop</button>
+                <button class="kl-btn quiet" x-show="taskSel.job_id" @click="openJobPanel(taskSel.job_id)">Open in job panel</button>
+                <button class="kl-btn quiet" @click="closeTask()" title="Close" aria-label="Close">&times;</button>
+              </div>
+              <div class="px-3 py-2 border-b border-bd text-xs flex flex-wrap gap-x-6 gap-y-1">
+                <span :class="taskStatusClass(taskSel)" class="font-medium break-all" x-text="taskSummary(taskSel)"></span>
+                <span><span class="text-muted">Started</span> <span x-text="humanTime(taskSel.start)"></span></span>
+                <span x-show="taskSel.end"><span class="text-muted">Finished</span> <span x-text="humanTime(taskSel.end)"></span></span>
+                <span x-show="taskSel.total"><span class="text-muted">Steps</span> <span x-text="taskSel.done + ' of ' + taskSel.total"></span></span>
+              </div>
+              <div class="min-h-0 flex-1 flex flex-col md:flex-row">
+                <template x-if="taskCounters(taskSel).length">
+                  <div class="md:w-64 shrink-0 overflow-auto border-b md:border-b-0 md:border-r border-bd-soft">
+                    <table class="w-full text-[0.6875rem]">
+                      <tbody>
+                        <template x-for="c in taskCounters(taskSel)" :key="c.name">
+                          <tr class="border-t border-bd-soft first:border-t-0">
+                            <td class="px-2 py-1" :class="c.level === 'error' ? 'text-danger' : c.level === 'warning' ? 'text-warn' : 'text-muted'" x-text="c.name"></td>
+                            <td class="px-2 py-1 text-right num" x-text="c.value"></td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </template>
+                <div class="kl-term whitespace-pre-wrap break-all min-h-[8rem] flex-1 rounded-none border-0" x-ref="taskTerm">
+                  <template x-for="(ln, i) in taskLines" :key="i"><div :class="klLogLineWarn(ln)" x-text="ln"></div></template>
+                  <div x-show="!taskLines.length" class="text-muted" x-text="taskSel.status === 'running' ? 'Waiting for output…' : 'No log for this task.'"></div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </section>
