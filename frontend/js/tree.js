@@ -192,7 +192,8 @@ const treePart = {
            { label: "Show in Search", action: () => { this.query = d.name; this.searchSource = ""; this.active = "search"; this.loadSearch(); } }];
       items.push(
         { separator: true },
-        { label: "Restore…", action: () => withSource((s) => this.openRestore([{ source: s, full_path: d.path, snapshot_id: snap }])) },
+        { label: "Restore…", action: () => this.openRestore([this.selectedSource === "*ALL*"
+            ? { source: null, full_path: d.path } : { source: this.selectedSource, full_path: d.path, snapshot_id: snap }]) },
         { label: "Download", action: () => withSource((s) => this.downloadItem({ source: s, full_path: d.path, snapshot_id: snap })) },
         { label: this.mountOpenLabel(), action: () => withSource((s) => this.mountOpen(this.selectedSnapshot, s, d.path)) },
         { label: "Exclude…", action: () => this.treeExcludeRow(d, "exclude") },

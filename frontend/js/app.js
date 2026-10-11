@@ -158,7 +158,7 @@ document.addEventListener("alpine:init", () => {
     diffMode: localStorage.getItem("kl-diffmode") || "changes", _jobThen: {},
     indexPending: [], indexUpdated: null,
     showMaint: false, maint: null, _maintSeq: 0,
-    _restoreSeq: 0, _restoreTimer: null, _restoreTargets: {},
+    _restoreSeq: 0, _restoreFromSeq: 0, _restoreTimer: null, _restoreTargets: {},
 
     fmtB(v) { return fmtBytes(v); },
     fmtPhys(v) { return fmtPhys(v); },

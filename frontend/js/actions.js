@@ -63,11 +63,14 @@ const actionsPart = {
 
     // ---- Restore ----
     // items: [{source, full_path, snapshot_id?, content_id?}]; several items restore flat into one folder.
-    openRestore(items, opts = {}) {
-      const list = (Array.isArray(items) ? items : [items]).filter((i) => i && i.source && i.full_path);
+    // An item without a source (a path held by several sources) gets its holders looked up; the
+    // newest backup is picked and the panel offers the others.
+    async openRestore(items, opts = {}) {
+      const list = (Array.isArray(items) ? items : [items]).filter((i) => i && i.full_path)
+        .map((i) => ({ ...i, source: i.source || null }));
       if (!list.length) { this.error = "Nothing to restore."; return; }
       this.restore = {
-        items: list, mode: "folder", target: "", preset: "safe", plan: null, loading: false, error: "",
+        items: list, holders: {}, mode: "folder", target: "", preset: "safe", plan: null, loading: false, error: "",
         label: opts.label || (list.length === 1 ? baseName(list[0].full_path) : `${list.length} items`),
         options: {
           restore_owners: true, restore_permissions: true, restore_times: true, ignore_errors: false,
@@ -76,9 +79,58 @@ const actionsPart = {
         },
       };
       this.showRestore = true;
+      if (list.some((i) => !i.source) && !(await this.restoreResolveSources())) return;
       this.restoreLoad(false);
     },
     closeRestore() { this.showRestore = false; this.restore = null; },
+
+    async restoreResolveSources() {
+      const r = this.restore;
+      const seq = ++this._restoreFromSeq;
+      const paths = [...new Set(r.items.filter((i) => !i.source).map((i) => i.full_path))];
+      r.loading = true;
+      let res = null;
+      try {
+        res = await getJson("/api/tree/holders", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo: this.repo, full_paths: paths, detail: paths.length <= 25, folders: true }) });
+      } catch (e) {
+        if (seq === this._restoreFromSeq && this.restore) { r.loading = false; r.error = e.message || String(e); }
+        return false;
+      }
+      if (seq !== this._restoreFromSeq || !this.restore) return false;
+      const when = (h) => (h.latest ? Math.floor(+toDate(h.latest) / 60000) : 0);   // same minute = same run: a tie
+      const order = (x, y) => (when(y) - when(x)) || (sourcePath(y.source).length - sourcePath(x.source).length);
+      const items = [], holders = {};
+      for (const it of r.items) {
+        if (!it.source) {
+          const hs = ((res.paths || {})[it.full_path] || []).slice().sort(order);
+          if (!hs.length) continue;
+          it.source = hs[0].source;
+          if (hs.length > 1) holders[items.length] = hs;
+        }
+        items.push(it);
+      }
+      r.items = items; r.holders = holders; r.loading = false;
+      if (!items.length) { r.error = "No indexed source holds this."; return false; }
+      return true;
+    },
+    restoreFromRows() {
+      const r = this.restore;
+      return r ? Object.keys(r.holders || {}).map((i) => ({ i: +i, path: r.items[i].full_path, holders: r.holders[i] })) : [];
+    },
+    restoreHolderLabel(h, all) {
+      const hosts = new Set((all || []).map((x) => x.source.split(":")[0]));
+      const parts = [hosts.size > 1 ? h.source : sourcePath(h.source)];
+      if (h.snapshots) parts.push(countOf(h.snapshots, "snapshot"));
+      if (h.latest) parts.push("newest " + this.humanTime(h.latest));
+      return parts.join(" · ");
+    },
+    restorePickSource(i, source) {
+      const r = this.restore;
+      if (!r || !r.items[i] || r.items[i].source === source) return;
+      r.items[i].source = source;
+      this.restoreLoad(!!(r.plan && r.plan.previewed));
+    },
 
     restorePresetOf(o) {
       for (const [name, p] of Object.entries(RESTORE_PRESETS)) {
@@ -264,8 +316,8 @@ const actionsPart = {
 
     // Search / Tree selections: files restore flat into one folder.
     selRestore(scope) {
-      const items = this._selItems(scope).filter((i) => i.source).map((i) => ({ source: i.source, full_path: i.path }));
-      if (!items.length) { this.error = "Select one or more rows first."; return; }
+      const items = this._selItems(scope).map((i) => ({ source: i.source || null, full_path: i.path }));
+      if (!items.length) { this.klNotify("Select one or more rows first.", "warn"); return; }
       this.openRestore(items);
     },
 

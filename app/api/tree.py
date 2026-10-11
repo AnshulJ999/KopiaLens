@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from ..core import paths as pathrules
 from ..core.sources import sources_index
-from ..index.holding import holding_snapshots
+from ..index.holding import _segments, holding_snapshots
 from .errors import PASS_THROUGH
 from ..index.queries import (
     flat_files,
@@ -118,6 +118,20 @@ class HoldersBody(BaseModel):
     repo: str
     full_paths: list[str]
     detail: bool = False
+    folders: bool = False   # a path no file row matches is taken as a folder: the sources covering it
+
+
+def _covering_sources(repo: str, path: str) -> list[str]:
+    """Sources whose root is at or above this folder, each compared under its own path rules."""
+    folder, _sep = pathrules.folder_key(path)
+    out = []
+    for src in sources_index(repo):
+        sep = pathrules.sep(src)
+        root = pathrules.ident(src, pathrules.source_root(src).rstrip(sep))
+        base = pathrules.ident(src, folder)
+        if base == root or base.startswith(root + sep):
+            out.append(src)
+    return sorted(out)
 
 
 @router.post("/tree/holders")
@@ -136,14 +150,26 @@ def tree_holders(body: HoldersBody) -> dict:
     if body.detail and len(paths) > _HOLDERS_DETAIL_CAP:
         return {"paths": out, "capped": True}
     by_path = holders_for_paths(body.repo, paths)
+    folder_paths = set()
+    if body.folders:
+        for fp in paths:
+            if not by_path.get(fp):
+                by_path[fp] = _covering_sources(body.repo, fp)
+                folder_paths.add(fp)
     if not body.detail:
         return {"paths": {fp: [{"source": s} for s in srcs] for fp, srcs in by_path.items()},
                 "capped": False}
     for fp, srcs in by_path.items():
         for src in srcs:
-            held = holding_snapshots(body.repo, src, [fp]).get(fp) or []
-            out[fp].append({"source": src, "snapshots": len(held),
-                            "latest": held[0].get("start_time") if held else None})
+            if fp in folder_paths and _segments(src, fp) == []:     # the source's own root: every snapshot
+                snaps = sources_index(body.repo).get(src, [])
+                count, latest = len(snaps), max((s.get("startTime", "") for s in snaps), default=None)
+            else:
+                held = holding_snapshots(body.repo, src, [fp]).get(fp) or []
+                count, latest = len(held), (held[0].get("start_time") if held else None)
+            if fp in folder_paths and not count:
+                continue    # covers the folder by root, but its snapshots never held it (excluded)
+            out[fp].append({"source": src, "snapshots": count, "latest": latest})
     return {"paths": out, "capped": False}
 
 
