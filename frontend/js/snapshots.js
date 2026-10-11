@@ -8,7 +8,7 @@ const snapshotsPart = {
       await this.wrap(async () => {
         const data = await getJson(`/api/snapshots?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.snapSource)}`);
         if (seq !== this._snapSeq) return;  // a newer load superseded this one
-        this.snapshots = data.snapshots || [];
+        this.snapshots = this.snapSource === "*ALL*" ? (data.snapshots || []).filter((x) => this.ownerMatch(x.source)) : (data.snapshots || []);
         this.analyzing = !!data.analyzing;
         // the churn/reclaim numbers can belong to the previous index run - say so
         this.snapStaleAnalysis = !!data.analyzed && data.analysis_fresh === false;
@@ -19,6 +19,7 @@ const snapshotsPart = {
         const cols = [
           ...(allSrc ? [{ title: "Source", field: "source", widthGrow: 2, minWidth: 200, formatter: (c) => sourcePath(c.getValue()) }] : []),
           { title: "Start", field: "start_time", width: 185, formatter: (c) => timeCell(c.getValue()) },
+          { title: "Description", field: "description", widthGrow: 1, minWidth: 120, formatter: (c) => escHtml(c.getValue() || "") },
           { title: "Logical", field: "logical", width: 100, sorter: "number", formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
           { title: "Physical", field: "physical", width: 100, sorter: "number", formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },
           { title: "Accum", field: "accum", width: 72, sorter: "number", formatter: (c) => { const v = c.getValue(); return (v == null) ? "—" : `${fmtFix(v, 2)}x`; }, hozAlign: "right" },
@@ -40,6 +41,7 @@ const snapshotsPart = {
             { label: "Show in Tree", action: () => this.browseSnapshot(d) },
             { label: "Restore this snapshot…", action: () => this.openRestore([{ source: d.source, full_path: sourcePath(d.source), snapshot_id: d.id }], { label: "snapshot " + this.humanTime(d.start_time) }) },
             { label: this.mountOpenLabel(), action: () => this.mountOpen(d.id, d.source, sourcePath(d.source)) },
+            ...(server ? [] : [this.engineOffReason() ? this.offMenuItem("Edit description…", this.engineOffReason()) : { label: "Edit description…", action: () => this.editDescription(d) }]),
             { separator: true });
           if (n === 2) items.push({ label: "Compare 2 snapshots", action: () => this.diffSelected() });
           const pinNames = [...new Set(this.snapSelected().flatMap((x) => x.pins || []))].sort();
@@ -111,6 +113,49 @@ const snapshotsPart = {
       this.snapSourceByRepo = { ...this.snapSourceByRepo, [this.repo]: this.snapSource };
       this.klSet({ snap_source_by_repo: this.snapSourceByRepo });
       this.loadSnapshots();
+    },
+
+    // ---- Owner filter (Dashboard + Snapshots): all computers, this computer, or one user@host ----
+    async loadClient() {
+      const repo = this.repo;
+      if (this.repoKind !== "kopia" || this.clientByRepo[repo]) return;
+      try {
+        const c = await getJson(`/api/client?repo=${encodeURIComponent(repo)}`);
+        this.clientByRepo = { ...this.clientByRepo, [repo]: c.user && c.host ? `${c.user}@${c.host}` : "" };
+      } catch (e) { /* no filter for "this computer" then */ }
+    },
+    myOwner() { return this.clientByRepo[this.repo] || ""; },
+    ownerOf(source) { return String(source || "").split(":")[0]; },
+    owners() { return [...new Set(this.sources.map((s) => this.ownerOf(s)))].sort(); },
+    otherOwners() { return this.owners().filter((o) => o !== this.myOwner()); },
+    showOwnerFilter() { const o = this.owners(); return o.length > 1 || (o.length === 1 && !!this.myOwner() && o[0] !== this.myOwner()); },
+    ownerFilter() { return this.ownerFilterByRepo[this.repo] || "all"; },
+    ownerMatch(source) {
+      const f = this.ownerFilter();
+      if (f === "all") return true;
+      return this.ownerOf(source) === (f === "me" ? this.myOwner() : f);
+    },
+    setOwnerFilter(value) {
+      this.ownerFilterByRepo = { ...this.ownerFilterByRepo, [this.repo]: value };
+      this.klSet({ owner_filter_by_repo: this.ownerFilterByRepo });
+      if (this.snapSource !== "*ALL*" && !this.ownerMatch(this.snapSource)) { this.snapSource = "*ALL*"; this.changeSnapSource(); return; }
+      this.activate();
+    },
+
+    async editDescription(d) {
+      const r = await this.klConfirm({
+        title: "Edit snapshot description",
+        facts: [["Folder", sourcePath(d.source)], ["Snapshot", humanTime(d.start_time)]],
+        input: { label: "Description", placeholder: "e.g. before the upgrade", value: d.description || "" },
+        confirmLabel: "Save description", danger: false,
+      });
+      if (!r) return;
+      try {
+        await getJson("/api/engine/snapshot-description", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo: this.repo, snapshot_id: d.id, description: r.value || "" }) });
+        this.klNotify("Description saved");
+        this.loadSnapshots();
+      } catch (e) { this.klNotify(e.message, "error"); }
     },
     planDelete() {  // build a confirm plan from the currently-selected snapshot rows
       const rows = this.snapSelected();

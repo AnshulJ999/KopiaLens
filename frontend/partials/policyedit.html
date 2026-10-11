@@ -179,7 +179,12 @@
     <template x-for="g in polAdvGroups()" :key="g">
       <details class="pe-adv" :open="g === 'Error handling'">
         <summary class="cursor-pointer select-none text-sm font-medium py-1.5" x-text="g"></summary>
-        <div class="kl-callout mb-2" x-show="g === 'Snapshot scripts' && polActionsOff()">Scripts are off on this computer: kopia was connected without actions enabled, so they won't run.</div>
+        <div class="kl-callout mb-2 flex items-center gap-2" x-show="g === 'Snapshot scripts' && polActionsOff()">
+          <span class="grow">Scripts are off on this computer, so they won't run.</span>
+          <button type="button" class="kl-btn quiet" x-show="isDesktopWindow()" @click="polSetScripts(true)" data-testid="scripts-on">Turn on scripts</button></div>
+        <div class="kl-note mb-2 flex items-center gap-2" x-show="g === 'Snapshot scripts' && polActionsOn() && isDesktopWindow()">
+          <span class="grow">Scripts are on for this computer.</span>
+          <button type="button" class="kl-btn quiet" @click="polSetScripts(false)">Turn off scripts</button></div>
         <div class="kl-callout mb-2" x-show="g === 'Splitter'">Changing the splitter makes new data dedupe badly against what is already stored. The repository's own splitter was chosen when it was created.</div>
         <div class="kl-note mb-2" x-show="g === 'Logging'">Each is a detail level from 0 to 10.</div>
         <div class="kl-callout mb-2" x-show="g === 'Inheritance'">Turning this on stops every policy above this one, and kopia's defaults, from applying here.</div>

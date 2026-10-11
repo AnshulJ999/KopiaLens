@@ -1,8 +1,13 @@
       <section x-show="active==='snapshots'" class="h-full flex flex-col gap-2">
         <div class="kl-toolbar">
+          <select x-show="showOwnerFilter()" x-cloak @change="setOwnerFilter($event.target.value)" class="fld border border-bd bg-surface max-w-[16rem]" title="Whose backups to show" data-testid="owner-filter">
+            <option value="all" :selected="ownerFilter() === 'all'">All computers</option>
+            <option value="me" :selected="ownerFilter() === 'me'" x-text="myOwner() ? 'This computer (' + myOwner() + ')' : 'This computer'"></option>
+            <template x-for="o in otherOwners()" :key="o"><option :value="o" :selected="ownerFilter() === o" x-text="o"></option></template>
+          </select>
           <select x-model="snapSource" @change="changeSnapSource()" class="fld border border-bd bg-surface max-w-[22rem]" title="Source">
             <option value="*ALL*">All sources</option>
-            <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
+            <template x-for="s in sources.filter((x) => ownerMatch(x))" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
           </select>
           <button x-show="repoKind !== 'server'" @click="snapSource === '*ALL*' ? analyzeAll() : analyzeSnapshots()" :disabled="analyzing || analyzingAll" class="kl-btn"
                   :title="snapSource === '*ALL*' ? 'Work out churn and reclaimable space for every source' : 'Work out churn and reclaimable space for this source'"

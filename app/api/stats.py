@@ -146,7 +146,7 @@ def _maintenance_health(repo: str, maint: dict, status: dict) -> tuple[dict, lis
         idc = coexist.identity_check(repo)
     except Exception:  # noqa: BLE001 - the check is optional
         idc = None
-    if idc:
+    if idc and idc["connect_needed"]:
         health.append({
             "id": "identity-case", "status": "warn",
             "title": "Snapshots here use a different spelling of this computer's name",
@@ -155,6 +155,13 @@ def _maintenance_health(repo: str, maint: dict, status: dict) -> tuple[dict, lis
                        "on the Dashboard."),
             "fix_command": _kopia_cmd(repo, ["repository", "set-client", f"--hostname={idc['host']}",
                                              f"--username={idc['user']}"]),
+        })
+    elif idc and idc["merge_from"]:
+        health.append({
+            "id": "identity-case", "status": "warn",
+            "title": "Snapshots here are stored under two spellings of this computer's name",
+            "detail": (f"{idc['merge_from']} and {idc['suggested']} each have their own histories. Merge them under "
+                       "Who runs backups on the Dashboard."),
         })
     if not card["full_enabled"]:
         health.append({

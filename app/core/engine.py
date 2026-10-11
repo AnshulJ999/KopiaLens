@@ -48,6 +48,7 @@ _lock = threading.RLock()
 _servers: dict[str, "_Server"] = {}
 _fail: dict[str, dict] = {}          # repo -> {count, next_try, error, alerted}
 _states: dict[str, str] = {}         # repo -> last reconciled state (for transition alerts)
+_done_seq: dict[str, int] = {}       # repo -> finished backup/maintenance tasks (screens reload on change)
 _alerts: deque = deque(maxlen=200)
 _alert_seq = 0
 _stop = threading.Event()
@@ -453,6 +454,10 @@ def _poll_one(srv: _Server) -> None:
         if t.get("endTime") and t["id"] not in srv.recorded:
             srv.recorded.add(t["id"])
             _record(srv, t)
+            if t.get("kind") != "Repository":
+                from .sources import invalidate
+                invalidate(srv.repo)    # a backup or maintenance changed kopia's snapshot list
+                _done_seq[srv.repo] = _done_seq.get(srv.repo, 0) + 1
 
 
 def _poll_loop() -> None:
@@ -472,6 +477,18 @@ _wake = threading.Event()
 def wake() -> None:
     """Reconcile soon (after a choice, pause or resume) instead of on the next tick."""
     _wake.set()
+
+
+def restart(repo: str, reason: str) -> bool:
+    """Stop KopiaLens's server for ``repo`` so the next reconcile starts it fresh (it re-reads its
+    connection file). False when none was running."""
+    with _lock:
+        srv = _servers.pop(repo, None)
+    if srv is None:
+        return False
+    _stop_server(srv, reason)
+    wake()
+    return True
 
 
 def _reconcile_loop() -> None:
@@ -555,6 +572,16 @@ def cancel_task(repo: str, task_id: str) -> bool:
     if srv is None:
         return False
     r = srv.ui.post(f"/api/v1/tasks/{task_id}/cancel", json={})
+    r.raise_for_status()
+    return True
+
+
+def edit_description(repo: str, snapshot_id: str, description: str) -> bool:
+    """Set one snapshot's description. Only kopia's server can do this; the snapshot gets a new id."""
+    srv = running(repo)
+    if srv is None:
+        return False
+    r = srv.ui.post("/api/v1/snapshots/edit", json={"snapshots": [snapshot_id], "description": description})
     r.raise_for_status()
     return True
 
@@ -782,6 +809,7 @@ def repo_status(repo: str) -> dict:
         "repo": repo, "choice": view["choice"], "state": state, "engine": view["engine"],
         "conflict": view["conflict"], "pause": pause_state(repo), "next": nxt,
         "paused_sources": len(source_pauses(repo)),
+        "done_seq": _done_seq.get(repo, 0),
         "error": f.get("error") if state == "failed" else "",
         "retry_at": f.get("next_try") if state == "failed" else None,
         "connecting": bool(pending and not pending.connected_at),

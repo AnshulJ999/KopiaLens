@@ -150,6 +150,28 @@ def cancel(payload: SourceRequest) -> dict:
     return {"ok": ok}
 
 
+class DescriptionRequest(BaseModel):
+    repo: str
+    snapshot_id: str
+    description: str = ""
+
+
+@router.post("/engine/snapshot-description")
+def snapshot_description(payload: DescriptionRequest) -> dict:
+    _need_repo(payload.repo)
+    try:
+        if not engine.edit_description(payload.repo, payload.snapshot_id, payload.description.strip()):
+            raise HTTPException(status_code=409, detail="KopiaLens isn't running backups for this repository.")
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Couldn't change the description: {exc}") from exc
+    from ..core.sources import invalidate
+    invalidate(payload.repo)
+    audit.audit("executed", "snapshot-description", repo=payload.repo, summary={"snapshot": payload.snapshot_id})
+    return {"ok": True}
+
+
 class IdentityRequest(BaseModel):
     repo: str
     identity: str               # the user@host the check suggested; must still be the suggestion
@@ -161,7 +183,7 @@ def fix_identity(payload: IdentityRequest) -> dict:
     the connection file changes; the maintenance owner is never moved (trap 55)."""
     _need_repo(payload.repo)
     check = coexist.identity_check(payload.repo)
-    if not check or check["suggested"] != payload.identity:
+    if not check or not check["connect_needed"] or check["suggested"] != payload.identity:
         raise HTTPException(status_code=409, detail="Nothing to fix: the names match now.")
     from ..core import kopiabin, repoconnect
     cfg = coexist.config_path(payload.repo)

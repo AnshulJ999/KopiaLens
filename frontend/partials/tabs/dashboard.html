@@ -6,7 +6,6 @@
                     title="Who runs this repository's backups"><span x-text="backupsLine()"></span> ▾</button>
             <div class="kl-menu" style="left:0;right:auto" x-show="open" x-cloak>
               <button @click="open = false; openEngineDlg()">Who runs backups…</button>
-              <button @click="open = false; openTasksFor(repo)">Show tasks</button>
               <div class="sep"></div>
               <template x-if="engine && engine.pause && engine.pause.on"><button @click="open = false; engineResume(null)">Resume all backups</button></template>
               <template x-if="!(engine && engine.pause && engine.pause.on)">
@@ -19,6 +18,11 @@
             </div>
           </span>
           <button class="kl-btn" @click="loadDashboard(true)" title="Recompute these numbers now">↻ Refresh</button>
+          <select x-show="showOwnerFilter()" x-cloak @change="setOwnerFilter($event.target.value)" class="fld border border-bd bg-surface max-w-[16rem]" title="Whose backups to show" data-testid="owner-filter">
+            <option value="all" :selected="ownerFilter() === 'all'">All computers</option>
+            <option value="me" :selected="ownerFilter() === 'me'" x-text="myOwner() ? 'This computer (' + myOwner() + ')' : 'This computer'"></option>
+            <template x-for="o in otherOwners()" :key="o"><option :value="o" :selected="ownerFilter() === o" x-text="o"></option></template>
+          </select>
           <span class="grow"></span>
           <span class="text-xs text-muted" x-show="dashboardMeta" title="Everything this repository stores, with shared data counted once">Repository holds <b class="text-fg font-medium" x-text="dashboardMeta"></b></span>
           <span class="kl-help" tabindex="0" title="Double-click a row to see its snapshots. Right-click a row for more; right-click a column header to show or hide columns.">?</span>

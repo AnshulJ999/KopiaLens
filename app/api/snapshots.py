@@ -54,6 +54,7 @@ def _snap_row(key: str, snap: dict, a: dict) -> dict:
         "start_time": snap.get("startTime", ""), "end_time": snap.get("endTime", ""),
         "logical": logical, "files": summ.get("files", 0), "dirs": summ.get("dirs", 0),
         "pins": snap.get("pins"), "retention": snap.get("retention", []),
+        "description": snap.get("description") or "",
         "root": snap.get("rootEntry", {}).get("obj"),
         "physical": phys or None,
         "accum": (round(logical / phys, 2) if phys else None),  # logical / physical = dedup gain

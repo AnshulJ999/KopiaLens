@@ -19,11 +19,10 @@
 
                 <template x-if="engineDlg.data.identity">
                   <div class="kl-callout space-y-1.5">
-                    <div x-text="engineDlg.data.identity.split
-                      ? 'Snapshots here are stored under two names: ' + engineDlg.data.identity.suggested + ' and ' + engineDlg.data.identity.current + '.'
-                      : 'Snapshots here were made as ' + engineDlg.data.identity.suggested + '. This connection is ' + engineDlg.data.identity.current + ', so a backup from here starts a separate history.'"></div>
+                    <div x-show="engineDlg.data.identity.split" x-text="'Snapshots here are stored under two names: ' + engineDlg.data.identity.suggested + ' and ' + engineDlg.data.identity.merge_from + '.'"></div>
+                    <div x-show="engineDlg.data.identity.connect_needed" x-text="'This connection is ' + engineDlg.data.identity.current + ', so a backup from here goes under that name instead of ' + engineDlg.data.identity.suggested + '.'"></div>
                     <div class="flex flex-wrap gap-2">
-                      <button class="kl-btn" style="height:24px" @click="engineFixIdentity()" x-text="'Connect as ' + engineDlg.data.identity.suggested + '…'"></button>
+                      <button class="kl-btn" style="height:24px" x-show="engineDlg.data.identity.connect_needed" @click="engineFixIdentity()" x-text="'Connect as ' + engineDlg.data.identity.suggested + '…'"></button>
                       <template x-if="engineDlg.data.identity.split">
                         <span class="flex gap-2">
                           <button class="kl-btn" style="height:24px" @click="engineMergeHistory(true)">Dry run the merge</button>

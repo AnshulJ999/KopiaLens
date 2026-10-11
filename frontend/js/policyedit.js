@@ -317,6 +317,23 @@ const policyEditPart = {
       return (r.effective.scheduling || {}).manual ? "Manual only: no scheduled snapshots." : "No scheduled snapshots.";
     },
     polActionsOff() { return !!(this.polMeta && this.polMeta.client && this.polMeta.client.host && !this.polMeta.client.enable_actions); },
+    polActionsOn() { return !!(this.polMeta && this.polMeta.client && this.polMeta.client.enable_actions); },
+    async polSetScripts(enable) {
+      const ok = await this.klConfirm({
+        title: enable ? "Turn on snapshot scripts for this computer?" : "Turn off snapshot scripts for this computer?",
+        facts: [["Repository", this.repoName(this.repo)], ["Computer", this.myOwner() || "This computer"]],
+        note: enable ? "Scripts set in this repository's policies will run on this computer before and after backups." : "Scripts in this repository's policies stop running on this computer.",
+        confirmLabel: enable ? "Turn on scripts" : "Turn off scripts", danger: false,
+      });
+      if (!ok) return;
+      try {
+        const r = await getJson("/api/client/scripts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, enable }) });
+        this.polMeta = null;
+        await this.polLoadMeta();
+        const apps = r.restart_apps || [];
+        this.klNotify((enable ? "Scripts turned on" : "Scripts turned off") + (apps.length ? `. Restart ${apps.join(" and ")} so it uses the new setting.` : ""), apps.length ? "warn" : "ok");
+      } catch (e) { this.klNotify(e.message, "error"); }
+    },
 
     // ---------- leaving a policy with unsaved changes ----------
     polChangeLines(target) {

@@ -29,7 +29,7 @@ Kopia files every snapshot under a name like `you@your-computer`, and the name i
 - A snapshot taken from a lowercase connection starts a **separate history** that BlinkDisk doesn't show.
 - Maintenance from that connection is refused, because BlinkDisk's name owns it.
 
-KopiaLens spots this in **Who runs backups** and in the Repository tab's health checks:
+KopiaLens spots this in **Who runs backups** and in the Repository tab's health checks. It keeps the spelling the vault's maintenance owner uses (BlinkDisk's), and the two steps work in either order:
 
 1. **Connect as** the vault's name (for example `Anshul@Anshul-Desktop`). Later backups from KopiaLens then join BlinkDisk's history. Only the connection's name changes; the vault stays as it is.
 2. If snapshots were already made under both names, **merge the histories**. Run the dry run first to see each snapshot that moves, then merge. Afterwards each folder has one history again. Moved snapshots get new IDs, and any policy set under the old name stays under that name (you can copy its settings in Policies).

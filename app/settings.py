@@ -77,6 +77,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "header_search_only": False,  # Search tab uses the header search box instead of its own
         "snap_source_by_repo": {},  # Snapshots tab source per repo id ("*ALL*" = all sources)
         "tree_source_by_repo": {},  # Tree tab source per repo id
+        "owner_filter_by_repo": {},  # Dashboard + Snapshots owner filter per repo id: "all" | "me" | "user@host"
         "sim_policy_by_repo": {},   # Simulate's last policy per repo id
         "recent_backup": "30",     # default "Backed up" filter in days ("" = Any); user changes persist
         "tree_dedupe": False,      # persisted dedupe toggle (tree)

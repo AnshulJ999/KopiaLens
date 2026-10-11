@@ -23,6 +23,14 @@ const enginePart = {
         this._alertSeen = d.alert_seq;
       } else if (this._alertSeen < 0) this._alertSeen = d.alert_seq || 0;
       if (this.active === "dashboard") this.loadEngineSources();
+      // A backup or maintenance run finished: kopia's snapshot list changed under these screens.
+      const e = this.engineFor();
+      const seq = e ? `${e.repo}:${e.done_seq || 0}` : "";
+      if (this._doneSeq && seq && seq !== this._doneSeq && this._doneSeq.split(":")[0] === e.repo) {
+        if (this.active === "dashboard") this.loadDashboard();
+        else if (this.active === "snapshots") this.loadSnapshots(true);
+      }
+      this._doneSeq = seq;
     } catch (e) { /* the status line is optional */ }
     if (!this.isDemo()) this.loadMounts();
   },
@@ -172,24 +180,24 @@ const enginePart = {
     } catch (e) { g.error = e.message; }
   },
 
-  // One history again: move the snapshots made under this connection's name to the other name
-  // (kopia's move-history). Policies under the old name stay where they are.
+  // One history again: move the snapshots under the other spelling into the kept one (kopia's
+  // move-history). Policies under the old name stay where they are.
   async engineMergeHistory(dry) {
     const g = this.engineDlg;
     const idc = g && g.data && g.data.identity;
     if (!idc || !idc.split) return;
-    const params = { src: idc.current, dst: idc.suggested, dry };
+    const params = { src: idc.merge_from, dst: idc.suggested, dry };
     if (!dry) {
       const ok = await this.klConfirm({
-        title: `Merge ${idc.current}'s snapshots into ${idc.suggested}?`,
-        facts: [["From", idc.current], ["Into", idc.suggested], ["Afterwards", "One history per folder; moved snapshots get new IDs"]],
+        title: `Merge ${idc.merge_from}'s snapshots into ${idc.suggested}?`,
+        facts: [["From", idc.merge_from], ["Into", idc.suggested], ["Afterwards", "One history per folder; moved snapshots get new IDs"]],
         callout: "Policies set under " + idc.current + " stay under that name.",
         note: "Run the dry run first to see every snapshot that moves.",
         confirmLabel: "Merge histories", danger: true,
       });
       if (!ok) return;
     }
-    await this.startJob("move_history", params, `${idc.current} -> ${idc.suggested}`, g.repo);
+    await this.startJob("move_history", params, `${idc.merge_from} -> ${idc.suggested}`, g.repo);
   },
 
   // ---- Pause ----
@@ -253,9 +261,22 @@ const enginePart = {
     return "";
   },
   engineSrcPaused(source) { const s = this.engineSrc[source]; return !!(s && s.paused); },
+  // Why a KopiaLens-only action is off for this repository (null when it's available).
+  engineOffReason() {
+    if (this.engineRuns()) return null;
+    const e = this.engineFor();
+    if (e && e.choice === "kopialens") return e.state === "paused" ? "Backups are paused for this repository" : "KopiaLens's backups aren't running right now";
+    return "Only when KopiaLens runs this repository's backups";
+  },
+  // A menu entry that stays visible but greyed out, with the reason on hover.
+  offMenuItem(label, reason) {
+    return { label: `<span title="${escHtml(reason)}">${escHtml(label)}</span>`, disabled: true };
+  },
   // Row menu entries for one folder's scheduled backups (only where KopiaLens runs them).
   engineSourceMenu(source) {
-    if (!this.engineRuns()) return [];
+    if (!this.engineFor() || this.isDemo()) return [];
+    const off = this.engineOffReason();
+    if (off) return [this.offMenuItem("Pause backups", off)];
     if (this.engineSrcPaused(source)) return [{ label: "Resume backups", action: () => this.engineSourceResume(source) }];
     return [{ label: "Pause backups", menu: [...PAUSE_CHOICES.map(([h, l]) => ({ label: l, action: () => this.engineSourcePause(source, h) })),
       { label: "Custom…", action: () => this.engineSourcePause(source, "custom") }] }];

@@ -19,10 +19,14 @@
                 </template>
               </div>
             </template>
-            <div class="kl-callout" x-show="confirmBox.callout" x-text="confirmBox.callout"></div>
+            <div class="kl-callout" :class="confirmBox.dangerCallout && 'danger'" x-show="confirmBox.callout" x-text="confirmBox.callout"></div>
             <template x-if="confirmBox.input">
               <label class="block"><span class="text-xs text-muted" x-text="confirmBox.input.label"></span>
                 <input class="fld border border-bd bg-surface2 w-full mt-1 text-xs" x-model="confirmBox.value" :type="confirmBox.input.type || 'text'" :min="confirmBox.input.min || null" :placeholder="confirmBox.input.placeholder || ''"></label>
+            </template>
+            <template x-if="confirmBox.typeToConfirm">
+              <label class="block"><span class="text-xs text-muted">Type <b class="text-fg" x-text="confirmBox.typeToConfirm"></b> to confirm</span>
+                <input class="fld border border-bd bg-surface2 w-full mt-1 text-xs" x-model="confirmBox.typed" autocomplete="off" spellcheck="false" data-testid="confirm-typed"></label>
             </template>
             <div class="kl-note" x-show="confirmBox.note" x-text="confirmBox.note"></div>
           </div>
@@ -30,7 +34,7 @@
             <button x-show="confirmBox.command" @click="copyText(confirmBox.command)" class="kl-btn quiet">Copy command</button>
             <span class="spacer"></span>
             <button @click="confirmResolve(false)" class="kl-btn" data-cf="cancel">Cancel</button>
-            <button @click="confirmResolve(true)" data-cf="ok" :class="confirmBox.danger ? 'kl-btn danger' : 'kl-btn primary'" x-text="confirmBox.confirmLabel"></button>
+            <button @click="confirmResolve(true)" data-cf="ok" :disabled="!confirmTypedOk()" :class="confirmBox.danger ? 'kl-btn danger' : 'kl-btn primary'" x-text="confirmBox.confirmLabel"></button>
           </div>
         </div>
       </div>

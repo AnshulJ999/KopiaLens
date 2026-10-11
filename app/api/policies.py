@@ -315,6 +315,54 @@ class ResolveBody(BaseModel):
     impact: bool = False
 
 
+class ScriptsRequest(BaseModel):
+    repo: str
+    enable: bool
+
+
+@router.post("/client/scripts")
+def set_scripts(body: ScriptsRequest) -> dict:
+    """Allow or block snapshot scripts on this computer: the one top-level `enableActions` value
+    in the connection file (kopia has no command for it; reconnecting rewrites the whole
+    file). A copy of the file is kept first."""
+    import json as _json
+    import os as _os
+    import shutil as _shutil
+    from ..core import auth, coexist
+    _kopia_repo(body.repo)
+    if auth.profile() != "desktop":
+        raise HTTPException(status_code=403, detail="Scripts can only be turned on or off in the desktop app.")
+    path = coexist.config_path(body.repo)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = _json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail="Couldn't read this repository's connection file.") from exc
+    if not isinstance(data, dict) or "storage" not in data:
+        raise HTTPException(status_code=409, detail="Couldn't read this repository's connection file.")
+    if bool(data.get("enableActions")) != body.enable:
+        _shutil.copy2(path, path + ".kopialens-backup")
+        data["enableActions"] = body.enable
+        tmp = path + ".kopialens-tmp"
+        with open(tmp, "w", encoding="utf-8", newline="") as fh:
+            _json.dump(data, fh, indent=2)
+        _os.replace(tmp, path)
+    _CLIENT_CACHE.pop(body.repo, None)
+    from ..core import audit, engine
+    restarted = engine.restart(body.repo, "scripts setting changed")
+    view = coexist.repo_view(body.repo)
+    others = sorted({r["label"] for r in view.get("running", []) if r.get("app") != "kopialens"})
+    audit.audit("executed", "client-scripts", repo=body.repo, summary={"enable": body.enable})
+    return {"enable_actions": body.enable, "restarted": restarted, "restart_apps": others}
+
+
+@router.get("/client")
+def client(repo: str) -> dict:
+    """This computer's kopia identity for the repo (user@host), for the owner filter."""
+    _kopia_repo(repo)
+    return client_options(repo)
+
+
 @router.get("/policies/meta")
 def meta(repo: str) -> dict:
     """Field catalogue, option lists, and this computer's kopia client facts."""

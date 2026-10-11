@@ -167,6 +167,17 @@ const jobsPart = {
     },
 
     // A finished real delete: offer the maintenance run that frees its space.
+    // Plain result of a Verify, read from kopia's last line (kopia's own lines stay as they are).
+    jobVerifySummary() {
+      const p = this.jobPanel;
+      if (!p || p.kind !== "snapshot_verify" || p.state !== "done") return "";
+      const re = /Finished processing ([\d,]+) objects \(([^)]*)\)\. Read ([\d,]+) files \(([^)]*)\)/;
+      for (let i = this.jobLines.length - 1; i >= 0; i--) {
+        const m = re.exec(this.jobLines[i]);
+        if (m) return `Checked ${m[1]} objects (${m[2]}). Downloaded and checked ${m[3]} files (${m[4]}).`;
+      }
+      return "";
+    },
     jobFreesLater() {
       const p = this.jobPanel;
       if (!p || p.dry || p.state !== "done" || p.held) return false;
@@ -326,6 +337,7 @@ const jobsPart = {
       if (j.kind === "policy_write" && this.polData) this.loadPolicies(true);
       // A pin rewrites the snapshot record under a new id; a new snapshot adds a row.
       if ((j.kind === "snapshot_pin" || j.kind === "snapshot_create") && this.active === "snapshots") this.loadSnapshots(true);
+      if (j.kind === "snapshot_create" && this.active === "dashboard") this.loadDashboard();
       const deleted = j.kind === "remove_files" || j.kind === "prune_versions" || j.kind === "snapshot_delete"
         || (j.kind === "policy_write" && j.kind_label === "Excluding and deleting" && !j.held);
       if (deleted && this.active === "snapshots") this.loadSnapshots(true);

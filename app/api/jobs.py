@@ -145,9 +145,9 @@ def _resolve_params(kind: str, repo: str, params: dict) -> dict:
     if kind == "move_history":
         from ..core import coexist
         check = coexist.identity_check(repo)
-        if not check or not check["split"] or params.get("src") != check["current"] or params.get("dst") != check["suggested"]:
+        if not check or not check["merge_from"] or params.get("src") != check["merge_from"] or params.get("dst") != check["suggested"]:
             raise jobs.JobRefused("Nothing to merge: the snapshot names match now.")
-        return {"src": check["current"], "dst": check["suggested"], "dry": bool(params.get("dry"))}
+        return {"src": check["merge_from"], "dst": check["suggested"], "dry": bool(params.get("dry"))}
     if kind == "snapshot_verify":
         sources = [s for s in (params.get("sources") or []) if s]
         try:

@@ -117,7 +117,9 @@ const sourceOpsPart = {
     if (row && row.freeable != null) facts.push([term("reclaimable"), fmtBytes(row.freeable)]);
     facts.push(["Policy", g.info.has_policy ? (g.policy ? "Deleted" : "Kept") : "None of its own"]);
     const ok = await this.klConfirm({ title: `Delete every snapshot of ${sourcePath(g.source)}?`, facts,
-      callout: "Space is freed after the next full maintenance.", confirmLabel: `Delete ${countOf(n, "snapshot")}`, danger: true });
+      callout: "This deletes every backup of this folder and can't be undone.", dangerCallout: true,
+      note: "Space is freed after the next full maintenance.", typeToConfirm: "delete",
+      confirmLabel: `Delete ${countOf(n, "snapshot")}`, danger: true });
     if (!ok) return;
     g.busy = true;
     const id = await this.startJob("source_delete", { source: g.source, delete_policy: g.policy && g.info.has_policy }, sourcePath(g.source));

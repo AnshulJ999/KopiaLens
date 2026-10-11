@@ -39,6 +39,7 @@ document.addEventListener("alpine:init", () => {
     sources: [], selectedSource: "",
     // Each tab remembers its own source per repo; "*ALL*" = all sources.
     snapSourceByRepo: {}, treeSourceByRepo: {},
+    ownerFilterByRepo: {}, clientByRepo: {},   // owner filter (all / this computer / one user@host) + this computer's kopia name
     searchSelCount: 0, treeSelCount: 0, snapSelCount: 0,   // rows selected in Search / Tree (their selection bars)
     snapshots: [], selectedSnapshot: "",
     showChurn: localStorage.getItem("kl-churn") === "1",
@@ -337,6 +338,7 @@ document.addEventListener("alpine:init", () => {
         this.searchPageSize = this.pageSizes.includes(_ps) ? _ps : "500";
         this.snapSourceByRepo = kl.snap_source_by_repo || {};
         this.treeSourceByRepo = kl.tree_source_by_repo || {};
+        this.ownerFilterByRepo = kl.owner_filter_by_repo || {};
         this.simPolicyByRepo = kl.sim_policy_by_repo || {};
         this.snapSource = this.snapSourceByRepo[this.repo] || kl.snap_source || "*ALL*";  // default All sources
         this.numberStyle = kl.number_style || "system";
@@ -549,6 +551,7 @@ document.addEventListener("alpine:init", () => {
       this.indexStatus = status;
       this.sources = sources.sources || [];
       if (this.selectedSource !== "*ALL*" && !this.sources.includes(this.selectedSource)) this.selectedSource = this.sources[0] || "";
+      this.loadClient();
     },
 
     activate() {

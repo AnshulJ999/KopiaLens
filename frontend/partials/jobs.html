@@ -27,6 +27,7 @@
             <div x-show="jobPanel.error && jobPanel.state === 'failed'" class="text-xs text-danger break-all" x-text="jobPanel.error"></div>
             <div x-show="jobPanel.freed" class="text-xs font-medium" style="color:var(--ok)"
                  x-text="jobPanel.freed ? 'Freed ' + fmtB(jobPanel.freed.freed) + ' · repository now ' + fmtB(jobPanel.freed.after) : ''"></div>
+            <div x-show="jobVerifySummary()" class="text-xs font-medium" style="color:var(--ok)" x-text="jobVerifySummary()" data-testid="verify-summary"></div>
             <div x-show="jobFreesLater()" class="flex items-center gap-2 text-xs">
               <span class="text-muted">Space comes back after maintenance.</span>
               <button class="kl-btn quiet" style="height:22px" @click="openMaint(jobPanel.repo)">Run maintenance…</button>

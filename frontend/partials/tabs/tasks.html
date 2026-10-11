@@ -28,7 +28,8 @@
         <div class="min-h-0 flex-1 flex flex-col gap-2">
           <div id="tasksTable" class="min-h-[12rem] flex-1"></div>
           <template x-if="taskSel">
-            <div class="shrink-0 rounded-md border border-bd bg-surface flex flex-col max-h-[55%]" data-testid="task-panel">
+           <div class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6" @click.self="closeTask()" @keydown.escape.window="!confirmBox && closeTask()">
+            <div class="bg-surface rounded-lg border border-bd w-full max-w-4xl h-[85vh] flex flex-col" role="dialog" aria-modal="true" data-testid="task-panel">
               <div class="flex items-center gap-3 px-3 py-2 border-b border-bd">
                 <div class="min-w-0 grow">
                   <div class="font-medium flex items-center gap-2">
@@ -39,7 +40,7 @@
                        x-text="repoLabel(taskSel.repo) + ' · ' + taskWhat(taskSel)"></div>
                 </div>
                 <button class="kl-btn danger" x-show="taskSel.status === 'running'" @click="stopTask()">Stop</button>
-                <button class="kl-btn quiet" x-show="taskSel.job_id" @click="openJobPanel(taskSel.job_id)">Open in job panel</button>
+                <button class="kl-btn quiet" x-show="taskSel.job_id" @click="const j = taskSel.job_id; closeTask(); openJobPanel(j)">Open in job panel</button>
                 <button class="kl-btn quiet" @click="closeTask()" title="Close" aria-label="Close">&times;</button>
               </div>
               <div class="px-3 py-2 border-b border-bd text-xs flex flex-wrap gap-x-6 gap-y-1">
@@ -69,6 +70,7 @@
                 </div>
               </div>
             </div>
+           </div>
           </template>
         </div>
       </section>

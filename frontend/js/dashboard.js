@@ -8,16 +8,23 @@ const dashboardPart = {
         const data = await getJson(`/api/dashboard?repo=${encodeURIComponent(this.repo)}&refresh=${refresh}`);
         if (seq !== this._dashSeq) return;  // a newer load superseded this one
         this.dashboardMeta = fmtBytes(data.union_total);
+        // Stale numbers come with a recompute in the background: look again shortly.
+        if (this._dashStaleTimer) clearTimeout(this._dashStaleTimer);
+        if ((data.stale || data.stale_build_in_progress) && this.active === "dashboard") {
+          this._dashStaleTries = (this._dashStaleTries || 0) + 1;
+          if (this._dashStaleTries <= 10) this._dashStaleTimer = setTimeout(() => this.loadDashboard(), 2000);
+        } else this._dashStaleTries = 0;
         // Skip re-rendering on the periodic auto-refresh when the data is unchanged (avoids flicker).
         // hash = the backend snaphash: it flips whenever the index moves, so another source's
         // physical/freeable changing is no longer hidden by an unchanged first row.
         // computed_at flips on every cache REBUILD, covering same-hash rebuilds that only moved
         // e.g. next_snapshot times; polls of an untouched cache keep matching and never re-render.
-        const sig = `${TIME_FMT}|${NUM_LOCALE}|${_dateStyle}|${_clock}|${this.repo}|${data.hash || ""}|${data.computed_at || ""}|${data.union_total}|${(data.rows || []).length}|${(data.rows && data.rows[0] && data.rows[0].last_time) || ""}`;
+        const rows = (data.rows || []).filter((r) => this.ownerMatch(r.source));
+        const sig = `${TIME_FMT}|${NUM_LOCALE}|${_dateStyle}|${_clock}|${this.repo}|${this.ownerFilter()}|${this.myOwner()}|${data.hash || ""}|${data.computed_at || ""}|${data.union_total}|${(data.rows || []).length}|${(data.rows && data.rows[0] && data.rows[0].last_time) || ""}`;
         const dEl = document.querySelector("#dashboardTable");
         if (!refresh && dEl && dEl._tabulator && sig === this._dashSig) return;
         this._dashSig = sig;
-        setTable("#dashboardTable", data.rows || [], [
+        setTable("#dashboardTable", rows, [
           { title: "Source", field: "source", widthGrow: 4, minWidth: 240, sorter: srcSorter, formatter: (c) => this.shortSource(c.getValue()) },
           { title: "Snaps", field: "snaps", width: 70, hozAlign: "right" },
           { title: "Files (latest)", field: "files_latest", width: 100, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
@@ -32,7 +39,7 @@ const dashboardPart = {
           { title: "Last snapshot", field: "last_time", width: 165, formatter: (c) => timeCell(c.getValue()) },
           { title: "Next snapshot", field: "next_snapshot", width: 190, formatter: (c) => this.nextCellHtml(c.getRow().getData()) },
           { title: "Pins", field: "pins", width: 64, hozAlign: "right" },
-          { title: "", field: "_actions", download: false, headerSort: false, width: 200, hozAlign: "center",
+          { title: "Actions", field: "_actions", download: false, headerSort: false, width: 200, hozAlign: "center",
             formatter: (c) => {
               const src = c.getRow().getData().source;
               const live = this.sourceStatusHtml(src);
@@ -90,7 +97,7 @@ const dashboardPart = {
         facts: [["Folder", sourcePath(source)], ["Source", source], ["Repository", this.repoName(this.repo)],
           ...(this.engineSrcPaused(source) ? [["Schedule", "Stays paused"]] : [])],
         note: "Kopia applies this folder's policy: its exclusions, compression and retention.",
-        input: { label: "Description (optional)", placeholder: "Before the upgrade" },
+        input: { label: "Description (optional)", placeholder: "e.g. before the upgrade" },
         confirmLabel: "Snapshot now", danger: false,
       });
       if (!r) return;

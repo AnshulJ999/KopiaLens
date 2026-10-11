@@ -317,34 +317,48 @@ def repo_view(repo: str, with_owner: bool = False) -> dict:
 
 
 def identity_check(repo: str) -> dict | None:
-    """This connection's name differs from the snapshots' only by letter case (BlinkDisk writes
-    ``Anshul@Anshul-Desktop``; kopia's default is lowercase): a snapshot from here would start a
-    separate history and maintenance is refused. None when the names match or nothing compares."""
+    """This computer's name appears in more than one letter case (BlinkDisk writes
+    ``Anshul@Anshul-Desktop``; kopia's default is lowercase). ``suggested`` is the spelling to keep:
+    the maintenance owner's when it is one of them, else the one with the most snapshots (the
+    current one on a tie), so it does not flip after Connect as. ``connect_needed``: this connection
+    uses another spelling (a snapshot from here starts a separate history). ``merge_from``: another
+    spelling that still holds snapshots. None when neither applies."""
     from .sources import sources_index
     cfg = read_config(config_path(repo))
     user, host = cfg.get("username") or "", cfg.get("hostname") or ""
     if not user or not host:
         return None
     try:
-        keys = list(sources_index(repo).keys())
+        index = sources_index(repo)
     except Exception:  # noqa: BLE001 - no listing, nothing to compare
         return None
-    owners: dict[tuple[str, str], int] = {}
-    for k in keys:
+    current = f"{user}@{host}"
+    snaps: dict[str, int] = {}
+    sources: dict[str, int] = {}
+    for k, rows in index.items():
         userhost = k.split(":", 1)[0]
-        u, _, h = userhost.partition("@")
-        if u.startswith("BLINKDISK-DRAFT-"):
+        if userhost.startswith("BLINKDISK-DRAFT-") or userhost.lower() != current.lower():
             continue
-        owners[(u, h)] = owners.get((u, h), 0) + 1
-    variants = sorted(((u, h), n) for (u, h), n in owners.items()
-                      if u.lower() == user.lower() and h.lower() == host.lower() and (u, h) != (user, host))
-    if not variants:
+        snaps[userhost] = snaps.get(userhost, 0) + len(rows or [])
+        sources[userhost] = sources.get(userhost, 0) + 1
+    if not snaps or set(snaps) == {current}:
         return None
-    (vu, vh), n = max(variants, key=lambda x: x[1])
+    owner = maintenance_info(repo).get("owner") or ""
+    if owner.lower() == current.lower():
+        target = owner
+    else:
+        target = max([current, *snaps], key=lambda s: (snaps.get(s, 0), s == current))
+    others = sorted((s for s in snaps if s != target), key=lambda s: -snaps[s])
+    merge_from = others[0] if others else None
+    connect_needed = current != target
+    if not connect_needed and not merge_from:
+        return None
+    vu, _, vh = target.partition("@")
     from . import kopiabin
     from .repoconnect import kopia_config_dir
     in_kopiaui_folder = os.path.normcase(os.path.dirname(os.path.abspath(config_path(repo)))) == \
         os.path.normcase(os.path.abspath(kopia_config_dir()))
-    return {"current": f"{user}@{host}", "suggested": f"{vu}@{vh}", "sources": n,
-            "split": (user, host) in owners, "user": vu, "host": vh,
+    return {"current": current, "suggested": target, "sources": sources.get(target, 0),
+            "connect_needed": connect_needed, "merge_from": merge_from, "split": merge_from is not None,
+            "user": vu, "host": vh,
             "kopiaui_shares_file": in_kopiaui_folder and kopiabin.kopiaui_uses_kopia_folder()}

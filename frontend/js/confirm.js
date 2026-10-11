@@ -1,24 +1,31 @@
 // Shared confirm dialog: one component, two shapes picked by what the caller passes.
 // A sentence gets the short form; a set of facts gets the detailed one. The confirm button
-// states the action with its count, never "OK", and nothing is typed to confirm.
+// states the action with its count, never "OK". Typing to confirm (`typeToConfirm`) is kept for
+// the one action that wipes a folder's whole history.
 const confirmPart = {
 
     // opts: {title, body, facts: [[label, value], ...], callout, note, command,
-    //        confirmLabel, danger, input: {label, placeholder}}. Resolves true (confirmed) /
+    //        confirmLabel, danger, dangerCallout, typeToConfirm, input: {label, placeholder}}. Resolves true (confirmed) /
     //        false (cancelled); with `input`, a confirm resolves {value}.
     klConfirm(opts) {
       return new Promise((resolve) => {
         this.confirmBox = {
           title: opts.title || "Are you sure?", body: opts.body || "",
-          facts: opts.facts || null, callout: opts.callout || "", note: opts.note || "",
+          facts: opts.facts || null, callout: opts.callout || "", dangerCallout: !!opts.dangerCallout, note: opts.note || "",
+          typeToConfirm: opts.typeToConfirm || "", typed: "",
           command: opts.command || "", confirmLabel: opts.confirmLabel || "Confirm",
           danger: !!opts.danger, input: opts.input || null, value: (opts.input && opts.input.value) || "", _resolve: resolve,
           _openedAt: Date.now(), _returnTo: document.activeElement,
         };
       });
     },
+    confirmTypedOk() {
+      const cb = this.confirmBox;
+      return !cb || !cb.typeToConfirm || cb.typed.trim().toLowerCase() === cb.typeToConfirm;
+    },
     confirmResolve(v) {
       const cb = this.confirmBox;
+      if (v && !this.confirmTypedOk()) return;
       this.confirmBox = null;
       if (cb && cb._resolve) cb._resolve(v && cb.input ? { value: cb.value } : v);
       const back = cb && cb._returnTo;
