@@ -412,6 +412,8 @@
               <div class="mt-2 flex items-center gap-3 text-xs">
                 <label class="flex items-center gap-1">Parallel <input type="number" min="1" x-model.number="restore.options.parallel" class="fld h-7 w-16 border border-bd bg-surface2"></label>
                 <label class="flex items-center gap-1" title="Folders this deep become placeholder files">Shallow depth <input type="number" min="0" x-model="restore.options.shallow" class="fld h-7 w-20 border border-bd bg-surface2" placeholder="full"></label>
+                <label class="flex items-center gap-1" x-show="restore.options.shallow !== '' && restore.options.shallow != null" title="In a shallow restore, files smaller than this are restored in full instead of as placeholders">Full files under <input type="number" min="0" x-model="restore.options.shallow_minsize_kb" class="fld h-7 w-20 border border-bd bg-surface2" placeholder="0"> KB</label>
+                <label class="flex items-center gap-1.5" x-show="/\.zip$/i.test(restore.target || '')"><input type="checkbox" x-model="restore.options.zip_uncompressed"> Uncompressed .zip</label>
               </div>
             </details>
 

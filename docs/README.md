@@ -7,6 +7,7 @@ KopiaLens is a web app for exploring, analysing and managing [Kopia](https://kop
 - [First-time setup](getting-started.md): connecting your repositories, protecting KopiaLens, and building the first index.
 - [Repositories](repositories.md): adding, renaming, reordering, checking and removing repositories.
 - [Running in Docker](docker.md): the container, its folders, running as your own user, and mounting snapshots.
+- [Using KopiaLens with BlinkDisk](blinkdisk.md): connecting a vault, who runs backups and maintenance, the computer name, and merging split histories.
 
 ## Security
 

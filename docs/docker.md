@@ -33,6 +33,18 @@ docker build -f packaging/docker/Dockerfile -t kopialens:local .
 
 Cloud repositories (S3, B2, SFTP and the rest) need no folder: connect them in setup.
 
+## Backing up from the container
+
+KopiaLens can run your backups from the container (choose **KopiaLens** in **Who runs backups**). It backs up only folders mounted into the container, so:
+
+- **Mount each folder at its host path**, as above. kopia files a snapshot under the path it read, so `/home/me/photos` inside the container continues the host's `/home/me/photos` history.
+- **Connect as the host's name.** kopia also files every snapshot under a `user@computer` name. Inside a container that would be `root@kopialens`, a separate history from the host's. When you connect the repository, open **Advanced** and fill **Connect as user** and **Connect as computer** with the name your existing snapshots use (it shows in the Snapshots tab, for example `me@my-server`). To fix an existing connection, KopiaLens offers **Connect as** in **Who runs backups** when the names differ only in capitals; otherwise reconnect with the right name.
+- **Read access.** The container's user (see below) must be able to read every folder it backs up. Restores also need write access.
+
+**Docker Desktop on Windows can't continue Windows backups.** A Linux container sees `/data/photos`, not `D:\Photos`, so its snapshots start a new history. Back up Windows folders with the KopiaLens desktop app instead; Docker on Windows is fine for analysis.
+
+Other computers can't be backed up from here: each computer runs its own backups (KopiaLens, KopiaUI or the kopia command line), and KopiaLens analyses all of them.
+
 ## Running as your own user
 
 By default KopiaLens runs as root inside the container, like kopia's own image. To have the files in `/config` belong to your user instead, set `PUID` and `PGID` to that user's ids (`id -u` and `id -g` on the host). KopiaLens changes the owner of `/config` and `/mounts` to match on start.

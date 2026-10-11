@@ -140,6 +140,62 @@ def resume(repo: str | None) -> dict:
     return pause_state(repo)
 
 
+def source_pauses(repo: str) -> dict[str, dict]:
+    """Folders whose scheduled backups are paused: source -> {on, until, since}."""
+    raw = ((_read_state().get("sources") or {}).get(str(repo)) or {})
+    out = {}
+    for src, p in raw.items():
+        a = _active(p)
+        if a["on"]:
+            out[src] = {**a, "since": p.get("since")}
+    return out
+
+
+def set_source_pause(repo: str, source: str, hours: float) -> dict:
+    """Pause one folder's scheduled backups. kopia forgets a pause when its server restarts, so the
+    pause lives here and is re-applied on every poll. ``hours`` 0 = until resumed."""
+    st = _read_state()
+    until = time.time() + hours * 3600 if hours and hours > 0 else None
+    st.setdefault("sources", {}).setdefault(str(repo), {})[source] = {"on": True, "until": until, "since": time.time()}
+    _write_state(st)
+    _audit("engine-pause-source", repo, {"source": source, "hours": hours})
+    _apply_source_pauses(repo)
+    return source_pauses(repo).get(source) or {"on": False, "until": None}
+
+
+def resume_source(repo: str, source: str) -> dict:
+    st = _read_state()
+    (st.setdefault("sources", {}).setdefault(str(repo), {})).pop(source, None)
+    _write_state(st)
+    _audit("engine-resume-source", repo, {"source": source})
+    _apply_source_pauses(repo)
+    return {"on": False, "until": None}
+
+
+def _apply_source_pauses(repo: str) -> None:
+    """Make KopiaLens's server match the saved folder pauses."""
+    srv = running(repo)
+    if srv is None:
+        return
+    want_paused = source_pauses(repo)
+    for s in srv.sources:
+        src = s.get("source") or {}
+        key = f"{src.get('userName')}@{src.get('host')}:{src.get('path')}"
+        is_paused = (s.get("status") or "") == "PAUSED"
+        if (key in want_paused) == is_paused:
+            continue
+        try:
+            srv.ctl.post("/api/v1/control/" + ("pause-source" if key in want_paused else "resume-source"),
+                         params=_source_params(key), json={})
+        except Exception as exc:  # noqa: BLE001 - the next poll tries again
+            log.debug("engine folder pause repo=%s %s: %s", repo, key, exc)
+
+
+def _take_back_waits() -> bool:
+    from ..settings import load_settings
+    return (load_settings().get("kopialens") or {}).get("engine_takeback", "auto") == "wait"
+
+
 # ---- alerts ----------------------------------------------------------------------------------
 
 def alert(repo: str | None, level: str, title: str, body: str = "") -> None:
@@ -150,6 +206,8 @@ def alert(repo: str | None, level: str, title: str, body: str = "") -> None:
         _alerts.append({"id": _alert_seq, "ts": time.time(), "repo": repo, "level": level,
                         "title": title, "body": body})
     (log.warning if level != "info" else log.info)("alert repo=%s %s: %s %s", repo, level, title, body)
+    from . import notify
+    notify.send_later(title, body, level)
 
 
 def alerts(after: int = 0) -> list[dict]:
@@ -299,8 +357,15 @@ def reconcile() -> None:
             from . import coexist
             other = next((r["label"] for r in coexist.repo_view(repo)["running"] if r["app"] != "kopialens"),
                          "Another app")
+            waits = _take_back_waits()
+            if waits:
+                st = _read_state()
+                st.setdefault("repos", {})[str(repo)] = {"on": True, "until": None, "since": time.time(),
+                                                         "reason": "other-app"}
+                _write_state(st)
             alert(repo, "warn", f"{other} started running backups for {_repo_label(repo)}",
-                  "KopiaLens stopped its own backup schedule there.")
+                  "KopiaLens stopped its own backup schedule there."
+                  + (" Resume it when you're ready." if waits else ""))
         if ok and srv is None:
             try:
                 srv = _start(repo)
@@ -376,6 +441,7 @@ def _poll_one(srv: _Server) -> None:
         _fail.pop(srv.repo, None)
     try:
         srv.sources = (_get(srv.ctl, "/api/v1/control/sources") or {}).get("sources") or []
+        _apply_source_pauses(srv.repo)
     except Exception:  # noqa: BLE001
         pass
     try:
@@ -519,6 +585,7 @@ def source_status(repo: str) -> list[dict]:
     srv = running(repo)
     if srv is None:
         return []
+    paused = source_pauses(repo)
     out = []
     for s in srv.sources:
         src = s.get("source") or {}
@@ -527,6 +594,7 @@ def source_status(repo: str) -> list[dict]:
             "source": f"{src.get('userName')}@{src.get('host')}:{src.get('path')}",
             "status": s.get("status") or "", "next": s.get("nextSnapshotTime"),
             "task": s.get("currentTask") or "",
+            "paused": paused.get(f"{src.get('userName')}@{src.get('host')}:{src.get('path')}"),
             "progress": {k: up.get(k) for k in ("hashedBytes", "cachedBytes", "estimatedBytes",
                                                 "hashedFiles", "cachedFiles", "directory")} if up else None,
         })
@@ -713,6 +781,7 @@ def repo_status(repo: str) -> dict:
     return {
         "repo": repo, "choice": view["choice"], "state": state, "engine": view["engine"],
         "conflict": view["conflict"], "pause": pause_state(repo), "next": nxt,
+        "paused_sources": len(source_pauses(repo)),
         "error": f.get("error") if state == "failed" else "",
         "retry_at": f.get("next_try") if state == "failed" else None,
         "connecting": bool(pending and not pending.connected_at),
@@ -735,6 +804,10 @@ def health(repo: str) -> list[dict]:
         if h.get("status") == "failed":
             out.append({"level": "error", "title": f"Last backup failed: {src.split(':', 1)[-1]}",
                         "detail": h.get("error") or ""})
+    for src, p in sorted(source_pauses(repo).items()):
+        if p.get("since") and now - p["since"] > 7 * 86400:
+            out.append({"level": "warn", "title": f"Backups paused for {int((now - p['since']) // 86400)} days: "
+                        f"{src.split(':', 1)[-1]}", "detail": ""})
     for s in source_status(repo):
         nt = _ts(s.get("next"))
         if nt and now - nt > OVERDUE_GRACE and s.get("status") == "IDLE":

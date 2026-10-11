@@ -6,8 +6,9 @@
             <span :class="logsTab === 'activity' ? 'on' : ''" @click="setLogsTab('activity')">Activity</span>
             <span :class="logsTab === 'indexing' ? 'on' : ''" @click="setLogsTab('indexing')">Indexing</span>
             <span :class="logsTab === 'app' ? 'on' : ''" @click="setLogsTab('app')">App log</span>
+            <span :class="logsTab === 'notices' ? 'on' : ''" @click="setLogsTab('notices')">Notices</span>
           </span>
-          <select x-model="logsRepo" class="fld h-7 border border-bd bg-surface text-xs shrink-0" style="width:auto" x-show="logsTab !== 'app'">
+          <select x-model="logsRepo" class="fld h-7 border border-bd bg-surface text-xs shrink-0" style="width:auto" x-show="logsTab !== 'app' && logsTab !== 'notices'">
             <option value="all">All repos</option>
             <template x-for="r in repos" :key="r.id"><option :value="r.id" x-text="r.name"></option></template>
           </select>
@@ -30,6 +31,7 @@
         <span class="kl-note -mt-1" x-show="logsTab === 'audit'">Every action KopiaLens executes or hands out, across all repos. Never trimmed.</span>
         <span class="kl-note -mt-1" x-show="logsTab === 'activity'">Past jobs - deletes, restores, dry runs. Kept on disk, so history survives a restart.</span>
         <span class="kl-note -mt-1" x-show="logsTab === 'indexing'">Every index run: how long each stage took, what failed or was skipped. Written by the app, so timed-out and killed runs appear too.</span>
+        <span class="kl-note -mt-1" x-show="logsTab === 'notices'">Messages this window showed, newest first. Cleared when the page reloads.</span>
         <span class="kl-note -mt-1" x-show="logsTab === 'app'">What the app did and what went wrong, newest first. The debug log (Settings, Advanced) adds detailed diagnostics.</span>
 
         <!-- AUDIT -->
@@ -97,6 +99,24 @@
               </tbody>
             </table>
             <div x-show="!logsRuns().length" class="p-3 text-xs text-muted">No runs recorded yet - the history starts with the next index run (or the next app restart for older runs' gaps).</div>
+          </div>
+        </div>
+
+        <!-- NOTICES: the messages this window showed (toasts and action results), newest first -->
+        <div x-show="logsTab === 'notices'" class="rounded border border-bd bg-surface p-3" data-testid="logs-notices">
+          <div class="overflow-auto max-h-[70vh] rounded border border-bd-soft">
+            <table class="w-full text-[0.6875rem]">
+              <thead class="bg-surface2 text-left text-muted"><tr><th class="p-1.5">Time</th><th class="p-1.5">Message</th></tr></thead>
+              <tbody>
+                <template x-for="(n, i) in noticeLog" :key="n.ts + '-' + i">
+                  <tr class="border-t border-bd-soft">
+                    <td class="p-1.5 whitespace-nowrap" x-text="humanTime(n.ts)"></td>
+                    <td class="p-1.5 whitespace-pre-wrap break-all" :class="n.kind === 'error' ? 'text-danger' : (n.kind === 'warn' ? 'text-warn' : '')" x-text="n.msg"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div x-show="!noticeLog.length" class="p-3 text-xs text-muted">No messages yet in this window.</div>
           </div>
         </div>
 

@@ -22,7 +22,15 @@
                     <div x-text="engineDlg.data.identity.split
                       ? 'Snapshots here are stored under two names: ' + engineDlg.data.identity.suggested + ' and ' + engineDlg.data.identity.current + '.'
                       : 'Snapshots here were made as ' + engineDlg.data.identity.suggested + '. This connection is ' + engineDlg.data.identity.current + ', so a backup from here starts a separate history.'"></div>
-                    <button class="kl-btn" style="height:24px" @click="engineFixIdentity()" x-text="'Connect as ' + engineDlg.data.identity.suggested + '…'"></button>
+                    <div class="flex flex-wrap gap-2">
+                      <button class="kl-btn" style="height:24px" @click="engineFixIdentity()" x-text="'Connect as ' + engineDlg.data.identity.suggested + '…'"></button>
+                      <template x-if="engineDlg.data.identity.split">
+                        <span class="flex gap-2">
+                          <button class="kl-btn" style="height:24px" @click="engineMergeHistory(true)">Dry run the merge</button>
+                          <button class="kl-btn" style="height:24px" @click="engineMergeHistory(false)" x-text="'Merge into ' + engineDlg.data.identity.suggested + '…'"></button>
+                        </span>
+                      </template>
+                    </div>
                   </div>
                 </template>
 
@@ -83,12 +91,12 @@
                   <div class="flex items-center gap-2 text-xs flex-wrap">
                     <span class="text-muted">Pause this repository's backups</span>
                     <template x-if="!(engineDlg.data.status.pause && engineDlg.data.status.pause.on)">
-                      <span class="flex gap-1">
-                        <button class="kl-btn" style="height:24px" @click="enginePause(engineDlg.repo, 1); openEngineDlg(engineDlg.repo)">1 hour</button>
-                        <button class="kl-btn" style="height:24px" @click="enginePause(engineDlg.repo, 4); openEngineDlg(engineDlg.repo)">4 hours</button>
-                        <button class="kl-btn" style="height:24px" @click="enginePause(engineDlg.repo, 24); openEngineDlg(engineDlg.repo)">24 hours</button>
-                        <button class="kl-btn" style="height:24px" @click="enginePause(engineDlg.repo, 0); openEngineDlg(engineDlg.repo)">Until I resume</button>
-                      </span>
+                      <select class="fld border border-bd bg-surface2" style="height:24px" aria-label="Pause for"
+                              @change="engineDlgPause($event)">
+                        <option value="">Pause for…</option>
+                        <template x-for="c in pauseChoices()" :key="c[0]"><option :value="c[0]" x-text="c[1]"></option></template>
+                        <option value="custom">Custom…</option>
+                      </select>
                     </template>
                     <button x-show="engineDlg.data.status.pause && engineDlg.data.status.pause.on" class="kl-btn" style="height:24px"
                             @click="engineResume(engineDlg.repo); openEngineDlg(engineDlg.repo)">Resume</button>

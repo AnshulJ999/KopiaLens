@@ -44,16 +44,22 @@ const dashboardPart = {
         ], {
           initialSort: [{ column: "source", dir: "asc" }],
           onRowDblClick: (_e, row) => this.showSourceSnapshots(row.getData().source),
-          rowMenu: [
-            { label: "Show snapshots", action: (_e, row) => this.showSourceSnapshots(row.getData().source) },
-            { label: "Show in Tree", action: (_e, row) => { this.selectedSource = row.getData().source; this.active = "tree"; this.openTree(); } },
-            { label: "Simulate this source", action: (_e, row) => this.simulateSource(row.getData().source) },
-            { separator: true },
-            { label: "Snapshot now…", action: (_e, row) => this.snapshotNowAny(row.getData().source) },
-            { label: "Open policy", action: (_e, row) => this.openSourcePolicy(row.getData().source) },
-            { separator: true },
-            { label: "Copy source", action: (_e, row) => this.copyText(row.getData().source) },
-          ],
+          rowMenu: (_e, row) => {
+            const src = row.getData().source;
+            return [
+              { label: "Show snapshots", action: () => this.showSourceSnapshots(src) },
+              { label: "Show in Tree", action: () => { this.selectedSource = src; this.active = "tree"; this.openTree(); } },
+              { label: "Simulate this source", action: () => this.simulateSource(src) },
+              { separator: true },
+              { label: "Snapshot now…", action: () => this.snapshotNowAny(src) },
+              ...this.engineSourceMenu(src),
+              { label: "Open policy", action: () => this.openSourcePolicy(src) },
+              { separator: true },
+              { label: "Copy source", action: () => this.copyText(src) },
+              { separator: true },
+              { label: "Delete this source…", action: () => this.openDeleteSource(src) },
+            ];
+          },
         });
         this.loadEngineSources();
         const dt = document.querySelector("#dashboardTable");
@@ -65,6 +71,7 @@ const dashboardPart = {
             const src = cell.getRow().getData().source;
             if (act.dataset.act === "snap") this.snapshotNowAny(src);
             else if (act.dataset.act === "cancel") this.engineCancel(src);
+            else if (act.dataset.act === "sresume") this.engineSourceResume(src);
             else this.openSourcePolicy(src);
           });
         }
@@ -73,12 +80,15 @@ const dashboardPart = {
 
     // Through KopiaLens's kopia server when it runs this repository's backups (live progress in
     // the table, a task in Tasks), otherwise as a job on the command line.
-    snapshotNowAny(source) { return this.engineRuns() ? this.engineSnapshotNow(source) : this.snapshotNow(source); },
+    // A paused folder is still backed up once on request: kopia's server skips paused folders, so
+    // that one run goes through the command line and the schedule stays paused.
+    snapshotNowAny(source) { return this.engineRuns() && !this.engineSrcPaused(source) ? this.engineSnapshotNow(source) : this.snapshotNow(source); },
 
     async snapshotNow(source) {
       const r = await this.klConfirm({
         title: "Take a snapshot now?",
-        facts: [["Folder", sourcePath(source)], ["Source", source], ["Repository", this.repoName(this.repo)]],
+        facts: [["Folder", sourcePath(source)], ["Source", source], ["Repository", this.repoName(this.repo)],
+          ...(this.engineSrcPaused(source) ? [["Schedule", "Stays paused"]] : [])],
         note: "Kopia applies this folder's policy: its exclusions, compression and retention.",
         input: { label: "Description (optional)", placeholder: "Before the upgrade" },
         confirmLabel: "Snapshot now", danger: false,

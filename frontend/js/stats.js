@@ -3,6 +3,17 @@
 const statsPart = {
 
     // ---------- Stats ----------
+    async statsEditDescription() {
+      const cur = (this.statsData && this.statsData.parsed && this.statsData.parsed.details || {}).description || "";
+      const r = await this.klConfirm({ title: "Repository description", input: { label: "Description", value: cur, placeholder: "Main backups" },
+        confirmLabel: "Save", danger: false });
+      if (!r) return;
+      try {
+        await getJson("/api/stats/description", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, description: r.value || "" }) });
+        this.klNotify("Description saved");
+        if (this.statsData && this.statsData.parsed && this.statsData.parsed.details) this.statsData.parsed.details.description = (r.value || "").trim();
+      } catch (e) { this.klNotify(e.message, "error"); }
+    },
     async loadStats(refresh = false) {
       if (this._statsLoading) return;        // never let stats requests pile up
       this._statsLoading = true;

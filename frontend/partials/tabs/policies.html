@@ -28,6 +28,7 @@
           <span class="grow"></span>
           <input x-model="polFilter" class="fld w-52 border border-bd bg-surface text-xs" placeholder="Filter policies…">
           <button @click="polOpenNew()" class="h-7 rounded border border-bd px-2 text-xs" x-show="polData && !polMulti.on">New policy…</button>
+          <button @click="openNewSnap(newSnapBack); newSnapBack = ''" class="h-7 rounded border border-accent text-accent px-2 text-xs" x-show="newSnapBack" x-cloak>Back to New snapshot</button>
           <button @click="polMultiToggle()" class="h-7 rounded border border-bd px-2 text-xs" :class="polMulti.on ? 'bg-sel' : ''" x-text="polMulti.on ? 'Editing several' : 'Edit several…'"></button>
           <button @click="loadPolicies(true)" class="h-7 rounded border border-bd px-2 text-xs">Refresh</button>
           <button @click="polOpenBackups()" class="h-7 rounded border border-bd px-2 text-xs">Backups…</button>
@@ -83,6 +84,7 @@
                     <span class="pill" x-show="polRes() && polRes().inheritors.length" x-text="((polRes() || {}).inheritors || []).length + ' inherit from here'"></span>
                     <button class="kl-btn quiet" x-show="!polSelected().isGlobal && polDetail && polDetail.defined && Object.keys(polDetail.defined).length && !(polStaged[polSelected().target] && polStaged[polSelected().target].removePolicy)"
                             @click="polStageRemovePolicy()">Remove policy…</button>
+                    <button class="kl-btn quiet" x-show="repoKind === 'kopia'" @click="showCli('policy', polSelected().isGlobal ? 'global' : polSelected().target)">Show command</button>
                   </div>
                   <div class="kl-note break-all" x-show="!polSelected().isGlobal" x-text="polSelected().target"></div>
                   <div class="kl-note mt-0.5" x-text="polHeaderLine()"></div>

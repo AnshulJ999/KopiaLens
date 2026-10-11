@@ -14,7 +14,7 @@ document.addEventListener("alpine:init", () => {
       { id: "churn", label: "Churn" },
       { id: "stats", label: "Repository" }, { id: "logs", label: "Logs" },
       { id: "excluded", label: "Excluded" },
-      { id: "policies", label: "Policies" }, { id: "tasks", label: "Tasks" }, { id: "actions", label: "Actions" },
+      { id: "policies", label: "Policies" }, { id: "tasks", label: "Tasks" },
     ],
     // Reached through a kopia server: kopia refuses the reads an index needs, so only the views
     // that work straight from kopia are offered.
@@ -34,7 +34,7 @@ document.addEventListener("alpine:init", () => {
     },
     timeFmt: localStorage.getItem("kl-timefmt") || "absolute",
     polRailW: Number(localStorage.getItem("kl-pol-rail")) || 288,   // Policies list width (drag handle)
-    numberStyle: "system", dateStyle: "system", clock: "system",   // Settings > General (util.js setFormatStyles)
+    numberStyle: "system", dateStyle: "system", clock: "system", byteUnits: "decimal",   // Settings > General (util.js setFormatStyles)
     indexStatus: {},
     sources: [], selectedSource: "",
     // Each tab remembers its own source per repo; "*ALL*" = all sources.
@@ -78,7 +78,7 @@ document.addEventListener("alpine:init", () => {
     auditRows: [], auditSize: 0,
     // Logs tab (): four sections (audit/activity/indexing/app log), all repos in one
     // view with a client-side repo filter; the app log is app-wide by nature.
-    logsTab: "audit", logsRepo: "all", jobHistory: [], indexRuns: [],
+    logsTab: "audit", logsRepo: "all", jobHistory: [], indexRuns: [], noticeLog: [],
     appLogRecords: [], appLogLoaded: false, appLogFile: "app", appLogLevel: "info",
     appLogDebugAvailable: false, appLogTruncated: false, _logsSeq: 0,
     groupReclaim: {},  // "repo:folder" -> {v: freeable, capped} - keyed by repo so one repo's
@@ -110,7 +110,7 @@ document.addEventListener("alpine:init", () => {
     debugLog: false,
     duckdbMemory: "", memoryAuto: "",  // memory limit override ("" = automatic) and what automatic resolves to
     indexWorkerTimeout: 14400, indexRetryDelay: 900, indexMaxRetries: 1, reindexAfterDeleteDelay: 300, quitIndexing: "finish",
-    folderPrewarmBudget: 900, startupDelay: 300, logCleanupDays: 90, taskHistoryKeep: 90, rankCount: 10000,
+    folderPrewarmBudget: 900, startupDelay: 300, logCleanupDays: 90, taskHistoryKeep: 90, engineTakeback: "auto", rankCount: 10000,
     showProBadge: true,   // the small Pro mark next to the logo while a licence is active
     repoLabels: "short",  // repo chips and columns: "short" (Repo 1) | "full" (the name from repos.json)
     // Backblaze settings. Defaults mirror app/settings.py; each control saves its own key into
@@ -159,6 +159,8 @@ document.addEventListener("alpine:init", () => {
     indexPending: [], indexUpdated: null,
     showMaint: false, maint: null, _maintSeq: 0,
     // Backups run by KopiaLens (engine.js) and the Tasks tab (tasks.js).
+    newSnap: null, newSnapBack: "", _newSnapSeq: 0, srcDel: null, verifyDlg: null, cliBox: null,
+    notifyHook: null, notifyForm: null, notifyProfiles: null, notifyRepo: "", _klSettings: null,
     engine: null, engineDlg: null, engineSrc: {}, _engineTimer: null, _engineSrcTimer: null, _alertSeen: -1, tasksRunning: 0,
     taskRows: [], taskFilter: { repo: "all", status: "all", kind: "all", text: "" }, taskSel: null, taskLines: [], taskCursor: 0,
     taskHistoryDays: 0, _tasksSeq: 0, _tasksPoll: null, _taskPoll: null, _tasksSig: "",
@@ -212,6 +214,10 @@ document.addEventListener("alpine:init", () => {
       if (this.repoMenu) { this.repoMenu = false; return; }
       if (this.repoDlg) { this.repoDlg = null; return; }
       if (this.engineDlg) { this.engineDlg = null; return; }
+      if (this.newSnap) { this.closeNewSnap(); return; }
+      if (this.srcDel) { this.srcDel = null; return; }
+      if (this.verifyDlg) { this.verifyDlg = null; return; }
+      if (this.cliBox) { this.cliBox = null; return; }
       if (this.repoAdd) { this.closeAddRepo(); return; }
       if (this.showIndex) { this.closeIndexPanel(); return; }
       if (this.showJob) { this.closeJob(); return; }
@@ -282,6 +288,7 @@ document.addEventListener("alpine:init", () => {
       // startup fetch.
       if (this._inited) return;
       this._inited = true;
+      this.$watch("actionText", (v) => this.pushNotice(v, "info"));
       window.addEventListener("kl-locked", (e) => this.showLock(e.detail));
       window.addEventListener("kl-setup-code", () => this.obNeedCode());
       this.initHelp();
@@ -333,6 +340,7 @@ document.addEventListener("alpine:init", () => {
         this.simPolicyByRepo = kl.sim_policy_by_repo || {};
         this.snapSource = this.snapSourceByRepo[this.repo] || kl.snap_source || "*ALL*";  // default All sources
         this.numberStyle = kl.number_style || "system";
+        this.byteUnits = kl.byte_units === "binary" ? "binary" : "decimal";
         this.dateStyle = kl.date_style || "system";
         this.clock = String(kl.clock || "system");
         setFormatStyles(kl);
@@ -529,7 +537,7 @@ document.addEventListener("alpine:init", () => {
     },
     // Re-apply the number/date style and redraw the open tab.
     applyFormats() {
-      setFormatStyles({ number_style: this.numberStyle, date_style: this.dateStyle, clock: this.clock });
+      setFormatStyles({ number_style: this.numberStyle, date_style: this.dateStyle, clock: this.clock, byte_units: this.byteUnits });
       this.activate();
     },
 
@@ -556,7 +564,6 @@ document.addEventListener("alpine:init", () => {
       if (this.active === "simulate") return this.openSimulate();  // a saved result only; Run computes
       if (this.active === "stats") return this.statsData ? null : this.loadStats();
       if (this.active === "logs") return this.loadLogs();
-      if (this.active === "actions") return this.loadMounts();
       if (this.active === "excluded") return this.loadExcluded();
       if (this.active === "policies") return this.loadPolicies();
       if (this.active === "tasks") return this.loadTasks();
@@ -584,7 +591,6 @@ document.addEventListener("alpine:init", () => {
         if (this.active === "churn") return this.loadChurn(true);
         if (this.active === "stats") return this.loadStats(true);
         if (this.active === "logs") return this.loadLogs();
-        if (this.active === "actions") return this.loadMounts();
         if (this.active === "policies") return this.loadPolicies(true);
         if (this.active === "tasks") return this.loadTasks();
       }, "Refreshing...");
@@ -671,13 +677,13 @@ document.addEventListener("alpine:init", () => {
     csv(id, name) { downloadTable(id, name); },
     };
     // Duplicate-key guard: two parts declaring the same key would compose silently last-wins.
-    const parts = [["core", core], ["toastPart", toastPart], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["browsePart", browsePart], ["treePart", treePart], ["searchPart", searchPart], ["indexPanelPart", indexPanelPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["prunePart", prunePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["accountPart", accountPart], ["appConfigPart", appConfigPart], ["reposPart", reposPart], ["onboardingPart", onboardingPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart], ["licencePart", licencePart], ["helpPart", helpPart], ["tasksPart", tasksPart], ["enginePart", enginePart]];
+    const parts = [["core", core], ["toastPart", toastPart], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["browsePart", browsePart], ["treePart", treePart], ["searchPart", searchPart], ["indexPanelPart", indexPanelPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["prunePart", prunePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["accountPart", accountPart], ["appConfigPart", appConfigPart], ["reposPart", reposPart], ["onboardingPart", onboardingPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart], ["licencePart", licencePart], ["helpPart", helpPart], ["tasksPart", tasksPart], ["enginePart", enginePart], ["sourceOpsPart", sourceOpsPart], ["notifyPart", notifyPart]];
     const seen = new Map();
     for (const [owner, part] of parts)
       for (const k of Object.keys(part)) {
         if (seen.has(k)) console.error(`kopiaLens: duplicate key "${k}" declared in both ${seen.get(k)} and ${owner}`);
         else seen.set(k, owner);
       }
-    return Object.assign(core, toastPart, indexPanelPart, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, browsePart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, prunePart, diffviewPart, jobsPart, maintenancePart, settingsPart, accountPart, appConfigPart, reposPart, onboardingPart, themePart, policiesPart, policyEditPart, licencePart, helpPart, tasksPart, enginePart);
+    return Object.assign(core, toastPart, indexPanelPart, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, browsePart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, prunePart, diffviewPart, jobsPart, maintenancePart, settingsPart, accountPart, appConfigPart, reposPart, onboardingPart, themePart, policiesPart, policyEditPart, licencePart, helpPart, tasksPart, enginePart, sourceOpsPart, notifyPart);
   });
 });

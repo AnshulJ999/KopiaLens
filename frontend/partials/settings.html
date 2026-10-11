@@ -12,7 +12,7 @@
 
         <div class="flex min-h-0 flex-1">
           <nav class="w-36 sm:w-44 shrink-0 overflow-y-auto border-r border-bd p-2 text-sm">
-            <template x-for="g in [['App', [['general','General'],['appearance','Appearance'],['desktop','Desktop app']]],
+            <template x-for="g in [['App', [['general','General'],['appearance','Appearance'],['desktop','Desktop app'],['notifications','Notifications']]],
                                    ['Data', [['repositories','Repositories'],['indexing','Indexing'],['backblaze','Backblaze']]],
                                    ['Access', [['account','Account'],['encryption','Encryption'],['remote','Remote access']]],
                                    ['More', [['licence','Licence'],['updates','Updates'],['backups','Settings backups'],['advanced','Advanced'],['about','About']]]]" :key="g[0]">
@@ -38,6 +38,13 @@
                     <option value="de-DE">1.234.567,8</option>
                     <option value="fr-FR">1 234 567,8</option>
                     <option value="en-IN">12,34,567.8</option>
+                  </select></div>
+              </div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Sizes</span>
+                  <select x-model="byteUnits" @change="saveKl('byte_units')" class="fld border border-bd bg-surface2 w-48" data-testid="byte-units">
+                    <option value="decimal">Decimal (1 GB = 1000 MB)</option>
+                    <option value="binary">Binary (1 GiB = 1024 MiB)</option>
                   </select></div>
               </div>
               <div>
@@ -131,10 +138,8 @@
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Pause indexing</span>
                   <div x-show="!indexPause.paused" class="flex flex-wrap justify-end gap-1">
-                    <button @click="pauseIndexing(4)" class="kl-btn">4 hours</button>
-                    <button @click="pauseIndexing(8)" class="kl-btn">8 hours</button>
-                    <button @click="pauseIndexing(12)" class="kl-btn">12 hours</button>
-                    <button @click="pauseIndexing(0)" class="kl-btn">Until I resume</button>
+                    <template x-for="c in pauseChoices()" :key="c[0]"><button @click="pauseIndexing(c[0])" class="kl-btn" x-text="c[1]"></button></template>
+                    <button @click="pauseIndexing('custom')" class="kl-btn">Custom…</button>
                   </div>
                   <div x-show="indexPause.paused" class="flex items-center gap-2">
                     <span class="text-xs" style="color:var(--warn)" x-text="pauseText()"></span>
@@ -219,6 +224,94 @@
                     <option value="off">Off</option>
                   </select></div>
                 <p class="text-[0.6875rem] text-muted mt-1">All includes finished indexing and finished jobs.</p>
+              </div>
+            </section>
+
+            <section x-show="settingsTab==='notifications'" x-effect="settingsTab==='notifications' && !notifyHook && notifyInit()" class="space-y-5" data-testid="settings-notifications">
+              <template x-if="notifyHook">
+                <div class="space-y-2">
+                  <div class="font-medium">From KopiaLens</div>
+                  <p class="text-[0.6875rem] text-muted">Failed jobs, failed backups and maintenance, and another app taking over backups. Plain text works with ntfy.</p>
+                  <label class="flex flex-col gap-1 text-xs">Webhook address
+                    <input x-model="notifyHook.url" class="fld border border-bd bg-surface2 font-mono" placeholder="https://ntfy.sh/my-backups" data-testid="notify-webhook-url"></label>
+                  <div class="flex flex-wrap gap-3 text-xs">
+                    <label class="flex items-center gap-2">Format
+                      <select x-model="notifyHook.format" class="fld border border-bd bg-surface2"><option value="text">Plain text</option><option value="json">JSON</option></select></label>
+                    <label class="flex items-center gap-2">Send
+                      <select x-model="notifyHook.level" class="fld border border-bd bg-surface2"><option value="error">Errors only</option><option value="warn">Warnings and errors</option><option value="info">Everything</option></select></label>
+                  </div>
+                  <label class="flex flex-col gap-1 text-xs">Extra headers, one per line
+                    <textarea x-model="notifyHook.headers" rows="2" class="fld border border-bd bg-surface2 font-mono" placeholder="Authorization: Bearer tk_…"></textarea></label>
+                  <div class="flex gap-2">
+                    <button class="kl-btn" @click="notifyHookSave()">Save</button>
+                    <button class="kl-btn" @click="notifyHookTest()" :disabled="!notifyHook.url.trim() || notifyHook.busy" x-text="notifyHook.busy ? 'Sending…' : 'Send a test'"></button>
+                  </div>
+                </div>
+              </template>
+
+              <div class="space-y-2">
+                <div class="flex items-center gap-2">
+                  <span class="font-medium">From kopia</span>
+                  <select x-model="notifyRepo" @change="notifyForm = null; notifyLoad()" class="fld border border-bd bg-surface2 text-xs" aria-label="Repository" x-show="notifyRepos().length > 1">
+                    <template x-for="r in notifyRepos()" :key="r.id"><option :value="r.id" x-text="r.name"></option></template>
+                  </select>
+                  <span class="grow"></span>
+                  <button class="kl-btn" @click="notifyEdit(null)" x-show="notifyRepo && !notifyForm">Add profile…</button>
+                </div>
+                <p class="text-[0.6875rem] text-muted">Backup reports and errors from kopia itself. Profiles live in the repository, so KopiaUI and the kopia command line use them too.</p>
+                <template x-if="notifyProfiles">
+                  <div>
+                    <div x-show="notifyProfiles.loading" class="kl-note">Loading…</div>
+                    <p x-show="notifyProfiles.error" class="text-xs text-danger" x-text="notifyProfiles.error"></p>
+                    <div x-show="!notifyProfiles.loading && !notifyProfiles.error && !notifyProfiles.list.length && !notifyForm" class="kl-note">No profiles yet. Add one to get kopia's backup reports by email, Pushover or webhook.</div>
+                    <div class="kl-list" x-show="notifyProfiles.list.length">
+                      <template x-for="p in notifyProfiles.list" :key="p.name">
+                        <div class="li">
+                          <span class="font-medium shrink-0" x-text="p.name"></span>
+                          <span class="kl-note shrink-0" x-text="p.type"></span>
+                          <span class="grow min-w-0 truncate text-xs" x-text="notifySummary(p)"></span>
+                          <span class="kl-note shrink-0" x-text="notifySeverityName(p.min_severity)"></span>
+                          <button class="kl-btn quiet shrink-0" style="height:22px" @click="notifyTest(p)">Test</button>
+                          <button class="kl-btn quiet shrink-0" style="height:22px" @click="notifyEdit(p)">Edit</button>
+                          <button class="kl-btn quiet shrink-0" style="height:22px" @click="notifyDelete(p)">Delete</button>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+                <template x-if="notifyForm">
+                  <div class="rounded border border-bd p-3 space-y-2 text-xs" data-testid="notify-form">
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <label class="flex flex-col gap-1">Profile name
+                        <input x-model="notifyForm.name" :disabled="!notifyForm.isNew" class="fld border border-bd bg-surface2"></label>
+                      <label class="flex flex-col gap-1">Send by
+                        <select x-model="notifyForm.type" :disabled="!notifyForm.isNew" class="fld border border-bd bg-surface2">
+                          <option value="email">Email</option><option value="pushover">Pushover</option><option value="webhook">Webhook</option></select></label>
+                      <label class="flex flex-col gap-1">Send
+                        <select x-model="notifyForm.min_severity" class="fld border border-bd bg-surface2">
+                          <option value="error">Errors only</option><option value="warning">Warnings and errors</option><option value="report">Reports and up</option><option value="success">Successes and up</option><option value="verbose">Everything</option></select></label>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <template x-for="fd in notifyFields(notifyForm.type)" :key="notifyForm.type + fd[0]">
+                        <label class="flex flex-col gap-1"><span x-text="fd[1]"></span>
+                          <input x-model="notifyForm.fields[fd[0]]" :type="notifySecret(fd[0]) ? 'password' : 'text'" autocomplete="off" class="fld border border-bd bg-surface2"
+                                 :placeholder="notifySecret(fd[0]) && notifyForm.secretSet[fd[0]] ? 'Unchanged' : fd[2]"></label>
+                      </template>
+                      <label class="flex flex-col gap-1" x-show="notifyForm.type === 'webhook'">Method
+                        <select x-model="notifyForm.method" class="fld border border-bd bg-surface2"><option>POST</option><option>PUT</option></select></label>
+                      <label class="flex flex-col gap-1">Message format
+                        <select x-model="notifyForm.format" class="fld border border-bd bg-surface2"><option value="">Default</option><option value="html">HTML</option><option value="txt">Plain text</option></select></label>
+                    </div>
+                    <label class="flex flex-col gap-1" x-show="notifyForm.type === 'webhook'">Headers, one per line
+                      <textarea x-model="notifyForm.headers" rows="2" class="fld border border-bd bg-surface2 font-mono" placeholder="Title: Backup report"></textarea></label>
+                    <p x-show="notifyForm.error" class="text-danger" x-text="notifyForm.error"></p>
+                    <div class="flex gap-2 justify-end">
+                      <button class="kl-btn" @click="notifyForm = null">Cancel</button>
+                      <button class="kl-btn" :disabled="notifyForm.busy || !notifyForm.name.trim()" @click="notifySave(true)">Save and send a test</button>
+                      <button class="kl-btn primary" :disabled="notifyForm.busy || !notifyForm.name.trim()" @click="notifySave(false)" x-text="notifyForm.busy ? 'Saving…' : 'Save'"></button>
+                    </div>
+                  </div>
+                </template>
               </div>
             </section>
 
@@ -366,6 +459,14 @@
                     <option value="365">365 days</option>
                   </select></div>
                 <p class="text-[0.6875rem] text-muted mt-1">How long finished backups and maintenance stay in the Tasks tab.</p>
+              </div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>When another app stops running backups</span>
+                  <select x-model="engineTakeback" @change="saveKl('engine_takeback')" class="fld border border-bd bg-surface2" data-testid="engine-takeback">
+                    <option value="auto">KopiaLens takes over again</option>
+                    <option value="wait">Wait for me to resume</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">For repositories where you chose KopiaLens to run backups.</p>
               </div>
             </section>
 

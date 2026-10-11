@@ -143,6 +143,10 @@ fn backups_text(b: &Value) -> String {
     format!("Backups: {}", app_name(s(b, "engine")))
 }
 
+/// One list for every pause menu (indexing and backups), matching the app's. 0 = until resumed.
+const PAUSE_CHOICES: [(u32, &str); 7] = [(1, "1 hour"), (4, "4 hours"), (12, "12 hours"), (24, "1 day"),
+    (72, "3 days"), (168, "1 week"), (0, "Until I resume")];
+
 fn backups_paused(state: &Value) -> Option<Option<f64>> {
     let p = state.get("backups")?.get("pause")?;
     if !p.get("on").and_then(Value::as_bool).unwrap_or(false) {
@@ -239,7 +243,11 @@ fn build_menu(app: &AppHandle, h: Health, state: Option<&Value>) -> tauri::Resul
                             if b.get("paused").and_then(Value::as_bool).unwrap_or(false) {
                                 sub.append(&MenuItem::with_id(app, format!("repo:bresume:{key}"), "Resume backups", true, None::<&str>)?)?;
                             } else {
-                                sub.append(&MenuItem::with_id(app, format!("repo:bpause:{key}"), "Pause backups until I resume", true, None::<&str>)?)?;
+                                let pm = Submenu::new(app, "Pause backups", true)?;
+                                for (h, label) in PAUSE_CHOICES {
+                                    pm.append(&MenuItem::with_id(app, format!("repo:bpause:{key}:{h}"), label, true, None::<&str>)?)?;
+                                }
+                                sub.append(&pm)?;
                             }
                         }
                     }
@@ -254,8 +262,8 @@ fn build_menu(app: &AppHandle, h: Health, state: Option<&Value>) -> tauri::Resul
                 }
                 None => {
                     let sub = Submenu::new(app, "Pause indexing", true)?;
-                    for (id, label) in [("pause:4", "For 4 hours"), ("pause:8", "For 8 hours"), ("pause:12", "For 12 hours"), ("pause:0", "Until I resume")] {
-                        sub.append(&MenuItem::with_id(app, id, label, true, None::<&str>)?)?;
+                    for (h, label) in PAUSE_CHOICES {
+                        sub.append(&MenuItem::with_id(app, format!("pause:{h}"), label, true, None::<&str>)?)?;
                     }
                     menu.append(&sub)?;
                 }
@@ -271,8 +279,8 @@ fn build_menu(app: &AppHandle, h: Health, state: Option<&Value>) -> tauri::Resul
                 }
                 None => {
                     let sub = Submenu::new(app, "Pause backups", true)?;
-                    for (id, label) in [("bpause:1", "For 1 hour"), ("bpause:4", "For 4 hours"), ("bpause:24", "For 24 hours"), ("bpause:0", "Until I resume")] {
-                        sub.append(&MenuItem::with_id(app, id, label, true, None::<&str>)?)?;
+                    for (h, label) in PAUSE_CHOICES {
+                        sub.append(&MenuItem::with_id(app, format!("bpause:{h}"), label, true, None::<&str>)?)?;
                     }
                     menu.append(&sub)?;
                 }

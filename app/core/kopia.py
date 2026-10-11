@@ -1174,10 +1174,16 @@ def snapshot_delete_dry_run(repo: str, snapshot_ids: list[str]) -> dict:
 
 
 def snapshot_pin_command(repo: str, ids: list[str], remove: bool = False,
-                         pin_name: str = "do-not-delete") -> list[str]:
-    """Pin (protect from retention deletion) or unpin snapshots."""
-    flag = "--remove" if remove else "--add"
-    return [_kopia_exe()] + _repo_args(repo) + ["snapshot", "pin", *ids, flag, pin_name]
+                         pin_name: str = "do-not-delete", rename_from: str = "") -> list[str]:
+    """Pin (protect from retention deletion) or unpin snapshots. A pin is a name; ``rename_from``
+    swaps one name for another in the same command."""
+    for n in (pin_name, rename_from):
+        if n and any(c in n for c in (chr(10), chr(13), ",")):
+            raise ValueError("invalid pin name")
+    cmd = [_kopia_exe()] + _repo_args(repo) + ["snapshot", "pin", *ids, "--remove" if remove else "--add", pin_name]
+    if rename_from and not remove:
+        cmd += ["--remove", rename_from]
+    return cmd
 
 
 def snapshot_create_command(repo: str, path: str, description: str = "") -> list[str]:
@@ -1188,6 +1194,50 @@ def snapshot_create_command(repo: str, path: str, description: str = "") -> list
     if description:
         cmd += ["--description", description[:1000]]
     return cmd
+
+
+def snapshot_estimate_command(repo: str, path: str) -> list[str]:
+    """How much a snapshot of ``path`` would hold, with this repository's policy for it. Reads the
+    local disk only; nothing is written to the repository."""
+    if not path or any(c in path for c in (chr(10), chr(13))):
+        raise ValueError("invalid path")
+    return [_kopia_exe()] + _repo_args(repo) + ["snapshot", "estimate", path, "--quiet",
+                                                 "--max-examples-per-bucket=3"]
+
+
+def snapshot_verify_command(repo: str, sources: list[str], percent: float = 0.0) -> list[str]:
+    """Check that the repository can read back every snapshot's folders (and, with ``percent``,
+    that share of the files, downloaded and checked). Read-only."""
+    cmd = [_kopia_exe()] + _repo_args(repo) + ["snapshot", "verify"]
+    for s in sources:
+        if not s or any(c in s for c in (chr(10), chr(13))):
+            raise ValueError("invalid source")
+        cmd += ["--sources", s]
+    if percent:
+        cmd.append(f"--verify-files-percent={max(0.0, min(100.0, float(percent))):g}")
+    return cmd
+
+
+def move_history_command(repo: str, src: str, dst: str, dry: bool) -> list[str]:
+    """Move every snapshot made as ``src`` (user@host) to ``dst`` (kopia's `snapshot move-history`):
+    one history again after a computer-name change. Moved snapshots get new ids; policies stay
+    under the old name. ``dry`` only lists the moves."""
+    for v in (src, dst):
+        if not v or "@" not in v or ":" in v or any(c in v for c in (chr(10), chr(13))):
+            raise ValueError("invalid user@host")
+    return [_kopia_exe()] + _repo_args(repo) + ["snapshot", "move-history"] + (["--dry-run"] if dry else []) + [src, dst]
+
+
+def source_delete_commands(repo: str, source: str, delete_policy: bool, dry: bool) -> list[list[str]]:
+    """Delete every snapshot of one source and, optionally, its policy (KopiaUI's "delete the
+    snapshot source"). Without ``dry`` kopia deletes; with it, kopia only lists what would go."""
+    if not source or ":" not in source or any(c in source for c in (chr(10), chr(13))):
+        raise ValueError("invalid source")
+    prefix = [_kopia_exe()] + _repo_args(repo)
+    cmds = [prefix + ["snapshot", "delete", source, "--all-snapshots-for-source"] + ([] if dry else ["--delete"])]
+    if delete_policy:
+        cmds.append(prefix + ["policy", "delete", source] + (["--dry-run"] if dry else []))
+    return cmds
 
 
 # ---- policy editing (/) ----------------------------------------------------
@@ -1363,6 +1413,10 @@ def restore_command_full(repo: str, source_id: str, target: str, options: dict |
         cmd += ["--parallel", str(int(opts["parallel"]))]
     if opts.get("shallow") not in (None, ""):
         cmd += [f"--shallow={int(opts['shallow'])}"]
+        if opts.get("shallow_minsize_kb") not in (None, "", 0):
+            cmd += [f"--shallow-minsize={min(int(float(opts['shallow_minsize_kb']) * 1024), 2**31 - 1)}"]
+    if opts.get("zip_uncompressed") and target.lower().endswith(".zip"):
+        cmd += ["--mode=zip-nocompress"]
     return cmd
 
 

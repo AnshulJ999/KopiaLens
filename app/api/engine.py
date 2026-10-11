@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 import config
 
-from ..core import audit, coexist, engine, jobs
+from ..core import audit, coexist, engine, jobs, pause as index_pause
 
 router = APIRouter(tags=["engine"])
 
@@ -76,11 +76,18 @@ class PauseRequest(BaseModel):
     hours: float = 0
 
 
+def _hours(h: float) -> float:
+    try:
+        return index_pause.check_hours(h)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/engine/pause")
 def pause(payload: PauseRequest) -> dict:
     if payload.repo is not None:
         _need_repo(payload.repo)
-    return engine.set_pause(payload.repo, payload.hours)
+    return engine.set_pause(payload.repo, _hours(payload.hours))
 
 
 class RepoRequest(BaseModel):
@@ -97,6 +104,26 @@ def resume(payload: RepoRequest) -> dict:
 class SourceRequest(BaseModel):
     repo: str
     source: str
+
+
+class SourcePause(BaseModel):
+    repo: str
+    source: str
+    hours: float = 0
+
+
+@router.post("/engine/source-pause")
+def source_pause(payload: SourcePause) -> dict:
+    _need_repo(payload.repo)
+    if config.repo_record(payload.repo).get("engine") != "kopialens":
+        raise HTTPException(status_code=409, detail="KopiaLens isn't running backups for this repository.")
+    return engine.set_source_pause(payload.repo, payload.source, _hours(payload.hours))
+
+
+@router.post("/engine/source-resume")
+def source_resume(payload: SourcePause) -> dict:
+    _need_repo(payload.repo)
+    return engine.resume_source(payload.repo, payload.source)
 
 
 @router.post("/engine/snapshot")
@@ -153,6 +180,8 @@ def fix_identity(payload: IdentityRequest) -> dict:
 # ---- Tasks tab --------------------------------------------------------------------------------
 
 _JOB_KIND = {"snapshot_create": "Snapshot", "maintenance": "Maintenance", "restore": "Restore",
+             "snapshot_estimate": "Estimate", "source_delete": "Delete source", "snapshot_verify": "Verify",
+             "move_history": "Merge histories",
              "snapshot_delete": "Delete snapshots", "remove_files": "Remove files",
              "prune_versions": "Prune versions", "policy_write": "Policies", "snapshot_pin": "Pins",
              "encryption_level": "Encryption", "blob_stats": "Blob stats"}

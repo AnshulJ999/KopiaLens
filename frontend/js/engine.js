@@ -24,6 +24,7 @@ const enginePart = {
       } else if (this._alertSeen < 0) this._alertSeen = d.alert_seq || 0;
       if (this.active === "dashboard") this.loadEngineSources();
     } catch (e) { /* the status line is optional */ }
+    if (!this.isDemo()) this.loadMounts();
   },
   engineFor(repo) { return ((this.engine && this.engine.repos) || []).find((r) => r.repo === (repo || this.repo)) || null; },
   engineRuns(repo) { const e = this.engineFor(repo); return !!(e && e.state === "running"); },
@@ -61,6 +62,19 @@ const enginePart = {
   enginePauseText(p) {
     if (!p || !p.on) return "";
     return p.until ? "until " + humanTime(p.until) : "until you resume";
+  },
+  pauseChoices() { return PAUSE_CHOICES; },
+  // "Custom…" in a pause menu: pick an end time; resolves hours, or null when cancelled.
+  async pauseCustomHours(title) {
+    const pad = (n) => String(n).padStart(2, "0");
+    const d = new Date(Date.now() + 2 * 86400000);
+    const local = (x) => `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}T${pad(x.getHours())}:${pad(x.getMinutes())}`;
+    const r = await this.klConfirm({ title, input: { label: "Pause until", type: "datetime-local", value: local(d), min: local(new Date()) },
+      confirmLabel: "Pause", danger: false });
+    if (!r || !r.value) return null;
+    const hours = (new Date(r.value).getTime() - Date.now()) / 3600000;
+    if (!(hours > 0)) { this.klNotify("Pick a time in the future", "warn"); return null; }
+    return Math.min(hours, 24 * 366);
   },
 
   // ---- Who runs backups ----
@@ -158,13 +172,42 @@ const enginePart = {
     } catch (e) { g.error = e.message; }
   },
 
+  // One history again: move the snapshots made under this connection's name to the other name
+  // (kopia's move-history). Policies under the old name stay where they are.
+  async engineMergeHistory(dry) {
+    const g = this.engineDlg;
+    const idc = g && g.data && g.data.identity;
+    if (!idc || !idc.split) return;
+    const params = { src: idc.current, dst: idc.suggested, dry };
+    if (!dry) {
+      const ok = await this.klConfirm({
+        title: `Merge ${idc.current}'s snapshots into ${idc.suggested}?`,
+        facts: [["From", idc.current], ["Into", idc.suggested], ["Afterwards", "One history per folder; moved snapshots get new IDs"]],
+        callout: "Policies set under " + idc.current + " stay under that name.",
+        note: "Run the dry run first to see every snapshot that moves.",
+        confirmLabel: "Merge histories", danger: true,
+      });
+      if (!ok) return;
+    }
+    await this.startJob("move_history", params, `${idc.current} -> ${idc.suggested}`, g.repo);
+  },
+
   // ---- Pause ----
   async enginePause(repo, hours) {
+    if (hours === "custom") { hours = await this.pauseCustomHours(repo ? "Pause this repository's backups" : "Pause all backups"); if (hours == null) return; }
     try {
       await getJson("/api/engine/pause", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: repo || null, hours }) });
       this.klNotify(repo ? "Backups paused for this repository" : "Backups paused");
       this.loadEngine();
     } catch (e) { this.klNotify(e.message, "error"); }
+  },
+  async engineDlgPause(ev) {
+    const h = ev.target.value;
+    ev.target.value = "";
+    if (h === "" || !this.engineDlg) return;
+    const repo = this.engineDlg.repo;
+    await this.enginePause(repo, h === "custom" ? "custom" : Number(h));
+    this.openEngineDlg(repo);
   },
   async engineResume(repo) {
     try {
@@ -203,8 +246,41 @@ const enginePart = {
       return `<span class="text-warn font-medium" title="${(p.directory || "").replace(/"/g, "&quot;")}">Backing up${pct != null ? " " + pct + "%" : ""} · ${fmtBytes(done)}</span>`;
     }
     if (s.status === "PENDING") return `<span class="text-warn" title="Starts when the backup before it finishes">Waiting</span>`;
-    if (s.status === "PAUSED") return `<span class="text-muted">Paused</span>`;
+    if (s.paused) {
+      const until = s.paused.until ? "Until " + humanTime(s.paused.until) : "Until you resume";
+      return `<span class="text-muted" title="${escHtml(until)}">Paused</span> <button class='kl-btn quiet' data-act='sresume' style='height:22px'>Resume</button>`;
+    }
     return "";
+  },
+  engineSrcPaused(source) { const s = this.engineSrc[source]; return !!(s && s.paused); },
+  // Row menu entries for one folder's scheduled backups (only where KopiaLens runs them).
+  engineSourceMenu(source) {
+    if (!this.engineRuns()) return [];
+    if (this.engineSrcPaused(source)) return [{ label: "Resume backups", action: () => this.engineSourceResume(source) }];
+    return [{ label: "Pause backups", menu: [...PAUSE_CHOICES.map(([h, l]) => ({ label: l, action: () => this.engineSourcePause(source, h) })),
+      { label: "Custom…", action: () => this.engineSourcePause(source, "custom") }] }];
+  },
+  async engineSourcePause(source, hours) {
+    if (hours === "custom") { hours = await this.pauseCustomHours("Pause backups of " + sourcePath(source)); if (hours == null) return; }
+    const s = this.engineSrc[source];
+    if (s && s.status === "UPLOADING") {
+      const ok = await this.klConfirm({ title: "Pause this folder's backups?",
+        facts: [["Folder", sourcePath(source)], ["Paused", hours ? "until " + humanTime(Date.now() / 1000 + hours * 3600) : "until you resume"]],
+        callout: "The backup running now stops.", confirmLabel: "Pause backups", danger: false });
+      if (!ok) return;
+    }
+    try {
+      await getJson("/api/engine/source-pause", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source, hours }) });
+      this.klNotify("Backups paused for " + sourcePath(source));
+      setTimeout(() => this.loadEngineSources(), 800);
+    } catch (e) { this.klNotify(e.message, "error"); }
+  },
+  async engineSourceResume(source) {
+    try {
+      await getJson("/api/engine/source-resume", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source }) });
+      this.klNotify("Backups resumed for " + sourcePath(source));
+      setTimeout(() => this.loadEngineSources(), 800);
+    } catch (e) { this.klNotify(e.message, "error"); }
   },
   nextCellHtml(row) {
     const s = this.engineSrc[row.source];

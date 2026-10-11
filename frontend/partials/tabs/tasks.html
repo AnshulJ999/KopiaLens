@@ -20,6 +20,11 @@
                 title="How long finished backups and maintenance stay here. Change it in Settings, Advanced."></span>
           <button class="kl-btn" @click="loadTasks()" title="Reload the list">↻ Refresh</button>
         </div>
+        <template x-if="mounts.length">
+          <div class="shrink-0">
+{% include "partials/mountlist.html" %}
+          </div>
+        </template>
         <div class="min-h-0 flex-1 flex flex-col gap-2">
           <div id="tasksTable" class="min-h-[12rem] flex-1"></div>
           <template x-if="taskSel">

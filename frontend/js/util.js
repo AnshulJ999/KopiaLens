@@ -1,6 +1,6 @@
 // ---- Number and date style (Settings > Appearance). undefined = the system's own style. ----
 let NUM_LOCALE;
-let _dateStyle = "system", _clock = "system";
+let _dateStyle = "system", _clock = "system", _byteUnits = "decimal";
 const _numFmts = {};
 // A fixed number of decimals in the chosen number style: fmtFix(1.5, 1) -> "1.5" or "1,5".
 const fmtFix = (n, d) => {
@@ -8,14 +8,20 @@ const fmtFix = (n, d) => {
   if (!_numFmts[key]) _numFmts[key] = new Intl.NumberFormat(NUM_LOCALE, { minimumFractionDigits: d, maximumFractionDigits: d });
   return _numFmts[key].format(Number(n) || 0);
 };
+// Decimal (1 GB = 10^9 bytes, kopia's default) or binary (1 GiB = 2^30 bytes) - Settings > Appearance.
 const fmtBytes = (value) => {
   const n = Number(value || 0);
-  if (n >= 1e12) return `${fmtFix(n / 1e12, 2)} TB`;
-  if (n >= 1e9) return `${fmtFix(n / 1e9, 2)} GB`;
-  if (n >= 1e6) return `${fmtFix(n / 1e6, 1)} MB`;
-  if (n >= 1e3) return `${fmtFix(n / 1e3, 1)} KB`;
+  const [k, u] = _byteUnits === "binary" ? [1024, ["KiB", "MiB", "GiB", "TiB"]] : [1000, ["KB", "MB", "GB", "TB"]];
+  if (n >= k ** 4) return `${fmtFix(n / k ** 4, 2)} ${u[3]}`;
+  if (n >= k ** 3) return `${fmtFix(n / k ** 3, 2)} ${u[2]}`;
+  if (n >= k ** 2) return `${fmtFix(n / k ** 2, 1)} ${u[1]}`;
+  if (n >= k) return `${fmtFix(n / k, 1)} ${u[0]}`;
   return `${n} B`;
 };
+// Text for a table cell built as HTML (Tabulator formatters).
+const escHtml = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\x22/g, "&quot;");
+// One list for every pause menu (indexing and backups, app and tray). 0 = until resumed.
+const PAUSE_CHOICES = [[1, "1 hour"], [4, "4 hours"], [12, "12 hours"], [24, "1 day"], [72, "3 days"], [168, "1 week"], [0, "Until I resume"]];
 const fmtPhys = (v) => (v === null || v === undefined ? "—" : fmtBytes(v));
 // A count with its noun: countOf(1, "file") -> "1 file", countOf(3, "file") -> "3 files".
 const countOf = (n, one, many = one + "s") => `${Number(n || 0).toLocaleString(NUM_LOCALE)} ${Number(n) === 1 ? one : many}`;
@@ -37,8 +43,9 @@ const _buildDateFmts = () => {
 _buildDateFmts();
 const _isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 // Apply the saved styles; callers redraw what is on screen afterwards.
-const setFormatStyles = ({ number_style, date_style, clock } = {}) => {
+const setFormatStyles = ({ number_style, date_style, clock, byte_units } = {}) => {
   NUM_LOCALE = ["en-US", "de-DE", "fr-FR", "en-IN"].includes(number_style) ? number_style : undefined;
+  _byteUnits = byte_units === "binary" ? "binary" : "decimal";
   _dateStyle = ["dmy", "mdy", "iso"].includes(date_style) ? date_style : "system";
   _clock = ["12", "24"].includes(String(clock)) ? String(clock) : "system";
   _buildDateFmts();

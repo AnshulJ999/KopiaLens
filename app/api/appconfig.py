@@ -91,7 +91,7 @@ def restart() -> dict:
 # ---------------------------------------------------------------------------- pause indexing
 
 class PauseRequest(BaseModel):
-    hours: int = 0
+    hours: float = 0
 
 
 @router.get("/index/pause")

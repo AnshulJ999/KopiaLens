@@ -12,7 +12,7 @@ const confirmPart = {
           title: opts.title || "Are you sure?", body: opts.body || "",
           facts: opts.facts || null, callout: opts.callout || "", note: opts.note || "",
           command: opts.command || "", confirmLabel: opts.confirmLabel || "Confirm",
-          danger: !!opts.danger, input: opts.input || null, value: "", _resolve: resolve,
+          danger: !!opts.danger, input: opts.input || null, value: (opts.input && opts.input.value) || "", _resolve: resolve,
           _openedAt: Date.now(), _returnTo: document.activeElement,
         };
       });

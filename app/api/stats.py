@@ -15,7 +15,8 @@ import re
 import threading
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from config import DATA_DIR
 
@@ -262,6 +263,29 @@ def _record_growth(repo: str, packed_bytes: int) -> list:
         return []
 
 
+def _repo_details(status: dict) -> dict:
+    """The repository's settings field by field (KopiaUI's Repository page)."""
+    co = status.get("clientOptions") or {}
+    cf = status.get("contentFormat") or {}
+    of = status.get("objectFormat") or {}
+    ecc = cf.get("ecc") or ""
+    return {
+        "config_file": status.get("configFile") or "",
+        "description": co.get("description") or "",
+        "connected_as": f"{co.get('username') or ''}@{co.get('hostname') or ''}".strip("@"),
+        "read_only": bool(co.get("readOnly")),
+        "scripts": bool(co.get("enableActions")),
+        "encryption": cf.get("encryption") or "",
+        "hash": cf.get("hash") or "",
+        "splitter": of.get("splitter") or "",
+        "ecc": f"{ecc} ({cf.get('eccOverheadPercent')}% overhead)" if ecc else "",
+        "format_version": cf.get("version"),
+        "index_version": cf.get("indexVersion"),
+        "max_pack_size": cf.get("maxPackSize"),
+        "epochs": bool((cf.get("epochParameters") or {}).get("Enabled")),
+    }
+
+
 def _compute_stats(repo: str) -> dict:
     status = _json(repo, ["repository", "status", "--json"])
     maint = _json(repo, ["maintenance", "info", "--json"])
@@ -285,6 +309,7 @@ def _compute_stats(repo: str) -> dict:
             "capacity": vol.get("capacity"), "available": vol.get("available"),
             "content": content,
             "maintenance": maint_card,
+            "details": _repo_details(status),
         }
         avail, cap = vol.get("available"), vol.get("capacity")
         if avail is not None and cap and avail / cap < 0.10:
@@ -379,6 +404,30 @@ def stats(repo: str, refresh: bool = False) -> dict:
     out["blob_stats"] = _blob_cache.get(repo)
     out["computed_at"] = at
     return out
+
+
+class DescriptionRequest(BaseModel):
+    repo: str
+    description: str
+
+
+@router.post("/stats/description")
+def set_description(payload: DescriptionRequest) -> dict:
+    """Change this connection's description (`kopia repository set-client --description`)."""
+    import config
+    from ..core import coexist, kopiabin, repoconnect
+    repo = payload.repo
+    if repo not in config.REPOS or config.repo_kind(repo) != "kopia" or config.is_demo(repo):
+        raise HTTPException(status_code=404, detail=f"unknown repository: {repo}")
+    text = " ".join((payload.description or "").split())[:200]
+    res = repoconnect._run([kopiabin.exe(), "--config-file", coexist.config_path(repo), "repository",
+                            "set-client", f"--description={text}"], None, timeout=120.0)
+    audit.audit("executed", "repo-set-client", repo=repo, summary={"description": text}, rc=res["returncode"])
+    if res["returncode"] != 0:
+        raise HTTPException(status_code=502, detail=repoconnect._last_meaningful_line(res.get("stderr") or "")
+                            or "kopia couldn't change the description.")
+    threading.Thread(target=refresh_stats, args=(repo,), daemon=True).start()
+    return {"ok": True, "description": text}
 
 
 def set_blob_stats(repo: str, text: str) -> None:

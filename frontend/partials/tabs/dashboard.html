@@ -1,12 +1,6 @@
       <section x-show="active==='dashboard'" class="h-full flex flex-col gap-2">
         <div class="kl-toolbar" data-testid="dashboard-strip">
-          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
-            <button class="kl-btn" @click="open = !open" :aria-expanded="open">New snapshot ▾</button>
-            <div class="kl-menu max-h-80 overflow-y-auto" style="left:0;right:auto" x-show="open" x-cloak>
-              <div class="hd">Snapshot a source now</div>
-              <template x-for="s in sources" :key="s"><button @click="open = false; snapshotNowAny(s)" x-text="shortSource(s)"></button></template>
-            </div>
-          </span>
+          <button class="kl-btn" @click="openNewSnap()" x-show="!isDemo()" data-testid="new-snapshot">New snapshot…</button>
           <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false" x-show="engineFor() && !isDemo()" x-cloak>
             <button class="kl-btn" :class="backupsClass()" @click="open = !open" :aria-expanded="open" data-testid="backups-chip"
                     title="Who runs this repository's backups"><span x-text="backupsLine()"></span> ▾</button>
@@ -18,10 +12,8 @@
               <template x-if="!(engine && engine.pause && engine.pause.on)">
                 <div>
                   <div class="hd">Pause all backups</div>
-                  <button @click="open = false; enginePause(null, 1)">For 1 hour</button>
-                  <button @click="open = false; enginePause(null, 4)">For 4 hours</button>
-                  <button @click="open = false; enginePause(null, 24)">For 24 hours</button>
-                  <button @click="open = false; enginePause(null, 0)">Until I resume</button>
+                  <template x-for="c in pauseChoices()" :key="c[0]"><button @click="open = false; enginePause(null, c[0])" x-text="c[1]"></button></template>
+                  <button @click="open = false; enginePause(null, 'custom')">Custom…</button>
                 </div>
               </template>
             </div>
@@ -34,6 +26,7 @@
             <button class="kl-btn icon" @click="open = !open" title="More">⋯</button>
             <div class="kl-menu" x-show="open" x-cloak>
               <button @click="open = false; csv('#dashboardTable','dashboard')">Export CSV</button>
+              <button @click="open = false; showCli('sources')">Show command</button>
             </div>
           </span>
         </div>

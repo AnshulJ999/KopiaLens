@@ -24,8 +24,8 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from config import APP_VERSION, DATA_DIR, DEMO_BACKBLAZE, DEMO_INSTANCE, REPOS, is_demo, repo_kind
 
-from .api import (access, account, actions, appconfig, audit, backblaze, dashboard, deleteplan, encryption, engine, excluded,
-                  help, insights, jobs, licence, logs, onboarding, policies, prune, restore, search, setup, shell, simulate,
+from .api import (access, account, actions, appconfig, audit, backblaze, cli, dashboard, deleteplan, encryption, engine, excluded,
+                  help, insights, jobs, licence, logs, newsnapshot, notify, onboarding, policies, prune, restore, search, setup, shell, simulate,
                   snapshots, stats, tree)
 from .core import auth, checkin, devaddons, netaccess, pause
 from .core import engine as backup_engine
@@ -1217,6 +1217,9 @@ app.include_router(access.router, prefix="/api")
 app.include_router(restore.router, prefix="/api")
 app.include_router(jobs.router, prefix="/api")
 app.include_router(engine.router, prefix="/api")
+app.include_router(newsnapshot.router, prefix="/api")
+app.include_router(cli.router, prefix="/api")
+app.include_router(notify.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
 app.include_router(logs.router, prefix="/api")

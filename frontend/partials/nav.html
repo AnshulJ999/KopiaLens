@@ -46,6 +46,14 @@
             <span x-text="j.total ? Math.round((j.done / j.total) * 100) + '%' : ''"></span>
           </button>
         </template>
+        <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false" x-show="mounts.length" x-cloak>
+          <button @click="open = !open; if (open) loadMounts()" class="h-8 rounded border border-bd bg-surface px-3 flex items-center gap-1.5"
+                  :aria-expanded="open" data-testid="mount-chip" title="Mounted snapshots">
+            <span x-text="mounts.length + ' mounted'"></span> ▾</button>
+          <div class="absolute right-0 top-full mt-1 z-30 w-[52rem] max-w-[92vw] rounded-md border border-bd bg-surface shadow-lg text-sm" x-show="open" x-cloak>
+{% include "partials/mountlist.html" %}
+          </div>
+        </span>
         <template x-for="p in indexPending" :key="p.repo">
           <span class="h-8 rounded border border-warn-bd bg-warn-bg text-warn px-2 flex items-center gap-2"
                 :title="pendingTitle(p)">

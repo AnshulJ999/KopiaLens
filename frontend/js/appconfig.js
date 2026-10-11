@@ -136,6 +136,7 @@ const appConfigPart = {
       return p.until ? `Indexing paused until ${fmtAbs(p.until)}` : "Indexing paused until you resume";
     },
     async pauseIndexing(hours) {
+      if (hours === "custom") { hours = await this.pauseCustomHours("Pause indexing"); if (hours == null) return; }
       try { this.indexPause = await _cfgPost("/api/index/pause", { hours }); }
       catch (e) { this.klNotify(e.message || String(e), "warn"); }
     },

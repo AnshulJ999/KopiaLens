@@ -51,7 +51,11 @@ from .kopia import (
     restore_command_full,
     snapshot_create_command,
     snapshot_delete_commands,
+    snapshot_estimate_command,
     snapshot_pin_command,
+    snapshot_verify_command,
+    source_delete_commands,
+    move_history_command,
 )
 
 log = get_logger("jobs")
@@ -70,6 +74,11 @@ KINDS = {
     "policy_write": {"label": "Saving policies", "mutating": False},
     "snapshot_create": {"label": "Taking a snapshot", "mutating": False},
     "snapshot_pin": {"label": "Changing pins", "mutating": False},
+    "snapshot_estimate": {"label": "Estimating a snapshot", "mutating": False},
+    "source_delete": {"label": "Deleting a source", "mutating": True},
+    "move_history": {"label": "Merging snapshot histories", "mutating": True},
+    # Read-only: reads every directory and, optionally, a share of the files.
+    "snapshot_verify": {"label": "Verifying backups", "mutating": False},
     # Local-only (): rewrites KopiaLens's own files, never the kopia repository.
     # Install-wide level change: every repo's generation, the file layer, Backblaze. Mutating,
     # but tolerant - a busy repo is deferred and reported rather than failing the job.
@@ -87,6 +96,10 @@ AUDIT_ACTION = {
     "policy_write": "policy-write",
     "snapshot_create": "snapshot-create",
     "snapshot_pin": "snapshot-pin",
+    "snapshot_estimate": "snapshot-estimate",
+    "source_delete": "source-delete",
+    "move_history": "move-history",
+    "snapshot_verify": "snapshot-verify",
     "encryption_level": "encryption-level",
     "blob_stats": "blob-stats",
 }
@@ -110,6 +123,7 @@ DRY_PARSERS = {
     "remove_files": _parse_remove_line,
     "prune_versions": _parse_remove_line,
     "snapshot_delete": _parse_delete_line,
+    "source_delete": _parse_delete_line,
 }
 
 _JOBS: dict[str, dict] = {}
@@ -228,8 +242,22 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
         cmds, meta = [[_kopia_exe()] + _repo_args(repo) + ["blob", "stats"]], {"dry": False}
     elif kind == "snapshot_pin":
         ids = params.get("snapshot_ids") or []
-        cmds = [snapshot_pin_command(repo, ids, remove=bool(params.get("remove")))] if ids else []
-        meta = {"snapshots": len(ids), "remove": bool(params.get("remove")), "dry": False}
+        name = params.get("pin_name") or "do-not-delete"
+        cmds = [snapshot_pin_command(repo, ids, remove=bool(params.get("remove")), pin_name=name,
+                                     rename_from=params.get("rename_from") or "")] if ids else []
+        meta = {"snapshots": len(ids), "remove": bool(params.get("remove")), "dry": False,
+                "pin": name, "rename_from": params.get("rename_from") or ""}
+    elif kind == "snapshot_estimate":
+        cmds, meta = [snapshot_estimate_command(repo, params["path"])], {"path": params["path"], "dry": False}
+    elif kind == "source_delete":
+        cmds = source_delete_commands(repo, params["source"], bool(params.get("delete_policy")), dry)
+        meta = {"source": params["source"], "policy": bool(params.get("delete_policy")), "dry": dry}
+    elif kind == "move_history":
+        cmds = [move_history_command(repo, params["src"], params["dst"], dry)]
+        meta = {"src": params["src"], "dst": params["dst"], "dry": dry}
+    elif kind == "snapshot_verify":
+        cmds = [snapshot_verify_command(repo, params.get("sources") or [], float(params.get("percent") or 0))]
+        meta = {"sources": len(params.get("sources") or []), "percent": float(params.get("percent") or 0), "dry": False}
     elif kind == "policy_write":
         # Python steps (one per policy), then optionally the delete's kopia commands.
         steps = list(params.get("steps") or [])
@@ -304,7 +332,18 @@ def _default_label(kind: str, params: dict, meta: dict) -> str:
     if kind == "snapshot_create":
         return meta["path"]
     if kind == "snapshot_pin":
+        if meta.get("rename_from"):
+            return f"rename pin {meta['rename_from']} -> {meta['pin']} on {_count(meta['snapshots'], 'snapshot')}"
         return f"{'unpin' if meta['remove'] else 'pin'} {_count(meta['snapshots'], 'snapshot')}"
+    if kind == "snapshot_estimate":
+        return meta["path"]
+    if kind == "source_delete":
+        return meta["source"] + (" and its policy" if meta["policy"] else "") + (" - dry run" if meta["dry"] else "")
+    if kind == "move_history":
+        return f"{meta['src']} -> {meta['dst']}" + (" - dry run" if meta["dry"] else "")
+    if kind == "snapshot_verify":
+        what = _count(meta["sources"], "source") if meta["sources"] else "all sources"
+        return what + (f", reading {meta['percent']:g}% of files" if meta["percent"] else "")
     if kind == "policy_write":
         n = meta["writes"]
         base = f"{n} polic{'y' if n == 1 else 'ies'}"

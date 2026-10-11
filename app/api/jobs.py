@@ -127,9 +127,39 @@ def _resolve_params(kind: str, repo: str, params: dict) -> dict:
         if user.lower() != client["user"].lower() or host.lower() != client["host"].lower():
             raise jobs.JobRefused(f"{user}@{host} is another computer; snapshots run on the computer they back up")
         path = source_root(source)
-        if not os.path.isdir(path):
+        if not os.path.exists(path):
             raise jobs.JobRefused(f"{path} is not on this computer")
         return {"path": path, "description": (params.get("description") or "").strip()}
+    if kind == "snapshot_estimate":
+        path = (params.get("path") or "").strip()
+        if not path or not os.path.exists(path):
+            raise jobs.JobRefused(f"{path or 'That path'} is not on this computer")
+        return {"path": path}
+    if kind == "source_delete":
+        from ..core.sources import sources_index
+        source = params.get("source") or ""
+        if source not in sources_index(repo):
+            raise jobs.JobRefused("That source has no snapshots in this repository.")
+        return {"source": source, "delete_policy": bool(params.get("delete_policy")),
+                "dry": bool(params.get("dry"))}
+    if kind == "move_history":
+        from ..core import coexist
+        check = coexist.identity_check(repo)
+        if not check or not check["split"] or params.get("src") != check["current"] or params.get("dst") != check["suggested"]:
+            raise jobs.JobRefused("Nothing to merge: the snapshot names match now.")
+        return {"src": check["current"], "dst": check["suggested"], "dry": bool(params.get("dry"))}
+    if kind == "snapshot_verify":
+        sources = [s for s in (params.get("sources") or []) if s]
+        try:
+            percent = float(params.get("percent") or 0)
+        except (TypeError, ValueError):
+            raise jobs.JobRefused("percent must be a number") from None
+        if not 0 <= percent <= 100:
+            raise jobs.JobRefused("percent must be between 0 and 100")
+        if any(j["kind"] == "snapshot_verify" and j["repo"] == repo and j["state"] == "running"
+               for j in jobs.list_jobs()):
+            raise jobs.JobRefused("a verify is already running for this repository")
+        return {"sources": sources, "percent": percent}
     if kind == "blob_stats":
         if any(j["kind"] == "blob_stats" and j["repo"] == repo and j["state"] == "running"
                for j in jobs.list_jobs()):
@@ -139,7 +169,12 @@ def _resolve_params(kind: str, repo: str, params: dict) -> dict:
         ids = [i for i in (params.get("snapshot_ids") or []) if i]
         if not ids:
             raise jobs.JobRefused("no snapshots selected")
-        return {"snapshot_ids": ids, "remove": bool(params.get("remove"))}
+        name = (params.get("pin_name") or "do-not-delete").strip()
+        old = (params.get("rename_from") or "").strip()
+        if not name or len(name) > 100 or any(c in name + old for c in (chr(10), chr(13), ",")):
+            raise jobs.JobRefused("Pin names can't be empty or contain commas.")
+        return {"snapshot_ids": ids, "remove": bool(params.get("remove")), "pin_name": name,
+                "rename_from": old if old != name else ""}
     if kind == "policy_write":
         writes = [w for w in (params.get("writes") or []) if w.get("target")]
         if not writes:
@@ -203,7 +238,10 @@ def _on_done(job: dict) -> None:
     """A completed remove/delete refreshes the source listing and queues the incremental
     reindex so the UI reflects reality. A maintenance run refreshes the Stats figures. Any write
     tells KopiaLens's kopia server (when it runs this repository's backups) to re-read the repo."""
-    if job.get("mutating") or job.get("kind") in ("snapshot_create", "snapshot_pin", "policy_write"):
+    if job.get("state") == "failed" and not job.get("dry"):
+        from ..core import notify
+        notify.send_later(f"{job.get('kind_label') or 'A KopiaLens job'} failed", str(job.get("error") or job.get("label") or "")[:300], "error")
+    if (job.get("mutating") and not job.get("dry")) or job.get("kind") in ("snapshot_create", "snapshot_pin", "policy_write"):
         try:
             from ..core import engine
             engine.refresh(job["repo"])
@@ -230,7 +268,7 @@ def _on_done(job: dict) -> None:
     kind = job.get("kind")
     if kind == "policy_write":
         kind = (job.get("detail") or {}).get("then")
-    if kind not in ("remove_files", "snapshot_delete", "prune_versions"):
+    if kind not in ("remove_files", "snapshot_delete", "prune_versions", "source_delete", "move_history"):
         return
     invalidate_sources(job["repo"])
     try:

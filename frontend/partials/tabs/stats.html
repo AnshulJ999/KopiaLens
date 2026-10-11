@@ -70,6 +70,32 @@
 
             <!-- the audit trail moved to the Logs tab (); its size stays a repository fact -->
 
+            <div class="rounded border border-bd bg-surface p-3" x-show="statsData.parsed?.details" data-testid="repo-details">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-sm font-medium">Details</span>
+                <span class="grow"></span>
+                <button class="kl-btn" style="height:24px" @click="showCli('repository')">Show command</button>
+                <button class="kl-btn" style="height:24px" @click="openVerify()" x-show="!isDemo()">Verify backups…</button>
+              </div>
+              <template x-if="statsData.parsed?.details">
+                <div class="kl-facts">
+                  <div class="r"><span class="k">Description</span>
+                    <span class="flex items-center gap-2 min-w-0"><span class="break-all" x-text="statsData.parsed.details.description || '—'"></span>
+                      <button class="kl-btn quiet shrink-0" style="height:22px" x-show="!isDemo()" @click="statsEditDescription()">Edit…</button></span></div>
+                  <div class="r"><span class="k">Connection file</span><span class="break-all font-mono" x-text="statsData.parsed.details.config_file || '—'"></span></div>
+                  <div class="r"><span class="k">Connected as</span><span class="break-all" x-text="statsData.parsed.details.connected_as + (statsData.parsed.details.read_only ? ' (read-only)' : '')"></span></div>
+                  <div class="r"><span class="k">Snapshot scripts</span><span x-text="statsData.parsed.details.scripts ? 'Allowed on this computer' : 'Off on this computer'"></span></div>
+                  <div class="r"><span class="k">Encryption</span><span x-text="statsData.parsed.details.encryption || '—'"></span></div>
+                  <div class="r"><span class="k">Hash</span><span x-text="statsData.parsed.details.hash || '—'"></span></div>
+                  <div class="r"><span class="k">Splitter</span><span x-text="statsData.parsed.details.splitter || '—'"></span></div>
+                  <div class="r"><span class="k">Error correction</span><span x-text="statsData.parsed.details.ecc || 'Off'"></span></div>
+                  <div class="r"><span class="k">Format version</span><span x-text="statsData.parsed.details.format_version + ' (index ' + statsData.parsed.details.index_version + ')'"></span></div>
+                  <div class="r"><span class="k">Pack size</span><span x-text="fmtBytes(statsData.parsed.details.max_pack_size || 0)"></span></div>
+                  <div class="r"><span class="k">Epoch index</span><span x-text="statsData.parsed.details.epochs ? 'On' : 'Off'"></span></div>
+                </div>
+              </template>
+            </div>
+
             <div class="rounded border border-bd bg-surface p-3">
               <div class="flex items-center gap-2">
                 <span class="text-sm font-medium">Versions worth pruning</span>

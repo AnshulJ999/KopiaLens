@@ -27,7 +27,7 @@ const snapshotsPart = {
           { title: "Files", field: "files", width: 90, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Dirs", field: "dirs", width: 80, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Retention", field: "retention", sorter: listSorter, headerSortStartingDir: "desc", accessorDownload: (v) => (v || []).join(", "), widthGrow: 2, minWidth: 150, formatter: (c) => (c.getValue() || []).map((r) => `<span class="pill" style="background:#dbeafe;color:#1e40af">${r}</span>`).join("") },
-          { title: "Pins", field: "pins", sorter: listSorter, headerSortStartingDir: "desc", accessorDownload: (v) => (v || []).join(", "), widthGrow: 1, minWidth: 90, formatter: (c) => (c.getValue() || []).map((p) => `<span class="pill" style="background:#fef3c7;color:#92400e">${p}</span>`).join("") },
+          { title: "Pins", field: "pins", sorter: listSorter, headerSortStartingDir: "desc", accessorDownload: (v) => (v || []).join(", "), widthGrow: 1, minWidth: 90, formatter: (c) => (c.getValue() || []).map((p) => `<span class="pill" style="background:#fef3c7;color:#92400e">${escHtml(p)}</span>`).join("") },
           { title: "ID", field: "id", width: 200 },
         ].filter((c) => !(server && spaceCols.includes(c.field)));
         // The menu acts on the selection (a right-click outside it selects that row first).
@@ -42,9 +42,12 @@ const snapshotsPart = {
             { label: this.mountOpenLabel(), action: () => this.mountOpen(d.id, d.source, sourcePath(d.source)) },
             { separator: true });
           if (n === 2) items.push({ label: "Compare 2 snapshots", action: () => this.diffSelected() });
-          items.push(
-            { label: many("Pin"), action: () => this.pinSelected(false) },
-            { label: many("Unpin"), action: () => this.pinSelected(true) });
+          const pinNames = [...new Set(this.snapSelected().flatMap((x) => x.pins || []))].sort();
+          items.push({ label: many("Pin") + "…", action: () => this.pinSelected(false) });
+          if (pinNames.length === 1) items.push({ label: many("Unpin"), action: () => this.pinSelected(true, pinNames[0]) });
+          else if (pinNames.length > 1) items.push({ label: many("Unpin"), menu: pinNames.map((p) => ({ label: p, action: () => this.pinSelected(true, p) })) });
+          if (pinNames.length === 1) items.push({ label: "Rename pin…", action: () => this.renamePin(pinNames[0]) });
+          else if (pinNames.length > 1) items.push({ label: "Rename pin", menu: pinNames.map((p) => ({ label: p + "…", action: () => this.renamePin(p) })) });
           if (!server) items.push(
             { separator: true },
             { label: "Select unretained snapshots", action: () => this.selectUnretained() },
@@ -216,23 +219,35 @@ const snapshotsPart = {
     },
 
     // ---- Snapshots: pin / unpin / diff ----
-    async pinSelected(remove) {
+    // A pin is a name kopia keeps on the snapshot; retention never removes a pinned snapshot.
+    async pinSelected(remove, name = "do-not-delete") {
       const rows = this.snapSelected();
       if (!rows.length) { this.klNotify("Select one or more snapshots first.", "warn"); return; }
-      const already = rows.filter((x) => (x.pins || []).includes("do-not-delete")).length;
       const n = rows.length;
-      const ok = await this.klConfirm({
-        title: `${remove ? "Unpin" : "Pin"} ${n} snapshot${n === 1 ? "" : "s"}?`,
-        facts: [
-          ["Snapshots", rows.slice(0, 4).map((x) => `${sourcePath(x.source || this.snapSource)} · ${humanTime(x.start_time || x.startTime)}`).join("; ") + (n > 4 ? `; and ${n - 4} more` : "")],
-          ["Pin", "do-not-delete"],
-          [remove ? "Pinned now" : "Already pinned", String(already)],
-        ],
+      const facts = [
+        ["Snapshots", rows.slice(0, 4).map((x) => `${sourcePath(x.source || this.snapSource)} · ${humanTime(x.start_time || x.startTime)}`).join("; ") + (n > 4 ? `; and ${n - 4} more` : "")],
+      ];
+      if (remove) facts.push(["Pin", name], ["Pinned now", String(rows.filter((x) => (x.pins || []).includes(name)).length)]);
+      const r = await this.klConfirm({
+        title: `${remove ? "Unpin" : "Pin"} ${countOf(n, "snapshot")}?`, facts,
+        input: remove ? null : { label: "Pin name", value: name },
         note: remove ? "Unpinned snapshots follow retention again and can expire at the next cleanup." : "Pinned snapshots are never removed by retention.",
-        confirmLabel: `${remove ? "Unpin" : "Pin"} ${n} snapshot${n === 1 ? "" : "s"}`, danger: remove,
+        confirmLabel: `${remove ? "Unpin" : "Pin"} ${countOf(n, "snapshot")}`, danger: remove,
       });
-      if (!ok) return;
-      await this.startJob("snapshot_pin", { snapshot_ids: rows.map((x) => x.id), remove }, `${remove ? "unpin" : "pin"} ${n} snapshot${n === 1 ? "" : "s"}`);
+      if (!r) return;
+      const pin = remove ? name : ((r.value || "").trim() || "do-not-delete");
+      await this.startJob("snapshot_pin", { snapshot_ids: rows.map((x) => x.id), remove, pin_name: pin }, `${remove ? "unpin" : "pin"} ${countOf(n, "snapshot")}`);
+    },
+    async renamePin(oldName) {
+      const rows = this.snapSelected().filter((x) => (x.pins || []).includes(oldName));
+      if (!rows.length) return;
+      const r = await this.klConfirm({
+        title: `Rename the pin ${oldName}?`, facts: [["Snapshots with it", String(rows.length)]],
+        input: { label: "New name", value: oldName }, confirmLabel: "Rename pin", danger: false,
+      });
+      const pin = r && (r.value || "").trim();
+      if (!pin || pin === oldName) return;
+      await this.startJob("snapshot_pin", { snapshot_ids: rows.map((x) => x.id), pin_name: pin, rename_from: oldName }, `rename pin on ${countOf(rows.length, "snapshot")}`);
     },
     async diffSelected() {
       const rows = this.snapSelected();

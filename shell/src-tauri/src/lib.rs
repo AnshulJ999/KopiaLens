@@ -259,7 +259,7 @@ fn act(app: &AppHandle, fail_title: &'static str, path: String, body: Value) {
 pub fn on_menu(app: &AppHandle, id: &str) {
     let sh = shell(app);
     note_action(app, &format!("menu {id}"));
-    let parts: Vec<&str> = id.splitn(3, ':').collect();
+    let parts: Vec<&str> = id.splitn(4, ':').collect();
     match parts.as_slice() {
         ["open"] => open_window(app, None),
         ["browser"] => open_external(&format!("{}/", sh.server.url())),
@@ -279,7 +279,7 @@ pub fn on_menu(app: &AppHandle, id: &str) {
         ["resume"] => act(app, "Couldn't resume indexing", "/api/index/resume".into(), json!({})),
         ["bpause", hours] => act(app, "Couldn't pause backups", "/api/engine/pause".into(), json!({"hours": hours.parse::<f64>().unwrap_or(0.0)})),
         ["bresume"] => act(app, "Couldn't resume backups", "/api/engine/resume".into(), json!({})),
-        ["repo", "bpause", key] => act(app, "Couldn't pause backups", "/api/engine/pause".into(), json!({"repo": key, "hours": 0})),
+        ["repo", "bpause", key, hours] => act(app, "Couldn't pause backups", "/api/engine/pause".into(), json!({"repo": key, "hours": hours.parse::<f64>().unwrap_or(0.0)})),
         ["repo", "bresume", key] => act(app, "Couldn't resume backups", "/api/engine/resume".into(), json!({"repo": key})),
         ["notify", level] => act(app, "Couldn't change notifications", "/api/shell/prefs".into(), json!({"notifications": level})),
         ["autostart"] => {

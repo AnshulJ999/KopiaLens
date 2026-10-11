@@ -13,7 +13,7 @@ from playwright.sync_api import expect
 from . import _harness as h
 
 TABS = ["Dashboard", "Snapshots", "Tree", "Search", "Churn", "Repository", "Logs",
-        "Excluded", "Policies", "Actions"]
+        "Excluded", "Policies", "Tasks"]
 
 
 def _idle(page) -> None:

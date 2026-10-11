@@ -26,9 +26,17 @@ def test_until_resumed_has_no_end():
     assert pause.state(now=1e12) == {"paused": True, "since": 1000.0, "until": None}
 
 
-def test_only_the_offered_lengths_are_accepted():
+@pytest.mark.parametrize("hours", [-1, 24 * 400])
+def test_lengths_outside_zero_to_a_year_are_refused(hours):
     with pytest.raises(ValueError):
-        pause.pause(5)
+        pause.pause(hours)
+
+
+def test_a_pause_survives_a_restart(monkeypatch):
+    pause.pause(0, now=1000.0)
+    monkeypatch.setattr(pause, "_loaded", False)
+    monkeypatch.setattr(pause, "_STATE", {"since": None, "until": None})
+    assert pause.state(now=2000.0)["paused"]
 
 
 @pytest.fixture

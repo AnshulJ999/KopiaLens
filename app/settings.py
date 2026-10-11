@@ -22,6 +22,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "window": {},
         "time_format": "absolute",
         "number_style": "system",    # system | en-US | de-DE | fr-FR | en-IN (shown by example)
+        "byte_units": "decimal",     # decimal (GB, kopia's default) | binary (GiB)
         "date_style": "system",      # system | dmy (9 Oct 2026) | mdy (Oct 9, 2026) | iso (2026-10-09)
         "clock": "12",               # system | 12 | 24
         # ---- appearance (themes + density) ---------------------------------------------------
@@ -46,6 +47,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "folder_prewarm_budget": 900,  # max seconds the nightly spends pre-computing folder reclaim
         "log_cleanup_days": 90,      # days of job/dry-run/mount logs to keep; 0 = keep everything
         "task_history_days": 90,     # days of backup/maintenance task history (Tasks tab); 0 = keep everything
+        "engine_takeback": "auto",
+        "notify_webhook": {},        # KopiaLens's own notifications: {url, format text|json, headers [..], level info|warn|error}   # when another app stops running a repo's backups: auto = take over again | wait = stay paused
         "rank_count": 10000,         # exact top entries the nightly ranks for the Search columns
         "index_retry_delay": 900,    # after a FAILED pass, wait this long before the one retry
         "index_max_retries": 1,      # retries per scheduled slot; 0 = never retry until the next slot

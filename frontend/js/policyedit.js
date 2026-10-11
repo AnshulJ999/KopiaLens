@@ -12,6 +12,7 @@ const POL_INTERVALS = [
   [10800, "3 hours"], [21600, "6 hours"], [43200, "12 hours"], [86400, "24 hours"], [172800, "2 days"],
 ];
 const POL_UNITS = [["KB", 1e3], ["MB", 1e6], ["GB", 1e9], ["TB", 1e12]];
+const POL_UNITS_BIN = [["KiB", 2 ** 10], ["MiB", 2 ** 20], ["GiB", 2 ** 30], ["TiB", 2 ** 40]];
 
 const policyEditPart = {
 
@@ -185,7 +186,7 @@ const policyEditPart = {
       return `every ${sec} seconds`;
     },
     polIntervals() { return POL_INTERVALS; },
-    polUnits() { return POL_UNITS; },
+    polUnits() { return _byteUnits === "binary" ? POL_UNITS_BIN : POL_UNITS; },
     polOptions(f) { return f.options === "compressors" ? (this.polMeta.compressors || []) : f.options === "splitters" ? (this.polMeta.splitters || []) : []; },
 
     // ---------- typed editors ----------
@@ -197,14 +198,17 @@ const policyEditPart = {
     },
     edBytesParts(path) {
       const v = this.edGet(path);
-      if (!v) return { num: "", unit: "GB" };
-      const unit = [...POL_UNITS].reverse().find(([, m]) => v >= m && v % (m / 10) === 0) || ["MB", 1e6];
+      const units = this.polUnits();
+      if (!v) return { num: "", unit: units[2][0] };
+      const unit = [...units].reverse().find(([, m]) => v >= m && v % (m / 10) === 0)
+        || [...units].reverse().find(([, m]) => v >= m) || units[1];
       return { num: String(Math.round((v / unit[1]) * 100) / 100), unit: unit[0] };
     },
     edBytes(path, num, unit) {
       const t = String(num).trim();
       if (t === "") return this.edSet(path, null);
-      const m = (POL_UNITS.find(([u]) => u === unit) || ["GB", 1e9])[1];
+      const units = this.polUnits();
+      const m = (units.find(([u]) => u === unit) || units[2])[1];
       const n = Number(t);
       if (Number.isFinite(n) && n >= 0) this.edSet(path, Math.round(n * m));
     },

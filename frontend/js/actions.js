@@ -1,4 +1,4 @@
-// Actions tab + shared ops: mounts, the restore panel, downloads.
+// Shared ops: mounts (header chip + Tasks), the restore panel, downloads.
 const RESTORE_PRESETS = {
   safe: { skip_existing: true, overwrite_files: false, overwrite_directories: false, overwrite_symlinks: false, delete_extra: false },
   replace: { skip_existing: false, overwrite_files: true, overwrite_directories: true, overwrite_symlinks: true, delete_extra: false },
@@ -75,7 +75,7 @@ const actionsPart = {
         options: {
           restore_owners: true, restore_permissions: true, restore_times: true, ignore_errors: false,
           write_files_atomically: false, write_sparse_files: false, ignore_permission_errors: true,
-          parallel: 8, shallow: "", ...RESTORE_PRESETS.safe,
+          parallel: 8, shallow: "", shallow_minsize_kb: "", zip_uncompressed: false, ...RESTORE_PRESETS.safe,
         },
       };
       this.showRestore = true;
@@ -266,19 +266,19 @@ const actionsPart = {
     },
 
     async browseFolder() {
-      const initial = this.restore && this.restore.target || null;
-      let path = null;
-      const dialog = window.__TAURI__ && window.__TAURI__.dialog;
-      if (dialog) {
-        // Inside the desktop app: the system folder picker, on every OS.
-        path = await dialog.open({ directory: true, defaultPath: initial || undefined }).catch(() => null);
-      } else if (this.host.folder_picker === "native") {
-        const r = await getJson("/api/actions/browse-folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial }) }).catch(() => null);
-        path = r && r.path;
-      } else {
-        path = await this.fbOpen(initial);
-      }
+      const path = await this.pickFolder(this.restore && this.restore.target || null);
       if (path && this.restore) { this.restore.target = path; this.restoreLoad(false); }
+    },
+    // A folder on the computer KopiaLens runs on: the system picker in the desktop app (or on
+    // this machine), the in-app browser otherwise.
+    async pickFolder(initial) {
+      const dialog = window.__TAURI__ && window.__TAURI__.dialog;
+      if (dialog) return dialog.open({ directory: true, defaultPath: initial || undefined }).catch(() => null);
+      if (this.host.folder_picker === "native") {
+        const r = await getJson("/api/actions/browse-folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial }) }).catch(() => null);
+        return r && r.path;
+      }
+      return this.fbOpen(initial);
     },
 
     // ---- In-app folder browser: the server's folders, for a browser on another machine or in Docker ----

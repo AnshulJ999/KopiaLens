@@ -28,6 +28,8 @@ const settingsPart = {
       try {
         const data = await getJson("/api/repos");
         const kl = data.settings?.kopialens || {};
+        this._klSettings = kl;
+        this.notifyHook = null; this.notifyForm = null;
         this.backend = data.settings?.listing_backend || "subprocess";
         this.reindexInterval = Number(kl.reindex_interval || 1800);
         this.groupDepth = Number(kl.group_depth || 3);
@@ -81,6 +83,7 @@ const settingsPart = {
       this.notifyLevel = ["all", "off"].includes(kl.notifications) ? kl.notifications : "warnings";
       this.logCleanupDays = Number(kl.log_cleanup_days ?? 90);
       this.taskHistoryKeep = Number(kl.task_history_days ?? 90);
+      this.engineTakeback = kl.engine_takeback === "wait" ? "wait" : "auto";
       this.rankCount = Number(kl.rank_count ?? 10000);
       this.duckdbMemory = String(kl.duckdb_memory || "").toUpperCase();
       this.memoryAuto = kl.memory_auto || "";
@@ -130,6 +133,7 @@ const settingsPart = {
       duckdb_memory: { s: "duckdbMemory", t: "choice", of: ["", ...MEMORY_CHOICES], restart: true },
       log_cleanup_days: { s: "logCleanupDays", t: "int", min: 0 },
       task_history_days: { s: "taskHistoryKeep", t: "int", min: 0 },
+      engine_takeback: { s: "engineTakeback", t: "choice", of: ["auto", "wait"] },
       rank_count: { s: "rankCount", t: "int", min: 0 },
       repo_labels: { s: "repoLabels", t: "choice", of: ["short", "full"] },
       show_pro_badge: { s: "showProBadge", t: "bool" },
@@ -143,6 +147,7 @@ const settingsPart = {
       eventlog_archive_path: { s: "bzEventlogArchive", t: "str", block: "backblaze" },
       session_days: { s: "sessionDays", t: "int", min: 1, max: 365 },
       number_style: { s: "numberStyle", t: "choice", of: ["system", "en-US", "de-DE", "fr-FR", "en-IN"] },
+      byte_units: { s: "byteUnits", t: "choice", of: ["decimal", "binary"] },
       date_style: { s: "dateStyle", t: "choice", of: ["system", "dmy", "mdy", "iso"] },
       clock: { s: "clock", t: "choice", of: ["system", "12", "24"] },
       search_dedupe_by: { s: "dedupeBy", t: "choice", of: ["path", "content"] },
@@ -202,7 +207,7 @@ const settingsPart = {
       } else {
         v = v == null ? "" : String(v);
       }
-      if (key === "number_style" || key === "date_style" || key === "clock") this.applyFormats();
+      if (key === "number_style" || key === "date_style" || key === "clock" || key === "byte_units") this.applyFormats();
       const body = f.top ? { [key]: v }
         : f.block === "backblaze" ? { backblaze: { [key]: v } }
         : { kopialens: { [key]: v } };

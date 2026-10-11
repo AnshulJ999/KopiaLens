@@ -342,6 +342,17 @@ PROVIDERS: dict[str, dict] = {
     },
 }
 
+# Connect as another user@host (KopiaUI's "Connect As"), e.g. to continue another computer's or
+# BlinkDisk's snapshots. Every storage type takes it; a server connection has its own pair.
+for _key, _prov in PROVIDERS.items():
+    if _key not in ("server", "token"):
+        _prov["fields"] += [
+            _field("override_username", "--override-username", "Connect as user", advanced=True,
+                   help="The user name snapshots are made as, when it isn't this computer's user."),
+            _field("override_hostname", "--override-hostname", "Connect as computer", advanced=True,
+                   help="The computer name snapshots are made as, when it isn't this computer's name."),
+        ]
+
 
 def provider_list() -> list[dict]:
     """The provider specs for the screens (/ UI) - one source with both flows."""
