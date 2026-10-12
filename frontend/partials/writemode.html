@@ -1,4 +1,6 @@
+{% from "partials/_macros.html" import needs_kopia %}
             <section x-show="settingsTab==='writemode'" x-effect="settingsTab==='writemode' && wmLoad()" class="space-y-4" data-testid="settings-writemode">
+{{ needs_kopia() }}
               <template x-if="wm">
                 <div class="space-y-4">
                   <div>

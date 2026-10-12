@@ -55,9 +55,10 @@ def all_snapshots(repo: str) -> list[dict]:
     the rows of every source missing from this list."""
     res = kopia(repo, ["snapshot", "list", "--json"])
     if res.returncode != 0:
+        from .kopiabin import friendly_error
         raise ListingFailed(
             f"repo {repo}: kopia snapshot list failed (exit {res.returncode}): "
-            f"{(res.stderr or '').strip()[:300] or 'no error output'}"
+            f"{friendly_error((res.stderr or '').strip()[:300]) or 'no error output'}"
         )
     out = res.stdout
     return json.loads(out) if out.strip() else []

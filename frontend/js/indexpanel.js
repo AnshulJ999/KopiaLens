@@ -14,6 +14,13 @@ const INDEX_STAGES = [
   ["rank_paths", "Biggest files"],
   ["next_snapshots", "Next snapshot times"],
 ];
+// The worker's phase names, in plain words.
+const INDEX_PHASES = {
+  "tree sync": "Reading folders from kopia", "seeding the tree": "Reading the old cache",
+  "rebuilding sources": "Rebuilding sources", maps: "Working out stored sizes",
+  sources: "Building file history", writing: "Saving the index",
+};
+const fmtNum = (n) => Number(n || 0).toLocaleString(NUM_LOCALE);
 // Worker lines the Clean view hides: timings, per-target pricing and data dumps.
 const INDEX_LINE_NOISE = /^\s*(perf:|policy prices .* (target=|global rollup priced)|.*\{'[a-z_]+': )/;
 const INDEX_STAGE_LINE = /^\s*stage: ([a-z_]+)\s*$/;
@@ -55,17 +62,28 @@ const indexPanelPart = {
     indexDetailText() {
       const p = this.indexProg();
       const bits = [];
-      if (p.phase) bits.push(p.phase);
+      if (p.phase) bits.push(INDEX_PHASES[p.phase] || p.phase);
       const sync = p.sync || null;
-      if (sync && (sync.snapshots || sync.folders || sync.done)) {
-        bits.push(`${Number(sync.done || 0).toLocaleString(NUM_LOCALE)} synced` +
-          (sync.snapshots ? ` · ${countOf(sync.snapshots, "snapshot")}` : "") +
-          (sync.folders ? ` · ${countOf(sync.folders, "folder")}` : ""));
+      if (sync && sync.waiting_since) {
+        bits.push(`Waiting for the repository since ${humanTime(sync.waiting_since)}`);
+      } else if (sync && sync.pieces) {
+        bits.push(`large files: ${fmtNum(sync.pieces_read)} of ${fmtNum(sync.pieces)}`);
+      } else if (sync && sync.read != null) {
+        const est = p.estimate && !p.estimate.exact && p.estimate.folders;
+        bits.push(countOf(sync.read, "folder") + " read" + (est ? ` of about ${fmtNum(est[0])}–${fmtNum(est[1])}` : ""));
       }
       const seed = p.seed || null;
       if (seed && seed.total) bits.push(`seed ${Number(seed.done || 0).toLocaleString(NUM_LOCALE)}/${Number(seed.total).toLocaleString(NUM_LOCALE)}`);
       if (p.current_source) bits.push(sourcePath(p.current_source));
       return bits.join(" · ");
+    },
+
+    // When kopia last answered during the folder read; a long silence is shown as one.
+    indexActivity() {
+      const sync = this.indexProg().sync;
+      if (!sync || !sync.at) return null;
+      const secs = Math.max(0, Date.now() / 1000 - Number(sync.at));
+      return { text: secs < 10 ? "Last read just now" : `Last read ${fmtDur(secs)} ago`, slow: secs > 300 };
     },
 
     indexPanelCounts(st) {
@@ -185,18 +203,20 @@ const indexPanelPart = {
     async indexStop() {
       const repo = this.indexLogRepo || this.repo;
       if (!this.ixs().building) return;
+      const first = !!this.ixs().never_indexed;
       const ok = await this.klConfirm({
         title: `Stop indexing ${this.repoLabel(repo)}?`,
-        callout: "The pass ends where it is and will not restart by itself; the next scheduled slot builds it again.",
+        callout: first
+          ? "What's read so far is saved. The next run continues from here."
+          : "The pass ends where it is and will not restart by itself; the next scheduled slot builds it again.",
         note: "Kopia already answered stays recorded - nothing is corrupted.",
         confirmLabel: "Stop indexing", danger: true,
       });
       if (!ok) return;
       try {
-        const r = await getJson("/api/index/stop", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo }) });
+        const r = await getJson(`/api/index/stop?repo=${encodeURIComponent(repo)}`, { method: "POST" });
         if (r && r.stopped === false && r.reason) this.klNotify(`Could not stop: ${r.reason}`, "warn");
-        else this.klNotify("Indexing stopped.");
+        else this.klNotify(first ? "Stopping. Saving what's read so far…" : "Indexing stopped.");
       } catch (e) {
         this.klNotify("Stopping an index run is not available from this build.", "warn");
       }

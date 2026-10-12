@@ -158,7 +158,7 @@ class _FakeProc:
     def __init__(self, out: str, rc: int):
         self._out, self.returncode, self.pid = out, rc, 4242
 
-    def communicate(self, timeout=None):
+    def communicate(self, input=None, timeout=None):
         return self._out, ""
 
     def poll(self):
@@ -167,7 +167,7 @@ class _FakeProc:
 
 def _run_worker_with(monkeypatch, tmp_path, out: str, rc: int) -> dict:
     monkeypatch.setattr(nightly, "worker_log_path", lambda repo: str(tmp_path / "w.log"))
-    monkeypatch.setattr(nightly, "worker_timeout", lambda: 60)
+    monkeypatch.setattr(nightly, "worker_timeout", lambda repo=None: 60)
     monkeypatch.setattr(nightly.subprocess, "Popen", lambda *a, **k: _FakeProc(out, rc))
     return nightly._run_worker("1", False)
 

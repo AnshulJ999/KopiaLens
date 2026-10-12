@@ -430,7 +430,10 @@ def _bz_kv_float(key: str) -> float:
 
 
 def _bz_present() -> bool:
-    """A Backblaze record exists. Without one (Linux, Docker, a PC without Backblaze) no BZ pass runs."""
+    """A Backblaze record exists and its automatic updates are on. Without one (Linux, Docker, a
+    PC without Backblaze) or with updates off, no BZ pass runs; a refresh started by hand still does."""
+    if load_settings().get("backblaze", {}).get("updates") == "off":
+        return False
     return any(repo_kind(r) == "backblaze" for r in REPOS)
 
 
@@ -680,7 +683,7 @@ async def lifespan(_app: FastAPI):
     try:  # point the read-only Backblaze backend at the configured bzdata root
         from .backblaze import paths as bz_paths
         bz_paths.set_bzdata_root(load_settings().get("backblaze", {}).get("bzdata_path")
-                                 or bz_paths.bzdata_root())
+                                 or bz_paths.default_bzdata() or bz_paths.bzdata_root())
     except Exception as exc:  # noqa: BLE001
         log.error("BZ bzdata path setup failed: %s", exc)
     if load_settings().get("listing_backend") == "server":
@@ -1266,9 +1269,13 @@ _JINJA = jinja2.Environment(
 )
 
 
-def _compose_html() -> str:
+def _compose_html(client_host: str | None = None) -> str:
     """Render index.html with its ``{% include %}`` partials resolved. The appearance values
-    are stamped onto <html> so the page paints in the saved theme before any JS runs."""
+    are stamped onto <html> so the page paints in the saved theme before any JS runs, and this
+    computer's own formats so the first table already follows them."""
+    from .core import host as _host
+    info = _host.info(client_host)["formats"]
+    os_formats = json.dumps(info).replace("</", "<\\/")
     kl = load_settings().get("kopialens", {})
     _THEMES = ("daylight", "parchment", "slate", "lilac", "ember", "midnight", "obsidian",
                "lens", "graphite", "ink")
@@ -1286,6 +1293,7 @@ def _compose_html() -> str:
         density_pct=pct,
         font=kl.get("font") if kl.get("font") in _FONTS else "inter",
         sortarrows="all" if kl.get("sort_arrows") == "all" else "sorted",
+        os_formats=os_formats,
     )
     if devaddons.HTML:
         html = html.replace("</body>", "\n".join(devaddons.HTML) + "\n</body>", 1)
@@ -1323,11 +1331,11 @@ def missing_partials() -> list[str]:
 
 
 @app.get("/")
-def index() -> Response:
+def index(request: Request) -> Response:
     # no-store on the shell itself: a cached index.html would keep pointing at the old asset
     # stamp, which is exactly how stale JS survived a reload before.
     try:
-        page = _compose_html()
+        page = _compose_html(request.client.host if request.client else None)
     except jinja2.TemplateNotFound as exc:
         log.error("page file missing: %s (incomplete install)", exc.name)
         import html as _html

@@ -68,6 +68,8 @@ const settingsPart = {
       this.lightInterval = Number(kl.light_interval || 1800);
       this.dashboardInterval = Number(kl.dashboard_interval || 14400);
       this.indexWorkerTimeout = Number(kl.index_worker_timeout || 14400);
+      this.indexFirstTimeout = Number(kl.index_first_timeout || 86400);
+      this.removePlanCap = Number(kl.remove_plan_cap || 200000);
       this.indexRetryDelay = Number(kl.index_retry_delay || 900);
       this.reindexAfterDeleteDelay = Number(kl.reindex_after_delete_delay ?? 300);
       this.indexMaxRetries = Number(kl.index_max_retries ?? 1);
@@ -91,7 +93,8 @@ const settingsPart = {
     MEMORY_CHOICES,
     fmtLimit(v) { return String(v || "").replace(/(\d)\s*([KMGT]B)$/i, "$1 $2"); },
     _readBackblaze(bz) {
-      this.bzDataPath = bz.bzdata_path || "C:\\ProgramData\\Backblaze\\bzdata";
+      this.bzDataPath = bz.bzdata_path || "";
+      this.bzUpdates = bz.updates === "off" ? "off" : "auto";
       this.bzReindexMinGap = Number(bz.bz_reindex_min_gap || 21600);
       this.bzHistoryDays = Number(bz.history_days || 90);
       this.bzCollapsePrefixes = (bz.collapse_prefixes || []).join(", ");
@@ -118,6 +121,8 @@ const settingsPart = {
       dashboard_refresh: { s: "dashRefresh", t: "int", min: 0 },
       dashboard_interval: { s: "dashboardInterval", t: "int", min: 900 },
       index_worker_timeout: { s: "indexWorkerTimeout", t: "int", min: 600 },
+      index_first_timeout: { s: "indexFirstTimeout", t: "int", min: 600 },
+      remove_plan_cap: { s: "removePlanCap", t: "int", min: 1000 },
       reindex_after_delete_delay: { s: "reindexAfterDeleteDelay", t: "int", min: 0 },
       index_retry_delay: { s: "indexRetryDelay", t: "int", min: 60 },
       index_max_retries: { s: "indexMaxRetries", t: "int", min: 0, max: 5 },
@@ -141,6 +146,7 @@ const settingsPart = {
       usage_stats: { s: "usageStats", t: "bool" },
       bzdata_path: { s: "bzDataPath", t: "str", block: "backblaze", restart: true },
       store: { s: "bzStore", t: "choice", of: ["parquet", "sqlite"], block: "backblaze" },
+      updates: { s: "bzUpdates", t: "choice", of: ["auto", "off"], block: "backblaze" },
       bz_reindex_min_gap: { s: "bzReindexMinGap", t: "int", min: 300, block: "backblaze" },
       history_days: { s: "bzHistoryDays", t: "int", min: 7, block: "backblaze" },
       collapse_prefixes: { s: "bzCollapsePrefixes", t: "list", block: "backblaze" },

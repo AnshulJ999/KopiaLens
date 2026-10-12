@@ -5,7 +5,7 @@
           <select x-model="searchSource" @change="searchSourceChanged()" class="fld border border-bd bg-surface grow-[0.5] basis-28 min-w-[7rem] max-w-[16rem]" title="Source">
             <option value="*REPOS*">All repositories</option>
             <option value="">All sources</option>
-            <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
+            <template x-for="s in sources" :key="s"><option :value="s" :selected="s == searchSource" x-text="shortSource(s)"></option></template>
           </select>
           <label title="Only files that are no longer on disk"><input type="checkbox" x-model="deletedOnly" @change="loadSearch()"> Deleted from disk</label>
           <label title="Only files of 1 GB or more"><input type="checkbox" x-model="overOneGb" @change="loadSearch()"> Over 1 GB</label>
@@ -88,7 +88,7 @@
             <span class="flex items-center gap-1.5">
               <span>Per page</span>
               <select x-model="searchPageSize" @change="changePageSize()" class="fld h-6 border border-bd bg-surface text-xs">
-                <template x-for="n in pageSizes" :key="n"><option :value="n" x-text="n"></option></template>
+                <template x-for="n in pageSizes" :key="n"><option :value="n" :selected="n == searchPageSize" x-text="n"></option></template>
               </select>
               <template x-if="searchPageSize!=='Infinite' && searchPages() > 1">
                 <span class="flex items-center gap-1">

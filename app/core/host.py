@@ -180,8 +180,65 @@ def data_persistent() -> bool:
         path = parent
 
 
+_FORMATS: dict | None = None
+
+
+def _windows_formats() -> dict:
+    import winreg
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Control Panel\International") as key:
+        def val(name: str) -> str:
+            try:
+                return str(winreg.QueryValueEx(key, name)[0])
+            except OSError:
+                return ""
+        out: dict = {"locale": val("LocaleName") or None}
+        short_time, short_date = val("sShortTime"), val("sShortDate")
+        if short_time:
+            out["clock"] = "24" if "H" in short_time else "12"
+        pos = {c: short_date.find(c) for c in "dMy" if c in short_date}
+        if len(pos) == 3:
+            out["date"] = "iso" if pos["y"] < pos["M"] else ("dmy" if pos["d"] < pos["M"] else "mdy")
+        dec, thou, grouping = val("sDecimal"), val("sThousand"), val("sGrouping")
+        if dec == "." and thou == ",":
+            out["number"] = "en-IN" if grouping.startswith("3;2") else "en-US"
+        elif dec == "," and thou == ".":
+            out["number"] = "de-DE"
+        elif dec == "," and thou in (" ", " ", " "):
+            out["number"] = "fr-FR"
+        return out
+
+
+def _posix_formats() -> dict:
+    """The locale from the environment (Linux, Docker) or macOS's own setting."""
+    tag = ""
+    if sys.platform == "darwin":
+        try:
+            tag = subprocess.run(["defaults", "read", "-g", "AppleLocale"], capture_output=True, text=True,
+                                 timeout=5, stdin=subprocess.DEVNULL).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            tag = ""
+    tag = tag or os.environ.get("LC_ALL") or os.environ.get("LC_TIME") or os.environ.get("LANG") or ""
+    tag = tag.split(".")[0].split("@")[0].replace("_", "-")
+    return {"locale": tag if tag and tag not in ("C", "POSIX") else None}
+
+
+def os_formats() -> dict:
+    """This computer's own clock, date order and number style ("follow the computer"). Read once;
+    a field is absent when it can't be told."""
+    global _FORMATS
+    if _FORMATS is None:
+        try:
+            _FORMATS = _windows_formats() if os.name == "nt" else _posix_formats()
+        except Exception as exc:  # noqa: BLE001 - unreadable: the browser's own style is used
+            log.warning("could not read this computer's formats: %s", exc)
+            _FORMATS = {}
+    return dict(_FORMATS)
+
+
 def info(client_host: str | None) -> dict:
     return {
+        # Applies only when the browser runs on this computer; elsewhere its own language decides.
+        "formats": {**os_formats(), "local": (client_host or "") in _LOOPBACK},
         "os": os_name(),
         "docker": in_docker(),
         "can_open": has_desktop(),

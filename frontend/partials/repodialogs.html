@@ -40,7 +40,7 @@
                     <div class="r"><span class="k" x-text="row[0]"></span><span class="break-all" x-text="row[1]"></span></div>
                   </template>
                 </div>
-                <p class="kl-note">KopiaLens deletes its index and history for this repository. The backups stay in the kopia repository, and you can add it again later.</p>
+                <p class="kl-note" x-show="repoDlg.repo.kind !== 'backblaze'">KopiaLens deletes its index and history for this repository. The backups stay in the kopia repository, and you can add it again later.</p>
                 <label x-show="repoDlg.preview && repoDlg.preview.managed_config" class="flex items-start gap-2 text-xs">
                   <input type="checkbox" x-model="repoDlg.deleteConfig" class="mt-0.5">
                   <span>Also delete the connection file KopiaLens created<span class="block text-muted">KopiaUI and the kopia command line can use it too. Keep it if they do.</span></span></label>

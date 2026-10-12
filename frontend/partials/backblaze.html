@@ -43,7 +43,7 @@
           <input x-model="query" @input.debounce.300ms="bzLoadSearch()" class="fld border border-bd bg-surface min-w-[22rem]" placeholder="Search Backblaze paths (substring)">
           <select x-model="bzSearchDrive" @change="bzLoadSearch()" class="fld border border-bd bg-surface">
             <option value="">All drives</option>
-            <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" x-text="d.drive + ':'"></option></template>
+            <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" :selected="d.drive == bzSearchDrive" x-text="d.drive + ':'"></option></template>
           </select>
           <select x-model="bzSearchStatus" @change="bzLoadSearch()" class="fld border border-bd bg-surface">
             <option value="all">Backed + excluded</option>
@@ -58,7 +58,7 @@
           <span class="ml-auto flex items-center gap-1.5" x-show="!bzGroupByFolder">
             <span class="text-muted text-xs">Per page</span>
             <select x-model="bzSearchPageSize" @change="bzSearchPage=1; bzLoadSearch()" class="fld h-7 border border-bd bg-surface text-xs">
-              <template x-for="n in pageSizes" :key="n"><option :value="n" x-text="n"></option></template>
+              <template x-for="n in pageSizes" :key="n"><option :value="n" :selected="n == bzSearchPageSize" x-text="n"></option></template>
             </select>
             <template x-if="bzSearchPageSize!=='Infinite'">
               <span class="flex items-center gap-1">
@@ -79,7 +79,7 @@
         <div class="flex flex-wrap items-center gap-2">
           <select x-model="bzTreeDrive" @change="bzTreeChanged()" class="fld border border-bd bg-surface">
             <option value="*ALL*">★ All drives</option>
-            <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" x-text="d.drive + ':\\'"></option></template>
+            <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" :selected="d.drive == bzTreeDrive" x-text="d.drive + ':\\'"></option></template>
           </select>
           <button @click="bzTreeUp()" class="h-8 rounded border border-bd px-3 text-sm" title="Up one level">⬆ Up</button>
           <span class="text-xs text-muted">📁 = folder · status shows backed / excluded / mixed</span>
@@ -147,13 +147,13 @@
           <span class="font-medium">Recently added, by folder</span>
           <label class="text-xs text-muted">Depth</label>
           <select x-model.number="bzChurnDepth" @change="bzChurnChanged()" class="fld h-8 border border-bd bg-surface text-xs">
-            <template x-for="n in [1,2,3,4,5,6,7,8]" :key="n"><option :value="n" x-text="n"></option></template>
+            <template x-for="n in [1,2,3,4,5,6,7,8]" :key="n"><option :value="n" :selected="n == bzChurnDepth" x-text="n"></option></template>
           </select>
           <button @click="bzChurnCollapse=!bzChurnCollapse; bzChurnChanged()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzChurnCollapse ? 'bg-sel' : ''" title="Roll the Kopia repos up to one row each">⧉ Collapse Kopia</button>
           <button @click="bzToggleChurnActive()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzChurnActiveOnly ? 'bg-sel' : ''" title="Show only folders that still have backed files (hide excluded / deleted)"><span x-text="bzChurnActiveOnly ? '● Active only' : 'Showing all'"></span></button>
           <select x-model="bzChurnDrive" @change="_bzDrawChurn()" class="fld h-8 border border-bd bg-surface text-xs">
             <option value="">All drives</option>
-            <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" x-text="d.drive + ':'"></option></template>
+            <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" :selected="d.drive == bzChurnDrive" x-text="d.drive + ':'"></option></template>
           </select>
           <span class="text-muted text-xs">total recent IDs: <span x-text="Number(bzChurnTotal||0).toLocaleString(NUM_LOCALE)"></span></span>
         </div>
@@ -164,7 +164,7 @@
         <div class="flex flex-wrap items-center gap-2">
           <label class="text-xs text-muted">Folder depth</label>
           <select x-model.number="bzQueueDepth" @change="bzQueueChanged()" class="fld h-8 border border-bd bg-surface text-xs">
-            <template x-for="n in [1,2,3,4,5,6,7,8]" :key="n"><option :value="n" x-text="n"></option></template>
+            <template x-for="n in [1,2,3,4,5,6,7,8]" :key="n"><option :value="n" :selected="n == bzQueueDepth" x-text="n"></option></template>
           </select>
           <button @click="bzQueueCollapse=!bzQueueCollapse; bzQueueChanged()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzQueueCollapse ? 'bg-sel' : ''" title="Roll the Kopia repos up to one row each">⧉ Collapse Kopia</button>
         </div>

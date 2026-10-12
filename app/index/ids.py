@@ -25,6 +25,10 @@ class Allocator:
     def counters(self) -> dict[str, int]:
         return dict(self._hw)
 
+    def at_least(self, space: str, value: int) -> None:
+        """Raise a high-water mark to ``value`` (ids a resumed build already handed out)."""
+        self._hw[space] = max(self._hw[space], int(value or 0))
+
     def assign(self, con, out: str, candidates_sql: str, order_by: str, space: str,
                id_col: str, id_type: str = "INTEGER") -> int:
         """Materialize ``candidates_sql`` (one row per NEW key, already anti-joined against

@@ -10,7 +10,7 @@
           </span>
           <select x-model="logsRepo" class="fld h-7 border border-bd bg-surface text-xs shrink-0" style="width:auto" x-show="logsTab !== 'app' && logsTab !== 'notices'">
             <option value="all">All repos</option>
-            <template x-for="r in repos" :key="r.id"><option :value="r.id" x-text="r.name"></option></template>
+            <template x-for="r in repos" :key="r.id"><option :value="r.id" :selected="r.id == logsRepo" x-text="r.name"></option></template>
           </select>
           <template x-if="logsTab === 'app'">
             <span class="flex items-center gap-2">

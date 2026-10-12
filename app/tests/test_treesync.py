@@ -160,7 +160,7 @@ def test_a_wholesale_kopia_failure_stops_at_the_cap(con, monkeypatch):
                      broken={f"k{i}" for i in range(6)})
     res, _s, _m = run(con, fake, ["root"], monkeypatch)
     assert len(res.unreadable) == 6          # the 2 it stepped over plus the 4 it gave up on
-    assert fake.calls <= 3                   # the root, then 2 attempts - not one per object
+    assert fake.calls <= 4                   # the root, 2 attempts, one reachability check - not one per object
 
 
 def test_a_dead_split_object_does_not_drop_the_next_one_s_pieces(con, monkeypatch):

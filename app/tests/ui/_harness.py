@@ -100,6 +100,7 @@ def isolated_env(root: Path, kopia: str) -> dict:
     # Python's user site-packages live under APPDATA on Windows: keep them where they are.
     env.setdefault("PYTHONUSERBASE", site.getuserbase())
     env.update(APPDATA=str(root / "appdata"), LOCALAPPDATA=str(root / "localappdata"),
+               ProgramData=str(root / "programdata"),   # no Backblaze from this PC
                KOPIALENS_KOPIA=kopia, KOPIA_CHECK_FOR_UPDATES="false",
                KOPIALENS_DEV_ADDONS="",   # empty beats a developer's .env.dev: no dev add-ons in tests
                KOPIALENS_NO_UPDATE_CHECK="1", KOPIALENS_NO_USAGE_STATS="1",

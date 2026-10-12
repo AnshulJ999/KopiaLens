@@ -30,7 +30,7 @@ import pyarrow as pa
 from ..core import paths as pathrules
 from ..core.applog import get_logger
 from ..core.sources import sources_index
-from . import crypto, ids, layer2, layer3, perf, store, tree, treeconvert, treesync
+from . import crypto, ids, layer2, layer3, perf, resume, store, tree, treeconvert, treesync
 from .builder import _drop_indexes
 from .physical import fill_paths_physical
 from .schema import init_schema
@@ -78,7 +78,8 @@ def _load_tree(con, root: str, prev: dict | None) -> bool:
     return True
 
 
-def _sync_tree(con, repo: str, srcs: dict, alloc, job: dict) -> dict:
+def _sync_tree(con, repo: str, srcs: dict, alloc, job: dict, resumed: dict | None = None,
+               save=None) -> dict:
     """Bring the tree up to date with the current snapshots, then merge and GC.
 
     The GC is driven by the listing the CALLER passed in, which it has already established came
@@ -96,7 +97,7 @@ def _sync_tree(con, repo: str, srcs: dict, alloc, job: dict) -> dict:
     # unified store - without it the first run after the schema bump would re-fetch 1.4M
     # folders on repo 1. A fresh install has no cache and simply reads from kopia.
     seeded = {}
-    if not con.execute("SELECT count(*) FROM tdir").fetchone()[0]:
+    if resumed is None and not con.execute("SELECT count(*) FROM tdir").fetchone()[0]:
         try:
             if os.path.exists(treeconvert.cache_path(repo)):
                 job["current_source"] = "(seeding the tree from the walk cache)"
@@ -118,8 +119,14 @@ def _sync_tree(con, repo: str, srcs: dict, alloc, job: dict) -> dict:
     job["phase"] = "tree sync"
     with perf.phase("tree/read from kopia"):
         res = treesync.sync(con, repo, roots, known_table="_known", alloc=alloc,
-                            progress=lambda **kw: job.update({"sync": kw}))
+                            progress=lambda **kw: job.update({"sync": kw}),
+                            resume=resumed, save=save,
+                            should_stop=lambda: resume.stop_requested(repo))
     job.pop("seed", None)
+    # From here the build rewrites the tree in place, so a saved read could not be continued:
+    # a stop or a kill from now on starts the next run over.
+    if save is not None:
+        save(None)
     with perf.phase("tree/merge"):
         mat = treesync.materialize(con, alloc, base_known="tdir")
         merged = _reach_and_merge(con, roots)
@@ -189,8 +196,9 @@ def _fwd(p: str) -> str:
     return p.replace("\\", "/").replace("'", "''")
 
 
-def _scratch(staging: str) -> tuple[str, duckdb.DuckDBPyConnection]:
+def _scratch(staging: str, keep: bool = False) -> tuple[str, duckdb.DuckDBPyConnection]:
     """A fresh scratch DuckDB in ``_staging/`` - spilled to disk, closed and deleted after.
+    ``keep`` reopens the one a stopped first index saved its progress in.
 
     Goes through ``crypto.open_scratch`` so the build gets the machine's RAM tier, the registered
     Parquet key, and - when encryption is on - an encrypted scratch file and encrypted spills. A
@@ -198,18 +206,20 @@ def _scratch(staging: str) -> tuple[str, duckdb.DuckDBPyConnection]:
     """
     scratch = os.path.join(staging, "build.duckdb")
     for suffix in ("", ".wal"):
-        if os.path.exists(scratch + suffix):
+        if not keep and os.path.exists(scratch + suffix):
             os.remove(scratch + suffix)
     limit, threads = store.resolve_limits()
     con = crypto.open_scratch(scratch, os.path.join(staging, "tmp"), limit, threads)
     return scratch, con
 
 
-def _close_scratch(scratch: str, con: duckdb.DuckDBPyConnection) -> None:
+def _close_scratch(scratch: str, con: duckdb.DuckDBPyConnection, keep: bool = False) -> None:
     try:
         con.close()
     except Exception:  # noqa: BLE001
         pass
+    if keep:
+        return          # it holds a first index's saved progress
     for suffix in ("", ".wal"):
         try:
             if os.path.exists(scratch + suffix):
@@ -366,13 +376,19 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
                     "not forcing another full rebuild. e.g. %s",
                     repo, len(unread_prev), unread_prev[:3])
     perf.lap("load previous")
-    scratch, con = _scratch(staging)
+    # A first index continues a stopped one when its saved progress belongs to this build; any
+    # other build drops progress a stopped first index left behind.
+    encrypted = crypto.writes_encrypted()
+    saved = resume.load(staging, repo, encrypted) if prev is None else None
+    if prev is not None:
+        resume.clear(staging)
+    if saved is not None:
+        log.warning("repo=%s continuing the first index where it stopped (level %s, %s folders read)",
+                    repo, saved.get("level"), saved.get("fetched"))
+    scratch, con = _scratch(staging, keep=saved is not None)
     prev_art = (prev or {}).get("artifacts", {})
     moves: list[tuple[str, str]] = []
     try:
-        init_schema(con)
-        _drop_indexes(con)
-
         # The previous generation's dictionaries, loaded as scratch tables - new rows are
         # appended and the whole tables are rewritten as this generation's dict artifacts.
         # hive_partitioning=false: the pool paths look like `src_id=N/`, and DuckDB's
@@ -383,15 +399,18 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
                         f"read_parquet({crypto.parquet_read_list(fl)}, "
                         f"hive_partitioning=false)")
 
-        _empty_previous(con)
-        if prev is not None:
-            for name in ("src", "dir", "anc", "cid", "snap"):
-                _read_prev_art(name, name)
-            _read_prev_art("isnaps", "prev_isnaps")
-        _load_tree(con, root, prev)
-        con.execute("CREATE TABLE src_rev AS SELECT source, src_id FROM src")
-        con.execute("CREATE TABLE cid_rev AS SELECT content_id, cid_id FROM cid")
-        con.execute("CREATE TABLE snap_rev AS SELECT snapshot_id, snap_id FROM snap")
+        if saved is None:          # a resumed scratch already holds all of this
+            init_schema(con)
+            _drop_indexes(con)
+            _empty_previous(con)
+            if prev is not None:
+                for name in ("src", "dir", "anc", "cid", "snap"):
+                    _read_prev_art(name, name)
+                _read_prev_art("isnaps", "prev_isnaps")
+            _load_tree(con, root, prev)
+            con.execute("CREATE TABLE src_rev AS SELECT source, src_id FROM src")
+            con.execute("CREATE TABLE cid_rev AS SELECT content_id, cid_id FROM cid")
+            con.execute("CREATE TABLE snap_rev AS SELECT snapshot_id, snap_id FROM snap")
 
         # Classification - the _run_build rules, against the published generation.
         prev_sets: dict[str, set] = {}
@@ -458,12 +477,24 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
 
         # The allocator is the single id authority for this build, so it has to exist before the
         # tree sync: folder objects, file contents and chunk ids all come out of one dictionary.
-        alloc = ids.Allocator((prev or {}).get("counters") or {})
-        hw0 = alloc.counters()
+        alloc = ids.Allocator((saved or prev or {}).get("counters") or {})
+        if saved is not None:
+            # A kill after a flush and before its save: ids up to the table's max are taken.
+            alloc.at_least("cid_id", con.execute("SELECT coalesce(max(cid_id), 0) FROM cid").fetchone()[0])
+        hw0 = ids.Allocator((prev or {}).get("counters") or {}).counters()
+
+        def _save(st: dict | None) -> None:
+            if st is None:
+                resume.clear(staging)
+                return
+            con.execute("CHECKPOINT")
+            resume.save(staging, {**st, "repo": repo, "encrypted": encrypted,
+                                  "counters": alloc.counters(), "attempts": 0})
 
         # Layer 1: bring the tree up to date, then merge and GC it.
         perf.lap("tree")
-        tree_stats = _sync_tree(con, repo, srcs, alloc, job)
+        tree_stats = _sync_tree(con, repo, srcs, alloc, job, resumed=saved,
+                                save=_save if prev is None else None)
         perf.lap("rebuild sources")
 
         # Rebuild what changed, from the TREE. One level pass over whole sets replaces the
@@ -876,6 +907,6 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
                 "tree_forced_for": forced_for[:_MAX_UNREADABLE],
                 "_checks": checks, "_moves": moves, "_mode": "incremental"}
     finally:
-        _close_scratch(scratch, con)
+        _close_scratch(scratch, con, keep=prev is None and os.path.exists(resume.path(staging)))
 
 

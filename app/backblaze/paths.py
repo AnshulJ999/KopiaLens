@@ -14,6 +14,19 @@ from dataclasses import dataclass, field
 
 # Default install location. Overridable by callers (e.g. a settings value) via set_bzdata_root.
 DEFAULT_BZDATA = r"C:\ProgramData\Backblaze\bzdata"
+
+
+def default_bzdata() -> str | None:
+    """Where Backblaze keeps its data on this OS, or None where KopiaLens can't read it yet.
+    macOS keeps the same layout in /Library/Backblaze.bzpkg/bzdata but is unsupported for now."""
+    if os.name != "nt":
+        return None
+    return os.path.join(os.environ.get("ProgramData") or r"C:\ProgramData", "Backblaze", "bzdata")
+
+
+def looks_like_bzdata(path: str | None) -> bool:
+    """A Backblaze data folder: it holds the per-drive file lists."""
+    return bool(path) and os.path.isdir(os.path.join(path, "bzfilelists"))
 try:
     from config import DATA_DIR, DEMO_INSTANCE
 except ImportError:   # standalone tooling outside the app

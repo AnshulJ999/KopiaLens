@@ -7,7 +7,7 @@
           </select>
           <select x-model="snapSource" @change="changeSnapSource()" class="fld border border-bd bg-surface max-w-[22rem]" title="Source">
             <option value="*ALL*">All sources</option>
-            <template x-for="s in sources.filter((x) => ownerMatch(x))" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
+            <template x-for="s in sources.filter((x) => ownerMatch(x))" :key="s"><option :value="s" :selected="s == snapSource" x-text="shortSource(s)"></option></template>
           </select>
           <button x-show="repoKind !== 'server'" @click="snapSource === '*ALL*' ? analyzeAll() : analyzeSnapshots()" :disabled="analyzing || analyzingAll" class="kl-btn"
                   :title="snapSource === '*ALL*' ? 'Work out churn and reclaimable space for every source' : 'Work out churn and reclaimable space for this source'"

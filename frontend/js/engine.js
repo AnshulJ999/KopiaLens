@@ -158,6 +158,7 @@ const enginePart = {
         body: JSON.stringify({ repo: g.repo, choice: g.choice, how: g.how, password: g.password }) });
       this.engineDlg = null;
       this.klNotify(g.choice === "kopialens" ? "KopiaLens runs backups for this repository now" : "Backups handed back");
+      if (this.ob) this.obLoadEngine();   // setup's Backups rows
       setTimeout(() => this.loadEngine(), 1500);
     } catch (e) { g.error = e.message; }
     g.busy = false;

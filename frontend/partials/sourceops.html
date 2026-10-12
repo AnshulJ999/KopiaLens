@@ -126,7 +126,7 @@
             </div>
             <select x-show="verifyDlg.scope === 'one'" x-model="verifyDlg.source" class="fld border border-bd bg-surface2 w-full text-xs" aria-label="Source">
               <option value="">Pick a source</option>
-              <template x-for="s in sources" :key="s"><option :value="s" x-text="s"></option></template>
+              <template x-for="s in sources" :key="s"><option :value="s" :selected="s == verifyDlg.source" x-text="s"></option></template>
             </select>
             <label class="flex items-center justify-between gap-3 text-xs">Also download and check files
               <select x-model.number="verifyDlg.percent" class="fld border border-bd bg-surface2">

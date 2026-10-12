@@ -24,7 +24,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "number_style": "system",    # system | en-US | de-DE | fr-FR | en-IN (shown by example)
         "byte_units": "decimal",     # decimal (GB, kopia's default) | binary (GiB)
         "date_style": "system",      # system | dmy (9 Oct 2026) | mdy (Oct 9, 2026) | iso (2026-10-09)
-        "clock": "12",               # system | 12 | 24
+        "clock": "system",           # system (this computer's own clock) | 12 | 24
         # ---- appearance (themes + density) ---------------------------------------------------
         # data-theme/data-density are stamped into the rendered page so it paints correctly
         # before any JS runs. light_theme/dark_theme are the two slots the nav quick switch
@@ -44,6 +44,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "index_time": "23:00",       # daily mode: local time. A missed run catches up at the next opportunity.
         "index_interval": 86400,     # interval mode only: seconds between heavy passes
         "index_worker_timeout": 14400,  # hard ceiling on one worker run (4h) so a hang can't block tomorrow
+        "index_first_timeout": 86400,   # the same ceiling for a repo's first index (24h: big cloud repos)
         "folder_prewarm_budget": 900,  # max seconds the nightly spends pre-computing folder reclaim
         "log_cleanup_days": 90,      # days of job/dry-run/mount logs to keep; 0 = keep everything
         "task_history_days": 90,     # days of backup/maintenance task history (Tasks tab); 0 = keep everything
@@ -80,7 +81,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "tree_source_by_repo": {},  # Tree tab source per repo id
         "owner_filter_by_repo": {},  # Dashboard + Snapshots owner filter per repo id: "all" | "me" | "user@host"
         "sim_policy_by_repo": {},   # Simulate's last policy per repo id
-        "recent_backup": "30",     # default "Backed up" filter in days ("" = Any); user changes persist
+        "recent_backup": "",       # default "Backed up" filter in days ("" = Any); user changes persist
         "tree_dedupe": False,      # persisted dedupe toggle (tree)
         "panel_layout": "classic",  # detail-panel layout (): "classic" | "tabbed"
         "policy_layout": "tabs",    # policy editor: "tabs" (one section at a time) | "scroll" (stacked, jump strip)
@@ -150,7 +151,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "remove_plan_cap": 200000,     # max files one chunked-delete plan may enumerate
     },
     "backblaze": {
-        "bzdata_path": r"C:\ProgramData\Backblaze\bzdata",  # read-only source root (never written)
+        "bzdata_path": "",           # read-only source root (never written); "" = this OS's default
+        "updates": "auto",           # auto = refresh when Backblaze's file lists change | off = only when started by hand
         # where the `files` index lives: "parquet" (data/bz/ per-drive Parquet generations
         # read via DuckDB - the DEFAULT) or "sqlite" (kopialens_bz.sqlite + FTS5, the LEGACY path
         # kept for rollback). Switching stores triggers a full rebuild of the missing store on the

@@ -23,7 +23,7 @@ from app.core import nightly, runhistory
 def data(tmp_path, monkeypatch):
     monkeypatch.setattr(nightly, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(nightly, "REPOS", {"1": {"name": "Main"}, "2": {"name": "Big"}})
-    monkeypatch.setattr(nightly, "worker_timeout", lambda: 3600)
+    monkeypatch.setattr(nightly, "worker_timeout", lambda repo=None: 3600)
     return tmp_path
 
 
@@ -146,7 +146,7 @@ def test_run_worker_consumes_only_its_own_result_file(data, monkeypatch):
     class _Done:
         pid, returncode = 4242, 0
 
-        def communicate(self, timeout=None):
+        def communicate(self, input=None, timeout=None):
             _write(data / "index_result_repo1.json", {"ok": True, "pid": 4242})
             return json.dumps({"ok": True}), ""
 

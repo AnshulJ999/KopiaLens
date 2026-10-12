@@ -32,6 +32,7 @@ const reposPart = {
 
     // ---- Sample data: an invented repository made on this computer (backend: sampledata.py) --
     hasSample() { return (this.repos || []).some((r) => r.sample); },
+    hasKopiaRepo() { return (this.repos || []).some((r) => r.kind !== "backblaze"); },
     isSample(id) {
       const r = (this.repos || []).find((x) => x.id === (id || this.repo));
       return !!(r && r.sample);
@@ -63,14 +64,17 @@ const reposPart = {
     async cxOpen(existing) {
       this.cx = {
         loading: true, error: "", busy: false,
-        detected: [], picked: {}, providers: [],
+        detected: [], picked: {}, providers: [], bz: null, bzPicked: false,
         mode: "", provider: "", fields: {}, password: "", name: "", serverOk: false,
         added: (existing || []).map((r) => this._cxEntry(r)),
       };
       try {
-        const [d, p] = await Promise.all([getJson("/api/setup/detect-configs"), getJson("/api/setup/providers")]);
+        const [d, p, bz] = await Promise.all([getJson("/api/setup/detect-configs"), getJson("/api/setup/providers"),
+                                              getJson("/api/setup/backblaze").catch(() => null)]);
         this.cx.detected = d.configs || [];
         this.cx.providers = p.providers || [];
+        this.cx.bz = bz;
+        this.cx.bzPicked = !!(bz && bz.found && !bz.added);   // found = offered ticked
       } catch (e) { this.cx.error = e.message || String(e); }
       this.cx.loading = false;
       for (const a of this.cx.added) this.cxSummary(a);
@@ -80,10 +84,21 @@ const reposPart = {
       return { id: r.id, name: r.name || "", short_name: r.short_name || "", type: st.type || "",
                where: repoWhereOf(st.type, st.config), summary: null, loading: false, error: "",
                pw: "", unlocking: false, managed: r.source === "connected" || r.source === "created",
-               server: !!r.via_server || st.type === "server", sample: !!r.sample };
+               created: r.source === "created", server: !!r.via_server || st.type === "server",
+               sample: !!r.sample, backblaze: r.kind === "backblaze" };
     },
     cxCandidates() { return ((this.cx && this.cx.detected) || []).filter((c) => !c.in_store); },
-    cxPickedCount() { return this.cxCandidates().filter((c) => this.cx.picked[c.config_file]).length; },
+    cxBzOffered() { const b = this.cx && this.cx.bz; return !!(b && b.found && !b.added); },
+    cxPickedCount() {
+      return this.cxCandidates().filter((c) => this.cx.picked[c.config_file]).length + (this.cxBzOffered() && this.cx.bzPicked ? 1 : 0);
+    },
+    async cxAddBackblaze() {
+      const cx = this.cx;
+      const r = await _setupPost("/api/setup/backblaze", { index: !this.ob });
+      cx.bz = { ...cx.bz, added: true };
+      cx.bzPicked = false;
+      cx.added.push({ ...this._cxEntry(r.repo), summary: { drives: r.drives } });
+    },
     cxTypeLabel(type) { return REPO_TYPE_LABELS[type] || type || "Unknown storage"; },
     cxWhere(c) { return repoWhereOf(c.type, c.config); },
     cxDefaultName(type, config, fallback) {
@@ -111,13 +126,19 @@ const reposPart = {
       const picked = this.cxCandidates().filter((c) => cx.picked[c.config_file]);
       const vault = picked.find((c) => c.folder === "blinkdisk");
       const chosen = picked.filter((c) => c.folder !== "blinkdisk");
-      if (vault && !chosen.length) return this.cxFromVault(vault);
-      if (!chosen.length || cx.busy) return;
+      const bz = this.cxBzOffered() && cx.bzPicked;
+      if (vault && !chosen.length && !bz) return this.cxFromVault(vault);
+      if ((!chosen.length && !bz) || cx.busy) return;
       cx.busy = true; cx.error = "";
+      if (bz) {
+        try { await this.cxAddBackblaze(); } catch (e) { cx.error = `Backblaze: ${e.message || e}`; }
+      }
       for (const c of chosen) {
         try {
           const name = this.cxDefaultName(c.type, c.config, c.filename.replace(/\.config$/, ""));
-          const r = await _setupPost("/api/setup/attach", { config_file: c.config_file, name, short_name: this.cxDefaultShort(c.type, c.config) });
+          const body = { config_file: c.config_file, name, short_name: this.cxDefaultShort(c.type, c.config) };
+          const r = await this._cxAdd("/api/setup/attach", body);
+          if (!r) continue;
           cx.added.push(this._cxEntry(r.repo));
           c.in_store = true;
           delete cx.picked[c.config_file];
@@ -182,7 +203,8 @@ const reposPart = {
       try {
         const url = cx.mode === "create" ? "/api/setup/create" : "/api/setup/connect";
         const short_name = this.cxDefaultShort(spec.key === "azure" ? "azureBlob" : spec.key, cfg);
-        const r = await _setupPost(url, { provider: spec.key, fields, password: cx.password, name, short_name });
+        const r = await this._cxAdd(url, { provider: spec.key, fields, password: cx.password, name, short_name });
+        if (!r) { cx.busy = false; return; }
         cx.added.push({ ...this._cxEntry(r.repo), managed: true });
         cx.mode = ""; cx.password = ""; cx.name = "";
         this.cxSummary(cx.added[cx.added.length - 1]);   // the tracked copy, so the card updates
@@ -190,7 +212,26 @@ const reposPart = {
       } catch (e) { cx.error = e.message || String(e); }
       cx.busy = false;
     },
+    // Connect or attach; when it's a repository KopiaLens already has, ask before adding it again.
+    // Returns null when the user says no.
+    async _cxAdd(url, body) {
+      try {
+        return await _setupPost(url, body);
+      } catch (e) {
+        if (e.status !== 409 || !e.data || !e.data.duplicate_of) throw e;
+        const ok = await this.klConfirm({
+          title: "Add this repository again?",
+          body: `It's the same repository as ${e.data.duplicate_name}. Adding it again indexes it twice and shows everything twice.`,
+          confirmLabel: "Add anyway", danger: false,
+        });
+        return ok ? _setupPost(url, { ...body, allow_duplicate: true }) : null;
+      }
+    },
     async cxSummary(a) {
+      if (a.backblaze) {
+        if (!a.summary) { try { a.summary = { drives: (await getJson("/api/setup/backblaze")).drives }; } catch (e) { a.summary = {}; } }
+        return;
+      }
       a.loading = true; a.error = "";
       try { a.summary = await getJson(`/api/setup/repos/${encodeURIComponent(a.id)}/summary`); }
       catch (e) { a.error = e.message || String(e); }
@@ -199,6 +240,7 @@ const reposPart = {
     cxSummaryLine(a) {
       const s = a.summary;
       if (!s) return "";
+      if (a.backblaze) return s.drives ? countOf(s.drives, "drive") + " backed up" : "";
       const parts = [countOf(s.sources, "source")];
       if (s.hosts > 1) parts[0] += ` (${countOf(s.hosts, "computer")})`;
       parts.push(countOf(s.snapshots, "snapshot"));
@@ -238,6 +280,7 @@ const reposPart = {
         await getJson(`/api/setup/repos/${encodeURIComponent(a.id)}?confirm=true&delete_config=${a.managed ? "true" : "false"}`, { method: "DELETE" });
         this.cx.added = this.cx.added.filter((x) => x !== a);
         this.cx.detected.forEach((c) => { if (c.repo_id === a.id) c.in_store = false; });
+        if (a.backblaze && this.cx.bz) this.cx.bz = { ...this.cx.bz, added: false };
         await this._cxRefreshRepos();
       } catch (e) { this.klNotify(e.message || String(e), "warn"); }
     },
@@ -276,7 +319,32 @@ const reposPart = {
     // ---- Settings -> Repositories -----------------------------------------------------------
     async raLoad() {
       this.loadFreshness();
+      getJson("/api/setup/backblaze").then((b) => { this.raBz = b; }).catch(() => { this.raBz = null; });
       try { this.kopiaInfo = await getJson("/api/setup/kopia"); } catch (e) { this.kopiaInfo = null; }
+    },
+    async raAddBackblaze() {
+      if (!this.raBz || this.raBz.busy) return;
+      this.raBz = { ...this.raBz, busy: true };
+      try {
+        await _setupPost("/api/setup/backblaze", { index: true });
+        await this._cxRefreshRepos();
+        this.klNotify("Backblaze added");
+      } catch (e) { this.klNotify(e.message || String(e), "warn"); }
+      this.raLoad();
+    },
+    async raRunSetup() {
+      const sample = (this.repos || []).find((r) => r.sample);
+      const ok = await this.klConfirm({
+        title: "Run setup again?",
+        body: "Your repositories, sign-in and encryption stay as they are. You can change any of them on the way.",
+        note: sample ? "You can remove the sample data there too." : "",
+        confirmLabel: "Run setup",
+      });
+      if (!ok) return;
+      try {
+        await _setupPost("/api/onboarding/restart");
+        location.reload();
+      } catch (e) { this.klNotify(e.message || String(e), "warn"); }
     },
     raIndexLine(r) {
       if (r.kind === "backblaze") return "Backblaze's own index, read-only";
@@ -352,6 +420,9 @@ const reposPart = {
       const d = this.repoDlg;
       if (!d || !d.preview) return [];
       const p = d.preview;
+      if (d.repo.kind === "backblaze") {
+        return [["Backblaze", "Not touched"], ["What KopiaLens read", "Kept, so adding it back picks up where it left off"]];
+      }
       return [
         ["KopiaLens data", (p.files || []).length ? `${fmtBytes(p.bytes || 0)} in ${countOf(p.files.length, "item")}` : "None yet"],
         ["Kopia repository", "Not touched"],
@@ -376,7 +447,8 @@ const reposPart = {
         await this._cxRefreshRepos();
         const left = (res.failed || []).length;
         this.klNotify(left ? `${d.repo.name} removed. ${countOf(left, "file")} couldn't be deleted; see the log.` : `${d.repo.name} removed`, left ? "warn" : "");
-        if (!this.repos.some((r) => r.kind !== "backblaze")) { location.reload(); return; }
+        if (!this.repos.length) { location.reload(); return; }
+        if (d.repo.kind === "backblaze") this.raLoad();
         if (!this.repos.some((r) => r.id === this.repo)) this.pickRepo((this.repos.find((r) => r.kind !== "backblaze") || this.repos[0]).id);
       } catch (e) {
         d.error = e.message || String(e);
@@ -389,7 +461,20 @@ const reposPart = {
       if (!k) return "";
       if (!k.available) return "Not found";
       const src = { bundled: "bundled", setting: "chosen here", environment: "set by environment", PATH: "on PATH", "install location": "installed", KopiaUI: "from KopiaUI" }[k.source] || k.source || "";
-      return [k.version ? `kopia ${k.version}` : "kopia", src].filter(Boolean).join(" · ");
+      const fit = { older: `older than KopiaLens supports (${k.minimum} or newer)`, newer: `newer than tested (${k.tested})` }[k.compat] || "";
+      return [k.version ? `kopia ${k.version}` : "kopia", src, fit].filter(Boolean).join(" · ");
+    },
+    // Once per kopia version: a kopia newer than tested gets a note; one older than supported
+    // gets a warning on every start (some screens can't work with it).
+    kopiaCompatNote(k) {
+      if (!k || !k.version || !["older", "newer"].includes(k.compat)) return;
+      if (k.compat === "older") {
+        this.klNotify(`kopia ${k.version} is older than KopiaLens supports (${k.minimum} or newer). Policies and notifications won't work. Update kopia, or pick another kopia in Settings → Repositories.`, "warn");
+        return;
+      }
+      const key = "kl-kopia-newer-seen";
+      try { if (localStorage.getItem(key) === k.version) return; localStorage.setItem(key, k.version); } catch (e) { /* show it anyway */ }
+      this.klNotify(`kopia ${k.version} is newer than the version KopiaLens was tested with (${k.tested}). If something doesn't work, report it from Help.`);
     },
     async raKopiaSave(path) {
       try {

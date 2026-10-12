@@ -11,7 +11,7 @@ const onboardingPart = {
         username: "admin", pw: "", confirm: "", level: "index", usePw: true, encPw: "", encConfirm: "",
         remember: true, hosts: (state.allowed_hosts || []).join(", "), busy: false, error: "",
         recoveryKey: "", keySaved: false, keyNote: "", protected: "", sampleBusy: false, sampleError: "",
-        auto: state.index_mode !== "off", time: state.index_time || "23:00",
+        auto: state.index_mode !== "off", time: state.index_time || "23:00", engine: {}, engineAuto: {},
       };
       if (this.ob.needsCode) return;
       await this._obStart();
@@ -20,7 +20,7 @@ const onboardingPart = {
       const st = this.ob.state;
       await _setupPost("/api/onboarding/begin").catch(() => {});
       if (st.protection_chosen) this.ob.protected = st.has_account ? "account" : "skipped";
-      await this.cxOpen((st.repos || []).filter((r) => r.kind !== "backblaze"));
+      await this.cxOpen(st.repos || []);
     },
     obSteps() { return OB_STEPS; },
     obStepIndex(step) { const s = step === "key" ? "protect" : step; return OB_STEPS.findIndex((x) => x[0] === s); },
@@ -61,7 +61,13 @@ const onboardingPart = {
     },
     obConnectReady() {
       const added = (this.cx && this.cx.added) || [];
-      return !!added.length && (!this.obKopiaMissing() || added.every((a) => a.sample));
+      return !!added.length && (!this.obKopiaMissing() || added.every((a) => a.sample || a.backblaze));
+    },
+    // Repositories in this setup that kopia indexes (not the sample, Backblaze or a server connection).
+    obKopiaAdded() { return ((this.cx && this.cx.added) || []).filter((a) => !a.sample && !a.backblaze && !a.server); },
+    obBackblazeOnly() {
+      const added = (this.cx && this.cx.added) || [];
+      return !!added.length && added.every((a) => a.backblaze || a.sample) && added.some((a) => a.backblaze);
     },
     obHasSample() { return !!(this.cx && this.cx.added.some((a) => a.sample)); },
     obSampleOnly() { return !!(this.cx && this.cx.added.length) && this.cx.added.every((a) => a.sample); },
@@ -146,6 +152,35 @@ const onboardingPart = {
     },
 
     // ---- Start ------------------------------------------------------------------------------
+    // Who runs each repository's backups. A repository created in this setup has nothing else
+    // running it, so KopiaLens takes it on; everything else stays as it is unless changed here.
+    async obLoadEngine() {
+      const o = this.ob;
+      await this._cxRefreshRepos();   // names for the Backups dialog
+      for (const a of this.obKopiaAdded()) {
+        try {
+          let d = await getJson(`/api/engine/repo?repo=${encodeURIComponent(a.id)}`);
+          const v = d.view;
+          if (a.created && !o.engineAuto[a.id]) {   // once: a later "hand back" stays handed back
+            o.engineAuto = { ...o.engineAuto, [a.id]: true };
+            if (d.status.choice !== "kopialens" && v.engine === "none" && !v.conflict) {
+              await _setupPost("/api/engine/choice", { repo: a.id, choice: "kopialens", how: "share" });
+              d = await getJson(`/api/engine/repo?repo=${encodeURIComponent(a.id)}`);
+            }
+          }
+          o.engine = { ...o.engine, [a.id]: d };
+        } catch (e) { o.engine = { ...o.engine, [a.id]: { error: e.message || String(e) } }; }
+      }
+    },
+    obEngineLine(a) {
+      const d = this.ob.engine[a.id];
+      if (!d) return "Checking…";
+      if (d.error) return "Couldn't check";
+      if (d.status.choice === "kopialens") return "KopiaLens";
+      const v = d.view;
+      if (v.engine === "none") return "Nothing yet";
+      return this.engineAppName(v.engine) + (v.engine === "kopiaui" && !v.running.length ? " (when it's open)" : "");
+    },
     obSummary() {
       const o = this.ob;
       const names = ((this.cx && this.cx.added) || []).map((a) => a.name + (a.server ? " (browse-only, not indexed)" : "")).join(", ");
@@ -191,8 +226,11 @@ const onboardingPart = {
       const ids = added.map((a) => a.id);
       const toIndex = added.filter((a) => !a.sample).map((a) => a.id);   // the sample is ready-made
       try {
-        const kl = { index_mode: o.auto ? (this.obInterval() ? "interval" : "daily") : "off" };
-        if (o.auto && !this.obInterval()) kl.index_time = o.time || "23:00";
+        const kl = {};
+        if (this.obKopiaAdded().length) {   // the kopia schedule is only asked when a kopia repository was added
+          kl.index_mode = o.auto ? (this.obInterval() ? "interval" : "daily") : "off";
+          if (o.auto && !this.obInterval()) kl.index_time = o.time || "23:00";
+        }
         await _setupPost("/api/settings", { kopialens: kl, last_repo: ids[0] || "" });
         await _setupPost("/api/onboarding/finish");
         if (index && toIndex.length) await _setupPost("/api/onboarding/start-indexing", { repos: toIndex });

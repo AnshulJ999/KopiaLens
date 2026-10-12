@@ -3,7 +3,7 @@
         <div class="kl-toolbar">
           <select x-model="selectedSource" @change="treeSourceChanged()" class="fld border border-bd bg-surface max-w-[20rem]" title="Source">
             <option value="*ALL*">All sources</option>
-            <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
+            <template x-for="s in sources" :key="s"><option :value="s" :selected="s == selectedSource" x-text="shortSource(s)"></option></template>
           </select>
           <span class="kl-seg" role="group" aria-label="View">
             <button :class="treeView==='list' ? 'on' : ''" @click="setTreeView('list')" title="One folder at a time. Double-click a folder to open it.">List</button>
@@ -18,11 +18,11 @@
           </select>
           <select x-show="selectedSource==='*ALL*'" x-model="treeWeek" @change="treeWeekChanged()" class="fld border border-bd bg-surface" title="What each source backed up that week. Files that did not change are not listed.">
             <option value="">Latest</option>
-            <template x-for="w in treeWeekOptions" :key="w.v"><option :value="w.v" x-text="'Week ' + w.label"></option></template>
+            <template x-for="w in treeWeekOptions" :key="w.v"><option :value="w.v" :selected="w.v == treeWeek" x-text="'Week ' + w.label"></option></template>
           </select>
           <select x-show="treeMode!=='all' && selectedSource!=='*ALL*'" x-model="selectedSnapshot" @change="treePrefix=sourceRoot(); loadTree()" class="fld border border-bd bg-surface" title="Snapshot">
             <!-- Built only while shown: the Snapshots tab fills the same list with every source. -->
-            <template x-for="sn in (active === 'tree' && treeMode !== 'all' && selectedSource !== '*ALL*' ? snapshots : [])" :key="sn.id"><option :value="sn.id" x-text="humanTime(sn.start_time)"></option></template>
+            <template x-for="sn in (active === 'tree' && treeMode !== 'all' && selectedSource !== '*ALL*' ? snapshots : [])" :key="sn.id"><option :value="sn.id" :selected="sn.id == selectedSnapshot" x-text="humanTime(sn.start_time)"></option></template>
           </select>
           <span class="inline-flex items-center gap-1 text-sm min-w-0" data-testid="tree-crumbs">
             <button @click="treeUp()" class="kl-btn icon" title="Up one level" :disabled="treeCrumbs().length < 2">↑</button>

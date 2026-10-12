@@ -93,11 +93,53 @@ def state(repo: str) -> dict:
     return dict(_STATE.get(repo, {}))
 
 
-def worker_timeout() -> float:
+_DEFAULT_FIRST_TIMEOUT = 24 * 3600   # a first index of a big cloud repository can run for hours
+STOP_GRACE = 120         # seconds a worker gets to save its progress and exit after a stop request
+_POLL = 5                # seconds between checks on a running worker
+_SLEPT = 60              # a gap this much longer than a poll means the computer was asleep
+
+
+class _WorkClock:
+    """Time a worker spent working: a gap between polls far longer than the poll is the computer
+    sleeping, which does not count. Past the limit it asks the worker to save and stop, and says
+    "kill" once the grace period is over too."""
+
+    def __init__(self) -> None:
+        self.worked = 0.0
+        self.last = time.time()
+        self.stop_asked: float | None = None
+
+    def over(self, repo: str, limit: float) -> str:
+        now = time.time()
+        gap, self.last = now - self.last, now
+        self.worked += gap if gap < _SLEPT else _POLL
+        if self.stop_asked is None:
+            if self.worked > limit:
+                from ..index import resume
+                log.warning("repo=%s index run reached its time limit - asking it to save and stop",
+                            repo)
+                resume.request_stop(repo)
+                self.stop_asked = now
+            return ""
+        return "kill" if now - self.stop_asked > STOP_GRACE else ""
+
+
+def worker_timeout(repo: str | None = None) -> float:
+    """The time limit for one run; a repo with no index yet gets the first-index limit."""
+    kl = load_settings().get("kopialens", {})
+    first = False
+    if repo is not None and repo_kind(repo) != "backblaze":
+        try:
+            from ..index import store
+            first = store.read_manifest(repo) is None
+        except Exception:  # noqa: BLE001 - unreadable manifest: the normal limit
+            first = False
     try:
-        return float(load_settings().get("kopialens", {}).get("index_worker_timeout", _DEFAULT_TIMEOUT))
-    except Exception:
-        return _DEFAULT_TIMEOUT
+        if first:
+            return float(kl.get("index_first_timeout", _DEFAULT_FIRST_TIMEOUT))
+        return float(kl.get("index_worker_timeout", _DEFAULT_TIMEOUT))
+    except (TypeError, ValueError):
+        return float(_DEFAULT_FIRST_TIMEOUT if first else _DEFAULT_TIMEOUT)
 
 
 def worker_progress(repo: str) -> dict | None:
@@ -259,15 +301,27 @@ def stop_index_pass(repo: str) -> dict:
         return {"stopped": False, "reason": f"cannot inspect pid {pid}: {exc}"}
     if proc is None:
         return {"stopped": False, "reason": "the worker has already exited"}
-    try:
-        proc.terminate()
-        proc.wait(timeout=10)
-    except Exception:  # noqa: BLE001 - fall back to a hard kill, then say if that failed too
+    # Ask first: a first index saves its progress and exits; anything still running after the
+    # grace period is ended the old way.
+    from ..index import resume
+    resume.request_stop(repo)
+
+    def _finish() -> None:
         try:
-            proc.kill()
-        except Exception as exc:  # noqa: BLE001
-            return {"stopped": False, "reason": f"could not stop pid {pid}: {exc}"}
-    log.info("repo=%s index worker (pid %s) stopped on request", repo, pid)
+            proc.wait(timeout=STOP_GRACE)
+        except Exception:  # noqa: BLE001 - still running (or uninspectable): end it
+            try:
+                proc.terminate()
+                proc.wait(timeout=10)
+            except Exception:  # noqa: BLE001 - fall back to a hard kill
+                try:
+                    proc.kill()
+                except Exception as exc:  # noqa: BLE001
+                    log.error("repo=%s could not stop index worker pid %s: %s", repo, pid, exc)
+        finally:
+            resume.clear_stop(repo)
+    threading.Thread(target=_finish, name=f"index-stop-{repo}", daemon=True).start()
+    log.info("repo=%s index worker (pid %s) asked to stop", repo, pid)
     return {"stopped": True, "pid": pid}
 
 
@@ -377,14 +431,16 @@ def _watch_adopted(repo: str, proc, pid: int, info: dict, on_done) -> None:
     """Wait for a worker taken over at startup, then record its result like any other run."""
     import psutil
     started = float(info.get("started") or time.time())
+    limit = worker_timeout(repo)
+    clock = _WorkClock()
     summary = None
     try:
         while True:
             try:
-                proc.wait(timeout=5)
+                proc.wait(timeout=_POLL)
                 break
             except psutil.TimeoutExpired:
-                if time.time() - started > worker_timeout():
+                if clock.over(repo, limit) == "kill":
                     log.error("repo=%s index worker (pid %s) timed out - killing it", repo, pid)
                     proc.kill()
                     _remove_progress(repo)
@@ -500,6 +556,9 @@ def _run_worker(repo: str, full: bool, trigger: str = "manual") -> dict:
     args = [SELF_EXE, "-m", "app.index.worker", repo]
     if full:
         args.append("--full")
+    limit = worker_timeout(repo)    # decided before the run: a finished first index has a manifest
+    from ..index import resume
+    resume.clear_stop(repo)         # a stop request left over from an earlier run
     logp = worker_log_path(repo)
     os.makedirs(os.path.dirname(logp), exist_ok=True)
     _roll_worker_log(logp)
@@ -529,16 +588,20 @@ def _run_worker(repo: str, full: bool, trigger: str = "manual") -> dict:
             env=env,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash under pythonw
         )
+        clock = _WorkClock()
+        send = payload
         try:
-            if payload is None:
-                out, _ = proc.communicate(timeout=worker_timeout())
-            else:
-                out, _ = proc.communicate(input=payload, timeout=worker_timeout())
-        except subprocess.TimeoutExpired:
-            log.error("repo=%s index worker timed out - killing it", repo)
-            proc.kill()
-            proc.communicate()
-            return {"ok": False, "reason": "timeout"}
+            while True:
+                try:
+                    out, _ = proc.communicate(input=send, timeout=_POLL)
+                    break
+                except subprocess.TimeoutExpired:
+                    send = None          # the key goes in once; later calls only read
+                    if clock.over(repo, limit) == "kill":
+                        log.error("repo=%s index worker timed out - killing it", repo)
+                        proc.kill()
+                        proc.communicate()
+                        return {"ok": False, "reason": "timeout"}
         finally:
             # This process records the run from stdout; the file is for a restarted app only.
             res = _read_result(result_path(repo))
@@ -565,6 +628,9 @@ def _run_worker(repo: str, full: bool, trigger: str = "manual") -> dict:
     if proc.returncode != 0:
         if summary is not None:
             summary["ok"] = False
+            if summary.get("stopped") and clock.stop_asked is not None:
+                summary["stopped"] = False      # the time limit, not the user: retried as usual
+                summary["reason"] = "time limit reached - the next run continues from where it stopped"
             _with_reason(summary, proc.returncode)
             summary["log"] = logp
             log.error("repo=%s index worker exit %d: %s (see %s)",

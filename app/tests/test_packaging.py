@@ -89,7 +89,7 @@ def test_missing_page_file_shows_a_readable_page(monkeypatch):
     from starlette.testclient import TestClient
     import app.main as m
 
-    def broken():
+    def broken(*_args):
         raise jinja2.TemplateNotFound("partials/nav.html")
     monkeypatch.setattr(m, "_compose_html", broken)
     monkeypatch.setattr(m, "missing_partials", lambda: ["partials/nav.html"])

@@ -23,8 +23,12 @@
           <div class="flex items-center gap-2 text-xs text-muted">
             <span x-text="indexPanelCounts()"></span>
             <span class="grow"></span>
+            <template x-if="ixs().building && indexActivity()">
+              <span :style="indexActivity().slow ? 'color:var(--warn)' : ''" x-text="indexActivity().text" data-testid="index-activity"></span>
+            </template>
             <span x-show="indexEtaText()" x-text="indexEtaText()"></span>
           </div>
+          <div x-show="ixs().building && ixs().never_indexed" class="kl-note" data-testid="index-first-note">A first index of a big repository can take hours. You can keep using KopiaLens, and closing this panel doesn't stop it. If it stops, the next run continues from where it was.</div>
           <div x-show="indexQueuedText()" class="text-xs text-muted" x-text="'Next in the queue: ' + indexQueuedText()"></div>
           <div x-show="ixs().error" class="text-xs text-danger break-all" x-text="ixs().error"></div>
         </div>
@@ -36,7 +40,6 @@
               <span class="pill" :class="s.state === 'now' ? 'warn' : (s.state === 'done' ? 'ok' : '')" x-text="s.label"></span>
             </template>
           </div>
-          <div class="kl-note mt-1" x-show="indexProg().sync">The tree sync discovers its folders as it goes, so it reports counters rather than a percentage.</div>
         </div>
 
         <div class="kl-sec px-4 py-3 min-h-0 grow">

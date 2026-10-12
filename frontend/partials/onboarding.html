@@ -59,6 +59,12 @@
                       <p class="text-xs" style="color:var(--danger)" x-show="ob.kopiaError" x-text="ob.kopiaError"></p>
                     </form>
                   </template>
+                  <template x-if="cx && obHasSample() && cx.added.some((a) => !a.sample)">
+                    <div class="kl-callout flex flex-wrap items-center gap-2" data-testid="ob-sample-offer">
+                      <span class="min-w-0 flex-1">The sample data is still here.</span>
+                      <button type="button" class="kl-btn" @click="cxRemoveAdded(cx.added.find((a) => a.sample))">Remove sample data</button>
+                    </div>
+                  </template>
                   <template x-if="cx && !obKopiaMissing()">
                     <div>
 {% include "partials/connectform.html" %}
@@ -180,11 +186,12 @@
 
             <!-- 3. Start -->
             <template x-if="!ob.needsCode && ob.step === 'start'">
-              <div>
+              <div x-init="obLoadEngine()">
                 <div class="p-5 space-y-5">
                   <div>
                     <h1 class="text-lg font-semibold" x-text="obSampleOnly() ? 'Ready to look around' : 'Build the index'">Build the index</h1>
-                    <p class="text-muted" x-show="!obSampleOnly()">KopiaLens reads your snapshots once to build its index. After that it only reads what changed.</p>
+                    <p class="text-muted" x-show="!obSampleOnly() && !obBackblazeOnly()">KopiaLens reads your snapshots once to build its index. After that it only reads what changed.</p>
+                    <p class="text-muted" x-show="obBackblazeOnly()">KopiaLens reads Backblaze's file lists to build its index, and updates it when they change.</p>
                     <p class="text-muted" x-show="obSampleOnly()">The sample data is ready. Connect your own repository any time from the repository menu.</p>
                   </div>
                   <div class="kl-facts" x-show="obEstimate()">
@@ -193,7 +200,19 @@
                   </div>
                   <p class="kl-note -mt-3" x-show="!obSampleOnly()">You can keep using KopiaLens while it runs. With several repositories, they're indexed one after another.</p>
 
-                  <div class="space-y-1" x-show="!obSampleOnly()">
+                  <div class="space-y-1" x-show="obKopiaAdded().length" data-testid="ob-backups">
+                    <div class="font-medium">Backups</div>
+                    <template x-for="a in obKopiaAdded()" :key="a.id">
+                      <div class="flex items-center gap-2 text-xs">
+                        <span class="min-w-0 truncate" x-text="a.name"></span>
+                        <span class="text-muted shrink-0" x-text="'run by ' + obEngineLine(a)"></span>
+                        <button type="button" class="kl-btn quiet ml-auto shrink-0" style="height:22px" @click="openEngineDlg(a.id)" :disabled="!ob.engine[a.id] || !!ob.engine[a.id].error">Change…</button>
+                      </div>
+                    </template>
+                    <p class="kl-note">Who takes snapshots on schedule. Change it any time from the Dashboard's Backups button.</p>
+                  </div>
+
+                  <div class="space-y-1" x-show="obKopiaAdded().length">
                     <div class="font-medium">Keep the index up to date</div>
                     <label class="flex flex-wrap items-center gap-2 text-xs">
                       <input type="checkbox" x-model="ob.auto">

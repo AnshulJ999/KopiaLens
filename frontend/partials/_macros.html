@@ -96,3 +96,11 @@
   </select>
 </div>
 {%- endmacro %}
+
+{#- Top of a kopia-only Settings section while no kopia repository is set up (only Backblaze). -#}
+{% macro needs_kopia() -%}
+<div x-show="!hasKopiaRepo()" class="kl-callout flex flex-wrap items-center gap-2" data-testid="needs-kopia">
+  <span class="min-w-0 flex-1">Connect a kopia repository to use this.</span>
+  <button type="button" @click="showSettings=false; openAddRepo()" class="kl-btn">Add repository…</button>
+</div>
+{%- endmacro %}

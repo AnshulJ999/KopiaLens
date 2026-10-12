@@ -1,8 +1,8 @@
 """Onboarding: whether the first-run flow is needed, its progress marker, and the setup-code entry.
 
-Onboarding shows when no kopia repository is set up, or while a started onboarding has not been
-finished (so a reload mid-way resumes it). An install that already has repositories and never ran
-onboarding counts as set up.
+Onboarding shows when no repository is set up (kopia or Backblaze), or while a started onboarding
+has not been finished (so a reload mid-way resumes it). An install that already has repositories
+and never ran onboarding counts as set up.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ class StartRequest(BaseModel):
 def needed() -> bool:
     if raw_kopialens_settings().get("onboarded") is False:
         return True
-    return not any(r.get("kind", "kopia") == "kopia" for r in repos.all_records())
+    return not repos.all_records()
 
 
 def _set_onboarded(value: bool) -> None:
@@ -87,9 +87,16 @@ def begin() -> dict:
     return {"ok": True, "needed": needed()}
 
 
+@router.post("/onboarding/restart")
+def restart() -> dict:
+    """Run setup again on an install that is already set up; nothing is reset."""
+    _set_onboarded(False)
+    return {"ok": True}
+
+
 @router.post("/onboarding/finish")
 def finish() -> dict:
-    if not any(r.get("kind", "kopia") == "kopia" for r in repos.all_records()):
+    if not repos.all_records():
         raise HTTPException(status_code=400, detail="Connect a repository first.")
     _set_onboarded(True)
     return {"ok": True}

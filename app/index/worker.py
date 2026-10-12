@@ -241,7 +241,12 @@ def run(repo: str, full: bool = False, skip_index: bool = False) -> dict:
             summary["stages"][name] = round(time.time() - t0, 1)
             return True
         except Exception as exc:  # noqa: BLE001 - one stage failing must not abort the rest
+            from .treesync import StopRequested
             summary["ok"] = False
+            if isinstance(exc, StopRequested):
+                summary.update(stopped=True, reason="stopped - the next run continues from here")
+                logging.warning("stage %s stopped on request; progress saved", name)
+                return False
             summary["errors"][name] = str(exc)[:500]
             logging.exception("stage %s failed", name)
             return False

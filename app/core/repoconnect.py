@@ -524,9 +524,10 @@ def _remove_config_files(config_file: str) -> None:
 
 
 def connect(provider: str, fields: dict, password: str, name: str = "", short_name: str = "",
-            counts_as_backup: bool = True) -> dict:
+            counts_as_backup: bool = True, allow_duplicate: bool = False) -> dict:
     """Connect a repository KopiaLens manages the config for, and record it."""
-    return _establish("connect", provider, fields, password, name, short_name, counts_as_backup)
+    return _establish("connect", provider, fields, password, name, short_name, counts_as_backup,
+                      allow_duplicate=allow_duplicate)
 
 
 def create(provider: str, fields: dict, password: str, name: str = "", short_name: str = "",
@@ -582,8 +583,35 @@ def unreadable_entries(path: str, budget: float = 2.0) -> int:
     return blocked
 
 
+class DuplicateRepo(ValueError):
+    """The connection points at a repository KopiaLens already has (it would be indexed twice)."""
+
+    def __init__(self, repo: str, name: str):
+        self.repo, self.name = repo, name
+        super().__init__(f"This is the same repository as {name}.")
+
+
+def same_repository(config_file: str) -> dict | None:
+    """The existing kopia record whose connection points at the same storage, or None."""
+    from . import coexist
+    key = coexist.storage_key(coexist.read_config(config_file))
+    if not key:
+        return None
+    default_cfg = os.path.join(kopia_config_dir(), "repository.config")
+    for rec in repos.all_records():
+        if rec.get("kind", "kopia") != "kopia" or rec.get("demo"):
+            continue
+        path = rec.get("config_file") or default_cfg
+        if os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(config_file)):
+            continue
+        if coexist.storage_key(coexist.read_config(path)) == key:
+            return rec
+    return None
+
+
 def _establish(verb: str, provider: str, fields: dict, password: str, name: str, short_name: str,
-               counts_as_backup: bool, options: dict | None = None) -> dict:
+               counts_as_backup: bool, options: dict | None = None,
+               allow_duplicate: bool = False) -> dict:
     """The shared connect/create path: validate, allocate an id + managed config, run kopia, record.
 
     Raises ValueError with kopia's own message when it fails - nothing is recorded and the
@@ -620,6 +648,11 @@ def _establish(verb: str, provider: str, fields: dict, password: str, name: str,
                     summary={"provider": provider, "ok": False, "config": config_file},
                     rc=res["returncode"])
         raise ValueError(detail or f"kopia could not {verb} to the repository (exit {res['returncode']}).")
+    dup = None if allow_duplicate or verb == "create" else same_repository(config_file)
+    if dup is not None:
+        _disconnect(rid, config_file)
+        _remove_config_files(config_file)
+        raise DuplicateRepo(str(dup.get("id")), dup.get("name") or str(dup.get("id")))
     record = repos.add_record({
         "id": rid, "name": name or f"{spec['label']}", "short_name": short_name,
         "kind": "kopia", "config_file": config_file,
@@ -643,7 +676,7 @@ def _last_meaningful_line(text: str) -> str:
     for ln in reversed(lines):
         if ln.lower().startswith(("to disable", "alternatively")):
             continue   # the update-check note that follows a success/failure
-        return ln[:300]
+        return kopiabin.friendly_error(ln[:300])
     return ""
 
 
@@ -820,7 +853,7 @@ def summary(repo: str) -> dict:
 
 
 def attach(config_file: str | None, name: str = "", short_name: str = "",
-           counts_as_backup: bool = True) -> dict:
+           counts_as_backup: bool = True, allow_duplicate: bool = False) -> dict:
     """Record an EXISTING kopia connection (KopiaUI's, the CLI default, a copied config). The file
     is never copied or rewritten - see the module docstring for why."""
     cfg = (config_file or "").strip() or None
@@ -842,6 +875,10 @@ def attach(config_file: str | None, name: str = "", short_name: str = "",
                              f"{rec.get('id')}")
         if cfg and existing and os.path.normcase(os.path.abspath(existing)) == os.path.normcase(cfg):
             raise ValueError(f"that connection is already attached as repo {rec.get('id')}")
+    if not allow_duplicate:
+        dup = same_repository(cfg or os.path.join(kopia_config_dir(), "repository.config"))
+        if dup is not None:
+            raise DuplicateRepo(str(dup.get("id")), dup.get("name") or str(dup.get("id")))
     with _CONNECT_LOCK:
         rid = repos.reserve_id()
     record = repos.add_record({

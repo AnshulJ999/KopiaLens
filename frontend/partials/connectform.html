@@ -9,12 +9,12 @@
                   <div class="rounded-md border p-3 space-y-2" :class="a.error ? 'border-warn-bd' : 'border-ok-bd'">
                     <div class="flex items-start gap-2">
                       <span class="pill" :class="a.error ? 'warn' : (a.summary ? 'ok' : '')" x-text="a.error ? 'Needs attention' : (a.summary ? (a.sample ? 'Ready' : 'Connected') : 'Checking…')"></span>
-                      <span class="min-w-0 flex-1 text-xs text-muted truncate" :title="a.where" x-text="a.sample ? 'Made on this computer' : [cxTypeLabel(a.type), a.where].filter(Boolean).join(' · ')"></span>
+                      <span class="min-w-0 flex-1 text-xs text-muted truncate" :title="a.where" x-text="a.sample ? 'Made on this computer' : (a.backblaze ? 'Backblaze on this computer' : [cxTypeLabel(a.type), a.where].filter(Boolean).join(' · '))"></span>
                       <button type="button" @click="cxRemoveAdded(a)" class="text-xs text-muted hover:text-fg">Remove</button>
                     </div>
                     <p x-show="a.summary" class="text-xs" x-text="cxSummaryLine(a)"></p>
                     <p x-show="cxEstimateLine(a)" class="text-xs text-muted" x-text="cxEstimateLine(a)"></p>
-                    <p x-show="a.summary && !a.summary.snapshots" class="kl-note">No snapshots yet. A source shows up after its first backup.</p>
+                    <p x-show="a.summary && !a.summary.snapshots && !a.backblaze" class="kl-note">No snapshots yet. A source shows up after its first backup.</p>
                     <template x-if="a.error">
                       <div class="space-y-2">
                         <p class="text-xs break-words" style="color:var(--warn)" x-text="a.error"></p>
@@ -36,10 +36,19 @@
                 </template>
 
                 <!-- Found on this computer -->
-                <template x-if="!cx.loading && cxCandidates().length">
+                <template x-if="!cx.loading && (cxCandidates().length || cxBzOffered())">
                   <div class="kl-sec">
                     <div class="h">Found on this computer</div>
                     <div class="rounded-md border border-bd divide-y divide-[var(--bd)]">
+                      <template x-if="cxBzOffered()">
+                        <label class="flex items-start gap-3 p-3 cursor-pointer hover:bg-head" data-testid="cx-backblaze">
+                          <input type="checkbox" class="mt-0.5" x-model="cx.bzPicked">
+                          <span class="min-w-0 flex-1">
+                            <span class="block font-medium">Backblaze Personal Backup</span>
+                            <span class="block text-xs text-muted" x-text="countOf(cx.bz.drives, 'drive') + ' backed up · see what Backblaze backs up and what it skips'"></span>
+                          </span>
+                        </label>
+                      </template>
                       <template x-for="c in cxCandidates()" :key="c.config_file">
                         <label class="flex items-start gap-3 p-3 cursor-pointer hover:bg-head">
                           <input type="checkbox" class="mt-0.5" x-model="cx.picked[c.config_file]">
@@ -63,7 +72,7 @@
                 <!-- Add another: connect an existing repository or create one -->
                 <template x-if="!cx.loading && !cx.mode">
                   <div class="kl-sec">
-                    <div class="h" x-text="cxCandidates().length || cx.added.length ? 'Add another repository' : 'No kopia repositories found on this computer'"></div>
+                    <div class="h" x-text="cxCandidates().length || cx.added.some((a) => !a.backblaze) ? 'Add another repository' : 'No kopia repositories found on this computer'"></div>
                     <div class="grid gap-2 sm:grid-cols-2">
                       <button type="button" @click="cxStart('existing')" class="rounded-md border border-bd p-3 text-left hover:bg-head">
                         <span class="block font-medium">Connect to an existing one</span>

@@ -410,6 +410,29 @@ def add_record(rec: dict) -> dict:
     return rec
 
 
+BACKBLAZE_ID = "bz"
+
+
+def add_backblaze() -> dict:
+    """The Backblaze record (fixed id, read-only, no kopia connection). Adding it again is a no-op."""
+    with _ID_LOCK:
+        rec = next((r for r in all_records() if str(r.get("id")) == BACKBLAZE_ID), None)
+        if rec is not None:
+            return rec
+        rec = {"id": BACKBLAZE_ID, "kind": "backblaze", "name": "Backblaze Personal Backup",
+               "short_name": "", "counts_as_backup": True, "source": "detected",
+               "created": time.time()}
+        config.RECORDS.setdefault("repos", []).append(rec)
+        try:
+            config.save_records(config.RECORDS, strict=True)
+        except OSError:
+            config.RECORDS["repos"].remove(rec)
+            raise
+    config.reload_repos()
+    log.info("repo=bz added (Backblaze)")
+    return rec
+
+
 def update_record(repo: str, fields: dict) -> dict:
     """Edit the editable fields in place. Storage facts and the unique id are NOT editable here -
     they come from a live status reading (core/repoconnect.probe)."""

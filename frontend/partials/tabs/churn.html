@@ -16,7 +16,7 @@
           </select>
           <label x-show="churnView==='folder'" title="How many folder levels deep to group by">Depth
             <select x-model.number="churnDepth" @change="changeChurn()" class="fld border border-bd bg-surface">
-              <template x-for="d in [2,3,4,5,6,7,8]" :key="d"><option :value="d" x-text="d"></option></template>
+              <template x-for="d in [2,3,4,5,6,7,8]" :key="d"><option :value="d" :selected="d == churnDepth" x-text="d"></option></template>
             </select></label>
           <span class="grow"></span>
           <span class="text-xs text-muted" x-text="churnMeta"></span>

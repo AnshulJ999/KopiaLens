@@ -7,11 +7,11 @@
           </span>
           <select x-model="taskFilter.kind" @change="renderTasks()" class="fld h-7 border border-bd bg-surface text-xs" style="width:auto" aria-label="Kind">
             <option value="all">All kinds</option>
-            <template x-for="k in taskKinds()" :key="k"><option :value="k" x-text="k"></option></template>
+            <template x-for="k in taskKinds()" :key="k"><option :value="k" :selected="k == taskFilter.kind" x-text="k"></option></template>
           </select>
           <select x-model="taskFilter.repo" @change="renderTasks()" class="fld h-7 border border-bd bg-surface text-xs" style="width:auto" aria-label="Repository">
             <option value="all">All repositories</option>
-            <template x-for="r in repos.filter((x) => x.kind !== 'backblaze')" :key="r.id"><option :value="r.id" x-text="r.name"></option></template>
+            <template x-for="r in repos.filter((x) => x.kind !== 'backblaze')" :key="r.id"><option :value="r.id" :selected="r.id == taskFilter.repo" x-text="r.name"></option></template>
           </select>
           <input x-model="taskFilter.text" @input.debounce.200ms="renderTasks()" placeholder="Filter by folder or text"
                  class="fld h-7 border border-bd bg-surface2 text-xs w-56" aria-label="Filter tasks">

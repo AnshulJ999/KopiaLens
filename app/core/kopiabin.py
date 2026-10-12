@@ -34,6 +34,7 @@ log = get_logger("kopiabin")
 
 ENV_OVERRIDE = "KOPIALENS_KOPIA"
 TESTED_VERSION = "0.23.1"   # the build this release is verified against; display only, never a gate
+MIN_VERSION = "0.18.0"      # oldest kopia with every command KopiaLens uses (policy export, notifications); warned, never a gate
 EXE_NAME = "kopia.exe" if os.name == "nt" else "kopia"
 
 _lock = threading.Lock()
@@ -304,6 +305,37 @@ def check(path: str) -> dict:
     return out
 
 
+def _vtuple(ver: str) -> tuple[int, ...] | None:
+    m = re.match(r"^v?(\d+)\.(\d+)(?:\.(\d+))?", ver or "")
+    return tuple(int(x or 0) for x in m.groups()) if m else None
+
+
+def compat(ver: str | None) -> str:
+    """How this kopia compares: "older" than KopiaLens supports, "newer" than tested, "ok", or
+    "unknown" (no version read)."""
+    have = _vtuple(ver or "")
+    if have is None:
+        return "unknown"
+    if have < _vtuple(MIN_VERSION):
+        return "older"
+    return "newer" if have > _vtuple(TESTED_VERSION) else "ok"
+
+
+_FORMAT_ERRORS = ("can't handle repositories created using version", "unsupported format version",
+                  "index version")
+
+
+def friendly_error(text: str) -> str:
+    """kopia's own error, or a plain sentence when the repository's format is newer than this
+    kopia can read (another app with a newer kopia upgraded it)."""
+    low = (text or "").lower()
+    if any(k in low for k in _FORMAT_ERRORS) and ("supported" in low or "unsupported" in low):
+        ver = version() or "this kopia"
+        return (f"This repository uses a newer format than kopia {ver} can read. Point KopiaLens at a "
+                f"newer kopia in Settings > Repositories.")
+    return text
+
+
 def info(with_version: bool = True, with_candidates: bool = False) -> dict:
     """What ``/api/repos`` and the Settings screen show: resolved path, where it came from, and
     (once read) the version. ``with_version=False`` never spawns; ``with_candidates`` adds the
@@ -323,6 +355,8 @@ def info(with_version: bool = True, with_candidates: bool = False) -> dict:
         "source": source(),
         "version": ver or "",
         "tested": TESTED_VERSION,
+        "minimum": MIN_VERSION,
+        "compat": compat(ver) if ver else "unknown",
         "bundled": bool(path) and source() == "bundled",
         "searched": searched,
         "detail": "" if path else ("Kopia was not found. Install Kopia or KopiaUI, or set the "

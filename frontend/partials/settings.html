@@ -1,4 +1,4 @@
-{% from "partials/_macros.html" import duration %}
+{% from "partials/_macros.html" import duration, needs_kopia %}
     <div x-show="showSettings" @click.self="showSettings=false" x-cloak class="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4 sm:p-6">
       <!-- One fixed height with a scrolling body, so the section list never moves. Every control
            SAVES ITSELF on change (saveKl), so the footer carries no Save button and closing the
@@ -33,7 +33,7 @@
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Numbers</span>
                   <select x-model="numberStyle" @change="saveKl('number_style')" class="fld border border-bd bg-surface2 w-48">
-                    <option value="system" x-text="'System (' + (1234567.8).toLocaleString(undefined) + ')'"></option>
+                    <option value="system" x-text="'System (' + sysFormatSamples().num + ')'"></option>
                     <option value="en-US">1,234,567.8</option>
                     <option value="de-DE">1.234.567,8</option>
                     <option value="fr-FR">1 234 567,8</option>
@@ -50,7 +50,7 @@
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Dates</span>
                   <select x-model="dateStyle" @change="saveKl('date_style')" class="fld border border-bd bg-surface2 w-48">
-                    <option value="system" x-text="'System (' + new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) + ')'"></option>
+                    <option value="system" x-text="'System (' + sysFormatSamples().date + ')'"></option>
                     <option value="dmy" x-text="new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })"></option>
                     <option value="mdy" x-text="new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })"></option>
                     <option value="iso" x-text="_isoDay(new Date())"></option>
@@ -60,7 +60,7 @@
                 <div class="flex items-center justify-between gap-3"><span>Times</span>
                   <span class="flex items-center gap-2">
                     <select x-model="clock" @change="saveKl('clock')" class="fld border border-bd bg-surface2">
-                      <option value="system">System clock</option>
+                      <option value="system" x-text="'System (' + sysFormatSamples().clock + ')'">System clock</option>
                       <option value="12">12-hour</option>
                       <option value="24">24-hour</option>
                     </select>
@@ -118,6 +118,7 @@
 {% include "partials/licence.html" %}
 
             <section x-show="settingsTab==='indexing' || settingsTab==='refresh'" class="space-y-4">
+{{ needs_kopia() }}
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Kopia indexing</span>
                   <select x-model="indexMode" @change="saveKl('index_mode')" class="fld border border-bd bg-surface2">
@@ -254,12 +255,13 @@
                 <div class="flex items-center gap-2">
                   <span class="font-medium">From kopia</span>
                   <select x-model="notifyRepo" @change="notifyForm = null; notifyLoad()" class="fld border border-bd bg-surface2 text-xs" aria-label="Repository" x-show="notifyRepos().length > 1">
-                    <template x-for="r in notifyRepos()" :key="r.id"><option :value="r.id" x-text="r.name"></option></template>
+                    <template x-for="r in notifyRepos()" :key="r.id"><option :value="r.id" :selected="r.id == notifyRepo" x-text="r.name"></option></template>
                   </select>
                   <span class="grow"></span>
                   <button class="kl-btn" @click="notifyEdit(null)" x-show="notifyRepo && !notifyForm">Add profile…</button>
                 </div>
                 <p class="text-[0.6875rem] text-muted">Backup reports and errors from kopia itself. Profiles live in the repository, so KopiaUI and the kopia command line use them too.</p>
+{{ needs_kopia() }}
                 <template x-if="notifyProfiles">
                   <div>
                     <div x-show="notifyProfiles.loading" class="kl-note">Loading…</div>
@@ -370,9 +372,19 @@
                 <p class="text-[0.6875rem] text-muted mt-1">An indexing run that takes longer is stopped and tried again later.</p>
               </div>
               <div>
+                <div class="flex items-center justify-between gap-3"><span>First index time limit</span>
+                  {{ duration('indexFirstTimeout', 'index_first_timeout', 600) }}</div>
+                <p class="text-[0.6875rem] text-muted mt-1">The same limit for a repository's first index, which reads every snapshot. A stopped first index continues where it left off. Time the computer sleeps doesn't count.</p>
+              </div>
+              <div>
                 <div class="flex items-center justify-between gap-3"><span>Update the index after deletes</span>
                   {{ duration('reindexAfterDeleteDelay', 'reindex_after_delete_delay') }}</div>
                 <p class="text-[0.6875rem] text-muted mt-1">How long after the last delete. Back-to-back deletes share one update.</p>
+              </div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Most files in one delete plan</span>
+                  <input type="number" min="1000" step="1000" x-model.number="removePlanCap" @change="saveKl('remove_plan_cap')" class="fld border border-bd bg-surface2 w-32" data-testid="remove-plan-cap"></div>
+                <p class="text-[0.6875rem] text-muted mt-1">A bigger match is planned for its biggest files first.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Retry after a failed run</span>
@@ -472,10 +484,24 @@
             </section>
 
             <section x-show="settingsTab==='backblaze'" class="space-y-4">
+              <template x-if="raBz && !raBz.added">
+                <div class="kl-callout flex flex-wrap items-center gap-2" data-testid="bz-not-added">
+                  <span class="min-w-0 flex-1" x-text="raBz.found ? 'Backblaze is on this computer. Add it to see what it backs up.' : 'Backblaze wasn’t found on this computer.'"></span>
+                  <button x-show="raBz.found" @click="raAddBackblaze()" class="kl-btn primary">Add Backblaze</button>
+                </div>
+              </template>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Backblaze updates</span>
+                  <select x-model="bzUpdates" @change="saveKl('updates')" class="fld border border-bd bg-surface2" data-testid="bz-updates">
+                    <option value="auto">When Backblaze's file lists change</option>
+                    <option value="off">Off, only when I start it</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Separate from kopia indexing. Off keeps what KopiaLens already read.</p>
+              </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Backblaze data folder <span class="text-[0.625rem] text-warn">restart</span></span>
-                  <input x-model="bzDataPath" @change="saveKl('bzdata_path')" class="fld border border-bd bg-surface2 min-w-[18rem]" placeholder="C:\ProgramData\Backblaze\bzdata"></div>
-                <p class="text-[0.6875rem] text-muted mt-1">Where the Backblaze client keeps its file lists. Read-only - KopiaLens never writes here.</p>
+                  <input x-model="bzDataPath" @change="saveKl('bzdata_path')" class="fld border border-bd bg-surface2 min-w-[18rem]" :placeholder="(raBz && raBz.default) || 'Path to Backblaze’s bzdata folder'"></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Where the Backblaze client keeps its file lists. Empty finds it automatically. Read-only - KopiaLens never writes here.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>File index format</span>
@@ -487,16 +513,16 @@
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Reindex minimum gap</span>
-                  <select x-model.number="bzReindexMinGap" @change="saveKl('bz_reindex_min_gap')" class="fld border border-bd bg-surface2">
-                    <option :value="3600">1 hour</option>
-                    <option :value="7200">2 hours</option>
-                    <option :value="10800">3 hours</option>
-                    <option :value="14400">4 hours</option>
-                    <option :value="21600">6 hours</option>
-                    <option :value="28800">8 hours</option>
-                    <option :value="36000">10 hours</option>
-                    <option :value="43200">12 hours</option>
-                    <option :value="86400">24 hours</option>
+                  <select x-model.number="bzReindexMinGap" @change="saveKl('bz_reindex_min_gap')" class="fld border border-bd bg-surface2" data-testid="bz-min-gap">
+                    <option value="3600">1 hour</option>
+                    <option value="7200">2 hours</option>
+                    <option value="10800">3 hours</option>
+                    <option value="14400">4 hours</option>
+                    <option value="21600">6 hours</option>
+                    <option value="28800">8 hours</option>
+                    <option value="36000">10 hours</option>
+                    <option value="43200">12 hours</option>
+                    <option value="86400">24 hours</option>
                   </select></div>
                 <p class="text-[0.6875rem] text-muted mt-1">How long to wait after Backblaze's own scan changes before reindexing. Shorter means fresher numbers and more work.</p>
               </div>

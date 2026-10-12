@@ -29,8 +29,14 @@ const countOf = (n, one, many = one + "s") => `${Number(n || 0).toLocaleString(N
 // Accepts an ISO / "YYYY-MM-DD HH:MM:SS" string, a Date, or an epoch number. Epoch SECONDS (the
 // backend's time.time()) are told apart from milliseconds by magnitude.
 const toDate = (s) => (typeof s === "number" ? new Date(s < 1e12 ? s * 1000 : s) : new Date(s));
-// The locale dates are written in: day-month and month-day styles pin one; system and ISO use the system's.
-const dateLocale = () => ({ dmy: "en-GB", mdy: "en-US" })[_dateStyle];
+// This computer's own formats (GET /api/app/host `formats`), used by the "system" styles when the
+// browser runs on the same computer; otherwise the browser's language decides.
+let _os = {};
+const _okLocale = (tag) => { try { return tag && Intl.getCanonicalLocales(tag).length ? tag : undefined; } catch (e) { return undefined; } };
+const setOsFormats = (f) => { _os = f && f.local ? { ...f, locale: _okLocale(f.locale) } : {}; };
+setOsFormats(window.KL_OS_FORMATS);
+// The locale dates are written in: day-month and month-day styles pin one; system uses the computer's.
+const dateLocale = () => ({ dmy: "en-GB", mdy: "en-US" })[_dateStyle] || (_dateStyle === "system" ? _os.locale : undefined);
 const _hour12 = () => (_clock === "12" ? true : _clock === "24" ? false : undefined);
 // One formatter each, rebuilt only when the style changes: toLocaleString builds a new one per
 // call, which is ~15x slower on long lists.
@@ -44,11 +50,21 @@ _buildDateFmts();
 const _isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 // Apply the saved styles; callers redraw what is on screen afterwards.
 const setFormatStyles = ({ number_style, date_style, clock, byte_units } = {}) => {
-  NUM_LOCALE = ["en-US", "de-DE", "fr-FR", "en-IN"].includes(number_style) ? number_style : undefined;
+  NUM_LOCALE = ["en-US", "de-DE", "fr-FR", "en-IN"].includes(number_style) ? number_style : (_os.number || _os.locale);
   _byteUnits = byte_units === "binary" ? "binary" : "decimal";
-  _dateStyle = ["dmy", "mdy", "iso"].includes(date_style) ? date_style : "system";
-  _clock = ["12", "24"].includes(String(clock)) ? String(clock) : "system";
+  _dateStyle = ["dmy", "mdy", "iso"].includes(date_style) ? date_style : (_os.date || "system");
+  _clock = ["12", "24"].includes(String(clock)) ? String(clock) : (_os.clock || "system");
   _buildDateFmts();
+};
+// What "System" means right now, for the Settings labels.
+const sysFormatSamples = () => {
+  const loc = _os.locale;
+  const num = new Intl.NumberFormat(_os.number || loc).format(1234567.8);
+  const day = { year: "numeric", month: "short", day: "numeric" };
+  const d = new Date();
+  const date = _os.date === "iso" ? _isoDay(d) : d.toLocaleDateString(({ dmy: "en-GB", mdy: "en-US" })[_os.date] || loc, day);
+  const h12 = _os.clock ? _os.clock === "12" : new Intl.DateTimeFormat(loc, { hour: "numeric" }).resolvedOptions().hour12;
+  return { num, date, clock: h12 ? "12-hour" : "24-hour" };
 };
 const fmtAbs = (s) => {
   if (!s) return "";
@@ -147,7 +163,11 @@ const getJson = async (url, options = {}) => {
   if (res.status === 403 && data && data.setup_code) window.dispatchEvent(new CustomEvent("kl-setup-code"));
   // A Pro refusal means the screen's licence state is stale.
   if (res.status === 403 && res.headers.get("X-KopiaLens-Pro")) window.dispatchEvent(new CustomEvent("kl-pro-denied"));
-  if (!res.ok) throw new Error((data && (data.detail || data.error)) || text || res.statusText);
+  if (!res.ok) {
+    const err = new Error((data && (data.detail || data.error)) || text || res.statusText);
+    err.status = res.status; err.data = data;
+    throw err;
+  }
   return data;
 };
 

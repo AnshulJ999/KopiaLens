@@ -242,7 +242,7 @@ def _read_batch(repo: str, batch: list[str], result: SyncResult, what: str,
     """``content show`` one batch, stepping over dead objects. Returns (answered ids, stdout)
     pieces in order. Runs on a worker thread when reads are parallel: kopia only, no DuckDB."""
     pieces: list[tuple[list[str], str]] = []
-    pending, skips = batch, 0
+    pending, skips, checked = batch, 0, False
     while pending:
         res = kopia(repo, ["content", "show"] + [to_arg(o) for o in pending])
         answered = _answered(res.stdout)
@@ -250,8 +250,39 @@ def _read_batch(repo: str, batch: list[str], result: SyncResult, what: str,
             pieces.append((pending[:answered], res.stdout))
         if answered >= len(pending):
             break
+        if not answered and res.returncode != 0 and _CTX and not checked:
+            if _wait_until_reachable(repo):
+                continue    # the repository was away, not the object: ask again
+            checked = True  # it answers: the failure belongs to the objects
         pending, skips = _skip_dead(repo, pending, answered, res, result, skips, what)
     return pieces
+
+
+_WAIT_START, _WAIT_MAX = 15, 300     # seconds between reachability checks while waiting
+
+
+def _wait_until_reachable(repo: str) -> bool:
+    """kopia answered nothing. True after waiting out an unreachable repository (retry the batch);
+    False when the repository answers, so the failure belongs to the object."""
+    since, delay = None, _WAIT_START
+    while True:
+        if kopia(repo, ["repository", "status", "--json"]).returncode == 0:
+            if since is not None:
+                log.info("repo=%s reachable again after %.0fs", repo, time.time() - since)
+            return since is not None
+        if since is None:
+            since = time.time()
+            log.warning("repo=%s the repository can't be reached - waiting for it", repo)
+        waiting = _CTX.get("waiting")
+        if waiting:
+            waiting(waiting_since=since)
+        end = time.monotonic() + delay
+        while time.monotonic() < end:
+            stop = _CTX.get("should_stop")
+            if stop and stop():
+                raise StopRequested()
+            time.sleep(min(5.0, max(0.0, end - time.monotonic())))
+        delay = min(delay * 2, _WAIT_MAX)
 
 
 def _in_order(fn, items: list, workers: int):
@@ -273,12 +304,14 @@ def _in_order(fn, items: list, workers: int):
             yield done
 
 
-def _fetch_dirs(con, repo: str, oids: list[str], result: SyncResult, out: str) -> None:
+def _fetch_dirs(con, repo: str, oids: list[str], result: SyncResult, out: str,
+                tick=lambda done: None) -> None:
     """Fetch one level's folders and append their entries to ``out``.
 
     Normal objects go through batched ``content show``; indirect directories need ``kopia show``
     one at a time. Both paths refuse to record a failed read. kopia calls may run in parallel;
-    parsing stays on this thread, in request order.
+    parsing stays on this thread, in request order. ``tick(done)`` reports progress within the
+    level (one level of a big repository can take hours).
     """
     normal = [o for o in oids if not o.startswith("I")]
     indirect = [o for o in oids if o.startswith("I")]
@@ -295,7 +328,9 @@ def _fetch_dirs(con, repo: str, oids: list[str], result: SyncResult, out: str) -
 
     budget = _parse_budget()
     batches = [normal[i:i + BATCH] for i in range(0, len(normal), BATCH)]
-    for pieces in _in_order(lambda b: _read_batch(repo, b, result, "folder"), batches, workers):
+    done = 0
+    for batch_no, pieces in enumerate(_in_order(lambda b: _read_batch(repo, b, result, "folder"),
+                                                batches, workers)):
         for got, stdout in pieces:
             lines = _split_lines(stdout)
             got = got[:len(lines)]
@@ -308,8 +343,12 @@ def _fetch_dirs(con, repo: str, oids: list[str], result: SyncResult, out: str) -
                 con.execute(f"INSERT INTO {out} SELECT * FROM _ent_new")
             _read(got)
             result.fetched += len(got)
+        done += len(batches[batch_no])
+        tick(done)
 
-    for oid, res in _in_order(lambda o: (o, kopia(repo, ["show", o])), indirect, workers):
+    for i, (oid, res) in enumerate(_in_order(lambda o: (o, kopia(repo, ["show", o])), indirect, workers)):
+        if i % 50 == 49:
+            tick(done + i + 1)
         if res.returncode != 0:
             result.unreadable.append(oid)
             log.warning("repo=%s kopia show %s failed (rc=%d): %s - left unread",
@@ -328,7 +367,8 @@ def _fetch_dirs(con, repo: str, oids: list[str], result: SyncResult, out: str) -
         result.fetched += 1
 
 
-def _fetch_parts(con, repo: str, iobjs: list[str], result: SyncResult, out: str) -> None:
+def _fetch_parts(con, repo: str, iobjs: list[str], result: SyncResult, out: str,
+                 tick=lambda done: None) -> None:
     """Piece lists of split objects. ``Ix...`` -> ``content show x...``; the index object itself
     is a piece, so it leads the list and its ordinal is 0."""
     import pyarrow as pa
@@ -345,7 +385,10 @@ def _fetch_parts(con, repo: str, iobjs: list[str], result: SyncResult, out: str)
         return batch, _read_batch(repo, batch, result, "split object", to_arg=lambda o: o[1:])
 
     budget = _parse_budget()
+    done = 0
     for batch, pieces in _in_order(read, batches, kopia_parallel()):
+        done += len(batch)
+        tick(done)
         answered_all: set[str] = set()
         for got, stdout in pieces:
             lines = _split_lines(stdout)
@@ -384,25 +427,18 @@ def _shape_table(con) -> None:
         s_incomplete VARCHAR, s_numignorederrors BIGINT, s_errors VARCHAR, extra VARCHAR)""")
 
 
-def sync(con, repo: str, roots: list[str], *, known_table: str | None = None,
-         progress=None, max_levels: int = 512, alloc: ids.Allocator | None = None) -> SyncResult:
-    """Fetch every folder reachable from ``roots`` that the tree does not already hold.
+class StopRequested(Exception):
+    """A stop was asked for: the read so far is saved and the next run continues from it."""
 
-    Leaves ``_sync_ent`` (raw entry rows) and ``_sync_part`` (raw piece rows) in the connection
-    for ``materialize`` to turn into tree tables. ``known_table`` names a table of object ids
-    already in the tree (carried from the previous generation) so an unchanged subtree is never
-    re-read - that is what makes a nightly cheap.
 
-    Pass ``alloc`` to materialize each level as it is read instead of holding every entry until
-    the end. A nightly reads a handful of folders and does not care; a FIRST index of a large
-    repository does, and this is what keeps it inside the 8 GB floor.
+SAVE_EVERY = 900                 # seconds between save points inside a level
+CHUNK = BATCH * 25               # folders read between flushes inside a level
 
-    Level by level, because each level's folders are only discovered by reading the one above.
-    Within a level everything is one anti-join and a handful of batched kopia calls.
-    """
-    started = time.perf_counter()
-    result = SyncResult()
-    _shape_table(con)
+# The running sync's stop check and progress hook, for the kopia-reading threads.
+_CTX: dict = {}
+
+
+def _working_tables(con, known_table: str | None) -> None:
     con.execute("CREATE OR REPLACE TABLE _sync_ent AS SELECT * FROM _ent_shape WHERE false")
     con.execute("DROP TABLE IF EXISTS _sync_part")
     con.execute("CREATE TABLE _sync_part (iobj VARCHAR, part VARCHAR, ord INTEGER)")
@@ -411,51 +447,163 @@ def sync(con, repo: str, roots: list[str], *, known_table: str | None = None,
     # Split objects are collected as they are seen, because with segmenting on, the entry rows
     # that revealed them are cleared before the piece-list pass runs.
     con.execute("CREATE OR REPLACE TABLE _iobj_all (oid VARCHAR)")
+    # The level being read (_frontier), what of it is read (_level_done), the next level found so
+    # far (_next) and folders kopia would not read (_unread): the state a resumed read continues.
+    con.execute("CREATE OR REPLACE TABLE _frontier (oid VARCHAR)")
+    con.execute("CREATE OR REPLACE TABLE _level_done (oid VARCHAR)")
+    con.execute("CREATE OR REPLACE TABLE _next (oid VARCHAR)")
+    con.execute("CREATE OR REPLACE TABLE _unread (oid VARCHAR)")
     # The accumulators must exist before the piece-list pass below anti-joins them, and a fully
     # carried tree never enters the level loop (so materialize, which creates them, never runs).
     _new_tables(con)
     if known_table:
         con.execute(f"INSERT INTO _seen SELECT oid FROM {known_table}")
 
+
+def sync(con, repo: str, roots: list[str], *, known_table: str | None = None,
+         progress=None, max_levels: int = 512, alloc: ids.Allocator | None = None,
+         resume: dict | None = None, save=None, should_stop=None) -> SyncResult:
+    """Fetch every folder reachable from ``roots`` that the tree does not already hold.
+
+    Leaves ``_sync_ent`` (raw entry rows) and ``_sync_part`` (raw piece rows) in the connection
+    for ``materialize`` to turn into tree tables. ``known_table`` names a table of object ids
+    already in the tree (carried from the previous generation) so an unchanged subtree is never
+    re-read - that is what makes a nightly cheap.
+
+    Pass ``alloc`` to materialize as the read goes instead of holding every entry until the end.
+    A nightly reads a handful of folders and does not care; a FIRST index of a large repository
+    does, and this is what keeps it inside the 8 GB floor.
+
+    Level by level, because each level's folders are only discovered by reading the one above.
+    Within a level everything is one anti-join and a handful of batched kopia calls. A level is
+    read in chunks, each flushed in one transaction, so ``save(state)`` can be called at any
+    flush and ``resume`` (that state) continues the same connection where it stopped. A stop
+    (``should_stop()`` true) saves and raises ``StopRequested``.
+    """
+    started = time.perf_counter()
+    result = SyncResult()
+    _shape_table(con)
+    level = 0
+    if resume is None:
+        _working_tables(con, known_table)
+    else:
+        level = int(resume.get("level") or 0)
+        result.fetched = int(resume.get("fetched") or 0)
+        result.indirect = int(resume.get("indirect") or 0)
+        result.unreadable = [r[0] for r in con.execute("SELECT oid FROM _unread").fetchall()]
+    unread_saved = len(result.unreadable)
+
     import pyarrow as pa
+    # A resumed read also picks up roots of snapshots taken since it stopped.
     con.register("_roots_arrow", pa.table({"oid": pa.array(sorted(set(roots)), pa.string())}))
-    con.execute("CREATE OR REPLACE TABLE _frontier AS SELECT oid FROM _roots_arrow "
-                "WHERE oid NOT IN (SELECT oid FROM _seen)")
+    con.execute("INSERT INTO _frontier SELECT oid FROM _roots_arrow "
+                "WHERE oid NOT IN (SELECT oid FROM _seen) AND oid NOT IN (SELECT oid FROM _frontier)")
     con.unregister("_roots_arrow")
 
-    for level in range(max_levels):
-        todo = [r[0] for r in con.execute("SELECT oid FROM _frontier ORDER BY oid").fetchall()]
-        if not todo:
-            break
-        result.levels = level + 1
+    def flush() -> None:
+        """Move what was read into the next level, the done list and (with ``alloc``) the tree,
+        as one transaction: a hard kill leaves the state before or after it, never half."""
+        nonlocal unread_saved
+        con.execute("BEGIN TRANSACTION")
+        try:
+            con.execute("""INSERT INTO _next
+                SELECT DISTINCT e.obj FROM _sync_ent e
+                WHERE e.etype_s = 'd' AND e.obj IS NOT NULL
+                  AND e.obj NOT IN (SELECT oid FROM _seen) AND e.obj NOT IN (SELECT oid FROM _next)""")
+            con.execute("""INSERT INTO _iobj_all
+                SELECT DISTINCT e.obj FROM _sync_ent e
+                WHERE e.obj LIKE 'I%' AND e.etype_s <> 'd'
+                  AND e.obj NOT IN (SELECT oid FROM _iobj_all)""")
+            con.execute("INSERT INTO _level_done SELECT DISTINCT oid FROM _fetched "
+                        "WHERE oid NOT IN (SELECT oid FROM _level_done)")
+            new_unread = result.unreadable[unread_saved:]
+            if new_unread:
+                con.register("_unread_arrow", pa.table({"oid": pa.array(new_unread, pa.string())}))
+                con.execute("INSERT INTO _unread SELECT oid FROM _unread_arrow")
+                con.unregister("_unread_arrow")
+            if alloc is not None:
+                materialize(con, alloc, base_known="tdir", segment=True)
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+        unread_saved = len(result.unreadable)
+
+    def state(phase: str = "levels") -> dict:
+        return {"level": level, "fetched": result.fetched, "indirect": result.indirect,
+                "levels": result.levels, "phase": phase}
+
+    def stopping() -> bool:
+        return bool(should_stop and should_stop())
+
+    def wait_tick(**kw) -> None:
         if progress:
-            progress(level=level + 1, folders=len(todo), fetched=result.fetched)
-        con.execute("INSERT INTO _seen SELECT oid FROM _frontier")
-        t_lvl, (c_lvl, k_lvl) = time.perf_counter(), perf.kopia_now()
-        _fetch_dirs(con, repo, todo, result, "_sync_ent")
-        t_read = time.perf_counter()
-        # Next level: child directory objects this level revealed that we have not seen. One
-        # anti-join, not a Python set difference over millions of ids. Computed BEFORE any
-        # segment flush, because the flush clears the rows it reads.
-        con.execute("""CREATE OR REPLACE TABLE _frontier AS
-            SELECT DISTINCT e.obj AS oid FROM _sync_ent e
-            WHERE e.etype_s = 'd' AND e.obj IS NOT NULL
-              AND e.obj NOT IN (SELECT oid FROM _seen)""")
-        con.execute("""INSERT INTO _iobj_all
-            SELECT DISTINCT e.obj FROM _sync_ent e
-            WHERE e.obj LIKE 'I%' AND e.etype_s <> 'd'
-              AND e.obj NOT IN (SELECT oid FROM _iobj_all)""")
-        if alloc is not None:
-            materialize(con, alloc, base_known="tdir", segment=True)
-        c_now, k_now = perf.kopia_now()
-        indirect = sum(1 for o in todo if o.startswith("I"))
-        result.indirect += indirect
-        perf.level(level=level + 1, folders=len(todo), indirect=indirect,
-                   kopia_calls=c_now - c_lvl, kopia_secs=round(k_now - k_lvl, 2),
-                   read_secs=round(t_read - t_lvl, 2),
-                   materialize_secs=round(time.perf_counter() - t_read, 2))
-    else:
-        raise RuntimeError(f"repo {repo}: tree deeper than {max_levels} levels - refusing to loop")
+            progress(read=result.fetched, at=time.time(), **kw)
+
+    _CTX.update(should_stop=stopping, waiting=wait_tick)
+    if resume is not None:
+        flush()          # rows an interrupted step read but had not flushed
+    last_save = time.monotonic()
+    try:
+        while True:
+            if level >= max_levels:
+                raise RuntimeError(f"repo {repo}: tree deeper than {max_levels} levels - refusing to loop")
+            con.execute("INSERT INTO _seen SELECT oid FROM _frontier WHERE oid NOT IN (SELECT oid FROM _seen)")
+            total = con.execute("SELECT count(*) FROM _frontier").fetchone()[0]
+            if not total:
+                break
+            todo = [r[0] for r in con.execute(
+                "SELECT oid FROM _frontier WHERE oid NOT IN (SELECT oid FROM _level_done) "
+                "ORDER BY oid").fetchall()]
+            result.levels = level + 1
+            offset = total - len(todo)
+
+            def _tick(done: int, _lvl: int = level + 1, _n: int = total, _off: int = offset) -> None:
+                if progress:
+                    progress(level=_lvl, level_folders=_n, level_read=_off + done,
+                             read=result.fetched, at=time.time())
+                if stopping():
+                    raise StopRequested()
+            t_lvl, (c_lvl, k_lvl) = time.perf_counter(), perf.kopia_now()
+            if progress:
+                progress(level=level + 1, level_folders=total, level_read=offset,
+                         read=result.fetched, at=time.time())
+            for i in range(0, len(todo), CHUNK):
+                try:
+                    _fetch_dirs(con, repo, todo[i:i + CHUNK], result, "_sync_ent",
+                                tick=lambda d, _i=i: _tick(_i + d))
+                except StopRequested:
+                    flush()
+                    if save:
+                        save(state())
+                    raise
+                flush()
+                if stopping():
+                    if save:
+                        save(state())
+                    raise StopRequested()
+                if save and time.monotonic() - last_save >= SAVE_EVERY:
+                    save(state())
+                    last_save = time.monotonic()
+            t_read = time.perf_counter()
+            con.execute("BEGIN TRANSACTION")
+            con.execute("CREATE OR REPLACE TABLE _frontier AS SELECT oid FROM _next")
+            con.execute("DELETE FROM _next")
+            con.execute("DELETE FROM _level_done")
+            con.execute("COMMIT")
+            c_now, k_now = perf.kopia_now()
+            indirect = sum(1 for o in todo if o.startswith("I"))
+            result.indirect += indirect
+            perf.level(level=level + 1, folders=len(todo), indirect=indirect,
+                       kopia_calls=c_now - c_lvl, kopia_secs=round(k_now - k_lvl, 2),
+                       read_secs=round(t_read - t_lvl, 2),
+                       materialize_secs=round(time.perf_counter() - t_read, 2))
+            level += 1
+            if save:
+                save(state())
+                last_save = time.monotonic()
+    finally:
+        _CTX.clear()
 
     # Split objects the tree already references but holds no piece list for. The walk-cache seed
     # takes piece lists from the cache's `indirect` table, and this sync only collects split
@@ -475,13 +623,36 @@ def sync(con, repo: str, roots: list[str], *, known_table: str | None = None,
         JOIN cid_rev c ON c.cid_id = x.cid_id
         WHERE c.content_id IS NOT NULL
           AND c.content_id NOT IN (SELECT oid FROM _iobj_all)""")
-    iobjs = [r[0] for r in con.execute("SELECT oid FROM _iobj_all ORDER BY oid").fetchall()]
+    # Piece lists already in the tree (a resumed run) are not read again; an interrupted piece
+    # read starts over.
+    con.execute("DELETE FROM _sync_part")
+    iobjs = [r[0] for r in con.execute(
+        "SELECT oid FROM _iobj_all WHERE oid NOT IN "
+        "(SELECT c.content_id FROM _tpart_new t JOIN cid_rev c ON c.cid_id = t.iobj_cid) "
+        "ORDER BY oid").fetchall()]
     perf.count(split_files=len(iobjs))
     if iobjs:
         with perf.phase("tree/split-file pieces"):
-            _fetch_parts(con, repo, iobjs, result, "_sync_part")
+            def _ptick(done: int) -> None:
+                if progress:
+                    progress(pieces=len(iobjs), pieces_read=done, read=result.fetched, at=time.time())
+                if should_stop and should_stop():
+                    if save:
+                        save(state("pieces"))
+                    raise StopRequested()
+            _CTX.update(should_stop=stopping, waiting=wait_tick)
+            try:
+                _fetch_parts(con, repo, iobjs, result, "_sync_part", tick=_ptick)
+            finally:
+                _CTX.clear()
             if alloc is not None:
-                materialize(con, alloc, base_known="tdir", segment=True)
+                con.execute("BEGIN TRANSACTION")
+                try:
+                    materialize(con, alloc, base_known="tdir", segment=True)
+                    con.execute("COMMIT")
+                except BaseException:
+                    con.execute("ROLLBACK")
+                    raise
     perf.count(indirect_dirs=result.indirect)
     result.seconds = time.perf_counter() - started
     log.info("repo=%s tree sync: %s", repo, result.as_dict())

@@ -38,6 +38,7 @@
                         <div class="flex gap-1.5">
                           <button @click="raEdit(r)" class="h-8 rounded border border-bd px-2.5 text-xs">Edit…</button>
                           <button @click="settingsTab = 'backblaze'" class="h-8 rounded border border-bd px-2.5 text-xs">Backblaze settings</button>
+                          <button @click="raRemove(r)" class="h-8 rounded border px-2.5 text-xs" style="color:var(--danger);border-color:var(--danger-bd)">Remove…</button>
                         </div>
                       </template>
                     </div>
@@ -58,6 +59,22 @@
                     <span>Counts as a backup <span class="text-muted">· the Excluded view treats files in it as backed up</span></span></label>
                 </div>
               </template>
+
+              <template x-if="raBz && raBz.found && !raBz.added">
+                <div class="rounded-md border border-dashed border-bd p-3 flex items-center gap-3" data-testid="ra-bz-found">
+                  <div class="min-w-0 flex-1">
+                    <div class="font-medium">Backblaze Personal Backup</div>
+                    <div class="text-xs text-muted" x-text="'Found on this computer · ' + countOf(raBz.drives, 'drive') + ' backed up'"></div>
+                  </div>
+                  <button @click="raAddBackblaze()" :disabled="!!raBz.busy" class="kl-btn" x-text="raBz.busy ? 'Adding…' : 'Add'"></button>
+                </div>
+              </template>
+
+              <div class="pt-3 border-t border-bd">
+                <div class="flex items-center justify-between gap-3"><span>Setup</span>
+                  <button @click="raRunSetup()" class="h-8 rounded border border-bd px-3 text-xs" data-testid="run-setup-again">Run setup again</button></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Goes through connecting, sign-in and indexing again. What's already set up stays.</p>
+              </div>
 
               <div class="pt-3 border-t border-bd">
                 <div class="flex items-center justify-between gap-3"><span>kopia program</span>

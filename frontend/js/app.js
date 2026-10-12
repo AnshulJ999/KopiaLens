@@ -110,14 +110,16 @@ document.addEventListener("alpine:init", () => {
     lightInterval: 1800, dashboardInterval: 14400,
     debugLog: false,
     duckdbMemory: "", memoryAuto: "",  // memory limit override ("" = automatic) and what automatic resolves to
-    indexWorkerTimeout: 14400, indexRetryDelay: 900, indexMaxRetries: 1, reindexAfterDeleteDelay: 300, quitIndexing: "finish",
+    indexWorkerTimeout: 14400, indexFirstTimeout: 86400, removePlanCap: 200000,
+    indexRetryDelay: 900, indexMaxRetries: 1, reindexAfterDeleteDelay: 300, quitIndexing: "finish",
     folderPrewarmBudget: 900, startupDelay: 300, logCleanupDays: 90, taskHistoryKeep: 90, engineTakeback: "auto", rankCount: 10000,
     showProBadge: true,   // the small Pro mark next to the logo while a licence is active
     repoLabels: "short",  // repo chips and columns: "short" (Repo 1) | "full" (the name from repos.json)
     // Backblaze settings. Defaults mirror app/settings.py; each control saves its own key into
     // the nested "backblaze" dict (KL_FIELDS in settings.js).
-    bzDataPath: "C:\\ProgramData\\Backblaze\\bzdata", bzReindexMinGap: 21600, bzHistoryDays: 90,
-    bzCollapsePrefixes: "", bzEventlogArchive: "", bzStore: "parquet",
+    bzDataPath: "", bzReindexMinGap: 21600, bzHistoryDays: 90,
+    bzCollapsePrefixes: "", bzEventlogArchive: "", bzStore: "parquet", bzUpdates: "auto",
+    raBz: null,   // Backblaze on this computer (GET /api/setup/backblaze), for Settings
     analyzingAll: false, showDelete: false, deletePlan: null, _autoRefresh: null,
     // detail-panel layout ("classic" | "tabbed"), persisted server-side, default Classic.
     panelLayout: "classic",
@@ -331,6 +333,7 @@ document.addEventListener("alpine:init", () => {
         this.loadLicence();
         window.addEventListener("focus", () => this.refreshLicence());
         window.addEventListener("kl-pro-denied", () => this.refreshLicence(true));
+        getJson("/api/app/about").then((a) => this.kopiaCompatNote(a.kopia)).catch(() => {});
         getJson("/api/app/host").then((h) => {
           this.host = h;
           if (!h.data_persistent) this.klNotify("The data folder isn't on a Docker volume. The index and settings are lost when the container is recreated.", "warn");

@@ -4,7 +4,7 @@
           <label class="flex-col !items-start !gap-0.5 text-muted" title="The same source as Snapshots">Source
             <select x-model="snapSource" @change="simSourceChanged()" class="fld border border-bd bg-surface max-w-[22rem] text-fg">
               <option value="*ALL*">All sources</option>
-              <template x-for="s in sources" :key="s"><option :value="s" x-text="shortSource(s)"></option></template>
+              <template x-for="s in sources" :key="s"><option :value="s" :selected="s == snapSource" x-text="shortSource(s)"></option></template>
             </select></label>
           <template x-for="k in policyKeys" :key="k">
             <label class="flex-col !items-start !gap-0.5 text-muted"><span x-text="simPolicyLabel(k)"></span>

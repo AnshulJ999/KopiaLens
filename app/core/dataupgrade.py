@@ -100,6 +100,21 @@ def read_version() -> dict:
         return {"version": 1, "at": 0.0, "unversioned": True}
 
 
+def _new_folder() -> bool:
+    """No settings, repositories, accounts or index yet: a first start, not an old folder. (The
+    repository list itself is written empty at import, so it counts only when it holds one.)"""
+    import config
+    if config.RECORDS.get("repos"):
+        return False
+    if any(os.path.exists(p) for p in (SETTINGS_FILE, os.path.join(DATA_DIR, "users.json"))):
+        return False
+    try:
+        return not any(name.startswith("repo") and os.path.isdir(os.path.join(DATA_DIR, name))
+                       for name in os.listdir(DATA_DIR))
+    except OSError:
+        return True
+
+
 def _write_version(version: int) -> None:
     atomic_json(VERSION_FILE, {"version": int(version), "app": DATA_VERSION, "at": time.time()})
 
@@ -188,6 +203,11 @@ def run_pending() -> dict:
                   "the version is left untouched", info["version"], DATA_VERSION)
         return {"version": info["version"], "ran": [], "newer": True}
     _load_steps()
+    if info["unversioned"] and _new_folder():
+        # A brand-new install has nothing an upgrade step could change.
+        _write_version(DATA_VERSION)
+        log.info("new data folder stamped at version %s", DATA_VERSION)
+        return {"version": DATA_VERSION, "ran": [], "newer": False}
     if info["unversioned"]:
         # A pre-version folder IS this version's layout; stamp it so the next release's steps know
         # where to start from.

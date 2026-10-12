@@ -32,10 +32,10 @@ def records(monkeypatch):
 
 # ---- when onboarding shows ------------------------------------------------------------------------
 
-def test_onboarding_shows_until_a_kopia_repo_exists(records):
+def test_onboarding_shows_until_a_repo_exists(records):
     assert onboarding.needed() is True
     records["repos"] = [{"id": "bz", "kind": "backblaze"}]
-    assert onboarding.needed() is True          # Backblaze alone is not a kopia repository
+    assert onboarding.needed() is False         # Backblaze-only users are set up too
     records["repos"].append({"id": "1", "kind": "kopia"})
     assert onboarding.needed() is False         # an existing install never sees it
 

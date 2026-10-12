@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..core import kopiabin, repoconnect, repos
@@ -20,6 +21,12 @@ router = APIRouter(tags=["setup"])
 
 def _bad(exc: Exception) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
+
+
+def _duplicate(exc: repoconnect.DuplicateRepo) -> JSONResponse:
+    """409 naming the repository it duplicates, so the screen can ask before adding it anyway."""
+    return JSONResponse({"detail": str(exc), "duplicate_of": exc.repo, "duplicate_name": exc.name},
+                        status_code=409)
 
 
 class KopiaPathRequest(BaseModel):
@@ -38,6 +45,7 @@ class ConnectRequest(BaseModel):
     name: str = ""
     short_name: str = ""
     counts_as_backup: bool = True
+    allow_duplicate: bool = False   # the user confirmed adding a repository that is already here
 
 
 class CreateRequest(ConnectRequest):
@@ -50,6 +58,7 @@ class AttachRequest(BaseModel):
     name: str = ""
     short_name: str = ""
     counts_as_backup: bool = True
+    allow_duplicate: bool = False
 
 
 class UnlockRequest(BaseModel):
@@ -134,7 +143,9 @@ def connect(payload: ConnectRequest) -> dict:
     try:
         record = repoconnect.connect(
             payload.provider, payload.fields, payload.password, payload.name,
-            payload.short_name, payload.counts_as_backup)
+            payload.short_name, payload.counts_as_backup, payload.allow_duplicate)
+    except repoconnect.DuplicateRepo as exc:
+        return _duplicate(exc)
     except (ValueError, OSError) as exc:
         raise _bad(exc) from exc
     return {"ok": True, "repo": repos.detail(record)}
@@ -160,7 +171,9 @@ def attach(payload: AttachRequest) -> dict:
     """Track an existing kopia connection (KopiaUI's list, the CLI default, a copied config)."""
     try:
         record = repoconnect.attach(payload.config_file, payload.name, payload.short_name,
-                                    payload.counts_as_backup)
+                                    payload.counts_as_backup, payload.allow_duplicate)
+    except repoconnect.DuplicateRepo as exc:
+        return _duplicate(exc)
     except (ValueError, OSError) as exc:
         raise _bad(exc) from exc
     return {"ok": True, "repo": repos.detail(record)}
@@ -236,6 +249,41 @@ def sample_add() -> dict:
     if any(r.get("sample") for r in repos.all_records()):
         raise HTTPException(status_code=400, detail="The sample data is already added.")
     return sampledata.start_install()
+
+
+class BackblazeAddRequest(BaseModel):
+    index: bool = True
+
+
+@router.get("/setup/backblaze")
+def backblaze_state() -> dict:
+    """Backblaze on this computer: found, where, and whether KopiaLens already reads it."""
+    from config import DEMO_INSTANCE
+    from ..backblaze import paths as bz_paths
+    path = bz_paths.bzdata_root()
+    found = not DEMO_INSTANCE and bz_paths.looks_like_bzdata(path)
+    return {"found": found, "path": path if found else "",
+            "added": repos.exists(repos.BACKBLAZE_ID),
+            "drives": len(bz_paths.volumes()) if found else 0,
+            "default": bz_paths.default_bzdata() or ""}
+
+
+@router.post("/setup/backblaze")
+def backblaze_add(payload: BackblazeAddRequest) -> dict:
+    """Start reading Backblaze. ``index`` builds its index right away (setup starts it itself)."""
+    state = backblaze_state()
+    if not state["found"] and not state["added"]:
+        raise HTTPException(status_code=400, detail="Backblaze wasn't found on this computer.")
+    try:
+        rec = repos.add_backblaze()
+    except OSError as exc:
+        raise _bad(ValueError(f"Couldn't save the repository list: {exc}")) from exc
+    started = False
+    if payload.index:
+        from ..core import reindexq
+        reindexq.request(repos.BACKBLAZE_ID, wait=0, reason="first")
+        started = bool(reindexq.run_now(repos.BACKBLAZE_ID).get("started"))
+    return {"ok": True, "repo": repos.detail(rec), "drives": state["drives"], "started": started}
 
 
 class IndexRebuildRequest(BaseModel):
