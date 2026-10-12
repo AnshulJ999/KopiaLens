@@ -11,6 +11,7 @@ import json
 import os
 import time
 
+from ..core import filecrypto
 from ..core.applog import get_logger
 
 log = get_logger("store")
@@ -53,12 +54,16 @@ def clear_stop(repo: str) -> None:
 def load(staging: str, repo: str, encrypted: bool) -> dict | None:
     """The saved state when it belongs to this build, else None (and it is dropped)."""
     p = path(staging)
-    try:
-        with open(p, encoding="utf-8") as fh:
-            state = json.load(fh)
-    except FileNotFoundError:
+    if not os.path.exists(p):
         return None
-    except (OSError, ValueError) as exc:
+    try:
+        text = filecrypto.read_text(p)      # encrypted at the Full level, like the other state files
+        if text is None:
+            raise ValueError("cannot be read or decrypted")
+        state = json.loads(text)
+        if not isinstance(state, dict):
+            raise ValueError("not a saved state")
+    except ValueError as exc:
         log.warning("repo=%s saved index progress unreadable (%s) - starting over", repo, exc)
         clear(staging)
         return None
@@ -96,9 +101,5 @@ def clear(staging: str) -> None:
 
 
 def _write(p: str, state: dict) -> None:
-    tmp = p + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(state, fh)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, p)
+    if not filecrypto.write_text(p, json.dumps(state)):
+        raise OSError("the saved index progress could not be written")
