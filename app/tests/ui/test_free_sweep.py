@@ -16,7 +16,21 @@ _TOKEN = re.compile(r"[0-9A-Za-z]{16,}")
 _CMD = re.compile(r"snapshot fix remove-files|--object-id|snapshot delete", re.I)
 
 # (route, key path) -> why a Free install may see it. Filled only from explicit rulings.
-ALLOWED: dict[tuple[str, str], str] = {}
+_SNAP = "snapshot id: Free deletes, restores and mounts whole snapshots"
+_PENDING_C = "object id: removed for Free by KL169 option C"
+ALLOWED: dict[tuple[str, str], str] = {
+    ("/api/snapshots", "snapshots[].id"): _SNAP,
+    ("/api/restore/plan", "items[].snapshot_id"): _SNAP,
+    ("/api/restore/plan", "items[].source_id"): _SNAP,
+    ("/api/search/detail", "versions[].snapshot_id"): _SNAP,
+    ("/api/search/versions", "versions[].snapshot_id"): _SNAP,
+    ("/api/snapshots", "snapshots[].root"): _PENDING_C,
+    ("/api/restore/plan", "items[].obj"): _PENDING_C,
+    ("/api/search/detail", "content_id"): _PENDING_C,
+    ("/api/search/detail", "versions[].content_id"): _PENDING_C,
+    ("/api/search/detail", "chunks[].cid"): _PENDING_C,
+    ("/api/search/versions", "versions[].content_id"): _PENDING_C,
+}
 
 # Routes that stream files or change state although they answer GET; never called here.
 _SKIP = {"/api/restore/download", "/api/search/export", "/api/logs/download", "/api/diagnostics/bundle"}

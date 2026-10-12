@@ -125,6 +125,13 @@ def _bounds(over_gb: float, largest: bool, min_gb: float, max_gb: float) -> tupl
     return min_size, max_size
 
 
+def _no_ids(rows: list) -> list:
+    """Search rows go out without the object id: nothing on screen uses it ()."""
+    for r in rows:
+        r.pop("content_id", None)
+    return rows
+
+
 @router.get("/search")
 def search(
     repo: str,
@@ -169,7 +176,7 @@ def search(
                 first_from=first_from or None,
                 min_versions=min_versions, shared_min=shared_min, dedupe=dedupe, dedupe_by=dedupe_by,
             )
-        return {"results": res["rows"], "total": res["total"], "offset": res["offset"],
+        return {"results": _no_ids(res["rows"]), "total": res["total"], "offset": res["offset"],
                 "limit": res["limit"], "ranked": res.get("ranked")}
     except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
@@ -278,7 +285,7 @@ def search_mixed(
         pick = [f for f in folders
                 if (prev is None or cmp(f, prev) >= 0) and (final or last is None or cmp(f, last) < 0)]
         merged = sorted(pick + files, key=cmp_to_key(cmp))
-    return {"results": merged, "total": page["total"], "folders": len(folders),
+    return {"results": _no_ids(merged), "total": page["total"], "folders": len(folders),
             "offset": page["offset"], "limit": page["limit"]}
 
 
@@ -328,7 +335,7 @@ def search_all_repos(
             r["repo"] = rid
         rows.extend(res["rows"])
     rows.sort(key=cmp_to_key(_row_cmp(_SEARCH_SORT[sort], dir != "asc")))
-    return {"results": rows[offset:offset + limit], "total": total, "offset": offset, "limit": limit,
+    return {"results": _no_ids(rows[offset:offset + limit]), "total": total, "offset": offset, "limit": limit,
             "sort": sort, "searched": searched, "skipped": skipped, "max_depth": _ALL_REPOS_DEPTH}
 
 

@@ -109,7 +109,7 @@
 </div>
 <div class="kl-note" x-show="!detail.loading && copyCount() === 0 && (detail.versions || []).length" x-text="fileVersionsLine()"></div>
 <div class="kl-note" x-show="copyCount() > 0">
-  <span x-text="copyCount() + (copyCount() === 1 ? ' identical copy' : ' identical copies') + ' at other paths keep it stored.'"></span>
+  <span x-text="copyCount().toLocaleString(NUM_LOCALE) + (copyCount() === 1 ? ' identical copy' : ' identical copies') + ' at other paths keep it stored.'"></span>
   Removing every copy frees <b style="color:var(--ok)" x-text="fmtPhys(detail.reclaim_everywhere)"></b>.
 </div>
 </div>
@@ -174,7 +174,7 @@
 
 {%- macro file_others() -%}
 <div class="kl-sec" x-show="detail.others && detail.others.length">
-  <div class="h">Deduped against this one <span class="count" x-text="countOf(detail.others.length, 'path')"></span></div>
+  <div class="h">Deduped against this one <span class="count" x-text="countOf(copyCount(), 'path') + (detail.others.length < copyCount() ? ' · first ' + detail.others.length.toLocaleString(NUM_LOCALE) + ' listed' : '')"></span></div>
   <div class="kl-list">
     <template x-for="(o, i) in detail.others" :key="i">
       <div class="li"><span class="break-all" x-text="shortSource(o.source) + '  ·  ' + o.full_path"></span></div>
@@ -185,7 +185,7 @@
 
 {%- macro file_dup() -%}
 <div class="kl-sec" x-show="copyCount() > 0">
-  <div class="h">Identical copies <span class="count" x-text="copyCount() + ' other paths · ' + detail.locations + ' backups'"></span></div>
+  <div class="h">Identical copies <span class="count" x-text="copyCount().toLocaleString(NUM_LOCALE) + ' other paths · ' + detail.locations + ' backups' + (detail.others.length < copyCount() ? ' · first ' + detail.others.length.toLocaleString(NUM_LOCALE) + ' listed' : '')"></span></div>
   <div class="kl-list">
     <template x-for="(o, i) in detail.others" :key="i">
       <div class="li"><span class="font-mono trunc grow" x-text="o.full_path"></span></div>
@@ -409,7 +409,7 @@
                 <span>
                   <span class="font-mono" x-text="shortSource(detail.source)"></span>
                   <span x-show="detail.versions.length"> · first backed up <span x-text="detail.versions.length ? fmtDate(detail.versions[detail.versions.length - 1].start) : ''"></span> · <span class="num" x-text="countOf(detail.versions.length, 'version')"></span></span>
-                  <span x-show="copyCount() > 0"> · <span class="num" x-text="copyCount() + (copyCount() === 1 ? ' copy' : ' copies') + ' elsewhere'"></span></span>
+                  <span x-show="copyCount() > 0"> · <span class="num" x-text="copyCount().toLocaleString(NUM_LOCALE) + (copyCount() === 1 ? ' copy' : ' copies') + ' elsewhere'"></span></span>
                 </span>
               </template>
               <template x-if="detail.kind === 'folder'">

@@ -937,6 +937,7 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
 
     # Every location of the latest content; the same path in a holder is this file, not a copy.
     rows: list = []
+    n_files = n_src = None
     latest_cid = oid_of.get(latest_obj) if latest_obj else None
     if latest_cid is not None and latest_obj not in kept_objs:
         rows = [(h, full_path) for h, objs in objs_by_holder.items() if latest_obj in objs]
@@ -950,14 +951,22 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
                 "WHERE f.cid_id=? LIMIT 500",
                 [latest_cid],
             ).fetchall()
+            # The list is capped; the counts are not (every empty file shares one content).
+            n_files, n_src = cur.execute(
+                f"SELECT count(DISTINCT ({_HOST_SQL}, p.full_path)), count(DISTINCT p.src_id) FROM filev f "
+                "JOIN pathx p ON p.path_id = f.path_id JOIN src s ON s.src_id = p.src_id WHERE f.cid_id=?",
+                [latest_cid]).fetchone()
         finally:
             cur.close()
     holder_set = set(holders)
     others = [(s, p) for s, p in rows if not (p == full_path and s in holder_set)]
+    if n_files is None:
+        n_files = len({_file_key(s, p) for s, p in others} | {_file_key(source, full_path)})
+        n_src = len({source} | {s for s, _ in rows})
 
     # What an exact-content delete of this file frees when it reaches every copy: every version's
     # object removed from every source holding it. Only asked when copies exist.
-    n_dup = len({source} | {s for s, _ in rows})
+    n_dup = n_src
     reclaim_everywhere = (price_objects(repo, st.all_objs)["freeable"] if others else freeable)
 
     return {
@@ -981,7 +990,7 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
         # content-centric / purge-everywhere
         "locations": n_dup,                       # distinct sources holding this exact content
         # distinct files holding it: one per (computer, path), this one included
-        "instances": len({_file_key(s, p) for s, p in others} - {_file_key(source, full_path)}) + 1,
+        "instances": int(n_files),
         "reclaim_everywhere": reclaim_everywhere,  # bytes freed if purged from every location
     }
 

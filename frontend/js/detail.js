@@ -186,7 +186,7 @@ const detailPart = {
         ["Last changed", humanTime(vs[0].start)],
         ["Changes", changes <= 1 ? "Unchanged since the first backup" : `Changed ${changes - 1} time${changes === 2 ? "" : "s"} in ${days} day${days === 1 ? "" : "s"}`],
         ["Versions", Number(vs.length).toLocaleString(NUM_LOCALE)],
-        ["Copies", copies > 0 ? `${copies} identical cop${copies === 1 ? "y" : "ies"} elsewhere` : "None elsewhere"],
+        ["Copies", copies > 0 ? `${copies.toLocaleString(NUM_LOCALE)} identical cop${copies === 1 ? "y" : "ies"} elsewhere` : "None elsewhere"],
         ["Rules", this._rulesRow()],
         ...(PANEL_EXTRA_FACTS ? [
           ["Compression", this._compressionRow()],
@@ -199,6 +199,7 @@ const detailPart = {
     copyCount() {
       const d = this.detail;
       if (!d || d.kind !== "file") return 0;
+      if (d.instances != null) return Math.max(0, d.instances - 1);   // the server's count; the list is capped
       return new Set((d.others || []).map((o) => o.full_path).filter((p) => p !== d.title)).size;
     },
     // "48 across 270 snapshots": the folder's distinct states, each one a change inside it.
