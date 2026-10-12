@@ -503,6 +503,7 @@ const policiesPart = {
       return ((this.polDiff && this.polDiff.groups) || []).flatMap((g) => g.errors || []);
     },
     async polSave() {
+      if (!this.wmGuard("non_destructive")) return;
       const changes = this.polChanges(this.polDiffOnly);
       if (!changes.length) { this.showPolDiff = false; return; }
       if (this.polDiffErrors().length) return;
@@ -598,6 +599,7 @@ const policiesPart = {
       this.polRestoreCmd = cmd;
     },
     async polRestoreExecute() {
+      if (!this.wmGuard("non_destructive")) return;
       const name = this.polRestoreName;
       if (!name) return;
       const mirror = this.polRestoreMode === "mirror";

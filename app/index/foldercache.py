@@ -109,6 +109,10 @@ def _load(repo: str) -> dict:
     return data
 
 
+# Bump when folder_detail's rules change: older entries then count as stale.
+_RULES = 2
+
+
 def _save(repo: str) -> None:
     with _LOCK:
         data = dict(_MEM.get(repo) or {})
@@ -130,8 +134,8 @@ def peek(repo: str, prefix: str, source: str | None = None, allow_stale: bool = 
     if not entry:
         return None
     try:
-        # An entry saved before physical_newest existed is stale whatever its stamp says.
-        fresh = ("physical_newest" in entry
+        # An entry saved under older pricing rules is stale whatever its stamp says.
+        fresh = (entry.get("rules") == _RULES
                  and entry.get("stamp") == folder_stamp(repo, prefix, source))
     except Exception:  # noqa: BLE001 - cannot verify freshness; treat as stale rather than fresh
         fresh = False
@@ -150,7 +154,8 @@ def saved_values(repo: str, prefixes: list[str]) -> dict[str, dict]:
         entry = data.get(_key(prefix, None))
         if entry and entry.get("physical") is not None:
             out[prefix] = {"physical": entry.get("physical"), "freeable": entry.get("freeable"),
-                           "physical_newest": entry.get("physical_newest"),
+                           "physical_newest": (entry.get("physical_newest")
+                                               if entry.get("rules") == _RULES else None),
                            "versions": entry.get("versions"),
                            "capped": bool(entry.get("capped"))}
     return out
@@ -203,7 +208,7 @@ def _compute_now(repo: str, prefix: str, source: str | None = None) -> dict:
         # the OLD index and must expire, not be filed under the newer stamp as if it were fresh.
         stamp = folder_stamp(repo, prefix, source)
         payload = folder_detail(repo, source, prefix)
-        payload.update({"prefix": prefix, "source": source, "stamp": stamp,
+        payload.update({"prefix": prefix, "source": source, "stamp": stamp, "rules": _RULES,
                         "computed_at": time.time(), "elapsed": round(time.time() - start, 2)})
         data = _load(repo)
         with _LOCK:
@@ -319,7 +324,7 @@ def prewarm(repo: str, top: int = _PREWARM_TOP, depths=None) -> None:
             entry = _load(repo).get(_key(prefix, None))
             if entry:
                 try:
-                    unchanged = ("physical_newest" in entry
+                    unchanged = (entry.get("rules") == _RULES
                                  and entry.get("stamp") == folder_stamp(repo, prefix))
                 except Exception:  # noqa: BLE001 - cannot verify -> treat as changed
                     unchanged = False

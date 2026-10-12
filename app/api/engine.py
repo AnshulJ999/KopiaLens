@@ -15,6 +15,9 @@ from pydantic import BaseModel
 import config
 
 from ..core import audit, coexist, engine, jobs, pause as index_pause
+from ..core.applog import get_logger
+
+log = get_logger("api.engine")
 
 router = APIRouter(tags=["engine"])
 
@@ -154,18 +157,23 @@ class DescriptionRequest(BaseModel):
     repo: str
     snapshot_id: str
     description: str = ""
+    password: str | None = None     # only when kopia's saved password wasn't found; never stored
 
 
 @router.post("/engine/snapshot-description")
 def snapshot_description(payload: DescriptionRequest) -> dict:
+    from ..core import descedit
     _need_repo(payload.repo)
+    if config.is_demo(payload.repo):
+        raise HTTPException(status_code=409, detail="Not available in the demo.")
     try:
-        if not engine.edit_description(payload.repo, payload.snapshot_id, payload.description.strip()):
-            raise HTTPException(status_code=409, detail="KopiaLens isn't running backups for this repository.")
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"Couldn't change the description: {exc}") from exc
+        engine.edit_description(payload.repo, payload.snapshot_id, payload.description.strip(), payload.password)
+    except descedit.PasswordNeeded:
+        return {"ok": False, "need_password": True}
+    except Exception as exc:  # noqa: BLE001 - KopiaLens's own text; kopia's output may echo input
+        log.warning("description edit failed repo=%s: %s", payload.repo, type(exc).__name__)
+        msg = str(exc) if isinstance(exc, RuntimeError) else "kopia refused the change."
+        raise HTTPException(status_code=502, detail=f"Couldn't change the description: {msg}") from exc
     from ..core.sources import invalidate
     invalidate(payload.repo)
     audit.audit("executed", "snapshot-description", repo=payload.repo, summary={"snapshot": payload.snapshot_id})

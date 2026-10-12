@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import jinja2
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, RedirectResponse,
                                Response)
@@ -26,7 +26,7 @@ from config import APP_VERSION, DATA_DIR, DEMO_BACKBLAZE, DEMO_INSTANCE, REPOS, 
 
 from .api import (access, account, actions, appconfig, audit, backblaze, cli, dashboard, deleteplan, encryption, engine, excluded,
                   help, insights, jobs, licence, logs, newsnapshot, notify, onboarding, policies, prune, restore, search, setup, shell, simulate,
-                  snapshots, stats, tree)
+                  snapshots, stats, tree, writemode)
 from .core import auth, checkin, devaddons, netaccess, pause
 from .core import engine as backup_engine
 from .core import jobs as jobrunner
@@ -742,7 +742,8 @@ async def lifespan(_app: FastAPI):
         pass
 
 
-app = FastAPI(title="KopiaLens", version=APP_VERSION, lifespan=lifespan)
+app = FastAPI(title="KopiaLens", version=APP_VERSION, lifespan=lifespan,
+              dependencies=[Depends(writemode.gate)])
 
 
 if DEMO_INSTANCE:
@@ -1206,6 +1207,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 
 
 app.include_router(dashboard.router, prefix="/api")
+app.include_router(writemode.router, prefix="/api")
 app.include_router(snapshots.router, prefix="/api")
 app.include_router(tree.router, prefix="/api")
 app.include_router(search.router, prefix="/api")

@@ -104,7 +104,7 @@ const excludedPart = {
           { label: "Open", action: (_e, row) => this.excludedRowOpen(row.getData()) },
           { label: "Details", action: (_e, row) => this.openExcludedDetail(row.getData()) },
           { label: "Back this up…", action: (_e, row) => this.excludedInclude(row.getData()) },
-          { label: "Exclude…", action: (_e, row) => this.excludedExclude(row.getData()) },
+          this.wmItem({ label: "Exclude…", action: (_e, row) => this.excludedExclude(row.getData()) }, "non_destructive"),
           { label: "Copy path", action: (_e, row) => this.copyText(this._excludedPath(row.getData())) },
         ],
       });

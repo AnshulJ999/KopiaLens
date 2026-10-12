@@ -66,6 +66,7 @@ const actionsPart = {
     // An item without a source (a path held by several sources) gets its holders looked up; the
     // newest backup is picked and the panel offers the others.
     async openRestore(items, opts = {}) {
+      if (!this.wmGuard("restores")) return;
       const list = (Array.isArray(items) ? items : [items]).filter((i) => i && i.full_path)
         .map((i) => ({ ...i, source: i.source || null }));
       if (!list.length) { this.error = "Nothing to restore."; return; }

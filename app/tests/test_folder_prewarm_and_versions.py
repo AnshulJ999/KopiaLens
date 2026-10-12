@@ -78,8 +78,9 @@ def priced(monkeypatch):
     con.execute("CREATE TABLE cid(cid_id INTEGER, content_id VARCHAR)")
     con.execute("INSERT INTO cid VALUES (1,'Inew'),(2,'Imid'),(3,'Iold'),"
                 "(4,'c_common'),(5,'c_new'),(6,'c_mid'),(7,'c_old')")
-    con.execute("CREATE TABLE pathx(path_id INTEGER, src_id INTEGER, full_path VARCHAR, cid_id INTEGER, size BIGINT)")
-    con.execute("INSERT INTO pathx VALUES (1, 1, ?, 1, 1000)", ["C:" + SEP + "f.dat"])
+    con.execute("CREATE TABLE pathx(path_id INTEGER, src_id INTEGER, full_path VARCHAR, cid_id INTEGER, size BIGINT, "
+                "last_seen TIMESTAMP DEFAULT TIMESTAMP '2026-01-01')")
+    con.execute("INSERT INTO pathx (path_id, src_id, full_path, cid_id, size) VALUES (1, 1, ?, 1, 1000)", ["C:" + SEP + "f.dat"])
     con.execute("CREATE TABLE filev(path_id INTEGER, snap_id INTEGER, cid_id INTEGER, size BIGINT)")
     con.execute("INSERT INTO filev VALUES (1, 3, 1, 1000), (1, 2, 2, 1000), (1, 1, 3, 1000)")
     con.execute("CREATE TABLE tpart(iobj_cid INTEGER, part_cid INTEGER)")
@@ -201,8 +202,8 @@ def test_prewarm_skips_unchanged_folders_and_refreshes_changed_ones(monkeypatch)
 
     now = _time.time()
     _skip_store(monkeypatch, {
-        foldercache._key(f"C:{SEP}One", None): {"stamp": "S1", "computed_at": now, "physical_newest": 1},
-        foldercache._key(f"C:{SEP}Two", None): {"stamp": "OLD", "computed_at": now, "physical_newest": 1},
+        foldercache._key(f"C:{SEP}One", None): {"stamp": "S1", "computed_at": now, "rules": foldercache._RULES},
+        foldercache._key(f"C:{SEP}Two", None): {"stamp": "OLD", "computed_at": now, "rules": foldercache._RULES},
     })
     stamps = {f"C:{SEP}One": "S1", f"C:{SEP}Two": "S2"}
     monkeypatch.setattr(foldercache, "folder_stamp",
@@ -243,7 +244,7 @@ def test_prewarm_skipped_unchanged_count_is_reported(monkeypatch):
 
     _skip_store(monkeypatch, {
         foldercache._key(f"C:{SEP}One", None): {"stamp": "S1", "computed_at": _time.time(),
-                                                 "physical_newest": 1},
+                                                 "rules": foldercache._RULES},
     })
     monkeypatch.setattr(foldercache, "folder_stamp",
                         lambda repo, prefix, source=None: "S1")
@@ -286,9 +287,10 @@ def folder_index(monkeypatch):
     con.execute("INSERT INTO crefo VALUES (3, 1), (4, 2)")
     con.execute("CREATE TABLE csize(cid_id INTEGER, packed UBIGINT)")
     con.execute("INSERT INTO csize VALUES (1, 100), (3, 10), (4, 20), (6, 5)")
-    con.execute("CREATE TABLE pathx(path_id INTEGER, src_id INTEGER, full_path VARCHAR, cid_id INTEGER, size BIGINT)")
+    con.execute("CREATE TABLE pathx(path_id INTEGER, src_id INTEGER, full_path VARCHAR, cid_id INTEGER, size BIGINT, "
+                "last_seen TIMESTAMP DEFAULT TIMESTAMP '2026-01-01')")
     a, b = "C:" + SEP + "A" + SEP, "C:" + SEP + "B" + SEP
-    con.execute("INSERT INTO pathx VALUES (1, 1, ?, 1, 1000), (2, 1, ?, 2, 3000), (3, 1, ?, 5, 400), "
+    con.execute("INSERT INTO pathx (path_id, src_id, full_path, cid_id, size) VALUES (1, 1, ?, 1, 1000), (2, 1, ?, 2, 3000), (3, 1, ?, 5, 400), "
                 "(4, 1, ?, 4, 2000)", [a + "plain", a + "split", a + "missing", b + "c2"])
     con.execute("CREATE TABLE filev(path_id INTEGER, snap_id INTEGER, cid_id INTEGER, size BIGINT)")
     # A's plain file had an older version with its own chunk pOld.

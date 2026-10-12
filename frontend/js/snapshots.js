@@ -39,23 +39,23 @@ const snapshotsPart = {
           const items = [];
           if (n === 1) items.push(
             { label: "Show in Tree", action: () => this.browseSnapshot(d) },
-            { label: "Restore this snapshot…", action: () => this.openRestore([{ source: d.source, full_path: sourcePath(d.source), snapshot_id: d.id }], { label: "snapshot " + this.humanTime(d.start_time) }) },
+            this.wmItem({ label: "Restore this snapshot…", action: () => this.openRestore([{ source: d.source, full_path: sourcePath(d.source), snapshot_id: d.id }], { label: "snapshot " + this.humanTime(d.start_time) }) }, "restores"),
             { label: this.mountOpenLabel(), action: () => this.mountOpen(d.id, d.source, sourcePath(d.source)) },
-            ...(server ? [] : [this.engineOffReason() ? this.offMenuItem("Edit description…", this.engineOffReason()) : { label: "Edit description…", action: () => this.editDescription(d) }]),
+            ...(server || this.isDemo() ? [] : [this.wmItem({ label: "Edit description…", action: () => this.editDescription(d) }, "non_destructive")]),
             { separator: true });
           if (n === 2) items.push({ label: "Compare 2 snapshots", action: () => this.diffSelected() });
           const pinNames = [...new Set(this.snapSelected().flatMap((x) => x.pins || []))].sort();
-          items.push({ label: many("Pin") + "…", action: () => this.pinSelected(false) });
-          if (pinNames.length === 1) items.push({ label: many("Unpin"), action: () => this.pinSelected(true, pinNames[0]) });
+          items.push(this.wmItem({ label: many("Pin") + "…", action: () => this.pinSelected(false) }, "non_destructive"));
+          if (pinNames.length === 1) items.push(this.wmItem({ label: many("Unpin"), action: () => this.pinSelected(true, pinNames[0]) }, "non_destructive"));
           else if (pinNames.length > 1) items.push({ label: many("Unpin"), menu: pinNames.map((p) => ({ label: p, action: () => this.pinSelected(true, p) })) });
-          if (pinNames.length === 1) items.push({ label: "Rename pin…", action: () => this.renamePin(pinNames[0]) });
+          if (pinNames.length === 1) items.push(this.wmItem({ label: "Rename pin…", action: () => this.renamePin(pinNames[0]) }, "non_destructive"));
           else if (pinNames.length > 1) items.push({ label: "Rename pin", menu: pinNames.map((p) => ({ label: p + "…", action: () => this.renamePin(p) })) });
           if (!server) items.push(
             { separator: true },
             { label: "Select unretained snapshots", action: () => this.selectUnretained() },
             { label: "Select identical duplicates", action: () => this.selectIdenticalDuplicates() },
             { separator: true },
-            { label: many("Delete") + "…", action: () => this.planDelete() });
+            this.wmItem({ label: many("Delete") + "…", action: () => this.planDelete() }, "full"));
           items.push({ separator: true },
             { label: n === 1 ? "Copy snapshot ID" : "Copy snapshot IDs", action: () => this.copyText(this.snapSelected().map((x) => x.id).join("\n")) });
           return items;
@@ -143,6 +143,7 @@ const snapshotsPart = {
     },
 
     async editDescription(d) {
+      if (!this.wmGuard("non_destructive")) return;
       const r = await this.klConfirm({
         title: "Edit snapshot description",
         facts: [["Folder", sourcePath(d.source)], ["Snapshot", humanTime(d.start_time)]],
@@ -150,14 +151,23 @@ const snapshotsPart = {
         confirmLabel: "Save description", danger: false,
       });
       if (!r) return;
+      const send = (password) => getJson("/api/engine/snapshot-description", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repo: this.repo, snapshot_id: d.id, description: r.value || "", password }) });
       try {
-        await getJson("/api/engine/snapshot-description", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo: this.repo, snapshot_id: d.id, description: r.value || "" }) });
+        let res = await send(null);
+        if (res.need_password) {
+          // kopia's saved password for this repository wasn't found; it's used for this edit only.
+          const p = await this.klConfirm({ title: "Repository password", body: "Needed to save the description. It isn't stored.",
+            input: { label: "Repository password", type: "password" }, confirmLabel: "Save description" });
+          if (!p || !p.value) return;
+          res = await send(p.value);
+        }
         this.klNotify("Description saved");
         this.loadSnapshots();
       } catch (e) { this.klNotify(e.message, "error"); }
     },
     planDelete() {  // build a confirm plan from the currently-selected snapshot rows
+      if (!this.wmGuard("full")) return;
       const rows = this.snapSelected();
       if (!rows.length) { this.klNotify("Select one or more snapshots first.", "warn"); return; }
       const reclaimVals = rows.map((r) => r.reclaimable).filter((v) => v !== null && v !== undefined);
@@ -266,6 +276,7 @@ const snapshotsPart = {
     // ---- Snapshots: pin / unpin / diff ----
     // A pin is a name kopia keeps on the snapshot; retention never removes a pinned snapshot.
     async pinSelected(remove, name = "do-not-delete") {
+      if (!this.wmGuard("non_destructive")) return;
       const rows = this.snapSelected();
       if (!rows.length) { this.klNotify("Select one or more snapshots first.", "warn"); return; }
       const n = rows.length;
@@ -284,6 +295,7 @@ const snapshotsPart = {
       await this.startJob("snapshot_pin", { snapshot_ids: rows.map((x) => x.id), remove, pin_name: pin }, `${remove ? "unpin" : "pin"} ${countOf(n, "snapshot")}`);
     },
     async renamePin(oldName) {
+      if (!this.wmGuard("non_destructive")) return;
       const rows = this.snapSelected().filter((x) => (x.pins || []).includes(oldName));
       if (!rows.length) return;
       const r = await this.klConfirm({

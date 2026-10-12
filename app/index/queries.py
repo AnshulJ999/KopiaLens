@@ -98,10 +98,10 @@ _HOST_SQL = "lower(regexp_extract(s.source, '^[^@]*@([^:]*)', 1))"
 def _per_file(where_sql: str, extra: str = "", joins: str = "") -> str:
     """SQL: the ``pathx`` rows matching ``where_sql`` folded to one row per FILE (). A path
     held by nested sources on one computer is one file; ``sources`` lists every source holding it
-    and ``source`` is the first of them. Sizes are the largest any holder reports."""
+    and ``source`` is the first of them. Sizes are the newest version's (the holder that saw it last)."""
     return (f"SELECT {_HOST_SQL} AS host, p.full_path, min(s.source) AS source, "
-            f"list_sort(list(DISTINCT s.source)) AS sources, max(p.size) AS size, "
-            f"max(p.physical) AS physical, bool_or(p.in_latest) AS in_latest{extra} "
+            f"list_sort(list(DISTINCT s.source)) AS sources, arg_max(p.size, coalesce(p.last_seen, TIMESTAMP '1970-01-01')) AS size, "
+            f"arg_max(p.physical, coalesce(p.last_seen, TIMESTAMP '1970-01-01')) AS physical, bool_or(p.in_latest) AS in_latest{extra} "
             f"FROM pathx p JOIN src s ON s.src_id = p.src_id {joins} WHERE {where_sql} "
             f"GROUP BY {_HOST_SQL}, p.full_path")
 

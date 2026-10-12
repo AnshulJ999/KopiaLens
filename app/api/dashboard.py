@@ -214,6 +214,8 @@ def index_freshness() -> dict:
 def post_settings(payload: dict) -> dict:
     kl = payload.pop("kopialens", None)
     bz = payload.pop("backblaze", None)
+    if isinstance(kl, dict):
+        kl.pop("write_mode", None)  # changed only through /write-mode (raising it needs the password)
 
     def _apply(settings: dict) -> None:
         settings.update(payload)

@@ -3,6 +3,7 @@
 const prunePart = {
 
     async openPrune(fullPath, source = null) {
+      if (!this.wmGuard("full")) return;
       if (!fullPath) return;
       const seq = ++this._pruneSeq;
       ++this._prunePriceSeq;

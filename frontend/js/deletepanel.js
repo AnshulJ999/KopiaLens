@@ -4,6 +4,7 @@ const deletePart = {
 
     // files: [{source, full_path}]; opts: {method, by, every, copies, flow}
     openDeletePanel(files, opts = {}) {
+      if (!this.wmGuard("full")) return;
       const list = (files || []).filter((f) => f && f.source && f.full_path);
       if (!list.length) { this.klNotify("Select one or more files first.", "warn"); return; }
       this.delPanel = {

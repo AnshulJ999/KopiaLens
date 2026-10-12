@@ -15,7 +15,7 @@
           <button x-show="repoKind !== 'server'" @click="openSimulateFromSnapshots()" class="kl-btn" title="Try a retention policy and see what it would keep and free">Simulate retention…</button>
           <span x-show="snapStaleAnalysis" class="pill warn" title="Churn and reclaimable numbers are from the previous index run. Analyze updates them.">Numbers from the last run</span>
           <span class="grow"></span>
-          <button x-show="repoKind !== 'server'" @click="planDelete()" :disabled="!snapSelCount" class="kl-btn dangerline"
+          <button x-show="repoKind !== 'server'" @click="planDelete()" :disabled="!snapSelCount || !!wmOff('full')" :title="wmOff('full')" class="kl-btn dangerline"
                   x-text="snapSelCount > 1 ? 'Delete ' + snapSelCount + ' snapshots…' : 'Delete snapshot…'" title="Delete the selected snapshots"></button>
           <span class="kl-help" tabindex="0"
                 :title="repoKind === 'server' ? 'Double-click a snapshot to browse its folders.' : 'Churn is the new data a snapshot added. Reclaimable is the space deleting it gives back. With all sources, the list is sorted by reclaimable space: Analyze fills it in. Select rows, then right-click for more.'">?</span>

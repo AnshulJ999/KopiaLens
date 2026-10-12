@@ -58,13 +58,13 @@ const dashboardPart = {
               { label: "Show in Tree", action: () => { this.selectedSource = src; this.active = "tree"; this.openTree(); } },
               { label: "Simulate this source", action: () => this.simulateSource(src) },
               { separator: true },
-              { label: "Snapshot now…", action: () => this.snapshotNowAny(src) },
+              this.wmItem({ label: "Snapshot now…", action: () => this.snapshotNowAny(src) }, "non_destructive"),
               ...this.engineSourceMenu(src),
               { label: "Open policy", action: () => this.openSourcePolicy(src) },
               { separator: true },
               { label: "Copy source", action: () => this.copyText(src) },
               { separator: true },
-              { label: "Delete this source…", action: () => this.openDeleteSource(src) },
+              this.wmItem({ label: "Delete this source…", action: () => this.openDeleteSource(src) }, "full"),
             ];
           },
         });

@@ -14,7 +14,7 @@
           <nav class="w-36 sm:w-44 shrink-0 overflow-y-auto border-r border-bd p-2 text-sm">
             <template x-for="g in [['App', [['general','General'],['appearance','Appearance'],['desktop','Desktop app'],['notifications','Notifications']]],
                                    ['Data', [['repositories','Repositories'],['indexing','Indexing'],['backblaze','Backblaze']]],
-                                   ['Access', [['account','Account'],['encryption','Encryption'],['remote','Remote access']]],
+                                   ['Access', [['account','Account'],['encryption','Encryption'],['remote','Remote access'],['writemode','Write mode']]],
                                    ['More', [['licence','Licence'],['updates','Updates'],['backups','Settings backups'],['advanced','Advanced'],['about','About']]]]" :key="g[0]">
               <div class="mb-2">
                 <div class="px-2 pt-1 pb-0.5 text-[0.6875rem] text-faint" x-text="g[0]"></div>
@@ -112,6 +112,7 @@
 {% include "partials/repos.html" %}
 {% include "partials/account.html" %}
 {% include "partials/remoteaccess.html" %}
+{% include "partials/writemode.html" %}
 {% include "partials/appconfig.html" %}
 {% include "partials/updates.html" %}
 {% include "partials/licence.html" %}

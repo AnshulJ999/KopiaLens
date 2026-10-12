@@ -484,6 +484,7 @@ const detailPart = {
       this.buildRemovePlan();
     },
     openRemoveFolder(row) {  // delete a Tree folder/file, honoring the active Tree filters
+      if (!this.wmGuard("full")) return;
       this._removeBase = {
         // All-sources mode is a scope marker, not a source: with no source the plan covers every
         // backup holding the folder.
@@ -495,6 +496,7 @@ const detailPart = {
       this.buildRemovePlan();
     },
     openRemoveFolderPath(prefix, source = null) {
+      if (!this.wmGuard("full")) return;
       // Cross-source folder delete (By-folder view, Churn, the folder panel). No tree filters, and
       // no source scope unless one is given, so every source holding the folder is covered.
       this._removeBase = { repo: this.repo, source, prefix, deleted_only: false, over_gb: 0, ext: null };
@@ -635,7 +637,7 @@ const detailPart = {
       const p = this.removePlan;
       if (!p) return "";
       const b = p.breakdown || {};
-      const total = this.removeFileTotal();
+      const total = Number(p.file_count || 0);   // the list holds the plan's own files; copies have their own section
       if (p.listView === "folders") return (b.folder_count || 0) > (b.folders || []).length ? `biggest ${(b.folders || []).length} of ${Number(b.folder_count).toLocaleString(NUM_LOCALE)} folders` : countOf((b.folders || []).length, "folder");
       if (p.listView === "types") return countOf((b.types || []).length, "file type");
       const shown = Math.min(p.shown || 100, (p.preview || []).length);

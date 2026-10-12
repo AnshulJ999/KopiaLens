@@ -35,7 +35,7 @@ def scratch(monkeypatch):
     rows.append((8, 2, "G:" + SEP + "other", 1, 1, 2))
     con.execute("CREATE TABLE pathx(path_id INTEGER, src_id INTEGER, full_path VARCHAR, "
                 "size BIGINT, physical BIGINT, cid_id INTEGER, in_latest BOOLEAN, "
-                "ext VARCHAR, last_seen VARCHAR, first_seen VARCHAR, versions INTEGER)")
+                "ext VARCHAR, last_seen TIMESTAMP, first_seen TIMESTAMP, versions INTEGER)")
     con.executemany("INSERT INTO pathx VALUES (?, ?, ?, ?, ?, ?, true, '', '2026-09-13', '2026-09-13', 1)",
                     rows)
     # folder scopes resolve through dir/anc, so the fixture carries them like a generation.

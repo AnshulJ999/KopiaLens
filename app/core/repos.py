@@ -445,6 +445,20 @@ def set_engine_fields(repo: str, fields: dict) -> dict:
     return rec
 
 
+def set_write_mode(repo: str, mode: str | None) -> dict:
+    """The repository's write-mode override (core/writemode); None follows the app-wide mode."""
+    rec = next((r for r in all_records() if str(r.get("id")) == str(repo)), None)
+    if rec is None:
+        raise ValueError(f"unknown repo: {repo}")
+    if mode:
+        rec["write_mode"] = mode
+    else:
+        rec.pop("write_mode", None)
+    config.save_records(config.RECORDS, strict=True)
+    config.reload_repos()
+    return rec
+
+
 def remove_record(repo: str) -> dict:
     """Drop the record from the store. The caller deletes the app's derived files (data_paths);
     the kopia repository itself is never touched."""

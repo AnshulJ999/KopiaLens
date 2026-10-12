@@ -129,6 +129,7 @@ const tasksPart = {
       .map(([name, c]) => ({ name, level: c.level || "", value: c.units === "bytes" ? fmtBytes(c.value) : Number(c.value).toLocaleString(NUM_LOCALE) }));
   },
   async stopTask() {
+    if (!this.wmGuard("non_destructive")) return;
     const t = this.taskSel;
     if (!t) return;
     const ok = await this.klConfirm({

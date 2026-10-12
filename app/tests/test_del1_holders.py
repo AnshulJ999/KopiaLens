@@ -78,9 +78,9 @@ def test_filename_matching_is_case_sensitive_like_kopia(monkeypatch):
     con = duckdb.connect()
     con.execute(f"CREATE TABLE src AS SELECT * FROM (VALUES (1::SMALLINT, '{src}')) t(src_id, source)")
     con.execute(f"CREATE TABLE pathx AS SELECT * FROM (VALUES "
-                f"(1::SMALLINT, 'config.json', 'G:{SEP}a{SEP}config.json', 1::UBIGINT, 10::UBIGINT, true), "
-                f"(1, 'Config.json', 'G:{SEP}b{SEP}Config.json', 2::UBIGINT, 20::UBIGINT, true)) "
-                f"t(src_id, name, full_path, size, physical, in_latest)")
+                f"(1::SMALLINT, 'config.json', 'G:{SEP}a{SEP}config.json', 1::UBIGINT, 10::UBIGINT, true, TIMESTAMP '2026-01-01'), "
+                f"(1, 'Config.json', 'G:{SEP}b{SEP}Config.json', 2::UBIGINT, 20::UBIGINT, true, TIMESTAMP '2026-01-01')) "
+                f"t(src_id, name, full_path, size, physical, in_latest, last_seen)")
     monkeypatch.setattr(queries, "read_cursor", lambda repo: con.cursor())
     out = queries.paths_named("3", [src], ["config.json"])
     assert out["total"] == 1 and [r["full_path"] for r in out["rows"]] == [f"G:{SEP}a{SEP}config.json"]

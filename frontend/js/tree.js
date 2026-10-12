@@ -192,18 +192,18 @@ const treePart = {
            { label: "Show in Search", action: () => { this.query = d.name; this.searchSource = ""; this.active = "search"; this.loadSearch(); } }];
       items.push(
         { separator: true },
-        { label: "Restore…", action: () => this.openRestore([this.selectedSource === "*ALL*"
-            ? { source: null, full_path: d.path } : { source: this.selectedSource, full_path: d.path, snapshot_id: snap }]) },
+        this.wmItem({ label: "Restore…", action: () => this.openRestore([this.selectedSource === "*ALL*"
+            ? { source: null, full_path: d.path } : { source: this.selectedSource, full_path: d.path, snapshot_id: snap }]) }, "restores"),
         { label: "Download", action: () => withSource((s) => this.downloadItem({ source: s, full_path: d.path, snapshot_id: snap })) },
         { label: this.mountOpenLabel(), action: () => withSource((s) => this.mountOpen(this.selectedSnapshot, s, d.path)) },
-        { label: "Exclude…", action: () => this.treeExcludeRow(d, "exclude") },
-        { label: "Prune versions…", action: () => (folder ? this.openPrune(d.path, this.selectedSource === "*ALL*" ? null : this.selectedSource)
-                                                          : withSource((s) => this.openPrune(d.path, s))) },
+        this.wmItem({ label: "Exclude…", action: () => this.treeExcludeRow(d, "exclude") }, "non_destructive"),
+        this.wmItem({ label: "Prune versions…", action: () => (folder ? this.openPrune(d.path, this.selectedSource === "*ALL*" ? null : this.selectedSource)
+                                                          : withSource((s) => this.openPrune(d.path, s))) }, "full"),
         { separator: true },
         // Files go to the Delete panel, folders to the folder plan (which honours the Tree filters).
         { label: (folder ? "Delete folder from backups…" : "Delete from backups…") + this.proMenuTag("remove"),
           action: () => (folder ? this.openRemoveFolder(d) : withSource((s) => this.openDeletePanel([{ source: s, full_path: d.path }]))) },
-        { label: "Exclude & delete…" + this.proMenuTag("exclude_delete"), action: () => this.treeExcludeRow(d, "delete") },
+        this.wmItem({ label: "Exclude & delete…" + this.proMenuTag("exclude_delete"), action: () => this.treeExcludeRow(d, "delete") }, "full"),
         { separator: true },
         { label: "Copy path", action: () => this.copyText(d.path) });
       return items;

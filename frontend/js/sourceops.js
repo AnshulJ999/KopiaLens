@@ -3,6 +3,7 @@
 const sourceOpsPart = {
   // ---- New snapshot ----
   openNewSnap(path) {
+    if (!this.wmGuard("non_destructive")) return;
     const keep = this.newSnap && !path ? this.newSnap.path : "";
     this.newSnap = { path: path || keep, check: null, checking: false, error: "", est: null, description: "", busy: false };
     if (this.newSnap.path) this.newSnapCheck();
@@ -91,6 +92,7 @@ const sourceOpsPart = {
 
   // ---- Delete a whole source ----
   async openDeleteSource(source) {
+    if (!this.wmGuard("full")) return;
     this.srcDel = { source, info: null, policy: false, error: "", busy: false };
     try {
       const d = await getJson(`/api/newsnap/source?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(source)}`);

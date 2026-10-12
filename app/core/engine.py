@@ -333,7 +333,9 @@ def want(repo: str) -> tuple[bool, str]:
         return False, "off"
     if pause_state(repo)["on"]:
         return False, "paused"
-    from . import coexist
+    from . import coexist, writemode
+    if not writemode.backups_allowed(repo):
+        return False, "write_mode"
     if coexist.repo_view(repo)["conflict"]:
         return False, "blocked"
     f = _fail.get(repo)
@@ -576,11 +578,14 @@ def cancel_task(repo: str, task_id: str) -> bool:
     return True
 
 
-def edit_description(repo: str, snapshot_id: str, description: str) -> bool:
-    """Set one snapshot's description. Only kopia's server can do this; the snapshot gets a new id."""
+def edit_description(repo: str, snapshot_id: str, description: str, password: str | None = None) -> bool:
+    """Set one snapshot's description. Only kopia's server can do this; the snapshot gets a new id.
+    Without KopiaLens's own server, a temporary one does it (core/descedit; may raise PasswordNeeded)."""
     srv = running(repo)
     if srv is None:
-        return False
+        from . import descedit
+        descedit.edit(repo, snapshot_id, description, password)
+        return True
     r = srv.ui.post("/api/v1/snapshots/edit", json={"snapshots": [snapshot_id], "description": description})
     r.raise_for_status()
     return True

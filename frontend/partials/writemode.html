@@ -1,0 +1,35 @@
+            <section x-show="settingsTab==='writemode'" x-effect="settingsTab==='writemode' && wmLoad()" class="space-y-4" data-testid="settings-writemode">
+              <template x-if="wm">
+                <div class="space-y-4">
+                  <div>
+                    <div class="flex items-center justify-between gap-3"><span>All repositories</span>
+                      <select :value="wm.global" @change="wmSet(null, $event.target.value)" class="fld border border-bd bg-surface2 w-48" data-testid="wm-global">
+                        <template x-for="m in wm.modes" :key="m"><option :value="m" x-text="wm.labels[m]" :selected="m === wm.global"></option></template>
+                      </select></div>
+                  </div>
+                  <table class="w-full text-xs">
+                    <tbody>
+                      <tr><td class="py-0.5 pr-3 font-medium whitespace-nowrap">Read-only</td><td class="text-muted">Browse, search, mount and download</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-medium whitespace-nowrap">Restores allowed</td><td class="text-muted">Also restore to disk</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-medium whitespace-nowrap">Non-destructive</td><td class="text-muted">Also snapshots, pins, policies, descriptions and maintenance</td></tr>
+                      <tr><td class="py-0.5 pr-3 font-medium whitespace-nowrap">Full Access</td><td class="text-muted">Also delete files, snapshots and sources</td></tr>
+                    </tbody>
+                  </table>
+                  <p class="text-[0.6875rem] text-muted">Read-only and Restores allowed stop KopiaLens's scheduled backups for that repository.</p>
+                  <div class="space-y-2" x-show="Object.keys(wm.repos).length">
+                    <div class="font-medium">Per repository</div>
+                    <template x-for="r in repos.filter((x) => wm.repos[x.id])" :key="r.id">
+                      <div class="flex items-center justify-between gap-3">
+                        <span class="truncate" x-text="r.name"></span>
+                        <select @change="wmSet(r.id, $event.target.value || null)" class="fld border border-bd bg-surface2 w-48" :data-testid="'wm-repo-' + r.id">
+                          <option value="" :selected="!wm.repos[r.id].override" x-text="'Same as all (' + wm.labels[wm.global] + ')'"></option>
+                          <template x-for="m in wm.modes" :key="m"><option :value="m" x-text="wm.labels[m]" :selected="m === wm.repos[r.id].override"></option></template>
+                        </select>
+                      </div>
+                    </template>
+                  </div>
+                  <p class="text-[0.6875rem] text-muted" x-show="!wm.password">Set a KopiaLens password to require it for Full Access.</p>
+                  <p class="text-[0.6875rem] text-muted" x-show="wm.password">Switching to Full Access asks for your KopiaLens password.</p>
+                </div>
+              </template>
+            </section>

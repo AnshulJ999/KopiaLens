@@ -525,6 +525,16 @@ def _objs_sql(sel: str, all_versions: bool) -> str:
             f"JOIN pathx p ON p.path_id = x.path_id WHERE p.cid_id IS NOT NULL")
 
 
+def _newest_per_file_sql(sel: str) -> str:
+    """Each FILE's newest object (the holder that saw it last), for Physical of the newest
+    versions. Nested sources snapshotted at different times each hold a "newest" object; only
+    the latest one is the file's newest version."""
+    return (f"SELECT DISTINCT src_id, cid_id FROM (SELECT x.src_id, p.cid_id, row_number() OVER ("
+            f"PARTITION BY {_HOST_SQL}, p.full_path ORDER BY p.last_seen DESC, p.path_id DESC) AS rn "
+            f"FROM ({sel}) x JOIN pathx p ON p.path_id = x.path_id JOIN src s ON s.src_id = p.src_id) "
+            f"WHERE rn = 1 AND cid_id IS NOT NULL")
+
+
 def _register_files(cur, files) -> str | None:
     """Register (source, full_path) pairs; returns SQL yielding their ``src_id, path_id`` (RAW-EXACT,
     one hash join at any size - trap 29). Unregister with ``_unregister``."""
@@ -656,9 +666,10 @@ def folder_detail(repo: str, source: str | None, prefix: str, all_versions: bool
                 f"GROUP BY {_HOST_SQL}, p.full_path)",
                 params).fetchone() or (0, 0)
             sel = f"SELECT p.src_id, p.path_id FROM pathx p WHERE {where}"
-            newest = _price(cur, _objs_sql(sel, False), params) if files else \
-                {"objects": 0, "unknown": 0, "physical": 0, "freeable": 0}
-            priced = (_price(cur, _objs_sql(sel, True), params) if all_versions and files else newest)
+            zero = {"objects": 0, "unknown": 0, "physical": 0, "freeable": 0}
+            newest = _price(cur, _newest_per_file_sql(sel), params) if files else zero
+            # A latest-only delete removes every holder's newest object, so it is priced per holder.
+            priced = (_price(cur, _objs_sql(sel, all_versions), params) if files else zero)
     finally:
         cur.close()
     if priced["unknown"]:

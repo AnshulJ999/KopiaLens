@@ -5,11 +5,14 @@ with the reason; anything else fails here and goes to him first."""
 
 from __future__ import annotations
 
+import json
 import re
 import urllib.error
 import urllib.parse
 
-_ID = re.compile(r"(?<![0-9A-Za-z])[A-Za-z]?[0-9a-f]{32,}(?![0-9A-Za-z])")
+from . import _harness as h
+
+_TOKEN = re.compile(r"[0-9A-Za-z]{16,}")
 _CMD = re.compile(r"snapshot fix remove-files|--object-id|snapshot delete", re.I)
 
 # (route, key path) -> why a Free install may see it. Filled only from explicit rulings.
@@ -19,14 +22,24 @@ ALLOWED: dict[tuple[str, str], str] = {}
 _SKIP = {"/api/restore/download", "/api/search/export", "/api/logs/download", "/api/diagnostics/bundle"}
 
 
-def _scan(value, path: str, out: list[tuple[str, str]]) -> None:
+def _repo_ids(fixture_repo: dict, kopia: str) -> set[str]:
+    """Every snapshot id and content id in the fixture repository (an object id is a content id,
+    or ``I`` + one for a split file)."""
+    run = lambda *a: h.kopia_run(kopia, fixture_repo["env"], fixture_repo["config"], *a)  # noqa: E731
+    ids = {s["id"] for s in json.loads(run("snapshot", "list", "--all", "--json"))}
+    ids |= {line.split()[0] for line in run("content", "list").splitlines() if line.strip()}
+    return ids
+
+
+def _scan(value, path: str, ids: set[str], out: list[tuple[str, str]]) -> None:
     if isinstance(value, dict):
         for k, v in value.items():
-            _scan(v, f"{path}.{k}" if path else str(k), out)
+            _scan(v, f"{path}.{k}" if path else str(k), ids, out)
     elif isinstance(value, list):
         for v in value:
-            _scan(v, path + "[]", out)
-    elif isinstance(value, str) and (_ID.search(value) or _CMD.search(value)):
+            _scan(v, path + "[]", ids, out)
+    elif isinstance(value, str) and (_CMD.search(value) or any(
+            t in ids or t[1:] in ids for t in _TOKEN.findall(value))):
         out.append((path, value[:80]))
 
 
@@ -48,8 +61,10 @@ def _call(srv, method: str, path: str, body: dict | None = None):
         return None
 
 
-def test_free_replies_carry_no_delete_ingredients(app_server):
+def test_free_replies_carry_no_delete_ingredients(app_server, fixture_repo, kopia):
     srv = app_server
+    ids = _repo_ids(fixture_repo, kopia)
+    assert len(ids) > 10, "could not list the fixture repository's ids"
     repo = srv.get("/api/repos")["repos"][0]["id"]
     row = srv.get(f"/api/search?repo={repo}&q=needle")["results"][0]
     sep = "\\" if "\\" in row["full_path"] else "/"
@@ -74,7 +89,7 @@ def test_free_replies_carry_no_delete_ingredients(app_server):
             continue
         called += 1
         hits: list[tuple[str, str]] = []
-        _scan(reply, "", hits)
+        _scan(reply, "", ids, hits)
         found += [(route, k, v) for k, v in hits]
 
     item = {"source": row["source"], "full_path": row["full_path"]}
@@ -99,7 +114,7 @@ def test_free_replies_carry_no_delete_ingredients(app_server):
             continue
         called += 1
         hits = []
-        _scan(reply, "", hits)
+        _scan(reply, "", ids, hits)
         found += [(route, k, v) for k, v in hits]
 
     assert called > 40, f"only {called} routes answered - the sweep is not reaching the app"

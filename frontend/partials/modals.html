@@ -287,8 +287,8 @@
                     </div>
                     <div class="flex items-center gap-2 mt-1">
                       <button class="kl-btn quiet" style="height:22px" x-show="(removePlan.shown || 100) < (removePlan.preview || []).length" @click="removePlan.shown = (removePlan.shown || 100) + 100">Show 100 more</button>
-                      <span class="kl-note" x-show="(removePlan.shown || 100) >= (removePlan.preview || []).length && removeFileTotal() > (removePlan.preview || []).length"
-                            x-text="'The biggest ' + Number((removePlan.preview || []).length).toLocaleString(NUM_LOCALE) + ' are listed here. Download the list for all ' + countOf(removeFileTotal(), 'file') + '.'"></span>
+                      <span class="kl-note" x-show="(removePlan.shown || 100) >= (removePlan.preview || []).length && Number(removePlan.file_count || 0) > (removePlan.preview || []).length"
+                            x-text="'The biggest ' + Number((removePlan.preview || []).length).toLocaleString(NUM_LOCALE) + ' are listed here. Download the list for all ' + countOf(Number(removePlan.file_count || 0), 'file') + '.'"></span>
                     </div>
                   </div>
                 </template>

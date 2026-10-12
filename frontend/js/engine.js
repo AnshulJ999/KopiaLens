@@ -47,6 +47,7 @@ const enginePart = {
       if (e.state === "paused") return "Backups: paused";
       if (e.state === "blocked") return `Backups: ${this.engineAppName(e.engine)} is running them`;
       if (e.state === "failed") return "Backups: stopped by an error";
+      if (e.state === "write_mode") return `Backups: off in ${this.wmLabel(this.wmMode(repo))} mode`;
       return "Backups: KopiaLens";
     }
     if (e.engine === "none") return "Backups: nothing runs them";
@@ -56,7 +57,7 @@ const enginePart = {
     const e = this.engineFor(repo);
     if (!e) return "";
     if (e.choice === "kopialens" && ["blocked", "failed"].includes(e.state)) return "border-danger text-danger";
-    if (e.state === "paused" || (e.choice !== "kopialens" && e.engine === "none")) return "border-warn-bd text-warn";
+    if (e.state === "paused" || e.state === "write_mode" || (e.choice !== "kopialens" && e.engine === "none")) return "border-warn-bd text-warn";
     return "";
   },
   // Policy editor note: who makes the schedule actually run.
@@ -131,6 +132,7 @@ const enginePart = {
     return true;
   },
   async engineSave() {
+    if (!this.wmGuard("non_destructive", this.engineDlg && this.engineDlg.repo)) return;
     const g = this.engineDlg;
     if (!this.engineCanSave()) return;
     const v = g.data.view;
@@ -161,6 +163,7 @@ const enginePart = {
     g.busy = false;
   },
   async engineFixIdentity() {
+    if (!this.wmGuard("non_destructive")) return;
     const g = this.engineDlg;
     const idc = g && g.data && g.data.identity;
     if (!idc) return;
@@ -183,6 +186,7 @@ const enginePart = {
   // One history again: move the snapshots under the other spelling into the kept one (kopia's
   // move-history). Policies under the old name stay where they are.
   async engineMergeHistory(dry) {
+    if (!dry && !this.wmGuard("non_destructive", this.engineDlg && this.engineDlg.repo)) return;
     const g = this.engineDlg;
     const idc = g && g.data && g.data.identity;
     if (!idc || !idc.split) return;
@@ -311,6 +315,7 @@ const enginePart = {
     return timeCell(next) + (overdue && (this.engineRuns() || row.next_snapshot) ? ' <span class="pill" style="background:var(--warn-bg);color:var(--warn)" title="This backup didn\'t start at its scheduled time">overdue</span>' : "");
   },
   async engineSnapshotNow(source) {
+    if (!this.wmGuard("non_destructive")) return;
     const ok = await this.klConfirm({
       title: "Back up this folder now?",
       facts: [["Folder", sourcePath(source)], ["Repository", this.repoName(this.repo)]],
@@ -325,6 +330,7 @@ const enginePart = {
     } catch (e) { this.klNotify(e.message, "error"); }
   },
   async engineCancel(source) {
+    if (!this.wmGuard("non_destructive")) return;
     const ok = await this.klConfirm({
       title: "Stop this backup?", facts: [["Folder", sourcePath(source)]],
       confirmLabel: "Stop backup", danger: true,

@@ -46,6 +46,9 @@
             <span x-text="j.total ? Math.round((j.done / j.total) * 100) + '%' : ''"></span>
           </button>
         </template>
+        <button x-show="repoKind === 'kopia' && wm && wmMode() !== 'full'" x-cloak @click="await openSettings(); settingsTab = 'writemode'"
+                class="h-8 rounded border border-warn-bd bg-warn-bg text-warn px-3" data-testid="wm-chip"
+                title="Write mode for this repository. Click to change it." x-text="wm ? wmLabel(wmMode()) : ''"></button>
         <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false" x-show="mounts.length" x-cloak>
           <button @click="open = !open; if (open) loadMounts()" class="h-8 rounded border border-bd bg-surface px-3 flex items-center gap-1.5"
                   :aria-expanded="open" data-testid="mount-chip" title="Mounted snapshots">

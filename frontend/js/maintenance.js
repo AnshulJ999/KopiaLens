@@ -2,6 +2,7 @@
 const maintenancePart = {
 
     async openMaint(repo) {
+      if (!this.wmGuard("non_destructive", repo)) return;
       const id = repo || this.repo;
       const seq = ++this._maintSeq;
       this.maint = { repo: id, full: true, safety: "full", info: null, loading: true, error: "" };

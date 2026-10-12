@@ -4,6 +4,7 @@ const statsPart = {
 
     // ---------- Stats ----------
     async statsEditDescription() {
+      if (!this.wmGuard("non_destructive")) return;
       const cur = (this.statsData && this.statsData.parsed && this.statsData.parsed.details || {}).description || "";
       const r = await this.klConfirm({ title: "Repository description", input: { label: "Description", value: cur, placeholder: "Main backups" },
         confirmLabel: "Save", danger: false });

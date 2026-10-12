@@ -319,6 +319,7 @@ const policyEditPart = {
     polActionsOff() { return !!(this.polMeta && this.polMeta.client && this.polMeta.client.host && !this.polMeta.client.enable_actions); },
     polActionsOn() { return !!(this.polMeta && this.polMeta.client && this.polMeta.client.enable_actions); },
     async polSetScripts(enable) {
+      if (!this.wmGuard("non_destructive")) return;
       const ok = await this.klConfirm({
         title: enable ? "Turn on snapshot scripts for this computer?" : "Turn off snapshot scripts for this computer?",
         facts: [["Repository", this.repoName(this.repo)], ["Computer", this.myOwner() || "This computer"]],

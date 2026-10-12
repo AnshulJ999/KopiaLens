@@ -91,9 +91,9 @@ const churnPart = {
         menu = [
           { label: "Details", action: (_e, row) => this.openFolderPanel(row.getData().folder) },
           { label: "Show in Search", action: (_e, row) => { this.query = row.getData().folder; this.searchSource = ""; this.active = "search"; this.loadSearch(); } },
-          { label: "Exclude & delete…" + this.proMenuTag("exclude_delete"), action: (_e, row) => this.openExclude({ kind: "folder", path: row.getData().folder }, "delete") },
+          this.wmItem({ label: "Exclude & delete…" + this.proMenuTag("exclude_delete"), action: (_e, row) => this.openExclude({ kind: "folder", path: row.getData().folder }, "delete") }, "full"),
           { label: "Copy path", action: (_e, row) => this.copyText(row.getData().folder) },
-          { label: "Delete folder from backups…" + this.proMenuTag("remove"), action: (_e, row) => this.openRemoveFolderPath(row.getData().folder) },
+          this.wmItem({ label: "Delete folder from backups…" + this.proMenuTag("remove"), action: (_e, row) => this.openRemoveFolderPath(row.getData().folder) }, "full"),
         ];
       } else {
         rows = (d.by_ext || []).map((r) => enrich({ ...r, ext: r.ext || "(no extension)" }));
