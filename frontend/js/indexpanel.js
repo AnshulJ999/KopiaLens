@@ -71,11 +71,29 @@ const indexPanelPart = {
       } else if (sync && sync.read != null) {
         const est = p.estimate && !p.estimate.exact && p.estimate.folders;
         bits.push(countOf(sync.read, "folder") + " read" + (est ? ` of about ${fmtNum(est[0])}–${fmtNum(est[1])}` : ""));
+        const pace = this.indexPace(sync, est);
+        if (pace) bits.push(pace);
       }
       const seed = p.seed || null;
       if (seed && seed.total) bits.push(`seed ${Number(seed.done || 0).toLocaleString(NUM_LOCALE)}/${Number(seed.total).toLocaleString(NUM_LOCALE)}`);
       if (p.current_source) bits.push(sourcePath(p.current_source));
       return bits.join(" · ");
+    },
+
+    // Folders per minute over this run, and a time-left range only when there is an estimate
+    // the read has not passed yet.
+    indexPace(sync, est) {
+      const secs = Number(sync.at) - Number(sync.since);
+      const done = Number(sync.read) - Number(sync.read0 || 0);
+      if (!sync.since || !(secs >= 60) || !(done > 0)) return "";
+      const perMin = done / (secs / 60);
+      let text = `${fmtNum(Math.round(perMin))} folders a minute`;
+      if (est && Number(sync.read) < est[1]) {
+        const lo = Math.max(0, est[0] - sync.read) / perMin * 60;
+        const hi = (est[1] - sync.read) / perMin * 60;
+        text += lo < 60 ? `, under ${fmtDur(Math.max(hi, 60))} left` : `, about ${fmtDur(lo)}–${fmtDur(hi)} left`;
+      }
+      return text;
     },
 
     // When kopia last answered during the folder read; a long silence is shown as one.

@@ -58,7 +58,7 @@ def test_back_up_restore_pause_and_recover_a_damaged_file(fresh_server, fixture_
     expect(notice).to_be_visible()
     page.get_by_role("button", name="Dismiss").click()
     expect(notice).to_be_hidden()
-    assert srv.get("/api/config-backups")["notices"] == []
+    assert h.wait_until(lambda: srv.get("/api/config-backups")["notices"] == [])
 
 
 def test_desktop_app_tray_settings_save(fresh_server, fixture_repo, open_page):

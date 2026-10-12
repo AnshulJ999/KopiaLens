@@ -25,6 +25,7 @@ Every invariant of the old walker is carried, and they are the reason this file 
 from __future__ import annotations
 
 import contextlib
+import os
 import time
 
 from ..core.applog import get_logger
@@ -431,7 +432,8 @@ class StopRequested(Exception):
     """A stop was asked for: the read so far is saved and the next run continues from it."""
 
 
-SAVE_EVERY = 900                 # seconds between save points inside a level
+# Seconds between save points inside a level (the variable exists for resume tests only).
+SAVE_EVERY = int(os.environ.get("KOPIALENS_INDEX_SAVE_EVERY") or 900)
 CHUNK = BATCH * 25               # folders read between flushes inside a level
 
 # The running sync's stop check and progress hook, for the kopia-reading threads.
@@ -535,6 +537,11 @@ def sync(con, repo: str, roots: list[str], *, known_table: str | None = None,
 
     def stopping() -> bool:
         return bool(should_stop and should_stop())
+
+    if progress:
+        # This run's start, so the panel can show speed even after a resume.
+        _report, _since, _read0 = progress, time.time(), result.fetched
+        progress = lambda **kw: _report(since=_since, read0=_read0, **kw)  # noqa: E731
 
     def wait_tick(**kw) -> None:
         if progress:

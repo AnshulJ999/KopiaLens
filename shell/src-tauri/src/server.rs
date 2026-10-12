@@ -316,16 +316,53 @@ impl Server {
         out
     }
 
-    /// Ends running index workers on quit, confirmed by command line. The next start records the
-    /// run as interrupted and retries it.
+    /// Ends running index workers on quit, confirmed by command line. A worker reading folders is
+    /// first asked to save and stop (the same flag the app's Stop writes) and gets up to a minute;
+    /// anything still running after that is killed. The next start records the run as interrupted.
     pub fn stop_workers(&self) {
+        const GRACE: Duration = Duration::from_secs(60);
         let sys = Self::processes();
+        let mut asked: Vec<u32> = vec![];
         for w in self.workers() {
             let Some(pid) = w.get("pid").and_then(Value::as_u64) else { continue };
-            if let Some(p) = sys.process(Pid::from_u32(pid as u32)) {
-                let cmd = Self::cmdline(p);
-                if cmd.contains("app.index.worker") || cmd.contains("app.backblaze.worker") {
-                    self.log(&format!("stopping the index worker pid {pid} on quit"));
+            let Some(p) = sys.process(Pid::from_u32(pid as u32)) else { continue };
+            let cmd = Self::cmdline(p);
+            let reading = cmd.contains("app.index.worker")
+                && w.get("stage").and_then(Value::as_str) == Some("index");
+            let repo = match w.get("repo") {
+                Some(Value::String(s)) => Some(s.clone()),
+                Some(Value::Number(n)) => Some(n.to_string()),
+                _ => None,
+            };
+            if let (true, Some(repo)) = (reading, repo) {
+                let flag = self.data_dir.join(format!("index_stop_repo{repo}.flag"));
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+                if std::fs::write(&flag, now.to_string()).is_ok() {
+                    self.log(&format!("asking the index worker pid {pid} to save and stop on quit"));
+                    asked.push(pid as u32);
+                    continue;
+                }
+            }
+            if cmd.contains("app.index.worker") || cmd.contains("app.backblaze.worker") {
+                self.log(&format!("stopping the index worker pid {pid} on quit"));
+                p.kill();
+            }
+        }
+        // A finished worker's pid can be reused, so "still running" means still that worker.
+        let still_worker = |sys: &System, pid: u32| {
+            sys.process(Pid::from_u32(pid)).is_some_and(|p| Self::cmdline(p).contains("app.index.worker"))
+        };
+        let deadline = Instant::now() + GRACE;
+        while !asked.is_empty() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(500));
+            let sys = Self::processes();
+            asked.retain(|pid| still_worker(&sys, *pid));
+        }
+        let sys = Self::processes();
+        for pid in asked {
+            if still_worker(&sys, pid) {
+                if let Some(p) = sys.process(Pid::from_u32(pid)) {
+                    self.log(&format!("index worker pid {pid} did not stop in time on quit - killing it"));
                     p.kill();
                 }
             }

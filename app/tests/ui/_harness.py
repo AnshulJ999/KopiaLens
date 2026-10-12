@@ -118,6 +118,28 @@ def _inside(path, root: Path) -> bool:
         return False
 
 
+def wait_until(check, wait: float = 5.0) -> bool:
+    """True once ``check()`` is; for server state a click changes through a request still in flight."""
+    deadline = time.monotonic() + wait
+    while not check():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
+    return True
+
+
+def _read_json_retry(path: Path, wait: float = 2.0) -> dict:
+    """Read a JSON file the server may be replacing right now (Windows refuses the open briefly)."""
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (PermissionError, json.JSONDecodeError):
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.1)
+
+
 def assert_contained(server: "Server", root: Path) -> None:
     """Stop the run if the server could reach anything outside this test's temp root: its own
     folders, every repository it lists, and where each of those stores its data."""
@@ -130,7 +152,7 @@ def assert_contained(server: "Server", root: Path) -> None:
         if not _inside(server.env[key], root):
             stop(f"{key} ({server.env[key]})")
     repos_file = server.data / "repos.json"
-    records = json.loads(repos_file.read_text(encoding="utf-8")).get("repos", []) if repos_file.exists() else []
+    records = _read_json_retry(repos_file).get("repos", []) if repos_file.exists() else []
     for rec in records:
         config = Path(rec.get("config_file") or Path(server.env["APPDATA"]) / "kopia" / "repository.config")
         if not _inside(config, root):
