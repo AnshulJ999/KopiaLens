@@ -19,6 +19,7 @@ from ..core import paths as pathrules
 from ..core.kopia import remove_files_chunked_commands, snapshot_delete_commands
 from ..core.sources import sources_index
 from ..index.holding import holding_snapshots
+from ..index.physical import batch_detail, copies_outside, price_objects
 from ..index.queries import (holders_for_paths, paths_for_contents, paths_named,
                              sources_for_content, versions_many)
 from ..licensing import features
@@ -28,6 +29,7 @@ router = APIRouter(tags=["delete"])
 
 LIST_CAP = 500
 COPIES_CAP = 20000   # copy paths resolved for a snapshot delete; beyond this the plan refuses to run
+PRICE_CAP = 200_000  # same-named files priced for a by-name removal
 
 
 class PlanFile(BaseModel):
@@ -123,10 +125,11 @@ def delete_plan(body: PlanBody) -> dict:
     if body.method == "remove":
         scope = resolve_scope(repo, body.by, body.sources, facts)
         if body.by == "filename":
-            found = paths_named(repo, scope, facts["names"], cap=LIST_CAP)
+            found = paths_named(repo, scope, facts["names"], cap=LIST_CAP, mark=sorted(selected))
             items, flag = facts["names"], "--filename"
         else:
-            found = paths_for_contents(repo, facts["oids"], sources=scope, cap=LIST_CAP)
+            found = paths_for_contents(repo, facts["oids"], sources=scope, cap=LIST_CAP,
+                                       mark=sorted(selected))
             items, flag = facts["oids"], "--object-id"
         rows = [{**r, "selected": r["full_path"] in selected} for r in found["rows"]]
         # Free installs get the full preview, never the command that runs it.
@@ -136,7 +139,7 @@ def delete_plan(body: PlanBody) -> dict:
         out.update({
             "scope": scope,
             "matches": rows, "match_total": found["total"],
-            "other_count": sum(1 for r in rows if not r["selected"]),
+            "other_count": max(0, found["total"] - found["marked"]),
             "capped": found["total"] > len(rows),
             "command": "\n".join(_fmt_cmd(c) for c in cmds),
         })
@@ -183,4 +186,41 @@ def delete_plan(body: PlanBody) -> dict:
         "capped": copies_capped,
         "command": "\n".join(" ".join(c) for c in cmds),
     })
+    return out
+
+
+def _removal_price(repo: str, by: str, scope: list[str], facts: dict) -> dict:
+    """What a removal frees. By content: the selected files' objects leave every path holding them
+    in ``scope`` and nothing else goes. By file name: exactly the same-named files in ``scope``
+    go, every version; an identical file under another name keeps its data ()."""
+    if by == "filename":
+        found = paths_named(repo, scope, facts["names"], cap=PRICE_CAP)
+        pairs = [(s, r["full_path"]) for r in found["rows"] for s in r["sources"]]
+        if not pairs:
+            return {"freeable": 0, "physical": 0, "kept": 0, "kept_files": [], "kept_count": 0,
+                    "capped": False}
+        d = batch_detail(repo, [{"source": s, "full_path": fp} for s, fp in pairs],
+                         all_versions=True, keep_copies=True)
+        kept = copies_outside(repo, pairs, cap=LIST_CAP)
+        return {"freeable": d.get("freeable", 0), "physical": d.get("physical", 0),
+                "kept": d.get("kept", 0), "kept_files": kept["rows"], "kept_count": kept["total"],
+                "capped": found["total"] > len(found["rows"])}
+    d = price_objects(repo, facts["oids"], sources=scope)
+    return {"freeable": d["freeable"], "physical": d["physical"], "capped": False}
+
+
+@router.post("/delete/stats")
+def delete_stats(body: PlanBody) -> dict:
+    """Reclaimable for a removal from the delete panel, priced over every match (the panel's list
+    stops at LIST_CAP), plus the other match method's figure for the side-by-side."""
+    files = [(f.source, f.full_path) for f in body.files if f.source and f.full_path]
+    if not files:
+        raise HTTPException(status_code=400, detail="no files specified")
+    if body.by not in ("object-id", "filename"):
+        raise HTTPException(status_code=400, detail="unknown match")
+    facts = selection_facts(body.repo, files)
+    out = _removal_price(body.repo, body.by, resolve_scope(body.repo, body.by, body.sources, facts), facts)
+    other = "filename" if body.by == "object-id" else "object-id"
+    alt = _removal_price(body.repo, other, resolve_scope(body.repo, other, body.sources, facts), facts)
+    out["alt_freeable"] = alt["freeable"]
     return out

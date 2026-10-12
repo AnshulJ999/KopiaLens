@@ -15,15 +15,17 @@ def _plan(**kw):
 
 
 TARGETS = {"names": ["config.json"], "pairs": [(f"u@h:G:{SEP}", FOLDER + SEP + "config.json")],
-           "files": [], "object_ids": ["o1"], "sources": [f"u@h:G:{SEP}"],
+           "files": [{"source": f"u@h:G:{SEP}", "sources": [f"u@h:G:{SEP}"],
+                      "full_path": FOLDER + SEP + "config.json", "size": 1, "physical": 10}],
+           "object_ids": ["o1"], "sources": [f"u@h:G:{SEP}"],
            "file_count": 1, "total_file_count": 1, "total_physical": 10, "total_logical": 1,
            "capped": False, "logical": 1, "physical": 10}
-SWEEP = {"rows": [{"source": f"u@h:G:{SEP}", "full_path": FOLDER + SEP + "config.json",
-                   "size": 1, "physical": 10, "in_latest": True},
-                  {"source": f"u@h:D:{SEP}", "full_path": f"D:{SEP}other{SEP}config.json",
-                   "size": 2, "physical": 20, "in_latest": True},
-                  {"source": f"u@h:D:{SEP}", "full_path": f"D:{SEP}x{SEP}config.json",
-                   "size": 3, "physical": 30, "in_latest": True}],
+SWEEP = {"rows": [{"source": f"u@h:G:{SEP}", "sources": [f"u@h:G:{SEP}"],
+                   "full_path": FOLDER + SEP + "config.json", "size": 1, "physical": 10, "in_latest": True},
+                  {"source": f"u@h:D:{SEP}", "sources": [f"u@h:D:{SEP}"],
+                   "full_path": f"D:{SEP}other{SEP}config.json", "size": 2, "physical": 20, "in_latest": True},
+                  {"source": f"u@h:D:{SEP}", "sources": [f"u@h:D:{SEP}"],
+                   "full_path": f"D:{SEP}x{SEP}config.json", "size": 3, "physical": 30, "in_latest": True}],
          "total": 3, "logical": 6, "physical": 60}
 
 
@@ -51,16 +53,20 @@ def test_a_filename_plan_prices_every_same_named_file(monkeypatch):
         asked.update(cap=cap, biggest_first=biggest_first)
         return SWEEP
 
-    def fake_detail(repo, files, all_versions=False):
-        asked.update(files=[f["full_path"] for f in files], all_versions=all_versions)
+    def fake_detail(repo, files, all_versions=False, keep_copies=False):
+        asked.setdefault("files", [f["full_path"] for f in files])
+        asked.setdefault("all_versions", all_versions)
+        asked.setdefault("keep_copies", keep_copies)
         return {"freeable": 1}
 
     monkeypatch.setattr(actions, "paths_named", fake_named)
     monkeypatch.setattr(actions, "batch_detail", fake_detail)
+    monkeypatch.setattr(actions, "copies_outside", lambda *a, **k: {"rows": [], "total": 0})
     out = actions.remove_detail(_plan(all_versions=False))
     assert asked["files"] == [r["full_path"] for r in SWEEP["rows"]]
-    assert asked["biggest_first"] is True and asked["cap"] == 5000
+    assert asked["biggest_first"] is True and asked["cap"] == actions._plan_cap()
     assert asked["all_versions"] is True          # kopia's --filename rewrites every snapshot
+    assert asked["keep_copies"] is True           # a file under another name keeps its data
     assert out["scope"] == "filename" and out["capped"] is False
 
 

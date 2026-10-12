@@ -45,7 +45,7 @@ def _rows(**kw):
 
 
 def test_the_stored_sort_exports_ranked_rows_first_with_their_values(monkeypatch):
-    big, small = _store(monkeypatch, {"stored": {3: 50}, "frees": {2: 40}})
+    big, small = _store(monkeypatch, {"stored": {3: 50}, "frees": {3: 40}})   # both keyed by path
     rows = _rows(sort="stored", direction="desc")
     assert [r["Path"] for r in rows][0] == small          # the only ranked row leads
     assert (rows[0]["Stored (all versions)"], rows[0]["Frees (all versions)"]) == (50, 40)

@@ -1,7 +1,8 @@
 """The nightly ranking: exact top lists, and the Search sort that reads them.
 
 Fixture: a tiny generation with a plainly-priced file, a two-version file whose versions share a
-chunk (Stored must count it once), and a duplicate pair (Frees counts every copy).
+chunk (Stored must count it once), and a duplicate pair (Frees is per file: each copy keeps the
+other's data stored, so removing either alone frees nothing).
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ SEP = chr(92)
 SRC = f"Anshul@anshul-desktop:C:{SEP}Src"
 P1 = f"C:{SEP}Src{SEP}a.bin"      # plain, 100 packed
 P2 = f"C:{SEP}Src{SEP}b.bin"      # split, two versions sharing chunk c2 -> stored 10
-P3 = f"C:{SEP}Src{SEP}dup.bin"    # same content as P4 -> frees counts both
+P3 = f"C:{SEP}Src{SEP}dup.bin"    # same content as P4 -> each keeps the other's data
 P4 = f"C:{SEP}Src{SEP}dup2.bin"
 
 
@@ -108,10 +109,10 @@ def test_precompute_ranks_the_exact_all_versions_numbers(tmp_path, monkeypatch):
     assert stored[1] == 100                  # a.bin: one plain object
     assert stored[2] == 15                   # b.bin: {p1,p2} + {p1,p3} = three 5-byte chunks
     assert stored[3] == 40 and stored[4] == 40
-    frees = {int(k): int(v) for k, v in payload["frees"]}
-    assert frees[1] == 100                   # a's content, held by one path
-    assert frees[3] == 15                    # b's latest content: both versions of the one holder
-    assert frees[7] == 40                    # the duplicated content
+    frees = {int(k): int(v) for k, v in payload["frees"]}   # keyed by path, per file
+    assert frees[1] == 100                   # a.bin, held by one path
+    assert frees[2] == 15                    # b.bin: both of its own versions
+    assert frees[3] == 0 and frees[4] == 0   # each duplicate's copy keeps the content stored
 
 
 def test_ranked_values_are_not_served_from_an_inexact_payload(tmp_path, monkeypatch):

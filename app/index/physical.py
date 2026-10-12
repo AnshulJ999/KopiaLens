@@ -13,13 +13,15 @@ from __future__ import annotations
 import collections
 import json
 import threading
+import uuid
 import weakref
 from types import SimpleNamespace
 
+from ..core import paths as pathrules
 from ..core.applog import get_logger
 from ..core.sizemap import load_sizemap
 from . import resolve
-from .queries import _ESC, like_literal, scope_sql
+from .queries import _ESC, _HOST_SQL, like_literal, scope_sql
 from .store import read_cursor
 
 log = get_logger("physical")
@@ -456,291 +458,354 @@ def stored_all_versions(repo: str, handles: list[tuple[str, str]]) -> dict[tuple
     return out
 
 
-def reclaim_for(repo: str, content_ids: list[str], cap: int = 500, fetch: bool = True) -> dict[str, int]:
-    """For each content id (a file's latest object), compute the TRUE 'reclaim if purged
-    everywhere': the deduped union of chunks across ALL versions of ALL paths sharing that
-    content, whose global refcount is fully attributable to those paths. Cached per content id.
-    This is the honest all-versions, content-aware freeable for the search 'Reclaim' column.
+def _price(cur, objs: str, params: list | None = None, kept: str | None = None) -> dict:
+    """Price one deletion. ``objs`` is SQL yielding DISTINCT ``(src_id, cid_id)``: every (source,
+    content object) pair the deletion removes. A piece is freed when every source (crefs) and every
+    (source, object) pair (crefo) using it is in ``objs`` - the rule `_freed` states - and it is not
+    a piece of a ``kept`` object (SQL yielding ``cid_id``: objects a file outside the deletion still
+    holds). A split object with no piece list is not in the tree yet: counted as unknown and left
+    out (understated, never zeroed). ``params`` bind the placeholders of ``objs`` then ``kept``.
 
-    The two index lookups are batched across the whole request: nothing indexes
-    `files.content_id`, so the per-id loop scanned the full history once per id - up to 500 scans
-    for one Reclaim click. One scan for "which paths hold these ids" plus one for "which objects
-    each of those paths has held" returns byte-identical results, and the chunk-expansion memo is
-    shared across the page so a repeated indirect object is expanded once, not per id.
+    Returns ``{objects, unknown, chunks, physical, freeable, kept}`` - ``kept`` is the packed bytes
+    of the kept objects' pieces."""
+    kept_cte = kept_join = ""
+    kept_col = "false"
+    if kept:
+        kept_cte = (f", keptobj AS ({kept}), keptch AS (SELECT cid_id AS chunk FROM keptobj UNION "
+                    "SELECT t.part_cid FROM keptobj k JOIN tpart t ON t.iobj_cid = k.cid_id)")
+        kept_join = "LEFT JOIN keptch kc ON kc.chunk = m.chunk"
+        kept_col = "kc.chunk IS NOT NULL"
+    row = cur.execute(f"""
+        WITH objs AS ({objs}),
+        kinds AS (SELECT o.src_id, o.cid_id, c.content_id LIKE 'I%' AS split
+                  FROM objs o JOIN cid c ON c.cid_id = o.cid_id),
+        chunks AS (SELECT src_id, cid_id AS obj, cid_id AS chunk FROM kinds WHERE NOT split
+                   UNION ALL
+                   SELECT k.src_id, k.cid_id, t.part_cid FROM kinds k
+                   JOIN tpart t ON t.iobj_cid = k.cid_id WHERE k.split),
+        mine AS (SELECT chunk, count(DISTINCT src_id) AS nsrc,
+                        count(DISTINCT (src_id, obj)) AS npair
+                 FROM chunks GROUP BY chunk){kept_cte},
+        sized AS (SELECT m.nsrc, m.npair, COALESCE(r.refs, 0) AS total, COALESCE(o.refs, 0) AS orefs,
+                         COALESCE(s.packed, 0) AS packed, {kept_col} AS kept
+                  FROM mine m LEFT JOIN crefs r ON r.cid_id = m.chunk
+                  LEFT JOIN crefo o ON o.cid_id = m.chunk
+                  LEFT JOIN csize s ON s.cid_id = m.chunk {kept_join})
+        SELECT (SELECT count(DISTINCT cid_id) FROM objs),
+               (SELECT count(DISTINCT k.cid_id) FROM kinds k WHERE k.split AND NOT EXISTS
+                  (SELECT 1 FROM tpart t WHERE t.iobj_cid = k.cid_id)),
+               count(*),
+               COALESCE(sum(packed), 0),
+               COALESCE(sum(packed) FILTER (WHERE total <= nsrc AND orefs <= npair AND NOT kept), 0),
+               COALESCE(sum(packed) FILTER (WHERE kept), 0)
+        FROM sized""", params or []).fetchone() or (0, 0, 0, 0, 0, 0)
+    objects, unknown, chunks, physical, freeable, kept_b = (int(v or 0) for v in row)
+    return {"objects": objects, "unknown": unknown, "chunks": chunks, "physical": physical,
+            "freeable": freeable, "kept": kept_b}
 
-    ``fetch=False`` never calls kopia: an id whose chunk lists are not all in the walk cache is left
-    out of the answer and not cached."""
-    uniq: list[str] = []
-    seen: set[str] = set()
-    for cid in content_ids:
-        if cid and cid not in seen:
-            seen.add(cid)
-            uniq.append(cid)
-        if len(uniq) >= cap:
-            break
-    out: dict[str, int] = {}
-    misses: list[str] = []
-    for cid in uniq:
-        cached = _reclaim_cache_get((repo, cid))
-        if cached is not None:
-            out[cid] = cached
-        else:
-            misses.append(cid)
-    if not misses:
-        return out
+
+def _kept_sql(sel: str) -> str:
+    """Objects a deletion of the paths in ``sel`` (SQL yielding ``path_id``) leaves stored: held
+    by more paths anywhere in the repo than inside the set, i.e. by a copy outside it. Every
+    version counts. The same rule as the file panel."""
+    vers = f"SELECT DISTINCT x.path_id, f.cid_id FROM ({sel}) x JOIN filev f ON f.path_id = x.path_id"
+    return (f"SELECT i.cid_id FROM (SELECT cid_id, count(DISTINCT path_id) AS n FROM ({vers}) "
+            f"GROUP BY cid_id) i JOIN (SELECT f.cid_id, count(DISTINCT f.path_id) AS n FROM filev f "
+            f"WHERE f.cid_id IN (SELECT cid_id FROM ({vers})) GROUP BY f.cid_id) h "
+            f"ON h.cid_id = i.cid_id WHERE h.n > i.n")
+
+
+def _objs_sql(sel: str, all_versions: bool) -> str:
+    """The (source, object) pairs a deletion of the paths in ``sel`` (SQL yielding ``src_id,
+    path_id``) removes: every version's object, or each path's newest one."""
+    if all_versions:
+        return (f"SELECT DISTINCT x.src_id, f.cid_id FROM ({sel}) x "
+                f"JOIN filev f ON f.path_id = x.path_id WHERE f.cid_id IS NOT NULL")
+    return (f"SELECT DISTINCT x.src_id, p.cid_id FROM ({sel}) x "
+            f"JOIN pathx p ON p.path_id = x.path_id WHERE p.cid_id IS NOT NULL")
+
+
+def _register_files(cur, files) -> str | None:
+    """Register (source, full_path) pairs; returns SQL yielding their ``src_id, path_id`` (RAW-EXACT,
+    one hash join at any size - trap 29). Unregister with ``_unregister``."""
+    import pyarrow as pa
+
+    sids = resolve.src_map(cur)
+    rows = list(dict.fromkeys((sids[s], fp) for s, fp in files if s in sids and fp))
+    if not rows:
+        return None
+    name = f"_sel_{uuid.uuid4().hex[:10]}"
+    cur.register(name, pa.table({"src_id": pa.array([r[0] for r in rows], pa.int64()),
+                                 "full_path": pa.array([r[1] for r in rows], pa.string())}))
+    return name
+
+
+def _unregister(cur, name: str | None) -> None:
+    if name:
+        try:
+            cur.unregister(name)
+        except Exception:  # noqa: BLE001 - already gone
+            pass
+
+
+def _host_table() -> str:
+    """SQL: every source's host, the computer half of a file's identity."""
+    return f"(SELECT s.src_id, {_HOST_SQL} AS host FROM src s)"
+
+
+def frees_sql(targets: str) -> str:
+    """SQL yielding ``(t, value)``: what removing each target FILE frees (). ``targets`` yields
+    ``(t, src_id, path_id)`` - every holder path of each file (nested sources on one computer hold
+    one file). Every version goes, from every holder; an object another path still holds keeps its
+    pieces; a piece is freed when every source and (source, object) pair using it is the file's.
+    The file panel's Reclaimable card, for many files at once. A file with a split object not yet
+    in the tree gets no row (unknown, never zero)."""
+    return f"""
+        WITH vers AS (SELECT DISTINCT g.t, g.src_id, g.path_id, f.cid_id FROM ({targets}) g
+                      JOIN filev f ON f.path_id = g.path_id WHERE f.cid_id IS NOT NULL),
+        inside AS (SELECT t, cid_id, count(DISTINCT path_id) AS n FROM vers GROUP BY t, cid_id),
+        held AS (SELECT f.cid_id, count(DISTINCT f.path_id) AS n FROM filev f
+                 WHERE f.cid_id IN (SELECT cid_id FROM inside) GROUP BY f.cid_id),
+        keptobj AS (SELECT i.t, i.cid_id FROM inside i JOIN held h ON h.cid_id = i.cid_id
+                    WHERE h.n > i.n),
+        keptch AS (SELECT t, cid_id AS chunk FROM keptobj
+                   UNION SELECT k.t, tp.part_cid FROM keptobj k JOIN tpart tp ON tp.iobj_cid = k.cid_id),
+        ch AS (SELECT DISTINCT v.t, v.src_id, v.cid_id AS obj, coalesce(tp.part_cid, v.cid_id) AS chunk,
+                      (c.content_id LIKE 'I%' AND tp.part_cid IS NULL) AS unknown
+               FROM vers v JOIN cid c ON c.cid_id = v.cid_id
+               LEFT JOIN tpart tp ON tp.iobj_cid = v.cid_id),
+        mine AS (SELECT t, chunk, count(DISTINCT src_id) AS nsrc,
+                        count(DISTINCT (src_id, obj)) AS npair
+                 FROM ch WHERE t NOT IN (SELECT t FROM ch WHERE unknown) GROUP BY t, chunk)
+        SELECT m.t, COALESCE(sum(s.packed) FILTER (
+                   WHERE coalesce(r.refs, 0) <= m.nsrc AND coalesce(o.refs, 0) <= m.npair
+                     AND k.chunk IS NULL), 0)::UBIGINT AS value
+        FROM mine m LEFT JOIN crefs r ON r.cid_id = m.chunk
+        LEFT JOIN crefo o ON o.cid_id = m.chunk
+        LEFT JOIN csize s ON s.cid_id = m.chunk
+        LEFT JOIN keptch k ON k.t = m.t AND k.chunk = m.chunk
+        GROUP BY m.t"""
+
+
+def frees_for_files(repo: str, handles: list[tuple[str, str]]) -> dict[tuple[str, str], int | None]:
+    """{(source, full_path): bytes freed by removing that file} for a page of Search rows - the
+    file panel's Reclaimable, one query for the page. None where a piece list is unknown."""
+    import pyarrow as pa
+
+    uniq = list(dict.fromkeys(h for h in handles if h[0] and h[1]))
+    if not uniq:
+        return {}
     cur = read_cursor(repo)
+    name = f"_ff_{uuid.uuid4().hex[:10]}"
     try:
-        # cid -> distinct (source, full_path) pairs holding it. Input ids resolve batched, then
-        # one chunked scan; the cid name comes back from the result set (output side).
-        id_of = resolve.cid_ids(cur, misses)
-        rev = {v: k for k, v in id_of.items()}
-        shares: dict[str, list[tuple[str, str]]] = {c: [] for c in misses}
-        ids = sorted(set(id_of.values()))
-        for i in range(0, len(ids), 900):
-            grp = ids[i:i + 900]
-            if not grp:
-                continue
-            q = ("SELECT DISTINCT f.cid_id, s.source, p.full_path FROM filev f "
-                 "JOIN pathx p ON p.path_id = f.path_id "
-                 "JOIN src s ON s.src_id = p.src_id "
-                 "WHERE f.cid_id IN (%s)" % ",".join("?" * len(grp)))
-            for c, src, fp in cur.execute(q, grp).fetchall():
-                name = rev.get(c)
-                if name:
-                    shares[name].append((src, fp))
-
-        handles = {(src, fp) for hs in shares.values() for src, fp in hs}
-        objs_of = _objects_by_path(cur, handles)
-
-        chunk_memo = _chunks_for_objs(
-            repo, [o for hs in objs_of.values() for o in hs], cursor=cur)
-        per_cid: dict[str, dict[str, tuple[set, set]]] = {}
-        for cid in misses:
-            mine: dict[str, tuple[set, set]] = {}   # piece -> (sources, (source, object) pairs)
-            unknown = False
-            for src, fp in shares.get(cid, []):
-                for obj in objs_of.get((src, fp), []):
-                    chunks = chunk_memo.get(obj)
-                    if chunks is None:
-                        unknown = True
-                        break
-                    for c in chunks:
-                        srcs, pairs = mine.setdefault(c, (set(), set()))
-                        srcs.add(src)
-                        pairs.add((src, obj))
-                if unknown:
-                    break
-            if not unknown:
-                per_cid[cid] = mine
+        cur.register(name, pa.table({
+            "t": pa.array(range(len(uniq)), pa.int64()),
+            "host": pa.array([pathrules.host(s) for s, _ in uniq], pa.string()),
+            "full_path": pa.array([fp for _, fp in uniq], pa.string())}))
+        targets = (f"SELECT w.t, p.src_id, p.path_id FROM {name} w JOIN pathx p ON p.full_path = w.full_path "
+                   f"JOIN {_host_table()} h ON h.src_id = p.src_id AND h.host = w.host")
+        got = dict(cur.execute(frees_sql(targets)).fetchall())
     finally:
+        _unregister(cur, name)
         cur.close()
-    # One refcount and one size lookup for the whole request, not one pair per content id.
-    every = {c for refs in per_cid.values() for c in refs}
-    refs = _refcount_for(repo, every) or {}
-    objrefs = _objrefs_for(repo, every)
-    sizes = _sizes_for(repo, every)
-    for cid, mine in per_cid.items():
-        reclaim = sum(sizes.get(c, 0) for c, (srcs, pairs) in mine.items()
-                      if _freed(c, refs, objrefs, len(srcs), len(pairs)))
-        _reclaim_cache_put((repo, cid), reclaim)
-        out[cid] = reclaim
-    return out
+    return {h: (int(got[i]) if i in got else None) for i, h in enumerate(uniq)}
 
 
-def folder_detail(repo: str, source: str | None, prefix: str, all_versions: bool = True) -> dict:
-    """Subtree reclaim over EVERY version, not just the latest.
+def folder_detail(repo: str, source: str | None, prefix: str, all_versions: bool = True,
+                  filters: dict | None = None, loose: bool = False) -> dict:
+    """What deleting a folder frees, over every version (or each path's newest, matching a
+    latest-only delete plan), plus the folder's Physical for its newest versions
+    (``physical_newest``: each stored piece once -).
 
-    This used to read the ``paths`` table, which holds one row per path carrying only its LATEST
-    content object. That made the headline "frees if deleted" number wrong in the direction that
-    matters: measured on this repo, the Everything app-data folder has 28 files but 6,786 stored
-    versions, so the latest-only figure counted ~0.4% of what a delete actually reclaims. Since the
-    delete planner runs with all-versions on by default, the panel was understating the payoff of
-    exactly the folders worth cleaning.
-
-    Now it unions the chunks of every version of every path under the prefix - the same counting
-    ``reclaim_for`` already does for a single content - so the number lines up with what the delete
-    will really free.
-
-    ``source=None`` spans EVERY source covering the folder. Chunk occurrences are counted per
-    (source, path, object), so a chunk held by two sources only counts as freeable when both are
-    inside this folder; deleting from one source would not free it, and the number reflects that.
-
-    Matching is case-insensitive: Windows paths are, and ``folder_summary`` already matched that
-    way, so a case-sensitive comparison here could make the two halves of the panel disagree.
-    """
+    ``source=None`` spans EVERY source covering the folder: a piece held by two sources only counts
+    as freeable when both are inside the folder. ``filters`` (``queries.folder_file_filter``
+    keywords) narrow it to the files matching a Search filter; ``loose`` to the files lying
+    directly in it. Files and Logical count each file once - a path held by nested sources is one
+    file ()."""
+    from .queries import _folder_dirs, folder_file_filter
     cur = read_cursor(repo)
     try:
-        where, params = scope_sql(cur, prefix, include_path=True)
-        run = True
+        if loose:
+            ids = _folder_dirs(cur, prefix)[0]
+            where, params = (f"p.dir_id IN ({','.join(str(i) for i in ids)})" if ids else "1 = 0"), []
+        else:
+            where, params = scope_sql(cur, prefix, include_path=True)
+        where = where or "true"
+        if filters:
+            conds, fparams = folder_file_filter(cur, **filters)
+            if conds:
+                where = f"({where}) AND " + " AND ".join(conds)
+                params = [*params, *fparams]
+        empty = False
         if source:
             sid = resolve.src_id(cur, source)
             if sid is None:  # an unknown source matched no rows before; keep that
-                run = False
+                empty = True
             else:
                 where += " AND p.src_id = ?"
                 params.append(sid)
-        agg = (0, 0)
-        priced = (0, 0, 0, 0)
-        if run:
-            # `filev` carries every version; `pathx` carries one row per path at its latest object. The
-            # delete panel can be set to latest-only, and then the reclaim figure must match THAT, not the
-            # all-versions number - a preview that describes a different operation is worse than none.
-            if all_versions:
-                sel = ("SELECT DISTINCT p.src_id, p.full_path, f.cid_id, f.size "
-                       "FROM filev f JOIN pathx p ON p.path_id = f.path_id WHERE " + where)
-            else:
-                sel = ("SELECT DISTINCT p.src_id, p.full_path, p.cid_id, p.size "
-                       "FROM pathx p WHERE " + where)
-            agg = cur.execute(
-                f"SELECT count(*), COALESCE(sum(size), 0) FROM ("
-                f"  SELECT DISTINCT src_id, full_path, max(size) AS size FROM ({sel})"
-                f"  GROUP BY src_id, full_path"
-                f")",
-                params,
-            ).fetchone() or (0, 0)
-            run = bool(agg[0])
-        if run:
-            # The whole chunk union in one query: split objects expanded through `tpart`, each
-            # piece priced against the sources (crefs) and (source, object) pairs (crefo) inside the
-            # folder. A split object with no piece list is not in the tree yet: counted as unknown
-            # and left out (understated, never zeroed).
-            priced = cur.execute(f"""
-                WITH objs AS (SELECT DISTINCT src_id, cid_id FROM ({sel})),
-                kinds AS (SELECT o.src_id, o.cid_id, c.content_id LIKE 'I%' AS split
-                          FROM objs o JOIN cid c ON c.cid_id = o.cid_id),
-                chunks AS (SELECT src_id, cid_id AS obj, cid_id AS chunk FROM kinds WHERE NOT split
-                           UNION ALL
-                           SELECT k.src_id, k.cid_id, t.part_cid FROM kinds k
-                           JOIN tpart t ON t.iobj_cid = k.cid_id WHERE k.split),
-                mine AS (SELECT chunk, count(DISTINCT src_id) AS nsrc,
-                                count(DISTINCT (src_id, obj)) AS npair
-                         FROM chunks GROUP BY chunk),
-                sized AS (SELECT m.nsrc, m.npair, COALESCE(r.refs, 0) AS total,
-                                 COALESCE(o.refs, 0) AS orefs, COALESCE(s.packed, 0) AS packed
-                          FROM mine m LEFT JOIN crefs r ON r.cid_id = m.chunk
-                          LEFT JOIN crefo o ON o.cid_id = m.chunk
-                          LEFT JOIN csize s ON s.cid_id = m.chunk)
-                SELECT (SELECT count(DISTINCT cid_id) FROM objs),
-                       (SELECT count(DISTINCT k.cid_id) FROM kinds k WHERE k.split AND NOT EXISTS
-                          (SELECT 1 FROM tpart t WHERE t.iobj_cid = k.cid_id)),
-                       COALESCE(sum(packed), 0),
-                       COALESCE(sum(packed) FILTER (WHERE total <= nsrc AND orefs <= npair), 0)
-                FROM sized""", params).fetchone() or (0, 0, 0, 0)
+        if empty:
+            files = logical = 0
+            priced = newest = {"objects": 0, "unknown": 0, "physical": 0, "freeable": 0}
+        else:
+            vjoin, size = (("JOIN filev f ON f.path_id = p.path_id", "f.size") if all_versions
+                           else ("", "p.size"))
+            files, logical = cur.execute(
+                f"SELECT count(*), COALESCE(sum(sz), 0) FROM (SELECT max({size}) AS sz FROM pathx p "
+                f"JOIN src s ON s.src_id = p.src_id {vjoin} WHERE {where} "
+                f"GROUP BY {_HOST_SQL}, p.full_path)",
+                params).fetchone() or (0, 0)
+            sel = f"SELECT p.src_id, p.path_id FROM pathx p WHERE {where}"
+            newest = _price(cur, _objs_sql(sel, False), params) if files else \
+                {"objects": 0, "unknown": 0, "physical": 0, "freeable": 0}
+            priced = (_price(cur, _objs_sql(sel, True), params) if all_versions and files else newest)
     finally:
         cur.close()
-
-    objects, unknown, physical, freeable = (int(v or 0) for v in priced)
-    if unknown:
+    if priced["unknown"]:
         log.warning("repo=%s folder detail: %d object(s) are not in the tree yet - their bytes are "
-                    "not counted until the next index", repo, unknown)
+                    "not counted until the next index", repo, priced["unknown"])
     return {
-        "logical": int(agg[1] or 0), "physical": physical, "freeable": freeable,
-        "files": int(agg[0] or 0), "shared": physical - freeable,
-        "objects": objects, "all_versions": all_versions,
+        "logical": int(logical or 0), "physical": priced["physical"], "freeable": priced["freeable"],
+        "files": int(files or 0), "shared": priced["physical"] - priced["freeable"],
+        "objects": priced["objects"], "all_versions": all_versions,
+        "physical_newest": newest["physical"],
     }
 
 
-def batch_detail(repo: str, files: list[dict], all_versions: bool = True) -> dict:
-    """Union (content-aware / deduped) footprint for a SET of selected files - the multi-file
-    equivalent of file_detail. Unions every selected file's content chunks across all its
-    versions, then: physical = packed bytes of the union; freeable = packed bytes referenced
-    ONLY by the selection (global refcount fully attributable to it -> removing the whole
-    selection frees them); logical = sum of distinct latest-content sizes (deduped).
+def batch_detail(repo: str, files: list[dict], all_versions: bool = True,
+                 keep_copies: bool = False) -> dict:
+    """What deleting a SET of files frees - the multi-file equivalent of the file panel.
+    physical = packed bytes of every piece the set's versions use; freeable = the pieces nothing
+    outside the set uses; logical = the newest sizes, identical content counted once.
 
-    ``all_versions=False`` unions only each path's LATEST version, matching a latest-only delete
-    plan. It must track whatever the caller is about to delete: pricing an all-versions union for a
-    latest-only deletion overstates the freeable bytes by the churn multiplier, which on a
-    rewrite-heavy path is two orders of magnitude."""
+    ``all_versions=False`` prices each path's newest version only, matching a latest-only delete
+    plan. ``keep_copies`` is for deletes that remove exactly these paths (by file name): an object
+    another path still holds keeps its pieces stored (``kept`` = their bytes). Without it the
+    set is priced as a content delete, where copies in the same sources go too."""
     pairs = [(f.get("source"), f.get("full_path")) for f in files if f.get("source") and f.get("full_path")]
     if not pairs:
         return {"found": False}
-    obj_chunks: dict[str, set[str]] = {}
-    mine: dict[str, tuple[set, set]] = {}   # piece -> (sources, (source, object) pairs) selected
-    latest: dict[tuple, tuple] = {}    # (source,fp) -> (latest content_id, latest size)
-    versions = 0
-    unknown = 0                        # objects the tree has not reached; counted, never zeroed
     cur = read_cursor(repo)
+    name = None
     try:
-        # One batched path resolution for the whole selection, then one filev scan per 900
-        # paths. SQL orders newest-version-first within a path, so grouping in fetch order gives
-        # each path its versions newest-first exactly as the per-path query did.
-        # Deduped: a repeated selection entry must not join twice (and the per-path loop it
-        # replaces double-counted its chunk references, understating freeable).
-        sid_of = resolve.src_map(cur)
-        rev_sid = {v: k for k, v in sid_of.items()}
-        pid_of = resolve.path_ids(cur, [(sid_of[s], fp) for s, fp in pairs if s in sid_of])
-        key_of = {pid: (rev_sid[sid], fp) for (sid, fp), pid in pid_of.items()}
-        by_path: dict[tuple, list[tuple]] = {p: [] for p in pairs}
-        pids = sorted(set(pid_of.values()))
-        for i in range(0, len(pids), 900):
-            grp = pids[i:i + 900]
-            if not grp:
-                continue
-            q = ("SELECT f.path_id, c.content_id, f.size FROM filev f "
-                 "JOIN snap sn ON sn.snap_id = f.snap_id "
-                 "LEFT JOIN cid c ON c.cid_id = f.cid_id "
-                 "WHERE f.path_id IN (%s) "
-                 "ORDER BY f.path_id, sn.start_time DESC, sn.snapshot_id DESC"
-                 % ",".join("?" * len(grp)))
-            for pid, obj, sz in cur.execute(q, grp).fetchall():
-                by_path[key_of[pid]].append((obj, sz))
-        obj_chunks = _chunks_for_objs(
-            repo, [o for rows in by_path.values()
-                   for o, _s in (rows if all_versions else rows[:1])], cursor=cur)
-        for key, rows in by_path.items():
-            if not rows:
-                continue
-            latest[key] = (rows[0][0], int(rows[0][1] or 0))
-            for obj, _sz in (rows if all_versions else rows[:1]):
-                versions += 1
-                chunks = obj_chunks.get(obj)
-                if chunks is None:
-                    unknown += 1
-                    continue
-                for c in chunks:
-                    srcs, objs = mine.setdefault(c, (set(), set()))
-                    srcs.add(key[0])
-                    objs.add((key[0], obj))
+        name = _register_files(cur, pairs)
+        if name is None:
+            return {"found": False}
+        sel = (f"SELECT p.src_id, p.path_id FROM {name} w JOIN pathx p "
+               f"ON p.src_id = w.src_id AND p.full_path = w.full_path")
+        nfiles, ncontent, srcs = cur.execute(
+            f"SELECT count(DISTINCT ({_HOST_SQL}, p.full_path)), count(DISTINCT p.cid_id), "
+            f"list_sort(list(DISTINCT s.source)) FROM {name} w JOIN pathx p "
+            f"ON p.src_id = w.src_id AND p.full_path = w.full_path JOIN src s ON s.src_id = p.src_id"
+        ).fetchone()
+        if not nfiles:
+            return {"found": False}
+        logical = cur.execute(
+            f"SELECT COALESCE(sum(sz), 0) FROM (SELECT max(p.size) AS sz FROM ({sel}) x "
+            f"JOIN pathx p ON p.path_id = x.path_id GROUP BY coalesce(p.cid_id, -p.path_id))").fetchone()[0]
+        versions = cur.execute(
+            f"SELECT count(*) FROM ({sel}) x JOIN filev f ON f.path_id = x.path_id" if all_versions
+            else f"SELECT count(*) FROM ({sel})").fetchone()[0]
+        priced = _price(cur, _objs_sql(sel, all_versions),
+                        kept=_kept_sql(f"SELECT path_id FROM ({sel})") if keep_copies else None)
     finally:
+        _unregister(cur, name)
         cur.close()
-    if not latest:
-        return {"found": False}
-    if unknown:
-        log.warning("repo=%s batch detail: %d version object(s) are not in the tree yet - their "
-                    "bytes are not counted until the next index", repo, unknown)
-
-    union_chunks = set(mine)
-    refs = _refcount_for(repo, union_chunks)
-    if refs is None:
-        refs = _refcount_map(repo)
-    objrefs = _objrefs_for(repo, union_chunks)
-    sizes = _sizes_for(repo, union_chunks)
-    physical = sum(sizes.get(c, 0) for c in union_chunks)
-    freeable = sum(sizes.get(c, 0) for c, (srcs, pairs) in mine.items()
-                   if _freed(c, refs, objrefs, len(srcs), len(pairs)))
-
-    seen_cid: set[str] = set()
-    logical = 0
-    for cid, sz in latest.values():
-        if cid in seen_cid:
-            continue
-        seen_cid.add(cid)
-        logical += sz
-    sources = sorted({s for s, _ in latest})
-    return {
+    if priced["unknown"]:
+        log.warning("repo=%s batch detail: %d object(s) are not in the tree yet - their bytes are "
+                    "not counted until the next index", repo, priced["unknown"])
+    sources = list(srcs or [])
+    out = {
         "found": True,
-        "files": len(latest),
-        "distinct_content": len(seen_cid),
+        "files": int(nfiles),
+        "distinct_content": int(ncontent or 0),
         "sources": sources,
         "source_count": len(sources),
-        "versions": versions,
-        "chunk_count": len(union_chunks),
-        "logical": logical,
-        "physical": physical,
-        "freeable": freeable,
-        "shared": physical - freeable,
+        "versions": int(versions or 0),
+        "chunk_count": priced["chunks"],
+        "logical": int(logical or 0),
+        "physical": priced["physical"],
+        "freeable": priced["freeable"],
+        "shared": priced["physical"] - priced["freeable"],
         "all_versions": all_versions,
     }
+    if keep_copies:
+        out["kept"] = priced["kept"]
+    return out
+
+
+def copies_outside(repo: str, files: list[tuple[str, str]], sources: list[str] | None = None,
+                   cap: int = 500, all_versions: bool = True) -> dict:
+    """Files OUTSIDE ``files`` that hold an object of them (any version's, or only each path's
+    newest) - identical copies at other paths. ``sources`` limits where to look (None = every
+    source). One row per file:
+    ``{"rows": [{source, sources, full_path, size, physical, in_latest}], "total", "logical",
+    "physical"}``; totals cover every copy."""
+    from .queries import _per_file, _rows
+    empty = {"rows": [], "total": 0, "logical": 0, "physical": 0}
+    cur = read_cursor(repo)
+    name = None
+    try:
+        name = _register_files(cur, files)
+        if name is None:
+            return empty
+        sel = (f"SELECT p.path_id FROM {name} w JOIN pathx p "
+               f"ON p.src_id = w.src_id AND p.full_path = w.full_path")
+        mine = (f"SELECT f.cid_id FROM ({sel}) x JOIN filev f ON f.path_id = x.path_id" if all_versions
+                else f"SELECT q.cid_id FROM ({sel}) x JOIN pathx q ON q.path_id = x.path_id")
+        where = (f"p.path_id IN (SELECT f2.path_id FROM filev f2 WHERE f2.cid_id IN ({mine})) "
+                 f"AND p.path_id NOT IN ({sel})")
+        params: list = []
+        if sources is not None:
+            sids = [i for i in (resolve.src_id(cur, s) for s in sources) if i is not None]
+            if not sids:
+                return empty
+            where += " AND p.src_id IN (%s)" % ",".join("?" * len(sids))
+            params = sids
+        # A file whose other holder is inside the set is the same file, not a copy.
+        base = _per_file(where)
+        own = f"SELECT DISTINCT {_HOST_SQL} AS host, p.full_path FROM ({sel}) x JOIN pathx p ON p.path_id = x.path_id JOIN src s ON s.src_id = p.src_id"
+        base = f"SELECT b.* FROM ({base}) b ANTI JOIN ({own}) o ON o.host = b.host AND o.full_path = b.full_path"
+        total, logical, phys = cur.execute(
+            f"SELECT count(*), COALESCE(sum(size), 0), COALESCE(sum(physical), 0) FROM ({base})",
+            params).fetchone()
+        rows = _rows(cur, f"SELECT source, sources, full_path, size, physical, in_latest FROM ({base}) "
+                          f"ORDER BY physical DESC NULLS LAST, size DESC, full_path LIMIT {int(cap)}", params)
+    finally:
+        _unregister(cur, name)
+        cur.close()
+    return {"rows": rows, "total": int(total or 0), "logical": int(logical or 0),
+            "physical": int(phys or 0)}
+
+
+def price_objects(repo: str, object_ids: list[str], sources: list[str] | None = None) -> dict:
+    """What removing these content objects frees inside ``sources`` (None = every source) - a
+    content delete: every path holding them in those sources loses them, and nothing else goes.
+    ``{objects, unknown, physical, freeable}``."""
+    import pyarrow as pa
+
+    oids = list(dict.fromkeys(o for o in object_ids if o))
+    zero = {"objects": 0, "unknown": 0, "chunks": 0, "physical": 0, "freeable": 0, "kept": 0}
+    if not oids:
+        return zero
+    cur = read_cursor(repo)
+    name = f"_po_{uuid.uuid4().hex[:10]}"
+    try:
+        cur.register(name, pa.table({"content_id": pa.array(oids, pa.string())}))
+        where = ""
+        params: list = []
+        if sources is not None:
+            sids = [i for i in (resolve.src_id(cur, s) for s in sources) if i is not None]
+            if not sids:
+                return zero
+            where = " AND p.src_id IN (%s)" % ",".join("?" * len(sids))
+            params = sids
+        objs = (f"SELECT DISTINCT p.src_id, f.cid_id FROM {name} w JOIN cid c ON c.content_id = w.content_id "
+                f"JOIN filev f ON f.cid_id = c.cid_id JOIN pathx p ON p.path_id = f.path_id WHERE true{where}")
+        return _price(cur, objs, params)
+    finally:
+        _unregister(cur, name)
+        cur.close()
 
 
 def _price_file(repo: str, source: str, full_path: str):
@@ -760,14 +825,14 @@ def _price_file(repo: str, source: str, full_path: str):
             "WHERE f.path_id = ? ORDER BY sn.start_time DESC, sn.snapshot_id DESC",
             [pid],
         ).fetchall()
-        # the SOURCES holding this exact PATH (raw-exact identity) on this machine; another
-        # machine's identical path is a different file.
-        machine = source.split(":", 1)[0]
+        # the SOURCES holding this exact PATH (raw-exact identity) on this computer; another
+        # computer's identical path is a different file.
+        host = pathrules.host(source)
         holders = [source] + [r[0] for r in cur.execute(
             "SELECT DISTINCT s.source FROM pathx p JOIN src s ON s.src_id = p.src_id "
             "WHERE p.full_path = ? AND s.source <> ? ORDER BY s.source",
             [full_path, source],
-        ).fetchall() if r[0].split(":", 1)[0] == machine]
+        ).fetchall() if pathrules.host(r[0]) == host]
         sids = resolve.src_map(cur)
         objs_by_holder: dict[str, set[str]] = {source: {r[3] for r in versions if r[3]}}
         if len(holders) > 1:
@@ -846,7 +911,6 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
     versions, holders, objs_by_holder = st.versions, st.holders, st.objs_by_holder
     oid_of, kept_objs, obj_chunks, refs = st.oid_of, st.kept_objs, st.obj_chunks, st.refs
     union_chunks, freed, sizes = st.union_chunks, st.freed, st.sizes
-    machine = source.split(":", 1)[0]
     latest_obj = versions[0][3]
     latest_chunks = obj_chunks.get(latest_obj) or set()
     physical_latest = sum(sizes.get(c, 0) for c in latest_chunks)
@@ -880,13 +944,10 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
     holder_set = set(holders)
     others = [(s, p) for s, p in rows if not (p == full_path and s in holder_set)]
 
-    # Content-centric reclaim: what is freed if this content is removed from every location. A chunk
-    # is freed iff its global source-refcount is fully attributable to the sources holding it. The
-    # snapshots holding it come from /api/delete/plan (the delta index cannot list them).
+    # What an exact-content delete of this file frees when it reaches every copy: every version's
+    # object removed from every source holding it. Only asked when copies exist.
     n_dup = len({source} | {s for s, _ in rows})
-    # An estimate: it counts sources only, not the (source, object) pairs `_freed` uses, so a piece
-    # another file in the same source still holds can read as freed. See kopialens-tech-debt.md.
-    reclaim_everywhere =sum(sizes.get(c, 0) for c in latest_chunks if refs.get(c, 0) <= n_dup)
+    reclaim_everywhere = (price_objects(repo, st.all_objs)["freeable"] if others else freeable)
 
     return {
         "found": True,
@@ -908,8 +969,8 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
         "holders": holders,                       # every source backing up this exact path
         # content-centric / purge-everywhere
         "locations": n_dup,                       # distinct sources holding this exact content
-        # distinct files holding it: one per (machine, path), this one included
-        "instances": len({(s.split(":", 1)[0], p) for s, p in others} - {(machine, full_path)}) + 1,
+        # distinct files holding it: one per (computer, path), this one included
+        "instances": len({_file_key(s, p) for s, p in others} - {_file_key(source, full_path)}) + 1,
         "reclaim_everywhere": reclaim_everywhere,  # bytes freed if purged from every location
     }
 
@@ -928,47 +989,21 @@ def _price_pairs(repo: str, cur, pairs: set[tuple[str, str]]) -> tuple[int, int]
     """(physical, freeable) of deleting every version of every (source, path) in ``pairs``. Same rule
     as the file panel: an object also held outside the set keeps its pieces, and a piece is freed
     only when every source and (source, object) pair using it is inside the set."""
-    sids = resolve.src_map(cur)
-    rev_sid = {v: k for k, v in sids.items()}
-    pid_of = resolve.path_ids(cur, [(sids[s], fp) for s, fp in pairs if s in sids])
-    objs_of: dict[tuple, set[str]] = {}
-    if pid_of:
-        key_of = {pid: (rev_sid[sid], fp) for (sid, fp), pid in pid_of.items()}
-        name = _register_ids(cur, key_of)
-        try:
-            for pid, obj in cur.execute(
-                    f"SELECT DISTINCT f.path_id, c.content_id FROM filev f JOIN {name} w ON w.c = f.path_id "
-                    "JOIN cid c ON c.cid_id = f.cid_id").fetchall():
-                objs_of.setdefault(key_of[pid], set()).add(obj)
-        finally:
-            cur.unregister(name)
-    all_objs = sorted({o for objs in objs_of.values() for o in objs})
-    held = _path_pairs(cur, all_objs)
-    inside = collections.Counter(o for objs in objs_of.values() for o in objs)
-    kept_objs = {o for o in all_objs if held.get(o, 1) > inside[o]}
-    obj_chunks = _chunks_for_objs(repo, all_objs, cursor=cur)
-    srcs: dict[str, set] = {}
-    obj_pairs: dict[str, set] = {}
-    for (s, _fp), objs in objs_of.items():
-        for o in objs:
-            for c in obj_chunks.get(o) or ():
-                srcs.setdefault(c, set()).add(s)
-                obj_pairs.setdefault(c, set()).add((s, o))
-    kept_chunks = {c for o in kept_objs for c in (obj_chunks.get(o) or ())}
-    union = set(srcs)
-    refs = _refcount_for(repo, union)
-    if refs is None:
-        refs = _refcount_map(repo)
-    objrefs = _objrefs_for(repo, union)
-    sizes = _sizes_for(repo, union)
-    freeable = sum(sizes.get(c, 0) for c in union
-                   if c not in kept_chunks and _freed(c, refs, objrefs, len(srcs[c]), len(obj_pairs[c])))
-    return sum(sizes.get(c, 0) for c in union), freeable
+    name = _register_files(cur, pairs)
+    if name is None:
+        return 0, 0
+    try:
+        sel = (f"SELECT p.src_id, p.path_id FROM {name} w JOIN pathx p "
+               f"ON p.src_id = w.src_id AND p.full_path = w.full_path")
+        priced = _price(cur, _objs_sql(sel, True), kept=_kept_sql(f"SELECT path_id FROM ({sel})"))
+    finally:
+        _unregister(cur, name)
+    return priced["physical"], priced["freeable"]
 
 
 def _file_key(source: str, full_path: str) -> tuple[str, str]:
-    """One file = one (machine, path); a path under nested sources is still one file."""
-    return source.split(":", 1)[0], full_path
+    """One file = one (computer, path); a path under nested sources is still one file."""
+    return pathrules.host(source), full_path
 
 
 def storage_breakdown(repo: str, source: str, full_path: str, limit: int = 10,

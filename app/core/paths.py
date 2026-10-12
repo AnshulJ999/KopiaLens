@@ -116,6 +116,13 @@ def ident(source_key: str, path: str) -> str:
     return path if case_sensitive(source_key) else path.lower()
 
 
+def host(source_key: str) -> str:
+    """The computer a source belongs to, lowercased. One file = one (host, full path): nested
+    sources on one computer hold the same file. Twin of ``queries._HOST_SQL``."""
+    who = source_key.split(":", 1)[0]
+    return who.rsplit("@", 1)[-1].lower() if "@" in who else ""
+
+
 def path_sep(path: str) -> str:
     """The separator a full path is written with, from its shape alone: POSIX paths start with
     "/", everything else (drive letter, UNC) is a Windows path. For when no source is at hand."""

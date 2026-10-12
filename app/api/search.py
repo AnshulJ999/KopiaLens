@@ -15,11 +15,19 @@ from config import REPOS, repo_kind
 from .errors import PASS_THROUGH
 from ..core import paths as pathrules
 from ..index import foldercache
-from ..index.physical import file_detail, reclaim_for, storage_breakdown, stored_all_versions
+from ..index.physical import file_detail, frees_for_files, storage_breakdown, stored_all_versions
 from ..index.queries import (_RANK_SORTS, _SEARCH_SORT, EXPORT_HEADER, group_by_folder, landing,
                              search_export, search_paths, versions)
 
 router = APIRouter(tags=["search"])
+
+
+def _saved_folder_values(repo: str, rows: list[dict], filtered: bool) -> dict[str, dict]:
+    """Last night's whole-folder values for unfiltered, whole-folder rows. A filtered list or a
+    loose-files row describes other files, so it fills on screen instead ()."""
+    if filtered:
+        return {}
+    return foldercache.saved_values(repo, [r["folder"] for r in rows if not r.get("loose")])
 
 
 @router.get("/search/group-by-folder")
@@ -27,24 +35,87 @@ def search_group_by_folder(
     repo: str, depth: int = 3, q: str = "", source: str | None = None, ext: str | None = None,
     ext_exclude: str | None = None, deleted_only: bool = False, min_gb: float = 0, min_files: int = 0,
     sort: str = "physical", direction: str = "desc", limit: int = 500, min_depth: int = 0,
+    loose: bool = False,
 ) -> dict:
-    """Bloat finder: backed-up folders rolled up to `depth` segments, ranked by physical."""
+    """Bloat finder: whole backed-up folders at `depth` (plus loose-files rows when asked), ranked by
+    physical. Each row carries the saved exact values when it has them."""
     try:
-        return group_by_folder(
+        out = group_by_folder(
             repo, depth=depth, query=q, source=source, ext=ext, ext_exclude=ext_exclude,
             deleted_only=deleted_only, min_size=int(min_gb * 1_000_000_000), min_files=min_files,
-            sort=sort, direction=direction, limit=limit, min_depth=min_depth,
+            sort=sort, direction=direction, limit=limit, min_depth=min_depth, loose=loose,
         )
     except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    saved = _saved_folder_values(repo, out["rows"], bool(q or source or ext or ext_exclude or deleted_only))
+    for r in out["rows"]:
+        s = saved.get(r["folder"]) or {}
+        r["physical"] = s.get("physical_newest")
+        r["physical_all"] = s.get("physical")
+        r["freeable"] = s.get("freeable")
+        r["folder_versions"] = s.get("versions")
+    return out
 
 
-class ReclaimRequest(BaseModel):
+class FolderVersionsRequest(BaseModel):
     repo: str
-    content_ids: list[str] = []
-    cap: int = 500
+    folders: list[str]
+
+
+@router.post("/search/folder-versions")
+def search_folder_versions(body: FolderVersionsRequest) -> dict:
+    """How many distinct states each folder on screen has had (): one tree walk per source
+    for the whole page (capped at 100 folders)."""
+    from ..index.holding import folder_states
+    folders = list(dict.fromkeys(f for f in body.folders if f))[:100]
+    try:
+        states = folder_states(body.repo, folders)
+    except PASS_THROUGH:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"versions": {f: st["versions"] for f, st in states.items()}}
+
+
+class FolderValuesRequest(BaseModel):
+    repo: str
+    folder: str
+    loose: bool = False
+    q: str = ""
+    source: str | None = None
+    ext: str | None = None
+    ext_exclude: str | None = None
+    deleted_only: bool = False
+
+
+@router.post("/search/folder-values")
+def search_folder_values(body: FolderValuesRequest) -> dict:
+    """One Search folder row's exact values: Physical (newest versions, each piece once), Physical
+    (all) and Reclaimable - over the files the row stands for: the whole folder, only its loose
+    files, and with a filter on only the matching ones. Unfiltered whole folders use the saved
+    nightly result when there is one."""
+    filters = {"query": body.q, "source": body.source, "ext": body.ext, "ext_exclude": body.ext_exclude,
+               "deleted_only": body.deleted_only}
+    filtered = any(filters.values())
+    try:
+        if not filtered and not body.loose:
+            d = foldercache.compute(body.repo, body.folder)
+            if d.get("physical_newest") is None:       # a stale entry saved before it existed
+                d = foldercache.compute(body.repo, body.folder, allow_stale=False)
+        else:
+            from ..index.physical import folder_detail
+            d = folder_detail(body.repo, None, body.folder, filters=filters if filtered else None,
+                              loose=body.loose)
+    except PASS_THROUGH:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"folder": body.folder, "loose": body.loose, "physical": d.get("physical_newest"),
+            "physical_all": d.get("physical"), "freeable": d.get("freeable"),
+            "files": d.get("files"), "logical": d.get("logical")}
+
 
 def _bounds(over_gb: float, largest: bool, min_gb: float, max_gb: float) -> tuple[int, int]:
     min_size = int(min_gb * 1_000_000_000) if min_gb else (int(over_gb * 1_000_000_000) if over_gb else 0)
@@ -125,7 +196,8 @@ def _row_cmp(field: str, desc: bool):
 # Columns folder rows have, in file-row field names; any other sort lists folders first.
 _FOLDER_SORT = {"size": "size", "physical": "physical", "full_path": "full_path", "name": "name",
                 "last_seen": "last_seen", "first_seen": "first_seen", "source": "source",
-                "stored": "stored_all_versions", "frees": "frees_all_versions"}
+                "stored": "stored_all_versions", "frees": "frees_all_versions",
+                "versions": "versions"}
 
 
 def _ranked_cmp(field: str, desc: bool, by_path: bool):
@@ -155,7 +227,7 @@ def search_mixed(
     sort: str = "size", dir: str = "desc", limit: int = 500, offset: int = 0,
     min_gb: float = 0, max_gb: float = 0, date_from: str | None = None, date_to: str | None = None,
     first_from: str | None = None, min_versions: int = 0, shared_min: int = 0,
-    dedupe: bool = False, dedupe_by: str = "path",
+    dedupe: bool = False, dedupe_by: str = "path", loose: bool = False,
 ) -> dict:
     """Files and folders in one list. Files page exactly as /search; the folder rollups (top 500)
     are placed into the page their sort position falls in, so every folder appears once."""
@@ -173,6 +245,7 @@ def search_mixed(
             ext_exclude=ext_exclude or None, deleted_only=deleted_only,
             min_size=int(folder_min_gb * 1_000_000_000), min_files=folder_min_files,
             sort="logical" if sort == "size" else "physical", direction=dir, limit=500, min_depth=min_depth,
+            loose=loose,
         )["rows"]
         field = _FOLDER_SORT.get(sort)
         prev = (search_paths(repo, limit=1, offset=offset - 1, **kw)["rows"] or [None])[0] if offset and field else None
@@ -181,16 +254,17 @@ def search_mixed(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     files = page["rows"]
-    saved = foldercache.saved_values(repo, [g["folder"] for g in groups])
+    saved = _saved_folder_values(repo, groups, bool(q or source or ext or ext_exclude or deleted_only))
     folders = []
     for g in groups:
         s = saved.get(g["folder"]) or {}
         folders.append({"kind": "folder", "full_path": g["folder"], "name": pathrules.basename(g["folder"]),
-                        "size": g["logical"], "physical": g["phys"], "files": g["files"],
+                        "loose": bool(g.get("loose")),
+                        "size": g["logical"], "physical": s.get("physical_newest"), "files": g["files"],
                         "deleted_files": g["deleted_files"], "last_seen": g["last_seen"],
                         "first_seen": g["first_seen"], "sources": g["sources"], "source": g["source"],
                         "stored_all_versions": s.get("physical"), "frees_all_versions": s.get("freeable"),
-                        "frees_capped": s.get("capped", False)})
+                        "versions": s.get("versions")})
     ranked = page.get("ranked") or {}
     if sort in ("stored", "frees") and not ranked.get("available"):
         field = "physical"     # no nightly list yet: files fell back to Physical, folders follow
@@ -258,22 +332,9 @@ def search_all_repos(
             "sort": sort, "searched": searched, "skipped": skipped, "max_depth": _ALL_REPOS_DEPTH}
 
 
-@router.post("/search/reclaim")
-def search_reclaim(payload: ReclaimRequest) -> dict:
-    """Compute the TRUE 'reclaim if purged everywhere' (all versions, content-aware) for the given
-    content ids (the visible page, capped). Cached per content id. Frontend sorts by it."""
-    try:
-        return {"reclaim": reclaim_for(payload.repo, payload.content_ids, cap=payload.cap)}
-    except PASS_THROUGH:
-        raise                       # let the dedicated 503 handler explain it
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
 class VersionRow(BaseModel):
     source: str
     full_path: str
-    content_id: str | None = None
 
 
 class VersionsRequest(BaseModel):
@@ -284,19 +345,20 @@ class VersionsRequest(BaseModel):
 @router.post("/search/versions")
 def search_versions(payload: VersionsRequest) -> dict:
     """All-versions sizes for the rows on screen: Stored (every version this path has held, shared
-    chunks once) and Frees (what removing every version of that content everywhere gives back).
-    Never calls kopia; a value whose chunk lists are not cached yet comes back null."""
+    chunks once) and Frees (what removing this file, every version, gives back - the file panel's
+    Reclaimable). Never calls kopia; a value whose piece lists are not indexed yet comes back null."""
     rows = payload.rows[:200]
+    handles = [(r.source, r.full_path) for r in rows]
     try:
-        stored = stored_all_versions(payload.repo, [(r.source, r.full_path) for r in rows])
-        frees = reclaim_for(payload.repo, [r.content_id for r in rows if r.content_id], cap=200, fetch=False)
+        stored = stored_all_versions(payload.repo, handles)
+        frees = frees_for_files(payload.repo, handles)
     except PASS_THROUGH:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"rows": [{"source": r.source, "full_path": r.full_path,
                       "stored": stored.get((r.source, r.full_path)),
-                      "frees": frees.get(r.content_id) if r.content_id else None} for r in rows]}
+                      "frees": frees.get((r.source, r.full_path))} for r in rows]}
 
 
 def _csv_rows(cur, registered=()):

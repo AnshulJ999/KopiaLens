@@ -7,13 +7,12 @@ ranks the top ``rank_count`` entries exactly, using a sound upper bound to prune
 * **Stored** (per path): bound = the sum of the path's DISTINCT version objects' packed sizes
   (chunks shared between its own versions count once in the exact value, so the bound is never
   below it).
-* **Frees** (per content): bound = the sum of the bound above over EVERY path that ever held the
-  content, because Frees counts what removing every version of that content everywhere gives back -
-  copies push it above any single path's own size, so a per-path bound is not sound for it.
+* **Frees** (per FILE - every holder path of one computer's path,): bound = the sum of the
+  bound above over the file's holders; removing a file can never free more than its holders store.
 
 Descend the bounds, work out the exact value per candidate, stop when the next candidate's bound is
-below the Nth exact value found. The numbers are byte-identical to the shipped on-demand helpers
-(verified against them across repos 1/2/3).
+below the Nth exact value found. Frees is ``physical.frees_sql``, the file panel's Reclaimable; the
+payload lists every holder path of a ranked file.
 
 The result is a small payload in the side cache that Search reads (memoized per generation) to sort
 by either column; rows outside the list keep their on-demand value and read "not ranked".
@@ -27,15 +26,16 @@ from config import DATA_DIR
 
 from ..core.applog import get_logger
 from . import sidecache
+from .physical import _host_table, frees_sql
 from .store import read_cursor
 
 log = get_logger("rankpaths")
 
 _NAME = "rank_paths_repo%s"
-_VERSION = 1
+_VERSION = 2                 # 2: frees keyed by path, per file (); 1 keyed it by content
 DEFAULT_COUNT = 10000
 _BOUND_BATCH = 2000          # paths per exact-math batch in the stored descent
-_FREES_BATCH = 500           # contents per exact-math batch in the frees descent
+_FREES_BATCH = 2000          # files per exact-math batch in the frees descent
 _BUDGET_SECONDS = 900.0      # a pathological repo stops here; the payload is then marked inexact
 
 
@@ -68,14 +68,19 @@ def _bounds(cur) -> None:
         CREATE OR REPLACE TABLE _rank_ord AS
         SELECT path_id AS key, est, row_number() OVER (ORDER BY est DESC, path_id) AS rn
         FROM _rank_est""")
+    # One file = one (host, path): fk is the smallest path_id among its holders.
+    cur.execute(f"""
+        CREATE OR REPLACE TABLE _rank_fk AS
+        SELECT p.path_id, p.src_id, min(p.path_id) OVER (PARTITION BY h.host, p.full_path) AS fk
+        FROM pathx p JOIN {_host_table()} h ON h.src_id = p.src_id""")
     cur.execute("""
         CREATE OR REPLACE TABLE _rank_gest AS
-        SELECT p.cid_id, sum(e.est)::HUGEINT AS gest
-        FROM _rank_pair p JOIN _rank_est e ON e.path_id = p.path_id
-        GROUP BY p.cid_id""")
+        SELECT k.fk, sum(e.est)::HUGEINT AS gest
+        FROM _rank_fk k JOIN _rank_est e ON e.path_id = k.path_id
+        GROUP BY k.fk""")
     cur.execute("""
         CREATE OR REPLACE TABLE _rank_gord AS
-        SELECT cid_id AS key, gest, row_number() OVER (ORDER BY gest DESC, cid_id) AS rn
+        SELECT fk AS key, gest, row_number() OVER (ORDER BY gest DESC, fk) AS rn
         FROM _rank_gest""")
 
 
@@ -104,39 +109,11 @@ def _exact_stored(cur, out: str = "_rank_bst") -> None:
 
 
 def _exact_frees(cur, out: str = "_rank_gf") -> None:
-    """Exact Frees per CONTENT for the contents in ``_rank_batch``, mirroring the shipped
-    on-demand maths (``physical._freed``): a chunk counts when every source (crefs) and every
-    (source, object) pair (crefo) using it is in the group. Contents with an unreadable split
-    object are dropped."""
-    cur.execute("CREATE OR REPLACE TABLE _rank_tgt AS SELECT key AS target FROM _rank_batch")
-    cur.execute("""
-        CREATE OR REPLACE TABLE _rank_grp AS
-        SELECT DISTINCT g.target, p2.src_id, p2.path_id, p2.cid_id AS obj
-        FROM _rank_tgt g JOIN _rank_pair h ON h.cid_id = g.target
-        JOIN _rank_pair p2 ON p2.path_id = h.path_id""")
-    cur.execute("""
-        CREATE OR REPLACE TABLE _rank_gt AS
-        SELECT target, chunk, count(DISTINCT src_id)::INTEGER AS nsrc,
-               count(DISTINCT (src_id, obj))::INTEGER AS npair FROM (
-            SELECT DISTINCT g.target, g.src_id, g.obj,
-                   coalesce(tp.part_cid, g.obj) AS chunk,
-                   (c.content_id LIKE 'I%' AND tp.part_cid IS NULL) AS unknown
-            FROM _rank_grp g JOIN cid c ON c.cid_id = g.obj
-            LEFT JOIN tpart tp ON tp.iobj_cid = g.obj)
-        WHERE NOT unknown
-          AND target NOT IN (SELECT target FROM _rank_grp g LEFT JOIN cid c ON c.cid_id = g.obj
-                             LEFT JOIN tpart tp ON tp.iobj_cid = g.obj
-                             WHERE c.content_id LIKE 'I%' AND tp.part_cid IS NULL)
-        GROUP BY target, chunk""")
-    cur.execute(f"""
-        CREATE OR REPLACE TABLE {out} AS
-        SELECT gt.target AS key, sum(coalesce(pr.packed, 0))::UBIGINT AS value
-        FROM _rank_gt gt
-        LEFT JOIN crefs r ON r.cid_id = gt.chunk
-        LEFT JOIN crefo o ON o.cid_id = gt.chunk
-        LEFT JOIN _rank_price pr ON pr.cid_id = gt.chunk
-        WHERE coalesce(r.refs, 0) <= gt.nsrc AND coalesce(o.refs, 0) <= gt.npair
-        GROUP BY gt.target""")
+    """Exact Frees per FILE for the files (keyed ``fk``) in ``_rank_batch`` - ``physical.frees_sql``
+    over each file's holders. Files with an unreadable split object are dropped."""
+    targets = ("SELECT b.key AS t, k.src_id, k.path_id FROM _rank_batch b "
+               "JOIN _rank_fk k ON k.fk = b.key")
+    cur.execute(f"CREATE OR REPLACE TABLE {out} AS SELECT t AS key, value FROM ({frees_sql(targets)})")
 
 
 def _descend(cur, *, order: str, bound: str, batch: int, n: int, label: str,
@@ -197,12 +174,21 @@ def precompute(repo: str, n: int | None = None) -> dict:
         frees, exact_f, done_f, end_f = _descend(cur, order="_rank_gord", bound="gest",
                                                  batch=_FREES_BATCH, n=n, label="frees",
                                                  exact_fn=_exact_frees, out="_rank_gf")
+        # Every holder path of a ranked file carries its value (Search lists one row per source).
+        holders: dict[int, list[int]] = {}
+        if frees:
+            import pyarrow as pa
+            cur.register("_rank_top", pa.table({"fk": pa.array([k for _v, k in frees], pa.int64())}))
+            for fk, pid in cur.execute("SELECT k.fk, k.path_id FROM _rank_fk k "
+                                       "JOIN _rank_top t ON t.fk = k.fk").fetchall():
+                holders.setdefault(int(fk), []).append(int(pid))
+            cur.unregister("_rank_top")
     finally:
         cur.close()
     payload = {"version": _VERSION, "ts": time.time(), "n": n, "generation": gen,
                "exact": bool(exact_s and exact_f),
                "stored": [[k, v] for v, k in stored],
-               "frees": [[k, v] for v, k in frees]}
+               "frees": [[pid, v] for v, k in frees for pid in sorted(holders.get(k, [k]))]}
     if not sidecache.write(_NAME % repo, payload, base=DATA_DIR):
         log.error("rank_paths repo=%s store write failed", repo)
     log.info("rank_paths repo=%s: %d stored (%s) + %d frees (%s) in %.1fs, exact=%s",

@@ -2,6 +2,8 @@
 
 POST /api/restore/plan      what each item restores, where it lands, and how that compares with
                             what is already on disk (new / identical / different / extra)
+POST /api/restore/check     the same comparison over every file (no cap), in the background;
+                            GET /api/restore/check/{id} polls it, POST .../stop stops it
 GET  /api/restore/download  a file streamed from the repository, or a folder as a .zip
 POST /api/restore/open      open a restored path in Explorer
 
@@ -17,6 +19,8 @@ import re
 import shutil
 import stat as statmod
 import subprocess
+import threading
+import time
 import urllib.parse
 import uuid
 
@@ -181,9 +185,15 @@ def _flat_names(names: list[str]) -> list[str]:
     return out
 
 
-def _listing(repo: str, obj: str, kind: str, size: int, mtime: str, bad: list | None = None):
-    """(relative path, size, mtime) for every file the object restores, capped at LIST_CAP.
-    ``bad`` collects the relative paths of entries whose own name this computer cannot create."""
+class _Stopped(Exception):
+    """A full check was stopped by the user."""
+
+
+def _listing(repo: str, obj: str, kind: str, size: int, mtime: str, bad: list | None = None,
+             cap: int | None = LIST_CAP):
+    """(relative path, size, mtime) for every file the object restores, stopping after ``cap``
+    files (None = every file). ``bad`` collects the relative paths of entries whose own name this
+    computer cannot create."""
     if kind != "d":
         yield "", size, mtime
         return
@@ -201,13 +211,17 @@ def _listing(repo: str, obj: str, kind: str, size: int, mtime: str, bad: list | 
                     nxt.append((e["obj"], path))
                 elif e.get("type") != "d":
                     count += 1
-                    if count > LIST_CAP:
+                    if cap is not None and count > cap:
                         return
                     yield path, int(e.get("size", 0) or 0), e.get("mtime", "")
         level = nxt
 
 
-def _compare(repo: str, r: dict, target: str, delete_extra: bool) -> dict:
+def _compare(repo: str, r: dict, target: str, delete_extra: bool, cap: int | None = LIST_CAP,
+             progress: dict | None = None) -> dict:
+    """How the item compares with the destination. Above ``cap`` files the comparison covers the
+    first ``cap`` (``capped``) and extra files are not checked (``extra`` None, never 0).
+    ``progress`` (a full check) counts listed files and carries the stop flag."""
     out = {"new": 0, "identical": 0, "different": 0, "extra": 0, "listed": 0, "bad_names": 0,
            "different_paths": [], "extra_paths": [], "bad_paths": [], "capped": False}
     if target.lower().endswith(ARCHIVE_EXT):
@@ -215,8 +229,12 @@ def _compare(repo: str, r: dict, target: str, delete_extra: bool) -> dict:
         return out
     bad: list[str] = [target] if _bad_here(r.get("name") or "") else []
     wanted: set[str] = set()
-    for rel, size, mtime in _listing(repo, r["obj"], r["type"], r["size"], r["mtime"], bad):
+    for rel, size, mtime in _listing(repo, r["obj"], r["type"], r["size"], r["mtime"], bad, cap=cap):
         out["listed"] += 1
+        if progress is not None:
+            progress["listed"] += 1
+            if progress["stop"]:
+                raise _Stopped()
         path = os.path.join(target, rel) if rel else target
         if delete_extra:
             wanted.add(os.path.normcase(path))
@@ -233,11 +251,15 @@ def _compare(repo: str, r: dict, target: str, delete_extra: bool) -> dict:
             out["different"] += 1
             if len(out["different_paths"]) < PATHS_SHOWN:
                 out["different_paths"].append(path)
-    out["capped"] = out["listed"] >= LIST_CAP
+    out["capped"] = cap is not None and out["listed"] >= cap
     out["bad_names"] = len(bad)
     out["bad_paths"] = bad[:PATHS_SHOWN]
-    if delete_extra and r["type"] == "d" and os.path.isdir(target) and not out["capped"]:
+    if delete_extra and out["capped"]:
+        out["extra"] = None             # not checked: the listing stopped at the cap
+    elif delete_extra and r["type"] == "d" and os.path.isdir(target):
         for root, _dirs, files in os.walk(target):
+            if progress is not None and progress["stop"]:
+                raise _Stopped()
             for f in files:
                 p = os.path.join(root, f)
                 if os.path.normcase(p) not in wanted:
@@ -249,6 +271,10 @@ def _compare(repo: str, r: dict, target: str, delete_extra: bool) -> dict:
 
 @router.post("/restore/plan")
 def restore_plan(body: PlanBody) -> dict:
+    return _plan(body)
+
+
+def _plan(body: PlanBody, cap: int | None = LIST_CAP, progress: dict | None = None) -> dict:
     if not body.items:
         raise HTTPException(status_code=400, detail="nothing to restore")
     mode = body.target_mode
@@ -279,11 +305,64 @@ def restore_plan(body: PlanBody) -> dict:
         row = {**r, "source": it.source, "full_path": it.full_path,
                "target": target, "target_exists": os.path.exists(target)}
         if body.preview:
-            row.update(_compare(body.repo, r, target, bool(body.options.get("delete_extra"))))
+            row.update(_compare(body.repo, r, target, bool(body.options.get("delete_extra")),
+                                cap=cap, progress=progress))
         items.append(row)
-    totals = {k: sum(i.get(k, 0) for i in items)
+    totals = {k: sum(i.get(k) or 0 for i in items)
               for k in ("files", "size", "new", "identical", "different", "extra", "bad_names")}
-    return {"repo": body.repo, "target_mode": mode, "items": items, "totals": totals}
+    totals["capped"] = any(i.get("capped") for i in items)
+    totals["extra_unchecked"] = any("extra" in i and i["extra"] is None for i in items)
+    return {"repo": body.repo, "target_mode": mode, "items": items, "totals": totals,
+            "full_check": cap is None}
+
+
+# ---- full check: the same comparison over every file, in the background ----
+
+_CHECKS: dict[str, dict] = {}
+_CHECKS_LOCK = threading.Lock()
+_CHECKS_KEPT = 10
+
+
+@router.post("/restore/check")
+def restore_check_start(body: PlanBody) -> dict:
+    """Start comparing every file with the destination (the preview stops at LIST_CAP)."""
+    check_id = uuid.uuid4().hex[:12]
+    st = {"state": "running", "listed": 0, "stop": False, "plan": None, "error": "",
+          "started": time.time()}
+    with _CHECKS_LOCK:
+        _CHECKS[check_id] = st
+        for old in sorted(_CHECKS, key=lambda k: _CHECKS[k]["started"])[:-_CHECKS_KEPT]:
+            _CHECKS.pop(old, None)
+
+    def run() -> None:
+        try:
+            st["plan"] = _plan(body.model_copy(update={"preview": True}), cap=None, progress=st)
+            st["state"] = "done"
+        except _Stopped:
+            st["state"] = "stopped"
+        except HTTPException as exc:
+            st["state"], st["error"] = "failed", str(exc.detail)
+        except Exception as exc:  # noqa: BLE001 - reported to the panel, never raised in a thread
+            st["state"], st["error"] = "failed", str(exc)[:300]
+    threading.Thread(target=run, daemon=True).start()
+    return {"check_id": check_id}
+
+
+@router.get("/restore/check/{check_id}")
+def restore_check_status(check_id: str) -> dict:
+    st = _CHECKS.get(check_id)
+    if st is None:
+        raise HTTPException(status_code=404, detail="That check has ended. Start it again.")
+    return {"state": st["state"], "listed": st["listed"], "error": st["error"],
+            "plan": st["plan"] if st["state"] == "done" else None}
+
+
+@router.post("/restore/check/{check_id}/stop")
+def restore_check_stop(check_id: str) -> dict:
+    st = _CHECKS.get(check_id)
+    if st is not None:
+        st["stop"] = True
+    return {"ok": True}
 
 
 def _content_disposition(name: str) -> str:

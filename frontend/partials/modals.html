@@ -139,8 +139,8 @@
             <div>
               <div class="lbl">Match by</div>
               <span class="kl-seg">
-                <span :class="removePlan.by === 'object-id' ? 'on' : ''" @click="setRemoveBy('object-id')" title="The same bytes, at any path in these sources">Exact content</span>
-                <span :class="removePlan.by === 'filename' ? 'on' : ''" @click="setRemoveBy('filename')" title="Any file with these names in these sources">File name</span>
+                <span :class="removePlan.by === 'object-id' ? 'on' : ''" @click="setRemoveBy('object-id')" title="The same bytes, at any path in these sources">Exact content<span class="num" x-show="removeByFig('object-id')" x-text="' · ' + removeByFig('object-id')"></span></span>
+                <span :class="removePlan.by === 'filename' ? 'on' : ''" @click="setRemoveBy('filename')" title="Any file with these names in these sources">File name<span class="num" x-show="removeByFig('filename')" x-text="' · ' + removeByFig('filename')"></span></span>
               </span>
             </div>
             <div>
@@ -181,14 +181,13 @@
                 <div class="kl-card"><div class="k">Files</div><div class="v" x-text="removeFileTotal().toLocaleString(NUM_LOCALE)"></div></div>
                 <div class="kl-card"><div class="k" x-text="removePlan.by === 'filename' ? 'Names' : 'Versions'"></div><div class="v" x-text="Number((removePlan.by === 'filename' ? removePlan.name_count : removePlan.object_count) || 0).toLocaleString(NUM_LOCALE)"></div></div>
                 <div class="kl-card good"><div class="k" :title="termTip('reclaimable')" x-text="term('reclaimable')"></div>
-                  <div class="v" x-text="removePlan.detailLoading ? '…' : (removePlan.detail && removePlan.detail.found !== false ? fmtPhys(removePlan.detail.freeable) : '—')"></div></div>
+                  <div class="v" x-text="removePlan.detailLoading ? '…' : (removePlan.detail && removePlan.detail.found !== false ? (removePlan.detail.capped ? '≥ ' : '') + fmtPhys(removePlan.detail.freeable) : '—')"></div></div>
                 <div class="kl-card"><div class="k">Sources</div><div class="v" x-text="removePlan.everywhere ? 'All' : (removePlan.sources_scope || []).length"></div></div>
               </div>
               <div class="kl-note">
-                <span :title="termTip('logical')" x-text="term('logical') + ' ' + fmtB(Number(removePlan.logical || 0) + removeExtra('filename_extra_logical'))"></span><span
+                <span :title="termTip('logical')" x-text="term('logical') + ' ' + fmtB(Number(removePlan.logical || 0) + removeExtra('logical'))"></span><span
                   :title="termTip('physical')" x-text="' · ' + term('physical') + ' ' + fmtPhys(removePhysTotal()) + ' (newest versions)'"></span><span
-                  x-show="removePlan.detail && removePlan.detail.found !== false && removePlan.detail.shared" x-text="' · shared with other files ' + fmtPhys(removePlan.detail && removePlan.detail.shared)"></span><span
-                  x-show="removePlan.detail && removePlan.detail.capped" class="text-warn"> · biggest 5,000 files checked</span>
+                  x-show="removePlan.detail && removePlan.detail.found !== false && removePlan.detail.shared" x-text="' · shared with other files ' + fmtPhys(removePlan.detail && removePlan.detail.shared)"></span>
                 <button class="kl-btn quiet ml-2" style="height:22px" x-show="!removePlan.detail && !removePlan.detailLoading" @click="removeComputeReclaim()">Work out reclaimable space</button>
               </div>
               <div class="kl-note" x-show="removePlan.capped && removePlan.total_physical">
@@ -236,6 +235,37 @@
                   </details>
                 </div>
               </template>
+              <template x-if="removePlan.by !== 'filename' && removePlan.content_extra_count">
+                <div>
+                  <div class="kl-callout" x-text="'Matching by exact content also removes ' + countOf(removePlan.content_extra_count, 'identical copy', 'identical copies') + ' at other paths, outside this selection' + (removePlan.everywhere ? ', across the whole repository.' : '.')"></div>
+                  <details class="mt-1">
+                    <summary class="text-xs text-muted cursor-pointer select-none"
+                             x-text="'Identical copies' + (removePlan.content_extra_capped ? ' (first ' + (removePlan.content_extra || []).length + ' of ' + Number(removePlan.content_extra_count).toLocaleString(NUM_LOCALE) + ')' : ' (' + (removePlan.content_extra || []).length + ')')"></summary>
+                    <div class="kl-list mt-1" style="max-height:160px">
+                      <template x-for="(f, i) in (removePlan.content_extra || [])" :key="i">
+                        <div class="li">
+                          <span class="font-mono break-all grow" x-text="f.full_path"></span>
+                          <span class="pill shrink-0" x-show="f.in_latest === false">deleted from disk</span>
+                          <span class="kl-note shrink-0" :title="fileSourcesTip(f)" x-text="fileSources(f)"></span>
+                          <span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtB(f.size)"></span>
+                        </div>
+                      </template>
+                    </div>
+                  </details>
+                </div>
+              </template>
+              <div class="kl-sec" x-show="removePlan.by === 'filename' && removePlan.detail && removePlan.detail.kept_count">
+                <div class="h">Identical files with other names <span class="count" x-text="removePlan.detail ? countOf(removePlan.detail.kept_count, 'file') + ' · keep ' + fmtPhys(removePlan.detail.kept) + ' stored' : ''"></span></div>
+                <div class="kl-list" style="max-height:132px">
+                  <template x-for="(f, i) in ((removePlan.detail && removePlan.detail.kept_files) || [])" :key="i">
+                    <div class="li">
+                      <span class="font-mono break-all grow" x-text="f.full_path"></span>
+                      <span class="kl-note shrink-0" :title="fileSourcesTip(f)" x-text="fileSources(f)"></span>
+                      <span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtB(f.size)"></span>
+                    </div>
+                  </template>
+                </div>
+              </div>
 
               <div class="kl-sec" x-show="(removePlan.preview || []).length">
                 <div class="h">What gets removed <span class="count" x-text="removeListCount()"></span>
@@ -252,7 +282,7 @@
                   <div>
                     <div class="kl-list" style="max-height:240px">
                       <template x-for="(f, i) in (removePlan.preview || []).slice(0, removePlan.shown || 100)" :key="i">
-                        <div class="li"><span class="font-mono break-all grow" x-text="f.full_path"></span><span class="kl-note shrink-0" x-show="(removePlan.sources_scope || []).length > 1" x-text="shortSource(f.source)"></span><span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtPhys(f.physical)"></span></div>
+                        <div class="li"><span class="font-mono break-all grow" x-text="f.full_path"></span><span class="kl-note shrink-0" x-show="(removePlan.sources_scope || []).length > 1" :title="fileSourcesTip(f)" x-text="fileSources(f)"></span><span class="num shrink-0" style="color:var(--muted);width:4.5rem;text-align:right" x-text="fmtPhys(f.physical)"></span></div>
                       </template>
                     </div>
                     <div class="flex items-center gap-2 mt-1">
@@ -427,10 +457,16 @@
                   <div class="kl-card good"><div class="k">New</div><div class="v" x-text="Number(restore.plan.totals.new).toLocaleString(NUM_LOCALE)"></div></div>
                   <div class="kl-card"><div class="k" title="Same size and modified time">Identical</div><div class="v" x-text="Number(restore.plan.totals.identical).toLocaleString(NUM_LOCALE)"></div></div>
                   <div class="kl-card" :class="restore.plan.totals.different ? 'warn' : ''"><div class="k" x-text="restore.options.overwrite_files ? 'Replaced' : 'Different, kept'"></div><div class="v" x-text="Number(restore.plan.totals.different).toLocaleString(NUM_LOCALE)"></div></div>
-                  <div class="kl-card" :class="restore.plan.totals.extra ? 'warn' : ''" x-show="restore.options.delete_extra"><div class="k">Deleted</div><div class="v" x-text="Number(restore.plan.totals.extra).toLocaleString(NUM_LOCALE)"></div></div>
+                  <div class="kl-card" :class="restore.plan.totals.extra || restore.plan.totals.extra_unchecked ? 'warn' : ''" x-show="restore.options.delete_extra"><div class="k">Deleted</div><div class="v" x-text="restore.plan.totals.extra_unchecked ? 'Not checked' : Number(restore.plan.totals.extra).toLocaleString(NUM_LOCALE)"></div></div>
                 </div>
                 <div class="kl-note" x-show="restore.plan.items.some((i) => i.archive)">Archive target: nothing on disk to compare.</div>
-                <div class="kl-note" x-show="restore.plan.items.some((i) => i.capped)">Compared the first 100,000 files.</div>
+                <div class="kl-note flex flex-wrap items-center gap-2" x-show="restore.plan.totals.capped && !restore.plan.full_check">
+                  <span>Over 100,000 files, so the preview checked the first 100,000. Checking all of them can take a while.</span>
+                  <button class="kl-btn quiet" style="height:22px" x-show="!restoreChecking()" @click="restoreCheckAll()">Check all files</button>
+                  <span x-show="restoreChecking()" x-text="'Checking… ' + countOf(restore.check && restore.check.listed, 'file')"></span>
+                  <button class="kl-btn quiet" style="height:22px" x-show="restoreChecking()" @click="restoreCheckStop()">Stop</button>
+                  <span class="text-danger" x-show="restore.check && restore.check.error" x-text="restore.check && restore.check.error"></span>
+                </div>
                 <template x-if="restore.plan.items.some((i) => (i.different_paths || []).length)">
                   <div class="kl-sec">
                     <div class="h" x-text="restore.options.overwrite_files ? 'Replaced' : 'Different on disk (kept)'"></div>

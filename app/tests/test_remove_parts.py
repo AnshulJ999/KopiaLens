@@ -11,7 +11,8 @@ A = "me@pc:G:\\"
 
 
 def _t(pairs, oids, physical=10, capped=False):
-    files = [{"source": s, "full_path": fp, "physical": physical} for s, fp in pairs]
+    files = [{"host": "pc", "source": s, "sources": [s], "full_path": fp, "physical": physical}
+             for s, fp in pairs]
     return {"file_count": len(pairs), "total_file_count": len(pairs), "total_physical": physical * len(pairs),
             "total_logical": 0, "capped": capped, "logical": 0, "physical": physical * len(pairs),
             "object_ids": oids, "names": [fp.rsplit("\\", 1)[-1] for _, fp in pairs], "pairs": pairs,

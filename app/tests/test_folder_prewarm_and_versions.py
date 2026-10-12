@@ -34,6 +34,7 @@ def test_prewarm_never_serves_a_stale_entry(monkeypatch):
         "rows": [{"folder": "C:" + SEP + "One", "files": 10},
                  {"folder": "C:" + SEP + "Two", "files": 20}]})
     monkeypatch.setattr(foldercache, "_prewarm_depths", lambda: (3,))
+    monkeypatch.setattr(foldercache, "_save_versions", lambda repo, prefixes: None)
 
     foldercache.prewarm("1")
 
@@ -67,36 +68,30 @@ def test_prewarm_depths_reject_nonsense_and_fall_back(monkeypatch):
 # ---- latest-only vs all-versions pricing -------------------------------------------------------
 @pytest.fixture
 def priced(monkeypatch):
-    """A single file whose three versions each hold a different 1 KB chunk, plus one chunk shared
-    by every version. Latest-only should price 2 chunks; all-versions should price 4."""
+    """A single file whose three versions are split objects, each with its own 100-byte piece plus
+    one piece shared by every version. Latest-only should price 2 pieces; all-versions 4."""
     import duckdb
 
     con = duckdb.connect()
     con.execute("CREATE TABLE src(src_id INTEGER, source VARCHAR)")
     con.execute("INSERT INTO src VALUES (1, 'src')")
     con.execute("CREATE TABLE cid(cid_id INTEGER, content_id VARCHAR)")
-    con.execute("INSERT INTO cid VALUES (1,'obj_new'),(2,'obj_mid'),(3,'obj_old')")
-    con.execute("CREATE TABLE pathx(path_id INTEGER, src_id INTEGER, full_path VARCHAR)")
-    con.execute("INSERT INTO pathx VALUES (1, 1, ?)", ["C:" + SEP + "f.dat"])
-    con.execute("CREATE TABLE snap(snap_id INTEGER, snapshot_id VARCHAR, start_time TIMESTAMP)")
-    # Newest version has the latest start_time: the per-path DESC ordering must pick obj_new.
-    con.execute("INSERT INTO snap VALUES (1, 's-old', '2026-01-01 00:00:00'), "
-                "(2, 's-mid', '2026-02-01 00:00:00'), (3, 's-new', '2026-03-01 00:00:00')")
+    con.execute("INSERT INTO cid VALUES (1,'Inew'),(2,'Imid'),(3,'Iold'),"
+                "(4,'c_common'),(5,'c_new'),(6,'c_mid'),(7,'c_old')")
+    con.execute("CREATE TABLE pathx(path_id INTEGER, src_id INTEGER, full_path VARCHAR, cid_id INTEGER, size BIGINT)")
+    con.execute("INSERT INTO pathx VALUES (1, 1, ?, 1, 1000)", ["C:" + SEP + "f.dat"])
     con.execute("CREATE TABLE filev(path_id INTEGER, snap_id INTEGER, cid_id INTEGER, size BIGINT)")
     con.execute("INSERT INTO filev VALUES (1, 3, 1, 1000), (1, 2, 2, 1000), (1, 1, 3, 1000)")
-    chunks = {"obj_new": {"c_common", "c_new"},
-              "obj_mid": {"c_common", "c_mid"},
-              "obj_old": {"c_common", "c_old"}}
-    sizes = {"c_common": 100, "c_new": 100, "c_mid": 100, "c_old": 100}
-
+    con.execute("CREATE TABLE tpart(iobj_cid INTEGER, part_cid INTEGER)")
+    con.execute("INSERT INTO tpart VALUES (1, 4), (1, 5), (2, 4), (2, 6), (3, 4), (3, 7)")
+    con.execute("CREATE TABLE csize(cid_id INTEGER, packed UBIGINT)")
+    con.execute("INSERT INTO csize VALUES (4, 100), (5, 100), (6, 100), (7, 100)")
+    # Nothing outside the file references these pieces.
+    con.execute("CREATE TABLE crefs(cid_id INTEGER, refs INTEGER)")
+    con.execute("INSERT INTO crefs VALUES (4, 1), (5, 1), (6, 1), (7, 1)")
+    con.execute("CREATE TABLE crefo(cid_id INTEGER, refs INTEGER)")
+    con.execute("INSERT INTO crefo VALUES (4, 3), (5, 1), (6, 1), (7, 1)")
     monkeypatch.setattr(physical, "read_cursor", lambda repo: con.cursor())
-    monkeypatch.setattr(physical, "_sizes_for",
-                        lambda repo, cids: {c: sizes[c] for c in set(cids) if c in sizes})
-    monkeypatch.setattr(physical, "_chunks_for_objs",
-                        lambda repo, objs, **kw: {o: set(chunks[o]) for o in objs if o})
-    # Nothing outside the selection references these chunks, so everything found is freeable.
-    monkeypatch.setattr(physical, "_refcount_for", lambda repo, cids: {c: 1 for c in cids})
-    monkeypatch.setattr(physical, "_objrefs_for", lambda repo, cids: {})
     return [{"source": "src", "full_path": "C:" + SEP + "f.dat"}]
 
 
@@ -192,6 +187,7 @@ def _prewarm_env(monkeypatch, folders: list[str]):
         foldercache, "group_by_folder", lambda repo, **kw:
         {"rows": [{"folder": f, "files": 10} for f in folders]})
     monkeypatch.setattr(foldercache, "_prewarm_depths", lambda: (3,))
+    monkeypatch.setattr(foldercache, "_save_versions", lambda repo, prefixes: None)
     monkeypatch.setattr(foldercache, "compute",
                         lambda repo, prefix, allow_stale=True, source=None:
                         computed.append(prefix))
@@ -205,8 +201,8 @@ def test_prewarm_skips_unchanged_folders_and_refreshes_changed_ones(monkeypatch)
 
     now = _time.time()
     _skip_store(monkeypatch, {
-        foldercache._key(f"C:{SEP}One", None): {"stamp": "S1", "computed_at": now},
-        foldercache._key(f"C:{SEP}Two", None): {"stamp": "OLD", "computed_at": now},
+        foldercache._key(f"C:{SEP}One", None): {"stamp": "S1", "computed_at": now, "physical_newest": 1},
+        foldercache._key(f"C:{SEP}Two", None): {"stamp": "OLD", "computed_at": now, "physical_newest": 1},
     })
     stamps = {f"C:{SEP}One": "S1", f"C:{SEP}Two": "S2"}
     monkeypatch.setattr(foldercache, "folder_stamp",
@@ -246,7 +242,8 @@ def test_prewarm_skipped_unchanged_count_is_reported(monkeypatch):
     from app.index import foldercache
 
     _skip_store(monkeypatch, {
-        foldercache._key(f"C:{SEP}One", None): {"stamp": "S1", "computed_at": _time.time()},
+        foldercache._key(f"C:{SEP}One", None): {"stamp": "S1", "computed_at": _time.time(),
+                                                 "physical_newest": 1},
     })
     monkeypatch.setattr(foldercache, "folder_stamp",
                         lambda repo, prefix, source=None: "S1")
@@ -307,8 +304,9 @@ def test_folder_detail_prices_every_version_and_splits_free_from_shared(folder_i
     a, _b = folder_index
     out = physical.folder_detail("1", None, a)
     # pA 100 + pOld 5 + c1 10 + c2 20; c2 is also held by folder B, so it is shared, not freeable.
+    # Newest versions: pA 100 + c1 10 + c2 20 (the missing split object is not in the tree).
     assert out == {"logical": 4400, "physical": 135, "freeable": 115, "files": 3, "shared": 20,
-                   "objects": 4, "all_versions": True}
+                   "objects": 4, "all_versions": True, "physical_newest": 130}
 
 
 def test_folder_detail_latest_only_skips_old_versions(folder_index):

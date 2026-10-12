@@ -80,6 +80,7 @@ def _fake_plan(monkeypatch):
          "files": [{"source": "u@h:C:\\d", "full_path": "C:\\d\\a.bin", "physical": 5, "content_id": "k1abc"}],
          "sources": ["u@h:C:\\d"]}
     monkeypatch.setattr(actions, "_remove_targets", lambda p: t)
+    monkeypatch.setattr(actions, "copies_outside", lambda *a, **k: {"rows": [], "total": 0, "logical": 0, "physical": 0})
     monkeypatch.setattr(actions, "index_generation", lambda repo: 7)
     monkeypatch.setattr(actions, "remove_files_chunked_commands",
                         lambda repo, items, **kw: [["kopia", "snapshot", "fix", "remove-files", *items]])
@@ -113,7 +114,8 @@ def _fake_delete_plan(monkeypatch):
     monkeypatch.setattr(deleteplan, "sources_for_content", lambda repo, oids: ["u@h:C:\\d"])
     monkeypatch.setattr(deleteplan, "resolve_scope", lambda *a: ["u@h:C:\\d"])
     monkeypatch.setattr(deleteplan, "paths_for_contents", lambda *a, **k: {
-        "rows": [{"source": "u@h:C:\\d", "full_path": "C:\\d\\a.bin", "size": 5, "in_latest": True}], "total": 1})
+        "rows": [{"source": "u@h:C:\\d", "sources": ["u@h:C:\\d"], "full_path": "C:\\d\\a.bin", "size": 5,
+                  "in_latest": True}], "total": 1, "marked": 1})
     monkeypatch.setattr(deleteplan, "remove_files_chunked_commands", lambda repo, items, **kw: [["kopia", *items]])
     monkeypatch.setattr(deleteplan, "sources_index", lambda repo: {})
     monkeypatch.setattr(deleteplan, "holding_snapshots", lambda repo, src, fps, snaps: {fps[0]: [

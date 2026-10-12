@@ -70,7 +70,7 @@ const actionsPart = {
         .map((i) => ({ ...i, source: i.source || null }));
       if (!list.length) { this.error = "Nothing to restore."; return; }
       this.restore = {
-        items: list, holders: {}, mode: "folder", target: "", preset: "safe", plan: null, loading: false, error: "",
+        items: list, holders: {}, mode: "folder", target: "", preset: "safe", plan: null, loading: false, error: "", check: null,
         label: opts.label || (list.length === 1 ? baseName(list[0].full_path) : `${list.length} items`),
         options: {
           restore_owners: true, restore_permissions: true, restore_times: true, ignore_errors: false,
@@ -82,7 +82,7 @@ const actionsPart = {
       if (list.some((i) => !i.source) && !(await this.restoreResolveSources())) return;
       this.restoreLoad(false);
     },
-    closeRestore() { this.showRestore = false; this.restore = null; },
+    closeRestore() { this.restoreCheckStop(); this.showRestore = false; this.restore = null; },
 
     async restoreResolveSources() {
       const r = this.restore;
@@ -153,12 +153,46 @@ const actionsPart = {
     restoreChanged() {  // any option change invalidates the preview
       const r = this.restore;
       if (!r) return;
+      this.restoreCheckStop();
       r.preset = this.restorePresetOf(r.options);
       if (r.plan && r.plan.previewed) this.restoreLoad(false);
     },
     restoreHasDirs() {
       const p = this.restore && this.restore.plan;
       return !!(p && p.items.some((i) => i.type === "d"));
+    },
+
+    // Above 100,000 files the preview checks the first 100,000; this compares every file in the
+    // background, with progress and Stop, and replaces the preview when it finishes.
+    restoreChecking() { const c = this.restore && this.restore.check; return !!(c && c.state === "running"); },
+    async restoreCheckAll() {
+      const r = this.restore;
+      if (!r || this.restoreChecking()) return;
+      r.check = { id: "", state: "running", listed: 0, error: "" };
+      const check = r.check;
+      try {
+        const st = await getJson("/api/restore/check", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo: this.repo, items: r.items, target_mode: r.mode, target: r.target, options: r.options, preview: true }) });
+        check.id = st.check_id;
+        while (this.restore === r && r.check === check && check.state === "running") {
+          await new Promise((ok) => setTimeout(ok, 1000));
+          if (this.restore !== r || r.check !== check) break;
+          const s = await getJson(`/api/restore/check/${check.id}`);
+          check.listed = s.listed; check.state = s.state; check.error = s.error || "";
+          if (s.state === "done" && s.plan) { s.plan.previewed = true; r.plan = s.plan; }
+        }
+        if (check.state === "stopped" && r.check === check) r.check = null;
+      } catch (e) {
+        check.state = "failed"; check.error = e.message || String(e);
+      }
+    },
+    restoreCheckStop() {
+      const r = this.restore, c = r && r.check;
+      if (!c) return;
+      if (c.id && c.state === "running") {
+        getJson(`/api/restore/check/${c.id}/stop`, { method: "POST" }).catch(() => {});
+      }
+      r.check = null;
     },
 
     // preview=false: resolve items and targets only (cheap); true: also compare with the destination.
@@ -234,8 +268,9 @@ const actionsPart = {
       }
       facts.push(["Existing files", { safe: "Skipped", replace: "Replaced when different", exact: "Replaced when different", custom: "Custom options" }[r.preset]]);
       if (p.previewed) {
-        facts.push(["On disk now", `${t.new.toLocaleString(NUM_LOCALE)} new · ${t.identical.toLocaleString(NUM_LOCALE)} identical · ${t.different.toLocaleString(NUM_LOCALE)} different`]);
-        if (r.options.delete_extra) facts.push(["Deleted", `${countOf(t.extra, "file")} not in the snapshot`]);
+        const part = t.capped && !p.full_check ? " · first 100,000 files" : "";
+        facts.push(["On disk now", `${t.new.toLocaleString(NUM_LOCALE)} new · ${t.identical.toLocaleString(NUM_LOCALE)} identical · ${t.different.toLocaleString(NUM_LOCALE)} different${part}`]);
+        if (r.options.delete_extra) facts.push(["Deleted", t.extra_unchecked ? "Not checked" : `${countOf(t.extra, "file")} not in the snapshot`]);
       }
       return facts;
     },
@@ -248,7 +283,8 @@ const actionsPart = {
       if (!this.restore || !r.plan || r.error) return;
       const t = r.plan.totals;
       let callout = "";
-      if (r.options.delete_extra && t.extra) callout = `${countOf(t.extra, "file")} at the destination ${t.extra === 1 ? "is" : "are"} not in the snapshot and will be deleted.`;
+      if (r.options.delete_extra && t.extra_unchecked) callout = "Not checked: every file at the destination that isn't in the snapshot gets deleted.";
+      else if (r.options.delete_extra && t.extra) callout = `${countOf(t.extra, "file")} at the destination ${t.extra === 1 ? "is" : "are"} not in the snapshot and will be deleted.`;
       else if (r.options.overwrite_files && t.different) callout = `${t.different.toLocaleString(NUM_LOCALE)} existing files will be replaced.`;
       else if (r.mode === "original") callout = "Restores over the original location.";
       const ok = await this.klConfirm({

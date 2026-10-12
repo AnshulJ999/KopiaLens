@@ -138,7 +138,7 @@ def test_remove_detail_folder_shortcut_needs_one_source_and_no_filters(monkeypat
 
 def test_remove_detail_cap_bounds_the_detail_set(monkeypatch):
     """a "Largest 100" plan must be detailed over those 100
-    files, not the top 5,000 of the whole match - the summary's limit is min(cap, 5000)."""
+    files, not the top of the whole match - the summary's limit is the plan's own cap."""
     seen = {}
 
     def fake_summary(repo, **kw):
@@ -160,9 +160,10 @@ def test_remove_detail_cap_bounds_the_detail_set(monkeypatch):
     actions.remove_detail(_detail_payload(prefix=FOLDER, cap=100))
     assert seen["detail_limit"] == 100 and seen["batch_len"] == 100
 
-    # default: no explicit cap -> the 200k plan ceiling, detail still capped at 5000
+    # default: no explicit cap -> every file of the plan, up to its 200k ceiling, is priced
     actions.remove_detail(_detail_payload(prefix=FOLDER))
-    assert seen["detail_limit"] == 5000 and seen["batch_len"] == 5000
+    assert seen["detail_limit"] == seen["cap"] == actions._plan_cap()
+    assert seen["batch_len"] == seen["detail_limit"]
 
 
 def test_remove_detail_no_filter_is_refused():

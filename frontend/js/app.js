@@ -49,7 +49,7 @@ document.addEventListener("alpine:init", () => {
     treeWeek: "",
     treeDeletedOnly: false, treeOverGb: false, treeExt: "", treeFlat: false, treeView: "list",
     query: "", deletedOnly: false, overOneGb: false, searchSource: "", searchExt: "", searchExtExclude: "", omniMeta: "",
-    groupByFolder: false, searchKind: "files", searchFolders: 0, searchSkipped: [], searchMaxDepth: 20000, groupDepth: 3, groupMinDepth: "", groupMinGb: 0, groupMinFiles: 0,
+    groupByFolder: false, searchKind: "files", searchFolders: 0, searchSkipped: [], searchMaxDepth: 20000, groupDepth: 3, groupMinDepth: "", groupMinGb: 0, groupMinFiles: 0, groupLoose: false, folderVersions: {},
     churnDays: "30", churnDepth: 4, churnView: "source", churnData: null, churnMeta: "", _churnSeq: 0,
     _churnPhysSeq: 0, _churnPhysCache: {}, _churnPhysTimer: null,   // folder view: on-screen all-versions physical
     indexMode: "daily", indexTime: "23:00", indexInterval: 86400, dashboardMode: "nightly",
@@ -173,6 +173,9 @@ document.addEventListener("alpine:init", () => {
     fmtDate(s) { return fmtDate(s); },
     fmtDur(s) { return fmtDur(s); },
     shortSource(s) { return String(s || "").startsWith("BLINKDISK-DRAFT-") ? sourcePath(s) + " (BlinkDisk draft)" : sourcePath(s); },
+    // A file held by nested sources: its first source, "+N" for the rest (full list in filesSourcesTip).
+    fileSources(f) { const n = (f && f.sources || []).length; return this.shortSource(f && f.source) + (n > 1 ? ` +${n - 1}` : ""); },
+    fileSourcesTip(f) { return ((f && f.sources) || [f && f.source]).map((s) => this.shortSource(s)).join("\n"); },
     midTrunc(s, n) { return midTrunc(s, n); },
     // The source the open tab is showing, for the tab bar ("" when the tab has none).
     navSource() {
@@ -366,6 +369,7 @@ document.addEventListener("alpine:init", () => {
         this.reindexInterval = Number(kl.reindex_interval || 1800);
         this.groupDepth = Number(kl.group_depth || 3);
         this.groupMinDepth = Number(kl.group_min_depth) > 1 ? Number(kl.group_min_depth) : "";
+        this.groupLoose = !!kl.group_loose;
         this.churnDays = String(kl.churn_days || 30);
         this.churnDepth = Number(kl.churn_depth || 4);
         this.churnView = kl.churn_view || "source";
@@ -666,7 +670,7 @@ document.addEventListener("alpine:init", () => {
       const rows = (el && el._tabulator) ? el._tabulator.getSelectedData() : [];
       if (id !== "#groupTable") return rows;
       return rows.map((r) => ({ kind: "folder", full_path: r.folder, source: r.source || null, sources: r.sources,
-                                size: r.logical, physical: r.phys, files: r.files }));
+                                size: r.logical, physical: r.physical != null ? r.physical : r.phys, files: r.files }));
     },
 
     // Tree rows mark folders with type, Search rows (Both view) with kind.

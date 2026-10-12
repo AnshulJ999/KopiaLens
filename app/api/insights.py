@@ -199,27 +199,11 @@ def folder_versions(repo: str, prefix: str = "", source: str | None = None) -> d
     _require_kopia(repo)
     if not prefix:
         raise HTTPException(status_code=400, detail="prefix is required")
-    from ..core.sources import sources_index
-    from ..index.holding import _segments, holding_snapshots
+    from ..index.holding import folder_states
     try:
-        index = sources_index(repo)
-        objs: set[str] = set()
-        held = 0
-        used = 0
-        for src in ([source] if source else list(index)):
-            segs = _segments(src, prefix)
-            snaps = index.get(src, [])
-            if segs is None or not snaps:
-                continue
-            used += 1
-            if not segs:   # the source's own root
-                rows = [(s.get("rootEntry") or {}).get("obj") for s in snaps]
-            else:
-                rows = [r.get("obj") for r in holding_snapshots(repo, src, [prefix], snaps)[prefix]]
-            rows = [o for o in rows if o]
-            held += len(rows)
-            objs.update(rows)
-        return {"prefix": prefix, "folder_versions": len(objs), "snapshots": held, "sources": used}
+        st = folder_states(repo, [prefix], source=source)[prefix]
+        return {"prefix": prefix, "folder_versions": st["versions"], "snapshots": st["snapshots"],
+                "sources": st["sources"]}
     except PASS_THROUGH:
         raise
     except Exception as exc:

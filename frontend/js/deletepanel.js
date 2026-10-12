@@ -48,17 +48,24 @@ const deletePart = {
       if (seq === this._delSeq && p.plan && p.method === "remove") this.delLoadStats();
     },
 
+    // Reclaimable over every match (the list stops at 500), and the other match method's figure.
     async delLoadStats() {
       const p = this.delPanel;
       if (!p || !p.plan || !(p.plan.matches || []).length) return;
       const seq = ++this._delStatsSeq;
       p.statsLoading = true;
-      const files = p.plan.matches.map((m) => ({ source: m.source, full_path: m.full_path }));
-      const r = await getJson("/api/actions/batch-detail", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repo: this.repo, files, all_versions: true }) }).catch(() => null);
+      const r = await getJson("/api/delete/stats", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repo: this.repo, files: p.files, method: "remove", by: p.by, sources: p.sources }) }).catch(() => null);
       if (seq !== this._delStatsSeq || !this.delPanel) return;
-      p.stats = r && r.found ? r : null;
+      p.stats = r;
       p.statsLoading = false;
+    },
+    // Reclaimable for a match method, shown in the switch so both can be compared.
+    delByFig(by) {
+      const st = this.delPanel && this.delPanel.stats;
+      if (!st) return "";
+      const v = by === this.delPanel.by ? st.freeable : st.alt_freeable;
+      return v == null ? "" : fmtPhys(v);
     },
 
     delSetMethod(m) {
@@ -186,6 +193,9 @@ const deletePart = {
         facts.push(["Sources", sources]);
         facts.push(["Removes", countOf(plan.match_total, "path") + (plan.other_count ? ` · ${plan.other_count} not selected` : "")]);
         if (p.stats) facts.push([term("reclaimable"), fmtPhys(p.stats.freeable) + " after maintenance"]);
+        if (p.stats && p.stats.kept_count) {
+          facts.push(["Stays stored", `${fmtPhys(p.stats.kept)} · kept by ${countOf(p.stats.kept_count, "identical file")} with other names`]);
+        }
       } else {
         const snaps = plan.snapshots || [];
         facts.push(["Sources", sources]);

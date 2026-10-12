@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from ..core import audit
 from ..core import paths as pathrules
+from ..core.applog import get_logger
 from ..core.kopia import (
     MountError,
     docker_exec,
@@ -38,12 +39,13 @@ from ..core.kopia import (
 from .errors import PASS_THROUGH
 from ..core.nightly import start_index_pass_async
 from ..index.holding import snapshots_for_path
-from ..index.physical import batch_detail, folder_detail
+from ..index.physical import batch_detail, copies_outside, folder_detail
 from ..index.queries import paths_named, remove_targets, remove_targets_summary
 from ..licensing import features
 from ..settings import load_settings
 
 router = APIRouter(tags=["actions"])
+log = get_logger("actions")
 
 _FILENAME_SAMPLE = 500   # collateral paths listed for a filename-mode plan (the count is exact)
 _PLAN_PREVIEW = 1000     # files a plan lists in the panel; the full list is the CSV download
@@ -407,26 +409,33 @@ def _merge_targets(results: list[dict]) -> dict:
         total = sum(t["total_file_count"] for t in results)
         raise HTTPException(status_code=400, detail=(
             f"{total:,} files is more than one delete takes ({cap:,}). Delete fewer folders at once."))
-    seen_pairs: set[tuple[str, str]] = set()
-    files, pairs = [], []
+    pairs = list(dict.fromkeys(pair for t in results for pair in t["pairs"]))
+    # One file per (host, path): the same file reached through two parts merges its sources.
+    merged: dict[tuple, dict] = {}
     for t in results:
-        for pair in t["pairs"]:
-            if pair not in seen_pairs:
-                seen_pairs.add(pair)
-                pairs.append(pair)
-        files.extend(t["files"])
-    files = sorted({(f["source"], f["full_path"]): f for f in files}.values(),
-                   key=lambda f: int(f.get("physical") or 0), reverse=True)
+        for f in t["files"]:
+            key = (f.get("host"), f["full_path"])
+            have = merged.get(key)
+            if have is None:
+                merged[key] = dict(f)
+            else:
+                have["sources"] = sorted(set(have["sources"]) | set(f["sources"]))
+                have["source"] = have["sources"][0]
+                have["size"] = max(int(have.get("size") or 0), int(f.get("size") or 0))
+                have["physical"] = max(int(have.get("physical") or 0), int(f.get("physical") or 0))
+    files = sorted(merged.values(), key=lambda f: int(f.get("physical") or 0), reverse=True)
     oids = list(dict.fromkeys(o for t in results for o in t["object_ids"]))
     names = list(dict.fromkeys(n for t in results for n in t["names"]))
+    logical = sum(int(f.get("size") or 0) for f in files)
+    physical = sum(int(f.get("physical") or 0) for f in files)
     return {
-        "file_count": len(pairs),
-        "total_file_count": len(pairs),
-        "total_physical": sum(t["total_physical"] for t in results),
-        "total_logical": sum(t["total_logical"] for t in results),
+        "file_count": len(files),
+        "total_file_count": len(files),
+        "total_physical": physical,
+        "total_logical": logical,
         "capped": False,
-        "logical": sum(t["logical"] for t in results),
-        "physical": sum(t["physical"] for t in results),
+        "logical": logical,
+        "physical": physical,
         "object_ids": oids,
         "names": names,
         "pairs": pairs,
@@ -493,7 +502,8 @@ def _plan_breakdown(files: list[dict], prefixes: list[str]) -> dict:
             folder = fp[:cut] if cut > 0 else fp
         add("folder", folder, f)
         add("ext", (f.get("ext") or "").lower(), f)
-        add("source", f["source"], f)
+        for src in f.get("sources") or [f["source"]]:
+            add("source", src, f)
 
     def rows(kind: str, n: int) -> list[dict]:
         top = sorted(groups[kind].items(), key=lambda kv: (-kv[1][2], -kv[1][1], kv[0]))[:n]
@@ -546,17 +556,26 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
     extra: dict = {}
     if payload.by == "filename" and t["names"]:
         found = _filename_matches(payload.repo, scope, t["names"], _FILENAME_SAMPLE)
-        planned = {(s, fp) for s, fp in t["pairs"]}
-        rows = [{**r} for r in found["rows"] if (r["source"], r["full_path"]) not in planned]
+        planned = set(t["pairs"])
+        rows = [{**r} for r in found["rows"]
+                if not any((s, r["full_path"]) in planned for s in r["sources"])]
         extra = {
             "filename_match_total": int(found["total"]),
-            "filename_extra_count": max(0, int(found["total"]) - len(planned)),
+            "filename_extra_count": max(0, int(found["total"]) - len(t["files"])),
             "filename_extra": rows,
             "filename_extra_capped": int(found["total"]) > len(found["rows"]),
             # every planned file is itself a match, so the extras are the match totals minus the plan's
             "filename_extra_logical": max(0, int(found["logical"]) - int(t["logical"] or 0)),
             "filename_extra_physical": max(0, int(found["physical"]) - int(t["physical"] or 0)),
         }
+    elif t["pairs"]:
+        # [DEL7 F8] ``--object-id`` removes that content at every path in the scoped sources, so
+        # identical copies outside the plan lose those versions too.
+        copies = copies_outside(payload.repo, t["pairs"], sources=scope, cap=_FILENAME_SAMPLE,
+                                all_versions=payload.all_versions)
+        extra = {"content_extra_count": copies["total"], "content_extra": copies["rows"],
+                 "content_extra_capped": copies["total"] > len(copies["rows"]),
+                 "content_extra_logical": copies["logical"], "content_extra_physical": copies["physical"]}
     return {
         "file_count": t["file_count"], "object_count": len(t["object_ids"]), "name_count": len(t["names"]),
         "item_count": len(items), "by": payload.by,
@@ -575,6 +594,8 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
         "dry_run": "\n".join(_fmt_cmd(c) for c in dry_cmds) if pro else "",
         "filename_match_total": None, "filename_extra_count": 0, "filename_extra": [],
         "filename_extra_capped": False, "filename_extra_logical": 0, "filename_extra_physical": 0,
+        "content_extra_count": 0, "content_extra": [], "content_extra_capped": False,
+        "content_extra_logical": 0, "content_extra_physical": 0,
         **extra,
         # the job start passes plan_token back; index_generation is what it compares.
         "plan_token": plan_token, "index_generation": generation,
@@ -592,45 +613,58 @@ def _has_filters(payload: RemovePlanRequest) -> bool:
     return any(getattr(payload, name, None) for name in _NARROWING_FILTERS)
 
 
-_DETAIL_LIMIT = 5000
+def _filters(p: RemovePlanRequest) -> dict:
+    """The plan's file filters, as ``remove_targets`` / ``remove_targets_summary`` keywords."""
+    return dict(query=p.query, deleted_only=p.deleted_only,
+                min_size=int((p.min_gb or p.over_gb or 0) * 1_000_000_000),
+                max_size=int((p.max_gb or 0) * 1_000_000_000), ext=p.ext or None,
+                ext_exclude=p.ext_exclude or None, date_from=p.date_from or None,
+                date_to=p.date_to or None, min_versions=p.min_versions, shared_min=p.shared_min,
+                first_from=p.first_from or None)
 
 
 def _filename_detail(payload: RemovePlanRequest) -> dict:
     """A file-name delete removes every same-named file in the scoped backups, not only the plan's
     own set, and every version of each (kopia rewrites every snapshot), so the detail prices that
-    whole set across all versions, biggest first."""
+    whole set across all versions. It removes those paths and nothing else: an identical file under
+    another name keeps its data, so those pieces stay () - listed as ``kept_files``."""
     t = _remove_targets(payload)
     if not t["names"]:
         return {"found": False}
     found = _filename_matches(payload.repo, _remove_scope(payload.everywhere, t["sources"]),
-                              t["names"], _DETAIL_LIMIT, biggest_first=True)
+                              t["names"], _plan_cap(), biggest_first=True)
     if not found["rows"]:
         return {"found": False}
-    out = batch_detail(payload.repo, [{"source": r["source"], "full_path": r["full_path"]}
-                                      for r in found["rows"]], all_versions=True)
-    out["capped"] = found["total"] > len(found["rows"])
-    out["scope"] = "filename"
+    pairs = [(s, r["full_path"]) for r in found["rows"] for s in r["sources"]]
+    out = batch_detail(payload.repo, [{"source": s, "full_path": fp} for s, fp in pairs],
+                       all_versions=True, keep_copies=True)
+    kept = copies_outside(payload.repo, pairs, cap=_FILENAME_SAMPLE)
+    out.update({"capped": found["total"] > len(found["rows"]), "scope": "filename",
+                "kept_files": kept["rows"], "kept_count": kept["total"]})
     return out
 
 
-@router.post("/actions/remove-detail")
-def remove_detail(payload: RemovePlanRequest) -> dict:
-    """On-demand reclaim/freeable/shared for the matched set (a chunk walk, so it's a button, not
-    auto). Folder under one source -> folder_detail (subtree walk); otherwise -> batch_detail over
-    the matched files (capped). reads the cheap summary - totals + distinct sources + the
-    top rows - never the full top-200k materialization. The detail walk describes the PLAN's set:
-    its limit is min(cap, 5000), so a "Largest 100" plan is detailed over those 100 files, not the
-    top 5,000 of the whole match."""
+def _remove_detail(payload: RemovePlanRequest) -> dict:
     if payload.by == "filename":
         return _filename_detail(payload)
     if payload.parts is not None:
-        t = _remove_targets(payload)
-        if not t["pairs"]:
+        # the light read per part: totals and the files' pairs, never the full row set.
+        parts = _remove_parts(payload.parts)
+        if not parts:
             return {"found": False}
-        pairs = t["pairs"][:5000]
+        cap = _plan_cap()
+        sums = [remove_targets_summary(payload.repo, source=src, prefix=prefix, cap=cap,
+                                       detail_limit=cap, **_filters(payload)) for src, prefix in parts]
+        if any(s_["capped"] for s_ in sums):
+            raise HTTPException(status_code=400, detail=(
+                f"{sum(s_['total_file_count'] for s_ in sums):,} files is more than one delete takes "
+                f"({cap:,}). Delete fewer folders at once."))
+        pairs = list(dict.fromkeys(pr for s_ in sums for pr in s_["pairs"]))
+        if not pairs:
+            return {"found": False}
         out = batch_detail(payload.repo, [{"source": s, "full_path": fp} for s, fp in pairs],
                            all_versions=payload.all_versions)
-        out["capped"] = len(t["pairs"]) > len(pairs)
+        out["capped"] = False
         out["scope"] = "selection"
         return out
     if not any([payload.query, payload.deleted_only, payload.min_gb, payload.over_gb, payload.max_gb,
@@ -639,24 +673,14 @@ def remove_detail(payload: RemovePlanRequest) -> dict:
         raise HTTPException(status_code=400,
                             detail="refusing to plan a delete with no filter - this would match the entire repo")
     cap = payload.cap or _plan_cap()
-    t = remove_targets_summary(
-        payload.repo, query=payload.query, deleted_only=payload.deleted_only,
-        min_size=int((payload.min_gb or payload.over_gb or 0) * 1_000_000_000),
-        max_size=int((payload.max_gb or 0) * 1_000_000_000), source=payload.source or None,
-        ext=payload.ext or None, ext_exclude=payload.ext_exclude or None,
-        date_from=payload.date_from or None, date_to=payload.date_to or None,
-        min_versions=payload.min_versions, shared_min=payload.shared_min,
-        first_from=payload.first_from or None, prefix=payload.prefix or None,
-        cap=cap, detail_limit=min(cap, 5000),
-    )
+    t = remove_targets_summary(payload.repo, source=payload.source or None,
+                               prefix=payload.prefix or None, cap=cap, detail_limit=cap,
+                               **_filters(payload))
     if not t["pairs"]:
         return {"found": False}
     # The whole-folder shortcut is only valid when the plan really is the whole folder. With a
-    # top-N cap ("Largest 100") the matched set is a slice, and folder_detail would report the
-    # entire folder's freeable/shared - numbers with nothing to do with what is about to be
-    # deleted, in exactly the workflow the cap exists for. The same applies to ANY active filter:
-    # folder_detail takes a prefix and nothing else, so "delete files over 1 GB in here" was being
-    # priced as "delete this entire folder".
+    # top-N cap ("Largest 100") the matched set is a slice, and with any filter it is a subset;
+    # either way folder_detail would price a different deletion than the one being planned.
     if payload.prefix and len(t["sources"]) == 1 and not t.get("capped") and not _has_filters(payload):
         out = folder_detail(payload.repo, t["sources"][0], payload.prefix,
                             all_versions=payload.all_versions)
@@ -664,8 +688,26 @@ def remove_detail(payload: RemovePlanRequest) -> dict:
         return out
     out = batch_detail(payload.repo, [{"source": s, "full_path": fp} for s, fp in t["pairs"]],
                        all_versions=payload.all_versions)
-    out["capped"] = t["total_file_count"] > len(t["pairs"])
+    out["capped"] = False             # every file of the plan is priced (a top-N plan: those N)
     out["scope"] = "selection"
+    return out
+
+
+@router.post("/actions/remove-detail")
+def remove_detail(payload: RemovePlanRequest) -> dict:
+    """On-demand reclaim/freeable/shared for the matched set (a button, not auto). A whole folder
+    under one source -> folder_detail; otherwise -> batch_detail over every matched file (a top-N
+    plan: those N). ``alt_freeable`` is the same plan's Reclaimable with the other match method
+    (exact content vs file name), for the side-by-side in the match switch."""
+    out = _remove_detail(payload)
+    if out.get("found") is not False:
+        other = "filename" if payload.by != "filename" else "object-id"
+        try:
+            alt = _remove_detail(payload.model_copy(update={"by": other}))
+            out["alt_freeable"] = alt.get("freeable") if alt.get("found") is not False else None
+        except Exception as exc:  # noqa: BLE001 - the side-by-side figure is extra; the plan's own stands
+            log.warning("remove-detail: the %s figure could not be worked out: %s", other, exc)
+            out["alt_freeable"] = None
     return out
 
 
@@ -697,16 +739,18 @@ def remove_list(payload: RemovePlanRequest) -> dict:
     t = _remove_targets(payload)
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
-    w.writerow(["Source", "Path", "Logical", "Physical", "Why"])
+    w.writerow(["Sources", "Path", "Logical", "Physical", "Why"])
     for f in t["files"]:
-        w.writerow([f["source"], f["full_path"], f.get("size") or 0, f.get("physical") or 0, "selected"])
+        w.writerow(["; ".join(f["sources"]), f["full_path"], f.get("size") or 0, f.get("physical") or 0,
+                    "selected"])
     rows = len(t["files"])
     if payload.by == "filename" and t["names"]:
         scope = _remove_scope(payload.everywhere, t["sources"])
-        planned = {(s, fp) for s, fp in t["pairs"]}
+        planned = set(t["pairs"])
         for r in _filename_matches(payload.repo, scope, t["names"], _plan_cap())["rows"]:
-            if (r["source"], r["full_path"]) not in planned:
-                w.writerow([r["source"], r["full_path"], r.get("size") or 0, r.get("physical") or 0, "same file name"])
+            if not any((s, r["full_path"]) in planned for s in r["sources"]):
+                w.writerow(["; ".join(r["sources"]), r["full_path"], r.get("size") or 0,
+                            r.get("physical") or 0, "same file name"])
                 rows += 1
     fname = f"kopialens_delete_list_repo{payload.repo}_{time.strftime('%Y%m%d_%H%M%S')}.csv"
     return {"filename": fname, "content": buf.getvalue(), "rows": rows}

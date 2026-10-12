@@ -95,6 +95,17 @@ _RANK_SORTS = ("stored", "frees")
 _HOST_SQL = "lower(regexp_extract(s.source, '^[^@]*@([^:]*)', 1))"
 
 
+def _per_file(where_sql: str, extra: str = "", joins: str = "") -> str:
+    """SQL: the ``pathx`` rows matching ``where_sql`` folded to one row per FILE (). A path
+    held by nested sources on one computer is one file; ``sources`` lists every source holding it
+    and ``source`` is the first of them. Sizes are the largest any holder reports."""
+    return (f"SELECT {_HOST_SQL} AS host, p.full_path, min(s.source) AS source, "
+            f"list_sort(list(DISTINCT s.source)) AS sources, max(p.size) AS size, "
+            f"max(p.physical) AS physical, bool_or(p.in_latest) AS in_latest{extra} "
+            f"FROM pathx p JOIN src s ON s.src_id = p.src_id {joins} WHERE {where_sql} "
+            f"GROUP BY {_HOST_SQL}, p.full_path")
+
+
 def _split_exts(ext: str) -> list[str]:
     return [e.lower().lstrip(".") for e in (x.strip() for x in ext.split(",")) if e]
 
@@ -240,8 +251,6 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
             else:
                 sort = "physical"      # nothing ranked yet: the closest meaningful order
         join_sql = f"LEFT JOIN {mat} r ON r.key = p.path_id" if mat else ""
-        if mat and sort == "frees":
-            join_sql = f"LEFT JOIN {mat} r ON r.key = p.cid_id"
         value_sql = ", r.value AS ranked_value" if mat else ""
         where, params = _search_where(cur, query, deleted_only, min_size, source, ext, max_size,
                                       date_from, date_to, min_versions, shared_min, ext_exclude, first_from)
@@ -421,8 +430,8 @@ def search_export(repo: str, query: str = "", deleted_only: bool = False, min_si
         where_sql = _where(where)
         st, fr = lists.get("stored"), lists.get("frees")
         st_join = f"LEFT JOIN {st} rs ON rs.key = p.path_id" if st else ""
-        fr_join = f"LEFT JOIN {fr} rf ON rf.key = m.cid_id" if fr else ""
-        fr_val = "rf.value" if fr else "NULL::UBIGINT"
+        fr_join = f"LEFT JOIN {fr} rf ON rf.key = p.path_id" if fr else ""
+        fr_val = "max(rf.value)" if fr else "NULL::UBIGINT"
         st_val = "max(rs.value)" if st else "NULL::UBIGINT"
         by_path = dedupe and dedupe_by != "content"
         if by_path:
@@ -431,8 +440,8 @@ def search_export(repo: str, query: str = "", deleted_only: bool = False, min_si
                        p.full_path, arg_max(p.ext, p.last_seen) AS ext,
                        arg_max(p.size, p.last_seen) AS size, arg_max(p.physical, p.last_seen) AS physical,
                        max(p.versions) AS versions, min(p.first_seen) AS first_seen, max(p.last_seen) AS last_seen,
-                       bool_or(p.in_latest) AS in_latest, {st_val} AS stored_all
-                FROM pathx p JOIN src s ON s.src_id = p.src_id {st_join}
+                       bool_or(p.in_latest) AS in_latest, {st_val} AS stored_all, {fr_val} AS frees_all
+                FROM pathx p JOIN src s ON s.src_id = p.src_id {st_join} {fr_join}
                 WHERE {where_sql}
                 GROUP BY {_HOST_SQL}, p.full_path"""
         elif dedupe:
@@ -441,17 +450,18 @@ def search_export(repo: str, query: str = "", deleted_only: bool = False, min_si
                        arg_max(p.full_path, p.last_seen) AS full_path, arg_max(p.ext, p.last_seen) AS ext,
                        max(p.size) AS size, max(p.physical) AS physical, max(p.versions) AS versions,
                        min(p.first_seen) AS first_seen, max(p.last_seen) AS last_seen,
-                       bool_or(p.in_latest) AS in_latest, {st_val} AS stored_all,
+                       bool_or(p.in_latest) AS in_latest, {st_val} AS stored_all, {fr_val} AS frees_all,
                        count(DISTINCT p.src_id) AS sources, count(DISTINCT p.full_path) AS copies
-                FROM pathx p JOIN src s ON s.src_id = p.src_id {st_join}
+                FROM pathx p JOIN src s ON s.src_id = p.src_id {st_join} {fr_join}
                 WHERE {where_sql} AND p.cid_id IS NOT NULL
                 GROUP BY p.cid_id"""
             counts, counts_join, src_col, copies_col = "", "", "m.sources", "m.copies"
         if not dedupe:
             base = f"""
                 SELECT p.cid_id, s.source, p.full_path, p.ext, p.size, p.physical, p.versions,
-                       p.first_seen, p.last_seen, p.in_latest, {"rs.value" if st else "NULL::UBIGINT"} AS stored_all
-                FROM pathx p JOIN src s ON s.src_id = p.src_id {st_join}
+                       p.first_seen, p.last_seen, p.in_latest, {"rs.value" if st else "NULL::UBIGINT"} AS stored_all,
+                       {"rf.value" if fr else "NULL::UBIGINT"} AS frees_all
+                FROM pathx p JOIN src s ON s.src_id = p.src_id {st_join} {fr_join}
                 WHERE {where_sql}"""
         if not dedupe or by_path:
             # Src / Copies exactly as the table counts them: distinct sources and distinct paths
@@ -471,10 +481,10 @@ def search_export(repo: str, query: str = "", deleted_only: bool = False, min_si
             f"""
             WITH m AS ({base}){counts}
             SELECT m.full_path, m.size, m.physical, {src_col} AS sources, m.stored_all,
-                   {fr_val} AS frees_all, m.ext, m.versions, {copies_col} AS copies,
+                   m.frees_all, m.ext, m.versions, {copies_col} AS copies,
                    m.last_seen, m.first_seen,
                    CASE WHEN m.in_latest THEN 'yes' ELSE 'deleted' END AS on_disk, m.source
-            FROM m {counts_join} {fr_join}
+            FROM m {counts_join}
             ORDER BY {order_col} {dirn}{nulls}, last_seen DESC, source, full_path
             LIMIT {int(cap)}
             """,
@@ -657,61 +667,85 @@ def paths_for_content(repo: str, content_id: str) -> list[dict]:
         cur.close()
 
 
+def folder_file_filter(cur, query: str = "", source: str | None = None, ext: str | None = None,
+                       ext_exclude: str | None = None, deleted_only: bool = False) -> tuple[list[str], list]:
+    """The file filters a folder rollup applies (Search's text, source, type and deleted filters),
+    over ``pathx p``. Shared by the folder list and the folder pricing so both count the same files."""
+    conds: list[str] = []
+    params: list = []
+    if source:
+        cond, sp = _src_cond_exact(cur, source)
+        conds.append(cond)
+        params.extend(sp)
+    if ext:
+        exts = _split_exts(ext)
+        if exts:
+            conds.append("p.ext IN (%s)" % ",".join("?" * len(exts)))
+            params.extend(exts)
+    if ext_exclude:
+        exx = _split_exts(ext_exclude)
+        if exx:
+            conds.append("(p.ext IS NULL OR p.ext NOT IN (%s))" % ",".join("?" * len(exx)))
+            params.extend(exx)
+    if deleted_only:
+        conds.append("p.in_latest=false")
+    if query:
+        cond, qp = _text_match(query)
+        conds.append(cond)
+        params.extend(qp)
+    return conds, params
+
+
 def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | None = None,
                     ext: str | None = None, deleted_only: bool = False, min_size: int = 0,
                     min_files: int = 0, sort: str = "physical", direction: str = "desc",
-                    limit: int = 500, ext_exclude: str | None = None, min_depth: int = 0) -> dict:
-    """Bloat finder: roll the (filtered) `paths` up by the first `depth` path segments, summing
-    physical + logical + file count per folder, ranked. Find backed-up folders that shouldn't be
-    there. Reclaim (freeable) is computed on demand per folder (folder_detail), not here."""
+                    limit: int = 500, ext_exclude: str | None = None, min_depth: int = 0,
+                    loose: bool = False) -> dict:
+    """Bloat finder: backed-up folders at ``depth``, each row a WHOLE folder (everything under it).
+    A folder shallower than ``depth`` gets a row only when it has no subfolders (it ends there, so
+    it is whole too). ``loose`` adds a row for the files lying directly in a shallower folder that
+    does have subfolders (``loose: true``; every column covers just those files).
+
+    Counts are per file: a path held by nested sources is one file (). ``phys`` adds up the
+    files' own Physical - a ranking estimate, since identical pieces count again; the exact
+    newest-versions Physical comes from ``physical.folder_detail`` ()."""
     cur = read_cursor(repo)
     try:
-        conds: list[str] = []
-        params: list = []
-        if source:
-            cond, sp = _src_cond_exact(cur, source)
-            conds.append(cond)
-            params.extend(sp)
-        if ext:
-            exts = _split_exts(ext)
-            if exts:
-                conds.append("p.ext IN (%s)" % ",".join("?" * len(exts)))
-                params.extend(exts)
-        if ext_exclude:
-            exx = _split_exts(ext_exclude)
-            if exx:
-                conds.append("(p.ext IS NULL OR p.ext NOT IN (%s))" % ",".join("?" * len(exx)))
-                params.extend(exx)
-        if deleted_only:
-            conds.append("p.in_latest=false")
-        if query:
-            cond, qp = _text_match(query)
-            conds.append(cond)
-            params.extend(qp)
+        conds, params = folder_file_filter(cur, query, source, ext, ext_exclude, deleted_only)
+        d = max(1, int(depth))
         if min_depth and int(min_depth) > 1:
             conds.append(f"_gd.depth >= {int(min_depth)}")   # hides folders shallower than this
-        where = _where(conds)
+        # shallow: the file's folder is above `depth`; split: that folder also has subfolders, so
+        # its own files are only part of it.
+        split = "(_ga.anc_id IS NULL AND _gk.parent_id IS NOT NULL)"
+        if not loose:
+            conds.append(f"NOT {split}")
         order = {"physical": "phys", "logical": "logical", "files": "files"}.get(sort, "phys")
         dirn = "ASC" if direction == "asc" else "DESC"
-        d = max(1, int(depth))
-        # Group by the file's folder capped at depth (its ancestor `d` levels down, or its own
-        # folder when shallower), so individual files never masquerade as folders and `depth`
-        # means folder depth. + deleted-ratio & last-seen.
         rows = _rows(
             cur,
             f"""
-            SELECT {_folder_name_sql(cur, 'g')} AS folder,
-                   sum(p.physical) AS phys, sum(coalesce(p.exclusive, 0)) AS excl,
-                   sum(p.size) AS logical, count(*) AS files,
-                   count(*) FILTER (WHERE NOT p.in_latest) AS deleted_files,
-                   max(p.last_seen) AS last_seen, min(p.first_seen) AS first_seen,
-                   count(DISTINCT p.src_id) AS sources, min(p.src_id) AS src_one
-            FROM pathx p
-            {_rollup_join('p', d, 'g')}
-            WHERE {where}
-            GROUP BY folder
-            HAVING sum(p.physical) >= {int(min_size)} AND count(*) >= {int(min_files)}
-            ORDER BY {order} {dirn}, folder LIMIT {int(limit)}
+            WITH m AS (
+                SELECT {_folder_name_sql(cur, 'g')} AS folder, {split} AS loose,
+                       {_HOST_SQL} AS host, p.full_path, p.size, p.physical, p.in_latest,
+                       p.last_seen, p.first_seen, p.src_id
+                FROM pathx p JOIN src s ON s.src_id = p.src_id
+                {_rollup_join('p', d, 'g')}
+                LEFT JOIN (SELECT DISTINCT parent_id FROM dir) _gk ON _gk.parent_id = _gd.dir_id
+                WHERE {_where(conds)}),
+            pf AS (SELECT folder, loose, host, full_path, max(size) AS size, max(physical) AS physical,
+                          bool_or(in_latest) AS in_latest, max(last_seen) AS last_seen,
+                          min(first_seen) AS first_seen
+                   FROM m GROUP BY folder, loose, host, full_path),
+            ff AS (SELECT folder, loose, sum(physical) AS phys, sum(size) AS logical, count(*) AS files,
+                          count(*) FILTER (WHERE NOT in_latest) AS deleted_files,
+                          max(last_seen) AS last_seen, min(first_seen) AS first_seen
+                   FROM pf GROUP BY folder, loose),
+            fs AS (SELECT folder, loose, count(DISTINCT src_id) AS sources, min(src_id) AS src_one
+                   FROM m GROUP BY folder, loose)
+            SELECT ff.*, 0 AS excl, fs.sources, fs.src_one FROM ff JOIN fs USING (folder, loose)
+            WHERE ff.phys >= {int(min_size)} AND ff.files >= {int(min_files)}
+            ORDER BY {order} {dirn}, folder, loose LIMIT {int(limit)}
             """,
             params,
         )
@@ -745,12 +779,26 @@ def holders_for_paths(repo: str, full_paths: list[str]) -> dict[str, list[str]]:
     return out
 
 
+def _file_rows(where_sql: str) -> str:
+    """SQL: one ``pathx``-shaped row per FILE under ``where_sql`` (columns dir_id, src_id, source,
+    full_path, name, ext, size, physical, versions, first_seen, last_seen, in_latest), for folder
+    breakdowns: a path held by nested sources counts once ()."""
+    return (f"SELECT p.full_path, any_value(p.dir_id) AS dir_id, min(p.src_id) AS src_id, "
+            f"min(s.source) AS source, any_value(p.name) AS name, any_value(p.ext) AS ext, "
+            f"max(p.size) AS size, max(p.physical) AS physical, max(p.versions) AS versions, "
+            f"min(p.first_seen) AS first_seen, max(p.last_seen) AS last_seen, "
+            f"bool_or(p.in_latest) AS in_latest "
+            f"FROM pathx p JOIN src s ON s.src_id = p.src_id WHERE {where_sql} "
+            f"GROUP BY {_HOST_SQL}, p.full_path")
+
+
 def paths_named(repo: str, sources: list[str], names: list[str], cap: int = 500,
-                biggest_first: bool = False) -> dict:
-    """Every path in ``sources`` whose file name equals one of ``names`` - what kopia's
-    ``remove-files --filename`` matches. ``{"rows": [{source, full_path, size, physical,
-    in_latest}], "total", "logical", "physical"}``; the totals cover every match, not just ``rows``."""
-    empty = {"rows": [], "total": 0, "logical": 0, "physical": 0}
+                biggest_first: bool = False, mark: list[str] | None = None) -> dict:
+    """Every file in ``sources`` whose name equals one of ``names`` - what kopia's
+    ``remove-files --filename`` matches. ``{"rows": [{source, sources, full_path, size, physical,
+    in_latest}], "total", "logical", "physical", "marked"}``, one row per file; the totals cover every
+    match, and ``marked`` counts the matches whose path is in ``mark``."""
+    empty = {"rows": [], "total": 0, "logical": 0, "physical": 0, "marked": 0}
     names = list(dict.fromkeys(n for n in names if n))
     if not names or not sources:
         return empty
@@ -764,55 +812,67 @@ def paths_named(repo: str, sources: list[str], names: list[str], cap: int = 500,
         where = ("p.src_id IN (%s) AND p.name IN (%s)"
                  % (",".join("?" * len(sids)), ",".join("?" * len(names))))
         params = [*sids, *names]
-        total, logical, phys = cur.execute(
-            f"SELECT count(*), sum(p.size), sum(p.physical) FROM pathx p WHERE {where}", params).fetchone()
-        order = ("p.physical DESC NULLS LAST, p.size DESC, s.source, p.full_path" if biggest_first
-                 else "s.source, p.full_path")
+        base = _per_file(where)
+        mk, mparams = _mark_sql(mark)
+        total, logical, phys, marked = cur.execute(
+            f"SELECT count(*), sum(size), sum(physical), {mk} FROM ({base})", [*mparams, *params]).fetchone()
+        order = ("physical DESC NULLS LAST, size DESC, source, full_path" if biggest_first
+                 else "source, full_path")
         rows = _rows(
             cur,
-            f"SELECT s.source, p.full_path, p.size, p.physical, p.in_latest FROM pathx p "
-            f"JOIN src s ON s.src_id = p.src_id WHERE {where} "
+            f"SELECT source, sources, full_path, size, physical, in_latest FROM ({base}) "
             f"ORDER BY {order} LIMIT {int(cap)}",
             params,
         )
     finally:
         cur.close()
     return {"rows": rows, "total": int(total or 0), "logical": int(logical or 0),
-            "physical": int(phys or 0)}
+            "physical": int(phys or 0), "marked": int(marked or 0)}
+
+
+def _mark_sql(mark: list[str] | None) -> tuple[str, list]:
+    """SQL counting the rows whose ``full_path`` is in ``mark`` (0 when none given)."""
+    paths = list(dict.fromkeys(m for m in (mark or []) if m))
+    if not paths:
+        return "0", []
+    return "count(*) FILTER (WHERE full_path IN (%s))" % ",".join("?" * len(paths)), paths
 
 
 def paths_for_contents(repo: str, object_ids: list[str], sources: list[str] | None = None,
-                       cap: int = 500) -> dict:
-    """Every (source, path) holding any of these content objects in any version - what
-    ``remove-files --object-id`` removes inside the scoped sources."""
+                       cap: int = 500, mark: list[str] | None = None) -> dict:
+    """Every file holding any of these content objects in any version - what
+    ``remove-files --object-id`` removes inside the scoped sources. One row per file, with
+    ``sources`` listing the scoped sources that hold it."""
     oids = list(dict.fromkeys(o for o in object_ids if o))
     if not oids:
-        return {"rows": [], "total": 0}
+        return {"rows": [], "total": 0, "marked": 0}
     cur = read_cursor(repo)
     try:
         ids = sorted(set(resolve.cid_ids(cur, oids).values()))
         if not ids:
-            return {"rows": [], "total": 0}
+            return {"rows": [], "total": 0, "marked": 0}
         conds = ["f.cid_id IN (%s)" % ",".join("?" * len(ids))]
         params: list = list(ids)
         if sources is not None:
             sids = [i for i in (resolve.src_id(cur, s) for s in sources) if i is not None]
             if not sids:
-                return {"rows": [], "total": 0}
+                return {"rows": [], "total": 0, "marked": 0}
             conds.append("p.src_id IN (%s)" % ",".join("?" * len(sids)))
             params.extend(sids)
-        sub = ("SELECT DISTINCT p.src_id, p.full_path, p.size, p.in_latest FROM filev f "
-               "JOIN pathx p ON p.path_id = f.path_id WHERE " + " AND ".join(conds))
-        total = cur.execute(f"SELECT count(*) FROM ({sub})", params).fetchone()[0]
+        where = ("p.path_id IN (SELECT f.path_id FROM filev f JOIN pathx p ON p.path_id = f.path_id "
+                 "WHERE " + " AND ".join(conds) + ")")
+        base = _per_file(where)
+        mk, mparams = _mark_sql(mark)
+        total, marked = cur.execute(f"SELECT count(*), {mk} FROM ({base})", [*mparams, *params]).fetchone()
         rows = _rows(
             cur,
-            f"SELECT s.source, x.full_path, x.size, x.in_latest FROM ({sub}) x "
-            f"JOIN src s ON s.src_id = x.src_id ORDER BY s.source, x.full_path LIMIT {int(cap)}",
+            f"SELECT source, sources, full_path, size, physical, in_latest FROM ({base}) "
+            f"ORDER BY source, full_path LIMIT {int(cap)}",
             params,
         )
     finally:
         cur.close()
-    return {"rows": rows, "total": int(total or 0)}
+    return {"rows": rows, "total": int(total or 0), "marked": int(marked or 0)}
 
 
 def sources_for_content(repo: str, object_ids: list[str]) -> list[str]:
@@ -879,21 +939,19 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
             min_versions=min_versions, shared_min=shared_min, ext_exclude=ext_exclude,
             first_from=first_from, prefix=prefix)
         # Unbounded totals for the SAME filter, so the UI can say "the 100 biggest files are 8.2 GiB
-        # = 70% of this folder". Cheap (one indexed aggregate) and it is what makes a top-N delete a
-        # judgement call rather than a guess - in a 10k-file folder a hundred files usually hold most
-        # of the bytes.
+        # = 70% of this folder". Counted per file: nested sources hold one file once ().
+        base = _per_file(where_sql, ", any_value(p.name) AS name, any_value(p.ext) AS ext, "
+                                    "list(DISTINCT c.content_id) AS content_ids",
+                         joins="LEFT JOIN cid c ON c.cid_id = p.cid_id")
         trow = cur.execute(
-            f"SELECT count(*), COALESCE(sum(p.physical), 0), COALESCE(sum(p.size), 0) "
-            f"FROM pathx p WHERE {where_sql}",
+            f"SELECT count(*), COALESCE(sum(physical), 0), COALESCE(sum(size), 0) FROM ({base})",
             params,
         ).fetchone() or (0, 0, 0)
         total_file_count, total_physical, total_logical = int(trow[0]), int(trow[1]), int(trow[2])
         files = _rows(
             cur,
-            f"SELECT s.source AS source, p.full_path, p.name, p.ext, c.content_id, p.size, p.physical FROM pathx p "
-            f"JOIN src s ON s.src_id = p.src_id LEFT JOIN cid c ON c.cid_id = p.cid_id "
-            f"WHERE {where_sql} "
-            f"ORDER BY p.physical DESC NULLS LAST, p.size DESC, s.source, p.full_path LIMIT {int(cap)}",
+            f"SELECT host, source, sources, full_path, name, ext, content_ids, size, physical FROM ({base}) "
+            f"ORDER BY physical DESC NULLS LAST, size DESC, source, full_path LIMIT {int(cap)}",
             params,
         )
         logical = sum(int(f["size"] or 0) for f in files)
@@ -906,8 +964,7 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
             # per 900 path ids. Emitted in the files' physical-desc order so the biggest files'
             # objects come first.
             sid_of = resolve.src_map(cur)
-            spairs = [(sid_of[s], fp) for s, fp in ((f["source"], f["full_path"]) for f in files)
-                      if s in sid_of]
+            spairs = [(sid_of[s], f["full_path"]) for f in files for s in f["sources"] if s in sid_of]
             pid_of = resolve.path_ids(cur, spairs)
             ver: dict[int, list[int]] = {}
             pids = list(pid_of.values())
@@ -919,29 +976,31 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
                         ver.setdefault(pid, []).append(c)
             cstr = resolve.content_ids(cur, sorted({c for v in ver.values() for c in v}))
             for f in files:
-                sid = sid_of.get(f["source"])
-                pid = pid_of.get((sid, f["full_path"])) if sid is not None else None
-                for c in ver.get(pid, []) if pid is not None else []:
-                    s = cstr.get(c)
-                    if s and s not in seen:
-                        seen.add(s)
-                        oids.append(s)
+                for src in f["sources"]:
+                    sid = sid_of.get(src)
+                    pid = pid_of.get((sid, f["full_path"])) if sid is not None else None
+                    for c in ver.get(pid, []) if pid is not None else []:
+                        s = cstr.get(c)
+                        if s and s not in seen:
+                            seen.add(s)
+                            oids.append(s)
         else:
             for f in files:
-                cid = f.get("content_id")
-                if cid and cid not in seen:
-                    seen.add(cid)
-                    oids.append(cid)
+                for cid in f.get("content_ids") or []:
+                    if cid and cid not in seen:
+                        seen.add(cid)
+                        oids.append(cid)
         # Basenames (deduped, biggest-files-first) for the --filename mechanism (mirrors the batch
         # panel's by-name removal). pairs = every matched (source, full_path) for on-demand detail.
         names: list[str] = []
         seenn: set[str] = set()
         for f in files:
             nm = f.pop("name")
+            f.pop("content_ids", None)
             if nm and nm not in seenn:
                 seenn.add(nm)
                 names.append(nm)
-        pairs = [(f["source"], f["full_path"]) for f in files]
+        pairs = [(s, f["full_path"]) for f in files for s in f["sources"]]
     finally:
         cur.close()
     return {
@@ -955,8 +1014,8 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
         "object_ids": oids,             # deduped, biggest-files-first
         "names": names,                 # deduped basenames, biggest-files-first
         "pairs": pairs,                 # all (source, full_path) - server-side only (detail/batch)
-        "files": files,                 # every matched file, physical-desc (callers slice previews)
-        "sources": sorted({f["source"] for f in files}),
+        "files": files,                 # one row per file, physical-desc (callers slice previews)
+        "sources": sorted({s for f in files for s in f["sources"]}),
     }
 
 
@@ -979,9 +1038,9 @@ def remove_targets_summary(repo: str, *, query: str = "", deleted_only: bool = F
             ext=ext, max_size=max_size, date_from=date_from, date_to=date_to,
             min_versions=min_versions, shared_min=shared_min, ext_exclude=ext_exclude,
             first_from=first_from, prefix=prefix)
+        base = _per_file(where_sql)
         trow = cur.execute(
-            f"SELECT count(*), COALESCE(sum(p.physical), 0), COALESCE(sum(p.size), 0) "
-            f"FROM pathx p WHERE {where_sql}",
+            f"SELECT count(*), COALESCE(sum(physical), 0), COALESCE(sum(size), 0) FROM ({base})",
             params,
         ).fetchone() or (0, 0, 0)
         total_file_count, total_physical, total_logical = int(trow[0]), int(trow[1]), int(trow[2])
@@ -990,13 +1049,12 @@ def remove_targets_summary(repo: str, *, query: str = "", deleted_only: bool = F
             f"WHERE {where_sql} ORDER BY s.source",
             params,
         ).fetchall()]
-        pairs = [(r[0], r[1]) for r in cur.execute(
-            f"SELECT s.source, p.full_path FROM pathx p JOIN src s ON s.src_id = p.src_id "
-            f"WHERE {where_sql} "
-            f"ORDER BY p.physical DESC NULLS LAST, p.size DESC, s.source, p.full_path "
+        pairs = [(src, fp) for srcs, fp in cur.execute(
+            f"SELECT sources, full_path FROM ({base}) "
+            f"ORDER BY physical DESC NULLS LAST, size DESC, source, full_path "
             f"LIMIT {int(detail_limit)}",
             params,
-        ).fetchall()]
+        ).fetchall() for src in srcs]
     finally:
         cur.close()
     return {
@@ -1219,11 +1277,12 @@ def folder_summary(repo: str, prefix: str, source: str | None = None) -> dict:
             params.extend(sp)
         where = _where(conds)
         row = cur.execute(
-            f"SELECT count(*), COALESCE(sum(p.physical), 0), COALESCE(sum(p.size), 0), "
-            f"  min(p.first_seen), max(p.last_seen), count(*) FILTER (WHERE NOT p.in_latest), "
-            f"  COALESCE(sum(p.versions), 0), count(DISTINCT p.src_id) "
-            f"FROM pathx p WHERE {where}",
-            params,
+            f"SELECT count(*), COALESCE(sum(f.physical), 0), COALESCE(sum(f.size), 0), "
+            f"  min(f.first_seen), max(f.last_seen), count(*) FILTER (WHERE NOT f.in_latest), "
+            f"  COALESCE(sum(f.versions), 0), "
+            f"  (SELECT count(DISTINCT p.src_id) FROM pathx p WHERE {where}) "
+            f"FROM ({_file_rows(where)}) f",
+            params + params,
         ).fetchone() or (0, 0, 0, None, None, 0, 0, 0)
     finally:
         cur.close()
@@ -1239,13 +1298,13 @@ def folder_top_children(repo: str, prefix: str, limit: int = 5, source: str | No
     here" without making the user drill down."""
     cur = read_cursor(repo)
     try:
-        ch, where, params = _folder_scope(cur, prefix, source)
+        ch, where, params = _folder_scope(cur, prefix, source, row_alias="dp")
         return _rows(
             cur,
             f"SELECT {ch.name} AS child, "
-            f"  COALESCE(sum(p.physical), 0) AS physical, count(*) AS files, "
+            f"  COALESCE(sum(dp.physical), 0) AS physical, count(*) AS files, "
             f"  bool_or({ch.folder}) AS is_folder "
-            f"FROM pathx p {ch.join} WHERE {where} GROUP BY child "
+            f"FROM ({_file_rows(where)}) dp {ch.join} GROUP BY child "
             f"ORDER BY physical DESC, child LIMIT {int(limit)}",
             params,
         )
@@ -1253,9 +1312,11 @@ def folder_top_children(repo: str, prefix: str, limit: int = 5, source: str | No
         cur.close()
 
 
-def _folder_scope(cur, prefix: str, source: str | None) -> tuple[_Children, str, list]:
-    """(children grouping, WHERE, params) for the rows under a folder, optionally one source."""
-    ch = _child_sql(cur, prefix)
+def _folder_scope(cur, prefix: str, source: str | None,
+                  row_alias: str | None = None) -> tuple[_Children, str, list]:
+    """(children grouping, WHERE, params) for the rows under a folder, optionally one source.
+    ``row_alias`` names a per-file relation the grouping reads (``_file_rows``)."""
+    ch = _child_sql(cur, prefix, row_alias=row_alias)
     conds = [ch.scope] if ch.scope else []
     params: list = []
     if source:
@@ -1272,9 +1333,9 @@ def folder_file_types(repo: str, prefix: str, source: str | None = None, limit: 
         _ch, where, params = _folder_scope(cur, prefix, source)
         rows = _rows(
             cur,
-            f"SELECT COALESCE(p.ext, '') AS ext, count(*) AS files, "
-            f"  COALESCE(sum(p.physical), 0) AS physical, COALESCE(sum(p.size), 0) AS logical "
-            f"FROM pathx p WHERE {where} "
+            f"SELECT COALESCE(f.ext, '') AS ext, count(*) AS files, "
+            f"  COALESCE(sum(f.physical), 0) AS physical, COALESCE(sum(f.size), 0) AS logical "
+            f"FROM ({_file_rows(where)}) f "
             f"GROUP BY 1 ORDER BY physical DESC, ext",
             params,
         )
@@ -1293,7 +1354,7 @@ def folder_contents(repo: str, prefix: str, source: str | None = None, limit: in
     each with size, file count, versions, last backup and a source to open it from."""
     cur = read_cursor(repo)
     try:
-        ch, where, params = _folder_scope(cur, prefix, source)
+        ch, where, params = _folder_scope(cur, prefix, source, row_alias="dp")
         return _rows(
             cur,
             f"SELECT child, bool_or(is_dir) AS is_folder, count(*) AS files, "
@@ -1301,8 +1362,8 @@ def folder_contents(repo: str, prefix: str, source: str | None = None, limit: in
             f"  COALESCE(sum(versions), 0) AS versions, max(last_seen) AS last_seen, "
             f"  count(*) FILTER (WHERE NOT in_latest) AS deleted_files, min(source) AS source "
             f"FROM (SELECT {ch.name} AS child, {ch.folder} AS is_dir, "
-            f"        p.physical, p.size, p.versions, p.last_seen, p.in_latest, s.source "
-            f"      FROM pathx p JOIN src s ON s.src_id = p.src_id {ch.join} WHERE {where}) "
+            f"        dp.physical, dp.size, dp.versions, dp.last_seen, dp.in_latest, dp.source "
+            f"      FROM ({_file_rows(where)}) dp {ch.join}) "
             f"GROUP BY child ORDER BY is_folder DESC, physical DESC, child LIMIT {int(limit)}",
             params,
         )

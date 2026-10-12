@@ -43,7 +43,7 @@ const detailPart = {
           if (seq !== this._detailSeq || !this.detail) return;
           this.detail.physical_sum = this.detail.physical;   // keep the fast, additive figure
           Object.assign(this.detail, {
-            physical_dedup: r.physical, freeable: r.freeable, shared: r.shared,
+            physical_dedup: r.physical, physical_newest: r.physical_newest, freeable: r.freeable, shared: r.shared,
             objects: r.objects, all_versions: r.all_versions, heavyLoading: false,
             reclaim_stale: !!r.stale, reclaim_at: r.computed_at,
           });
@@ -588,30 +588,41 @@ const detailPart = {
       const st = this.removePlan && this.removePlan.dry;
       return !!(st && st.done && st.ok && !st.running);
     },
-    // A file-name delete also removes same-named files outside the plan; every count and size the
-    // panel and confirm show includes them.
-    removeExtra(key) {
+    // Files outside the plan that go too: same-named files (file name) or identical copies at other
+    // paths (exact content). Every count and size the panel and confirm show includes them.
+    removeExtra(kind) {
       const p = this.removePlan;
-      return p && p.by === "filename" ? Number(p[key] || 0) : 0;
+      if (!p) return 0;
+      if (p.by !== "filename" && kind === "physical") return 0;   // identical copies store the same pieces
+      return Number(p[(p.by === "filename" ? "filename" : "content") + "_extra_" + kind] || 0);
+    },
+    // Reclaimable for a match method, shown in the switch so both can be compared.
+    removeByFig(by) {
+      const p = this.removePlan, d = p && p.detail;
+      if (!d || d.found === false) return "";
+      const v = by === p.by ? d.freeable : d.alt_freeable;
+      return v == null ? "" : fmtPhys(v);
     },
     removeAllVersions() {  // kopia's --filename rewrites every snapshot, so a name delete is always every version
       const p = this.removePlan;
       return !!(p && (p.all_versions || p.by === "filename"));
     },
     removeFileTotal() {
-      return this.removePlan ? Number(this.removePlan.file_count || 0) + this.removeExtra("filename_extra_count") : 0;
+      return this.removePlan ? Number(this.removePlan.file_count || 0) + this.removeExtra("count") : 0;
     },
     removePhysTotal() {
-      return this.removePlan ? Number(this.removePlan.physical || 0) + this.removeExtra("filename_extra_physical") : 0;
+      return this.removePlan ? Number(this.removePlan.physical || 0) + this.removeExtra("physical") : 0;
     },
     removeFreesText() {
       const d = this.removePlan && this.removePlan.detail;
-      if (d && d.found !== false) return fmtPhys(d.freeable) + " after maintenance" + (d.capped ? " · biggest 5,000 files checked" : "");
+      if (d && d.found !== false) return (d.capped ? "at least " : "") + fmtPhys(d.freeable) + " after maintenance";
       return fmtPhys(this.removePhysTotal()) + " stored";
     },
     removeFilesSplit() {  // "9 here + 8 with the same name elsewhere", or "" when nothing rides along
-      const extra = this.removeExtra("filename_extra_count");
-      return extra ? `${Number(this.removePlan.file_count || 0).toLocaleString(NUM_LOCALE)} here + ${extra.toLocaleString(NUM_LOCALE)} with the same name elsewhere` : "";
+      const extra = this.removeExtra("count");
+      if (!extra) return "";
+      const what = this.removePlan.by === "filename" ? "with the same name" : (extra === 1 ? "identical copy" : "identical copies");
+      return `${Number(this.removePlan.file_count || 0).toLocaleString(NUM_LOCALE)} here + ${extra.toLocaleString(NUM_LOCALE)} ${what} elsewhere`;
     },
     removeCoverage() {  // "these 100 files are 70% of the folder" - the number that makes top-N a decision
       const p = this.removePlan;
@@ -663,9 +674,12 @@ const detailPart = {
           ["Match", p.by === "filename" ? `File name · ${countOf(p.name_count, "name")}` : "Exact content"],
           ["Sources", p.everywhere ? "Every source in the repository" : (p.sources_scope || []).map((s) => sourcePath(s)).join(", ")],
           [term("reclaimable"), this.removeFreesText()],
+          ...(p.by === "filename" && p.detail && p.detail.kept_count
+            ? [["Stays stored", `${fmtPhys(p.detail.kept)} · kept by ${countOf(p.detail.kept_count, "identical file")} with other names`]] : []),
         ],
         callout: p.everywhere ? "Not limited to these sources: removes this content from the whole repository."
-          : (p.by === "filename" ? "Every file with these names in these sources goes." : ""),
+          : (p.by === "filename" ? "Every file with these names in these sources goes."
+            : (this.removeExtra("count") ? "Identical copies at other paths in these sources go too." : "")),
         note: (this.removePlanDryChecked() ? "" : "No dry run yet. ") + "Snapshots stay. Space comes back after the next full maintenance.",
         command: p.commit, confirmLabel: this.removeConfirmLabel(), danger: true,
       });

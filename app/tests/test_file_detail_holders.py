@@ -39,6 +39,15 @@ def _store(monkeypatch, rows: list[tuple[str, str, str, int]], refs: dict[str, i
     for o, parts in chunks.items():
         for c in parts:
             con.execute("INSERT INTO tpart VALUES (?, ?)", [cids.index(o) + 1, cids.index(c) + 1])
+    # The same maps as the helpers below, as tables for the SQL pricing.
+    con.execute("CREATE TABLE csize(cid_id INTEGER, packed UBIGINT)")
+    con.executemany("INSERT INTO csize VALUES (?, 10)", [(i + 1,) for i in range(len(cids))])
+    con.execute("CREATE TABLE crefs(cid_id INTEGER, refs INTEGER)")
+    con.execute("CREATE TABLE crefo(cid_id INTEGER, refs INTEGER)")
+    for table, counts in (("crefs", refs), ("crefo", objrefs)):
+        for c, n in counts.items():
+            if c in cids:
+                con.execute(f"INSERT INTO {table} VALUES (?, ?)", [cids.index(c) + 1, n])
     con.execute("CREATE TABLE snap(snap_id INTEGER, snapshot_id VARCHAR, start_time TIMESTAMP)")
     con.execute("CREATE TABLE filev(path_id INTEGER, cid_id INTEGER, snap_id INTEGER, size BIGINT)")
     for n, (s, p, c, snap) in enumerate(rows):

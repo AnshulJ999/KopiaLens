@@ -91,3 +91,35 @@ def holding_snapshots(repo: str, source: str, full_paths: list[str],
 
 def snapshots_for_path(repo: str, source: str, full_path: str) -> list[dict]:
     return holding_snapshots(repo, source, [full_path])[full_path]
+
+
+def folder_states(repo: str, prefixes: list[str], source: str | None = None,
+                  index: dict | None = None) -> dict[str, dict]:
+    """``{prefix: {versions, snapshots, sources}}``: how many distinct states each folder has had -
+    the different folder objects at its path across every snapshot of the sources that back it
+    (kopia stores an unchanged folder once). One walk per source for all the prefixes."""
+    if index is None:
+        index = sources_index(repo)
+    objs: dict[str, set] = {p: set() for p in prefixes}
+    held = {p: 0 for p in prefixes}
+    used = {p: 0 for p in prefixes}
+    for src in ([source] if source else list(index)):
+        snaps = index.get(src, [])
+        if not snaps:
+            continue
+        segs = {p: _segments(src, p) for p in prefixes}
+        roots = [p for p, s in segs.items() if s == []]
+        deep = [p for p, s in segs.items() if s]
+        for p in roots:            # the source's own root
+            rows = [(s.get("rootEntry") or {}).get("obj") for s in snaps]
+            rows = [o for o in rows if o]
+            used[p] += 1
+            held[p] += len(rows)
+            objs[p].update(rows)
+        if deep:
+            for p, rows in holding_snapshots(repo, src, deep, snaps).items():
+                used[p] += 1
+                found = [r.get("obj") for r in rows if r.get("obj")]
+                held[p] += len(found)
+                objs[p].update(found)
+    return {p: {"versions": len(objs[p]), "snapshots": held[p], "sources": used[p]} for p in prefixes}

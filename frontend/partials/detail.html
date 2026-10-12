@@ -305,13 +305,13 @@
 <div class="kl-cards five">
   <div class="kl-card"><div class="k" :title="termTip('logical')" x-text="term('logical')"></div><div class="v" x-text="detail.loading ? '…' : fmtB(detail.logical)"></div></div>
   <div class="kl-card"><div class="k" :title="detail.physical_dedup != null ? termTip('physicalAll') : 'Each file added up, so duplicates count twice until the exact figure arrives'" x-text="term('physicalAll') + (detail.physical_dedup != null ? '' : ' (approx.)')"></div><div class="v" x-text="detail.heavyLoading ? '…' : fmtPhys((detail.physical_dedup != null) ? detail.physical_dedup : detail.physical)"></div>
-    <div class="s" x-show="detail.physical_dedup != null && (detail.physical_sum ?? detail.physical) != null" :title="termTip('physical')" x-text="'newest versions: ' + fmtPhys(detail.physical_sum ?? detail.physical)"></div></div>
+    <div class="s" x-show="detail.physical_dedup != null && (detail.physical_sum ?? detail.physical) != null" :title="termTip('physical')" x-text="'newest versions: ' + fmtPhys(detail.physical_newest ?? detail.physical_sum ?? detail.physical)"></div></div>
   <div class="kl-card good"><div class="k" :title="termTip('reclaimable')" x-text="term('reclaimable')"></div><div class="v" x-text="detail.heavyLoading ? 'working…' : fmtPhys(detail.freeable)"></div></div>
   <div class="kl-card"><div class="k" title="Stays stored after a delete, because data elsewhere uses the same pieces">Shared elsewhere</div><div class="v" x-text="detail.heavyLoading ? '…' : (detail.shared != null ? fmtPhys(detail.shared) : '—')"></div></div>
   <div class="kl-card"><div class="k">Files</div><div class="v" x-text="Number(detail.files || 0).toLocaleString(NUM_LOCALE)"></div></div>
 </div>
-<div class="kl-note" x-show="detail.physical_dedup != null && detail.physical_sum && detail.physical_sum > detail.physical_dedup * 1.02"
-     x-text="'Added up file by file: ' + fmtPhys(detail.physical_sum) + '. Duplicates in here share ' + fmtPhys(detail.physical_sum - detail.physical_dedup) + ' of that, stored once.'"></div>
+<div class="kl-note" x-show="detail.physical_newest != null && detail.physical_sum && detail.physical_sum > detail.physical_newest * 1.02"
+     x-text="'Added up file by file: ' + fmtPhys(detail.physical_sum) + '. Duplicates in here share ' + fmtPhys(detail.physical_sum - detail.physical_newest) + ' of that, stored once.'"></div>
 </div>
 {%- endmacro -%}
 

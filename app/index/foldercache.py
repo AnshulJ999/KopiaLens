@@ -130,7 +130,9 @@ def peek(repo: str, prefix: str, source: str | None = None, allow_stale: bool = 
     if not entry:
         return None
     try:
-        fresh = entry.get("stamp") == folder_stamp(repo, prefix, source)
+        # An entry saved before physical_newest existed is stale whatever its stamp says.
+        fresh = ("physical_newest" in entry
+                 and entry.get("stamp") == folder_stamp(repo, prefix, source))
     except Exception:  # noqa: BLE001 - cannot verify freshness; treat as stale rather than fresh
         fresh = False
     if fresh:
@@ -139,14 +141,17 @@ def peek(repo: str, prefix: str, source: str | None = None, allow_stale: bool = 
 
 
 def saved_values(repo: str, prefixes: list[str]) -> dict[str, dict]:
-    """``{prefix: {physical, freeable, capped}}`` for folders with a saved all-sources result,
-    without the freshness check (a list shows last night's number; the panel refreshes it)."""
+    """``{prefix: {physical, freeable, physical_newest, files, logical, capped}}`` for folders with a
+    saved all-sources result, without the freshness check (a list shows last night's number; the
+    panel refreshes it). ``physical_newest`` is None in entries saved before it existed."""
     data = _load(repo)
     out = {}
     for prefix in prefixes:
         entry = data.get(_key(prefix, None))
         if entry and entry.get("physical") is not None:
             out[prefix] = {"physical": entry.get("physical"), "freeable": entry.get("freeable"),
+                           "physical_newest": entry.get("physical_newest"),
+                           "versions": entry.get("versions"),
                            "capped": bool(entry.get("capped"))}
     return out
 
@@ -211,6 +216,26 @@ def _compute_now(repo: str, prefix: str, source: str | None = None) -> dict:
         return {**payload, "cached": False, "stale": False}
 
 
+def _save_versions(repo: str, prefixes: list[str]) -> None:
+    """Store each folder's distinct-state count () beside its saved values - one tree walk
+    per source for the whole list."""
+    start = time.time()
+    try:
+        from .holding import folder_states
+        states = folder_states(repo, prefixes)
+    except Exception as exc:  # noqa: BLE001 - versions are extra; the prices are already saved
+        log.warning("repo=%s folder versions walk failed: %s", repo, exc)
+        return
+    data = _load(repo)
+    with _LOCK:
+        for prefix, st in states.items():
+            entry = data.get(_key(prefix, None))
+            if entry is not None:
+                entry["versions"] = st["versions"]
+    _save(repo)
+    log.info("repo=%s folder versions: %d folders in %.1fs", repo, len(prefixes), time.time() - start)
+
+
 def _prewarm_budget() -> float:
     """Wall-clock seconds this stage may spend. **0 means DISABLED, never unlimited.**
 
@@ -263,6 +288,7 @@ def prewarm(repo: str, top: int = _PREWARM_TOP, depths=None) -> None:
     depths = depths or _prewarm_depths()
     seen: set[str] = set()
     done = failed = skipped = skipped_unchanged = 0
+    need_versions: list[str] = []
     start = time.time()
     stopped_early = False
     for depth in depths:
@@ -293,12 +319,15 @@ def prewarm(repo: str, top: int = _PREWARM_TOP, depths=None) -> None:
             entry = _load(repo).get(_key(prefix, None))
             if entry:
                 try:
-                    unchanged = entry.get("stamp") == folder_stamp(repo, prefix)
+                    unchanged = ("physical_newest" in entry
+                                 and entry.get("stamp") == folder_stamp(repo, prefix))
                 except Exception:  # noqa: BLE001 - cannot verify -> treat as changed
                     unchanged = False
                 age_days = (time.time() - entry.get("computed_at", 0)) / 86400.0
                 if unchanged and age_days < _FULL_REFRESH_DAYS:
                     skipped_unchanged += 1
+                    if "versions" not in entry:
+                        need_versions.append(prefix)
                     continue
             try:
                 # allow_stale=False is LOAD-BEARING, not a tidy-up. A stale entry hands the work
@@ -308,9 +337,12 @@ def prewarm(repo: str, top: int = _PREWARM_TOP, depths=None) -> None:
                 # daemon threads die when the process exits.
                 compute(repo, prefix, allow_stale=False)
                 done += 1
+                need_versions.append(prefix)
             except Exception as exc:  # noqa: BLE001 - one bad folder must not end the pass
                 failed += 1
                 log.debug("repo=%s folder prewarm failed for %s: %s", repo, prefix, exc)
+    if need_versions:
+        _save_versions(repo, need_versions)
     log.debug("repo=%s prewarm depths=%s", repo, depths)
     log.info("repo=%s folder reclaim prewarm: %d computed, %d skipped (unchanged), "
              "%d skipped (too large), %d failed, %.0fs%s",

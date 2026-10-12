@@ -94,6 +94,73 @@ const searchPart = {
     // ---- Bloat finder: group backed-up paths by folder, ranked by physical (own #groupTable) ----
     changeGroupDepth() { this.klSet({ group_depth: Number(this.groupDepth) || 3 }); this.loadSearch(); },
     changeGroupMinDepth() { this.klSet({ group_min_depth: Number(this.groupMinDepth) || 0 }); this.loadSearch(); },
+    toggleGroupLoose() { this.groupLoose = !this.groupLoose; this.klSet({ group_loose: this.groupLoose }); this.loadSearch(); },
+    // A folder row's exact values cover the files it stands for: the whole folder, or only its loose
+    // files, and with a filter on only the matching ones. Cached per repo, row kind and filters.
+    _folderFilters() {
+      const f = { q: this.query || "", deleted_only: !!this.deletedOnly };
+      if (this.searchSource && !this.searchAllRepos()) f.source = this.searchSource;
+      if (this.searchExt) f.ext = this.searchExt;
+      if (this.searchExtExclude) f.ext_exclude = this.searchExtExclude;
+      return f;
+    },
+    _folderValKey(folder, loose) { return this.repo + ":" + (loose ? "loose:" : "") + folder + "|" + JSON.stringify(this._folderFilters()); },
+    folderRowLabel(path, d) {
+      return `📁 ${path}` + (d.loose ? ` <span style="color:var(--muted)">(files directly in it)</span>` : "")
+        + (d.kind === "folder" ? ` <span style="color:var(--muted)">· ${countOf(d.files || 0, "file")}</span>` : "");
+    },
+    // Versions of a folder row: how many distinct states the whole folder has had.
+    folderVersionsCell(d, path) {
+      if (d.loose) return "";
+      const v = d.folder_versions != null ? d.folder_versions : d.kind === "folder" ? d.versions : null;
+      const g = v != null ? v : this.folderVersions[this.repo + ":" + path];
+      if (g === "pending") return "<span style='color:var(--faint)'>…</span>";
+      if (g == null || g === "error") return "<span style='color:var(--faint)' title='Not worked out yet'>—</span>";
+      return Number(g).toLocaleString(NUM_LOCALE);
+    },
+    // Fill Versions for the visible folder rows that have none: one request for the page.
+    async fillFolderVersions(sel, pathOf) {
+      const el = document.querySelector(sel);
+      const t = el && el._tabulator;
+      if (!t || this._versionsFilling) return;
+      const repo = this.repo;
+      const rows = t.getRows("visible").filter((r) => {
+        const d = r.getData();
+        const saved = d.folder_versions != null || (d.kind === "folder" && d.versions != null);
+        return pathOf(d) && !d.loose && !saved && this.folderVersions[repo + ":" + pathOf(d)] === undefined;
+      }).slice(0, 100);
+      if (!rows.length) return;
+      this._versionsFilling = true;
+      const paths = rows.map((r) => pathOf(r.getData()));
+      for (const p of paths) this.folderVersions[repo + ":" + p] = "pending";
+      rows.forEach((r) => r.reformat());
+      try {
+        const r = await getJson("/api/search/folder-versions", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo, folders: paths }) });
+        for (const p of paths) this.folderVersions[repo + ":" + p] = (r.versions || {})[p] ?? "error";
+      } catch (e) {
+        for (const p of paths) this.folderVersions[repo + ":" + p] = "error";
+      } finally {
+        this._versionsFilling = false;
+      }
+      if (repo !== this.repo || el._tabulator !== t) return;
+      rows.forEach((row) => {
+        const d = row.getData(), v = this.folderVersions[repo + ":" + pathOf(d)];
+        try {
+          if (d.kind !== "folder" && typeof v === "number") row.update({ folder_versions: v });
+          else row.reformat();
+        } catch (e) { /* the table was rebuilt meanwhile */ }
+      });
+    },
+    // Physical of a folder row: newest versions, each stored piece counted once.
+    folderPhysCell(d, path) {
+      if (d.physical != null) return fmtPhys(d.physical);
+      const g = this.groupReclaim[this._folderValKey(path, d.loose)];
+      if (g && typeof g === "object" && g.n != null) return fmtPhys(g.n);
+      if (g === "pending") return "<span style='color:var(--faint)'>…</span>";
+      if (g === "error") return "<span style='color:var(--danger)' title='Could not work this out'>error</span>";
+      return "<span style='color:var(--faint)' title='Not worked out yet'>—</span>";
+    },
     drillFolder(row) { this.searchKind = "files"; this.groupByFolder = false; this.klSet({ search_kind: "files" }); this.query = row.folder; this.searchPage = 1; this.loadSearch(); },
     // A row from another repository opens there: switch repo, then its panel.
     async openInRepo(d) {
@@ -118,32 +185,37 @@ const searchPart = {
         if (this.deletedOnly) p.set("deleted_only", "1");
         if (this.groupMinGb) p.set("min_gb", this.groupMinGb);
         if (this.groupMinFiles) p.set("min_files", this.groupMinFiles);
+        if (this.groupLoose) p.set("loose", "1");
         const data = await getJson(`/api/search/group-by-folder?${p.toString()}`);
         const rows = data.rows || [];
         this.searchSelCount = 0;   // the table is rebuilt, so its selection goes
         this.omniMeta = `${countOf(rows.length, "folder")} · depth ${data.depth} · ranked by physical`;
         const cols = [
-          { title: "Folder", field: "folder", widthGrow: 5, minWidth: 300, formatter: (c) => `📁 ${c.getValue()}` },
-          { title: "Physical", field: "phys", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => fmtPhys(c.getValue()) },
+          { title: "Folder", field: "folder", widthGrow: 5, minWidth: 300, formatter: (c) => this.folderRowLabel(c.getValue(), c.getRow().getData()) },
+          { title: "Physical", field: "physical", width: 110, hozAlign: "right", sorter: "number", headerTooltip: termTip("physical"),
+            formatter: (c) => this.folderPhysCell(c.getRow().getData(), c.getRow().getData().folder) },
           { title: "Logical", field: "logical", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => fmtBytes(c.getValue()) },
           // Excl column hidden here too - same reason as the Search table ().
           { title: "Files", field: "files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
+          { title: "Versions", field: "folder_versions", width: 85, hozAlign: "right", sorter: "number",
+            headerTooltip: "How many different states the folder has had across its snapshots",
+            formatter: (c) => this.folderVersionsCell(c.getRow().getData(), c.getRow().getData().folder) },
           { title: "Deleted #", field: "deleted_files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Deleted %", field: "deleted_pct", width: 90, headerSort: false, hozAlign: "right",
             accessorDownload: (_v, d) => (d.files ? Math.round((d.deleted_files / d.files) * 100) : ""), formatter: (c) => { const d = c.getRow().getData(); return d.files ? Math.round((d.deleted_files / d.files) * 100) + "%" : ""; } },
           { title: "Avg size", field: "avg_size", width: 95, headerSort: false, hozAlign: "right",
-            accessorDownload: (_v, d) => (d.files ? Math.round(d.phys / d.files) : ""), formatter: (c) => { const d = c.getRow().getData(); return d.files ? fmtBytes(Math.round(d.phys / d.files)) : ""; } },
-          // per-folder freeable, computed on demand (right-click) - a chunk walk per folder.
-          // "≥" marks a partial result: the backend caps the walk at the first 5,000 files.
+            accessorDownload: (_v, d) => (d.files && d.physical != null ? Math.round(d.physical / d.files) : ""), formatter: (c) => { const d = c.getRow().getData(); return d.files && d.physical != null ? fmtBytes(Math.round(d.physical / d.files)) : ""; } },
+          // Per-folder Reclaimable: saved nightly, or worked out for the folders on screen.
           { title: term("reclaimable"), headerTooltip: termTip("reclaimable") + " Worked out for the folders on screen, one at a time.", field: "reclaim_val", headerSort: false, width: 115, hozAlign: "right",
-            accessorDownload: (_v, d) => { const v = this.groupReclaim[this.repo + ":" + d.folder]; return v && v.v != null ? v.v : ""; },
+            accessorDownload: (_v, d) => { const v = this.groupReclaim[this._folderValKey(d.folder, d.loose)]; return d.freeable != null ? d.freeable : (v && v.v != null ? v.v : ""); },
             formatter: (c) => {
-              const v = this.groupReclaim[this.repo + ":" + c.getRow().getData().folder];
+              const d = c.getRow().getData();
+              if (d.freeable != null) return `<span style="color:var(--ok)">${fmtPhys(d.freeable)}</span>`;
+              const v = this.groupReclaim[this._folderValKey(d.folder, d.loose)];
               if (v === "pending") return "<span style='color:var(--faint)'>…</span>";
               if (v === "error") return "<span style='color:var(--danger)' title='Could not work this out'>error</span>";
               if (v == null) return "<span style='color:var(--faint)' title='Not worked out yet'>—</span>";
-              const tip = v.capped ? ' title="At least this much: only the biggest 5,000 files were checked"' : "";
-              return `<span style="color:var(--ok)"${tip}>${v.capped ? "&ge; " : ""}${fmtPhys(v.v)}</span>`;
+              return `<span style="color:var(--ok)">${fmtPhys(v.v)}</span>`;
             } },
           { title: "Last seen", field: "last_seen", width: 155, formatter: (c) => timeCell(c.getValue()) },
         ];
@@ -162,8 +234,8 @@ const searchPart = {
           ]),
         });
         if (gt) {
-          gt.on("tableBuilt", () => this.fillGroupReclaim());
-          gt.on("scrollVertical", () => this.fillGroupReclaim());
+          gt.on("tableBuilt", () => { this.fillGroupReclaim(); this.fillFolderVersions("#groupTable", (d) => d.folder); });
+          gt.on("scrollVertical", () => { this.fillGroupReclaim(); this.fillFolderVersions("#groupTable", (d) => d.folder); });
         }
       }, "Grouping folders…");
     },
@@ -177,7 +249,10 @@ const searchPart = {
         const t = el && el._tabulator;
         const repo = this.repo;
         while (t && el._tabulator === t && this.active === "search" && this.groupByFolder && this.repo === repo) {
-          const row = t.getRows("visible").find((r) => this.groupReclaim[repo + ":" + r.getData().folder] === undefined);
+          const row = t.getRows("visible").find((r) => {
+            const d = r.getData();
+            return (d.physical == null || d.freeable == null) && this.groupReclaim[this._folderValKey(d.folder, d.loose)] === undefined;
+          });
           if (!row) break;
           await this.computeGroupReclaim(row);
         }
@@ -185,24 +260,23 @@ const searchPart = {
         this._groupFilling = false;
       }
     },
-    // freeable for one folder row of the By-folder view - the same on-demand walk the
-    // remove-detail button uses, scoped to the folder prefix. Heavy, so it only runs when asked.
-    // Keyed by repo: switching repos must never show the previous repo's number.
+    // One folder row's exact values (Physical, Physical (all), Reclaimable) over the files the row
+    // stands for. Keyed by repo, row kind and filters: another repo or filter never shows this number.
     async computeGroupReclaim(row, folder) {
       const d = row.getData();
       folder = folder || d.folder;
-      const key = this.repo + ":" + folder;
+      const key = this._folderValKey(folder, d.loose);
       const cur = this.groupReclaim[key];
       if (cur === "pending") return;  // block repeats only while in flight; a deliberate
                                       // second pick recomputes - that pick IS the manual refresh
       this.groupReclaim[key] = "pending";
       row.reformat();
       try {
-        const r = await getJson("/api/actions/remove-detail", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo: this.repo, prefix: folder, all_versions: true }) });
-        this.groupReclaim[key] = (r.found === false)
-          ? { v: 0, p: 0, capped: false }
-          : { v: r.freeable ?? 0, p: r.physical ?? null, capped: !!r.capped };
+        const r = await getJson("/api/search/folder-values", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo: this.repo, folder, loose: !!d.loose, ...this._folderFilters() }) });
+        this.groupReclaim[key] = { v: r.freeable ?? 0, p: r.physical_all ?? null, n: r.physical ?? null };
+        // The Folders view sorts on the row's own Physical, so it takes the exact value.
+        if (d.kind !== "folder" && d.physical == null && r.physical != null) row.update({ physical: r.physical });
       } catch (e) {
         this.groupReclaim[key] = "error";
       }
@@ -222,6 +296,7 @@ const searchPart = {
         if (allRepos) p.delete("repo");
         if (both) {
           p.set("depth", this.groupDepth);
+          if (this.groupLoose) p.set("loose", "1");
           if (this.groupMinGb) p.set("folder_min_gb", this.groupMinGb);
           if (this.groupMinFiles) p.set("folder_min_files", this.groupMinFiles);
           if (this.groupMinDepth) p.set("min_depth", this.groupMinDepth);
@@ -263,7 +338,7 @@ const searchPart = {
               : "That list is built by the nightly index. Sorted by Physical until then.", "warn");
           }
         }
-        // Folder rows (Both view) leave Versions and Copies blank; Physical (all) and Reclaimable come
+        // Folder rows (Both view) leave Copies blank; Physical, Versions, Physical (all) and Reclaimable come
         // from the saved folder values or are worked out for the folders on screen.
         const nf = (fn) => (c) => (c.getRow().getData().kind === "folder" ? "" : fn(c));
         const isFolder = (c) => c.getRow().getData().kind === "folder";
@@ -271,10 +346,11 @@ const searchPart = {
           { title: "Repo", field: "repo", headerSort: false, width: 90, visible: allRepos, formatter: (c) => (c.getValue() ? this.repoLabel(c.getValue()) : "") },
           H("Path", "full_path", { widthGrow: 5, minWidth: 320, formatter: (c) => {
             const d = c.getRow().getData();
-            return d.kind === "folder" ? `📁 ${c.getValue()} <span style="color:var(--muted)">· ${countOf(d.files || 0, "file")}</span>` : `📄 ${c.getValue()}`;
+            return d.kind === "folder" ? this.folderRowLabel(c.getValue(), d) : `📄 ${c.getValue()}`;
           } }),
           H("Size", "size", { width: 100, headerTooltip: "Logical size. " + termTip("logical"), formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" }),
-          H(term("physical"), "physical", { width: 110, headerTooltip: termTip("physical"), formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" }),
+          H(term("physical"), "physical", { width: 110, headerTooltip: termTip("physical"), hozAlign: "right",
+            formatter: (c) => (isFolder(c) ? this.folderPhysCell(c.getRow().getData(), c.getRow().getData().full_path) : fmtPhys(c.getValue())) }),
           // Excl column intentionally hidden: paths.exclusive is unfilled (the fill was removed -
           // wrong semantics for shared indirect content + write amplification) and its per-object
           // semantics overstated exclusivity. Returns with the proper implementation ().
@@ -288,7 +364,8 @@ const searchPart = {
             headerTooltip: termTip("reclaimableAll") + " Sorting uses the nightly top list; files outside it come after.",
             formatter: (c) => self.versionCell(c.getRow().getData(), "frees") }, "frees"),
           H("Ext", "ext", { width: 70, formatter: (c) => (isFolder(c) ? "<span style='color:var(--muted)'>Folder</span>" : c.getValue() || "") }),
-          H("Versions", "versions", { width: 80, hozAlign: "right", formatter: nf((c) => c.getValue() ?? "") }),
+          H("Versions", "versions", { width: 80, hozAlign: "right",
+            formatter: (c) => (isFolder(c) ? this.folderVersionsCell(c.getRow().getData(), c.getRow().getData().full_path) : c.getValue() ?? "") }),
           { title: "Copies", field: "copies", headerSort: false, width: 75, hozAlign: "right",
             headerTooltip: "How many paths hold this exact content. More filters: same content in at least N paths.",
             formatter: nf((c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="This exact content is at ${v} paths">${v}</span>` : "1"; }) },
@@ -416,10 +493,9 @@ const searchPart = {
     versionCell(d, which) {
       const exact = d[which + "_all_versions"];   // present when sorted by this column, or saved for a folder
       if (d.kind === "folder") {
-        const g = this.groupReclaim[this.repo + ":" + d.full_path];
+        const g = this.groupReclaim[this._folderValKey(d.full_path, d.loose)];
         const v = exact != null ? exact : g && typeof g === "object" ? (which === "frees" ? g.v : g.p) : null;
-        const capped = which === "frees" && (exact != null ? !!d.frees_capped : !!(g && g.capped));
-        if (v != null) return (capped ? "&ge; " : "") + fmtPhys(v);
+        if (v != null) return fmtPhys(v);
         if (g === "pending") return "<span style='color:var(--faint)'>…</span>";
         if (g === "error") return "<span style='color:var(--danger)' title='Could not work this out'>error</span>";
         return "<span style='color:var(--faint)' title='Not worked out yet'>—</span>";
@@ -433,7 +509,10 @@ const searchPart = {
     },
     fillVersionSizes() {
       if (this._versionTimer) clearTimeout(this._versionTimer);
-      this._versionTimer = setTimeout(() => { this._fillVersionSizes(); this.fillBothFolders(); }, 250);
+      this._versionTimer = setTimeout(() => {
+        this._fillVersionSizes(); this.fillBothFolders();
+        if (this.searchKind === "both" && !this.groupByFolder) this.fillFolderVersions("#searchTable", (d) => (d.kind === "folder" ? d.full_path : ""));
+      }, 250);
     },
     // Both view: work out Physical (all) and Reclaimable for the folders on screen that have no
     // saved value, one at a time, top first (each takes a few seconds).
@@ -447,7 +526,8 @@ const searchPart = {
         while (t && el._tabulator === t && this.active === "search" && this.searchKind === "both" && !this.groupByFolder && this.repo === repo) {
           const row = t.getRows("visible").find((r) => {
             const d = r.getData();
-            return d.kind === "folder" && d.stored_all_versions == null && this.groupReclaim[repo + ":" + d.full_path] === undefined;
+            return d.kind === "folder" && (d.stored_all_versions == null || d.physical == null)
+              && this.groupReclaim[this._folderValKey(d.full_path, d.loose)] === undefined;
           });
           if (!row) break;
           await this.computeGroupReclaim(row, row.getData().full_path);
@@ -473,7 +553,7 @@ const searchPart = {
       try {
         await Promise.all(Object.entries(byRepo).map(async ([rid, list]) => {
           const r = await getJson("/api/search/versions", { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ repo: rid, rows: list.map((d) => ({ source: d.source, full_path: d.full_path, content_id: d.content_id || null })) }) });
+            body: JSON.stringify({ repo: rid, rows: list.map((d) => ({ source: d.source, full_path: d.full_path })) }) });
           for (const x of r.rows || []) this.versionSizes[rid + "|" + x.source + "|" + x.full_path] = { stored: x.stored, frees: x.frees };
         }));
       } catch (e) {
