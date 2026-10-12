@@ -9,7 +9,7 @@
               <span x-text="(ixs().building ? 'Indexing ' : 'Index · ') + repoLabel(indexLogRepo || repo)"></span>
               <span x-show="ixs().building" class="w-2 h-2 rounded-full bg-warn animate-pulse"></span>
             </div>
-            <div class="text-xs text-muted truncate" x-text="indexDetailText() || ixs().stage || ''"></div>
+            <div class="text-xs text-muted break-words" x-text="indexDetailText() || ixs().stage || ''"></div>
           </div>
           <button class="kl-btn danger" x-show="ixs().building" @click="indexStop()">Stop</button>
           <button class="kl-btn quiet" x-show="ixs().building" @click="closeIndexPanel()">Run in background</button>
