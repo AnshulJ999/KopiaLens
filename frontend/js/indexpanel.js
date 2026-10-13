@@ -221,17 +221,18 @@ const indexPanelPart = {
     async indexStop() {
       const repo = this.indexLogRepo || this.repo;
       if (!this.ixs().building) return;
-      const first = !!this.ixs().never_indexed;
+      const stage = this.ixs().stage;
+      const reading = !stage || stage === "index";
       const ok = await this.klConfirm({
         title: `Stop indexing ${this.repoLabel(repo)}?`,
-        callout: first ? "Progress is saved. The next run continues from here." : "The next scheduled run indexes it again.",
+        callout: reading ? "Progress is saved. The next run continues from here." : "The index is saved. The next run repeats the remaining steps.",
         confirmLabel: "Stop indexing", danger: true,
       });
       if (!ok) return;
       try {
         const r = await getJson(`/api/index/stop?repo=${encodeURIComponent(repo)}`, { method: "POST" });
         if (r && r.stopped === false && r.reason) this.klNotify(`Could not stop: ${r.reason}`, "warn");
-        else this.klNotify(first ? "Stopping. Saving what's read so far…" : "Indexing stopped.");
+        else this.klNotify(reading ? "Stopping. Saving what's read so far…" : "Indexing stopped.");
       } catch (e) {
         this.klNotify("Stopping an index run is not available from this build.", "warn");
       }

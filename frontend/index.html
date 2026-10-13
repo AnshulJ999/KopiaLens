@@ -46,6 +46,15 @@
           <button @click="cfgDismiss(n)" class="kl-btn quiet">Dismiss</button>
         </div>
       </template>
+      <template x-for="n in ixNotices" :key="n.id">
+        <div class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm" data-testid="index-recovered-notice">
+          <div class="min-w-0 flex-1">
+            <div class="font-medium" x-text="ixNoticeText(n)"></div>
+            <div class="text-xs text-muted">The next index brings it up to date.</div>
+          </div>
+          <button @click="ixDismiss(n)" class="kl-btn quiet">Dismiss</button>
+        </div>
+      </template>
       <!-- A repository with no index yet: say so once, with the way to start, instead of blank pages. -->
       <div x-show="repoKind !== 'backblaze' && indexStatus && indexStatus.never_indexed" x-cloak
            class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm">

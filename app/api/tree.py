@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from ..core import paths as pathrules
 from ..core.sources import sources_index
 from ..index.holding import _segments, holding_snapshots
+from . import freeids
 from .errors import PASS_THROUGH
 from ..index.queries import (
     flat_files,
@@ -173,6 +174,13 @@ def tree_holders(body: HoldersBody) -> dict:
     return {"paths": out, "capped": False}
 
 
+def _reply(repo: str, children: list[dict], mode: str) -> dict:
+    if freeids.free(repo):          # the content id only groups rows here (dedupe); not for Free
+        for c in children:
+            c.pop("content_id", None)
+    return {"children": children, "mode": mode}
+
+
 @router.get("/tree")
 def tree(
     repo: str,
@@ -237,13 +245,13 @@ def tree(
                                              ext=ext, ext_exclude=ext_exclude)
             if dedupe:
                 children = _dedupe_children(children)
-            return {"children": children, "mode": mode}
+            return _reply(repo, children, mode)
         if flat:
             children = flat_files(
                 repo, source, prefix, deleted_only=deleted_only,
                 min_size=1_000_000_000 if over_gb else 0, ext=ext, ext_exclude=ext_exclude,
             )
-            return {"children": children, "mode": "flat"}
+            return _reply(repo, children, "flat")
         if mode == "all":
             children = tree_children_paths(
                 repo, source, prefix, deleted_only=deleted_only,
@@ -271,7 +279,7 @@ def tree(
             children = _post_filter(children, over_gb, ext, ext_exclude)
         if dedupe:
             children = _dedupe_children(children)
-        return {"children": children, "mode": mode}
+        return _reply(repo, children, mode)
     except HTTPException:
         raise
     except PASS_THROUGH:

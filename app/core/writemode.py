@@ -80,6 +80,7 @@ NO_REPO_WRITE = {
     "/api/config-backups/{backup_id}/restore", "/api/config-backups/import",
     "/api/config-backups/import/apply", "/api/config-backups/notices/{notice_id}/dismiss",
     "/api/index/pending/run", "/api/index/build", "/api/settings", "/api/settings/table",
+    "/api/index/backups/copy", "/api/index/notices/{notice_id}/dismiss",
     "/api/delete/plan", "/api/delete/stats",
     "/api/engine/pause", "/api/engine/resume", "/api/engine/source-pause", "/api/engine/source-resume",
     "/api/help/check-updates", "/api/folder/detail", "/api/jobs/stop",

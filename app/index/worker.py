@@ -190,8 +190,9 @@ def index_stage(repo: str, full: bool = False) -> None:
     _JOBS[repo] = job
     with publish.WriterLock(repo):
         body = artifacts.build_repo(repo, root, gen=gen, job=job, full=full)
-        publish.publish(root, body)
-    from . import perf
+        publish.publish(root, body, keep_version=True)
+    from . import perf, resume
+    resume.clear_tree(os.path.join(root, "_staging"))     # the saved read is published now
     perf.set_outputs(root, body.get("artifacts") or {})
     logging.info("published generation %s: %s", gen, body.get("stats"))
     # Loud, because it is the one condition that silently under-counts the index. The next build
@@ -364,6 +365,12 @@ def run(repo: str, full: bool = False, skip_index: bool = False) -> dict:
                                   "refcount is stale and its numbers would be wrong", name)
                     continue
                 stage(name, fn)
+            from . import versions
+            if not skip_index and versions.backup_dir():
+                # After the last stage, so the copy holds the whole run's results.
+                copied = versions.sync_backup(repo)
+                if not copied.get("ok"):
+                    summary["backup_copy"] = copied.get("error")
         else:
             summary["skipped"] = ["dashboard", "analysis", "churn", "folders", "policies",
                                   "policy_prices", "ignore_files", "rank_paths",

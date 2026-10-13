@@ -24,10 +24,10 @@ def _public(manifest: dict) -> dict:
     return {k: v for k, v in manifest.items() if not k.startswith("_")}
 
 
-def _previous_artifacts(root: str) -> dict[str, list[str]]:
+def _previous_manifest(root: str) -> dict:
     try:
         with open(os.path.join(root, "manifest.json"), encoding="utf-8") as fh:
-            return json.load(fh).get("artifacts", {})
+            return json.load(fh)
     except Exception:
         return {}
 
@@ -63,7 +63,8 @@ def write_manifest(root: str, manifest: dict) -> None:
 
 
 def _gc(root: str, current: dict[str, list[str]], previous: dict[str, list[str]]) -> None:
-    keep: set[str] = set()
+    from . import versions
+    keep: set[str] = versions.protected(root)
     for rels in list(current.values()) + list(previous.values()):
         # Normalize both directions: the writer emits forward slashes, but normalizing the
         # manifest side too means a path that ever lands in a manifest via os.path.join
@@ -89,11 +90,16 @@ def _gc(root: str, current: dict[str, list[str]], previous: dict[str, list[str]]
                 pass
 
 
-def publish(root: str, manifest: dict) -> None:
+def publish(root: str, manifest: dict, keep_version: bool = False) -> None:
     """Move staged files into pool/ then swap the manifest, then GC. The previous manifest is
-    captured BEFORE the swap so GC can keep current + previous generations."""
-    previous = _previous_artifacts(root)
+    captured BEFORE the swap so GC can keep current + previous generations. ``keep_version``
+    (an index build) keeps the replaced manifest as an older version (``versions.keep``)."""
+    replaced = _previous_manifest(root)
+    previous = replaced.get("artifacts", {})
     move_into_pool(root, manifest.get("_moves", []))
+    if keep_version:
+        from . import versions
+        versions.keep(root, replaced)
     write_manifest(root, manifest)
     _gc(root, manifest.get("artifacts", {}), previous)
     log.info("published generation %s", manifest.get("generation"))

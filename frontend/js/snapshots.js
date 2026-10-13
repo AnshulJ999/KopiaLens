@@ -86,13 +86,13 @@ const snapshotsPart = {
       });
       this.klNotify(n ? `${countOf(n, "snapshot")} selected that no retention rule or pin keeps.` : "Every snapshot is pinned or kept by retention.", n ? "ok" : "warn");
     },
-    selectIdenticalDuplicates() {  // HYBRID: group the source's snapshots by `root` (byte-identical
+    selectIdenticalDuplicates() {  // HYBRID: group the source's snapshots by `same` (byte-identical
       const el = document.querySelector("#snapshotsTable");                       // content = same object),
       if (!el || !el._tabulator) return;                                          // keep OLDEST + NEWEST of
       const tbl = el._tabulator;                                                  // each group, select the
       const groups = {};                                                         // middle. Pinned = never
       for (const s of tbl.getData()) {                                           // selected; retention does
-        if (s.root) (groups[s.root] = groups[s.root] || []).push(s);            // NOT block (the whole point
+        if (s.same) (groups[s.same] = groups[s.same] || []).push(s);            // NOT block (the whole point
       }                                                                          // is to declutter redundant
       const del = new Set();                                                     // identicals retention keeps).
       for (const root in groups) {

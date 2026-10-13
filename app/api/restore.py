@@ -38,6 +38,7 @@ from ..core.sources import sources_index
 from ..index import entries
 from ..index.holding import _segments, holding_snapshots
 from ..index.queries import versions as file_versions
+from . import freeids
 from .actions import FULL_LIST_CAP
 
 router = APIRouter(tags=["restore"])
@@ -53,6 +54,7 @@ class RestoreItem(BaseModel):
     full_path: str
     snapshot_id: str | None = None   # a specific snapshot; default the newest holding the path
     content_id: str | None = None    # a specific file version
+    version: bool = False            # the file version that snapshot_id holds (no id needed)
 
 
 class PlanBody(BaseModel):
@@ -94,6 +96,12 @@ def resolve_item(repo: str, it: RestoreItem) -> dict:
     """The repository object behind an item: ``{obj, source_id, type, size, files, mtime, snapshot_id, snap_time}``."""
     name = _name(it.source, it.full_path)
     snaps = sources_index(repo).get(it.source, [])
+    if it.version and not it.content_id and it.snapshot_id:
+        # The version the index lists at that snapshot: the same pick as passing its content id.
+        row = next((v for v in file_versions(repo, it.source, it.full_path)
+                    if v.get("snapshot_id") == it.snapshot_id), None)
+        if row and row.get("content_id"):
+            it = it.model_copy(update={"content_id": row["content_id"]})
     if it.content_id:
         size, snap_id, snap_time = None, it.snapshot_id or "", ""
         rows = [v for v in file_versions(repo, it.source, it.full_path) if v.get("content_id") == it.content_id]
@@ -309,6 +317,10 @@ def _plan(body: PlanBody, cap: int | None = LIST_CAP, progress: dict | None = No
         if body.preview:
             row.update(_compare(body.repo, r, target, bool(body.options.get("delete_extra")),
                                 cap=cap, progress=progress, shown=min(max(body.paths_shown, 1), FULL_LIST_CAP)))
+        if freeids.free(body.repo):
+            if row.get("source_id") and row["source_id"] == row.get("obj"):
+                row["source_id"] = freeids.hold(row["obj"])   # a bare object: its snapshot expired
+            row.pop("obj", None)
         items.append(row)
     totals = {k: sum(i.get(k) or 0 for i in items)
               for k in ("files", "size", "new", "identical", "different", "extra", "bad_names")}
@@ -374,12 +386,12 @@ def _content_disposition(name: str) -> str:
 
 @router.get("/restore/download")
 def restore_download(repo: str, source: str, full_path: str, snapshot_id: str | None = None,
-                     content_id: str | None = None):
+                     content_id: str | None = None, version: bool = False):
     if is_demo(repo):
         from ..core.demoreplies import UNAVAILABLE
         raise HTTPException(status_code=400, detail=UNAVAILABLE)
     r = resolve_item(repo, RestoreItem(source=source, full_path=full_path, snapshot_id=snapshot_id,
-                                       content_id=content_id))
+                                       content_id=content_id, version=version))
     audit.audit("executed", "download", repo=repo,
                 summary={"path": full_path, "snapshot_id": r["snapshot_id"], "type": r["type"]})
     if r["type"] != "d":

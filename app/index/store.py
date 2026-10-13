@@ -237,18 +237,36 @@ class NoIndex(FileNotFoundError):
     """The repo has never been indexed (no manifest yet): a normal state, not a fault."""
 
 
-def open_generation(repo: str) -> Generation:
+def _recover(repo: str, reason: str) -> bool:
+    """Switch a damaged index to its newest good copy, unless a writer is busy with the repo."""
+    from . import publish, versions
+    try:
+        with publish.WriterLock(repo):
+            return versions.recover(repo, reason) is not None
+    except publish.WriterBusy:
+        return False
+
+
+def open_generation(repo: str, _recovered: bool = False) -> Generation:
     """Open the current generation: read the manifest, bind views, return the handle.
 
     The manifest's mtime is captured BEFORE the manifest is read. The other order pairs the
     views of one manifest with the mtime of a newer one (a publication landing between the read
     and the stat), and ``current()`` would then keep serving the older views as current until
-    the NEXT publish. Stamping the older mtime can only cause one extra reopen."""
+    the NEXT publish. Stamping the older mtime can only cause one extra reopen.
+
+    A damaged generation (unreadable manifest, missing or broken files) is switched to the newest
+    good kept copy once (``versions.recover``); any other failure is raised as before."""
     p = manifest_path(repo)
     if not os.path.exists(p):
         raise NoIndex(f"repo {repo!r} has no index (no manifest.json)")
     mtime = os.stat(p).st_mtime_ns
-    manifest = read_manifest(repo)
+    try:
+        manifest = read_manifest(repo)
+    except ValueError as exc:
+        if not _recovered and _recover(repo, f"the manifest could not be read ({exc})"):
+            return open_generation(repo, _recovered=True)
+        raise
     if manifest is None:
         raise NoIndex(f"repo {repo!r} has no index (no manifest.json)")
     found = int(manifest.get("schema_version") or 0)
@@ -276,10 +294,14 @@ def open_generation(repo: str) -> Generation:
     }
     try:
         _bind_generation(con, repo, artifacts, encrypted)
-    except Exception:
+    except Exception as exc:
         con.close()
         if session is not None:
             session.cleanup()
+        from . import versions
+        bad = [] if _recovered else versions.problems(base, manifest)
+        if bad and _recover(repo, f"{len(bad)} file(s) missing or damaged, e.g. {bad[0]} ({exc})"):
+            return open_generation(repo, _recovered=True)
         raise
     return Generation(repo, manifest.get("generation"), manifest, con, mtime, session)
 

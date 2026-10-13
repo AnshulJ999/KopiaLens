@@ -67,7 +67,7 @@ document.addEventListener("alpine:init", () => {
     // Settings Account + Encryption sections, their shared dialog, and the unlock box (lock.html).
     acct: null, encStatus: null, acctDialog: null, locked: null, sessionDays: 30,
     // Settings backups, the damaged-file notice, pausing indexing and About (appconfig.js).
-    cfg: null, cfgError: false, cfgNotices: [], cfgDlg: null, cfgBusy: "", cfgExportAccounts: false, cfgExportKeys: false,
+    cfg: null, cfgError: false, cfgNotices: [], ixNotices: [], ixBackups: null, cfgDlg: null, cfgBusy: "", cfgExportAccounts: false, cfgExportKeys: false,
     indexPause: { paused: false }, about: null, controlApi: true, trayClick: "window", trayDoubleClick: "window", notifyLevel: "warnings",
     // Onboarding (onboarding.js) and repositories (repos.js): the shared connect form is `cx`.
     ob: null, cx: null, repoMenu: false, repoAdd: false, repoDlg: null, repoChecks: {}, kopiaInfo: null, repoKopiaEdit: null,
@@ -110,7 +110,7 @@ document.addEventListener("alpine:init", () => {
     lightInterval: 1800, dashboardInterval: 14400,
     debugLog: false,
     duckdbMemory: "", memoryAuto: "",  // memory limit override ("" = automatic) and what automatic resolves to
-    indexWorkerTimeout: 14400, indexFirstTimeout: 86400, indexWaitUnreachable: 1800, indexStallTimeout: 3600, removePlanCap: 200000,
+    indexWorkerTimeout: 14400, indexFirstTimeout: 86400, indexWaitUnreachable: 1800, indexStallTimeout: 3600, indexKeepVersions: 1, indexBackupDir: "", removePlanCap: 200000,
     indexRetryDelay: 900, indexMaxRetries: 1, reindexAfterDeleteDelay: 300, quitIndexing: "finish",
     folderPrewarmBudget: 900, startupDelay: 300, logCleanupDays: 90, taskHistoryKeep: 90, engineTakeback: "auto", rankCount: 10000,
     showProBadge: true,   // the small Pro mark next to the logo while a licence is active
@@ -353,6 +353,7 @@ document.addEventListener("alpine:init", () => {
         // A locked index shows the unlock box on load, not only once a view happens to read it.
         getJson("/api/encryption/status").then((s) => { if (s.enabled && !s.unlocked) this.showLock({}); }).catch(() => {});
         this.loadCfg();   // a damaged settings file restored at startup shows its notice
+        this.loadIxNotices();
         this.backend = data.settings?.listing_backend || "subprocess";
         const _ps = String(kl.page_size || 500);  // snap to a valid <option> so the select can't visually revert to 100
         this.searchPageSize = this.pageSizes.includes(_ps) ? _ps : "500";

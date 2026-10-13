@@ -17,44 +17,53 @@ _CMD = re.compile(r"snapshot fix remove-files|--object-id|snapshot delete", re.I
 
 # (route, key path) -> why a Free install may see it. Filled only from explicit rulings.
 _SNAP = "snapshot id: Free deletes, restores and mounts whole snapshots"
-_PENDING_C = "object id: removed for Free by KL169 option C"
 ALLOWED: dict[tuple[str, str], str] = {
     ("/api/snapshots", "snapshots[].id"): _SNAP,
     ("/api/restore/plan", "items[].snapshot_id"): _SNAP,
     ("/api/restore/plan", "items[].source_id"): _SNAP,
     ("/api/search/detail", "versions[].snapshot_id"): _SNAP,
     ("/api/search/versions", "versions[].snapshot_id"): _SNAP,
-    ("/api/snapshots", "snapshots[].root"): _PENDING_C,
-    ("/api/restore/plan", "items[].obj"): _PENDING_C,
-    ("/api/search/detail", "content_id"): _PENDING_C,
-    ("/api/search/detail", "versions[].content_id"): _PENDING_C,
-    ("/api/search/detail", "chunks[].cid"): _PENDING_C,
-    ("/api/search/versions", "versions[].content_id"): _PENDING_C,
+    ("/api/jobs/status", "params.items[].source_id"): _SNAP,
+    ("/api/jobs/list", "jobs[].params.items[].source_id"): _SNAP,
+    ("/api/jobs/list", "jobs[].commands_text"): _SNAP,
+    ("/api/audit", "records[].summary.source_id"): _SNAP,
 }
+# An allowance covers snapshot ids only: an object id or a delete command is never allowed.
 
 # Routes that stream files or change state although they answer GET; never called here.
 _SKIP = {"/api/restore/download", "/api/search/export", "/api/logs/download", "/api/diagnostics/bundle"}
 
 
-def _repo_ids(fixture_repo: dict, kopia: str) -> set[str]:
-    """Every snapshot id and content id in the fixture repository (an object id is a content id,
-    or ``I`` + one for a split file)."""
+def _repo_ids(fixture_repo: dict, kopia: str) -> dict[str, str]:
+    """Every snapshot id ("snapshot") and content id ("object") in the fixture repository (an object
+    id is a content id, or ``I`` + one for a split file)."""
     run = lambda *a: h.kopia_run(kopia, fixture_repo["env"], fixture_repo["config"], *a)  # noqa: E731
-    ids = {s["id"] for s in json.loads(run("snapshot", "list", "--all", "--json"))}
-    ids |= {line.split()[0] for line in run("content", "list").splitlines() if line.strip()}
+    ids = {line.split()[0]: "object" for line in run("content", "list").splitlines() if line.strip()}
+    ids.update({s["id"]: "snapshot" for s in json.loads(run("snapshot", "list", "--all", "--json"))})
     return ids
 
 
-def _scan(value, path: str, ids: set[str], out: list[tuple[str, str]]) -> None:
+def _kinds(text: str, ids: dict[str, str]) -> set[str]:
+    kinds = {"command"} if _CMD.search(text) else set()
+    for t in _TOKEN.findall(text):
+        kind = ids.get(t) or ids.get(t[1:])
+        if kind:
+            kinds.add(kind)
+    return kinds
+
+
+def _scan(value, path: str, ids: dict[str, str], out: list[tuple[str, str, set]]) -> None:
     if isinstance(value, dict):
         for k, v in value.items():
+            _scan(str(k), (f"{path}." if path else "") + "<key>", ids, out)   # ids used as keys too
             _scan(v, f"{path}.{k}" if path else str(k), ids, out)
     elif isinstance(value, list):
         for v in value:
             _scan(v, path + "[]", ids, out)
-    elif isinstance(value, str) and (_CMD.search(value) or any(
-            t in ids or t[1:] in ids for t in _TOKEN.findall(value))):
-        out.append((path, value[:80]))
+    elif isinstance(value, str):
+        kinds = _kinds(value, ids)
+        if kinds:
+            out.append((path, value[:120], kinds))
 
 
 def _params(names: list[str], ctx: dict) -> dict | None:
@@ -83,8 +92,10 @@ def test_free_replies_carry_no_delete_ingredients(app_server, fixture_repo, kopi
     row = srv.get(f"/api/search?repo={repo}&q=needle")["results"][0]
     sep = "\\" if "\\" in row["full_path"] else "/"
     folder = row["full_path"].rsplit(sep, 1)[0]
+    snap = srv.get(f"/api/search/versions?repo={repo}&source={urllib.parse.quote(row['source'])}"
+                   f"&full_path={urllib.parse.quote(row['full_path'])}")["versions"][0]["snapshot_id"]
     ctx = {"repo": repo, "source": row["source"], "full_path": row["full_path"], "path": row["full_path"],
-           "prefix": folder, "folder": folder, "q": "needle"}
+           "prefix": folder, "folder": folder, "q": "needle", "snapshot_id": snap}
 
     found: list[tuple[str, str, str]] = []
     called = 0
@@ -102,11 +113,20 @@ def test_free_replies_carry_no_delete_ingredients(app_server, fixture_repo, kopi
         if reply is None:
             continue
         called += 1
-        hits: list[tuple[str, str]] = []
+        hits: list[tuple[str, str, set]] = []
         _scan(reply, "", ids, hits)
-        found += [(route, k, v) for k, v in hits]
+        found += [(route, k, v, kinds) for k, v, kinds in hits]
 
     item = {"source": row["source"], "full_path": row["full_path"]}
+    version = {**item, "snapshot_id": snap, "version": True}
+    # A real restore of the file version into the test folder, so job replies are scanned too.
+    plan = srv.post("/api/restore/plan", {"repo": repo, "items": [version], "target_mode": "folder",
+                                          "target": str(srv.data / "restore-out"), "preview": False})
+    job = srv.post("/api/jobs/start", {"kind": "restore", "repo": repo, "params": {
+        "items": [{"source_id": i["source_id"], "target": i["target"]} for i in plan["items"]]}})
+    assert h.wait_until(lambda: srv.get(f"/api/jobs/status?job_id={job['job_id']}").get("state")
+                        not in ("queued", "running"), wait=60)
+    ctx["job_id"] = job["job_id"]
     previews = [
         ("/api/delete/plan", {"repo": repo, "files": [item], "method": "remove"}),
         ("/api/delete/plan", {"repo": repo, "files": [item], "method": "remove", "by": "filename"}),
@@ -121,6 +141,8 @@ def test_free_replies_carry_no_delete_ingredients(app_server, fixture_repo, kopi
         ("/api/folder/detail", {"repo": repo, "prefix": folder}),
         ("/api/restore/plan", {"repo": repo, "items": [item], "target_mode": "folder",
                                "target": str(srv.data / "restore-preview")}),
+        ("/api/restore/plan", {"repo": repo, "items": [version], "target_mode": "folder",
+                               "target": str(srv.data / "restore-preview")}),
     ]
     for route, body in previews:
         reply = _call(srv, "POST", route, body)
@@ -129,10 +151,10 @@ def test_free_replies_carry_no_delete_ingredients(app_server, fixture_repo, kopi
         called += 1
         hits = []
         _scan(reply, "", ids, hits)
-        found += [(route, k, v) for k, v in hits]
+        found += [(route, k, v, kinds) for k, v, kinds in hits]
 
     assert called > 40, f"only {called} routes answered - the sweep is not reaching the app"
-    new = sorted({(r, k) for r, k, _v in found if (r, k) not in ALLOWED})
-    examples = {(r, k): v for r, k, v in found}
+    new = sorted({(r, k) for r, k, _v, kinds in found if (r, k) not in ALLOWED or kinds != {"snapshot"}})
+    examples = {(r, k): f"{sorted(kinds)}: {v}" for r, k, v, kinds in found}
     assert not new, "Free replies carry ids or commands (ask Anshul before allowing any):\n" + "\n".join(
         f"  {r}  {k}  e.g. {examples[(r, k)]}" for r, k in new)

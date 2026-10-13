@@ -124,6 +124,43 @@ const appConfigPart = {
       this.cfgNotices = this.cfgNotices.filter((x) => x.id !== n.id);
       _cfgPost(`/api/config-backups/notices/${encodeURIComponent(n.id)}/dismiss`).catch(() => {});
     },
+    // ---- index backups (Settings > Indexing) and the damaged-index notice ----------------------
+    async loadIxNotices() {
+      try { this.ixNotices = (await getJson("/api/index/notices")).notices || []; } catch (e) { /* keep */ }
+    },
+    ixNoticeText(n) {
+      const from = n.version_at ? `the copy from ${fmtAbs(n.version_at)}` : "the last good copy";
+      return `The index for ${this.repoLabel(n.repo)} was damaged. KopiaLens switched to ${from}.`;
+    },
+    ixDismiss(n) {
+      this.ixNotices = this.ixNotices.filter((x) => x.id !== n.id);
+      _cfgPost(`/api/index/notices/${encodeURIComponent(n.id)}/dismiss`).catch(() => {});
+    },
+    async loadIxBackups() {
+      try { this.ixBackups = await getJson("/api/index/backups"); } catch (e) { this.ixBackups = null; }
+    },
+    ixVersionsText() {
+      const repos = (this.ixBackups && this.ixBackups.repos) || [];
+      const bytes = repos.reduce((t, r) => t + (r.versions || []).reduce((s, v) => s + (v.bytes || 0), 0), 0);
+      return bytes ? `Older versions use ${fmtBytes(bytes)} now.` : "";
+    },
+    ixCopyLines() {
+      return ((this.ixBackups && this.ixBackups.repos) || []).filter((r) => r.copy).map((r) => {
+        const c = r.copy;
+        const text = c.ok
+          ? `${this.repoLabel(r.repo)}: copied ${fmtAbs(c.at)}` + (c.bytes ? `, ${fmtBytes(c.bytes)}` : "")
+          : `${this.repoLabel(r.repo)}: couldn't copy. ${c.error || ""}`;
+        return { repo: r.repo, ok: !!c.ok, text };
+      });
+    },
+    async ixCopyNow() {
+      try {
+        await this.saveKl("index_backup_dir");   // a folder typed just now, before the click
+        await _cfgPost("/api/index/backups/copy");
+        this.klNotify("Copying the index…");
+        setTimeout(() => this.loadIxBackups(), 4000);
+      } catch (e) { this.klNotify(`Couldn't start the copy: ${e.message || e}`, "warn"); }
+    },
     cfgOpenBackups() {
       this.openSettings();
       this.settingsTab = "backups";

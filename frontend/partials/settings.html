@@ -169,6 +169,29 @@
                 <p class="text-[0.6875rem] text-muted mt-1">Reads every snapshot again instead of only what changed. Rarely needed, and much slower.</p>
               </div>
 
+              <div class="pt-2 border-t border-bd-soft text-xs font-medium" data-testid="settings-index-backups">Index backups</div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Keep older versions</span>
+                  <select x-model.number="indexKeepVersions" @change="saveKl('index_keep_versions')" class="fld border border-bd bg-surface2">
+                    <option :value="0">Off</option>
+                    <option :value="1">1</option>
+                    <option :value="2">2</option>
+                    <option :value="3">3</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">If the index is damaged, KopiaLens switches to the newest good version and tells you. Changes apply at the next index. <span x-text="ixVersionsText()"></span></p>
+              </div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Copy to a folder</span>
+                  <div class="flex items-center gap-2">
+                    <input type="text" x-model.trim="indexBackupDir" @change="saveKl('index_backup_dir')" placeholder="Off" class="fld border border-bd bg-surface2" style="width:16rem" aria-label="Folder for the index copy">
+                    <button @click="ixCopyNow()" :disabled="!indexBackupDir" class="kl-btn">Copy now</button>
+                  </div></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Updated after each index. A folder on another drive keeps a copy if this one fails.</p>
+                <template x-for="c in ixCopyLines()" :key="c.repo">
+                  <p class="text-[0.6875rem] mt-0.5" :class="c.ok ? 'text-muted' : ''" :style="c.ok ? '' : 'color:var(--warn)'" x-text="c.text"></p>
+                </template>
+              </div>
+
               <div class="pt-2 border-t border-bd-soft text-xs font-medium">Refresh</div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Quick refresh</span>
@@ -388,12 +411,12 @@
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Indexing time limit</span>
                   {{ duration('indexWorkerTimeout', 'index_worker_timeout', 600) }}</div>
-                <p class="text-[0.6875rem] text-muted mt-1">An indexing run that takes longer is stopped and tried again later.</p>
+                <p class="text-[0.6875rem] text-muted mt-1">An indexing run that takes longer is stopped. The next run continues where it left off.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>First index time limit</span>
                   {{ duration('indexFirstTimeout', 'index_first_timeout', 600) }}</div>
-                <p class="text-[0.6875rem] text-muted mt-1">The same limit for a repository's first index, which reads every snapshot. A stopped first index continues where it left off. Time the computer sleeps doesn't count.</p>
+                <p class="text-[0.6875rem] text-muted mt-1">The same limit for a repository's first index, which reads every snapshot. Time the computer sleeps doesn't count.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Give up on an unreachable repository after</span>

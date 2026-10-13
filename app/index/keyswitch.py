@@ -33,7 +33,7 @@ from . import crypto, publish, store
 
 log = get_logger("keyswitch")
 
-_GEN_RE = re.compile(r"g(\d+)\.parquet$")
+_GEN_RE = re.compile(r"g(\d+)(?:s\d+)*\.parquet$")   # s<N>: a kept version's file after a switch
 
 
 def repo_states() -> list[dict]:
@@ -101,16 +101,34 @@ def switch_repo(repo: str, on: bool, say=None) -> dict:
             return {"repo": repo, "files": 0, "rows": 0, "mb": 0.0, "seconds": 0.0,
                     "note": "already in the requested state"}
         started = time.time()
-        out = _rewrite_generation(root, manifest, on, os.path.join(root, "_staging"),
-                                  os.path.join(DATA_DIR, f"duck_tmp_repo{repo}"), say)
+        staging, tmp = os.path.join(root, "_staging"), os.path.join(DATA_DIR, f"duck_tmp_repo{repo}")
+        out = _rewrite_generation(root, manifest, on, staging, tmp, say)
+        # Kept older versions follow the same state (never a plaintext copy left behind). A file
+        # they share with the current version is rewritten once; they are saved before the
+        # current version is published, so a crash leaves every manifest readable.
+        from . import versions
+        done, old_all, new_all = dict(out["rel_map"]), [], []
+        for man in versions.kept(root):
+            if bool(man.get("encrypted")) == on:
+                continue
+            vout = _rewrite_generation(root, man, on, staging, tmp, say, gen=out["generation"],
+                                       done=done, tag=f"v{man.get('generation')}")
+            done.update(vout["rel_map"])
+            publish.move_into_pool(root, vout["moves"])
+            versions.rewrite(man, vout["artifacts"], on)
+            old_all += [r for rels in man["artifacts"].values() for r in rels]
+            new_all += [r for rels in vout["artifacts"].values() for r in rels]
         new = dict(manifest)
         new["generation"] = out["generation"]
         new["artifacts"] = out["artifacts"]
         new["encrypted"] = on
         new["_moves"] = out["moves"]
         publish.publish(root, new)
-        _drop_superseded(root, manifest.get("artifacts") or {}, out["artifacts"],
+        _drop_superseded(root, {**(manifest.get("artifacts") or {}), "_kept": old_all},
+                         {**out["artifacts"], "_kept": new_all},
                          lambda: store.close_repo(repo)["busy"] == 0, say)
+        if versions.backup_dir():
+            versions.sync_backup(repo)
         summary = {"repo": repo, "generation": out["generation"], "files": out["files"],
                    "rows": out["rows"], "mb": out["mb"], "encrypted": on,
                    "seconds": round(time.time() - started, 1)}
@@ -162,16 +180,22 @@ def switch_bz(on: bool, say=None) -> dict:
 
 
 def _rewrite_generation(root: str, manifest: dict, on: bool, staging: str, tmp: str,
-                        say) -> dict:
+                        say, *, gen: int | None = None, done: dict | None = None,
+                        tag: str = "cur") -> dict:
     """Re-encode every artifact file of one generation, verified, into ``on``.
 
     Shared by the index store and the Backblaze store (same manifest shape). The caller holds
     that store's writer lock and does the publication; this function only produces staged files
     and a new artifact list, and never touches the published generation - a crash leaves it
     exactly as it was, and the next attempt overwrites the staged files.
+
+    A kept older version passes ``gen`` (the switch's generation; its files keep their own number
+    plus ``s<gen>``, so they never collide with the current version's) and ``done``: files
+    already rewritten, reused instead of written again.
     """
     current = bool(manifest.get("encrypted"))
-    gen = int(manifest.get("generation") or 0) + 1
+    kept_names = gen is not None
+    gen = gen if gen is not None else int(manifest.get("generation") or 0) + 1
     os.makedirs(staging, exist_ok=True)
     limit, threads = store.resolve_limits()
     con = duckdb.connect()
@@ -191,12 +215,17 @@ def _rewrite_generation(root: str, manifest: dict, on: bool, staging: str, tmp: 
         for name, rels in (manifest.get("artifacts") or {}).items():
             out_rels = []
             for index, rel in enumerate(rels):
+                if done and rel in done:
+                    rel_map[rel] = done[rel]
+                    out_rels.append(done[rel])
+                    continue
                 src = os.path.join(root, rel)
-                new_rel = _GEN_RE.sub(f"g{gen}.parquet", rel)
-                if new_rel == rel:
+                new_rel = (rel[:-len(".parquet")] + f"s{gen}.parquet" if kept_names
+                           else _GEN_RE.sub(f"g{gen}.parquet", rel))
+                if new_rel == rel or not _GEN_RE.search(rel):
                     # Never let an unexpected name overwrite the file it read from.
                     raise RuntimeError(f"cannot version the artifact path {rel!r}")
-                staged = os.path.join(staging, f"switch_{name}_{index}_g{gen}.parquet")
+                staged = os.path.join(staging, f"switch_{tag}_{name}_{index}_g{gen}.parquet")
                 rows = con.execute("SELECT count(*) FROM read_parquet(%s)"
                                    % crypto.parquet_read(_fwd(src), encrypted=current)).fetchone()[0]
                 con.execute("COPY (SELECT * FROM read_parquet(%s)) TO '%s' (%s)"

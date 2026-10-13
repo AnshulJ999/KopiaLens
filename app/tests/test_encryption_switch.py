@@ -176,12 +176,34 @@ def test_switch_on_then_off_keeps_every_row(sandbox):
 
 def test_no_plaintext_parquet_survives_a_switch_on(sandbox):
     root = make_generation(sandbox, rows=64)
+    # A kept older version: one file shared with the current version, one of its own.
+    own = os.path.join(root, "pool", "tent", "g0.parquet")
+    con = duckdb.connect()
+    con.execute("COPY (SELECT range AS cid_id FROM range(9)) TO '%s' (FORMAT parquet)"
+                % own.replace("\\", "/"))
+    con.close()
+    os.makedirs(os.path.join(root, "versions"))
+    with open(os.path.join(root, "versions", "g0.json"), "w", encoding="utf-8") as fh:
+        json.dump({"generation": 0, "encrypted": False, "artifacts": {
+            "cid": ["pool/cid/g1.parquet"], "tent": ["pool/tent/g0.parquet"]}}, fh)
+
     keyswitch.switch_repo("3", True)
     leftovers = [os.path.join(dp, fn)
                  for dp, _dirs, files in os.walk(root)
                  for fn in files
                  if fn.endswith(".parquet") and not crypto.file_is_encrypted(os.path.join(dp, fn))]
     assert leftovers == []
+    from app.index import versions
+    (kept,) = versions.kept(root)
+    assert kept["encrypted"] is True
+    assert kept["artifacts"]["cid"] == manifest_json(root)["artifacts"]["cid"]   # rewritten once
+    con = duckdb.connect()
+    crypto.register_key(con, encrypted=True)
+    rows = [con.execute("SELECT count(*) FROM read_parquet(%s)" % crypto.parquet_read_list(
+        [os.path.join(root, rel).replace("\\", "/")], encrypted=True)).fetchone()[0]
+        for rels in kept["artifacts"].values() for rel in rels]
+    con.close()
+    assert rows == [64, 9]
 
 
 def test_a_switch_that_dies_before_the_swap_leaves_the_generation_untouched(sandbox, monkeypatch):

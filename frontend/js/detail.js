@@ -178,7 +178,7 @@ const detailPart = {
       if (!d || d.kind !== "file" || !(d.versions || []).length) return [];
       const vs = d.versions;
       const first = toDate(vs[vs.length - 1].start), last = toDate(vs[0].start);
-      const changes = new Set(vs.map((v) => v.content_id)).size;
+      const changes = d.contents || 1;
       const days = Math.max(1, Math.round((last - first) / 86400000));
       const copies = this.copyCount();
       return [
@@ -438,7 +438,6 @@ const detailPart = {
           title: item.full_path,
           source: detail.source || item.source,
           on_disk: item.in_latest,
-          content_id: detail.content_id,
           logical: detail.logical, physical: detail.physical, freeable: detail.freeable,
           shared: detail.shared, physical_all: detail.physical_all_versions, chunk_count: detail.chunk_count,
           chunks: detail.chunks || [],
@@ -446,8 +445,9 @@ const detailPart = {
           locations: detail.locations, instances: detail.instances, holders: detail.holders || [],
           reclaim_everywhere: detail.reclaim_everywhere,
           versions: (vres.versions || []).map((x) => ({ time: humanTime(x.start_time), start: x.start_time, size: x.size, mtime: x.mtime, snapshot_id: x.snapshot_id, content_id: x.content_id })),
+          contents: vres.contents,
           purge: purgeRows,
-          notFound: !(vres.versions || []).length && !detail.content_id,
+          notFound: !(vres.versions || []).length && !detail.found,
         });
         this._loadPathStatus(seq, this.detail.source, item.full_path, false);
         this._loadExtraFacts(seq, this.detail.source, item.full_path);

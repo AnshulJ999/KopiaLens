@@ -67,6 +67,7 @@ const settingsPart = {
         this._readAdvanced(kl);
         this._readBackblaze(data.settings?.backblaze || {});
         this.loadCfg();
+        this.loadIxBackups();
         this.loadAbout();
       } catch (e) { /* keep last-known state on fetch failure */ }
       this.showSettings = true;
@@ -78,6 +79,8 @@ const settingsPart = {
       this.indexFirstTimeout = Number(kl.index_first_timeout || 86400);
       this.indexWaitUnreachable = Number(kl.index_wait_unreachable || 1800);
       this.indexStallTimeout = Number(kl.index_stall_timeout ?? 3600);
+      this.indexKeepVersions = Number(kl.index_keep_versions ?? 1);
+      this.indexBackupDir = kl.index_backup_dir || "";
       this.removePlanCap = Number(kl.remove_plan_cap || 200000);
       this.indexRetryDelay = Number(kl.index_retry_delay || 900);
       this.reindexAfterDeleteDelay = Number(kl.reindex_after_delete_delay ?? 300);
@@ -149,6 +152,8 @@ const settingsPart = {
       index_first_timeout: { s: "indexFirstTimeout", t: "int", min: 600 },
       index_wait_unreachable: { s: "indexWaitUnreachable", t: "int", min: 60 },
       index_stall_timeout: { s: "indexStallTimeout", t: "int", min: 0 },
+      index_keep_versions: { s: "indexKeepVersions", t: "int", min: 0, max: 3 },
+      index_backup_dir: { s: "indexBackupDir", t: "str" },
       remove_plan_cap: { s: "removePlanCap", t: "int", min: 1000 },
       reindex_after_delete_delay: { s: "reindexAfterDeleteDelay", t: "int", min: 0 },
       index_retry_delay: { s: "indexRetryDelay", t: "int", min: 60 },
@@ -251,7 +256,7 @@ const settingsPart = {
       const body = f.top ? { [key]: v }
         : f.block === "backblaze" ? { backblaze: { [key]: v } }
         : { kopialens: { [key]: v } };
-      getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      return getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
         .then(() => {
           this.klNotify(f.restart ? "Saved - this setting needs a restart" : "Saved");
           if (key === "dashboard_refresh") this.armAutoRefresh();

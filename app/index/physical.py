@@ -930,7 +930,8 @@ def file_detail(repo: str, source: str, full_path: str, others_cap: int = 500) -
     shared = physical_total - freeable
 
     chunk_rows = []
-    for c in sorted(latest_chunks, key=lambda x: sizes.get(x, 0), reverse=True)[:200]:
+    # Largest first, ties by id: storage_breakdown numbers the same 200 pieces in this order.
+    for c in sorted(latest_chunks, key=lambda x: (-sizes.get(x, 0), x))[:200]:
         chunk_rows.append({
             "cid": c, "packed": sizes.get(c, 0), "refs": refs.get(c, 0), "exclusive": freed(c),
         })
@@ -1096,15 +1097,16 @@ def storage_breakdown(repo: str, source: str, full_path: str, limit: int = 10,
     matched = set().union(*by_path.values()) if by_path else set()
     # Who else uses each shared piece in the panel's chunk list (the latest version's 200 largest).
     latest = st.obj_chunks.get(st.versions[0][3]) or set()
-    listed = set(sorted(latest, key=lambda c: sizes.get(c, 0), reverse=True)[:200])
+    order = sorted(latest, key=lambda c: (-sizes.get(c, 0), c))[:200]   # file_detail's chunk order
+    listed, rank = set(order), {c: i + 1 for i, c in enumerate(order)}
     pieces: dict[str, dict] = {}
     for (_s, fp), cs in sorted(by_path.items(), key=lambda kv: kv[0][1]):
         for c in cs & listed:
-            names = pieces.setdefault(c, {"files": []})["files"]
+            names = pieces.setdefault(c, {"files": [], "n": rank[c]})["files"]
             if fp not in names:
                 names.append(fp)
     for c in listed & st.kept_chunks:
-        pieces.setdefault(c, {"files": []})["copy"] = True
+        pieces.setdefault(c, {"files": [], "n": rank[c]})["copy"] = True
     # One entry per file: nested sources hold the same (machine, path) once each.
     merged: dict[tuple, dict] = {}
     for (src, fp), cs in sorted(by_path.items()):

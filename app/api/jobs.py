@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from ..core import jobs
 from ..core.sources import invalidate as invalidate_sources
 from ..licensing import features
+from . import freeids
 
 router = APIRouter(tags=["jobs"])
 
@@ -96,6 +97,10 @@ def _resolve_params(kind: str, repo: str, params: dict) -> dict:
         if items is not None:
             if not items or not all(i.get("source_id") and i.get("target") for i in items):
                 raise jobs.JobRefused("restore needs a source and a target for every item")
+            for i in items:
+                i["source_id"] = freeids.release(i["source_id"])
+                if not i["source_id"]:
+                    raise jobs.JobRefused("This restore preview has expired. Preview it again.")
         elif not params.get("source_id") or not params.get("target"):
             raise jobs.JobRefused("restore needs source_id and target")
         # kopia creates a missing folder target, but not the parent folder of a single file

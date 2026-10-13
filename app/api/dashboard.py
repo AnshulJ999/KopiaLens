@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import threading
 import time
 
 from fastapi import APIRouter, HTTPException, Query
 
-from config import REPOS, repo_kind
+from config import REPOS, is_demo, kopia_repos, repo_kind
 
 from ..core.metrics import table_rows
 from ..core.nightly import start_index_pass_async, state as nightly_state, worker_progress
@@ -109,6 +110,44 @@ def get_index_status(repo: str) -> dict:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/index/backups")
+def index_backups() -> dict:
+    """Settings > Indexing: kept older versions per repo (space each one holds) and the copy
+    folder's last result."""
+    from ..index import versions
+    return {"keep": versions.keep_count(), "dir": versions.backup_dir(),
+            "repos": [versions.report(r) for r in kopia_repos() if not is_demo(r)]}
+
+
+@router.post("/index/backups/copy")
+def index_backups_copy() -> dict:
+    """Copy every repo's index to the copy folder now, in the background."""
+    from ..index import versions
+    if not versions.backup_dir():
+        raise HTTPException(status_code=400, detail="Choose a folder first.")
+
+    def run() -> None:
+        for r in kopia_repos():
+            if not is_demo(r):
+                versions.sync_backup(r)
+    threading.Thread(target=run, name="index-copy", daemon=True).start()
+    return {"started": True}
+
+
+@router.get("/index/notices")
+def index_notices() -> dict:
+    """An index that was damaged and switched to a backup copy (the page banner)."""
+    from ..index import versions
+    return {"notices": versions.notices()}
+
+
+@router.post("/index/notices/{notice_id}/dismiss")
+def index_notice_dismiss(notice_id: str) -> dict:
+    from ..index import versions
+    versions.dismiss(notice_id)
+    return {"ok": True}
 
 
 @router.get("/index/log")

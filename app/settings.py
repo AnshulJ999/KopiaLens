@@ -108,6 +108,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "repo_labels": "short",      # repo chips/columns: "short" (Repo 1) | "full" (the name from repos.json)
         "index_wait_unreachable": 1800,  # seconds an unreachable repository is waited for before the run gives up (progress kept)
         "index_stall_timeout": 3600,     # seconds the tree read may make no progress before it is stopped; 0 = off
+        "index_keep_versions": 1,        # older index versions kept on disk (0-3); 0 = off
+        "index_backup_dir": "",          # a folder (ideally another drive) holding a copy of each index; "" = off
         "show_pro_badge": True,      # the small Pro mark next to the logo while a licence is active
         "logo": "k6",                # header logo: k6 | orig7 | k3a | none
         "tray_icon": "k6",           # desktop app tray icon (api/shell.PREFS lists the choices)

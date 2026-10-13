@@ -6,6 +6,11 @@ file, closed and reopened the way a new worker process would."""
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 import duckdb
 import pytest
 
@@ -143,30 +148,44 @@ def test_a_stopped_read_resumes_to_the_same_tree(tmp_path, monkeypatch, stop_at)
     assert _resume_run(path, saved) == clean
 
 
-class _Killed(BaseException):
-    """The process dying: no handler in the code under test runs."""
+# The read runs in a child process that dies inside a kopia call (os._exit: no handler, no close,
+# DuckDB's WAL left as it was). The save points it reached are all the parent gets.
+_CHILD = r"""
+import json, os, sys
+sys.path.insert(0, sys.argv[1])
+from app.index import ids, treesync
+from app.tests import test_index_resume as t
+die_at, path, out = int(sys.argv[2]), sys.argv[3], sys.argv[4]
+treesync.BATCH, treesync.CHUNK, treesync.SAVE_EVERY = 3, 7, 0
+treesync.kopia_parallel = lambda: 1
+fake, calls = t._repo(), {"n": 0}
+def dying(repo, args, **kw):
+    calls["n"] += 1
+    if calls["n"] == die_at:
+        os._exit(9)
+    return fake(repo, args, **kw)
+treesync.kopia = dying
+con = t._open(path)
+alloc = ids.Allocator({})
+def save(state):
+    con.execute("CHECKPOINT")
+    with open(out + ".tmp", "w") as fh:
+        json.dump({"state": state, "counters": alloc.counters()}, fh)
+    os.replace(out + ".tmp", out)
+treesync.sync(con, "3", t.ROOTS, alloc=alloc, save=save)
+"""
 
 
-@pytest.mark.parametrize("die_at", [2, 4, 7, 11, 16, 23, 30, 38])
-def test_a_killed_read_resumes_to_the_same_tree(tmp_path, monkeypatch, die_at):
+@pytest.mark.parametrize("die_at", [3, 9, 17, 30])
+def test_a_killed_process_resumes_to_the_same_tree(tmp_path, monkeypatch, die_at):
     clean = _clean(tmp_path, monkeypatch)
-    fake = _repo()
-    calls = {"n": 0}
-
-    def dying(repo, args, **kw):
-        calls["n"] += 1
-        if calls["n"] == die_at:
-            raise _Killed()
-        return fake(repo, args, **kw)
-    monkeypatch.setattr(treesync, "kopia", dying)
-    path = tmp_path / "killed.duckdb"
-    con = _open(path)
-    alloc = ids.Allocator({})
-    saved: dict = {}
-    with pytest.raises(_Killed):
-        treesync.sync(con, "3", ROOTS, alloc=alloc, save=_saver(con, alloc, saved))
-    con.close()
-    monkeypatch.setattr(treesync, "kopia", fake)
+    path, out = tmp_path / "killed.duckdb", tmp_path / "saved.json"
+    root = Path(__file__).resolve().parents[2]
+    done = subprocess.run([sys.executable, "-c", _CHILD, str(root), str(die_at), str(path), str(out)],
+                          capture_output=True, text=True, timeout=50)
+    assert done.returncode == 9, done.stderr[-2000:]
+    saved = json.loads(out.read_text()) if out.exists() else {}
+    monkeypatch.setattr(treesync, "kopia", _repo())
     assert _resume_run(path, saved) == clean
 
 

@@ -371,7 +371,7 @@ const actionsPart = {
     },
     restoreFromDetail() { if (this.detail) this.openRestore([{ source: this.detail.source, full_path: this.detail.title }]); },
     restoreVersion(v) {
-      if (this.detail) this.openRestore([{ source: this.detail.source, full_path: this.detail.title, content_id: v.content_id || null, snapshot_id: v.snapshot_id }]);
+      if (this.detail) this.openRestore([{ source: this.detail.source, full_path: this.detail.title, content_id: v.content_id || null, snapshot_id: v.snapshot_id, version: true }]);
     },
     async openRestoredPath(path) {
       await getJson("/api/restore/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }) })
@@ -410,6 +410,7 @@ const actionsPart = {
       const q = new URLSearchParams({ repo: this.repo, source: item.source, full_path: item.full_path });
       if (item.snapshot_id) q.set("snapshot_id", item.snapshot_id);
       if (item.content_id) q.set("content_id", item.content_id);
+      if (item.version) q.set("version", "true");
       const a = document.createElement("a");
       a.href = `/api/restore/download?${q}`;
       // A new tab, so a JSON error response (expired version, kopia failure) cannot navigate the
@@ -425,6 +426,6 @@ const actionsPart = {
       }
     },
     downloadVersion(v) {
-      if (this.detail) this.downloadItem({ source: this.detail.source, full_path: this.detail.title, content_id: v.content_id || null, snapshot_id: v.snapshot_id });
+      if (this.detail) this.downloadItem({ source: this.detail.source, full_path: this.detail.title, content_id: v.content_id || null, snapshot_id: v.snapshot_id, version: true });
     },
 };

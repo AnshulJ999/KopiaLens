@@ -18,6 +18,7 @@ from ..index.holding import _find, _segments
 from ..index.queries import snapshot_files
 from ..index.store import NoIndex
 from ..index.snapanalysis import batched, compute_source, read_analysis, reclaimable_files
+from . import freeids
 from .errors import PASS_THROUGH
 
 router = APIRouter(tags=["snapshots"])
@@ -44,7 +45,7 @@ _ANALYZING_ALL: set[str] = set()  # repo-level "analyze everything" in progress
 _LAST_ALL: dict[str, dict] = {}   # repo -> outcome of the last analyze-all, for analyze-status
 
 
-def _snap_row(key: str, snap: dict, a: dict) -> dict:
+def _snap_row(key: str, snap: dict, a: dict, ids: bool = True) -> dict:
     stats = snap.get("stats", {})
     summ = snap.get("rootEntry", {}).get("summ", {})
     logical = stats.get("totalSize", 0)
@@ -55,7 +56,8 @@ def _snap_row(key: str, snap: dict, a: dict) -> dict:
         "logical": logical, "files": summ.get("files", 0), "dirs": summ.get("dirs", 0),
         "pins": snap.get("pins"), "retention": snap.get("retention", []),
         "description": snap.get("description") or "",
-        "root": snap.get("rootEntry", {}).get("obj"),
+        **({"root": snap.get("rootEntry", {}).get("obj")} if ids else {}),   # an object id: Pro only
+        "same": freeids.same_key(snap.get("rootEntry", {}).get("obj")),     # identical snapshots match
         "physical": phys or None,
         "accum": (round(logical / phys, 2) if phys else None),  # logical / physical = dedup gain
         "churn": a.get("churn"), "reclaimable": a.get("reclaimable"),
@@ -78,6 +80,7 @@ def snapshots(repo: str, source: str | None = None, source_index: int | None = N
     returns every snapshot across all sources (for the repo-wide by-reclaimable view).
     ``analysis_fresh`` is false when the numbers on screen belong to the previous index run
     () - rows exist but their snaphash predates the current snapshot set."""
+    ids = not freeids.free(repo)
     if source == "*ALL*":
         rows, analyzed_sources = [], 0
         all_fresh = True
@@ -88,7 +91,7 @@ def snapshots(repo: str, source: str | None = None, source_index: int | None = N
                 analyzed_sources += 1
                 all_fresh = all_fresh and bool(info.get("fresh"))
             for snap in sources_index(repo)[key]:
-                rows.append(_snap_row(key, snap, analysis.get(snap["id"], {})))
+                rows.append(_snap_row(key, snap, analysis.get(snap["id"], {}), ids))
         analyzed = analyzed_sources > 0
         return {"source": "*ALL*", "snapshots": rows, "analyzed": analyzed,
                 "analysis_fresh": (all_fresh if analyzed else True),
@@ -100,7 +103,7 @@ def snapshots(repo: str, source: str | None = None, source_index: int | None = N
 
     info = _analysis(repo, key)
     analysis = info.get("by_id", {})
-    rows = [_snap_row(key, snap, analysis.get(snap["id"], {})) for snap in srcs[key]]
+    rows = [_snap_row(key, snap, analysis.get(snap["id"], {}), ids) for snap in srcs[key]]
     return {"source": key, "snapshots": rows, "analyzed": bool(analysis),
             "analysis_fresh": bool(info.get("fresh")),
             "analyzing": f"{repo}|{key}" in _ANALYZING}

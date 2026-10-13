@@ -277,6 +277,11 @@ def mark_nightly_result(repo: str, ok: bool, reason: str | None = None) -> None:
     else:
         errors[repo] = {"at": time.time(), "reason": (reason or "index pass failed")[:500]}
     _write_state(data)
+    try:            # a recovery inside the worker is alerted from here
+        from .index import versions
+        versions.alert_pending()
+    except Exception as exc:  # noqa: BLE001 - an alert must never affect the run record
+        log.warning("index notice alert failed: %s", exc)
 
 
 def _close_stale_attempts(adopted: list[str]) -> None:

@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import REPOS, repo_kind
+from . import freeids
 from .actions import FULL_LIST_CAP
 from .errors import PASS_THROUGH
 from ..core import paths as pathrules
@@ -426,7 +427,8 @@ def export(
 def file_versions(repo: str, source: str | None = None, full_path: str | None = None) -> dict:
     if not source or not full_path:
         raise HTTPException(status_code=400, detail="source and full_path are required")
-    return {"versions": versions(repo, source, full_path)}
+    rows = versions(repo, source, full_path)
+    return {"versions": freeids.versions(repo, rows), "contents": freeids.contents(rows)}
 
 
 @router.get("/search/detail")
@@ -436,7 +438,8 @@ def detail(repo: str, source: str | None = None, full_path: str | None = None, o
     if not source or not full_path:
         raise HTTPException(status_code=400, detail="source and full_path are required")
     try:
-        return file_detail(repo, source, full_path, others_cap=max(1, min(others_cap, FULL_LIST_CAP)))
+        return freeids.detail(repo, file_detail(repo, source, full_path,
+                                                others_cap=max(1, min(others_cap, FULL_LIST_CAP))))
     except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:
@@ -450,7 +453,7 @@ def breakdown(repo: str, source: str | None = None, full_path: str | None = None
     if not source or not full_path:
         raise HTTPException(status_code=400, detail="source and full_path are required")
     try:
-        return storage_breakdown(repo, source, full_path)
+        return freeids.breakdown(repo, storage_breakdown(repo, source, full_path))
     except PASS_THROUGH:
         raise
     except Exception as exc:

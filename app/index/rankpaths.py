@@ -226,6 +226,12 @@ def current(repo: str) -> dict | None:
     return data
 
 
+def forget(repo: str) -> None:
+    """Drop the stored lists (the index switched to an older copy, whose ids they may not match)."""
+    sidecache.drop(_NAME % repo, base=DATA_DIR)
+    _MEMO.pop(repo, None)
+
+
 def ranked_values(repo: str, kind: str) -> dict[int, int]:
     """{key: bytes} for one ranked list, or {} when there is none (or it is not exact)."""
     data = current(repo)
