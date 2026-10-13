@@ -168,6 +168,10 @@ html.dark { --logo-main: #2dd4bf; --logo-mid: #11806f; --logo-accent: #fbbf24; }
 .rt-monthly { background: #787a7d; } .rt-annual { background: #c49508; } .rt-other { background: #5b89b4; }
 html.dark .rt-latest { background: #498235; } html.dark .rt-daily { background: #127d74; } html.dark .rt-weekly { background: #c14b0b; }
 html.dark .rt-monthly { background: #6e7072; } html.dark .rt-annual { background: #c49508; } html.dark .rt-other { background: #47729a; }
+/* Folder icons in Name columns: amber, like the folder emoji they replaced. */
+:root { --folder-ic: #d99a1e; }
+html.dark { --folder-ic: #f0b93a; }
+.kl-folder-ic { color: var(--folder-ic); }
 /* Icon-only header buttons: the icon sits centred and a little larger than the text. */
 .kl-ibtn { display: inline-flex; align-items: center; justify-content: center; }
 .kl-ibtn .ic { font-size: 1.05rem; }

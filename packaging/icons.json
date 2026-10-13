@@ -63,5 +63,13 @@
   "checkbox-empty": "phosphor/square",
   "dot": "phosphor/circle",
   "list": "phosphor/list-bullets",
-  "dock": "phosphor/sidebar-simple"
+  "dock": "phosphor/sidebar-simple",
+  "t-folder": "tabler/folder",
+  "t-file": "tabler/file",
+  "t-file-image": "tabler/photo",
+  "t-file-audio": "tabler/music",
+  "t-file-video": "tabler/movie",
+  "t-file-zip": "tabler/file-zip",
+  "t-file-code": "tabler/file-code",
+  "t-file-text": "tabler/file-text"
 }

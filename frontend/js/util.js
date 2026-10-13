@@ -41,8 +41,12 @@ const fileIconName = (name) => {
   const hit = ext && _FILE_KINDS.find(([, set]) => set.has(ext));
   return hit ? hit[0] : "file";
 };
-// The icon in front of a file or folder name in tables.
-const itemIconHtml = (name, folder) => iconHtml(folder ? "folder" : fileIconName(name), "text-muted mr-1");
+// The icon in front of a file or folder name in tables: Tabler's set ("t-" icons) or Phosphor's
+// (""), kept switchable for comparing. Folders are tinted like the old folder emoji.
+const NAME_ICON_PREFIX = "t-";
+const itemIconHtml = (name, folder) => (folder
+  ? iconHtml(NAME_ICON_PREFIX + "folder", "kl-folder-ic mr-1")
+  : iconHtml(NAME_ICON_PREFIX + fileIconName(name), "text-muted mr-1"));
 // One list for every pause menu (indexing and backups, app and tray). 0 = until resumed.
 const PAUSE_CHOICES = [[1, "1 hour"], [4, "4 hours"], [12, "12 hours"], [24, "1 day"], [72, "3 days"], [168, "1 week"], [0, "Until I resume"]];
 const fmtPhys = (v) => (v === null || v === undefined ? "—" : fmtBytes(v));
