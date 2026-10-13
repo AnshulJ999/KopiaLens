@@ -13,7 +13,8 @@ import urllib.parse
 from . import _harness as h
 
 _TOKEN = re.compile(r"[0-9A-Za-z]{16,}")
-_CMD = re.compile(r"snapshot fix remove-files|--object-id|snapshot delete", re.I)
+_CMD = re.compile(r"snapshot fix remove-files|--object-id", re.I)
+_SNAP_DELETE = re.compile(r"snapshot delete", re.I)
 
 # (route, key path) -> why a Free install may see it. Filled only from explicit rulings.
 _SNAP = "snapshot id: Free deletes, restores and mounts whole snapshots"
@@ -28,7 +29,10 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("/api/jobs/list", "jobs[].commands_text"): _SNAP,
     ("/api/audit", "records[].summary.source_id"): _SNAP,
 }
-# An allowance covers snapshot ids only: an object id or a delete command is never allowed.
+# An allowance covers snapshot ids only: an object id or a content delete command never is.
+# A Free snapshot delete's own job shows its command (allowed, Free deletes
+# whole snapshots), so the job list may also carry "snapshot delete".
+_ALLOWED_KINDS = {("/api/jobs/list", "jobs[].commands_text"): {"snapshot", "snapshot delete"}}
 
 # Routes that stream files or change state although they answer GET; never called here.
 _SKIP = {"/api/restore/download", "/api/search/export", "/api/logs/download", "/api/diagnostics/bundle"}
@@ -45,6 +49,8 @@ def _repo_ids(fixture_repo: dict, kopia: str) -> dict[str, str]:
 
 def _kinds(text: str, ids: dict[str, str]) -> set[str]:
     kinds = {"command"} if _CMD.search(text) else set()
+    if _SNAP_DELETE.search(text):
+        kinds.add("snapshot delete")
     for t in _TOKEN.findall(text):
         kind = ids.get(t) or ids.get(t[1:])
         if kind:
@@ -154,7 +160,8 @@ def test_free_replies_carry_no_delete_ingredients(app_server, fixture_repo, kopi
         found += [(route, k, v, kinds) for k, v, kinds in hits]
 
     assert called > 40, f"only {called} routes answered - the sweep is not reaching the app"
-    new = sorted({(r, k) for r, k, _v, kinds in found if (r, k) not in ALLOWED or kinds != {"snapshot"}})
+    new = sorted({(r, k) for r, k, _v, kinds in found
+                  if (r, k) not in ALLOWED or not kinds <= _ALLOWED_KINDS.get((r, k), {"snapshot"})})
     examples = {(r, k): f"{sorted(kinds)}: {v}" for r, k, v, kinds in found}
     assert not new, "Free replies carry ids or commands (ask Anshul before allowing any):\n" + "\n".join(
         f"  {r}  {k}  e.g. {examples[(r, k)]}" for r, k in new)
