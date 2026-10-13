@@ -6,8 +6,9 @@ checksums.
 
 Run with the dev Python (it runs the tests); the server is compiled with the build venv
 (KOPIALENS_BUILD_PYTHON). Output: <BUILD_ROOT>\\release\\<version>\\ plus release.log there.
-KOPIALENS_RELEASE_SKIP_TESTS=1 skips the test step while iterating on packaging. The updater key must be
-in TAURI_SIGNING_PRIVATE_KEY (path or content) and its password in TAURI_SIGNING_PRIVATE_KEY_PASSWORD.
+KOPIALENS_RELEASE_SKIP_TESTS=1 skips the test step while iterating on packaging. The updater key is
+private/updater.key (or TAURI_SIGNING_PRIVATE_KEY); its password is asked once and can be remembered
+(packaging/updater_key.py).
 """
 import hashlib
 import json
@@ -21,6 +22,9 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import updater_key  # noqa: E402
 from datetime import datetime, timezone
 
 KL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -288,8 +292,13 @@ def main() -> int:
         fail("no updater public key in shell/src-tauri/tauri.conf.json (plugins.updater.pubkey)")
     if shell_key != server_key:
         fail("UPDATE_PUBKEY in app/core/checkin.py differs from the updater key in tauri.conf.json")
-    if not os.environ.get("TAURI_SIGNING_PRIVATE_KEY"):
-        fail("TAURI_SIGNING_PRIVATE_KEY is not set: installs could not update to this release")
+    key = updater_key.key_path()
+    if not key:
+        fail(f"no updater key: {updater_key.KEY_FILE} is missing and TAURI_SIGNING_PRIVATE_KEY is not set")
+    key_password = updater_key.password()
+    if key_password is None:
+        fail("the updater key could not be opened, so installs could not update to this release")
+    signing_env = {"TAURI_SIGNING_PRIVATE_KEY": key, "TAURI_SIGNING_PRIVATE_KEY_PASSWORD": key_password}
 
     log("0/6 banned licence ids")
     bake_banned_ids()
@@ -317,7 +326,7 @@ def main() -> int:
         json.dump({"bundle": {"active": True, "targets": ["nsis"], "createUpdaterArtifacts": True,
                               "resources": {"release-stage/server/": "server/"}}}, fh)
     run(["cargo", "tauri", "build", "--config", release_conf, "--bundles", "nsis"], SHELL, "tauri.log",
-        {"CARGO_TARGET_DIR": SHELL_TARGET})
+        {"CARGO_TARGET_DIR": SHELL_TARGET, **signing_env})
     exe = os.path.join(SHELL_TARGET, "release", "KopiaLens.exe")
     installers = [os.path.join(SHELL_TARGET, "release", "bundle", "nsis", f)
                   for f in os.listdir(os.path.join(SHELL_TARGET, "release", "bundle", "nsis"))
