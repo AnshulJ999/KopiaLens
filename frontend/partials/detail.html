@@ -394,7 +394,7 @@
              style="border-color:var(--bd);background:var(--surface);color:var(--fg)">
           <div class="shrink-0 px-4 pt-3 pb-2 border-b" style="border-color:var(--bd)">
             <div class="flex items-center gap-1.5 text-xs mb-1 flex-wrap" x-show="panelStack.length">
-              <button class="kl-btn quiet" style="height:22px" @click="panelBack()">‹ Back</button>
+              <button class="kl-btn quiet" style="height:22px" @click="panelBack()"><i class="ic ic-arrow-left"></i> Back</button>
               <template x-for="c in panelCrumbs()" :key="c.i">
                 <span class="flex items-center gap-1.5"><button class="hover:underline" style="color:var(--link)" @click="panelBack(c.i)" x-text="c.label"></button><span class="text-faint">›</span></span>
               </template>
@@ -440,7 +440,7 @@
                   <div class="kl-list" style="max-height:none">
                     <template x-for="(it, i) in detail.items" :key="i">
                       <div class="li cursor-pointer hover:bg-head" @click="panelOpenItem(it)">
-                        <span class="shrink-0" x-text="it.kind === 'folder' ? '📁' : '📄'"></span>
+                        <span class="shrink-0" x-html="itemIconHtml(it.name || '', it.kind === 'folder')"></span>
                         <span class="font-mono break-all grow" x-text="it.path"></span>
                         <span class="kl-note shrink-0" x-show="it.source" x-text="shortSource(it.source)"></span>
                         <span class="num shrink-0" style="color:var(--muted);width:5rem;text-align:right" x-text="fmtPhys(it.physical)"></span>

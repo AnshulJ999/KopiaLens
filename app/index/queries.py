@@ -617,11 +617,15 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "",
             f"""
             SELECT {ch.name} AS name,
                    sum(f.size) AS size,
+                   sum(coalesce(ip.packed, cs.packed, 0)) AS physical,
                    count(*) AS files,
                    max(f.mtime) AS modified,
+                   max(p.versions) AS versions, max(p.last_seen) AS last_seen,
                    max(CASE WHEN {ch.folder} THEN 1 ELSE 0 END) AS is_folder
             FROM filev f
             JOIN pathx p ON p.path_id = f.path_id
+            LEFT JOIN iphys ip ON ip.cid_id = f.cid_id
+            LEFT JOIN csize cs ON cs.cid_id = f.cid_id
             {ch.join}
             WHERE p.src_id = ? AND f.snap_id = ?{cond}{recl}
             GROUP BY 1
@@ -639,8 +643,11 @@ def tree_children(repo: str, source: str, snapshot_id: str, prefix: str = "",
                 "path": pathrules.child_path(ch.base, ch.sep, name),
                 "name": name,
                 "size": r["size"] or 0,
+                "physical": r["physical"] or 0,
                 "files": r["files"],
                 "modified": str(r["modified"]) if r["modified"] else "",
+                "versions": None if r["is_folder"] else r["versions"],
+                "last_seen": str(r["last_seen"]) if r["last_seen"] else "",
                 "type": "folder" if r["is_folder"] else "file",
             }
         )
@@ -1487,6 +1494,8 @@ def _tree_rows(rows: list[dict], ch: _Children, physical: bool) -> list[dict]:
             "size": r["size"] or 0, "physical": (r["physical"] or 0) if physical else None,
             "files": r["files"],
             "modified": str(r["modified"]) if r["modified"] else "",
+            "versions": None if r["is_folder"] else r.get("versions"),
+            "last_seen": str(r["last_seen"]) if r.get("last_seen") else "",
             "type": "folder" if r["is_folder"] else "file",
         })
     return out
@@ -1513,12 +1522,13 @@ def tree_children_all(repo: str, prefix: str, latest_only: bool = False, deleted
             WITH dp AS (
                 SELECT p.full_path, any_value(p.dir_id) AS dir_id, any_value(p.src_id) AS src_id,
                        any_value(p.name) AS name, max(p.size) AS size, max(p.physical) AS physical,
-                       max(p.last_seen) AS last_seen
+                       max(p.last_seen) AS last_seen, max(p.versions) AS versions
                 FROM pathx p WHERE {_where(where)} GROUP BY p.full_path
             )
             SELECT {ch.name} AS name,
                    sum(dp.size) AS size, sum(dp.physical) AS physical,
                    count(*) AS files, max(dp.last_seen) AS modified,
+                   max(dp.versions) AS versions, max(dp.last_seen) AS last_seen,
                    max(CASE WHEN {ch.folder} THEN 1 ELSE 0 END) AS is_folder
             FROM dp {ch.join} GROUP BY 1 ORDER BY size DESC, name
             """,
@@ -1547,14 +1557,18 @@ def tree_children_snaps(repo: str, snapshot_ids: list[str], prefix: str = "") ->
             f"""
             WITH dp AS (
                 SELECT p.full_path, any_value(p.dir_id) AS dir_id, any_value(p.src_id) AS src_id,
-                       any_value(p.name) AS name, max(f.size) AS size, max(f.mtime) AS mtime
+                       any_value(p.name) AS name, max(f.size) AS size, max(f.mtime) AS mtime,
+                       max(coalesce(ip.packed, cs.packed, 0)) AS physical,
+                       max(p.versions) AS versions, max(p.last_seen) AS last_seen
                 FROM filev f
                 JOIN pathx p ON p.path_id = f.path_id
+                LEFT JOIN iphys ip ON ip.cid_id = f.cid_id
+                LEFT JOIN csize cs ON cs.cid_id = f.cid_id
                 WHERE f.snap_id IN ({ph}){cond}
                 GROUP BY p.full_path
             )
-            SELECT {ch.name} AS name, sum(dp.size) AS size, count(*) AS files,
-                   max(dp.mtime) AS modified,
+            SELECT {ch.name} AS name, sum(dp.size) AS size, sum(dp.physical) AS physical, count(*) AS files,
+                   max(dp.mtime) AS modified, max(dp.versions) AS versions, max(dp.last_seen) AS last_seen,
                    max(CASE WHEN {ch.folder} THEN 1 ELSE 0 END) AS is_folder
             FROM dp {ch.join} GROUP BY 1 ORDER BY size DESC, name
             """,
@@ -1562,7 +1576,7 @@ def tree_children_snaps(repo: str, snapshot_ids: list[str], prefix: str = "") ->
         )
     finally:
         cur.close()
-    return _tree_rows(rows, ch, physical=False)
+    return _tree_rows(rows, ch, physical=True)
 
 
 def tree_children_paths(repo: str, source: str, prefix: str, deleted_only: bool = False,
@@ -1603,6 +1617,7 @@ def tree_children_paths(repo: str, source: str, prefix: str, deleted_only: bool 
                    sum(p.physical) AS physical,
                    count(*) AS files,
                    max(p.last_seen) AS modified,
+                   max(p.versions) AS versions, max(p.last_seen) AS last_seen,
                    max(CASE WHEN {ch.folder} THEN 1 ELSE 0 END) AS is_folder
             FROM pathx p
             {ch.join}

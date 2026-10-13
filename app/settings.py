@@ -105,7 +105,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "mount_host_path": "",       # Docker: the host folder mapped to mount_dir, shown instead of the container path
         "excluded_tolerance": 0.05,  # folder counts as "backed" when excluded fraction is below this (cuts partial noise)
         "repo_labels": "short",      # repo chips/columns: "short" (Repo 1) | "full" (the name from repos.json)
+        "index_wait_unreachable": 1800,  # seconds an unreachable repository is waited for before the run gives up (progress kept)
+        "index_stall_timeout": 3600,     # seconds the tree read may make no progress before it is stopped; 0 = off
         "show_pro_badge": True,      # the small Pro mark next to the logo while a licence is active
+        "logo": "k6",                # header logo: k6 | orig7 | k3a | none
+        "tray_icon": "k6",           # desktop app tray icon (api/shell.PREFS lists the choices)
+        "ask_snapshot_now": True,    # confirm before Snapshot now
+        "task_view": "popup",        # Tasks: details as a full-size popup or a small panel
+        "retention_chips": "uniform",  # Snapshots retention chips: uniform | kopiaui | custom
+        "retention_chip_color": "#2563eb",  # the custom chip colour
         "update_check": True,        # daily check for a newer version (docs/usage-stats.md)
         "usage_stats": True,         # anonymous usage stats sent with that check
         "debug_log": False,          # also write data/logs/kopialens-debug.log at DEBUG (env KOPIALENS_DEBUG_LOG overrides)

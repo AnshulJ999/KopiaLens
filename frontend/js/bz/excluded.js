@@ -72,7 +72,7 @@ const bzExcludedPart = {
         return it.status !== "backed";
       });
       setTable("#bzExcludedTable", items, [
-        { title: "Name", field: "name", widthGrow: 4, minWidth: 240, formatter: (c) => (c.getRow().getData().is_dir ? "📁 " : "📄 ") + c.getValue() },
+        { title: "Name", field: "name", widthGrow: 4, minWidth: 240, formatter: (c) => itemIconHtml(c.getValue(), c.getRow().getData().is_dir) + escHtml(c.getValue()) },
         { title: "Status", field: "status", width: 105, formatter: (c) => statusPill(c.getValue()) },
         { title: "Backed Up", field: "backed_bytes", width: 105, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
         { title: "Excluded", field: "excluded_bytes", width: 105, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },

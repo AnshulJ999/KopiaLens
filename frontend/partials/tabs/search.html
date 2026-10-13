@@ -12,15 +12,15 @@
           <template x-if="searchChips().length <= 3">
             <span class="inline-flex flex-wrap gap-1">
               <template x-for="c in searchChips()" :key="c.key">
-                <span class="kl-fchip"><b x-text="c.label"></b><span x-text="c.value"></span><button @click="clearChip(c.key)" :title="'Clear ' + c.label" aria-label="Clear filter">✕</button></span>
+                <span class="kl-fchip"><b x-text="c.label"></b><span x-text="c.value"></span><button @click="clearChip(c.key)" :title="'Clear ' + c.label" aria-label="Clear filter"><i class="ic ic-close"></i></button></span>
               </template>
             </span>
           </template>
           <template x-if="searchChips().length > 3">
-            <span class="kl-fchip" :title="searchChips().map((c) => c.label + ' ' + c.value).join(' · ')"><span x-text="searchChips().length + ' filters'"></span><button @click="clearFilters()" title="Clear all filters" aria-label="Clear all filters">✕</button></span>
+            <span class="kl-fchip" :title="searchChips().map((c) => c.label + ' ' + c.value).join(' · ')"><span x-text="searchChips().length + ' filters'"></span><button @click="clearFilters()" title="Clear all filters" aria-label="Clear all filters"><i class="ic ic-close"></i></button></span>
           </template>
           <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
-            <button class="kl-btn" :class="open ? 'on' : ''" @click="open = !open" :aria-expanded="open" data-testid="search-more-filters">More filters ▾</button>
+            <button class="kl-btn" :class="open ? 'on' : ''" @click="open = !open" :aria-expanded="open" data-testid="search-more-filters">More filters<i class="ic ic-caret-down"></i></button>
             <div class="kl-menu p-3 space-y-2 text-xs" style="left:0;right:auto;min-width:430px" x-show="open" x-cloak>
               <div class="flex items-center gap-2"><span class="w-28 text-muted">Extensions</span>
                 <input x-model="searchExt" @input.debounce.300ms="loadSearch()" class="fld h-7 w-28 border border-bd bg-surface" placeholder="iso, 7z" title="Only these extensions">
@@ -56,7 +56,7 @@
           <span class="grow"></span>
           {{ selbar('search', 'searchSelCount') }}
           <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
-            <button class="kl-btn icon" @click="open = !open" title="More" data-testid="search-more">⋯</button>
+            <button class="kl-btn icon" @click="open = !open" title="More" aria-label="More" data-testid="search-more"><i class="ic ic-more"></i></button>
             <div class="kl-menu" x-show="open" x-cloak>
               <div class="hd">This search</div>
               <button @click="open = false; exportSearch()" x-text="groupByFolder ? 'Export CSV' : (searchAllRepos() || searchKind==='both') ? 'Export CSV (this page)' : 'Export CSV (all ' + searchTotal.toLocaleString(NUM_LOCALE) + ')'"></button>
@@ -93,9 +93,9 @@
               <template x-if="searchPageSize!=='Infinite' && searchPages() > 1">
                 <span class="flex items-center gap-1">
                   <button @click="setSearchPage(1)" :disabled="searchPage<=1" class="h-6 px-2 rounded border border-bd disabled:opacity-40" title="First page">«</button>
-                  <button @click="setSearchPage(searchPage-1)" :disabled="searchPage<=1" class="h-6 px-2 rounded border border-bd disabled:opacity-40" title="Previous page">‹</button>
+                  <button @click="setSearchPage(searchPage-1)" :disabled="searchPage<=1" class="h-6 px-2 rounded border border-bd disabled:opacity-40" title="Previous page" aria-label="Previous page"><i class="ic ic-caret-left"></i></button>
                   <span class="px-1">Page <span x-text="searchPage"></span> of <span x-text="searchPages()"></span></span>
-                  <button @click="setSearchPage(searchPage+1)" :disabled="searchPage>=searchPages()" class="h-6 px-2 rounded border border-bd disabled:opacity-40" title="Next page">›</button>
+                  <button @click="setSearchPage(searchPage+1)" :disabled="searchPage>=searchPages()" class="h-6 px-2 rounded border border-bd disabled:opacity-40" title="Next page" aria-label="Next page"><i class="ic ic-caret-right"></i></button>
                   <button @click="setSearchPage(searchPages())" :disabled="searchPage>=searchPages()" class="h-6 px-2 rounded border border-bd disabled:opacity-40" title="Last page">»</button>
                 </span>
               </template>

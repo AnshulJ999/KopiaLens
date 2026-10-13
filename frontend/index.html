@@ -21,6 +21,7 @@
   <script src="/static/vendor/tabulator-6.6.1.min.js"></script>
   <link href="/static/css/tokens.css?v={{ asset_v }}" rel="stylesheet">
   <link href="/static/css/app.css?v={{ asset_v }}" rel="stylesheet">
+  <link href="/static/css/icons.css?v={{ asset_v }}" rel="stylesheet">
   <!-- Built by packaging/build_css.py. Last on purpose: utilities override app.css. -->
   <link href="/static/css/tailwind.css?v={{ asset_v }}" rel="stylesheet">
 </head>
@@ -40,7 +41,7 @@
             <div class="font-medium" x-text="cfgNoticeText(n)"></div>
             <div class="text-xs text-muted" x-show="n.kept_as" x-text="'The damaged file was kept as ' + n.kept_as + '.'"></div>
           </div>
-          <button @click="cfgOpenBackups()" class="kl-btn">Settings backups</button>
+          <button @click="cfgOpenBackups()" class="kl-btn">Open Config</button>
           <button @click="cfgDismiss(n)" class="kl-btn quiet">Dismiss</button>
         </div>
       </template>
@@ -113,6 +114,7 @@
 {% include "partials/pronotice.html" %}
 {% include "partials/indexpanel.html" %}
 {% include "partials/help.html" %}
+{% include "partials/fulllist.html" %}
   </div>
   <script>window.KL_OS_FORMATS = {{ os_formats }};</script>
   <script src="/static/js/util.js?v={{ asset_v }}"></script>
@@ -164,6 +166,7 @@
   <script src="/static/js/sourceops.js?v={{ asset_v }}"></script>
   <script src="/static/js/notify.js?v={{ asset_v }}"></script>
   <script src="/static/js/writemode.js?v={{ asset_v }}"></script>
+  <script src="/static/js/fulllist.js?v={{ asset_v }}"></script>
   <script src="/static/js/app.js?v={{ asset_v }}"></script>
 </body>
 </html>

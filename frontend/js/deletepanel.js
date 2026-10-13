@@ -49,6 +49,22 @@ const deletePart = {
       if (seq === this._delSeq && p.plan && p.method === "remove") this.delLoadStats();
     },
 
+    // Every match in the full-list popup (the panel lists the first 500), with Download CSV.
+    delShowAll() {
+      const p = this.delPanel;
+      if (!p || !p.plan) return;
+      const body = { repo: this.repo, files: p.files, method: p.method, by: p.by, sources: p.sources, copies: p.copies, list_cap: 1000000 };
+      this.openFullList({
+        title: "What gets removed", name: "delete-plan",
+        columns: [["full_path", "Path"], ["tag", "Match"], ["sources_text", "Sources"], ["on_disk", "On disk"], ["size", "Size", "bytes"]],
+        load: async () => {
+          const r = await getJson("/api/delete/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+          return (r.matches || []).map((m) => ({ full_path: m.full_path, tag: this.delRowTag(m) || "", sources_text: this.fileSources(m),
+            on_disk: m.in_latest ? "yes" : "deleted", size: m.size }));
+        },
+      });
+    },
+
     // Reclaimable over every match (the list stops at 500), and the other match method's figure.
     async delLoadStats() {
       const p = this.delPanel;

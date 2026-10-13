@@ -27,7 +27,7 @@ def test_back_up_restore_pause_and_recover_a_damaged_file(fresh_server, fixture_
     _arrange(srv, fixture_repo)
     page = open_page(srv)
 
-    _settings_tab(page, "Settings backups")
+    _settings_tab(page, "Config")
     page.get_by_role("button", name="Back up now").click()
     row = page.locator("div.divide-y > div", has_text="Manual").first
     expect(row).to_be_visible()

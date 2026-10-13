@@ -90,10 +90,10 @@ def test_search_finds_a_file_and_marks_one_deleted_from_disk(app_server, open_pa
 def test_tree_opens_a_folder_and_goes_back_up(app_server, open_page):
     page = open_page(app_server)
     h.go_tab(page, "Tree")
-    page.get_by_role("row", name="📁 Documents", exact=False).dblclick()
+    page.get_by_role("row", name="Documents", exact=False).dblclick()
     expect(page.get_by_role("row", name="needle-report.txt", exact=False)).to_be_visible()
     page.get_by_test_id("tree-crumbs").get_by_title("Up one level").click()
-    expect(page.get_by_role("row", name="📁 Photos", exact=False)).to_be_visible()
+    expect(page.get_by_role("row", name="Photos", exact=False)).to_be_visible()
 
 
 def test_restore_writes_the_file_into_the_chosen_folder(app_server, open_page, tmp_path, tmp_path_factory):
@@ -182,16 +182,16 @@ def test_repositories_rename_add_reorder_and_remove(fresh_server, open_page, fix
 
 def test_restart_keeps_settings_and_signing_in_unlocks_the_index(indexed_server, open_page):
     page = open_page(indexed_server)
-    fmt = page.get_by_role("button", name="🕒 abs")
+    fmt = page.get_by_role("button", name="Times: dates")
     fmt.click()
-    expect(page.get_by_role("button", name="⏱ rel")).to_be_visible()
+    expect(page.get_by_role("button", name="Times: how long ago")).to_be_visible()
 
     indexed_server.restart()
     assert indexed_server.get("/api/encryption/status")["unlocked"] is False
     # A tab left open across the restart asks for the unlock box, not a raw error.
     page.kl_allow.append("status of 423")
     # force: a background poll may open the unlock box first, and it then covers the button.
-    page.get_by_role("button", name="⟳ Refresh").click(force=True)
+    page.get_by_role("button", name="Refresh", exact=True).click(force=True)
     expect(page.get_by_text("Unlock the index")).to_be_visible(timeout=30_000)
     page.context.close()
 
@@ -201,5 +201,5 @@ def test_restart_keeps_settings_and_signing_in_unlocks_the_index(indexed_server,
     expect(fresh.locator("button[type=submit]")).to_have_text("Sign in and unlock")
     h.sign_in(fresh, indexed_server)
     expect(fresh.get_by_role("row", name="3 33 35", exact=False)).to_be_visible(timeout=30_000)
-    expect(fresh.get_by_role("button", name="⏱ rel")).to_be_visible()
+    expect(fresh.get_by_role("button", name="Times: how long ago")).to_be_visible()
 

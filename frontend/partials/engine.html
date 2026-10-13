@@ -19,8 +19,10 @@
 
                 <template x-if="engineDlg.data.identity">
                   <div class="kl-callout space-y-1.5">
-                    <div x-show="engineDlg.data.identity.split" x-text="'Snapshots here are stored under two names: ' + engineDlg.data.identity.suggested + ' and ' + engineDlg.data.identity.merge_from + '.'"></div>
-                    <div x-show="engineDlg.data.identity.connect_needed" x-text="'This connection is ' + engineDlg.data.identity.current + ', so a backup from here goes under that name instead of ' + engineDlg.data.identity.suggested + '.'"></div>
+                    <div x-show="engineDlg.data.identity.split" title="Kopia treats each spelling as a separate computer. Merge to keep one history."
+                         x-text="'Stored under two names: ' + engineDlg.data.identity.suggested + ' and ' + engineDlg.data.identity.merge_from"></div>
+                    <div x-show="engineDlg.data.identity.connect_needed" :title="'A backup from here would go under ' + engineDlg.data.identity.current + ', not ' + engineDlg.data.identity.suggested + '.'"
+                         x-text="'This connection: ' + engineDlg.data.identity.current"></div>
                     <div class="flex flex-wrap gap-2">
                       <button class="kl-btn" style="height:24px" x-show="engineDlg.data.identity.connect_needed" @click="engineFixIdentity()" x-text="'Connect as ' + engineDlg.data.identity.suggested + '…'"></button>
                       <template x-if="engineDlg.data.identity.split">

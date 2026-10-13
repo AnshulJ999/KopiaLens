@@ -9,7 +9,7 @@
   <button class="kl-btn quiet" @click="selRestore('{{ scope }}')">Restore…</button>
   <button class="kl-btn quiet" @click="selExclude('{{ scope }}')">Exclude…</button>
   <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
-    <button class="kl-btn dangerline" @click="open = !open" :aria-expanded="open">Delete ▾</button>
+    <button class="kl-btn dangerline" @click="open = !open" :aria-expanded="open">Delete<i class="ic ic-caret-down"></i></button>
     <div class="kl-menu" x-show="open" x-cloak>
       <button class="dg" @click="open = false; selDelete('{{ scope }}')">Delete from backups… <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
       <button class="dg" @click="open = false; selExclude('{{ scope }}', 'delete', $event)">Exclude &amp; delete… <span class="protag" x-show="proTag('exclude_delete')" :title="proTagTitle()">PRO</span></button>

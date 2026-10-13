@@ -1,3 +1,4 @@
+{% from "partials/logo.html" import logo_mark %}
 <!-- Appearance: theme, density, panel layout. Included from settings.html; own section so it
      composes independently of the other settings sections. -->
 <section x-show="settingsTab==='appearance'" class="space-y-4">
@@ -81,6 +82,29 @@
         <option value="full">Full - the repository's name</option>
       </select></div>
     <p class="text-[0.6875rem] text-muted mt-1">How repositories are labelled in chips, headers and log columns. Pickers always show the full name.</p>
+  </div>
+  <div>
+    <div class="text-sm font-medium mb-2">Logo</div>
+    <div class="flex flex-wrap gap-1.5" data-testid="logo-choice">
+      {% for id, label in [("k6", "Two-tone K"), ("orig7", "Plain K"), ("k3a", "K in a lens ring"), ("none", "None")] %}
+      <button @click="logo = '{{ id }}'; saveKl('logo')" class="flex items-center gap-2 h-8 rounded border px-2 text-xs"
+              :class="logo === '{{ id }}' ? 'border-fg bg-sel font-medium' : 'border-bd'">
+        {{ logo_mark(id, cls="kl-logo sm") }}<span>{{ label }}</span>
+      </button>
+      {% endfor %}
+    </div>
+    <p class="text-[0.6875rem] text-muted mt-1">Next to the KopiaLens name in the header, and on the browser tab.</p>
+  </div>
+  <div>
+    <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Retention chips</span>
+      <span class="flex items-center gap-2">
+        <input x-show="retentionChips === 'custom'" type="color" x-model="retentionChipColor" @change="saveKl('retention_chip_color')" class="h-8 w-10 rounded border border-bd" aria-label="Chip colour">
+        <select x-model="retentionChips" @change="saveKl('retention_chips')" class="fld border border-bd bg-surface2" data-testid="retention-chips">
+          <option value="uniform">One colour</option>
+          <option value="kopiaui">By type, like KopiaUI</option>
+          <option value="custom">Custom colour</option>
+        </select></span></div>
+    <p class="text-[0.6875rem] text-muted mt-1">The Snapshots tab's retention reasons. By type: latest, daily, weekly, monthly and annual each get their own colour.</p>
   </div>
   <div>
     <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Pro badge</span>

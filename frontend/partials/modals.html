@@ -102,7 +102,7 @@
     <!-- Excluded item detail -->
     <div x-show="showExcludedDetail && excludedDetail" @click.self="showExcludedDetail=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
       <div class="w-[44rem] max-w-full max-h-[85vh] overflow-auto rounded-lg border border-bd bg-surface p-4 text-sm">
-        <div class="flex items-center gap-2"><div class="font-medium" x-text="excludedDetail && ((excludedDetail.is_dir ? '📁 ' : '📄 ') + excludedDetail.name)"></div><button @click="showExcludedDetail=false" class="ml-auto text-muted text-lg leading-none">&times;</button></div>
+        <div class="flex items-center gap-2"><div class="font-medium" x-html="excludedDetail && (itemIconHtml(excludedDetail.name, excludedDetail.is_dir) + escHtml(excludedDetail.name))"></div><button @click="showExcludedDetail=false" class="ml-auto text-muted text-lg leading-none">&times;</button></div>
         <div class="text-xs text-muted mt-1 break-all" x-text="excludedDetail && excludedDetail.full_path"></div>
         <div class="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2" x-show="excludedDetail">
           <div class="rounded border border-bd p-2"><div class="text-[0.6875rem] text-muted">Total</div><div class="font-medium" x-text="excludedDetail && fmtBytes(excludedDetail.total_size)"></div></div>

@@ -1,15 +1,19 @@
-
+{% from "partials/logo.html" import logo_mark %}
     <!-- One row normally; when zoomed in or narrow, the buttons wrap to a second row instead of being cut off. -->
     <header class="min-h-14 shrink-0 border-b border-bd bg-surface flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2">
       <div class="flex items-start shrink-0">
-        <button @click="goHome()" class="font-semibold text-lg" title="Go to the first tab">Kopia<span class="text-ok">Lens</span></button>
+        <button @click="goHome()" class="flex items-center font-semibold text-lg" title="Go to the first tab">
+          {{ logo_mark("k6", 'x-show="logo === \'k6\'"') }}
+          {{ logo_mark("orig7", 'x-show="logo === \'orig7\'" x-cloak') }}
+          {{ logo_mark("k3a", 'x-show="logo === \'k3a\'" x-cloak') }}
+          Kopia<span class="text-ok">Lens</span></button>
         <span x-show="lic.state === 'active' && showProBadge" x-cloak class="pro-mark" :title="lic.plan + (lic.name ? ', licensed to ' + lic.name : '')">Pro</span>
       </div>
       <div class="relative shrink-0" @click.outside="repoMenu = false">
         <button type="button" @click="repoMenu = !repoMenu" class="fld border border-bd bg-surface flex items-center gap-2 max-w-[16rem]"
                 aria-haspopup="menu" :aria-expanded="repoMenu" title="Switch repository">
           <span class="truncate" x-text="repoName(repo)"></span>
-          <svg class="h-3.5 w-3.5 shrink-0 text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+          <i class="ic ic-caret-down text-muted"></i>
         </button>
         <span x-show="isDemo()" x-cloak class="absolute -top-1.5 -right-2 rounded border border-warn-bd bg-warn-bg text-warn px-1 text-[0.625rem] font-medium leading-4"
               title="Invented names, real numbers. Actions are simulated and change nothing. Pro features are unlocked.">Demo</span>
@@ -17,7 +21,7 @@
           <template x-for="item in repos" :key="item.id">
             <button type="button" role="menuitemradio" :aria-checked="item.id === repo" @click="pickRepo(item.id)"
                     class="w-full text-left px-3 py-1.5 hover:bg-head flex items-center gap-2">
-              <span class="w-3 text-ok" x-text="item.id === repo ? '✓' : ''"></span>
+              <span class="w-4 text-ok"><i x-show="item.id === repo" class="ic ic-check"></i></span>
               <span class="truncate flex-1" x-text="item.name"></span>
               <span class="text-[0.6875rem] text-muted" x-text="item.kind === 'backblaze' ? 'Backblaze' : cxTypeLabel((item.storage || {}).type)"></span>
             </button>
@@ -27,14 +31,15 @@
           <button type="button" role="menuitem" @click="openRepoAdmin()" class="w-full text-left px-3 py-1.5 hover:bg-head pl-8">Manage repositories…</button>
         </div>
       </div>
-      <div class="relative flex-1 max-w-xl min-w-[12rem]">
+      <!-- Grows and shrinks with the window instead of holding a fixed wide box. -->
+      <div class="relative flex-1 min-w-[10rem] max-w-[clamp(14rem,30vw,30rem)]">
         <!-- No @focus: switching tab on focus left Search blank until the first keystroke. Typing
              switches and loads; clicking in only focuses. -->
         <input x-model="query" @input.debounce.300ms="headerSearch()"
           class="fld w-full border border-bd bg-surface2 pl-9"
           :disabled="repoKind==='server'" :title="repoKind==='server' ? 'Search needs the index, and a kopia server connection has none' : ''"
           :placeholder="repoKind==='backblaze' ? 'Search Backblaze files…' : (repoKind==='server' ? 'Search needs the index' : 'Search files across all snapshots...')">
-        <svg class="absolute left-3 top-2.5 h-4 w-4 text-faint" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <i class="ic ic-search absolute left-3 top-1/2 -translate-y-1/2 text-faint"></i>
       </div>
       <div class="ml-auto flex items-center gap-2 text-xs shrink-0">
         <template x-for="j in runningJobs" :key="j.job_id">
@@ -48,11 +53,11 @@
         </template>
         <button x-show="repoKind === 'kopia' && wm && wmMode() !== 'full'" x-cloak @click="await openSettings(); settingsTab = 'writemode'"
                 class="h-8 rounded border border-warn-bd bg-warn-bg text-warn px-3" data-testid="wm-chip"
-                title="Write mode for this repository. Click to change it." x-text="wm ? wmLabel(wmMode()) : ''"></button>
+                title="Permissions for this repository. Click to change them." x-text="wm ? wmLabel(wmMode()) : ''"></button>
         <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false" x-show="mounts.length" x-cloak>
           <button @click="open = !open; if (open) loadMounts()" class="h-8 rounded border border-bd bg-surface px-3 flex items-center gap-1.5"
                   :aria-expanded="open" data-testid="mount-chip" title="Mounted snapshots">
-            <span x-text="mounts.length + ' mounted'"></span> ▾</button>
+            <span x-text="mounts.length + ' mounted'"></span><i class="ic ic-caret-down"></i></button>
           <div class="absolute right-0 top-full mt-1 z-30 w-[52rem] max-w-[92vw] rounded-md border border-bd bg-surface shadow-lg text-sm" x-show="open" x-cloak>
 {% include "partials/mountlist.html" %}
           </div>
@@ -81,17 +86,19 @@
         <button x-show="repoKind==='kopia' && !isDemo()" @click="buildIndex()" :disabled="!!indexStatus.building" class="h-8 rounded bg-fg px-3 text-surface disabled:opacity-50" :title="indexStatus.never_indexed ? 'Build the first index for this repo' : 'Update index (incremental)'" x-text="indexStatus.never_indexed ? 'Index now' : 'Index'">Index</button>
         <span x-show="repoKind==='backblaze'" class="rounded border border-bd bg-surface2 px-2 py-1" x-text="bzStatusLine()" :title="bzStatusTitle()"></span>
         <span x-show="repoKind==='backblaze' && bzRefreshResult" class="text-xs px-2 py-1 rounded" :class="bzRefreshResult.includes('FAILED') ? 'bg-danger-bg text-danger' : 'bg-ok-bg text-ok'" x-text="bzRefreshResult"></span>
-        <button x-show="repoKind==='backblaze'" @click="bzRefresh()" class="h-8 rounded bg-fg px-3 text-surface" title="Re-scan the read-only Backblaze index">↻ Index BZ</button>
-        <button @click="refreshAll()" class="h-8 rounded border border-bd px-3" title="Refresh current view + sources">⟳ Refresh</button>
-        <button @click="toggleTimeFmt()" class="h-8 rounded border border-bd px-2" :title="timeFmt==='relative' ? 'Times shown as how long ago. Click to show dates.' : 'Times shown as dates. Click to show how long ago.'" x-text="timeFmt==='relative' ? '⏱ rel' : '🕒 abs'"></button>
+        <button x-show="repoKind==='backblaze'" @click="bzRefresh()" class="h-8 rounded bg-fg px-3 text-surface flex items-center gap-1.5" title="Re-scan the read-only Backblaze index"><i class="ic ic-refresh"></i>Index BZ</button>
+        <button @click="refreshAll()" class="h-8 w-8 rounded border border-bd kl-ibtn" title="Refresh this view and the snapshot list" aria-label="Refresh"><i class="ic ic-refresh"></i></button>
+        <button @click="toggleTimeFmt()" class="h-8 w-8 rounded border border-bd kl-ibtn" :aria-label="timeFmt==='relative' ? 'Times: how long ago' : 'Times: dates'"
+                :title="timeFmt==='relative' ? 'Times shown as how long ago. Click to show dates.' : 'Times shown as dates. Click to show how long ago.'">
+          <i class="ic" :class="timeFmt==='relative' ? 'ic-hourglass' : 'ic-clock'"></i></button>
         <div class="relative" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
-          <button @click="quickTheme()" @contextmenu.prevent="open = !open" class="h-8 w-8 rounded border border-bd" title="Switch between your light and dark theme. Right-click to pick a theme." x-text="dark ? '☀' : '☽'"></button>
+          <button @click="quickTheme()" @contextmenu.prevent="open = !open" class="h-8 w-8 rounded border border-bd kl-ibtn" title="Switch between your light and dark theme. Right-click to pick a theme." aria-label="Switch theme"><i class="ic" :class="dark ? 'ic-sun' : 'ic-moon'"></i></button>
           <div x-show="open" x-cloak role="menu" class="kl-menu" data-testid="theme-picker">
             <div class="hd">Theme</div>
             <template x-for="t in THEMES" :key="t.id">
               <button type="button" role="menuitemradio" :aria-checked="theme === t.id" @click="open = false; setTheme(t.id)" class="flex items-center gap-2" :title="t.title || ''">
                 <span class="inline-block w-3.5 h-3.5 rounded-full border border-bd shrink-0" :style="'background:' + t.swatch"></span>
-                <span class="flex-1" x-text="t.label"></span><span class="text-ok" x-text="theme === t.id ? '✓' : ''"></span>
+                <span class="flex-1" x-text="t.label"></span><i x-show="theme === t.id" class="ic ic-check text-ok"></i>
               </button>
             </template>
             <div class="sep"></div>
@@ -101,7 +108,7 @@
         <button x-show="update().available" x-cloak @click="showUpdate = true" class="h-8 rounded border border-ok-bd bg-ok-bg text-ok px-2"
                 :title="'KopiaLens ' + update().latest + ' is out'">Update available</button>
         <div class="relative" @click.outside="helpMenu = false">
-          <button @click="toggleHelpMenu()" class="h-8 w-8 rounded border border-bd" :title="acct && acct.sign_in_on ? 'Help and account' : 'Help'" aria-haspopup="menu" :aria-expanded="helpMenu">?</button>
+          <button @click="toggleHelpMenu()" class="h-8 w-8 rounded border border-bd kl-ibtn" :title="acct && acct.sign_in_on ? 'Help and account' : 'Help'" aria-label="Help" aria-haspopup="menu" :aria-expanded="helpMenu"><i class="ic ic-help"></i></button>
           <div x-show="helpMenu" x-cloak role="menu" class="absolute right-0 top-full mt-1 z-50 w-64 rounded-md border border-bd bg-surface shadow-lg py-1 text-sm">
             <button type="button" role="menuitem" @click="helpLink('docs')" class="w-full text-left px-3 py-1.5 hover:bg-head">Documentation</button>
             <button type="button" role="menuitem" @click="openDiagnostics(true)" class="w-full text-left px-3 py-1.5 hover:bg-head">Report a problem…</button>
@@ -135,7 +142,7 @@
             </template>
           </div>
         </div>
-        <button @click="openSettings()" class="h-8 w-8 rounded border border-bd" title="Settings">⚙</button>
+        <button @click="openSettings()" class="h-8 w-8 rounded border border-bd kl-ibtn" title="Settings" aria-label="Settings"><i class="ic ic-settings"></i></button>
       </div>
     </header>
 

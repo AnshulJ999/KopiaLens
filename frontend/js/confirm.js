@@ -5,14 +5,14 @@
 const confirmPart = {
 
     // opts: {title, body, facts: [[label, value], ...], callout, note, command,
-    //        confirmLabel, danger, dangerCallout, typeToConfirm, input: {label, placeholder}}. Resolves true (confirmed) /
-    //        false (cancelled); with `input`, a confirm resolves {value}.
+    //        confirmLabel, danger, dangerCallout, typeToConfirm, input: {label, placeholder}, dontAsk}. Resolves true
+    //        (confirmed) / false (cancelled); with `input` or `dontAsk`, a confirm resolves {value, dontAsk}.
     klConfirm(opts) {
       return new Promise((resolve) => {
         this.confirmBox = {
           title: opts.title || "Are you sure?", body: opts.body || "",
           facts: opts.facts || null, callout: opts.callout || "", dangerCallout: !!opts.dangerCallout, note: opts.note || "",
-          typeToConfirm: opts.typeToConfirm || "", typed: "",
+          typeToConfirm: opts.typeToConfirm || "", typed: "", dontAsk: !!opts.dontAsk, dontAskOn: false,
           command: opts.command || "", confirmLabel: opts.confirmLabel || "Confirm",
           danger: !!opts.danger, input: opts.input || null, value: (opts.input && opts.input.value) || "", _resolve: resolve,
           _openedAt: Date.now(), _returnTo: document.activeElement,
@@ -27,7 +27,7 @@ const confirmPart = {
       const cb = this.confirmBox;
       if (v && !this.confirmTypedOk()) return;
       this.confirmBox = null;
-      if (cb && cb._resolve) cb._resolve(v && cb.input ? { value: cb.value } : v);
+      if (cb && cb._resolve) cb._resolve(v && (cb.input || cb.dontAsk) ? { value: cb.value, dontAsk: cb.dontAskOn } : v);
       const back = cb && cb._returnTo;
       if (back && back.focus) setTimeout(() => { if (document.contains(back)) back.focus(); }, 0);
     },

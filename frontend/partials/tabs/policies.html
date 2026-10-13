@@ -164,7 +164,7 @@
                     <template x-if="polIgnoreShown()">
                       <div>
                         <button type="button" class="text-xs font-medium mb-1 flex items-center gap-1 text-left" @click="polFold('ignore')" :aria-expanded="!polFolded.ignore">
-                          <span class="text-muted w-3" x-text="polFolded.ignore ? '▸' : '▾'"></span>Ignore files <span class="count" style="color:var(--muted);font-weight:400"
+                          <i class="ic text-muted" :class="polFolded.ignore ? 'ic-caret-right' : 'ic-caret-down'"></i>Ignore files <span class="count" style="color:var(--muted);font-weight:400"
                               x-text="polIgnore.files.length + ' found, read-only'"></span></button>
                         <div x-show="!polFolded.ignore">
                         <div class="kl-note" x-show="!polIgnore.stored">Not checked yet. The nightly index looks for them.</div>
@@ -204,7 +204,7 @@
                 {%- macro polsec(key, label) %}
                 <div id="polsec-{{ key }}" class="rounded border border-bd bg-surface p-3">
                   <button type="button" class="font-medium text-sm flex items-center gap-1 w-full text-left" :class="polFolded.{{ key }} ? '' : 'mb-2'"
-                          @click="polFold('{{ key }}')" :aria-expanded="!polFolded.{{ key }}"><span class="text-muted w-3" x-text="polFolded.{{ key }} ? '▸' : '▾'"></span>{{ label }}</button>
+                          @click="polFold('{{ key }}')" :aria-expanded="!polFolded.{{ key }}"><i class="ic text-muted" :class="polFolded.{{ key }} ? 'ic-caret-right' : 'ic-caret-down'"></i>{{ label }}</button>
                   <div x-show="!polFolded.{{ key }}">{{ caller() }}</div>
                 </div>
                 {%- endmacro %}
@@ -335,7 +335,7 @@
           </template>
         </div>
         <div class="kl-footer shrink-0">
-          <span class="kl-note" x-show="polDiffMode === 'save'">A verified backup is taken before each write; a failed backup refuses the write.</span>
+          <span class="kl-note" x-show="polDiffMode === 'save'">A verified backup is taken before each write.</span>
           <span class="spacer"></span>
           <button class="kl-btn" @click="showPolDiff=false">Cancel</button>
           <button x-show="polDiffMode === 'save'" class="kl-btn primary" @click="polSave()" :disabled="polDiffBusy || !polDiff || polDiffErrors().length > 0">Save changes</button>

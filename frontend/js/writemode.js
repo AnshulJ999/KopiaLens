@@ -1,4 +1,4 @@
-// Write modes: what KopiaLens may change in a repository (Settings > Write mode). The server refuses
+// Write modes: what KopiaLens may change in a repository (Settings > Permissions). The server refuses
 // what a mode doesn't allow; these helpers grey actions and stop panels opening for nothing.
 const WM_ORDER = ["read_only", "restores", "non_destructive", "full"];
 
@@ -28,7 +28,7 @@ const writeModePart = {
   wmGuard(need, repo) {
     const off = this.wmOff(need, repo);
     if (!off) return true;
-    this.klNotify(off + " Change it in Settings > Write mode.", "warn");
+    this.klNotify(off + " Change it in Settings > Permissions.", "warn");
     return false;
   },
   async wmSet(repo, mode) {
@@ -45,7 +45,7 @@ const writeModePart = {
     try {
       this.wm = await getJson("/api/write-mode", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo: repo || null, mode: mode || null, password }) });
-      this.klNotify("Write mode changed");
+      this.klNotify("Permissions changed");
       this.loadEngine && this.loadEngine();
     } catch (e) {
       this.klNotify(e.message, "warn");

@@ -77,8 +77,8 @@
             <div class="relative min-h-0">
               <button class="absolute top-1.5 right-1.5 z-10 h-6 w-6 rounded border border-bd bg-surface text-muted hover:text-fg flex items-center justify-center"
                 @click="jobExpanded = !jobExpanded" :title="jobExpanded ? 'Collapse output' : 'Expand output'" :aria-label="jobExpanded ? 'Collapse output' : 'Expand output'">
-                <svg x-show="!jobExpanded" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"/></svg>
-                <svg x-show="jobExpanded" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 6.5v-4h4M13.5 9.5v4h-4M6.5 9.5h-4v4M2.5 6.5v-4h4"/></svg>
+                <i x-show="!jobExpanded" class="ic ic-expand"></i>
+                <i x-show="jobExpanded" class="ic ic-collapse"></i>
               </button>
               <div class="kl-term whitespace-pre-wrap break-all" :class="jobExpanded ? 'h-[55vh]' : 'h-44'" x-ref="jobTerm" @scroll="jobOnScroll()">
                 <template x-for="(ln, i) in jobView().lines" :key="i">

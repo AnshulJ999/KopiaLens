@@ -224,10 +224,7 @@ const indexPanelPart = {
       const first = !!this.ixs().never_indexed;
       const ok = await this.klConfirm({
         title: `Stop indexing ${this.repoLabel(repo)}?`,
-        callout: first
-          ? "What's read so far is saved. The next run continues from here."
-          : "The pass ends where it is and will not restart by itself; the next scheduled slot builds it again.",
-        note: "Kopia already answered stays recorded - nothing is corrupted.",
+        callout: first ? "Progress is saved. The next run continues from here." : "The next scheduled run indexes it again.",
         confirmLabel: "Stop indexing", danger: true,
       });
       if (!ok) return;

@@ -129,17 +129,34 @@ const treePart = {
         const rows = this._treeLevel(children, this.treePrefix);
         // Inside a folder, a first row goes back up one level (the toolbar Up stays too).
         const crumbs = this.treeCrumbs();
-        if (crumbs.length > 1) rows.unshift({ _ph: true, _up: true, name: `↑ Up to ${crumbs[crumbs.length - 2].label}` });
+        if (crumbs.length > 1) rows.unshift({ _ph: true, _up: true, name: `Up to ${crumbs[crumbs.length - 2].label}` });
         const ph = (fn) => (c) => (c.getData()._ph ? "" : fn(c));
         const ttbl = setTable("#treeTable", rows, [
           { title: "Name", field: "name", widthGrow: 4, minWidth: 260,
-            formatter: (c) => { const d = c.getData(); return d._ph ? `<span class="text-muted">${c.getValue()}</span>` : `${d.type === "folder" ? "📁 " : "📄 "}${c.getValue()}`; } },
+            formatter: (c) => {
+              const d = c.getData();
+              if (d._up) return `<span class="text-muted">${iconHtml("arrow-up", "mr-1")}${escHtml(c.getValue())}</span>`;
+              return d._ph ? `<span class="text-muted">${escHtml(c.getValue())}</span>` : itemIconHtml(d.name, d.type === "folder") + escHtml(c.getValue());
+            } },
           { title: "Size", headerTooltip: "Logical size. " + termTip("logical"), field: "size", width: 105, sorter: "number", formatter: ph((c) => fmtBytes(c.getValue())), hozAlign: "right" },
           { title: "Physical", field: "physical", width: 100, sorter: "number", formatter: ph((c) => fmtPhys(c.getValue())), hozAlign: "right" },
+          { title: term("physicalAll"), field: "physical_all", width: 115, headerSort: false, hozAlign: "right",
+            headerTooltip: termTip("physicalAll") + " Worked out for the rows on screen.", formatter: ph((c) => this.treeExtraCell(c.getData(), "pa")) },
+          { title: term("reclaimable"), field: "reclaim", width: 110, headerSort: false, hozAlign: "right",
+            headerTooltip: termTip("reclaimable") + " Worked out for the rows on screen.", formatter: ph((c) => this.treeExtraCell(c.getData(), "rc")) },
           { title: "Share of folder", field: "pct", width: 130, sorter: "number",
             formatter: ph((c) => { const v = Number(c.getValue() || 0); return `<span class="kl-sharebar"><i style="width:${Math.min(100, v).toFixed(1)}%"></i></span>${fmtFix(v, 1)}%`; }) },
           { title: "Files", field: "files", width: 85, hozAlign: "right", formatter: ph((c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE)) },
+          { title: "Versions", field: "versions", width: 80, hozAlign: "right", sorter: "number",
+            headerTooltip: "Files: how many versions are backed up. Folders: how many different states the folder has had.",
+            formatter: ph((c) => { const d = c.getData(); return d.type === "folder" ? this.folderVersionsCell(d, d.path) : (c.getValue() == null ? "—" : Number(c.getValue()).toLocaleString(NUM_LOCALE)); }) },
           { title: "Modified", field: "modified", width: 165, formatter: ph((c) => timeCell(c.getValue())) },
+          { title: "Last seen", field: "last_seen", width: 160, headerTooltip: "When a snapshot last held it",
+            formatter: ph((c) => (c.getValue() ? timeCell(c.getValue()) : "—")) },
+          { title: "Ext", field: "ext", width: 70, visible: false, accessorDownload: (_v, d) => (d.type === "folder" || d._ph ? "" : (/\.([^.\\/]+)$/.exec(d.name || "") || [])[1] || ""),
+            formatter: ph((c) => { const d = c.getData(); return d.type === "folder" ? "" : escHtml((/\.([^.\\/]+)$/.exec(d.name || "") || [])[1] || ""); }) },
+          { title: "Src", field: "src_count", width: 62, visible: false, headerSort: false, hozAlign: "right", headerTooltip: "How many sources hold this file",
+            formatter: ph((c) => this.treeExtraCell(c.getData(), "n")) },
           { title: "Type", field: "type", width: 75, visible: false },
         ], {
           selectableRows: true,
@@ -157,11 +174,81 @@ const treePart = {
           },
           rowMenu: (_e, row) => (row.getData()._ph ? false : this.treeRowMenu(row.getData())),
         });
-        if (tree && ttbl) ttbl.on("dataTreeRowExpanded", (row) => this._treeExpand(row));
+        if (tree && ttbl) ttbl.on("dataTreeRowExpanded", (row) => this._treeExpand(row).then(() => this.fillTreeExtras()));
         if (ttbl) ttbl.on("rowClick", (_e, row) => { if (row.getData()._up) this.treeUp(); });
+        if (ttbl) {
+          ttbl.on("tableBuilt", () => this.fillTreeExtras());
+          ttbl.on("scrollVertical", () => this.fillTreeExtras());
+        }
         this.treeSelCount = 0;
       }, "Loading tree...");
     },
+    // Physical (all), Reclaimable and the source count for the rows on screen: files in one batch,
+    // folders one at a time (a big folder takes a few seconds). Values cover every version.
+    _treeExtraKey(d) { return `${this.repo}|${this.selectedSource}|${d.path}`; },
+    treeExtraCell(d, which) {
+      const g = this.treeExtra[this._treeExtraKey(d)];
+      if (which === "n" && this.selectedSource !== "*ALL*") return "1";
+      if (g === "pending") return "<span style='color:var(--faint)'>…</span>";
+      if (g === "error") return "<span style='color:var(--danger)' title='Could not work this out'>error</span>";
+      if (!g || g[which] == null) return "<span style='color:var(--faint)' title='Not worked out yet'>—</span>";
+      if (which === "n") return g.n > 1 ? `<span style="color:var(--warn)">${g.n}</span>` : String(g.n);
+      return which === "rc" ? `<span style="color:var(--ok)">${fmtPhys(g.rc)}</span>` : fmtPhys(g[which]);
+    },
+    async fillTreeExtras() {
+      if (this._treeFilling) return;
+      this._treeFilling = true;
+      const el = document.querySelector("#treeTable");
+      const t = el && el._tabulator;
+      const repo = this.repo, src = this.selectedSource;
+      const alive = () => t && el._tabulator === t && this.active === "tree" && this.repo === repo && this.selectedSource === src;
+      const todo = () => t.getRows("visible").filter((r) => { const d = r.getData(); return !d._ph && this.treeExtra[this._treeExtraKey(d)] === undefined; });
+      const post = (url, body) => getJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      try {
+        if (!alive()) return;
+        this.fillFolderVersions("#treeTable", (d) => (!d._ph && d.type === "folder" ? d.path : null));
+        const files = todo().filter((r) => r.getData().type !== "folder").slice(0, 60);
+        if (files.length) {
+          const ds = files.map((r) => r.getData());
+          ds.forEach((d) => { this.treeExtra[this._treeExtraKey(d)] = "pending"; });
+          files.forEach((r) => r.reformat());
+          try {
+            const holders = {};
+            if (src === "*ALL*") {
+              const h = await post("/api/tree/holders", { repo, full_paths: ds.map((d) => d.path) });
+              for (const d of ds) holders[d.path] = ((h.paths || {})[d.path] || []).map((x) => x.source);
+            } else for (const d of ds) holders[d.path] = [src];
+            const want = ds.filter((d) => holders[d.path].length).map((d) => ({ source: holders[d.path][0], full_path: d.path }));
+            const r = want.length ? await post("/api/search/versions", { repo, rows: want }) : { rows: [] };
+            const got = Object.fromEntries((r.rows || []).map((x) => [x.full_path, x]));
+            for (const d of ds) {
+              const x = got[d.path];
+              this.treeExtra[this._treeExtraKey(d)] = x ? { pa: x.stored, rc: x.frees, n: holders[d.path].length } : "error";
+            }
+          } catch (e) {
+            ds.forEach((d) => { this.treeExtra[this._treeExtraKey(d)] = "error"; });
+          }
+          if (alive()) files.forEach((r) => { try { r.reformat(); } catch (e) { /* rebuilt meanwhile */ } });
+        }
+        while (alive()) {
+          const row = todo().find((r) => r.getData().type === "folder");
+          if (!row) break;
+          const d = row.getData(), key = this._treeExtraKey(d);
+          this.treeExtra[key] = "pending";
+          row.reformat();
+          try {
+            const r = await post("/api/search/folder-values", { repo, folder: d.path, ...(src === "*ALL*" ? {} : { source: src }) });
+            this.treeExtra[key] = { pa: r.physical_all ?? null, rc: r.freeable ?? null };
+          } catch (e) {
+            this.treeExtra[key] = "error";
+          }
+          try { row.reformat(); } catch (e) { /* rebuilt meanwhile; the cache has the value */ }
+        }
+      } finally {
+        this._treeFilling = false;
+      }
+    },
+
     // One menu per row type; with several rows selected it acts on all of them.
     treeRowMenu(d) {
       const sel = this.selectedRows("tree");

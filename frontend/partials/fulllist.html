@@ -1,0 +1,18 @@
+    <!-- Full list popup (fulllist.js): every row of a list a panel shows only part of. -->
+    <template x-if="fullList">
+      <div class="fixed inset-0 z-[55] bg-black/40 flex items-center justify-center p-4 sm:p-6" @click.self="closeFullList()" role="dialog" aria-modal="true" data-testid="full-list">
+        <div class="w-[64rem] max-w-full h-[min(80vh,44rem)] rounded-lg border border-bd bg-surface shadow-xl flex flex-col">
+          <div class="flex items-center gap-2 border-b border-bd px-4 py-3">
+            <div class="font-medium" x-text="fullList.title"></div>
+            <span class="text-xs text-muted" x-show="!fullList.loading && !fullList.error" x-text="countOf(fullList.count, 'row')"></span>
+            <span class="grow"></span>
+            <button class="kl-btn" @click="fullListCsv()" :disabled="fullList.loading || !!fullList.error"><i class="ic ic-download"></i> Download CSV</button>
+            <button class="kl-btn quiet" @click="closeFullList()" title="Close" aria-label="Close"><i class="ic ic-close"></i></button>
+          </div>
+          <div class="p-4 text-sm text-muted" x-show="fullList.loading">Loading…</div>
+          <div class="p-4 text-sm text-danger break-all" x-show="fullList.error" x-text="fullList.error"></div>
+          <!-- Always shown: a table built inside a hidden box lays out at zero width. -->
+          <div id="fullListTable" class="flex-1 min-h-0"></div>
+        </div>
+      </div>
+    </template>

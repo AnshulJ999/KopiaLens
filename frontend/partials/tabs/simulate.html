@@ -1,6 +1,6 @@
       <section x-show="active==='simulate'" class="h-full flex flex-col gap-2">
         <div class="kl-toolbar items-end">
-          <button class="kl-btn" @click="active = 'snapshots'; activate()" title="Back to Snapshots">← Snapshots</button>
+          <button class="kl-btn" @click="active = 'snapshots'; activate()" title="Back to Snapshots"><i class="ic ic-arrow-left"></i> Snapshots</button>
           <label class="flex-col !items-start !gap-0.5 text-muted" title="The same source as Snapshots">Source
             <select x-model="snapSource" @change="simSourceChanged()" class="fld border border-bd bg-surface max-w-[22rem] text-fg">
               <option value="*ALL*">All sources</option>
@@ -14,7 +14,7 @@
           <span class="grow"></span>
           <span class="kl-help" tabindex="0" title="Try a retention policy without changing anything: see which snapshots it would keep and how much space deleting the rest frees. The boxes start from this repository's Global policy.">?</span>
           <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
-            <button class="kl-btn icon" @click="open = !open" title="More">⋯</button>
+            <button class="kl-btn icon" @click="open = !open" title="More" aria-label="More"><i class="ic ic-more"></i></button>
             <div class="kl-menu" x-show="open" x-cloak>
               <button @click="open = false; runSimulate(true)">Recompute (ignore the saved result)</button>
               <button @click="open = false; csv('#simulateTable','simulate')">Export CSV</button>

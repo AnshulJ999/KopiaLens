@@ -1,3 +1,8 @@
+// The selection bar floats over the bottom of the table (true) or sits in the toolbar (false, the
+// earlier behaviour, kept for comparison). css/app.css html[data-selbar="float"].
+const SELBAR_FLOAT = true;
+document.documentElement.dataset.selbar = SELBAR_FLOAT ? "float" : "inline";
+
 // ---- Number and date style (Settings > Appearance). undefined = the system's own style. ----
 let NUM_LOCALE;
 let _dateStyle = "system", _clock = "system", _byteUnits = "decimal";
@@ -20,6 +25,24 @@ const fmtBytes = (value) => {
 };
 // Text for a table cell built as HTML (Tabulator formatters).
 const escHtml = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\x22/g, "&quot;");
+// Icons (css/icons.css, built from packaging/icons.json) for HTML built in JS.
+const iconHtml = (name, cls = "") => `<i class="ic ic-${name}${cls ? " " + cls : ""}"></i>`;
+const _FILE_KINDS = [
+  ["file-image", "jpg jpeg png gif webp heic heif bmp tif tiff svg ico raw cr2 cr3 nef arw dng psd"],
+  ["file-audio", "mp3 flac wav m4a aac ogg opus wma aiff alac"],
+  ["file-video", "mp4 mkv mov avi wmv webm m4v mts m2ts ts flv mpg mpeg"],
+  ["file-zip", "zip 7z rar tar gz tgz bz2 xz zst iso cab"],
+  ["file-code", "py js ts jsx tsx json html htm css c cpp h hpp cs go rs java kt sh bat cmd ps1 xml yml yaml toml ini sql lua rb php"],
+  ["file-text", "txt md log csv pdf doc docx rtf odt xls xlsx ppt pptx"],
+].map(([icon, exts]) => [icon, new Set(exts.split(" "))]);
+const fileIconName = (name) => {
+  const m = /\.([^.\\/]+)$/.exec(String(name || ""));
+  const ext = m ? m[1].toLowerCase() : "";
+  const hit = ext && _FILE_KINDS.find(([, set]) => set.has(ext));
+  return hit ? hit[0] : "file";
+};
+// The icon in front of a file or folder name in tables.
+const itemIconHtml = (name, folder) => iconHtml(folder ? "folder" : fileIconName(name), "text-muted mr-1");
 // One list for every pause menu (indexing and backups, app and tray). 0 = until resumed.
 const PAUSE_CHOICES = [[1, "1 hour"], [4, "4 hours"], [12, "12 hours"], [24, "1 day"], [72, "3 days"], [168, "1 week"], [0, "Until I resume"]];
 const fmtPhys = (v) => (v === null || v === undefined ? "—" : fmtBytes(v));
@@ -183,22 +206,49 @@ const klLogLineWarn = (ln) => {
 // ---- Backend-persisted table preferences (columns + sort), survives browser-data clears ----
 let TABLE_PREFS = {};
 const _persistTimers = {};
+// Several browser tabs stay in step: a layout saved in one tab is applied in the others at once
+// (same browser), and a tab coming back into view re-reads the saved layouts (another browser).
+// Without this, a tab kept its startup copy and wrote it back over the newer layout.
+const _tablesByPid = {};
+let _applyingPrefs = false;
+const _prefsChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("kl-table-prefs") : null;
 function persistReader(id, type) { return (TABLE_PREFS[id] && TABLE_PREFS[id][type]) || false; }
 function persistWriter(id, type, data) {
   TABLE_PREFS[id] = TABLE_PREFS[id] || {};
   TABLE_PREFS[id][type] = data;
+  if (_applyingPrefs) return;
   clearTimeout(_persistTimers[id]);
   _persistTimers[id] = setTimeout(() => {
     getJson("/api/settings/table", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, config: TABLE_PREFS[id] }),
     }).catch(() => {});
+    if (_prefsChannel) _prefsChannel.postMessage({ id, config: TABLE_PREFS[id] });
   }, 600);
 }
+function applyTablePrefs(id, config) {
+  if (!config || JSON.stringify(TABLE_PREFS[id] || null) === JSON.stringify(config)) return;
+  clearTimeout(_persistTimers[id]);   // a pending save of this tab's older layout must not win
+  TABLE_PREFS[id] = config;
+  const t = _tablesByPid[id];
+  if (!t || !t.element || !document.contains(t.element)) return;
+  _applyingPrefs = true;
+  try {
+    if (config.columns) t.setColumnLayout(config.columns);
+    if (config.sort) t.setSort(config.sort);
+  } catch (e) { /* the table rebuilds from TABLE_PREFS next time */ } finally { _applyingPrefs = false; }
+}
+if (_prefsChannel) _prefsChannel.onmessage = (e) => { if (e.data && e.data.id) applyTablePrefs(e.data.id, e.data.config); };
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  getJson("/api/settings/tables").then((all) => {
+    for (const [id, cfg] of Object.entries(all || {})) applyTablePrefs(id, cfg);
+  }).catch(() => {});
+});
 
 function colVisibilityMenu(e, column) {
   return column.getTable().getColumns().map((col) => ({
-    label: (col.isVisible() ? "☑ " : "☐ ") + (col.getDefinition().title || col.getField()),
+    label: iconHtml(col.isVisible() ? "checkbox" : "checkbox-empty", "mr-1") + escHtml(col.getDefinition().title || col.getField()),
     action: (ev) => { ev.stopPropagation(); col.toggle(); },
   }));
 }
@@ -259,6 +309,7 @@ const setTable = (id, data, columns, opts = {}) => {
   // finishes re-measures against the real container.
   table.on("tableBuilt", () => table.redraw(true));
   el._tabulator = table;
+  _tablesByPid["tabulator-" + (rest.persistenceID || id.replace("#", ""))] = table;
   return table;
 };
 

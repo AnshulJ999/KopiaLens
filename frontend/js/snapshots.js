@@ -27,7 +27,7 @@ const snapshotsPart = {
           { title: term("reclaimable"), headerTooltip: termTip("reclaimable"), field: "reclaimable", width: 110, sorter: "number", formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },
           { title: "Files", field: "files", width: 90, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Dirs", field: "dirs", width: 80, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
-          { title: "Retention", field: "retention", sorter: listSorter, headerSortStartingDir: "desc", accessorDownload: (v) => (v || []).join(", "), widthGrow: 2, minWidth: 150, formatter: (c) => (c.getValue() || []).map((r) => `<span class="pill" style="background:#dbeafe;color:#1e40af">${r}</span>`).join("") },
+          { title: "Retention", field: "retention", sorter: listSorter, headerSortStartingDir: "desc", accessorDownload: (v) => (v || []).join(", "), widthGrow: 2, minWidth: 150, formatter: (c) => (c.getValue() || []).map((r) => this.retentionPill(r)).join("") },
           { title: "Pins", field: "pins", sorter: listSorter, headerSortStartingDir: "desc", accessorDownload: (v) => (v || []).join(", "), widthGrow: 1, minWidth: 90, formatter: (c) => (c.getValue() || []).map((p) => `<span class="pill" style="background:#fef3c7;color:#92400e">${escHtml(p)}</span>`).join("") },
           { title: "ID", field: "id", width: 200 },
         ].filter((c) => !(server && spaceCols.includes(c.field)));
@@ -124,6 +124,23 @@ const snapshotsPart = {
         this.clientByRepo = { ...this.clientByRepo, [repo]: c.user && c.host ? `${c.user}@${c.host}` : "" };
       } catch (e) { /* no filter for "this computer" then */ }
     },
+    // A retention reason chip (Settings > Appearance > Retention chips). "By type" uses KopiaUI's
+    // colours: latest, daily, weekly, monthly, annual, and one colour for the rest.
+    retentionPill(r) {
+      const t = escHtml(r);
+      if (this.retentionChips === "kopiaui") {
+        const kind = ["latest", "daily", "weekly", "monthly", "annual"].find((k) => String(r).startsWith(k + "-")) || "other";
+        return `<span class="pill rt rt-${kind}">${t}</span>`;
+      }
+      if (this.retentionChips === "custom") {
+        const c = this.retentionChipColor;
+        const [R, G, B] = [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+        const fg = 0.299 * R + 0.587 * G + 0.114 * B > 150 ? "#111" : "#fff";
+        return `<span class="pill" style="background:${c};color:${fg}">${t}</span>`;
+      }
+      return `<span class="pill" style="background:#dbeafe;color:#1e40af">${t}</span>`;
+    },
+
     myOwner() { return this.clientByRepo[this.repo] || ""; },
     ownerOf(source) { return String(source || "").split(":")[0]; },
     owners() { return [...new Set(this.sources.map((s) => this.ownerOf(s)))].sort(); },

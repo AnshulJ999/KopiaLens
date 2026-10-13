@@ -78,7 +78,9 @@
                     </div>
                     <div class="kl-callout" x-show="delCallout()" x-text="delCallout()"></div>
                     <div class="kl-sec">
-                      <div class="h">What gets removed <span class="count" x-text="delPanel.plan.capped ? ('first ' + delPanel.plan.matches.length + ' of ' + Number(delPanel.plan.match_total).toLocaleString(NUM_LOCALE)) : countOf(delPanel.plan.matches.length, 'path')"></span></div>
+                      <div class="h">What gets removed <span class="count" x-text="delPanel.plan.capped ? ('first ' + delPanel.plan.matches.length + ' of ' + Number(delPanel.plan.match_total).toLocaleString(NUM_LOCALE)) : countOf(delPanel.plan.matches.length, 'path')"></span>
+                        <span class="acts"><button class="kl-btn quiet" style="height:22px" x-show="delPanel.plan.matches.length" @click="delShowAll()" data-testid="del-show-all"
+                          x-text="delPanel.plan.capped ? 'Show all ' + Number(delPanel.plan.match_total).toLocaleString(NUM_LOCALE) : 'Show as a table'"></button></span></div>
                       <div class="kl-list" style="max-height:220px">
                         <template x-for="(m, i) in delPanel.plan.matches" :key="i">
                           <div class="li">

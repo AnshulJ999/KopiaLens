@@ -52,8 +52,8 @@
           </select>
           <input x-model="bzSearchExt" @input.debounce.300ms="bzLoadSearch()" class="fld w-36 border border-bd bg-surface" placeholder="ext: mp4,iso">
           <input x-model="bzSearchExtExclude" @input.debounce.300ms="bzLoadSearch()" class="fld w-36 border border-warn-bd bg-surface" placeholder="hide ext: mp4,mkv" title="Hide these extensions">
-          <button @click="bzToggleGroup()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzGroupByFolder ? 'bg-sel' : ''" title="Group results by folder">⊞ By folder</button>
-          <button @click="bzExportSearch()" class="h-8 rounded border border-bd px-2 text-xs" title="Export the full filtered set to CSV">⬇ CSV</button>
+          <button @click="bzToggleGroup()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzGroupByFolder ? 'bg-sel' : ''" title="Group results by folder"><i class="ic ic-grid"></i> By folder</button>
+          <button @click="bzExportSearch()" class="h-8 rounded border border-bd px-2 text-xs" title="Export the full filtered set to CSV"><i class="ic ic-download"></i> CSV</button>
           <span class="ml-2 text-xs text-muted font-medium" x-text="bzSearchMeta"></span>
           <span class="ml-auto flex items-center gap-1.5" x-show="!bzGroupByFolder">
             <span class="text-muted text-xs">Per page</span>
@@ -78,7 +78,7 @@
       <section x-show="active==='bz-tree'" class="h-full flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
           <select x-model="bzTreeDrive" @change="bzTreeChanged()" class="fld border border-bd bg-surface">
-            <option value="*ALL*">★ All drives</option>
+            <option value="*ALL*">All drives</option>
             <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" :selected="d.drive == bzTreeDrive" x-text="d.drive + ':\\'"></option></template>
           </select>
           <button @click="bzTreeUp()" class="h-8 rounded border border-bd px-3 text-sm" title="Up one level">⬆ Up</button>
@@ -94,7 +94,7 @@
 
       <section x-show="active==='bz-excluded'" class="h-full flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
-          <button @click="bzExclNav('')" class="h-8 rounded border border-bd px-3 text-sm" title="All drives">🖥 All drives</button>
+          <button @click="bzExclNav('')" class="h-8 rounded border border-bd px-3 text-sm" title="All drives"><i class="ic ic-desktop"></i> All drives</button>
           <button @click="bzExclUp()" class="h-8 rounded border border-bd px-3 text-sm" title="Up one level">⬆ Up</button>
           <div class="inline-flex rounded border border-bd overflow-hidden text-sm">
             <button @click="bzSetExclFilter('excluded')" :class="bzExclFilter==='excluded' ? 'bg-sel' : ''" class="px-2 h-8">Not backed up</button>
@@ -138,7 +138,7 @@
 
       <section x-show="active==='bz-churn'" class="h-full flex flex-col gap-2">
         <div class="rounded border border-warn-bd bg-warn-bg/20 p-2" x-show="bzChurnAlerts().length">
-          <div class="text-xs font-medium text-warn">⚠ Watch these — high recent churn, not an intentional Kopia repo:</div>
+          <div class="text-xs font-medium text-warn"><i class="ic ic-warning"></i> Watch these — high recent churn, not an intentional Kopia repo:</div>
           <template x-for="(a,i) in bzChurnAlerts()" :key="i">
             <div class="text-[0.75rem] flex items-center gap-2"><span class="text-warn w-12 text-right" x-text="a.pct + '%'"></span><span class="break-all" x-text="a.folder"></span></div>
           </template>
@@ -150,7 +150,7 @@
             <template x-for="n in [1,2,3,4,5,6,7,8]" :key="n"><option :value="n" :selected="n == bzChurnDepth" x-text="n"></option></template>
           </select>
           <button @click="bzChurnCollapse=!bzChurnCollapse; bzChurnChanged()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzChurnCollapse ? 'bg-sel' : ''" title="Roll the Kopia repos up to one row each">⧉ Collapse Kopia</button>
-          <button @click="bzToggleChurnActive()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzChurnActiveOnly ? 'bg-sel' : ''" title="Show only folders that still have backed files (hide excluded / deleted)"><span x-text="bzChurnActiveOnly ? '● Active only' : 'Showing all'"></span></button>
+          <button @click="bzToggleChurnActive()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzChurnActiveOnly ? 'bg-sel' : ''" title="Show only folders that still have backed files (hide excluded / deleted)"><span x-text="bzChurnActiveOnly ? 'Active only' : 'Showing all'"></span></button>
           <select x-model="bzChurnDrive" @change="_bzDrawChurn()" class="fld h-8 border border-bd bg-surface text-xs">
             <option value="">All drives</option>
             <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" :selected="d.drive == bzChurnDrive" x-text="d.drive + ':'"></option></template>
@@ -192,7 +192,7 @@
           <div id="bzBackupDaysTable" class="mt-2"></div>
         </div>
         <div class="flex items-center gap-2">
-          <button @click="bzImportArchive()" class="h-8 rounded border border-link text-link px-3 text-sm" title="One-time import of ~1 year of session history from the copied (unlocked) archive">⤓ Import archived history</button>
+          <button @click="bzImportArchive()" class="h-8 rounded border border-link text-link px-3 text-sm" title="One-time import of ~1 year of session history from the copied (unlocked) archive"><i class="ic ic-download"></i> Import archived history</button>
           <span class="text-xs text-ok" x-text="bzImportMsg"></span>
         </div>
         <div>
@@ -219,7 +219,7 @@
 
       <section x-show="active==='bz-health'" class="h-full flex flex-col gap-3 overflow-auto">
         <div class="rounded p-3" :class="bzHealth && bzHealth.ok ? 'border border-ok-bd bg-ok-bg/20' : 'border border-danger-bd bg-danger-bg/20'" x-show="bzHealth">
-          <div class="font-medium text-sm" x-text="bzHealth && (bzHealth.ok ? '✓ No anomalies detected — backup state looks healthy.' : (countOf(bzHealth.issues.length, 'potential issue') + ' detected:'))"></div>
+          <div class="font-medium text-sm" x-text="bzHealth && (bzHealth.ok ? 'No anomalies detected — backup state looks healthy.' : (countOf(bzHealth.issues.length, 'potential issue') + ' detected:'))"></div>
           <template x-for="(iss,i) in (bzHealth ? bzHealth.issues : [])" :key="i">
             <div class="text-[0.75rem] text-danger">• <span x-text="iss"></span></div>
           </template>

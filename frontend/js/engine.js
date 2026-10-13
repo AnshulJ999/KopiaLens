@@ -317,13 +317,16 @@ const enginePart = {
   },
   async engineSnapshotNow(source) {
     if (!this.wmGuard("non_destructive")) return;
-    const ok = await this.klConfirm({
-      title: "Back up this folder now?",
-      facts: [["Folder", sourcePath(source)], ["Repository", this.repoName(this.repo)]],
-      note: "Kopia applies this folder's policy: its exclusions, compression and retention.",
-      confirmLabel: "Back up now", danger: false,
-    });
-    if (!ok) return;
+    if (this.askSnapshotNow) {
+      const ok = await this.klConfirm({
+        title: "Back up this folder now?",
+        facts: [["Folder", sourcePath(source)], ["Repository", this.repoName(this.repo)]],
+        note: "Kopia applies this folder's policy: its exclusions, compression and retention.",
+        confirmLabel: "Back up now", danger: false, dontAsk: true,
+      });
+      if (!ok) return;
+      this.snapshotNowDontAsk(ok);
+    }
     try {
       await getJson("/api/engine/snapshot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source }) });
       this.klNotify("Backup started", "ok", { label: "Show in Tasks", run: () => { this.active = "tasks"; this.activate(); } });

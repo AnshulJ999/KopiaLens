@@ -21,6 +21,7 @@ PREFS = {
     "tray_click": ("window", "menu"),
     "tray_double_click": ("window", "none"),
     "notifications": ("warnings", "all", "off"),
+    "tray_icon": ("k6", "orig7", "k3a", "mono", "q1", "s3", "r4", "slice", "old"),
 }
 
 

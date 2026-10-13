@@ -28,6 +28,7 @@ from .actions import _fmt_cmd
 router = APIRouter(tags=["delete"])
 
 LIST_CAP = 500
+FULL_LIST_CAP = 1_000_000   # the most "Show all" lists
 COPIES_CAP = 20000   # copy paths resolved for a snapshot delete; beyond this the plan refuses to run
 PRICE_CAP = 200_000  # same-named files priced for a by-name removal
 
@@ -44,6 +45,7 @@ class PlanBody(BaseModel):
     by: str = "object-id"
     sources: list[str] | None = None
     copies: bool = False
+    list_cap: int | None = None   # "Show all": list up to this many matches instead of LIST_CAP
 
 
 def _basename(source: str, full_path: str) -> str:
@@ -124,11 +126,12 @@ def delete_plan(body: PlanBody) -> dict:
 
     if body.method == "remove":
         scope = resolve_scope(repo, body.by, body.sources, facts)
+        cap = min(max(body.list_cap or LIST_CAP, 1), FULL_LIST_CAP)
         if body.by == "filename":
-            found = paths_named(repo, scope, facts["names"], cap=LIST_CAP, mark=sorted(selected))
+            found = paths_named(repo, scope, facts["names"], cap=cap, mark=sorted(selected))
             items, flag = facts["names"], "--filename"
         else:
-            found = paths_for_contents(repo, facts["oids"], sources=scope, cap=LIST_CAP,
+            found = paths_for_contents(repo, facts["oids"], sources=scope, cap=cap,
                                        mark=sorted(selected))
             items, flag = facts["oids"], "--object-id"
         rows = [{**r, "selected": r["full_path"] in selected} for r in found["rows"]]

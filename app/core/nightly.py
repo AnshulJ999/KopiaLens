@@ -108,6 +108,32 @@ class _WorkClock:
         self.worked = 0.0
         self.last = time.time()
         self.stop_asked: float | None = None
+        self.cause = ""                      # "limit" or "stuck" once a stop was asked for
+        self._sig, self._sig_at = None, 0.0  # the tree read's last counters, and when they moved
+
+    def stuck(self, repo: str, limit: float) -> bool:
+        """Watchdog for the tree read (the long kopia part): counters that don't move for ``limit``
+        seconds of working time mean it is stuck, not slow. Waiting for an unreachable repository
+        has its own limit in the worker; the later stages report no counters and are not watched."""
+        if limit <= 0 or self.stop_asked is not None:
+            return False
+        p = worker_progress(repo) or {}
+        sync = p.get("sync") if p.get("phase") == "tree sync" else None
+        if not isinstance(sync, dict) or sync.get("waiting_since"):
+            self._sig = None
+            return False
+        sig = (sync.get("level"), sync.get("level_read"), sync.get("read"))
+        if sig != self._sig:
+            self._sig, self._sig_at = sig, self.worked
+            return False
+        if self.worked - self._sig_at <= limit:
+            return False
+        from ..index import resume
+        log.warning("repo=%s index run made no progress for %.0f min (level %s, %s folders read) - "
+                    "asking it to save and stop", repo, (self.worked - self._sig_at) / 60, sig[0], sig[2])
+        resume.request_stop(repo)
+        self.stop_asked, self.cause = time.time(), "stuck"
+        return True
 
     def over(self, repo: str, limit: float) -> str:
         now = time.time()
@@ -115,6 +141,7 @@ class _WorkClock:
         self.worked += gap if gap < _SLEPT else _POLL
         if self.stop_asked is None:
             if self.worked > limit:
+                self.cause = "limit"
                 from ..index import resume
                 log.warning("repo=%s index run reached its time limit - asking it to save and stop",
                             repo)
@@ -140,6 +167,14 @@ def worker_timeout(repo: str | None = None) -> float:
         return float(kl.get("index_worker_timeout", _DEFAULT_TIMEOUT))
     except (TypeError, ValueError):
         return float(_DEFAULT_FIRST_TIMEOUT if first else _DEFAULT_TIMEOUT)
+
+
+def stall_limit() -> float:
+    """Settings > Advanced: how long the tree read may make no progress before the run stops."""
+    try:
+        return float(load_settings().get("kopialens", {}).get("index_stall_timeout", 3600))
+    except (TypeError, ValueError):
+        return 3600.0
 
 
 def worker_progress(repo: str) -> dict | None:
@@ -589,6 +624,7 @@ def _run_worker(repo: str, full: bool, trigger: str = "manual") -> dict:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash under pythonw
         )
         clock = _WorkClock()
+        stall = stall_limit()
         send = payload
         try:
             while True:
@@ -597,11 +633,13 @@ def _run_worker(repo: str, full: bool, trigger: str = "manual") -> dict:
                     break
                 except subprocess.TimeoutExpired:
                     send = None          # the key goes in once; later calls only read
+                    clock.stuck(repo, stall)
                     if clock.over(repo, limit) == "kill":
-                        log.error("repo=%s index worker timed out - killing it", repo)
+                        log.error("repo=%s index worker didn't stop after %s - killing it", repo,
+                                  "making no progress" if clock.cause == "stuck" else "its time limit")
                         proc.kill()
                         proc.communicate()
-                        return {"ok": False, "reason": "timeout"}
+                        return {"ok": False, "reason": "stuck - no progress" if clock.cause == "stuck" else "timeout"}
         finally:
             # This process records the run from stdout; the file is for a restarted app only.
             res = _read_result(result_path(repo))
@@ -629,8 +667,10 @@ def _run_worker(repo: str, full: bool, trigger: str = "manual") -> dict:
         if summary is not None:
             summary["ok"] = False
             if summary.get("stopped") and clock.stop_asked is not None:
-                summary["stopped"] = False      # the time limit, not the user: retried as usual
-                summary["reason"] = "time limit reached - the next run continues from where it stopped"
+                summary["stopped"] = False      # the time limit or the watchdog, not the user: retried as usual
+                summary["reason"] = ("no progress for a long time (stuck) - the next run continues from where it stopped"
+                                     if clock.cause == "stuck" else
+                                     "time limit reached - the next run continues from where it stopped")
             _with_reason(summary, proc.returncode)
             summary["log"] = logp
             log.error("repo=%s index worker exit %d: %s (see %s)",

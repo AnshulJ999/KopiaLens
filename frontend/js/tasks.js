@@ -121,6 +121,20 @@ const tasksPart = {
     if (t.status === "failed") return t.error || "Failed";
     return this.taskStatusText(t);
   },
+  // The summary above the raw log (the line above it has the result and times): where, what,
+  // and kopia's key counts.
+  taskFacts(t) {
+    const facts = [["Repository", this.repoName(t.repo)], ["What", this.taskWhat(t)]];
+    for (const c of this.taskCounters(t).filter((x) => /file|byte|error/i.test(x.name)).slice(0, 3)) {
+      facts.push([c.name, c.value, c.level === "error" ? "text-danger" : c.level === "warning" ? "text-warn" : ""]);
+    }
+    return facts;
+  },
+  // Task details as a full-size popup or a small panel under the list (remembered).
+  setTaskView(v) {
+    this.taskView = v;
+    this.klSet({ task_view: v });
+  },
   taskCounters(t) {
     const order = { error: 0, warning: 1, notice: 2 };
     return Object.entries(t.counters || {})

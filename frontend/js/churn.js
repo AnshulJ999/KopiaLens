@@ -63,7 +63,7 @@ const churnPart = {
         cols = [
           { title: "Source", field: "source", widthGrow: 3, minWidth: 220, formatter: (c) => {
               const r = c.getRow().getData();
-              const warn = r.nested_in ? ` <span title="Also covered by ${sourcePath(r.nested_in)}, so this data is snapshotted twice and counted in both rows" style="color:var(--warn)">⚠ inside ${sourcePath(r.nested_in)}</span>` : "";
+              const warn = r.nested_in ? ` <span title="Also covered by ${sourcePath(r.nested_in)}, so this data is snapshotted twice and counted in both rows" style="color:var(--warn)"><i class="ic ic-warning"></i> inside ${sourcePath(r.nested_in)}</span>` : "";
               return sourcePath(c.getValue()) + warn;
             } },
           bytesCol, rateCol, verCol, rewriteCol, fileCol, ...sizeCols, physAllCol(false),

@@ -1,6 +1,11 @@
 // Settings modal: every control in it saves itself on change (one key per save, never a full
 // payload of browser-side defaults - that is what stamped values the user never chose).
 const MEMORY_CHOICES = ["512MB", "1GB", "2GB", "3GB", "4GB", "6GB", "8GB"];
+// Tray icon choices (the desktop app draws them from shell/src-tauri/icons/tray/). First = default.
+const TRAY_ICONS = [
+  ["k6", "Two-tone K"], ["orig7", "Plain K"], ["k3a", "K in a lens ring"], ["mono", "K in one colour"],
+  ["q1", "Lens with a tail"], ["s3", "Ring with a slice out"], ["r4", "Bold lens"], ["slice", "Slice pulled out"], ["old", "Original"],
+];
 
 // A duration setting shown as a free number plus a unit; the setting itself stays in seconds.
 // Changing the unit converts the shown number, it never changes the stored value.
@@ -45,6 +50,7 @@ const settingsPart = {
         this.esPath = kl.es_path || "";
         this.repoLabels = kl.repo_labels === "full" ? "full" : "short";
         this.showProBadge = kl.show_pro_badge !== false;
+        this._readLook(kl);
         this.updateCheck = kl.update_check !== false;
         this.usageStats = kl.usage_stats !== false;
         this.diskLookupMode = ["auto", "everything", "scan", "off"].includes(kl.disk_lookup) ? kl.disk_lookup : "auto";
@@ -69,6 +75,8 @@ const settingsPart = {
       this.dashboardInterval = Number(kl.dashboard_interval || 14400);
       this.indexWorkerTimeout = Number(kl.index_worker_timeout || 14400);
       this.indexFirstTimeout = Number(kl.index_first_timeout || 86400);
+      this.indexWaitUnreachable = Number(kl.index_wait_unreachable || 1800);
+      this.indexStallTimeout = Number(kl.index_stall_timeout ?? 3600);
       this.removePlanCap = Number(kl.remove_plan_cap || 200000);
       this.indexRetryDelay = Number(kl.index_retry_delay || 900);
       this.reindexAfterDeleteDelay = Number(kl.reindex_after_delete_delay ?? 300);
@@ -90,6 +98,22 @@ const settingsPart = {
       this.duckdbMemory = String(kl.duckdb_memory || "").toUpperCase();
       this.memoryAuto = kl.memory_auto || "";
     },
+    // Logo, retention chips and the Snapshot now confirm: read at startup and on each Settings open.
+    _readLook(kl) {
+      this.logo = ["k6", "orig7", "k3a", "none"].includes(kl.logo) ? kl.logo : "k6";
+      this.trayIcon = TRAY_ICONS.some((t) => t[0] === kl.tray_icon) ? kl.tray_icon : "k6";
+      this.askSnapshotNow = kl.ask_snapshot_now !== false;
+      this.taskView = kl.task_view === "panel" ? "panel" : "popup";
+      this.retentionChips = ["kopiaui", "custom"].includes(kl.retention_chips) ? kl.retention_chips : "uniform";
+      this.retentionChipColor = /^#[0-9a-f]{6}$/i.test(kl.retention_chip_color || "") ? kl.retention_chip_color : "#2563eb";
+      this.applyFavicon();
+    },
+    // The browser tab icon follows the header logo (the two-tone K when the logo is hidden).
+    applyFavicon() {
+      const el = document.querySelector('link[rel="icon"]');
+      if (el) el.href = `/static/logos/${this.logo === "none" ? "k6" : this.logo}.svg`;
+    },
+    TRAY_ICONS,
     MEMORY_CHOICES,
     fmtLimit(v) { return String(v || "").replace(/(\d)\s*([KMGT]B)$/i, "$1 $2"); },
     _readBackblaze(bz) {
@@ -122,6 +146,8 @@ const settingsPart = {
       dashboard_interval: { s: "dashboardInterval", t: "int", min: 900 },
       index_worker_timeout: { s: "indexWorkerTimeout", t: "int", min: 600 },
       index_first_timeout: { s: "indexFirstTimeout", t: "int", min: 600 },
+      index_wait_unreachable: { s: "indexWaitUnreachable", t: "int", min: 60 },
+      index_stall_timeout: { s: "indexStallTimeout", t: "int", min: 0 },
       remove_plan_cap: { s: "removePlanCap", t: "int", min: 1000 },
       reindex_after_delete_delay: { s: "reindexAfterDeleteDelay", t: "int", min: 0 },
       index_retry_delay: { s: "indexRetryDelay", t: "int", min: 60 },
@@ -142,6 +168,11 @@ const settingsPart = {
       rank_count: { s: "rankCount", t: "int", min: 0 },
       repo_labels: { s: "repoLabels", t: "choice", of: ["short", "full"] },
       show_pro_badge: { s: "showProBadge", t: "bool" },
+      logo: { s: "logo", t: "choice", of: ["k6", "orig7", "k3a", "none"] },
+      tray_icon: { s: "trayIcon", t: "choice", of: TRAY_ICONS.map((t) => t[0]) },
+      ask_snapshot_now: { s: "askSnapshotNow", t: "bool" },
+      retention_chips: { s: "retentionChips", t: "choice", of: ["uniform", "kopiaui", "custom"] },
+      retention_chip_color: { s: "retentionChipColor", t: "str" },
       update_check: { s: "updateCheck", t: "bool" },
       usage_stats: { s: "usageStats", t: "bool" },
       bzdata_path: { s: "bzDataPath", t: "str", block: "backblaze", restart: true },
@@ -214,6 +245,8 @@ const settingsPart = {
         v = v == null ? "" : String(v);
       }
       if (key === "number_style" || key === "date_style" || key === "clock" || key === "byte_units") this.applyFormats();
+      if (key === "logo") this.applyFavicon();
+      if ((key === "retention_chips" || key === "retention_chip_color") && this.active === "snapshots") this.loadSnapshots(true);
       const body = f.top ? { [key]: v }
         : f.block === "backblaze" ? { backblaze: { [key]: v } }
         : { kopialens: { [key]: v } };

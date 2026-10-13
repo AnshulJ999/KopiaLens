@@ -1,7 +1,7 @@
       <section x-show="active==='stats'" class="h-full flex flex-col gap-3 overflow-auto">
         <div class="flex items-center gap-2">
           <span class="font-medium">Repository</span>
-          <button @click="loadStats(true)" class="h-7 rounded border border-bd px-2 text-xs">⟳ Refresh</button>
+          <button @click="loadStats(true)" class="h-7 rounded border border-bd px-2 text-xs flex items-center gap-1"><i class="ic ic-refresh"></i>Refresh</button>
           <span class="text-[0.6875rem] text-muted" x-show="statsData && statsData.computed_at" x-text="statsData && statsData.computed_at ? 'Updated ' + humanTime(statsData.computed_at) : ''"></span>
           <!-- the nightly retention self-check; silent while it agrees with kopia -->
           <span class="kl-note text-warn" x-show="retentionIssueText()" x-text="retentionIssueText()"></span>
@@ -16,7 +16,7 @@
                 <template x-for="h in (statsData.health || [])" :key="h.id">
                   <div class="flex items-start gap-2 text-xs rounded p-2 border"
                        :class="h.status==='warn' ? 'bg-warn-bg border-warn-bd' : h.status==='ok' ? 'bg-ok-bg border-ok-bd' : 'bg-surface2 border-bd-soft'">
-                    <span class="mt-0.5" x-text="h.status==='warn' ? '⚠' : h.status==='ok' ? '✓' : 'ℹ'"></span>
+                    <i class="ic mt-0.5" :class="h.status==='warn' ? 'ic-warning' : h.status==='ok' ? 'ic-check' : 'ic-info'"></i>
                     <div class="min-w-0">
                       <div class="font-medium" x-text="h.title"></div>
                       <div class="text-muted" x-text="h.detail"></div>
@@ -24,7 +24,7 @@
                     <button x-show="h.fix_command" @click="copyText(h.fix_command)" class="ml-auto shrink-0 h-6 rounded border border-bd px-2 text-[0.625rem]" :title="'Copy: ' + h.fix_command">Copy fix</button>
                   </div>
                 </template>
-                <div x-show="!(statsData.health || []).length" class="text-xs text-ok">✓ All checks passed.</div>
+                <div x-show="!(statsData.health || []).length" class="text-xs text-ok flex items-center gap-1"><i class="ic ic-check"></i>All checks passed.</div>
               </div>
             </div>
 
@@ -47,7 +47,7 @@
               <div class="rounded border border-bd bg-surface p-3">
                 <div class="text-[0.6875rem] text-muted mb-1">Maintenance</div>
                 <div class="text-xs flex items-center gap-1">
-                  <span x-show="statsData.parsed?.maintenance?.owner_match === false" class="text-warn">⚠</span>
+                  <span x-show="statsData.parsed?.maintenance?.owner_match === false" class="text-warn"><i class="ic ic-warning"></i></span>
                   <span class="break-all" x-text="'owner ' + (statsData.parsed?.maintenance?.owner || '?')"></span></div>
                 <div class="text-xs mt-1" x-show="statsData.parsed?.maintenance?.last_run" x-text="'last run ' + humanTime(statsData.parsed?.maintenance?.last_run) + (statsData.parsed?.maintenance?.last_run_age_days != null ? ' (' + statsData.parsed.maintenance.last_run_age_days + 'd ago)' : '')"></div>
                 <div class="text-[0.6875rem] text-muted" x-show="statsData.parsed?.maintenance?.next_quick" x-text="'next quick ' + humanTime(statsData.parsed?.maintenance?.next_quick)"></div>

@@ -241,8 +241,12 @@ def run(repo: str, full: bool = False, skip_index: bool = False) -> dict:
             summary["stages"][name] = round(time.time() - t0, 1)
             return True
         except Exception as exc:  # noqa: BLE001 - one stage failing must not abort the rest
-            from .treesync import StopRequested
+            from .treesync import GaveUpWaiting, StopRequested
             summary["ok"] = False
+            if isinstance(exc, GaveUpWaiting):
+                summary["errors"][name] = f"{exc} - progress is saved; the next run continues from here"
+                logging.warning("stage %s gave up waiting for the repository; progress saved", name)
+                return False
             if isinstance(exc, StopRequested):
                 summary.update(stopped=True, reason="stopped - the next run continues from here")
                 logging.warning("stage %s stopped on request; progress saved", name)

@@ -28,33 +28,24 @@ pub enum Health {
     Error,
 }
 
-/// The original KopiaLens mark (a "Q" on a light tile), kept until the real logo exists.
-fn icon() -> Image<'static> {
-    const N: usize = 64;
-    let (bg, teal) = ([250u8, 250, 249], [15u8, 118, 110]);
-    let mut px = vec![0u8; N * N * 4];
-    for y in 0..N {
-        for x in 0..N {
-            let (mut r, mut g, mut b) = (0u32, 0u32, 0u32);
-            for sy in 0..4 {
-                for sx in 0..4 {
-                    let fx = x as f32 + (sx as f32 + 0.5) / 4.0;
-                    let fy = y as f32 + (sy as f32 + 0.5) / 4.0;
-                    let d = ((fx - 32.0).powi(2) + (fy - 32.0).powi(2)).sqrt();
-                    let ring = d <= 24.0 && d >= 10.0;
-                    let tail = (42.0..=58.0).contains(&fx) && (42.0..=50.0).contains(&fy);
-                    let c = if ring || tail { teal } else { bg };
-                    r += c[0] as u32;
-                    g += c[1] as u32;
-                    b += c[2] as u32;
-                }
-            }
-            let i = (y * N + x) * 4;
-            px[i..i + 4].copy_from_slice(&[(r / 16) as u8, (g / 16) as u8, (b / 16) as u8, 255]);
-        }
-    }
-    Image::new_owned(px, N as u32, N as u32)
+/// The tray icon choices (Settings > Desktop app), 64x64 RGBA built by packaging/build_logos.py.
+fn icon(name: &str) -> Image<'static> {
+    let px: &'static [u8] = match name {
+        "orig7" => include_bytes!("../icons/tray/orig7.rgba"),
+        "k3a" => include_bytes!("../icons/tray/k3a.rgba"),
+        "mono" => include_bytes!("../icons/tray/mono.rgba"),
+        "q1" => include_bytes!("../icons/tray/q1.rgba"),
+        "s3" => include_bytes!("../icons/tray/s3.rgba"),
+        "r4" => include_bytes!("../icons/tray/r4.rgba"),
+        "slice" => include_bytes!("../icons/tray/slice.rgba"),
+        "old" => include_bytes!("../icons/tray/old.rgba"),
+        _ => include_bytes!("../icons/tray/k6.rgba"),
+    };
+    Image::new(px, 64, 64)
 }
+
+/// The tray icon shown now, so a changed choice is applied once.
+static ICON_SHOWN: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
 fn now() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
@@ -327,8 +318,10 @@ pub fn create(app: &AppHandle, shell: &Arc<Shell>) -> tauri::Result<()> {
     shell.server.log(&format!("start at logon: {:?}", app.autolaunch().is_enabled()));
     let menu = build_menu(app, h, state.as_ref())?;
     drop(app.remove_tray_by_id(TRAY_ID));
+    let choice = pref(state.as_ref(), "tray_icon", "k6");
+    *ICON_SHOWN.lock().unwrap() = choice.clone();
     TrayIconBuilder::with_id(TRAY_ID)
-        .icon(icon())
+        .icon(icon(&choice))
         .tooltip(tooltip(h, state.as_ref()))
         .menu(&menu)
         .show_menu_on_left_click(click == "menu")
@@ -369,6 +362,14 @@ pub fn refresh(app: &AppHandle, shell: &Arc<Shell>, h: Health) {
         return;
     }
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    let choice = pref(state.as_ref(), "tray_icon", "k6");
+    {
+        let mut shown = ICON_SHOWN.lock().unwrap();
+        if *shown != choice {
+            let _ = tray.set_icon(Some(icon(&choice)));
+            *shown = choice;
+        }
+    }
     let tip = tooltip(h, state.as_ref());
     let menu_view = state.as_ref().map(|st| {
         let rows: Vec<String> = repos(st).iter().map(|r| {

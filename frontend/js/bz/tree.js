@@ -41,7 +41,7 @@ const bzTreePart = {
         const tot = kids.reduce((a, c) => a + ((c.backed_bytes || 0) + (c.excluded_bytes || 0)), 0) || 1;
         kids.forEach((c) => { c.total_bytes = (c.backed_bytes || 0) + (c.excluded_bytes || 0); c.pct = 100 * c.total_bytes / tot; });
         setTable("#bzTreeTable", kids, [
-          { title: "Name", field: "name", widthGrow: 5, minWidth: 280, formatter: (c) => `${c.getRow().getData().is_dir ? "📁 " : "📄 "}${c.getValue()}` },
+          { title: "Name", field: "name", widthGrow: 5, minWidth: 280, formatter: (c) => itemIconHtml(c.getValue(), c.getRow().getData().is_dir) + escHtml(c.getValue()) },
           { title: "Status", field: "status", width: 90, formatter: (c) => statusPill(c.getValue()) },
           { title: "Total", field: "total_bytes", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
           { title: "%", field: "pct", width: 68, hozAlign: "right", sorter: "number", formatter: (c) => `${fmtFix(c.getValue() || 0, 1)}%` },

@@ -262,10 +262,20 @@ def _read_batch(repo: str, batch: list[str], result: SyncResult, what: str,
 _WAIT_START, _WAIT_MAX = 15, 300     # seconds between reachability checks while waiting
 
 
+def _wait_limit() -> float:
+    """Settings > Advanced: how long a repository may stay unreachable before the run gives up."""
+    try:
+        from ..settings import load_settings
+        return max(60.0, float(load_settings()["kopialens"].get("index_wait_unreachable") or 1800))
+    except Exception:  # noqa: BLE001 - a settings problem must not stop an index
+        return 1800.0
+
+
 def _wait_until_reachable(repo: str) -> bool:
     """kopia answered nothing. True after waiting out an unreachable repository (retry the batch);
-    False when the repository answers, so the failure belongs to the object."""
-    since, delay = None, _WAIT_START
+    False when the repository answers, so the failure belongs to the object. Past the wait limit
+    it raises ``GaveUpWaiting``: the read so far is saved and the next run continues from it."""
+    since, delay, limit = None, _WAIT_START, _wait_limit()
     while True:
         if kopia(repo, ["repository", "status", "--json"]).returncode == 0:
             if since is not None:
@@ -274,6 +284,11 @@ def _wait_until_reachable(repo: str) -> bool:
         if since is None:
             since = time.time()
             log.warning("repo=%s the repository can't be reached - waiting for it", repo)
+        waited = time.time() - since
+        if waited >= limit:
+            log.warning("repo=%s unreachable for %.0f min - giving up this run; the read so far is "
+                        "saved and the next run continues from it", repo, waited / 60)
+            raise GaveUpWaiting(f"the repository couldn't be reached for {waited / 60:.0f} min")
         waiting = _CTX.get("waiting")
         if waiting:
             waiting(waiting_since=since)
@@ -430,6 +445,11 @@ def _shape_table(con) -> None:
 
 class StopRequested(Exception):
     """A stop was asked for: the read so far is saved and the next run continues from it."""
+
+
+class GaveUpWaiting(StopRequested):
+    """The repository stayed unreachable past the wait limit. Saved like a stop, but the run
+    counts as failed, so it is retried as usual and the next repository can index."""
 
 
 # Seconds between save points inside a level (the variable exists for resume tests only).

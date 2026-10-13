@@ -1,7 +1,7 @@
       <section x-show="active==='excluded'" class="h-full flex flex-col gap-2">
         <div class="kl-toolbar">
           <span class="inline-flex items-center gap-1 text-sm min-w-0">
-            <button @click="excludedUp()" class="kl-btn icon" title="Up one level">↑</button>
+            <button @click="excludedUp()" class="kl-btn icon" title="Up one level" aria-label="Up one level"><i class="ic ic-arrow-up"></i></button>
             <template x-for="(c, i) in excludedCrumbs()" :key="i">
               <span class="whitespace-nowrap"><span class="crumb" :class="i === excludedCrumbs().length - 1 ? 'font-medium' : 'text-muted'" @click="excludedNav(c.path)" x-text="c.label"></span><span class="text-faint" x-show="i < excludedCrumbs().length - 1"> › </span></span>
             </template>

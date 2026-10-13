@@ -28,7 +28,7 @@
             </template>
             <span x-show="indexEtaText()" x-text="indexEtaText()"></span>
           </div>
-          <div x-show="ixs().building && ixs().never_indexed" class="kl-note" data-testid="index-first-note">A first index of a big repository can take hours. You can keep using KopiaLens, and closing this panel doesn't stop it. If it stops, the next run continues from where it was.</div>
+          <div x-show="ixs().building && ixs().never_indexed" class="kl-note" data-testid="index-first-note" title="If it stops, the next run continues from where it was.">A first index can take hours. Closing this panel doesn't stop it.</div>
           <div x-show="indexQueuedText()" class="text-xs text-muted" x-text="'Next in the queue: ' + indexQueuedText()"></div>
           <div x-show="ixs().error" class="text-xs text-danger break-all" x-text="ixs().error"></div>
         </div>

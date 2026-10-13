@@ -81,7 +81,7 @@ const excludedPart = {
       const bytes = (c) => c.getValue() ? fmtBytes(c.getValue()) : "";
       const num = (c) => c.getValue() ? Number(c.getValue()).toLocaleString(NUM_LOCALE) : "";
       const cols = [
-        { title: "Name", field: "name", widthGrow: 4, minWidth: 220, formatter: (c) => (c.getRow().getData().is_dir ? "📁 " : "📄 ") + c.getValue() },
+        { title: "Name", field: "name", widthGrow: 4, minWidth: 220, formatter: (c) => itemIconHtml(c.getValue(), c.getRow().getData().is_dir) + escHtml(c.getValue()) },
         { title: "Status", field: "status", width: 115, formatter: (c) => pill(c.getValue()) },
         { title: "Total", field: "total_size", width: 90, hozAlign: "right", sorter: "number", formatter: bytes },
         { title: "Backed Up", field: "backed_bytes", width: 105, hozAlign: "right", sorter: "number", formatter: bytes },

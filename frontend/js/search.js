@@ -106,7 +106,7 @@ const searchPart = {
     },
     _folderValKey(folder, loose) { return this.repo + ":" + (loose ? "loose:" : "") + folder + "|" + JSON.stringify(this._folderFilters()); },
     folderRowLabel(path, d) {
-      return `📁 ${path}` + (d.loose ? ` <span style="color:var(--muted)">(files directly in it)</span>` : "")
+      return itemIconHtml(path, true) + escHtml(path) + (d.loose ? ` <span style="color:var(--muted)">(files directly in it)</span>` : "")
         + (d.kind === "folder" ? ` <span style="color:var(--muted)">· ${countOf(d.files || 0, "file")}</span>` : "");
     },
     // Versions of a folder row: how many distinct states the whole folder has had.
@@ -161,6 +161,15 @@ const searchPart = {
       if (g === "error") return "<span style='color:var(--danger)' title='Could not work this out'>error</span>";
       return "<span style='color:var(--faint)' title='Not worked out yet'>—</span>";
     },
+    // Physical (all) of a Folders-view row: saved nightly, or worked out for the folders on screen.
+    folderPhysAllCell(d) {
+      if (d.physical_all != null) return fmtPhys(d.physical_all);
+      const g = this.groupReclaim[this._folderValKey(d.folder, d.loose)];
+      if (g && typeof g === "object" && g.p != null) return fmtPhys(g.p);
+      if (g === "pending") return "<span style='color:var(--faint)'>…</span>";
+      if (g === "error") return "<span style='color:var(--danger)' title='Could not work this out'>error</span>";
+      return "<span style='color:var(--faint)' title='Not worked out yet'>—</span>";
+    },
     drillFolder(row) { this.searchKind = "files"; this.groupByFolder = false; this.klSet({ search_kind: "files" }); this.query = row.folder; this.searchPage = 1; this.loadSearch(); },
     // A row from another repository opens there: switch repo, then its panel.
     async openInRepo(d) {
@@ -191,10 +200,17 @@ const searchPart = {
         this.searchSelCount = 0;   // the table is rebuilt, so its selection goes
         this.omniMeta = `${countOf(rows.length, "folder")} · depth ${data.depth} · ranked by physical`;
         const cols = [
+          { title: "Repo", field: "repo", width: 90, visible: false, headerSort: false, headerTooltip: "The repository this folder is in",
+            accessorDownload: () => this.repoLabel(this.repo), formatter: () => this.repoLabel(this.repo) },
           { title: "Folder", field: "folder", widthGrow: 5, minWidth: 300, formatter: (c) => this.folderRowLabel(c.getValue(), c.getRow().getData()) },
           { title: "Physical", field: "physical", width: 110, hozAlign: "right", sorter: "number", headerTooltip: termTip("physical"),
             formatter: (c) => this.folderPhysCell(c.getRow().getData(), c.getRow().getData().folder) },
-          { title: "Logical", field: "logical", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => fmtBytes(c.getValue()) },
+          { title: term("physicalAll"), field: "physical_all", width: 120, hozAlign: "right", sorter: "number",
+            headerTooltip: termTip("physicalAll") + " Worked out for the folders on screen.",
+            formatter: (c) => this.folderPhysAllCell(c.getRow().getData()) },
+          { title: "Size", field: "logical", width: 110, hozAlign: "right", sorter: "number", headerTooltip: "Logical size. " + termTip("logical"), formatter: (c) => fmtBytes(c.getValue()) },
+          { title: "Src", field: "sources", width: 62, hozAlign: "right", sorter: "number", headerTooltip: "How many sources hold files in this folder",
+            formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="Held by ${v} sources">${v}</span>` : "1"; } },
           // Excl column hidden here too - same reason as the Search table ().
           { title: "Files", field: "files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Versions", field: "folder_versions", width: 85, hozAlign: "right", sorter: "number",
@@ -251,7 +267,7 @@ const searchPart = {
         while (t && el._tabulator === t && this.active === "search" && this.groupByFolder && this.repo === repo) {
           const row = t.getRows("visible").find((r) => {
             const d = r.getData();
-            return (d.physical == null || d.freeable == null) && this.groupReclaim[this._folderValKey(d.folder, d.loose)] === undefined;
+            return (d.physical == null || d.physical_all == null || d.freeable == null) && this.groupReclaim[this._folderValKey(d.folder, d.loose)] === undefined;
           });
           if (!row) break;
           await this.computeGroupReclaim(row);
@@ -277,6 +293,7 @@ const searchPart = {
         this.groupReclaim[key] = { v: r.freeable ?? 0, p: r.physical_all ?? null, n: r.physical ?? null };
         // The Folders view sorts on the row's own Physical, so it takes the exact value.
         if (d.kind !== "folder" && d.physical == null && r.physical != null) row.update({ physical: r.physical });
+        if (d.kind !== "folder" && d.physical_all == null && r.physical_all != null) row.update({ physical_all: r.physical_all });
       } catch (e) {
         this.groupReclaim[key] = "error";
       }
@@ -346,7 +363,7 @@ const searchPart = {
           { title: "Repo", field: "repo", headerSort: false, width: 90, visible: allRepos, formatter: (c) => (c.getValue() ? this.repoLabel(c.getValue()) : "") },
           H("Path", "full_path", { widthGrow: 5, minWidth: 320, formatter: (c) => {
             const d = c.getRow().getData();
-            return d.kind === "folder" ? this.folderRowLabel(c.getValue(), d) : `📄 ${c.getValue()}`;
+            return d.kind === "folder" ? this.folderRowLabel(c.getValue(), d) : itemIconHtml(c.getValue(), false) + escHtml(c.getValue());
           } }),
           H("Size", "size", { width: 100, headerTooltip: "Logical size. " + termTip("logical"), formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" }),
           H(term("physical"), "physical", { width: 110, headerTooltip: termTip("physical"), hozAlign: "right",
@@ -358,10 +375,10 @@ const searchPart = {
             headerTooltip: "How many sources hold this content. Copies inside one source count once.",
             formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="Held by ${v} sources">${v}</span>` : "1"; } },
           H(term("physicalAll"), "stored_all", { width: 125, hozAlign: "right",
-            headerTooltip: termTip("physicalAll") + " Sorting uses the nightly top list; files outside it come after.",
+            headerTooltip: termTip("physicalAll"),
             formatter: (c) => self.versionCell(c.getRow().getData(), "stored") }, "stored"),
           H(term("reclaimableAll"), "frees_all", { width: 120, hozAlign: "right",
-            headerTooltip: termTip("reclaimableAll") + " Sorting uses the nightly top list; files outside it come after.",
+            headerTooltip: termTip("reclaimableAll"),
             formatter: (c) => self.versionCell(c.getRow().getData(), "frees") }, "frees"),
           H("Ext", "ext", { width: 70, formatter: (c) => (isFolder(c) ? "<span style='color:var(--muted)'>Folder</span>" : c.getValue() || "") }),
           H("Versions", "versions", { width: 80, hozAlign: "right",

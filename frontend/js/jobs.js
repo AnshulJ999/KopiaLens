@@ -15,6 +15,7 @@ const jobsPart = {
         });
       if (!r) return null;
       this.openJobPanel(r.job_id);
+      this.armJobChip();   // a job is running now: poll the header at the busy pace
       return r.job_id;
     },
 
@@ -45,6 +46,15 @@ const jobsPart = {
 
     closeJob() {  // also "Run in background" - the job keeps running; the header chip finds it
       if (this._jobPoll) { clearInterval(this._jobPoll); this._jobPoll = null; }
+      const p = this.jobPanel;
+      if (p && p.state === "running") {
+        // Show its chip at once, and poll at the busy pace, instead of waiting for the idle poll.
+        if (!(this.runningJobs || []).some((j) => j.job_id === p.job_id)) {
+          this.runningJobs = [...(this.runningJobs || []), { job_id: p.job_id, state: "running", label: p.label,
+            kind_label: p.kind_label, done: p.done, total: p.total }];
+        }
+        this.armJobChip();
+      }
       this.showJob = false;
       this.jobPanel = null;
       this.jobLines = [];

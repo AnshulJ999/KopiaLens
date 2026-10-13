@@ -127,7 +127,7 @@ def allows(repo: str | None, need: str | None) -> bool:
 def reason(repo: str | None, need: str | None) -> str:
     """Why an action is refused, for the screens and the 403."""
     return (f"This repository is in {LABELS[mode(repo)]} mode, which doesn't allow this. "
-            f"It needs {LABELS[need]}. Change it in Settings > Write mode.")
+            f"It needs {LABELS[need]}. Change it in Settings > Permissions.")
 
 
 def backups_allowed(repo: str) -> bool:

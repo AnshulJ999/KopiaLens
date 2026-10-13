@@ -151,6 +151,26 @@ body { font-family: var(--font-sans); }
 
 /* Pro: the tag on a locked button (and the header badge), and the notice it opens. */
 .protag { display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: .05em; line-height: 1.3; padding: 1px 5px; border-radius: 5px; color: var(--accent); background: var(--accent-bg); border: 1px solid var(--accent-bd); }
+/* Brand colours: fixed per light/dark, not per theme (they match the website). */
+:root { --logo-main: #0f766e; --logo-mid: #5eaaa2; --logo-accent: #f59e0b; }
+html.dark { --logo-main: #2dd4bf; --logo-mid: #11806f; --logo-accent: #fbbf24; }
+.kl-logo { width: 1.75rem; height: 1.75rem; flex-shrink: 0; margin-right: .4rem; }
+.kl-logo.sm { width: 1.1rem; height: 1.1rem; margin-right: 0; }
+.kl-logo .lm { fill: var(--logo-main); }
+.kl-logo .lms { stroke: var(--logo-main); }
+.kl-logo .lmid { fill: var(--logo-mid); }
+.kl-logo .la { fill: var(--logo-accent); }
+.kl-logo .las { stroke: var(--logo-accent); }
+.kl-logo .lring { fill: none; stroke: var(--logo-main); }
+/* Retention chips by type: KopiaUI's colours (htmlui src/css/Theme.css, light then dark). */
+.pill.rt { color: #fff; }
+.rt-latest { background: #5da745; } .rt-daily { background: #159489; } .rt-weekly { background: #f3712b; }
+.rt-monthly { background: #787a7d; } .rt-annual { background: #c49508; } .rt-other { background: #5b89b4; }
+html.dark .rt-latest { background: #498235; } html.dark .rt-daily { background: #127d74; } html.dark .rt-weekly { background: #c14b0b; }
+html.dark .rt-monthly { background: #6e7072; } html.dark .rt-annual { background: #c49508; } html.dark .rt-other { background: #47729a; }
+/* Icon-only header buttons: the icon sits centred and a little larger than the text. */
+.kl-ibtn { display: inline-flex; align-items: center; justify-content: center; }
+.kl-ibtn .ic { font-size: 1.05rem; }
 .pro-mark { font-size: 9.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; line-height: 1; margin: 3px 0 0 3px; color: var(--ok); cursor: default; }
 .kl-btn.patreon { background: #000; border-color: #000; color: #fff; display: inline-flex; align-items: center; gap: 6px; }
 .kl-btn.patreon:hover:not(:disabled) { background: #222; border-color: #222; }
@@ -193,6 +213,12 @@ body { font-family: var(--font-sans); }
 .kl-selbar { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0 0.25rem 0 0.5625rem; border-radius: var(--r-md);
   background: color-mix(in srgb, var(--link) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--link) 35%, var(--bd)); }
 .kl-selbar > b { font-size: var(--fs-sm); font-weight: 600; margin-right: 4px; white-space: nowrap; }
+/* Floating selection bar (util.js SELBAR_FLOAT): over the bottom of the table, so selecting a row
+   never moves the toolbar or the rows under it. Its menus open upwards. */
+html[data-selbar="float"] .kl-selbar { position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%); z-index: 35;
+  padding: 0.3rem 0.4rem 0.3rem 0.75rem; background: color-mix(in srgb, var(--link) 10%, var(--surface));
+  box-shadow: 0 10px 28px rgba(0,0,0,.22); max-width: calc(100vw - 2rem); flex-wrap: wrap; }
+html[data-selbar="float"] .kl-selbar .kl-menu { top: auto; bottom: calc(100% + 4px); }
 .kl-btn.dangerline { border-color: var(--danger-bd); color: var(--danger); }
 
 /* Small dropdown menu under a toolbar button (Delete ▾, ⋯). */

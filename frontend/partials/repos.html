@@ -13,8 +13,8 @@
                 <div class="rounded-md border border-bd p-3 space-y-2">
                   <div class="flex items-start gap-3">
                     <div class="flex flex-col -my-1">
-                      <button @click="raMove(i, -1)" :disabled="i === 0" class="h-5 w-5 text-muted hover:text-fg disabled:opacity-30" title="Move up" aria-label="Move up">▲</button>
-                      <button @click="raMove(i, 1)" :disabled="i === repos.length - 1" class="h-5 w-5 text-muted hover:text-fg disabled:opacity-30" title="Move down" aria-label="Move down">▼</button>
+                      <button @click="raMove(i, -1)" :disabled="i === 0" class="h-5 w-5 text-muted hover:text-fg disabled:opacity-30" title="Move up" aria-label="Move up"><i class="ic ic-caret-up"></i></button>
+                      <button @click="raMove(i, 1)" :disabled="i === repos.length - 1" class="h-5 w-5 text-muted hover:text-fg disabled:opacity-30" title="Move down" aria-label="Move down"><i class="ic ic-caret-down"></i></button>
                     </div>
                     <div class="min-w-0 flex-1 space-y-0.5">
                       <div class="flex items-center gap-2 flex-wrap">

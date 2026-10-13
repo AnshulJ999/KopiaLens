@@ -31,6 +31,8 @@
             <div class="kl-note" x-show="confirmBox.note" x-text="confirmBox.note"></div>
           </div>
           <div class="kl-footer">
+            <label x-show="confirmBox.dontAsk" class="flex items-center gap-1.5 text-xs text-muted" data-testid="confirm-dont-ask">
+              <input type="checkbox" x-model="confirmBox.dontAskOn">Don't ask again</label>
             <button x-show="confirmBox.command" @click="copyText(confirmBox.command)" class="kl-btn quiet">Copy command</button>
             <span class="spacer"></span>
             <button @click="confirmResolve(false)" class="kl-btn" data-cf="cancel">Cancel</button>
