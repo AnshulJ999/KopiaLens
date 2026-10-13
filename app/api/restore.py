@@ -38,6 +38,7 @@ from ..core.sources import sources_index
 from ..index import entries
 from ..index.holding import _segments, holding_snapshots
 from ..index.queries import versions as file_versions
+from .actions import FULL_LIST_CAP
 
 router = APIRouter(tags=["restore"])
 
@@ -61,6 +62,7 @@ class PlanBody(BaseModel):
     target: str = ""
     options: dict = {}
     preview: bool = True
+    paths_shown: int = PATHS_SHOWN   # different/extra/bad paths listed per item ("Show all" asks for more)
 
 
 class OpenBody(BaseModel):
@@ -218,7 +220,7 @@ def _listing(repo: str, obj: str, kind: str, size: int, mtime: str, bad: list | 
 
 
 def _compare(repo: str, r: dict, target: str, delete_extra: bool, cap: int | None = LIST_CAP,
-             progress: dict | None = None) -> dict:
+             progress: dict | None = None, shown: int = PATHS_SHOWN) -> dict:
     """How the item compares with the destination. Above ``cap`` files the comparison covers the
     first ``cap`` (``capped``) and extra files are not checked (``extra`` None, never 0).
     ``progress`` (a full check) counts listed files and carries the stop flag."""
@@ -249,11 +251,11 @@ def _compare(repo: str, r: dict, target: str, delete_extra: bool, cap: int | Non
             out["identical"] += 1
         else:
             out["different"] += 1
-            if len(out["different_paths"]) < PATHS_SHOWN:
+            if len(out["different_paths"]) < shown:
                 out["different_paths"].append(path)
     out["capped"] = cap is not None and out["listed"] >= cap
     out["bad_names"] = len(bad)
-    out["bad_paths"] = bad[:PATHS_SHOWN]
+    out["bad_paths"] = bad[:shown]
     if delete_extra and out["capped"]:
         out["extra"] = None             # not checked: the listing stopped at the cap
     elif delete_extra and r["type"] == "d" and os.path.isdir(target):
@@ -264,7 +266,7 @@ def _compare(repo: str, r: dict, target: str, delete_extra: bool, cap: int | Non
                 p = os.path.join(root, f)
                 if os.path.normcase(p) not in wanted:
                     out["extra"] += 1
-                    if len(out["extra_paths"]) < PATHS_SHOWN:
+                    if len(out["extra_paths"]) < shown:
                         out["extra_paths"].append(p)
     return out
 
@@ -306,7 +308,7 @@ def _plan(body: PlanBody, cap: int | None = LIST_CAP, progress: dict | None = No
                "target": target, "target_exists": os.path.exists(target)}
         if body.preview:
             row.update(_compare(body.repo, r, target, bool(body.options.get("delete_extra")),
-                                cap=cap, progress=progress))
+                                cap=cap, progress=progress, shown=min(max(body.paths_shown, 1), FULL_LIST_CAP)))
         items.append(row)
     totals = {k: sum(i.get(k) or 0 for i in items)
               for k in ("files", "size", "new", "identical", "different", "extra", "bad_names")}

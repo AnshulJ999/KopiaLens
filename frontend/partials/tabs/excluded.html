@@ -15,7 +15,7 @@
           <span x-show="!excludedOk" class="text-xs text-danger font-medium" x-text="diskLookupText() || 'Disk lookup is not available.'"></span>
           <span x-show="excludedOk && diskLookup && diskLookup.provider === 'scan'" class="text-xs text-muted" title="Without Everything, big folders can show their size as not measured">Folder scan</span>
           <span class="text-xs text-muted" x-text="excludedMeta"></span>
-          <span class="kl-help" tabindex="0" title="Not backed up means on disk but in no latest snapshot of any repository. Local fixed drives only. Sizes come from the disk lookup in Settings.">?</span>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('excluded')" @keydown.enter.prevent="openDocs('excluded')" title="Not backed up means on disk but in no latest snapshot of any repository. Local fixed drives only. Sizes come from the disk lookup in Settings.">?</span>
         </div>
         <div id="excludedTable" class="flex-1 min-h-0"></div>
       </section>

@@ -26,7 +26,8 @@
               </select>
             </span>
           </template>
-          <button @click="loadLogs()" class="ml-auto h-7 rounded border border-bd px-2 text-xs flex items-center gap-1"><i class="ic ic-refresh"></i>Refresh</button>
+          <span class="ml-auto"><span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('logs')" @keydown.enter.prevent="openDocs('logs')" title="What KopiaLens did: changes it made, jobs, index runs and its own log.">?</span></span>
+          <button @click="loadLogs()" class="h-7 rounded border border-bd px-2 text-xs flex items-center gap-1"><i class="ic ic-refresh"></i>Refresh</button>
         </div>
         <span class="kl-note -mt-1" x-show="logsTab === 'audit'">Every action KopiaLens executes or hands out, across all repos. Never trimmed.</span>
         <span class="kl-note -mt-1" x-show="logsTab === 'activity'">Past jobs - deletes, restores, dry runs. Kept on disk, so history survives a restart.</span>

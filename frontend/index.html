@@ -19,6 +19,7 @@
   <script defer src="/static/vendor/alpine-3.17.4.min.js"></script>
   <link href="/static/vendor/tabulator-6.6.1.simple.min.css" rel="stylesheet">
   <script src="/static/vendor/tabulator-6.6.1.min.js"></script>
+  <script src="/static/vendor/marked-18.0.14.min.js"></script>
   <link href="/static/css/tokens.css?v={{ asset_v }}" rel="stylesheet">
   <link href="/static/css/app.css?v={{ asset_v }}" rel="stylesheet">
   <link href="/static/css/icons.css?v={{ asset_v }}" rel="stylesheet">
@@ -115,6 +116,7 @@
 {% include "partials/indexpanel.html" %}
 {% include "partials/help.html" %}
 {% include "partials/fulllist.html" %}
+{% include "partials/docs.html" %}
   </div>
   <script>window.KL_OS_FORMATS = {{ os_formats }};</script>
   <script src="/static/js/util.js?v={{ asset_v }}"></script>
@@ -167,6 +169,7 @@
   <script src="/static/js/notify.js?v={{ asset_v }}"></script>
   <script src="/static/js/writemode.js?v={{ asset_v }}"></script>
   <script src="/static/js/fulllist.js?v={{ asset_v }}"></script>
+  <script src="/static/js/docs.js?v={{ asset_v }}"></script>
   <script src="/static/js/app.js?v={{ asset_v }}"></script>
 </body>
 </html>

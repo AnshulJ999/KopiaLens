@@ -218,6 +218,33 @@ const actionsPart = {
         if (seq === this._restoreSeq && this.restore) r.loading = false;
       }
     },
+    // The preview lists the first 200 paths per item for each of these; "Show all" asks for every one.
+    _restoreList(k) {
+      return { different: ["different_paths", "different"], extra: ["extra_paths", "extra"], bad: ["bad_paths", "bad_names"] }[k];
+    },
+    restoreListLen(k) {
+      const plan = this.restore && this.restore.plan;
+      return plan ? plan.items.reduce((n, i) => n + (i[this._restoreList(k)[0]] || []).length, 0) : 0;
+    },
+    restoreListTotal(k) {
+      const plan = this.restore && this.restore.plan;
+      return plan ? Number(plan.totals[this._restoreList(k)[1]] || 0) : 0;
+    },
+    restoreListCut(k) { return this.restoreListTotal(k) > this.restoreListLen(k); },
+    restoreShowPaths(k) {
+      const r = this.restore;
+      if (!r || !r.plan) return;
+      const body = JSON.stringify({ repo: this.repo, items: r.items, target_mode: r.mode, target: r.target, options: r.options,
+        preview: true, paths_shown: 1000000 });
+      const titles = { different: r.options.overwrite_files ? "Replaced" : "Different on disk (kept)", extra: "Deleted from the destination", bad: "Names this computer can't use" };
+      this.openFullList({
+        title: titles[k], name: "restore-" + k, columns: [["path", "Path"]],
+        load: async () => {
+          const plan = await getJson("/api/restore/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body });
+          return plan.items.flatMap((i) => (i[this._restoreList(k)[0]] || []).map((path) => ({ path })));
+        },
+      });
+    },
     async restoreResolveOnly() {  // item facts before a destination is chosen
       const r = this.restore;
       const seq = ++this._restoreSeq;

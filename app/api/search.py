@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import REPOS, repo_kind
+from .actions import FULL_LIST_CAP
 from .errors import PASS_THROUGH
 from ..core import paths as pathrules
 from ..index import foldercache
@@ -429,12 +430,13 @@ def file_versions(repo: str, source: str | None = None, full_path: str | None = 
 
 
 @router.get("/search/detail")
-def detail(repo: str, source: str | None = None, full_path: str | None = None) -> dict:
-    """Accurate per-file footprint: logical/physical/freeable + dedup chunks + shared paths."""
+def detail(repo: str, source: str | None = None, full_path: str | None = None, others_cap: int = 500) -> dict:
+    """Accurate per-file footprint: logical/physical/freeable + dedup chunks + shared paths
+    (the first ``others_cap``; the panel's "Show all" asks for every one)."""
     if not source or not full_path:
         raise HTTPException(status_code=400, detail="source and full_path are required")
     try:
-        return file_detail(repo, source, full_path)
+        return file_detail(repo, source, full_path, others_cap=max(1, min(others_cap, FULL_LIST_CAP)))
     except PASS_THROUGH:
         raise                       # let the dedicated 503 handler explain it
     except Exception as exc:

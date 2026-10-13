@@ -63,6 +63,7 @@ const settingsPart = {
         this.loadAccount();
         this.raLoad();
         this.panelLayout = kl.panel_layout === "tabbed" ? "tabbed" : "classic";  //
+        this.docsView = kl.docs_view === "side" ? "side" : "popup";
         this._readAdvanced(kl);
         this._readBackblaze(data.settings?.backblaze || {});
         this.loadCfg();

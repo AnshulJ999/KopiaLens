@@ -222,7 +222,9 @@
                   <div class="kl-callout" x-text="'Matching by file name also removes ' + countOf(removePlan.filename_extra_count, 'other file') + ' with the same names, outside this selection' + (removePlan.everywhere ? ', across the whole repository.' : '.')"></div>
                   <details class="mt-1">
                     <summary class="text-xs text-muted cursor-pointer select-none"
-                             x-text="'Other same-named files' + (removePlan.filename_extra_capped ? ' (first ' + (removePlan.filename_extra || []).length + ' of ' + Number(removePlan.filename_extra_count).toLocaleString(NUM_LOCALE) + ')' : ' (' + (removePlan.filename_extra || []).length + ')')"></summary>
+                             ><span x-text="'Other same-named files' + (removePlan.filename_extra_capped ? ' (first ' + (removePlan.filename_extra || []).length + ' of ' + Number(removePlan.filename_extra_count).toLocaleString(NUM_LOCALE) + ')' : ' (' + (removePlan.filename_extra || []).length + ')')"></span>
+                      <button class="kl-btn quiet ml-2" style="height:22px" x-show="removePlan.filename_extra_capped" @click.prevent="removeShowExtra('filename')"
+                              x-text="'Show all ' + Number(removePlan.filename_extra_count).toLocaleString(NUM_LOCALE)"></button></summary>
                     <div class="kl-list mt-1" style="max-height:160px">
                       <template x-for="(f, i) in (removePlan.filename_extra || [])" :key="i">
                         <div class="li">
@@ -240,7 +242,9 @@
                   <div class="kl-callout" x-text="'Matching by exact content also removes ' + countOf(removePlan.content_extra_count, 'identical copy', 'identical copies') + ' at other paths, outside this selection' + (removePlan.everywhere ? ', across the whole repository.' : '.')"></div>
                   <details class="mt-1">
                     <summary class="text-xs text-muted cursor-pointer select-none"
-                             x-text="'Identical copies' + (removePlan.content_extra_capped ? ' (first ' + (removePlan.content_extra || []).length + ' of ' + Number(removePlan.content_extra_count).toLocaleString(NUM_LOCALE) + ')' : ' (' + (removePlan.content_extra || []).length + ')')"></summary>
+                             ><span x-text="'Identical copies' + (removePlan.content_extra_capped ? ' (first ' + (removePlan.content_extra || []).length + ' of ' + Number(removePlan.content_extra_count).toLocaleString(NUM_LOCALE) + ')' : ' (' + (removePlan.content_extra || []).length + ')')"></span>
+                      <button class="kl-btn quiet ml-2" style="height:22px" x-show="removePlan.content_extra_capped" @click.prevent="removeShowExtra('content')"
+                              x-text="'Show all ' + Number(removePlan.content_extra_count).toLocaleString(NUM_LOCALE)"></button></summary>
                     <div class="kl-list mt-1" style="max-height:160px">
                       <template x-for="(f, i) in (removePlan.content_extra || [])" :key="i">
                         <div class="li">
@@ -469,7 +473,10 @@
                 </div>
                 <template x-if="restore.plan.items.some((i) => (i.different_paths || []).length)">
                   <div class="kl-sec">
-                    <div class="h" x-text="restore.options.overwrite_files ? 'Replaced' : 'Different on disk (kept)'"></div>
+                    <div class="h"><span x-text="restore.options.overwrite_files ? 'Replaced' : 'Different on disk (kept)'"></span>
+                      <span class="count" x-show="restoreListCut('different')" x-text="'first ' + restoreListLen('different').toLocaleString(NUM_LOCALE) + ' listed'"></span>
+                      <span class="acts"><button class="kl-btn quiet" style="height:22px" x-show="restoreListCut('different')" @click="restoreShowPaths('different')"
+                        x-text="'Show all ' + restoreListTotal('different').toLocaleString(NUM_LOCALE)"></button></span></div>
                     <div class="kl-list" style="max-height:150px">
                       <template x-for="(p, i) in restore.plan.items.flatMap((it) => it.different_paths || [])" :key="'d' + i">
                         <div class="li"><span class="font-mono break-all" x-text="p"></span></div>
@@ -479,7 +486,10 @@
                 </template>
                 <template x-if="restore.plan.totals.bad_names">
                   <div class="kl-sec">
-                    <div class="h" x-text="countOf(restore.plan.totals.bad_names, 'name') + ' this computer can\'t use'"></div>
+                    <div class="h"><span x-text="countOf(restore.plan.totals.bad_names, 'name') + ' this computer can\'t use'"></span>
+                      <span class="count" x-show="restoreListCut('bad')" x-text="'first ' + restoreListLen('bad').toLocaleString(NUM_LOCALE) + ' listed'"></span>
+                      <span class="acts"><button class="kl-btn quiet" style="height:22px" x-show="restoreListCut('bad')" @click="restoreShowPaths('bad')"
+                        x-text="'Show all ' + restoreListTotal('bad').toLocaleString(NUM_LOCALE)"></button></span></div>
                     <div class="kl-note">Restoring may stop at these. Tick Continue on errors to skip them.</div>
                     <div class="kl-list" style="max-height:150px">
                       <template x-for="(p, i) in restore.plan.items.flatMap((it) => it.bad_paths || [])" :key="'b' + i">
@@ -490,7 +500,10 @@
                 </template>
                 <template x-if="restore.options.delete_extra && restore.plan.items.some((i) => (i.extra_paths || []).length)">
                   <div class="kl-sec">
-                    <div class="h">Deleted from the destination</div>
+                    <div class="h">Deleted from the destination
+                      <span class="count" x-show="restoreListCut('extra')" x-text="'first ' + restoreListLen('extra').toLocaleString(NUM_LOCALE) + ' listed'"></span>
+                      <span class="acts"><button class="kl-btn quiet" style="height:22px" x-show="restoreListCut('extra')" @click="restoreShowPaths('extra')"
+                        x-text="'Show all ' + restoreListTotal('extra').toLocaleString(NUM_LOCALE)"></button></span></div>
                     <div class="kl-list" style="max-height:150px">
                       <template x-for="(p, i) in restore.plan.items.flatMap((it) => it.extra_paths || [])" :key="'x' + i">
                         <div class="li"><span class="font-mono break-all" x-text="p"></span></div>

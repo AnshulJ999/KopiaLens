@@ -28,23 +28,52 @@ pub enum Health {
     Error,
 }
 
-/// The tray icon choices (Settings > Desktop app), 64x64 RGBA built by packaging/build_logos.py.
-fn icon(name: &str) -> Image<'static> {
-    let px: &'static [u8] = match name {
-        "orig7" => include_bytes!("../icons/tray/orig7.rgba"),
-        "k3a" => include_bytes!("../icons/tray/k3a.rgba"),
-        "mono" => include_bytes!("../icons/tray/mono.rgba"),
-        "q1" => include_bytes!("../icons/tray/q1.rgba"),
-        "s3" => include_bytes!("../icons/tray/s3.rgba"),
-        "r4" => include_bytes!("../icons/tray/r4.rgba"),
-        "slice" => include_bytes!("../icons/tray/slice.rgba"),
-        "old" => include_bytes!("../icons/tray/old.rgba"),
-        _ => include_bytes!("../icons/tray/k6.rgba"),
-    };
+/// The tray icon choices (Settings > Desktop app), 64x64 RGBA built by packaging/build_logos.py,
+/// each in a dark-taskbar and a light-taskbar (`-light`) version.
+fn icon(name: &str, light: bool) -> Image<'static> {
+    macro_rules! pick {
+        ($($id:literal),*) => {
+            match (name, light) {
+                $(
+                    ($id, false) => include_bytes!(concat!("../icons/tray/", $id, ".rgba")),
+                    ($id, true) => include_bytes!(concat!("../icons/tray/", $id, "-light.rgba")),
+                )*
+                (_, true) => include_bytes!("../icons/tray/k6-light.rgba"),
+                _ => include_bytes!("../icons/tray/k6.rgba"),
+            }
+        };
+    }
+    let px: &'static [u8] = pick!("k6", "orig7", "k3a", "mono", "q1", "s3", "r4", "slice", "old");
     Image::new(px, 64, 64)
 }
 
-/// The tray icon shown now, so a changed choice is applied once.
+/// Whether the taskbar (Windows) or the system appearance (elsewhere) is light.
+#[cfg(windows)]
+fn light_taskbar(_app: &AppHandle) -> bool {
+    use winreg::enums::HKEY_CURRENT_USER;
+    winreg::RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize")
+        .and_then(|k| k.get_value::<u32, _>("SystemUsesLightTheme"))
+        .map(|v| v == 1)
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn light_taskbar(app: &AppHandle) -> bool {
+    app.webview_windows()
+        .values()
+        .next()
+        .and_then(|w| w.theme().ok())
+        .map(|t| t == tauri::Theme::Light)
+        .unwrap_or(false)
+}
+
+/// macOS tints a template icon to match its menu bar; only the one-colour choice suits that.
+fn as_template(choice: &str) -> bool {
+    cfg!(target_os = "macos") && choice == "mono"
+}
+
+/// The tray icon shown now (choice + light/dark), so a change is applied once.
 static ICON_SHOWN: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
 fn now() -> f64 {
@@ -319,9 +348,11 @@ pub fn create(app: &AppHandle, shell: &Arc<Shell>) -> tauri::Result<()> {
     let menu = build_menu(app, h, state.as_ref())?;
     drop(app.remove_tray_by_id(TRAY_ID));
     let choice = pref(state.as_ref(), "tray_icon", "k6");
-    *ICON_SHOWN.lock().unwrap() = choice.clone();
+    let light = light_taskbar(app);
+    *ICON_SHOWN.lock().unwrap() = format!("{choice}|{light}");
     TrayIconBuilder::with_id(TRAY_ID)
-        .icon(icon(&choice))
+        .icon(icon(&choice, light))
+        .icon_as_template(as_template(&choice))
         .tooltip(tooltip(h, state.as_ref()))
         .menu(&menu)
         .show_menu_on_left_click(click == "menu")
@@ -363,11 +394,14 @@ pub fn refresh(app: &AppHandle, shell: &Arc<Shell>, h: Health) {
     }
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
     let choice = pref(state.as_ref(), "tray_icon", "k6");
+    let light = light_taskbar(app);
     {
+        let key = format!("{choice}|{light}");
         let mut shown = ICON_SHOWN.lock().unwrap();
-        if *shown != choice {
-            let _ = tray.set_icon(Some(icon(&choice)));
-            *shown = choice;
+        if *shown != key {
+            let _ = tray.set_icon(Some(icon(&choice, light)));
+            let _ = tray.set_icon_as_template(as_template(&choice));
+            *shown = key;
         }
     }
     let tip = tooltip(h, state.as_ref());

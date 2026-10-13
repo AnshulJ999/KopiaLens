@@ -23,12 +23,11 @@ from ..index.physical import batch_detail, copies_outside, price_objects
 from ..index.queries import (holders_for_paths, paths_for_contents, paths_named,
                              sources_for_content, versions_many)
 from ..licensing import features
-from .actions import _fmt_cmd
+from .actions import FULL_LIST_CAP, _fmt_cmd
 
 router = APIRouter(tags=["delete"])
 
 LIST_CAP = 500
-FULL_LIST_CAP = 1_000_000   # the most "Show all" lists
 COPIES_CAP = 20000   # copy paths resolved for a snapshot delete; beyond this the plan refuses to run
 PRICE_CAP = 200_000  # same-named files priced for a by-name removal
 

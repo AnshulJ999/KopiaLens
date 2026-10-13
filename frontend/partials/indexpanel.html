@@ -8,6 +8,7 @@
             <div class="font-semibold flex items-center gap-2">
               <span x-text="(ixs().building ? 'Indexing ' : 'Index · ') + repoLabel(indexLogRepo || repo)"></span>
               <span x-show="ixs().building" class="w-2 h-2 rounded-full bg-warn animate-pulse"></span>
+              <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('indexing')" @keydown.enter.prevent="openDocs('indexing')" title="How indexing works">?</span>
             </div>
             <div class="text-xs text-muted break-words" x-text="indexDetailText() || ixs().stage || ''"></div>
           </div>
@@ -28,7 +29,7 @@
             </template>
             <span x-show="indexEtaText()" x-text="indexEtaText()"></span>
           </div>
-          <div x-show="ixs().building && ixs().never_indexed" class="kl-note" data-testid="index-first-note" title="If it stops, the next run continues from where it was.">A first index can take hours. Closing this panel doesn't stop it.</div>
+          <div x-show="ixs().building && ixs().never_indexed" class="kl-note" data-testid="index-first-note">A first index can take hours. Closing this panel doesn't stop it. <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('indexing', 'first-index')" @keydown.enter.prevent="openDocs('indexing', 'first-index')" title="If it stops, the next run continues from where it was.">?</span></div>
           <div x-show="indexQueuedText()" class="text-xs text-muted" x-text="'Next in the queue: ' + indexQueuedText()"></div>
           <div x-show="ixs().error" class="text-xs text-danger break-all" x-text="ixs().error"></div>
         </div>

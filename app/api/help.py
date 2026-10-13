@@ -1,14 +1,57 @@
-"""Help menu: links, update status, what the usage stats send, and the diagnostics bundle."""
+"""Help menu: links, update status, what the usage stats send, the diagnostics bundle, and the
+user docs for the in-app docs browser."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
-from fastapi.responses import Response
+import re
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse, Response
 
 from config import APP_VERSION, DISCORD_URL, DOCS_URL, REPO_URL, SUPPORT_EMAIL
 
 from ..core import checkin, diagnostics, netaccess
 
 router = APIRouter(tags=["help"])
+
+DOCS = Path(__file__).resolve().parents[2] / "docs"
+_INDEX_LINK = re.compile(r"^\s*-\s*\[[^\]]+\]\(([^)#]+\.md)")
+
+
+@router.get("/help/docs")
+def docs() -> dict:
+    """Every page of the user docs, grouped the way docs/README.md lists them (unlisted pages last)."""
+    pages = {}
+    for f in sorted(DOCS.glob("*.md")):
+        text = f.read_text(encoding="utf-8")
+        title = next((ln[2:].strip() for ln in text.splitlines() if ln.startswith("# ")), f.stem)
+        pages[f.stem] = {"title": title, "md": text}
+    groups: list[dict] = []
+    listed: set[str] = set()
+    for line in pages.get("README", {}).get("md", "").splitlines():
+        if line.startswith("## "):
+            groups.append({"title": line[3:].strip(), "pages": []})
+        elif groups and (m := _INDEX_LINK.match(line)):
+            slug = Path(m.group(1)).stem
+            if slug in pages and slug not in listed:
+                groups[-1]["pages"].append(slug)
+                listed.add(slug)
+    rest = [s for s in pages if s != "README" and s not in listed]
+    if rest:
+        groups.append({"title": "More", "pages": rest})
+    # Images and other files the pages may link to; a screenshot not in this list shows as a placeholder.
+    files = sorted(p.relative_to(DOCS).as_posix() for p in DOCS.rglob("*") if p.is_file() and p.suffix != ".md")
+    return {"pages": pages, "groups": [g for g in groups if g["pages"]], "files": files}
+
+
+@router.get("/help/docs/file")
+def docs_file(path: str) -> FileResponse:
+    """An image (or other file) a docs page links to, from inside the docs folder only."""
+    root = DOCS.resolve()
+    target = (root / path).resolve()
+    if root not in target.parents or not target.is_file():
+        raise HTTPException(status_code=404, detail="not found")
+    return FileResponse(target)
 
 
 @router.get("/help/info")

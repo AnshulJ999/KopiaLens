@@ -195,6 +195,20 @@ const detailPart = {
         ] : []),
       ];
     },
+    // Every identical copy in the full-list popup (the panel lists the first 500).
+    detailShowCopies() {
+      const d = this.detail;
+      if (!d || d.kind !== "file") return;
+      const q = `repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(d.source)}&full_path=${encodeURIComponent(d.title)}&others_cap=1000000`;
+      this.openFullList({
+        title: "Identical copies", name: "identical-copies",
+        columns: [["source", "Source"], ["full_path", "Path"]],
+        load: async () => {
+          const r = await getJson(`/api/search/detail?${q}`);
+          return (r.other_paths || []).map((o) => ({ source: this.shortSource(o.source), full_path: o.full_path }));
+        },
+      });
+    },
     // Identical copies at OTHER paths. The same path held by nested backups is not a copy.
     copyCount() {
       const d = this.detail;
@@ -555,6 +569,21 @@ const detailPart = {
       this.removePlan.loading = false;
       // Auto-compute freeable/shared (like the file panel) unless the set is huge (avoid a long walk).
       if (r && (r.file_count || 0) <= 200000) this.removeComputeReclaim();
+    },
+    // Every same-named file / identical copy outside the plan, in the full-list popup.
+    removeShowExtra(kind) {
+      if (!this.removePlan) return;
+      const body = JSON.stringify({ ...this._removeBody(), extra_cap: 1000000 });
+      const byName = kind === "filename";
+      this.openFullList({
+        title: byName ? "Other same-named files" : "Identical copies", name: byName ? "same-named-files" : "identical-copies",
+        columns: [["full_path", "Path"], ["sources_text", "Sources"], ["on_disk", "On disk"], ["size", "Size", "bytes"]],
+        load: async () => {
+          const r = await getJson("/api/actions/remove-plan", { method: "POST", headers: { "Content-Type": "application/json" }, body });
+          return ((byName ? r.filename_extra : r.content_extra) || []).map((f) => ({ full_path: f.full_path,
+            sources_text: this.fileSources(f), on_disk: f.in_latest === false ? "deleted" : "yes", size: f.size }));
+        },
+      });
     },
     toggleRemoveAllVersions() { if (this.removePlan) { this.removePlan.all_versions = !this.removePlan.all_versions; this.klDryClear(this.removePlan.dry); this._fetchRemovePlan(); } },
     toggleRemoveEverywhere() { if (this.removePlan) { this.removePlan.everywhere = !this.removePlan.everywhere; this.klDryClear(this.removePlan.dry); this._fetchRemovePlan(); } },

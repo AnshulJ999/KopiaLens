@@ -20,7 +20,7 @@
             </select></label>
           <span class="grow"></span>
           <span class="text-xs text-muted" x-text="churnMeta"></span>
-          <span class="kl-help" tabindex="0" title="Churn shows what keeps adding new data to your backups in the chosen window. Files rewritten again and again are often worth excluding.">?</span>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('churn')" @keydown.enter.prevent="openDocs('churn')" title="Churn shows what keeps adding new data to your backups in the chosen window. Files rewritten again and again are often worth excluding.">?</span>
           <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
             <button class="kl-btn icon" @click="open = !open" title="More" aria-label="More"><i class="ic ic-more"></i></button>
             <div class="kl-menu" x-show="open" x-cloak>

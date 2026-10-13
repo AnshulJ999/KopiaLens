@@ -5,6 +5,7 @@
         <div class="w-[36rem] max-w-full max-h-[88vh] flex flex-col rounded-lg border border-bd bg-surface shadow-xl text-sm">
           <div class="flex items-center gap-2 shrink-0 border-b border-bd px-4 py-3">
             <div class="font-medium" x-text="'Who runs backups for ' + repoName(engineDlg.repo) + '?'"></div>
+            <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('backups', 'who-runs-backups')" @keydown.enter.prevent="openDocs('backups', 'who-runs-backups')" title="Who runs backups">?</span>
             <button @click="engineDlg = null" class="ml-auto text-muted text-lg leading-none" aria-label="Close">&times;</button>
           </div>
           <div class="min-h-0 flex-1 overflow-y-auto p-4 space-y-3">

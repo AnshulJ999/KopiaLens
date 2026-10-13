@@ -24,7 +24,7 @@
           </select>
           <span class="grow"></span>
           <span class="text-xs text-muted" x-show="dashboardMeta" title="Everything this repository stores, with shared data counted once">Repository holds <b class="text-fg font-medium" x-text="dashboardMeta"></b></span>
-          <span class="kl-help" tabindex="0" title="Double-click a row to see its snapshots. Right-click a row for more; right-click a column header to show or hide columns.">?</span>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('dashboard')" @keydown.enter.prevent="openDocs('dashboard')" title="Double-click a row to see its snapshots. Right-click a row for more; right-click a column header to show or hide columns.">?</span>
           <button class="kl-btn icon" @click="refreshDashboard()" title="Read new snapshots from kopia and recompute these numbers" aria-label="Refresh the Dashboard" data-testid="dashboard-refresh"><i class="ic ic-refresh"></i></button>
           <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
             <button class="kl-btn icon" @click="open = !open" title="More" aria-label="More"><i class="ic ic-more"></i></button>

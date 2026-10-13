@@ -907,7 +907,7 @@ def _price_file(repo: str, source: str, full_path: str):
         objrefs=objrefs, freed=freed, sizes=_sizes_for(repo, union_chunks))
 
 
-def file_detail(repo: str, source: str, full_path: str) -> dict:
+def file_detail(repo: str, source: str, full_path: str, others_cap: int = 500) -> dict:
     """Accurate per-file footprint: logical/physical/freeable + dedup chunk breakdown +
     other paths sharing the same content object.
 
@@ -948,8 +948,8 @@ def file_detail(repo: str, source: str, full_path: str) -> dict:
                 "SELECT DISTINCT s.source, p.full_path FROM filev f "
                 "JOIN pathx p ON p.path_id = f.path_id "
                 "JOIN src s ON s.src_id = p.src_id "
-                "WHERE f.cid_id=? LIMIT 500",
-                [latest_cid],
+                "WHERE f.cid_id=? LIMIT ?",
+                [latest_cid, others_cap],
             ).fetchall()
             # The list is capped; the counts are not (every empty file shares one content).
             n_files, n_src = cur.execute(

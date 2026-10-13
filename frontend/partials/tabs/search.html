@@ -75,7 +75,7 @@
           <label>Min GB <input type="number" min="0" step="0.1" x-model.number="groupMinGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>
           <label>Min files <input type="number" min="0" x-model.number="groupMinFiles" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>
           <label class="cursor-pointer" title="A folder above Max depth that also has subfolders gets a row for the files lying directly in it"><input type="checkbox" :checked="groupLoose" @change="toggleGroupLoose()"> Loose files as their own rows</label>
-          <span class="kl-help" tabindex="0" title="Folders ranked by physical size. Double-click a folder to open it; right-click to see its files or delete it.">?</span>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('search')" @keydown.enter.prevent="openDocs('search')" title="Folders ranked by physical size. Double-click a folder to open it; right-click to see its files or delete it.">?</span>
         </div>
         <div x-show="!groupByFolder && searchEmpty" class="flex flex-wrap items-center gap-2 text-sm text-muted">
           <span x-text="searchEmptyText()"></span>

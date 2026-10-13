@@ -4,9 +4,10 @@ Writes:
   frontend/logos/<id>.svg          browser tab icons for the header logo choices (light and dark aware)
   frontend/logos/tray/<id>.png     previews of the tray icon choices (Settings > Desktop app)
   shell/src-tauri/icons/tray/<id>.rgba   the tray icons themselves, 64x64 raw RGBA, read by tray.rs
+                                         (<id>-light.rgba for a light taskbar)
 
 Shapes come from the logo mockups and the website.
-Tray icons use the dark-taskbar colours. Rendering needs Playwright's Chromium and Pillow.
+Rendering needs Playwright's Chromium and Pillow.
 
     python packaging/build_logos.py
 """
@@ -68,7 +69,11 @@ MARKS = {
 OLD = ('<rect width="64" height="64" fill="#fafaf9"/><circle cx="32" cy="32" r="24" fill="#0f766e"/>'
        '<circle cx="32" cy="32" r="10" fill="#fafaf9"/><rect x="42" y="42" width="16" height="8" fill="#0f766e"/>')
 
+MONO_LIGHT = {"m": "#18181b", "mid": "#18181b", "a": "#18181b"}
+
 TRAY = {**{k: (v, DARK) for k, v in MARKS.items()}, "mono": (K6, MONO), "old": (OLD, DARK)}
+# Light taskbar versions (`<id>-light`), picked by tray.rs when the taskbar is light.
+TRAY_LIGHT = {**{k: (v, LIGHT) for k, v in MARKS.items()}, "mono": (K6, MONO_LIGHT), "old": (OLD, DARK)}
 
 
 def _vars(p: dict) -> str:
@@ -94,15 +99,17 @@ def main() -> None:
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         page = browser.new_page(viewport={"width": SIZE, "height": SIZE})
-        for key, (inner, palette) in TRAY.items():
-            svg = _svg(inner, palette).replace("<svg ", f'<svg width="{SIZE}" height="{SIZE}" ', 1)
-            page.set_content(f'<html><body style="margin:0;background:transparent">{svg}</body></html>')
-            png = page.locator("svg").screenshot(omit_background=True)
-            img = Image.open(io.BytesIO(png)).convert("RGBA").resize((SIZE, SIZE))
-            img.save(TRAY_PNG / f"{key}.png")
-            (TRAY_RGBA / f"{key}.rgba").write_bytes(img.tobytes())
+        sets = [(TRAY, ""), (TRAY_LIGHT, "-light")]
+        for icons, suffix in sets:
+            for key, (inner, palette) in icons.items():
+                svg = _svg(inner, palette).replace("<svg ", f'<svg width="{SIZE}" height="{SIZE}" ', 1)
+                page.set_content(f'<html><body style="margin:0;background:transparent">{svg}</body></html>')
+                png = page.locator("svg").screenshot(omit_background=True)
+                img = Image.open(io.BytesIO(png)).convert("RGBA").resize((SIZE, SIZE))
+                img.save(TRAY_PNG / f"{key}{suffix}.png")
+                (TRAY_RGBA / f"{key}{suffix}.rgba").write_bytes(img.tobytes())
         browser.close()
-    print(f"{len(TRAY)} tray icons, 3 tab icons")
+    print(f"{len(TRAY)} tray icons (dark and light taskbar), 3 tab icons")
 
 
 if __name__ == "__main__":

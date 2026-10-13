@@ -30,6 +30,7 @@
           <button @click="polOpenNew()" class="h-7 rounded border border-bd px-2 text-xs" x-show="polData && !polMulti.on">New policy…</button>
           <button @click="openNewSnap(newSnapBack); newSnapBack = ''" class="h-7 rounded border border-accent text-accent px-2 text-xs" x-show="newSnapBack" x-cloak>Back to New snapshot</button>
           <button @click="polMultiToggle()" class="h-7 rounded border border-bd px-2 text-xs" :class="polMulti.on ? 'bg-sel' : ''" x-text="polMulti.on ? 'Editing several' : 'Edit several…'"></button>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('policies')" @keydown.enter.prevent="openDocs('policies')" title="Kopia&#39;s rules for each folder: schedule, retention, exclusions and more.">?</span>
           <button @click="loadPolicies(true)" class="h-7 rounded border border-bd px-2 text-xs">Refresh</button>
           <button @click="polOpenBackups()" class="h-7 rounded border border-bd px-2 text-xs">Backups…</button>
           <button x-show="polStageCount()" @click="polDiscardAsk()" class="h-7 rounded border border-bd px-2 text-xs">Discard</button>

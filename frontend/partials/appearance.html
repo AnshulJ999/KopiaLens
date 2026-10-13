@@ -61,6 +61,13 @@
     <p class="text-[0.6875rem] text-muted mt-1">Applies to the file and folder detail panels. Classic shows every section in order; Tabbed keeps the summary cards on screen and groups the rest under Overview / Storage / Versions / Actions.</p>
   </div>
   <div>
+    <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Documentation opens as</span>
+      <select x-model="docsView" @change="klSet({ docs_view: docsView })" class="fld border border-bd bg-surface2">
+        <option value="popup">A popup</option>
+        <option value="side">A side panel</option>
+      </select></div>
+  </div>
+  <div>
     <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Policy editor layout</span>
       <select x-model="polLayout" @change="klSet({ policy_layout: polLayout })" class="fld border border-bd bg-surface2">
         <option value="tabs">Tabs - one section at a time</option>

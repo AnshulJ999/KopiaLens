@@ -247,6 +247,31 @@ html[data-selbar="float"] .kl-selbar .kl-menu { top: auto; bottom: calc(100% + 4
   font-size: 0.625rem; font-weight: 600; line-height: 1; color: var(--muted); border: 1px solid var(--bd); background: var(--surface);
   cursor: help; vertical-align: super; margin-left: 2px; }
 .kl-help:hover, .kl-help:focus-visible { color: var(--fg); border-color: var(--fg); outline: none; }
+.kl-help[data-doc] { cursor: pointer; }
+
+/* Documentation pages (docs.js renders docs/*.md here). */
+.kl-doc { font-size: var(--fs-md); line-height: 1.65; color: var(--fg); }
+.kl-doc > * { max-width: 52rem; }
+.kl-doc > * + * { margin-top: 0.75em; }
+.kl-doc h1 { font-size: 1.5em; font-weight: 600; margin-bottom: 0.5em; }
+.kl-doc h2 { font-size: 1.2em; font-weight: 600; margin-top: 1.6em; padding-bottom: 0.25em; border-bottom: 1px solid var(--bd-soft); }
+.kl-doc h3 { font-size: 1.05em; font-weight: 600; margin-top: 1.3em; }
+.kl-doc h1, .kl-doc h2, .kl-doc h3 { scroll-margin-top: 0.75rem; }
+.kl-doc a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
+.kl-doc ul { list-style: disc; padding-left: 1.4em; }
+.kl-doc ol { list-style: decimal; padding-left: 1.4em; }
+.kl-doc li + li { margin-top: 0.25em; }
+.kl-doc code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 0.9em; padding: 0.1em 0.3em; border-radius: var(--r-sm); background: var(--surface2); }
+.kl-doc pre { padding: 0.75em 1em; border-radius: var(--r-md); background: var(--surface2); overflow-x: auto; }
+.kl-doc pre code { padding: 0; background: none; }
+.kl-doc blockquote { padding-left: 0.9em; border-left: 3px solid var(--bd); color: var(--muted); }
+.kl-doc table { border-collapse: collapse; display: block; overflow-x: auto; }
+.kl-doc th, .kl-doc td { border: 1px solid var(--bd); padding: 0.35em 0.7em; text-align: left; vertical-align: top; }
+.kl-doc th { background: var(--head); font-weight: 600; }
+.kl-doc img { max-width: 100%; border-radius: var(--r-md); border: 1px solid var(--bd-soft); }
+/* A screenshot not taken yet: a dashed box saying what goes there. */
+.kl-doc-ph { display: flex; align-items: center; justify-content: center; min-height: 7rem; padding: 1rem;
+  border: 1px dashed var(--bd); border-radius: var(--r-md); color: var(--muted); font-size: var(--fs-xs); text-align: center; background: var(--surface2); }
 
 /* Share of a folder, as a bar plus its number. */
 .kl-sharebar { display: inline-block; width: 52px; height: 6px; margin-right: 7px; border-radius: 3px; background: var(--bd-soft); vertical-align: middle; overflow: hidden; }

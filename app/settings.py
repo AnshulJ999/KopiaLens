@@ -83,6 +83,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "sim_policy_by_repo": {},   # Simulate's last policy per repo id
         "recent_backup": "",       # default "Backed up" filter in days ("" = Any); user changes persist
         "tree_dedupe": False,      # persisted dedupe toggle (tree)
+        "docs_view": "popup",       # the docs browser: "popup" | "side"
         "panel_layout": "classic",  # detail-panel layout (): "classic" | "tabbed"
         "policy_layout": "tabs",    # policy editor: "tabs" (one section at a time) | "scroll" (stacked, jump strip)
         "policy_leave": "ask",      # leaving a policy with unsaved changes: "ask" | "keep" (drafts stay until saved)

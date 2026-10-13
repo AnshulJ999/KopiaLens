@@ -47,6 +47,7 @@ from ..settings import load_settings
 router = APIRouter(tags=["actions"])
 log = get_logger("actions")
 
+FULL_LIST_CAP = 1_000_000   # the most rows any "Show all" list returns
 _FILENAME_SAMPLE = 500   # collateral paths listed for a filename-mode plan (the count is exact)
 _PLAN_PREVIEW = 1000     # files a plan lists in the panel; the full list is the CSV download
 
@@ -337,6 +338,7 @@ class RemovePlanRequest(BaseModel):
     by: str = "object-id"           # "object-id" (exact content) | "filename" (by basename)
     cap: int | None = None          # None = the remove_plan_cap setting (the UI sends top_n here)
     parts: list[dict] | None = None  # several folders/files: [{source|None, prefix}]; replaces prefix/source
+    extra_cap: int | None = None    # rows of the same-name / identical-copy lists ("Show all" asks for every one)
 
 
 DEFAULT_REMOVE_PLAN_CAP = 200000
@@ -547,15 +549,17 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
     # The background executor uses larger 32k batches (fewer kopia invocations).
     commit_cmds = remove_files_chunked_commands(payload.repo, items, source=scope, commit=True, max_chars=8000, flag=flag)
     dry_cmds = remove_files_chunked_commands(payload.repo, items, source=scope, commit=False, max_chars=8000, flag=flag)
-    audit.audit("generated", "remove-plan", repo=payload.repo,
-                summary={"items": len(items), "by": payload.by, "batches": len(commit_cmds),
-                         "sources": scope or [], "everywhere": scope is None,
-                         "query": payload.query, "first_from": payload.first_from})
+    if payload.extra_cap is None:   # a "Show all" re-read is not a new plan
+        audit.audit("generated", "remove-plan", repo=payload.repo,
+                    summary={"items": len(items), "by": payload.by, "batches": len(commit_cmds),
+                             "sources": scope or [], "everywhere": scope is None,
+                             "query": payload.query, "first_from": payload.first_from})
+    extra_cap = min(max(payload.extra_cap or _FILENAME_SAMPLE, 1), FULL_LIST_CAP)
     # ``--filename`` is a basename match across the whole scoped source, so a folder plan
     # also removes same-named files OUTSIDE it. These fields say how much rides along, and which.
     extra: dict = {}
     if payload.by == "filename" and t["names"]:
-        found = _filename_matches(payload.repo, scope, t["names"], _FILENAME_SAMPLE)
+        found = _filename_matches(payload.repo, scope, t["names"], extra_cap)
         planned = set(t["pairs"])
         rows = [{**r} for r in found["rows"]
                 if not any((s, r["full_path"]) in planned for s in r["sources"])]
@@ -571,7 +575,7 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
     elif t["pairs"]:
         # [DEL7 F8] ``--object-id`` removes that content at every path in the scoped sources, so
         # identical copies outside the plan lose those versions too.
-        copies = copies_outside(payload.repo, t["pairs"], sources=scope, cap=_FILENAME_SAMPLE,
+        copies = copies_outside(payload.repo, t["pairs"], sources=scope, cap=extra_cap,
                                 all_versions=payload.all_versions)
         extra = {"content_extra_count": copies["total"], "content_extra": copies["rows"],
                  "content_extra_capped": copies["total"] > len(copies["rows"]),

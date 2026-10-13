@@ -110,7 +110,7 @@
         <div class="relative" @click.outside="helpMenu = false">
           <button @click="toggleHelpMenu()" class="h-8 w-8 rounded border border-bd kl-ibtn" :title="acct && acct.sign_in_on ? 'Help and account' : 'Help'" aria-label="Help" aria-haspopup="menu" :aria-expanded="helpMenu"><i class="ic ic-help"></i></button>
           <div x-show="helpMenu" x-cloak role="menu" class="absolute right-0 top-full mt-1 z-50 w-64 rounded-md border border-bd bg-surface shadow-lg py-1 text-sm">
-            <button type="button" role="menuitem" @click="helpLink('docs')" class="w-full text-left px-3 py-1.5 hover:bg-head">Documentation</button>
+            <button type="button" role="menuitem" @click="openDocs('README')" class="w-full text-left px-3 py-1.5 hover:bg-head">Documentation</button>
             <button type="button" role="menuitem" @click="openDiagnostics(true)" class="w-full text-left px-3 py-1.5 hover:bg-head">Report a problem…</button>
             <button type="button" role="menuitem" @click="openDiagnostics(false)" class="w-full text-left px-3 py-1.5 hover:bg-head">Create diagnostics bundle…</button>
             <button type="button" role="menuitem" @click="helpLink('discord')" :disabled="!(help && help.links && help.links.discord)"

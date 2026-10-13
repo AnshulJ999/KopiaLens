@@ -7,6 +7,7 @@
 
         <div class="flex items-center gap-2 shrink-0 border-b border-bd px-4 py-3">
           <div class="font-medium">Settings</div>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openSettingsDocs()" @keydown.enter.prevent="openSettingsDocs()" title="Help for this section">?</span>
           <button @click="showSettings=false" class="ml-auto kl-btn quiet" title="Close" aria-label="Close">&times;</button>
         </div>
 

@@ -12,7 +12,7 @@
           </template>
           <button @click="runSimulate()" class="kl-btn primary">Run</button>
           <span class="grow"></span>
-          <span class="kl-help" tabindex="0" title="Try a retention policy without changing anything: see which snapshots it would keep and how much space deleting the rest frees. The boxes start from this repository's Global policy.">?</span>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('simulate')" @keydown.enter.prevent="openDocs('simulate')" title="Try a retention policy without changing anything: see which snapshots it would keep and how much space deleting the rest frees. The boxes start from this repository's Global policy.">?</span>
           <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
             <button class="kl-btn icon" @click="open = !open" title="More" aria-label="More"><i class="ic ic-more"></i></button>
             <div class="kl-menu" x-show="open" x-cloak>

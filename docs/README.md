@@ -26,4 +26,21 @@ KopiaLens is a web app for exploring, analysing and managing [Kopia](https://kop
 
 - [Free and Pro](licensing.md): what Pro adds, adding your licence, renewals, and licences in Docker.
 
+## Screens
+
+- [Dashboard](dashboard.md): page to come.
+- [Snapshots](snapshots.md): page to come.
+- [Simulate](simulate.md): page to come.
+- [Tree](tree.md): page to come.
+- [Search](search.md): page to come.
+- [Churn](churn.md): page to come.
+- [Repository](repository.md): page to come.
+- [Excluded](excluded.md): page to come.
+- [Policies](policies.md): page to come.
+- [Tasks](tasks.md): page to come.
+- [Logs](logs.md): page to come.
+- [Backblaze](backblaze.md): page to come.
+- [Indexing](indexing.md): page to come.
+- [Settings](settings.md): page to come.
+
 More pages are added as features are documented.

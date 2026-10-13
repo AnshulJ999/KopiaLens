@@ -1,6 +1,7 @@
       <section x-show="active==='stats'" class="h-full flex flex-col gap-3 overflow-auto">
         <div class="flex items-center gap-2">
           <span class="font-medium">Repository</span>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('repository')" @keydown.enter.prevent="openDocs('repository')" title="Storage, maintenance and health of this repository.">?</span>
           <button @click="loadStats(true)" class="h-7 rounded border border-bd px-2 text-xs flex items-center gap-1"><i class="ic ic-refresh"></i>Refresh</button>
           <span class="text-[0.6875rem] text-muted" x-show="statsData && statsData.computed_at" x-text="statsData && statsData.computed_at ? 'Updated ' + humanTime(statsData.computed_at) : ''"></span>
           <!-- the nightly retention self-check; silent while it agrees with kopia -->
