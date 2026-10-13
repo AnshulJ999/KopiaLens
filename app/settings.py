@@ -187,6 +187,18 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 # bug that silently reset settings.json to defaults.
 _SETTINGS_LOCK = threading.RLock()
 
+# kopialens settings with their own route and checks: the general settings save refuses them.
+OWN_ROUTE_SETTINGS = {
+    "auth_enabled": "Settings > Account",
+    **{k: "Settings > Remote access" for k in ("access", "access_addresses", "allowed_hosts", "https",
+                                                "https_cert", "https_key", "trusted_proxies")},
+    "bind_host": "settings.json",
+    "encryption": "Settings > Encryption",
+    "encryption_level": "Settings > Encryption",
+    "kopia_path": "Settings > Repositories",
+    "write_mode": "Settings > Permissions",
+}
+
 
 def _read_settings_file(strict: bool = False) -> dict[str, Any]:
     """The file exactly as written - defaults do NOT fill absent keys. That distinction is the

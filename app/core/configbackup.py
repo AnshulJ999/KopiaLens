@@ -306,8 +306,33 @@ def _put_back(files: dict[str, bytes], groups) -> list[str]:
     for name in chosen:
         path = _target(name)
         with locked(path):
-            _atomic_write(path, files[name])
+            data = files[name]
+            if name == "users.json":
+                data = _secret_from(data, path)
+            _atomic_write(path, data)
     return chosen
+
+
+def _secret_from(data: bytes, current: str | None) -> bytes:
+    """users.json carrying the secret that signs sign-in cookies from the file at ``current`` (this
+    install's own), or none at all: an export never hands it out, and an import never replaces it.
+    Without one, the account store makes a fresh secret on first read."""
+    try:
+        doc = json.loads(data.decode("utf-8"))
+    except ValueError:
+        return data
+    if not isinstance(doc, dict):
+        return data
+    doc.pop("secret", None)
+    if current and os.path.isfile(current):
+        try:
+            with open(current, encoding="utf-8") as fh:
+                mine = json.load(fh).get("secret")
+        except (OSError, ValueError, AttributeError):
+            mine = None
+        if mine:
+            doc["secret"] = mine
+    return json.dumps(doc, indent=2).encode("utf-8")
 
 
 def restore(backup_id: str, groups=DEFAULT_RESTORE) -> dict:
@@ -391,7 +416,11 @@ def export_zip(groups) -> bytes:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, path in _live_files().items():
             if _group_of(name) in groups:
-                zf.write(path, name)
+                if name == "users.json":
+                    with open(path, "rb") as fh:
+                        zf.writestr(name, _secret_from(fh.read(), None))
+                else:
+                    zf.write(path, name)
                 included.append(name)
         zf.writestr("manifest.json", json.dumps({
             "app": "KopiaLens", "version": _app_version(), "at": time.time(),

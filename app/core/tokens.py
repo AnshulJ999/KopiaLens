@@ -188,10 +188,6 @@ def current() -> dict | None:
 READ, APP, REPO, PERSON, NEVER = "read", "app", "repo", "person", "never"
 
 _DELETE_JOBS = {"remove_files", "prune_versions", "snapshot_delete", "source_delete"}
-# Settings keys that decide who can reach KopiaLens or how its data is protected.
-_GUARDED_SETTINGS = {"auth_enabled", "access", "access_addresses", "allowed_hosts", "bind_host",
-                     "https", "https_cert", "https_key", "session_days", "trusted_proxies",
-                     "encryption", "encryption_level", "write_mode", "kopia_path"}
 
 
 def _job(body: dict, _q: dict) -> str:
@@ -208,7 +204,8 @@ def _job(body: dict, _q: dict) -> str:
 def _settings(body: dict, _q: dict) -> str:
     extra = set(body) - {"kopialens", "backblaze"}
     kl = body.get("kopialens") if isinstance(body.get("kopialens"), dict) else {}
-    return PERSON if extra or (_GUARDED_SETTINGS & set(kl)) else APP
+    from ..settings import OWN_ROUTE_SETTINGS
+    return PERSON if extra or (set(kl) & (set(OWN_ROUTE_SETTINGS) | {"session_days"})) else APP
 
 
 def _write_mode(body: dict, _q: dict) -> str:
@@ -251,7 +248,7 @@ def _access(body: dict, _q: dict) -> str:
 
 def _export(_body: dict, query: dict) -> str:
     groups = {g for g in str(query.get("groups") or "settings,repos").split(",") if g}
-    return READ if groups <= {"settings"} else PERSON   # repos/accounts/keys carry credentials
+    return READ if groups <= {"settings", "repos"} else PERSON   # accounts and keys are secrets
 
 
 # Every write route, sorted. The guard test fails on a write route missing here.

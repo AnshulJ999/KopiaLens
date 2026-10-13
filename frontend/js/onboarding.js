@@ -128,7 +128,7 @@ const onboardingPart = {
       const o = this.ob;
       if (o.state.profile !== "server") return;
       const hosts = o.hosts.split(/[\s,]+/).map((h) => h.trim()).filter(Boolean);
-      await _setupPost("/api/settings", { kopialens: { allowed_hosts: hosts } });
+      await _setupPost("/api/access", { allowed_hosts: hosts });
     },
     async obSkipProtect() {
       const o = this.ob;

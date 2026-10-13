@@ -254,7 +254,13 @@ def post_settings(payload: dict) -> dict:
     kl = payload.pop("kopialens", None)
     bz = payload.pop("backblaze", None)
     if isinstance(kl, dict):
-        kl.pop("write_mode", None)  # changed only through /write-mode (raising it needs the password)
+        from ..settings import OWN_ROUTE_SETTINGS
+        own = [k for k in kl if k in OWN_ROUTE_SETTINGS]
+        if own:
+            where = OWN_ROUTE_SETTINGS[own[0]]
+            raise HTTPException(status_code=400, detail=(
+                f"{own[0]} isn't saved here. Set it in settings.json." if where == "settings.json"
+                else f"{own[0]} isn't saved here. Change it in {where}."))
 
     def _apply(settings: dict) -> None:
         settings.update(payload)

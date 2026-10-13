@@ -118,6 +118,23 @@ def test_export_import_round_trip_previews_before_writing(cfg):
     assert json.loads((cfg / "repos.json").read_text())["repos"][0]["name"] == "Main"
 
 
+def test_an_export_never_carries_the_sign_in_secret_and_an_import_keeps_this_one(cfg):
+    """The secret signs session cookies: whoever holds it can sign in to this install."""
+    users.create("admin", "hash")
+    mine = json.loads((cfg / "users.json").read_text())["secret"]
+    data = configbackup.export_zip(["accounts"])
+    exported = json.loads(zipfile.ZipFile(io.BytesIO(data)).read("users.json"))
+    assert "secret" not in exported and exported["users"][0]["username"] == "admin"
+
+    old = json.dumps({**exported, "secret": "ab" * 32}).encode()   # an older export that had one
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("users.json", old)
+        zf.writestr("manifest.json", json.dumps({"app": "KopiaLens", "files": ["users.json"]}))
+    configbackup.import_apply(configbackup.import_preview(buf.getvalue())["token"], ["accounts"])
+    assert json.loads((cfg / "users.json").read_text())["secret"] == mine
+
+
 @pytest.mark.parametrize("name", ["../settings.json", "sub/settings.json", "evil.exe"])
 def test_import_refuses_files_it_would_not_write(cfg, name):
     buf = io.BytesIO()

@@ -56,7 +56,7 @@ def test_a_token_reads_and_gets_its_write_mode(client):
     ("post", "/api/tokens", {"json": {"name": "more", "mode": "full"}}, "person"),
     ("get", "/api/tokens", {}, "person"),
     ("get", "/api/config-backups/export?groups=settings,accounts", {}, "person"),
-    ("get", "/api/config-backups/export", {}, "person"),          # repos.json holds storage logins
+    ("get", "/api/config-backups/export?groups=settings,keys", {}, "person"),
     ("post", "/api/account/password", {"json": {}}, "never"),
     ("post", "/api/encryption/recovery-key", {"json": {}}, "never"),
 ])
@@ -64,6 +64,19 @@ def test_a_full_access_token_cannot_do_the_unsafe_side(client, method, path, kw,
     monkeypatch.setattr("app.core.writemode.global_mode", lambda: "read_only")
     resp = getattr(client, method)(path, headers=_token("full"), **kw)
     assert _refused(resp, needs), (resp.status_code, resp.headers.get("x-kopialens-needs"), resp.text[:200])
+
+
+def test_the_settings_save_refuses_settings_with_their_own_route(client, monkeypatch):
+    """Sign-in, remote access, encryption and the kopia program have their own checks; the general
+    save must not skip them, for a person either."""
+    from app.api import dashboard
+    writes = []
+    monkeypatch.setattr(dashboard, "mutate_settings", lambda fn: writes.append(fn) or {})
+    for key in ("auth_enabled", "allowed_hosts", "encryption_level", "kopia_path", "write_mode"):
+        resp = client.post("/api/settings", json={"kopialens": {key: "x"}})
+        assert resp.status_code == 400 and key in resp.json()["detail"], key
+    assert not writes
+    assert client.post("/api/settings", json={"kopialens": {"session_days": 7}}).status_code == 200
 
 
 def test_revoked_expired_and_unknown_tokens_are_refused(client):
