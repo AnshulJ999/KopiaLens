@@ -27,7 +27,8 @@ from __future__ import annotations
 import duckdb
 import pytest
 
-from app.index.churnview import _MATERIALIZE_SQL, _base_sql, _deduped_sql, _qualify_params
+from app.index.churnview import (_MATERIALIZE_SQL, _SHARED_SQL, _WINDOW_SQL, _base_sql, _deduped_sql,
+                                 _qualify_params)
 
 SEP = chr(92)
 CUTOFF = "2026-07-22 00:00:00"
@@ -131,12 +132,25 @@ def set_ipacked(con, oid: str, packed: int) -> None:
 
 
 TMP = "_t_newc"
+WIDEST = "2025-01-01 00:00:00"   # the prewarm's shared set is built at the widest window's cutoff
+_path: dict = {}
+
+
+@pytest.fixture(autouse=True, params=["single", "shared"])
+def _qualify_path(request):
+    """Every case runs through both paths: one window's own grouping, and the prewarm's shared
+    set (built at an earlier cutoff) filtered down to this window."""
+    _path["mode"] = request.param
 
 
 def _materialize(con) -> str:
     """The qualifying set is built ONCE per call and both outputs derive from it.
     Every assertion below is unchanged, so they also prove the rewrite returns identical rows."""
-    con.execute(_MATERIALIZE_SQL.format(tmp=TMP), _qualify_params(CUTOFF))
+    if _path["mode"] == "shared":
+        con.execute(_SHARED_SQL.format(tmp="_t_shared"), _qualify_params(WIDEST))
+        con.execute(_WINDOW_SQL.format(tmp=TMP, shared="_t_shared"), _qualify_params(CUTOFF))
+    else:
+        con.execute(_MATERIALIZE_SQL.format(tmp=TMP), _qualify_params(CUTOFF))
     return TMP
 
 

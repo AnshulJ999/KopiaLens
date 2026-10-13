@@ -1,0 +1,54 @@
+            <section x-show="settingsTab==='tokens'" x-effect="settingsTab==='tokens' && tokLoad()" class="space-y-4" data-testid="settings-tokens">
+              <p class="text-xs text-muted">For scripts, the command line and AI agents.</p>
+              <template x-if="tok">
+                <div class="space-y-4">
+                  <p x-show="!tok.sign_in" class="text-xs rounded border border-bd bg-head px-3 py-2" data-testid="tok-signin-off">Sign-in is off, so anyone who can open KopiaLens can do everything without a token. Tokens still limit and label what each script or agent does.</p>
+
+                  <div class="space-y-2">
+                    <div class="font-medium">New token</div>
+                    <div class="flex flex-wrap items-end gap-2">
+                      <label class="flex flex-col gap-1 text-xs min-w-[12rem] flex-1"><span>Name</span>
+                        <input x-model="tokForm.name" maxlength="40" @keydown.enter.prevent="tokCreate()" class="fld border border-bd bg-surface2" placeholder="Claude on this PC" data-testid="tok-name"></label>
+                      <label class="flex flex-col gap-1 text-xs"><span>Permission</span>
+                        <select x-model="tokForm.mode" class="fld border border-bd bg-surface2 w-44" data-testid="tok-mode">
+                          <template x-for="m in tok.modes" :key="m"><option :value="m" x-text="tok.labels[m]" :selected="m === tokForm.mode"></option></template>
+                        </select></label>
+                      <label class="flex flex-col gap-1 text-xs"><span>Expires after</span>
+                        <select x-model="tokForm.days" class="fld border border-bd bg-surface2 w-32" data-testid="tok-days">
+                          <template x-for="d in tok.expiry_days" :key="d"><option :value="String(d)" x-text="TOKEN_EXPIRY[d]" :selected="String(d) === String(tokForm.days)"></option></template>
+                        </select></label>
+                      <button @click="tokCreate()" :disabled="tokBusy" class="kl-btn" data-testid="tok-create" x-text="tokBusy ? 'Creating…' : 'Create token'"></button>
+                    </div>
+                    <p class="text-[0.6875rem] text-muted">Deleting data, and changing sign-in, remote access or encryption, always need you in KopiaLens.</p>
+                  </div>
+
+                  <div x-show="tokNew" class="rounded border border-bd bg-head px-3 py-2 space-y-2" data-testid="tok-new">
+                    <div class="text-xs"><span class="font-medium" x-text="tokNew && tokNew.name"></span>: copy this token now. You won't see it again.</div>
+                    <div class="flex items-center gap-2">
+                      <input readonly :value="tokNew && tokNew.secret" @focus="$event.target.select()" class="fld border border-bd bg-surface2 flex-1 min-w-0 font-mono text-xs" aria-label="New token" data-testid="tok-secret">
+                      <button @click="tokCopy()" class="kl-btn">Copy</button>
+                      <button @click="tokNew = null" class="kl-btn quiet">Done</button>
+                    </div>
+                  </div>
+
+                  <div class="space-y-1">
+                    <div class="font-medium">Tokens</div>
+                    <p x-show="!tok.tokens.length" class="text-xs text-muted">No tokens yet.</p>
+                    <table x-show="tok.tokens.length" class="w-full text-xs" data-testid="tok-list">
+                      <thead><tr class="text-left text-muted"><th class="py-1 pr-3 font-normal">Name</th><th class="py-1 pr-3 font-normal">Permission</th><th class="py-1 pr-3 font-normal">Expires</th><th class="py-1 pr-3 font-normal">Last used</th><th></th></tr></thead>
+                      <tbody>
+                        <template x-for="t in tok.tokens" :key="t.id">
+                          <tr class="border-t border-bd-soft">
+                            <td class="py-1 pr-3 truncate max-w-[12rem]" :title="t.name" x-text="t.name"></td>
+                            <td class="py-1 pr-3 whitespace-nowrap" x-text="tok.labels[t.mode] || t.mode"></td>
+                            <td class="py-1 pr-3 whitespace-nowrap" :class="t.expired ? 'text-warn' : ''" x-text="tokExpiry(t)"></td>
+                            <td class="py-1 pr-3 whitespace-nowrap" x-text="t.last_used ? fmtAbs(t.last_used) : 'Never'"></td>
+                            <td class="py-1 text-right"><button @click="tokRevoke(t)" class="kl-btn quiet" :aria-label="'Revoke ' + t.name">Revoke</button></td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </template>
+            </section>

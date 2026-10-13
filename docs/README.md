@@ -16,6 +16,7 @@ KopiaLens is a web app for exploring, analysing and managing [Kopia](https://kop
 - [Sign-in and your account](sign-in.md): the KopiaLens password, staying signed in, signing out other devices, and resetting a forgotten password.
 - [Encryption](encryption.md): encrypting what KopiaLens stores on disk, the recovery key, and unlocking after a restart.
 - [Remote access and HTTPS](remote-access.md): who can open KopiaLens, HTTPS certificates, and running it behind a reverse proxy.
+- [API tokens](api-tokens.md): access for scripts, the command line and AI agents, what a token can and can't do, and revoking one.
 
 ## Help and privacy
 

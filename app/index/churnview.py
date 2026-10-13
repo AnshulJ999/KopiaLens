@@ -71,7 +71,7 @@ _EXT = ("CASE WHEN len(string_split(t.name, '.')) > 1 "
 # An old path whose surviving groups have no predecessor is NOT new data (its earlier history
 # expired from retention; counting the nightly re-stamp would re-report old files forever).
 # Tests: test_churn_sql.py pins each branch against an in-memory DuckDB.
-_QUALIFY_CTE = """
+_HIST_CTE = """
 WITH pc AS (
   SELECT f.path_id, f.cid_id, min(sn.start_time) AS first_ts, max(sn.start_time) AS last_ts,
          max(f.size) AS size
@@ -83,7 +83,8 @@ WITH pc AS (
          row_number() OVER (PARTITION BY path_id ORDER BY last_ts, cid_id) AS rn,
          lag(last_ts) OVER (PARTITION BY path_id ORDER BY last_ts, cid_id) AS prev_last
   FROM pc
-), newc AS (
+)"""
+_QUALIFY_CTE = _HIST_CTE + """, newc AS (
   SELECT s.source, p.full_path, p.dir_id, p.src_id, p.name, hist.cid_id, COALESCE(hist.size, 0) AS size,
          COALESCE(cs.packed, ip.packed, 0) AS packed
   FROM hist
@@ -113,6 +114,32 @@ def _qualify_params(cutoff: str) -> list:
 # _QUALIFY_CTE in each statement made the expensive grouping run twice per window (measured 10.4s
 # per window against 5.4s for the old, wrong query - most of the remaining gap).
 _MATERIALIZE_SQL = f"CREATE OR REPLACE TEMPORARY TABLE {{tmp}} AS {_QUALIFY_CTE} SELECT * FROM newc"
+
+# Several windows from ONE grouping pass. The rule is monotone in the cutoff (a pair that qualifies
+# for a later cutoff qualifies for every earlier one), so the widest window's set is materialized
+# once with the facts the rule reads, and each window filters it. next_ts is the source's first
+# snapshot after prev_last: "no snapshot between prev_last and the cutoff" is exactly
+# "next_ts IS NULL OR next_ts >= cutoff".
+_WINDOW_RULE = ("first_seen >= ? OR (first_seen IS NULL AND first_ts >= ?) "
+                "OR (rn > 1 AND (next_ts IS NULL OR next_ts >= ?))")
+_SHARED_SQL = "CREATE OR REPLACE TEMPORARY TABLE {tmp} AS " + _HIST_CTE + f""", q AS (
+  SELECT s.source, p.full_path, p.dir_id, p.src_id, p.name, hist.cid_id, COALESCE(hist.size, 0) AS size,
+         COALESCE(cs.packed, ip.packed, 0) AS packed, p.first_seen, hist.first_ts, hist.rn, hist.prev_last
+  FROM hist
+  LEFT JOIN pathx p ON p.path_id = hist.path_id
+  JOIN src s ON s.src_id = p.src_id
+  LEFT JOIN csize cs ON cs.cid_id = hist.cid_id
+  LEFT JOIN iphys ip ON ip.cid_id = hist.cid_id
+), r AS (
+  SELECT q.*, nx.start_time AS next_ts
+  FROM q ASOF LEFT JOIN (SELECT src_id, start_time FROM snap) nx
+    ON q.src_id = nx.src_id AND q.prev_last < nx.start_time
+)
+SELECT source, full_path, dir_id, src_id, name, cid_id, size, packed, first_seen, first_ts, rn, next_ts
+FROM r WHERE {_WINDOW_RULE}
+"""
+_WINDOW_SQL = ("CREATE OR REPLACE TEMPORARY TABLE {tmp} AS SELECT source, full_path, dir_id, src_id, "
+               "name, cid_id, size, packed FROM {shared} WHERE " + _WINDOW_RULE)
 
 
 def _base_sql(tmp: str, depth: int, folder: str) -> str:
@@ -242,12 +269,16 @@ def _build_lock(ck: tuple) -> threading.Lock:
         return _BUILD_LOCKS.setdefault(ck, threading.Lock())
 
 
-def _compute(repo: str, depth: int, cutoff: str) -> tuple[list[dict], int]:
+def _compute(repo: str, depth: int, cutoff: str, shared: tuple | None = None) -> tuple[list[dict], int]:
+    """``shared`` = (cursor, table) from ``_shared_set``: filter that set instead of re-grouping."""
     # Unique table name per call: concurrent builds for different windows must never collide on it.
     tmp = f"_churn_newc_{uuid.uuid4().hex[:12]}"
-    cur = read_cursor(repo)
+    cur = shared[0] if shared else read_cursor(repo)
     try:
-        cur.execute(_MATERIALIZE_SQL.format(tmp=tmp), _qualify_params(cutoff))
+        if shared:
+            cur.execute(_WINDOW_SQL.format(tmp=tmp, shared=shared[1]), _qualify_params(cutoff))
+        else:
+            cur.execute(_MATERIALIZE_SQL.format(tmp=tmp), _qualify_params(cutoff))
         rows = [
             {"source": r[0], "folder": r[1], "ext": r[2],
              "bytes": int(r[3] or 0), "versions": int(r[4] or 0), "files": int(r[5] or 0),
@@ -262,7 +293,8 @@ def _compute(repo: str, depth: int, cutoff: str) -> tuple[list[dict], int]:
             cur.execute(f"DROP TABLE IF EXISTS {tmp}")
         except Exception:  # noqa: BLE001 - a temp-table cleanup must never fail the request
             pass
-        cur.close()
+        if not shared:
+            cur.close()
     return rows, deduped
 
 
@@ -332,7 +364,7 @@ def build_views(rows: list[dict], limit: int, all_sources=None, current=None) ->
 
 
 def churn_rollup(repo: str, days: int = 30, depth: int = 4, limit: int = 400,
-                 refresh: bool = False) -> dict:
+                 refresh: bool = False, shared: tuple | None = None, current: dict | None = None) -> dict:
     """The churn tab's single data source. Heavy (a grouped scan of the whole ``files`` table),
     so it is cached per (repo, days, depth) until the index changes."""
     days = max(1, int(days))
@@ -351,12 +383,12 @@ def churn_rollup(repo: str, days: int = 30, depth: int = 4, limit: int = 400,
                 return {**_slice(hit, limit), "cached": True}
         start = time.time()
         cutoff = (dt.datetime.now() - dt.timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
-        rows, deduped = _compute(repo, depth, cutoff)
-        try:
-            current = _current(repo, depth)
-        except Exception as exc:  # noqa: BLE001 - the size columns are extra; churn must still load
-            log.warning("churn repo=%s: current sizes failed: %s", repo, exc)
-            current = None
+        rows, deduped = _compute(repo, depth, cutoff, shared)
+        if current is None:
+            try:
+                current = _current(repo, depth)
+            except Exception as exc:  # noqa: BLE001 - the size columns are extra; churn must still load
+                log.warning("churn repo=%s: current sizes failed: %s", repo, exc)
         try:
             from ..core.sources import sources_index
             all_sources = list(sources_index(repo))
@@ -428,13 +460,41 @@ def prewarm(repo: str, depth: int | None = None, windows=WINDOWS) -> None:
     exits) rather than in the long-lived app."""
     if depth is None:
         depth = ui_depth()
-    for days in windows:
+    start = time.time()
+    widest = (dt.datetime.now() - dt.timedelta(days=max((*windows, 30)))).strftime("%Y-%m-%d %H:%M:%S")
+    table = f"_churn_shared_{uuid.uuid4().hex[:12]}"
+    cur = None
+    shared = None
+    try:
         try:
-            churn_rollup(repo, days=days, depth=depth, refresh=True)
-        except Exception as exc:  # noqa: BLE001 - never fail the nightly cycle on a warm pass
-            log.error("churn prewarm repo=%s days=%d depth=%d failed: %s", repo, days, depth, exc)
-    if depth != _PANEL_DEPTH:
-        try:
-            churn_rollup(repo, days=30, depth=_PANEL_DEPTH, refresh=True)
-        except Exception as exc:  # noqa: BLE001 - the panel row is a bonus, not the pass
-            log.error("churn prewarm repo=%s days=30 depth=%d failed: %s", repo, _PANEL_DEPTH, exc)
+            cur = read_cursor(repo)
+            cur.execute(_SHARED_SQL.format(tmp=table), _qualify_params(widest))
+            shared = (cur, table)
+        except Exception as exc:  # noqa: BLE001 - each window then groups on its own, as before
+            log.error("churn prewarm repo=%s: shared set failed, per-window passes: %s", repo, exc)
+        currents: dict[int, dict | None] = {}
+        for d in dict.fromkeys((depth, _PANEL_DEPTH)):
+            try:
+                currents[d] = _current(repo, d)
+            except Exception:  # noqa: BLE001 - churn_rollup retries and logs it
+                currents[d] = None
+        for days in windows:
+            try:
+                churn_rollup(repo, days=days, depth=depth, refresh=True, shared=shared,
+                             current=currents[depth])
+            except Exception as exc:  # noqa: BLE001 - never fail the nightly cycle on a warm pass
+                log.error("churn prewarm repo=%s days=%d depth=%d failed: %s", repo, days, depth, exc)
+        if depth != _PANEL_DEPTH:
+            try:
+                churn_rollup(repo, days=30, depth=_PANEL_DEPTH, refresh=True, shared=shared,
+                             current=currents[_PANEL_DEPTH])
+            except Exception as exc:  # noqa: BLE001 - the panel row is a bonus, not the pass
+                log.error("churn prewarm repo=%s days=30 depth=%d failed: %s", repo, _PANEL_DEPTH, exc)
+    finally:
+        if cur is not None:
+            try:
+                cur.execute(f"DROP TABLE IF EXISTS {table}")
+            except Exception:  # noqa: BLE001 - a temp-table cleanup must never fail the nightly
+                pass
+            cur.close()
+    log.info("churn prewarm repo=%s depth=%d: %d windows, %.1fs", repo, depth, len(windows), time.time() - start)

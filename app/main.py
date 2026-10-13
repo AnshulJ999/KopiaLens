@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import gc
+import ipaddress
 import json
 import os
 import re
@@ -27,7 +28,8 @@ from config import APP_VERSION, DATA_DIR, DEMO_BACKBLAZE, DEMO_INSTANCE, REPOS, 
 from .api import (access, account, actions, appconfig, audit, backblaze, cli, dashboard, deleteplan, encryption, engine, excluded,
                   help, insights, jobs, licence, logs, newsnapshot, notify, onboarding, policies, prune, restore, search, setup, shell, simulate,
                   snapshots, stats, tree, writemode)
-from .core import auth, checkin, devaddons, netaccess, pause
+from .api import tokens as tokens_api
+from .core import auth, checkin, devaddons, netaccess, pause, tokens
 from .core import engine as backup_engine
 from .core import jobs as jobrunner
 from .index.crypto import StoreLocked
@@ -874,6 +876,9 @@ async def _access(request: Request, call_next):
             return JSONResponse(status_code=403, content={"detail": "This address may not open KopiaLens."})
         return _blocked_page("This address may not open KopiaLens. Ask whoever runs it to add it in "
                              "Settings > Remote access.")
+    secret = tokens.bearer(request.headers.get("authorization"))
+    if secret is not None:
+        return await _token_access(request, call_next, secret, mode, client)
     if (mode == "window" and path not in ("/shell/open", "/health")
             and not auth.shell_request_ok(path, request.headers.get(auth.SHELL_HEADER), client)
             and not netaccess.window_ok(request.cookies.get(netaccess.WINDOW_COOKIE))):
@@ -907,6 +912,29 @@ async def _access(request: Request, call_next):
     if request.url.path.startswith("/api/"):
         return JSONResponse(status_code=401, content={"detail": "Not signed in.", "login": "/login"})
     return HTMLResponse(_login_html(), status_code=401)
+
+
+async def _token_access(request: Request, call_next, secret: str, mode: str, client: str | None):
+    """An API token alone decides who the request is (no cookie, no setup code); what it may do is
+    checked per route in the write gate. Window-only mode accepts tokens from this computer only."""
+    rec = tokens.verify(secret)
+    if rec is None:
+        return JSONResponse(status_code=401, content={
+            "detail": "This API token isn't valid. It may have been revoked, expired or mistyped."})
+    try:
+        local = ipaddress.ip_address(client or "").is_loopback
+    except ValueError:
+        local = False
+    if mode == "window" and not local:
+        return JSONResponse(status_code=403, content={
+            "detail": "KopiaLens opens only in its own window, so API tokens work from this computer only."})
+    actor = auth.set_actor("token:" + rec["name"])
+    using = tokens.use(rec)
+    try:
+        return await call_next(request)
+    finally:
+        tokens.reset(using)
+        auth._ACTOR.reset(actor)
 
 
 def _login_html(error: str = "", username: str = "") -> str:
@@ -1244,6 +1272,7 @@ app.include_router(appconfig.router, prefix="/api")
 app.include_router(shell.router, prefix="/api")
 app.include_router(licence.router, prefix="/api")
 app.include_router(help.router, prefix="/api")
+app.include_router(tokens_api.router, prefix="/api")
 if not DEMO_INSTANCE or DEMO_BACKBLAZE:   # a demo reads only its own generated bzdata
     app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
 devaddons.load(app, ROOT)

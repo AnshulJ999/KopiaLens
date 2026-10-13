@@ -94,6 +94,7 @@ NO_REPO_WRITE = {
     "/api/simulate", "/api/simulate/all", "/api/snapshots/analyze", "/api/snapshots/analyze-all",
     "/api/snapshots/set-reclaim", "/api/tree/holders",
     "/api/write-mode", "/api/auth/login", "/api/auth/logout", "/api/auth/recover", "/api/index/stop",
+    "/api/tokens", "/api/tokens/{token_id}",
 }
 # Prefixes whose write routes are KopiaLens's own (licence, onboarding, setup, encryption, shell,
 # Backblaze): connecting, creating and removing repositories is allowed in every mode.

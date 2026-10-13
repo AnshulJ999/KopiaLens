@@ -64,7 +64,8 @@ _OPEN: dict[str, "CryptoStream"] = {}        # streams this process holds open, 
 # file (pid, stage, counts - no paths) is read by the keyless tray and by Stop.
 _NEVER_COVERED = re.compile(r"^(data_version\.json|index_progress_repo[^_]*\.json)$")
 # Config read before an unlock (sign-in, repo list, key, table layouts): plain at every level.
-_PLAIN_CONFIG = ("settings.json", "repos.json", "keystore.json", "users.json", "ui_state.json")
+_PLAIN_CONFIG = ("settings.json", "repos.json", "keystore.json", "users.json", "ui_state.json",
+                 "tokens.json")
 _WORKER_LOG = re.compile(r"^index_worker_repo(\w+)\.log(\.\d+)?$")
 
 
