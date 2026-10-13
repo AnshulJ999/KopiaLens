@@ -31,8 +31,7 @@ RETRY_AFTER_FAILURE = 6 * 3600
 TIMEOUT = 10
 VERSION_RE = re.compile(r"^[0-9A-Za-z.+-]{1,32}$")
 # The updater's public key: the same text as plugins.updater.pubkey in shell/src-tauri/tauri.conf.json.
-# Empty until the release key exists; then no notice is shown, since none can be verified.
-UPDATE_PUBKEY = ""
+UPDATE_PUBKEY = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVCM0Q0QjhFQTBBN0EyNEQKUldSTm9xZWdqa3M5NndIQ0pzUnhwaUpaaW1VZ0gvVFduVE9UT0hCeDFiU1RJSDUvbUlCcGQyMXcK"
 
 _lock = threading.Lock()
 # Names only, since the last check-in: which screens and actions were used. Never counts or paths.
