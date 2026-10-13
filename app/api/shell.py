@@ -75,7 +75,24 @@ def _backups() -> dict:
 def _update() -> dict | None:
     from ..core import checkin
     st = checkin.status()
-    return {"latest": st["latest"], "url": st["url"]} if st["available"] and st["url"] else None
+    if not st["available"]:
+        return None
+    return {"latest": st["latest"], "url": st["url"], "can_install": st["can_install"], "install": st["install"],
+            "install_requested": checkin.install_requested()}
+
+
+@router.post("/update-progress")
+def update_progress(payload: dict) -> dict:
+    """The desktop app reports an in-app install's progress (it also takes up the request)."""
+    from ..core import checkin
+    state = payload.get("state")
+    if state not in ("waiting", "checking", "downloading", "installing", "failed", "none"):
+        raise HTTPException(status_code=400, detail="Unknown update state")
+    pct = payload.get("pct")
+    error = payload.get("error")
+    checkin.set_install_progress(state, pct if isinstance(pct, int) else None,
+                                 str(error)[:300] if error else None)
+    return {"ok": True}
 
 
 @router.post("/open-code")

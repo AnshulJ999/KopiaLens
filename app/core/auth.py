@@ -320,7 +320,8 @@ def exempt(path: str) -> bool:
 # The desktop shell's per-launch secret (env KOPIALENS_SHELL_TOKEN, set by the shell that started
 # this server) opens only these paths, and only from this computer.
 SHELL_HEADER = "x-kopialens-shell"
-SHELL_PATHS = frozenset({"/api/shell/state", "/api/shell/prefs", "/api/shell/open-code", "/api/index/build",
+SHELL_PATHS = frozenset({"/api/shell/state", "/api/shell/prefs", "/api/shell/open-code",
+                         "/api/shell/update-progress", "/api/index/build",
                          "/api/index/stop", "/api/index/pause", "/api/index/resume",
                          "/api/engine/pause", "/api/engine/resume"})
 

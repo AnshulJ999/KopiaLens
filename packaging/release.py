@@ -1,11 +1,13 @@
 """One command for a Windows release: banned licence ids, tests, server build, bundled kopia, desktop
-app + installer, portable zip, a smoke test of the built app, checksums.
+app + installer, the signed in-app update file (latest.json), portable zip, a smoke test of the built app,
+checksums.
 
     python packaging\\release.py
 
 Run with the dev Python (it runs the tests); the server is compiled with the build venv
 (KOPIALENS_BUILD_PYTHON). Output: <BUILD_ROOT>\\release\\<version>\\ plus release.log there.
-KOPIALENS_RELEASE_SKIP_TESTS=1 skips the test step while iterating on packaging.
+KOPIALENS_RELEASE_SKIP_TESTS=1 skips the test step while iterating on packaging. The updater key must be
+in TAURI_SIGNING_PRIVATE_KEY (path or content) and its password in TAURI_SIGNING_PRIVATE_KEY_PASSWORD.
 """
 import hashlib
 import json
@@ -34,6 +36,7 @@ PORTABLE_MARKER = "KopiaLens-portable.txt"
 KEYS_FILE = os.path.join(KL_ROOT, "app", "licensing", "keys.py")
 LICENSEKIT_DIR = os.path.join(REPO_ROOT, "LicenseKit")
 SYNC_MAX_AGE_DAYS = 7
+RELEASE_REPO_URL = "https://github.com/AnshulJ999/KopiaLens"   # config.REPO_URL
 
 _log_fh = None
 
@@ -76,6 +79,31 @@ def versions() -> dict:
     with open(os.path.join(KL_ROOT, "app", "core", "kopiabin.py"), encoding="utf-8") as fh:
         kopia = re.search(r'^TESTED_VERSION\s*=\s*"([^"]+)"', fh.read(), re.M).group(1)
     return {"app": app, "cargo": cargo, "tauri": tauri, "kopia": kopia}
+
+
+def updater_keys() -> tuple[str, str]:
+    """The updater public key in tauri.conf.json and the server's copy in checkin.py."""
+    with open(os.path.join(SHELL, "tauri.conf.json"), encoding="utf-8") as fh:
+        shell_key = json.load(fh).get("plugins", {}).get("updater", {}).get("pubkey", "")
+    with open(os.path.join(KL_ROOT, "app", "core", "checkin.py"), encoding="utf-8") as fh:
+        m = re.search(r'^UPDATE_PUBKEY = "([^"]*)"', fh.read(), re.M)
+    return shell_key, m.group(1) if m else ""
+
+
+def write_update_file(dest: str, version: str, installer: str, setup_name: str) -> None:
+    """latest.json for the in-app updater, attached to the GitHub release (the check-in Worker passes
+    it along). The signature is Tauri's .sig of the installer."""
+    sig_path = installer + ".sig"
+    if not os.path.isfile(sig_path):
+        fail(f"no updater signature next to {installer}")
+    with open(sig_path, encoding="utf-8") as fh:
+        signature = fh.read().strip()
+    doc = {"version": version, "notes": "", "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+           "platforms": {"windows-x86_64": {
+               "signature": signature,
+               "url": f"{RELEASE_REPO_URL}/releases/download/v{version}/{setup_name}"}}}
+    with open(os.path.join(dest, "latest.json"), "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(doc, fh, indent=2)
 
 
 # ---------------------------------------------------------------- banned licences
@@ -255,6 +283,13 @@ def main() -> int:
 
     if len({v["app"], v["cargo"], v["tauri"]}) != 1:
         fail(f"versions differ: VERSION {v['app']}, Cargo.toml {v['cargo']}, tauri.conf.json {v['tauri']}")
+    shell_key, server_key = updater_keys()
+    if not shell_key:
+        fail("no updater public key in shell/src-tauri/tauri.conf.json (plugins.updater.pubkey)")
+    if shell_key != server_key:
+        fail("UPDATE_PUBKEY in app/core/checkin.py differs from the updater key in tauri.conf.json")
+    if not os.environ.get("TAURI_SIGNING_PRIVATE_KEY"):
+        fail("TAURI_SIGNING_PRIVATE_KEY is not set: installs could not update to this release")
 
     log("0/6 banned licence ids")
     bake_banned_ids()
@@ -279,7 +314,7 @@ def main() -> int:
     log("4/6 desktop app + installer (Tauri)")
     release_conf = os.path.join(STAGE, "tauri.release.json")
     with open(release_conf, "w", encoding="utf-8") as fh:
-        json.dump({"bundle": {"active": True, "targets": ["nsis"],
+        json.dump({"bundle": {"active": True, "targets": ["nsis"], "createUpdaterArtifacts": True,
                               "resources": {"release-stage/server/": "server/"}}}, fh)
     run(["cargo", "tauri", "build", "--config", release_conf, "--bundles", "nsis"], SHELL, "tauri.log",
         {"CARGO_TARGET_DIR": SHELL_TARGET})
@@ -291,6 +326,7 @@ def main() -> int:
         fail(f"Tauri output missing: {exe}, installers {installers}")
     setup_name = f"KopiaLens-{version}-windows-x64-setup.exe"
     shutil.copy2(installers[0], os.path.join(dest, setup_name))
+    write_update_file(dest, version, installers[0], setup_name)
 
     log("5/6 portable zip")
     zip_name = f"KopiaLens-{version}-windows-x64-portable.zip"
@@ -315,6 +351,8 @@ def main() -> int:
         log(f"  {name}  {os.path.getsize(os.path.join(dest, name)) / 1e6:.0f} MB")
     shutil.rmtree(STAGE, ignore_errors=True)  # ~200 MB copy inside the repo folder, rebuilt each run
     log(f"DONE: {dest}")
+    log(f"  publish: a GitHub release tagged v{version} on {RELEASE_REPO_URL} with {setup_name}, {zip_name},"
+        " SHA256SUMS.txt and latest.json (installs update from its latest.json)")
     return 0
 
 

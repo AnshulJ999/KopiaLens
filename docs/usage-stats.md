@@ -4,7 +4,9 @@ Once a day, KopiaLens asks the KopiaLens update service whether a newer version 
 
 Both are on by default, and both can be turned off in **Settings > Updates**. With both off, KopiaLens sends nothing unless you click **Check now**, which sends the update-check details once. The same page shows exactly what the next check sends.
 
-KopiaLens never installs anything by itself. When a newer version is out, it says so and links to the download.
+KopiaLens never installs anything by itself. When a newer version is out, it says so. The installed Windows app can install it when you click **Install and restart**; other copies link to the download. Before installing, KopiaLens checks that the installer is signed by KopiaLens.
+
+When you click **Install and restart**, the app asks the update service for the installer's details, sending only its version and platform (`windows-x86_64`). If the service can't be reached, it asks GitHub instead.
 
 ## What's sent
 

@@ -23,6 +23,11 @@ A bundle never contains passwords, keys, licence codes or the encryption key. Yo
 
 **? > Check for updates** checks now. KopiaLens also checks once a day; see [Update checks and usage stats](usage-stats.md) for what that sends and how to turn it off.
 
+When an update is out, **Update available** in the top bar opens its details.
+
+- **Installed Windows app:** click **Install and restart**, or **Install update** in the tray menu. If an index or a job is running, KopiaLens waits until it finishes. It then closes, installs the update and opens again.
+- **Portable copy, Docker and other installs:** click **Get it** to open the download page, then install it the way you installed KopiaLens.
+
 If your licence covers an earlier major version (for example a lifetime licence for 2.x), KopiaLens tells you before you update to a version it doesn't cover, and points you to the newest version it does.
 
 ## Desktop app

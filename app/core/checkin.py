@@ -5,6 +5,8 @@ docs/usage-stats.md - keep the two in step. Never sent by a demo copy or the web
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 import platform
@@ -15,7 +17,7 @@ import threading
 import time
 import urllib.request
 
-from config import APP_VERSION, CHECKIN_URL, COMPILED, DATA_DIR, DEMO_INSTANCE, REPOS, is_demo
+from config import APP_VERSION, CHECKIN_URL, COMPILED, DATA_DIR, DEMO_INSTANCE, REPO_URL, REPOS, is_demo
 
 from .applog import get_logger
 
@@ -28,6 +30,9 @@ LOOP_SLEEP = 3600               # re-evaluated hourly: the settings can change a
 RETRY_AFTER_FAILURE = 6 * 3600
 TIMEOUT = 10
 VERSION_RE = re.compile(r"^[0-9A-Za-z.+-]{1,32}$")
+# The updater's public key: the same text as plugins.updater.pubkey in shell/src-tauri/tauri.conf.json.
+# Empty until the release key exists; then no notice is shown, since none can be verified.
+UPDATE_PUBKEY = ""
 
 _lock = threading.Lock()
 # Names only, since the last check-in: which screens and actions were used. Never counts or paths.
@@ -182,14 +187,58 @@ def _post(payload: dict) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def signed(data: bytes, signature: str, pubkey: str | None = None) -> bool:
+    """True when ``signature`` (a minisign .sig file, base64, as `tauri signer sign` writes it) is a
+    valid signature of ``data`` by the updater key."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    pubkey = UPDATE_PUBKEY if pubkey is None else pubkey
+    try:
+        pk = base64.b64decode(base64.b64decode(pubkey).decode("utf-8").splitlines()[1])
+        lines = base64.b64decode(signature).decode("utf-8").splitlines()
+        sig, comment, global_sig = base64.b64decode(lines[1]), lines[2], base64.b64decode(lines[3])
+    except (ValueError, IndexError, TypeError, UnicodeDecodeError):
+        return False
+    prefix = "trusted comment: "
+    if len(pk) != 42 or pk[:2] != b"Ed" or len(sig) != 74 or sig[2:10] != pk[2:10] or not comment.startswith(prefix):
+        return False
+    # "ED" signs a BLAKE2b-512 hash of the data (minisign's default); "Ed" signs the data itself.
+    message = {b"ED": hashlib.blake2b(data, digest_size=64).digest(), b"Ed": data}.get(sig[:2])
+    if message is None:
+        return False
+    key = Ed25519PublicKey.from_public_bytes(pk[10:])
+    try:
+        key.verify(sig[10:], message)
+        key.verify(global_sig, sig[10:] + comment[len(prefix):].encode("utf-8"))
+    except InvalidSignature:
+        return False
+    return True
+
+
+def _notice(data: dict) -> str | None:
+    """The reply's notice, only when signed offline with the updater key: the Worker holds no key,
+    so whoever controls the domain or the Worker cannot put text in front of users."""
+    notice, sig = data.get("notice"), data.get("notice_sig")
+    if not isinstance(notice, str) or not notice:
+        return None
+    if isinstance(sig, str) and signed(notice.encode("utf-8"), sig):
+        return notice
+    log.warning("check-in notice ignored: not signed with the updater key")
+    return None
+
+
+def release_url(version: str) -> str:
+    """Built here, never taken from the reply, so a notice can't point at someone else's download."""
+    return f"{REPO_URL}/releases/tag/v{version}"
+
+
 def _clean_reply(data: dict) -> dict:
     def ver(v):
         return v if isinstance(v, str) and VERSION_RE.match(v) else None
     by_major = data.get("latest_by_major")
     return {
         "latest": ver(data.get("latest")),
-        "url": data.get("url") if isinstance(data.get("url"), str) else None,
-        "notice": data.get("notice") if isinstance(data.get("notice"), str) else None,
+        "notice": _notice(data),
         "latest_by_major": {str(k): ver(v) for k, v in by_major.items() if ver(v) and str(k).isdigit()}
                            if isinstance(by_major, dict) else {},
         "checked_at": time.time(),
@@ -248,10 +297,12 @@ def status() -> dict:
         "stats_enabled": stats_enabled(),
         "available": available,
         "latest": latest if available else None,
-        "url": info.get("url") if available else None,
+        "url": release_url(latest) if available else None,
         "notice": info.get("notice") if shown else None,
         "checked_at": info.get("checked_at"),
         "licence": None,
+        "can_install": available and in_app_install(),
+        "install": dict(_install) if _install.get("state") else None,
     }
     if available:
         from ..licensing import licence
@@ -261,6 +312,34 @@ def status() -> dict:
             out["licence"] = {"covers_through": upd,
                               "latest_covered": covered if _newer(covered, APP_VERSION) else None}
     return out
+
+
+# In-app installs: the desktop app sets KOPIALENS_IN_APP_UPDATES for an installed copy that can update
+# itself (Tauri's updater), asks for the request through /api/shell/state and reports progress back.
+_install: dict = {}
+_install_requested = False
+
+
+def in_app_install() -> bool:
+    return os.environ.get("KOPIALENS_IN_APP_UPDATES") == "1"
+
+
+def request_install() -> None:
+    global _install_requested
+    _install_requested = True
+
+
+def install_requested() -> bool:
+    return _install_requested
+
+
+def set_install_progress(state: str, pct: int | None = None, error: str | None = None) -> None:
+    """The desktop app's progress: waiting (for indexing or jobs), checking, downloading, installing,
+    failed. Taking it up ends the request."""
+    global _install_requested
+    _install_requested = False
+    _install.clear()
+    _install.update(state=state, pct=pct, error=error, at=time.time())
 
 
 def _due() -> bool:

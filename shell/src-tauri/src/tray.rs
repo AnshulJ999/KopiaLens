@@ -330,8 +330,22 @@ fn build_menu(app: &AppHandle, h: Health, state: Option<&Value>) -> tauri::Resul
     if let Some(v) = state.map(|st| s(st, "version")).filter(|v| !v.is_empty()) {
         menu.append(&MenuItem::with_id(app, "status:version", format!("KopiaLens {v}"), false, None::<&str>)?)?;
     }
-    if let Some(latest) = state.and_then(|st| st.get("update")).and_then(|u| u.get("latest")).and_then(Value::as_str) {
-        menu.append(&MenuItem::with_id(app, "update", format!("Update available: {latest}"), true, None::<&str>)?)?;
+    if let Some(u) = state.and_then(|st| st.get("update")).filter(|u| u.is_object()) {
+        let (latest, progress) = (s(u, "latest"), u.get("install").map(|i| s(i, "state")).unwrap_or(""));
+        let pct = u.get("install").and_then(|i| i.get("pct")).and_then(Value::as_i64);
+        let busy = match progress {
+            "waiting" => Some("Update waits for indexing and jobs".to_string()),
+            "checking" => Some("Preparing update…".to_string()),
+            "downloading" => Some(match pct { Some(p) => format!("Downloading update… {p}%"), None => "Downloading update…".into() }),
+            "installing" => Some("Installing update…".to_string()),
+            _ => None,
+        };
+        match busy {
+            Some(text) => menu.append(&MenuItem::with_id(app, "status:update", text, false, None::<&str>)?)?,
+            None if u.get("can_install").and_then(Value::as_bool) == Some(true) =>
+                menu.append(&MenuItem::with_id(app, "update", format!("Install update {latest}"), true, None::<&str>)?)?,
+            None => menu.append(&MenuItem::with_id(app, "update", format!("Update available: {latest}"), true, None::<&str>)?)?,
+        }
     }
     menu.append(&MenuItem::with_id(app, "restart", "Restart", true, None::<&str>)?)?;
     menu.append(&MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?)?;

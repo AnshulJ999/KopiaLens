@@ -60,6 +60,35 @@ const helpPart = {
       if (u.url) window.open(u.url, "_blank", "noopener");
       this.showUpdate = false;
     },
+    // The desktop app installs it (after indexing and jobs finish); this follows its progress.
+    async installUpdate() {
+      try {
+        await getJson("/api/help/install-update", { method: "POST" });
+      } catch (e) {
+        this.klNotify(e.message || "Couldn't start the update.", "warn");
+        return;
+      }
+      if (this.help) this.help.update = { ...this.update(), install: { state: "checking" } };
+      clearInterval(this._updTimer);
+      this._updTimer = setInterval(async () => {
+        await this.loadHelp();
+        const st = (this.update().install || {}).state;
+        if (st === "failed" || st === "none") clearInterval(this._updTimer);
+      }, 2000);
+    },
+    updateProgress() {
+      const i = this.update().install;
+      if (!i) return "";
+      return {
+        checking: "Preparing…",
+        waiting: "Installs when indexing and running jobs finish.",
+        downloading: i.pct != null ? `Downloading… ${i.pct}%` : "Downloading…",
+        installing: "Installing. KopiaLens restarts when it's done.",
+        none: "This update isn't ready to install yet. Try again later, or download it.",
+        failed: "Couldn't install the update. Try again, or download it.",
+      }[i.state] || "";
+    },
+    updateInstalling() { return ["checking", "waiting", "downloading", "installing"].includes((this.update().install || {}).state); },
     async loadUsagePreview() {
       try { this.usagePreview = await getJson("/api/help/usage-preview"); } catch (e) { this.usagePreview = { error: true }; }
     },

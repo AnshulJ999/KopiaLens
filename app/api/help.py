@@ -76,6 +76,16 @@ def check_updates() -> dict:
     return {"ok": ok, "update": checkin.status()}
 
 
+@router.post("/help/install-update")
+def install_update() -> dict:
+    """Asks the desktop app to install the update (it waits for indexing and jobs to finish)."""
+    st = checkin.status()
+    if not st["can_install"]:
+        raise HTTPException(status_code=400, detail="This copy of KopiaLens can't install updates itself. Download the new version instead.")
+    checkin.request_install()
+    return {"ok": True}
+
+
 @router.get("/help/usage-preview")
 def usage_preview() -> dict:
     """Exactly what the next check-in sends with the current settings."""

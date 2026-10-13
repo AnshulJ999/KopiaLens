@@ -14,11 +14,17 @@
             </div>
           </template>
           <div class="kl-note" x-show="update().notice" x-text="update().notice"></div>
+          <div x-show="updateProgress()" :class="update().install && update().install.state === 'failed' ? 'text-warn' : ''">
+            <span x-text="updateProgress()"></span>
+            <span class="kl-note block" x-show="update().install && update().install.error" x-text="update().install && update().install.error"></span>
+          </div>
         </div>
         <div class="kl-footer">
+          <button class="kl-btn quiet" x-show="update().can_install && update().url" @click="updateDownload()">Download instead</button>
           <span class="spacer"></span>
-          <button class="kl-btn" @click="showUpdate = false">Later</button>
-          <button class="kl-btn primary" @click="updateDownload()" :disabled="!update().url">Get it</button>
+          <button class="kl-btn" @click="showUpdate = false" x-text="updateInstalling() ? 'Close' : 'Later'"></button>
+          <button class="kl-btn primary" x-show="update().can_install" @click="installUpdate()" :disabled="updateInstalling()">Install and restart</button>
+          <button class="kl-btn primary" x-show="!update().can_install" @click="updateDownload()" :disabled="!update().url">Get it</button>
         </div>
       </div>
     </div>

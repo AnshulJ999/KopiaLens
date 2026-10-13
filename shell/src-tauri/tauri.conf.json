@@ -14,6 +14,18 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://checkin.kopialens.com/v1/update/{{target}}-{{arch}}/{{current_version}}",
+        "https://github.com/AnshulJ999/KopiaLens/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": false,
     "publisher": "KopiaLens",

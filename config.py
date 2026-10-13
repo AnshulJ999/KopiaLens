@@ -31,7 +31,7 @@ APP_VERSION = _read_app_version()
 LICENCE_SERVICE_URL = os.environ.get("KOPIALENS_LICENCE_SERVICE") or "https://licensekit-sandbox.anshuljain.workers.dev"
 PRICING_URL = os.environ.get("KOPIALENS_PRICING_URL") or "https://kopialens.com/#pricing"
 # Daily update check + usage stats (docs/usage-stats.md). Placeholder host until the domain exists.
-CHECKIN_URL = os.environ.get("KOPIALENS_CHECKIN_URL") or "https://kl.anshuljain.net/v1/checkin"
+CHECKIN_URL = os.environ.get("KOPIALENS_CHECKIN_URL") or "https://checkin.kopialens.com/v1/checkin"
 # Help menu.
 DOCS_URL = os.environ.get("KOPIALENS_DOCS_URL") or "https://kopialens.com/docs"
 REPO_URL = os.environ.get("KOPIALENS_REPO_URL") or "https://github.com/AnshulJ999/KopiaLens"

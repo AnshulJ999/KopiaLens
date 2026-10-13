@@ -3,6 +3,7 @@
 mod control;
 mod server;
 mod tray;
+mod update;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::path::PathBuf;
@@ -30,7 +31,7 @@ pub struct Shell {
     quitting: AtomicBool,
 }
 
-fn shell(app: &AppHandle) -> Arc<Shell> {
+pub(crate) fn shell(app: &AppHandle) -> Arc<Shell> {
     app.state::<Arc<Shell>>().inner().clone()
 }
 
@@ -267,7 +268,10 @@ pub fn on_menu(app: &AppHandle, id: &str) {
             let app = app.clone();
             thread::spawn(move || {
                 let st = shell(&app).server.get("/api/shell/state").ok();
-                if let Some(url) = st.as_ref().and_then(|v| v.get("update")).and_then(|u| u.get("url")).and_then(Value::as_str) {
+                let upd = st.as_ref().and_then(|v| v.get("update")).cloned().unwrap_or(Value::Null);
+                if upd.get("can_install").and_then(Value::as_bool).unwrap_or(false) {
+                    update::install(&app);
+                } else if let Some(url) = upd.get("url").and_then(Value::as_str) {
                     open_external(url);
                 }
             });
@@ -317,6 +321,10 @@ pub fn poll_once(app: &AppHandle) {
         Ok(v) => {
             *sh.state.lock().unwrap() = Some(v.clone());
             tray::notify_changes(app, &sh, v);
+            // "Install" in the app's update notice: the server holds the request until this takes it up.
+            if v.get("update").and_then(|u| u.get("install_requested")).and_then(Value::as_bool) == Some(true) {
+                update::install(app);
+            }
         }
         Err(_) => *sh.state.lock().unwrap() = None,
     }
@@ -381,6 +389,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
         .on_window_event(|window, event| {
             if let WindowEvent::Destroyed = event {
@@ -417,6 +426,10 @@ pub fn run() {
                 quitting: AtomicBool::new(false),
             });
             app.manage(sh.clone());
+            if update::available(&handle, &sh) {
+                // Inherited by the server: its update notice offers Install instead of a download link.
+                std::env::set_var("KOPIALENS_IN_APP_UPDATES", "1");
+            }
             sh.server.log(&format!("--- desktop app started (data {}) ---", sh.server.data_dir.display()));
             sh.server.start();
             tray::create(&handle, &sh)?;
