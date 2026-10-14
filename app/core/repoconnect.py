@@ -981,8 +981,8 @@ def set_readonly(repo: str, on: bool, shared_ok: bool = False) -> dict:
     if on and other and not shared_ok:
         raise SharedConnection(other)
     flag = "--read-only" if on else "--read-write"
-    res = _run([kopiabin.exe(), "--config-file", cfg, "repository", "set-client", flag,
-                "--no-check-for-updates"], None, timeout=300.0)
+    res = _run([kopiabin.exe(), "--config-file", cfg, "repository", "set-client", flag],
+               None, timeout=300.0)
     ok = res["returncode"] == 0
     audit.audit("executed", "repo-readonly", repo=repo, summary={"on": bool(on), "ok": ok, "shared": other},
                 rc=res["returncode"])

@@ -58,7 +58,7 @@
                     <input type="checkbox" :checked="r.counts_as_backup" @change="raCountsAsBackup(r, $event.target.checked)">
                     <span>Counts as a backup <span class="text-muted">· the Excluded view treats files in it as backed up</span></span></label>
                   <label x-show="r.kind !== 'backblaze' && !r.demo" class="flex items-center gap-2 text-xs pl-8" data-testid="ra-kopia-readonly">
-                    <input type="checkbox" :checked="r.kopia_readonly" @change="raKopiaReadonly(r, $event.target.checked)">
+                    <input type="checkbox" :checked="r.kopia_readonly" @change="raKopiaReadonly(r, $event.target.checked, false, $event.target)">
                     <span>Read-only connection <span class="text-muted">· kopia refuses every change: no backups, deletes or policy edits from here</span></span></label>
                 </div>
               </template>

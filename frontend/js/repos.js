@@ -404,10 +404,11 @@ const reposPart = {
         r.counts_as_backup = on;
       } catch (e) { this.klNotify(e.message || String(e), "warn"); }
     },
-    async raKopiaReadonly(r, on, sharedOk = false) {
+    async raKopiaReadonly(r, on, sharedOk = false, el = null) {
       try {
         const res = await _setupPost(`/api/setup/repos/${encodeURIComponent(r.id)}/readonly`, { on, shared_ok: sharedOk });
         r.kopia_readonly = !!(res.repo && res.repo.kopia_readonly);
+        if (el) el.checked = r.kopia_readonly;
         this.klNotify(on ? `${r.name} is read-only now` : `${r.name} can be changed again`);
         this.wmLoad && this.wmLoad();
       } catch (e) {
@@ -416,11 +417,13 @@ const reposPart = {
           const ok = await this.klConfirm({ title: `Make ${app}'s connection read-only too?`,
             body: `${app} uses the same connection to this repository. Read-only applies to both, so ${app} can't back up to it until you turn this off.`,
             confirmLabel: "Make read-only", danger: true });
-          if (ok) return this.raKopiaReadonly(r, on, true);
+          if (ok) return this.raKopiaReadonly(r, on, true, el);
         } else {
           this.klNotify(e.message || String(e), "warn");
         }
+        // The box was already toggled by the click; the model didn't change, so set it back by hand.
         r.kopia_readonly = !on;
+        if (el) el.checked = !on;
         this.repos = this.repos.slice();
       }
     },
