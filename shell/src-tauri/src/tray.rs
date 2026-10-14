@@ -38,12 +38,12 @@ fn icon(name: &str, light: bool) -> Image<'static> {
                     ($id, false) => include_bytes!(concat!("../icons/tray/", $id, ".rgba")),
                     ($id, true) => include_bytes!(concat!("../icons/tray/", $id, "-light.rgba")),
                 )*
-                (_, true) => include_bytes!("../icons/tray/k6-light.rgba"),
-                _ => include_bytes!("../icons/tray/k6.rgba"),
+                (_, true) => include_bytes!("../icons/tray/k3g-light.rgba"),
+                _ => include_bytes!("../icons/tray/k3g.rgba"),
             }
         };
     }
-    let px: &'static [u8] = pick!("k6", "orig7", "k3a", "mono", "q1", "s3", "r4", "slice", "old");
+    let px: &'static [u8] = pick!("k3g", "k6s", "k3a", "tile", "mono", "q3", "q1", "s3", "r4", "slice", "q");
     Image::new(px, 64, 64)
 }
 
@@ -361,7 +361,7 @@ pub fn create(app: &AppHandle, shell: &Arc<Shell>) -> tauri::Result<()> {
     shell.server.log(&format!("start at logon: {:?}", app.autolaunch().is_enabled()));
     let menu = build_menu(app, h, state.as_ref())?;
     drop(app.remove_tray_by_id(TRAY_ID));
-    let choice = pref(state.as_ref(), "tray_icon", "k6");
+    let choice = pref(state.as_ref(), "tray_icon", "k3g");
     let light = light_taskbar(app);
     *ICON_SHOWN.lock().unwrap() = format!("{choice}|{light}");
     TrayIconBuilder::with_id(TRAY_ID)
@@ -407,7 +407,7 @@ pub fn refresh(app: &AppHandle, shell: &Arc<Shell>, h: Health) {
         return;
     }
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
-    let choice = pref(state.as_ref(), "tray_icon", "k6");
+    let choice = pref(state.as_ref(), "tray_icon", "k3g");
     let light = light_taskbar(app);
     {
         let key = format!("{choice}|{light}");

@@ -692,6 +692,8 @@ Section Uninstall
   Delete "$INSTDIR\bin\klens.exe"
   Delete "$INSTDIR\bin\kopialens-cli.exe"
   RMDir "$INSTDIR\bin"
+  Delete "$INSTDIR\icons\KopiaLens *.ico"
+  RMDir "$INSTDIR\icons"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
 

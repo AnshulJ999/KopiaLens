@@ -1,10 +1,12 @@
-{# The logo candidates (Settings > Appearance > Logo); shapes match the website. #}
+{# The logo choices (Settings > Appearance > Logo); shapes match packaging/build_logos.py. #}
 {% macro logo_mark(id, attrs="", cls="kl-logo") %}
-{% if id == "k6" %}
-<svg {{ attrs }} class="{{ cls }}" viewBox="0 0 64 64" aria-hidden="true"><g transform="translate(-2.5 -0.5)"><rect x="10" y="8" width="12" height="48" rx="3" class="lm"/><polygon points="25,31 46,8 57,8 36,31" class="lmid"/><polygon points="31,38 42,38 59,57 48,57" stroke-width="2" stroke-linejoin="round" class="la las"/></g></svg>
-{% elif id == "orig7" %}
-<svg {{ attrs }} class="{{ cls }}" viewBox="0 0 64 64" aria-hidden="true"><rect x="10" y="8" width="11" height="48" rx="2.5" class="lm"/><polygon points="24,30 45,8 57,8 36,30" class="lm"/><polygon points="28,35 40,35 60,56 48,56" class="la"/></svg>
+{% if id == "k3g" %}
+<svg {{ attrs }} class="{{ cls }}" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="27" fill="#0f766e"/><g transform="translate(32 32) scale(0.52) translate(-32 -32)"><g transform="translate(-3 0)"><rect x="10" y="8" width="11" height="48" rx="2" fill="#ffffff"/><polygon points="24,30 45,8 57,8 36,30" fill="#ffffff"/><polygon points="28,35 40,35 60,56 48,56" fill="#f59e0b"/></g></g></svg>
+{% elif id == "k6s" %}
+<svg {{ attrs }} class="{{ cls }}" viewBox="0 0 64 64" aria-hidden="true"><g transform="translate(-3 0)"><rect x="10" y="8" width="11" height="48" rx="2" class="lm"/><polygon points="24,30 45,8 57,8 36,30" class="lmid"/><polygon points="28,35 40,35 60,56 48,56" class="la"/></g></svg>
 {% elif id == "k3a" %}
-<svg {{ attrs }} class="{{ cls }}" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="26" stroke-width="5" class="lring"/><g transform="translate(32 32) scale(0.46) translate(-32 -32)"><g transform="translate(-2.5 -0.5)"><rect x="10" y="8" width="12" height="48" rx="3" class="lm"/><polygon points="25,31 46,8 57,8 36,31" stroke-width="2" stroke-linejoin="round" class="lm lms"/><polygon points="31,38 42,38 59,57 48,57" stroke-width="2" stroke-linejoin="round" class="la las"/></g></g></svg>
+<svg {{ attrs }} class="{{ cls }}" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="26" stroke-width="5" class="lring"/><g transform="translate(32 32) scale(0.46) translate(-32 -32)"><g transform="translate(-3 0)"><rect x="10" y="8" width="11" height="48" rx="2" class="lm"/><polygon points="24,30 45,8 57,8 36,30" class="lmid"/><polygon points="28,35 40,35 60,56 48,56" class="la"/></g></g></svg>
+{% elif id == "tile" %}
+<svg {{ attrs }} class="{{ cls }}" viewBox="0 0 64 64" aria-hidden="true"><rect x="1" y="1" width="62" height="62" rx="14" fill="#0f766e"/><g transform="translate(32 32) scale(0.7) translate(-32 -32)"><g transform="translate(-3 0)"><rect x="10" y="8" width="11" height="48" rx="2" fill="#ffffff"/><polygon points="24,30 45,8 57,8 36,30" fill="#ffffff" fill-opacity=".62"/><polygon points="28,35 40,35 60,56 48,56" fill="#fbbf24"/></g></g></svg>
 {% endif %}
 {% endmacro %}

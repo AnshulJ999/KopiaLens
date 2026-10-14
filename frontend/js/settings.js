@@ -3,8 +3,8 @@
 const MEMORY_CHOICES = ["512MB", "1GB", "2GB", "3GB", "4GB", "6GB", "8GB"];
 // Tray icon choices (the desktop app draws them from shell/src-tauri/icons/tray/). First = default.
 const TRAY_ICONS = [
-  ["k6", "Two-tone K"], ["orig7", "Plain K"], ["k3a", "K in a lens ring"], ["mono", "K in one colour"],
-  ["q1", "Lens with a tail"], ["s3", "Ring with a slice out"], ["r4", "Bold lens"], ["slice", "Slice pulled out"], ["old", "Original"],
+  ["k3g", "Disc"], ["k6s", "K"], ["k3a", "Ring"], ["tile", "Tile"], ["mono", "K in one colour"], ["q3", "Q with a glint"],
+  ["q1", "Lens with a tail"], ["s3", "Ring with a slice out"], ["r4", "Bold lens"], ["slice", "Slice pulled out"], ["q", "Simple Q"],
 ];
 
 // A duration setting shown as a free number plus a unit; the setting itself stays in seconds.
@@ -106,18 +106,18 @@ const settingsPart = {
     },
     // Logo, retention chips and the Snapshot now confirm: read at startup and on each Settings open.
     _readLook(kl) {
-      this.logo = ["k6", "orig7", "k3a", "none"].includes(kl.logo) ? kl.logo : "k6";
-      this.trayIcon = TRAY_ICONS.some((t) => t[0] === kl.tray_icon) ? kl.tray_icon : "k6";
+      this.logo = ["k3g", "k6s", "k3a", "tile", "none"].includes(kl.logo) ? kl.logo : "k3g";
+      this.trayIcon = TRAY_ICONS.some((t) => t[0] === kl.tray_icon) ? kl.tray_icon : "k3g";
       this.askSnapshotNow = kl.ask_snapshot_now !== false;
       this.taskView = kl.task_view === "panel" ? "panel" : "popup";
       this.retentionChips = ["kopiaui", "custom"].includes(kl.retention_chips) ? kl.retention_chips : "uniform";
       this.retentionChipColor = /^#[0-9a-f]{6}$/i.test(kl.retention_chip_color || "") ? kl.retention_chip_color : "#2563eb";
       this.applyFavicon();
     },
-    // The browser tab icon follows the header logo (the two-tone K when the logo is hidden).
+    // The browser tab icon follows the header logo (the Disc when the logo is hidden).
     applyFavicon() {
       const el = document.querySelector('link[rel="icon"]');
-      if (el) el.href = `/static/logos/${this.logo === "none" ? "k6" : this.logo}.svg`;
+      if (el) el.href = `/static/logos/${this.logo === "none" ? "k3g" : this.logo}.svg`;
     },
     TRAY_ICONS,
     MEMORY_CHOICES,
@@ -178,7 +178,7 @@ const settingsPart = {
       rank_count: { s: "rankCount", t: "int", min: 0 },
       repo_labels: { s: "repoLabels", t: "choice", of: ["short", "full"] },
       show_pro_badge: { s: "showProBadge", t: "bool" },
-      logo: { s: "logo", t: "choice", of: ["k6", "orig7", "k3a", "none"] },
+      logo: { s: "logo", t: "choice", of: ["k3g", "k6s", "k3a", "tile", "none"] },
       tray_icon: { s: "trayIcon", t: "choice", of: TRAY_ICONS.map((t) => t[0]) },
       ask_snapshot_now: { s: "askSnapshotNow", t: "bool" },
       retention_chips: { s: "retentionChips", t: "choice", of: ["uniform", "kopiaui", "custom"] },

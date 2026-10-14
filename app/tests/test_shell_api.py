@@ -84,4 +84,4 @@ def test_prefs_accept_only_known_values(monkeypatch):
 def test_unknown_stored_values_read_as_defaults():
     prefs = shell._prefs({"tray_click": "sideways", "notifications": None, "control_api": False})
     assert prefs == {"tray_click": "window", "tray_double_click": "window", "notifications": "warnings",
-                     "tray_icon": "k6", "quit_indexing": "finish", "control_api": False}
+                     "tray_icon": "k3g", "quit_indexing": "finish", "control_api": False}

@@ -110,8 +110,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "index_keep_versions": 1,        # older index versions kept on disk (0-3); 0 = off
         "index_backup_dir": "",          # a folder (ideally another drive) holding a copy of each index; "" = off
         "show_pro_badge": True,      # the small Pro mark next to the logo while a licence is active
-        "logo": "k6",                # header logo: k6 | orig7 | k3a | none
-        "tray_icon": "k6",           # desktop app tray icon (api/shell.PREFS lists the choices)
+        "logo": "k3g",               # header logo: k3g | k6s | k3a | tile | none
+        "tray_icon": "k3g",          # desktop app tray icon (api/shell.PREFS lists the choices)
         "ask_snapshot_now": True,    # confirm before Snapshot now
         "task_view": "popup",        # Tasks: details as a full-size popup or a small panel
         "retention_chips": "uniform",  # Snapshots retention chips: uniform | kopiaui | custom

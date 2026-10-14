@@ -343,6 +343,8 @@ def main() -> int:
     os.makedirs(bindir)
     for name in ("klens.exe", "kopialens-cli.exe"):
         shutil.copy2(os.path.join(launcher_target, "release", "klens.exe"), os.path.join(bindir, name))
+    # Logo icons for desktop shortcuts (Properties > Change Icon); built by build_logos.py.
+    shutil.copytree(os.path.join(SHELL, "icons", "shortcuts"), os.path.join(STAGE, "icons"))
 
     log("4/6 desktop app + installer (Tauri)")
     release_conf = os.path.join(STAGE, "tauri.release.json")
@@ -350,7 +352,8 @@ def main() -> int:
         json.dump({**RELEASE_IDENTITY,
                    "bundle": {"active": True, "targets": ["nsis"], "createUpdaterArtifacts": True,
                               "resources": {"release-stage/server/": "server/",
-                                            "release-stage/bin/": "bin/"}}}, fh)
+                                            "release-stage/bin/": "bin/",
+                                            "release-stage/icons/": "icons/"}}}, fh)
     run(["cargo", "tauri", "build", "--config", release_conf, "--bundles", "nsis"], SHELL, "tauri.log",
         {"CARGO_TARGET_DIR": SHELL_TARGET, **signing_env})
     exe = os.path.join(SHELL_TARGET, "release", "KopiaLens.exe")
@@ -379,6 +382,8 @@ def main() -> int:
                 zf.write(full, "KopiaLens/server/" + os.path.relpath(full, server).replace("\\", "/"))
         for f in os.listdir(bindir):
             zf.write(os.path.join(bindir, f), "KopiaLens/bin/" + f)
+        for f in os.listdir(os.path.join(STAGE, "icons")):
+            zf.write(os.path.join(STAGE, "icons", f), "KopiaLens/icons/" + f)
 
     # The command line on its own, for any machine with Python 3 (standard library only).
     with open(os.path.join(KL_ROOT, "klens.py"), encoding="utf-8") as fh:

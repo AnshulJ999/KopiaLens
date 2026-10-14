@@ -93,7 +93,7 @@
   <div>
     <div class="text-sm font-medium mb-2">Logo</div>
     <div class="flex flex-wrap gap-1.5" data-testid="logo-choice">
-      {% for id, label in [("k6", "Two-tone K"), ("orig7", "Plain K"), ("k3a", "K in a lens ring"), ("none", "None")] %}
+      {% for id, label in [("k3g", "Disc"), ("k6s", "K"), ("k3a", "Ring"), ("tile", "Tile"), ("none", "None")] %}
       <button @click="logo = '{{ id }}'; saveKl('logo')" class="flex items-center gap-2 h-8 rounded border px-2 text-xs"
               :class="logo === '{{ id }}' ? 'border-fg bg-sel font-medium' : 'border-bd'">
         {{ logo_mark(id, cls="kl-logo sm") }}<span>{{ label }}</span>

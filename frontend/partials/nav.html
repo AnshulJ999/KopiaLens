@@ -3,9 +3,10 @@
     <header class="min-h-14 shrink-0 border-b border-bd bg-surface flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2">
       <div class="flex items-start shrink-0">
         <button @click="goHome()" class="flex items-center font-semibold text-lg" title="Go to the first tab">
-          {{ logo_mark("k6", 'x-show="logo === \'k6\'"') }}
-          {{ logo_mark("orig7", 'x-show="logo === \'orig7\'" x-cloak') }}
+          {{ logo_mark("k3g", 'x-show="logo === \'k3g\'"') }}
+          {{ logo_mark("k6s", 'x-show="logo === \'k6s\'" x-cloak') }}
           {{ logo_mark("k3a", 'x-show="logo === \'k3a\'" x-cloak') }}
+          {{ logo_mark("tile", 'x-show="logo === \'tile\'" x-cloak') }}
           Kopia<span class="text-ok">Lens</span></button>
         <span x-show="lic.state === 'active' && showProBadge" x-cloak class="pro-mark" :title="lic.plan + (lic.name ? ', licensed to ' + lic.name : '')">Pro</span>
       </div>

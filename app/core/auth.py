@@ -337,6 +337,11 @@ def shell_request_ok(path: str, header: str | None, client_host: str | None) -> 
     return local and hmac.compare_digest(header.encode(), token.encode())
 
 
+_LOGO = ('<svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="27" fill="#0f766e"/>'
+         '<g transform="translate(32 32) scale(0.52) translate(-35 -32)"><rect x="10" y="8" width="11" height="48" rx="2" '
+         'fill="#fff"/><polygon points="24,30 45,8 57,8 36,30" fill="#fff"/><polygon points="28,35 40,35 60,56 48,56" '
+         'fill="#f59e0b"/></g></svg>')  # the Disc logo (packaging/build_logos.py)
+
 LOGIN_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Sign in - KopiaLens</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -351,7 +356,7 @@ LOGIN_PAGE = """<!doctype html>
  form{width:100%;max-width:340px;padding:24px;background:var(--surface);border:1px solid var(--bd);
       border-radius:12px;display:flex;flex-direction:column;gap:12px}
  .brand{display:flex;gap:8px;align-items:center;font-weight:600}
- .logo{width:22px;height:22px;border-radius:6px;background:var(--fg)}
+ .logo{width:24px;height:24px;flex-shrink:0}
  h1{margin:0;font-size:17px}
  label.f{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:500}
  input[type=text],input[type=password]{height:34px;padding:0 9px;border-radius:6px;border:1px solid var(--bd);
@@ -367,7 +372,7 @@ LOGIN_PAGE = """<!doctype html>
  code{font-family:ui-monospace,Consolas,monospace;font-size:12px}
 </style></head><body>
 <form method="post" action="/api/auth/login">
-  <div class="brand"><span class="logo"></span>KopiaLens</div>
+  <div class="brand">__LOGO__KopiaLens</div>
   <h1>Sign in</h1>
   __LOCK__
   <label class="f">Username<input type="text" name="username" autocomplete="username" value="__USER__" required __FOCUS_USER__></label>
@@ -377,7 +382,7 @@ LOGIN_PAGE = """<!doctype html>
   <button type="submit">__BUTTON__</button>
   <div class="note">__REMEMBER_NOTE__</div>
   <a href="/login/recover">Forgot password?</a>
-</form></body></html>"""
+</form></body></html>""".replace("__LOGO__", _LOGO)
 
 def _read_pw_script() -> str:
     """The show/hide password script, inlined so the sign-in pages need no static files."""
@@ -426,7 +431,7 @@ def recover_page(error: str = "", with_key: bool = False) -> str:
     err = f'<div class="err">{escape(error)}</div>' if error else ""
     if with_key:
         body = ('<form method="post" action="/api/auth/recover">'
-                '<div class="brand"><span class="logo"></span>KopiaLens</div>'
+                f'<div class="brand">{_LOGO}KopiaLens</div>'
                 '<h1>Reset your password</h1>'
                 '<div class="note">Your recovery key sets a new password for signing in and for '
                 'encryption.</div>'
@@ -441,7 +446,7 @@ def recover_page(error: str = "", with_key: bool = False) -> str:
                 '<a href="/login">Back to sign in</a></form>')
     else:
         body = ('<form onsubmit="return false">'
-                '<div class="brand"><span class="logo"></span>KopiaLens</div>'
+                f'<div class="brand">{_LOGO}KopiaLens</div>'
                 '<h1>Reset your password</h1>'
                 f'<div class="note">{_LOCAL_RESET}</div>'
                 '<a href="/login">Back to sign in</a></form>')

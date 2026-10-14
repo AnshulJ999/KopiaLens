@@ -114,8 +114,8 @@ document.addEventListener("alpine:init", () => {
     indexRetryDelay: 900, indexMaxRetries: 1, reindexAfterDeleteDelay: 300, quitIndexing: "finish",
     folderPrewarmBudget: 900, startupDelay: 300, logCleanupDays: 90, taskHistoryKeep: 90, engineTakeback: "auto", rankCount: 10000,
     showProBadge: true,   // the small Pro mark next to the logo while a licence is active
-    logo: "k6",           // header logo: k6 | orig7 | k3a | none (Settings > Appearance)
-    trayIcon: "k6",       // desktop app tray icon (Settings > Desktop app; TRAY_ICONS in settings.js)
+    logo: "k3g",          // header logo: k3g | k6s | k3a | tile | none (Settings > Appearance)
+    trayIcon: "k3g",      // desktop app tray icon (Settings > Desktop app; TRAY_ICONS in settings.js)
     askSnapshotNow: true, // confirm before Snapshot now (Settings > General; the confirm's "Don't ask again")
     retentionChips: "uniform", retentionChipColor: "#2563eb",   // Snapshots retention chips: uniform | kopiaui | custom
     treeExtra: {}, _treeFilling: false,   // Tree: Physical (all) / Reclaimable / sources worked out for the rows on screen
