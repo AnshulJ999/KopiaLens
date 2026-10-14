@@ -46,6 +46,8 @@ class ConnectRequest(BaseModel):
     short_name: str = ""
     counts_as_backup: bool = True
     allow_duplicate: bool = False   # the user confirmed adding a repository that is already here
+    config_location: str = ""       # data | kopia | folder; empty = the default (repoconnect.config_location)
+    config_folder: str = ""         # the folder, for "folder"
 
 
 class CreateRequest(ConnectRequest):
@@ -117,7 +119,10 @@ def set_kopia(payload: KopiaPathRequest) -> dict:
 @router.get("/setup/providers")
 def get_providers() -> dict:
     """Every storage type kopia supports, with the field specs the connect form renders."""
-    return {"providers": repoconnect.provider_list()}
+    from ..core import host
+    # In a container kopia's own folder isn't kept across a recreate, so it isn't offered there.
+    return {"providers": repoconnect.provider_list(), "config_location": repoconnect.config_location(),
+            "kopia_folder_ok": not host.in_docker()}
 
 
 @router.get("/setup/detect-configs")
@@ -143,7 +148,8 @@ def connect(payload: ConnectRequest) -> dict:
     try:
         record = repoconnect.connect(
             payload.provider, payload.fields, payload.password, payload.name,
-            payload.short_name, payload.counts_as_backup, payload.allow_duplicate)
+            payload.short_name, payload.counts_as_backup, payload.allow_duplicate,
+            payload.config_location, payload.config_folder)
     except repoconnect.DuplicateRepo as exc:
         return _duplicate(exc)
     except (ValueError, OSError) as exc:
@@ -160,7 +166,8 @@ def create(payload: CreateRequest) -> dict:
     try:
         record = repoconnect.create(
             payload.provider, payload.fields, payload.password, payload.name,
-            payload.short_name, payload.counts_as_backup, payload.options)
+            payload.short_name, payload.counts_as_backup, payload.options,
+            payload.config_location, payload.config_folder)
     except (ValueError, OSError) as exc:
         raise _bad(exc) from exc
     return {"ok": True, "repo": repos.detail(record)}

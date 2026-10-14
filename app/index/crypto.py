@@ -476,41 +476,94 @@ def _account() -> str:
     return f"data-key:{digest}"
 
 
-def unlock_from_keychain() -> bool:
-    """Unlock from the OS keychain ("remember on this machine"). False when nothing is stored."""
-    global _DATA_KEY, _SOURCE
-    with _LOCK:
-        try:
-            import keyring
-            key = keyring.get_password(_SERVICE, _account())
-            if not key:
-                key = keyring.get_password(_SERVICE, _ACCOUNT)
-                if key:
-                    try:
-                        keyring.set_password(_SERVICE, _account(), key)   # migrate to the scoped name
-                    except Exception:  # noqa: BLE001 - the read already worked; the write is a bonus
-                        pass
-        except Exception as exc:  # noqa: BLE001 - no backend, locked keyring, DBus absent
-            log.info("keychain unavailable: %s", exc)
+# The OS keychain is only ever used from one background thread at a time. On a Linux desktop
+# without an open login keyring, a keychain call opens a password window and waits for a person;
+# a request, startup, the nightly or Quit must never wait on that, and a second call must not
+# open a second window. A call still waiting simply finishes (or fails) later.
+_KC_LOCK = threading.Lock()
+_KC_THREAD: threading.Thread | None = None
+_KC_FAILED = False                    # the last keychain call raised (no keychain, refused, cancelled)
+_REMEMBERED: bool | None = None       # last known: the data key is in the keychain
+
+
+def _keychain_job(work, wait: float) -> bool:
+    """Run ``work`` (keychain calls) on the keychain thread and wait up to ``wait`` seconds.
+    True when it finished in time; False when it is still waiting or another call is."""
+    global _KC_THREAD
+    with _KC_LOCK:
+        if _KC_THREAD is not None and _KC_THREAD.is_alive():
             return False
+
+        def run():
+            global _KC_FAILED
+            try:
+                work()
+                _KC_FAILED = False
+            except Exception as exc:  # noqa: BLE001 - no backend, locked keyring, DBus absent, cancelled
+                _KC_FAILED = True
+                log.info("keychain unavailable: %s", exc)
+
+        _KC_THREAD = threading.Thread(target=run, name="keychain", daemon=True)
+        _KC_THREAD.start()
+        thread = _KC_THREAD
+    thread.join(wait)
+    return not thread.is_alive()
+
+
+def _set_remembered(on: bool) -> None:
+    global _REMEMBERED
+    _REMEMBERED = on
+    meta = _read_meta()
+    if meta and meta.get("remembered") != on:
+        meta["remembered"] = on
+        _write_meta(meta)
+
+
+def unlock_from_keychain(wait: float = 10.0) -> bool:
+    """Unlock from the OS keychain ("remember on this machine"). False when nothing is stored, the
+    keychain is unavailable, or it hasn't answered within ``wait`` seconds; a late answer still
+    unlocks when it comes. Not tried when the key was never saved there."""
+    if _read_meta().get("remembered") is False:
+        return False
+
+    def work():
+        global _DATA_KEY, _SOURCE, _REMEMBERED
+        import keyring
+        key = keyring.get_password(_SERVICE, _account())
         if not key:
-            return False
+            key = keyring.get_password(_SERVICE, _ACCOUNT)
+            if key:
+                try:
+                    keyring.set_password(_SERVICE, _account(), key)   # migrate to the scoped name
+                except Exception:  # noqa: BLE001 - the read already worked; the write is a bonus
+                    pass
+        _REMEMBERED = bool(key)
+        if not key:
+            return
         try:
-            _DATA_KEY, _SOURCE = _check_key(key), "keychain"
+            checked = _check_key(key)
         except ValueError:                 # not a key: fall back to the pipe / a password
             log.warning("the keychain entry is not a usable key - ignoring it")
-            return False
-        return True
+            return
+        with _LOCK:
+            if _DATA_KEY is None:
+                _DATA_KEY, _SOURCE = checked, "keychain"
+                log.info("index unlocked from the keychain")
+
+    _keychain_job(work, wait)
+    return unlocked()
 
 
-def remember_on_this_machine(on: bool) -> bool:
-    """Store or clear the data key in the OS keychain. Returns whether the keychain accepted it."""
-    try:
+def remember_on_this_machine(on: bool, wait: float = 10.0) -> str:
+    """Store or clear the data key in the OS keychain: "on" / "off" when done, "waiting" while the
+    keychain hasn't answered (it finishes in the background), "unavailable" when it refused."""
+    key = data_key() if on else None
+    if on and not key:
+        return "unavailable"
+
+    def work():
         import keyring
         if on:
-            key = data_key()
-            if not key:
-                return False
             keyring.set_password(_SERVICE, _account(), key)
         else:
             for account in (_account(), _ACCOUNT):
@@ -518,19 +571,25 @@ def remember_on_this_machine(on: bool) -> bool:
                     keyring.delete_password(_SERVICE, account)
                 except Exception:  # noqa: BLE001 - nothing stored is a successful clear
                     pass
-        return True
-    except Exception as exc:  # noqa: BLE001
-        log.warning("keychain write failed: %s", exc)
-        return False
+        _set_remembered(on)
+
+    if not _keychain_job(work, wait):
+        return "waiting"
+    return "unavailable" if _KC_FAILED else ("on" if on else "off")
 
 
 def is_remembered() -> bool:
-    try:
-        import keyring
-        return bool(keyring.get_password(_SERVICE, _account())
-                    or keyring.get_password(_SERVICE, _ACCOUNT))
-    except Exception:  # noqa: BLE001
-        return False
+    """Whether the data key is in the keychain, as last known (never asks the keychain)."""
+    return bool(_REMEMBERED)
+
+
+def remember_state() -> str:
+    """For the screens: "waiting" | "unavailable" | "on" | "off"."""
+    if _KC_THREAD is not None and _KC_THREAD.is_alive():
+        return "waiting"
+    if _KC_FAILED:
+        return "unavailable"
+    return "on" if _REMEMBERED else "off"
 
 
 # --------------------------------------------------------------- worker key handoff (stdin)

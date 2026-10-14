@@ -91,6 +91,7 @@ def _status() -> dict:
         "enabled": crypto.enabled(),
         "unlocked": crypto.unlocked(),
         "remembered": crypto.is_remembered(),
+        "remember_state": crypto.remember_state(),   # waiting | unavailable | on | off
         "has_recovery": crypto.has_recovery(),
         "pending": [r["repo"] for r in repos if r["pending"]],
         "repos": repos,
@@ -212,10 +213,10 @@ def remember(payload: RememberRequest) -> dict:
     """Turn "remember on this machine" on or off (the OS keychain holds the data key)."""
     if payload.on and not crypto.unlocked():
         raise HTTPException(status_code=409, detail="Unlock KopiaLens first.")
-    if not crypto.remember_on_this_machine(payload.on):
+    if crypto.remember_on_this_machine(payload.on) == "unavailable":
         raise HTTPException(status_code=500,
-                            detail="The OS keychain refused to store the key. The nightly will "
-                                   "need an unlock after a restart.")
+                            detail="This computer's keychain didn't accept the key. KopiaLens will "
+                                   "ask for the password after a restart.")
     return {"ok": True, "status": _status()}
 
 

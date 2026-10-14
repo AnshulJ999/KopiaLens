@@ -49,6 +49,8 @@ def keystore(tmp_path, monkeypatch):
     """Point the keystore at a scratch dir and leave encryption ON for the test."""
     monkeypatch.setattr(crypto, "keystore_dir", lambda: str(tmp_path / "cfg"))
     monkeypatch.setattr(crypto, "enabled", lambda: crypto.configured())
+    for name, value in (("_KC_THREAD", None), ("_KC_FAILED", False), ("_REMEMBERED", None)):
+        monkeypatch.setattr(crypto, name, value)
     crypto.lock()
     yield tmp_path
     crypto.lock()
@@ -171,14 +173,37 @@ def test_the_recovery_key_sets_a_new_password(keystore):
 def test_a_keychain_entry_is_scoped_to_the_install(keystore, fake_keyring):
     crypto.setup("pw", with_recovery=False)
     key = crypto.data_key()
-    assert crypto.remember_on_this_machine(True) is True
+    assert crypto.remember_on_this_machine(True) == "on"
     assert fake_keyring.store[(crypto._SERVICE, crypto._account())] == key
     crypto.lock()
     assert crypto.is_remembered() is True
     assert crypto.unlock_from_keychain() is True
     assert crypto.data_key() == key
-    assert crypto.remember_on_this_machine(False) is True
+    assert crypto.remember_on_this_machine(False) == "off"
     assert crypto.is_remembered() is False
+
+
+def test_a_keychain_that_never_answers_blocks_nothing(keystore, fake_keyring, monkeypatch):
+    # On a Linux desktop the keychain can open a password window and wait for a person: setup,
+    # status and Quit hung on it, and every status check opened another window.
+    import threading
+    crypto.setup("pw", with_recovery=False)
+    answer = threading.Event()
+    calls = []
+
+    def stuck_set(service, account, value):
+        calls.append(account)
+        answer.wait(10)
+        raise RuntimeError("prompt dismissed")
+
+    monkeypatch.setattr(fake_keyring, "set_password", stuck_set)
+    assert crypto.remember_on_this_machine(True, wait=0.2) == "waiting"
+    assert crypto.remember_state() == "waiting"
+    assert crypto.remember_on_this_machine(True, wait=0.2) == "waiting"   # no second window
+    assert len(calls) == 1
+    answer.set()
+    crypto._KC_THREAD.join(5)
+    assert crypto.remember_state() == "unavailable" and crypto.is_remembered() is False
 
 
 def test_a_legacy_keychain_entry_is_migrated_to_the_scoped_name(keystore, fake_keyring):

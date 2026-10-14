@@ -92,10 +92,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         # tested with), then PATH, the usual install locations and KopiaUI's bundle - see
         # core/kopiabin.py, the ONLY place that resolves it. KOPIALENS_KOPIA overrides it.
         "kopia_path": "",
-        # Where a connection KopiaLens CREATES keeps its kopia config file:
-        #   "" = profile default (tray/desktop = "kopia", server/Docker = "data")
+        # The default place for a connection KopiaLens CREATES (the connect form can pick per repo):
+        #   "" / "data" = KopiaLens's data folder, used only by this copy
         #   "kopia" = kopia's own config folder, so KopiaUI and the kopia CLI see it too
-        #   "data"  = KopiaLens's data folder (a container's data folder is the mounted volume)
         # KOPIALENS_KOPIA_CONFIG_LOCATION overrides it. See core/repoconnect.config_location().
         "kopia_config_location": "",
         "es_path": "",               # Everything CLI for the Excluded browser; "" = find it (core/everything.es_path)

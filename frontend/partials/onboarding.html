@@ -9,7 +9,7 @@
               <template x-for="(s, i) in obSteps()" :key="s[0]">
                 <li class="flex items-center gap-1">
                   <span x-show="i > 0" class="w-5 border-t border-bd"></span>
-                  <button type="button" @click="obGo(s[0])" :disabled="!obStepDone(s[0])"
+                  <button type="button" @click="obGo(s[0])" :disabled="!obStepDone(s[0]) || ob.busy"
                           class="flex items-center gap-1.5 rounded-full px-2 py-1"
                           :class="obStepIndex(ob.step) === i ? 'bg-sel font-medium text-fg' : (obStepDone(s[0]) ? 'text-fg hover:bg-head' : 'text-muted')"
                           :aria-current="obStepIndex(ob.step) === i ? 'step' : null">
@@ -83,7 +83,8 @@
             </template>
 
             <!-- 2. Protect -->
-            <template x-if="!ob.needsCode && ob.step === 'protect' && ob.protected">
+            <!-- The form stays up until its request finishes (ob.protected is set halfway through). -->
+            <template x-if="!ob.needsCode && ob.step === 'protect' && ob.protected && !ob.busy">
               <div>
                 <div class="p-5 space-y-3">
                   <h1 class="text-lg font-semibold">Protect KopiaLens</h1>
@@ -99,7 +100,7 @@
               </div>
             </template>
 
-            <template x-if="!ob.needsCode && ob.step === 'protect' && !ob.protected">
+            <template x-if="!ob.needsCode && ob.step === 'protect' && (!ob.protected || ob.busy)">
               <form @submit.prevent="obProtect()">
                 <div class="p-5 space-y-5">
                   <div>
@@ -157,7 +158,7 @@
                   <p class="text-xs" style="color:var(--danger)" x-show="ob.error" x-text="ob.error"></p>
                 </div>
                 <div class="kl-footer">
-                  <button type="button" @click="ob.step = 'connect'" class="kl-btn">Back</button>
+                  <button type="button" @click="ob.step = 'connect'" class="kl-btn" :disabled="ob.busy">Back</button>
                   <span class="spacer"></span>
                   <button type="button" @click="obSkipProtect()" class="kl-btn quiet" :disabled="ob.busy">Skip protection</button>
                   <button type="submit" class="kl-btn primary" :disabled="ob.busy" x-text="ob.busy ? 'Setting up…' : 'Continue'"></button>

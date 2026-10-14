@@ -240,8 +240,10 @@ const accountPart = {
     },
     async toggleRemember(on) {
       try {
-        this._acctApply(await _acctPost("/api/encryption/remember", { on }));
-        this.klNotify(on ? "Unlocks automatically on this computer" : "Asks for the password after every restart");
+        const r = await _acctPost("/api/encryption/remember", { on });
+        this._acctApply(r);
+        const waiting = r && r.status && r.status.remember_state === "waiting";
+        this.klNotify(waiting ? "Waiting for this computer's keychain" : (on ? "Unlocks automatically on this computer" : "Asks for the password after every restart"));
       } catch (e) { this.klNotify(e.message || String(e), "warn"); }
     },
     async lockNow() {

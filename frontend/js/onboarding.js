@@ -115,6 +115,7 @@ const onboardingPart = {
             o.keyNote = `Encryption is set up, but encrypting the data didn't start: ${e.message}. Choose the level again in Settings → Encryption.`;
           }
           o.recoveryKey = r.recovery_key || "";
+          o.rememberState = (r.status && r.status.remember_state) || "";
           o.pw = o.confirm = o.encPw = o.encConfirm = "";
           o.step = o.recoveryKey ? "key" : "start";
         } else {
@@ -187,8 +188,14 @@ const onboardingPart = {
       return [
         ["Repositories", names || "None"],
         ["Sign-in", o.protected === "account" ? "On" : (o.protected === "skipped" ? "Off" : "Unchanged")],
-        ["Encryption", o.recoveryKey ? `${this.encLevelLabel(o.level)}${o.remember ? ", unlocks automatically" : ""}` : (o.protected === "account" && o.level === "off" ? "Off" : (o.state.encryption_level && o.state.encryption_level !== "off" ? this.encLevelLabel(o.state.encryption_level) : "Unchanged"))],
+        ["Encryption", o.recoveryKey ? `${this.encLevelLabel(o.level)}${this._obRememberText()}` : (o.protected === "account" && o.level === "off" ? "Off" : (o.state.encryption_level && o.state.encryption_level !== "off" ? this.encLevelLabel(o.state.encryption_level) : "Unchanged"))],
       ];
+    },
+    _obRememberText() {
+      const o = this.ob;
+      if (!o.remember) return "";
+      return { waiting: ", waiting for this computer's keychain", unavailable: ", password needed after a restart (this computer's keychain didn't accept the key)" }[o.rememberState]
+        || ", unlocks automatically";
     },
     obEstimate() {
       const list = ((this.cx && this.cx.added) || [])

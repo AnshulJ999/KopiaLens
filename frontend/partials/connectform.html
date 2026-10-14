@@ -133,6 +133,17 @@
                               </label>
                             </template>
                           </div>
+                          <div class="grid gap-2 sm:grid-cols-2 mt-3" data-testid="cx-config-location">
+                            <label class="flex flex-col gap-1 text-xs font-medium" title="Where kopia keeps this connection: the repository's location and settings">Connection file
+                              <select x-model="cx.cfgLoc" class="fld border border-bd bg-surface2 font-normal">
+                                <option value="data">KopiaLens's folder</option>
+                                <option value="kopia" x-show="cx.kopiaFolderOk">kopia's folder, shared with KopiaUI</option>
+                                <option value="folder">Another folder…</option>
+                              </select></label>
+                            <label x-show="cx.cfgLoc === 'folder'" class="flex flex-col gap-1 text-xs font-medium">Folder
+                              <input type="text" x-model="cx.cfgFolder" spellcheck="false" class="fld border border-bd bg-surface2 font-normal"></label>
+                            <p x-show="cx.cfgLoc === 'kopia'" class="kl-note sm:col-span-2" style="color:var(--warn)">KopiaUI will list this repository too, and may run its own backups and maintenance on it.</p>
+                          </div>
                         </details>
                         <label x-show="cxSpec().password" class="flex flex-col gap-1 text-xs font-medium">Repository password
                           <input type="password" x-model="cx.password" :autocomplete="cx.mode === 'create' ? 'new-password' : 'off'" class="fld border border-bd bg-surface2">

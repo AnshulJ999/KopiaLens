@@ -8,6 +8,16 @@ Select **Add repository…**. It works the same way as [first-time setup](gettin
 
 A new repository is indexed at the next scheduled time, or when you select **Index now**.
 
+### Where the connection file goes
+
+Connecting or creating a repository writes a small kopia connection file: where the repository is and how to reach it. **More options** → **Connection file** picks its place:
+
+- **KopiaLens's folder** (the default): used by this KopiaLens only. Removing the repository can remove it too.
+- **kopia's folder, shared with KopiaUI**: KopiaUI and the kopia command line see the connection too. KopiaUI then lists the repository and may run its own backups and maintenance on it. Not offered in Docker.
+- **Another folder…**: any folder you choose.
+
+Connections found on this computer stay where they are.
+
 ## Managing repositories
 
 Each repository in Settings → Repositories shows where it's stored and when it was last indexed.

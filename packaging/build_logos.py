@@ -1,6 +1,7 @@
 """Build the logo files from one set of shapes.
 
 Writes:
+  shell/src-tauri/icons/*          the desktop app's own icon set (window, taskbar, installer, exe)
   frontend/logos/<id>.svg          browser tab icons for the header logo choices (light and dark aware)
   frontend/logos/tray/<id>.png     previews of the tray icon choices (Settings > Desktop app)
   shell/src-tauri/icons/tray/<id>.rgba   the tray icons themselves, 64x64 raw RGBA, read by tray.rs
@@ -108,8 +109,41 @@ def main() -> None:
                 img = Image.open(io.BytesIO(png)).convert("RGBA").resize((SIZE, SIZE))
                 img.save(TRAY_PNG / f"{key}{suffix}.png")
                 (TRAY_RGBA / f"{key}{suffix}.rgba").write_bytes(img.tobytes())
+        app_png = _app_icon_png(browser)
         browser.close()
-    print(f"{len(TRAY)} tray icons (dark and light taskbar), 3 tab icons")
+    _app_icon_set(app_png)
+    print(f"{len(TRAY)} tray icons (dark and light taskbar), 3 tab icons, the desktop app's icon set")
+
+
+# The desktop app's own icon (window, taskbar, installer, exe): the default logo on a light tile.
+APP_LOGO = "k6"
+APP_ICON_SIZE = 1024
+APP_ICONS = ROOT / "shell" / "src-tauri" / "icons"
+
+
+def _app_icon_png(browser) -> bytes:
+    inner = ('<rect x="2" y="2" width="60" height="60" rx="14" fill="#fafaf9"/>'
+             f'<g transform="translate(32 32) scale(0.78) translate(-32 -32)">{MARKS[APP_LOGO]}</g>')
+    svg = _svg(inner, LIGHT).replace("<svg ", f'<svg width="{APP_ICON_SIZE}" height="{APP_ICON_SIZE}" ', 1)
+    page = browser.new_page(viewport={"width": APP_ICON_SIZE, "height": APP_ICON_SIZE})
+    page.set_content(f'<html><body style="margin:0;background:transparent">{svg}</body></html>')
+    return page.locator("svg").screenshot(omit_background=True)
+
+
+def _app_icon_set(png: bytes) -> None:
+    """Regenerate every icon file the app already has with `cargo tauri icon` (it also makes
+    Android/iOS sets, which are not copied)."""
+    import shutil
+    import subprocess
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "app-icon.png"
+        src.write_bytes(png)
+        out = Path(tmp) / "out"
+        subprocess.run(["cargo", "tauri", "icon", str(src), "-o", str(out)], check=True, capture_output=True)
+        for old in APP_ICONS.iterdir():
+            if old.is_file() and (out / old.name).is_file():
+                shutil.copyfile(out / old.name, old)
 
 
 if __name__ == "__main__":

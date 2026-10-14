@@ -17,6 +17,7 @@ drive. The screens render their forms from the same specs, so a new field is add
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -52,8 +53,10 @@ def kopia_config_dir() -> str:
     return os.path.join(base, "kopia")
 
 
-# Where a KopiaLens-CREATED connection keeps its kopia config file.
+# Where a KopiaLens-CREATED connection keeps its kopia config file: "data" by default; the
+# connect form can also pick "kopia" or "folder" (any folder) per repository.
 CONFIG_LOCATIONS = ("kopia", "data")
+FORM_LOCATIONS = ("data", "kopia", "folder")
 
 
 def _location_setting() -> str:
@@ -65,41 +68,45 @@ def _location_setting() -> str:
 
 
 def config_location() -> str:
-    """`kopia` = kopia's own config folder, so KopiaUI and the kopia command line see the
-    connection too; `data` = KopiaLens's data folder, which is what a container wants (the data
-    folder is a mounted volume, kopia's folder inside a container is not).
-
-    Precedence mirrors the bind default: env beats an explicit setting, which beats the profile
-    default (tray = desktop = kopia's folder; bare python/systemd/Docker = server = data folder)."""
+    """The default place for a new connection's config file: `data` = KopiaLens's data folder,
+    used by this copy only (the default everywhere); `kopia` = kopia's own config folder, so
+    KopiaUI and the kopia command line see the connection too. Env beats the setting."""
     env = (os.environ.get("KOPIALENS_KOPIA_CONFIG_LOCATION") or "").strip().lower()
     if env in CONFIG_LOCATIONS:
         return env
     chosen = _location_setting().lower()
-    if chosen in CONFIG_LOCATIONS:
-        return chosen
-    # Lazy: core.auth owns the launch profile, and importing it at module level drags in the whole
-    # auth/settings chain for anyone who only wants a provider list.
-    try:
-        from .auth import profile
-        return "kopia" if profile() == "desktop" else "data"
-    except Exception:  # noqa: BLE001
-        return "kopia"
+    return chosen if chosen in CONFIG_LOCATIONS else "data"
 
 
-def managed_config_dir() -> str:
-    """The folder a created connection's config file lives in, per `config_location()`."""
-    if config_location() == "data":
-        return os.path.join(config.DATA_DIR, "configs")
-    return kopia_config_dir()
+def _copy_tag() -> str:
+    """Six hex characters unique to this copy's data folder, so two copies never pick one name."""
+    return hashlib.sha256(os.path.normcase(os.path.abspath(config.DATA_DIR)).encode("utf-8")).hexdigest()[:6]
 
 
-def managed_config_path(rid: str) -> str:
-    """The config file for a connection KopiaLens creates. In kopia's folder it uses KopiaUI's own
-    `repository-*.config` convention (so KopiaUI lists it as a connection), in our data folder the
-    shorter `repo<id>.config`."""
-    if config_location() == "data":
-        return os.path.join(managed_config_dir(), f"repo{rid}.config")
-    return os.path.join(kopia_config_dir(), f"repository-kopialens-{rid}.config")
+def managed_config_path(rid: str, location: str = "", folder: str = "") -> str:
+    """A free path for the config file of a connection KopiaLens creates. `location` is
+    data/kopia/folder (empty = `config_location()`); `folder` is the folder for "folder".
+    Outside our data folder the name carries `_copy_tag()` and KopiaUI's `repository-*.config`
+    shape. Never an existing file: a taken name gets -2, -3, ..."""
+    loc = (location or config_location()).strip().lower()
+    if loc not in FORM_LOCATIONS:
+        raise ValueError(f"Unknown place for the connection file: {location}")
+    if loc == "data":
+        base, stem = os.path.join(config.DATA_DIR, "configs"), f"repo{rid}"
+    else:
+        if loc == "kopia":
+            base = kopia_config_dir()
+        else:
+            base = os.path.expanduser((folder or "").strip())
+            if not base or not os.path.isabs(base):
+                raise ValueError("Enter the full path of the folder for the connection file.")
+            if os.path.exists(base) and not os.path.isdir(base):
+                raise ValueError(f"{base} is a file, not a folder.")
+        stem = f"repository-kopialens-{_copy_tag()}-{rid}"
+    path, n = os.path.join(base, stem + ".config"), 2
+    while _config_siblings(path):
+        path, n = os.path.join(base, f"{stem}-{n}.config"), n + 1
+    return path
 
 
 def is_managed_config(config_file: str | None) -> bool:
@@ -114,9 +121,11 @@ def is_managed_config(config_file: str | None) -> bool:
             os.path.abspath(kopia_config_dir()))
         in_data = os.path.normcase(os.path.dirname(path)) == os.path.normcase(
             os.path.abspath(os.path.join(config.DATA_DIR, "configs")))
+        if re.match(rf"^repository-kopialens-{_copy_tag()}-\d{{1,12}}(-\d+)?\.config$", name):
+            return True                     # this copy's own name, in any folder
         if not (in_kopia or in_data):
             return False
-        return bool(re.match(r"^(repo\d{1,12}\.config|repository-kopialens-\d{1,12}\.config)$", name))
+        return bool(re.match(r"^(repo\d{1,12}(-\d+)?\.config|repository-kopialens-\d{1,12}\.config)$", name))
     except Exception:  # noqa: BLE001
         return False
 
@@ -532,21 +541,24 @@ def _remove_config_files(config_file: str) -> None:
 
 
 def connect(provider: str, fields: dict, password: str, name: str = "", short_name: str = "",
-            counts_as_backup: bool = True, allow_duplicate: bool = False) -> dict:
-    """Connect a repository KopiaLens manages the config for, and record it."""
+            counts_as_backup: bool = True, allow_duplicate: bool = False,
+            location: str = "", folder: str = "") -> dict:
+    """Connect a repository KopiaLens manages the config for, and record it. `location`/`folder`:
+    where the config file goes (`managed_config_path`)."""
     return _establish("connect", provider, fields, password, name, short_name, counts_as_backup,
-                      allow_duplicate=allow_duplicate)
+                      allow_duplicate=allow_duplicate, location=location, folder=folder)
 
 
 def create(provider: str, fields: dict, password: str, name: str = "", short_name: str = "",
-           counts_as_backup: bool = True, options: dict | None = None) -> dict:
+           counts_as_backup: bool = True, options: dict | None = None,
+           location: str = "", folder: str = "") -> dict:
     """Create a NEW repository in the given storage and record it (kopia's `repository create`
     initializes the storage and connects this config to it in one step).
 
     The storage location must be EMPTY - kopia refuses otherwise, and that refusal is surfaced
     as-is. This is the one flow that writes to a user's storage rather than only reading it."""
     return _establish("create", provider, fields, password, name, short_name, counts_as_backup,
-                      options)
+                      options, location=location, folder=folder)
 
 
 def unreadable_entries(path: str, budget: float = 2.0) -> int:
@@ -619,7 +631,7 @@ def same_repository(config_file: str) -> dict | None:
 
 def _establish(verb: str, provider: str, fields: dict, password: str, name: str, short_name: str,
                counts_as_backup: bool, options: dict | None = None,
-               allow_duplicate: bool = False) -> dict:
+               allow_duplicate: bool = False, location: str = "", folder: str = "") -> dict:
     """The shared connect/create path: validate, allocate an id + managed config, run kopia, record.
 
     Raises ValueError with kopia's own message when it fails - nothing is recorded and the
@@ -642,7 +654,7 @@ def _establish(verb: str, provider: str, fields: dict, password: str, name: str,
     # connects must never share an identity or a file (a failed connect just burns a number).
     with _CONNECT_LOCK:
         rid = repos.reserve_id()
-        config_file = managed_config_path(rid)
+        config_file = managed_config_path(rid, location, folder)   # a free name: cleanup below only removes what kopia made
         os.makedirs(os.path.dirname(config_file), exist_ok=True)
     log.info("repo id %s reserved for a new connection", rid)
     args = _build_args(verb, provider, fields, config_file, options)

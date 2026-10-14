@@ -66,6 +66,7 @@ const reposPart = {
         loading: true, error: "", busy: false,
         detected: [], picked: {}, providers: [], bz: null, bzPicked: false,
         mode: "", provider: "", fields: {}, password: "", name: "", serverOk: false,
+        cfgLoc: "data", cfgFolder: "", kopiaFolderOk: true,
         added: (existing || []).map((r) => this._cxEntry(r)),
       };
       try {
@@ -73,6 +74,8 @@ const reposPart = {
                                               getJson("/api/setup/backblaze").catch(() => null)]);
         this.cx.detected = d.configs || [];
         this.cx.providers = p.providers || [];
+        this.cx.cfgLoc = p.config_location || "data";
+        this.cx.kopiaFolderOk = p.kopia_folder_ok !== false;
         this.cx.bz = bz;
         this.cx.bzPicked = !!(bz && bz.found && !bz.added);   // found = offered ticked
       } catch (e) { this.cx.error = e.message || String(e); }
@@ -206,7 +209,8 @@ const reposPart = {
       try {
         const url = cx.mode === "create" ? "/api/setup/create" : "/api/setup/connect";
         const short_name = this.cxDefaultShort(spec.key === "azure" ? "azureBlob" : spec.key, cfg);
-        const r = await this._cxAdd(url, { provider: spec.key, fields, password: cx.password, name, short_name });
+        const r = await this._cxAdd(url, { provider: spec.key, fields, password: cx.password, name, short_name,
+                                           config_location: cx.cfgLoc, config_folder: cx.cfgFolder.trim() });
         if (!r) { cx.busy = false; return; }
         cx.added.push({ ...this._cxEntry(r.repo), managed: true });
         cx.mode = ""; cx.password = ""; cx.name = "";
