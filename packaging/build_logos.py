@@ -109,6 +109,18 @@ def _render(page, inner: str, palette: dict, size: int):
     return Image.open(io.BytesIO(png)).convert("RGBA").resize((size, size))
 
 
+# Tray icons fill the square like other tray icons do; the logo drawings keep their margin.
+TRAY_FILL = 60
+
+
+def _fill_tray(page, inner: str, palette: dict) -> str:
+    """The mark scaled and centred so its larger side spans TRAY_FILL of the 64 box."""
+    x0, y0, x1, y1 = _render(page, inner, palette, SIZE).getchannel("A").point(lambda a: 255 if a > 40 else 0).getbbox()
+    s = TRAY_FILL / max(x1 - x0, y1 - y0)
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    return f'<g transform="translate(32 32) scale({s:.4f}) translate({-cx:.2f} {-cy:.2f})">{inner}</g>'
+
+
 def main() -> None:
     from playwright.sync_api import sync_playwright
 
@@ -122,7 +134,7 @@ def main() -> None:
         page = browser.new_page()
         for icons, suffix in ((TRAY, ""), (TRAY_LIGHT, "-light")):
             for key, (inner, palette) in icons.items():
-                img = _render(page, inner, palette, SIZE)
+                img = _render(page, _fill_tray(page, inner, palette), palette, SIZE)
                 img.save(TRAY_PNG / f"{key}{suffix}.png")
                 (TRAY_RGBA / f"{key}{suffix}.rgba").write_bytes(img.tobytes())
         # Shortcut icons: every size drawn on its own (sharper than shrinking the largest).
