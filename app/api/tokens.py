@@ -93,7 +93,8 @@ def revoke_token(token_id: str) -> dict:
 
 @router.get("/approvals")
 def list_approvals() -> dict:
-    return {"approvals": approvals.listing(), "waiting": approvals.waiting_count(), "ttl": approvals.TTL}
+    return {"approvals": approvals.listing(), "waiting": approvals.waiting_count(), "ttl": approvals.TTL,
+            "sign_in": auth.enabled()}
 
 
 @router.get("/approvals/{approval_id}")

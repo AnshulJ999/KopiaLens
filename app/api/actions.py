@@ -27,6 +27,7 @@ from ..core.kopia import (
     mount_and_browse,
     mount_snapshot,
     open_in_explorer,
+    PickerBusy,
     pick_folder,
     remove_files_script,
     remove_files_chunked_commands,
@@ -79,6 +80,13 @@ def _remember_plan(plan: dict) -> str:
             _PLANS.pop(next(iter(_PLANS)), None)
         _PLANS[token] = {"created": now, **plan}
     return token
+
+
+def _note_plan(token: str | None, **facts) -> None:
+    """Add what the preview found later (sample paths, what goes along) to a stored plan."""
+    with _PLANS_LOCK:
+        if token and token in _PLANS:
+            _PLANS[token].update(facts)
 
 
 def previewed_plan(token: str) -> dict | None:
@@ -582,6 +590,9 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
         extra = {"content_extra_count": copies["total"], "content_extra": copies["rows"],
                  "content_extra_capped": copies["total"] > len(copies["rows"]),
                  "content_extra_logical": copies["logical"], "content_extra_physical": copies["physical"]}
+    _note_plan(plan_token, sample=[f["full_path"] for f in t["files"][:10]],
+               filename_extra_count=extra.get("filename_extra_count", 0),
+               content_extra_count=extra.get("content_extra_count", 0))
     return {
         "file_count": t["file_count"], "object_count": len(t["object_ids"]), "name_count": len(t["names"]),
         "item_count": len(items), "by": payload.by,
@@ -789,9 +800,16 @@ def snapshot_delete_dry_run_route(payload: SnapshotDeleteRequest) -> dict:
 
 
 @router.post("/actions/browse-folder")
-def browse_folder(payload: dict) -> dict:
-    """Open the native Windows folder picker and return the chosen path (server is local)."""
-    return {"path": pick_folder(payload.get("initial"))}
+def browse_folder(payload: dict, request: Request) -> dict:
+    """Open the Windows folder dialog on this PC and return the chosen path. Only for a browser on
+    this PC: anywhere else the dialog would open on a screen nobody is looking at."""
+    from ..core import host
+    if host.folder_picker(request.client.host if request.client else None) != "native":
+        raise HTTPException(status_code=409, detail="Browse… shows the folder list here. The Windows dialog opens only when it's chosen under Folder picker in Settings, and only for a browser on this PC.")
+    try:
+        return {"path": pick_folder(payload.get("initial"))}
+    except PickerBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/actions/folders")

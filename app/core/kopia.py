@@ -1443,29 +1443,52 @@ def restore_execute(repo: str, source_id: str, target: str, options: dict | None
     return {"returncode": res.returncode, "stdout": res.stdout, "stderr": res.stderr, "command": full}
 
 
+class PickerBusy(Exception):
+    pass
+
+
+_PICK_LOCK = threading.Lock()
+# A background process can't bring a window to the front, so the dialog gets a topmost owner;
+# the starting folder arrives in an environment variable (never inside the script text).
+_PICK_PS = (
+    "Add-Type -AssemblyName System.Windows.Forms, System.Drawing; "
+    "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+    "[System.Windows.Forms.Application]::EnableVisualStyles(); "
+    "$o = New-Object System.Windows.Forms.Form; $o.TopMost = $true; $o.ShowInTaskbar = $false; "
+    "$o.Opacity = 0; $o.StartPosition = 'CenterScreen'; $o.Size = New-Object System.Drawing.Size(1, 1); "
+    "$o.Show(); $o.Activate(); "
+    "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
+    "$f.Description = 'Choose a folder for KopiaLens'; $f.ShowNewFolderButton = $true; "
+    "if ($env:KL_PICK_INITIAL) { $f.SelectedPath = $env:KL_PICK_INITIAL }; "
+    "if ($f.ShowDialog($o) -eq 'OK') { [Console]::Out.Write($f.SelectedPath) }; $o.Close()"
+)
+PICK_TIMEOUT = 300   # frees the request (and closes the window) if it's left open
+
+
 def pick_folder(initial: str | None = None) -> str | None:
-    """Open the native Windows folder picker (on the user's desktop, since the server is local)
-    and return the chosen path. Blocks until the user picks or cancels."""
+    """Open the Windows folder dialog on this PC's screen and return the chosen path (None when
+    cancelled). One at a time: a second call while one is open raises PickerBusy."""
     from . import host
     if not host.native_picker_possible():
         return None
-    ps = (
-        "Add-Type -AssemblyName System.Windows.Forms; "
-        "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
-        "$f.Description = 'Select restore destination'; "
-        + (f"$f.SelectedPath = '{initial}'; " if initial else "")
-        + "if ($f.ShowDialog() -eq 'OK') { [Console]::Out.Write($f.SelectedPath) }"
-    )
+    if not _PICK_LOCK.acquire(blocking=False):
+        raise PickerBusy("A folder window is already open on this PC. Pick a folder there or close it.")
     try:
+        env = {**os.environ, "KL_PICK_INITIAL": initial if initial and os.path.isdir(initial) else ""}
         res = subprocess.run(
-            ["powershell", "-NoProfile", "-STA", "-Command", ps],
-            capture_output=True, text=True, timeout=300,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            ["powershell", "-NoProfile", "-STA", "-Command", _PICK_PS],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=PICK_TIMEOUT,
+            env=env, stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         return res.stdout.strip() or None
+    except subprocess.TimeoutExpired:
+        log.info("folder picker left open for %d s; closed it", PICK_TIMEOUT)
+        return None
     except Exception as exc:  # noqa: BLE001
         log.warning("folder picker failed: %s", exc)
         return None
+    finally:
+        _PICK_LOCK.release()
 
 
 def next_free_drive() -> str | None:

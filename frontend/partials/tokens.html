@@ -13,7 +13,7 @@
                         </div>
                         <template x-if="a.status === 'waiting'">
                           <div class="flex gap-2">
-                            <button @click="apDecide(a, true)" class="kl-btn" :aria-label="'Approve ' + a.label">Approve…</button>
+                            <button @click="apStart(a)" class="kl-btn" :aria-label="'Review and approve ' + a.label">Approve…</button>
                             <button @click="apDecide(a, false)" class="kl-btn quiet" :aria-label="'Deny ' + a.label">Deny</button>
                           </div>
                         </template>

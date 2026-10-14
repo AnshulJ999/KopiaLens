@@ -101,7 +101,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "es_path": "",               # Everything CLI for the Excluded browser; "" = find it (core/everything.es_path)
         "disk_lookup": "auto",       # what answers disk questions: auto | everything | scan | off
         "disk_scan_budget": 15,      # seconds one folder scan may take before it answers "not measured"
-        "folder_picker": "auto",     # Browse...: auto | native (Windows dialog) | browser (in-app list); see core/host.py
+        "folder_picker": "auto",     # Browse... in a browser: auto (= in-app list) | native (Windows dialog, this PC only) | browser; see core/host.py
         "mount_dir": "",             # Linux/macOS snapshot mounts go under this folder; "" = <data>/mounts (env KOPIALENS_MOUNT_DIR wins)
         "mount_host_path": "",       # Docker: the host folder mapped to mount_dir, shown instead of the container path
         "excluded_tolerance": 0.05,  # folder counts as "backed" when excluded fraction is below this (cuts partial noise)

@@ -173,7 +173,7 @@ document.addEventListener("alpine:init", () => {
     newSnap: null, newSnapBack: "", _newSnapSeq: 0, srcDel: null, verifyDlg: null, cliBox: null,
     wm: null,
     tok: null, tokNew: null, tokBusy: false, tokForm: { name: "", mode: "read_only", days: "90" },
-    tokEdit: null, apList: null, apWaiting: 0,
+    tokEdit: null, apList: null, apWaiting: 0, apReview: null, apPassword: "", apBusy: false, apSignIn: false,
     notifyHook: null, notifyForm: null, notifyProfiles: null, notifyRepo: "", _klSettings: null,
     engine: null, engineDlg: null, engineSrc: {}, _engineTimer: null, _engineSrcTimer: null, _alertSeen: -1, tasksRunning: 0,
     taskRows: [], taskFilter: { repo: "all", status: "all", kind: "all", text: "" }, taskSel: null, taskLines: [], taskCursor: 0,
@@ -219,6 +219,7 @@ document.addEventListener("alpine:init", () => {
     async escClose() {
       if (closeTableMenu()) return;   // an open table menu sits above everything
       if (this.confirmBox) { this.confirmResolve(false); return; }
+      if (this.apReview) { this.apReview = null; return; }
       if (this.fullList) { this.closeFullList(); return; }
       if (this.docs && this.docs.view !== "window") { this.closeDocs(); return; }
       if (this.proNotice) { this.proNotice = null; return; }

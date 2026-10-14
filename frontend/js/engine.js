@@ -13,7 +13,7 @@ const enginePart = {
       const d = await getJson("/api/engine/status");
       this.engine = d;
       this.tasksRunning = (d.running_tasks || 0) + (this.runningJobs || []).filter((j) => j.state === "running").length;
-      if ((d.approvals_waiting || 0) !== this.apWaiting && this.settingsTab === "tokens") this.apLoad();
+      if ((d.approvals_waiting || 0) !== this.apWaiting) this.apLoad();   // the notice shows the newest
       this.apWaiting = d.approvals_waiting || 0;
       if (d.alert_seq > this._alertSeen) {
         if (this._alertSeen >= 0 && !this.isDesktopWindow()) {

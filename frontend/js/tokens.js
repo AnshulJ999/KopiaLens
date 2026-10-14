@@ -98,36 +98,57 @@ const tokensPart = {
       const d = await getJson("/api/approvals");
       this.apList = d.approvals || [];
       this.apWaiting = d.waiting || 0;
+      this.apSignIn = !!d.sign_in;
     } catch (e) { /* the list reloads with the next status poll */ }
   },
   apOpen() {
     this.openSettings();
     this.settingsTab = "tokens";
   },
+  apNewest() {
+    return (this.apList || []).find((a) => a.status === "waiting") || null;
+  },
+  apMinutesLeft(a) { return Math.max(0, Math.round((a.expires * 1000 - Date.now()) / 60000)); },
   apWhen(a) {
     if (a.status !== "waiting") return a.decided_by ? `${APPROVAL_STATUS[a.status] || a.status} by ${a.decided_by}` : (APPROVAL_STATUS[a.status] || a.status);
-    const min = Math.max(0, Math.round((a.expires * 1000 - Date.now()) / 60000));
-    return `Asked ${fmtAbs(a.created)} · expires in ${min} min`;
+    return `Asked ${fmtAbs(a.created)} · expires in ${this.apMinutesLeft(a)} min`;
+  },
+  // The notice's second line: the first two facts, so the request is clear before opening it.
+  apNoticeLine(a) {
+    const facts = (a.facts || []).filter((f) => f[0] !== "Repository").slice(0, 2).map((f) => `${f[0]}: ${f[1]}`);
+    return [...facts, `expires in ${this.apMinutesLeft(a)} min`].join(" · ");
+  },
+  apFacts(a) {
+    return [...(a.facts || []),
+      ["Asked by", `API token "${a.token_name}"${a.token_mode ? ` (${a.token_mode})` : ""}`],
+      ["Asked", fmtAbs(a.created)], ["Expires", `in ${this.apMinutesLeft(a)} min, or when KopiaLens restarts`]];
+  },
+  apSampleTitle(a) {
+    const n = (a.sample || []).length, total = a.sample_total || n;
+    return total > n ? `The first ${n} of ${total.toLocaleString(NUM_LOCALE)}` : `All ${n}`;
+  },
+  apDanger(a) { return /^(Remove|Delete|Save policies, then)/.test(a.label || ""); },
+  apStart(a) {
+    this.apPassword = "";
+    this.apReview = a;
   },
   async apDecide(a, approve) {
-    let password = null;
-    if (approve) {
-      const opts = { title: `Approve: ${a.label}?`, body: `Asked by the API token "${a.token_name}". ${a.detail || ""}`.trim(),
-        confirmLabel: "Approve", danger: a.label.startsWith("Remove") || a.label.startsWith("Delete") };
-      if (a.needs_password && this.tok && this.tok.sign_in) opts.input = { label: "KopiaLens password", type: "password" };
-      const r = await this.klConfirm(opts);
-      if (!r || (opts.input && !r.value)) return;
-      password = opts.input ? r.value : null;
-    }
+    if (this.apBusy) return;
+    const password = approve && a.needs_password && this.apSignIn ? this.apPassword : null;
+    if (approve && a.needs_password && this.apSignIn && !password) { this.klNotify("Enter your KopiaLens password to approve this.", "warn"); return; }
+    this.apBusy = true;
     try {
       const d = await getJson(`/api/approvals/${encodeURIComponent(a.id)}/${approve ? "approve" : "deny"}`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) });
       this.apList = d.approvals || [];
       this.apWaiting = d.waiting || 0;
+      this.apReview = null;
       this.klNotify(approve ? "Approved. The token can run it now." : "Denied");
     } catch (e) {
       this.klNotify(e.message, "warn");
-      this.apLoad();
+      if (e.status !== 401) { this.apReview = null; this.apLoad(); }
+    } finally {
+      this.apBusy = false;
     }
   },
 };

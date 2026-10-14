@@ -18,9 +18,10 @@ def _settings(monkeypatch, **kl):
 
 
 @pytest.mark.parametrize("choice,client,possible,want", [
-    ("auto", "127.0.0.1", True, "native"),
+    ("auto", "127.0.0.1", True, "browser"),      # a background server can't bring a dialog to the front
     ("auto", "192.168.1.20", True, "browser"),
-    ("native", "192.168.1.20", True, "native"),
+    ("native", "127.0.0.1", True, "native"),
+    ("native", "192.168.1.20", True, "browser"),  # the dialog would open on a screen nobody is at
     ("browser", "127.0.0.1", True, "browser"),
     ("native", "127.0.0.1", False, "browser"),   # Linux/Docker: no Windows dialog to show
 ])
@@ -178,3 +179,32 @@ def test_in_docker_the_remove_script_runs_kopia_inside_the_container(monkeypatch
     assert f'docker exec -u {os.getuid()}:{os.getgid()} "$CONTAINER" /app/kopia/kopia snapshot fix' in text
     monkeypatch.setattr(host, "in_docker", lambda: False)
     assert "docker" not in "\n".join(k._remove_sh_lines([["kopia", "snapshot", "fix"]], "x.log"))
+
+
+def test_only_one_windows_folder_dialog_at_a_time(monkeypatch):
+    """Each open dialog holds a request until it closes; a second one must be refused at once,
+    or repeated clicks fill the browser's connections and the page stops loading."""
+    import subprocess
+    import threading
+
+    from app.core import kopia as k
+    opened, release = threading.Event(), threading.Event()
+
+    def run(*_a, **_kw):
+        opened.set()
+        release.wait(5)
+        return subprocess.CompletedProcess([], 0, "C:/Picked", "")
+    monkeypatch.setattr(host, "native_picker_possible", lambda: True)
+    monkeypatch.setattr(k.subprocess, "run", run)
+    first: dict = {}
+    t = threading.Thread(target=lambda: first.setdefault("path", k.pick_folder(None)))
+    t.start()
+    assert opened.wait(5)
+    with pytest.raises(k.PickerBusy):
+        k.pick_folder(None)
+    release.set()
+    t.join(5)
+    assert first["path"] == "C:/Picked"
+    opened.clear()
+    release.set()
+    assert k.pick_folder(None) == "C:/Picked"     # free again once the first one closed

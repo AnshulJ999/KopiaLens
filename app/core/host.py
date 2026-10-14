@@ -73,14 +73,13 @@ def native_picker_possible() -> bool:
 
 
 def folder_picker(client_host: str | None) -> str:
-    """"native" (the Windows dialog on this PC's screen) or "browser" (KopiaLens's own folder
-    list). Automatic picks the dialog only when the browser runs on this same PC."""
+    """What Browse… opens in a browser: "native" (the Windows dialog on this PC's screen) only
+    when chosen and the browser runs on this PC, else "browser" (KopiaLens's own folder list).
+    The desktop app opens its own dialog and never asks."""
     choice = str(_kl().get("folder_picker") or "auto")
-    if not native_picker_possible() or choice == "browser":
-        return "browser"
-    if choice == "native":
+    if choice == "native" and native_picker_possible() and (client_host or "") in _LOOPBACK:
         return "native"
-    return "native" if (client_host or "") in _LOOPBACK else "browser"
+    return "browser"
 
 
 def folder_roots() -> list[dict]:

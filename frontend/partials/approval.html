@@ -1,0 +1,38 @@
+    <!-- An API token's approval request: every detail, then Approve or Deny (tokens.js apReview). -->
+    <template x-if="apReview">
+      <div class="fixed inset-0 z-[58] bg-black/40 flex items-center justify-center p-4 sm:p-6"
+           @click.self="apReview = null" @keydown.tab.window="trapTab($event, $el)"
+           x-init="$nextTick(() => { const el = $el.querySelector('input') || $el.querySelector('[data-ap=cancel]'); if (el) el.focus(); })"
+           data-testid="approval-review">
+        <div role="dialog" aria-modal="true" aria-labelledby="ap-title" class="w-[38rem] max-w-full max-h-[88vh] flex flex-col rounded-lg border border-bd bg-surface shadow-xl text-sm">
+          <div class="p-4 space-y-3 overflow-y-auto">
+            <h3 id="ap-title" class="text-[0.9375rem] font-semibold leading-snug" x-text="apReview.label"></h3>
+            <div class="kl-facts">
+              <template x-for="row in apFacts(apReview)" :key="row[0]">
+                <div class="r"><span class="k" x-text="row[0]"></span><span class="break-all" x-text="row[1]"></span></div>
+              </template>
+            </div>
+            <div x-show="apReview.sample && apReview.sample.length" class="space-y-1">
+              <div class="text-xs text-muted" x-text="apSampleTitle(apReview)"></div>
+              <ul class="rounded border border-bd-soft bg-head px-3 py-2 font-mono text-[0.6875rem] space-y-0.5 max-h-40 overflow-y-auto">
+                <template x-for="p in apReview.sample" :key="p"><li class="break-all" x-text="p"></li></template>
+              </ul>
+            </div>
+            <details class="text-xs">
+              <summary class="cursor-pointer text-muted">Request details</summary>
+              <pre class="mt-1 rounded border border-bd-soft bg-head px-3 py-2 font-mono text-[0.6875rem] whitespace-pre-wrap break-all max-h-48 overflow-y-auto" x-text="apReview.request"></pre>
+            </details>
+            <template x-if="apReview.needs_password && apSignIn">
+              <label class="block"><span class="text-xs text-muted">KopiaLens password</span>
+                <input type="password" x-model="apPassword" @keydown.enter.prevent="apDecide(apReview, true)" class="fld border border-bd bg-surface2 w-full mt-1 text-xs"></label>
+            </template>
+          </div>
+          <div class="kl-footer">
+            <span class="spacer"></span>
+            <button @click="apReview = null" class="kl-btn quiet" data-ap="cancel">Cancel</button>
+            <button @click="apDecide(apReview, false)" :disabled="apBusy" class="kl-btn">Deny</button>
+            <button @click="apDecide(apReview, true)" :disabled="apBusy" :class="apDanger(apReview) ? 'kl-btn danger' : 'kl-btn primary'">Approve</button>
+          </div>
+        </div>
+      </div>
+    </template>

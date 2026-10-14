@@ -46,10 +46,19 @@
           <button @click="cfgDismiss(n)" class="kl-btn quiet">Dismiss</button>
         </div>
       </template>
-      <div x-show="apWaiting > 0" x-cloak class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm" data-testid="approvals-waiting">
-        <div class="min-w-0 flex-1 font-medium" x-text="apWaiting === 1 ? 'An API token is waiting for your approval.' : apWaiting + ' API token requests are waiting for your approval.'"></div>
-        <button @click="apOpen()" class="kl-btn">Review</button>
-      </div>
+      <template x-if="apNewest()">
+        <div class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm" data-testid="approvals-waiting">
+          <div class="min-w-0 flex-1">
+            <div class="font-medium" x-text="'API token &quot;' + apNewest().token_name + '&quot; asks to: ' + apNewest().label"></div>
+            <div class="text-xs text-muted" x-text="apNoticeLine(apNewest())"></div>
+          </div>
+          <button @click="apStart(apNewest())" class="kl-btn" :aria-label="'Review and approve ' + apNewest().label">Approve…</button>
+          <button @click="apDecide(apNewest(), false)" :disabled="apBusy" class="kl-btn quiet" :aria-label="'Deny ' + apNewest().label">Deny</button>
+          <template x-if="apWaiting > 1">
+            <button @click="apOpen()" class="kl-btn quiet" x-text="(apWaiting - 1) + ' more waiting · Review all'"></button>
+          </template>
+        </div>
+      </template>
       <template x-for="n in ixNotices" :key="n.id">
         <div class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm" data-testid="index-recovered-notice">
           <div class="min-w-0 flex-1">
@@ -121,6 +130,7 @@
 {% include "partials/onboarding.html" %}
 {% include "partials/lock.html" %}
 {% include "partials/cfgdialog.html" %}
+{% include "partials/approval.html" %}
 {% include "partials/confirm.html" %}
 {% include "partials/jobs.html" %}
 {% include "partials/maintenance.html" %}

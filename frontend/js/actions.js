@@ -335,14 +335,30 @@ const actionsPart = {
     },
     // A folder on the computer KopiaLens runs on: the system picker in the desktop app (or on
     // this machine), the in-app browser otherwise.
+    // One folder window at a time: repeated clicks never stack waiting requests.
     async pickFolder(initial) {
-      const dialog = window.__TAURI__ && window.__TAURI__.dialog;
-      if (dialog) return dialog.open({ directory: true, defaultPath: initial || undefined }).catch(() => null);
-      if (this.host.folder_picker === "native") {
-        const r = await getJson("/api/actions/browse-folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial }) }).catch(() => null);
-        return r && r.path;
+      if (this._picking) return null;
+      this._picking = true;
+      try {
+        const dialog = window.__TAURI__ && window.__TAURI__.dialog;
+        if (dialog) {
+          return await dialog.open({ directory: true, defaultPath: initial || undefined })
+            .catch((e) => { this.klNotify(`Couldn't open the folder window: ${e}`, "warn"); return null; });
+        }
+        if (this.host.folder_picker === "native") {
+          this.klNotify("Choose a folder in the window that opened.");
+          try {
+            const r = await getJson("/api/actions/browse-folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial }) });
+            return r && r.path;
+          } catch (e) {
+            this.klNotify(e.message || "Couldn't open the folder window.", "warn");
+            return null;
+          }
+        }
+        return await this.fbOpen(initial);
+      } finally {
+        this._picking = false;
       }
-      return this.fbOpen(initial);
     },
 
     // ---- In-app folder browser: the server's folders, for a browser on another machine or in Docker ----
