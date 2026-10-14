@@ -51,18 +51,56 @@ def user_data_root() -> str:
     return os.path.join(base, "kopialens")
 
 
-# A portable copy keeps its data in data\ beside the app. The marker sits next to the desktop
-# app, one level above the server folder (the desktop app also passes KOPIALENS_DATA_DIR).
+# A portable copy keeps its data in data\ beside the app, or in the folder a ``data=<path>`` line
+# in the marker names (relative paths are beside the app). The marker sits next to the desktop
+# app, one level above the server folder; it beats KOPIALENS_DATA_DIR, and the desktop app passes
+# the same folder on. shell/src-tauri/src/server.rs reads the marker the same way.
 PORTABLE_MARKER = "KopiaLens-portable.txt"
+
+
+def portable_dir_of(app_dir: str) -> str | None:
+    marker = os.path.join(app_dir, PORTABLE_MARKER)
+    if not os.path.isfile(marker):
+        return None
+    try:
+        with open(marker, encoding="utf-8-sig", errors="replace") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        key, sep, value = line.partition("=")
+        value = value.strip().strip('"')
+        if sep and key.strip().lower() == "data" and value:
+            return value if os.path.isabs(value) else os.path.join(app_dir, value)
+    return os.path.join(app_dir, "data")
 
 
 def portable_data_dir() -> str | None:
     if not COMPILED:
         return None
-    app_dir = os.path.dirname(HERE)
-    if os.path.isfile(os.path.join(app_dir, PORTABLE_MARKER)):
-        return os.path.join(app_dir, "data")
+    return portable_dir_of(os.path.dirname(HERE))
+
+
+def _dev_env(name: str) -> str | None:
+    """A setting from the git-ignored ``.env.dev`` of a source checkout (developer machines only;
+    compiled builds never read it)."""
+    try:
+        with open(os.path.join(HERE, ".env.dev"), encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        key, sep, value = line.partition("=")
+        if sep and key.strip() == name:
+            return value.strip().strip('"') or None
     return None
+
+
+# A source checkout may name its data folder in .env.dev instead of a system-wide variable, so an
+# installed or portable KopiaLens on the same computer never opens the developer's live data. Set in
+# the environment so workers and other child processes inherit it; an explicit variable still wins.
+if not COMPILED and os.environ.get("KOPIALENS_DATA_DIR") is None and _dev_env("KOPIALENS_DATA_DIR"):
+    os.environ["KOPIALENS_DATA_DIR"] = _dev_env("KOPIALENS_DATA_DIR")
 
 
 def _env_port(name: str, default: int) -> int:
@@ -93,7 +131,7 @@ if _LEGACY:
     _DEFAULT_CONFIG_DIR = HERE
     _DEFAULT_CACHE_DIR = os.path.join(os.path.dirname(HERE), ".cache")
 else:
-    _DEFAULT_DATA_DIR = os.environ.get("KOPIALENS_DATA_DIR") or portable_data_dir() or user_data_root()
+    _DEFAULT_DATA_DIR = portable_data_dir() or os.environ.get("KOPIALENS_DATA_DIR") or user_data_root()
     _DEFAULT_CONFIG_DIR = _DEFAULT_DATA_DIR
     _DEFAULT_CACHE_DIR = os.path.join(_DEFAULT_DATA_DIR, "cache")
 
@@ -101,15 +139,26 @@ CONFIG_DIR = os.environ.get("KOPIALENS_CONFIG_DIR") or _DEFAULT_CONFIG_DIR
 SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
 REPOS_FILE = os.environ.get("KOPIALENS_REPOS_FILE") or os.path.join(CONFIG_DIR, "repos.json")
 
+def _setting_port(key: str, default: int) -> int:
+    """A port saved in settings.json (Settings > Advanced), read before anything else loads."""
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as fh:
+            value = int((json.load(fh).get("kopialens") or {}).get(key) or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return default
+    return value if 1 <= value <= 65535 else default
+
+
 # Loopback by DEFAULT: reaching KopiaLens from another machine is a deliberate choice, not the
 # out-of-the-box state (it browses and can delete from a backup repository). The actual bind comes
 # from settings.kopialens.bind_host - see app.core.auth.bind_host - with this as the fallback.
-HOST, PORT = "127.0.0.1", _env_port("KOPIALENS_PORT", 7123)
+# Ports: environment, then Settings > Advanced, then the default.
+HOST, PORT = "127.0.0.1", _env_port("KOPIALENS_PORT", _setting_port("port", 7123))
 GUARD_HOST = "127.0.0.1"                                                # single-instance guard probes loopback (a 0.0.0.0 bind includes it; connecting to 0.0.0.0 is unreliable on Windows)
 
 # Control API of the desktop app (shell/). Restart/quit live there, not in the server: a process
 # cannot kill itself and still answer the request that asked it to. Loopback only.
-TRAY_CONTROL_HOST, TRAY_CONTROL_PORT = "127.0.0.1", _env_port("KOPIALENS_TRAY_PORT", 7124)
+TRAY_CONTROL_HOST, TRAY_CONTROL_PORT = "127.0.0.1", _env_port("KOPIALENS_TRAY_PORT", _setting_port("control_port", 7124))
 
 def save_records(store: dict, strict: bool = False) -> None:
     """Persist the record store (see app.core.repos). ``strict`` raises OSError instead of

@@ -8,6 +8,7 @@ use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -27,16 +28,25 @@ pub enum Layout {
 
 pub struct Server {
     pub layout: Layout,
-    /// `data/` beside the app when the portable marker is present.
+    /// The portable data folder when the portable marker is present.
     pub portable: Option<PathBuf>,
     pub root: PathBuf,
     pub data_dir: PathBuf,
     pub settings_file: PathBuf,
-    pub port: u16,
+    port: AtomicU16,
     pub control_port: u16,
+    /// A data folder the server must be told about (portable, or a source checkout's `.env.dev`).
+    data_env: Option<PathBuf>,
     token: String,
     child: Mutex<Option<Child>>,
     agent: ureq::Agent,
+}
+
+/// Who is listening on the app's port.
+pub enum PortOwner {
+    Free,
+    Ours,
+    Other,
 }
 
 fn env(name: &str) -> Option<String> {
@@ -45,6 +55,46 @@ fn env(name: &str) -> Option<String> {
 
 fn env_port(name: &str, default: u16) -> u16 {
     env(name).and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
+/// A port saved in settings.json (Settings > Advanced). Mirrors config._setting_port.
+fn setting_port(settings_file: &Path, key: &str, default: u16) -> u16 {
+    std::fs::read_to_string(settings_file).ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v.get("kopialens")?.get(key)?.as_u64())
+        .filter(|p| (1..=65535).contains(p))
+        .map(|p| p as u16)
+        .unwrap_or(default)
+}
+
+/// A setting from a source checkout's git-ignored `.env.dev` (mirrors config._dev_env).
+fn dev_env(root: &Path, name: &str) -> Option<String> {
+    let text = std::fs::read_to_string(root.join(".env.dev")).ok()?;
+    text.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        let value = value.trim().trim_matches('"');
+        (key.trim() == name && !value.is_empty()).then(|| value.to_string())
+    })
+}
+
+/// The portable data folder: `data/` beside the app, or the marker's `data=<path>` line
+/// (relative paths are beside the app). Mirrors config.portable_dir_of.
+fn portable_dir(app_dir: &Path) -> Option<PathBuf> {
+    let marker = app_dir.join(PORTABLE_MARKER);
+    if !marker.is_file() {
+        return None;
+    }
+    let text = std::fs::read_to_string(&marker).unwrap_or_default();
+    let custom = text.trim_start_matches('\u{feff}').lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        let value = value.trim().trim_matches('"');
+        (key.trim().eq_ignore_ascii_case("data") && !value.is_empty()).then(|| PathBuf::from(value))
+    });
+    Some(match custom {
+        Some(p) if p.is_absolute() => p,
+        Some(p) => app_dir.join(p),
+        None => app_dir.join("data"),
+    })
 }
 
 fn server_exe_name() -> &'static str {
@@ -89,10 +139,13 @@ fn python() -> String {
     env("KOPIALENS_PYTHON").unwrap_or_else(|| if cfg!(windows) { "pythonw".into() } else { "python3".into() })
 }
 
-// Mirrors config.py: KOPIALENS_DATA_DIR, else the old layout (repos.json next to the code), else
-// the per-user data folder.
-fn data_dirs(root: &Path, portable: Option<&PathBuf>) -> (PathBuf, PathBuf) {
-    if let Some(d) = env("KOPIALENS_DATA_DIR").map(PathBuf::from).or_else(|| portable.cloned()) {
+// Mirrors config.py: the portable folder, else KOPIALENS_DATA_DIR, else a source checkout's
+// `.env.dev`, else the old layout (repos.json next to the code), else the per-user data folder.
+fn data_dirs(root: &Path, portable: Option<&PathBuf>, dev: Option<&PathBuf>) -> (PathBuf, PathBuf) {
+    let chosen = portable.cloned()
+        .or_else(|| env("KOPIALENS_DATA_DIR").map(PathBuf::from))
+        .or_else(|| dev.cloned());
+    if let Some(d) = chosen {
         let cfg = env("KOPIALENS_CONFIG_DIR").map(PathBuf::from).unwrap_or_else(|| d.clone());
         return (d, cfg);
     }
@@ -148,24 +201,40 @@ impl Server {
     pub fn locate(resource_dir: Option<PathBuf>) -> Option<Server> {
         let (layout, root) = find_layout(resource_dir)?;
         let app_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-        let portable = app_dir.join(PORTABLE_MARKER).is_file().then(|| app_dir.join("data"));
-        let (data_dir, cfg_dir) = data_dirs(&root, portable.as_ref());
+        let portable = portable_dir(&app_dir);
+        let dev = match &layout {
+            Layout::Source { root, .. } => dev_env(root, "KOPIALENS_DATA_DIR").map(PathBuf::from),
+            Layout::Installed { .. } => None,
+        };
+        let (data_dir, cfg_dir) = data_dirs(&root, portable.as_ref(), dev.as_ref());
+        let data_env = portable.clone().or(if env("KOPIALENS_DATA_DIR").is_none() { dev } else { None });
+        let settings_file = cfg_dir.join("settings.json");
         Some(Server {
             layout,
             portable,
             root,
-            settings_file: cfg_dir.join("settings.json"),
+            port: AtomicU16::new(env_port("KOPIALENS_PORT", setting_port(&settings_file, "port", 7123))),
+            control_port: env_port("KOPIALENS_TRAY_PORT", setting_port(&settings_file, "control_port", 7124)),
+            settings_file,
             data_dir,
-            port: env_port("KOPIALENS_PORT", 7123),
-            control_port: env_port("KOPIALENS_TRAY_PORT", 7124),
+            data_env,
             token: new_token(),
             child: Mutex::new(None),
             agent: ureq::AgentBuilder::new().timeout(Duration::from_secs(5)).build(),
         })
     }
 
+    pub fn port(&self) -> u16 {
+        self.port.load(Ordering::SeqCst)
+    }
+
+    /// A new port for this run (the user chose another one because the saved port was taken).
+    pub fn set_port(&self, port: u16) {
+        self.port.store(port, Ordering::SeqCst);
+    }
+
     pub fn url(&self) -> String {
-        format!("http://127.0.0.1:{}", self.port)
+        format!("http://127.0.0.1:{}", self.port())
     }
 
     pub fn log(&self, msg: &str) {
@@ -198,8 +267,8 @@ impl Server {
         if self.child_pid().is_some() {
             return;
         }
-        if port_open(self.port) {
-            self.log(&format!("server already listening on port {} - not starting another", self.port));
+        if port_open(self.port()) {
+            self.log(&format!("server already listening on port {} - not starting another", self.port()));
             return;
         }
         let mut cmd = match &self.layout {
@@ -214,10 +283,12 @@ impl Server {
                 c
             }
         };
-        if let (Some(p), None) = (&self.portable, env("KOPIALENS_DATA_DIR")) {
-            cmd.env("KOPIALENS_DATA_DIR", p);
+        if let Some(d) = &self.data_env {
+            cmd.env("KOPIALENS_DATA_DIR", d);
         }
         cmd.current_dir(&self.root)
+            .env("KOPIALENS_PORT", self.port().to_string())
+            .env("KOPIALENS_TRAY_PORT", self.control_port.to_string())
             .env("KOPIALENS_PROFILE", "desktop")
             .env("KOPIALENS_SHELL_TOKEN", &self.token)
             .stdin(Stdio::null())
@@ -232,6 +303,52 @@ impl Server {
             }
             Err(e) => self.log(&format!("could not start the server: {e}")),
         }
+    }
+
+    /// Whether the app's port is free, held by this data folder's server (left running by an
+    /// earlier launch), or held by another program or another KopiaLens. The server records its
+    /// pid and port in `<data>/server.json`; the pid must still be a KopiaLens server of this layout.
+    pub fn port_owner(&self) -> PortOwner {
+        if !port_open(self.port()) {
+            return PortOwner::Free;
+        }
+        let recorded = std::fs::read_to_string(self.data_dir.join("server.json")).ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+        let pid = recorded.as_ref()
+            .filter(|v| v.get("port").and_then(Value::as_u64) == Some(self.port() as u64))
+            .and_then(|v| v.get("pid").and_then(Value::as_u64));
+        if let Some(pid) = pid {
+            let sys = Self::processes();
+            if sys.process(Pid::from_u32(pid as u32)).is_some_and(|p| self.is_server_cmd(&Self::cmdline(p))) {
+                return PortOwner::Ours;
+            }
+        }
+        PortOwner::Other
+    }
+
+    /// The first free port after the app's port, for "use another port".
+    pub fn next_free_port(&self) -> Option<u16> {
+        (self.port().saturating_add(1)..self.port().saturating_add(100))
+            .find(|p| *p != self.control_port && !port_open(*p))
+    }
+
+    /// Saves the app's port in settings.json (only before the server starts, so nothing else
+    /// writes the file at the same time).
+    pub fn save_port(&self, port: u16) -> std::io::Result<()> {
+        let mut doc: Value = std::fs::read_to_string(&self.settings_file).ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .filter(Value::is_object)
+            .unwrap_or_else(|| json!({}));
+        if !doc.get("kopialens").is_some_and(Value::is_object) {
+            doc["kopialens"] = json!({});
+        }
+        doc["kopialens"]["port"] = json!(port);
+        if let Some(dir) = self.settings_file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let tmp = self.settings_file.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_string_pretty(&doc).unwrap_or_default())?;
+        std::fs::rename(&tmp, &self.settings_file)
     }
 
     /// The server's own command line, to find one this shell did not start. Matched by command
@@ -282,16 +399,16 @@ impl Server {
     /// starting would be refused and the old process would answer the port check.
     pub fn restart(&self) -> bool {
         self.stop();
-        if !wait_for(self.port, false, Duration::from_secs(15)) {
+        if !wait_for(self.port(), false, Duration::from_secs(15)) {
             self.log("the old server never released the port - restart aborted");
             return false;
         }
         self.start();
-        wait_for(self.port, true, Duration::from_secs(60))
+        wait_for(self.port(), true, Duration::from_secs(60))
     }
 
     pub fn wait_up(&self, timeout: Duration) -> bool {
-        wait_for(self.port, true, timeout)
+        wait_for(self.port(), true, timeout)
     }
 
     /// Index workers that look alive, from their own progress files (works with the server down).

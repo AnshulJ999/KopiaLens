@@ -189,6 +189,23 @@ def unlock(repo: str, payload: UnlockRequest) -> dict:
         raise _bad(exc) from exc
 
 
+class ReadonlyRequest(BaseModel):
+    on: bool
+    shared_ok: bool = False   # the user confirmed that another app's connection turns read-only too
+
+
+@router.post("/setup/repos/{repo}/readonly")
+def set_readonly(repo: str, payload: ReadonlyRequest):
+    """kopia's own read-only connection on or off. 409 names the other app when the connection
+    file is shared, so the screen can ask first."""
+    try:
+        return repoconnect.set_readonly(repo, payload.on, payload.shared_ok)
+    except repoconnect.SharedConnection as exc:
+        return JSONResponse({"detail": str(exc), "shared_with": exc.app}, status_code=409)
+    except (ValueError, OSError) as exc:
+        raise _bad(exc) from exc
+
+
 @router.get("/setup/repos/{repo}/summary")
 def repo_summary(repo: str) -> dict:
     """Sources, computers and snapshots in a repository (one live listing) - the "Connected" card."""

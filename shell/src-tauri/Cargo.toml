@@ -1,6 +1,6 @@
 [package]
 name = "kopialens-desktop"
-version = "0.28.0"
+version = "0.31.0"
 description = "KopiaLens desktop app: window, tray and server supervisor"
 edition = "2021"
 rust-version = "1.77.2"

@@ -6,7 +6,9 @@ checksums.
 
 Run with the dev Python (it runs the tests); the server is compiled with the build venv
 (KOPIALENS_BUILD_PYTHON). Output: <BUILD_ROOT>\\release\\<version>\\ plus release.log there.
-KOPIALENS_RELEASE_SKIP_TESTS=1 skips the test step while iterating on packaging. The updater key is
+KOPIALENS_RELEASE_SKIP_TESTS=1 skips the test step while iterating on packaging. --with-notes makes a
+testing build with the Notes widget (packaging/notes_bundle.py): its files are named -testing and it
+writes no latest.json, so it can never be published as an update. The updater key is
 private/updater.key (or TAURI_SIGNING_PRIVATE_KEY); its password is asked once and can be remembered
 (packaging/updater_key.py).
 """
@@ -24,6 +26,7 @@ import urllib.request
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import notes_bundle  # noqa: E402
 import updater_key  # noqa: E402
 from datetime import datetime, timezone
 
@@ -41,6 +44,9 @@ KEYS_FILE = os.path.join(KL_ROOT, "app", "licensing", "keys.py")
 LICENSEKIT_DIR = os.path.join(REPO_ROOT, "LicenseKit")
 SYNC_MAX_AGE_DAYS = 7
 RELEASE_REPO_URL = "https://github.com/AnshulJ999/KopiaLens"   # config.REPO_URL
+# tauri.conf.json carries the dev identity ("KopiaLens Dev"), so a source build never shares the
+# installed app's single-instance lock, startup entry or browser profile; releases use the real one.
+RELEASE_IDENTITY = {"productName": "KopiaLens", "identifier": "com.kopialens.desktop"}
 
 _log_fh = None
 
@@ -284,10 +290,14 @@ def main() -> int:
     global _log_fh
     v = versions()
     version = v["app"]
-    dest = os.path.join(BUILD_ROOT, "release", version)
+    with_notes = "--with-notes" in sys.argv[1:]
+    tag = "-testing" if with_notes else ""
+    dest = os.path.join(BUILD_ROOT, "release", version + tag)
     os.makedirs(dest, exist_ok=True)
     _log_fh = open(os.path.join(dest, "release.log"), "w", encoding="utf-8")
     log(f"KopiaLens {version} release build (kopia {v['kopia']})")
+    if with_notes:
+        log("  TESTING BUILD: the Notes widget is included. Never publish it; it writes no latest.json.")
 
     if len({v["app"], v["cargo"], v["tauri"]}) != 1:
         fail(f"versions differ: VERSION {v['app']}, Cargo.toml {v['cargo']}, tauri.conf.json {v['tauri']}")
@@ -315,8 +325,11 @@ def main() -> int:
              "-p", "no:cacheprovider"], REPO_ROOT, "tests.log")
 
     log("2/6 server build (Nuitka)")
+    notes_env = {}
+    if with_notes:
+        notes_env["KOPIALENS_BUILD_NOTES"] = notes_bundle.stage(os.path.join(BUILD_ROOT, "devnotes-stage"))
     run([BUILD_PYTHON, os.path.join(KL_ROOT, "packaging", "build_server.py")], KL_ROOT, "nuitka.log",
-        {"KOPIALENS_BUILD_OUT": OUT_DIR})
+        {"KOPIALENS_BUILD_OUT": OUT_DIR, "KOPIALENS_BUILD_NOTES": "", **notes_env})
 
     log("3/6 stage server + bundled kopia + command-line launchers")
     server = os.path.join(STAGE, "server")
@@ -324,7 +337,7 @@ def main() -> int:
     shutil.copytree(os.path.join(OUT_DIR, "kopialens.dist"), server)
     stage_kopia(fetch_kopia(v["kopia"]), os.path.join(server, "kopia"))
     launcher_target = os.path.join(BUILD_ROOT, "launcher-target")
-    run(["cargo", "build", "--release", "--manifest-path", os.path.join(SHELL, "cli-launcher", "Cargo.toml")],
+    run(["cargo", "build", "--release", "--manifest-path", os.path.join(KL_ROOT, "shell", "cli-launcher", "Cargo.toml")],
         KL_ROOT, "launcher.log", {"CARGO_TARGET_DIR": launcher_target})
     bindir = os.path.join(STAGE, "bin")
     os.makedirs(bindir)
@@ -334,7 +347,8 @@ def main() -> int:
     log("4/6 desktop app + installer (Tauri)")
     release_conf = os.path.join(STAGE, "tauri.release.json")
     with open(release_conf, "w", encoding="utf-8") as fh:
-        json.dump({"bundle": {"active": True, "targets": ["nsis"], "createUpdaterArtifacts": True,
+        json.dump({**RELEASE_IDENTITY,
+                   "bundle": {"active": True, "targets": ["nsis"], "createUpdaterArtifacts": True,
                               "resources": {"release-stage/server/": "server/",
                                             "release-stage/bin/": "bin/"}}}, fh)
     run(["cargo", "tauri", "build", "--config", release_conf, "--bundles", "nsis"], SHELL, "tauri.log",
@@ -345,18 +359,20 @@ def main() -> int:
                   if f.endswith("-setup.exe") and f"_{version}_" in f]
     if not os.path.isfile(exe) or len(installers) != 1:
         fail(f"Tauri output missing: {exe}, installers {installers}")
-    setup_name = f"KopiaLens-{version}-windows-x64-setup.exe"
+    setup_name = f"KopiaLens-{version}{tag}-windows-x64-setup.exe"
     shutil.copy2(installers[0], os.path.join(dest, setup_name))
-    write_update_file(dest, version, installers[0], setup_name)
+    if not with_notes:
+        write_update_file(dest, version, installers[0], setup_name)
 
     log("5/6 portable zip")
-    zip_name = f"KopiaLens-{version}-windows-x64-portable.zip"
+    zip_name = f"KopiaLens-{version}{tag}-windows-x64-portable.zip"
     zip_path = os.path.join(dest, zip_name)
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.write(exe, "KopiaLens/KopiaLens.exe")
         zf.writestr(f"KopiaLens/{PORTABLE_MARKER}",
                     "This file makes KopiaLens keep its settings and index in the data folder next to it.\r\n"
-                    "Without it, KopiaLens uses its normal per-user folder.\r\n")
+                    "Without it, KopiaLens uses its normal per-user folder.\r\n"
+                    "To keep them somewhere else, add a line like: data=D:\\KopiaLens data\r\n")
         for dirpath, _dirs, files in os.walk(server):
             for f in files:
                 full = os.path.join(dirpath, f)
@@ -382,6 +398,9 @@ def main() -> int:
         log(f"  {name}  {os.path.getsize(os.path.join(dest, name)) / 1e6:.0f} MB")
     shutil.rmtree(STAGE, ignore_errors=True)  # ~200 MB copy inside the repo folder, rebuilt each run
     log(f"DONE: {dest}")
+    if with_notes:
+        log("  TESTING BUILD: for test copies only; do not publish.")
+        return 0
     log(f"  publish: a GitHub release tagged v{version} on {RELEASE_REPO_URL} with {setup_name}, {zip_name},"
         " SHA256SUMS.txt and latest.json (installs update from its latest.json)")
     return 0

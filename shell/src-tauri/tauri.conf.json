@@ -1,9 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "KopiaLens",
+  "productName": "KopiaLens Dev",
   "mainBinaryName": "KopiaLens",
-  "version": "0.28.0",
-  "identifier": "com.kopialens.desktop",
+  "version": "0.31.0",
+  "identifier": "com.kopialens.desktop.dev",
   "build": {
     "frontendDist": "../dist-placeholder"
   },

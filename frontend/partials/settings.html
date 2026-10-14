@@ -503,6 +503,14 @@
                   <button @click="controlApi = !controlApi; saveKl('control_api')" class="h-8 rounded border border-bd px-3" x-text="controlApi ? 'On' : 'Off'"></button></div>
                 <p class="text-[0.6875rem] text-muted mt-1">Lets scripts on this computer restart or quit KopiaLens through the tray. Nothing else can reach it. Turn it off if nothing uses it.</p>
               </div>
+              <div x-show="!(host && host.in_docker)" data-testid="port-settings">
+                <div class="flex items-center justify-between gap-3"><span>Ports <span class="text-[0.625rem] text-warn">restart</span></span>
+                  <span class="flex items-center gap-2">
+                    <label class="flex items-center gap-1 text-xs">App <input type="number" min="1024" max="65535" x-model.number="appPort" @change="saveKl('port')" class="fld border border-bd bg-surface2 w-24"></label>
+                    <label class="flex items-center gap-1 text-xs">Control <input type="number" min="1024" max="65535" x-model.number="controlPort" @change="saveKl('control_port')" class="fld border border-bd bg-surface2 w-24"></label>
+                  </span></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Change them if another program uses 7123 or 7124, or to run a second KopiaLens. They apply after you quit and reopen KopiaLens; a bookmark or reverse proxy then needs the new port.</p>
+              </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Log cleanup</span>
                   <select x-model.number="logCleanupDays" @change="saveKl('log_cleanup_days')" class="fld border border-bd bg-surface2">

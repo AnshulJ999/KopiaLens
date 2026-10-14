@@ -56,6 +56,17 @@ def pin_mismatches() -> list[str]:
     return out
 
 
+def notes_args() -> list[str]:
+    """A testing build (KOPIALENS_BUILD_NOTES = a folder staged by notes_bundle.py) ships the Notes
+    widget as devnotes/; any other build leaves it out."""
+    folder = os.environ.get("KOPIALENS_BUILD_NOTES", "").strip()
+    if not folder:
+        return []
+    if not os.path.isfile(os.path.join(folder, "BUNDLE.txt")):
+        raise SystemExit(f"KOPIALENS_BUILD_NOTES={folder} is not a staged Notes folder (packaging/notes_bundle.py)")
+    return [f"--include-data-dir={folder}=devnotes"]
+
+
 def nuitka_args() -> list[str]:
     version = app_version()
     # Opt-in: Nuitka's own tool downloads (Dependency Walker; one-time, cached per user).
@@ -83,6 +94,7 @@ def nuitka_args() -> list[str]:
         f"--include-data-files={os.path.join(KL_ROOT, 'VERSION')}=VERSION",
         f"--include-data-files={os.path.join(KL_ROOT, 'app', 'core', 'sample_profile.json')}=app/core/sample_profile.json",
         *[f"--include-module={m}" for m in upgrade_step_modules()],
+        *notes_args(),
         # Our own test packages only - a *.tests wildcard also drops jinja2.tests, which jinja2 needs.
         "--nofollow-import-to=app.tests",
         "--nofollow-import-to=app.backblaze.tests",

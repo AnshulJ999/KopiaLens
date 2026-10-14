@@ -352,6 +352,12 @@ for _key, _prov in PROVIDERS.items():
             _field("override_hostname", "--override-hostname", "Connect as computer", advanced=True,
                    help="The computer name snapshots are made as, when it isn't this computer's name."),
         ]
+    # kopia's own read-only connection: kopia refuses every repository write through it.
+    _prov["fields"].append(dict(
+        _bool("kopia_readonly", "--readonly", "Read-only connection", advanced=True,
+              help="kopia refuses every change through this connection. KopiaLens can browse, search, "
+                   "index, mount and restore, but can't back up, delete or edit policies."),
+        connect_only=True))
 
 
 def provider_list() -> list[dict]:
@@ -437,6 +443,8 @@ def _build_args(verb: str, provider: str, fields: dict, config_file: str,
         raise ValueError(f"{spec['label']} cannot host a new repository - connect to one instead.")
     args = [kopiabin.exe(), "--config-file", config_file, "repository", verb, spec["provider"]]
     for f in spec["fields"]:
+        if verb != "connect" and f.get("connect_only"):
+            continue
         value = fields.get(f["key"])
         if f["kind"] == "bool":
             if value is None:
@@ -934,6 +942,60 @@ def unlock(repo: str, password: str) -> dict:
                          "kopia could not open the repository with that password.")
     status = probe(repo=repo)
     return {"ok": True, "status": status}
+
+
+class SharedConnection(ValueError):
+    """The connection file is also another app's (KopiaUI, BlinkDisk): a read-only switch applies to it too."""
+
+    def __init__(self, app: str):
+        self.app = app
+        super().__init__(f"{app} uses this connection too. Read-only would stop its backups as well.")
+
+
+def shared_with(config_file: str) -> str:
+    """The other app that uses this connection file, or "" (KopiaUI opens every config in kopia's
+    folder, BlinkDisk its vault configs)."""
+    from . import coexist
+    folder = os.path.normcase(os.path.dirname(os.path.abspath(config_file)))
+    if folder == os.path.normcase(os.path.abspath(kopia_config_dir())) and kopiabin.kopiaui_uses_kopia_folder():
+        return "KopiaUI"
+    if folder == os.path.normcase(os.path.abspath(coexist.blinkdisk_vault_dir())):
+        return "BlinkDisk"
+    return ""
+
+
+def set_readonly(repo: str, on: bool, shared_ok: bool = False) -> dict:
+    """Switch kopia's own read-only connection on or off (`kopia repository set-client
+    --read-only|--read-write`). It opens the repository, so the storage must be reachable."""
+    rec = next((r for r in repos.all_records() if str(r.get("id")) == str(repo)), None)
+    if rec is None or rec.get("kind", "kopia") != "kopia":
+        raise ValueError(f"unknown kopia repository: {repo}")
+    if rec.get("demo"):
+        raise ValueError("Sample data has no kopia connection.")
+    cfg = repos.connection_file(repo)
+    if not os.path.isfile(cfg):
+        raise ValueError(f"config file not found: {cfg}")
+    if repos.kopia_readonly(repo) == bool(on):
+        return {"ok": True, "repo": repos.detail(rec)}
+    other = shared_with(cfg)
+    if on and other and not shared_ok:
+        raise SharedConnection(other)
+    flag = "--read-only" if on else "--read-write"
+    res = _run([kopiabin.exe(), "--config-file", cfg, "repository", "set-client", flag,
+                "--no-check-for-updates"], None, timeout=300.0)
+    ok = res["returncode"] == 0
+    audit.audit("executed", "repo-readonly", repo=repo, summary={"on": bool(on), "ok": ok, "shared": other},
+                rc=res["returncode"])
+    if not ok:
+        raise ValueError(_last_meaningful_line((res.get("stderr") or "") + "\n" + (res.get("stdout") or ""))
+                         or "kopia could not change the connection.")
+    log.warning("repo=%s kopia read-only connection %s", repo, "on" if on else "off")
+    try:
+        from . import engine
+        engine.wake()
+    except Exception:  # noqa: BLE001 - the next reconcile applies it anyway
+        pass
+    return {"ok": True, "repo": repos.detail(rec)}
 
 
 def remove_preview(repo: str) -> dict:

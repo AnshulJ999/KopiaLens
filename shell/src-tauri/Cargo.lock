@@ -2042,7 +2042,7 @@ dependencies = [
 
 [[package]]
 name = "kopialens-desktop"
-version = "0.28.0"
+version = "0.31.0"
 dependencies = [
  "getrandom 0.3.4",
  "serde",

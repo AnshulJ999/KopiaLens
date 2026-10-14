@@ -92,6 +92,8 @@ const settingsPart = {
       this.startupDelay = Number(kl.startup_delay ?? 300);
       this.debugLog = kl.debug_log === true;
       this.controlApi = kl.control_api !== false;
+      this.appPort = Number(kl.port || 7123);
+      this.controlPort = Number(kl.control_port || 7124);
       this.trayClick = kl.tray_click === "menu" ? "menu" : "window";
       this.trayDoubleClick = kl.tray_double_click === "none" ? "none" : "window";
       this.notifyLevel = ["all", "off"].includes(kl.notifications) ? kl.notifications : "warnings";
@@ -164,6 +166,8 @@ const settingsPart = {
       startup_delay: { s: "startupDelay", t: "int", min: 0, restart: true },
       debug_log: { s: "debugLog", t: "bool" },
       control_api: { s: "controlApi", t: "bool", restart: true },
+      port: { s: "appPort", t: "int", min: 1024, max: 65535, restart: true },
+      control_port: { s: "controlPort", t: "int", min: 1024, max: 65535, restart: true },
       tray_click: { s: "trayClick", t: "choice", of: ["window", "menu"] },
       tray_double_click: { s: "trayDoubleClick", t: "choice", of: ["window", "none"] },
       notifications: { s: "notifyLevel", t: "choice", of: ["all", "warnings", "off"] },

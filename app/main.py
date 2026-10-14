@@ -1276,6 +1276,9 @@ app.include_router(tokens_api.router, prefix="/api")
 if not DEMO_INSTANCE or DEMO_BACKBLAZE:   # a demo reads only its own generated bzdata
     app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
 devaddons.load(app, ROOT)
+if not devaddons.HTML:      # a source run with the Notes add-on keeps its own; a testing build gets this
+    from .core import devnotes
+    devnotes.load(app, ROOT, devaddons.HTML.append)
 
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
 

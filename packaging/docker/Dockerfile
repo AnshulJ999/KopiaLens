@@ -2,6 +2,9 @@
 # KopiaLens release image: the server compiled with Nuitka, plus a pinned kopia. No Python source ships.
 # Build (from the KopiaLens folder):
 #   docker build -f packaging/docker/Dockerfile -t kopialens:local .
+# Testing build with the Notes widget (never published): stage it first, then pass the folder:
+#   python packaging/notes_bundle.py packaging/docker/devnotes
+#   docker build -f packaging/docker/Dockerfile --build-arg KOPIALENS_BUILD_NOTES=/src/packaging/docker/devnotes -t kopialens:testing .
 ARG PYTHON_VERSION=3.14
 ARG DEBIAN=trixie
 
@@ -14,6 +17,7 @@ WORKDIR /src
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt nuitka==4.2.2
 COPY . .
+ARG KOPIALENS_BUILD_NOTES=
 ENV KOPIALENS_BUILD_OUT=/out
 RUN --mount=type=cache,target=/root/.cache/Nuitka \
     python packaging/build_server.py || (tail -40 /out/build.log; exit 1)

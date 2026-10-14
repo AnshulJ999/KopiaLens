@@ -12,11 +12,17 @@ const writeModePart = {
     return (w.repos[r] && w.repos[r].mode) || w.global || "full";
   },
   wmLabel(mode) { return (this.wm && this.wm.labels[mode]) || mode; },
+  // kopia itself holds this repository's connection read-only (Settings > Repositories).
+  wmKopiaReadonly(repo) {
+    const w = this.wm, r = repo || this.repo;
+    return !!(w && w.repos[r] && w.repos[r].kopia_readonly);
+  },
   // Why ``need`` is refused on this repository, or "" when it is allowed.
   wmOff(need, repo) {
     if (!need || this.repoKind !== "kopia") return "";
     const mode = this.wmMode(repo);
     if (WM_ORDER.indexOf(mode) >= WM_ORDER.indexOf(need)) return "";
+    if (this.wmKopiaReadonly(repo)) return "Connected read-only, so kopia refuses changes.";
     return `${this.wmLabel(mode)} mode. This needs ${this.wmLabel(need)}.`;
   },
   // A menu entry greyed out with the reason when the mode refuses it.
@@ -28,7 +34,8 @@ const writeModePart = {
   wmGuard(need, repo) {
     const off = this.wmOff(need, repo);
     if (!off) return true;
-    this.klNotify(off + " Change it in Settings > Permissions.", "warn");
+    const where = this.wmKopiaReadonly(repo) ? "Settings > Repositories" : "Settings > Permissions";
+    this.klNotify(`${off} Change it in ${where}.`, "warn");
     return false;
   },
   async wmSet(repo, mode) {

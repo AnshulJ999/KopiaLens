@@ -116,11 +116,23 @@ def repo_override(repo: str) -> str | None:
     return _valid(config.repo_record(str(repo)).get("write_mode"))
 
 
+def kopia_readonly(repo: str | None) -> bool:
+    """kopia itself holds this connection read-only, so nothing above Restores allowed can work."""
+    if repo is None:
+        return False
+    from . import repos
+    return repos.kopia_readonly(str(repo))
+
+
 def mode(repo: str | None) -> str:
-    """The mode that applies to ``repo``: its override, else the app-wide mode."""
+    """The mode that applies to ``repo``: its override, else the app-wide mode, capped at Restores
+    allowed when kopia holds the connection read-only."""
     if repo is None:
         return global_mode()
-    return repo_override(repo) or global_mode()
+    chosen = repo_override(repo) or global_mode()
+    if kopia_readonly(repo) and MODES.index(chosen) > MODES.index("restores"):
+        return "restores"
+    return chosen
 
 
 def allows(repo: str | None, need: str | None) -> bool:
@@ -129,6 +141,9 @@ def allows(repo: str | None, need: str | None) -> bool:
 
 def reason(repo: str | None, need: str | None) -> str:
     """Why an action is refused, for the screens and the 403."""
+    if kopia_readonly(repo):
+        return ("This repository is connected read-only, so kopia refuses changes to it. "
+                "Change it in Settings > Repositories.")
     return (f"This repository is in {LABELS[mode(repo)]} mode, which doesn't allow this. "
             f"It needs {LABELS[need]}. Change it in Settings > Permissions.")
 
@@ -203,7 +218,8 @@ def state() -> dict:
     for rid in config.REPOS:
         if config.repo_kind(rid) != "kopia":
             continue
-        repos_out[str(rid)] = {"override": repo_override(rid), "mode": mode(rid)}
+        repos_out[str(rid)] = {"override": repo_override(rid), "mode": mode(rid),
+                               "kopia_readonly": kopia_readonly(rid)}
     return {"modes": list(MODES), "labels": LABELS, "global": global_mode(), "repos": repos_out,
             "password": users.has_accounts(), "jobs": JOBS,
             "routes": {f"{m} {p}": (n if not callable(n) else "by kind") for (m, p), n in ROUTES.items()}}

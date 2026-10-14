@@ -33,7 +33,7 @@ pub fn spawn(app: AppHandle, shell: Arc<Shell>) {
                 (Method::Get, "/status") => {
                     let srv = &shell.server;
                     let body = json!({
-                        "server_up": crate::server::port_open(srv.port),
+                        "server_up": crate::server::port_open(srv.port()),
                         "pid": srv.child_pid(),
                         "url": srv.url(),
                         "indexing": srv.workers(),

@@ -121,6 +121,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "usage_stats": True,         # anonymous usage stats sent with that check
         "debug_log": False,          # also write data/logs/kopialens-debug.log at DEBUG (env KOPIALENS_DEBUG_LOG overrides)
         "control_api": True,         # the tray's local control port (restart/quit/status for scripts); read at tray start
+        "port": 7123,                # the app's port, read at start by config.py and the desktop app (env KOPIALENS_PORT wins)
+        "control_port": 7124,        # the tray's control port (env KOPIALENS_TRAY_PORT wins)
         "tray_click": "window",      # desktop app tray icon click: window | menu (right-click always shows the menu)
         "tray_double_click": "window",  # tray icon double-click (Windows): window | none
         "notifications": "warnings",  # desktop app toasts: all | warnings | off

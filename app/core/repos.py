@@ -105,36 +105,54 @@ def config_path_for(repo: str) -> str | None:
     return rec.get("config_file") or None
 
 
-_SERVER_CACHE: dict[str, tuple[int, bool]] = {}
+_CONFIG_FACTS: dict[str, tuple[int, dict]] = {}
+
+
+def connection_file(repo: str) -> str:
+    """The kopia config file a repo uses, with kopia's default connection filled in."""
+    path = config_path_for(repo)
+    if not path:
+        from .repoconnect import kopia_config_dir   # lazy: repoconnect imports this module
+        path = os.path.join(kopia_config_dir(), "repository.config")
+    return path
+
+
+def _config_facts(repo: str) -> dict:
+    """``server`` (an ``apiServer`` connection) and ``readonly`` (kopia's own read-only
+    connection), read from the config file itself and cached per file mtime."""
+    if config.repo_kind(repo) != "kopia" or config.is_demo(repo) or not exists(repo):
+        return {}      # a demo repo has no kopia connection (its missing config is not the default)
+    path = connection_file(repo)
+    try:
+        mtime = os.stat(path).st_mtime_ns
+    except OSError:
+        return {}
+    hit = _CONFIG_FACTS.get(path)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        data = data if isinstance(data, dict) else {}
+        facts = {"server": bool(data.get("apiServer")), "readonly": bool(data.get("readonly"))}
+    except (OSError, ValueError):
+        facts = {}
+    _CONFIG_FACTS[path] = (mtime, facts)
+    return facts
 
 
 def via_server(repo: str) -> bool:
     """True when the repo is reached through a kopia repository server (an ``apiServer`` config).
 
     kopia refuses the direct-only commands the index is built from over such a connection
-    (content/blob/index reads), so the repo is browse-only. Read from the config file itself, so
-    records written before this existed answer correctly; cached per file mtime."""
-    if config.repo_kind(repo) != "kopia" or config.is_demo(repo) or not exists(repo):
-        return False   # a demo repo has no kopia connection (its missing config is not the default)
-    path = config_path_for(repo)
-    if not path:
-        from .repoconnect import kopia_config_dir   # lazy: repoconnect imports this module
-        path = os.path.join(kopia_config_dir(), "repository.config")
-    try:
-        mtime = os.stat(path).st_mtime_ns
-    except OSError:
-        return False
-    hit = _SERVER_CACHE.get(path)
-    if hit and hit[0] == mtime:
-        return hit[1]
-    try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-        answer = bool(isinstance(data, dict) and data.get("apiServer"))
-    except (OSError, ValueError):
-        answer = False
-    _SERVER_CACHE[path] = (mtime, answer)
-    return answer
+    (content/blob/index reads), so the repo is browse-only."""
+    return bool(_config_facts(repo).get("server"))
+
+
+def kopia_readonly(repo: str) -> bool:
+    """True when kopia itself holds this connection read-only (``repository connect --readonly``
+    or ``set-client --read-only``): every repository write fails in kopia."""
+    return bool(_config_facts(repo).get("readonly"))
 
 
 # Storage-config keys that must NEVER leave the machine. A kopia config file holds credentials in
@@ -243,6 +261,7 @@ def detail(record: dict) -> dict:
         "unique_id": record.get("unique_id") or "",
         "storage": info,
         "via_server": via_server(rid),
+        "kopia_readonly": kopia_readonly(rid),
         "demo": bool(record.get("demo")),
         "sample": bool(record.get("sample")),
     }

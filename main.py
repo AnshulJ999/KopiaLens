@@ -21,13 +21,33 @@ def _already_running(host: str, port: int) -> bool:
         return sock.connect_ex((host, port)) == 0
 
 
+def _record_server() -> None:
+    """``<data>/server.json``: this server's pid and port. The desktop app reads it to tell its own
+    server from another program on the same port."""
+    import json
+    import os
+
+    from config import DATA_DIR
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        path = os.path.join(DATA_DIR, "server.json")
+        with open(path + ".tmp", "w", encoding="utf-8") as fh:
+            json.dump({"pid": os.getpid(), "port": PORT}, fh)
+        os.replace(path + ".tmp", path)
+    except OSError:
+        pass
+
+
 def run() -> None:
     setup_logging()
     log = get_logger("startup")
     if _already_running(GUARD_HOST, PORT):
-        log.warning("single-instance guard: KopiaLens already listening on %s:%s - this instance is exiting", GUARD_HOST, PORT)
-        print(f"KopiaLens already running on {GUARD_HOST}:{PORT} - exiting (single-instance guard).")
+        log.warning("port %s is already in use (another KopiaLens, or another program) - this instance is "
+                    "exiting. Set another port in Settings > Advanced, or KOPIALENS_PORT.", PORT)
+        print(f"Port {PORT} is already in use - exiting. Set another port in Settings > Advanced, "
+              f"or KOPIALENS_PORT.")
         sys.exit(0)
+    _record_server()
     from app.core import netaccess
     host = auth.bind_host()
     mode = netaccess.mode()

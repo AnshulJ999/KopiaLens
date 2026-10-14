@@ -11,3 +11,5 @@
 app/tests
 app/backblaze/tests
 **/__pycache__
+!docs/
+!packaging/docker/devnotes/

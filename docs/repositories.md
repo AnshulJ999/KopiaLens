@@ -17,7 +17,16 @@ Each repository in Settings → Repositories shows where it's stored and when it
 - **Index now**: updates the index for that repository.
 - **Edit…**: rename the repository or change its short name.
 - **Counts as a backup**: when on, the Excluded view treats files in this repository as backed up. Turn it off for a test or scratch repository.
+- **Read-only connection**: see below.
 - **Remove…**: see below.
+
+## Read-only connections
+
+A read-only connection is kopia's own lock: kopia refuses every change made through it. KopiaLens can still browse, search, index, mount and restore, but it can't back up, delete, pin or edit policies there, and those actions show as unavailable.
+
+Turn it on when connecting (**More options** → **Read-only connection**), or later in Settings → Repositories. It suits a computer that should only look at a repository, for example a second KopiaLens on another machine.
+
+The lock belongs to the connection file. If KopiaUI or BlinkDisk uses the same connection, KopiaLens asks first, because that app then can't back up to the repository either. Turning it on or off opens the repository, so its storage must be reachable.
 
 ## Removing a repository
 

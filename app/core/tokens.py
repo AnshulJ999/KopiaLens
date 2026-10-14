@@ -313,6 +313,10 @@ def _access(body: dict, _q: dict) -> str:
     return APP if order.index(new) <= order.index(cur) else PERSON
 
 
+def _kopia_readonly(body: dict, _q: dict) -> str:
+    return APP if body.get("on") is True else PERSON
+
+
 def _export(_body: dict, query: dict) -> str:
     groups = {g for g in str(query.get("groups") or "settings,repos").split(",") if g}
     return READ if groups <= {"settings", "repos"} else NEVER    # accounts and keys are secrets
@@ -376,6 +380,7 @@ _WRITES: dict[str, object] = {
     **{f"POST /api/setup/{p}": APP for p in ("attach", "backblaze", "connect", "create",
                                              "index/rebuild", "sample", "repos/{repo}/unlock")},
     "PATCH /api/setup/repos/{repo}": APP,
+    "POST /api/setup/repos/{repo}/readonly": _kopia_readonly,   # turning it off is the unsafe side
     "DELETE /api/setup/repos/{repo}": PERSON,
     "POST /api/setup/kopia": PERSON,             # picks the program KopiaLens runs
     **{f"POST /api/licence{p}": APP for p in ("", "/activate", "/renew", "/patreon/start",
@@ -397,9 +402,11 @@ _WRITES: dict[str, object] = {
     "PATCH /api/tokens/{token_id}": NEVER,
     "DELETE /api/tokens/{token_id}": NEVER,
     **{f"POST /api/approvals/{{approval_id}}/{p}": NEVER for p in ("approve", "deny")},
+    # Test copies send their review notes here with a token (devnotes.py); the rest stays a person's.
+    **{f"{m} /api/devnotes/{p}": APP for m, p in (
+        ("POST", "notes"), ("PATCH", "notes/{note_id}"), ("DELETE", "notes/{note_id}"))},
     **{f"{m} /api/devnotes/{p}": PERSON for m, p in (
-        ("POST", "backup"), ("POST", "notes"), ("PATCH", "notes/{note_id}"),
-        ("DELETE", "notes/{note_id}"), ("PUT", "reviews/{slug}/verdicts/{card}"),
+        ("POST", "backup"), ("PUT", "reviews/{slug}/verdicts/{card}"),
         ("DELETE", "reviews/{slug}/verdicts/{card}"), ("POST", "round"), ("POST", "state"))},
 }
 # Reads a token may not make: they hand out credentials or manage tokens.

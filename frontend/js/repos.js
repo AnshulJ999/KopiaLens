@@ -177,7 +177,10 @@ const reposPart = {
       cx.fields = {};
       for (const f of (spec ? spec.fields : [])) cx.fields[f.key] = f.default == null ? (f.kind === "bool" ? false : "") : f.default;
     },
-    cxFieldList(advanced) { const s = this.cxSpec(); return s ? s.fields.filter((f) => !!f.advanced === advanced) : []; },
+    cxFieldList(advanced) {
+      const s = this.cxSpec();
+      return s ? s.fields.filter((f) => !!f.advanced === advanced && !(f.connect_only && this.cx.mode === "create")) : [];
+    },
     cxPasswordNote() {
       if (this.cx.provider === "server") return "Your account's password on the kopia server. Not your KopiaLens password.";
       return this.cx.mode === "create"
@@ -400,6 +403,26 @@ const reposPart = {
         await _setupPost(`/api/setup/repos/${encodeURIComponent(r.id)}`, { counts_as_backup: on }, "PATCH");
         r.counts_as_backup = on;
       } catch (e) { this.klNotify(e.message || String(e), "warn"); }
+    },
+    async raKopiaReadonly(r, on, sharedOk = false) {
+      try {
+        const res = await _setupPost(`/api/setup/repos/${encodeURIComponent(r.id)}/readonly`, { on, shared_ok: sharedOk });
+        r.kopia_readonly = !!(res.repo && res.repo.kopia_readonly);
+        this.klNotify(on ? `${r.name} is read-only now` : `${r.name} can be changed again`);
+        this.wmLoad && this.wmLoad();
+      } catch (e) {
+        if (e.status === 409 && e.data && e.data.shared_with) {
+          const app = e.data.shared_with;
+          const ok = await this.klConfirm({ title: `Make ${app}'s connection read-only too?`,
+            body: `${app} uses the same connection to this repository. Read-only applies to both, so ${app} can't back up to it until you turn this off.`,
+            confirmLabel: "Make read-only", danger: true });
+          if (ok) return this.raKopiaReadonly(r, on, true);
+        } else {
+          this.klNotify(e.message || String(e), "warn");
+        }
+        r.kopia_readonly = !on;
+        this.repos = this.repos.slice();
+      }
     },
     raMove(i, dir) {
       const j = i + dir;

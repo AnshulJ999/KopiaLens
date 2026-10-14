@@ -146,7 +146,7 @@ pub fn open_window(app: &AppHandle, repo: Option<String>) {
         None => format!("{}{next}", sh.server.url()),
     };
     let Ok(parsed) = Url::parse(&url) else { return };
-    let port = sh.server.port;
+    let port = sh.server.port();
     let (app2, label2) = (app.clone(), label.clone());
     let mut builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(parsed));
     if let Some(p) = &sh.server.portable {
@@ -315,7 +315,7 @@ pub fn on_menu(app: &AppHandle, id: &str) {
 
 pub fn poll_once(app: &AppHandle) {
     let sh = shell(app);
-    let result = if server::port_open(sh.server.port) { sh.server.get("/api/shell/state") } else { Err(ApiError::Down) };
+    let result = if server::port_open(sh.server.port()) { sh.server.get("/api/shell/state") } else { Err(ApiError::Down) };
     let mut h = tray::status_from(&result);
     match &result {
         Ok(v) => {
@@ -344,6 +344,29 @@ fn tray_note_once(app: &AppHandle) {
     let _ = std::fs::create_dir_all(&dir);
     let _ = std::fs::write(&flag, b"1");
     tray::toast(app, "KopiaLens is still running", "Open it again from the tray icon. Scheduled indexing keeps running.");
+}
+
+/// Starts the server, tray, control port, watchdog and status polling, then opens the window.
+fn launch(handle: &AppHandle, sh: &Arc<Shell>, hidden: bool) -> tauri::Result<()> {
+    sh.server.start();
+    tray::create(handle, sh)?;
+    control::spawn(handle.clone(), sh.clone());
+    spawn_watchdog(handle.clone());
+    let poll_app = handle.clone();
+    thread::spawn(move || loop {
+        poll_once(&poll_app);
+        thread::sleep(Duration::from_secs(3));
+    });
+    if !hidden {
+        let open_app = handle.clone();
+        let sh2 = sh.clone();
+        thread::spawn(move || {
+            if sh2.server.wait_up(Duration::from_secs(90)) {
+                open_window(&open_app, None);
+            }
+        });
+    }
+    Ok(())
 }
 
 fn env_flag_off(name: &str) -> bool {
@@ -431,24 +454,44 @@ pub fn run() {
                 std::env::set_var("KOPIALENS_IN_APP_UPDATES", "1");
             }
             sh.server.log(&format!("--- desktop app started (data {}) ---", sh.server.data_dir.display()));
-            sh.server.start();
-            tray::create(&handle, &sh)?;
-            control::spawn(handle.clone(), sh.clone());
-            spawn_watchdog(handle.clone());
-            let poll_app = handle.clone();
-            thread::spawn(move || loop {
-                poll_once(&poll_app);
-                thread::sleep(Duration::from_secs(3));
-            });
-            if !hidden {
-                let open_app = handle.clone();
-                let sh2 = sh.clone();
-                thread::spawn(move || {
-                    if sh2.server.wait_up(Duration::from_secs(90)) {
-                        open_window(&open_app, None);
+            if let server::PortOwner::Other = sh.server.port_owner() {
+                // Another program (or another KopiaLens) holds the port: never show its pages as ours.
+                let port = sh.server.port();
+                sh.server.log(&format!("port {port} is used by another program"));
+                let (app2, sh2) = (handle.clone(), sh.clone());
+                match sh.server.next_free_port() {
+                    Some(next) => {
+                        app.dialog()
+                            .message(format!("Another program is using port {port}, so KopiaLens can't start there. \
+                                              Use port {next} instead? KopiaLens remembers it; you can change it in Settings > Advanced."))
+                            .title("Port in use")
+                            .kind(MessageDialogKind::Warning)
+                            .buttons(MessageDialogButtons::OkCancelCustom(format!("Use port {next}"), "Quit".into()))
+                            .show(move |ok| {
+                                if !ok {
+                                    app2.exit(1);
+                                    return;
+                                }
+                                if let Err(e) = sh2.server.save_port(next) {
+                                    sh2.server.log(&format!("could not save port {next}: {e}"));
+                                }
+                                sh2.server.set_port(next);
+                                if let Err(e) = launch(&app2, &sh2, hidden) {
+                                    sh2.server.log(&format!("start failed: {e}"));
+                                }
+                            });
                     }
-                });
+                    None => {
+                        app.dialog()
+                            .message(format!("Another program is using port {port}, and no nearby port is free. Close that program, or set KOPIALENS_PORT, and open KopiaLens again."))
+                            .title("Port in use")
+                            .kind(MessageDialogKind::Error)
+                            .show(move |_| app2.exit(1));
+                    }
+                }
+                return Ok(());
             }
+            launch(&handle, &sh, hidden)?;
             Ok(())
         })
         .build(tauri::generate_context!())
