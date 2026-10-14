@@ -25,6 +25,7 @@ def _read_app_version() -> str:
 
 
 APP_VERSION = _read_app_version()
+API_VERSION = 1   # the stable API's version (docs/api.md); matches klens.API_VERSION
 
 # Online addresses baked into every shipped copy. Final values before the first public build.
 # Sandbox (Polar test purchases) until the production switch; never ship this default.

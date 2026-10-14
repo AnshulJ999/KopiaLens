@@ -23,7 +23,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, Redirec
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
-from config import APP_VERSION, DATA_DIR, DEMO_BACKBLAZE, DEMO_INSTANCE, REPOS, is_demo, repo_kind
+from config import API_VERSION, APP_VERSION, DATA_DIR, DEMO_BACKBLAZE, DEMO_INSTANCE, REPOS, is_demo, repo_kind
 
 from .api import (access, account, actions, appconfig, audit, backblaze, cli, dashboard, deleteplan, encryption, engine, excluded,
                   help, insights, jobs, licence, logs, newsnapshot, notify, onboarding, policies, prune, restore, search, setup, shell, simulate,
@@ -1381,7 +1381,8 @@ def index(request: Request) -> Response:
 
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True, "version": APP_VERSION}
+    """``api`` goes up only when a stable route (docs/api.md) changes incompatibly."""
+    return {"ok": True, "version": APP_VERSION, "api": API_VERSION}
 
 
 @app.get("/debug/memory")

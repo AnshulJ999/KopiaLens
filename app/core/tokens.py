@@ -4,7 +4,8 @@ A request carrying ``Authorization: Bearer kl_...`` acts as that token (audit ac
 ``token:<name>``). What it may do is decided in ONE place, ``check``: every route is sorted in
 ``classify`` into read / app / repo / person / never, and the token's scopes (today only its write
 mode) are applied on top. The repository's own write mode still applies afterwards, so the stricter
-of the two wins.
+of the two wins. A ``person`` request can go ahead once a person approves it (core/approvals);
+a ``never`` request cannot.
 
 ``tokens.json`` sits next to ``users.json``: plain at every encryption level (it is read before an
 unlock), hashes only (SHA-256 of a 32-byte random secret), and never part of a settings backup.
@@ -123,6 +124,39 @@ def create(name: str, mode: str, days: int, created_by: str = "") -> tuple[str, 
     return secret, _public(rec)
 
 
+def update(token_id: str, name: str | None = None, mode: str | None = None,
+           days: int | None = None) -> tuple[dict, dict] | None:
+    """Change a token's name, permission or expiry (``days`` from now, 0 = never); the secret
+    stays the same. (before, after) public records, or None when there is no such token."""
+    from . import writemode
+    if name is not None:
+        name = name.strip()
+        if not _NAME.match(name):
+            raise ValueError("Give the token a name of up to 40 characters.")
+    if mode is not None and mode not in writemode.MODES:
+        raise ValueError("Pick one of the listed permissions.")
+    if days is not None and days not in EXPIRY_DAYS:
+        raise ValueError("Pick one of the listed expiry choices.")
+
+    def _set(data: dict):
+        for t in data["tokens"]:
+            if t["id"] != token_id:
+                continue
+            if name is not None and any(o["id"] != token_id and o["name"].lower() == name.lower()
+                                        for o in data["tokens"]):
+                raise ValueError("A token with that name already exists.")
+            before = _public(t)
+            if name is not None:
+                t["name"] = name
+            if mode is not None:
+                t.setdefault("scopes", {})["write_mode"] = mode
+            if days is not None:
+                t["expires"] = time.time() + days * 86400 if days else None
+            return before, _public(t)
+        return None
+    return _mutate(_set)
+
+
 def revoke(token_id: str) -> dict | None:
     """Remove a token; its public record, or None when there is no such token."""
     def _drop(data: dict):
@@ -197,8 +231,41 @@ def _job(body: dict, _q: dict) -> str:
         return READ if params.get("dry") else PERSON
     if kind == "encryption_level":
         return PERSON          # the level is set through /api/encryption/level
+    if kind == "policy_write" and any(_lowers_retention(body.get("repo"), w.get("target"), w.get("changes"))
+                                      for w in params.get("writes") or []):
+        return PERSON
     from . import writemode
     return REPO if kind in writemode.JOBS else PERSON
+
+
+def _lowers_retention(repo, target, changes) -> bool:
+    """True when saving these policy changes lowers a retention number or removes the policy
+    (fail closed: anything that can't be compared counts as lowering)."""
+    if not isinstance(changes, dict):
+        return True
+    if changes.get("delete_policy"):
+        return True
+    if not any(str(f).startswith("retention.") for f in changes.get("fields") or {}):
+        return False
+    try:
+        from ..api.policies import Changes, _build_diff
+        diff = _build_diff(str(repo), str(target), Changes(**changes), price=False)
+    except Exception:  # noqa: BLE001
+        return True
+
+    def num(v):
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+    for fc in diff.get("field_changes") or []:
+        if not str(fc.get("field")).startswith("retention."):
+            continue
+        before, after = fc.get("effective_before"), fc.get("effective_after")
+        if num(after) and (not num(before) or after < before):
+            return True
+    return False
+
+
+def _policy_save(body: dict, _q: dict) -> str:
+    return PERSON if _lowers_retention(body.get("repo"), body.get("target"), body.get("changes")) else REPO
 
 
 def _settings(body: dict, _q: dict) -> str:
@@ -248,14 +315,15 @@ def _access(body: dict, _q: dict) -> str:
 
 def _export(_body: dict, query: dict) -> str:
     groups = {g for g in str(query.get("groups") or "settings,repos").split(",") if g}
-    return READ if groups <= {"settings", "repos"} else PERSON   # accounts and keys are secrets
+    return READ if groups <= {"settings", "repos"} else NEVER    # accounts and keys are secrets
 
 
 # Every write route, sorted. The guard test fails on a write route missing here.
 # read = changes nothing (previews, plans, dry runs, lookups sent as POST);
 # app = KopiaLens's own state, the safe side (needs a token above Read-only);
 # repo = changes a repository: the token's write mode must allow the route's need;
-# person = the unsafe side, a person does it in KopiaLens; never = sets or reveals a secret.
+# person = the unsafe side, runs only once a person approves it; never = sets or reveals a secret,
+# manages tokens or decides an approval.
 _WRITES: dict[str, object] = {
     **{f"POST /api/actions/{p}": READ for p in (
         "batch-detail", "browse-folder", "folder-reclaim", "remove-detail", "remove-files-dry-run",
@@ -265,8 +333,8 @@ _WRITES: dict[str, object] = {
     **{f"POST /api/policies/{p}": READ for p in (
         "diff", "exclusion-targets", "exclusion-variants", "multi-plan", "preview", "price", "resolve")},
     "POST /api/policies/backup": APP,
-    "POST /api/policies/save": REPO,
-    "POST /api/policies/restore": REPO,
+    "POST /api/policies/save": _policy_save,      # lowering retention needs a person
+    "POST /api/policies/restore": PERSON,
     "POST /api/client/scripts": PERSON,          # lets kopia run commands on this computer
     **{f"POST /api/{p}": READ for p in (
         "delete/plan", "delete/stats", "folder/detail", "prune/plan", "prune/price", "restore/plan",
@@ -325,8 +393,10 @@ _WRITES: dict[str, object] = {
                                                  "encryption/join")},
     **{f"POST /api/auth/{p}": NEVER for p in ("login", "logout", "recover")},
     **{f"POST /api/shell/{p}": NEVER for p in ("open-code", "prefs", "update-progress")},
-    "POST /api/tokens": PERSON,
-    "DELETE /api/tokens/{token_id}": PERSON,
+    "POST /api/tokens": NEVER,
+    "PATCH /api/tokens/{token_id}": NEVER,
+    "DELETE /api/tokens/{token_id}": NEVER,
+    **{f"POST /api/approvals/{{approval_id}}/{p}": NEVER for p in ("approve", "deny")},
     **{f"{m} /api/devnotes/{p}": PERSON for m, p in (
         ("POST", "backup"), ("POST", "notes"), ("PATCH", "notes/{note_id}"),
         ("DELETE", "notes/{note_id}"), ("PUT", "reviews/{slug}/verdicts/{card}"),
@@ -335,7 +405,8 @@ _WRITES: dict[str, object] = {
 # Reads a token may not make: they hand out credentials or manage tokens.
 _READS: dict[str, object] = {
     "GET /api/config-backups/export": _export,
-    "GET /api/tokens": PERSON,
+    "GET /api/tokens": NEVER,
+    "GET /api/approvals": NEVER,          # a token reads only its own request, by id
 }
 
 
@@ -351,7 +422,7 @@ def classify(method: str, route: str, body: dict, query: dict) -> str:
 
 
 MESSAGES = {
-    PERSON: "Ask the user to do this in KopiaLens. An API token can't do it on its own.",
+    PERSON: "This needs the user's approval in KopiaLens.",
     NEVER: "This step stays with the user in KopiaLens; an API token can never do it.",
 }
 
@@ -363,9 +434,11 @@ def check(rec: dict, method: str, route: str, path: str, body: dict, query: dict
     cls = classify(method, route, body, query)
     if cls == READ:
         return None
-    if cls in MESSAGES:
+    if cls == NEVER:
         return cls, MESSAGES[cls]
-    need = writemode.route_need(method, path, body, query) if cls == REPO else None
+    # The token's permission applies to person requests too: approval never lifts a token
+    # above its own write mode (a delete needs a Full Access token, then the user's approval).
+    need = writemode.route_need(method, path, body, query) if cls in (REPO, PERSON) else None
     if cls == REPO and need is None:
         return None            # e.g. an estimate or verify job: reads the repository only
     mode = (rec.get("scopes") or {}).get("write_mode") or DEFAULT_MODE
@@ -374,4 +447,4 @@ def check(rec: dict, method: str, route: str, path: str, body: dict, query: dict
         return "mode", f"This token is {label}, so it can't change anything."
     if need and writemode.MODES.index(mode) < writemode.MODES.index(need):
         return "mode", f"This token is {label}. This needs {writemode.LABELS[need]}."
-    return None
+    return (cls, MESSAGES[cls]) if cls == PERSON else None

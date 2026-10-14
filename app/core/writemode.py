@@ -94,7 +94,8 @@ NO_REPO_WRITE = {
     "/api/simulate", "/api/simulate/all", "/api/snapshots/analyze", "/api/snapshots/analyze-all",
     "/api/snapshots/set-reclaim", "/api/tree/holders",
     "/api/write-mode", "/api/auth/login", "/api/auth/logout", "/api/auth/recover", "/api/index/stop",
-    "/api/tokens", "/api/tokens/{token_id}",
+    "/api/tokens", "/api/tokens/{token_id}", "/api/approvals/{approval_id}/approve",
+    "/api/approvals/{approval_id}/deny",
 }
 # Prefixes whose write routes are KopiaLens's own (licence, onboarding, setup, encryption, shell,
 # Backblaze): connecting, creating and removing repositories is allowed in every mode.
@@ -147,7 +148,11 @@ class PasswordNeeded(Exception):
 
 
 def _password_ok(password: str | None) -> bool:
-    """The KopiaLens password: the signed-in account's, or (sign-in off) any account's."""
+    """The KopiaLens password: the signed-in account's, or (sign-in off) any account's. A request
+    running on an approval whose approver entered the password counts as having it."""
+    from . import approvals
+    if approvals.password_confirmed():
+        return True
     from . import auth, users
     accounts = users.accounts()
     if not accounts:

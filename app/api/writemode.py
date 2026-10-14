@@ -7,7 +7,7 @@ import json
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from ..core import tokens, writemode
+from ..core import approvals, tokens, writemode
 
 router = APIRouter()
 
@@ -53,7 +53,10 @@ async def gate(request: Request) -> None:
             body = {}
     query = dict(request.query_params)
     if tok is not None:
-        refused = tokens.check(tok, request.method, _template(request, path), path, body, query)
+        route = _template(request, path)
+        refused = tokens.check(tok, request.method, route, path, body, query)
+        if refused and refused[0] == tokens.PERSON:
+            refused = _approval(request, tok, route, path, body, query)
         if refused:
             raise HTTPException(status_code=403, detail=refused[1], headers={"X-KopiaLens-Needs": refused[0]})
     if not gated:
@@ -64,6 +67,22 @@ async def gate(request: Request) -> None:
     repo = request.path_params.get("repo") or query.get("repo") or body.get("repo")
     if not writemode.allows(str(repo) if repo else None, need):
         raise HTTPException(status_code=403, detail=writemode.reason(str(repo) if repo else None, need))
+
+
+def _approval(request: Request, tok: dict, route: str, path: str, body: dict,
+              query: dict) -> tuple[str, str] | None:
+    """None when the request carries a matching approval (used up now); else the refusal, after
+    opening (or finding) the waiting request the user approves in KopiaLens."""
+    aid = request.headers.get(approvals.HEADER)
+    if aid:
+        why = approvals.redeem(aid, tok, request.method, path, body, query)
+        return None if why is None else ("approval", why)
+    rec = approvals.request(tok, request.method, route, path, body, query)
+    raise HTTPException(status_code=403, detail=(
+        f"Waiting for the user to approve this in KopiaLens: {rec['label']}. Once it's approved, send "
+        f"the same request again with the header {approvals.HEADER}: {rec['id']}. "
+        f"Check its status at /api/approvals/{rec['id']}."),
+        headers={"X-KopiaLens-Needs": "approval", approvals.HEADER: rec["id"]})
 
 
 @router.get("/write-mode")

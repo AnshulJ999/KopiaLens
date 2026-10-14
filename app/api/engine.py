@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 import config
 
-from ..core import audit, coexist, engine, jobs, pause as index_pause
+from ..core import approvals, audit, coexist, engine, jobs, pause as index_pause
 from ..core.applog import get_logger
 
 log = get_logger("api.engine")
@@ -36,7 +36,8 @@ def status() -> dict:
     return {"pause": engine.pause_state(None),
             "repos": [engine.repo_status(r) for r in _kopia_repos()],
             "running_tasks": sum(1 for t in engine.live_tasks() if t["status"] == "running"),
-            "alert_seq": max((a["id"] for a in engine.alerts()), default=0)}
+            "alert_seq": max((a["id"] for a in engine.alerts()), default=0),
+            "approvals_waiting": approvals.waiting_count()}
 
 
 @router.get("/engine/repo")

@@ -44,19 +44,26 @@ def test_a_token_reads_and_gets_its_write_mode(client):
     # no such repository).
     assert _refused(client.patch("/api/setup/repos/zz", json={"label": "x"}, headers=ro), "mode")
     assert client.patch("/api/setup/repos/zz", json={"label": "x"}, headers=nd).status_code == 400
+    # Approval never lifts a token above its permission: a delete needs a Full Access token.
+    delete = {"kind": "remove_files", "repo": "1", "params": {}}
+    assert _refused(client.post("/api/jobs/start", json=delete, headers=nd), "mode")
+    assert _refused(client.post("/api/settings", json={"kopialens": {"session_days": 7}}, headers=ro), "mode")
 
 
 @pytest.mark.parametrize("method,path,kw,needs", [
-    ("post", "/api/actions/snapshot-delete", {"json": {"repo": "1", "snapshot_ids": ["k1"]}}, "person"),
-    ("post", "/api/jobs/start", {"json": {"kind": "remove_files", "repo": "1", "params": {}}}, "person"),
-    ("post", "/api/settings", {"json": {"kopialens": {"auth_enabled": False}}}, "person"),
-    ("post", "/api/settings", {"json": {"kopialens": {"allowed_hosts": ["evil.example"]}}}, "person"),
-    ("post", "/api/write-mode", {"json": {"repo": None, "mode": "full"}}, "person"),
-    ("delete", "/api/licence", {}, "person"),
-    ("post", "/api/tokens", {"json": {"name": "more", "mode": "full"}}, "person"),
-    ("get", "/api/tokens", {}, "person"),
-    ("get", "/api/config-backups/export?groups=settings,accounts", {}, "person"),
-    ("get", "/api/config-backups/export?groups=settings,keys", {}, "person"),
+    ("post", "/api/actions/snapshot-delete", {"json": {"repo": "1", "snapshot_ids": ["k1"]}}, "approval"),
+    ("post", "/api/jobs/start", {"json": {"kind": "remove_files", "repo": "1", "params": {}}}, "approval"),
+    ("post", "/api/settings", {"json": {"kopialens": {"auth_enabled": False}}}, "approval"),
+    ("post", "/api/settings", {"json": {"kopialens": {"allowed_hosts": ["evil.example"]}}}, "approval"),
+    ("post", "/api/write-mode", {"json": {"repo": None, "mode": "full"}}, "approval"),
+    ("delete", "/api/licence", {}, "approval"),
+    ("post", "/api/tokens", {"json": {"name": "more", "mode": "full"}}, "never"),
+    ("patch", "/api/tokens/abc", {"json": {"mode": "full"}}, "never"),
+    ("get", "/api/tokens", {}, "never"),
+    ("get", "/api/approvals", {}, "never"),
+    ("post", "/api/approvals/abc/approve", {"json": {}}, "never"),
+    ("get", "/api/config-backups/export?groups=settings,accounts", {}, "never"),
+    ("get", "/api/config-backups/export?groups=settings,keys", {}, "never"),
     ("post", "/api/account/password", {"json": {}}, "never"),
     ("post", "/api/encryption/recovery-key", {"json": {}}, "never"),
 ])
@@ -64,6 +71,44 @@ def test_a_full_access_token_cannot_do_the_unsafe_side(client, method, path, kw,
     monkeypatch.setattr("app.core.writemode.global_mode", lambda: "read_only")
     resp = getattr(client, method)(path, headers=_token("full"), **kw)
     assert _refused(resp, needs), (resp.status_code, resp.headers.get("x-kopialens-needs"), resp.text[:200])
+
+
+def test_an_approval_runs_once_for_that_exact_request_and_only_a_person_decides(client, monkeypatch):
+    from app.core import approvals
+    from app.api import dashboard
+    monkeypatch.setattr(dashboard, "mutate_settings", lambda fn: {})
+    tok = _token("non_destructive")
+    body = {"kopialens": {"session_days": 7}}           # a person-only setting for a token
+    first = client.post("/api/settings", json=body, headers=tok)
+    aid = first.headers.get(approvals.HEADER)
+    assert _refused(first, "approval") and aid
+    assert client.get(f"/api/approvals/{aid}", headers=tok).json()["status"] == "waiting"
+    assert client.get(f"/api/approvals/{aid}", headers=_token("read_only")).status_code == 404
+    early = client.post("/api/settings", json=body, headers={**tok, approvals.HEADER: aid})
+    assert _refused(early, "approval")
+    assert _refused(client.post(f"/api/approvals/{aid}/approve", json={}, headers=tok), "never")
+    assert client.post(f"/api/approvals/{aid}/approve", json={}).status_code == 200   # a person
+    changed = client.post("/api/settings", json={"kopialens": {"session_days": 1}},
+                          headers={**tok, approvals.HEADER: aid})
+    assert _refused(changed, "approval")
+    assert client.post("/api/settings", json=body, headers={**tok, approvals.HEADER: aid}).status_code == 200
+    again = client.post("/api/settings", json=body, headers={**tok, approvals.HEADER: aid})
+    assert _refused(again, "approval")
+
+
+def test_approving_a_password_action_asks_the_person_for_it(client, monkeypatch):
+    from app.core import approvals, writemode
+    monkeypatch.setattr(writemode, "global_mode", lambda: "read_only")
+    monkeypatch.setattr(writemode, "mode", lambda repo=None: "read_only")
+    users.create("admin", auth.hash_password("correct horse"))
+    tok = _token("non_destructive")
+    resp = client.post("/api/write-mode", json={"repo": None, "mode": "full"}, headers=tok)
+    aid = resp.headers.get(approvals.HEADER)
+    with pytest.raises(approvals.PasswordNeeded):
+        approvals.decide(aid, True, "admin", None)
+    approvals.decide(aid, True, "admin", "correct horse")
+    ok = client.post("/api/write-mode", json={"repo": None, "mode": "full"}, headers={**tok, approvals.HEADER: aid})
+    assert ok.status_code == 200, ok.text[:200]
 
 
 def test_the_settings_save_refuses_settings_with_their_own_route(client, monkeypatch):
@@ -111,3 +156,17 @@ def test_a_strong_token_asks_for_the_password_while_sign_in_is_on(client):
     out = api.create_token(api.CreateRequest(name="agent", mode="non_destructive", password="correct horse"))
     assert out["secret"].startswith("kl_") and out["created"]["mode"] == "non_destructive"
     assert api.create_token(api.CreateRequest(name="reader"))["created"]["mode"] == "read_only"
+
+
+def test_editing_a_token_asks_for_the_password_to_raise_or_extend(client):
+    users.create("admin", auth.hash_password("correct horse"))
+    from app.api import tokens as api
+    _secret, rec = tokens.create("edit-me", "read_only", 30)
+    api.edit_token(rec["id"], api.EditRequest(name="renamed", days=30))   # same length: no password
+    for change in ({"mode": "restores"}, {"days": 0}, {"days": 365}):
+        with pytest.raises(Exception) as exc:
+            api.edit_token(rec["id"], api.EditRequest(**change))
+        assert getattr(exc.value, "status_code", None) == 401, change
+    api.edit_token(rec["id"], api.EditRequest(mode="restores", days=0, password="correct horse"))
+    after = next(t for t in tokens.list_tokens() if t["id"] == rec["id"])
+    assert (after["name"], after["mode"], after["expires"]) == ("renamed", "restores", None)

@@ -40,6 +40,10 @@ COPY --from=build /out/kopialens.dist /app
 COPY --from=kopia /kopia /app/kopia
 COPY packaging/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh /app/kopia/kopia
+# The command line: docker exec <container> klens status
+RUN for n in klens kopialens-cli; do \
+      printf '#!/bin/sh\nexec /app/kopialens-server --cli "$@"\n' > /usr/local/bin/$n && chmod 0755 /usr/local/bin/$n; \
+    done
 
 # /config holds settings, the index and kopia's cache and config (mount a volume there).
 # /mounts holds snapshot mounts (optional; mount a host folder with :shared to see them outside).

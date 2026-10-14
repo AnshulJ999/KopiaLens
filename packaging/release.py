@@ -262,7 +262,11 @@ def smoke_test(zip_path: str, version: str) -> None:
                 fail("smoke: the server is not the compiled build")
         else:
             fail(f"smoke: /api/app/about returned {status}")
-        log(f"  smoke: version {version}, page OK, portable data + bundled kopia OK")
+        cli = subprocess.run([os.path.join(app_dir, "bin", "klens.exe"), "--url", base, "version"],
+                             capture_output=True, text=True, timeout=60)
+        if cli.returncode != 0 or json.loads(cli.stdout or "{}").get("kopialens") != version:
+            fail(f"smoke: bin/klens.exe version failed ({cli.returncode}): {cli.stderr.strip()[:200]}")
+        log(f"  smoke: version {version}, page OK, portable data + bundled kopia OK, klens OK")
         http(f"http://127.0.0.1:{ctl}/quit", "POST")
         if not wait(lambda: proc.poll() is not None, 30):
             fail("smoke: the desktop app did not quit within 30 s")
@@ -314,17 +318,25 @@ def main() -> int:
     run([BUILD_PYTHON, os.path.join(KL_ROOT, "packaging", "build_server.py")], KL_ROOT, "nuitka.log",
         {"KOPIALENS_BUILD_OUT": OUT_DIR})
 
-    log("3/6 stage server + bundled kopia")
+    log("3/6 stage server + bundled kopia + command-line launchers")
     server = os.path.join(STAGE, "server")
     shutil.rmtree(STAGE, ignore_errors=True)
     shutil.copytree(os.path.join(OUT_DIR, "kopialens.dist"), server)
     stage_kopia(fetch_kopia(v["kopia"]), os.path.join(server, "kopia"))
+    launcher_target = os.path.join(BUILD_ROOT, "launcher-target")
+    run(["cargo", "build", "--release", "--manifest-path", os.path.join(SHELL, "cli-launcher", "Cargo.toml")],
+        KL_ROOT, "launcher.log", {"CARGO_TARGET_DIR": launcher_target})
+    bindir = os.path.join(STAGE, "bin")
+    os.makedirs(bindir)
+    for name in ("klens.exe", "kopialens-cli.exe"):
+        shutil.copy2(os.path.join(launcher_target, "release", "klens.exe"), os.path.join(bindir, name))
 
     log("4/6 desktop app + installer (Tauri)")
     release_conf = os.path.join(STAGE, "tauri.release.json")
     with open(release_conf, "w", encoding="utf-8") as fh:
         json.dump({"bundle": {"active": True, "targets": ["nsis"], "createUpdaterArtifacts": True,
-                              "resources": {"release-stage/server/": "server/"}}}, fh)
+                              "resources": {"release-stage/server/": "server/",
+                                            "release-stage/bin/": "bin/"}}}, fh)
     run(["cargo", "tauri", "build", "--config", release_conf, "--bundles", "nsis"], SHELL, "tauri.log",
         {"CARGO_TARGET_DIR": SHELL_TARGET, **signing_env})
     exe = os.path.join(SHELL_TARGET, "release", "KopiaLens.exe")
@@ -349,12 +361,22 @@ def main() -> int:
             for f in files:
                 full = os.path.join(dirpath, f)
                 zf.write(full, "KopiaLens/server/" + os.path.relpath(full, server).replace("\\", "/"))
+        for f in os.listdir(bindir):
+            zf.write(os.path.join(bindir, f), "KopiaLens/bin/" + f)
+
+    # The command line on its own, for any machine with Python 3 (standard library only).
+    with open(os.path.join(KL_ROOT, "klens.py"), encoding="utf-8") as fh:
+        cli_src = fh.read()
+    if '__version__ = "dev"' not in cli_src:
+        fail("klens.py: its version line changed; update the stamp in release.py")
+    with open(os.path.join(dest, "klens.py"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(cli_src.replace('__version__ = "dev"', f'__version__ = "{version}"', 1))
 
     log("6/6 smoke test of the portable build")
     smoke_test(zip_path, version)
 
     with open(os.path.join(dest, "SHA256SUMS.txt"), "w", encoding="utf-8", newline="\n") as fh:
-        for name in (setup_name, zip_name):
+        for name in (setup_name, zip_name, "klens.py"):
             fh.write(f"{sha256(os.path.join(dest, name))}  {name}\n")
     for name in (setup_name, zip_name):
         log(f"  {name}  {os.path.getsize(os.path.join(dest, name)) / 1e6:.0f} MB")

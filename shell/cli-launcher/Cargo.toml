@@ -1,0 +1,16 @@
+[package]
+name = "klens-launcher"
+version = "0.1.0"
+description = "klens / kopialens-cli: starts the KopiaLens server program in its command-line role"
+edition = "2021"
+
+[[bin]]
+name = "klens"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

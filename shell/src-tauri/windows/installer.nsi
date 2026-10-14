@@ -64,9 +64,11 @@ Var ModeFromCmdline
 Var DirFromCmdline
 Var WantDesktop
 Var WantStartup
+Var WantPath
 Var ModeRadioAll
 Var DesktopBox
 Var StartupBox
+Var PathBox
 Var DeleteDataBox
 Var DeleteDataState
 
@@ -140,6 +142,9 @@ LangString klOptionsSubtitle ${LANG_ENGLISH} "You can change these later."
 LangString klDesktop ${LANG_ENGLISH} "Create a desktop shortcut"
 LangString klStartup ${LANG_ENGLISH} "Start KopiaLens when I sign in to Windows"
 LangString klStartupHint ${LANG_ENGLISH} "Recommended: scheduled indexing only runs while KopiaLens is running. You can change this later in the tray menu."
+LangString klPath ${LANG_ENGLISH} "Add the klens command line to PATH"
+LangString klPathHint ${LANG_ENGLISH} "Lets you run klens and kopialens-cli in any terminal, for scripts and AI agents."
+LangString klPathTooLong ${LANG_ENGLISH} "PATH is too long to change safely, so it was left as it is. Add $INSTDIR\bin to PATH yourself to use klens."
 LangString klRunNow ${LANG_ENGLISH} "Open KopiaLens"
 LangString klClosing ${LANG_ENGLISH} "Closing KopiaLens..."
 LangString klUninstallTop ${LANG_ENGLISH} "KopiaLens will be removed from this computer. Your backups and kopia repositories are not touched."
@@ -172,6 +177,49 @@ FunctionEnd
 Function SkipIfPassive
   ${IfThen} $PassiveMode = 1 ${|} Abort ${|}
 FunctionEnd
+
+; Adds (_add 1) or removes (_add 0) <install>\bin on the PATH of the chosen mode. NSIS strings
+; are NSIS_MAX_STRLEN long, so a longer PATH is left alone: writing back a cut-off PATH breaks it.
+!define KLENVALL "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+!define /math KLPATHMAX ${NSIS_MAX_STRLEN} - 300
+!macro KlPathEdit _add
+  ${If} $AllUsers = 1
+    ReadRegStr $R0 HKLM "${KLENVALL}" "Path"
+  ${Else}
+    ReadRegStr $R0 HKCU "Environment" "Path"
+  ${EndIf}
+  StrLen $R1 $R0
+  ${If} $R1 > ${KLPATHMAX}
+    DetailPrint "$(klPathTooLong)"
+  ${Else}
+    StrCpy $R2 $R0
+    ClearErrors
+    ${WordFind} "$R0" "$INSTDIR\bin" "E+1{" $R3
+    ${If} ${Errors}
+      ${If} ${_add} = 1
+        ${If} $R0 == ""
+          StrCpy $R2 "$INSTDIR\bin"
+        ${Else}
+          StrCpy $R2 "$R0;$INSTDIR\bin"
+        ${EndIf}
+      ${EndIf}
+    ${ElseIf} ${_add} = 0
+      ${WordReplace} "$R2" ";$INSTDIR\bin" "" "+" $R2
+      ${WordReplace} "$R2" "$INSTDIR\bin;" "" "+" $R2
+      ${If} $R2 == "$INSTDIR\bin"
+        StrCpy $R2 ""
+      ${EndIf}
+    ${EndIf}
+    ${If} $R2 != $R0
+      ${If} $AllUsers = 1
+        WriteRegExpandStr HKLM "${KLENVALL}" "Path" $R2
+      ${Else}
+        WriteRegExpandStr HKCU "Environment" "Path" $R2
+      ${EndIf}
+      SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+    ${EndIf}
+  ${EndIf}
+!macroend
 
 Function un.SkipIfPassive
   ${IfThen} $PassiveMode = 1 ${|} Abort ${|}
@@ -287,6 +335,13 @@ Function PageOptions
   ${EndIf}
   ${NSD_CreateLabel} 12u 46u -12u 24u "$(klStartupHint)"
   Pop $0
+  ${NSD_CreateCheckbox} 0 76u 100% 12u "$(klPath)"
+  Pop $PathBox
+  ${If} $WantPath = 1
+    ${NSD_Check} $PathBox
+  ${EndIf}
+  ${NSD_CreateLabel} 12u 90u -12u 16u "$(klPathHint)"
+  Pop $0
   nsDialogs::Show
 FunctionEnd
 
@@ -302,6 +357,12 @@ Function PageOptionsLeave
     StrCpy $WantStartup 1
   ${Else}
     StrCpy $WantStartup 0
+  ${EndIf}
+  ${NSD_GetState} $PathBox $0
+  ${If} $0 = ${BST_CHECKED}
+    StrCpy $WantPath 1
+  ${Else}
+    StrCpy $WantPath 0
   ${EndIf}
 FunctionEnd
 
@@ -392,7 +453,13 @@ Function .onInit
   ; Defaults: on for a new install; an upgrade keeps what the user has now.
   StrCpy $WantDesktop 1
   StrCpy $WantStartup 1
+  StrCpy $WantPath 1
   ${If} $PrevInstall = 1
+    ClearErrors
+    ReadRegDWORD $0 SHCTX "${UNINSTKEY}" "KlensOnPath"
+    ${IfNot} ${Errors}
+      StrCpy $WantPath $0
+    ${EndIf}
     StrCpy $WantDesktop 0
     ${If} ${FileExists} "$DESKTOP\${PRODUCTNAME}.lnk"
       StrCpy $WantDesktop 1
@@ -405,6 +472,10 @@ Function .onInit
   ${GetOptions} $CMDLINE "/NOSTARTUP" $0
   ${IfNot} ${Errors}
     StrCpy $WantStartup 0
+  ${EndIf}
+  ${GetOptions} $CMDLINE "/NOPATH" $0
+  ${IfNot} ${Errors}
+    StrCpy $WantPath 0
   ${EndIf}
   ${If} $NoShortcutMode = 1
     StrCpy $WantDesktop 0
@@ -485,6 +556,12 @@ Section Install
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
+  ${If} $WantPath = 1
+    !insertmacro KlPathEdit 1
+  ${Else}
+    !insertmacro KlPathEdit 0
+  ${EndIf}
+
   WriteRegStr SHCTX "${MANUPRODUCTKEY}" "" $INSTDIR
   WriteRegStr SHCTX "${UNINSTKEY}" "DisplayName" "${PRODUCTNAME}"
   WriteRegStr SHCTX "${UNINSTKEY}" "DisplayIcon" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\""
@@ -495,6 +572,7 @@ Section Install
   WriteRegStr SHCTX "${UNINSTKEY}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
   WriteRegDWORD SHCTX "${UNINSTKEY}" "NoModify" "1"
   WriteRegDWORD SHCTX "${UNINSTKEY}" "NoRepair" "1"
+  WriteRegDWORD SHCTX "${UNINSTKEY}" "KlensOnPath" $WantPath
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD SHCTX "${UNINSTKEY}" "EstimatedSize" "$0"
@@ -611,10 +689,14 @@ Section Uninstall
   ${If} ${FileExists} "$INSTDIR\server\${SERVEREXE}"
     RMDir /r "$INSTDIR\server"
   ${EndIf}
+  Delete "$INSTDIR\bin\klens.exe"
+  Delete "$INSTDIR\bin\kopialens-cli.exe"
+  RMDir "$INSTDIR\bin"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
 
   ${If} $UpdateMode <> 1
+    !insertmacro KlPathEdit 0
     !insertmacro DeleteAppUserModelId
     !insertmacro IsShortcutTarget "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
     Pop $0

@@ -18,6 +18,11 @@ KopiaLens is a web app for exploring, analysing and managing [Kopia](https://kop
 - [Remote access and HTTPS](remote-access.md): who can open KopiaLens, HTTPS certificates, and running it behind a reverse proxy.
 - [API tokens](api-tokens.md): access for scripts, the command line and AI agents, what a token can and can't do, and revoking one.
 
+## For scripts and agents
+
+- [Command line](cli.md): `klens` for scripts and AI agents, signing in once, removing files safely, and approvals.
+- [API](api.md): calling KopiaLens over HTTP, the stable routes, refusals, and approvals.
+
 ## Help and privacy
 
 - [Getting help](getting-help.md): reporting a problem, the diagnostics bundle, checking for updates, and the desktop app's zoom.

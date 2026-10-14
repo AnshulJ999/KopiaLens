@@ -2,6 +2,7 @@
 
     kopialens-server.exe --server                      server
     kopialens-server.exe --reset-password              set a new sign-in password (local reset)
+    kopialens-server.exe --cli <command> ...           the command line (klens.py; bin/klens.exe)
     kopialens-server.exe -m app.index.worker <repo>    index worker
     kopialens-server.exe -m app.backblaze.worker       Backblaze worker
     kopialens-server.exe -m app.core.sampledata ...   sample data build
@@ -12,7 +13,7 @@ unchanged in both modes.
 """
 import sys
 
-USAGE = "usage: kopialens-server --server | --reset-password (the desktop app starts the server)"
+USAGE = "usage: kopialens-server --server | --reset-password | --cli (the desktop app starts the server)"
 
 
 def run() -> int:
@@ -29,6 +30,11 @@ def run() -> int:
     if argv[:1] == ["--reset-password"]:
         from app.core import resetpw
         return resetpw.main()
+    if argv[:1] == ["--cli"]:
+        import klens
+        from config import APP_VERSION
+        klens.__version__ = APP_VERSION
+        return klens.main(argv[1:])
     if argv[:1] == ["--server"]:
         import main
         main.run()

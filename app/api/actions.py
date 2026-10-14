@@ -544,7 +544,9 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
     # Free installs see the whole preview, but never the commands or ids that rebuild the delete.
     pro = features.allowed("remove", payload.repo)  # licence check: do not remove or bypass (KopiaLens License)
     plan_token = _remember_plan({"items": items, "flag": flag, "source": scope, "by": payload.by,
-                                 "repo": payload.repo, "generation": generation}) if pro else None
+                                 "repo": payload.repo, "generation": generation,
+                                 "file_count": t["file_count"], "physical": t["physical"],
+                                 "logical": t["logical"]}) if pro else None
     # 8k per command so the copied lines are pasteable into a terminal (cmd.exe line cap ~8191).
     # The background executor uses larger 32k batches (fewer kopia invocations).
     commit_cmds = remove_files_chunked_commands(payload.repo, items, source=scope, commit=True, max_chars=8000, flag=flag)
