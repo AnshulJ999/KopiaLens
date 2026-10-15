@@ -201,15 +201,22 @@ def kopiaui_autostart() -> bool:
                     except OSError:
                         pass
                     return True
+        # KopiaUI uses the auto-launch package with the name "Kopia": ~/Library/LaunchAgents/Kopia.plist
+        # on macOS, ~/.config/autostart/Kopia.desktop on Linux (always ~/.config, not XDG_CONFIG_HOME).
         if sys.platform == "darwin":
-            agents = os.path.expanduser("~/Library/LaunchAgents")
-            return os.path.isdir(agents) and any("kopiaui" in n.lower() for n in os.listdir(agents))
-        base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-        path = os.path.join(base, "autostart", "KopiaUI.desktop")
-        if not os.path.isfile(path):
-            return False
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            return "hidden=true" not in fh.read().lower()
+            paths = [os.path.expanduser("~/Library/LaunchAgents/Kopia.plist")]
+        else:
+            dirs = {os.path.expanduser("~/.config"), os.environ.get("XDG_CONFIG_HOME") or ""}
+            paths = [os.path.join(d, "autostart", n) for d in dirs if d
+                     for n in ("Kopia.desktop", "KopiaUI.desktop")]
+        for path in paths:
+            if not os.path.isfile(path):
+                continue
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                text = fh.read().lower()
+            if ("kopiaui" in text or "kopia-ui" in text) and "hidden=true" not in text:
+                return True
+        return False
     except Exception:  # noqa: BLE001 - an unreadable startup list just means "unknown"
         return False
 
@@ -285,7 +292,9 @@ def repo_view(repo: str, with_owner: bool = False) -> dict:
                                     "pid": srv["pid"], "config": srv["config"],
                                     "same_file": _same_file(srv["config"], path)})
     from . import kopiabin
-    view["kopiaui_installed"] = kopiabin.kopiaui_uses_kopia_folder()
+    # A KopiaUI AppImage has no install folder to find: seen running or starting at logon counts.
+    view["kopiaui_installed"] = kopiabin.kopiaui_uses_kopia_folder() or (
+        sys.platform.startswith("linux") and (kopiaui_running() or kopiaui_autostart()))
     for other in _configs_in(kopia_config_dir()):
         if storage_key(read_config(other)) == key:
             view["kopiaui_config"] = other

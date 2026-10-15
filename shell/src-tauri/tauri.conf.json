@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "KopiaLens Dev",
   "mainBinaryName": "KopiaLens",
-  "version": "0.31.0",
+  "version": "0.32.0",
   "identifier": "com.kopialens.desktop.dev",
   "build": {
     "frontendDist": "../dist-placeholder"
@@ -38,6 +38,18 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "category": "Utility",
+    "linux": {
+      "deb": {
+        "recommends": ["fuse3"]
+      },
+      "rpm": {
+        "recommends": ["fuse3"]
+      }
+    },
+    "macOS": {
+      "signingIdentity": "-"
+    },
     "windows": {
       "nsis": {
         "template": "windows/installer.nsi",

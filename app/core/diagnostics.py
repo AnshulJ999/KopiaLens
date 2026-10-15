@@ -120,11 +120,9 @@ def _system_lines() -> list[str]:
     lines = [f"KopiaLens version: {APP_VERSION}", f"Install type: {checkin.install_type()}",
              f"OS: {platform.platform()}", f"CPU: {platform.machine()} x{os.cpu_count()}",
              f"Python: {sys.version.split()[0]}"]
-    try:
-        import psutil
-        lines.append(f"Memory: {psutil.virtual_memory().total // (1024 ** 2)} MB")
-    except Exception:  # noqa: BLE001
-        pass
+    from .host import ram_bytes
+    if ram := ram_bytes():
+        lines.append(f"Memory: {ram // (1024 ** 2)} MB")
     try:
         lines.append(f"Free disk (data folder): {shutil.disk_usage(DATA_DIR).free // (1024 ** 3)} GB")
     except OSError:

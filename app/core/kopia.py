@@ -435,6 +435,8 @@ def mount_snapshot(repo: str, snapshot_id: str, mountpoint: str, info: dict | No
             raise MountError(support["reason"])
         os.makedirs(mountpoint, exist_ok=True)   # FUSE mounts over an existing empty folder
     args = ["mount", snapshot_id, mountpoint]
+    if posix and host.mac_webdav_mount():
+        args.append("--webdav")
     full = _base_command(repo, args)
     from .applog import JOB_LOG_DIR, ensure_dirs
     ensure_dirs()

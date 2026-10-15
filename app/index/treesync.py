@@ -225,11 +225,9 @@ def kopia_parallel() -> int:
     except Exception:  # noqa: BLE001 - a settings problem must not stop an index
         n = 0
     if not n:
-        try:
-            import psutil
-            n = 2 if psutil.virtual_memory().total <= 8.5 * 2**30 else DEFAULT_PARALLEL
-        except Exception:  # noqa: BLE001 - unknown RAM: the cautious default
-            n = 2
+        from ..core.host import ram_bytes
+        ram = ram_bytes()   # 0 when unknown: the cautious default
+        n = 2 if ram <= 8.5 * 2**30 else DEFAULT_PARALLEL
     return max(1, min(n, 16))
 
 

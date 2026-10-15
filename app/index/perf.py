@@ -261,11 +261,9 @@ def set_outputs(root: str, artifacts: dict) -> None:
 
 def machine() -> dict:
     out: dict = {"cpus": os.cpu_count()}
-    try:
-        import psutil
-        out["ram_gb"] = round(psutil.virtual_memory().total / 2**30, 1)
-    except Exception:  # noqa: BLE001
-        pass
+    from ..core.host import ram_bytes
+    if ram := ram_bytes():
+        out["ram_gb"] = round(ram / 2**30, 1)
     try:
         from . import store
         out["duckdb_memory"], out["duckdb_threads"] = store.resolve_limits()

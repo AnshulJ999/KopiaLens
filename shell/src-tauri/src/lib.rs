@@ -1,6 +1,7 @@
 // KopiaLens desktop app. Owns the tray and the server process; windows are views onto the local
 // server, so closing them leaves the tray, the server and scheduled indexing running.
 mod control;
+mod instance;
 mod server;
 mod tray;
 mod update;
@@ -231,6 +232,7 @@ pub fn quit(app: &AppHandle, confirm: bool, stop_all: bool) {
         if sh.quitting.swap(true, Ordering::SeqCst) {
             return;
         }
+        instance::exiting();
         sh.server.log("quit");
         if stop {
             sh.server.stop_workers();
@@ -378,28 +380,28 @@ pub fn run() {
     let hidden = std::env::args().any(|a| a == "--hidden");
     // `--quit` closes a running KopiaLens (the installer uses it before replacing files).
     let quit_only = std::env::args().any(|a| a == "--quit");
-    let mut builder = tauri::Builder::default();
-    // Must be first: a second launch opens the window instead of starting another app.
+    let context = tauri::generate_context!();
+    let resource_dir = tauri::utils::platform::resource_dir(context.package_info(), &tauri::utils::Env::default()).ok();
+    let located = Server::locate(resource_dir);
+    // One copy per data folder: a second launch opens the running copy's window (or quits it).
     // KOPIALENS_SINGLE_INSTANCE=0 lets an isolated test copy run beside the real one.
-    if env_flag_off("KOPIALENS_SINGLE_INSTANCE") {
-        if quit_only {
-            return;
+    let mut first: Option<instance::Instance> = None;
+    if let Some(server) = located.as_ref().filter(|_| !env_flag_off("KOPIALENS_SINGLE_INSTANCE")) {
+        match instance::claim(&server.data_dir, server::new_token(), quit_only) {
+            instance::Claim::First(inst) => first = Some(inst),
+            instance::Claim::Handed => return,
+            instance::Claim::Unreachable => {
+                server.log("another KopiaLens holds this data folder but did not answer - not starting a second one");
+                return;
+            }
         }
-    } else {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            // Off the main thread: building a webview inside the cross-process hand-off deadlocks both copies.
-            let (app, quit_now) = (app.clone(), args.iter().any(|a| a == "--quit"));
-            thread::spawn(move || {
-                note_action(&app, if quit_now { "second launch --quit" } else { "second launch" });
-                if quit_now {
-                    quit(&app, false, true);
-                } else {
-                    open_window(&app, None);
-                }
-            });
-        }));
     }
-    let app = builder
+    if quit_only {
+        // Nothing was running on this data folder, so there is nothing to close.
+        return;
+    }
+    let mut located = located;
+    let app = tauri::Builder::default()
         .plugin(
             tauri_plugin_window_state::Builder::new()
                 .with_state_flags(
@@ -425,12 +427,8 @@ pub fn run() {
             }
         })
         .setup(move |app| {
-            if quit_only {
-                // Nothing was running, so there is nothing to close.
-                std::process::exit(0);
-            }
             let handle = app.handle().clone();
-            let Some(server) = Server::locate(app.path().resource_dir().ok()) else {
+            let Some(server) = located.take() else {
                 app.dialog()
                     .message("Couldn't find the KopiaLens server next to this app. Reinstall KopiaLens, or set KOPIALENS_HOME to its folder.")
                     .title("KopiaLens can't start")
@@ -449,6 +447,21 @@ pub fn run() {
                 quitting: AtomicBool::new(false),
             });
             app.manage(sh.clone());
+            if let Some(inst) = first.take() {
+                let h = handle.clone();
+                inst.serve(move |cmd| {
+                    // Off the listener thread: building a webview there can stall other launches.
+                    let (app, quit_now) = (h.clone(), cmd == "quit");
+                    thread::spawn(move || {
+                        note_action(&app, if quit_now { "second launch --quit" } else { "second launch" });
+                        if quit_now {
+                            quit(&app, false, true);
+                        } else {
+                            open_window(&app, None);
+                        }
+                    });
+                });
+            }
             if update::available(&handle, &sh) {
                 // Inherited by the server: its update notice offers Install instead of a download link.
                 std::env::set_var("KOPIALENS_IN_APP_UPDATES", "1");
@@ -494,12 +507,14 @@ pub fn run() {
             launch(&handle, &sh, hidden)?;
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building the KopiaLens desktop app");
-    app.run(|_app, event| {
+    app.run(|_app, event| match event {
         // Closing the last window keeps the app in the tray; only an explicit quit exits.
-        if let RunEvent::ExitRequested { code: None, api, .. } = event {
-            api.prevent_exit();
-        }
+        RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
+        // macOS: clicking the Dock icon (or opening the app again) with no window open.
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen { has_visible_windows: false, .. } => open_window(_app, None),
+        _ => {}
     });
 }

@@ -16,6 +16,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 
@@ -132,12 +133,15 @@ def auto_mountpoint(repo: str, snapshot_id: str) -> str | None:
 
 
 def release_folder(mountpoint: str) -> None:
-    """POSIX: unmount a leftover FUSE mount in one of our folders, then remove the empty folder."""
+    """POSIX: unmount a leftover mount in one of our folders, then remove the empty folder."""
     if os.name == "nt" or not _ours(mountpoint):
         return
     from . import host
     fm = host.fusermount()
-    if fm:
+    if sys.platform == "darwin":
+        if os.path.ismount(mountpoint):
+            subprocess.run(["/sbin/umount", "-f", mountpoint], capture_output=True, timeout=15)
+    elif fm:
         # Lazy: a dead mount ("transport endpoint is not connected") or a busy one goes now.
         subprocess.run([fm, "-u", "-z", mountpoint], capture_output=True, timeout=15)
     try:

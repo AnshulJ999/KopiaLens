@@ -4,6 +4,7 @@ KopiaLens is a web app for exploring, analysing and managing [Kopia](https://kop
 
 ## Getting started
 
+- [Installing KopiaLens](install.md): Windows installer or portable, the macOS app, Linux AppImage, deb and rpm.
 - [First-time setup](getting-started.md): connecting your repositories, protecting KopiaLens, and building the first index.
 - [Repositories](repositories.md): adding, renaming, reordering, checking and removing repositories.
 - [Running in Docker](docker.md): the container, its folders, running as your own user, and mounting snapshots.

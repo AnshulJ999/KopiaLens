@@ -388,10 +388,19 @@ def test_ready_is_true_when_encryption_is_off(monkeypatch):
 
 # ---------------------------------------------------------------------------- RAM tiers
 
+@pytest.fixture
+def _fixed_machine(monkeypatch):
+    """The tier tests set RAM themselves: no container limit and enough cores on any test machine."""
+    from app.core import host
+    monkeypatch.setattr(host, "_cgroup_memory_limit", lambda: 0)
+    monkeypatch.setattr(store.os, "cpu_count", lambda: 64)
+
+
 @pytest.mark.parametrize("total_gb, expect", [(8, ("512MB", 4)), (7.6, ("512MB", 4)),
                                               (15.8, ("1GB", 8)), (16, ("1GB", 8)),
                                               (24, ("2GB", 8)), (31.8, ("2GB", 8)),
                                               (32, ("2GB", 8)), (64, ("3GB", 16))])
+@pytest.mark.usefixtures("_fixed_machine")
 def test_ram_tiers_follow_total_memory(total_gb, expect, monkeypatch):
     import psutil
     monkeypatch.setattr(psutil, "virtual_memory",
@@ -409,6 +418,7 @@ def test_explicit_settings_beat_the_detected_tier(monkeypatch):
     assert store.resolve_limits() == ("7GB", 2)
 
 
+@pytest.mark.usefixtures("_fixed_machine")
 def test_auto_threads_never_exceed_the_processor_count(monkeypatch):
     import psutil
     monkeypatch.setattr(psutil, "virtual_memory", lambda: type("m", (), {"total": 64 * 1024 ** 3})())
@@ -416,6 +426,7 @@ def test_auto_threads_never_exceed_the_processor_count(monkeypatch):
     assert store.auto_limits() == ("3GB", 6)
 
 
+@pytest.mark.usefixtures("_fixed_machine")
 def test_auto_limits_ignore_the_override(monkeypatch):
     # Settings shows "Automatic (<tier>)", which must not echo the user's own override back.
     import psutil
@@ -426,6 +437,7 @@ def test_auto_limits_ignore_the_override(monkeypatch):
     assert store.resolve_limits() == ("7GB", 2)
 
 
+@pytest.mark.usefixtures("_fixed_machine")
 def test_the_index_worker_caps_threads_but_an_explicit_setting_wins(monkeypatch):
     import psutil
     monkeypatch.setattr(psutil, "virtual_memory", lambda: type("m", (), {"total": 64 * 1024 ** 3})())

@@ -57,12 +57,8 @@ def mark_worker() -> None:
 
 def auto_limits() -> tuple[str, int]:
     """(memory_limit, threads) from this machine's RAM tier, ignoring any override."""
-    total_gb = 0.0
-    try:
-        import psutil
-        total_gb = psutil.virtual_memory().total / (1024 ** 3)
-    except Exception:  # noqa: BLE001 - unknown RAM falls through to the smallest tier
-        pass
+    from ..core.host import ram_bytes
+    total_gb = ram_bytes() / (1024 ** 3)   # 0 when unknown: the smallest tier
     mem, thr = _TIERS[-1][1], _TIERS[-1][2]
     for max_gb, tier_mem, tier_thr in _TIERS:
         if total_gb <= max_gb or max_gb == 0:

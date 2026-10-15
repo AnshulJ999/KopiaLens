@@ -149,13 +149,17 @@ def fusermount() -> str | None:
     return shutil.which("fusermount3") or shutil.which("fusermount")
 
 
+def mac_webdav_mount() -> bool:
+    """macOS without macFUSE: kopia mounts through its built-in WebDAV server (`mount -t webdav`)."""
+    return sys.platform == "darwin" and not os.path.isdir("/Library/Filesystems/macfuse.fs")
+
+
 def mount_support() -> dict:
     """Whether kopia can mount a snapshot here, and if not, what is missing."""
     if os.name == "nt":
         return {"ok": True, "reason": ""}
     if sys.platform == "darwin":
-        ok = os.path.isdir("/Library/Filesystems/macfuse.fs")
-        return {"ok": ok, "reason": "" if ok else "Mounting needs macFUSE (osxfuse.github.io)."}
+        return {"ok": True, "reason": ""}   # macFUSE when installed, else macOS's own WebDAV mount
     if not os.path.exists("/dev/fuse"):
         reason = ("Mounting needs FUSE. Add the FUSE device to the container (see the Docker guide)."
                   if in_docker() else "Mounting needs FUSE (install the fuse3 package).")
@@ -177,6 +181,50 @@ def data_persistent() -> bool:
         if parent == path:
             return False
         path = parent
+
+
+def ram_bytes() -> int:
+    """Memory KopiaLens may use: physical RAM, or the container's memory limit when that is lower
+    (a 2 GB container on a 16 GB machine must size itself for 2 GB). 0 when unknown."""
+    total = 0
+    try:
+        import psutil
+        total = int(psutil.virtual_memory().total)
+    except Exception:  # noqa: BLE001 - unknown RAM: callers use their cautious default
+        pass
+    limit = _cgroup_memory_limit()
+    return limit if limit and (not total or limit < total) else total
+
+
+def _cgroup_memory_limit() -> int:
+    """The tightest cgroup memory limit on this process (v2 along its own cgroup path, else v1)."""
+    if not sys.platform.startswith("linux"):
+        return 0
+    root = "/sys/fs/cgroup"
+    paths: list[str] = []
+    try:
+        with open("/proc/self/cgroup", encoding="utf-8") as fh:
+            rel = next((ln.split("::", 1)[1].strip() for ln in fh if ln.startswith("0::")), None)
+    except OSError:
+        rel = None
+    if rel is not None:
+        d = os.path.normpath(os.path.join(root, rel.lstrip("/")))
+        while d.startswith(root):
+            paths.append(os.path.join(d, "memory.max"))
+            if d == root:
+                break
+            d = os.path.dirname(d)
+    paths.append(os.path.join(root, "memory", "memory.limit_in_bytes"))
+    best = 0
+    for path in paths:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                raw = fh.read().strip()
+        except OSError:
+            continue
+        if raw.isdigit() and 0 < int(raw) < 1 << 60:   # "max" / v1's huge number = no limit
+            best = min(best, int(raw)) if best else int(raw)
+    return best
 
 
 _FORMATS: dict | None = None

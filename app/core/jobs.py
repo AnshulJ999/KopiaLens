@@ -63,7 +63,7 @@ log = get_logger("jobs")
 BUFFER_LINES = 2000        # in-memory ring; the full raw output always lands in the log file
 HISTORY_JOBS = 50          # finished jobs kept in memory (their log files persist regardless)
 HISTORY_FILE_LINES = 1000  # on-disk history cap: a restart must not blank the Activity view
-EVENT_FORCE_AFTER = 300.0  # seconds a delivered Ctrl+Break gets before Stop forces the issue
+EVENT_FORCE_AFTER = 300.0  # seconds a graceful stop (Ctrl+Break / SIGTERM) gets before Stop kills
 
 KINDS = {
     "remove_files": {"label": "Removing files", "mutating": True},
@@ -546,8 +546,8 @@ def _prune_history() -> None:
 
 
 def stop_job(job_id: str) -> dict:
-    """Ask a running job to stop: request the stop, then end the CURRENT kopia process (the
-    Ctrl+Break event when deliverable, TerminateProcess otherwise). Chunked jobs then also
+    """Ask a running job to stop: request the stop, then end the CURRENT kopia process (SIGTERM on
+    Linux/macOS, Ctrl+Break on Windows when deliverable, TerminateProcess otherwise). Chunked jobs then also
     refuse to start the next chunk. Stopping an already-finished job is a no-op."""
     with _JOBS_LOCK:
         job = _JOBS.get(job_id)
@@ -559,13 +559,34 @@ def stop_job(job_id: str) -> dict:
     proc = (job.get("_stream") or {}).get("proc")
     how = "flagged"
     if proc is not None and proc.poll() is None:
-        if _send_ctrl_break(proc):
+        if _send_sigterm(proc) or _send_ctrl_break(proc):
             how = "event"  # force timer armed inside; kopia gets its grace window
         else:
             _terminate(proc)
             how = "terminated"
     log.warning("JOB STOP %s %s how=%s", job_id, job["kind"], how)
     return {"ok": True, "how": how, "state": job["state"]}
+
+
+def _force_later(proc) -> None:
+    t = threading.Timer(EVENT_FORCE_AFTER, lambda: _terminate(proc, force=True))
+    t.daemon = True
+    t.start()
+
+
+def _send_sigterm(proc) -> bool:
+    """Linux/macOS: SIGTERM is kopia's graceful stop (the same handler as Ctrl+C; a snapshot saves
+    a checkpoint). Kill it if it is still running after the grace window."""
+    import sys
+    if sys.platform == "win32":
+        return False
+    try:
+        proc.terminate()
+    except Exception:  # noqa: BLE001 - already gone
+        return False
+    if proc.poll() is None:
+        _force_later(proc)
+    return True
 
 
 def _send_ctrl_break(proc) -> bool:
@@ -590,18 +611,19 @@ def _send_ctrl_break(proc) -> bool:
         else:
             k.AttachConsole(-1)
         if ok and proc.poll() is None:
-            t = threading.Timer(EVENT_FORCE_AFTER, lambda: _terminate(proc))
-            t.daemon = True
-            t.start()
+            _force_later(proc)
         return ok
     except Exception:  # noqa: BLE001 - the graceful path must never break Stop
         return False
 
 
-def _terminate(proc) -> None:
+def _terminate(proc, force: bool = False) -> None:
     try:
         if proc.poll() is None:
-            proc.terminate()  # TerminateProcess on Windows
+            if force:
+                proc.kill()
+                return
+            proc.terminate()  # TerminateProcess on Windows, SIGTERM elsewhere
             try:
                 proc.wait(timeout=10)
             except Exception:  # noqa: BLE001

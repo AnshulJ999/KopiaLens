@@ -1,6 +1,6 @@
-// In-app updates for an installed Windows copy (Tauri's updater): wait until no index or job is
-// running, download and verify the signed installer, then hand over to it. The installer restarts
-// KopiaLens. Progress goes to the server, which shows it in the app.
+// In-app updates (Tauri's updater): wait until no index or job is running, download and verify the
+// signed update, then install it. On Windows the installer restarts KopiaLens; on macOS and the
+// Linux AppImage the app restarts itself. Progress goes to the server, which shows it in the app.
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -15,11 +15,15 @@ use crate::{tray, Shell};
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
-/// An installed copy (not portable, not a source checkout) built with the update key.
+/// An installed copy (not portable, not a source checkout) built with the update key, in a form
+/// the updater can replace: the Windows install, the macOS app, or the Linux AppImage (deb and
+/// rpm installs are updated by installing the new package).
 pub fn available(app: &AppHandle, sh: &Shell) -> bool {
     let key = app.config().plugins.0.get("updater")
         .and_then(|u| u.get("pubkey")).and_then(Value::as_str).unwrap_or("");
-    cfg!(windows) && !key.is_empty() && sh.server.portable.is_none()
+    let replaceable = cfg!(any(windows, target_os = "macos"))
+        || std::env::var_os("APPIMAGE").is_some_and(|v| !v.is_empty());
+    replaceable && !key.is_empty() && sh.server.portable.is_none()
         && matches!(sh.server.layout, Layout::Installed { .. })
 }
 
@@ -93,5 +97,14 @@ fn run(app: &AppHandle, sh: &Arc<Shell>) -> Result<(), String> {
     )).map_err(|e| e.to_string())?;
     report(sh, "installing", None, None);
     sh.server.log(&format!("update: starting the {} installer", update.version));
-    update.install(bytes).map_err(|e| e.to_string())
+    update.install(bytes).map_err(|e| e.to_string())?;
+    if !cfg!(windows) {
+        // macOS and the AppImage replace the app in place; start the new version ourselves.
+        sh.server.log(&format!("update: {} installed, restarting", update.version));
+        crate::instance::exiting();
+        sh.server.stop_workers();
+        sh.server.stop();
+        app.restart();
+    }
+    Ok(())
 }

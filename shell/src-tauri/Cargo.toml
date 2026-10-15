@@ -1,9 +1,9 @@
 [package]
 name = "kopialens-desktop"
-version = "0.31.0"
+version = "0.32.0"
 description = "KopiaLens desktop app: window, tray and server supervisor"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.89"
 
 [lib]
 name = "kopialens_desktop_lib"
@@ -15,7 +15,6 @@ tauri-build = { version = "2.6.3", features = [] }
 [dependencies]
 # devtools stays on in release builds: without it a shipped window has no inspector at all.
 tauri = { version = "2.11.3", features = ["tray-icon", "devtools"] }
-tauri-plugin-single-instance = "2.4.3"
 tauri-plugin-window-state = "2.4.1"
 tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2"

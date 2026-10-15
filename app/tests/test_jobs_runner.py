@@ -21,6 +21,7 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(jobs, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(jobs, "_JOBS", {})
     monkeypatch.setattr(jobs, "_send_ctrl_break", lambda proc: False)
+    monkeypatch.setattr(jobs, "_send_sigterm", lambda proc: False)
     calls = []
     monkeypatch.setattr(jobs.audit, "audit", lambda *a, **k: calls.append((a, k)))
     return calls
