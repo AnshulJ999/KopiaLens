@@ -499,7 +499,7 @@ const searchPart = {
       if (this.searchAllRepos()) return downloadTable("#searchTable", "kopialens_search_all_repos");
       if (this.searchKind === "both") return downloadTable("#searchTable", "kopialens_files_folders_repo" + this.repo);
       const p = this.searchParams();
-      window.open(`/api/search/export?${p.toString()}`, "_blank");
+      window.open(appUrl(`/api/search/export?${p.toString()}`), "_blank");
     },
 
     // ---- Dedupe (Search) ----

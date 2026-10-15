@@ -445,6 +445,11 @@ def build_create_args(provider: str, fields: dict, config_file: str, options: di
     return _build_args("create", provider, fields, config_file, options)
 
 
+# A fixed identity where this machine's own name is not stable (the Home Assistant add-on's
+# container): these fill an empty "Connect as" field, so every snapshot continues one history.
+_IDENTITY_ENV = {"override_hostname": "KOPIALENS_KOPIA_HOSTNAME", "override_username": "KOPIALENS_KOPIA_USERNAME"}
+
+
 def _build_args(verb: str, provider: str, fields: dict, config_file: str,
                 options: dict | None) -> list[str]:
     spec = _spec(provider)
@@ -455,6 +460,8 @@ def _build_args(verb: str, provider: str, fields: dict, config_file: str,
         if verb != "connect" and f.get("connect_only"):
             continue
         value = fields.get(f["key"])
+        if f["key"] in _IDENTITY_ENV and (value is None or str(value).strip() == ""):
+            value = os.environ.get(_IDENTITY_ENV[f["key"]], "").strip()
         if f["kind"] == "bool":
             if value is None:
                 continue

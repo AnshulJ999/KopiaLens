@@ -158,6 +158,8 @@ def mount_support() -> dict:
     """Whether kopia can mount a snapshot here, and if not, what is missing."""
     if os.name == "nt":
         return {"ok": True, "reason": ""}
+    if os.environ.get("KOPIALENS_HA_MOUNTING") == "off":    # the Home Assistant add-on's option
+        return {"ok": False, "reason": "Snapshot mounting is off. Turn it on in the add-on's Configuration tab."}
     if sys.platform == "darwin":
         return {"ok": True, "reason": ""}   # macFUSE when installed, else macOS's own WebDAV mount
     if not os.path.exists("/dev/fuse"):

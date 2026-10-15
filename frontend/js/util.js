@@ -171,8 +171,13 @@ const parentPath = (p) => {
 const srcSortKey = (s) => { const p = sourcePath(s); return (isUnc(p) ? "1" : "0") + "|" + p.toLowerCase(); };
 const srcSorter = (a, b) => srcSortKey(a).localeCompare(srcSortKey(b));
 
+// An app path as the browser must request it: window.KL_BASE is the prefix KopiaLens is served under
+// (Home Assistant ingress, a proxy sub-path), stamped by the server, "" otherwise.
+const appUrl = (path) => (typeof path === "string" && path.startsWith("/") && !path.startsWith("//")
+  ? (window.KL_BASE || "") + path : path);
+
 const getJson = async (url, options = {}) => {
-  const res = await fetch(url, options);
+  const res = await fetch(appUrl(url), options);
   // Tolerate a non-JSON body (e.g. a plain-text 500 "Internal Server Error") instead of throwing
   // an "Unexpected token" parse error - surface the text as the message.
   const text = await res.text();
@@ -181,7 +186,7 @@ const getJson = async (url, options = {}) => {
   // A sign-in that expired (or a password changed elsewhere) must land on the login page - the
   // alternative is every poll failing forever in the corner of an open tab.
   if (res.status === 401 && data && data.login) {
-    location.href = data.login;
+    location.href = appUrl(data.login);
     throw new Error(data.detail || "Not signed in.");
   }
   // An encrypted index that is locked: the app shows one unlock box instead of per-view errors.

@@ -252,7 +252,7 @@
                       <template x-for="t in TRAY_ICONS" :key="t[0]">
                         <button @click="trayIcon = t[0]; saveKl('tray_icon')" class="flex items-center gap-2 h-9 rounded border px-2 text-xs"
                                 :class="trayIcon === t[0] ? 'border-fg bg-sel font-medium' : 'border-bd'">
-                          <span class="inline-flex items-center justify-center w-6 h-6 rounded bg-[#202024]"><img :src="'/static/logos/tray/' + t[0] + '.png'" alt="" class="w-5 h-5"></span>
+                          <span class="inline-flex items-center justify-center w-6 h-6 rounded bg-[#202024]"><img :src="appUrl('/static/logos/tray/' + t[0] + '.png')" alt="" class="w-5 h-5"></span>
                           <span x-text="t[1]"></span>
                         </button>
                       </template>

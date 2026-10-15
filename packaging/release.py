@@ -1,26 +1,39 @@
-"""One command for a Windows release: banned licence ids, tests, server build, bundled kopia, desktop
-app + installer, the signed in-app update file (latest.json), portable zip, a smoke test of the built app,
-the installer test in Windows Sandbox (packaging/installer_test.py; only when the installer changed since
-its last pass, or with --installer-test), checksums.
+"""KopiaLens release build, in steps. With no step it is the one-command local Windows release; the
+release pipeline (.github/workflows/kopialens-release.yml) runs the steps one at a time on each
+platform, then `update-file` and `checksums` once over every platform's files.
 
-    python packaging\\release.py
+    python packaging\\release.py                     full local Windows release (DEFAULT_STEPS)
+    python packaging/release.py <step> [<step>...]   only these steps, in the order given
 
-Run with the dev Python (it runs the tests); the server is compiled with the build venv
-(KOPIALENS_BUILD_PYTHON). Output: <BUILD_ROOT>\\release\\<version>\\ plus release.log there.
-KOPIALENS_RELEASE_SKIP_TESTS=1 skips the test step while iterating on packaging. --with-notes makes a
-testing build with the Notes widget (packaging/notes_bundle.py): its files are named -testing and it
-writes no latest.json, so it can never be published as an update. The updater key is
-private/updater.key (or TAURI_SIGNING_PRIVATE_KEY); its password is asked once and can be remembered
-(packaging/updater_key.py).
+Steps: check, banned, tests, server, stage, desktop, portable, cli, smoke, installer-test,
+update-file, checksums, cleanup. Run with the dev Python (it runs the tests); the server is compiled
+with the build venv (KOPIALENS_BUILD_PYTHON).
+
+Version: KOPIALENS_RELEASE_VERSION (the pipeline passes the release tag) wins over the VERSION file;
+`check` writes it into VERSION (the server ships that file) and `desktop` stamps it into the Tauri
+build, so Cargo.toml and tauri.conf.json are never edited by hand.
+
+Output: <BUILD_ROOT>/release/<version>/ (or KOPIALENS_RELEASE_DIR) plus release.log there.
+KOPIALENS_RELEASE_SKIP_TESTS=1 skips the test step while iterating. --with-notes makes a testing build
+with the Notes widget (packaging/notes_bundle.py): its files are named -testing and it writes no
+update file, so it can never be published as an update. The banned licence list comes from the
+LicenseKit issuing tool on this PC, or from the licence service with KOPIALENS_BANNED_FROM=service
+(the pipeline). The updater key is private/updater.key (or TAURI_SIGNING_PRIVATE_KEY); its password
+is asked once and can be remembered (packaging/updater_key.py).
 """
+import ast
+import glob
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import socket
 import subprocess
 import sys
+import tarfile
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -35,8 +48,14 @@ from datetime import datetime, timezone
 KL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPO_ROOT = os.path.dirname(os.path.dirname(KL_ROOT))
 SHELL = os.path.join(KL_ROOT, "shell", "src-tauri")
-BUILD_ROOT = os.environ.get("KOPIALENS_BUILD_ROOT") or r"J:\Excluded\KopiaLens-Build"
-BUILD_PYTHON = os.environ.get("KOPIALENS_BUILD_PYTHON") or os.path.join(BUILD_ROOT, "venv", "Scripts", "python.exe")
+PLATFORM = {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux")
+ARCH = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x64"
+WINDOWS = PLATFORM == "windows"
+EXE = ".exe" if WINDOWS else ""
+BUILD_ROOT = os.environ.get("KOPIALENS_BUILD_ROOT") or (
+    r"J:\Excluded\KopiaLens-Build" if WINDOWS else os.path.expanduser("~/KopiaLens-Build"))
+BUILD_PYTHON = os.environ.get("KOPIALENS_BUILD_PYTHON") or os.path.join(
+    BUILD_ROOT, "venv", *(("Scripts", "python.exe") if WINDOWS else ("bin", "python")))
 OUT_DIR = os.path.join(BUILD_ROOT, "out")
 # Inside the shell folder (git-ignored): Tauri resource paths must be relative to src-tauri.
 STAGE = os.path.join(SHELL, "release-stage")
@@ -49,8 +68,18 @@ RELEASE_REPO_URL = "https://github.com/AnshulJ999/KopiaLens"   # config.REPO_URL
 # tauri.conf.json carries the dev identity ("KopiaLens Dev"), so a source build never shares the
 # installed app's single-instance lock, startup entry or browser profile; releases use the real one.
 RELEASE_IDENTITY = {"productName": "KopiaLens", "identifier": "com.kopialens.desktop"}
+# Tauri bundle formats and the updater's platform key, per build machine.
+BUNDLES = {"windows": ["nsis"], "linux": ["appimage", "deb", "rpm"], "macos": ["app", "dmg"]}[PLATFORM]
+UPDATER_TARGET = ({"windows": "windows", "linux": "linux", "macos": "darwin"}[PLATFORM] + "-"
+                  + {"x64": "x86_64", "arm64": "aarch64"}[ARCH])
+KOPIA_ASSET = {"windows": "windows-x64.zip", "linux": f"linux-{ARCH}.tar.gz", "macos": f"macOS-{ARCH}.tar.gz"}[PLATFORM]
+SEMVER = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
+
+DEFAULT_STEPS = ["check", "banned", "tests", "server", "stage", "desktop", "update-file", "portable", "cli",
+                 "smoke", "installer-test", "checksums", "cleanup"]
 
 _log_fh = None
+_ctx: dict = {}
 
 
 def log(msg: str) -> None:
@@ -76,6 +105,9 @@ def run(args: list[str], cwd: str, log_name: str, env: dict | None = None) -> No
                             env={**os.environ, **(env or {})}).returncode
     log(f"  {log_name}: rc={rc} in {time.time() - started:.0f}s")
     if rc != 0:
+        if os.environ.get("GITHUB_ACTIONS"):
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                print(fh.read()[-6000:], flush=True)
         fail(f"{' '.join(args[:3])} failed - see {path}")
 
 
@@ -93,6 +125,12 @@ def versions() -> dict:
     return {"app": app, "cargo": cargo, "tauri": tauri, "kopia": kopia}
 
 
+def release_version() -> str:
+    """The release tag (without "v") when the pipeline passes one, else the VERSION file."""
+    tag = (os.environ.get("KOPIALENS_RELEASE_VERSION") or "").strip()
+    return (tag[1:] if tag.startswith("v") else tag) or versions()["app"]
+
+
 def updater_keys() -> tuple[str, str]:
     """The updater public key in tauri.conf.json and the server's copy in checkin.py."""
     with open(os.path.join(SHELL, "tauri.conf.json"), encoding="utf-8") as fh:
@@ -102,20 +140,17 @@ def updater_keys() -> tuple[str, str]:
     return shell_key, m.group(1) if m else ""
 
 
-def write_update_file(dest: str, version: str, installer: str, setup_name: str) -> None:
-    """latest.json for the in-app updater, attached to the GitHub release (the check-in Worker passes
-    it along). The signature is Tauri's .sig of the installer."""
-    sig_path = installer + ".sig"
-    if not os.path.isfile(sig_path):
-        fail(f"no updater signature next to {installer}")
-    with open(sig_path, encoding="utf-8") as fh:
-        signature = fh.read().strip()
-    doc = {"version": version, "notes": "", "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-           "platforms": {"windows-x86_64": {
-               "signature": signature,
-               "url": f"{RELEASE_REPO_URL}/releases/download/v{version}/{setup_name}"}}}
-    with open(os.path.join(dest, "latest.json"), "w", encoding="utf-8", newline="\n") as fh:
-        json.dump(doc, fh, indent=2)
+def signing_env() -> dict:
+    """Tauri's signing variables, checked once per run (the key must open)."""
+    if "signing" not in _ctx:
+        key = updater_key.key_path()
+        if not key:
+            fail(f"no updater key: {updater_key.KEY_FILE} is missing and TAURI_SIGNING_PRIVATE_KEY is not set")
+        key_password = updater_key.password()
+        if key_password is None:
+            fail("the updater key could not be opened, so installs could not update to this release")
+        _ctx["signing"] = {"TAURI_SIGNING_PRIVATE_KEY": key, "TAURI_SIGNING_PRIVATE_KEY_PASSWORD": key_password}
+    return _ctx["signing"]
 
 
 # ---------------------------------------------------------------- banned licences
@@ -132,9 +167,17 @@ def with_banned_ids(keys_text: str, ids) -> str:
     return new
 
 
-def bake_banned_ids() -> None:
-    """Builds the issuing tool's banned list (own bans + last service sync) into this release, for installs
-    that never fetch the revoked list."""
+def built_in_banned_ids(keys_text: str) -> set[str]:
+    """The ids keys.py carries now."""
+    for node in ast.parse(keys_text).body:
+        if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", "") == "BANNED_IDS":
+            args = node.value.args
+            return set(ast.literal_eval(args[0])) if args else set()
+    fail("BANNED_IDS not found in app/licensing/keys.py")
+
+
+def issuer_banned_ids() -> set[str]:
+    """The issuing tool's banned list (own bans + last service sync) on this PC."""
     sys.path.insert(0, LICENSEKIT_DIR)
     from issuer.core import Issuer
     issuer = Issuer()
@@ -148,11 +191,59 @@ def bake_banned_ids() -> None:
     if age is None or age > SYNC_MAX_AGE_DAYS:
         log(f"  WARNING: licence service last synced {'never' if age is None else f'{age:.0f} days ago'}; "
             "sync in the issuing tool first so recent refunds are included")
+    log(f"  issuing tool: {len(ids)} banned (service: {snap.get('url') or 'not synced'})")
+    return set(ids)
+
+
+_SERVICE_FETCH = """
+import json, sys, urllib.request
+import config
+from app.licensing import revoked
+url = config.LICENCE_SERVICE_URL.rstrip("/") + "/v1/revoked?product=kopialens"
+req = urllib.request.Request(url, headers={"User-Agent": "KopiaLens-release"})
+token = json.loads(urllib.request.urlopen(req, timeout=20).read(262144)).get("token") or ""
+payload = revoked._decode(token)
+print(json.dumps({"url": url, "ids": sorted(payload["revoked"]) if payload else None}))
+"""
+
+
+def service_banned_ids() -> set[str] | None:
+    """The licence service's signed revoked list (the one installs fetch weekly), verified with the
+    keys this build trusts. None when it can't be fetched or verified."""
+    with tempfile.TemporaryDirectory() as tmp:
+        done = subprocess.run([sys.executable, "-c", _SERVICE_FETCH], cwd=KL_ROOT, capture_output=True, text=True,
+                              timeout=90, env={**os.environ, "KOPIALENS_DATA_DIR": tmp}, stdin=subprocess.DEVNULL)
+    try:
+        out = json.loads(done.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        log(f"  service list not fetched: {(done.stderr or '').strip()[-300:]}")
+        return None
+    if out["ids"] is None:
+        log(f"  service list from {out['url']} is not signed by a key this build trusts")
+        return None
+    log(f"  licence service: {len(out['ids'])} revoked ({out['url']})")
+    return set(out["ids"])
+
+
+def step_banned() -> None:
+    """Builds the banned licence ids into this release, for installs that never fetch the revoked
+    list. The ids already in keys.py stay: a release never unbans anyone by accident."""
     with open(KEYS_FILE, encoding="utf-8") as fh:
         text = fh.read()
+    have = built_in_banned_ids(text)
+    if (os.environ.get("KOPIALENS_BANNED_FROM") or "issuer").strip().lower() == "service":
+        got = service_banned_ids()
+        if got is None:
+            log("  " + "!" * 70)
+            log(f"  WARNING: the revoked list was not fetched; this build keeps the {len(have)} id(s) in keys.py")
+            log("  " + "!" * 70)
+            return
+    else:
+        got = issuer_banned_ids()
+    ids = have | got
     with open(KEYS_FILE, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(with_banned_ids(text, ids))
-    log(f"  {len(ids)} banned licence(s) built in (service: {snap.get('url') or 'not synced'})")
+    log(f"  {len(ids)} banned licence(s) built in ({len(ids - have)} new)")
 
 
 # ---------------------------------------------------------------- kopia
@@ -166,10 +257,11 @@ def sha256(path: str) -> str:
 
 
 def fetch_kopia(version: str) -> str:
-    """The pinned kopia release zip, downloaded once and checked against kopia's checksums.txt."""
+    """This platform's pinned kopia release archive, downloaded once and checked against kopia's
+    checksums.txt."""
     cache = os.path.join(BUILD_ROOT, "cache", f"kopia-{version}")
     os.makedirs(cache, exist_ok=True)
-    name = f"kopia-{version}-windows-x64.zip"
+    name = f"kopia-{version}-{KOPIA_ASSET}"
     base = f"https://github.com/kopia/kopia/releases/download/v{version}/"
     for fname in ("checksums.txt", name):
         dest = os.path.join(cache, fname)
@@ -179,24 +271,33 @@ def fetch_kopia(version: str) -> str:
             os.replace(dest + ".part", dest)
     with open(os.path.join(cache, "checksums.txt"), encoding="utf-8") as fh:
         want = next((ln.split()[0] for ln in fh if ln.strip().endswith(name)), None)
-    zpath = os.path.join(cache, name)
-    if not want or sha256(zpath) != want:
+    path = os.path.join(cache, name)
+    if not want or sha256(path) != want:
         fail(f"kopia {name} does not match kopia's checksums.txt")
-    log(f"  kopia {version} checksum OK")
-    return zpath
+    log(f"  kopia {version} ({KOPIA_ASSET}) checksum OK")
+    return path
 
 
-def stage_kopia(zpath: str, dest: str) -> None:
+def stage_kopia(archive: str, dest: str) -> None:
     os.makedirs(dest, exist_ok=True)
-    with zipfile.ZipFile(zpath) as zf:
-        for member in zf.namelist():
-            base = os.path.basename(member)
-            if base in ("kopia.exe", "LICENSE"):
-                with zf.open(member) as src, open(os.path.join(dest, base), "wb") as out:
-                    shutil.copyfileobj(src, out)
-    for need in ("kopia.exe", "LICENSE"):
+    wanted = {"kopia" + EXE, "LICENSE"}
+    if archive.endswith(".zip"):
+        with zipfile.ZipFile(archive) as zf:
+            for member in zf.namelist():
+                if os.path.basename(member) in wanted:
+                    with zf.open(member) as src, open(os.path.join(dest, os.path.basename(member)), "wb") as out:
+                        shutil.copyfileobj(src, out)
+    else:
+        with tarfile.open(archive) as tf:
+            for member in tf.getmembers():
+                if member.isfile() and os.path.basename(member.name) in wanted:
+                    with tf.extractfile(member) as src, open(os.path.join(dest, os.path.basename(member.name)), "wb") as out:
+                        shutil.copyfileobj(src, out)
+    for need in wanted:
         if not os.path.isfile(os.path.join(dest, need)):
-            fail(f"{need} not found in {zpath}")
+            fail(f"{need} not found in {archive}")
+    if not WINDOWS:
+        os.chmod(os.path.join(dest, "kopia"), 0o755)
 
 
 # ---------------------------------------------------------------- smoke test
@@ -235,10 +336,32 @@ def wait(check, timeout: float) -> bool:
     return False
 
 
-def smoke_test(zip_path: str, version: str) -> None:
-    """Unpacks the portable zip and runs it isolated (own ports and data, beside any running
-    KopiaLens): server up with the right version, page renders, data stays in the portable
-    folder, bundled kopia found, then a clean quit through the control port."""
+def check_running(base: str, version: str, data_root: str, kopia_root: str) -> None:
+    """The server answers with this version, renders the page, keeps its data inside data_root and
+    uses the kopia bundled under kopia_root."""
+    if not wait(lambda: http(base + "/health")[0] == 200, 90):
+        fail("smoke: the server did not answer /health within 90 s")
+    health = json.loads(http(base + "/health")[1])
+    if health.get("version") != version:
+        fail(f"smoke: /health reports {health.get('version')}, expected {version}")
+    status, page = http(base + "/")
+    if status != 200 or b"<html" not in page[:2000].lower():
+        fail(f"smoke: / returned {status}")
+    status, body = http(base + "/api/app/about")
+    if status != 200:
+        fail(f"smoke: /api/app/about returned {status}")
+    about = json.loads(body)
+    if not os.path.normcase(about["data_dir"]).startswith(os.path.normcase(data_root)):
+        fail(f"smoke: data folder {about['data_dir']} is outside {data_root}")
+    if os.path.normcase(kopia_root) not in os.path.normcase(json.dumps(about.get("kopia"))).replace("\\\\", "\\"):
+        fail(f"smoke: bundled kopia not in use: {about.get('kopia')}")
+    if not about.get("compiled"):
+        fail("smoke: the server is not the compiled build")
+
+
+def smoke_portable(zip_path: str, version: str) -> None:
+    """Windows: unpacks the portable zip and runs it isolated (own ports and data, beside any running
+    KopiaLens), checks the server and klens, then a clean quit through the control port."""
     root = os.path.join(BUILD_ROOT, "smoke", time.strftime("%Y%m%d-%H%M%S"))
     with zipfile.ZipFile(zip_path) as zf:
         zf.extractall(root)
@@ -251,25 +374,7 @@ def smoke_test(zip_path: str, version: str) -> None:
     proc = subprocess.Popen([os.path.join(app_dir, "KopiaLens.exe"), "--hidden"], cwd=app_dir, env=env)
     base = f"http://127.0.0.1:{port}"
     try:
-        if not wait(lambda: http(base + "/health")[0] == 200, 90):
-            fail("smoke: the server did not answer /health within 90 s")
-        health = json.loads(http(base + "/health")[1])
-        if health.get("version") != version:
-            fail(f"smoke: /health reports {health.get('version')}, expected {version}")
-        status, page = http(base + "/")
-        if status != 200 or b"<html" not in page[:2000].lower():
-            fail(f"smoke: / returned {status}")
-        status, body = http(base + "/api/app/about")
-        if status == 200:
-            about = json.loads(body)
-            if not os.path.normcase(about["data_dir"]).startswith(os.path.normcase(app_dir)):
-                fail(f"smoke: data folder {about['data_dir']} is outside the portable folder")
-            if os.path.normcase(app_dir) not in os.path.normcase(json.dumps(about.get("kopia"))).replace("\\\\", "\\"):
-                fail(f"smoke: bundled kopia not in use: {about.get('kopia')}")
-            if not about.get("compiled"):
-                fail("smoke: the server is not the compiled build")
-        else:
-            fail(f"smoke: /api/app/about returned {status}")
+        check_running(base, version, app_dir, app_dir)
         cli = subprocess.run([os.path.join(app_dir, "bin", "klens.exe"), "--url", base, "version"],
                              capture_output=True, text=True, timeout=60)
         if cli.returncode != 0 or json.loads(cli.stdout or "{}").get("kopialens") != version:
@@ -286,97 +391,196 @@ def smoke_test(zip_path: str, version: str) -> None:
     log("  smoke: clean quit OK")
 
 
-# ---------------------------------------------------------------- main
+def smoke_server(version: str) -> None:
+    """Linux/macOS: the staged server with its bundled kopia and klens, started on its own port with
+    a throwaway data folder (the desktop window needs a display, so the shell is not started)."""
+    root = tempfile.mkdtemp(prefix="kopialens-smoke-")
+    data = os.path.join(root, "data")
+    port = free_port()
+    env = {**os.environ, "KOPIALENS_PORT": str(port), "KOPIALENS_DATA_DIR": data, "KOPIALENS_HTTPS": "off",
+           "KOPIALENS_BIND_HOST": "127.0.0.1", "KOPIALENS_NO_UPDATE_CHECK": "1", "KOPIALENS_NO_USAGE_STATS": "1",
+           "HOME": root}
+    for k in ("KOPIALENS_CONFIG_DIR", "KOPIALENS_HOME", "KOPIALENS_REPOS_FILE", "KOPIALENS_KOPIA"):
+        env.pop(k, None)
+    server = os.path.join(STAGE, "server", "kopialens-server")
+    with open(os.path.join(root, "server.log"), "w", encoding="utf-8") as out:
+        proc = subprocess.Popen([server, "--server"], cwd=root, env=env, stdout=out, stderr=subprocess.STDOUT,
+                                stdin=subprocess.DEVNULL)
+    base = f"http://127.0.0.1:{port}"
+    try:
+        check_running(base, version, root, os.path.join(STAGE, "server"))
+        cli = subprocess.run([os.path.join(STAGE, "bin", "klens"), "--url", base, "version"],
+                             capture_output=True, text=True, timeout=60, env=env)
+        if cli.returncode != 0 or json.loads(cli.stdout or "{}").get("kopialens") != version:
+            fail(f"smoke: bin/klens version failed ({cli.returncode}): {cli.stderr.strip()[:200]}")
+        log(f"  smoke: version {version}, page OK, data folder + bundled kopia OK, klens OK")
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(20)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            fail("smoke: the server did not stop within 20 s of SIGTERM")
+    log("  smoke: clean stop OK")
 
-def main() -> int:
-    global _log_fh
+
+# ---------------------------------------------------------------- steps
+
+def tag() -> str:
+    return "-testing" if _ctx["with_notes"] else ""
+
+
+def asset(kind: str) -> str:
+    """A release file name: KopiaLens-<version>[-testing]-<platform>-<arch><kind>."""
+    return f"KopiaLens-{_ctx['version']}{tag()}-{PLATFORM}-{ARCH}{kind}"
+
+
+def step_check() -> None:
     v = versions()
-    version = v["app"]
-    with_notes = "--with-notes" in sys.argv[1:]
-    tag = "-testing" if with_notes else ""
-    dest = os.path.join(BUILD_ROOT, "release", version + tag)
-    os.makedirs(dest, exist_ok=True)
-    _log_fh = open(os.path.join(dest, "release.log"), "w", encoding="utf-8")
-    log(f"KopiaLens {version} release build (kopia {v['kopia']})")
-    if with_notes:
-        log("  TESTING BUILD: the Notes widget is included. Never publish it; it writes no latest.json.")
-
-    if len({v["app"], v["cargo"], v["tauri"]}) != 1:
-        fail(f"versions differ: VERSION {v['app']}, Cargo.toml {v['cargo']}, tauri.conf.json {v['tauri']}")
+    version = _ctx["version"]
+    if not SEMVER.match(version):
+        fail(f"release version {version!r} is not like 1.2.3")
+    if version != v["app"]:
+        with open(os.path.join(KL_ROOT, "VERSION"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(version + "\n")
+        log(f"  VERSION file set to {version} (from the release tag; was {v['app']})")
+    if v["cargo"] != version or v["tauri"] != version:
+        log(f"  note: Cargo.toml {v['cargo']} / tauri.conf.json {v['tauri']}; the build is stamped {version}")
     shell_key, server_key = updater_keys()
     if not shell_key:
         fail("no updater public key in shell/src-tauri/tauri.conf.json (plugins.updater.pubkey)")
     if shell_key != server_key:
         fail("UPDATE_PUBKEY in app/core/checkin.py differs from the updater key in tauri.conf.json")
-    key = updater_key.key_path()
-    if not key:
-        fail(f"no updater key: {updater_key.KEY_FILE} is missing and TAURI_SIGNING_PRIVATE_KEY is not set")
-    key_password = updater_key.password()
-    if key_password is None:
-        fail("the updater key could not be opened, so installs could not update to this release")
-    signing_env = {"TAURI_SIGNING_PRIVATE_KEY": key, "TAURI_SIGNING_PRIVATE_KEY_PASSWORD": key_password}
+    if "desktop" in _ctx["steps"]:
+        signing_env()   # asks for the key password now, not after the server build
+    log(f"  {PLATFORM}-{ARCH}, kopia {v['kopia']}, updater key matches")
 
-    log("0/7 banned licence ids")
-    bake_banned_ids()
 
+def step_tests() -> None:
     if os.environ.get("KOPIALENS_RELEASE_SKIP_TESTS"):
-        log("1/7 tests SKIPPED (KOPIALENS_RELEASE_SKIP_TESTS)")
-    else:
-        log("1/7 tests")
-        run([sys.executable, "-m", "pytest", os.path.relpath(KL_ROOT, REPO_ROOT).replace("\\", "/"), "-q",
-             "-p", "no:cacheprovider"], REPO_ROOT, "tests.log")
+        log("  SKIPPED (KOPIALENS_RELEASE_SKIP_TESTS)")
+        return
+    run([sys.executable, "-m", "pytest", os.path.relpath(KL_ROOT, REPO_ROOT).replace("\\", "/"), "-q",
+         "-p", "no:cacheprovider"], REPO_ROOT, "tests.log")
 
-    log("2/7 server build (Nuitka)")
+
+def step_server() -> None:
     notes_env = {}
-    if with_notes:
+    if _ctx["with_notes"]:
         notes_env["KOPIALENS_BUILD_NOTES"] = notes_bundle.stage(os.path.join(BUILD_ROOT, "devnotes-stage"))
     run([BUILD_PYTHON, os.path.join(KL_ROOT, "packaging", "build_server.py")], KL_ROOT, "nuitka.log",
         {"KOPIALENS_BUILD_OUT": OUT_DIR, "KOPIALENS_BUILD_NOTES": "", **notes_env})
 
-    log("3/7 stage server + bundled kopia + command-line launchers")
+
+def step_stage() -> None:
+    """The compiled server + bundled kopia, the command-line launchers and (Windows) the shortcut
+    icons, in the folder Tauri bundles from."""
     server = os.path.join(STAGE, "server")
     shutil.rmtree(STAGE, ignore_errors=True)
-    shutil.copytree(os.path.join(OUT_DIR, "kopialens.dist"), server)
-    stage_kopia(fetch_kopia(v["kopia"]), os.path.join(server, "kopia"))
+    shutil.copytree(os.path.join(OUT_DIR, "kopialens.dist"), server, symlinks=True)
+    stage_kopia(fetch_kopia(versions()["kopia"]), os.path.join(server, "kopia"))
     launcher_target = os.path.join(BUILD_ROOT, "launcher-target")
-    # Static C runtime: a fresh Windows has no VCRUNTIME140.dll, and bin\ ships none.
+    # Windows: static C runtime, since a fresh Windows has no VCRUNTIME140.dll and bin\ ships none.
     run(["cargo", "build", "--release", "--manifest-path", os.path.join(KL_ROOT, "shell", "cli-launcher", "Cargo.toml")],
-        KL_ROOT, "launcher.log", {"CARGO_TARGET_DIR": launcher_target, "RUSTFLAGS": "-C target-feature=+crt-static"})
+        KL_ROOT, "launcher.log",
+        {"CARGO_TARGET_DIR": launcher_target, **({"RUSTFLAGS": "-C target-feature=+crt-static"} if WINDOWS else {})})
     bindir = os.path.join(STAGE, "bin")
     os.makedirs(bindir)
-    for name in ("klens.exe", "kopialens-cli.exe"):
-        shutil.copy2(os.path.join(launcher_target, "release", "klens.exe"), os.path.join(bindir, name))
-        with open(os.path.join(bindir, name), "rb") as fh:
-            needs = sorted(set(re.findall(rb"(?i)(?:vcruntime|msvcp)\d+[a-z0-9_]*\.dll", fh.read())))
-        if needs:
-            fail(f"bin/{name} needs {b', '.join(needs).decode()}, which a fresh Windows doesn't have")
-    # Logo icons for desktop shortcuts (Properties > Change Icon); built by build_logos.py.
-    shutil.copytree(os.path.join(SHELL, "icons", "shortcuts"), os.path.join(STAGE, "icons"))
+    for name in ("klens", "kopialens-cli"):
+        dest = os.path.join(bindir, name + EXE)
+        shutil.copy2(os.path.join(launcher_target, "release", "klens" + EXE), dest)
+        if WINDOWS:
+            with open(dest, "rb") as fh:
+                needs = sorted(set(re.findall(rb"(?i)(?:vcruntime|msvcp)\d+[a-z0-9_]*\.dll", fh.read())))
+            if needs:
+                fail(f"bin/{name}.exe needs {b', '.join(needs).decode()}, which a fresh Windows doesn't have")
+    if WINDOWS:
+        # Logo icons for desktop shortcuts (Properties > Change Icon); built by build_logos.py.
+        shutil.copytree(os.path.join(SHELL, "icons", "shortcuts"), os.path.join(STAGE, "icons"))
+    log(f"  staged {server}")
 
-    log("4/7 desktop app + installer (Tauri)")
+
+def _bundle_files(pattern: str) -> list[str]:
+    return sorted(glob.glob(os.path.join(SHELL_TARGET, "release", "bundle", pattern)))
+
+
+def _one(pattern: str) -> str:
+    found = [p for p in _bundle_files(pattern) if not p.endswith(".sig")]
+    if len(found) != 1:
+        fail(f"Tauri output: expected one {pattern}, found {found}")
+    return found[0]
+
+
+def step_desktop() -> None:
+    """The desktop app and this platform's packages (Tauri), stamped with the release version and
+    identity, plus the signed update piece for this platform (update-<target>.json)."""
+    version, dest = _ctx["version"], _ctx["dest"]
+    resources = {"release-stage/server/": "server/", "release-stage/bin/": "bin/"}
+    if WINDOWS:
+        resources["release-stage/icons/"] = "icons/"
     release_conf = os.path.join(STAGE, "tauri.release.json")
     with open(release_conf, "w", encoding="utf-8") as fh:
-        json.dump({**RELEASE_IDENTITY,
-                   "bundle": {"active": True, "targets": ["nsis"], "createUpdaterArtifacts": True,
-                              "resources": {"release-stage/server/": "server/",
-                                            "release-stage/bin/": "bin/",
-                                            "release-stage/icons/": "icons/"}}}, fh)
-    run(["cargo", "tauri", "build", "--config", release_conf, "--bundles", "nsis"], SHELL, "tauri.log",
-        {"CARGO_TARGET_DIR": SHELL_TARGET, **signing_env})
-    exe = os.path.join(SHELL_TARGET, "release", "KopiaLens.exe")
-    installers = [os.path.join(SHELL_TARGET, "release", "bundle", "nsis", f)
-                  for f in os.listdir(os.path.join(SHELL_TARGET, "release", "bundle", "nsis"))
-                  if f.endswith("-setup.exe") and f"_{version}_" in f]
-    if not os.path.isfile(exe) or len(installers) != 1:
-        fail(f"Tauri output missing: {exe}, installers {installers}")
-    setup_name = f"KopiaLens-{version}{tag}-windows-x64-setup.exe"
-    shutil.copy2(installers[0], os.path.join(dest, setup_name))
-    if not with_notes:
-        write_update_file(dest, version, installers[0], setup_name)
+        json.dump({**RELEASE_IDENTITY, "version": version,
+                   "bundle": {"active": True, "targets": BUNDLES, "createUpdaterArtifacts": True,
+                              "resources": resources}}, fh)
+    shutil.rmtree(os.path.join(SHELL_TARGET, "release", "bundle"), ignore_errors=True)
+    run(["cargo", "tauri", "build", "--config", release_conf, "--bundles", ",".join(BUNDLES)], SHELL, "tauri.log",
+        {"CARGO_TARGET_DIR": SHELL_TARGET, **signing_env()})
+    exe = os.path.join(SHELL_TARGET, "release", "KopiaLens" + EXE)
+    if not os.path.isfile(exe):
+        fail(f"Tauri output missing: {exe}")
+    if WINDOWS:
+        update = _one(f"nsis/*_{version}_*-setup.exe")
+        shipped = {update: asset("-setup.exe")}
+    elif PLATFORM == "linux":
+        update = _one("appimage/*.AppImage")
+        shipped = {update: asset(".AppImage"), _one("deb/*.deb"): asset(".deb"), _one("rpm/*.rpm"): asset(".rpm")}
+    else:
+        update = _one("macos/*.app.tar.gz")
+        shipped = {update: asset(".app.tar.gz"), _one("dmg/*.dmg"): asset(".dmg")}
+    for src, name in shipped.items():
+        shutil.copy2(src, os.path.join(dest, name))
+        log(f"  {name}  {os.path.getsize(src) / 1e6:.0f} MB")
+    if _ctx["with_notes"]:
+        return
+    sig = update + ".sig"
+    if not os.path.isfile(sig):
+        fail(f"no updater signature next to {update}")
+    with open(sig, encoding="utf-8") as fh:
+        signature = fh.read().strip()
+    piece = {UPDATER_TARGET: {"signature": signature,
+                              "url": f"{RELEASE_REPO_URL}/releases/download/v{version}/{shipped[update]}"}}
+    with open(os.path.join(dest, f"update-{UPDATER_TARGET}.json"), "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(piece, fh, indent=2)
 
-    log("5/7 portable zip")
-    zip_name = f"KopiaLens-{version}{tag}-windows-x64-portable.zip"
-    zip_path = os.path.join(dest, zip_name)
+
+def step_update_file() -> None:
+    """latest.json for the in-app updater, attached to the GitHub release (the check-in Worker passes
+    it along): every platform's update-<target>.json in the release folder, merged."""
+    if _ctx["with_notes"]:
+        log("  skipped: testing builds write no update file")
+        return
+    dest = _ctx["dest"]
+    platforms = {}
+    for path in sorted(glob.glob(os.path.join(dest, "update-*.json"))):
+        with open(path, encoding="utf-8") as fh:
+            platforms.update(json.load(fh))
+    if not platforms:
+        fail(f"no update-*.json in {dest}: run the desktop step first")
+    doc = {"version": _ctx["version"], "notes": "",
+           "pub_date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "platforms": platforms}
+    with open(os.path.join(dest, "latest.json"), "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(doc, fh, indent=2)
+    log(f"  latest.json: {', '.join(sorted(platforms))}")
+
+
+def step_portable() -> None:
+    if not WINDOWS:
+        log("  skipped: the portable zip is Windows-only")
+        return
+    exe = os.path.join(SHELL_TARGET, "release", "KopiaLens.exe")
+    server, bindir = os.path.join(STAGE, "server"), os.path.join(STAGE, "bin")
+    zip_path = os.path.join(_ctx["dest"], asset("-portable.zip"))
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.write(exe, "KopiaLens/KopiaLens.exe")
         zf.writestr(f"KopiaLens/{PORTABLE_MARKER}",
@@ -391,47 +595,97 @@ def main() -> int:
             zf.write(os.path.join(bindir, f), "KopiaLens/bin/" + f)
         for f in os.listdir(os.path.join(STAGE, "icons")):
             zf.write(os.path.join(STAGE, "icons", f), "KopiaLens/icons/" + f)
+    log(f"  {os.path.basename(zip_path)}  {os.path.getsize(zip_path) / 1e6:.0f} MB")
 
-    # The command line on its own, for any machine with Python 3 (standard library only).
+
+def step_cli() -> None:
+    """The command line on its own, for any machine with Python 3 (standard library only)."""
     with open(os.path.join(KL_ROOT, "klens.py"), encoding="utf-8") as fh:
         cli_src = fh.read()
     if '__version__ = "dev"' not in cli_src:
         fail("klens.py: its version line changed; update the stamp in release.py")
-    with open(os.path.join(dest, "klens.py"), "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(cli_src.replace('__version__ = "dev"', f'__version__ = "{version}"', 1))
+    with open(os.path.join(_ctx["dest"], "klens.py"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(cli_src.replace('__version__ = "dev"', f'__version__ = "{_ctx["version"]}"', 1))
 
-    log("6/7 smoke test of the portable build")
-    smoke_test(zip_path, version)
 
-    log("7/7 installer test in Windows Sandbox")
-    installer_untested = False
+def step_smoke() -> None:
+    if WINDOWS:
+        smoke_portable(os.path.join(_ctx["dest"], asset("-portable.zip")), _ctx["version"])
+    else:
+        smoke_server(_ctx["version"])
+
+
+def step_installer_test() -> None:
+    if not WINDOWS:
+        log("  skipped: the installer test is Windows-only")
+        return
     if "--installer-test" not in sys.argv[1:] and not installer_test.needed():
         log(f"  skipped: the installer is unchanged since it passed on {installer_test.last_pass()['date']}"
             " (--installer-test runs it anyway)")
-    else:
-        outcome = installer_test.run(os.path.join(dest, setup_name), log)
-        if outcome == "failed":
-            fail("the installer failed its Sandbox test - see the lines above")
-        installer_untested = outcome != "passed"
-        if installer_untested:
-            log("  " + "!" * 70)
-            log("  WARNING: the installer was NOT tested. Run python packaging\\installer_test.py before publishing.")
-            log("  " + "!" * 70)
+        return
+    outcome = installer_test.run(os.path.join(_ctx["dest"], asset("-setup.exe")), log)
+    if outcome == "failed":
+        fail("the installer failed its Sandbox test - see the lines above")
+    if outcome != "passed":
+        _ctx["installer_untested"] = True
+        log("  " + "!" * 70)
+        log("  WARNING: the installer was NOT tested. Run python packaging\\installer_test.py before publishing.")
+        log("  " + "!" * 70)
 
+
+_NOT_SHIPPED = re.compile(r"(\.sig|\.log|^update-.*\.json|^SHA256SUMS\.txt)$")
+
+
+def step_checksums() -> None:
+    """SHA256SUMS.txt over every release file in the folder (all platforms, when merged)."""
+    dest = _ctx["dest"]
+    names = sorted(n for n in os.listdir(dest) if os.path.isfile(os.path.join(dest, n)) and not _NOT_SHIPPED.search(n))
     with open(os.path.join(dest, "SHA256SUMS.txt"), "w", encoding="utf-8", newline="\n") as fh:
-        for name in (setup_name, zip_name, "klens.py"):
+        for name in names:
             fh.write(f"{sha256(os.path.join(dest, name))}  {name}\n")
-    for name in (setup_name, zip_name):
-        log(f"  {name}  {os.path.getsize(os.path.join(dest, name)) / 1e6:.0f} MB")
+    log(f"  SHA256SUMS.txt: {len(names)} file(s)")
+
+
+def step_cleanup() -> None:
     shutil.rmtree(STAGE, ignore_errors=True)  # ~200 MB copy inside the repo folder, rebuilt each run
+
+
+STEPS = {"check": step_check, "banned": step_banned, "tests": step_tests, "server": step_server,
+         "stage": step_stage, "desktop": step_desktop, "update-file": step_update_file, "portable": step_portable,
+         "cli": step_cli, "smoke": step_smoke, "installer-test": step_installer_test, "checksums": step_checksums,
+         "cleanup": step_cleanup}
+
+
+# ---------------------------------------------------------------- main
+
+def main() -> int:
+    global _log_fh
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    unknown = [a for a in args if a not in STEPS]
+    if unknown:
+        fail(f"unknown step(s) {', '.join(unknown)}; steps: {', '.join(STEPS)}")
+    steps = args or DEFAULT_STEPS
+    if not args and not WINDOWS:
+        fail("the one-command release is Windows-only; name the steps (see the docstring)")
+    _ctx.update(version=release_version(), with_notes="--with-notes" in sys.argv[1:], steps=steps)
+    dest = os.environ.get("KOPIALENS_RELEASE_DIR") or os.path.join(BUILD_ROOT, "release", _ctx["version"] + tag())
+    _ctx["dest"] = dest
+    os.makedirs(dest, exist_ok=True)
+    _log_fh = open(os.path.join(dest, "release.log"), "a" if args else "w", encoding="utf-8")
+    log(f"KopiaLens {_ctx['version']} release ({PLATFORM}-{ARCH}): {', '.join(steps)}")
+    if _ctx["with_notes"]:
+        log("  TESTING BUILD: the Notes widget is included. Never publish it; it writes no latest.json.")
+    for n, name in enumerate(steps, 1):
+        log(f"{n}/{len(steps)} {name}")
+        STEPS[name]()
     log(f"DONE: {dest}")
-    if installer_untested:
-        log("  WARNING: the installer was NOT tested in Windows Sandbox (step 7).")
-    if with_notes:
+    if _ctx.get("installer_untested"):
+        log("  WARNING: the installer was NOT tested in Windows Sandbox (installer-test).")
+    if _ctx["with_notes"]:
         log("  TESTING BUILD: for test copies only; do not publish.")
-        return 0
-    log(f"  publish: a GitHub release tagged v{version} on {RELEASE_REPO_URL} with {setup_name}, {zip_name},"
-        " SHA256SUMS.txt and latest.json (installs update from its latest.json)")
+    elif not args:
+        log(f"  publish: a GitHub release tagged v{_ctx['version']} on {RELEASE_REPO_URL} with the files in"
+            " SHA256SUMS.txt, SHA256SUMS.txt itself and latest.json (installs update from its latest.json)")
     return 0
 
 

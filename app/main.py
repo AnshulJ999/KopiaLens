@@ -29,7 +29,7 @@ from .api import (access, account, actions, appconfig, audit, backblaze, cli, da
                   help, insights, jobs, licence, logs, newsnapshot, notify, onboarding, policies, prune, restore, search, setup, shell, simulate,
                   snapshots, stats, tree, writemode)
 from .api import tokens as tokens_api
-from .core import auth, checkin, devaddons, netaccess, pause, tokens
+from .core import auth, basepath, checkin, devaddons, netaccess, pause, tokens
 from .core import engine as backup_engine
 from .core import jobs as jobrunner
 from .index.crypto import StoreLocked
@@ -839,7 +839,7 @@ def shell_open(code: str = "", next: str = "/") -> Response:
     that the "This window only" access mode asks for."""
     token = netaccess.redeem(code)
     target = next if next.startswith("/") and not next.startswith("//") else "/"
-    resp = RedirectResponse(target, status_code=303)
+    resp = RedirectResponse(basepath.url(target), status_code=303)
     if token:
         resp.set_cookie(netaccess.WINDOW_COOKIE, token, httponly=True, samesite="strict", path="/",
                         secure=auth.request_secure())
@@ -856,9 +856,12 @@ async def access_middleware(request: Request, call_next):
     when auth is disabled, which is the state for anyone who fronts KopiaLens with their own
     reverse proxy."""
     secure = auth.set_secure(request.url.scheme == "https")
+    base = basepath.set_current(basepath.for_request(request.client.host if request.client else None,
+                                                     request.headers))
     try:
         return await _access(request, call_next)
     finally:
+        basepath.reset(base)
         auth._SECURE.reset(secure)
 
 
@@ -886,6 +889,14 @@ async def _access(request: Request, call_next):
             return JSONResponse(status_code=403, content={"detail": "KopiaLens opens only in its own window."})
         return _blocked_page("KopiaLens is set to open only in its own window. Open it from the "
                              "tray icon, or change this in Settings > Remote access.")
+    if basepath.from_ingress(client) and request.headers.get(basepath.INGRESS_HEADER):
+        # Home Assistant ingress: HA has signed its user in, and only its proxy uses this address.
+        name = (request.headers.get("x-remote-user-name") or "").strip()
+        token = auth.set_actor(f"{name} (Home Assistant)" if name else "Home Assistant")
+        try:
+            return await call_next(request)
+        finally:
+            auth._ACTOR.reset(token)
     if auth.shell_request_ok(path, request.headers.get(auth.SHELL_HEADER),
                              request.client.host if request.client else None):
         token = auth.set_actor("desktop app")
@@ -981,7 +992,7 @@ async def auth_login(request: Request):
     auth.record_login_success(address)
     from .api.account import unlock_if_linked
     unlock_if_linked(user, password)
-    resp = RedirectResponse("/", status_code=303)
+    resp = RedirectResponse(basepath.url("/"), status_code=303)
     resp.set_cookie(auth.COOKIE_NAME, auth.issue_session(user, persist), **auth.cookie_kwargs(persist))
     return resp
 
@@ -1050,7 +1061,7 @@ async def auth_recover(request: Request):
     log.warning("password reset with the recovery key from %s", address)
     from .api.account import unlock_if_linked
     unlock_if_linked(user, new)
-    resp = RedirectResponse("/", status_code=303)
+    resp = RedirectResponse(basepath.url("/"), status_code=303)
     resp.set_cookie(auth.COOKIE_NAME, auth.issue_session(user, True), **auth.cookie_kwargs(True))
     return resp
 
@@ -1323,7 +1334,10 @@ def _compose_html(client_host: str | None = None) -> str:
         pct = min(115, max(80, int(kl.get("density_pct", 100))))
     except (TypeError, ValueError):
         pct = 100
+    base = basepath.current()
     html = _JINJA.get_template("index.html").render(
+        base=base,
+        base_json=json.dumps(base),
         asset_v=_asset_version(),
         theme=theme if theme in _THEMES else "system",
         density=kl.get("density") if kl.get("density") in _DENSITY else "normal",

@@ -33,6 +33,9 @@ REPO_PASSWORD = "fixture repo pw"
 HOST, USER = "kltest", "tester"
 USERNAME, PASSWORD = "admin", "battery staple horse"   # the KopiaLens account
 SNAPSHOT_DAYS_AGO = (6, 4, 2)           # one snapshot per generation, oldest first
+# Windows kopia keeps passwords in Credential Manager unless told not to (trap 41); the flag exists
+# only there. Elsewhere it saves them next to the config file, inside the temp root.
+NO_CRED_MANAGER = ["--no-use-credential-manager"] if os.name == "nt" else []
 
 
 # ---------------------------------------------------------------- child cleanup
@@ -222,7 +225,7 @@ def build_fixture_repo(root: Path, kopia: str) -> dict:
     config = root / "appdata" / "kopia" / "repository.config"
     config.parent.mkdir(parents=True, exist_ok=True)
     kopia_run(kopia, env, config, "repository", "create", "filesystem", "--path", str(repo),
-              "--password", REPO_PASSWORD, "--no-use-credential-manager",
+              "--password", REPO_PASSWORD, *NO_CRED_MANAGER,
               "--override-hostname", HOST, "--override-username", USER)
     rnd = random.Random(20260930)
     today = dt.datetime.now(dt.timezone.utc).replace(hour=10, minute=0, second=0, microsecond=0)
@@ -333,6 +336,12 @@ class Server:
                     "KOPIALENS_BIND_HOST": "127.0.0.1", "KOPIALENS_PORT": str(_free_port()),
                     "KOPIALENS_HTTPS": "off"}   # a server install serves HTTPS by default; the flows test HTTP
         self.url = f"http://127.0.0.1:{self.env['KOPIALENS_PORT']}"
+        prefix = os.environ.get("KOPIALENS_UI_PREFIX", "").rstrip("/")
+        if prefix:   # the whole run behind a sub-path proxy (_prefix_proxy.py)
+            from ._prefix_proxy import PrefixProxy
+            self.env["KOPIALENS_BASE_PATH"] = prefix
+            self.proxy = PrefixProxy(prefix, int(self.env["KOPIALENS_PORT"]))
+            self.url = f"http://127.0.0.1:{self.proxy.port}{prefix}"
         self.proc: subprocess.Popen | None = None
         self._http = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))

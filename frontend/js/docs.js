@@ -52,7 +52,7 @@ const docsPart = {
     docsNewWindow() {
       if (!this.docs) return;
       const d = this.docs;
-      window.open(`${location.origin}/?docs=${encodeURIComponent(d.page)}${d.section ? "#" + encodeURIComponent(d.section) : ""}`, "_blank", "noopener");
+      window.open(`${location.origin}${appUrl("/")}?docs=${encodeURIComponent(d.page)}${d.section ? "#" + encodeURIComponent(d.section) : ""}`, "_blank", "noopener");
     },
     docsPages(group) { return (group.pages || []).filter((p) => this._docsLoaded && this._docsLoaded.pages[p]); },
     docsTitle(page) { const p = this._docsLoaded && this._docsLoaded.pages[page]; return p ? p.title : page; },
@@ -82,7 +82,7 @@ const docsPart = {
         image({ href, text }) {
           if (/^https?:/.test(href || "")) return `<img src="${escHtml(href)}" alt="${escHtml(text)}">`;
           if (!files.has(href)) return `<span class="kl-doc-ph">${escHtml(text || "Screenshot")}</span>`;
-          return `<img src="/api/help/docs/file?path=${encodeURIComponent(href)}" alt="${escHtml(text)}">`;
+          return `<img src="${appUrl("/api/help/docs/file")}?path=${encodeURIComponent(href)}" alt="${escHtml(text)}">`;
         },
       };
       return window.marked.marked.parse(p.md, { gfm: true, renderer: Object.assign(new window.marked.Renderer(), renderer) });

@@ -117,7 +117,7 @@ const settingsPart = {
     // The browser tab icon follows the header logo (the Disc when the logo is hidden).
     applyFavicon() {
       const el = document.querySelector('link[rel="icon"]');
-      if (el) el.href = `/static/logos/${this.logo === "none" ? "k3g" : this.logo}.svg`;
+      if (el) el.href = appUrl(`/static/logos/${this.logo === "none" ? "k3g" : this.logo}.svg`);
     },
     TRAY_ICONS,
     MEMORY_CHOICES,
