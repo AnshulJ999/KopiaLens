@@ -1,6 +1,7 @@
 """One command for a Windows release: banned licence ids, tests, server build, bundled kopia, desktop
 app + installer, the signed in-app update file (latest.json), portable zip, a smoke test of the built app,
-checksums.
+the installer test in Windows Sandbox (packaging/installer_test.py; only when the installer changed since
+its last pass, or with --installer-test), checksums.
 
     python packaging\\release.py
 
@@ -26,6 +27,7 @@ import urllib.request
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import installer_test  # noqa: E402
 import notes_bundle  # noqa: E402
 import updater_key  # noqa: E402
 from datetime import datetime, timezone
@@ -39,6 +41,7 @@ OUT_DIR = os.path.join(BUILD_ROOT, "out")
 # Inside the shell folder (git-ignored): Tauri resource paths must be relative to src-tauri.
 STAGE = os.path.join(SHELL, "release-stage")
 SHELL_TARGET = os.path.join(BUILD_ROOT, "shell-target")
+NSIS_PLUGINS = os.path.join(SHELL, "windows", "nsis-plugins")   # installer.nsi reads KOPIALENS_NSIS_PLUGINS
 PORTABLE_MARKER = "KopiaLens-portable.txt"
 KEYS_FILE = os.path.join(KL_ROOT, "app", "licensing", "keys.py")
 LICENSEKIT_DIR = os.path.join(REPO_ROOT, "LicenseKit")
@@ -314,24 +317,24 @@ def main() -> int:
         fail("the updater key could not be opened, so installs could not update to this release")
     signing_env = {"TAURI_SIGNING_PRIVATE_KEY": key, "TAURI_SIGNING_PRIVATE_KEY_PASSWORD": key_password}
 
-    log("0/6 banned licence ids")
+    log("0/7 banned licence ids")
     bake_banned_ids()
 
     if os.environ.get("KOPIALENS_RELEASE_SKIP_TESTS"):
-        log("1/6 tests SKIPPED (KOPIALENS_RELEASE_SKIP_TESTS)")
+        log("1/7 tests SKIPPED (KOPIALENS_RELEASE_SKIP_TESTS)")
     else:
-        log("1/6 tests")
+        log("1/7 tests")
         run([sys.executable, "-m", "pytest", os.path.relpath(KL_ROOT, REPO_ROOT).replace("\\", "/"), "-q",
              "-p", "no:cacheprovider"], REPO_ROOT, "tests.log")
 
-    log("2/6 server build (Nuitka)")
+    log("2/7 server build (Nuitka)")
     notes_env = {}
     if with_notes:
         notes_env["KOPIALENS_BUILD_NOTES"] = notes_bundle.stage(os.path.join(BUILD_ROOT, "devnotes-stage"))
     run([BUILD_PYTHON, os.path.join(KL_ROOT, "packaging", "build_server.py")], KL_ROOT, "nuitka.log",
         {"KOPIALENS_BUILD_OUT": OUT_DIR, "KOPIALENS_BUILD_NOTES": "", **notes_env})
 
-    log("3/6 stage server + bundled kopia + command-line launchers")
+    log("3/7 stage server + bundled kopia + command-line launchers")
     server = os.path.join(STAGE, "server")
     shutil.rmtree(STAGE, ignore_errors=True)
     shutil.copytree(os.path.join(OUT_DIR, "kopialens.dist"), server)
@@ -346,7 +349,7 @@ def main() -> int:
     # Logo icons for desktop shortcuts (Properties > Change Icon); built by build_logos.py.
     shutil.copytree(os.path.join(SHELL, "icons", "shortcuts"), os.path.join(STAGE, "icons"))
 
-    log("4/6 desktop app + installer (Tauri)")
+    log("4/7 desktop app + installer (Tauri)")
     release_conf = os.path.join(STAGE, "tauri.release.json")
     with open(release_conf, "w", encoding="utf-8") as fh:
         json.dump({**RELEASE_IDENTITY,
@@ -355,7 +358,7 @@ def main() -> int:
                                             "release-stage/bin/": "bin/",
                                             "release-stage/icons/": "icons/"}}}, fh)
     run(["cargo", "tauri", "build", "--config", release_conf, "--bundles", "nsis"], SHELL, "tauri.log",
-        {"CARGO_TARGET_DIR": SHELL_TARGET, **signing_env})
+        {"CARGO_TARGET_DIR": SHELL_TARGET, "KOPIALENS_NSIS_PLUGINS": NSIS_PLUGINS, **signing_env})
     exe = os.path.join(SHELL_TARGET, "release", "KopiaLens.exe")
     installers = [os.path.join(SHELL_TARGET, "release", "bundle", "nsis", f)
                   for f in os.listdir(os.path.join(SHELL_TARGET, "release", "bundle", "nsis"))
@@ -367,7 +370,7 @@ def main() -> int:
     if not with_notes:
         write_update_file(dest, version, installers[0], setup_name)
 
-    log("5/6 portable zip")
+    log("5/7 portable zip")
     zip_name = f"KopiaLens-{version}{tag}-windows-x64-portable.zip"
     zip_path = os.path.join(dest, zip_name)
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -393,8 +396,23 @@ def main() -> int:
     with open(os.path.join(dest, "klens.py"), "w", encoding="utf-8", newline="\n") as fh:
         fh.write(cli_src.replace('__version__ = "dev"', f'__version__ = "{version}"', 1))
 
-    log("6/6 smoke test of the portable build")
+    log("6/7 smoke test of the portable build")
     smoke_test(zip_path, version)
+
+    log("7/7 installer test in Windows Sandbox")
+    installer_untested = False
+    if "--installer-test" not in sys.argv[1:] and not installer_test.needed():
+        log(f"  skipped: the installer is unchanged since it passed on {installer_test.last_pass()['date']}"
+            " (--installer-test runs it anyway)")
+    else:
+        outcome = installer_test.run(os.path.join(dest, setup_name), log)
+        if outcome == "failed":
+            fail("the installer failed its Sandbox test - see the lines above")
+        installer_untested = outcome != "passed"
+        if installer_untested:
+            log("  " + "!" * 70)
+            log("  WARNING: the installer was NOT tested. Run python packaging\\installer_test.py before publishing.")
+            log("  " + "!" * 70)
 
     with open(os.path.join(dest, "SHA256SUMS.txt"), "w", encoding="utf-8", newline="\n") as fh:
         for name in (setup_name, zip_name, "klens.py"):
@@ -403,6 +421,8 @@ def main() -> int:
         log(f"  {name}  {os.path.getsize(os.path.join(dest, name)) / 1e6:.0f} MB")
     shutil.rmtree(STAGE, ignore_errors=True)  # ~200 MB copy inside the repo folder, rebuilt each run
     log(f"DONE: {dest}")
+    if installer_untested:
+        log("  WARNING: the installer was NOT tested in Windows Sandbox (step 7).")
     if with_notes:
         log("  TESTING BUILD: for test copies only; do not publish.")
         return 0

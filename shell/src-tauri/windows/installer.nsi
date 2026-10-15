@@ -89,6 +89,8 @@ VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "ProductVersion" "${VERSION}"
 
 !addplugindir "${ADDITIONALPLUGINSPATH}"
+; EnVar (zlib licence) lives in windows/nsis-plugins/; release.py passes that folder.
+!addplugindir /x86-unicode "$%KOPIALENS_NSIS_PLUGINS%\x86-unicode"
 
 !if "${INSTALLERICON}" != ""
   !define MUI_ICON "${INSTALLERICON}"
@@ -144,7 +146,9 @@ LangString klStartup ${LANG_ENGLISH} "Start KopiaLens when I sign in to Windows"
 LangString klStartupHint ${LANG_ENGLISH} "Recommended: scheduled indexing only runs while KopiaLens is running. You can change this later in the tray menu."
 LangString klPath ${LANG_ENGLISH} "Add the klens command line to PATH"
 LangString klPathHint ${LANG_ENGLISH} "Lets you run klens and kopialens-cli in any terminal, for scripts and AI agents."
-LangString klPathTooLong ${LANG_ENGLISH} "PATH is too long to change safely, so it was left as it is. Add $INSTDIR\bin to PATH yourself to use klens."
+LangString klPathFailed ${LANG_ENGLISH} "Couldn't add $INSTDIR\bin to PATH. Add it yourself to use klens."
+LangString klStillRunning ${LANG_ENGLISH} "KopiaLens is still running. Close it from the tray, then click Retry."
+LangString klStillRunningSilent ${LANG_ENGLISH} "KopiaLens is still running. Close it, then try again."
 LangString klRunNow ${LANG_ENGLISH} "Open KopiaLens"
 LangString klClosing ${LANG_ENGLISH} "Closing KopiaLens..."
 LangString klUninstallTop ${LANG_ENGLISH} "KopiaLens will be removed from this computer. Your backups and kopia repositories are not touched."
@@ -178,47 +182,27 @@ Function SkipIfPassive
   ${IfThen} $PassiveMode = 1 ${|} Abort ${|}
 FunctionEnd
 
-; Adds (_add 1) or removes (_add 0) <install>\bin on the PATH of the chosen mode. NSIS strings
-; are NSIS_MAX_STRLEN long, so a longer PATH is left alone: writing back a cut-off PATH breaks it.
-!define KLENVALL "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
-!define /math KLPATHMAX ${NSIS_MAX_STRLEN} - 300
+; Adds (_add 1) or removes (_add 0) <install>\bin on the PATH of the chosen mode. Never read PATH
+; into an NSIS string: they stop at 1024 characters, and a longer PATH reads back empty. EnVar edits
+; the registry value itself and keeps its type and any %VAR% entries.
 !macro KlPathEdit _add
   ${If} $AllUsers = 1
-    ReadRegStr $R0 HKLM "${KLENVALL}" "Path"
+    EnVar::SetHKLM
   ${Else}
-    ReadRegStr $R0 HKCU "Environment" "Path"
+    EnVar::SetHKCU
   ${EndIf}
-  StrLen $R1 $R0
-  ${If} $R1 > ${KLPATHMAX}
-    DetailPrint "$(klPathTooLong)"
+  ${If} ${_add} = 1
+    EnVar::AddValue "Path" "$INSTDIR\bin"
+    Pop $R0
+    ${If} $R0 != "0"
+      DetailPrint "$(klPathFailed)"
+    ${EndIf}
   ${Else}
-    StrCpy $R2 $R0
-    ClearErrors
-    ${WordFind} "$R0" "$INSTDIR\bin" "E+1{" $R3
-    ${If} ${Errors}
-      ${If} ${_add} = 1
-        ${If} $R0 == ""
-          StrCpy $R2 "$INSTDIR\bin"
-        ${Else}
-          StrCpy $R2 "$R0;$INSTDIR\bin"
-        ${EndIf}
-      ${EndIf}
-    ${ElseIf} ${_add} = 0
-      ${WordReplace} "$R2" ";$INSTDIR\bin" "" "+" $R2
-      ${WordReplace} "$R2" "$INSTDIR\bin;" "" "+" $R2
-      ${If} $R2 == "$INSTDIR\bin"
-        StrCpy $R2 ""
-      ${EndIf}
-    ${EndIf}
-    ${If} $R2 != $R0
-      ${If} $AllUsers = 1
-        WriteRegExpandStr HKLM "${KLENVALL}" "Path" $R2
-      ${Else}
-        WriteRegExpandStr HKCU "Environment" "Path" $R2
-      ${EndIf}
-      SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
-    ${EndIf}
+    ; 3 = not on PATH, nothing to remove.
+    EnVar::DeleteValue "Path" "$INSTDIR\bin"
+    Pop $R0
   ${EndIf}
+  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
 !macroend
 
 Function un.SkipIfPassive
@@ -235,40 +219,67 @@ Function RunMainBinary
   nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" ""
 FunctionEnd
 
-; Asks a running KopiaLens to quit (it stops its server and index workers), waits, and ends
-; whatever is left so the files can be replaced.
+; Sets $0 to 1 when the file can't be opened for writing: Windows refuses that while the program
+; runs. Checking this install's own files leaves other KopiaLens copies (same exe names) alone.
+!macro KlFileInUse _path
+  ${If} ${FileExists} "${_path}"
+    ClearErrors
+    FileOpen $1 "${_path}" a
+    ${If} ${Errors}
+      StrCpy $0 1
+    ${Else}
+      FileClose $1
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+; Asks this install's KopiaLens to quit (it stops its server and index workers) and waits for its
+; programs to end. Still running after that: asks the user, or in a silent install ends this user's
+; copies as a last resort.
 !macro CLOSE_RUNNING_APP UN
+Function ${UN}InstallInUse
+  StrCpy $0 0
+  !insertmacro KlFileInUse "$INSTDIR\${MAINBINARYNAME}.exe"
+  !insertmacro KlFileInUse "$INSTDIR\server\${SERVEREXE}"
+  !insertmacro KlFileInUse "$INSTDIR\server\kopia\kopia.exe"
+FunctionEnd
+
 Function ${UN}CloseRunningApp
-  nsis_tauri_utils::FindProcess "${MAINBINARYNAME}.exe"
-  Pop $0
+  Call ${UN}InstallInUse
   ${If} $0 = 0
-  ${AndIf} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
+    Return
+  ${EndIf}
+  ${If} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
     DetailPrint "$(klClosing)"
     nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" "--quit"
   ${EndIf}
-  StrCpy $1 0
-  wait_loop:
-    nsis_tauri_utils::FindProcess "${MAINBINARYNAME}.exe"
-    Pop $0
-    ${If} $0 <> 0
-      nsis_tauri_utils::FindProcess "${SERVEREXE}"
-      Pop $0
-    ${EndIf}
-    ${If} $0 <> 0
-      Goto wait_done
-    ${EndIf}
-    IntOp $1 $1 + 1
-    ${If} $1 > 40
-      nsis_tauri_utils::KillProcess "${MAINBINARYNAME}.exe"
-      Pop $0
-      nsis_tauri_utils::KillProcess "${SERVEREXE}"
-      Pop $0
-      Sleep 1000
-      Goto wait_done
-    ${EndIf}
+  ; The app gives an index worker up to 60 s to save; wait a little longer.
+  StrCpy $2 0
+  ${Do}
     Sleep 500
-    Goto wait_loop
-  wait_done:
+    Call ${UN}InstallInUse
+    ${If} $0 = 0
+      Return
+    ${EndIf}
+    IntOp $2 $2 + 1
+  ${LoopUntil} $2 >= 150
+  ${If} ${Silent}
+    nsis_tauri_utils::KillProcessCurrentUser "${MAINBINARYNAME}.exe"
+    Pop $1
+    nsis_tauri_utils::KillProcessCurrentUser "${SERVEREXE}"
+    Pop $1
+    Sleep 2000
+    Call ${UN}InstallInUse
+    ${If} $0 <> 0
+      Abort "$(klStillRunningSilent)"
+    ${EndIf}
+  ${Else}
+    ${Do}
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(klStillRunning)" IDRETRY +2
+      Abort
+      Call ${UN}InstallInUse
+    ${LoopWhile} $0 <> 0
+  ${EndIf}
 FunctionEnd
 !macroend
 !insertmacro CLOSE_RUNNING_APP ""
