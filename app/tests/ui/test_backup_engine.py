@@ -55,7 +55,7 @@ def _rival(kopia: str, repo: dict) -> subprocess.Popen:
     env = {**repo["env"], "KOPIA_PASSWORD": h.REPO_PASSWORD}
     if not cfg.exists():
         h.kopia_run(kopia, env, cfg, "repository", "connect", "filesystem", "--path", repo["repo"],
-                    "--no-use-credential-manager", "--override-hostname", h.HOST, "--override-username", h.USER)
+                    *h.NO_CRED_MANAGER, "--override-hostname", h.HOST, "--override-username", h.USER)
     return h.contain(subprocess.Popen([kopia, "--config-file", str(cfg), "server", "start", "--insecure",
                                        "--random-password", "--no-grpc", "--address=127.0.0.1:0"],
                                       env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
