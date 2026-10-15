@@ -131,6 +131,9 @@ def stats_ready() -> bool:
 
 
 def install_type() -> str:
+    from . import basepath
+    if basepath.ingress_enabled():          # set only by the Home Assistant add-on
+        return "ha_addon"
     if os.path.exists("/.dockerenv"):
         return "docker"
     if not COMPILED:
