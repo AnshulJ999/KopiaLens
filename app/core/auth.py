@@ -41,7 +41,7 @@ import threading
 import time
 
 from ..settings import load_settings, mutate_settings, raw_kopialens_settings
-from . import users
+from . import basepath, users
 from .applog import get_logger
 
 log = get_logger("auth")
@@ -371,7 +371,7 @@ LOGIN_PAGE = """<!doctype html>
  a{color:var(--accent);font-size:12px}
  code{font-family:ui-monospace,Consolas,monospace;font-size:12px}
 </style></head><body>
-<form method="post" action="/api/auth/login">
+<form method="post" action="__BASE__/api/auth/login">
   <div class="brand">__LOGO__KopiaLens</div>
   <h1>Sign in</h1>
   __LOCK__
@@ -381,7 +381,7 @@ LOGIN_PAGE = """<!doctype html>
   <label class="c"><input type="checkbox" name="remember" value="1" checked>Keep me signed in</label>
   <button type="submit">__BUTTON__</button>
   <div class="note">__REMEMBER_NOTE__</div>
-  <a href="/login/recover">Forgot password?</a>
+  <a href="__BASE__/login/recover">Forgot password?</a>
 </form></body></html>""".replace("__LOGO__", _LOGO)
 
 def _read_pw_script() -> str:
@@ -420,6 +420,7 @@ def login_page(error: str = "", username: str = "", unlocks: bool = False) -> st
             .replace("__ERROR__", f'<div class="err">{escape(error)}</div>' if error else "")
             .replace("__BUTTON__", "Sign in and unlock" if unlocks else "Sign in")
             .replace("__REMEMBER_NOTE__", note)
+            .replace("__BASE__", basepath.current())
             .replace("</body></html>", _PW_SCRIPT + "</body></html>"))
 
 
@@ -427,10 +428,10 @@ def recover_page(error: str = "", with_key: bool = False) -> str:
     """Forgotten password. ``with_key``: the password also unlocks encryption and a recovery key
     exists, so the recovery key can reset it here; otherwise only the local reset applies."""
     from html import escape
-    head, _form_open, _rest = LOGIN_PAGE.partition('<form method="post" action="/api/auth/login">')
+    head, _form_open, _rest = LOGIN_PAGE.partition('<form method="post" action="__BASE__/api/auth/login">')
     err = f'<div class="err">{escape(error)}</div>' if error else ""
     if with_key:
-        body = ('<form method="post" action="/api/auth/recover">'
+        body = ('<form method="post" action="__BASE__/api/auth/recover">'
                 f'<div class="brand">{_LOGO}KopiaLens</div>'
                 '<h1>Reset your password</h1>'
                 '<div class="note">Your recovery key sets a new password for signing in and for '
@@ -443,15 +444,16 @@ def recover_page(error: str = "", with_key: bool = False) -> str:
                 'autocomplete="new-password" required minlength="8"></label>'
                 f'{err}<button type="submit">Reset password</button>'
                 f'<div class="note">No recovery key? {_LOCAL_RESET}</div>'
-                '<a href="/login">Back to sign in</a></form>')
+                '<a href="__BASE__/login">Back to sign in</a></form>')
     else:
         body = ('<form onsubmit="return false">'
                 f'<div class="brand">{_LOGO}KopiaLens</div>'
                 '<h1>Reset your password</h1>'
                 f'<div class="note">{_LOCAL_RESET}</div>'
-                '<a href="/login">Back to sign in</a></form>')
+                '<a href="__BASE__/login">Back to sign in</a></form>')
     return head.replace("<title>Sign in - KopiaLens</title>",
-                        "<title>Reset password - KopiaLens</title>") + body + _PW_SCRIPT + "</body></html>"
+                        "<title>Reset password - KopiaLens</title>") + body.replace(
+        "__BASE__", basepath.current()) + _PW_SCRIPT + "</body></html>"
 
 
 # Whether the current request arrived over HTTPS (built-in, or a trusted proxy's X-Forwarded-Proto);

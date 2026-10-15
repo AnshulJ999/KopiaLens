@@ -428,7 +428,7 @@ const actionsPart = {
       if (item.content_id) q.set("content_id", item.content_id);
       if (item.version) q.set("version", "true");
       const a = document.createElement("a");
-      a.href = `/api/restore/download?${q}`;
+      a.href = appUrl(`/api/restore/download?${q}`);
       // A new tab, so a JSON error response (expired version, kopia failure) cannot navigate the
       // whole app away from itself.
       a.target = "_blank";

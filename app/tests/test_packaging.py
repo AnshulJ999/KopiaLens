@@ -4,9 +4,7 @@ folder, port parsing, the incomplete-install page, and the KopiaUI label."""
 from __future__ import annotations
 
 import importlib.util
-import json
 import os
-import re
 from pathlib import Path
 
 import jinja2
@@ -25,13 +23,18 @@ def _load(rel: str):
     return mod
 
 
-def test_version_is_the_same_everywhere():
-    version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
-    cargo = re.search(r'^version\s*=\s*"([^"]+)"', (ROOT / "shell/src-tauri/Cargo.toml").read_text(encoding="utf-8"), re.M)
-    tauri = json.loads((ROOT / "shell/src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
-    assert cargo.group(1) == version
-    assert tauri["version"] == version
-    assert config.APP_VERSION == version
+def test_the_app_reports_the_version_file():
+    """The release tag > VERSION is the one version; release.py stamps it into the Tauri build, so
+    Cargo.toml and tauri.conf.json are not kept in step by hand."""
+    assert config.APP_VERSION == (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+
+
+def test_release_stamps_the_tag_over_the_version_file(monkeypatch):
+    release = _load("packaging/release.py")
+    monkeypatch.setenv("KOPIALENS_RELEASE_VERSION", "v9.8.7")
+    assert release.release_version() == "9.8.7"
+    monkeypatch.delenv("KOPIALENS_RELEASE_VERSION")
+    assert release.release_version() == (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 
 
 def test_build_compiles_in_every_upgrade_step():

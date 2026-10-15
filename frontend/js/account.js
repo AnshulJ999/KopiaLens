@@ -224,7 +224,7 @@ const accountPart = {
     },
     async signOutHere() {
       await _acctPost("/api/auth/logout").catch(() => {});
-      location.href = "/login";
+      location.href = appUrl("/login");
     },
     async signOutAll() {
       const ok = await this.klConfirm({
@@ -235,7 +235,7 @@ const accountPart = {
       if (!ok) return;
       try {
         await _acctPost("/api/account/sign-out-all");
-        location.href = "/login";
+        location.href = appUrl("/login");
       } catch (e) { this.klNotify(e.message || String(e), "warn"); }
     },
     async toggleRemember(on) {
@@ -325,6 +325,6 @@ const accountPart = {
     },
     async lockSignOut() {
       await _acctPost("/api/auth/logout").catch(() => {});
-      location.href = "/login";
+      location.href = appUrl("/login");
     },
 };

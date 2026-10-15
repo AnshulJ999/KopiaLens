@@ -158,6 +158,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "bind_host": "127.0.0.1",      # desktop-profile default; a server install resolves 0.0.0.0
         "allowed_hosts": [],           # extra Host header names (a reverse proxy's domain).
                                        # localhost and bare IP addresses are always accepted.
+        "base_path": "",               # sub-path behind a reverse proxy ("/kopialens"); file-only
+                                       # (env KOPIALENS_BASE_PATH), core/basepath.py
         # ---- misc ceilings ------------------------------------------------------------------
         "kopia_timeout": 3600,         # seconds; a hung kopia call fails instead of hanging forever
         "remove_plan_cap": 200000,     # max files one chunked-delete plan may enumerate
@@ -194,6 +196,7 @@ OWN_ROUTE_SETTINGS = {
     **{k: "Settings > Remote access" for k in ("access", "access_addresses", "allowed_hosts", "https",
                                                 "https_cert", "https_key", "trusted_proxies")},
     "bind_host": "settings.json",
+    "base_path": "settings.json",
     "encryption": "Settings > Encryption",
     "encryption_level": "Settings > Encryption",
     "kopia_path": "Settings > Repositories",

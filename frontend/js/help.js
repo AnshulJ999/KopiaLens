@@ -15,7 +15,7 @@ const helpPart = {
         const d = e.detail || {};
         if (!d.ok) { this.klNotify(`Couldn't save ${d.name || "the download"}`, "warn"); return; }
         this.klNotify(`Saved ${d.name} to ${d.folder}`, "ok",
-          { label: "Show in folder", run: () => { location.href = "/?kl-reveal-download=1"; } });
+          { label: "Show in folder", run: () => { location.href = appUrl("/?kl-reveal-download=1"); } });
       });
       setTimeout(() => this.loadHelp(), 5000);   // after the first screen; the check itself runs server-side
     },
@@ -33,7 +33,7 @@ const helpPart = {
     zoomReset() { if (window.klZoom) window.klZoom.reset(); },
     openInBrowser() {
       this.helpMenu = false;
-      window.open(location.origin + "/?open-in-browser=1", "_blank");
+      window.open(location.origin + appUrl("/?open-in-browser=1"), "_blank");
     },
     canOpenInBrowser() { return this.isDesktopWindow() && !(this.help && this.help.access === "window"); },
 
@@ -126,7 +126,7 @@ const helpPart = {
     diagDownload() {
       const p = this._diagQuery();
       p.set("id", this.diag.id);
-      window.open(`/api/diagnostics/download?${p.toString()}`, "_blank");
+      window.open(appUrl(`/api/diagnostics/download?${p.toString()}`), "_blank");
     },
     diagIssueUrl() {
       const h = this.help || {};

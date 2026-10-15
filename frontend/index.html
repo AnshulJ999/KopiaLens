@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>KopiaLens</title>
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <script>window.KL_BASE = {{ base_json }};   // URL prefix (HA ingress, proxy sub-path); "" otherwise</script>
+  <link rel="icon" href="{{ base }}/static/favicon.svg" type="image/svg+xml">
   <script>
     // Resolve the Tailwind dark variant before first paint. data-theme is stamped by the
     // server; only "system" needs the media query, so no flash on any path.
@@ -16,15 +17,15 @@
       document.documentElement.classList.toggle('dark', dark);
     })();
   </script>
-  <script defer src="/static/vendor/alpine-3.17.4.min.js"></script>
-  <link href="/static/vendor/tabulator-6.6.1.simple.min.css" rel="stylesheet">
-  <script src="/static/vendor/tabulator-6.6.1.min.js"></script>
-  <script src="/static/vendor/marked-18.0.14.min.js"></script>
-  <link href="/static/css/tokens.css?v={{ asset_v }}" rel="stylesheet">
-  <link href="/static/css/app.css?v={{ asset_v }}" rel="stylesheet">
-  <link href="/static/css/icons.css?v={{ asset_v }}" rel="stylesheet">
+  <script defer src="{{ base }}/static/vendor/alpine-3.17.4.min.js"></script>
+  <link href="{{ base }}/static/vendor/tabulator-6.6.1.simple.min.css" rel="stylesheet">
+  <script src="{{ base }}/static/vendor/tabulator-6.6.1.min.js"></script>
+  <script src="{{ base }}/static/vendor/marked-18.0.14.min.js"></script>
+  <link href="{{ base }}/static/css/tokens.css?v={{ asset_v }}" rel="stylesheet">
+  <link href="{{ base }}/static/css/app.css?v={{ asset_v }}" rel="stylesheet">
+  <link href="{{ base }}/static/css/icons.css?v={{ asset_v }}" rel="stylesheet">
   <!-- Built by packaging/build_css.py. Last on purpose: utilities override app.css. -->
-  <link href="/static/css/tailwind.css?v={{ asset_v }}" rel="stylesheet">
+  <link href="{{ base }}/static/css/tailwind.css?v={{ asset_v }}" rel="stylesheet">
 </head>
 <body class="bg-canvas text-fg">
   <div id="app" x-data="kopiaLens()" x-init="init()" x-cloak class="h-screen flex flex-col" :class="ob ? 'overflow-hidden' : ''">
@@ -142,58 +143,58 @@
 {% include "partials/docs.html" %}
   </div>
   <script>window.KL_OS_FORMATS = {{ os_formats }};</script>
-  <script src="/static/js/util.js?v={{ asset_v }}"></script>
-  <script src="/static/js/terms.js?v={{ asset_v }}"></script>
-  <script src="/static/js/pwreveal.js?v={{ asset_v }}"></script>
-  <script src="/static/js/toast.js?v={{ asset_v }}"></script>
-<script src="/static/js/zoom.js?v={{ asset_v }}"></script>
-  <script src="/static/js/indexpanel.js?v={{ asset_v }}"></script>
-  <script src="/static/js/bz/index.js?v={{ asset_v }}"></script>
-  <script src="/static/js/bz/dashboard.js?v={{ asset_v }}"></script>
-  <script src="/static/js/bz/search.js?v={{ asset_v }}"></script>
-  <script src="/static/js/bz/tree.js?v={{ asset_v }}"></script>
-  <script src="/static/js/bz/excluded.js?v={{ asset_v }}"></script>
-  <script src="/static/js/bz/exclusions.js?v={{ asset_v }}"></script>
-  <script src="/static/js/bz/churn.js?v={{ asset_v }}"></script>
-  <script src="/static/js/bz/health.js?v={{ asset_v }}"></script>
-  <script src="/static/js/dashboard.js?v={{ asset_v }}"></script>
-  <script src="/static/js/snapshots.js?v={{ asset_v }}"></script>
-  <script src="/static/js/browse.js?v={{ asset_v }}"></script>
-  <script src="/static/js/tree.js?v={{ asset_v }}"></script>
-  <script src="/static/js/search.js?v={{ asset_v }}"></script>
-  <script src="/static/js/churn.js?v={{ asset_v }}"></script>
-  <script src="/static/js/simulate.js?v={{ asset_v }}"></script>
-  <script src="/static/js/stats.js?v={{ asset_v }}"></script>
-  <script src="/static/js/logs.js?v={{ asset_v }}"></script>
-  <script src="/static/js/excluded.js?v={{ asset_v }}"></script>
-  <script src="/static/js/actions.js?v={{ asset_v }}"></script>
-  <script src="/static/js/confirm.js?v={{ asset_v }}"></script>
-  <script src="/static/js/runbar.js?v={{ asset_v }}"></script>
-  <script src="/static/js/settings.js?v={{ asset_v }}"></script>
-  <script src="/static/js/account.js?v={{ asset_v }}"></script>
-  <script src="/static/js/appconfig.js?v={{ asset_v }}"></script>
-  <script src="/static/js/repos.js?v={{ asset_v }}"></script>
-  <script src="/static/js/onboarding.js?v={{ asset_v }}"></script>
-  <script src="/static/js/theme.js?v={{ asset_v }}"></script>
-  <script src="/static/js/detail.js?v={{ asset_v }}"></script>
-  <script src="/static/js/exclude.js?v={{ asset_v }}"></script>
-  <script src="/static/js/deletepanel.js?v={{ asset_v }}"></script>
-  <script src="/static/js/prune.js?v={{ asset_v }}"></script>
-  <script src="/static/js/diffview.js?v={{ asset_v }}"></script>
-  <script src="/static/js/jobs.js?v={{ asset_v }}"></script>
-  <script src="/static/js/maintenance.js?v={{ asset_v }}"></script>
-  <script src="/static/js/help.js?v={{ asset_v }}"></script>
-  <script src="/static/js/policyedit.js?v={{ asset_v }}"></script>
-  <script src="/static/js/policies.js?v={{ asset_v }}"></script>
-  <script src="/static/js/licence.js?v={{ asset_v }}"></script>
-  <script src="/static/js/tasks.js?v={{ asset_v }}"></script>
-  <script src="/static/js/engine.js?v={{ asset_v }}"></script>
-  <script src="/static/js/sourceops.js?v={{ asset_v }}"></script>
-  <script src="/static/js/notify.js?v={{ asset_v }}"></script>
-  <script src="/static/js/writemode.js?v={{ asset_v }}"></script>
-  <script src="/static/js/tokens.js?v={{ asset_v }}"></script>
-  <script src="/static/js/fulllist.js?v={{ asset_v }}"></script>
-  <script src="/static/js/docs.js?v={{ asset_v }}"></script>
-  <script src="/static/js/app.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/util.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/terms.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/pwreveal.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/toast.js?v={{ asset_v }}"></script>
+<script src="{{ base }}/static/js/zoom.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/indexpanel.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/bz/index.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/bz/dashboard.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/bz/search.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/bz/tree.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/bz/excluded.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/bz/exclusions.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/bz/churn.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/bz/health.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/dashboard.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/snapshots.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/browse.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/tree.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/search.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/churn.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/simulate.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/stats.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/logs.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/excluded.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/actions.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/confirm.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/runbar.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/settings.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/account.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/appconfig.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/repos.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/onboarding.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/theme.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/detail.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/exclude.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/deletepanel.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/prune.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/diffview.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/jobs.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/maintenance.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/help.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/policyedit.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/policies.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/licence.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/tasks.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/engine.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/sourceops.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/notify.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/writemode.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/tokens.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/fulllist.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/docs.js?v={{ asset_v }}"></script>
+  <script src="{{ base }}/static/js/app.js?v={{ asset_v }}"></script>
 </body>
 </html>

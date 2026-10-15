@@ -71,6 +71,6 @@ const bzSearchPart = {
     },
     bzExportSearch() {
       if (this.bzGroupByFolder) return downloadTable("#bzGroupTable", "backblaze_folders");
-      window.open(`/api/backblaze/export?${this.bzSearchUrl().toString()}`, "_blank");
+      window.open(appUrl(`/api/backblaze/export?${this.bzSearchUrl().toString()}`), "_blank");
     },
 };
