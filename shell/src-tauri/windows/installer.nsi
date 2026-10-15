@@ -89,8 +89,6 @@ VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "ProductVersion" "${VERSION}"
 
 !addplugindir "${ADDITIONALPLUGINSPATH}"
-; EnVar (zlib licence) lives in windows/nsis-plugins/; release.py passes that folder.
-!addplugindir /x86-unicode "$%KOPIALENS_NSIS_PLUGINS%\x86-unicode"
 
 !if "${INSTALLERICON}" != ""
   !define MUI_ICON "${INSTALLERICON}"
@@ -182,27 +180,25 @@ Function SkipIfPassive
   ${IfThen} $PassiveMode = 1 ${|} Abort ${|}
 FunctionEnd
 
-; Adds (_add 1) or removes (_add 0) <install>\bin on the PATH of the chosen mode. Never read PATH
-; into an NSIS string: they stop at 1024 characters, and a longer PATH reads back empty. EnVar edits
-; the registry value itself and keeps its type and any %VAR% entries.
+; Adds (_add 1) or removes (_add 0) <install>\bin on the PATH of the chosen mode, through klens.exe
+; (needs bin\ in place). Never read PATH into an NSIS string: they stop at 1024 characters, and a
+; longer PATH reads back empty.
 !macro KlPathEdit _add
   ${If} $AllUsers = 1
-    EnVar::SetHKLM
+    StrCpy $R1 "machine"
   ${Else}
-    EnVar::SetHKCU
+    StrCpy $R1 "user"
   ${EndIf}
   ${If} ${_add} = 1
-    EnVar::AddValue "Path" "$INSTDIR\bin"
+    nsExec::Exec '"$INSTDIR\bin\klens.exe" --installer-path add $R1 "$INSTDIR\bin"'
     Pop $R0
     ${If} $R0 != "0"
       DetailPrint "$(klPathFailed)"
     ${EndIf}
   ${Else}
-    ; 3 = not on PATH, nothing to remove.
-    EnVar::DeleteValue "Path" "$INSTDIR\bin"
+    nsExec::Exec '"$INSTDIR\bin\klens.exe" --installer-path remove $R1 "$INSTDIR\bin"'
     Pop $R0
   ${EndIf}
-  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
 !macroend
 
 Function un.SkipIfPassive
@@ -696,6 +692,10 @@ FunctionEnd
 Section Uninstall
   Call un.CloseRunningApp
 
+  ${If} $UpdateMode <> 1
+    !insertmacro KlPathEdit 0
+  ${EndIf}
+
   Delete "$INSTDIR\${MAINBINARYNAME}.exe"
   ${If} ${FileExists} "$INSTDIR\server\${SERVEREXE}"
     RMDir /r "$INSTDIR\server"
@@ -709,7 +709,6 @@ Section Uninstall
   RMDir "$INSTDIR"
 
   ${If} $UpdateMode <> 1
-    !insertmacro KlPathEdit 0
     !insertmacro DeleteAppUserModelId
     !insertmacro IsShortcutTarget "$SMPROGRAMS\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
     Pop $0

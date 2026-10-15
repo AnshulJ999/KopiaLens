@@ -41,7 +41,6 @@ OUT_DIR = os.path.join(BUILD_ROOT, "out")
 # Inside the shell folder (git-ignored): Tauri resource paths must be relative to src-tauri.
 STAGE = os.path.join(SHELL, "release-stage")
 SHELL_TARGET = os.path.join(BUILD_ROOT, "shell-target")
-NSIS_PLUGINS = os.path.join(SHELL, "windows", "nsis-plugins")   # installer.nsi reads KOPIALENS_NSIS_PLUGINS
 PORTABLE_MARKER = "KopiaLens-portable.txt"
 KEYS_FILE = os.path.join(KL_ROOT, "app", "licensing", "keys.py")
 LICENSEKIT_DIR = os.path.join(REPO_ROOT, "LicenseKit")
@@ -340,12 +339,17 @@ def main() -> int:
     shutil.copytree(os.path.join(OUT_DIR, "kopialens.dist"), server)
     stage_kopia(fetch_kopia(v["kopia"]), os.path.join(server, "kopia"))
     launcher_target = os.path.join(BUILD_ROOT, "launcher-target")
+    # Static C runtime: a fresh Windows has no VCRUNTIME140.dll, and bin\ ships none.
     run(["cargo", "build", "--release", "--manifest-path", os.path.join(KL_ROOT, "shell", "cli-launcher", "Cargo.toml")],
-        KL_ROOT, "launcher.log", {"CARGO_TARGET_DIR": launcher_target})
+        KL_ROOT, "launcher.log", {"CARGO_TARGET_DIR": launcher_target, "RUSTFLAGS": "-C target-feature=+crt-static"})
     bindir = os.path.join(STAGE, "bin")
     os.makedirs(bindir)
     for name in ("klens.exe", "kopialens-cli.exe"):
         shutil.copy2(os.path.join(launcher_target, "release", "klens.exe"), os.path.join(bindir, name))
+        with open(os.path.join(bindir, name), "rb") as fh:
+            needs = sorted(set(re.findall(rb"(?i)(?:vcruntime|msvcp)\d+[a-z0-9_]*\.dll", fh.read())))
+        if needs:
+            fail(f"bin/{name} needs {b', '.join(needs).decode()}, which a fresh Windows doesn't have")
     # Logo icons for desktop shortcuts (Properties > Change Icon); built by build_logos.py.
     shutil.copytree(os.path.join(SHELL, "icons", "shortcuts"), os.path.join(STAGE, "icons"))
 
@@ -358,7 +362,7 @@ def main() -> int:
                                             "release-stage/bin/": "bin/",
                                             "release-stage/icons/": "icons/"}}}, fh)
     run(["cargo", "tauri", "build", "--config", release_conf, "--bundles", "nsis"], SHELL, "tauri.log",
-        {"CARGO_TARGET_DIR": SHELL_TARGET, "KOPIALENS_NSIS_PLUGINS": NSIS_PLUGINS, **signing_env})
+        {"CARGO_TARGET_DIR": SHELL_TARGET, **signing_env})
     exe = os.path.join(SHELL_TARGET, "release", "KopiaLens.exe")
     installers = [os.path.join(SHELL_TARGET, "release", "bundle", "nsis", f)
                   for f in os.listdir(os.path.join(SHELL_TARGET, "release", "bundle", "nsis"))

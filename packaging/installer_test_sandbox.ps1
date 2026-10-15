@@ -9,8 +9,17 @@ $checks = New-Object System.Collections.ArrayList
 $userDir = Join-Path $env:LOCALAPPDATA 'Programs\KopiaLens'
 $allDir = Join-Path $env:ProgramFiles 'KopiaLens'
 
+# The host reads this file while the test runs; retry when it holds the file open.
 function Log([string]$msg) {
-    Add-Content -Path $logFile -Value "$(Get-Date -Format HH:mm:ss) $msg"
+    $line = "$(Get-Date -Format HH:mm:ss) $msg`r`n"
+    for ($i = 0; $i -lt 20; $i++) {
+        try {
+            [IO.File]::AppendAllText($logFile, $line)
+            return
+        } catch {
+            Start-Sleep -Milliseconds 100
+        }
+    }
 }
 
 function Check([string]$name, [bool]$ok, [string]$detail = '') {
@@ -67,14 +76,33 @@ function Run-Uninstall([string]$dir) {
     Run-Program (Join-Path $dir 'uninstall.exe') @('/S', "_?=$dir")
 }
 
+# The command-line launchers run on a fresh Windows (no Visual C++ runtime installed).
+function Check-Klens([string]$mode, [string]$dir) {
+    foreach ($exe in 'klens.exe', 'kopialens-cli.exe') {
+        $info = New-Object System.Diagnostics.ProcessStartInfo (Join-Path $dir "bin\$exe"), '--help'
+        $info.UseShellExecute = $false
+        $info.RedirectStandardOutput = $true
+        $p = [System.Diagnostics.Process]::Start($info)
+        $text = $p.StandardOutput.ReadToEndAsync()
+        if (-not $p.WaitForExit(60000)) {
+            $p.Kill()
+        }
+        $ok = $p.HasExited -and $p.ExitCode -eq 0 -and $text.Result -match 'klens'
+        Check "$mode $exe --help runs" $ok ('exit {0}' -f $(if ($p.HasExited) { $p.ExitCode } else { 'timeout' }))
+    }
+}
+
 function Same-Path([string]$name, [string]$scope, $want) {
     $got = Read-Path $scope
     $ok = ($got.value -ceq $want.value) -and ($got.kind -eq $want.kind)
     Check $name $ok ('{0} PATH {1} chars ({2}), expected {3} chars ({4})' -f $scope, $got.value.Length, $got.kind, $want.value.Length, $want.kind)
 }
 
+# The entry goes at the end; a trailing ";" stays at the end.
 function With-Bin($before, [string]$dir) {
-    [pscustomobject]@{ value = $before.value.TrimEnd(';') + ';' + (Join-Path $dir 'bin'); kind = $before.kind }
+    $bin = Join-Path $dir 'bin'
+    $value = if (-not $before.value) { $bin } elseif ($before.value.EndsWith(';')) { "$($before.value)$bin;" } else { "$($before.value);$bin" }
+    [pscustomobject]@{ value = $value; kind = $before.kind }
 }
 
 function Test-Mode([string]$mode, [string]$flag, [string]$dir, [string]$scope, [string]$other) {
@@ -83,6 +111,7 @@ function Test-Mode([string]$mode, [string]$flag, [string]$dir, [string]$scope, [
     Check "$mode install exits 0" ((Run-Setup @('/S', $flag)) -eq 0)
     Same-Path "$mode install adds bin to PATH" $scope (With-Bin $before $dir)
     Same-Path "$mode install leaves the other PATH alone" $other $otherBefore
+    Check-Klens $mode $dir
     Check "$mode reinstall exits 0" ((Run-Setup @('/S')) -eq 0)
     Same-Path "$mode reinstall adds no second entry" $scope (With-Bin $before $dir)
     Check "$mode update exits 0" ((Run-Setup @('/P', '/UPDATE')) -eq 0)
@@ -121,6 +150,8 @@ function Test-CloseRunning {
         Start-Sleep -Seconds 2
     }
     Check 'installed app starts its server' ((Running-From $serverDir).Count -gt 0)
+    $decoy.Refresh()
+    Check 'the other copy runs before the upgrade' (-not $decoy.HasExited)
     Check 'upgrade over the running app exits 0' ((Run-Setup @('/S')) -eq 0)
     Check 'upgrade closed the installed app' ((Running-From $userDir).Count -eq 0)
     $decoy.Refresh()
@@ -146,6 +177,9 @@ try {
     $result.error = $_.ToString()
     Log "ERROR $($_.ToString())"
 } finally {
+    # Program crashes (Windows Error Reporting), to name the module that failed.
+    Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000 } -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.Message } | Set-Content -Path (Join-Path $out 'crashes.txt')
     $tmp = Join-Path $out 'result.json.tmp'
     $result | ConvertTo-Json -Depth 5 | Set-Content -Path $tmp -Encoding UTF8
     Move-Item -Force $tmp (Join-Path $out 'result.json')

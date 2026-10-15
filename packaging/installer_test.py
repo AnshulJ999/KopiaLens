@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -28,7 +29,8 @@ SANDBOX_SCRIPT = os.path.join(HERE, "installer_test_sandbox.ps1")
 # A change to any of these means the installer needs testing again.
 INPUTS = [
     os.path.join(KL_ROOT, "shell", "src-tauri", "windows", "installer.nsi"),
-    os.path.join(KL_ROOT, "shell", "src-tauri", "windows", "nsis-plugins", "x86-unicode", "EnVar.dll"),
+    os.path.join(KL_ROOT, "shell", "cli-launcher", "src", "main.rs"),
+    os.path.join(KL_ROOT, "shell", "cli-launcher", "src", "installer_path.rs"),
     os.path.abspath(__file__),
     SANDBOX_SCRIPT,
 ]
@@ -36,15 +38,28 @@ TIMEOUT = 20 * 60
 START_TIMEOUT = 5 * 60   # no log line by then: the Sandbox never ran the script
 
 
+def _sandbox_exe() -> str:
+    return os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "WindowsSandbox.exe")
+
+
 def available() -> bool:
-    """Windows Sandbox registers the .wsb file type once the feature is on (after a restart).
-    Without it, opening a .wsb shows Windows' "open with" box instead of failing."""
-    import winreg
-    try:
-        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, ".wsb"):
-            return True
-    except OSError:
-        return False
+    """The Windows Sandbox feature is on. Started directly: the .wsb file type isn't always registered."""
+    return os.path.isfile(_sandbox_exe())
+
+
+def _sandbox_running() -> bool:
+    out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True,
+                         creationflags=subprocess.CREATE_NO_WINDOW).stdout
+    return "windowssandbox" in out.lower()
+
+
+def _wait_closed(seconds: int) -> bool:
+    end = time.time() + seconds
+    while _sandbox_running():
+        if time.time() > end:
+            return False
+        time.sleep(2)
+    return True
 
 
 def inputs_hash() -> str:
@@ -87,6 +102,10 @@ def run(setup: str, log=print) -> str:
     if not available():
         log("  installer test: Windows Sandbox isn't set up (turn it on in Windows features, then restart)")
         return "unavailable"
+    # Windows runs one Sandbox at a time; a second start only shows an error box.
+    if not _wait_closed(60):
+        log("  installer test: another Windows Sandbox is open; close it and run the test again")
+        return "unavailable"
     run_dir = os.path.join(WORK, time.strftime("%Y%m%d-%H%M%S"))
     in_dir, out_dir = os.path.join(run_dir, "in"), os.path.join(run_dir, "out")
     os.makedirs(in_dir)
@@ -98,7 +117,7 @@ def run(setup: str, log=print) -> str:
         fh.write(_config(in_dir, out_dir))
     log(f"  installer test: {os.path.basename(setup)} in Windows Sandbox ({run_dir})")
     try:
-        os.startfile(wsb)
+        subprocess.Popen([_sandbox_exe(), wsb])
     except OSError as e:
         log(f"  installer test: Windows Sandbox didn't start ({e})")
         return "unavailable"
@@ -113,8 +132,11 @@ def run(setup: str, log=print) -> str:
                 " close its window if one is open")
             return "unavailable"
         if os.path.isfile(log_path):
-            with open(log_path, encoding="utf-8-sig", errors="replace") as fh:
-                lines = fh.read().splitlines()
+            try:
+                with open(log_path, encoding="utf-8-sig", errors="replace") as fh:
+                    lines = fh.read().splitlines()
+            except PermissionError:  # the Sandbox is writing to it right now
+                continue
             for line in lines[shown:]:
                 log(f"    {line}")
             shown = len(lines)
@@ -126,11 +148,15 @@ def run(setup: str, log=print) -> str:
 
     with open(result_path, encoding="utf-8-sig") as fh:
         result = json.load(fh)
+    _wait_closed(60)  # it shuts itself down after writing the result
     failed = [c for c in result.get("checks") or [] if not c.get("ok")]
     if result.get("error"):
         log(f"  installer test: the Sandbox script stopped: {result['error']}")
     for c in failed:
         log(f"  FAIL {c.get('name')}: {c.get('detail')}")
+    crashes = os.path.join(out_dir, "crashes.txt")
+    if os.path.isfile(crashes) and os.path.getsize(crashes):
+        log(f"  program crashes inside the Sandbox: {crashes}")
     if not result.get("ok"):
         return "failed"
     with open(PASS_FILE, "w", encoding="utf-8") as fh:

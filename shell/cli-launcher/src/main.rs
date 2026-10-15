@@ -1,5 +1,9 @@
 //! `klens` / `kopialens-cli`: runs `<install>/server/kopialens-server --cli <args>` and passes its
 //! exit code through. It lives in `<install>/bin`, the only folder the installer adds to PATH.
+//! `--installer-path` is the installer's own PATH edit (installer_path.rs).
+
+#[cfg(windows)]
+mod installer_path;
 
 use std::path::PathBuf;
 use std::process::{exit, Command};
@@ -25,6 +29,13 @@ fn server() -> Option<PathBuf> {
 }
 
 fn main() {
+    #[cfg(windows)]
+    {
+        let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+        if args.first().is_some_and(|a| a == "--installer-path") {
+            exit(installer_path::run(&args[1..]));
+        }
+    }
     let Some(server) = server() else {
         eprintln!("klens: the KopiaLens server program isn't next to this one (expected ..\\server). Reinstall KopiaLens.");
         exit(1);
