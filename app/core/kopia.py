@@ -322,6 +322,8 @@ def kopia_job_stream(repo: str, args: list[str], result: dict):
     on threads (an unread pipe fills at ~64 KB and blocks the child), ``result["returncode"]``
     is set once the exit code is known, and the finally always waits/closes so no child or
     handle leaks. Mutating by design - job commands are deliberately outside the RO allowlist.
+    ``result["extra_args"]`` (set by the caller) are added to the command: flags that shape the
+    run (kopia's log file, JSON output) but don't belong in the pasteable command.
     """
     # progress=True: a job exists to stream kopia's live output (per-snapshot detail, progress
     # updates); --no-progress would ask kopia to be quiet.
@@ -329,7 +331,7 @@ def kopia_job_stream(repo: str, args: list[str], result: dict):
         from . import demosim
         yield from demosim.stream(repo, args, result)
         return
-    full = _base_command(repo, args, progress=True)
+    full = _base_command(repo, args + list(result.get("extra_args") or []), progress=True)
     # CREATE_NEW_PROCESS_GROUP so a console event, if one ever becomes deliverable, can be
     # addressed to the child; CREATE_NO_WINDOW is the standing pythonw rule.
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)

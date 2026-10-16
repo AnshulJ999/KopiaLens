@@ -1,3 +1,4 @@
+{% from "partials/_macros.html" import task_counters %}
       <section x-show="active==='tasks'" class="h-full flex flex-col gap-2 min-h-0" data-testid="tasks-tab">
         <div class="kl-toolbar flex-wrap">
           <span class="kl-seg">
@@ -51,6 +52,7 @@
                 <span :class="taskStatusClass(taskSel)" class="font-medium break-all" x-text="taskSummary(taskSel)"></span>
                 <span><span class="text-muted">Started</span> <span x-text="humanTime(taskSel.start)"></span></span>
                 <span x-show="taskSel.end"><span class="text-muted">Finished</span> <span x-text="humanTime(taskSel.end)"></span></span>
+                <span x-show="taskSel.start"><span class="text-muted">Duration</span> <span x-text="taskTook(taskSel)"></span></span>
                 <span x-show="taskSel.total"><span class="text-muted">Steps</span> <span x-text="taskSel.done + ' of ' + taskSel.total"></span></span>
               </div>
               <div class="px-3 py-2 border-b border-bd grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2" data-testid="task-summary">
@@ -64,21 +66,21 @@
               <div class="min-h-0 flex-1 flex flex-col md:flex-row">
                 <template x-if="taskCounters(taskSel).length">
                   <div class="md:w-64 shrink-0 overflow-auto border-b md:border-b-0 md:border-r border-bd-soft">
-                    <table class="w-full text-[0.6875rem]">
-                      <tbody>
-                        <template x-for="c in taskCounters(taskSel)" :key="c.name">
-                          <tr class="border-t border-bd-soft first:border-t-0">
-                            <td class="px-2 py-1" :class="c.level === 'error' ? 'text-danger' : c.level === 'warning' ? 'text-warn' : 'text-muted'" x-text="c.name"></td>
-                            <td class="px-2 py-1 text-right num" x-text="c.value"></td>
-                          </tr>
-                        </template>
-                      </tbody>
-                    </table>
+                    {{ task_counters('taskSel') }}
                   </div>
                 </template>
-                <div class="kl-term whitespace-pre-wrap break-all min-h-[8rem] flex-1 rounded-none border-0" x-ref="taskTerm">
-                  <template x-for="(ln, i) in taskLines" :key="i"><div :class="klLogLineWarn(ln)" x-text="ln"></div></template>
-                  <div x-show="!taskLines.length" class="text-muted" x-text="taskSel.status === 'running' ? 'Waiting for output…' : 'No log for this task.'"></div>
+                <div class="min-h-0 flex-1 flex flex-col">
+                  <div class="flex items-center gap-2 px-2 py-1 border-b border-bd-soft text-xs" x-show="taskSel.kopia_log">
+                    <span class="kl-seg" role="radiogroup" aria-label="Log">
+                      <button type="button" role="radio" :aria-checked="taskLogMode === 'own'" :class="taskLogMode === 'own' ? 'on' : ''" @click="setTaskLog('own')">Output</button>
+                      <button type="button" role="radio" :aria-checked="taskLogMode === 'kopia'" :class="taskLogMode === 'kopia' ? 'on' : ''" @click="setTaskLog('kopia')" data-testid="task-full-log">Full log</button>
+                    </span>
+                    <span class="text-muted" x-show="taskLogMode === 'kopia'" x-text="taskLogSkipped ? 'The last part of kopia’s own log' : 'kopia’s own log'"></span>
+                  </div>
+                  <div class="kl-term whitespace-pre-wrap break-all min-h-[8rem] flex-1 rounded-none border-0" x-ref="taskTerm">
+                    <template x-for="(ln, i) in taskLines" :key="i"><div :class="klLogLineWarn(logMsg(ln))"><span x-text="logMsg(ln)"></span><span class="text-muted" x-text="logDetail(ln)"></span></div></template>
+                    <div x-show="!taskLines.length" class="text-muted" x-text="taskSel.status === 'running' ? 'Waiting for output…' : 'No log for this task.'"></div>
+                  </div>
                 </div>
               </div>
             </div>

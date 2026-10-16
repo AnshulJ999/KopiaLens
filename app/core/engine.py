@@ -73,6 +73,8 @@ class _Server:
         self.sources: list[dict] = []
         self.tasks: dict[str, dict] = {}
         self.recorded: set[str] = set()
+        self.log_seen: dict[str, list] = {}      # task id -> kopia's log window as last read
+        self.log_lock = threading.Lock()
         self.log_path = log_path
         self.last_err = ""
 
@@ -453,7 +455,11 @@ def _poll_one(srv: _Server) -> None:
         return
     for t in tasks:
         srv.tasks[t["id"]] = t
-        if t.get("endTime") and t["id"] not in srv.recorded:
+        if t["id"] in srv.recorded:
+            continue
+        if not t.get("endTime"):
+            collect_task_log(srv, t["id"])
+        else:
             srv.recorded.add(t["id"])
             _record(srv, t)
             if t.get("kind") != "Repository":
@@ -591,25 +597,65 @@ def edit_description(repo: str, snapshot_id: str, description: str, password: st
     return True
 
 
+def task_log_path(repo: str, tag: str, task_id: str) -> str:
+    return os.path.join(ENGINE_LOG_DIR, f"task_repo{repo}_{tag}_{task_id}.log")
+
+
+def _new_log_entries(seen: list, now: list) -> tuple[list, bool]:
+    """The entries of kopia's log window ``now`` that weren't in ``seen`` (the window read last
+    time). kopia keeps only a task's newest 1000 entries, so the window slides; ``gap`` is True
+    when nothing of ``seen`` is left in it (entries were dropped between two reads)."""
+    if not seen:
+        return now, False
+    last = seen[-1]
+    for j in range(len(now) - 1, -1, -1):
+        if now[j] == last and now[: j + 1] == seen[len(seen) - j - 1:]:
+            return now[j + 1:], False
+    return now, True
+
+
+def collect_task_log(srv: _Server, task_id: str) -> str:
+    """Append what kopia logged for a task since the last read to its log file and return the
+    file's path. Reading while the task runs keeps every line: kopia itself keeps only the newest
+    1000 per task."""
+    path = task_log_path(srv.repo, srv.tag, task_id)
+    with srv.log_lock:
+        try:
+            raw = (_get(srv.ui, f"/api/v1/tasks/{task_id}/logs") or {}).get("logs") or []
+        except Exception:  # noqa: BLE001 - the next poll reads again
+            return path
+        new, gap = _new_log_entries(srv.log_seen.get(task_id) or [], raw)
+        srv.log_seen[task_id] = raw
+        if gap:
+            filecrypto.append_line(path, "… kopia dropped some log lines before KopiaLens could read them")
+        for e in new:
+            filecrypto.append_line(path, _log_text(e))
+    return path
+
+
 def task_logs(repo: str, task_id: str) -> list[str]:
+    """A live task's log so far (every line read since KopiaLens's server started)."""
     srv = running(repo)
     if srv is None:
         return []
-    try:
-        raw = (_get(srv.ui, f"/api/v1/tasks/{task_id}/logs") or {}).get("logs") or []
-    except Exception:  # noqa: BLE001
-        return []
-    return [_log_text(e) for e in raw]
+    return filecrypto.read_lines(collect_task_log(srv, task_id))
+
+
+_LOG_LEVELS = {0: "", 1: "", 2: "warning", 3: "error"}   # kopia's task log levels (KopiaUI's loglevel-N); only problems are named
 
 
 def _log_text(e) -> str:
+    """One kopia log entry as text: time, level, message, then a tab and the entry's details
+    (key=value), which the task panel shows muted like KopiaUI."""
     if not isinstance(e, dict):
-        return str(e)
+        return str(e).replace("\n", " ")
     ts = e.get("ts")
     when = time.strftime("%H:%M:%S", time.localtime(float(ts))) if isinstance(ts, (int, float)) else "--:--:--"
-    extra = " ".join(f"{k}={v}" for k, v in e.items() if k not in ("ts", "level", "msg", "mod"))
-    level = e.get("level") or ""
-    return f"{when} {level + ' ' if level and level != 'info' else ''}{e.get('msg', '')}{' ' + extra if extra else ''}"
+    extra = " ".join(f"{k}={json.dumps(v) if isinstance(v, (dict, list)) else v}"
+                     for k, v in e.items() if k not in ("ts", "level", "msg", "mod"))
+    level = _LOG_LEVELS.get(e.get("level"), str(e.get("level") or ""))
+    text = f"{when} {level + ' ' if level and level != 'info' else ''}{e.get('msg', '')}{chr(9) + extra if extra else ''}"
+    return text.replace("\n", " ")
 
 
 def source_status(repo: str) -> list[dict]:
@@ -663,13 +709,9 @@ def _record(srv: _Server, t: dict) -> None:
     if t.get("kind") == "Repository" and (t.get("status") or "").upper() == "SUCCESS":
         return                      # the server opening the repository: noise on every start
     rec = task_record(srv.repo, t, srv.tag)
-    lines = task_logs(srv.repo, t["id"])
-    log_path = os.path.join(ENGINE_LOG_DIR, f"task_repo{srv.repo}_{srv.tag}_{t['id']}.log")
-    try:
-        filecrypto.write_text(log_path, "\n".join(lines) + "\n")
-        rec["log_path"] = log_path
-    except Exception:  # noqa: BLE001
-        rec["log_path"] = ""
+    log_path = collect_task_log(srv, t["id"])     # the last lines; earlier ones were appended as it ran
+    srv.log_seen.pop(t["id"], None)
+    rec["log_path"] = log_path if os.path.isfile(log_path) else ""
     with _hist_lock:
         filecrypto.append_line(HISTORY_FILE, json.dumps(rec, ensure_ascii=False))
     if rec["kind"] == "Snapshot" and rec["status"] == "failed":

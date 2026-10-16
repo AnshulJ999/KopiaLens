@@ -50,7 +50,7 @@ const tasksPart = {
   taskStatusText(t) { return (TASK_STATUS[t.status] || [t.status || ""])[0]; },
   taskStatusClass(t) { return (TASK_STATUS[t.status] || ["", ""])[1]; },
   taskTook(t) {
-    if (!t.start) return "";
+    if (!t || !t.start) return "";
     return fmtDur((t.end || Date.now() / 1000) - t.start);
   },
   renderTasks() {
@@ -89,6 +89,8 @@ const tasksPart = {
     this.taskSel = { ...t };
     this.taskLines = [];
     this.taskCursor = 0;
+    this.taskLogMode = "own";
+    this.taskLogSkipped = false;
     await this.pollTask();
   },
   closeTask() {
@@ -102,11 +104,13 @@ const tasksPart = {
     const cur = this.taskSel;
     if (!cur) return;
     try {
-      const d = await getJson(`/api/tasks/detail?id=${encodeURIComponent(cur.id)}&after=${this.taskCursor}`);
-      if (!this.taskSel || this.taskSel.id !== cur.id) return;
-      this.taskLines = this.taskLines.concat(d.lines || []).slice(-3000);
+      const mode = this.taskLogMode;
+      const d = await getJson(`/api/tasks/detail?id=${encodeURIComponent(cur.id)}&after=${this.taskCursor}${mode === "kopia" ? "&log=kopia" : ""}`);
+      if (!this.taskSel || this.taskSel.id !== cur.id || mode !== this.taskLogMode) return;
+      this.taskLines = this.taskLines.concat(d.lines || []).slice(-5000);
       this.taskCursor = d.cursor || this.taskCursor;
-      const { lines, cursor, ...rest } = d;
+      if (d.skipped_earlier) this.taskLogSkipped = true;
+      const { lines, cursor, skipped_earlier, ...rest } = d;
       this.taskSel = { ...this.taskSel, ...rest };
       this.$nextTick(() => { const term = this.$refs.taskTerm; if (term) term.scrollTop = term.scrollHeight; });
     } catch (e) { /* the task may have rolled out of kopia's memory; keep what we have */ }
@@ -123,11 +127,11 @@ const tasksPart = {
     if (t.status === "failed") return t.error || "Failed";
     return this.taskStatusText(t);
   },
-  // The summary above the raw log (the line above it has the result and times): where, what,
-  // and kopia's key counts.
+  // The summary above the log (the line above it has the result and times): where, what, and
+  // kopia's key counts (all of them are in the Counter table).
   taskFacts(t) {
     const facts = [["Repository", this.repoName(t.repo)], ["What", this.taskWhat(t)]];
-    for (const c of this.taskCounters(t).filter((x) => /file|byte|error/i.test(x.name)).slice(0, 3)) {
+    for (const c of this.taskCounters(t).filter((x) => !x.zero && /file|byte|size|error/i.test(x.name)).slice(0, 3)) {
       facts.push([c.name, c.value, c.level === "error" ? "text-danger" : c.level === "warning" ? "text-warn" : ""]);
     }
     return facts;
@@ -137,12 +141,33 @@ const tasksPart = {
     this.taskView = v;
     this.klSet({ task_view: v });
   },
+  // Every counter kopia reports, like KopiaUI's table: errors and warnings first (coloured when
+  // not zero), zeros greyed.
   taskCounters(t) {
     const order = { error: 0, warning: 1, notice: 2 };
-    return Object.entries(t.counters || {})
-      .filter(([, c]) => c && c.value)
-      .sort(([a, ca], [b, cb]) => ((order[ca.level] ?? 3) - (order[cb.level] ?? 3)) || a.localeCompare(b))
-      .map(([name, c]) => ({ name, level: c.level || "", value: c.units === "bytes" ? fmtBytes(c.value) : Number(c.value).toLocaleString(NUM_LOCALE) }));
+    return Object.entries((t && t.counters) || {})
+      .filter(([, c]) => c)
+      .map(([name, c]) => ({ name, level: c.value ? (c.level || "") : "", zero: !c.value,
+        value: c.units === "bytes" ? fmtBytes(c.value || 0) : Number(c.value || 0).toLocaleString(NUM_LOCALE) }))
+      .sort((a, b) => ((order[a.level] ?? 3) - (order[b.level] ?? 3)) || (a.zero - b.zero) || a.name.localeCompare(b.name));
+  },
+  // A log line "time level message<TAB>details": the details show muted, like KopiaUI.
+  logMsg(ln) { const i = String(ln).indexOf("\t"); return i < 0 ? ln : ln.slice(0, i); },
+  logDetail(ln) { const i = String(ln).indexOf("\t"); return i < 0 ? "" : " " + ln.slice(i + 1); },
+  // KopiaLens's own command-line jobs: their output, or kopia's full log for the command.
+  setTaskLog(mode) {
+    if (!this.taskSel || this.taskLogMode === mode) return;
+    this.taskLogMode = mode;
+    this.taskLines = [];
+    this.taskCursor = 0;
+    this.taskLogSkipped = false;
+    this.pollTask();
+  },
+  async openTaskById(id) {
+    this.active = "tasks";
+    await this.loadTasks();
+    const t = this.taskRows.find((x) => x.id === id);
+    if (t) await this.openTask(t);
   },
   async stopTask() {
     const t = this.taskSel;

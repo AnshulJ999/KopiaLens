@@ -1,4 +1,4 @@
-{% from "partials/_macros.html" import rulediff %}
+{% from "partials/_macros.html" import rulediff, task_counters %}
 
     <div x-show="showJob" @click.self="closeJob()" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
       <template x-if="jobPanel">
@@ -15,6 +15,7 @@
             </div>
             <button class="kl-btn danger" x-show="jobPanel.state === 'running'" @click="jobStop()">Stop</button>
             <button class="kl-btn quiet" x-show="jobPanel.state === 'running'" @click="closeJob()">Run in background</button>
+            <button class="kl-btn quiet" x-show="!jobPanel.dry" @click="const id = 'job:' + jobPanel.job_id; closeJob(); openTaskById(id)" title="This job in Tasks, with kopia's full log" data-testid="job-open-task">Details</button>
             <button class="kl-btn quiet" x-show="jobPanel.state !== 'running'" @click="closeJob()" title="Close" aria-label="Close">&times;</button>
           </div>
           <div class="px-4 py-3 border-b border-bd flex flex-col gap-1.5">
@@ -34,6 +35,11 @@
               <button class="kl-btn quiet" style="height:22px" @click="openMaint(jobPanel.repo)">Run maintenance…</button>
             </div>
           </div>
+          <template x-if="taskCounters(jobPanel).length">
+            <div class="px-4 py-2 border-b border-bd overflow-auto" style="max-height:30vh" data-testid="job-counters">
+              {{ task_counters('jobPanel') }}
+            </div>
+          </template>
           <template x-if="(jobPanel.results || []).length || jobPanel.held">
             <div class="px-4 py-3 border-b border-bd space-y-2 overflow-auto" style="max-height:40vh">
               <div class="kl-callout flex items-center gap-2" x-show="jobPanel.held">

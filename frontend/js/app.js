@@ -207,6 +207,7 @@ document.addEventListener("alpine:init", () => {
     notifyHook: null, notifyForm: null, notifyProfiles: null, notifyRepo: "", _klSettings: null,
     engine: null, engineDlg: null, engineSrc: {}, _engineTimer: null, _engineSrcTimer: null, _alertSeen: -1, tasksRunning: 0,
     taskRows: [], taskFilter: { repo: "all", status: "all", kind: "all", text: "" }, taskSel: null, taskLines: [], taskCursor: 0,
+    taskLogMode: "own", taskLogSkipped: false,   // a command-line job's own output or kopia's full log
     taskHistoryDays: 0, _tasksSeq: 0, _tasksPoll: null, _taskPoll: null, _tasksSig: "",
     _restoreSeq: 0, _restoreFromSeq: 0, _restoreTimer: null, _restoreTargets: {},
 

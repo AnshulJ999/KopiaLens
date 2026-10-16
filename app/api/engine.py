@@ -230,8 +230,40 @@ def _job_task(j: dict) -> dict:
         "description": (j.get("label") or "") + (" (dry run)" if j.get("dry") else ""),
         "source": "", "status": status, "start": j.get("started") or j.get("created"),
         "end": j.get("finished"), "error": j.get("error") or "", "progress": "",
-        "counters": {}, "done": j.get("done"), "total": j.get("total"),
+        "counters": j.get("counters") or {}, "done": j.get("done"), "total": j.get("total"),
     }
+
+
+_KOPIA_LOG_CHUNK = 2 * 1024 * 1024   # bytes of kopia's own log sent per request
+
+
+def _kopia_log(log_path: str, after: int) -> tuple[list[str], int, bool]:
+    """kopia's own log for a job, from byte offset ``after`` across its files: (lines, new offset,
+    whether earlier lines were skipped). A first read of a big log starts at its last 2 MB."""
+    files = jobs.kopia_log_files({"log_path": log_path}) if log_path else []
+    sizes = [os.path.getsize(f) for f in files if os.path.isfile(f)]
+    total = sum(sizes)
+    skipped = False
+    if after <= 0 and total > _KOPIA_LOG_CHUNK:
+        after, skipped = total - _KOPIA_LOG_CHUNK, True
+    out, pos, want = bytearray(), 0, _KOPIA_LOG_CHUNK
+    for f, size in zip(files, sizes):
+        if after < pos + size and want > 0:
+            with open(f, "rb") as fh:
+                fh.seek(max(0, after - pos))
+                part = fh.read(want)
+            out += part
+            want -= len(part)
+        pos += size
+    text = out.decode("utf-8", errors="replace")
+    end = text.rfind("\n")
+    if end < 0:
+        return [], after, skipped
+    used = len(text[: end + 1].encode("utf-8", errors="replace"))
+    lines = text[:end].split("\n")
+    if skipped and lines:
+        lines = lines[1:]          # the first line was cut in the middle
+    return lines, after + used, skipped
 
 
 @router.get("/tasks")
@@ -269,15 +301,22 @@ def _live(repo: str, tag: str, tid: str):
 
 
 @router.get("/tasks/detail")
-def task_detail(id: str, after: int = 0) -> dict:
+def task_detail(id: str, after: int = 0, log: str = "") -> dict:
+    """A task's details and log lines after cursor ``after``. ``log=kopia`` (KopiaLens's own
+    command-line jobs): kopia's full log instead, where the cursor is a byte offset."""
     origin, repo, tag, tid = _split(id)
     if origin == "job":
-        s = jobs.job_status(tid, after) or jobs.history_status(tid, after)
+        own_after = 10 ** 12 if log == "kopia" else after      # kopia's log asked: none of KopiaLens's lines
+        s = jobs.job_status(tid, own_after) or jobs.history_status(tid, own_after)
         if s is None:
             raise HTTPException(status_code=404, detail="unknown task")
         out = _job_task(s)
+        log_path = s.get("log_path") or ""
         out.update(lines=s.get("lines") or [], cursor=s.get("cursor") or 0, job_id=tid, commands=s.get("commands_text") or "",
-                   log_path=s.get("log_path") or "")
+                   log_path=log_path, kopia_log=bool(jobs.kopia_log_files({"log_path": log_path})) if log_path else False)
+        if log == "kopia":
+            lines, cursor, skipped = _kopia_log(log_path, after)
+            out.update(lines=lines, cursor=cursor, skipped_earlier=skipped)
         return out
     live = _live(repo, tag, tid)
     rec = engine.task_record(repo, live, tag) if live else next(

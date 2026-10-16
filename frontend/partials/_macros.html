@@ -104,3 +104,19 @@
   <button type="button" @click="showSettings=false; openAddRepo()" class="kl-btn">Add repository…</button>
 </div>
 {%- endmacro %}
+
+{#- A task's Counter / Value table (Tasks popup and the job panel): kopia's counters, errors and warnings
+    coloured, like KopiaUI's task page. `t` is a task (Tasks) or a job (job panel). -#}
+{% macro task_counters(t) -%}
+<table class="w-full text-[0.6875rem]" data-testid="task-counters">
+  <thead><tr class="text-muted text-left"><th class="px-2 py-1 font-medium">Counter</th><th class="px-2 py-1 font-medium text-right">Value</th></tr></thead>
+  <tbody>
+    <template x-for="c in taskCounters({{ t }})" :key="c.name">
+      <tr class="border-t border-bd-soft">
+        <td class="px-2 py-1" :class="c.zero ? 'text-faint' : c.level === 'error' ? 'text-danger font-medium' : c.level === 'warning' ? 'text-warn font-medium' : ''" x-text="c.name"></td>
+        <td class="px-2 py-1 text-right num" :class="c.zero ? 'text-faint' : c.level === 'error' ? 'text-danger font-medium' : c.level === 'warning' ? 'text-warn font-medium' : ''" x-text="c.value"></td>
+      </tr>
+    </template>
+  </tbody>
+</table>
+{%- endmacro %}

@@ -148,7 +148,7 @@ def _record_history(job: dict) -> None:
         "elapsed": round(max(0.0, (job["finished"] or job["created"])
                              - (job["started"] or job["created"])), 1),
         "total": job["total"], "done": job["done"], "errors": job["errors"],
-        "log_path": job["log_path"],
+        "log_path": job["log_path"], "counters": job.get("counters") or {},
     }
     try:
         line = json.dumps(rec, ensure_ascii=False)
@@ -426,16 +426,79 @@ def start_job(kind: str, repo: str, params: dict, label: str | None = None,
     return job
 
 
+def kopia_log_files(job: dict) -> list[str]:
+    """kopia's own log files for a job's commands, in run order (``--log-file X.log`` makes kopia
+    write ``X.0.log``)."""
+    stem = job["log_path"][:-4] + "-kopia-"
+    folder = os.path.dirname(stem)
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return []
+    base = os.path.basename(stem)
+    found = [n for n in names if n.startswith(base) and n.endswith(".log")]
+    return [os.path.join(folder, n) for n in sorted(found, key=lambda n: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", n)])]
+
+
+def _run_args(job: dict, index: int) -> list[str]:
+    """Flags added when a job's command runs (not in the pasteable command): kopia's full log in the
+    job's own log folder, and the snapshot as JSON so its numbers can fill the task's counters."""
+    if is_demo(job["repo"]):
+        return []
+    extra = ["--log-file", f"{job['log_path'][:-4]}-kopia-{index}.log"]
+    if job["kind"] == "snapshot_create":
+        extra.append("--json")
+    return extra
+
+
+def _snapshot_counters(job: dict, manifest: dict) -> dict:
+    """The task panel's Counter / Value table for a snapshot taken on the command line: the
+    snapshot's totals plus kopia's run stats (read back from the listing; --json leaves them out)."""
+    summ = (manifest.get("rootEntry") or {}).get("summ") or {}
+    stats = {}
+    path = (manifest.get("source") or {}).get("path") or ""
+    try:
+        from .kopia import kopia as _kopia
+        res = _kopia(job["repo"], ["snapshot", "list", path, "--json"])
+        if res.returncode == 0:
+            hit = next((m for m in json.loads(res.stdout or "[]") if m.get("id") == manifest.get("id")), None)
+            stats = (hit or {}).get("stats") or {}
+    except Exception as exc:  # noqa: BLE001 - the counters are a bonus; the snapshot is already saved
+        log.warning("snapshot stats for %s: %s", manifest.get("id"), exc)
+    def c(value, units="", level=""):
+        return {"value": int(value or 0), "units": units, "level": level}
+    errors = int(stats.get("errorCount") or 0) + int(summ.get("numFailed") or 0)
+    out = {"Size": c(summ.get("size"), "bytes"), "Files": c(summ.get("files")), "Folders": c(summ.get("dirs"))}
+    if stats:
+        out.update({
+            "Hashed files": c(stats.get("nonCachedFiles")), "Cached files": c(stats.get("cachedFiles")),
+            "Excluded files": c(stats.get("excludedFileCount")), "Excluded folders": c(stats.get("excludedDirCount")),
+            "Excluded size": c(stats.get("excludedTotalSize"), "bytes"),
+            "Ignored errors": c(stats.get("ignoredErrorCount"), level="warning"),
+        })
+    out["Errors"] = c(errors, level="error")
+    return out
+
+
 def _stream_one(job: dict, cmd: list[str], lf) -> tuple[int, str]:
     """Run one command, stamping every line into the ring buffer and appending the raw line
     to the job log. Returns (rc, last stderr line) - the last line feeds the error text."""
-    result: dict = {}
+    result: dict = {"extra_args": _run_args(job, job.get("_cmd_index") or 1)}
     job["_stream"] = result  # Stop reaches the live child the moment it exists - a command
     last_err = ""            # that goes quiet before its first line must still be stoppable
     parser = DRY_PARSERS.get(job["kind"]) if job["dry"] else None
     for stream, line in kopia_job_stream(job["repo"], cmd, result):
         if not line:
             continue
+        if job["kind"] == "snapshot_create" and stream == "stdout" and line.startswith("{"):
+            try:                                   # --json: the saved snapshot, one line
+                manifest = json.loads(line)
+                job["snapshot_id"] = manifest.get("id")
+                job["counters"] = _snapshot_counters(job, manifest)
+                lf.write(line + "\n")
+                line = f"Saved snapshot {manifest.get('id')}"
+            except ValueError:
+                pass
         job["buffer"].append(time.strftime("%H:%M:%S ") + line)
         job["line_count"] += 1
         lf.write(line + "\n")
@@ -471,6 +534,7 @@ def _run(job: dict, cmds: list[list[str]]) -> None:
                 if callable(cmd):
                     chunk_rc, last_err = cmd(job, lf)
                 else:
+                    job["_cmd_index"] = i
                     chunk_rc, last_err = _stream_one(job, cmd, lf)
                 job["done"] = i
                 if chunk_rc != 0:
@@ -656,7 +720,7 @@ def maintenance_running(repo: str | None = None) -> bool:
 
 def _serialize(job: dict) -> dict:
     out = {k: v for k, v in job.items()
-           if k not in ("buffer", "_stream", "on_done", "detail")}
+           if k not in ("buffer", "_stream", "on_done", "detail", "_cmd_index")}
     out["elapsed"] = round(max(0.0, (job["finished"] or time.time()) - (job["started"] or job["created"])), 1)
     if job["dry_summary"]:
         out["summary"] = dict(job["dry_summary"])
