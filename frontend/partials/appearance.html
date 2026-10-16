@@ -23,13 +23,16 @@
         <button @click="setDensity(d)" class="h-8 rounded border px-3 text-xs capitalize"
                 :class="density===d ? 'border-fg bg-sel font-medium' : 'border-bd'" x-text="d"></button>
       </template>
+      <button @click="slideDensity(densityPct, true)" class="h-8 rounded border px-3 text-xs" data-testid="density-custom"
+              :class="density==='custom' ? 'border-fg bg-sel font-medium' : 'border-bd'" x-text="density==='custom' ? 'Custom ' + densityPct + '%' : 'Custom'"></button>
     </div>
-    <div class="flex items-center gap-3 mt-2 text-xs">
-      <span class="text-muted">Custom</span>
-      <input type="range" :min="DENSITY_PCT.min" :max="DENSITY_PCT.max" step="2.5" :value="densityPct"
+    <div x-show="density==='custom'" x-cloak class="flex items-center gap-3 mt-2 text-xs">
+      <span class="tabular-nums text-muted" x-text="DENSITY_PCT.min + '%'"></span>
+      <input type="range" :min="DENSITY_PCT.min" :max="DENSITY_PCT.max" step="1" :value="densityPct"
              @input="slideDensity($event.target.value, false)" @change="slideDensity($event.target.value, true)"
-             class="w-48" aria-label="Custom density">
-      <span class="tabular-nums w-10" :class="density==='custom' ? 'font-medium' : 'text-muted'" x-text="densityPct + '%'"></span>
+             class="flex-1 min-w-0" aria-label="Custom density">
+      <span class="tabular-nums text-muted" x-text="DENSITY_PCT.max + '%'"></span>
+      <span class="tabular-nums w-10 font-medium text-right" x-text="densityPct + '%'"></span>
     </div>
     <p class="text-[0.6875rem] text-muted mt-1">Row height and text size. Independent of theme.</p>
   </div>
@@ -51,6 +54,11 @@
         <option value="all">Every column</option>
       </select></div>
     <p class="text-[0.6875rem] text-muted mt-1">With "Sorted column only", hovering a header still shows its arrow.</p>
+  </div>
+  <div>
+    <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Tab order</span>
+      <button class="kl-btn" @click="resetTabOrder()" :disabled="!tabOrder.length" data-testid="tab-order-reset">Reset to default</button></div>
+    <p class="text-[0.6875rem] text-muted mt-1">Drag a tab to move it. Your order is saved.</p>
   </div>
   <div>
     <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Table alignment</span>

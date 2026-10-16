@@ -400,6 +400,11 @@ def _require_free(repo: str) -> None:
         raise ValueError(f"repo {repo} is being indexed right now - wait for the pass to finish")
 
 
+def default_short_name(rid: str, kind: str) -> str:
+    """The chip label a new record gets when none is given; stored once, never changed afterwards."""
+    return "BZ" if kind == "backblaze" else f"Repo {rid}"
+
+
 def add_record(rec: dict) -> dict:
     """Append one validated record and persist. `id` may be blank (the allocator fills it; the
     connect flow reserves one up front with `reserve_id()`)."""
@@ -413,7 +418,7 @@ def add_record(rec: dict) -> dict:
         rec["id"] = rid
         rec.setdefault("kind", "kopia")
         rec.setdefault("name", rec.get("name") or f"Repo {rid}")
-        rec.setdefault("short_name", "")
+        rec["short_name"] = str(rec.get("short_name") or "").strip() or default_short_name(rid, rec["kind"])
         rec.setdefault("counts_as_backup", True)
         rec.setdefault("source", "connected")
         rec.setdefault("created", time.time())
@@ -439,7 +444,7 @@ def add_backblaze() -> dict:
         if rec is not None:
             return rec
         rec = {"id": BACKBLAZE_ID, "kind": "backblaze", "name": "Backblaze Personal Backup",
-               "short_name": "", "counts_as_backup": True, "source": "detected",
+               "short_name": default_short_name(BACKBLAZE_ID, "backblaze"), "counts_as_backup": True, "source": "detected",
                "created": time.time()}
         config.RECORDS.setdefault("repos", []).append(rec)
         try:

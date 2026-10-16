@@ -218,6 +218,24 @@ def test_save_keeps_rule_order_appends_and_removes_in_place(wired, monkeypatch):
     assert out["stored_rules"] == ["zeta", "alpha", "mid"] and out["stored_matches"] is True
 
 
+def test_save_writes_the_typed_order_and_refuses_an_order_naming_other_rules(wired, monkeypatch):
+    """Edit as text: kopia reads rules top to bottom ("!" only undoes a rule above it), so the
+    typed order is what gets written, not the stored order with additions appended."""
+    store = {"(global)": DEFINED["(global)"], SRC: {"files": {"ignore": ["!important.log", "zeta"]}}}
+    monkeypatch.setattr(api, "load_defined_policies", lambda repo: {"policies": store})
+    monkeypatch.setattr(api, "refresh_defined_policies", lambda repo, force=False: ({"policies": store}, True))
+    seen = _capture_write(monkeypatch, store)
+    typed = ["*.log", "!important.log", "zeta"]
+    d = api.diff(api.DiffBody(repo="1", target=SRC, changes=api.Changes(add=["*.log"], order=typed), price=False))
+    assert d["resulting_rules"] == typed and d["order_changed"] is True and d["command"] == ""
+    out = api.save(api.SaveBody(repo="1", target=SRC, changes=api.Changes(add=["*.log"], order=typed), confirmed=True))
+    assert seen["policy"]["files"]["ignore"] == typed
+    assert out["stored_matches"] is True
+    with pytest.raises(api.HTTPException) as e:
+        api.diff(api.DiffBody(repo="1", target=SRC, changes=api.Changes(order=["zeta", "other"]), price=False))
+    assert e.value.status_code == 400
+
+
 def test_save_global_and_new_policy_and_last_rule_removed(wired, monkeypatch):
     store = {"(global)": {"files": {"ignore": ["b", "a"]}, "retention": {"keepDaily": 7}}}
     monkeypatch.setattr(api, "load_defined_policies", lambda repo: {"policies": store})

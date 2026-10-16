@@ -206,7 +206,7 @@ def _write_step(repo: str, w: dict):
         try:
             r = write_rules(repo, target, Changes(add=w.get("add") or [], remove=w.get("remove") or [],
                                                   delete_policy=bool(w.get("delete_policy")),
-                                                  fields=w.get("fields") or {}),
+                                                  fields=w.get("fields") or {}, order=w.get("order")),
                             log=lambda text: jobs.say(job, lf, text))
         except _HTTPException as exc:
             jobs.say(job, lf, f"Not added to {label}: {exc.detail}")

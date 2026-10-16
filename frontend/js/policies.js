@@ -199,8 +199,12 @@ const policiesPart = {
         const p = (this.polAddPrices || {})[this.polSel + "|" + pat];
         return { pattern: pat, files: p ? p.files : null, bytes: p ? p.bytes : null, dirs: p ? p.dirs : null, error: p ? p.error : null, state: "staged-add" };
       });
-      return [...adds, ...own];
+      if (!st.order) return [...adds, ...own];
+      // Typed order ("Edit as text"): the rules as they'll be saved, removed ones after them.
+      const by = Object.fromEntries([...own, ...adds].map((r) => [r.pattern, r]));
+      return [...st.order.map((p) => by[p]).filter(Boolean), ...own.filter((r) => r.state === "staged-remove")];
     },
+    polOrderStaged() { const st = this.polStaged[this.polSel]; return !!(st && st.order); },
 
     polInheritedRules() {
       return this.polDetail ? (this.polDetail.rules.inherited || []) : [];
@@ -385,7 +389,7 @@ const policiesPart = {
 
     // ---------- staging ----------
     polStagedFor(target) {
-      if (!this.polStaged[target]) this.polStaged[target] = { add: [], remove: [], removePolicy: false, fields: {} };
+      if (!this.polStaged[target]) this.polStaged[target] = { add: [], remove: [], removePolicy: false, fields: {}, order: null };
       return this.polStaged[target];
     },
     polStageAdd() {
@@ -397,6 +401,7 @@ const policiesPart = {
       // removal - staging add+remove of the same pattern is a contradiction).
       if (st.add.includes(pat) || this.polOwnPatterns().includes(pat)) return;
       st.add.push(pat);
+      if (st.order) st.order.push(pat);
       this.polAddText = ""; this.polAddPrice = null;
       this.polPriceStaged(this.polSel, pat);
       this.polResolve();
@@ -408,16 +413,21 @@ const policiesPart = {
       if (!this.polOwnPatterns().includes(pat)) return;
       const st = this.polStagedFor(this.polSel);
       st.remove.push(pat);
+      if (st.order) st.order = st.order.filter((p) => p !== pat);
       this.polResolve();
     },
     // The own rules as one text box, one rule per line, like KopiaUI. Apply turns the edit into
-    // staged adds and removes, so it goes through the same review as single rules.
+    // staged adds and removes, plus the typed order when it differs (kopia reads rules top to
+    // bottom), so it goes through the same review as single rules.
     polTextOpen() {
       if (!this.polDetail) return;
-      const rows = this.polRuleRows().filter((r) => r.state !== "staged-remove");
-      const own = rows.filter((r) => r.state === "own").map((r) => r.pattern);
-      const adds = rows.filter((r) => r.state === "staged-add").map((r) => r.pattern);
-      this.polText = { target: this.polSel, text: [...own, ...adds].join("\n") };
+      this.polText = { target: this.polSel, text: this._polRuleOrder(this.polStagedFor(this.polSel)).join("\n") };
+    },
+    // The rules a save would leave, in order: the typed order, else stored order with additions last.
+    _polRuleOrder(st) {
+      if (st.order) return [...st.order];
+      const own = this.polOwnPatterns().filter((p) => !st.remove.includes(p));
+      return [...own, ...st.add.filter((p) => !own.includes(p))];
     },
     polTextShown() { return !!(this.polText && this.polText.target === this.polSel); },
     polTextApply() {
@@ -428,6 +438,8 @@ const policiesPart = {
       const before = new Set(st.add);
       st.add = lines.filter((p) => !own.includes(p));
       st.remove = own.filter((p) => !lines.includes(p));
+      st.order = null;
+      st.order = JSON.stringify(this._polRuleOrder(st)) === JSON.stringify(lines) ? null : lines;
       for (const p of st.add) if (!before.has(p)) this.polPriceStaged(this.polSel, p);
       this.polText = null;
       this.polResolve();
@@ -439,15 +451,19 @@ const policiesPart = {
     polUndo(target, kind, pat) {
       const st = this.polStaged[target];
       if (!st) return;
-      if (kind === "add") st.add = st.add.filter((p) => p !== pat);
-      if (kind === "remove") st.remove = st.remove.filter((p) => p !== pat);
+      if (kind === "add") { st.add = st.add.filter((p) => p !== pat); if (st.order) st.order = st.order.filter((p) => p !== pat); }
+      if (kind === "remove") {
+        st.remove = st.remove.filter((p) => p !== pat);
+        if (st.order) st.order.splice(Math.min(this.polOwnPatterns().indexOf(pat), st.order.length), 0, pat);
+      }
       if (kind === "policy") st.removePolicy = false;
+      if (kind === "order") st.order = null;
       this.polResolve(target);
     },
     polStageCount() {
       let n = 0;
       for (const st of Object.values(this.polStaged)) {
-        n += (st.add || []).length + (st.remove || []).length + (st.removePolicy ? 1 : 0) + Object.keys(st.fields || {}).length;
+        n += (st.add || []).length + (st.remove || []).length + (st.removePolicy ? 1 : 0) + Object.keys(st.fields || {}).length + (st.order ? 1 : 0);
       }
       return n;
     },
@@ -455,7 +471,7 @@ const policiesPart = {
 
     polHasStaged(target) {
       const st = this.polStaged[target];
-      return !!(st && ((st.add || []).length || (st.remove || []).length || st.removePolicy || Object.keys(st.fields || {}).length));
+      return !!(st && ((st.add || []).length || (st.remove || []).length || st.removePolicy || Object.keys(st.fields || {}).length || st.order));
     },
 
     // ---------- add-box live pricing ----------
@@ -492,7 +508,7 @@ const policiesPart = {
       for (const [target, st] of Object.entries(this.polStaged)) {
         if (only && !only.includes(target)) continue;
         if (this.polHasStaged(target)) {
-          out.push({ target, add: st.add || [], remove: st.remove || [], delete_policy: !!st.removePolicy, fields: st.fields || {} });
+          out.push({ target, add: st.add || [], remove: st.remove || [], delete_policy: !!st.removePolicy, fields: st.fields || {}, order: st.order || null });
         }
       }
       return out;
@@ -512,7 +528,7 @@ const policiesPart = {
       const groups = await Promise.all(changes.map(async (c) => {
         try {
           const r = await getJson("/api/policies/diff", { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ repo: this.repo, target: c.target, changes: { add: c.add, remove: c.remove, delete_policy: c.delete_policy, fields: c.fields } }) });
+            body: JSON.stringify({ repo: this.repo, target: c.target, changes: { add: c.add, remove: c.remove, delete_policy: c.delete_policy, fields: c.fields, order: c.order } }) });
           return { ...r, staged: c };
         } catch (e) {
           return { target: c.target, error: e.message || String(e), staged: c };
@@ -529,7 +545,7 @@ const policiesPart = {
       const changes = this.polChanges(this.polDiffOnly);
       if (!changes.length) { this.showPolDiff = false; return; }
       if (this.polDiffErrors().length) return;
-      const nRules = changes.reduce((n, c) => n + c.add.length + c.remove.length + (c.delete_policy ? 1 : 0) + Object.keys(c.fields).length, 0);
+      const nRules = changes.reduce((n, c) => n + c.add.length + c.remove.length + (c.delete_policy ? 1 : 0) + Object.keys(c.fields).length + (c.order ? 1 : 0), 0);
       const ok = await this.klConfirm({
         title: "Save policy changes?",
         facts: [
@@ -540,7 +556,7 @@ const policiesPart = {
         command: "", confirmLabel: "Save changes", danger: false,
       });
       if (!ok) return;
-      const writes = changes.map((c) => ({ target: c.target, add: c.add, remove: c.remove, delete_policy: c.delete_policy, fields: c.fields }));
+      const writes = changes.map((c) => ({ target: c.target, add: c.add, remove: c.remove, delete_policy: c.delete_policy, fields: c.fields, order: c.order }));
       const started = await this.startJob("policy_write", { writes }, `${changes.length} polic${changes.length === 1 ? "y" : "ies"}`);
       if (!started) return;
       this.showPolDiff = false;

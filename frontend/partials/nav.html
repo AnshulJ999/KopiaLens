@@ -202,9 +202,21 @@
     <!-- Tabs, then status chips. Chips never break inside; when there is no room the whole group
          wraps to a second row (zoom, big text, many repos) instead of running off the edge. -->
     <nav class="shrink-0 border-b border-bd-soft bg-surface px-3 py-1.5 flex flex-wrap items-center gap-1">
-      <template x-for="t in currentTabs()" :key="t.id">
-        <button class="tab" @click="active=t.id; activate()" :class="(active===t.id || (t.id==='snapshots' && active==='simulate')) ? 'bg-sel font-medium' : 'hover:bg-head'" x-text="t.label + (t.id === 'tasks' && tasksRunning ? ' (' + tasksRunning + ')' : '')"></button>
-      </template>
+      <!-- Drag a tab to reorder (kopia repositories); right-click for Reset tab order. -->
+      <div class="relative flex flex-wrap items-center gap-1" @click.outside="tabMenu = false" @contextmenu.prevent="if (repoKind === 'kopia') tabMenu = !tabMenu">
+        <template x-for="t in currentTabs()" :key="t.id">
+          <button class="tab" @click="active=t.id; activate()" :draggable="repoKind === 'kopia' ? 'true' : 'false'"
+                  @dragstart="tabDrag = t.id; $event.dataTransfer.effectAllowed = 'move'" @dragend="tabDrag = ''; tabOver = ''"
+                  @dragover.prevent="if (tabDrag) tabOver = t.id" @drop.prevent="tabDrop(t.id)"
+                  :class="[(active===t.id || (t.id==='snapshots' && active==='simulate')) ? 'bg-sel font-medium' : 'hover:bg-head',
+                           tabDrag === t.id ? 'opacity-50' : '', tabOver === t.id && tabDrag && tabDrag !== t.id ? 'ring-1 ring-fg' : '']"
+                  x-text="t.label + (t.id === 'tasks' && tasksRunning ? ' (' + tasksRunning + ')' : '')"></button>
+        </template>
+        <div x-show="tabMenu" x-cloak role="menu" class="kl-menu" style="left:0;right:auto" data-testid="tab-menu">
+          <div class="hd">Drag a tab to move it</div>
+          <button type="button" @click="resetTabOrder()" :disabled="!tabOrder.length" class="disabled:opacity-50">Reset tab order</button>
+        </div>
+      </div>
       <div class="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs pr-2 min-w-0 max-w-full">
         <span x-show="indexPause.paused" class="rounded px-1.5 py-0.5 border border-warn-bd text-warn whitespace-nowrap"
               :title="pauseText() + '. Automatic indexing waits; Index still runs when you start it.'">

@@ -18,10 +18,6 @@ const repoWhereOf = (type, c) => {
     default: return "";
   }
 };
-const REPO_SHORT_TYPES = {
-  filesystem: "Folder", sftp: "SFTP", s3: "S3", b2: "B2", gcs: "GCS", azureBlob: "Azure",
-  webdav: "WebDAV", rclone: "Rclone", gdrive: "Drive", server: "Server",
-};
 const REPO_TYPE_LABELS = {
   filesystem: "Folder", sftp: "SFTP", s3: "S3", b2: "Backblaze B2", gcs: "Google Cloud Storage",
   azureBlob: "Azure", webdav: "WebDAV", rclone: "Rclone", gdrive: "Google Drive", server: "Kopia server",
@@ -128,18 +124,6 @@ const reposPart = {
       for (let i = 2; taken.has(name); i++) name = `${tail || fallback} ${i}`;
       return name;
     },
-    // Suggested chip label: the folder or bucket name when it fits in 12 characters, else the storage type.
-    cxDefaultShort(type, config) {
-      // A URL's port is not a name: "https://nas:51515" suggests "nas".
-      const where = repoWhereOf(type, config).replace(/[\\/:]+$/, "").replace(/:\d+$/, "");
-      const tail = where.split(/[\\/:]/).filter(Boolean).pop() || "";
-      const base = tail && tail.length <= 12 ? tail : (REPO_SHORT_TYPES[type] || "");
-      if (!base) return "";
-      const taken = new Set((this.repos || []).map((r) => r.short_name).concat(((this.cx && this.cx.added) || []).map((a) => a.short_name)));
-      let label = base;
-      for (let i = 2; taken.has(label); i++) label = `${base.slice(0, 12 - String(i).length - 1)} ${i}`;
-      return label;
-    },
     async cxUseSelected() {
       const cx = this.cx;
       const picked = this.cxCandidates().filter((c) => cx.picked[c.config_file]);
@@ -155,7 +139,7 @@ const reposPart = {
       for (const c of chosen) {
         try {
           const name = this.cxDefaultName(c.type, c.config, c.filename.replace(/\.config$/, ""));
-          const body = { config_file: c.config_file, name, short_name: this.cxDefaultShort(c.type, c.config) };
+          const body = { config_file: c.config_file, name };   // the server names it "Repo <id>"
           const r = await this._cxAdd("/api/setup/attach", body);
           if (!r) continue;
           cx.added.push(this._cxEntry(r.repo));
@@ -228,8 +212,7 @@ const reposPart = {
       cx.busy = true; cx.error = "";
       try {
         const url = cx.mode === "create" ? "/api/setup/create" : "/api/setup/connect";
-        const short_name = this.cxDefaultShort(spec.key === "azure" ? "azureBlob" : spec.key, cfg);
-        const r = await this._cxAdd(url, { provider: spec.key, fields, password: cx.password, name, short_name,
+        const r = await this._cxAdd(url, { provider: spec.key, fields, password: cx.password, name,
                                            config_location: cx.cfgLoc, config_folder: cx.cfgFolder.trim() });
         if (!r) { cx.busy = false; return; }
         cx.added.push({ ...this._cxEntry(r.repo), managed: true });

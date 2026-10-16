@@ -115,6 +115,7 @@ const settingsPart = {
       this.retentionChipColor = /^#[0-9a-f]{6}$/i.test(kl.retention_chip_color || "") ? kl.retention_chip_color : "#2563eb";
       this.tableAlign = ALIGNS.some((a) => a[0] === kl.table_align) ? kl.table_align : "auto";
       TABLE_ALIGN = this.tableAlign;
+      this.tabOrder = Array.isArray(kl.tab_order) ? kl.tab_order.filter((x) => typeof x === "string") : [];
       this.dashPageSize = ["25", "50", "100"].includes(String(kl.dashboard_page_size)) ? String(kl.dashboard_page_size) : "all";
       this.applyFavicon();
     },

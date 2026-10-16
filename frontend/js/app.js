@@ -8,21 +8,44 @@ document.addEventListener("alpine:init", () => {
   Alpine.data("kopiaLens", () => {
     const core = {
     repos: [], repo: "1", repoKind: "kopia",
+    // The default order; people drag tabs into their own (tab_order, Settings > Appearance resets it).
     tabs: [
       { id: "dashboard", label: "Dashboard" }, { id: "snapshots", label: "Snapshots" },
       { id: "tree", label: "Tree" }, { id: "search", label: "Search" },
-      { id: "churn", label: "Churn" },
-      { id: "stats", label: "Repository" }, { id: "logs", label: "Logs" },
-      { id: "excluded", label: "Excluded" },
-      { id: "policies", label: "Policies" }, { id: "tasks", label: "Tasks" },
+      { id: "churn", label: "Churn" }, { id: "excluded", label: "Excluded" },
+      { id: "stats", label: "Repository" }, { id: "policies", label: "Policies" },
+      { id: "tasks", label: "Tasks" }, { id: "logs", label: "Logs" },
     ],
+    tabOrder: [], tabDrag: "", tabOver: "", tabMenu: false,
     // Reached through a kopia server: kopia refuses the reads an index needs, so only the views
     // that work straight from kopia are offered.
     serverTabs: [
       { id: "snapshots", label: "Snapshots" }, { id: "policies", label: "Policies" }, { id: "tasks", label: "Tasks" }, { id: "logs", label: "Logs" },
     ],
     active: "dashboard",
-    currentTabs() { return this.repoKind === "backblaze" ? this.bzTabs : (this.repoKind === "server" ? this.serverTabs : this.tabs); },
+    currentTabs() { return this.repoKind === "backblaze" ? this.bzTabs : (this.repoKind === "server" ? this.serverTabs : this.orderedTabs()); },
+    orderedTabs() {
+      const at = (id) => { const i = this.tabOrder.indexOf(id); return i < 0 ? 1000 + this.tabs.findIndex((t) => t.id === id) : i; };
+      return [...this.tabs].sort((a, b) => at(a.id) - at(b.id));
+    },
+    // Drag a tab onto another to put it there; the order is saved (tab_order).
+    tabDrop(target) {
+      const from = this.tabDrag;
+      this.tabDrag = ""; this.tabOver = "";
+      if (!from || from === target || this.repoKind !== "kopia") return;
+      const ids = this.orderedTabs().map((t) => t.id).filter((id) => id !== from);
+      const at = ids.indexOf(target);
+      const after = this.orderedTabs().findIndex((t) => t.id === from) < this.orderedTabs().findIndex((t) => t.id === target);
+      ids.splice(after ? at + 1 : at, 0, from);
+      this.tabOrder = ids;
+      this.klSet({ tab_order: ids });
+    },
+    resetTabOrder() {
+      this.tabMenu = false;
+      this.tabOrder = [];
+      this.klSet({ tab_order: [] });
+      this.klNotify("Tab order reset");
+    },
     kindOf(id) {
       const r = (this.repos || []).find((x) => x.id === id) || {};
       if (r.kind === "backblaze") return "backblaze";
@@ -243,6 +266,7 @@ document.addEventListener("alpine:init", () => {
       if (this.repoMenu) { this.repoMenu = false; return; }
       if (this.chipMenu) { this.chipMenu = ""; return; }
       if (this.timeMenu) { this.timeMenu = false; return; }
+      if (this.tabMenu) { this.tabMenu = false; return; }
       if (this.tblLayout) { this.tblLayout = null; return; }
       if (this.repoDlg) { this.repoDlg = null; return; }
       if (this.engineDlg) { this.engineDlg = null; return; }

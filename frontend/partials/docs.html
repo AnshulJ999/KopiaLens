@@ -57,7 +57,7 @@
                 <div class="text-xs text-muted mb-2" x-text="docsResults().length ? countOf(docsResults().length, 'result') : 'No results for “' + docs.query.trim() + '”'"></div>
                 <template x-for="(r, i) in docsResults()" :key="i">
                   <button class="block w-full text-left rounded px-2 py-1.5 hover:bg-head" @click="docsGo(r.page, r.section)">
-                    <div class="text-sm font-medium" x-text="r.title"></div>
+                    <div class="text-sm font-medium"><span x-text="r.title"></span><span x-show="r.close" class="ml-2 text-xs font-normal text-muted">close match</span></div>
                     <div class="text-xs text-muted" x-text="r.snippet"></div>
                   </button>
                 </template>

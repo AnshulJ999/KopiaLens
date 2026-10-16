@@ -4,7 +4,8 @@
               <template x-if="wm">
                 <div class="space-y-4">
                   <div>
-                    <div class="flex items-center justify-between gap-3"><span>All repositories</span>
+                    <div class="flex items-center justify-between gap-3"><span class="flex items-center gap-1.5">All repositories
+                      <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('settings', 'permissions')" @keydown.enter.prevent="openDocs('settings', 'permissions')" title="What each level allows">?</span></span>
                       <select :value="wm.global" @change="wmSet(null, $event.target.value)" class="fld border border-bd bg-surface2 w-48" data-testid="wm-global">
                         <template x-for="m in wm.modes" :key="m"><option :value="m" x-text="wm.labels[m]" :selected="m === wm.global"></option></template>
                       </select></div>

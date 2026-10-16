@@ -116,6 +116,25 @@ class Changes(BaseModel):
     remove: list[str] = Field(default_factory=list)
     delete_policy: bool = False
     fields: dict = Field(default_factory=dict)   # field JSON path -> value (None = unset)
+    # The whole rule list in the order to save ("Edit as text"); None keeps the stored order with
+    # additions appended. Order matters to kopia: a "!" rule only undoes a rule above it.
+    order: list[str] | None = None
+
+
+def _resulting_rules(current: list[str], add: list[str], remove: list[str], order: list[str] | None) -> list[str]:
+    """The rules a change leaves: removals taken out in place, additions appended, then ``order``
+    (when given) puts the same rules in its order. An order naming other rules is refused."""
+    gone = set(remove)
+    rules = [p for p in current if p not in gone]
+    for p in add:
+        if p not in rules:
+            rules.append(p)
+    if order is None:
+        return rules
+    ordered = list(dict.fromkeys(order))
+    if sorted(ordered) != sorted(rules):
+        raise ValueError("the rule order doesn't match the rules being saved")
+    return ordered
 
 
 class DiffBody(BaseModel):
@@ -295,10 +314,7 @@ def _retention_impact(repo: str, defined_before: dict, defined_after: dict, key:
 def _draft_policy(defined: dict, key: str, changes: Changes) -> dict:
     pol = policyresolve.apply_fields(defined.get(key) or {}, changes.fields)
     current = list(((defined.get(key) or {}).get("files") or {}).get("ignore") or [])
-    rules = [p for p in current if p not in set(changes.remove)]
-    for p in changes.add:
-        if p not in rules:
-            rules.append(p)
+    rules = _resulting_rules(current, changes.add, changes.remove, changes.order)
     files = dict(pol.get("files") or {})
     if rules:
         files["ignore"] = rules
@@ -669,7 +685,8 @@ def exclusion_variants(body: VariantsBody) -> dict:
 def _validate_changes(repo: str, target: str, changes: Changes,
                       force: bool = False) -> tuple[list[str], list[str], dict]:
     """Shared diff/save validation. Returns (current_rules, resulting_rules, defined_policies).
-    Resulting order: current rules with removals taken out in place, additions appended."""
+    Resulting order: current rules with removals taken out in place, additions appended, unless
+    ``changes.order`` gives the whole list's order."""
     defined, _fresh = refresh_defined_policies(repo, force=force)
     defined_policies = defined.get("policies") or {}
     current = _own_rules(defined_policies, _GLOBAL_TARGET if _is_global(target) else target)
@@ -677,7 +694,7 @@ def _validate_changes(repo: str, target: str, changes: Changes,
     remove = list(dict.fromkeys(changes.remove))
 
     if changes.delete_policy:
-        if add or remove or changes.fields:
+        if add or remove or changes.fields or changes.order is not None:
             raise HTTPException(status_code=400,
                                 detail="delete_policy cannot be combined with other changes")
         if not current and not defined_policies.get(_GLOBAL_TARGET if _is_global(target) else target):
@@ -697,10 +714,10 @@ def _validate_changes(repo: str, target: str, changes: Changes,
             detail=f"patterns not defined by this target's own policy: {missing}. "
                    "Rules inherited from the global policy are removed there (or by defining "
                    "own rules first), not on the source.")
-    resulting = [p for p in current if p not in set(remove)]
-    for p in add:
-        if p not in resulting:
-            resulting.append(p)
+    try:
+        resulting = _resulting_rules(current, add, remove, changes.order)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return current, resulting, defined_policies
 
 
@@ -710,6 +727,8 @@ def _build_diff(repo: str, target: str, changes: Changes, force: bool = False,
     add = list(dict.fromkeys(changes.add))
     remove = list(dict.fromkeys(changes.remove))
     priced = []
+    order_changed = (changes.order is not None and not changes.delete_policy
+                     and resulting != _resulting_rules(current, add, remove, None))
     if price and not changes.delete_policy and (add or remove):
         priced = _price_for_target(repo, target, add + remove, limit=_EXAMPLES_MAX)["results"]
     by_pattern = {r["pattern"]: r for r in priced}
@@ -718,7 +737,7 @@ def _build_diff(repo: str, target: str, changes: Changes, force: bool = False,
         "removed": [by_pattern.get(p) for p in remove],
     }
     target_key = _GLOBAL_TARGET if _is_global(target) else target
-    will_create = (not changes.delete_policy and (add or remove or changes.fields)
+    will_create = (not changes.delete_policy and (add or remove or changes.fields or order_changed)
                    and target_key not in defined_policies)
     field_changes, errors, retention = [], [], []
     if changes.fields and not changes.delete_policy:
@@ -744,8 +763,8 @@ def _build_diff(repo: str, target: str, changes: Changes, force: bool = False,
     if changes.delete_policy:
         command = policy_delete_command(repo, None if _is_global(target) else target,
                                         global_=_is_global(target))
-    elif changes.fields:
-        command = None  # a whole-policy import from a temporary file; nothing pasteable
+    elif changes.fields or order_changed or not (add or remove):
+        command = None  # a whole-policy import from a temporary file (or nothing to change); nothing pasteable
     else:
         command = policy_set_command(repo, None if _is_global(target) else target,
                                      global_=_is_global(target),
@@ -753,7 +772,7 @@ def _build_diff(repo: str, target: str, changes: Changes, force: bool = False,
     return {
         "repo": repo, "target": target,
         "current_rules": current, "resulting_rules": resulting,
-        "added": add, "removed": remove,
+        "added": add, "removed": remove, "order_changed": order_changed,
         "field_changes": field_changes, "errors": errors, "retention_impact": retention,
         "impact": impact, "will_create_policy": will_create,
         "command": _cmd_text(command) if command else "",
@@ -822,12 +841,13 @@ def _write_rules(repo: str, target: str, changes: Changes, log=None) -> dict:
         if changes.fields:
             n = len(changes.fields)
             say(f"Writing {n} setting{'' if n == 1 else 's'} to {label}")
-        if changes.add or changes.remove:
+        if changes.add or changes.remove or diff_payload["order_changed"]:
             say(f"Writing {len(diff_payload['resulting_rules'])} rules to {label}"
-                f" (+{len(diff_payload['added'])} -{len(diff_payload['removed'])})")
+                f" (+{len(diff_payload['added'])} -{len(diff_payload['removed'])}"
+                f"{', new order' if diff_payload['order_changed'] else ''})")
         policy = _draft_policy(defined_policies, target_key,
                                Changes(add=diff_payload["added"], remove=diff_payload["removed"],
-                                       fields=changes.fields))
+                                       fields=changes.fields, order=changes.order))
         res = policy_write_rules_execute(repo, None if is_global else target, is_global, policy,
                                          add=len(diff_payload["added"]),
                                          remove=len(diff_payload["removed"]))

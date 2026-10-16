@@ -27,7 +27,7 @@ const policyEditPart = {
 
     polStagedChanges(target) {
       const st = this.polStaged[target] || {};
-      return { add: st.add || [], remove: st.remove || [], delete_policy: !!st.removePolicy, fields: st.fields || {} };
+      return { add: st.add || [], remove: st.remove || [], delete_policy: !!st.removePolicy, fields: st.fields || {}, order: st.order || null };
     },
 
     polResolve(target, immediate = false) {

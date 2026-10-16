@@ -15,6 +15,8 @@ const SETTINGS_DOCS = {
   about: ["settings", "about"],
 };
 
+let _docsRes = null;   // the last search's results (docsResults runs several times per render)
+
 const docsPart = {
 
     async _docsData() {
@@ -109,20 +111,26 @@ const docsPart = {
       e.preventDefault();
       this.docsGo(a.dataset.doc || this.docs.page, a.dataset.sec || "");
     },
-    // Search across every page: each heading's section is one result; every word must appear.
+    // Search across every page; each heading's section is one result. Best first: the exact phrase,
+    // then every word in any order, then close matches (a word's start, or one or two letters off).
     docsResults() {
       const q = this.docs && this.docs.query.trim().toLowerCase();
       if (!q || !this._docsLoaded) return [];
+      const src = Alpine.raw(this._docsLoaded);
+      if (_docsRes && _docsRes.q === q && _docsRes.src === src) return _docsRes.out;
       const words = q.split(/\s+/);
-      const out = [];
+      const hits = [];
       for (const [page, p] of Object.entries(this._docsLoaded.pages)) {
         let sec = { id: "", title: p.title, text: [] };
         const flush = () => {
           const text = sec.text.join(" ").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[#*`>|_]+|-{3,}/g, " ").replace(/\s+/g, " ").trim();
           const hay = (sec.title + " " + text).toLowerCase();
-          if (words.every((w) => hay.includes(w))) {
-            const at = Math.max(0, text.toLowerCase().indexOf(words[0]) - 60);
-            out.push({ page, section: sec.id, title: p.title + (sec.id ? " › " + sec.title : ""), snippet: (at ? "…" : "") + text.slice(at, at + 160) });
+          const m = docsMatch(hay, q, words);
+          if (m.tier) {
+            const lower = text.toLowerCase();
+            const at = Math.max(0, lower.indexOf(m.at) - 60);
+            hits.push({ page, section: sec.id, title: p.title + (sec.id ? " › " + sec.title : ""), close: m.tier === 1,
+              snippet: (at ? "…" : "") + text.slice(at, at + 160), rank: m.tier * 2 + (docsMatch(sec.title.toLowerCase(), q, words).tier >= m.tier ? 1 : 0), n: hits.length });
           }
         };
         for (const line of p.md.split("\n")) {
@@ -130,8 +138,42 @@ const docsPart = {
           if (h) { flush(); sec = { id: docSlug(h[1]), title: h[1].trim(), text: [] }; } else if (!/^# /.test(line)) sec.text.push(line);
         }
         flush();
-        if (out.length >= 50) break;
       }
-      return out.slice(0, 50);
+      const out = hits.sort((x, y) => y.rank - x.rank || x.n - y.n).slice(0, 50);
+      _docsRes = { q, src, out };
+      return out;
     },
 };
+
+// How a section matches a docs search: tier 3 = the exact phrase, 2 = every word, 1 = every word
+// closely (a word starting with it, or one letter off; two for words of 7+ letters), 0 = no match.
+// `at` is the text to centre the snippet on.
+function docsMatch(hay, q, words) {
+  if (hay.includes(q)) return { tier: 3, at: q };
+  if (words.every((w) => hay.includes(w))) return { tier: 2, at: words[0] };
+  const tokens = hay.match(/[a-z0-9]+/g) || [];
+  let at = "";
+  for (const w of words) {
+    if (hay.includes(w)) { at = at || w; continue; }
+    const t = tokens.find((x) => (w.length >= 3 && x.startsWith(w)) || _within(x, w, w.length >= 7 ? 2 : 1));
+    if (!t || w.length < 3) return { tier: 0, at: "" };
+    at = at || t;
+  }
+  return { tier: 1, at };
+}
+// Edit distance between a and b is at most k (insert, delete, change one letter).
+function _within(a, b, k) {
+  if (Math.abs(a.length - b.length) > k) return false;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      best = Math.min(best, cur[j]);
+    }
+    if (best > k) return false;
+    prev = cur;
+  }
+  return prev[b.length] <= k;
+}

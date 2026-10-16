@@ -89,7 +89,7 @@ const themePart = {
 
   // The Settings slider: any size between the presets. Saved once the slider is let go.
   slideDensity(v, save) {
-    this.densityPct = Math.min(this.DENSITY_PCT.max, Math.max(this.DENSITY_PCT.min, Number(v) || 100));
+    this.densityPct = Math.round(Math.min(this.DENSITY_PCT.max, Math.max(this.DENSITY_PCT.min, Number(v) || 100)));
     this.density = "custom";
     this._applyDensity();
     if (save) {

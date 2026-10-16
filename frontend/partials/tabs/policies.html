@@ -139,6 +139,11 @@
                     </div>
                   </template>
                   <div x-show="!polTextShown()" class="space-y-2">
+                  <div class="flex items-center gap-2 text-[0.6875rem]" x-show="polOrderStaged()" data-testid="pol-order-staged">
+                    <span class="pill warn">new order, not saved</span>
+                    <span class="text-muted grow">Kopia reads the rules from the top; a rule starting with ! brings back what a rule above it left out.</span>
+                    <button class="kl-btn quiet shrink-0" style="height:22px" @click="polUndo(polSelected().target, 'order')">Undo order</button>
+                  </div>
                   <div class="kl-list" style="max-height:calc(100vh - 26rem)" x-show="polRuleRows().length">
                     <template x-for="r in polRuleRows()" :key="r.state + '|' + r.pattern">
                       <div class="li">
@@ -269,6 +274,7 @@
                     <div class="space-y-1.5">
                       <template x-for="e in (g.errors || [])" :key="e"><div class="kl-callout" x-text="'Kopia would refuse this: ' + e"></div></template>
                       <div class="kl-callout" x-show="g.will_create_policy">Saving this creates a new policy at this target.</div>
+                      <div class="kl-note" x-show="g.order_changed" data-testid="pol-order-changed">Order changed: the rules are saved in the order shown.</div>
                       <div class="kl-note" x-show="g.staged && g.staged.delete_policy">
                         Whole-policy removal: the target falls back to inherited settings afterwards.
                       </div>
