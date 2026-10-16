@@ -419,8 +419,9 @@ document.addEventListener("alpine:init", () => {
           await this.refreshBase();
           this.selectedSource = this._rememberedTreeSource();
           if (this.indexStatus.building) this.pollIndex();  // show progress for the auto-triggered (migration) rebuild
-          if (this.repoKind === "server") await this.activate();
-          else if (!this._neverIndexed()) await this.loadDashboard();
+          // The open tab, not always the Dashboard: a tab clicked before the sources arrived
+          // loaded nothing.
+          await this.activate();
         }
       });
       this.armAutoRefresh();

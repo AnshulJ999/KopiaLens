@@ -88,9 +88,10 @@ def test_search_finds_a_file_and_marks_one_deleted_from_disk(app_server, open_pa
     expect(page.get_by_role("row", name="big-video.mp4", exact=False)).to_contain_text("deleted")
 
 
-# Known flaky: a Tree opened before the page finishes starting up stays empty (an app bug, not yet
-# fixed). xfail keeps it running without turning the suite red.
-@pytest.mark.xfail(reason="known flaky: Tree opened during page start-up stays empty", strict=False)
+# Known flaky until it passes reliably for many days: its cause (a Tree opened during page start-up
+# stayed empty) is fixed and pinned by the start-up test below. xfail keeps it from turning the
+# suite red meanwhile.
+@pytest.mark.xfail(reason="known flaky; its start-up cause is fixed", strict=False)
 def test_tree_opens_a_folder_and_goes_back_up(app_server, open_page):
     page = open_page(app_server)
     h.go_tab(page, "Tree")
@@ -98,6 +99,22 @@ def test_tree_opens_a_folder_and_goes_back_up(app_server, open_page):
     expect(page.get_by_role("row", name="needle-report.txt", exact=False)).to_be_visible()
     page.get_by_test_id("tree-crumbs").get_by_title("Up one level").click()
     expect(page.get_by_role("row", name="Photos", exact=False)).to_be_visible()
+
+
+def test_a_tab_opened_while_the_page_starts_up_loads_once_start_up_ends(app_server, open_page):
+    """The page's first source list is held back until Tree has been clicked."""
+    page = open_page(app_server, signed_in=False)
+    held = []
+    page.route("**/api/sources?*", lambda route: held.append(route), times=1)
+    h.sign_in(page, app_server)
+    h.go_tab(page, "Tree")
+    for _ in range(100):
+        if held:
+            break
+        page.wait_for_timeout(100)
+    assert held, "the page never asked for its sources"
+    held[0].continue_()
+    expect(page.get_by_role("row", name="Documents", exact=False)).to_be_visible()
 
 
 # Known flaky in full runs (passes alone; seen on older code too, cause unknown). Don't chase a
