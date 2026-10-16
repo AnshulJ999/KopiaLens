@@ -93,8 +93,9 @@ def revoke_token(token_id: str) -> dict:
 
 @router.get("/approvals")
 def list_approvals() -> dict:
+    from ..core import users
     return {"approvals": approvals.listing(), "waiting": approvals.waiting_count(), "ttl": approvals.TTL,
-            "sign_in": auth.enabled()}
+            "has_account": users.has_accounts()}   # the password box (writemode._password_ok's rule)
 
 
 @router.get("/approvals/{approval_id}")

@@ -219,6 +219,17 @@ def _index_health(repo: str) -> list[dict]:
         return []
 
 
+def _index_counts(repo: str) -> dict:
+    """Counts from the published index (the Verify dialog's "this can take hours" check)."""
+    try:
+        from ..index import store
+        stats = (store.read_manifest(repo) or {}).get("stats", {})
+    except Exception as exc:  # noqa: BLE001 - a count must never break the panel
+        log.warning("index counts failed: %s", exc)
+        stats = {}
+    return {"file_versions": int(stats.get("file_versions") or 0)}
+
+
 def _retention_check(repo: str) -> dict:
     """The nightly's retention self-check (``app/index/retentioncheck.py``), read from disk.
 
@@ -327,6 +338,7 @@ def _compute_stats(repo: str) -> dict:
     else:
         data["parsed"] = {}
     data["parsed"]["duckdb_health"] = _index_health(repo)
+    data["parsed"]["index"] = _index_counts(repo)
     health.extend(h for h in data["parsed"]["duckdb_health"] if h["status"] == "warn")
     rc = _retention_check(repo)
     data["parsed"]["retention_check"] = rc

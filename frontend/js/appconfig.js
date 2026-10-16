@@ -153,13 +153,20 @@ const appConfigPart = {
         return { repo: r.repo, ok: !!c.ok, text };
       });
     },
+    ixCopyBusy() { return this.ixCopyRunning || !!(this.ixBackups && this.ixBackups.copying); },
     async ixCopyNow() {
+      if (this.ixCopyBusy()) return;
       try {
         await this.saveKl("index_backup_dir");   // a folder typed just now, before the click
         await _cfgPost("/api/index/backups/copy");
         this.klNotify("Copying the index…");
-        setTimeout(() => this.loadIxBackups(), 4000);
-      } catch (e) { this.klNotify(`Couldn't start the copy: ${e.message || e}`, "warn"); }
+      } catch (e) { this.klNotify(`Couldn't start the copy: ${e.message || e}`, "warn"); return; }
+      this.ixCopyRunning = true;
+      while (this.ixCopyRunning) {
+        await new Promise((r) => setTimeout(r, 2000));
+        await this.loadIxBackups();
+        if (!(this.ixBackups && this.ixBackups.copying)) this.ixCopyRunning = false;
+      }
     },
     cfgOpenBackups() {
       this.openSettings();

@@ -285,8 +285,9 @@ def test_connect_records_a_managed_config(store, fixed_binary, monkeypatch):
     seen = {}
 
     def fake_run(args, password, timeout=600.0, **_kw):
-        seen["args"], seen["password"] = args, password
-        open(args[2], "w", encoding="utf-8").write("{}")   # kopia wrote the config
+        if "connect" in args:
+            seen["args"], seen["password"] = args, password
+            open(args[2], "w", encoding="utf-8").write("{}")   # kopia wrote the config
         return {"returncode": 0, "stdout": "Connected to repository.", "stderr": "", "command": args}
 
     monkeypatch.setattr(repoconnect, "_run", fake_run)
@@ -297,6 +298,27 @@ def test_connect_records_a_managed_config(store, fixed_binary, monkeypatch):
     assert rec["counts_as_backup"] is True
     assert seen["password"] == "pw"
     assert "1" in config.REPOS
+
+
+def test_the_same_repository_reached_another_way_is_caught(store, fixed_binary, monkeypatch):
+    """A mapped drive and a network path to one repository: kopia's repository id matches."""
+    from app.core import repoconnect
+    first = os.path.join(str(store), "first.config")
+    with open(first, "w", encoding="utf-8") as fh:
+        json.dump({"storage": {"type": "filesystem", "config": {"path": r"Z:\Kopia"}}}, fh)
+    config.RECORDS["repos"].append({"id": "1", "kind": "kopia", "config_file": first, "unique_id": "abc123"})
+
+    def fake_run(args, password, timeout=600.0, **_kw):
+        if "connect" in args:
+            with open(args[2], "w", encoding="utf-8") as fh:
+                json.dump({"storage": {"type": "filesystem", "config": {"path": r"\nas\Kopia"}}}, fh)
+        out = json.dumps({"uniqueIDHex": "abc123"}) if "status" in args else ""
+        return {"returncode": 0, "stdout": out, "stderr": "", "command": args}
+
+    monkeypatch.setattr(repoconnect, "_run", fake_run)
+    with pytest.raises(repoconnect.DuplicateRepo):
+        repoconnect.connect("filesystem", {"path": r"\nas\Kopia"}, "pw")
+    assert [r["id"] for r in config.RECORDS["repos"]] == ["1"]
 
 
 def test_connect_failure_leaves_nothing_behind(store, fixed_binary, monkeypatch):

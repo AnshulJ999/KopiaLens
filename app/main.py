@@ -1101,6 +1101,7 @@ _POLL_PATHS = frozenset({
     "/api/jobs/list", "/api/jobs/status", "/api/index/freshness", "/api/index/status",
     "/api/backblaze/status", "/api/settings/table", "/api/settings/tables", "/api/repos",
     "/api/index/runs", "/api/logs/app", "/api/audit", "/api/index/pending", "/api/shell/state",
+    "/api/engine/status", "/api/engine/sources", "/api/tasks",
 })
 _SLOW_REQUEST_MS = 3000.0
 _request_stats = RequestStats()
@@ -1340,6 +1341,7 @@ def _compose_html(client_host: str | None = None) -> str:
     html = _JINJA.get_template("index.html").render(
         base=base,
         base_json=json.dumps(base),
+        ha_json=json.dumps(basepath.from_ingress(client_host)),
         asset_v=_asset_version(),
         theme=theme if theme in _THEMES else "system",
         density=kl.get("density") if kl.get("density") in _DENSITY else "normal",

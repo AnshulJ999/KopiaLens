@@ -350,9 +350,10 @@ fn tray_note_once(app: &AppHandle) {
 
 /// Starts the server, tray, control port, watchdog and status polling, then opens the window.
 fn launch(handle: &AppHandle, sh: &Arc<Shell>, hidden: bool) -> tauri::Result<()> {
+    let control = control::bind(sh);
     sh.server.start();
     tray::create(handle, sh)?;
-    control::spawn(handle.clone(), sh.clone());
+    control::spawn(handle.clone(), sh.clone(), control);
     spawn_watchdog(handle.clone());
     let poll_app = handle.clone();
     thread::spawn(move || loop {

@@ -5,6 +5,8 @@
                 <span class="pill" :class="licPillClass()" x-text="licPillText()"></span>
               </div>
 
+              <div x-show="lic.demo" class="text-sm">Demo: every Pro feature is unlocked to try.</div>
+
               <template x-if="lic.state === 'none'">
                 <div class="rounded-md border border-bd bg-surface2 px-3 py-2 text-xs text-muted">
                   Everything you can see is free. Pro adds removing files from snapshots, deleting the snapshots that hold a file, smart exclude rules and exclude &amp; delete.

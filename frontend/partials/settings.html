@@ -185,7 +185,7 @@
                 <div class="flex items-center justify-between gap-3"><span>Copy to a folder</span>
                   <div class="flex items-center gap-2">
                     <input type="text" x-model.trim="indexBackupDir" @change="saveKl('index_backup_dir')" placeholder="Off" class="fld border border-bd bg-surface2" style="width:16rem" aria-label="Folder for the index copy">
-                    <button @click="ixCopyNow()" :disabled="!indexBackupDir" class="kl-btn">Copy now</button>
+                    <button @click="ixCopyNow()" :disabled="!indexBackupDir || ixCopyBusy()" class="kl-btn" x-text="ixCopyBusy() ? 'Copying…' : 'Copy now'">Copy now</button>
                   </div></div>
                 <p class="text-[0.6875rem] text-muted mt-1">Updated after each index. A folder on another drive keeps a copy if this one fails.</p>
                 <template x-for="c in ixCopyLines()" :key="c.repo">

@@ -127,6 +127,7 @@ def _sync_tree(con, repo: str, srcs: dict, alloc, job: dict, resumed: dict | Non
                             resume=resumed, save=save,
                             should_stop=lambda: resume.stop_requested(repo))
     job.pop("seed", None)
+    job["phase"] = "merging the read"     # its own phase: the stuck-read watchdog leaves it alone
     # Save point 1 stays valid through the merge: materialize and the swap are transactions, and
     # the merge itself only reads the carried and new tables, so re-running it gives the same tree.
     with perf.phase("tree/merge"):

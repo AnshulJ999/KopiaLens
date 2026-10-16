@@ -65,7 +65,7 @@
                       <button type="button" class="kl-btn" @click="cxRemoveAdded(cx.added.find((a) => a.sample))">Remove sample data</button>
                     </div>
                   </template>
-                  <template x-if="cx && !obKopiaMissing()">
+                  <template x-if="cx">
                     <div>
 {% include "partials/connectform.html" %}
                     </div>
@@ -83,8 +83,9 @@
             </template>
 
             <!-- 2. Protect -->
-            <!-- The form stays up until its request finishes (ob.protected is set halfway through). -->
-            <template x-if="!ob.needsCode && ob.step === 'protect' && ob.protected && !ob.busy">
+            <!-- The form stays up until its request finishes (ob.protected is set halfway through),
+                 and after an error, so a failed encryption step can be retried. -->
+            <template x-if="!ob.needsCode && ob.step === 'protect' && ob.protected && !ob.busy && !ob.error">
               <div>
                 <div class="p-5 space-y-3">
                   <h1 class="text-lg font-semibold">Protect KopiaLens</h1>
@@ -100,9 +101,9 @@
               </div>
             </template>
 
-            <template x-if="!ob.needsCode && ob.step === 'protect' && (!ob.protected || ob.busy)">
+            <template x-if="!ob.needsCode && ob.step === 'protect' && (!ob.protected || ob.busy || ob.error)">
               <form @submit.prevent="obProtect()">
-                <div class="p-5 space-y-5">
+                <fieldset class="p-5 space-y-5 min-w-0" :disabled="ob.busy">
                   <div>
                     <h1 class="text-lg font-semibold">Protect KopiaLens</h1>
                     <p class="text-muted">Who can open KopiaLens, and how its index is stored.</p>
@@ -156,7 +157,7 @@
                   </template>
 
                   <p class="text-xs" style="color:var(--danger)" x-show="ob.error" x-text="ob.error"></p>
-                </div>
+                </fieldset>
                 <div class="kl-footer">
                   <button type="button" @click="ob.step = 'connect'" class="kl-btn" :disabled="ob.busy">Back</button>
                   <span class="spacer"></span>

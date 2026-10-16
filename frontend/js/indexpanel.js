@@ -17,6 +17,7 @@ const INDEX_STAGES = [
 // The worker's phase names, in plain words.
 const INDEX_PHASES = {
   "tree sync": "Reading folders from kopia", "seeding the tree": "Reading the old cache",
+  "merging the read": "Combining the folders read",
   "rebuilding sources": "Rebuilding sources", maps: "Working out stored sizes",
   sources: "Building file history", writing: "Saving the index",
 };

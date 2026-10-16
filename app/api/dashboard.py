@@ -117,22 +117,30 @@ def index_backups() -> dict:
     """Settings > Indexing: kept older versions per repo (space each one holds) and the copy
     folder's last result."""
     from ..index import versions
-    return {"keep": versions.keep_count(), "dir": versions.backup_dir(),
-            "repos": [versions.report(r) for r in kopia_repos() if not is_demo(r)]}
+    repos = [versions.report(r) for r in kopia_repos() if not is_demo(r)]
+    copying = bool(_copy_thread and _copy_thread.is_alive()) or any(r["copying"] for r in repos)
+    return {"keep": versions.keep_count(), "dir": versions.backup_dir(), "copying": copying, "repos": repos}
+
+
+_copy_thread: threading.Thread | None = None
 
 
 @router.post("/index/backups/copy")
 def index_backups_copy() -> dict:
-    """Copy every repo's index to the copy folder now, in the background."""
+    """Copy every repo's index to the copy folder now, in the background (one run at a time)."""
+    global _copy_thread
     from ..index import versions
     if not versions.backup_dir():
         raise HTTPException(status_code=400, detail="Choose a folder first.")
+    if _copy_thread and _copy_thread.is_alive():
+        return {"started": False}
 
     def run() -> None:
         for r in kopia_repos():
             if not is_demo(r):
                 versions.sync_backup(r)
-    threading.Thread(target=run, name="index-copy", daemon=True).start()
+    _copy_thread = threading.Thread(target=run, name="index-copy", daemon=True)
+    _copy_thread.start()
     return {"started": True}
 
 

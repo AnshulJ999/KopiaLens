@@ -177,8 +177,12 @@ class WriterLock:
     """One-process-at-a-time publication via an O_CREAT|O_EXCL lock file (PID inside, stale
     detection by process check - the technique reap_orphan_workers already uses)."""
 
-    def __init__(self, repo: str):
-        self.path = os.path.join(repo_dir(repo), ".writer")
+    def __init__(self, repo: str, path: str | None = None):
+        self.path = path or os.path.join(repo_dir(repo), ".writer")
+
+    def held(self) -> bool:
+        """Another live process (or this one) holds the lock now."""
+        return os.path.exists(self.path) and not self._stale()
 
     def __enter__(self):
         os.makedirs(os.path.dirname(self.path), exist_ok=True)

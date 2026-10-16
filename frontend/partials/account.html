@@ -27,7 +27,7 @@
                   </div>
                   <template x-if="acct.sign_in_on">
                     <div class="space-y-4">
-                      <div class="flex items-center justify-between gap-3"><span>This browser</span>
+                      <div x-show="!viaHa()" class="flex items-center justify-between gap-3"><span>This browser</span>
                         <button @click="signOutHere()" class="h-8 rounded border border-bd px-3 text-xs">Sign out</button></div>
                       <div>
                         <div class="flex items-center justify-between gap-3"><span>Other devices</span>

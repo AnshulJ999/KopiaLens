@@ -21,7 +21,7 @@ KopiaLens runs backups only while it's open. The desktop app starts at logon and
 
 - **New snapshot…** on the Dashboard backs up any folder: pick it, check which policy applies (or give it its own), see a size estimate, then **Snapshot now**.
 - **Snapshot now** on a Dashboard row backs up a folder that's already backed up. When KopiaLens runs the backups, the row shows live progress with a **Cancel** button.
-- In the Snapshots tab, **Edit description…** changes a snapshot's description. It's available when KopiaLens runs that repository's backups.
+- In the Snapshots tab, **Edit description…** changes a snapshot's description.
 
 ## Pausing
 

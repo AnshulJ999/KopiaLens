@@ -728,7 +728,7 @@ def live_tasks(repo: str | None = None) -> list[dict]:
         servers = [s for r, s in _servers.items() if repo in (None, r)]
     out = []
     for srv in servers:
-        for t in srv.tasks.values():
+        for t in list(srv.tasks.values()):
             if t.get("kind") == "Repository" and (t.get("status") or "").upper() == "SUCCESS":
                 continue
             out.append(task_record(srv.repo, t, srv.tag))
@@ -756,7 +756,10 @@ def set_choice(repo: str, choice: str, how: str = "share", password: str = "") -
         fields = {"engine": "", "engine_since": 0}
         moved = rec.get("engine_moved_from") or ""
         if moved and os.path.isfile(moved + MOVED_SUFFIX) and not os.path.exists(moved):
-            os.replace(moved + MOVED_SUFFIX, moved)
+            try:
+                os.replace(moved + MOVED_SUFFIX, moved)
+            except OSError as exc:
+                raise ValueError(f"Couldn't put KopiaUI's connection file back: {exc}") from exc
             fields.update(config_file=moved, engine_moved_from="")
         repos.set_engine_fields(repo, fields)
         _fail.pop(repo, None)
@@ -810,9 +813,15 @@ def repo_status(repo: str) -> dict:
     view = coexist.repo_view(repo)
     nxt = min((s["next"] for s in source_status(repo) if s.get("next")), default=None)
     f = _fail.get(repo) or {}
+    # KopiaUI keeps running on the file KopiaLens moved until it restarts; then KopiaLens takes over.
+    moved = config.repo_record(repo).get("engine_moved_from") or ""
+    others = [r for r in view["running"] if r["app"] != "kopialens"]
+    norm = lambda p: os.path.normcase(os.path.abspath(p))  # noqa: E731
+    until_restart = state == "blocked" and bool(moved) and bool(others) and all(
+        norm(r["config"]) == norm(moved) for r in others)
     return {
         "repo": repo, "choice": view["choice"], "state": state, "engine": view["engine"],
-        "conflict": view["conflict"], "pause": pause_state(repo), "next": nxt,
+        "conflict": view["conflict"], "until_restart": until_restart, "pause": pause_state(repo), "next": nxt,
         "paused_sources": len(source_pauses(repo)),
         "done_seq": _done_seq.get(repo, 0),
         "error": f.get("error") if state == "failed" else "",
@@ -896,7 +905,7 @@ def hints(repo: str) -> list[dict]:
         srv = _servers.get(repo)
     if srv:
         ours += [(_ts(t.get("startTime")) or 0, _ts(t.get("endTime")) or time.time())
-                 for t in srv.tasks.values()]
+                 for t in list(srv.tasks.values())]
 
     def by_us(ts: float) -> bool:
         return any(a - 120 <= ts <= (b or a) + 120 for a, b in ours)

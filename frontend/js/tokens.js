@@ -98,7 +98,7 @@ const tokensPart = {
       const d = await getJson("/api/approvals");
       this.apList = d.approvals || [];
       this.apWaiting = d.waiting || 0;
-      this.apSignIn = !!d.sign_in;
+      this.apHasAccount = !!d.has_account;
     } catch (e) { /* the list reloads with the next status poll */ }
   },
   apOpen() {
@@ -134,8 +134,8 @@ const tokensPart = {
   },
   async apDecide(a, approve) {
     if (this.apBusy) return;
-    const password = approve && a.needs_password && this.apSignIn ? this.apPassword : null;
-    if (approve && a.needs_password && this.apSignIn && !password) { this.klNotify("Enter your KopiaLens password to approve this.", "warn"); return; }
+    const password = approve && a.needs_password && this.apHasAccount ? this.apPassword : null;
+    if (approve && a.needs_password && this.apHasAccount && !password) { this.klNotify("Enter your KopiaLens password to approve this.", "warn"); return; }
     this.apBusy = true;
     try {
       const d = await getJson(`/api/approvals/${encodeURIComponent(a.id)}/${approve ? "approve" : "deny"}`, {

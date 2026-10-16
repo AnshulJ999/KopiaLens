@@ -101,7 +101,12 @@ def kept(root: str) -> list[dict]:
 def keep(root: str, replaced: dict | None) -> None:
     """At an index build's publish: keep the manifest it replaces, then trim to the setting."""
     n = keep_count()
-    if replaced and replaced.get("artifacts") and n > 0:
+    bad = problems(root, replaced) if replaced and replaced.get("artifacts") and n > 0 else []
+    if bad:
+        # A damaged version is no backup; the older good ones stay.
+        log.warning("index at %s: the replaced version %s is damaged, so it is not kept (%s)",
+                    root, replaced.get("generation"), bad[0])
+    elif replaced and replaced.get("artifacts") and n > 0:
         os.makedirs(_vdir(root), exist_ok=True)
         try:
             published = os.path.getmtime(os.path.join(root, "manifest.json"))
@@ -294,7 +299,7 @@ def _copy_back(repo: str, man: dict) -> None:
 
 def _copy(src: str, dst: str) -> None:
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    tmp = dst + ".part"
+    tmp = f"{dst}.{secrets.token_hex(4)}.part"
     shutil.copyfile(src, tmp)
     os.replace(tmp, dst)
 
@@ -307,12 +312,38 @@ def _unique_id(repo: str) -> str:
         return ""
 
 
+def _copy_lock(repo: str):
+    """One copy per repo at a time, across the app and the index worker."""
+    from . import publish, store
+    return publish.WriterLock(repo, os.path.join(store.repo_dir(repo), ".copying"))
+
+
+def copying(repo: str) -> bool:
+    return _copy_lock(repo).held()
+
+
 def sync_backup(repo: str) -> dict:
     """Bring the copy folder up to date with the current version. Records and returns a status."""
-    from . import store
+    from . import publish, store
     d = _dest(repo)
     if not d:
         return {"repo": repo, "skipped": True}
+    if not os.path.isdir(store.repo_dir(repo)):
+        return _sync_backup(repo, d)        # not indexed yet: nothing to copy or lock
+    lock = _copy_lock(repo)
+    try:
+        lock.__enter__()
+    except publish.WriterBusy:
+        log.info("repo=%s index copy already running", repo)
+        return {"repo": repo, "busy": True}
+    try:
+        return _sync_backup(repo, d)
+    finally:
+        lock.__exit__(None, None, None)
+
+
+def _sync_backup(repo: str, d: str) -> dict:
+    from . import store
     status: dict = {"at": time.time(), "path": d}
     try:
         if os.path.realpath(d).lower().startswith(os.path.realpath(DATA_DIR).lower() + os.sep):
@@ -394,5 +425,5 @@ def report(repo: str) -> dict:
         versions.append({"generation": man.get("generation"),
                          "published_at": (man.get("kept") or {}).get("published_at"),
                          "bytes": size})
-    return {"repo": repo, "versions": versions,
+    return {"repo": repo, "versions": versions, "copying": copying(repo),
             "copy": (_read_json(_status_path()) or {}).get(str(repo))}

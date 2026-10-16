@@ -27,10 +27,11 @@ const notifyPart = {
       await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kopialens: { notify_webhook: val } }) });
       if (this._klSettings) this._klSettings.notify_webhook = val;
       this.klNotify("Saved");
-    } catch (e) { this.klNotify(e.message, "error"); }
+      return true;
+    } catch (e) { this.klNotify(e.message, "error"); return false; }
   },
   async notifyHookTest() {
-    await this.notifyHookSave();
+    if (!(await this.notifyHookSave())) return;
     this.notifyHook.busy = true;
     try {
       await getJson("/api/notify/webhook/test", { method: "POST" });

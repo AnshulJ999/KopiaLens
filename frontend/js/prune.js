@@ -126,8 +126,9 @@ const prunePart = {
       const ids = p.rows.filter((r) => p.tick[r.id]).map((r) => r.id);
       if (!ids.length) { ++this._prunePriceSeq; p.price = null; p.priceLoading = false; return; }
       p.priceLoading = true;
+      // Bumped now, not in the timer: a price still in flight for the previous ticks must not land.
+      const seq = ++this._prunePriceSeq;
       this._pruneTimer = setTimeout(async () => {
-        const seq = ++this._prunePriceSeq;
         try {
           const r = await getJson("/api/prune/price", { method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ token: p.token, remove: ids }) });

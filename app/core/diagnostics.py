@@ -194,18 +194,19 @@ def _changed_settings(anon=None) -> list[str]:
     current, defaults = load_settings(), DEFAULT_SETTINGS
     out = []
 
-    def show(v):
+    def show(k, v):
+        if _SECRET_KEYS.search(k):
+            return "(set)"
+        v = anon.walk({k: v})[k] if anon else v
         return v if isinstance(v, str) else json.dumps(v)
     for key in sorted(set(current) | set(defaults)):
         cur, dflt = current.get(key), defaults.get(key)
         if isinstance(cur, dict) and isinstance(dflt, dict):
             for sub in sorted(set(cur) | set(dflt)):
                 if cur.get(sub) != dflt.get(sub):
-                    val = "(set)" if _SECRET_KEYS.search(sub) else show(
-                        anon.walk({sub: cur.get(sub)})[sub] if anon else cur.get(sub))
-                    out.append(f"  {key}.{sub}: {val}")
+                    out.append(f"  {key}.{sub}: {show(sub, cur.get(sub))}")
         elif cur != dflt:
-            out.append(f"  {key}: {'(set)' if _SECRET_KEYS.search(key) else show(cur)}")
+            out.append(f"  {key}: {show(key, cur)}")
     return out
 
 

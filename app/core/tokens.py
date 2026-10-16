@@ -234,10 +234,18 @@ def _job(body: dict, _q: dict) -> str:
         return PERSON          # the policy writes run for real; only the delete step can be dry
     if kind == "encryption_level":
         return PERSON          # the level is set through /api/encryption/level
-    if kind == "policy_write" and any(_lowers_retention(body.get("repo"), w.get("target"), w.get("changes"))
+    if kind == "policy_write" and any(_lowers_retention(body.get("repo"), w.get("target"), policy_changes(w))
                                       for w in params.get("writes") or []):
         return PERSON
     return REPO if kind in writemode.JOBS else PERSON
+
+
+def policy_changes(write: dict) -> dict:
+    """One policy write's changes. Jobs send them flat ({target, add, remove, delete_policy,
+    fields}); a ``changes`` object is read the same way."""
+    if isinstance(write.get("changes"), dict):
+        return write["changes"]
+    return {k: write[k] for k in ("add", "remove", "delete_policy", "fields") if k in write}
 
 
 def _lowers_retention(repo, target, changes) -> bool:
@@ -274,7 +282,9 @@ def _settings(body: dict, _q: dict) -> str:
     extra = set(body) - {"kopialens", "backblaze"}
     kl = body.get("kopialens") if isinstance(body.get("kopialens"), dict) else {}
     from ..settings import OWN_ROUTE_SETTINGS
-    return PERSON if extra or (set(kl) & (set(OWN_ROUTE_SETTINGS) | {"session_days"})) else APP
+    if set(kl) & set(OWN_ROUTE_SETTINGS):
+        return APP          # the save refuses these and names their own screen: nothing to approve
+    return PERSON if extra or "session_days" in kl else APP
 
 
 def _write_mode(body: dict, _q: dict) -> str:
@@ -316,7 +326,8 @@ def _access(body: dict, _q: dict) -> str:
 
 
 def _kopia_readonly(body: dict, _q: dict) -> str:
-    return APP if body.get("on") is True else PERSON
+    """Accepting the shared-connection warning stops other apps' backups: a person decides that."""
+    return APP if body.get("on") is True and not body.get("shared_ok") else PERSON
 
 
 def _export(_body: dict, query: dict) -> str:
@@ -351,10 +362,8 @@ _WRITES: dict[str, object] = {
     "POST /api/snapshots/set-reclaim": APP,
     "POST /api/stats/description": REPO,
     "POST /api/jobs/start": _job,
-    "POST /api/jobs/stop": APP,
-    "POST /api/tasks/cancel": REPO,
-    **{f"POST /api/engine/{p}": REPO for p in ("cancel", "choice", "identity", "snapshot",
-                                               "snapshot-description")},
+    **{f"POST /api/{p}": APP for p in ("jobs/stop", "tasks/cancel", "engine/cancel")},   # any Stop
+    **{f"POST /api/engine/{p}": REPO for p in ("choice", "identity", "snapshot", "snapshot-description")},
     "POST /api/engine/resume": APP,
     "POST /api/engine/source-resume": APP,
     "POST /api/engine/pause": PERSON,            # pausing backups is the unsafe side
@@ -362,7 +371,7 @@ _WRITES: dict[str, object] = {
     **{f"POST /api/index/{p}": APP for p in ("backups/copy", "build", "notices/{notice_id}/dismiss",
                                              "pause", "pending/run", "resume", "stop")},
     "POST /api/app/restart": APP,
-    "POST /api/help/install-update": APP,
+    "POST /api/help/install-update": PERSON,     # stops indexing and jobs, then restarts the app
     **{f"POST /api/backblaze/{p}": APP for p in ("exclusions/generate", "import-archive", "refresh")},
     "POST /api/config-backups": APP,
     "POST /api/config-backups/notices/{notice_id}/dismiss": APP,

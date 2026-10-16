@@ -90,7 +90,9 @@ const reposPart = {
                created: r.source === "created", server: !!r.via_server || st.type === "server",
                sample: !!r.sample, backblaze: r.kind === "backblaze" };
     },
-    cxCandidates() { return ((this.cx && this.cx.detected) || []).filter((c) => !c.in_store); },
+    // Setup without kopia: only Backblaze can be added until kopia is found.
+    cxKopiaOk() { return !(this.ob && this.obKopiaMissing()); },
+    cxCandidates() { return this.cxKopiaOk() ? ((this.cx && this.cx.detected) || []).filter((c) => !c.in_store) : []; },
     cxBzOffered() { const b = this.cx && this.cx.bz; return !!(b && b.found && !b.added); },
     cxPickedCount() {
       return this.cxCandidates().filter((c) => this.cx.picked[c.config_file]).length + (this.cxBzOffered() && this.cx.bzPicked ? 1 : 0);

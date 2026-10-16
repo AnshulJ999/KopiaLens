@@ -70,7 +70,7 @@
                 </template>
 
                 <!-- Add another: connect an existing repository or create one -->
-                <template x-if="!cx.loading && !cx.mode">
+                <template x-if="!cx.loading && !cx.mode && cxKopiaOk()">
                   <div class="kl-sec">
                     <div class="h" x-text="cxCandidates().length || cx.added.some((a) => !a.backblaze) ? 'Add another repository' : 'No kopia repositories found on this computer'"></div>
                     <div class="grid gap-2 sm:grid-cols-2">

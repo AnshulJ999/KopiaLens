@@ -114,7 +114,8 @@ class _WorkClock:
     def stuck(self, repo: str, limit: float) -> bool:
         """Watchdog for the tree read (the long kopia part): counters that don't move for ``limit``
         seconds of working time mean it is stuck, not slow. Waiting for an unreachable repository
-        has its own limit in the worker; the later stages report no counters and are not watched."""
+        has its own limit in the worker; the merge and the later stages report no counters and are
+        not watched."""
         if limit <= 0 or self.stop_asked is not None:
             return False
         p = worker_progress(repo) or {}
@@ -122,7 +123,7 @@ class _WorkClock:
         if not isinstance(sync, dict) or sync.get("waiting_since"):
             self._sig = None
             return False
-        sig = (sync.get("level"), sync.get("level_read"), sync.get("read"))
+        sig = (sync.get("level"), sync.get("level_read"), sync.get("read"), sync.get("pieces_read"))
         if sig != self._sig:
             self._sig, self._sig_at = sig, self.worked
             return False
@@ -336,15 +337,21 @@ def stop_index_pass(repo: str) -> dict:
         return {"stopped": False, "reason": f"cannot inspect pid {pid}: {exc}"}
     if proc is None:
         return {"stopped": False, "reason": "the worker has already exited"}
-    # Ask first: a first index saves its progress and exits; anything still running after the
-    # grace period is ended the old way.
+    # The index stage saves its progress and exits when asked; anything still running after the
+    # grace period, and every later stage, is ended straight away (the desktop app's Quit rule).
     from ..index import resume
-    resume.request_stop(repo)
+    asked = info.get("stage") == "index"
+    if asked:
+        resume.request_stop(repo)
 
     def _finish() -> None:
         try:
-            proc.wait(timeout=STOP_GRACE)
-        except Exception:  # noqa: BLE001 - still running (or uninspectable): end it
+            if asked:
+                try:
+                    proc.wait(timeout=STOP_GRACE)
+                    return
+                except Exception:  # noqa: BLE001 - still running (or uninspectable): end it
+                    pass
             try:
                 proc.terminate()
                 proc.wait(timeout=10)

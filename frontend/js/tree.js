@@ -1,4 +1,6 @@
 // Tree tab: point-in-time / changed / reclaimable / all-snapshots browsing + crumbs + flat view.
+const TREE_LEVEL_CAP = 300;   // rows per folder level in Tree view; "Show more" adds the next ones
+
 const treePart = {
 
     // All-sources rows are deduped by path and deliberately carry no source. Resolve the sources
@@ -76,18 +78,34 @@ const treePart = {
         + (this.treeExt ? `&ext=${encodeURIComponent(this.treeExt)}` : "");
     },
     // One level of rows: share of their folder, and in Tree view a placeholder child under each
-    // folder (loaded on expand) plus a "more" row past the per-level cap.
-    _treeLevel(children, parent) {
+    // folder (loaded on expand) plus a "Show more" row past the per-level cap.
+    _treeLevel(children) {
       const total = children.reduce((a, c) => a + (c.size || 0), 0) || 1;
       children.forEach((c) => { c.pct = 100 * (c.size || 0) / total; });
       if (this.treeView !== "tree") return children;
-      const CAP = 300;
-      const rows = children.length > CAP ? [...children].sort((a, b) => (b.size || 0) - (a.size || 0)).slice(0, CAP) : children;
-      rows.forEach((c) => { if (c.type === "folder") c._children = [{ _ph: true, name: "Loading…" }]; });
-      if (children.length > CAP) {
-        rows.push({ _ph: true, _open: parent, name: `${(children.length - CAP).toLocaleString(NUM_LOCALE)} more. Double-click to open this folder and see everything.` });
-      }
+      const sorted = children.length > TREE_LEVEL_CAP ? [...children].sort((a, b) => (b.size || 0) - (a.size || 0)) : children;
+      const rows = this._treeRows(sorted.slice(0, TREE_LEVEL_CAP));
+      if (sorted.length > TREE_LEVEL_CAP) rows.push(this._treeMoreRow(sorted.slice(TREE_LEVEL_CAP)));
       return rows;
+    },
+    _treeRows(rows) {
+      rows.forEach((c) => { if (c.type === "folder") c._children = [{ _ph: true, name: "Loading…" }]; });
+      return rows;
+    },
+    _treeMoreRow(rest) {
+      const n = Math.min(TREE_LEVEL_CAP, rest.length).toLocaleString(NUM_LOCALE);
+      return { _ph: true, _more: rest, name: `Show ${n} more of ${rest.length.toLocaleString(NUM_LOCALE)}` };
+    },
+    // The next rows of that level go in above the "Show more" row; the level is already loaded.
+    async _treeShowMore(row) {
+      const d = row.getData();
+      const next = this._treeRows(d._more.slice(0, TREE_LEVEL_CAP));
+      const rest = d._more.slice(TREE_LEVEL_CAP);
+      const parent = row.getTreeParent();
+      if (parent) next.forEach((r) => parent.addTreeChild(r, true, row));
+      else await row.getTable().addData(next, true, row);
+      if (rest.length) row.update(this._treeMoreRow(rest)); else row.delete();
+      this.fillTreeExtras();
     },
     async _treeExpand(row) {
       const d = row.getData();
@@ -102,7 +120,7 @@ const treePart = {
         kids[0].update({ name: "Couldn't load this folder. Collapse and expand to retry." });
         return;
       }
-      const rows = this._treeLevel(children, d.path);
+      const rows = this._treeLevel(children);
       // Add before removing the placeholder: a row left with no children is marked collapsed.
       if (!rows.length) rows.push({ _ph: true, name: "Empty" });
       rows.forEach((r) => row.addTreeChild(r));
@@ -126,7 +144,7 @@ const treePart = {
         if (seq !== this._treeSeq) return;  // a newer navigation superseded this one
         const children = data.children || [];
         if (!children.length && !(this.indexStatus.indexed_snapshots > 0)) this.error = "Snapshot not indexed yet - click Index (top right).";
-        const rows = this._treeLevel(children, this.treePrefix);
+        const rows = this._treeLevel(children);
         // Inside a folder, a first row goes back up one level (the toolbar Up stays too).
         const crumbs = this.treeCrumbs();
         if (crumbs.length > 1) rows.unshift({ _ph: true, _up: true, name: `Up to ${crumbs[crumbs.length - 2].label}` });
@@ -136,6 +154,7 @@ const treePart = {
             formatter: (c) => {
               const d = c.getData();
               if (d._up) return `<span class="text-muted">${iconHtml("arrow-up", "mr-1")}${escHtml(c.getValue())}</span>`;
+              if (d._more) return `<span class="text-link cursor-pointer">${escHtml(c.getValue())}</span>`;
               return d._ph ? `<span class="text-muted">${escHtml(c.getValue())}</span>` : itemIconHtml(d.name, d.type === "folder") + escHtml(c.getValue());
             } },
           { title: "Size", headerTooltip: "Logical size. " + termTip("logical"), field: "size", width: 105, sorter: "number", formatter: ph((c) => fmtBytes(c.getValue())), hozAlign: "right" },
@@ -167,7 +186,7 @@ const treePart = {
           onSelect: (rows) => { this.treeSelCount = rows.length; },
           onRowDblClick: async (_e, row) => {
             const d = row.getData();
-            if (d._ph) { if (d._open) this.navTree(d._open); return; }   // the Up row goes up on a single click
+            if (d._ph) return;   // the Up and Show more rows act on a single click
             if (d.type === "folder") return this.navTree(d.path);
             const s = await this.treeSourceFor(d.path);
             if (s) this.openFileDetail({ source: s, full_path: d.path });
@@ -175,7 +194,10 @@ const treePart = {
           rowMenu: (_e, row) => (row.getData()._ph ? false : this.treeRowMenu(row.getData())),
         });
         if (tree && ttbl) ttbl.on("dataTreeRowExpanded", (row) => this._treeExpand(row).then(() => this.fillTreeExtras()));
-        if (ttbl) ttbl.on("rowClick", (_e, row) => { if (row.getData()._up) this.treeUp(); });
+        if (ttbl) ttbl.on("rowClick", (_e, row) => {
+          const d = row.getData();
+          if (d._up) this.treeUp(); else if (d._more) this._treeShowMore(row);
+        });
         if (ttbl) {
           ttbl.on("tableBuilt", () => this.fillTreeExtras());
           ttbl.on("scrollVertical", () => this.fillTreeExtras());

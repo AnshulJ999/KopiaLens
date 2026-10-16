@@ -108,6 +108,15 @@ def test_free_purge_plan_lists_snapshots_without_ids(free, monkeypatch):
     assert "k9snap" not in repr(out)
 
 
+def test_free_file_versions_still_count_their_contents(free, monkeypatch):
+    """Free strips the ids, but the panel's "Changed N times" is counted from them first."""
+    from app.api import search
+    rows = [{"content_id": "k1abc"}, {"content_id": "k2abc"}, {"content_id": "k2abc"}]
+    monkeypatch.setattr(search, "versions", lambda *a: [dict(r) for r in rows])
+    out = search.file_versions("1", source="u@h:C:\\d", full_path="C:\\d\\a.bin")
+    assert out["contents"] == 2 and "k1abc" not in repr(out["versions"])
+
+
 def _fake_delete_plan(monkeypatch):
     facts = {"oids": ["k1abc"], "names": ["a.bin"], "holders": [["u@h:C:\\d"]], "holder_union": ["u@h:C:\\d"], "versions": 1}
     monkeypatch.setattr(deleteplan, "selection_facts", lambda repo, files: facts)

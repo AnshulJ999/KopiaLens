@@ -428,7 +428,8 @@ def file_versions(repo: str, source: str | None = None, full_path: str | None = 
     if not source or not full_path:
         raise HTTPException(status_code=400, detail="source and full_path are required")
     rows = versions(repo, source, full_path)
-    return {"versions": freeids.versions(repo, rows), "contents": freeids.contents(rows)}
+    contents = freeids.contents(rows)          # before Free strips the ids it counts
+    return {"versions": freeids.versions(repo, rows), "contents": contents}
 
 
 @router.get("/search/detail")

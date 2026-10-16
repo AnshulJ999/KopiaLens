@@ -56,7 +56,7 @@ pub fn install(app: &AppHandle) {
     });
 }
 
-fn run(app: &AppHandle, sh: &Arc<Shell>) -> Result<(), String> {
+fn wait_idle(app: &AppHandle, sh: &Shell) {
     if busy(sh) {
         report(sh, "waiting", None, None);
         tray::toast(app, "Update waiting", "KopiaLens installs it when indexing and running jobs finish.");
@@ -64,6 +64,10 @@ fn run(app: &AppHandle, sh: &Arc<Shell>) -> Result<(), String> {
             thread::sleep(Duration::from_secs(5));
         }
     }
+}
+
+fn run(app: &AppHandle, sh: &Arc<Shell>) -> Result<(), String> {
+    wait_idle(app, sh);
     report(sh, "checking", None, None);
     let stopper = sh.clone();
     // Windows quits the app to run the installer: stop indexing (it saves and resumes) and the server first.
@@ -95,6 +99,7 @@ fn run(app: &AppHandle, sh: &Arc<Shell>) -> Result<(), String> {
         },
         || {},
     )).map_err(|e| e.to_string())?;
+    wait_idle(app, sh);   // a job started during the download
     report(sh, "installing", None, None);
     sh.server.log(&format!("update: starting the {} installer", update.version));
     update.install(bytes).map_err(|e| e.to_string())?;

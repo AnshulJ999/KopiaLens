@@ -222,6 +222,8 @@ const accountPart = {
         this.klNotify(on ? "Sign-in is on" : "Sign-in is off");
       } catch (e) { this.klNotify(e.message || String(e), "warn"); }
     },
+    // Inside Home Assistant, HA has signed its user in: signing out of KopiaLens does nothing there.
+    viaHa() { return !!window.KL_HA; },
     async signOutHere() {
       await _acctPost("/api/auth/logout").catch(() => {});
       location.href = appUrl("/login");

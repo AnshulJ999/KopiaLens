@@ -29,7 +29,9 @@ Some things wait for your approval in KopiaLens, whatever the token's permission
 - turning sign-in off, opening remote access, or lowering encryption;
 - a looser write mode, removing a repository or a licence;
 - lowering retention in a policy, or restoring policies from a backup;
-- pausing backups, and restoring a settings backup.
+- pausing backups, and restoring a settings backup;
+- installing an update;
+- making a repository's connection read-only when another app shares it.
 
 A token can still do the safe side of these on its own: turn sign-in on, raise encryption, make a write mode stricter, add a licence, or raise retention.
 

@@ -138,7 +138,7 @@
               <div data-testid="help-account">
                 <div class="my-1 border-t border-bd"></div>
                 <div class="px-3 py-1 text-xs text-muted">Signed in as <span class="text-fg font-medium" x-text="acct.username"></span></div>
-                <button type="button" role="menuitem" @click="helpMenu = false; signOutHere()" class="w-full text-left px-3 py-1.5 hover:bg-head">Sign out</button>
+                <button type="button" role="menuitem" x-show="!viaHa()" @click="helpMenu = false; signOutHere()" class="w-full text-left px-3 py-1.5 hover:bg-head">Sign out</button>
               </div>
             </template>
           </div>

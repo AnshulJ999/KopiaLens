@@ -361,7 +361,7 @@
   <div class="kl-list">
     <template x-for="ch in (detail.children || [])" :key="ch.child">
       <div class="li cursor-pointer hover:bg-head" @click="folderOpenChild(ch)" :title="'Open ' + ch.child">
-        <span class="font-mono trunc grow" x-text="ch.child + (ch.is_folder ? '\\' : '')"></span>
+        <span class="font-mono trunc grow" x-text="ch.child + (ch.is_folder ? pathSep(detail.path) : '')"></span>
         <span class="num" style="color:var(--muted)" x-text="fmtPhys(ch.physical) + ' · ' + countOf(ch.files, 'file')"></span>
       </div>
     </template>

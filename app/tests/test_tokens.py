@@ -60,11 +60,29 @@ def test_a_dry_flag_never_lifts_a_job_without_a_dry_run(client):
     assert _refused(client.post("/api/jobs/start", json=then, headers=full), "approval")
 
 
+def test_an_agent_adding_an_exclusion_needs_no_approval(client):
+    """Jobs send policy changes flat ({target, add, ...}); only lowering retention asks a person."""
+    rec = tokens.verify(_token("non_destructive")["Authorization"].split()[1])
+    body = {"kind": "policy_write", "repo": "1", "params": {"writes": [{"target": "global", "add": ["*.tmp"]}]}}
+    assert tokens.check(rec, "POST", "/api/jobs/start", "/api/jobs/start", body, {}) is None
+
+
+def test_no_approval_is_asked_for_what_would_be_refused_anyway(client, monkeypatch):
+    """The repository's write mode, and settings with their own screen, answer before any approval."""
+    from app.core import approvals
+    monkeypatch.setattr("app.core.writemode.global_mode", lambda: "read_only")
+    full, waiting = _token("full"), approvals.waiting_count()
+    resp = client.post("/api/actions/snapshot-delete", json={"repo": "1", "snapshot_ids": ["k1"]}, headers=full)
+    assert resp.status_code == 403 and "Read-only" in resp.json()["detail"]
+    for key in ("auth_enabled", "allowed_hosts"):
+        resp = client.post("/api/settings", json={"kopialens": {key: "x"}}, headers=full)
+        assert resp.status_code == 400 and key in resp.json()["detail"], key
+    assert approvals.waiting_count() == waiting
+
+
 @pytest.mark.parametrize("method,path,kw,needs", [
     ("post", "/api/actions/snapshot-delete", {"json": {"repo": "1", "snapshot_ids": ["k1"]}}, "approval"),
     ("post", "/api/jobs/start", {"json": {"kind": "remove_files", "repo": "1", "params": {}}}, "approval"),
-    ("post", "/api/settings", {"json": {"kopialens": {"auth_enabled": False}}}, "approval"),
-    ("post", "/api/settings", {"json": {"kopialens": {"allowed_hosts": ["evil.example"]}}}, "approval"),
     ("post", "/api/write-mode", {"json": {"repo": None, "mode": "full"}}, "approval"),
     ("delete", "/api/licence", {}, "approval"),
     ("post", "/api/tokens", {"json": {"name": "more", "mode": "full"}}, "never"),
@@ -78,7 +96,8 @@ def test_a_dry_flag_never_lifts_a_job_without_a_dry_run(client):
     ("post", "/api/encryption/recovery-key", {"json": {}}, "never"),
 ])
 def test_a_full_access_token_cannot_do_the_unsafe_side(client, method, path, kw, needs, monkeypatch):
-    monkeypatch.setattr("app.core.writemode.global_mode", lambda: "read_only")
+    if path == "/api/write-mode":   # raising the mode is the unsafe side only from below Full Access
+        monkeypatch.setattr("app.core.writemode.global_mode", lambda: "read_only")
     resp = getattr(client, method)(path, headers=_token("full"), **kw)
     assert _refused(resp, needs), (resp.status_code, resp.headers.get("x-kopialens-needs"), resp.text[:200])
 

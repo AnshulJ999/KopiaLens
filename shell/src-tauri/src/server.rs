@@ -34,7 +34,7 @@ pub struct Server {
     pub data_dir: PathBuf,
     pub settings_file: PathBuf,
     port: AtomicU16,
-    pub control_port: u16,
+    control_port: AtomicU16,
     /// A data folder the server must be told about (portable, or a source checkout's `.env.dev`).
     data_env: Option<PathBuf>,
     token: String,
@@ -214,7 +214,7 @@ impl Server {
             portable,
             root,
             port: AtomicU16::new(env_port("KOPIALENS_PORT", setting_port(&settings_file, "port", 7123))),
-            control_port: env_port("KOPIALENS_TRAY_PORT", setting_port(&settings_file, "control_port", 7124)),
+            control_port: AtomicU16::new(env_port("KOPIALENS_TRAY_PORT", setting_port(&settings_file, "control_port", 7124))),
             settings_file,
             data_dir,
             data_env,
@@ -231,6 +231,15 @@ impl Server {
     /// A new port for this run (the user chose another one because the saved port was taken).
     pub fn set_port(&self, port: u16) {
         self.port.store(port, Ordering::SeqCst);
+    }
+
+    pub fn control_port(&self) -> u16 {
+        self.control_port.load(Ordering::SeqCst)
+    }
+
+    /// The control port this run actually listens on (another copy held the saved one).
+    pub fn set_control_port(&self, port: u16) {
+        self.control_port.store(port, Ordering::SeqCst);
     }
 
     pub fn url(&self) -> String {
@@ -288,7 +297,7 @@ impl Server {
         }
         cmd.current_dir(&self.root)
             .env("KOPIALENS_PORT", self.port().to_string())
-            .env("KOPIALENS_TRAY_PORT", self.control_port.to_string())
+            .env("KOPIALENS_TRAY_PORT", self.control_port().to_string())
             .env("KOPIALENS_PROFILE", "desktop")
             .env("KOPIALENS_SHELL_TOKEN", &self.token)
             .stdin(Stdio::null())
@@ -329,12 +338,17 @@ impl Server {
     /// The first free port after the app's port, for "use another port".
     pub fn next_free_port(&self) -> Option<u16> {
         (self.port().saturating_add(1)..self.port().saturating_add(100))
-            .find(|p| *p != self.control_port && !port_open(*p))
+            .find(|p| *p != self.control_port() && !port_open(*p))
     }
 
     /// Saves the app's port in settings.json (only before the server starts, so nothing else
     /// writes the file at the same time).
     pub fn save_port(&self, port: u16) -> std::io::Result<()> {
+        self.save_setting("port", json!(port))
+    }
+
+    /// One `kopialens` setting written to settings.json, under the same before-the-server rule.
+    pub fn save_setting(&self, key: &str, value: Value) -> std::io::Result<()> {
         let mut doc: Value = std::fs::read_to_string(&self.settings_file).ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .filter(Value::is_object)
@@ -342,7 +356,7 @@ impl Server {
         if !doc.get("kopialens").is_some_and(Value::is_object) {
             doc["kopialens"] = json!({});
         }
-        doc["kopialens"]["port"] = json!(port);
+        doc["kopialens"][key] = value;
         if let Some(dir) = self.settings_file.parent() {
             std::fs::create_dir_all(dir)?;
         }

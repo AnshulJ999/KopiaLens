@@ -17,8 +17,8 @@ const INFO_FILE: &str = "desktop-instance.json";
 
 static EXITING: AtomicBool = AtomicBool::new(false);
 
-/// This copy is quitting or restarting: stop answering, so a new launch waits for the lock instead
-/// of handing its request to a copy that is about to exit.
+/// This copy is quitting or restarting: a new launch is told so and waits for the lock instead of
+/// handing its request to a copy that is about to exit.
 pub fn exiting() {
     EXITING.store(true, Ordering::SeqCst);
 }
@@ -65,14 +65,18 @@ pub fn claim(data_dir: &Path, token: String, quit: bool) -> Claim {
     Claim::First(Instance { lock, listener, token })
 }
 
-/// Sends "open" or "quit" to the copy holding the lock. It may still be starting, or be exiting
-/// (a restart), so keep trying for a few seconds; None = the lock came free and is now ours.
+/// Sends "open" or "quit" to the copy holding the lock. It may still be starting, so keep trying
+/// for a few seconds; a copy that is quitting (Quit waits up to a minute for an index to save) is
+/// waited for. None = the lock came free and is now ours.
 fn hand_over(lock: &File, data_dir: &Path, quit: bool) -> Option<Claim> {
     let cmd = if quit { "quit" } else { "open" };
-    let end = Instant::now() + Duration::from_secs(10);
+    let start = Instant::now();
+    let mut end = start + Duration::from_secs(10);
     while Instant::now() < end {
-        if send(data_dir, cmd) {
-            return Some(Claim::Handed);
+        match send(data_dir, cmd).as_deref() {
+            Some("ok") => return Some(Claim::Handed),
+            Some("exiting") => end = start + Duration::from_secs(90),
+            _ => {}
         }
         if lock.try_lock().is_ok() {
             return None;
@@ -82,19 +86,19 @@ fn hand_over(lock: &File, data_dir: &Path, quit: bool) -> Option<Claim> {
     Some(Claim::Unreachable)
 }
 
-fn send(data_dir: &Path, cmd: &str) -> bool {
-    let Some(info) = std::fs::read_to_string(data_dir.join(INFO_FILE)).ok()
-        .and_then(|t| serde_json::from_str::<Value>(&t).ok()) else { return false };
-    let (Some(port), Some(token)) = (info.get("port").and_then(Value::as_u64), info.get("token").and_then(Value::as_str))
-    else { return false };
+/// The running copy's one-word reply ("ok" or "exiting"), or None when it did not answer.
+fn send(data_dir: &Path, cmd: &str) -> Option<String> {
+    let info = std::fs::read_to_string(data_dir.join(INFO_FILE)).ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())?;
+    let port = info.get("port").and_then(Value::as_u64)?;
+    let token = info.get("token").and_then(Value::as_str)?;
     let addr = SocketAddr::from(([127, 0, 0, 1], port as u16));
-    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_secs(2)) else { return false };
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2)).ok()?;
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    if writeln!(stream, "{token} {cmd}").is_err() {
-        return false;
-    }
+    writeln!(stream, "{token} {cmd}").ok()?;
     let mut reply = String::new();
-    BufReader::new(stream).read_line(&mut reply).is_ok() && reply.trim() == "ok"
+    BufReader::new(stream).read_line(&mut reply).ok()?;
+    Some(reply.trim().to_string())
 }
 
 impl Instance {
@@ -119,7 +123,12 @@ impl Instance {
                     continue;
                 }
                 let cmd = parts.next().unwrap_or("");
-                if (cmd == "open" || cmd == "quit") && !EXITING.load(Ordering::SeqCst) {
+                if cmd != "open" && cmd != "quit" {
+                    continue;
+                }
+                if EXITING.load(Ordering::SeqCst) {
+                    let _ = writeln!(stream, "exiting");
+                } else {
                     let _ = writeln!(stream, "ok");
                     on_request(cmd);
                 }

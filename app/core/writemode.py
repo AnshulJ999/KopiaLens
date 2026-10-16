@@ -56,10 +56,8 @@ ROUTES: dict[tuple[str, str], object] = {
     ("POST", "/api/actions/remove-bat"): _F,
     ("POST", "/api/engine/choice"): _N,
     ("POST", "/api/engine/snapshot"): _N,
-    ("POST", "/api/engine/cancel"): _N,
     ("POST", "/api/engine/snapshot-description"): _N,
     ("POST", "/api/engine/identity"): _N,
-    ("POST", "/api/tasks/cancel"): _N,
     ("POST", "/api/snapshots/pin"): _N,
     ("POST", "/api/stats/description"): _N,
     ("POST", "/api/client/scripts"): _N,
@@ -87,6 +85,7 @@ NO_REPO_WRITE = {
     "/api/delete/plan", "/api/delete/stats",
     "/api/engine/pause", "/api/engine/resume", "/api/engine/source-pause", "/api/engine/source-resume",
     "/api/help/check-updates", "/api/help/install-update", "/api/folder/detail", "/api/jobs/stop",
+    "/api/tasks/cancel", "/api/engine/cancel",   # stopping writes nothing
     "/api/notify/profile/test", "/api/notify/webhook/test",
     "/api/policies/resolve", "/api/policies/multi-plan", "/api/policies/preview", "/api/policies/price",
     "/api/policies/exclusion-targets", "/api/policies/exclusion-variants", "/api/policies/diff",

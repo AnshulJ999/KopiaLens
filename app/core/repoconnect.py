@@ -618,11 +618,12 @@ class DuplicateRepo(ValueError):
         super().__init__(f"This is the same repository as {name}.")
 
 
-def same_repository(config_file: str) -> dict | None:
-    """The existing kopia record whose connection points at the same storage, or None."""
+def same_repository(config_file: str, unique_id: str = "") -> dict | None:
+    """The existing kopia record for the same repository, or None: by kopia's repository id when
+    both sides know it (one repository reached two ways), else by storage location."""
     from . import coexist
     key = coexist.storage_key(coexist.read_config(config_file))
-    if not key:
+    if not key and not unique_id:
         return None
     default_cfg = os.path.join(kopia_config_dir(), "repository.config")
     for rec in repos.all_records():
@@ -631,9 +632,25 @@ def same_repository(config_file: str) -> dict | None:
         path = rec.get("config_file") or default_cfg
         if os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(config_file)):
             continue
-        if coexist.storage_key(coexist.read_config(path)) == key:
+        if unique_id and rec.get("unique_id"):
+            if rec["unique_id"] == unique_id:
+                return rec
+        elif key and coexist.storage_key(coexist.read_config(path)) == key:
             return rec
     return None
+
+
+def _status_of(config_file: str | None) -> dict:
+    """kopia's ``repository status --json`` for a connection file (None = kopia's default), or {}."""
+    args = [kopiabin.exe()] + (["--config-file", config_file] if config_file else [])
+    res = _run(args + ["repository", "status", "--json"], None, timeout=120.0)
+    if res["returncode"] != 0:
+        return {}
+    try:
+        data = json.loads(res["stdout"]) if (res["stdout"] or "").strip() else {}
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _establish(verb: str, provider: str, fields: dict, password: str, name: str, short_name: str,
@@ -675,7 +692,9 @@ def _establish(verb: str, provider: str, fields: dict, password: str, name: str,
                     summary={"provider": provider, "ok": False, "config": config_file},
                     rc=res["returncode"])
         raise ValueError(detail or f"kopia could not {verb} to the repository (exit {res['returncode']}).")
-    dup = None if allow_duplicate or verb == "create" else same_repository(config_file)
+    status = {} if verb == "create" else _status_of(config_file)
+    dup = None if allow_duplicate or verb == "create" else same_repository(
+        config_file, status.get("uniqueIDHex") or "")
     if dup is not None:
         _disconnect(rid, config_file)
         _remove_config_files(config_file)
@@ -686,7 +705,7 @@ def _establish(verb: str, provider: str, fields: dict, password: str, name: str,
         "source": "created" if verb == "create" else "connected",
         "counts_as_backup": bool(counts_as_backup),
     })
-    repos.capture_status(rid)
+    repos.capture_status(rid, status or None)
     status = repos.storage_info(rid)
     log.warning("repo=%s %s (%s, %s)", rid, "created" if verb == "create" else "connected",
                 provider, status.get("type") or "?")
@@ -902,8 +921,10 @@ def attach(config_file: str | None, name: str = "", short_name: str = "",
                              f"{rec.get('id')}")
         if cfg and existing and os.path.normcase(os.path.abspath(existing)) == os.path.normcase(cfg):
             raise ValueError(f"that connection is already attached as repo {rec.get('id')}")
+    status = _status_of(cfg)
     if not allow_duplicate:
-        dup = same_repository(cfg or os.path.join(kopia_config_dir(), "repository.config"))
+        dup = same_repository(cfg or os.path.join(kopia_config_dir(), "repository.config"),
+                              status.get("uniqueIDHex") or "")
         if dup is not None:
             raise DuplicateRepo(str(dup.get("id")), dup.get("name") or str(dup.get("id")))
     with _CONNECT_LOCK:
@@ -915,7 +936,7 @@ def attach(config_file: str | None, name: str = "", short_name: str = "",
         # call; a live status capture (below) can refine it with capacity.
         "storage": {"type": facts.get("type") or "", "config": facts.get("config") or {}},
     })
-    repos.capture_status(rid)   # live status; an offline repo just stays uncaptured
+    repos.capture_status(rid, status or None)   # live status; an offline repo just stays uncaptured
     audit.audit("executed", "repo-attach", repo=rid,
                 summary={"config": cfg or "(default)", "type": facts.get("type")})
     return record

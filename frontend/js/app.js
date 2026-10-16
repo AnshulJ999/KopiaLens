@@ -67,7 +67,7 @@ document.addEventListener("alpine:init", () => {
     // Settings Account + Encryption sections, their shared dialog, and the unlock box (lock.html).
     acct: null, encStatus: null, acctDialog: null, locked: null, sessionDays: 30,
     // Settings backups, the damaged-file notice, pausing indexing and About (appconfig.js).
-    cfg: null, cfgError: false, cfgNotices: [], ixNotices: [], ixBackups: null, cfgDlg: null, cfgBusy: "", cfgExportAccounts: false, cfgExportKeys: false,
+    cfg: null, cfgError: false, cfgNotices: [], ixNotices: [], ixBackups: null, ixCopyRunning: false, cfgDlg: null, cfgBusy: "", cfgExportAccounts: false, cfgExportKeys: false,
     indexPause: { paused: false }, about: null, controlApi: true, appPort: 7123, controlPort: 7124, trayClick: "window", trayDoubleClick: "window", notifyLevel: "warnings",
     // Onboarding (onboarding.js) and repositories (repos.js): the shared connect form is `cx`.
     ob: null, cx: null, repoMenu: false, repoAdd: false, repoDlg: null, repoChecks: {}, kopiaInfo: null, repoKopiaEdit: null,
@@ -173,7 +173,7 @@ document.addEventListener("alpine:init", () => {
     newSnap: null, newSnapBack: "", _newSnapSeq: 0, srcDel: null, verifyDlg: null, cliBox: null,
     wm: null,
     tok: null, tokNew: null, tokBusy: false, tokForm: { name: "", mode: "read_only", days: "90" },
-    tokEdit: null, apList: null, apWaiting: 0, apReview: null, apPassword: "", apBusy: false, apSignIn: false,
+    tokEdit: null, apList: null, apWaiting: 0, apReview: null, apPassword: "", apBusy: false, apHasAccount: false,
     notifyHook: null, notifyForm: null, notifyProfiles: null, notifyRepo: "", _klSettings: null,
     engine: null, engineDlg: null, engineSrc: {}, _engineTimer: null, _engineSrcTimer: null, _alertSeen: -1, tasksRunning: 0,
     taskRows: [], taskFilter: { repo: "all", status: "all", kind: "all", text: "" }, taskSel: null, taskLines: [], taskCursor: 0,

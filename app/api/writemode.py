@@ -56,11 +56,17 @@ async def gate(request: Request) -> None:
         route = _template(request, path)
         refused = tokens.check(tok, request.method, route, path, body, query)
         if refused and refused[0] == tokens.PERSON:
+            if gated:
+                _repo_gate(request, path, body, query)   # never ask a person to approve a refusal
             refused = _approval(request, tok, route, path, body, query)
         if refused:
             raise HTTPException(status_code=403, detail=refused[1], headers={"X-KopiaLens-Needs": refused[0]})
-    if not gated:
-        return
+    if gated:
+        _repo_gate(request, path, body, query)
+
+
+def _repo_gate(request: Request, path: str, body: dict, query: dict) -> None:
+    """Refuse a write the repository's mode does not allow."""
     need = writemode.route_need(request.method, path, body, query)
     if need is None:
         return

@@ -138,7 +138,7 @@ def waiting_count() -> int:
 
 def decide(approval_id: str, approve: bool, actor: str, password: str | None = None) -> dict | None:
     """Approve or deny a waiting request. Approving one that needs the password asks for it."""
-    from . import audit, auth, writemode
+    from . import audit, users, writemode
     with _LOCK:
         _prune(time.time())
         rec = _ITEMS.get(approval_id)
@@ -147,7 +147,7 @@ def decide(approval_id: str, approve: bool, actor: str, password: str | None = N
         if rec["status"] != WAITING:
             raise ValueError(f"This request was already {rec['status']}.")
         pw_ok = False
-        if approve and rec["needs_password"] and auth.enabled():
+        if approve and rec["needs_password"] and users.has_accounts():
             if not writemode._password_ok(password):
                 raise PasswordNeeded("Enter your KopiaLens password to approve this.")
             pw_ok = True
@@ -237,7 +237,8 @@ def _delete_job(kind: str, p: dict, where: str, out: dict) -> None:
 
 def _policy_facts(repo, writes: list, out: dict) -> None:
     for w in writes:
-        target, changes = w.get("target"), w.get("changes") or {}
+        from .tokens import policy_changes
+        target, changes = w.get("target"), policy_changes(w)
         if changes.get("delete_policy"):
             out["facts"].append([str(target), "the whole policy is removed (it falls back to its parent's)"])
             continue

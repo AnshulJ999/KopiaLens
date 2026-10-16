@@ -15,6 +15,12 @@ import pytest
 from app import main as m
 
 
+@pytest.fixture(autouse=True)
+def _no_repo_record(monkeypatch):
+    """A repo's creation time counts as its last run; these tests date runs before any real record."""
+    monkeypatch.setattr(m, "_repo_created", lambda repo: 0.0)
+
+
 @pytest.fixture
 def daily(monkeypatch):
     """Daily mode at 23:00, with a settable 'last run' timestamp."""

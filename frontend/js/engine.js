@@ -47,6 +47,7 @@ const enginePart = {
       if (e.state === "running") return "Backups: KopiaLens" + (e.next ? " · next " + humanTime(e.next) : "");
       if (e.state === "starting") return "Backups: KopiaLens · starting…";
       if (e.state === "paused") return "Backups: paused";
+      if (e.state === "blocked" && e.until_restart) return "Backups: KopiaLens takes over when KopiaUI restarts";
       if (e.state === "blocked") return `Backups: ${this.engineAppName(e.engine)} is running them`;
       if (e.state === "failed") return "Backups: stopped by an error";
       if (e.state === "write_mode") return `Backups: off in ${this.wmLabel(this.wmMode(repo))} mode`;
@@ -58,8 +59,8 @@ const enginePart = {
   backupsClass(repo) {
     const e = this.engineFor(repo);
     if (!e) return "";
-    if (e.choice === "kopialens" && ["blocked", "failed"].includes(e.state)) return "border-danger text-danger";
-    if (e.state === "paused" || e.state === "write_mode" || (e.choice !== "kopialens" && e.engine === "none")) return "border-warn-bd text-warn";
+    if (e.choice === "kopialens" && ["blocked", "failed"].includes(e.state) && !e.until_restart) return "border-danger text-danger";
+    if (e.until_restart || e.state === "paused" || e.state === "write_mode" || (e.choice !== "kopialens" && e.engine === "none")) return "border-warn-bd text-warn";
     return "";
   },
   // Policy editor note: who makes the schedule actually run.
@@ -156,10 +157,12 @@ const enginePart = {
     if (!(await this.klConfirm({ title, facts, note, confirmLabel: label, danger: false }))) return;
     g.busy = true; g.error = "";
     try {
-      await getJson("/api/engine/choice", { method: "POST", headers: { "Content-Type": "application/json" },
+      const st = await getJson("/api/engine/choice", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo: g.repo, choice: g.choice, how: g.how, password: g.password }) });
       this.engineDlg = null;
-      this.klNotify(g.choice === "kopialens" ? "KopiaLens runs backups for this repository now" : "Backups handed back");
+      this.klNotify(g.choice !== "kopialens" ? "Backups handed back"
+        : st && st.until_restart ? "Saved. KopiaLens takes over when KopiaUI restarts."
+        : "KopiaLens runs backups for this repository now");
       if (this.ob) this.obLoadEngine();   // setup's Backups rows
       setTimeout(() => this.loadEngine(), 1500);
     } catch (e) { g.error = e.message; }
@@ -222,6 +225,12 @@ const enginePart = {
     if (h === "" || !this.engineDlg) return;
     const repo = this.engineDlg.repo;
     await this.enginePause(repo, h === "custom" ? "custom" : Number(h));
+    this.openEngineDlg(repo);
+  },
+  async engineDlgResume() {
+    if (!this.engineDlg) return;
+    const repo = this.engineDlg.repo;
+    await this.engineResume(repo);
     this.openEngineDlg(repo);
   },
   async engineResume(repo) {
@@ -336,7 +345,6 @@ const enginePart = {
     } catch (e) { this.klNotify(e.message, "error"); }
   },
   async engineCancel(source) {
-    if (!this.wmGuard("non_destructive")) return;
     const ok = await this.klConfirm({
       title: "Stop this backup?", facts: [["Folder", sourcePath(source)]],
       confirmLabel: "Stop backup", danger: true,

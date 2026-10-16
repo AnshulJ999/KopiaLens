@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>KopiaLens</title>
-  <script>window.KL_BASE = {{ base_json }};   // URL prefix (HA ingress, proxy sub-path); "" otherwise</script>
+  <script>window.KL_BASE = {{ base_json }};   // URL prefix (HA ingress, proxy sub-path); "" otherwise
+    window.KL_HA = {{ ha_json }};   // opened through Home Assistant, which signs its user in</script>
   <link rel="icon" href="{{ base }}/static/favicon.svg" type="image/svg+xml">
   <script>
     // Resolve the Tailwind dark variant before first paint. data-theme is stamped by the
@@ -79,8 +80,9 @@
         <button x-show="!indexStatus.building" @click="buildIndex()" class="kl-btn primary">Start indexing</button>
         <button x-show="indexStatus.building" @click="openIndexPanel()" class="kl-btn">Show progress</button>
       </div>
-      <!-- KopiaLens runs this repository's backups but can't right now: another app took over, or an error. -->
-      <template x-if="repoKind !== 'backblaze' && engineFor() && engineFor().choice === 'kopialens' && ['blocked', 'failed'].includes(engineFor().state)">
+      <!-- KopiaLens runs this repository's backups but can't right now: another app took over, or an error.
+           Not while KopiaUI hands over after a move (the Backups button says so). -->
+      <template x-if="repoKind !== 'backblaze' && engineFor() && engineFor().choice === 'kopialens' && ['blocked', 'failed'].includes(engineFor().state) && !engineFor().until_restart">
         <div class="mb-4 rounded-md border border-danger bg-danger-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm" data-testid="engine-banner">
           <div class="min-w-0 flex-1">
             <div class="font-medium" x-text="engineFor().state === 'blocked' ? engineFor().conflict + ' KopiaLens stopped its own backups here.' : 'KopiaLens stopped running backups for this repository.'"></div>

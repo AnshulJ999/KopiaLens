@@ -31,11 +31,14 @@ const licencePart = {
     },
 
     // The PRO mark: shown for a feature this licence doesn't include, demo repos too (see PRO_TAGS_ON_DEMO).
+    // A demo copy unlocks every feature server-side, so there it marks every Pro feature.
     proTag(feature) {
-      const locked = ((this.lic && this.lic.locked) || []).includes(feature);
+      const lic = this.lic || {};
+      if (lic.demo) return PRO_TAGS_ON_DEMO && feature in (lic.features || {});
+      const locked = (lic.locked || []).includes(feature);
       return locked && (PRO_TAGS_ON_DEMO || !this.isDemo());
     },
-    proTagTitle() { return this.isDemo() ? "Pro feature. Free to try in the demo." : null; },
+    proTagTitle() { return this.isDemo() || (this.lic && this.lic.demo) ? "Pro feature. Free to try in the demo." : null; },
     // The same mark inside a table's right-click menu, whose labels are HTML.
     proMenuTag(feature) { return this.proTag(feature) ? ' <span class="protag">PRO</span>' : ""; },
 

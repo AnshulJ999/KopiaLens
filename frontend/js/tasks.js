@@ -17,6 +17,8 @@ const tasksPart = {
       if (this.taskSel) {
         const fresh = this.taskRows.find((t) => t.id === this.taskSel.id);
         if (fresh) this.taskSel = { ...this.taskSel, ...fresh };
+        // The log refresh stops when the tab is left; pick it up again.
+        if (this.taskSel.status === "running" && !this._taskPoll) this.pollTask();
       }
     } catch (e) { this.error = e.message; }
     this.armTasksPoll();
@@ -40,7 +42,7 @@ const tasksPart = {
     const text = (f.text || "").toLowerCase();
     return this.taskRows.filter((t) =>
       (f.repo === "all" || t.repo === f.repo)
-      && (f.status === "all" || (f.status === "failed" ? t.status === "failed" : t.status === "running"))
+      && (f.status === "all" || (f.status === "failed" ? t.status === "failed" || t.status === "warning" : t.status === "running"))
       && (f.kind === "all" || t.kind === f.kind)
       && (!text || (t.description + " " + (t.error || "")).toLowerCase().includes(text)));
   },
@@ -143,7 +145,6 @@ const tasksPart = {
       .map(([name, c]) => ({ name, level: c.level || "", value: c.units === "bytes" ? fmtBytes(c.value) : Number(c.value).toLocaleString(NUM_LOCALE) }));
   },
   async stopTask() {
-    if (!this.wmGuard("non_destructive")) return;
     const t = this.taskSel;
     if (!t) return;
     const ok = await this.klConfirm({

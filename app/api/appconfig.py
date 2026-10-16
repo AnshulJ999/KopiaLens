@@ -68,7 +68,13 @@ def restart() -> dict:
     call is made after this reply has gone out. In Docker the server exits and the container's
     restart rule starts it again."""
     from ..core import host
-    if _tray("/status") is None:
+    st = _tray("/status")
+    if st is not None and st.get("pid") != os.getpid():
+        # Another copy's desktop app holds the control port: never restart that one.
+        log.warning("restart requested: the desktop app on port %s runs another server (pid %s)",
+                    config.TRAY_CONTROL_PORT, st.get("pid"))
+        return {"ok": False, "reason": "no-tray"}
+    if st is None:
         if not host.in_docker():
             return {"ok": False, "reason": "no-tray"}
 
