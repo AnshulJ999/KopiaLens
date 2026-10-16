@@ -105,6 +105,7 @@ const excludedPart = {
           { label: "Details", action: (_e, row) => this.openExcludedDetail(row.getData()) },
           { label: "Back this up…", action: (_e, row) => this.excludedInclude(row.getData()) },
           this.wmItem({ label: "Exclude…", action: (_e, row) => this.excludedExclude(row.getData()) }, "non_destructive"),
+          { label: "Policy…", action: (_e, row) => this.polPopFor("", this._excludedPath(row.getData())) },
           { label: "Copy path", action: (_e, row) => this.copyText(this._excludedPath(row.getData())) },
         ],
       });

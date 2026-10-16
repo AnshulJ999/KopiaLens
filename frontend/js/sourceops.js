@@ -70,16 +70,7 @@ const sourceOpsPart = {
   },
   newSnapEditPolicy() {
     const g = this.newSnap;
-    if (!g || !g.check) return;
-    const target = g.check.source;
-    this.newSnapBack = g.path;
-    this.newSnap = null;
-    this.active = "policies";
-    this.loadPolicies().then(() => {
-      const known = [...(this.polData.sources || []).map((s) => s.source), ...(this.polData.others || []).map((o) => o.target)];
-      if (!known.includes(target) && !this.polNewTargets.includes(target)) this.polNewTargets = [...this.polNewTargets, target];
-      this.polTryLeave(target);
-    });
+    if (g && g.check) this.polPopOpen(g.check.source, { create: true });
   },
   async newSnapStart() {
     const g = this.newSnap;

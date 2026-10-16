@@ -116,7 +116,7 @@ const policyEditPart = {
     polStageCountFor(target) {
       const st = this.polStaged[target];
       if (!st) return 0;
-      return (st.add || []).length + (st.remove || []).length + (st.removePolicy ? 1 : 0) + Object.keys(st.fields || {}).length;
+      return (st.add || []).length + (st.remove || []).length + (st.removePolicy ? 1 : 0) + Object.keys(st.fields || {}).length + (st.order ? 1 : 0);
     },
     polReviewLabel() {
       const n = this.polStageCount();
@@ -243,7 +243,7 @@ const policyEditPart = {
       if (this.polMulti.on) return Object.keys(this.polMulti.fields).filter((p) => (this.polFieldSpec(p) || {}).section === sec).length;
       const st = this.polStaged[this.polSel];
       if (!st) return 0;
-      if (sec === "exclusions") return (st.add || []).length + (st.remove || []).length + (st.removePolicy ? 1 : 0);
+      if (sec === "exclusions") return (st.add || []).length + (st.remove || []).length + (st.removePolicy ? 1 : 0) + (st.order ? 1 : 0);
       return Object.keys(st.fields || {}).filter((p) => (this.polFieldSpec(p) || {}).section === sec).length;
     },
     polFieldSpec(path) { return ((this.polMeta && this.polMeta.fields) || []).find((f) => f.path === path); },
@@ -347,6 +347,7 @@ const policyEditPart = {
       }
       for (const p of (st.add || [])) lines.push("Add rule " + p);
       for (const p of (st.remove || [])) lines.push("Remove rule " + p);
+      if (st.order) lines.push("New rule order");
       if (st.removePolicy) lines.push("Remove this policy");
       return lines;
     },

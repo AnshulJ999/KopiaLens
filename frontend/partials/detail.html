@@ -87,6 +87,7 @@
 {%- endmacro -%}
 
 {%- macro panel_actions(kind) -%}
+<button class="kl-btn quiet" @click="polPopFor(detail.source || ((detail.sources || [])[0] || {}).source, detail.title)" title="The policy that rules this {{ kind }}: schedule, retention and exclusions">Policy…</button>
 {%- if kind == 'file' -%}
 <button class="kl-btn" @click="openExclude({kind: 'file', path: detail.title, source: detail.source}, 'exclude')">Exclude…</button>
 <button class="kl-btn danger" @click="openDeletePanel([{source: detail.source, full_path: detail.title}])">Delete… <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
@@ -340,6 +341,7 @@
           <div x-text="fmtPhys(sc.physical)"></div>
           <div x-text="countOf(sc.files, 'file')"></div>
         </div>
+        <button class="kl-btn quiet shrink-0" style="height:22px" @click="polPopOpen(sc.source)" :title="'Open the policy of ' + shortSource(sc.source)">Policy…</button>
       </div>
     </template>
   </div>

@@ -123,6 +123,58 @@ const policiesPart = {
       this.polResolve(target, true);
     },
 
+    // ---------- popup editor ----------
+    // One policy over the current tab or panel. It shares the selection and the unsaved changes
+    // with the Policies tab; `create` opens a folder with no policy yet as a new one.
+    async polPopOpen(target, opts = {}) {
+      if (this.polMulti.on) { this.klNotify("Finish editing several policies in the Policies tab first.", "warn"); return; }
+      if (!this.polData) await this.loadPolicies();
+      if (!this.polData) return;
+      target = target || "global";
+      const known = [...(this.polData.sources || []).map((s) => s.source), ...(this.polData.others || []).map((o) => o.target)];
+      if (opts.create && target !== "global" && !known.includes(target) && !this.polNewTargets.includes(target)) {
+        this.polNewTargets = [...this.polNewTargets, target];
+      }
+      this.polPop = {};
+      if (target !== this.polSel || !this.polDetail) this.polSelect(target);
+    },
+    // The policy that rules a path: the deepest source or folder policy above it, else Global.
+    polNearest(owner, path) {
+      const d = this.polData || {};
+      const win = /^[A-Za-z]:|^\\\\/.test(path || "");
+      const norm = (p) => { const t = String(p || "").replace(/[\\/]+$/, ""); return win ? t.toLowerCase() : t; };
+      const p = norm(path);
+      let best = "global", len = -1;
+      const targets = [...(d.sources || []).map((s) => s.source),
+        ...(d.others || []).filter((o) => o.kind === "folder").map((o) => o.target), ...this.polNewTargets];
+      for (const t of targets) {
+        if (owner && t.slice(0, t.indexOf(":")) !== owner) continue;
+        const tp = norm(sourcePath(t));
+        if ((p === tp || p.startsWith(tp + "\\") || p.startsWith(tp + "/")) && tp.length > len) { best = t; len = tp.length; }
+      }
+      return best;
+    },
+    // File and folder panels, Excluded: the policy that rules this path in this repository.
+    async polPopFor(source, path) {
+      if (!this.polData) await this.loadPolicies();
+      if (!this.polData) return;
+      const owner = source ? source.slice(0, source.indexOf(":")) : this.myOwner();
+      return this.polPopOpen(this.polNearest(owner, path));
+    },
+    polPopClose() {
+      this.polPop = null;
+      const n = this.polStageCount();
+      if (n) this.klNotify(`${countOf(n, "unsaved policy change")} kept for review in Policies.`, "info",
+        { label: "Open Policies", run: () => this.polPopToTab() });
+    },
+    polPopToTab() {
+      this.polPop = null;
+      this.detail = null;
+      if (this.newSnap) this.closeNewSnap();
+      this.active = "policies";
+      this.activate();
+    },
+
     // The overview row for the selection (header facts live there; rule data in polDetail).
     polSelected() {
       if (!this.polData) return null;
@@ -560,6 +612,7 @@ const policiesPart = {
       const started = await this.startJob("policy_write", { writes }, `${changes.length} polic${changes.length === 1 ? "y" : "ies"}`);
       if (!started) return;
       this.showPolDiff = false;
+      this.polPop = null;
       for (const c of changes) delete this.polStaged[c.target];
       this.polStaged = { ...this.polStaged };
       // The stored numbers predate these writes; the reload after the job re-reads them.

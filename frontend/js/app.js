@@ -178,6 +178,7 @@ document.addEventListener("alpine:init", () => {
     polMeta: null, polResolved: {}, polResolveError: "", _polResolveSeq: 0, _polResolveTimer: null,
     polLayout: "tabs", polLeave: "ask", polSection: "exclusions", polDiffOnly: null, polFolded: {},
     polLeaveBox: null, polNewBox: null, polNewTargets: [], polPreview: null, _polPreviewSeq: 0,
+    polPop: null,   // the policy editor as a popup over another tab: {} while open (policies.js polPopOpen)
     polMulti: { on: false, picked: [], fields: {}, plan: null, ticks: {}, busy: false }, _polMultiSeq: 0, _polMultiTimer: null,
     versionSizes: {}, _versionSeq: 0, _versionTimer: null,
     diskLookup: null, diskLookupMode: "auto", diskScanBudget: 15,
@@ -200,7 +201,7 @@ document.addEventListener("alpine:init", () => {
     indexPending: [], indexUpdated: null,
     showMaint: false, maint: null, _maintSeq: 0,
     // Backups run by KopiaLens (engine.js) and the Tasks tab (tasks.js).
-    newSnap: null, newSnapBack: "", _newSnapSeq: 0, srcDel: null, verifyDlg: null, cliBox: null,
+    newSnap: null, _newSnapSeq: 0, srcDel: null, verifyDlg: null, cliBox: null,
     wm: null,
     tok: null, tokNew: null, tokBusy: false, tokForm: { name: "", mode: "read_only", days: "90" },
     tokEdit: null, apList: null, apWaiting: 0, apReview: null, apPassword: "", apBusy: false, apHasAccount: false,
@@ -273,6 +274,12 @@ document.addEventListener("alpine:init", () => {
       if (this.tblLayout) { this.tblLayout = null; return; }
       if (this.repoDlg) { this.repoDlg = null; return; }
       if (this.engineDlg) { this.engineDlg = null; return; }
+      if (this.polPop && !this.cliBox && !this.showPolDiff) {
+        if (this.polPreview) { this.polPreview = null; return; }
+        if (this.polLeaveBox) { this.polLeaveBox = null; return; }
+        if (this.polNewBox) { this.polNewBox = null; return; }
+        this.polPopClose(); return;
+      }
       if (this.newSnap) { this.closeNewSnap(); return; }
       if (this.srcDel) { this.srcDel = null; return; }
       if (this.verifyDlg) { this.verifyDlg = null; return; }

@@ -135,9 +135,5 @@ const dashboardPart = {
 
     showSourceSnapshots(source) { this.snapSource = source; this.active = "snapshots"; this.loadSnapshots(); },
 
-    async openSourcePolicy(source) {
-      this.active = "policies";
-      await this.loadPolicies();
-      this.polTryLeave(source);
-    },
+    openSourcePolicy(source) { return this.polPopOpen(source); },
 };

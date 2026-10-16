@@ -376,6 +376,7 @@ const jobsPart = {
       // the reindex publishes a new generation, so they wait for that moment instead.
       if (j.dry || j.repo !== this.repo) return;
       if (j.kind === "policy_write" && this.polData) this.loadPolicies(true);
+      if (j.kind === "policy_write" && this.newSnap && this.newSnap.check) this.newSnapCheck();
       // A pin rewrites the snapshot record under a new id; a new snapshot adds a row.
       if ((j.kind === "snapshot_pin" || j.kind === "snapshot_create") && this.active === "snapshots") this.loadSnapshots(true);
       if (j.kind === "snapshot_create" && this.active === "dashboard") this.loadDashboard();
