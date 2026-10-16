@@ -445,7 +445,7 @@ def _run_args(job: dict, index: int) -> list[str]:
     job's own log folder, and the snapshot as JSON so its numbers can fill the task's counters."""
     if is_demo(job["repo"]):
         return []
-    extra = ["--log-file", f"{job['log_path'][:-4]}-kopia-{index}.log"]
+    extra = ["--log-file", f"{job['log_path'][:-4]}-kopia-{index}.log", "--file-log-level=info"]
     if job["kind"] == "snapshot_create":
         extra.append("--json")
     return extra
@@ -467,7 +467,8 @@ def _snapshot_counters(job: dict, manifest: dict) -> dict:
         log.warning("snapshot stats for %s: %s", manifest.get("id"), exc)
     def c(value, units="", level=""):
         return {"value": int(value or 0), "units": units, "level": level}
-    errors = int(stats.get("errorCount") or 0) + int(summ.get("numFailed") or 0)
+    # Both count the same failed entries (the root summary's numFailed totals the whole tree).
+    errors = int(summ.get("numFailed") or stats.get("errorCount") or 0)
     out = {"Size": c(summ.get("size"), "bytes"), "Files": c(summ.get("files")), "Folders": c(summ.get("dirs"))}
     if stats:
         out.update({

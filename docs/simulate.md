@@ -41,7 +41,7 @@ With one source, the line above the table sums up the result: how many snapshots
 | **Start** | When the snapshot was taken |
 | **Result** | **kept** or **deleted** |
 | **Why kept** | kopia's reasons for keeping it, such as `latest-1` or `daily-3` |
-| **Frees on its own** | The space deleting only this snapshot gives back. It fills in when KopiaLens has worked it out |
+| **Reclaimable** | The space deleting only this snapshot gives back. It fills in when KopiaLens has worked it out |
 | **Description** | The snapshot's description |
 | **Pins** | Its [pins](glossary.md#pin) |
 

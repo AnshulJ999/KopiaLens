@@ -55,7 +55,7 @@ const simulatePart = {
       return `${sourcePath(r.source)} · keeps ${r.keep_snapshots} of ${countOf(r.total_snapshots, "snapshot")} · deletes ${r.delete_snapshots}`
         + ` · frees ${fmtBytes(r.reclaim)}${topLine}`;
     },
-    // Frees on its own comes from the per-snapshot analysis; when it's missing, start it and fill the column in.
+    // Reclaimable comes from the per-snapshot analysis; when it's missing, start it and fill the column in.
     async _simFillFrees(source) {
       const seq = ++this._simFreesSeq;
       const q = `repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(source)}`;
@@ -98,7 +98,7 @@ const simulatePart = {
               accessorDownload: (v) => (v ? "kept" : "deleted"), headerTooltip: "What this policy does with the snapshot" },
             { title: "Why kept", field: "reasons", sorter: listSorter, widthGrow: 2, minWidth: 150, accessorDownload: (v) => (v || []).join(", "),
               formatter: (c) => (c.getValue() || []).map((x) => this.retentionPill(x)).join(""), headerTooltip: "Kopia's reasons for keeping it, under this policy" },
-            { title: "Frees on its own", field: "frees", width: 135, sorter: "number", hozAlign: "right",
+            { title: "Reclaimable", field: "frees", width: 135, sorter: "number", hozAlign: "right",
               formatter: (c) => (c.getValue() == null ? `<span class="text-muted" title="Working it out">…</span>` : fmtBytes(c.getValue())),
               headerTooltip: "Space freed by deleting only this snapshot. Deleting several frees at least their sum." },
             { title: "Description", field: "description", widthGrow: 1, minWidth: 120, formatter: (c) => escHtml(c.getValue() || "") },
