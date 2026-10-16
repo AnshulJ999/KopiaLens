@@ -2,7 +2,7 @@
 
 KopiaLens can ask for a username and password before anyone opens it. Turn this on whenever other people or devices can reach KopiaLens, for example on a home server or in Docker.
 
-Your **KopiaLens password** is separate from your **repository password**. The repository password belongs to kopia and unlocks your backups; the KopiaLens password only protects KopiaLens.
+Your **KopiaLens password** is separate from your **repository password**. The repository password belongs to kopia and unlocks your backups. The KopiaLens password only protects KopiaLens.
 
 ## Create an account
 
@@ -57,4 +57,4 @@ On the sign-in page, select **Forgot password?**.
   kopialens --reset-password
   ```
 
-  When running from source, use `python main.py --reset-password`. KopiaLens can keep running while you do this. If your password also unlocked encryption, the encryption password stays as it was and becomes a separate password; you can join them again in **Settings → Encryption**.
+  When running from source, use `python main.py --reset-password`. KopiaLens can keep running while you do this. If your password also unlocked encryption, the encryption password stays as it was and becomes a separate password. You can join them again in **Settings → Encryption**.

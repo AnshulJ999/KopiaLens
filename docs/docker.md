@@ -24,7 +24,7 @@ docker build -f packaging/docker/Dockerfile -t kopialens:local .
 |---|---|---|
 | `/config` | Settings, the index, kopia's cache and connection files | Yes |
 | Your repository's path | The kopia repository, if it's a folder or a network share | For folder repositories |
-| Your backed-up folders | Lets the Excluded browser compare the disk with your backups | Optional |
+| Your backed-up folders | Lets the Excluded tab compare the disk with your backups | Optional |
 | `/mounts` | Mounted snapshots | Optional |
 
 **Mount `/config` on a volume.** Without it the index, settings and sign-in are lost whenever the container is recreated, and KopiaLens warns you about this.
@@ -35,13 +35,13 @@ Cloud repositories (S3, B2, SFTP and the rest) need no folder: connect them in s
 
 ## Backing up from the container
 
-KopiaLens can run your backups from the container (choose **KopiaLens** in **Who runs backups**). It backs up only folders mounted into the container, so:
+KopiaLens can run your backups from the container (choose **KopiaLens** in **Who runs backups…**). It backs up only folders mounted into the container, so:
 
 - **Mount each folder at its host path**, as above. kopia files a snapshot under the path it read, so `/home/me/photos` inside the container continues the host's `/home/me/photos` history.
-- **Connect as the host's name.** kopia also files every snapshot under a `user@computer` name. Inside a container that would be `root@kopialens`, a separate history from the host's. When you connect the repository, open **Advanced** and fill **Connect as user** and **Connect as computer** with the name your existing snapshots use (it shows in the Snapshots tab, for example `me@my-server`). To fix an existing connection, KopiaLens offers **Connect as** in **Who runs backups** when the names differ only in capitals; otherwise reconnect with the right name.
+- **Connect as the host's name.** kopia also files every snapshot under a `user@computer` name. Inside a container that would be `root@kopialens`, a separate history from the host's. When you connect the repository, open **More options** and fill **Connect as user** and **Connect as computer** with the name your existing snapshots use (it shows in the Snapshots tab, for example `me@my-server`). To fix an existing connection, KopiaLens offers **Connect as** in **Who runs backups…** when the names differ only in capitals. Otherwise, reconnect with the right name.
 - **Read access.** The container's user (see below) must be able to read every folder it backs up. Restores also need write access.
 
-**Docker Desktop on Windows can't continue Windows backups.** A Linux container sees `/data/photos`, not `D:\Photos`, so its snapshots start a new history. Back up Windows folders with the KopiaLens desktop app instead; Docker on Windows is fine for analysis.
+**Docker Desktop on Windows can't continue Windows backups.** A Linux container sees `/data/photos`, not `D:\Photos`, so its snapshots start a new history. Back up Windows folders with the KopiaLens desktop app instead. Docker on Windows is fine for analysis.
 
 Other computers can't be backed up from here: each computer runs its own backups (KopiaLens, KopiaUI or the kopia command line), and KopiaLens analyses all of them.
 
@@ -55,7 +55,7 @@ kopia writes repository files that only their owner can read. So with `PUID` set
 
 Mounting shows a snapshot as a read-only folder. In Docker this needs FUSE, which the example file enables with three settings: the `/dev/fuse` device, `SYS_ADMIN` and `apparmor:unconfined`. These are the same settings kopia's own Docker image uses.
 
-Mounts appear inside the container under `/mounts`. To see them on the host, mount a host folder there with `:shared` (as in the example), then enter that host folder in Settings, **Mount folder on the host**, so KopiaLens shows host paths.
+Mounts appear inside the container under `/mounts`. To see them on the host, mount a host folder there with `:shared` (as in the example), then enter that host folder in **Settings → General → Mount folder on the host**, so KopiaLens shows host paths.
 
 Without FUSE everything else works, and the Mount buttons say what is missing.
 
@@ -64,7 +64,7 @@ Docker Desktop (Windows and macOS) runs containers inside a hidden Linux machine
 ## Restarting and updating
 
 - **Restart** in Settings stops the container, and Docker starts it again through `restart: unless-stopped`.
-- `docker compose stop` stops KopiaLens cleanly. An index pass that was running is picked up again later; the previous index stays usable.
+- `docker compose stop` stops KopiaLens cleanly. An index pass that was running is picked up again later. The previous index stays usable.
 - To update, pull or build the new image and run `docker compose up -d`. Your `/config` folder carries everything over.
 
 ## Who can reach it

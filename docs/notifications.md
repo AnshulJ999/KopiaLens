@@ -1,6 +1,6 @@
 # Notifications
 
-KopiaLens can tell you when something needs attention: a backup failed, maintenance failed, or another app started running a repository's backups. There are three places messages come from. All of them are in **Settings > Notifications**.
+KopiaLens can tell you when something needs attention: a backup failed, maintenance failed, or another app started running a repository's backups. Messages come from three places, and you set up all of them in **Settings → Notifications**.
 
 ## In the app and the tray
 
@@ -30,7 +30,7 @@ kopia itself can report on backups and maintenance. Its settings are stored **in
 - **Pushover**: your app token and user key.
 - **Webhook**: an address, POST or PUT, extra headers, and a format. For ntfy, use your topic address with POST and plain text.
 
-Each profile has a minimum level, from errors only up to everything. **Save and send a test** saves the profile and sends a test message straight away; **Test** sends another one later. When you edit a profile, leave a password field empty to keep the saved one.
+Each profile has a minimum level, from errors only up to everything. **Save and send a test** saves the profile and sends a test message straight away. **Test** sends another one later. When you edit a profile, leave a password field empty to keep the saved one.
 
 kopia only sends these while something runs that repository's backups or maintenance: KopiaUI, a kopia server, or KopiaLens when it runs the backups (see [Backups](backups.md)).
 

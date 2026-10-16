@@ -2,9 +2,9 @@
 
 Once a day, KopiaLens asks the KopiaLens update service whether a newer version is out. By default it also sends a few anonymous usage stats, so we know roughly how many people use KopiaLens and which features matter most.
 
-Both are on by default, and both can be turned off in **Settings > Updates**. With both off, KopiaLens sends nothing unless you click **Check now**, which sends the update-check details once. The same page shows exactly what the next check sends.
+Both are on by default, and you can turn off either one in **Settings → Updates**. With both off, KopiaLens sends nothing unless you click **Check now**, which sends the update-check details once. The same page shows exactly what the next check sends.
 
-KopiaLens never installs anything by itself. When a newer version is out, it says so. The installed Windows app can install it when you click **Install and restart**; other copies link to the download. Before installing, KopiaLens checks that the installer is signed by KopiaLens.
+KopiaLens never installs anything by itself. When a newer version is out, it says so. The installed Windows app can install it when you click **Install and restart**. Other copies link to the download. Before installing, KopiaLens checks that the installer is signed by KopiaLens.
 
 When you click **Install and restart**, the app asks the update service for the installer's details, sending only its version and platform (`windows-x86_64`). If the service can't be reached, it asks GitHub instead.
 
@@ -52,5 +52,5 @@ Once a week, KopiaLens also fetches the list of licences that were refunded or m
 
 ## Turning it off
 
-- In the app: **Settings > Updates**.
+- In the app: **Settings → Updates**.
 - Docker or headless installs: set `KOPIALENS_NO_UPDATE_CHECK=1` and/or `KOPIALENS_NO_USAGE_STATS=1`.

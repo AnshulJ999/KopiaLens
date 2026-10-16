@@ -40,7 +40,7 @@ These routes keep their paths, parameters and reply fields within one API versio
 | `POST /api/index/build?repo=` | Start an index run |
 | `GET /api/engine/status` | Backups, running tasks, and approval requests waiting |
 | `POST /api/engine/snapshot` | Take a snapshot now: `{"repo", "source"}` |
-| `POST /api/actions/remove-plan` | Preview removing files; replies with a `plan_token` |
+| `POST /api/actions/remove-plan` | Preview removing files. Replies with a `plan_token` |
 | `POST /api/jobs/start` | Start a job: a dry run, removing files, or deleting snapshots (below) |
 | `GET /api/jobs/status?job_id=&after=` | A job's state and its new output lines |
 | `GET /api/jobs/list` | Recent jobs |
@@ -80,7 +80,7 @@ Other answers to expect:
 | 401 | The token is missing, wrong, revoked or expired |
 | 403 | Refused: see `detail`, and the repository's [write mode](settings.md#permissions) |
 | 409 | Can't be done right now, for example a job of that kind is already running |
-| 423 | The index is encrypted and locked after a restart. Ask the user to unlock it in KopiaLens; a token can't |
+| 423 | The index is encrypted and locked after a restart. Ask the user to unlock it in KopiaLens. A token can't |
 | 503 | The repository is being indexed, or has no index yet |
 
 ## Approvals

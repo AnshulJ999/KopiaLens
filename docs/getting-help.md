@@ -4,13 +4,13 @@ Everything below lives in the **?** menu at the top right of KopiaLens.
 
 ## Report a problem
 
-**? > Report a problem** builds a diagnostics bundle, lets you check what's in it, and opens a pre-filled GitHub issue. Pro users can also email support from the same place.
+**? → Report a problem** builds a diagnostics bundle, lets you check what's in it, and opens a pre-filled GitHub issue. Pro users can also email support from the same place.
 
 Before reporting, check whether the same thing happens in KopiaUI or the `kopia` command. If it does, it's most likely a kopia problem, and the [kopia project](https://github.com/kopia/kopia/issues) is the right place for it.
 
 ## Diagnostics bundle
 
-**? > Create diagnostics bundle** (also in **Settings > About**) collects what support needs to understand a problem:
+**? → Create diagnostics bundle** (also in **Settings → About**) collects what support needs to understand a problem:
 
 - **Always included:** KopiaLens version, install type, operating system, memory and free disk, kopia's version, your licence (Free or Pro, its plan and when it ends) and each repository's type and last index.
 - **Your choice:** the app log, the indexing logs, the action history (deletes, restores, prunes) and your settings.
@@ -21,7 +21,7 @@ A bundle never contains passwords, keys, licence codes or the encryption key. Yo
 
 ## Updates
 
-**? > Check for updates** checks now. KopiaLens also checks once a day; see [Update checks and usage stats](usage-stats.md) for what that sends and how to turn it off.
+**? → Check for updates** checks now. KopiaLens also checks once a day. See [Update checks and usage stats](usage-stats.md) for what that sends and how to turn it off.
 
 When an update is out, **Update available** in the top bar opens its details.
 
@@ -35,4 +35,4 @@ If your licence covers an earlier major version (for example a lifetime licence 
 In the desktop app, the **?** menu also has:
 
 - **Zoom:** smaller, larger and back to 100%. Ctrl+minus, Ctrl+plus, Ctrl+0 and Ctrl+mouse wheel do the same.
-- **Open in browser:** the same KopiaLens in your web browser (not shown when Remote access is set to This window only).
+- **Open in browser:** the same KopiaLens in your web browser. It isn't shown when **Settings → Remote access** is set to **This window only**.

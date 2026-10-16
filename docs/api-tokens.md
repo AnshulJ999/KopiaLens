@@ -10,7 +10,7 @@ While sign-in is on, a token above **Read-only** asks for your KopiaLens passwor
 
 ## Permissions
 
-A token's permission works like the [write modes](settings.md#permissions):
+A token's permission uses the same four levels as [**Settings → Permissions**](settings.md#permissions):
 
 | Permission | What the token can do |
 |---|---|
@@ -25,13 +25,13 @@ A repository's own write mode still applies, so the stricter of the two wins.
 
 Some things wait for your approval in KopiaLens, whatever the token's permission:
 
-- deleting files, snapshots or sources;
-- turning sign-in off, opening remote access, or lowering encryption;
-- a looser write mode, removing a repository or a licence;
-- lowering retention in a policy, or restoring policies from a backup;
-- pausing backups, and restoring a settings backup;
-- installing an update;
-- making a repository's connection read-only when another app shares it.
+- deleting files, snapshots or sources
+- turning sign-in off, opening remote access, or lowering encryption
+- a looser write mode, removing a repository or a licence
+- lowering retention in a policy, or restoring policies from a backup
+- pausing backups, and restoring a settings backup
+- installing an update
+- making a repository's connection read-only when another app shares it
 
 A token can still do the safe side of these on its own: turn sign-in on, raise encryption, make a write mode stricter, add a licence, or raise retention.
 
@@ -61,6 +61,6 @@ Select **Edit** next to a token to change its name, permission or expiry. The to
 
 ## Revoke or expire
 
-Select **Revoke** next to a token. Anything using it stops working straight away. An expired token stops working on its expiry date; create a new one to continue.
+Select **Revoke** next to a token. Anything using it stops working straight away. An expired token stops working on its expiry date. Create a new one to continue.
 
 Every action a token takes is recorded in the audit log as `token:<name>`. Tokens aren't part of [settings backups](settings.md#config), so restoring one never brings back a revoked token.

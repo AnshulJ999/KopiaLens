@@ -12,7 +12,7 @@ This is separate from kopia's own encryption. Your kopia repository is always en
 | Index (recommended) | The index: file and folder names, sizes and snapshot contents. |
 | Full | The index, plus history, logs, policy backups and the Backblaze data. |
 
-Change the level at any time in **Settings → Encryption → Change level…**. KopiaLens rewrites the stored data in the background; progress shows in the jobs panel. Everything stays readable while it runs, and a failed rewrite can simply be started again.
+Change the level at any time in **Settings → Encryption → Change level…**. KopiaLens rewrites the stored data in the background, and progress shows in the jobs panel. Everything stays readable while it runs, and a failed rewrite can simply be started again.
 
 ## Turn on encryption
 
@@ -45,7 +45,7 @@ The recovery key is a long code that unlocks the index if you forget the passwor
 
 With the recovery key you can:
 
-- unlock the index: select **Use recovery key** on the unlock box;
+- unlock the index: select **Use recovery key** on the unlock box.
 - set a new password: select **Forgot password?** on the sign-in page (when your KopiaLens password also unlocks encryption).
 
 **New recovery key…** in **Settings → Encryption** creates a new key. The old one stops working.
@@ -54,8 +54,8 @@ With the recovery key you can:
 
 Without either, the encrypted data can't be read, not even by KopiaLens. **Start over…** in **Settings → Encryption** (or **Lost the recovery key too?** on the unlock box) resets KopiaLens:
 
-- you choose what happens to the encrypted files: **delete them permanently**, or **move them aside** into a new `encryption-reset-…` folder in the data folder in case the password turns up. Settings → Encryption shows moved files until you delete that folder;
-- encryption is turned off;
+- you choose what happens to the encrypted files: **delete them permanently**, or **move them aside** into a new `encryption-reset-…` folder in the data folder in case the password turns up. **Settings → Encryption** shows moved files until you delete that folder.
+- encryption is turned off.
 - the index is rebuilt from your kopia repositories on the next index pass.
 
 Your kopia repositories are never touched. Encrypted history, such as past index runs and the audit log at the Full level, can't be recovered.

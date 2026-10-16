@@ -1,6 +1,6 @@
 # Repositories
 
-Open the repository menu at the top left to switch repositories, add one, or manage them. **Manage repositories…** opens Settings → Repositories.
+Open the repository menu at the top left to switch repositories, add one, or manage them. **Manage repositories…** opens **Settings → Repositories**.
 
 ## Adding a repository
 
@@ -10,7 +10,7 @@ A new repository is indexed at the next scheduled time, or when you select **Ind
 
 ### Where the connection file goes
 
-Connecting or creating a repository writes a small kopia connection file: where the repository is and how to reach it. **More options** → **Connection file** picks its place:
+Connecting or creating a repository writes a small kopia connection file: where the repository is and how to reach it. **More options → Connection file** picks its place:
 
 - **KopiaLens's folder** (the default): used by this KopiaLens only. Removing the repository can remove it too.
 - **kopia's folder, shared with KopiaUI**: KopiaUI and the kopia command line see the connection too. KopiaUI then lists the repository and may run its own backups and maintenance on it. Not offered in Docker.
@@ -20,13 +20,13 @@ Connections found on this computer stay where they are.
 
 ## Managing repositories
 
-Each repository in Settings → Repositories shows where it's stored and when it was last indexed.
+Each repository in **Settings → Repositories** shows where it's stored and when it was last indexed.
 
 - **Order**: the arrows set the order of the repository menu.
 - **Check connection**: asks kopia whether the repository can be reached. If kopia no longer remembers the repository password, enter it here.
 - **Index now**: updates the index for that repository.
 - **Edit…**: rename the repository or change its short name.
-- **Counts as a backup**: when on, the Excluded view treats files in this repository as backed up. Turn it off for a test or scratch repository.
+- **Counts as a backup**: when on, the Excluded tab treats files in this repository as backed up. Turn it off for a test or scratch repository.
 - **Read-only connection**: see below.
 - **Remove…**: see below.
 
@@ -34,7 +34,7 @@ Each repository in Settings → Repositories shows where it's stored and when it
 
 A read-only connection is kopia's own lock: kopia refuses every change made through it. KopiaLens can still browse, search, index, mount and restore, but it can't back up, delete, pin or edit policies there, and those actions show as unavailable.
 
-Turn it on when connecting (**More options** → **Read-only connection**), or later in Settings → Repositories. It suits a computer that should only look at a repository, for example a second KopiaLens on another machine.
+Turn it on when connecting (**More options → Read-only connection**), or later in **Settings → Repositories**. It suits a computer that should only look at a repository, for example a second KopiaLens on another machine.
 
 The lock belongs to the connection file. If KopiaUI or BlinkDisk uses the same connection, KopiaLens asks first, because that app then can't back up to the repository either. Turning it on or off opens the repository, so its storage must be reachable.
 
@@ -46,7 +46,7 @@ If KopiaLens created the connection file, you can delete it too. Keep it if Kopi
 
 ## Browsing a snapshot
 
-In the Snapshots view, double-click a snapshot (or select **Browse files** from its menu) to look inside it. An indexed repository opens it in the Tree view. A repository that isn't indexed yet, or one reached through a kopia server, opens a folder browser that reads one folder at a time from kopia. Select **Restore…** on any file or folder to restore it.
+In the Snapshots tab, double-click a snapshot (or select **Browse files** from its menu) to look inside it. An indexed repository opens it in the Tree tab. A repository that isn't indexed yet, or one reached through a kopia server, opens a folder browser that reads one folder at a time from kopia. Select **Restore…** on any file or folder to restore it.
 
 ## Repositories reached through a kopia server
 
@@ -60,4 +60,4 @@ For full analysis, install KopiaLens on the computer that runs the kopia server,
 
 ## The kopia program
 
-The bottom of Settings → Repositories shows which kopia program KopiaLens uses and its version. Select **Change…** to point to a different kopia, or **Find automatically** to go back to the default.
+The bottom of **Settings → Repositories** shows which kopia program KopiaLens uses and its version. Select **Change…** to point to a different kopia, or **Find automatically** to go back to the default.

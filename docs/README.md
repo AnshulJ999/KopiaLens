@@ -1,6 +1,6 @@
 # KopiaLens documentation
 
-KopiaLens is a web app for exploring, analysing and managing [Kopia](https://kopia.io) backup repositories. It works alongside KopiaUI and the kopia command line; it never replaces your repository or changes how kopia stores data.
+KopiaLens is an app for exploring, analysing and managing [Kopia](https://kopia.io) backup repositories. It runs in its own window or in your browser. It can run your backups the way KopiaUI does, or work alongside KopiaUI and the kopia command line. It never changes how kopia stores your data.
 
 ## Getting started
 
@@ -11,6 +11,11 @@ KopiaLens is a web app for exploring, analysing and managing [Kopia](https://kop
 - [Backups](backups.md): who runs a repository's backups, snapshots by hand, pausing, Tasks, snapshot scripts and checking backups.
 - [Notifications](notifications.md): alerts in the app and tray, KopiaLens's webhook (works with ntfy), and kopia's email, Pushover and webhook profiles.
 - [Using KopiaLens with BlinkDisk](blinkdisk.md): connecting a vault, who runs backups and maintenance, the computer name, and merging split histories.
+
+## Understanding KopiaLens
+
+- [How KopiaLens counts space](space.md): logical, physical and reclaimable sizes, deduplication, and why deleting doesn't always free space.
+- [Glossary](glossary.md): every term KopiaLens uses, in one place.
 
 ## Security
 
@@ -47,7 +52,7 @@ KopiaLens is a web app for exploring, analysing and managing [Kopia](https://kop
 - [Tasks](tasks.md): page to come.
 - [Logs](logs.md): page to come.
 - [Backblaze](backblaze.md): page to come.
-- [Indexing](indexing.md): page to come.
-- [Settings](settings.md): page to come.
+- [Indexing](indexing.md): stopping an index and index backups (more to come).
+- [Settings](settings.md): the logo and tray icon (more to come).
 
 More pages are added as features are documented.

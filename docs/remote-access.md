@@ -1,6 +1,6 @@
 # Remote access and HTTPS
 
-These settings decide who can open KopiaLens and whether the connection is encrypted. Find them in **Settings → Remote access**. KopiaLens reads them when it starts, so restart it after a change (tray menu → **Restart**, or restart the container).
+These settings decide who can open KopiaLens and whether the connection is encrypted. Find them in **Settings → Remote access**. KopiaLens reads them when it starts, so restart it after a change: **Restart** in the tray menu, or restart the container.
 
 ## Who can open KopiaLens
 
@@ -78,4 +78,4 @@ Docker and server installs can set these without the Settings page. An environme
 | `KOPIALENS_HTTPS_CERT`, `KOPIALENS_HTTPS_KEY` | `/certs/fullchain.pem`, `/certs/privkey.pem` |
 | `KOPIALENS_TRUSTED_PROXIES` | `192.168.1.5` |
 | `KOPIALENS_ALLOWED_HOSTS` | `kopia.example.com` |
-| `KOPIALENS_BIND_HOST` | `0.0.0.0` (the network address KopiaLens listens on; overrides what the access choice picks) |
+| `KOPIALENS_BIND_HOST` | `0.0.0.0` (the network address KopiaLens listens on. It overrides what the access choice picks) |
