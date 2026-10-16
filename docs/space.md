@@ -74,6 +74,8 @@ Kopia waits on purpose, so that a computer backing up at the same time can't los
 
 To start maintenance by hand, select **Run maintenance…** in the Repository tab. Full maintenance can take hours on a large repository.
 
+To get the space back sooner, run full maintenance with **Safety: None**. Kopia then skips its waiting rules and deletes unused pieces in that run. Use it only when nothing else is writing to the repository at the time: no backup running on this computer, and no other computer or app using the same repository. A backup that runs during it can lose data ([Maintenance](maintenance.md)).
+
 ## The other space columns
 
 | Column | Meaning |
