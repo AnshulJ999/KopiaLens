@@ -233,7 +233,7 @@ const searchPart = {
               if (v == null) return "<span style='color:var(--faint)' title='Not worked out yet'>—</span>";
               return `<span style="color:var(--ok)">${fmtPhys(v.v)}</span>`;
             } },
-          { title: "Last seen", field: "last_seen", width: 155, formatter: (c) => timeCell(c.getValue()) },
+          { title: "Last seen", field: "last_seen", width: 155, formatter: (c) => timeCell(c.getValue(), c) },
         ];
         const gt = setTable("#groupTable", rows, cols, {
           selectableRows: true,
@@ -386,8 +386,8 @@ const searchPart = {
           { title: "Copies", field: "copies", headerSort: false, width: 75, hozAlign: "right",
             headerTooltip: "How many paths hold this exact content. More filters: same content in at least N paths.",
             formatter: nf((c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="This exact content is at ${v} paths">${v}</span>` : "1"; }) },
-          H("Last seen", "last_seen", { width: 160, formatter: (c) => timeCell(c.getValue()) }),
-          H("First seen", "first_seen", { width: 160, formatter: (c) => timeCell(c.getValue()) }),
+          H("Last seen", "last_seen", { width: 160, formatter: (c) => timeCell(c.getValue(), c) }),
+          H("First seen", "first_seen", { width: 160, formatter: (c) => timeCell(c.getValue(), c) }),
           H("On disk", "in_latest", { width: 90, formatter: (c) => {
             const d = c.getRow().getData();
             const gone = "<span style='color:var(--danger)'>deleted</span>";

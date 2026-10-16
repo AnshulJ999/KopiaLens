@@ -1,0 +1,38 @@
+    <!-- "Table layout…" (tables.js): one table's default alignment and width mode. -->
+    <template x-if="tblLayout">
+      <div class="fixed inset-0 z-[55] bg-black/40 flex items-center justify-center p-4" @click.self="tblLayout = null" role="dialog" aria-modal="true" data-testid="table-layout">
+        <div class="w-[30rem] max-w-full rounded-lg border border-bd bg-surface shadow-xl">
+          <div class="flex items-center gap-2 border-b border-bd px-4 py-3">
+            <div class="font-medium" x-text="'Table layout: ' + tblLayout.name"></div>
+            <span class="grow"></span>
+            <button class="kl-btn quiet" @click="tblLayout = null" title="Close" aria-label="Close"><i class="ic ic-close"></i></button>
+          </div>
+          <div class="p-4 space-y-4 text-sm">
+            <div>
+              <div class="font-medium mb-1.5">Alignment</div>
+              <span class="kl-seg" role="radiogroup" aria-label="Alignment">
+                <button type="button" role="radio" :aria-checked="!tblLayout.align" :class="!tblLayout.align ? 'on' : ''" @click="tblLayoutSet({ align: '' })"
+                        :title="'Settings > Appearance: ' + alignLabel(tableAlign)" x-text="'App default (' + alignLabel(tableAlign) + ')'"></button>
+                <template x-for="a in ALIGNS" :key="a[0]">
+                  <button type="button" role="radio" :aria-checked="tblLayout.align === a[0]" :class="tblLayout.align === a[0] ? 'on' : ''" @click="tblLayoutSet({ align: a[0] })" x-text="a[1]"></button>
+                </template>
+              </span>
+              <p class="text-xs text-muted mt-1.5">Auto puts numbers on the right and text on the left. Right-click a column header to align one column.</p>
+            </div>
+            <div>
+              <div class="font-medium mb-1.5">Width</div>
+              <span class="kl-seg" role="radiogroup" aria-label="Width">
+                <button type="button" role="radio" :aria-checked="tblLayout.layout === 'fill'" :class="tblLayout.layout === 'fill' ? 'on' : ''" @click="tblLayoutSet({ layout: 'fill' })">Fill the width</button>
+                <button type="button" role="radio" :aria-checked="tblLayout.layout === 'fit'" :class="tblLayout.layout === 'fit' ? 'on' : ''" @click="tblLayoutSet({ layout: 'fit' })">Fit to contents</button>
+              </span>
+              <p class="text-xs text-muted mt-1.5">Fit to contents makes each column as wide as its longest value, so wide tables scroll sideways.</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 border-t border-bd px-4 py-3">
+            <button class="kl-btn" @click="tblLayoutReset()" title="Widths, order, hidden columns, sort, alignment and pinned columns go back to the defaults">Reset this table</button>
+            <span class="grow"></span>
+            <button class="kl-btn primary" @click="tblLayout = null">Done</button>
+          </div>
+        </div>
+      </div>
+    </template>

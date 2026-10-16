@@ -23,6 +23,7 @@
             <button class="kl-btn icon" @click="open = !open" title="More" aria-label="More"><i class="ic ic-more"></i></button>
             <div class="kl-menu" x-show="open" x-cloak>
               <button @click="open = false; csv('#snapshotsTable','snapshots')">Export CSV</button>
+              <button @click="open = false; openTableLayout('#snapshotsTable')">Table layout…</button>
               <button x-show="repoKind === 'kopia'" @click="open = false; showCli('snapshots', snapSource)">Show command</button>
               <template x-if="repoKind !== 'server' && snapSource !== '*ALL*'">
                 <button @click="open = false; analyzeAll()">Analyze every source</button>

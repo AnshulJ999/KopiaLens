@@ -26,6 +26,7 @@
             <div class="kl-menu" x-show="open" x-cloak>
               <button @click="open = false; loadChurn(true)">Recompute now</button>
               <button @click="open = false; csv('#churnTable','churn')">Export CSV</button>
+              <button @click="open = false; openTableLayout('#churnTable')">Table layout…</button>
             </div>
           </span>
         </div>

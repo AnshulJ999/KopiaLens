@@ -61,6 +61,7 @@
             <div class="kl-menu" x-show="open" x-cloak>
               <div class="hd">This search</div>
               <button @click="open = false; exportSearch()" x-text="groupByFolder ? 'Export CSV' : (searchAllRepos() || searchKind==='both') ? 'Export CSV (this page)' : 'Export CSV (all ' + searchTotal.toLocaleString(NUM_LOCALE) + ')'"></button>
+              <button @click="open = false; openTableLayout(groupByFolder ? '#groupTable' : '#searchTable')">Table layout…</button>
               <template x-if="searchKind==='files' && !searchAllRepos()">
                 <div><div class="sep"></div>
                   <button class="dg" @click="open = false; openRemoveFromSearch()" :disabled="searchDeleteTooBig()" x-text="'Delete all ' + searchTotal.toLocaleString(NUM_LOCALE) + ' matching…'"></button>

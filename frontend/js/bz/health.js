@@ -20,7 +20,7 @@ const bzHealthPart = {
         this.bzSessions = r;
         // explicit heights so the stacked tables don't collapse/overlap inside the scrolling section
         setTable("#bzSessionsTable", r.sessions || [], [
-          { title: "Time", field: "ts", width: 190, formatter: (c) => timeCell(c.getValue()) },
+          { title: "Time", field: "ts", width: 190, formatter: (c) => timeCell(c.getValue(), c) },
           { title: "Event", field: "kind", width: 130, formatter: (c) => c.getValue() === "session_end" ? "<span style='color:#16a34a'>backup ended</span>" : "backup started" },
           { title: "Files", field: "files", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? Number(c.getValue()).toLocaleString(NUM_LOCALE) : "" },
           { title: "Uploaded", field: "bytes", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() ? bzFmt(c.getValue()) : "" },

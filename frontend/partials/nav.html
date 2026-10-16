@@ -130,9 +130,20 @@
         <span x-show="repoKind==='backblaze' && bzRefreshResult" class="text-xs px-2 py-1 rounded" :class="bzRefreshResult.includes('FAILED') ? 'bg-danger-bg text-danger' : 'bg-ok-bg text-ok'" x-text="bzRefreshResult"></span>
         <button x-show="repoKind==='backblaze'" @click="bzRefresh()" class="h-8 rounded bg-fg px-3 text-surface flex items-center gap-1.5" title="Re-scan the read-only Backblaze index"><i class="ic ic-refresh"></i>Index BZ</button>
         <button @click="refreshAll()" class="h-8 w-8 rounded border border-bd kl-ibtn" title="Refresh this view and the snapshot list" aria-label="Refresh"><i class="ic ic-refresh"></i></button>
-        <button @click="toggleTimeFmt()" class="h-8 w-8 rounded border border-bd kl-ibtn" :aria-label="timeFmt==='relative' ? 'Times: how long ago' : 'Times: dates'"
-                :title="timeFmt==='relative' ? 'Times shown as how long ago. Click to show dates.' : 'Times shown as dates. Click to show how long ago.'">
-          <i class="ic" :class="timeFmt==='relative' ? 'ic-timer' : 'ic-clock'"></i></button>
+        <div class="relative" @click.outside="timeMenu = false">
+          <button @click="toggleTimeFmt()" @contextmenu.prevent="timeMenu = !timeMenu" class="h-8 w-8 rounded border border-bd kl-ibtn" :aria-label="timeFmt==='relative' ? 'Times: how long ago' : 'Times: dates'"
+                  :title="(timeFmt==='relative' ? 'Times shown as how long ago. Click to show dates.' : 'Times shown as dates. Click to show how long ago.') + ' Right-click for columns with their own choice.'">
+            <i class="ic" :class="timeFmt==='relative' ? 'ic-timer' : 'ic-clock'"></i></button>
+          <div x-show="timeMenu" x-cloak role="menu" class="kl-menu" data-testid="time-menu">
+            <div class="hd">Columns with their own choice</div>
+            <template x-for="o in (timeMenu ? timeOverrideList() : [])" :key="o.key + o.field">
+              <div class="flex items-center gap-3 px-3 py-1.5 text-sm whitespace-nowrap"><span x-text="o.where"></span><span class="ml-auto text-muted" x-text="o.label"></span></div>
+            </template>
+            <div x-show="timeMenu && !timeOverrideList().length" class="px-3 py-1.5 text-sm text-muted whitespace-nowrap">None. Right-click a time column's header to pick one.</div>
+            <div class="sep"></div>
+            <button type="button" @click="resetTimeOverrides()" :disabled="!(timeMenu && timeOverrideList().length)" class="disabled:opacity-50">Use this button's choice everywhere</button>
+          </div>
+        </div>
         <div class="relative" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
           <button @click="quickTheme()" @contextmenu.prevent="open = !open" class="h-8 w-8 rounded border border-bd kl-ibtn" title="Switch between your light and dark theme. Right-click to pick a theme." aria-label="Switch theme"><i class="ic" :class="dark ? 'ic-sun' : 'ic-moon'"></i></button>
           <div x-show="open" x-cloak role="menu" class="kl-menu" data-testid="theme-picker">

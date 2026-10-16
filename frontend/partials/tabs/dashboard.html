@@ -24,13 +24,21 @@
           </select>
           <span class="grow"></span>
           <span class="text-xs text-muted" x-show="dashboardMeta" title="Everything this repository stores, with shared data counted once">Repository holds <b class="text-fg font-medium" x-text="dashboardMeta"></b></span>
-          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('dashboard')" @keydown.enter.prevent="openDocs('dashboard')" title="Double-click a row to see its snapshots. Right-click a row for more; right-click a column header to show or hide columns.">?</span>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('dashboard')" @keydown.enter.prevent="openDocs('dashboard')" title="Double-click a row to see its snapshots. Right-click a row for more; right-click a column header for alignment, widths and columns.">?</span>
           <button class="kl-btn icon" @click="refreshDashboard()" title="Read new snapshots from kopia and recompute these numbers" aria-label="Refresh the Dashboard" data-testid="dashboard-refresh"><i class="ic ic-refresh"></i></button>
           <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
             <button class="kl-btn icon" @click="open = !open" title="More" aria-label="More"><i class="ic ic-more"></i></button>
             <div class="kl-menu" x-show="open" x-cloak>
               <button @click="open = false; csv('#dashboardTable','dashboard')">Export CSV</button>
               <button @click="open = false; showCli('sources')">Show command</button>
+              <div class="sep"></div>
+              <div class="hd">Rows per page</div>
+              <template x-for="n in ['all', '25', '50', '100']" :key="n">
+                <button @click="open = false; setDashPageSize(n)" class="flex items-center gap-2" data-testid="dash-page-size">
+                  <i class="ic" :class="dashPageSize === n ? 'ic-check text-ok' : 'ic-dot opacity-0'"></i><span x-text="n === 'all' ? 'All' : n"></span></button>
+              </template>
+              <div class="sep"></div>
+              <button @click="open = false; openTableLayout('#dashboardTable')">Table layout…</button>
             </div>
           </span>
         </div>

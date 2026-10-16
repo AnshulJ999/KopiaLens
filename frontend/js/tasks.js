@@ -61,7 +61,7 @@ const tasksPart = {
     this._tasksSig = sig;
     const sel = this.taskSel && this.taskSel.id;
     const table = setTable("#tasksTable", rows, [
-      { title: "Started", field: "start", width: 165, sorter: "number", formatter: (c) => timeCell(c.getValue()) },
+      { title: "Started", field: "start", width: 165, sorter: "number", formatter: (c) => timeCell(c.getValue(), c) },
       { title: "Status", field: "status", width: 150, formatter: (c) => {
           const t = c.getRow().getData();
           const pct = t.status === "running" && t.total ? ` ${Math.round((t.done / t.total) * 100)}%` : "";

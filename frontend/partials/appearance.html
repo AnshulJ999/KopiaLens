@@ -53,6 +53,16 @@
     <p class="text-[0.6875rem] text-muted mt-1">With "Sorted column only", hovering a header still shows its arrow.</p>
   </div>
   <div>
+    <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Table alignment</span>
+      <select :value="tableAlign" @change="setTableAlign($event.target.value)" class="fld border border-bd bg-surface2" data-testid="table-align">
+        <option value="auto">Auto - numbers right, text left</option>
+        <option value="left">Left</option>
+        <option value="center">Centre</option>
+        <option value="right">Right</option>
+      </select></div>
+    <p class="text-[0.6875rem] text-muted mt-1">Every table starts here. A table's … menu (Table layout…) or a right-click on a column header changes one table or column.</p>
+  </div>
+  <div>
     <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Detail panel layout</span>
       <select x-model="panelLayout" @change="klSet({ panel_layout: panelLayout })" class="fld border border-bd bg-surface2">
         <option value="classic">Classic - everything on one scroll</option>

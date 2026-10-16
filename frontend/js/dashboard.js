@@ -20,7 +20,7 @@ const dashboardPart = {
         // computed_at flips on every cache REBUILD, covering same-hash rebuilds that only moved
         // e.g. next_snapshot times; polls of an untouched cache keep matching and never re-render.
         const rows = (data.rows || []).filter((r) => this.ownerMatch(r.source)).map((r) => ({ ...r, owner: this.ownerOf(r.source) }));
-        const sig = `${TIME_FMT}|${NUM_LOCALE}|${_dateStyle}|${_clock}|${this.repo}|${this.ownerFilter()}|${this.myOwner()}|${data.hash || ""}|${data.computed_at || ""}|${data.union_total}|${(data.rows || []).length}|${(data.rows && data.rows[0] && data.rows[0].last_time) || ""}`;
+        const sig = `${this.dashPageSize}|${TIME_FMT}|${NUM_LOCALE}|${_dateStyle}|${_clock}|${this.repo}|${this.ownerFilter()}|${this.myOwner()}|${data.hash || ""}|${data.computed_at || ""}|${data.union_total}|${(data.rows || []).length}|${(data.rows && data.rows[0] && data.rows[0].last_time) || ""}`;
         const dEl = document.querySelector("#dashboardTable");
         if (!refresh && dEl && dEl._tabulator && sig === this._dashSig) return;
         this._dashSig = sig;
@@ -37,8 +37,8 @@ const dashboardPart = {
           { title: "Dedup", field: "dedup", width: 72, formatter: (c) => `${fmtFix(c.getValue(), 0)}x`, hozAlign: "right", headerTooltip: "Size of every snapshot added up, compared with the space they take" },
           { title: "Size", field: "logical_latest", width: 100, formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right", headerTooltip: "Size of the latest snapshot, as on disk" },
           { title: term("physical"), field: "physical_latest", width: 100, formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right", headerTooltip: "Space the latest snapshot takes in the repository" },
-          { title: "Last snapshot", field: "last_time", width: 165, formatter: (c) => timeCell(c.getValue()), headerTooltip: "When the newest snapshot was taken" },
-          { title: "Next snapshot", field: "next_snapshot", width: 190, formatter: (c) => this.nextCellHtml(c.getRow().getData()), headerTooltip: "When the schedule takes the next one" },
+          { title: "Last snapshot", field: "last_time", width: 165, formatter: (c) => timeCell(c.getValue(), c), headerTooltip: "When the newest snapshot was taken" },
+          { title: "Next snapshot", field: "next_snapshot", width: 190, formatter: (c) => this.nextCellHtml(c.getRow().getData(), c), headerTooltip: "When the schedule takes the next one" },
           { title: "Pins", field: "pins", width: 64, hozAlign: "right", headerTooltip: "Pinned snapshots, which retention never removes" },
           { title: "Actions", field: "_actions", download: false, headerSort: false, width: 200, hozAlign: "center",
             formatter: (c) => {
@@ -51,6 +51,7 @@ const dashboardPart = {
             } },
         ], {
           initialSort: [{ column: "source", dir: "asc" }],
+          ...(this.dashPageSize !== "all" ? { pagination: true, paginationSize: Number(this.dashPageSize), paginationCounter: "rows" } : {}),
           onRowDblClick: (_e, row) => this.showSourceSnapshots(row.getData().source),
           rowMenu: (_e, row) => {
             const src = row.getData().source;
@@ -84,6 +85,14 @@ const dashboardPart = {
           });
         }
       }, "Loading dashboard...");
+    },
+
+    // Rows per page ("…" menu): all, or pages of 25 / 50 / 100 for repositories with many folders.
+    setDashPageSize(v) {
+      this.dashPageSize = v;
+      this.saveKl("dashboard_page_size");
+      this._dashSig = "";
+      this.loadDashboard();
     },
 
     // Through KopiaLens's kopia server when it runs this repository's backups (live progress in

@@ -322,12 +322,12 @@ const enginePart = {
       setTimeout(() => this.loadEngineSources(), 800);
     } catch (e) { this.klNotify(e.message, "error"); }
   },
-  nextCellHtml(row) {
+  nextCellHtml(row, cell) {
     const s = this.engineSrc[row.source];
     const next = (s && s.next) || row.next_snapshot;
     if (!next) return "—";
     const overdue = toDate(next).getTime() < Date.now() - 15 * 60 * 1000 && !(s && (s.status === "UPLOADING" || s.status === "PENDING"));
-    return timeCell(next) + (overdue && (this.engineRuns() || row.next_snapshot) ? ' <span class="pill" style="background:var(--warn-bg);color:var(--warn)" title="This backup didn\'t start at its scheduled time">overdue</span>' : "");
+    return timeCell(next, cell) + (overdue && (this.engineRuns() || row.next_snapshot) ? ' <span class="pill" style="background:var(--warn-bg);color:var(--warn)" title="This backup didn\'t start at its scheduled time">overdue</span>' : "");
   },
   async engineSnapshotNow(source) {
     if (!this.wmGuard("non_destructive")) return;

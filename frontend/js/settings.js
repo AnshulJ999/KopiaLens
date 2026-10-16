@@ -113,6 +113,9 @@ const settingsPart = {
       this.taskView = kl.task_view === "panel" ? "panel" : "popup";
       this.retentionChips = ["uniform", "custom"].includes(kl.retention_chips) ? kl.retention_chips : "kopiaui";
       this.retentionChipColor = /^#[0-9a-f]{6}$/i.test(kl.retention_chip_color || "") ? kl.retention_chip_color : "#2563eb";
+      this.tableAlign = ALIGNS.some((a) => a[0] === kl.table_align) ? kl.table_align : "auto";
+      TABLE_ALIGN = this.tableAlign;
+      this.dashPageSize = ["25", "50", "100"].includes(String(kl.dashboard_page_size)) ? String(kl.dashboard_page_size) : "all";
       this.applyFavicon();
     },
     // The browser tab icon follows the header logo (the Disc when the logo is hidden).
@@ -184,6 +187,8 @@ const settingsPart = {
       ask_snapshot_now: { s: "askSnapshotNow", t: "bool" },
       retention_chips: { s: "retentionChips", t: "choice", of: ["uniform", "kopiaui", "custom"] },
       retention_chip_color: { s: "retentionChipColor", t: "str" },
+      table_align: { s: "tableAlign", t: "choice", of: ["auto", "left", "center", "right"] },
+      dashboard_page_size: { s: "dashPageSize", t: "choice", of: ["all", "25", "50", "100"] },
       update_check: { s: "updateCheck", t: "bool" },
       usage_stats: { s: "usageStats", t: "bool" },
       bzdata_path: { s: "bzDataPath", t: "str", block: "backblaze", restart: true },

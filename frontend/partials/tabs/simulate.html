@@ -18,6 +18,7 @@
             <div class="kl-menu" x-show="open" x-cloak>
               <button @click="open = false; runSimulate(true)">Recompute (ignore the saved result)</button>
               <button @click="open = false; csv('#simulateTable','simulate')">Export CSV</button>
+              <button @click="open = false; openTableLayout('#simulateTable')">Table layout…</button>
             </div>
           </span>
         </div>

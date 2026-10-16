@@ -34,6 +34,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "density_pct": 100,          # density="custom": root text size in percent (80-115)
         "font": "inter",             # inter|geist|plex|system (bundled in frontend/vendor/fonts)
         "sort_arrows": "sorted",     # sorted|all - table header sort arrows
+        "table_align": "auto",       # auto|left|center|right - every table's starting alignment (a table or column can override)
+        "dashboard_page_size": "all",   # all|25|50|100 - Dashboard rows per page
         "light_theme": "daylight",   # remembered light slot for the quick switch
         "dark_theme": "lens",        # remembered dark slot for the quick switch
         "page_size": 500,      # search default page size (may be "Infinite")

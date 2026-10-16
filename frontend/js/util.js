@@ -149,10 +149,12 @@ const fmtRel = (s) => {
 };
 let TIME_FMT = localStorage.getItem("kl-timefmt") || "absolute";
 const humanTime = (s) => (TIME_FMT === "relative" ? fmtRel(s) : fmtAbs(s));
-const timeCell = (s) => {
+// A time in a table cell; ``cell`` (the Tabulator cell) lets a column keep its own choice (column menu > Times).
+const timeCell = (s, cell) => {
   if (!s) return "—";
   const abs = fmtAbs(s), rel = fmtRel(s);
-  return TIME_FMT === "relative" ? `<span title="${abs}">${rel}</span>` : `<span title="${rel}">${abs}</span>`;
+  const mode = cellTimeMode(cell) || (TIME_FMT === "relative" ? "rel" : "abs");
+  return mode === "rel" ? `<span title="${abs}">${rel}</span>` : `<span title="${rel}">${abs}</span>`;
 };
 
 const sourcePath = (s) => (s && s.includes(":") ? s.split(":").slice(1).join(":") : (s || ""));
@@ -229,18 +231,23 @@ function persistWriter(id, type, data) {
   TABLE_PREFS[id] = TABLE_PREFS[id] || {};
   TABLE_PREFS[id][type] = data;
   if (_applyingPrefs) return;
+  _queueTableSave(id);
+}
+function _queueTableSave(id) {
   clearTimeout(_persistTimers[id]);
   _persistTimers[id] = setTimeout(() => {
     getJson("/api/settings/table", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, config: TABLE_PREFS[id] }),
+      body: JSON.stringify({ id, config: TABLE_PREFS[id] || null }),
     }).catch(() => {});
-    if (_prefsChannel) _prefsChannel.postMessage({ id, config: TABLE_PREFS[id] });
+    if (_prefsChannel) _prefsChannel.postMessage({ id, config: TABLE_PREFS[id] || null });
   }, 600);
 }
 function applyTablePrefs(id, config) {
-  if (!config || JSON.stringify(TABLE_PREFS[id] || null) === JSON.stringify(config)) return;
+  if (JSON.stringify(TABLE_PREFS[id] || null) === JSON.stringify(config || null)) return;
   clearTimeout(_persistTimers[id]);   // a pending save of this tab's older layout must not win
+  const klBefore = JSON.stringify((TABLE_PREFS[id] || {}).kl || {});
+  if (!config) { delete TABLE_PREFS[id]; window.dispatchEvent(new CustomEvent("kl-table-rebuild")); return; }
   TABLE_PREFS[id] = config;
   const t = _tablesByPid[id];
   if (!t || !t.element || !document.contains(t.element)) return;
@@ -249,6 +256,7 @@ function applyTablePrefs(id, config) {
     if (config.columns) t.setColumnLayout(config.columns);
     if (config.sort) t.setSort(config.sort);
   } catch (e) { /* the table rebuilds from TABLE_PREFS next time */ } finally { _applyingPrefs = false; }
+  if (JSON.stringify(config.kl || {}) !== klBefore) applyTableKl(t);
 }
 if (_prefsChannel) _prefsChannel.onmessage = (e) => { if (e.data && e.data.id) applyTablePrefs(e.data.id, e.data.config); };
 document.addEventListener("visibilitychange", () => {
@@ -263,6 +271,134 @@ function colVisibilityMenu(e, column) {
     label: iconHtml(col.isVisible() ? "checkbox" : "checkbox-empty", "mr-1") + escHtml(col.getDefinition().title || col.getField()),
     action: (ev) => { ev.stopPropagation(); col.toggle(); },
   }));
+}
+
+// ---- Table layout choices, saved with the table's layout under `kl` (ui_state.json): ----
+// {align: {field: a}, tableAlign, layout: "fill"|"fit", frozen: [field], time: {field: {mode, title}}}.
+// Alignment: column > table > app default (Settings > Appearance) > the column's own (Auto).
+let TABLE_ALIGN = "auto";
+const ALIGNS = [["auto", "Auto"], ["left", "Left"], ["center", "Centre"], ["right", "Right"]];
+const _origAlign = {};       // "key|field" -> the column's own hozAlign, for Auto
+const _timeCols = new Set(); // "key|field" of columns drawn with timeCell
+const tableKey = (table) => "tabulator-" + table.options.persistenceID;
+const tableKl = (key) => (TABLE_PREFS[key] && TABLE_PREFS[key].kl) || {};
+function saveTableKl(table, patch) {   // ``table``: a Tabulator, or its prefs key
+  const key = typeof table === "string" ? table : tableKey(table);
+  const kl = { ...tableKl(key), ...patch };
+  for (const k of Object.keys(kl)) if (kl[k] == null || (typeof kl[k] === "object" && !Object.keys(kl[k]).length)) delete kl[k];
+  TABLE_PREFS[key] = { ...(TABLE_PREFS[key] || {}), kl };
+  _queueTableSave(key);
+}
+const _alignOf = (key, field) => {
+  const kl = tableKl(key);
+  return (kl.align && kl.align[field]) || kl.tableAlign || TABLE_ALIGN || "auto";
+};
+const _hoz = (key, field) => { const a = _alignOf(key, field); return a === "auto" ? (_origAlign[key + "|" + field] || undefined) : a; };
+// Bring a built table in line with its saved choices: alignment, pinned columns, width mode, times.
+function applyTableKl(table) {
+  const key = tableKey(table);
+  const kl = tableKl(key);
+  for (const col of table.getColumns()) {
+    const f = col.getField();
+    if (!f) continue;
+    const want = _hoz(key, f) || "left";
+    const def = col.getDefinition();
+    const pinned = (kl.frozen || []).includes(f);
+    if ((def.hozAlign || "left") !== want || !!def.frozen !== pinned) {
+      col.updateDefinition({ hozAlign: want, headerHozAlign: want, frozen: pinned, width: col.getWidth() }).catch(() => {});
+    }
+  }
+  _setTableLayout(table, kl.layout === "fit" ? "fitData" : (table._klLayout || "fitColumns"));
+  table.getRows().forEach((r) => r.reformat());
+}
+function _setTableLayout(table, mode) {
+  if (table.options.layout === mode) return;
+  table.options.layout = mode;
+  table.modules.layout.mode = mode;
+  table.element.setAttribute("tabulator-layout", mode);
+  if (mode === "fitData") table.getColumns().forEach((c) => c.isVisible() && c.setWidth(true));
+  table.redraw(true);
+}
+// A time column's own choice: "rel" (how long ago), "abs" (date) or "" (the header button's).
+function cellTimeMode(cell) {
+  if (!cell || !cell.getColumn) return "";
+  const table = cell.getTable(), f = cell.getColumn().getField(), key = tableKey(table);
+  _timeCols.add(key + "|" + f);
+  const t = tableKl(key).time;
+  return (t && t[f] && t[f].mode) || "";
+}
+// Every per-column time choice, for the header button's menu: [{key, field, title, mode}].
+function timeOverrides() {
+  const out = [];
+  for (const [key, cfg] of Object.entries(TABLE_PREFS)) {
+    const t = cfg && cfg.kl && cfg.kl.time;
+    for (const [field, v] of Object.entries(t || {})) out.push({ key, field, title: v.title || field, mode: v.mode });
+  }
+  return out;
+}
+function clearTimeOverrides() {
+  for (const [key, cfg] of Object.entries(TABLE_PREFS)) {
+    if (!(cfg && cfg.kl && cfg.kl.time)) continue;
+    const kl = { ...cfg.kl };
+    delete kl.time;
+    TABLE_PREFS[key] = { ...cfg, kl };
+    _queueTableSave(key);
+    const t = _tablesByPid[key];
+    if (t && t.element && document.contains(t.element)) t.getRows().forEach((r) => r.reformat());
+  }
+}
+const _menuMark = (on) => iconHtml(on ? "check" : "dot", on ? "mr-1" : "mr-1 opacity-0");
+// Right-click on a column header.
+function colHeaderMenu(e, column) {
+  const table = column.getTable(), key = tableKey(table), f = column.getField();
+  const kl = tableKl(key);
+  const own = (kl.align && kl.align[f]) || "";
+  const setAlign = (a) => { saveTableKl(table, { align: { ...(kl.align || {}), [f]: a === "inherit" ? undefined : a } }); applyTableKl(table); };
+  const menu = [
+    { label: "Align", menu: [
+      { label: _menuMark(!own) + "Table default", action: () => setAlign("inherit") },
+      ...ALIGNS.map(([a, l]) => ({ label: _menuMark(own === a) + l, action: () => setAlign(a) })),
+    ] },
+  ];
+  if (_timeCols.has(key + "|" + f)) {
+    const cur = ((kl.time || {})[f] || {}).mode || "";
+    const title = column.getDefinition().title || f;
+    const setTime = (m) => { const t = { ...(kl.time || {}) }; if (m) t[f] = { mode: m, title }; else delete t[f]; saveTableKl(table, { time: t }); table.getRows().forEach((r) => r.reformat()); };
+    menu.push({ label: "Times", menu: [
+      { label: _menuMark(!cur) + "Default (header button)", action: () => setTime("") },
+      { label: _menuMark(cur === "rel") + "How long ago", action: () => setTime("rel") },
+      { label: _menuMark(cur === "abs") + "Date", action: () => setTime("abs") },
+    ] });
+  }
+  const pinned = (kl.frozen || []).includes(f);
+  menu.push(
+    { label: "Size to fit", action: () => column.setWidth(true) },
+    { label: "Size all to fit", action: () => table.getColumns().forEach((c) => c.isVisible() && c.setWidth(true)) },
+    { label: pinned ? "Unpin" : "Pin to left", action: () => {
+      const frozen = (kl.frozen || []).filter((x) => x !== f);
+      if (!pinned) {
+        frozen.push(f);
+        const first = table.getColumns().find((c) => !(kl.frozen || []).includes(c.getField()));
+        if (first && first !== column) table.moveColumn(column, first, false);
+      }
+      saveTableKl(table, { frozen });
+      applyTableKl(table);
+    } },
+    { separator: true },
+    { label: "Columns", menu: colVisibilityMenu(e, column) },
+    { label: "Table layout…", action: () => window.dispatchEvent(new CustomEvent("kl-table-layout", { detail: { key } })) },
+    { label: "Reset layout", action: () => resetTableLayout(key) },
+  );
+  return menu;
+}
+// Widths, order, hidden columns, sort and the choices above go back to the defaults.
+function resetTableLayout(key) {
+  delete TABLE_PREFS[key];
+  clearTimeout(_persistTimers[key]);
+  getJson("/api/settings/table", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: key, config: null }) }).catch(() => {});
+  if (_prefsChannel) _prefsChannel.postMessage({ id: key, config: null });
+  window.dispatchEvent(new CustomEvent("kl-table-rebuild"));
 }
 
 // Tabulator sorter for list cells (pins, retention reasons): by how many entries, then by their text.
@@ -288,14 +424,23 @@ const setTable = (id, data, columns, opts = {}) => {
         return typeof rowMenu === "function" ? rowMenu(e, row) : rowMenu;
       }
     : rowMenu;
+  const key = "tabulator-" + (rest.persistenceID || id.replace("#", ""));
+  const kl = tableKl(key);
   columns.forEach((c) => {
-    c.headerContextMenu = colVisibilityMenu;
+    c.headerContextMenu = colHeaderMenu;
     if (c.headerTooltip === undefined) c.headerTooltip = true;   // full title on hover when a header is clipped
     if (!c.sorter && data && data.length && typeof data[0][c.field] === "number") c.sorter = "number";
+    if (!c.field) return;
+    if (!(key + "|" + c.field in _origAlign)) _origAlign[key + "|" + c.field] = c.hozAlign || "";
+    const a = _hoz(key, c.field);
+    if (a) { c.hozAlign = a; c.headerHozAlign = a; }
+    if ((kl.frozen || []).includes(c.field)) c.frozen = true;
   });
+  const baseLayout = rest.layout || "fitColumns";
+  delete rest.layout;
   const table = new Tabulator(id, {
     data, columns,
-    layout: "fitColumns",
+    layout: kl.layout === "fit" ? "fitData" : baseLayout,
     height: "100%",
     movableColumns: true,
     selectableRows: 1,
@@ -321,7 +466,8 @@ const setTable = (id, data, columns, opts = {}) => {
   // finishes re-measures against the real container.
   table.on("tableBuilt", () => table.redraw(true));
   el._tabulator = table;
-  _tablesByPid["tabulator-" + (rest.persistenceID || id.replace("#", ""))] = table;
+  table._klLayout = baseLayout;
+  _tablesByPid[key] = table;
   return table;
 };
 

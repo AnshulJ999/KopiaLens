@@ -123,6 +123,8 @@ document.addEventListener("alpine:init", () => {
     docs: null, docsView: "popup", _docsLoaded: null, _docsCache: null, _docsWindow: false,   // the docs browser (docs.js)
     taskView: "popup",                    // Tasks: details as a full-size popup or a small panel (task_view)
     chipMenu: "",                         // the open header chip list: "jobs" | "pending" | "more"
+    tblLayout: null, tableAlign: "auto", timeMenu: false,   // tables.js: "Table layout…", app-wide alignment, the time button's menu
+    dashPageSize: "all",                  // Dashboard rows per page: all | 25 | 50 | 100
     design: {},                           // Design widget choices (dev add-on, data-d-* on <html>); see designIs
     repoLabels: "short",  // repo chips and columns: "short" (Repo 1) | "full" (the name from repos.json)
     // Backblaze settings. Defaults mirror app/settings.py; each control saves its own key into
@@ -240,6 +242,8 @@ document.addEventListener("alpine:init", () => {
       if (this.ob) return;        // onboarding is the whole page
       if (this.repoMenu) { this.repoMenu = false; return; }
       if (this.chipMenu) { this.chipMenu = ""; return; }
+      if (this.timeMenu) { this.timeMenu = false; return; }
+      if (this.tblLayout) { this.tblLayout = null; return; }
       if (this.repoDlg) { this.repoDlg = null; return; }
       if (this.engineDlg) { this.engineDlg = null; return; }
       if (this.newSnap) { this.closeNewSnap(); return; }
@@ -319,6 +323,8 @@ document.addEventListener("alpine:init", () => {
       this.$watch("actionText", (v) => this.pushNotice(v, "info"));
       window.addEventListener("kl-locked", (e) => this.showLock(e.detail));
       window.addEventListener("kl-setup-code", () => this.obNeedCode());
+      window.addEventListener("kl-table-layout", (e) => this.openTableLayout(e.detail.key));
+      window.addEventListener("kl-table-rebuild", () => this.rebuildTables());
       window.addEventListener("design-change", (e) => { this.design = { ...this.design, [e.detail.key]: e.detail.value }; });
       this.initHelp();
       this.wmLoad();
@@ -717,13 +723,13 @@ document.addEventListener("alpine:init", () => {
     csv(id, name) { downloadTable(id, name); },
     };
     // Duplicate-key guard: two parts declaring the same key would compose silently last-wins.
-    const parts = [["core", core], ["toastPart", toastPart], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["browsePart", browsePart], ["treePart", treePart], ["searchPart", searchPart], ["indexPanelPart", indexPanelPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["prunePart", prunePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["accountPart", accountPart], ["appConfigPart", appConfigPart], ["reposPart", reposPart], ["onboardingPart", onboardingPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart], ["licencePart", licencePart], ["helpPart", helpPart], ["tasksPart", tasksPart], ["enginePart", enginePart], ["sourceOpsPart", sourceOpsPart], ["notifyPart", notifyPart], ["writeModePart", writeModePart], ["fullListPart", fullListPart], ["docsPart", docsPart]];
+    const parts = [["core", core], ["toastPart", toastPart], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["browsePart", browsePart], ["treePart", treePart], ["searchPart", searchPart], ["indexPanelPart", indexPanelPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["prunePart", prunePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["accountPart", accountPart], ["appConfigPart", appConfigPart], ["reposPart", reposPart], ["onboardingPart", onboardingPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart], ["licencePart", licencePart], ["helpPart", helpPart], ["tasksPart", tasksPart], ["enginePart", enginePart], ["sourceOpsPart", sourceOpsPart], ["notifyPart", notifyPart], ["writeModePart", writeModePart], ["fullListPart", fullListPart], ["docsPart", docsPart], ["tablesPart", tablesPart]];
     const seen = new Map();
     for (const [owner, part] of parts)
       for (const k of Object.keys(part)) {
         if (seen.has(k)) console.error(`kopiaLens: duplicate key "${k}" declared in both ${seen.get(k)} and ${owner}`);
         else seen.set(k, owner);
       }
-    return Object.assign(core, toastPart, indexPanelPart, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, browsePart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, prunePart, diffviewPart, jobsPart, maintenancePart, settingsPart, accountPart, appConfigPart, reposPart, onboardingPart, themePart, policiesPart, policyEditPart, licencePart, helpPart, tasksPart, enginePart, sourceOpsPart, notifyPart, writeModePart, tokensPart, fullListPart, docsPart);
+    return Object.assign(core, toastPart, indexPanelPart, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, browsePart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, prunePart, diffviewPart, jobsPart, maintenancePart, settingsPart, accountPart, appConfigPart, reposPart, onboardingPart, themePart, policiesPart, policyEditPart, licencePart, helpPart, tasksPart, enginePart, sourceOpsPart, notifyPart, writeModePart, tokensPart, fullListPart, docsPart, tablesPart);
   });
 });
