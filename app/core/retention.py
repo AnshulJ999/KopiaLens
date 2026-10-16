@@ -211,8 +211,14 @@ def simulate(
     candidates = deleted_content - kept_content
     reclaim = sum(smap.get(cid, 0) for cid in candidates if count.get(cid, 0) == 1)
     pinned = sum(smap.get(cid, 0) for cid in candidates if count.get(cid, 0) != 1)
+    own = _own_frees(repo, key)
+    rows = [{"id": s["id"], "start_time": s.get("startTime", ""), "kept": s["id"] in keep_ids,
+             "reasons": reasons.get(s["id"], []), "frees": own.get(s["id"]), "pins": s.get("pins") or [],
+             "description": s.get("description") or ""} for s in snaps]
     return {
         "source": key,
+        "snapshots": rows,
+        "frees_ready": all(r["frees"] is not None for r in rows),
         "policy": policy,
         "total_snapshots": len(snaps),
         "keep_snapshots": len(keep_snaps),
@@ -225,6 +231,20 @@ def simulate(
         "reasons": dict(reasons),
         "note": keep_all_note(policy),
     }
+
+
+def _own_frees(repo: str, key: str) -> dict[str, int | None]:
+    """What deleting each snapshot alone frees (the Snapshots tab's Reclaimable), from the saved
+    per-snapshot analysis; empty while it is missing or belongs to an older snapshot list."""
+    from ..index.snapanalysis import read_analysis
+    from ..index.store import NoIndex
+    try:
+        info = read_analysis(repo, key)
+    except NoIndex:
+        return {}
+    if not info.get("fresh"):
+        return {}
+    return {sid: a.get("reclaimable") for sid, a in (info.get("by_id") or {}).items()}
 
 
 _SIMALL_CACHE_VERSION = 2   # bump on any retention_keep rule change: old payloads assume old rules

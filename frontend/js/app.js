@@ -97,6 +97,7 @@ document.addEventListener("alpine:init", () => {
     ob: null, cx: null, repoMenu: false, repoAdd: false, repoDlg: null, repoChecks: {}, kopiaInfo: null, repoKopiaEdit: null,
     policyKeys: ["latest", "hourly", "daily", "weekly", "monthly", "annual"],
     policy: { latest: 100, hourly: 96, daily: 30, weekly: 52, monthly: 36, annual: 5 },
+    _simOne: null, _simFreesSeq: 0,   // Simulate one source: the last result, its own-frees fill
     simMode: "all", simMeta: "", simText: "", actionText: "", simEmpty: true, simPolicyByRepo: {}, _simRepo: null, _simRunOnOpen: false,
     mounts: [],
     statsData: null, blobStats: "", blobLoading: false, _statsLoading: false,
