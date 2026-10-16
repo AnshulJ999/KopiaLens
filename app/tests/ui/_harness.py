@@ -358,6 +358,8 @@ class Server:
             try:
                 self.get("/api/onboarding/state")
                 return self
+            except urllib.error.HTTPError:    # it answered (401 once an account exists): it is up
+                return self
             except (urllib.error.URLError, ConnectionError, OSError):
                 time.sleep(0.3)
         raise RuntimeError(f"KopiaLens did not start within {timeout}s:\n{self.tail()}")

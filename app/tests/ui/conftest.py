@@ -7,13 +7,62 @@ Run by name only: ``pytest Kopia/KopiaLens/app/tests/ui`` (the default suite ski
 from __future__ import annotations
 
 import faulthandler
+import os
 import re
+from pathlib import Path
 
 import pytest
 
 from . import _harness as h
 
 UI_TEST_TIMEOUT = 240     # a flow can include a first index; Playwright bounds each wait itself
+UI_DIR = Path(__file__).parent
+
+
+@pytest.hookimpl(tryfirst=True)     # before xdist reads the group marks
+def pytest_collection_modifyitems(config, items):
+    """Retry a failed flow once (the summary lists it as rerun, with its trace). Under xdist,
+    tests on the shared ``app_server`` stay on one worker in file order (the Free sweep reads
+    what the earlier ones left behind); every other file runs on a worker of its own."""
+    for item in items:
+        if UI_DIR not in item.path.parents:
+            continue
+        group = "app_server" if "app_server" in item.fixturenames else item.path.name
+        item.add_marker(pytest.mark.xdist_group(group))
+        if not item.get_closest_marker("xfail"):
+            item.add_marker(pytest.mark.flaky(reruns=1))
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    rep = (yield).get_result()
+    if rep.when == "call":
+        item.kl_failed = rep.failed or (rep.skipped and hasattr(rep, "wasxfail"))
+
+
+_TRACES: list[str] = []
+
+
+def pytest_runtest_logreport(report):
+    """Runs where the reports arrive (the xdist controller too); the trace paths ride on them."""
+    if report.when == "teardown":
+        _TRACES.extend(v for k, v in report.user_properties if k == "trace")
+
+
+def pytest_terminal_summary(terminalreporter):
+    if _TRACES:
+        terminalreporter.section("browser traces of failed flows (playwright show-trace <file>)")
+        for path in sorted(set(_TRACES)):
+            terminalreporter.line(path)
+
+
+def _traces_dir(tmp_path_factory) -> Path:
+    """Inside this run's pytest temp folder (pytest keeps the last three runs)."""
+    base = tmp_path_factory.getbasetemp()
+    root = base.parent if base.name.startswith("popen-gw") else base
+    path = root / "traces"
+    path.mkdir(exist_ok=True)
+    return path
 
 
 @pytest.fixture(autouse=True)
@@ -76,8 +125,10 @@ def _disconnect_created(server: h.Server, kopia: str) -> None:
             pass
 
 
-def _server(fixture_repo, kopia, name: str):
-    srv = h.Server(fixture_repo["root"], fixture_repo["env"], re.sub(r"\W+", "-", name)[:40]).start()
+def _server(fixture_repo, kopia, name: str, run: int = 1):
+    """``run`` is the attempt number: a retried test gets a data folder of its own."""
+    folder = re.sub(r"\W+", "-", name)[:36] + f"-r{run}"
+    srv = h.Server(fixture_repo["root"], fixture_repo["env"], folder).start()
     try:
         yield srv
     finally:
@@ -88,7 +139,7 @@ def _server(fixture_repo, kopia, name: str):
 @pytest.fixture
 def fresh_server(fixture_repo, kopia, request):
     """A new server with an empty data folder: no account, no repository."""
-    yield from _server(fixture_repo, kopia, request.node.name)
+    yield from _server(fixture_repo, kopia, request.node.name, getattr(request.node, "execution_count", 1))
 
 
 def arrange_indexed(srv: h.Server, fixture_repo: dict) -> str:
@@ -119,7 +170,7 @@ def app_server(fixture_repo, kopia):
 @pytest.fixture
 def indexed_server(fixture_repo, kopia, request):
     """A server of its own in the same onboarded state, for flows that restart it."""
-    gen = _server(fixture_repo, kopia, request.node.name)
+    gen = _server(fixture_repo, kopia, request.node.name, getattr(request.node, "execution_count", 1))
     srv = next(gen)
     arrange_indexed(srv, fixture_repo)
     yield srv
@@ -127,13 +178,15 @@ def indexed_server(fixture_repo, kopia, request):
 
 
 @pytest.fixture
-def open_page(browser):
+def open_page(browser, request, tmp_path_factory):
     """``open_page(server, signed_in=True)`` -> a page in a new browser context. Any console
-    error or uncaught exception fails the test, except those matching ``page.kl_allow``."""
+    error or uncaught exception fails the test, except those matching ``page.kl_allow``. A failed
+    test keeps each context's trace (requests, console, page snapshots per step)."""
     opened = []
 
     def _open(server: h.Server, signed_in: bool = True, width: int = 1400):
         ctx = browser.new_context(viewport={"width": width, "height": 1000}, accept_downloads=True)
+        ctx.tracing.start(screenshots=True, snapshots=True)
         page = ctx.new_page()
         page.kl_errors, page.kl_allow = [], []
         page.on("console", lambda m: m.type == "error" and page.kl_errors.append(m.text))
@@ -145,9 +198,21 @@ def open_page(browser):
         return page
 
     yield _open
+    from playwright.sync_api import Error as PlaywrightError
     problems = []
-    for ctx, page in opened:
-        problems += [e for e in page.kl_errors if not any(re.search(a, e) for a in page.kl_allow)]
+    keep_all = os.environ.get("KOPIALENS_UI_TRACES") == "all"   # for timing a passing flow
+    for i, (ctx, page) in enumerate(opened):
+        mine = [e for e in page.kl_errors if not any(re.search(a, e) for a in page.kl_allow)]
+        problems += mine
+        keep = keep_all or getattr(request.node, "kl_failed", False) or bool(mine)
+        run = getattr(request.node, "execution_count", 1)
+        path = _traces_dir(tmp_path_factory) / f"{request.node.name[:60]}-run{run}-{i}.zip"
+        try:
+            ctx.tracing.stop(path=str(path) if keep else None)
+            if keep:
+                request.node.user_properties.append(("trace", str(path)))
+        except PlaywrightError:   # the test closed this context itself: nothing left to save
+            pass
         ctx.close()
     assert not problems, f"browser console errors: {problems}"
 

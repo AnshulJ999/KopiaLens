@@ -15,6 +15,9 @@ _real_stats_ready = checkin.stats_ready
 @pytest.fixture
 def sent(monkeypatch, tmp_path):
     monkeypatch.setattr(checkin, "STATE_FILE", str(tmp_path / "checkin.json"))
+    # Any earlier API call in this process marks features used and the app opened.
+    monkeypatch.setattr(checkin, "_used", set())
+    monkeypatch.setattr(checkin, "_opened", False)
     monkeypatch.setattr(checkin, "DEMO_INSTANCE", False)
     monkeypatch.setattr(checkin, "_tier", lambda: "free")
     monkeypatch.setattr(checkin, "stats_ready", lambda: True)

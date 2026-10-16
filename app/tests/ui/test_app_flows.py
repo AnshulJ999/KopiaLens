@@ -88,9 +88,9 @@ def test_search_finds_a_file_and_marks_one_deleted_from_disk(app_server, open_pa
     expect(page.get_by_role("row", name="big-video.mp4", exact=False)).to_contain_text("deleted")
 
 
-# Known flaky: sometimes the Tree never asks for its folder list (cause unknown). Don't chase a
-# failure here until that cause is found; xfail keeps it running without turning the suite red.
-@pytest.mark.xfail(reason="known flaky, cause unknown", strict=False)
+# Known flaky: a Tree opened before the page finishes starting up stays empty (an app bug, not yet
+# fixed). xfail keeps it running without turning the suite red.
+@pytest.mark.xfail(reason="known flaky: Tree opened during page start-up stays empty", strict=False)
 def test_tree_opens_a_folder_and_goes_back_up(app_server, open_page):
     page = open_page(app_server)
     h.go_tab(page, "Tree")
@@ -193,6 +193,8 @@ def test_restart_keeps_settings_and_signing_in_unlocks_the_index(indexed_server,
     fmt.click()
     expect(page.get_by_role("button", name="Times: how long ago")).to_be_visible()
 
+    # A background poll in flight when the server stops loses its connection.
+    page.kl_allow.append(r"net::ERR_CONNECTION_(RESET|REFUSED|CLOSED)")
     indexed_server.restart()
     assert indexed_server.get("/api/encryption/status")["unlocked"] is False
     # A tab left open across the restart asks for the unlock box, not a raw error.

@@ -94,6 +94,38 @@ os.environ["KOPIALENS_REPOS_FILE"] = os.path.join(_DATA_SANDBOX, "repos.json")
 os.environ["KOPIALENS_DEV_ADDONS"] = ""   # empty beats a developer's .env.dev: no dev add-ons in tests
 
 
+MAIN_WORKERS = 8    # measured 2026-10-16: 8 workers ~33 s vs 145 s serial; more workers only contend
+UI_WORKERS = 4      # each worker runs its own KopiaLens servers, kopia and Chromium
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_cmdline_main(config):
+    """Defaults for every run: the slowest tests listed at the end, and a whole folder run in
+    parallel (a file or a single test stays in one process). An explicit -n, -p no:xdist or
+    --durations wins."""
+    opt = config.option
+    if getattr(opt, "durations", None) is None:
+        opt.durations, opt.durations_min = 10, 2.0
+    here = config.invocation_params.dir
+    targets = [os.path.join(here, a.split("::")[0]) for a in config.args] or [str(here)]
+    ui = os.path.realpath(os.path.join(_HERE, "app", "tests", "ui"))
+    is_ui = any(os.path.realpath(t).startswith(ui) for t in targets)
+    if hasattr(config, "workerinput"):
+        # A worker re-reads the original command line, which never named --dist: it marks the
+        # groups (xdist_group) only when told to here.
+        if is_ui:
+            opt.loadgroup = True
+        return
+    if getattr(opt, "numprocesses", "absent") is not None or opt.collectonly:
+        return
+    if not all(os.path.isdir(t) for t in targets):
+        return
+    if is_ui:
+        opt.numprocesses, opt.dist = UI_WORKERS, "loadgroup"
+    else:
+        opt.numprocesses, opt.dist = MAIN_WORKERS, "worksteal"
+
+
 def pytest_sessionstart(session):
     """Refuse the whole run if config still points outside the sandbox: continuing would write
     into a real install."""
