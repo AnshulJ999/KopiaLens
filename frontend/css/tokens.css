@@ -149,6 +149,129 @@
   --term-dim: #9992ab;
 }
 
+/* ---- Kopia Blue (light; KopiaUI's own blue #2a7fff on buttons and the selected tab) ---- */
+:root[data-theme="kopia"] {
+  --canvas: #e6eefb;
+  --surface: #ffffff;
+  --surface2: #f4f8fe;
+  --head: #e4eefd;
+  --hover: #e8f0fc;
+  --sel: #cfe2ff;
+  --bd: #b9cdec;
+  --bd-soft: #d6e3f6;
+  --fg: #0e1a2e;
+  --muted: #55688a;
+  --faint: #8a9bb5;
+
+  --ok: #0b7059;
+  --ok-bd: #6fdcbe;
+  --ok-bg: #eafaf4;
+  --ok-solid: #0b7059;
+  --danger: #bb2d4c;
+  --danger-bd: #f2a2b4;
+  --danger-bg: #fdf0f3;
+  --warn: #a05c0d;
+  --warn-bd: #e8b95c;
+  --warn-bg: #fdf5e5;
+  --link: #1a66d6;
+  --accent: #1a66d6;
+  --accent-bd: #8ab8ff;
+  --accent-bg: #e3eeff;
+  --accent-solid: #2a7fff;
+
+  --primary-bg: #2a7fff;
+  --primary-fg: #ffffff;
+  --tab-on-bg: #2a7fff;
+  --tab-on-fg: #ffffff;
+  --chrome-tint: #dde9fd;
+
+  --term-bg: #f1f5fc;
+  --term-fg: #34405a;
+  --term-dim: #8f9bb0;
+}
+
+/* ---- Sky Blue (light and airy: pale sky buttons with dark text) ---- */
+:root[data-theme="sky"] {
+  --canvas: #e3f3fc;
+  --surface: #ffffff;
+  --surface2: #f3fafe;
+  --head: #e0f2fe;
+  --hover: #e6f5fd;
+  --sel: #c7e9fb;
+  --bd: #b0dcf2;
+  --bd-soft: #d2ecf8;
+  --fg: #0b1c28;
+  --muted: #4f6f82;
+  --faint: #86a4b5;
+
+  --ok: #0b7059;
+  --ok-bd: #6fdcbe;
+  --ok-bg: #eafaf4;
+  --ok-solid: #0b7059;
+  --danger: #bb2d4c;
+  --danger-bd: #f2a2b4;
+  --danger-bg: #fdf0f3;
+  --warn: #a05c0d;
+  --warn-bd: #e8b95c;
+  --warn-bg: #fdf5e5;
+  --link: #0369a1;
+  --accent: #0277b6;
+  --accent-bd: #7dd3fc;
+  --accent-bg: #e0f2fe;
+  --accent-solid: #0277b6;
+
+  --primary-bg: #bae6fd;
+  --primary-fg: #0c4a6e;
+  --tab-on-bg: #bae6fd;
+  --tab-on-fg: #0c4a6e;
+  --chrome-tint: #e0f2fe;
+
+  --term-bg: #f0f8fd;
+  --term-fg: #2f4552;
+  --term-dim: #8aa1ad;
+}
+
+/* ---- Teal (light; the logo's deep teal #0f766e on buttons and the selected tab) ---- */
+:root[data-theme="teal"] {
+  --canvas: #e2f1ee;
+  --surface: #ffffff;
+  --surface2: #f3faf8;
+  --head: #e0f2ef;
+  --hover: #e5f3f0;
+  --sel: #c8ece6;
+  --bd: #acd6cf;
+  --bd-soft: #cfe8e3;
+  --fg: #0b1f1c;
+  --muted: #4d6f6a;
+  --faint: #84a39e;
+
+  --ok: #15803d;
+  --ok-bd: #86efac;
+  --ok-bg: #f0fdf4;
+  --ok-solid: #15803d;
+  --danger: #bb2d4c;
+  --danger-bd: #f2a2b4;
+  --danger-bg: #fdf0f3;
+  --warn: #a05c0d;
+  --warn-bd: #e8b95c;
+  --warn-bg: #fdf5e5;
+  --link: #0e7490;
+  --accent: #0f766e;
+  --accent-bd: #5eead4;
+  --accent-bg: #dff5f1;
+  --accent-solid: #0f766e;
+
+  --primary-bg: #0f766e;
+  --primary-fg: #ffffff;
+  --tab-on-bg: #0f766e;
+  --tab-on-fg: #ffffff;
+  --chrome-tint: #d7eeea;
+
+  --term-bg: #eff7f5;
+  --term-fg: #2e4744;
+  --term-dim: #87a19d;
+}
+
 /* ---- Ember (warm dark) ---- */
 :root[data-theme="ember"] {
   --canvas: #0c0a09;

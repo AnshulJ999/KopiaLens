@@ -1,6 +1,6 @@
 {% from "partials/logo.html" import logo_mark %}
     <!-- One row normally; when zoomed in or narrow, the buttons wrap to a second row instead of being cut off. -->
-    <header class="min-h-14 shrink-0 border-b border-bd bg-surface flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2">
+    <header class="kl-chrome min-h-14 shrink-0 border-b border-bd bg-surface flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2">
       <div class="flex items-start shrink-0">
         <button @click="goHome()" class="flex items-center font-semibold text-lg" title="Go to the first tab">
           {{ logo_mark("k3g", 'x-show="logo === \'k3g\'"') }}
@@ -125,10 +125,10 @@
                 :class="indexPct(indexStatus) == null ? 'bg-warn' : 'bg-ok'"></span>
           <span x-text="indexLine()"></span>
         </button>
-        <button x-show="repoKind==='kopia' && !isDemo()" @click="buildIndex()" :disabled="!!indexStatus.building" class="h-8 rounded bg-fg px-3 text-surface disabled:opacity-50" :title="indexStatus.never_indexed ? 'Build the first index for this repo' : 'Update index (incremental)'" x-text="indexStatus.never_indexed ? 'Index now' : 'Index'">Index</button>
+        <button x-show="repoKind==='kopia' && !isDemo()" @click="buildIndex()" :disabled="!!indexStatus.building" class="kl-fill h-8 rounded px-3 disabled:opacity-50" :title="indexStatus.never_indexed ? 'Build the first index for this repo' : 'Update index (incremental)'" x-text="indexStatus.never_indexed ? 'Index now' : 'Index'">Index</button>
         <span x-show="repoKind==='backblaze'" class="rounded border border-bd bg-surface2 px-2 py-1" x-text="bzStatusLine()" :title="bzStatusTitle()"></span>
         <span x-show="repoKind==='backblaze' && bzRefreshResult" class="text-xs px-2 py-1 rounded" :class="bzRefreshResult.includes('FAILED') ? 'bg-danger-bg text-danger' : 'bg-ok-bg text-ok'" x-text="bzRefreshResult"></span>
-        <button x-show="repoKind==='backblaze'" @click="bzRefresh()" class="h-8 rounded bg-fg px-3 text-surface flex items-center gap-1.5" title="Re-scan the read-only Backblaze index"><i class="ic ic-refresh"></i>Index BZ</button>
+        <button x-show="repoKind==='backblaze'" @click="bzRefresh()" class="kl-fill h-8 rounded px-3 flex items-center gap-1.5" title="Re-scan the read-only Backblaze index"><i class="ic ic-refresh"></i>Index BZ</button>
         <button @click="refreshAll()" class="h-8 w-8 rounded border border-bd kl-ibtn" title="Refresh this view and the snapshot list" aria-label="Refresh"><i class="ic ic-refresh"></i></button>
         <div class="relative" @click.outside="timeMenu = false">
           <button @click="toggleTimeFmt()" @contextmenu.prevent="timeMenu = !timeMenu" class="h-8 w-8 rounded border border-bd kl-ibtn" :aria-label="timeFmt==='relative' ? 'Times: how long ago' : 'Times: dates'"
@@ -201,14 +201,14 @@
 
     <!-- Tabs, then status chips. Chips never break inside; when there is no room the whole group
          wraps to a second row (zoom, big text, many repos) instead of running off the edge. -->
-    <nav class="shrink-0 border-b border-bd-soft bg-surface px-3 py-1.5 flex flex-wrap items-center gap-1">
+    <nav class="kl-chrome shrink-0 border-b border-bd-soft bg-surface px-3 py-1.5 flex flex-wrap items-center gap-1">
       <!-- Drag a tab to reorder (kopia repositories); right-click for Reset tab order. -->
       <div class="relative flex flex-wrap items-center gap-1" @click.outside="tabMenu = false" @contextmenu.prevent="if (repoKind === 'kopia') tabMenu = !tabMenu">
         <template x-for="t in currentTabs()" :key="t.id">
-          <button class="tab" @click="active=t.id; activate()" :draggable="repoKind === 'kopia' ? 'true' : 'false'"
+          <button class="tab" @click="active=t.id; activate()" :title="t.tip || ''" :draggable="repoKind === 'kopia' ? 'true' : 'false'"
                   @dragstart="tabDrag = t.id; $event.dataTransfer.effectAllowed = 'move'" @dragend="tabDrag = ''; tabOver = ''"
                   @dragover.prevent="if (tabDrag) tabOver = t.id" @drop.prevent="tabDrop(t.id)"
-                  :class="[(active===t.id || (t.id==='snapshots' && active==='simulate')) ? 'bg-sel font-medium' : 'hover:bg-head',
+                  :class="[(active===t.id || (t.id==='snapshots' && active==='simulate')) ? 'on' : 'hover:bg-head',
                            tabDrag === t.id ? 'opacity-50' : '', tabOver === t.id && tabDrag && tabDrag !== t.id ? 'ring-1 ring-fg' : '']"
                   x-text="t.label + (t.id === 'tasks' && tasksRunning ? ' (' + tasksRunning + ')' : '')"></button>
         </template>

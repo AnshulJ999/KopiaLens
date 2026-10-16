@@ -29,7 +29,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         # data-theme/data-density are stamped into the rendered page so it paints correctly
         # before any JS runs. light_theme/dark_theme are the two slots the nav quick switch
         # flips between. Values are validated against the known lists before use.
-        "theme": "system",           # daylight|parchment|slate|lilac|ember|midnight|pine|obsidian|lens|graphite|ink|system
+        "theme": "system",           # daylight|parchment|slate|lilac|kopia|sky|teal|ember|midnight|obsidian|lens|graphite|ink|system
         "density": "normal",         # comfortable|normal|compact|dense|custom
         "density_pct": 100,          # density="custom": root text size in percent (80-115)
         "font": "inter",             # inter|geist|plex|system (bundled in frontend/vendor/fonts)

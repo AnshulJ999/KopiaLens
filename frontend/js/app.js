@@ -10,11 +10,16 @@ document.addEventListener("alpine:init", () => {
     repos: [], repo: "1", repoKind: "kopia",
     // The default order; people drag tabs into their own (tab_order, Settings > Appearance resets it).
     tabs: [
-      { id: "dashboard", label: "Dashboard" }, { id: "snapshots", label: "Snapshots" },
-      { id: "tree", label: "Tree" }, { id: "search", label: "Search" },
-      { id: "churn", label: "Churn" }, { id: "excluded", label: "Excluded" },
-      { id: "stats", label: "Repository" }, { id: "policies", label: "Policies" },
-      { id: "tasks", label: "Tasks" }, { id: "logs", label: "Logs" },
+      { id: "dashboard", label: "Dashboard", tip: "Every backup source in this repo" },
+      { id: "snapshots", label: "Snapshots", tip: "Every snapshot of a source" },
+      { id: "tree", label: "Tree", tip: "Browse backed-up snapshots" },
+      { id: "search", label: "Search", tip: "Find files across your backups" },
+      { id: "churn", label: "Churn", tip: "How much new data each source adds" },
+      { id: "excluded", label: "Excluded", tip: "Browse excluded files and folders" },
+      { id: "stats", label: "Repository", tip: "Storage, maintenance and health" },
+      { id: "policies", label: "Policies", tip: "Backup rules and schedules" },
+      { id: "tasks", label: "Tasks", tip: "Backups and jobs, running and finished" },
+      { id: "logs", label: "Logs", tip: "Audit trail, activity and app logs" },
     ],
     tabOrder: [], tabDrag: "", tabOver: "", tabMenu: false,
     // Reached through a kopia server: kopia refuses the reads an index needs, so only the views
