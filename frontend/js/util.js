@@ -479,7 +479,34 @@ const closeTableMenu = () => {
   return true;
 };
 
+// Download names: kopialens-<what>-<about>-<repo>-<date-time>.<ext>, lowercase a-z 0-9 . _ - only.
+// <about> (the file, folder or search words) is cut at a word near 24 characters. Twin of app/core/exportname.py.
+const _slug = (text, limit = 0) => {
+  let s = String(text || "").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/[-._]*-[-._]*/g, "-").replace(/^[-._]+|[-._]+$/g, "");
+  if (limit && s.length > limit) {
+    const cut = s.lastIndexOf("-", limit);
+    s = (cut >= limit / 2 ? s.slice(0, cut) : s.slice(0, limit)).replace(/[-._]+$/, "");
+  }
+  return s;
+};
+const aboutOf = (names) => {
+  const list = (names || []).filter(Boolean);
+  if (!list.length) return "";
+  const first = String(list[0]).replace(/[\\/]+$/, "").split(/[\\/]/).pop() || list[0];
+  return first + (list.length > 1 ? `-and-${list.length - 1}-more` : "");
+};
+const exportName = (what, about = "", repo = "", ext = "csv") => {
+  const d = new Date(), p = (n) => String(n).padStart(2, "0");
+  const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+  const tail = String(about || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop();   // never a whole path
+  const more = /-and-\d+-more$/.exec(tail);
+  const head = _slug(more ? tail.slice(0, more.index) : tail, 24);
+  const stem = ["kopialens", _slug(what), head + (more && head ? more[0] : ""), _slug(repo, 16)].filter(Boolean).join("-")
+    .slice(0, 100 - stamp.length - ext.length - 2).replace(/[-._]+$/, "");
+  return `${stem}-${stamp}.${ext}`;
+};
+// ``name``: a full file name from exportName (or a bare stem, given .csv).
 const downloadTable = (id, name) => {
   const el = document.querySelector(id);
-  if (el && el._tabulator) el._tabulator.download("csv", `${name}.csv`);
+  if (el && el._tabulator) el._tabulator.download("csv", /\.csv$/.test(name) ? name : `${name}.csv`);
 };

@@ -55,7 +55,7 @@ const deletePart = {
       if (!p || !p.plan) return;
       const body = { repo: this.repo, files: p.files, method: p.method, by: p.by, sources: p.sources, copies: p.copies, list_cap: 1000000 };
       this.openFullList({
-        title: "What gets removed", name: "delete-plan",
+        title: "What gets removed", name: "delete-plan", about: aboutOf((p.files || []).map((f) => f.full_path)),
         columns: [["full_path", "Path"], ["tag", "Match"], ["sources_text", "Sources"], ["on_disk", "On disk"], ["size", "Size", "bytes"]],
         load: async () => {
           const r = await getJson("/api/delete/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

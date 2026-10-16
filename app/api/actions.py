@@ -16,7 +16,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from ..core import audit
+from ..core import audit, exportname
 from ..core import paths as pathrules
 from ..core.applog import get_logger
 from ..core.kopia import (
@@ -250,7 +250,7 @@ def _rf_preview(repo: str, items: list[str], flag: str, scope, by: str) -> dict:
     large selections without sharing the folder-delete plan machinery."""
     commit_cmds = remove_files_chunked_commands(repo, items, source=scope, commit=True, max_chars=8000, flag=flag)
     dry_cmds = remove_files_chunked_commands(repo, items, source=scope, commit=False, max_chars=8000, flag=flag)
-    stem = f"kopialens_remove_repo{repo}_{time.strftime('%Y%m%d_%H%M%S')}"
+    stem = exportname.export_name("delete-script", "", exportname.repo_label(repo), ext="x")[:-2]
     ext, script = remove_files_script(commit_cmds, stem)
     audit.audit("generated", "remove-files-commands", repo=repo,
                 summary={"items": len(items), "by": by, "batches": len(commit_cmds),
@@ -739,7 +739,7 @@ def remove_bat(payload: RemovePlanRequest) -> dict:
         raise HTTPException(status_code=404, detail="no matching files")
     scope = _remove_scope(payload.everywhere, t["sources"])
     cmds = remove_files_chunked_commands(payload.repo, items, source=scope, commit=True, max_chars=8000, flag=flag)
-    stem = f"kopialens_remove_repo{payload.repo}_{time.strftime('%Y%m%d_%H%M%S')}"
+    stem = exportname.export_name("delete-script", "", exportname.repo_label(payload.repo), ext="x")[:-2]
     ext, content = remove_files_script(cmds, stem)
     fname = stem + ext
     audit.audit("generated", "remove-bat", repo=payload.repo,
@@ -769,7 +769,7 @@ def remove_list(payload: RemovePlanRequest) -> dict:
                 w.writerow(["; ".join(r["sources"]), r["full_path"], r.get("size") or 0,
                             r.get("physical") or 0, "same file name"])
                 rows += 1
-    fname = f"kopialens_delete_list_repo{payload.repo}_{time.strftime('%Y%m%d_%H%M%S')}.csv"
+    fname = exportname.export_name("delete-list", "", exportname.repo_label(payload.repo))
     return {"filename": fname, "content": buf.getvalue(), "rows": rows}
 
 

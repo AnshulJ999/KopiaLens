@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, Response
 
 from config import APP_VERSION, DISCORD_URL, DOCS_URL, REPO_URL, SUPPORT_EMAIL
 
-from ..core import checkin, diagnostics, netaccess
+from ..core import checkin, diagnostics, exportname, netaccess
 
 router = APIRouter(tags=["help"])
 
@@ -113,6 +113,6 @@ def diagnostics_download(request: Request, sections: str = "", anonymise: bool =
                          days: int = 7) -> Response:
     bundle = diagnostics.build(_sections(sections), anonymise=anonymise, bundle_id=id or None, days=_days(days),
                                browser=request.headers.get("user-agent", ""))
-    name = f"kopialens-diagnostics-{bundle['id']}.zip"
+    name = exportname.export_name("diagnostics", bundle["id"], ext="zip")
     return Response(diagnostics.zip_bytes(bundle), media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})

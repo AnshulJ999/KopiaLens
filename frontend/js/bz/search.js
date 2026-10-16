@@ -70,7 +70,8 @@ const bzSearchPart = {
       }, "Grouping folders…");
     },
     bzExportSearch() {
-      if (this.bzGroupByFolder) return downloadTable("#bzGroupTable", "backblaze_folders");
-      window.open(appUrl(`/api/backblaze/export?${this.bzSearchUrl().toString()}`), "_blank");
+      if (this.bzGroupByFolder) return downloadTable("#bzGroupTable", this.fileName("search-folders", this.query || "", "csv", "bz"));
+      const p = this.bzSearchUrl({ filename: this.fileName("search", this.query || "", "csv", "bz") });
+      window.open(appUrl(`/api/backblaze/export?${p.toString()}`), "_blank");
     },
 };

@@ -15,6 +15,7 @@ from config import REPOS, repo_kind
 from . import freeids
 from .actions import FULL_LIST_CAP
 from .errors import PASS_THROUGH
+from ..core import exportname
 from ..core import paths as pathrules
 from ..index import foldercache
 from ..index.physical import file_detail, frees_for_files, storage_breakdown, stored_all_versions
@@ -407,7 +408,7 @@ def export(
     ext_exclude: str | None = None, sort: str = "size", dir: str = "desc",
     min_gb: float = 0, max_gb: float = 0, date_from: str | None = None, date_to: str | None = None,
     first_from: str | None = None, min_versions: int = 0, shared_min: int = 0, dedupe: bool = False,
-    dedupe_by: str = "path",
+    dedupe_by: str = "path", filename: str = "",
 ) -> StreamingResponse:
     min_size, max_size = _bounds(over_gb, largest, min_gb, max_gb)
     cur, registered = search_export(repo, query=q, deleted_only=deleted_only, min_size=min_size,
@@ -419,7 +420,7 @@ def export(
 
     return StreamingResponse(
         _csv_rows(cur, registered), media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="kopialens_search_repo{repo}.csv"'},
+        headers={"Content-Disposition": f'attachment; filename="{exportname.client_name(filename) or exportname.export_name("search", q, exportname.repo_label(repo))}"'},
     )
 
 

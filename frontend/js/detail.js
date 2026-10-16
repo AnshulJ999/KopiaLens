@@ -203,7 +203,7 @@ const detailPart = {
       const q = `repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(d.source)}&full_path=${encodeURIComponent(d.title)}&others_cap=1000000`;
       const local = d.others.slice();
       this.openFullList({
-        title: "Identical copies", name: "identical-copies",
+        title: "Identical copies", name: "identical-copies", about: baseName(d.title),
         columns: [["source", "Source"], ["full_path", "Path"]],
         load: async () => {
           const rows = cut ? ((await getJson(`/api/search/detail?${q}`)).other_paths || []) : local;
@@ -581,7 +581,7 @@ const detailPart = {
       const cut = byName ? p.filename_extra_capped : p.content_extra_capped;
       const local = ((byName ? p.filename_extra : p.content_extra) || []).slice();
       this.openFullList({
-        title: byName ? "Other same-named files" : "Identical copies", name: byName ? "same-named-files" : "identical-copies",
+        title: byName ? "Other same-named files" : "Identical copies", name: byName ? "same-named-files" : "identical-copies", about: p.label || "",
         columns: [["full_path", "Path"], ["sources_text", "Sources"], ["on_disk", "On disk"], ["size", "Size", "bytes"]],
         load: async () => {
           const r = cut ? await getJson("/api/actions/remove-plan", { method: "POST", headers: { "Content-Type": "application/json" }, body }) : null;
@@ -685,8 +685,9 @@ const detailPart = {
       if (!this.proGate("remove", ev)) return;
       const r = await getJson("/api/actions/remove-list", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
       if (!r) return;
-      this._downloadText(r.filename, r.content);
-      this.klNotify(`Downloaded ${r.filename} (${countOf(r.rows, "file")}).`);
+      const name = this.fileName("delete-list", (this.removePlan && this.removePlan.label) || "");
+      this._downloadText(name, r.content);
+      this.klNotify(`Downloaded ${name} (${countOf(r.rows, "file")}).`);
     },
     async removeSaveBat(ev) {
       if (!this.proGate("remove", ev)) return;

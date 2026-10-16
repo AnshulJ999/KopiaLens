@@ -141,9 +141,15 @@ def path_status(path: str) -> dict:
             "size": hit.get("size")}
 
 
+def _bz_export_name(filename: str, q: str) -> str:
+    from ..core import exportname
+    return exportname.client_name(filename) or exportname.export_name("search", q, "BZ")
+
+
 @router.get("/export")
 def export(q: str = "", drive: str | None = None, ext: str | None = None, ext_exclude: str | None = None,
-           status: str = "all", min_size: int = 0, sort: str = "size", direction: str = "desc") -> StreamingResponse:
+           status: str = "all", min_size: int = 0, sort: str = "size", direction: str = "desc",
+           filename: str = "") -> StreamingResponse:
     _require_data()
     cur = bzq.export_iter(query=q, drive=drive, ext=ext, ext_exclude=ext_exclude, status=status,
                           min_size=min_size, sort=sort, direction=direction)
@@ -159,7 +165,7 @@ def export(q: str = "", drive: str | None = None, ext: str | None = None, ext_ex
             yield buf.getvalue(); buf.seek(0); buf.truncate(0)
 
     return StreamingResponse(gen(), media_type="text/csv",
-                             headers={"Content-Disposition": "attachment; filename=backblaze_search.csv"})
+                             headers={"Content-Disposition": f'attachment; filename="{_bz_export_name(filename, q)}"'})
 
 
 @router.get("/group-by-folder")

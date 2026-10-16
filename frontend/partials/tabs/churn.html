@@ -25,7 +25,7 @@
             <button class="kl-btn icon" @click="open = !open" title="More" aria-label="More"><i class="ic ic-more"></i></button>
             <div class="kl-menu" x-show="open" x-cloak>
               <button @click="open = false; loadChurn(true)">Recompute now</button>
-              <button @click="open = false; csv('#churnTable','churn')">Export CSV</button>
+              <button @click="open = false; csv('#churnTable', fileName('churn', churnView + '-' + churnDays + 'd'))">Export CSV</button>
               <button @click="open = false; openTableLayout('#churnTable')">Table layout…</button>
             </div>
           </span>

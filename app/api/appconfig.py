@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 import config
 
-from ..core import audit, configbackup, pause
+from ..core import audit, configbackup, exportname, pause
 from ..core.applog import get_logger
 
 log = get_logger("app")
@@ -164,7 +164,7 @@ def restore(backup_id: str, body: GroupsRequest) -> dict:
 def export(groups: str = "settings,repos") -> Response:
     chosen = _groups([g for g in groups.split(",") if g])
     data = configbackup.export_zip(chosen)
-    name = f"kopialens-settings-{time.strftime('%Y-%m-%d')}.zip"
+    name = exportname.export_name("config-backup", ext="zip")
     audit.audit("config", "export", summary={"groups": chosen})
     return Response(data, media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})

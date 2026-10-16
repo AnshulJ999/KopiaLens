@@ -29,7 +29,7 @@
           <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
             <button class="kl-btn icon" @click="open = !open" title="More" aria-label="More"><i class="ic ic-more"></i></button>
             <div class="kl-menu" x-show="open" x-cloak>
-              <button @click="open = false; csv('#dashboardTable','dashboard')">Export CSV</button>
+              <button @click="open = false; csv('#dashboardTable', fileName('dashboard'))">Export CSV</button>
               <button @click="open = false; showCli('sources')">Show command</button>
               <div class="sep"></div>
               <div class="hd">Rows per page</div>
