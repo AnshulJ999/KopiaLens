@@ -321,7 +321,7 @@
                       <template x-for="ri in (g.retention_impact || []).slice(0, 6)" :key="ri.source">
                         <div class="kl-note" x-text="shortSource(ri.source) + ': keeps ' + ri.kept_after + ' of ' + countOf(ri.total, 'snapshot') + ' (today ' + ri.kept_before + ')'"></div>
                       </template>
-                      <template x-if="(g.added || []).length || (g.removed || []).length">
+                      <template x-if="(g.added || []).length || (g.removed || []).length || g.order_changed">
                         <div class="space-y-1.5">
                           {{ rulediff('polDiffView(g)') }}
                           <template x-for="(pat, i) in (g.added || [])" :key="'a' + i">
@@ -338,7 +338,7 @@
                           </template>
                         </div>
                       </template>
-                      <div class="kl-note" x-show="!(g.added || []).length && !(g.removed || []).length && !(g.field_changes || []).length && !(g.staged && g.staged.delete_policy)">
+                      <div class="kl-note" x-show="!(g.added || []).length && !(g.removed || []).length && !(g.field_changes || []).length && !(g.staged && g.staged.delete_policy) && !g.order_changed">
                         No differences found.
                       </div>
                     </div>

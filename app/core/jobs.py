@@ -495,8 +495,7 @@ def _stream_one(job: dict, cmd: list[str], lf) -> tuple[int, str]:
                 manifest = json.loads(line)
                 job["snapshot_id"] = manifest.get("id")
                 job["counters"] = _snapshot_counters(job, manifest)
-                lf.write(line + "\n")
-                line = f"Saved snapshot {manifest.get('id')}"
+                line =f"Saved snapshot {manifest.get('id')}"
             except ValueError:
                 pass
         job["buffer"].append(time.strftime("%H:%M:%S ") + line)
