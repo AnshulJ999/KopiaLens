@@ -23,10 +23,10 @@ The snapshot runs as a job in the [job panel](job-panel.md). Later backups of th
 
 Before the first snapshot, you may want different rules for this folder: other exclusions, retention or a schedule.
 
-- **Give it its own policy…** opens the Policies tab with a new policy for this folder.
+- **Give it its own policy…** opens the policy editor in a popup with a new policy for this folder.
 - **Edit its policy…** opens the policy it already has.
 
-When you're done, select **Back to New snapshot** at the top of the Policies tab.
+New snapshot stays open underneath. After you save, it shows the new policy.
 
 ## Who runs later backups
 

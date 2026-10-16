@@ -32,6 +32,7 @@ The **Exclusions** section lists the policy's own rules. For each rule, KopiaLen
 - **Preview** shows what a rule matches: **On disk now** (what it keeps out of the next snapshot) and **In the backups** (backed-up files it would drop from the next snapshot).
 - **Remove** takes a rule out.
 - **Work out sizes** prices rules that have no size yet.
+- **Edit as text** shows the policy's own rules in one box, one rule per line. Select **Apply** to stage the changes. kopia reads the rules from the top, and a rule starting with `!` brings back only what a rule above it left out. So the order you type is saved too. **new order, not saved** shows above the list until you save, and **Undo order** puts the old order back.
 
 **Inherited rules** lists the rules that come from policies above, read-only. To change one, select **Jump there** to open the policy that owns it.
 
@@ -52,6 +53,17 @@ Every change is staged first. The tab shows **not saved** next to it, and **Undo
 Before each write, KopiaLens backs up the repository's policies and checks that the backup can be read. If kopia would refuse a change, the review says so before anything is written.
 
 If you leave a policy with unsaved changes, KopiaLens asks first. To keep them as a draft instead, change **Leaving a policy with unsaved changes** in **Settings → Appearance**.
+
+## Edit a policy from other screens
+
+The same editor opens in a popup from other screens, so you don't lose your place:
+
+- **Policy** on a Dashboard row, and **Open policy** in its right-click menu.
+- **Give it its own policy…** or **Edit its policy…** in [New snapshot](new-snapshot.md).
+- **Policy…** in the file and folder panels, and on each source under **Backed up by**.
+- **Policy…** in a row's right-click menu on the [Excluded](excluded.md) tab.
+
+The panels and Excluded open the policy that rules that path: the closest folder policy or source above it, else the Global policy. Unsaved changes are shared with the Policies tab. Close the popup and they stay there until you save or discard them. **Open in Policies** switches to the tab.
 
 ## Other actions
 

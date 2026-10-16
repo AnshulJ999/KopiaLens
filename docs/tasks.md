@@ -27,7 +27,12 @@ The list updates every few seconds while the tab is open.
 
 ## Open a task
 
-Click a row. The task opens with its steps, its start and finish times, and kopia's log as it runs.
+Click a row. The task opens with its start and finish times, how long it took, its counters and kopia's log as it runs.
+
+- **Counters** list what kopia counted, such as files, folders, hashed and cached files, excluded files and errors. Counters at zero are greyed.
+- **Output** shows kopia's messages, each with its details in grey. KopiaLens saves them while the task runs, so long tasks keep every line.
+- **Full log** shows kopia's complete log for jobs KopiaLens runs on the command line.
+
 
 - **Stop** stops a running task.
 - **Open in job panel** opens a KopiaLens job in the [job panel](job-panel.md).

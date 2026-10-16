@@ -32,6 +32,21 @@ With **All sources**, the line above the table gives the total. The total is oft
 
 To open a source's snapshots, double-click its row.
 
+### One source
+
+With one source, the line above the table sums up the result: how many snapshots it keeps and deletes, and the space that frees. The table lists every snapshot:
+
+| Column | What it means |
+|---|---|
+| **Start** | When the snapshot was taken |
+| **Result** | **kept** or **deleted** |
+| **Why kept** | kopia's reasons for keeping it, such as `latest-1` or `daily-3` |
+| **Frees on its own** | The space deleting only this snapshot gives back. It fills in when KopiaLens has worked it out |
+| **Description** | The snapshot's description |
+| **Pins** | Its [pins](glossary.md#pin) |
+
+Snapshots that would be deleted come first, the biggest saving first.
+
 ## Saved results
 
 With **All sources**, KopiaLens saves the result and shows it again next time, with the time it was worked out. To work it out again from the current index, select **Recompute (ignore the saved result)** in the **…** menu. **Export CSV** is in the same menu.

@@ -48,6 +48,7 @@ Right-click a row:
 - **Open** a folder, or see its **Details**.
 - **Back this up…** copies the kopia command that adds the folder to each repository. Run the one for the repository you want. To back it up from KopiaLens instead, use **New snapshot…** on the Dashboard ([New snapshot](new-snapshot.md)).
 - **Exclude…** writes an exclusion rule for something you never want backed up ([Exclude](exclude.md)).
+- **Policy…** opens the policy that rules this folder in the open repository, in a popup ([Policies](policies.md#edit-a-policy-from-other-screens)).
 - **Copy path**.
 
 ## Limits

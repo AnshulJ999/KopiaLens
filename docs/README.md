@@ -75,6 +75,7 @@ KopiaLens is an app for exploring, analysing and managing [Kopia](https://kopia.
 - [Backblaze](backblaze.md): what Backblaze Personal Backup backs up.
 - [Indexing](indexing.md): when the index updates, the indexing panel, and index backups.
 - [Settings](settings.md): every section and its defaults.
+- [Tables](tables.md): columns, alignment, widths, times and rows per page in any table.
 
 ## Panels
 

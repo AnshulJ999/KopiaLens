@@ -22,7 +22,7 @@ One row per source. Above the table, **Repository holds** shows the space the wh
 | **Next snapshot** | When the schedule takes the next one. **overdue** means the scheduled time has passed and no snapshot was taken |
 | **Actions** | **Snapshot now** and **Policy**. While a backup runs, its progress shows here instead |
 
-More columns are hidden at first. To show or hide a column, right-click any column header.
+More columns are hidden at first. To show or hide a column, right-click any column header ([Tables](tables.md)).
 
 | Column | What it means |
 |---|---|
@@ -38,12 +38,13 @@ The space columns come from the last [index run](glossary.md#index-run). [How Ko
 
 - **See a source's snapshots:** double-click its row. The [Snapshots](snapshots.md) tab opens on that source.
 - **Take a snapshot now:** select **Snapshot now** on the row. By default KopiaLens asks first and lets you add a description. To start straight away, turn off **Ask before Snapshot now** in **Settings → General**.
-- **Open the source's policy:** select **Policy** on the row. The [Policies](policies.md) tab opens on that source.
+- **Open the source's policy:** select **Policy** on the row. The [policy editor](policies.md#edit-a-policy-from-other-screens) opens in a popup.
 - **More actions:** right-click a row for **Show in Tree**, **Simulate this source**, **Copy source** and **Delete this source…**.
 - **Back up a new folder:** select **New snapshot…** above the table ([New snapshot](new-snapshot.md)).
 - **Choose who runs backups:** select the **Backups:** button. It names who runs this repository's backups now ([Backups](backups.md#who-runs-backups)).
 - **Read new snapshots:** select the refresh button next to **Repository holds**. KopiaLens reads kopia's snapshot list again and recomputes the numbers. It doesn't rebuild the index.
 - **Export:** the **…** menu has **Export CSV** and **Show command** (the kopia command behind the table).
+- **Many sources:** the **…** menu has **Rows per page** and **Table layout…** ([Tables](tables.md)).
 
 ## Whose backups to show
 

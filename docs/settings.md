@@ -38,7 +38,9 @@ The other sections are described below.
 | Setting | What it does |
 |---|---|
 | **Theme** | A light and a dark theme. **System** follows your computer's light or dark setting. Saved on the server, so it follows you between browsers |
-| **Density** | Row height and text size |
+| **Density** | Row height and text size. **Custom** shows a slider in 1% steps |
+| **Table alignment** | How table columns line up unless a table or column has its own choice ([Tables](tables.md#table-layout)). **Auto**, the default, puts numbers on the right and text on the left |
+| **Tab order** | **Reset to default** puts the tabs back in their first order. To move a tab, drag it in the tab row |
 | **Font** | The font for the whole app |
 | **Sort arrows in table headers** | **Sorted column only** or **Every column** |
 | **Detail panel layout** | **Classic** shows every section of the file and folder panels in one scroll. **Tabbed** keeps the summary on screen and groups the rest |
@@ -103,9 +105,9 @@ Permissions set what KopiaLens may change in a repository. They apply to you, to
 | **Non-destructive** | Also take snapshots, pin, change policies and descriptions, and run maintenance |
 | **Full Access** | Also delete files, snapshots and sources. The default |
 
-Set the level for **All repositories**, then change it for single repositories under **Per repository** if needed. **Read-only** and **Restores allowed** also stop KopiaLens's scheduled backups for that repository.
+Set the level for **All repositories**, then change it for single repositories under **Per repository** if needed. The **?** beside **All repositories** opens this section. **Read-only** and **Restores allowed** also stop KopiaLens's scheduled backups for that repository.
 
-When a KopiaLens password is set, raising a level to **Full Access** asks for it. The header shows the current level as a chip. Select it to change the level. Actions the level doesn't allow are greyed out.
+When a KopiaLens password is set, raising a level to **Full Access** asks for it. Below **Full Access**, the repository picker in the header shows a small eye (**Read-only**) or lock icon. Its tooltip and the repository menu name the level, and **Permissions:** in that menu changes it. Actions the level doesn't allow are greyed out.
 
 [API tokens](api-tokens.md#permissions) have their own permission on top. A token can never do more than the repository's level allows.
 
@@ -114,11 +116,13 @@ When a KopiaLens password is set, raising a level to **Full Access** asks for it
 **Backups of these settings** keeps copies of your KopiaLens settings, repository list, sign-in accounts and encryption key files. KopiaLens makes a copy before changes, once a week and before upgrades. Your kopia backups aren't part of it.
 
 - **Back up now** makes a copy now.
-- **Restore…** on a copy shows what would change, then restores it.
+- **Restore…** on a copy lists every change before anything is replaced: each setting as it is now and in the copy, repositories added, removed or changed, table layouts, accounts and keys.
+
+Some changes affect who can get in or what KopiaLens may change: sign-in and remote access, permissions, who runs backups, accounts and keys. They start with **Keep current** ticked, so the restore leaves them as they are now. Untick **Keep current** to restore them too.
 
 **Export to a file** saves your settings and repository list as one file, to move KopiaLens to another computer or to keep a copy elsewhere. Tick **Include sign-in accounts** or **Include encryption key files** to add them. The file then holds password hashes or your locked encryption key, so keep it somewhere private.
 
-**Import from a file** reads an exported file. You see what would change before anything is replaced.
+**Import from a file** reads an exported file. You see the same list of changes, with **Keep current**, before anything is replaced.
 
 ## Advanced
 

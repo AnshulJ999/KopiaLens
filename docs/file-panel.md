@@ -61,7 +61,7 @@ Both are [Pro](licensing.md) actions. The figures they show are free.
 
 ## Other actions
 
-At the bottom of the panel: **Mount** (the latest snapshot holding the file), **Restore**, **Download** (the latest backed-up copy), **Copy path** and **Show files**.
+At the bottom of the panel: **Mount** (the latest snapshot holding the file), **Restore**, **Download** (the latest backed-up copy), **Copy path**, **Show files** and **Policy…** (the policy that rules this file, in a popup).
 
 ## Layout
 

@@ -91,6 +91,12 @@ To act on several rows, select them with Ctrl or Shift and right-click.
 
 The **…** menu has **Export CSV** for this page or for all results. **Delete all … matching…** deletes every file the search matches from the backups ([Delete from backups](delete-files.md)). It is offered for up to 100000 files. For a bigger match, narrow the search first.
 
+## Ready-made views
+
+The **…** menu lists **Ready-made views**. **Old versions that free the most** lists the old versions of files whose removal gives back the most space, biggest first. Each row has **Prune…** ([Prune versions](prune.md)). Sorting, columns and **Export CSV** work as in any search. **Back to Search** returns to your results.
+
+The same list starts from **Open in Search** in the **Versions worth pruning** box on the [Repository](repository.md) tab.
+
 ## Related
 
 - [Tree](tree.md)

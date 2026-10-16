@@ -43,6 +43,7 @@ When more than one source backs up the folder, deleting it from one source leave
 | **Restore**, **Download**, **Mount** | Gets the folder back from the latest snapshot that holds it ([Restore, download and mount](restore.md)) |
 | **Show files** | Lists the folder's files in [Search](search.md) |
 | **Copy path** | Copies the folder's path |
+| **Policy…** | Opens the policy that rules this folder in a popup ([Policies](policies.md#edit-a-policy-from-other-screens)). Each source under **Backed up by** has its own **Policy…** |
 
 **Prune snapshots…**, **Delete folder…** and **Exclude & delete…** are [Pro](licensing.md) actions. Their previews are free.
 
