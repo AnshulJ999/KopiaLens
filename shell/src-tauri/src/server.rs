@@ -321,18 +321,19 @@ impl Server {
         if !port_open(self.port()) {
             return PortOwner::Free;
         }
-        let recorded = std::fs::read_to_string(self.data_dir.join("server.json")).ok()
-            .and_then(|t| serde_json::from_str::<Value>(&t).ok());
-        let pid = recorded.as_ref()
-            .filter(|v| v.get("port").and_then(Value::as_u64) == Some(self.port() as u64))
-            .and_then(|v| v.get("pid").and_then(Value::as_u64));
-        if let Some(pid) = pid {
+        if let Some((pid, port)) = self.recorded() {
             let sys = Self::processes();
-            if sys.process(Pid::from_u32(pid as u32)).is_some_and(|p| self.is_server_cmd(&Self::cmdline(p))) {
+            if port == self.port() && sys.process(Pid::from_u32(pid)).is_some_and(|p| self.is_server_cmd(&Self::cmdline(p))) {
                 return PortOwner::Ours;
             }
         }
         PortOwner::Other
+    }
+
+    /// The pid and port this data folder's server recorded in `<data>/server.json`.
+    fn recorded(&self) -> Option<(u32, u16)> {
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(self.data_dir.join("server.json")).ok()?).ok()?;
+        Some((v.get("pid")?.as_u64()? as u32, v.get("port")?.as_u64()? as u16))
     }
 
     /// The first free port after the app's port, for "use another port".
@@ -399,13 +400,15 @@ impl Server {
                 return;
             }
         }
+        // A server this app did not start (left by an earlier launch): only the one this data
+        // folder recorded, never another copy's server from the same program folder.
+        let Some((pid, _)) = self.recorded() else { return };
         let sys = Self::processes();
-        let me = std::process::id();
-        for (pid, p) in sys.processes() {
-            if pid.as_u32() != me && self.is_server_cmd(&Self::cmdline(p)) {
-                self.log(&format!("stopping a server this app did not start (pid {pid})"));
-                p.kill();
-            }
+        if let Some(p) = sys.process(Pid::from_u32(pid))
+            .filter(|p| pid != std::process::id() && self.is_server_cmd(&Self::cmdline(p)))
+        {
+            self.log(&format!("stopping a server this app did not start (pid {pid})"));
+            p.kill();
         }
     }
 

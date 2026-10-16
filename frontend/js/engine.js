@@ -148,11 +148,14 @@ const enginePart = {
       facts.push(["Schedules", "Each folder's policy decides when"], ["Maintenance", v.owner_is_us === false ? "Stays with " + v.owner : "Runs from KopiaLens"]);
       if (g.how === "move") facts.push(["KopiaUI", "Stops loading this repository after it restarts"]);
       note = "Backups run while KopiaLens is open.";
+    } else if (other === "another app") {   // no other app is known to run them
+      title = "Stop running this repository's backups?";
+      label = "Stop backups";
+      facts.push(["KopiaLens", "Stops its backups and maintenance here"], ["Then", "Nothing runs them until you choose again"]);
     } else {
       title = `Hand this repository's backups back to ${other}?`;
       label = "Hand back";
-      facts.push(["KopiaLens", "Stops its backups and maintenance here"]);
-      if (other !== "another app") facts.push(["Then", `${other} runs them when it's open`]);
+      facts.push(["KopiaLens", "Stops its backups and maintenance here"], ["Then", `${other} runs them when it's open`]);
     }
     if (!(await this.klConfirm({ title, facts, note, confirmLabel: label, danger: false }))) return;
     g.busy = true; g.error = "";
@@ -160,7 +163,7 @@ const enginePart = {
       const st = await getJson("/api/engine/choice", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo: g.repo, choice: g.choice, how: g.how, password: g.password }) });
       this.engineDlg = null;
-      this.klNotify(g.choice !== "kopialens" ? "Backups handed back"
+      this.klNotify(g.choice !== "kopialens" ? (other === "another app" ? "Backups stopped" : "Backups handed back")
         : st && st.until_restart ? "Saved. KopiaLens takes over when KopiaUI restarts."
         : "KopiaLens runs backups for this repository now");
       if (this.ob) this.obLoadEngine();   // setup's Backups rows

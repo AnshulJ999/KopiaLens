@@ -94,7 +94,7 @@ const treePart = {
     },
     _treeMoreRow(rest) {
       const n = Math.min(TREE_LEVEL_CAP, rest.length).toLocaleString(NUM_LOCALE);
-      return { _ph: true, _more: rest, name: `Show ${n} more of ${rest.length.toLocaleString(NUM_LOCALE)}` };
+      return { _ph: true, _more: rest, name: `Show ${n} more (${rest.length.toLocaleString(NUM_LOCALE)} left)` };
     },
     // The next rows of that level go in above the "Show more" row; the level is already loaded.
     async _treeShowMore(row) {

@@ -84,6 +84,8 @@ def test_no_approval_is_asked_for_what_would_be_refused_anyway(client, monkeypat
     ("post", "/api/actions/snapshot-delete", {"json": {"repo": "1", "snapshot_ids": ["k1"]}}, "approval"),
     ("post", "/api/jobs/start", {"json": {"kind": "remove_files", "repo": "1", "params": {}}}, "approval"),
     ("post", "/api/write-mode", {"json": {"repo": None, "mode": "full"}}, "approval"),
+    ("post", "/api/account/enabled", {"json": {"on": False}}, "approval"),
+    ("post", "/api/access", {"json": {"allowed_hosts": ["evil.example"]}}, "approval"),
     ("delete", "/api/licence", {}, "approval"),
     ("post", "/api/tokens", {"json": {"name": "more", "mode": "full"}}, "never"),
     ("patch", "/api/tokens/abc", {"json": {"mode": "full"}}, "never"),
