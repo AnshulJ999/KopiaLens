@@ -122,11 +122,13 @@ def post_resume() -> dict:
 
 class GroupsRequest(BaseModel):
     groups: list[str] = list(configbackup.DEFAULT_RESTORE)
+    keep: list[str] = []          # restore-preview item ids to leave as they are now
 
 
 class ImportApply(BaseModel):
     token: str
     groups: list[str] = list(configbackup.DEFAULT_RESTORE)
+    keep: list[str] = []
 
 
 def _groups(groups: list[str]) -> list[str]:
@@ -150,13 +152,22 @@ def back_up_now() -> dict:
     return made
 
 
+@router.get("/config-backups/{backup_id}/preview")
+def restore_preview(backup_id: str, groups: str = "settings,repos,accounts,keys") -> dict:
+    """What restoring this backup would change, item by item. Nothing is written."""
+    try:
+        return configbackup.restore_plan(backup_id, [g for g in groups.split(",") if g in configbackup.GROUPS])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/config-backups/{backup_id}/restore")
 def restore(backup_id: str, body: GroupsRequest) -> dict:
     try:
-        out = configbackup.restore(backup_id, _groups(body.groups))
+        out = configbackup.restore(backup_id, _groups(body.groups), body.keep)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    audit.audit("config", "restore", summary={"backup": backup_id, "files": out["restored"]})
+    audit.audit("config", "restore", summary={"backup": backup_id, "files": out["restored"], "kept": body.keep})
     return out
 
 
@@ -184,10 +195,10 @@ async def import_preview(request: Request) -> dict:
 @router.post("/config-backups/import/apply")
 def import_apply(body: ImportApply) -> dict:
     try:
-        out = configbackup.import_apply(body.token, _groups(body.groups))
+        out = configbackup.import_apply(body.token, _groups(body.groups), body.keep)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    audit.audit("config", "import", summary={"files": out["restored"]})
+    audit.audit("config", "import", summary={"files": out["restored"], "kept": body.keep})
     return out
 
 

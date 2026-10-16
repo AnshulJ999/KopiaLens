@@ -100,6 +100,28 @@ def test_restore_puts_back_only_the_chosen_files_and_keeps_a_safety_copy(cfg):
     assert any(b["kind"] == "safety" for b in configbackup.list_backups())
 
 
+def test_restore_preview_flags_risky_items_and_keep_leaves_them_as_now(cfg):
+    """Sign-in, remote access, permissions and who runs backups change only when not kept."""
+    (cfg / "settings.json").write_text(json.dumps({"kopialens": {"bind_host": "0.0.0.0", "theme": "lens",
+                                                                 "write_mode": "full"}}))
+    (cfg / "repos.json").write_text(json.dumps({"version": 1, "repos": [{"id": "1", "name": "Main", "engine": "kopialens"}]}))
+    backup = configbackup.create("manual")
+    (cfg / "settings.json").write_text(json.dumps({"kopialens": {"bind_host": "127.0.0.1", "theme": "ink",
+                                                                 "write_mode": "read_only"}}))
+    (cfg / "repos.json").write_text(json.dumps({"version": 1, "repos": [{"id": "1", "name": "Main"}]}))
+
+    plan = configbackup.restore_plan(backup["id"], ["settings", "repos"])
+    by_id = {i["id"]: i for i in plan["items"]}
+    assert set(plan["risky"]) == {"settings:kopialens.bind_host", "settings:kopialens.write_mode", "repos:1:engine"}
+    assert by_id["settings:kopialens.theme"]["risky"] is False
+    assert by_id["settings:kopialens.theme"]["now"] == "ink" and by_id["settings:kopialens.theme"]["backup"] == "lens"
+
+    configbackup.restore(backup["id"], ["settings", "repos"], keep=plan["risky"])
+    kl = json.loads((cfg / "settings.json").read_text())["kopialens"]
+    assert kl == {"bind_host": "127.0.0.1", "theme": "lens", "write_mode": "read_only"}
+    assert "engine" not in json.loads((cfg / "repos.json").read_text())["repos"][0]
+
+
 def test_restore_refuses_names_that_are_not_backups(cfg):
     with pytest.raises(ValueError):
         configbackup.restore("../settings.json", ["settings"])
@@ -110,8 +132,8 @@ def test_export_import_round_trip_previews_before_writing(cfg):
     (cfg / "repos.json").write_text(json.dumps({"version": 1, "repos": []}))
 
     preview = configbackup.import_preview(data)
-    repos = next(f for f in preview["files"] if f["file"] == "repos.json")
-    assert repos["added"] == ["Main"]
+    added = [i["label"] for i in preview["plan"]["items"] if i["kind"] == "repo-added"]
+    assert added == ["Main"]
     assert json.loads((cfg / "repos.json").read_text())["repos"] == [], "preview writes nothing"
 
     configbackup.import_apply(preview["token"], ["repos"])

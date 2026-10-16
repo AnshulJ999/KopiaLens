@@ -3,7 +3,7 @@
     <template x-if="cfgDlg">
       <div class="fixed inset-0 z-[58] bg-black/40 flex items-center justify-center p-4 sm:p-6"
            @click.self="cfgDlg.busy || (cfgDlg = null)">
-        <div role="dialog" aria-modal="true" class="w-[32rem] max-w-full rounded-lg border border-bd bg-surface shadow-xl flex flex-col text-sm">
+        <div role="dialog" aria-modal="true" class="w-[44rem] max-w-full rounded-lg border border-bd bg-surface shadow-xl flex flex-col text-sm">
           <div class="p-4 space-y-3 overflow-auto max-h-[80vh]">
             <template x-if="!cfgDlg.done">
               <div class="space-y-3">
@@ -19,16 +19,44 @@
                   <template x-for="g in CFG_GROUPS.filter((x) => cfgDlg.available.includes(x[0]))" :key="g[0]">
                     <div>
                       <label class="flex items-center gap-2 text-xs font-medium"><input type="checkbox" x-model="cfgDlg.groups[g[0]]"><span x-text="g[1]"></span></label>
-                      <template x-if="cfgDlg.mode === 'import'">
-                        <div class="ml-6">
-                          <template x-for="f in cfgDlg.preview.files.filter((f) => (g[0] === 'settings' && /settings|ui_state/.test(f.file)) || (g[0] === 'repos' && f.file === 'repos.json') || (g[0] === 'accounts' && f.file === 'users.json'))" :key="f.file">
-                            <p class="text-[0.6875rem] text-muted" :title="(f.changed || []).join(', ')" x-text="cfgFileSummary(f)"></p>
-                          </template>
-                        </div>
-                      </template>
                       <p x-show="CFG_GROUP_NOTE[g[0]] && cfgDlg.groups[g[0]]" class="ml-6 text-[0.6875rem]" style="color:var(--warn)" x-text="CFG_GROUP_NOTE[g[0]]"></p>
                     </div>
                   </template>
+                </div>
+                <!-- What putting it back changes, item by item; risky items can stay as they are now. -->
+                <div class="space-y-2" data-testid="cfg-changes">
+                  <div class="flex items-baseline gap-2">
+                    <span class="text-xs font-medium">What changes</span>
+                    <span class="text-[0.6875rem] text-muted" x-show="cfgDlg.plan" x-text="countOf(cfgChangeCount(), 'change') + (cfgKeptCount() ? ', ' + cfgKeptCount() + ' kept as now' : '')"></span>
+                  </div>
+                  <p class="text-[0.6875rem] text-muted" x-show="!cfgDlg.plan && !cfgDlg.planError">Working out what changes…</p>
+                  <p class="text-[0.6875rem]" style="color:var(--danger)" x-show="cfgDlg.planError" x-text="cfgDlg.planError"></p>
+                  <p class="text-[0.6875rem] text-muted" x-show="cfgDlg.plan && !cfgChangeCount()">Nothing differs from what you have now.</p>
+                  <template x-for="sec in cfgSections()" :key="sec.title">
+                    <div>
+                      <div class="text-[0.6875rem] text-muted mb-1" x-text="sec.title"></div>
+                      <div class="kl-list" style="max-height:16rem">
+                        <template x-for="it in sec.items" :key="it.id">
+                          <div class="li text-xs" :class="it.risky && cfgDlg.keep[it.id] ? 'opacity-60' : ''">
+                            <span class="w-52 shrink-0 truncate" :title="it.label" x-text="cfgItemLabel(it)"></span>
+                            <template x-if="Array.isArray(cfgItemChange(it))">
+                              <span class="grow min-w-0 truncate" :title="cfgItemChange(it)[0] + ' → ' + cfgItemChange(it)[1]">
+                                <span class="line-through text-muted" x-text="cfgItemChange(it)[0]"></span><span class="text-faint"> → </span><span class="font-medium" x-text="cfgItemChange(it)[1]"></span>
+                              </span>
+                            </template>
+                            <template x-if="!Array.isArray(cfgItemChange(it))">
+                              <span class="grow min-w-0 truncate text-muted" x-text="cfgItemChange(it)"></span>
+                            </template>
+                            <template x-if="it.risky">
+                              <label class="shrink-0 flex items-center gap-1 text-[0.6875rem] whitespace-nowrap" title="Leave this as it is now">
+                                <input type="checkbox" :checked="!!cfgDlg.keep[it.id]" @change="cfgDlg.keep = { ...cfgDlg.keep, [it.id]: $event.target.checked }"> Keep current</label>
+                            </template>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                  <p class="text-[0.6875rem] text-muted" x-show="cfgDlg.plan && (cfgDlg.plan.risky || []).length">Ticked items stay as they are now: sign-in, remote access, permissions, who runs backups, accounts and keys.</p>
                 </div>
                 <p class="text-[0.6875rem] text-muted">Your current files are backed up first, so this can be undone.</p>
                 <p class="text-xs" style="color:var(--danger)" x-show="cfgDlg.error" x-text="cfgDlg.error"></p>

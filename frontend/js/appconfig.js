@@ -13,6 +13,16 @@ const CFG_GROUP_NOTE = {
   keys: "Only if the key files are damaged. Keys from before an encryption reset can't open the current index.",
 };
 const CFG_KIND = { change: "Before changes", weekly: "Weekly", upgrade: "Before upgrade", manual: "Manual", safety: "Before restore" };
+// Names for the settings a restore preview lists most (the rest show their key in words).
+const CFG_SETTING_LABELS = {
+  "kopialens.write_mode": "Permissions", "kopialens.auth_enabled": "Sign-in", "kopialens.bind_host": "Listens on",
+  "kopialens.access": "Who can connect", "kopialens.access_addresses": "Allowed addresses", "kopialens.allowed_hosts": "Allowed host names",
+  "kopialens.https": "HTTPS", "kopialens.https_cert": "HTTPS certificate", "kopialens.https_key": "HTTPS key",
+  "kopialens.trusted_proxies": "Trusted proxies", "kopialens.encryption": "Encryption", "kopialens.encryption_level": "Encryption level",
+  "kopialens.kopia_path": "Kopia program", "kopialens.theme": "Theme", "kopialens.density": "Density", "last_repo": "Last repository",
+};
+const CFG_REPO_FIELDS = { name: "name", short_name: "short name", config_file: "connection file", write_mode: "permissions",
+  engine: "who runs backups", engine_moved_from: "moved KopiaUI file", counts_as_backup: "counts as a backup", kind: "kind" };
 const CFG_FILE = { "settings.json": "settings file", "repos.json": "repository list", "users.json": "sign-in accounts file" };
 
 const appConfigPart = {
@@ -44,10 +54,61 @@ const appConfigPart = {
       } catch (e) { this.klNotify(e.message || String(e), "warn"); }
       finally { this.cfgBusy = ""; }
     },
-    cfgOpenRestore(b) {
+    async cfgOpenRestore(b) {
       const groups = {};
       for (const [g] of CFG_GROUPS) groups[g] = b.groups.includes(g) && (g === "settings" || g === "repos");
-      this.cfgDlg = { mode: "restore", backup: b, available: b.groups, groups, done: null, busy: false, error: "" };
+      this.cfgDlg = { mode: "restore", backup: b, available: b.groups, groups, done: null, busy: false, error: "",
+                      plan: null, planError: "", keep: {} };
+      try {
+        const plan = await getJson(`/api/config-backups/${encodeURIComponent(b.id)}/preview`);
+        if (this.cfgDlg && this.cfgDlg.backup && this.cfgDlg.backup.id === b.id) this._cfgSetPlan(plan);
+      } catch (e) { if (this.cfgDlg) this.cfgDlg.planError = e.message || String(e); }
+    },
+    // Risky items start as "keep current": nothing that changes who can get in or what may change
+    // happens unless it is unticked.
+    _cfgSetPlan(plan) {
+      const d = this.cfgDlg;
+      d.plan = plan;
+      d.keep = Object.fromEntries((plan.risky || []).map((id) => [id, true]));
+    },
+    // The preview's items for the groups ticked, in sections.
+    cfgSections() {
+      const d = this.cfgDlg;
+      if (!d || !d.plan) return [];
+      const items = d.plan.items.filter((i) => d.groups[i.group]);
+      const out = [];
+      const sec = (title, list) => { if (list.length) out.push({ title, items: list }); };
+      sec("Settings", items.filter((i) => i.kind === "setting" || i.id === "ui_state"));
+      sec("Repositories", items.filter((i) => i.kind.startsWith("repo")));
+      sec("Accounts and keys", items.filter((i) => i.id === "accounts" || i.id === "keys"));
+      return out;
+    },
+    cfgChangeCount() { return this.cfgSections().reduce((n, s) => n + s.items.length, 0); },
+    cfgKeptCount() {
+      const d = this.cfgDlg;
+      return this.cfgSections().reduce((n, s) => n + s.items.filter((i) => i.risky && d.keep[i.id]).length, 0);
+    },
+    cfgItemLabel(i) {
+      if (i.kind === "setting") return CFG_SETTING_LABELS[i.label] || capFirst(i.label.split(".").pop().replace(/_/g, " "));
+      if (i.kind === "repo-added") return "Adds " + i.label;
+      if (i.kind === "repo-removed") return "Removes " + i.label;
+      if (i.kind === "repo-field") return i.repo_name + ": " + (CFG_REPO_FIELDS[i.label] || i.label);
+      return i.label;
+    },
+    cfgVal(v, i) {
+      if (v === null || v === undefined || v === "") return "default";
+      if (i && /write_mode$/.test(i.label) && typeof v === "string") return this.wmLabel(v);
+      if (v === true) return "On";
+      if (v === false) return "Off";
+      if (Array.isArray(v)) return v.length ? v.join(", ") : "none";
+      if (typeof v === "object") return JSON.stringify(v);
+      return String(v);
+    },
+    cfgItemChange(i) {
+      if (i.id === "ui_state") return countOf(i.backup, "table") + " laid out differently";
+      if (i.id === "keys") return "The backup's key files replace today's";
+      if (i.kind === "repo-added" || i.kind === "repo-removed") return "";
+      return [this.cfgVal(i.now, i), this.cfgVal(i.backup, i)];
     },
     cfgChosen() {
       const d = this.cfgDlg;
@@ -58,9 +119,10 @@ const appConfigPart = {
       if (!d || d.busy || !this.cfgChosen().length) return;
       d.busy = true; d.error = "";
       try {
+        const keep = Object.keys(d.keep || {}).filter((id) => d.keep[id]);
         const out = d.mode === "restore"
-          ? await _cfgPost(`/api/config-backups/${encodeURIComponent(d.backup.id)}/restore`, { groups: this.cfgChosen() })
-          : await _cfgPost("/api/config-backups/import/apply", { token: d.preview.token, groups: this.cfgChosen() });
+          ? await _cfgPost(`/api/config-backups/${encodeURIComponent(d.backup.id)}/restore`, { groups: this.cfgChosen(), keep })
+          : await _cfgPost("/api/config-backups/import/apply", { token: d.preview.token, groups: this.cfgChosen(), keep });
         const names = this.cfgChosen().map((g) => CFG_GROUPS.find((x) => x[0] === g)[1].toLowerCase());
         d.done = { ...out, label: capFirst(names.length > 1 ? names.slice(0, -1).join(", ") + " and " + names.at(-1) : names[0]) };
         this.loadCfg();
@@ -97,20 +159,11 @@ const appConfigPart = {
         const preview = await getJson("/api/config-backups/import", { method: "POST", headers: { "Content-Type": "application/zip" }, body: file });
         const groups = {};
         for (const [g] of CFG_GROUPS) groups[g] = preview.groups.includes(g) && (g === "settings" || g === "repos");
-        this.cfgDlg = { mode: "import", preview, available: preview.groups, groups, done: null, busy: false, error: "" };
+        this.cfgDlg = { mode: "import", preview, available: preview.groups, groups, done: null, busy: false, error: "",
+                        plan: null, planError: "", keep: {} };
+        this._cfgSetPlan(preview.plan || { items: [], risky: [] });
       } catch (e) { this.klNotify(e.message || String(e), "warn"); }
       finally { this.cfgBusy = ""; }
-    },
-    cfgFileSummary(f) {
-      if (f.file === "settings.json") return f.changed && f.changed.length ? countOf(f.changed.length, "setting") + " differ" : "Same as now";
-      if (f.file === "repos.json") {
-        const parts = [];
-        if (f.added && f.added.length) parts.push("adds " + f.added.join(", "));
-        if (f.removed && f.removed.length) parts.push("removes " + f.removed.join(", "));
-        return parts.length ? capFirst(parts.join("; ")) : "Same repositories as now";
-      }
-      if (f.file === "users.json") return "Accounts: " + (f.accounts || []).join(", ");
-      return "Replaces the current file";
     },
 
     // ---- damaged-file notice ----------------------------------------------------------------

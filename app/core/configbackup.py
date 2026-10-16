@@ -335,13 +335,171 @@ def _secret_from(data: bytes, current: str | None) -> bytes:
     return json.dumps(doc, indent=2).encode("utf-8")
 
 
-def restore(backup_id: str, groups=DEFAULT_RESTORE) -> dict:
+# ---------------------------------------------------------------------------- restore preview
+
+# Repository record fields a restore can change, and the ones that need care.
+_REPO_FIELDS = ("name", "short_name", "kind", "config_file", "counts_as_backup", "write_mode",
+                "engine", "engine_moved_from")
+_RISKY_REPO_FIELDS = {"config_file", "write_mode", "engine", "engine_moved_from"}
+_SECRET = re.compile(r"password|secret|hash|token|key$", re.I)
+
+
+def _risky_setting(path: str) -> bool:
+    """Settings with their own route and checks (sign-in, remote access, permissions, encryption),
+    which a restore would otherwise set without those checks."""
+    from ..settings import OWN_ROUTE_SETTINGS
+    leaf = path.rsplit(".", 1)[-1]
+    return leaf in OWN_ROUTE_SETTINGS or bool(_SECRET.search(leaf))
+
+
+def _shown(path: str, value):
+    """A value as the preview shows it: secrets never leave the server."""
+    if value is None:
+        return None
+    return "(hidden)" if _SECRET.search(path.rsplit(".", 1)[-1]) else value
+
+
+def _current_json(name: str):
+    path = _target(name)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def _flat(doc: dict) -> dict:
+    """settings.json as "block.key" -> value (one level of blocks)."""
+    out = {}
+    for k, v in (doc or {}).items():
+        if isinstance(v, dict):
+            for k2, v2 in v.items():
+                out[f"{k}.{k2}"] = v2
+        else:
+            out[k] = v
+    return out
+
+
+def _repo_map(doc) -> dict[str, dict]:
+    return {str(r.get("id")): r for r in ((doc or {}).get("repos") or []) if isinstance(r, dict)}
+
+
+def plan(files: dict[str, bytes], groups) -> dict:
+    """What putting ``files`` back would change, item by item; nothing is written. Each item:
+    {id, group, kind, label, now, backup, risky}. Risky items can be kept as they are now
+    (``keep`` on restore/import)."""
+    groups = set(groups)
+    items: list[dict] = []
+    def add(**kw):
+        items.append({"risky": False, "now": None, "backup": None, **kw})
+    for name in sorted(files):
+        group = _group_of(name)
+        if group not in groups:
+            continue
+        try:
+            incoming = json.loads(files[name].decode("utf-8")) if name.endswith(".json") else None
+        except ValueError:
+            incoming = None
+        if name == "settings.json" and isinstance(incoming, dict):
+            cur, new = _flat(_current_json(name) or {}), _flat(incoming)
+            for path in sorted(set(cur) | set(new)):
+                if cur.get(path) != new.get(path):
+                    add(id=f"settings:{path}", group=group, kind="setting", label=path,
+                        now=_shown(path, cur.get(path)), backup=_shown(path, new.get(path)),
+                        risky=_risky_setting(path))
+        elif name == "ui_state.json" and isinstance(incoming, dict):
+            cur = (_current_json(name) or {}).get("tables") or {}
+            new = incoming.get("tables") or {}
+            n = sum(1 for k in set(cur) | set(new) if cur.get(k) != new.get(k))
+            if n:
+                add(id="ui_state", group=group, kind="file", label="Table layouts", backup=n)
+        elif name == "repos.json" and isinstance(incoming, dict):
+            cur, new = _repo_map(_current_json(name)), _repo_map(incoming)
+            for rid in sorted(set(cur) | set(new), key=lambda x: (not x.isdigit(), int(x) if x.isdigit() else 0, x)):
+                a, b = cur.get(rid), new.get(rid)
+                label = (b or a or {}).get("name") or rid
+                if a is None:
+                    add(id=f"repos:{rid}:added", group=group, kind="repo-added", label=label, repo=rid)
+                elif b is None:
+                    add(id=f"repos:{rid}:removed", group=group, kind="repo-removed", label=label, repo=rid)
+                else:
+                    for f in _REPO_FIELDS:
+                        if a.get(f) != b.get(f):
+                            add(id=f"repos:{rid}:{f}", group=group, kind="repo-field", label=f, repo=rid,
+                                repo_name=label, now=a.get(f), backup=b.get(f), risky=f in _RISKY_REPO_FIELDS)
+        elif name == "users.json":
+            try:
+                with open(_target(name), "rb") as fh:
+                    same = _secret_from(fh.read(), None) == _secret_from(files[name], None)
+            except OSError:
+                same = False
+            if not same:
+                now = sorted(str(u.get("username")) for u in ((_current_json(name) or {}).get("users") or []) if isinstance(u, dict))
+                back = sorted(str(u.get("username")) for u in ((incoming or {}).get("users") or []) if isinstance(u, dict))
+                add(id="accounts", group=group, kind="file", label="Sign-in accounts and passwords",
+                    now=now, backup=back, risky=True)
+        elif group == "keys":
+            if not any(i["id"] == "keys" for i in items):
+                add(id="keys", group=group, kind="file", label="Encryption key files", risky=True)
+    return {"items": items, "risky": [i["id"] for i in items if i["risky"]]}
+
+
+def _keep_current(files: dict[str, bytes], keep) -> dict[str, bytes]:
+    """``files`` with the kept items set back to what is on disk now."""
+    keep = set(keep or ())
+    if not keep:
+        return files
+    out = dict(files)
+    if "accounts" in keep:
+        out.pop("users.json", None)
+    if "keys" in keep:
+        for n in [n for n in out if _group_of(n) == "keys"]:
+            out.pop(n)
+    if "settings.json" in out and any(k.startswith("settings:") for k in keep):
+        doc = json.loads(out["settings.json"].decode("utf-8"))
+        cur = _flat(_current_json("settings.json") or {})
+        for k in keep:
+            if not k.startswith("settings:"):
+                continue
+            path = k.split(":", 1)[1]
+            block, _, leaf = path.rpartition(".")
+            target = doc.setdefault(block, {}) if block else doc
+            if path in cur:
+                target[leaf] = cur[path]
+            else:
+                target.pop(leaf, None)
+        out["settings.json"] = json.dumps(doc, indent=2).encode("utf-8")
+    if "repos.json" in out and any(k.startswith("repos:") for k in keep):
+        doc = json.loads(out["repos.json"].decode("utf-8"))
+        cur = _repo_map(_current_json("repos.json"))
+        for rec in doc.get("repos") or []:
+            rid = str(rec.get("id"))
+            for f in _REPO_FIELDS:
+                if f"repos:{rid}:{f}" in keep and rid in cur:
+                    if f in cur[rid]:
+                        rec[f] = cur[rid][f]
+                    else:
+                        rec.pop(f, None)
+        out["repos.json"] = json.dumps(doc, indent=2).encode("utf-8")
+    return out
+
+
+def _backup_files(backup_id: str) -> dict[str, bytes]:
     folder = _backup_folder(backup_id)
     files = {}
     for name in os.listdir(folder):
         if name != "info.json" and _group_of(name):
             with open(os.path.join(folder, name), "rb") as fh:
                 files[name] = fh.read()
+    return files
+
+
+def restore_plan(backup_id: str, groups=DEFAULT_RESTORE) -> dict:
+    return plan(_backup_files(backup_id), groups)
+
+
+def restore(backup_id: str, groups=DEFAULT_RESTORE, keep=()) -> dict:
+    files = _keep_current(_backup_files(backup_id), keep)
     with _LOCK:
         safety = create("safety", note=f"before restoring {backup_id}")
         restored = _put_back(files, groups)
@@ -428,46 +586,6 @@ def export_zip(groups) -> bytes:
     return buf.getvalue()
 
 
-def _summary(name: str, new: bytes) -> dict:
-    """What importing this file would change, in terms a person can check."""
-    try:
-        incoming = json.loads(new.decode("utf-8")) if name.endswith(".json") else None
-    except ValueError:
-        incoming = None
-    current = None
-    path = _target(name)
-    if name.endswith(".json") and os.path.exists(path):
-        try:
-            with open(path, encoding="utf-8") as fh:
-                current = json.load(fh)
-        except (OSError, ValueError):
-            current = None
-    out: dict = {"file": name, "exists": os.path.exists(path)}
-    if name == "settings.json" and isinstance(incoming, dict):
-        cur = current if isinstance(current, dict) else {}
-        changed = []
-        for block in sorted(set(incoming) | set(cur)):
-            a, b = cur.get(block), incoming.get(block)
-            if isinstance(a, dict) or isinstance(b, dict):
-                a, b = a or {}, b or {}
-                changed += [f"{block}.{k}" for k in sorted(set(a) | set(b)) if a.get(k) != b.get(k)]
-            elif a != b:
-                changed.append(block)
-        out["changed"] = changed
-    elif name == "repos.json" and isinstance(incoming, dict):
-        def names(store):
-            return {str(r.get("id")): (r.get("name") or str(r.get("id")))
-                    for r in (store or {}).get("repos", []) if isinstance(r, dict)}
-        cur, new_ = names(current if isinstance(current, dict) else {}), names(incoming)
-        out["added"] = sorted(new_[i] for i in set(new_) - set(cur))
-        out["removed"] = sorted(cur[i] for i in set(cur) - set(new_))
-        out["kept"] = sorted(new_[i] for i in set(new_) & set(cur))
-    elif name == "users.json" and isinstance(incoming, dict):
-        out["accounts"] = sorted(str(u.get("username")) for u in incoming.get("users", [])
-                                 if isinstance(u, dict))
-    return out
-
-
 def import_preview(data: bytes) -> dict:
     """Read an exported file and say what importing it would change. Nothing is written."""
     try:
@@ -510,16 +628,16 @@ def _import_preview(zf: zipfile.ZipFile) -> dict:
         _IMPORTS[token] = {"at": now, "files": files}
     groups = sorted({_group_of(n) for n in files})
     return {"token": token, "version": manifest.get("version") or "", "exported_at": manifest.get("at"),
-            "groups": groups, "files": [_summary(n, files[n]) for n in sorted(files)]}
+            "groups": groups, "plan": plan(files, groups)}
 
 
-def import_apply(token: str, groups) -> dict:
+def import_apply(token: str, groups, keep=()) -> dict:
     with _LOCK:
         pending = _IMPORTS.pop(token, None)
     if not pending:
         raise ValueError("this import has expired; choose the file again")
     with _LOCK:
         safety = create("safety", note="before an import")
-        restored = _put_back(pending["files"], groups)
+        restored = _put_back(_keep_current(pending["files"], keep), groups)
     log.warning("config imported: %s", ", ".join(restored) or "nothing")
     return {"restored": restored, "safety": safety["id"] if safety else None, "restart_needed": True}
