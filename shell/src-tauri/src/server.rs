@@ -272,6 +272,15 @@ impl Server {
         matches!(c.try_wait(), Ok(None)).then(|| c.id())
     }
 
+    /// The running server's pid: the one this app started, else this data folder's own server
+    /// left by an earlier launch.
+    pub fn server_pid(&self) -> Option<u32> {
+        self.child_pid().or_else(|| match self.port_owner() {
+            PortOwner::Ours => self.recorded().map(|(pid, _)| pid),
+            _ => None,
+        })
+    }
+
     pub fn start(&self) {
         if self.child_pid().is_some() {
             return;

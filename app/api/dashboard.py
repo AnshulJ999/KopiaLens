@@ -269,6 +269,12 @@ def post_settings(payload: dict) -> dict:
             raise HTTPException(status_code=400, detail=(
                 f"{own[0]} isn't saved here. Set it in settings.json." if where == "settings.json"
                 else f"{own[0]} isn't saved here. Change it in {where}."))
+        if "port" in kl or "control_port" in kl:
+            cur = load_settings().get("kopialens", {})
+            app_port = kl.get("port", cur.get("port"))
+            ctl_port = kl.get("control_port", cur.get("control_port"))
+            if app_port is not None and str(app_port) == str(ctl_port):
+                raise HTTPException(status_code=400, detail="Use a different port for App and Control.")
 
     def _apply(settings: dict) -> None:
         settings.update(payload)

@@ -94,6 +94,7 @@ const settingsPart = {
       this.controlApi = kl.control_api !== false;
       this.appPort = Number(kl.port || 7123);
       this.controlPort = Number(kl.control_port || 7124);
+      this.savedPorts = { port: this.appPort, control_port: this.controlPort };
       this.trayClick = kl.tray_click === "menu" ? "menu" : "window";
       this.trayDoubleClick = kl.tray_double_click === "none" ? "none" : "window";
       this.notifyLevel = ["all", "off"].includes(kl.notifications) ? kl.notifications : "warnings";
@@ -264,7 +265,11 @@ const settingsPart = {
         .then(() => {
           this.klNotify(f.restart ? "Saved - this setting needs a restart" : "Saved");
           if (key === "dashboard_refresh") this.armAutoRefresh();
+          if (key in this.savedPorts) this.savedPorts[key] = v;
         })
-        .catch((e) => { this.error = e.message || String(e); });
+        .catch((e) => {
+          this.error = e.message || String(e);
+          if (key in this.savedPorts) this[f.s] = this.savedPorts[key];  // refused: show what is saved
+        });
     },
 };

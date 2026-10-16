@@ -16,8 +16,8 @@ fn reply(req: tiny_http::Request, code: u16, body: Value) {
 }
 
 /// Opens the control port before the server starts, so the server is told the one in use. When
-/// another program (another KopiaLens copy) holds it, the next free port is used and saved in this
-/// copy's own settings.
+/// another program (another KopiaLens copy) holds it, or it is the app's own port, the next free
+/// port is used and saved in this copy's own settings.
 pub fn bind(shell: &Shell) -> Option<HttpServer> {
     let srv = &shell.server;
     if srv.setting("control_api").and_then(|v| v.as_bool()) == Some(false) {
@@ -25,23 +25,26 @@ pub fn bind(shell: &Shell) -> Option<HttpServer> {
         return None;
     }
     let port = srv.control_port();
-    match HttpServer::http(("127.0.0.1", port)) {
-        Ok(s) => return Some(s),
-        Err(e) if !port_open(port) => {
-            srv.log(&format!("control port {port} failed to bind: {e}"));
-            return None;
-        }
-        Err(_) => {}
-    }
     let app_port = srv.port();
+    let why = if port == app_port { "is the app's port" } else { "is used by another program" };
+    if port != app_port {
+        match HttpServer::http(("127.0.0.1", port)) {
+            Ok(s) => return Some(s),
+            Err(e) if !port_open(port) => {
+                srv.log(&format!("control port {port} failed to bind: {e}"));
+                return None;
+            }
+            Err(_) => {}
+        }
+    }
     let Some((next, http)) = (port.saturating_add(1)..port.saturating_add(100))
         .filter(|p| *p != app_port && !port_open(*p))
         .find_map(|p| HttpServer::http(("127.0.0.1", p)).ok().map(|s| (p, s)))
     else {
-        srv.log(&format!("control port {port} is used by another program and no nearby port is free"));
+        srv.log(&format!("control port {port} {why} and no nearby port is free"));
         return None;
     };
-    srv.log(&format!("control port {port} is used by another program - using {next}"));
+    srv.log(&format!("control port {port} {why} - using {next}"));
     srv.set_control_port(next);
     if std::env::var_os("KOPIALENS_TRAY_PORT").is_none() {
         if let Err(e) = srv.save_setting("control_port", json!(next)) {
@@ -60,7 +63,7 @@ pub fn spawn(app: AppHandle, shell: Arc<Shell>, http: Option<HttpServer>) {
                     let srv = &shell.server;
                     let body = json!({
                         "server_up": crate::server::port_open(srv.port()),
-                        "pid": srv.child_pid(),
+                        "pid": srv.server_pid(),
                         "url": srv.url(),
                         "indexing": srv.workers(),
                     });

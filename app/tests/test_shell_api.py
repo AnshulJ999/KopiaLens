@@ -81,6 +81,21 @@ def test_prefs_accept_only_known_values(monkeypatch):
     assert "bind_host" not in saved["kopialens"]
 
 
+def test_app_and_control_ports_cannot_be_the_same(monkeypatch):
+    """One port for both leaves the control port answering where the app should be."""
+    from fastapi import HTTPException
+    from app.api import dashboard
+    saved = {"kopialens": {"port": 7123, "control_port": 7124}}
+    monkeypatch.setattr(dashboard, "mutate_settings", lambda fn: fn(saved) or saved)
+    monkeypatch.setattr(dashboard, "load_settings", lambda: saved)
+    for bad in ({"port": 7124}, {"control_port": 7123}, {"port": 7300, "control_port": 7300}):
+        with pytest.raises(HTTPException):
+            dashboard.post_settings({"kopialens": bad})
+    assert saved["kopialens"] == {"port": 7123, "control_port": 7124}
+    dashboard.post_settings({"kopialens": {"port": 7300}})
+    assert saved["kopialens"]["port"] == 7300
+
+
 def test_unknown_stored_values_read_as_defaults():
     prefs = shell._prefs({"tray_click": "sideways", "notifications": None, "control_api": False})
     assert prefs == {"tray_click": "window", "tray_double_click": "window", "notifications": "warnings",
