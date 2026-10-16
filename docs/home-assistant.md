@@ -55,6 +55,7 @@ Home Assistant's own backups include KopiaLens's settings and repository connect
 
 ## What's different from other installs
 
+- Through the sidebar, Home Assistant keeps you signed in, so **Sign out** isn't shown there. **Sign out all devices…** in **Settings → Account** still signs out every browser that uses the direct port.
 - KopiaLens's own HTTPS is off. Through the sidebar, Home Assistant's own address and HTTPS apply. The direct port uses plain HTTP, so use it only on your home network.
 - The data folder is the add-on's own `/data` folder.
 
