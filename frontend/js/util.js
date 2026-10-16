@@ -400,6 +400,22 @@ function resetTableLayout(key) {
   if (_prefsChannel) _prefsChannel.postMessage({ id: key, config: null });
   window.dispatchEvent(new CustomEvent("kl-table-rebuild"));
 }
+// Tabulator opens a submenu only on click. Hovering one opens it after a short pause; it then stays
+// open like a clicked one, until another submenu opens, a click lands outside or Escape.
+let _submenuTimer = null, _submenuOpen = null;
+document.addEventListener("mouseover", (e) => {
+  const item = e.target.closest && e.target.closest(".tabulator-menu .tabulator-menu-item");
+  if (!item) return;
+  clearTimeout(_submenuTimer);
+  if (!item.classList.contains("tabulator-menu-item-submenu") || item === _submenuOpen) return;
+  _submenuTimer = setTimeout(() => {
+    if (item.isConnected && item.matches(":hover")) { _submenuOpen = item; item.click(); }
+  }, 150);
+});
+document.addEventListener("click", (e) => {
+  const item = e.isTrusted && e.target.closest && e.target.closest(".tabulator-menu-item-submenu");
+  if (item) { clearTimeout(_submenuTimer); _submenuOpen = item; }
+}, true);
 
 // Tabulator sorter for list cells (pins, retention reasons): by how many entries, then by their text.
 const listSorter = (a, b) => {
