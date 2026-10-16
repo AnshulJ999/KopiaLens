@@ -117,7 +117,7 @@ document.addEventListener("alpine:init", () => {
     logo: "k3g",          // header logo: k3g | k6s | k3a | tile | none (Settings > Appearance)
     trayIcon: "k3g",      // desktop app tray icon (Settings > Desktop app; TRAY_ICONS in settings.js)
     askSnapshotNow: true, // confirm before Snapshot now (Settings > General; the confirm's "Don't ask again")
-    retentionChips: "uniform", retentionChipColor: "#2563eb",   // Snapshots retention chips: uniform | kopiaui | custom
+    retentionChips: "kopiaui", retentionChipColor: "#2563eb",   // Snapshots retention chips: kopiaui | uniform | custom
     treeExtra: {}, _treeFilling: false,   // Tree: Physical (all) / Reclaimable / sources worked out for the rows on screen
     fullList: null, _fullListSeq: 0,      // the "Show all" popup (fulllist.js)
     docs: null, docsView: "popup", _docsLoaded: null, _docsCache: null, _docsWindow: false,   // the docs browser (docs.js)
@@ -136,6 +136,7 @@ document.addEventListener("alpine:init", () => {
     // polStaged and reach kopia only through Review + save (sync POST, fail-closed backup
     // server-side). polAddPrices / polRowPrices cache "keeping out" pricing per pattern.
     polData: null, polSel: "global", polFilter: "", polStaged: {}, polAddText: "", polAddPrice: null,
+    polText: null,   // exclusions as one text box: {target, text} (policies.js polTextOpen)
     polAddPrices: {}, polRowPrices: {}, polPriceError: {}, polStoredTs: {},
     _polAddTimer: null, _polSeq: 0, _polRowPriceSeq: 0, _polAddPriceSeq: 0, _polStoredSeq: 0,
     polDetail: null, polDetailCache: {}, _polDetailSeq: 0,

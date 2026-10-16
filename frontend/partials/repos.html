@@ -6,6 +6,8 @@
                 <button x-show="!hasSample()" @click="raAddSample()" :disabled="sampleBusy" class="ml-auto kl-btn"
                         title="An invented repository, made on this computer, to look around"
                         x-text="sampleBusy ? 'Making sample data…' : 'Add sample data'">Add sample data</button>
+                <span x-show="sampleBusy && sampleProg" class="flex items-center gap-2 text-xs text-muted">
+                  <span class="kl-bar busy w-24"><i style="width:30%"></i></span><span class="whitespace-nowrap" x-text="sampleProgText()"></span></span>
                 <button @click="openAddRepo()" class="kl-btn primary" :class="hasSample() ? 'ml-auto' : ''">Add repository…</button>
               </div>
               <p class="kl-note">The order here is the order in the repository menu.</p>

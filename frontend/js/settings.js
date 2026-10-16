@@ -111,7 +111,7 @@ const settingsPart = {
       this.trayIcon = TRAY_ICONS.some((t) => t[0] === kl.tray_icon) ? kl.tray_icon : "k3g";
       this.askSnapshotNow = kl.ask_snapshot_now !== false;
       this.taskView = kl.task_view === "panel" ? "panel" : "popup";
-      this.retentionChips = ["kopiaui", "custom"].includes(kl.retention_chips) ? kl.retention_chips : "uniform";
+      this.retentionChips = ["uniform", "custom"].includes(kl.retention_chips) ? kl.retention_chips : "kopiaui";
       this.retentionChipColor = /^#[0-9a-f]{6}$/i.test(kl.retention_chip_color || "") ? kl.retention_chip_color : "#2563eb";
       this.applyFavicon();
     },

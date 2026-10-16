@@ -75,6 +75,8 @@
                   <button type="button" class="kl-btn quiet" @click="obSample()" :disabled="ob.sampleBusy || obHasSample()"
                           title="An invented repository, made on this computer, to look around first"
                           x-text="ob.sampleBusy ? 'Making sample data…' : (obHasSample() ? 'Sample data added' : 'Try with sample data')">Try with sample data</button>
+                  <span x-show="ob.sampleBusy && sampleProg" class="flex items-center gap-2 text-xs text-muted" data-testid="sample-progress">
+                    <span class="kl-bar busy w-24"><i style="width:30%"></i></span><span class="whitespace-nowrap" x-text="sampleProgText()"></span></span>
                   <span x-show="ob.sampleError" class="text-xs" style="color:var(--danger)" x-text="ob.sampleError"></span>
                   <span class="spacer"></span>
                   <button type="button" @click="ob.step = 'protect'" class="kl-btn primary" :disabled="!obConnectReady()">Continue</button>

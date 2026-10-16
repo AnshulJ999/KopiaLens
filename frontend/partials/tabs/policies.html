@@ -30,9 +30,9 @@
           <button @click="polOpenNew()" class="h-7 rounded border border-bd px-2 text-xs" x-show="polData && !polMulti.on">New policy…</button>
           <button @click="openNewSnap(newSnapBack); newSnapBack = ''" class="h-7 rounded border border-accent text-accent px-2 text-xs" x-show="newSnapBack" x-cloak>Back to New snapshot</button>
           <button @click="polMultiToggle()" class="h-7 rounded border border-bd px-2 text-xs" :class="polMulti.on ? 'bg-sel' : ''" x-text="polMulti.on ? 'Editing several' : 'Edit several…'"></button>
-          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('policies')" @keydown.enter.prevent="openDocs('policies')" title="Kopia&#39;s rules for each folder: schedule, retention, exclusions and more.">?</span>
           <button @click="loadPolicies(true)" class="h-7 rounded border border-bd px-2 text-xs">Refresh</button>
           <button @click="polOpenBackups()" class="h-7 rounded border border-bd px-2 text-xs">Backups…</button>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('policies')" @keydown.enter.prevent="openDocs('policies')" title="Kopia&#39;s rules for each folder: schedule, retention, exclusions and more.">?</span>
           <button x-show="polStageCount()" @click="polDiscardAsk()" class="h-7 rounded border border-bd px-2 text-xs">Discard</button>
           <button x-show="polStageCount()" @click="polOpenDiff()" class="h-7 rounded bg-fg px-3 text-xs text-surface font-medium"
                   x-text="polReviewLabel()"></button>
@@ -121,10 +121,24 @@
                     <span class="text-[0.625rem]" style="color:var(--muted)" x-show="polPricingNote()" x-text="polPricingNote()"></span>
                     <button x-show="polSel !== 'global' && polKeepout().priced < polKeepout().total"
                             @click="polPriceRow()" class="h-6 rounded border border-bd px-2 text-[0.625rem]">Work out sizes</button>
+                    <button x-show="polDetail && !polTextShown()" @click="polTextOpen()" class="kl-btn quiet" style="height:24px"
+                            title="Edit this policy's rules in one text box, one rule per line" data-testid="pol-text-edit"><i class="ic ic-edit"></i> Edit as text</button>
                   </div>
                   <div class="kl-note" x-text="polTargetNote()"></div>
                   <div class="kl-callout" x-show="polGlobalShadowed()"
                        x-text="'This policy\'s ' + countOf(polRuleRows().length, 'rule') + (polRuleRows().length === 1 ? ' replaces' : ' replace') + ' Global\'s ' + countOf(polData && polData.global ? polData.global.rule_count : 0, 'rule') + ' here.'"></div>
+                  <template x-if="polTextShown()">
+                    <div class="space-y-2">
+                      <textarea x-model="polText.text" rows="12" spellcheck="false" aria-label="Exclusion rules, one per line"
+                                class="fld w-full border border-bd bg-surface2 font-mono text-xs" style="height:auto;max-height:calc(100vh - 24rem)" data-testid="pol-text"></textarea>
+                      <div class="flex items-center gap-2">
+                        <span class="kl-note grow">One rule per line.</span>
+                        <button class="kl-btn quiet" @click="polText = null">Cancel</button>
+                        <button class="kl-btn" @click="polTextApply()" title="Added to the changes you review before saving">Apply</button>
+                      </div>
+                    </div>
+                  </template>
+                  <div x-show="!polTextShown()" class="space-y-2">
                   <div class="kl-list" style="max-height:calc(100vh - 26rem)" x-show="polRuleRows().length">
                     <template x-for="r in polRuleRows()" :key="r.state + '|' + r.pattern">
                       <div class="li">
@@ -149,6 +163,7 @@
                   <div class="kl-note font-mono" x-show="polAddExamplesText()" x-text="polAddExamplesText()"></div>
                   <div class="kl-note" x-show="polAddPrice && polAddPrice.files === 0">Matches nothing in the current index - it may simply not match anything on disk today.</div>
                   <div class="kl-note" x-show="polSelected() && polSelected().isGlobal && polAddText.trim()">Sizes at Global take a while, so the review shows what this changes.</div>
+                  </div>
                   <template x-if="polInheritedRules().length">
                     <div>
                       <div class="text-xs font-medium mb-1">Inherited rules <span class="count" style="color:var(--muted);font-weight:400"

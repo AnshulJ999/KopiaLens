@@ -118,7 +118,7 @@ const policiesPart = {
 
     polSelect(target) {
       this.polSel = target;
-      this.polAddText = ""; this.polAddPrice = null;
+      this.polAddText = ""; this.polAddPrice = null; this.polText = null;
       this.loadPolDetail(target);
       this.polResolve(target, true);
     },
@@ -408,6 +408,28 @@ const policiesPart = {
       if (!this.polOwnPatterns().includes(pat)) return;
       const st = this.polStagedFor(this.polSel);
       st.remove.push(pat);
+      this.polResolve();
+    },
+    // The own rules as one text box, one rule per line, like KopiaUI. Apply turns the edit into
+    // staged adds and removes, so it goes through the same review as single rules.
+    polTextOpen() {
+      if (!this.polDetail) return;
+      const rows = this.polRuleRows().filter((r) => r.state !== "staged-remove");
+      const own = rows.filter((r) => r.state === "own").map((r) => r.pattern);
+      const adds = rows.filter((r) => r.state === "staged-add").map((r) => r.pattern);
+      this.polText = { target: this.polSel, text: [...own, ...adds].join("\n") };
+    },
+    polTextShown() { return !!(this.polText && this.polText.target === this.polSel); },
+    polTextApply() {
+      if (!this.polTextShown() || !this.polDetail) return;
+      const lines = [...new Set(this.polText.text.split("\n").map((l) => l.trim()).filter(Boolean))];
+      const own = this.polOwnPatterns();
+      const st = this.polStagedFor(this.polSel);
+      const before = new Set(st.add);
+      st.add = lines.filter((p) => !own.includes(p));
+      st.remove = own.filter((p) => !lines.includes(p));
+      for (const p of st.add) if (!before.has(p)) this.polPriceStaged(this.polSel, p);
+      this.polText = null;
       this.polResolve();
     },
     polStageRemovePolicy() {

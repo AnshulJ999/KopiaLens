@@ -175,8 +175,8 @@
 {%- macro file_others() -%}
 <div class="kl-sec" x-show="detail.others && detail.others.length">
   <div class="h">Deduped against this one <span class="count" x-text="countOf(copyCount(), 'path') + (detail.others.length < copyCount() ? ' · first ' + detail.others.length.toLocaleString(NUM_LOCALE) + ' listed' : '')"></span>
-    <span class="acts"><button class="kl-btn quiet" style="height:22px" x-show="detail.others.length < copyCount()" @click="detailShowCopies()"
-      x-text="'Show all ' + copyCount().toLocaleString(NUM_LOCALE)"></button></span></div>
+    <span class="acts"><button class="kl-btn quiet" style="height:22px" x-show="fullListOffer(detail.others.length, copyCount())" @click="detailShowCopies()"
+      x-text="fullListLabel(detail.others.length, copyCount())"></button></span></div>
   <div class="kl-list">
     <template x-for="(o, i) in detail.others" :key="i">
       <div class="li"><span class="break-all" x-text="shortSource(o.source) + '  ·  ' + o.full_path"></span></div>
@@ -188,8 +188,8 @@
 {%- macro file_dup() -%}
 <div class="kl-sec" x-show="copyCount() > 0">
   <div class="h">Identical copies <span class="count" x-text="copyCount().toLocaleString(NUM_LOCALE) + ' other paths · ' + detail.locations + ' backups' + (detail.others.length < copyCount() ? ' · first ' + detail.others.length.toLocaleString(NUM_LOCALE) + ' listed' : '')"></span>
-    <span class="acts"><button class="kl-btn quiet" style="height:22px" x-show="detail.others.length < copyCount()" @click="detailShowCopies()"
-      x-text="'Show all ' + copyCount().toLocaleString(NUM_LOCALE)"></button></span></div>
+    <span class="acts"><button class="kl-btn quiet" style="height:22px" x-show="fullListOffer(detail.others.length, copyCount())" @click="detailShowCopies()"
+      x-text="fullListLabel(detail.others.length, copyCount())"></button></span></div>
   <div class="kl-list">
     <template x-for="(o, i) in detail.others" :key="i">
       <div class="li"><span class="font-mono trunc grow" x-text="o.full_path"></span></div>

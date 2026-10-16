@@ -114,7 +114,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "tray_icon": "k3g",          # desktop app tray icon (api/shell.PREFS lists the choices)
         "ask_snapshot_now": True,    # confirm before Snapshot now
         "task_view": "popup",        # Tasks: details as a full-size popup or a small panel
-        "retention_chips": "uniform",  # Snapshots retention chips: uniform | kopiaui | custom
+        "retention_chips": "kopiaui",  # Snapshots retention chips: kopiaui | uniform | custom
         "retention_chip_color": "#2563eb",  # the custom chip colour
         "update_check": True,        # daily check for a newer version (docs/usage-stats.md)
         "usage_stats": True,         # anonymous usage stats sent with that check

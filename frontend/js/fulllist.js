@@ -24,5 +24,8 @@ const fullListPart = {
       }
     },
     closeFullList() { ++this._fullListSeq; this.fullList = null; },
+    // A list gets the popup button when it is cut, or long enough that a table and CSV help.
+    fullListOffer(shown, total) { return total > shown || shown > FULL_LIST_MIN; },
+    fullListLabel(shown, total) { return total > shown ? "Show all " + Number(total).toLocaleString(NUM_LOCALE) : "Show as a table"; },
     fullListCsv() { downloadTable("#fullListTable", this.fullList ? this.fullList.name : "list"); },
 };

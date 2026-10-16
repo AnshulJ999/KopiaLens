@@ -195,17 +195,19 @@ const detailPart = {
         ] : []),
       ];
     },
-    // Every identical copy in the full-list popup (the panel lists the first 500).
+    // Every identical copy in the full-list popup (the panel lists the first 500; a whole list is used as is).
     detailShowCopies() {
       const d = this.detail;
       if (!d || d.kind !== "file") return;
+      const cut = d.others.length < this.copyCount();
       const q = `repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(d.source)}&full_path=${encodeURIComponent(d.title)}&others_cap=1000000`;
+      const local = d.others.slice();
       this.openFullList({
         title: "Identical copies", name: "identical-copies",
         columns: [["source", "Source"], ["full_path", "Path"]],
         load: async () => {
-          const r = await getJson(`/api/search/detail?${q}`);
-          return (r.other_paths || []).map((o) => ({ source: this.shortSource(o.source), full_path: o.full_path }));
+          const rows = cut ? ((await getJson(`/api/search/detail?${q}`)).other_paths || []) : local;
+          return rows.map((o) => ({ source: this.shortSource(o.source), full_path: o.full_path }));
         },
       });
     },
@@ -575,12 +577,15 @@ const detailPart = {
       if (!this.removePlan) return;
       const body = JSON.stringify({ ...this._removeBody(), extra_cap: 1000000 });
       const byName = kind === "filename";
+      const p = this.removePlan;
+      const cut = byName ? p.filename_extra_capped : p.content_extra_capped;
+      const local = ((byName ? p.filename_extra : p.content_extra) || []).slice();
       this.openFullList({
         title: byName ? "Other same-named files" : "Identical copies", name: byName ? "same-named-files" : "identical-copies",
         columns: [["full_path", "Path"], ["sources_text", "Sources"], ["on_disk", "On disk"], ["size", "Size", "bytes"]],
         load: async () => {
-          const r = await getJson("/api/actions/remove-plan", { method: "POST", headers: { "Content-Type": "application/json" }, body });
-          return ((byName ? r.filename_extra : r.content_extra) || []).map((f) => ({ full_path: f.full_path,
+          const r = cut ? await getJson("/api/actions/remove-plan", { method: "POST", headers: { "Content-Type": "application/json" }, body }) : null;
+          return (r ? ((byName ? r.filename_extra : r.content_extra) || []) : local).map((f) => ({ full_path: f.full_path,
             sources_text: this.fileSources(f), on_disk: f.in_latest === false ? "deleted" : "yes", size: f.size }));
         },
       });

@@ -117,7 +117,11 @@
                             <label class="flex text-xs font-medium" :class="f.kind === 'bool' ? 'items-center gap-2 sm:col-span-2' : 'flex-col gap-1'">
                               <template x-if="f.kind === 'bool'"><input type="checkbox" x-model="cx.fields[f.key]"></template>
                               <span x-text="f.label + (f.required ? '' : ' (optional)')"></span>
-                              <template x-if="f.kind !== 'bool'"><input :type="cxInputType(f)" x-model="cx.fields[f.key]" :autocomplete="f.secret ? 'off' : 'on'" spellcheck="false" class="fld border border-bd bg-surface2 font-normal"></template>
+                              <template x-if="f.kind !== 'bool' && f.kind !== 'path'"><input :type="cxInputType(f)" x-model="cx.fields[f.key]" :autocomplete="f.secret ? 'off' : 'on'" spellcheck="false" class="fld border border-bd bg-surface2 font-normal"></template>
+                              <template x-if="f.kind === 'path'">
+                                <span class="flex gap-2"><input type="text" x-model="cx.fields[f.key]" :aria-label="f.label + (f.help ? ' ' + f.help : '')" spellcheck="false" class="fld grow min-w-0 border border-bd bg-surface2 font-normal" data-testid="cx-path">
+                                  <button type="button" class="kl-btn" @click.prevent="cxBrowse(f.key)" title="Pick a folder on the computer running KopiaLens">Browse…</button></span>
+                              </template>
                               <span x-show="f.help && f.kind !== 'bool'" class="kl-note font-normal" x-text="f.help"></span>
                             </label>
                           </template>

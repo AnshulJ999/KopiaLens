@@ -18,8 +18,8 @@
           <span class="grow"></span>
           <span class="text-xs text-muted" x-show="taskHistoryDays" x-text="'Kept ' + taskHistoryDays + ' days'"
                 title="How long finished backups and maintenance stay here. Change it in Settings, Advanced."></span>
-          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('tasks')" @keydown.enter.prevent="openDocs('tasks')" title="Backups, maintenance and KopiaLens jobs, running and finished.">?</span>
           <button class="kl-btn" @click="loadTasks()" title="Reload the list"><i class="ic ic-refresh"></i> Refresh</button>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('tasks')" @keydown.enter.prevent="openDocs('tasks')" title="Backups, maintenance and KopiaLens jobs, running and finished.">?</span>
         </div>
         <template x-if="mounts.length">
           <div class="shrink-0">

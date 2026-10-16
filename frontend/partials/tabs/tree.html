@@ -31,13 +31,13 @@
             </template>
           </span>
           <span class="grow"></span>
-          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('tree')" @keydown.enter.prevent="openDocs('tree')" title="Folders and files by size. Double-click a folder to open it; right-click a row for more.">?</span>
           <label :class="(treeMode!=='all' && selectedSource!=='*ALL*') ? 'opacity-40' : ''" title="Only folders holding files deleted from disk (All snapshots or All sources)"><input type="checkbox" x-model="treeDeletedOnly" :disabled="treeMode!=='all' && selectedSource!=='*ALL*'" @change="treeFilterChanged()"> Deleted</label>
           <label title="Only files of 1 GB or more"><input type="checkbox" x-model="treeOverGb" @change="treeFilterChanged()"> Over 1 GB</label>
           <input x-model="treeExt" @input.debounce.400ms="treeFilterChanged()" class="fld w-28 border border-bd bg-surface text-xs" placeholder="ext: iso, 7z" title="Only these extensions">
           <button @click="toggleTreeFlat()" class="kl-btn" :class="treeFlat && treeView!=='tree' ? 'on' : ''" :disabled="treeView==='tree'" :title="treeView==='tree' ? 'Flat works in List view' : 'List every file under this folder, without folders'">Flat</button>
           <button @click="toggleTreeDedupe()" class="kl-btn" :class="treeDedupe ? 'on' : ''" title="Show files with identical content once">Dedupe</button>
           {{ selbar('tree', 'treeSelCount') }}
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('tree')" @keydown.enter.prevent="openDocs('tree')" title="Folders and files by size. Double-click a folder to open it; right-click a row for more.">?</span>
           <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
             <button class="kl-btn icon" @click="open = !open" title="More" aria-label="More"><i class="ic ic-more"></i></button>
             <div class="kl-menu" x-show="open" x-cloak>

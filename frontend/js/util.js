@@ -3,6 +3,9 @@
 const SELBAR_FLOAT = true;
 document.documentElement.dataset.selbar = SELBAR_FLOAT ? "float" : "inline";
 
+// Panel lists longer than this offer "Show as a table" (full-list popup with Download CSV) even when nothing is cut.
+const FULL_LIST_MIN = 50;
+
 // ---- Number and date style (Settings > Appearance). undefined = the system's own style. ----
 let NUM_LOCALE;
 let _dateStyle = "system", _clock = "system", _byteUnits = "decimal";

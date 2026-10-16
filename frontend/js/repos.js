@@ -29,24 +29,38 @@ const REPO_TYPE_LABELS = {
 
 const reposPart = {
     sampleBusy: false,
+    sampleProg: null,   // {step, started} while the sample is being made
 
     // ---- Sample data: an invented repository made on this computer (backend: sampledata.py) --
     hasSample() { return (this.repos || []).some((r) => r.sample); },
+    sampleProgText() {
+      const p = this.sampleProg;
+      if (!p) return "";
+      const step = { making: "Making the sample", checking: "Checking it", adding: "Adding it" }[p.step] || "Starting";
+      return `${step}… · ${fmtDur((Date.now() - p.started) / 1000)}`;
+    },
     hasKopiaRepo() { return (this.repos || []).some((r) => r.kind !== "backblaze"); },
     isSample(id) {
       const r = (this.repos || []).find((x) => x.id === (id || this.repo));
       return !!(r && r.sample);
     },
     async addSampleData() {
-      await _setupPost("/api/setup/sample");
-      for (;;) {
-        await new Promise((ok) => setTimeout(ok, 1500));
-        const st = await getJson("/api/setup/sample");
-        if (st.state === "error") throw new Error(st.error || "The sample data couldn't be made.");
-        if (st.state === "done") {
-          await this._cxRefreshRepos();
-          return (this.repos || []).find((r) => r.id === st.repo) || { id: st.repo, name: st.name, sample: true };
+      const started = Date.now();
+      this.sampleProg = { step: "", started };
+      try {
+        await _setupPost("/api/setup/sample");
+        for (;;) {
+          await new Promise((ok) => setTimeout(ok, 1000));
+          const st = await getJson("/api/setup/sample");
+          if (st.state === "error") throw new Error(st.error || "The sample data couldn't be made.");
+          if (st.state === "done") {
+            await this._cxRefreshRepos();
+            return (this.repos || []).find((r) => r.id === st.repo) || { id: st.repo, name: st.name, sample: true };
+          }
+          this.sampleProg = { step: st.step || "", started };
         }
+      } finally {
+        this.sampleProg = null;
       }
     },
     async raAddSample() {
@@ -193,6 +207,10 @@ const reposPart = {
         : "kopia's own password for this repository. Not your KopiaLens password.";
     },
     cxInputType(f) { return f.kind === "password" ? "password" : f.kind === "int" ? "number" : "text"; },
+    async cxBrowse(key) {
+      const path = await this.pickFolder(this.cx && this.cx.fields[key] || null);
+      if (path && this.cx) this.cx.fields[key] = path;
+    },
     async cxSubmit() {
       const cx = this.cx;
       const spec = this.cxSpec();

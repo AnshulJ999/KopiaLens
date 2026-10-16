@@ -237,10 +237,11 @@ const actionsPart = {
       const body = JSON.stringify({ repo: this.repo, items: r.items, target_mode: r.mode, target: r.target, options: r.options,
         preview: true, paths_shown: 1000000 });
       const titles = { different: r.options.overwrite_files ? "Replaced" : "Different on disk (kept)", extra: "Deleted from the destination", bad: "Names this computer can't use" };
+      const local = this.restoreListCut(k) ? null : r.plan;   // a whole list needs no new preview
       this.openFullList({
         title: titles[k], name: "restore-" + k, columns: [["path", "Path"]],
         load: async () => {
-          const plan = await getJson("/api/restore/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body });
+          const plan = local || await getJson("/api/restore/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body });
           return plan.items.flatMap((i) => (i[this._restoreList(k)[0]] || []).map((path) => ({ path })));
         },
       });

@@ -172,7 +172,7 @@ html.dark { --folder-ic: #f0b93a; }
 .kl-folder-ic { color: var(--folder-ic); }
 /* Icon-only header buttons: the icon sits centred and a little larger than the text. */
 .kl-ibtn { display: inline-flex; align-items: center; justify-content: center; }
-.kl-ibtn .ic { font-size: 1.05rem; }
+.kl-ibtn .ic { font-size: 0.875rem; }
 .pro-mark { font-size: 9.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; line-height: 1; margin: 3px 0 0 3px; color: var(--ok); cursor: default; }
 .kl-btn.patreon { background: #000; border-color: #000; color: #fff; display: inline-flex; align-items: center; gap: 6px; }
 .kl-btn.patreon:hover:not(:disabled) { background: #222; border-color: #222; }

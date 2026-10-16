@@ -975,9 +975,11 @@ def _record(seed: int, repo: str = REPO_ID, name: str = "Sample") -> dict:
 
 
 def build(out: str | None = None, *, files: int = DEFAULT_FILES, seed: int = DEFAULT_SEED,
-          repo: str = REPO_ID, backblaze: bool = True) -> dict:
-    """Write a complete sample data folder: index, caches and recorded replies."""
+          repo: str = REPO_ID, backblaze: bool = True, on_step=None) -> dict:
+    """Write a complete sample data folder: index, caches and recorded replies.
+    ``on_step(key)`` is told each step: "making", then "checking"."""
     from . import demo
+    on_step = on_step or (lambda key: None)
     from .dataupgrade import DATA_VERSION
     target = out or sample_dir()
     building = target + ".building"
@@ -997,6 +999,7 @@ def build(out: str | None = None, *, files: int = DEFAULT_FILES, seed: int = DEF
                 "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")})
     forbidden = _real_identity()
     demo._step("generating and indexing the sample")
+    on_step("making")
     salt = secrets.token_hex(8)
     check = building + ".check"
     demo._dump(check, sorted(demo._hash(salt, f) for f in forbidden))
@@ -1017,6 +1020,7 @@ def build(out: str | None = None, *, files: int = DEFAULT_FILES, seed: int = DEF
     child = json.loads(lines[-1])
     demo.prune(building, [repo])
     demo._step("checking names")
+    on_step("checking")
     names = check_names(building, repo)
     leaks = demo.leak_check(building, forbidden, demoreplies.machine_paths())
     warnings = demo._leak_warnings(leaks, child) or {}
@@ -1040,6 +1044,11 @@ _INSTALL_LOCK = threading.Lock()
 
 def install_state() -> dict:
     return dict(_INSTALL)
+
+
+def _set_step(key: str) -> None:
+    if _INSTALL.get("state") == "building":
+        _INSTALL["step"] = key
 
 
 def start_install() -> dict:
@@ -1071,7 +1080,8 @@ def install(*, files: int = DEFAULT_FILES, seed: int = DEFAULT_SEED) -> dict:
     rid = repos.reserve_id()
     tmp = os.path.join(DATA_DIR, "demo", f"sample-build-{rid}")
     try:
-        build(tmp, files=files, seed=seed, repo=rid, backblaze=False)
+        build(tmp, files=files, seed=seed, repo=rid, backblaze=False, on_step=_set_step)
+        _set_step("adding")
         for entry in os.listdir(tmp):
             src = os.path.join(tmp, entry)
             if entry == f"repo{rid}":
