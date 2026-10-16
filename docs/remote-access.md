@@ -66,6 +66,38 @@ server {
 
 In both cases, add the proxy's address under **Trusted proxy addresses** and `kopia.example.com` under **Hostnames**. When a proxy handles HTTPS, set KopiaLens's own HTTPS to **Off**.
 
+### Under a sub-path
+
+KopiaLens can also run under a path on a shared address, for example `https://home.example.com/kopialens/`. Two things are needed:
+
+1. The proxy removes the path before it forwards the request. KopiaLens itself always receives `/`.
+2. KopiaLens knows the path, so the links it hands the browser carry it. Set the environment variable `KOPIALENS_BASE_PATH=/kopialens`, or add `"base_path": "/kopialens"` to the `kopialens` section of `settings.json` in the data folder. There is no control for it in Settings. The environment variable wins when both are set, and it applies after a restart.
+
+The path may hold only letters, digits and `.`, `_`, `~`, `-`, with `/` between parts. KopiaLens ignores any other value and writes a warning to its log.
+
+Example for Caddy (`handle_path` removes the path):
+
+```
+home.example.com {
+    handle_path /kopialens/* {
+        reverse_proxy 192.168.1.10:7123
+    }
+}
+```
+
+Example for nginx (the `/` at the end of `proxy_pass` removes the path):
+
+```
+location /kopialens/ {
+    proxy_pass http://192.168.1.10:7123/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+The Home Assistant add-on sets its path on its own ([Home Assistant](home-assistant.md)).
+
 ## Settings from the environment
 
 Docker and server installs can set these without the Settings page. An environment variable wins over the setting.
@@ -78,4 +110,5 @@ Docker and server installs can set these without the Settings page. An environme
 | `KOPIALENS_HTTPS_CERT`, `KOPIALENS_HTTPS_KEY` | `/certs/fullchain.pem`, `/certs/privkey.pem` |
 | `KOPIALENS_TRUSTED_PROXIES` | `192.168.1.5` |
 | `KOPIALENS_ALLOWED_HOSTS` | `kopia.example.com` |
+| `KOPIALENS_BASE_PATH` | `/kopialens` (a sub-path behind a reverse proxy) |
 | `KOPIALENS_BIND_HOST` | `0.0.0.0` (the network address KopiaLens listens on. It overrides what the access choice picks) |

@@ -406,6 +406,8 @@
             </div>
             <div class="flex items-start gap-2">
               <div class="font-medium break-all flex-1" x-text="detail.title"></div>
+              <span class="kl-help" tabindex="0" role="button" data-doc x-show="detail.kind === 'file'" @click="openDocs('file-panel')" @keydown.enter.prevent="openDocs('file-panel')" title="Versions, space and copies of this file">?</span>
+              <span class="kl-help" tabindex="0" role="button" data-doc x-show="detail.kind !== 'file'" @click="openDocs('folder-panel')" @keydown.enter.prevent="openDocs('folder-panel')" title="Contents, space and sources of this folder">?</span>
               <button @click="detail=null" class="kl-btn quiet" title="Close" aria-label="Close">&times;</button>
             </div>
             <div class="kl-note mt-0.5 break-all">

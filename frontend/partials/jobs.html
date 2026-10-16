@@ -9,6 +9,7 @@
                 <span x-text="jobPanel.kind_label"></span>
                 <span x-show="jobPanel.dry" class="pill">dry run</span>
                 <span x-show="jobPanel.state === 'running'" class="w-2 h-2 rounded-full bg-warn animate-pulse"></span>
+                <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('job-panel')" @keydown.enter.prevent="openDocs('job-panel')" title="Progress, output and result">?</span>
               </div>
               <div class="text-xs text-muted truncate font-mono" x-text="repoLabel(jobPanel.repo) + ' · ' + jobPanel.label + ' · job ' + jobPanel.job_id.slice(0, 6)"></div>
             </div>

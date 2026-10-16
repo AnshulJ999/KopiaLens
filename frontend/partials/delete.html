@@ -8,6 +8,7 @@
           <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
             <div class="flex items-center gap-2">
               <div class="font-medium" x-text="delTitle()"></div>
+              <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('delete-files')" @keydown.enter.prevent="openDocs('delete-files')" title="Removing files from your snapshots">?</span>
               <button @click="closeDelete()" class="ml-auto kl-btn quiet" title="Close" aria-label="Close">&times;</button>
             </div>
             <template x-if="delPanel.flow">{{ flowsteps(2) }}</template>
@@ -186,6 +187,7 @@
           <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
             <div class="flex items-center gap-2">
               <div class="font-medium">Exclude and delete</div>
+              <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('delete-files', 'exclude-and-delete')" @keydown.enter.prevent="openDocs('delete-files', 'exclude-and-delete')" title="Exclude first, then remove from old snapshots">?</span>
               <button @click="flowCancel()" class="ml-auto kl-btn quiet" title="Close" aria-label="Close">&times;</button>
             </div>
             {{ flowsteps(3) }}

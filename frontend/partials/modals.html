@@ -11,6 +11,7 @@
         <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
           <div class="flex items-center gap-2">
             <div class="font-medium" x-text="'Delete ' + countOf(deletePlan.count, 'snapshot')"></div>
+            <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('delete-snapshots')" @keydown.enter.prevent="openDocs('delete-snapshots')" title="Deleting snapshots, and what it frees">?</span>
             <button @click="showDelete=false" class="ml-auto kl-btn quiet" title="Close">&times;</button>
           </div>
           <div class="kl-note mt-0.5 break-all" x-text="deletePlan.sources.length ? deletePlan.sources.map(shortSource).join(' · ') : ''"></div>
@@ -128,6 +129,7 @@
         <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
           <div class="flex items-center gap-2">
             <div class="font-medium" x-text="removeTitle()"></div>
+            <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('delete-files', 'delete-a-folder')" @keydown.enter.prevent="openDocs('delete-files', 'delete-a-folder')" title="Deleting a folder from your snapshots">?</span>
             <button @click="removePlan.flow ? flowCancel() : closeRemove()" class="ml-auto kl-btn quiet" title="Close" aria-label="Close">&times;</button>
           </div>
           <template x-if="removePlan.flow">{{ flowsteps(2) }}</template>
@@ -364,6 +366,7 @@
           <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
             <div class="flex items-center gap-2">
               <div class="font-medium" x-text="'Restore ' + restore.label"></div>
+              <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('restore')" @keydown.enter.prevent="openDocs('restore')" title="Where files go and what happens to existing ones">?</span>
               <button @click="closeRestore()" class="ml-auto kl-btn quiet" title="Close">&times;</button>
             </div>
             <template x-if="restore.plan && restore.plan.items.length === 1">

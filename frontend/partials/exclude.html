@@ -8,6 +8,7 @@
           <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
             <div class="flex items-center gap-2">
               <div class="font-medium" x-text="exDialog.mode === 'delete' ? 'Exclude and delete' : 'Exclude'"></div>
+              <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('exclude')" @keydown.enter.prevent="openDocs('exclude')" title="What the rule matches and where it goes">?</span>
               <button @click="exClose()" class="ml-auto kl-btn quiet" title="Close" aria-label="Close">&times;</button>
             </div>
             <template x-if="exDialog.mode === 'delete' && !exAlreadyExcluded()">{{ flowsteps(1) }}</template>

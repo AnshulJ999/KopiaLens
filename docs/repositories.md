@@ -46,7 +46,7 @@ If KopiaLens created the connection file, you can delete it too. Keep it if Kopi
 
 ## Browsing a snapshot
 
-In the Snapshots tab, double-click a snapshot (or select **Browse files** from its menu) to look inside it. An indexed repository opens it in the Tree tab. A repository that isn't indexed yet, or one reached through a kopia server, opens a folder browser that reads one folder at a time from kopia. Select **Restore…** on any file or folder to restore it.
+In the Snapshots tab, double-click a snapshot (or select **Show in Tree** from its menu) to look inside it. An indexed repository opens it in the Tree tab. A repository that isn't indexed yet, or one reached through a kopia server, opens a folder browser that reads one folder at a time from kopia. Select **Restore…** on any file or folder to restore it.
 
 ## Repositories reached through a kopia server
 

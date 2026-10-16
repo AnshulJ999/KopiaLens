@@ -132,6 +132,52 @@ def _licence_grace_days():
     return GRACE.days
 
 
+def _kl_in(key, unit):
+    """A setting stated in another unit: seconds as minutes (60) or hours (3600), a fraction as a percentage (0.01)."""
+    from app.settings import DEFAULT_SETTINGS
+    def value():
+        return round(DEFAULT_SETTINGS["kopialens"][key] / unit)
+    value.__name__ = key
+    return value
+
+
+def _index_time():
+    from app.settings import DEFAULT_SETTINGS
+    return tuple(int(p) for p in DEFAULT_SETTINGS["kopialens"]["index_time"].split(":"))
+
+
+def _ports():
+    from app.settings import DEFAULT_SETTINGS
+    kl = DEFAULT_SETTINGS["kopialens"]
+    return kl["port"], kl["control_port"]
+
+
+def _memory_tiers():
+    from app.index import store
+    return tuple(n for max_gb, mem, _t in store._TIERS[:-1] for n in (max_gb, int(mem.rstrip("GMB")))) + \
+        (int(store._TIERS[-1][1].rstrip("GMB")),)
+
+
+def _worker_threads():
+    from app.index import store
+    return store.WORKER_THREADS
+
+
+def _all_repos_depth():
+    from app.api import search
+    return search._ALL_REPOS_DEPTH
+
+
+def _restore_preview_cap():
+    from app.api import restore
+    return restore.LIST_CAP
+
+
+def _search_delete_max():
+    m = re.search(r"const SEARCH_DELETE_MAX = ([\d_]+)", (FRONTEND / "js" / "search.js").read_text(encoding="utf-8"))
+    return int(m.group(1).replace("_", ""))
+
+
 # Every default or fixed limit a page states: (page, pattern with one group per number, value(s) in code).
 # Numbers written as words ("one hour") are matched as words.
 DEFAULTS = [
@@ -149,11 +195,58 @@ DEFAULTS = [
     ("api.md", r"It's valid for (\w+) hours?", _plan_hours),
     ("cli.md", r"is valid for (\w+) hours?", _plan_hours),
     ("licensing.md", r"for (\d+) more days after the end date", _licence_grace_days),
+    ("tasks.md", r"kept for (\d+) days by default", _kl("task_history_days")),
+    ("logs.md", r"removed after (\d+) days by default", _kl("log_cleanup_days")),
+    ("churn.md", r"how many folder levels deep to group by, (\d+) by default", _kl("churn_depth")),
+    ("churn.md", r"The default is (\d+) days", _kl("churn_days")),
+    ("excluded.md", r"\((\d+) seconds by default\)", _kl("disk_scan_budget")),
+    ("search.md", r"\((\d+) by default\)", _kl("rank_count")),
+    ("search.md", r"offered for up to (\d+) files", _search_delete_max),
+    ("search.md", r"Results stop at (\d+) rows", _all_repos_depth),
+    ("indexing.md", r"once a day at (\d+):(\d+)", _index_time),
+    ("indexing.md", r"tried (\w+) more after (\d+) minutes", lambda: (_kl("index_max_retries")(), _kl_in("index_retry_delay", 60)())),
+    ("indexing.md", r"on its own (\d+) minutes after the last delete", _kl_in("reindex_after_delete_delay", 60)),
+    ("indexing.md", r"\*\*Indexing time limit\*\* \| (\d+) hours", _kl_in("index_worker_timeout", 3600)),
+    ("indexing.md", r"\*\*First index time limit\*\* \| (\d+) hours", _kl_in("index_first_timeout", 3600)),
+    ("indexing.md", r"unreachable repository after\*\* \| (\d+) minutes", _kl_in("index_wait_unreachable", 60)),
+    ("indexing.md", r"makes no progress after\*\* \| (\d+) minutes", _kl_in("index_stall_timeout", 60)),
+    ("settings.md", r"Once a day at (\d+):(\d+)", _index_time),
+    ("settings.md", r"\*\*Quick refresh\*\* \| (\d+) minutes", _kl_in("light_interval", 60)),
+    ("settings.md", r"\*\*Dashboard auto-refresh\*\* \| (\d+) minutes", _kl_in("dashboard_refresh", 60)),
+    ("settings.md", r"\*\*Dashboard rebuild interval\*\* \| (\d+) hours", _kl_in("dashboard_interval", 3600)),
+    ("settings.md", r"\*\*Folder scan time limit\*\* \| (\d+) seconds", _kl("disk_scan_budget")),
+    ("settings.md", r"\*\*Excluded-folder tolerance\*\* \| (\d+)%", _kl_in("excluded_tolerance", 0.01)),
+    ("settings.md", r"\*\*Indexing time limit\*\* \| (\d+) hours", _kl_in("index_worker_timeout", 3600)),
+    ("settings.md", r"\*\*First index time limit\*\* \| (\d+) hours", _kl_in("index_first_timeout", 3600)),
+    ("settings.md", r"unreachable repository after\*\* \| (\d+) minutes", _kl_in("index_wait_unreachable", 60)),
+    ("settings.md", r"makes no progress after\*\* \| (\d+) minutes", _kl_in("index_stall_timeout", 60)),
+    ("settings.md", r"\*\*Update the index after deletes\*\* \| (\d+) minutes", _kl_in("reindex_after_delete_delay", 60)),
+    ("settings.md", r"\*\*Most files in one delete plan\*\* \| (\d+)", _kl("remove_plan_cap")),
+    ("settings.md", r"\*\*Retry after a failed run\*\* \| (\d+) minutes", _kl_in("index_retry_delay", 60)),
+    ("settings.md", r"\*\*Retries per scheduled slot\*\* \| (\d+)", _kl("index_max_retries")),
+    ("settings.md", r"ahead of time\*\* \| (\d+) minutes", _kl_in("folder_prewarm_budget", 60)),
+    ("settings.md", r"\*\*Quiet period after startup\*\* \| (\d+) minutes", _kl_in("startup_delay", 60)),
+    ("settings.md", r"\*\*Ranked files\*\* \| (\d+)", _kl("rank_count")),
+    ("settings.md", r"\*\*Ports\*\* \| (\d+) and (\d+)", _ports),
+    ("settings.md", r"\*\*Log cleanup\*\* \| (\d+) days", _kl("log_cleanup_days")),
+    ("settings.md", r"\*\*Task history\*\* \| (\d+) days", _kl("task_history_days")),
+    ("delete-files.md", r"A plan holds at most (\d+) files", _kl("remove_plan_cap")),
+    ("delete-files.md", r"updates its index (\d+) minutes after the last delete", _kl_in("reindex_after_delete_delay", 60)),
+    ("guide-accidental-backup.md", r"A plan holds at most (\d+) files by default", _kl("remove_plan_cap")),
+    ("restore.md", r"With more than ([\d,]+) files, the preview checks the first ([\d,]+)",
+     lambda: (_restore_preview_cap(), _restore_preview_cap())),
+    ("hardware.md", r"\| (\d+) GB or less \| (\d+) MB \|\n\| Up to (\d+) GB \| (\d+) GB \|\n\| Up to (\d+) GB \| (\d+) GB \|\n"
+                    r"\| More than \d+ GB \| (\d+) GB \|", _memory_tiers),
+    ("hardware.md", r"up to (\d+) processor cores", _worker_threads),
+    ("hardware.md", r"it waits (\d+) minutes by default", _kl_in("startup_delay", 60)),
+    ("faq.md", r"for at most (\d+) seconds by default", _kl("disk_scan_budget")),
 ]
-WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "twelve": 12, "24": 24}
+WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "twelve": 12, "24": 24,
+         "once": 1}
 
 
 def _number(s: str) -> int:
+    s = s.replace(",", "")
     return int(s) if s.isdigit() else WORDS[s.lower()]
 
 

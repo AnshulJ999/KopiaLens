@@ -2,6 +2,8 @@
 
 The first time you open KopiaLens, it walks you through three steps: **Connect**, **Protect** and **Start**. Everything you choose here can be changed later in Settings.
 
+New to kopia and backups? [Start backing up from scratch](guide-start-from-scratch.md) walks you through it from the beginning.
+
 **On Windows**, the first run may show a "Windows protected your PC" notice, which Windows shows for new apps. Choose **More info**, then **Run anyway**.
 
 ## 1. Connect your repositories

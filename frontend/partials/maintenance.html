@@ -5,6 +5,7 @@
           <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd">
             <div class="flex items-center gap-2">
               <div class="font-medium">Run maintenance</div>
+              <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('maintenance')" @keydown.enter.prevent="openDocs('maintenance')" title="Quick and full maintenance, and when space comes back">?</span>
               <button @click="closeMaint()" class="ml-auto kl-btn quiet" title="Close">&times;</button>
             </div>
             <div class="kl-note mt-0.5" x-text="maintRepoName()"></div>
