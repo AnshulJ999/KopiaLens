@@ -26,10 +26,10 @@ const detailPart = {
         const p = new URLSearchParams({ repo: this.repo, prefix });
         if (source) p.set("source", source);
         const sum = await getJson(`/api/folder/summary?${p.toString()}`);
-        if (seq !== this._detailSeq) return;
+        if (seq !== this._detailSeq || !this.detail) return;   // a newer panel, or this one was closed
         Object.assign(this.detail, sum, { loading: false, notFound: !sum.files && !sum.source_count });
       } catch (e) {
-        if (seq === this._detailSeq) { this.detail.loading = false; this.detail.error = e.message; }
+        if (seq === this._detailSeq && this.detail) { this.detail.loading = false; this.detail.error = e.message; }
         return;
       }
       // Heavy pass: the chunk walk behind freeable / shared.
@@ -428,7 +428,7 @@ const detailPart = {
           getJson(`/api/search/versions?${base}`),
           getJson(`/api/actions/purge-plan?${base}`),
         ]);
-        if (seq !== this._detailSeq) return;  // a newer file was opened meanwhile - drop this result
+        if (seq !== this._detailSeq || !this.detail) return;  // a newer file was opened, or the panel closed - drop this result
         // A Free install gets the snapshots without ids or commands (the purge plan is Pro).
         const cmds = purge.commands || [];
         const purgeRows = (purge.items || []).map((it, i) => {
@@ -455,7 +455,7 @@ const detailPart = {
         this._loadExtraFacts(seq, this.detail.source, item.full_path);
         this._loadBreakdown(seq, base);
       } catch (err) {
-        if (seq === this._detailSeq) this.error = err.message || String(err);
+        if (seq === this._detailSeq && this.detail) this.error = err.message || String(err);
       }
     },
 
