@@ -50,6 +50,16 @@ def test_a_token_reads_and_gets_its_write_mode(client):
     assert _refused(client.post("/api/settings", json={"kopialens": {"session_days": 7}}, headers=ro), "mode")
 
 
+def test_a_dry_flag_never_lifts_a_job_without_a_dry_run(client):
+    """`dry` is honoured only by jobs that have a dry run; a restore or policy write runs for real."""
+    ro, full = _token("read_only"), _token("full")
+    restore = {"kind": "restore", "repo": "1", "params": {"dry": True, "source_id": "k1", "target": "x"}}
+    assert _refused(client.post("/api/jobs/start", json=restore, headers=ro), "mode")
+    then = {"kind": "policy_write", "repo": "1",
+            "params": {"dry": True, "writes": [{"target": "global", "add": ["x"]}], "then": {"kind": "remove_files"}}}
+    assert _refused(client.post("/api/jobs/start", json=then, headers=full), "approval")
+
+
 @pytest.mark.parametrize("method,path,kw,needs", [
     ("post", "/api/actions/snapshot-delete", {"json": {"repo": "1", "snapshot_ids": ["k1"]}}, "approval"),
     ("post", "/api/jobs/start", {"json": {"kind": "remove_files", "repo": "1", "params": {}}}, "approval"),

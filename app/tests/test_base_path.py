@@ -85,6 +85,9 @@ def test_ingress_trusts_only_home_assistants_proxy(signin_on, monkeypatch):
     monkeypatch.setenv("KOPIALENS_HA_INGRESS", "1")
     head = {basepath.INGRESS_HEADER: HA_PATH}
     assert _client(basepath.HA_PROXY).get("/api/index/pause", headers=head).status_code == 200
+    # HA forwards the browser's Host, so a hostname must not be refused (421).
+    named = {**head, "host": "homeassistant.local:8123"}
+    assert _client(basepath.HA_PROXY).get("/api/index/pause", headers=named).status_code == 200
     assert _client("172.30.33.5").get("/api/index/pause", headers=head).status_code == 401
     assert _client(basepath.HA_PROXY).get("/api/index/pause").status_code == 401   # no ingress header
 

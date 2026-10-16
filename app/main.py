@@ -866,12 +866,14 @@ async def access_middleware(request: Request, call_next):
 
 
 async def _access(request: Request, call_next):
-    if not auth.host_allowed(request.headers.get("host", "")):
+    path = request.url.path
+    client = request.client.host if request.client else None
+    # HA ingress forwards the browser's own Host (e.g. homeassistant.local), so it skips the Host check.
+    ingress = bool(basepath.from_ingress(client) and request.headers.get(basepath.INGRESS_HEADER))
+    if not ingress and not auth.host_allowed(request.headers.get("host", "")):
         return JSONResponse(status_code=421, content={
             "detail": f"Host {request.headers.get('host', '')!r} is not allowed. Add it to "
                       "settings.kopialens.allowed_hosts if you reach KopiaLens by that name."})
-    path = request.url.path
-    client = request.client.host if request.client else None
     mode = netaccess.STARTED.get("mode") or netaccess.mode()
     if not netaccess.client_allowed(client, mode):
         log.info("refused a request from %s (not in the allowed addresses)", client)
@@ -889,7 +891,7 @@ async def _access(request: Request, call_next):
             return JSONResponse(status_code=403, content={"detail": "KopiaLens opens only in its own window."})
         return _blocked_page("KopiaLens is set to open only in its own window. Open it from the "
                              "tray icon, or change this in Settings > Remote access.")
-    if basepath.from_ingress(client) and request.headers.get(basepath.INGRESS_HEADER):
+    if ingress:
         # Home Assistant ingress: HA has signed its user in, and only its proxy uses this address.
         name = (request.headers.get("x-remote-user-name") or "").strip()
         token = auth.set_actor(f"{name} (Home Assistant)" if name else "Home Assistant")

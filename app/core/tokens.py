@@ -227,14 +227,16 @@ _DELETE_JOBS = {"remove_files", "prune_versions", "snapshot_delete", "source_del
 def _job(body: dict, _q: dict) -> str:
     kind = body.get("kind") or ""
     params = body.get("params") or {}
-    if kind in _DELETE_JOBS or (kind == "policy_write" and params.get("then")):
-        return READ if params.get("dry") else PERSON
+    from . import writemode
+    if kind in _DELETE_JOBS:
+        return READ if params.get("dry") and kind in writemode.DRY_KINDS else PERSON
+    if kind == "policy_write" and params.get("then"):
+        return PERSON          # the policy writes run for real; only the delete step can be dry
     if kind == "encryption_level":
         return PERSON          # the level is set through /api/encryption/level
     if kind == "policy_write" and any(_lowers_retention(body.get("repo"), w.get("target"), w.get("changes"))
                                       for w in params.get("writes") or []):
         return PERSON
-    from . import writemode
     return REPO if kind in writemode.JOBS else PERSON
 
 

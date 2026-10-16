@@ -44,6 +44,8 @@ def test_the_gate_refuses_what_the_mode_does_not_allow():
         assert dry.status_code != 403
         _mode("read_only")
         assert client.post("/api/jobs/start", json={**body, "kind": "restore"}).status_code == 403
+        # A restore has no dry run, so a dry flag must not get it past the mode.
+        assert client.post("/api/jobs/start", json={**body, "kind": "restore", "params": {"dry": True}}).status_code == 403
         _mode("full")
         assert client.post("/api/jobs/start", json=body).status_code != 403
     finally:

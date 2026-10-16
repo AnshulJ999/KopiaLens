@@ -31,7 +31,7 @@ _R, _N, _F = "restores", "non_destructive", "full"
 def _job_need(body: dict, _query: dict) -> str | None:
     kind = body.get("kind") or ""
     params = body.get("params") or {}
-    if params.get("dry"):
+    if params.get("dry") and kind in DRY_KINDS:
         return None
     if kind == "policy_write" and params.get("then"):
         return _F  # exclude-and-delete removes the excluded files from the snapshots
@@ -45,6 +45,9 @@ JOBS: dict[str, str | None] = {
     "snapshot_estimate": None, "snapshot_verify": None, "blob_stats": None,
     "encryption_level": None,  # KopiaLens's own files, never the repository
 }
+
+# Job kinds whose runner has a real dry run. Any other kind ignores `dry`, so it is refused there.
+DRY_KINDS = frozenset({"remove_files", "prune_versions", "snapshot_delete", "source_delete", "move_history"})
 
 ROUTES: dict[tuple[str, str], object] = {
     ("POST", "/api/jobs/start"): _job_need,

@@ -15,7 +15,7 @@ import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..core import jobs
+from ..core import jobs, writemode
 from ..core.sources import invalidate as invalidate_sources
 from ..licensing import features
 from . import freeids
@@ -300,6 +300,8 @@ def _require_pro(kind: str, repo: str, params: dict) -> None:
 def start(payload: JobStartRequest) -> dict:
     if payload.kind not in jobs.KINDS:
         raise HTTPException(status_code=409, detail=f"unknown job kind: {payload.kind}")
+    if (payload.params or {}).get("dry") and payload.kind not in writemode.DRY_KINDS:
+        raise HTTPException(status_code=409, detail=f"{payload.kind} has no dry run.")
     _require_pro(payload.kind, payload.repo, payload.params)
     try:
         params = _resolve_params(payload.kind, payload.repo, payload.params)
