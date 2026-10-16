@@ -4,6 +4,9 @@ Each icon becomes a class `.ic-<name>` drawn with a CSS mask, so it takes the te
 scales with font size. SVGs are kept in frontend/vendor/icons/<pack>/; a missing one is fetched
 once from the pinned package version (dev machines only; the app never fetches icons).
 
+`_variants` in icons.json swaps icons under a selector (the Design menu's choices): each variant
+has `selector` with `{name}` for the icon name and `icons` {name: "<pack>/<file>"}.
+
     python packaging/build_icons.py
 """
 from __future__ import annotations
@@ -19,12 +22,17 @@ MAP = ROOT / "packaging" / "icons.json"
 VENDOR = ROOT / "frontend" / "vendor" / "icons"
 OUT = ROOT / "frontend" / "css" / "icons.css"
 
-# Pinned sources. Phosphor (MIT), Tabler (MIT), Lucide (ISC).
+# Pinned sources. Phosphor (MIT), Tabler (MIT), Lucide (ISC), Material Icon Theme (MIT).
+_PH = "https://cdn.jsdelivr.net/npm/@phosphor-icons/core@2.1.1/"
 PACKS = {
-    "phosphor": ("https://cdn.jsdelivr.net/npm/@phosphor-icons/core@2.1.1/assets/regular/{}.svg",
-                 "https://cdn.jsdelivr.net/npm/@phosphor-icons/core@2.1.1/LICENSE"),
+    "phosphor": (_PH + "assets/regular/{}.svg", _PH + "LICENSE"),
+    **{f"phosphor-{w}": (_PH + f"assets/{w}/{{}}.svg", _PH + "LICENSE") for w in ("light", "thin", "fill", "duotone")},
     "tabler": ("https://cdn.jsdelivr.net/npm/@tabler/icons@3.48.0/icons/outline/{}.svg",
                "https://cdn.jsdelivr.net/npm/@tabler/icons@3.48.0/LICENSE"),
+    "tabler-filled": ("https://cdn.jsdelivr.net/npm/@tabler/icons@3.48.0/icons/filled/{}.svg",
+                      "https://cdn.jsdelivr.net/npm/@tabler/icons@3.48.0/LICENSE"),
+    "material": ("https://cdn.jsdelivr.net/npm/material-icon-theme@5.27.0/icons/{}.svg",
+                 "https://cdn.jsdelivr.net/npm/material-icon-theme@5.27.0/LICENSE"),
     "lucide": ("https://cdn.jsdelivr.net/npm/lucide-static@1.48.0/icons/{}.svg",
                "https://cdn.jsdelivr.net/npm/lucide-static@1.48.0/LICENSE"),
 }
@@ -61,14 +69,26 @@ def _uri(svg: str) -> str:
     return "data:image/svg+xml," + urllib.parse.quote(svg, safe=" /=:;,'-.")
 
 
+def _rule(selector: str, src: str) -> str:
+    pack, _, file = src.partition("/")
+    return f'{selector} {{ --ic: url("{_uri(_svg(pack, file))}"); }}\n'
+
+
 def main() -> None:
-    icons = {k: v for k, v in json.loads(MAP.read_text(encoding="utf-8")).items() if not k.startswith("_")}
+    data = json.loads(MAP.read_text(encoding="utf-8"))
+    icons = {k: v for k, v in data.items() if not k.startswith("_")}
     lines = [HEADER]
     for name, src in sorted(icons.items()):
-        pack, _, file = src.partition("/")
-        lines.append(f'.ic-{name} {{ --ic: url("{_uri(_svg(pack, file))}"); }}\n')
+        lines.append(_rule(f".ic-{name}", src))
+    variants = data.get("_variants", {})
+    for vname, v in variants.items():
+        lines.append(f"/* variant: {vname} */\n")
+        for name, src in v["icons"].items():
+            if name not in icons:
+                sys.exit(f"variant {vname}: {name!r} is not an icon in icons.json")
+            lines.append(_rule(v["selector"].format(name=name), src))
     OUT.write_text("".join(lines), encoding="utf-8", newline="\n")
-    print(f"{len(icons)} icons -> {OUT.relative_to(ROOT)}")
+    print(f"{len(icons)} icons, {len(variants)} variants -> {OUT.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":

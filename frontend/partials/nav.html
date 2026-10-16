@@ -14,6 +14,8 @@
         <button type="button" @click="repoMenu = !repoMenu" class="fld border border-bd bg-surface flex items-center gap-2 max-w-[16rem]"
                 aria-haspopup="menu" :aria-expanded="repoMenu" title="Switch repository">
           <span class="truncate" x-text="repoName(repo)"></span>
+          <i x-show="repoKind === 'kopia' && wm && wmMode() !== 'full' && designIs('permsign', 'icon', 'icon')" x-cloak data-testid="wm-icon"
+             class="ic text-warn" :class="wmMode() === 'read_only' ? 'ic-eye' : 'ic-lock'" :title="wm ? 'Permissions: ' + wmLabel(wmMode()) : ''"></i>
           <i class="ic ic-caret-down text-muted"></i>
         </button>
         <span x-show="isDemo()" x-cloak class="absolute -top-1.5 -right-2 rounded border border-warn-bd bg-warn-bg text-warn px-1 text-[0.625rem] font-medium leading-4"
@@ -24,10 +26,14 @@
                     class="w-full text-left px-3 py-1.5 hover:bg-head flex items-center gap-2">
               <span class="w-4 text-ok"><i x-show="item.id === repo" class="ic ic-check"></i></span>
               <span class="truncate flex-1" x-text="item.name"></span>
+              <i x-show="item.kind !== 'backblaze' && wm && wmMode(item.id) !== 'full'" class="ic text-warn"
+                 :class="wmMode(item.id) === 'read_only' ? 'ic-eye' : 'ic-lock'" :title="wm ? 'Permissions: ' + wmLabel(wmMode(item.id)) : ''"></i>
               <span class="text-[0.6875rem] text-muted" x-text="item.kind === 'backblaze' ? 'Backblaze' : cxTypeLabel((item.storage || {}).type)"></span>
             </button>
           </template>
           <div class="my-1 border-t border-bd"></div>
+          <button type="button" role="menuitem" x-show="repoKind === 'kopia' && wm && wmMode() !== 'full'" @click="repoMenu = false; await openSettings(); settingsTab = 'writemode'"
+                  class="w-full text-left px-3 py-1.5 hover:bg-head pl-8" x-text="'Permissions: ' + (wm ? wmLabel(wmMode()) : '') + '…'"></button>
           <button type="button" role="menuitem" @click="openAddRepo()" class="w-full text-left px-3 py-1.5 hover:bg-head pl-8">Add repository…</button>
           <button type="button" role="menuitem" @click="openRepoAdmin()" class="w-full text-left px-3 py-1.5 hover:bg-head pl-8">Manage repositories…</button>
         </div>
@@ -43,19 +49,47 @@
         <i class="ic ic-search absolute left-3 top-1/2 -translate-y-1/2 text-faint"></i>
       </div>
       <div class="ml-auto flex items-center gap-2 text-xs shrink-0">
-        <template x-for="j in runningJobs" :key="j.job_id">
-          <button @click="openJobPanel(j.job_id)" class="h-8 rounded border px-3 flex items-center gap-1.5"
-            :class="j.state === 'running' ? 'border-warn-bd bg-warn-bg text-warn' : 'border-danger bg-danger-bg text-danger'"
-            :title="(j.state === 'running' ? 'Running: ' : (j.state === 'failed' ? 'FAILED: ' : 'Finished with errors: ')) + j.kind_label + ' - click to open'">
-            <span class="w-1.5 h-1.5 rounded-full" :class="j.state === 'running' ? 'bg-warn animate-pulse' : 'bg-danger'"></span>
-            <span class="truncate max-w-[180px]" x-text="j.label"></span>
-            <span x-text="j.total ? Math.round((j.done / j.total) * 100) + '%' : ''"></span>
+        <!-- Chip tray: jobs and pending indexes merge into one chip each; past three chips the rest fold into "+N". -->
+        <template x-if="runningJobs.length === 1">
+          <button @click="openJobPanel(runningJobs[0].job_id)" class="h-8 rounded border px-3 flex items-center gap-1.5" x-show="chipShown('jobs')"
+            :class="runningJobs[0].state === 'running' ? 'border-warn-bd bg-warn-bg text-warn' : 'border-danger bg-danger-bg text-danger'"
+            :title="jobChipTitle(runningJobs[0])" data-testid="job-chip">
+            <span class="w-1.5 h-1.5 rounded-full" :class="runningJobs[0].state === 'running' ? 'bg-warn animate-pulse' : 'bg-danger'"></span>
+            <span class="truncate max-w-[180px]" x-text="runningJobs[0].label"></span>
+            <span x-text="jobPct(runningJobs[0])"></span>
           </button>
         </template>
-        <button x-show="repoKind === 'kopia' && wm && wmMode() !== 'full'" x-cloak @click="await openSettings(); settingsTab = 'writemode'"
+        <span class="kl-dd" x-show="runningJobs.length > 1 && chipShown('jobs')" x-cloak @click.outside="if (chipMenu === 'jobs') chipMenu = ''">
+          <button @click="chipMenu = chipMenu === 'jobs' ? '' : 'jobs'" class="h-8 rounded border px-3 flex items-center gap-1.5" data-testid="jobs-chip"
+                  :class="jobsFailed() ? 'border-danger bg-danger-bg text-danger' : 'border-warn-bd bg-warn-bg text-warn'" :aria-expanded="chipMenu === 'jobs'">
+            <span class="w-1.5 h-1.5 rounded-full" :class="jobsFailed() ? 'bg-danger' : 'bg-warn animate-pulse'"></span>
+            <span x-text="jobsChipText()"></span><i class="ic ic-caret-down"></i></button>
+          <div class="kl-menu" x-show="chipMenu === 'jobs'" x-cloak role="menu">
+{% include "partials/chipjobs.html" %}
+          </div>
+        </span>
+        <template x-if="indexPending.length === 1">
+          <span class="h-8 rounded border border-warn-bd bg-warn-bg text-warn px-2 flex items-center gap-2" x-show="chipShown('pending')" :title="pendingTitle(indexPending[0])">
+            <span x-text="(indexPending[0].repo !== repo ? repoLabel(indexPending[0].repo) + ' · ' : '') + pendingText(indexPending[0])"></span>
+            <button x-show="indexPending[0].reason !== 'first'" class="underline" @click="pendingRunNow(indexPending[0].repo)">Update now</button>
+          </span>
+        </template>
+        <span class="kl-dd" x-show="indexPending.length > 1 && chipShown('pending')" x-cloak @click.outside="if (chipMenu === 'pending') chipMenu = ''">
+          <button @click="chipMenu = chipMenu === 'pending' ? '' : 'pending'" class="h-8 rounded border border-warn-bd bg-warn-bg text-warn px-3 flex items-center gap-1.5"
+                  data-testid="pending-chip" :aria-expanded="chipMenu === 'pending'">
+            <span x-text="indexPending.length + ' index updates waiting'"></span><i class="ic ic-caret-down"></i></button>
+          <div class="kl-menu" x-show="chipMenu === 'pending'" x-cloak role="menu">
+{% include "partials/chippending.html" %}
+          </div>
+        </span>
+        <span x-show="chipShown('updated')" class="h-8 rounded border border-ok-bd bg-ok-bg text-ok px-2 flex items-center gap-2">
+          <span>Index updated</span>
+          <button class="underline" @click="reloadAfterIndex()">Reload</button>
+        </span>
+        <button x-show="chipShown('wm')" x-cloak @click="await openSettings(); settingsTab = 'writemode'"
                 class="h-8 rounded border border-warn-bd bg-warn-bg text-warn px-3" data-testid="wm-chip"
                 title="Permissions for this repository. Click to change them." x-text="wm ? wmLabel(wmMode()) : ''"></button>
-        <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false" x-show="mounts.length" x-cloak>
+        <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false" x-show="chipShown('mounts')" x-cloak>
           <button @click="open = !open; if (open) loadMounts()" class="h-8 rounded border border-bd bg-surface px-3 flex items-center gap-1.5"
                   :aria-expanded="open" data-testid="mount-chip" title="Mounted snapshots">
             <span x-text="mounts.length + ' mounted'"></span><i class="ic ic-caret-down"></i></button>
@@ -63,16 +97,23 @@
 {% include "partials/mountlist.html" %}
           </div>
         </span>
-        <template x-for="p in indexPending" :key="p.repo">
-          <span class="h-8 rounded border border-warn-bd bg-warn-bg text-warn px-2 flex items-center gap-2"
-                :title="pendingTitle(p)">
-            <span x-text="(p.repo !== repo ? repoLabel(p.repo) + ' · ' : '') + pendingText(p)"></span>
-            <button x-show="p.reason !== 'first'" class="underline" @click="pendingRunNow(p.repo)">Update now</button>
-          </span>
-        </template>
-        <span x-show="indexUpdated && indexUpdated.repo === repo" class="h-8 rounded border border-ok-bd bg-ok-bg text-ok px-2 flex items-center gap-2">
-          <span>Index updated</span>
-          <button class="underline" @click="reloadAfterIndex()">Reload</button>
+        <span class="kl-dd" x-show="chipMore().length" x-cloak @click.outside="if (chipMenu === 'more') chipMenu = ''">
+          <button @click="chipMenu = chipMenu === 'more' ? '' : 'more'" class="h-8 rounded border border-bd bg-surface px-2.5 flex items-center gap-1"
+                  data-testid="chip-more" :aria-expanded="chipMenu === 'more'" :title="chipMoreTitle()">
+            <span x-text="'+' + chipMore().length"></span><i class="ic ic-caret-down"></i></button>
+          <div class="kl-menu" x-show="chipMenu === 'more'" x-cloak role="menu">
+            <template x-if="chipMore().includes('jobs')"><div>
+{% include "partials/chipjobs.html" %}
+            </div></template>
+            <template x-if="chipMore().includes('pending')"><div>
+{% include "partials/chippending.html" %}
+            </div></template>
+            <button x-show="chipMore().includes('updated')" type="button" role="menuitem" @click="chipMenu = ''; reloadAfterIndex()">Index updated · Reload</button>
+            <button x-show="chipMore().includes('wm')" type="button" role="menuitem" @click="chipMenu = ''; await openSettings(); settingsTab = 'writemode'"
+                    x-text="'Permissions: ' + (wm ? wmLabel(wmMode()) : '')"></button>
+            <button x-show="chipMore().includes('mounts')" type="button" role="menuitem" @click="chipMenu = ''; active = 'tasks'; activate()"
+                    x-text="mounts.length + ' mounted · Show in Tasks'"></button>
+          </div>
         </span>
         <!-- Index status: click for the panel. While a pass runs it carries the live percentage
              (only when one honestly exists - the tree sync reports counters instead). -->

@@ -122,6 +122,8 @@ document.addEventListener("alpine:init", () => {
     fullList: null, _fullListSeq: 0,      // the "Show all" popup (fulllist.js)
     docs: null, docsView: "popup", _docsLoaded: null, _docsCache: null, _docsWindow: false,   // the docs browser (docs.js)
     taskView: "popup",                    // Tasks: details as a full-size popup or a small panel (task_view)
+    chipMenu: "",                         // the open header chip list: "jobs" | "pending" | "more"
+    design: {},                           // Design widget choices (dev add-on, data-d-* on <html>); see designIs
     repoLabels: "short",  // repo chips and columns: "short" (Repo 1) | "full" (the name from repos.json)
     // Backblaze settings. Defaults mirror app/settings.py; each control saves its own key into
     // the nested "backblaze" dict (KL_FIELDS in settings.js).
@@ -214,6 +216,10 @@ document.addEventListener("alpine:init", () => {
       return (r && (r.short_name || r.shortName)) || (id === "bz" ? "BZ" : "Repo " + id);
     },
     repoLabel(id) { return this.repoLabels === "full" ? this.repoName(id) : this.repoShortLabel(id); },
+    // A Design widget choice (dev only); without the widget every choice is its shipped ``fallback``.
+    designIs(key, id, fallback) {
+      return (this.design[key] || document.documentElement.getAttribute("data-d-" + key) || fallback) === id;
+    },
 
     // Escape closes the topmost panel only. The confirm owns the first check (Cancel on Escape);
     // a panel that holds edits asks before dropping them, and Settings needs no ask (it autosaves).
@@ -233,6 +239,7 @@ document.addEventListener("alpine:init", () => {
       if (this.locked) return;    // the unlock box has no close: nothing behind it has data
       if (this.ob) return;        // onboarding is the whole page
       if (this.repoMenu) { this.repoMenu = false; return; }
+      if (this.chipMenu) { this.chipMenu = ""; return; }
       if (this.repoDlg) { this.repoDlg = null; return; }
       if (this.engineDlg) { this.engineDlg = null; return; }
       if (this.newSnap) { this.closeNewSnap(); return; }
@@ -312,6 +319,7 @@ document.addEventListener("alpine:init", () => {
       this.$watch("actionText", (v) => this.pushNotice(v, "info"));
       window.addEventListener("kl-locked", (e) => this.showLock(e.detail));
       window.addEventListener("kl-setup-code", () => this.obNeedCode());
+      window.addEventListener("design-change", (e) => { this.design = { ...this.design, [e.detail.key]: e.detail.value }; });
       this.initHelp();
       this.wmLoad();
       // A fresh install (no repository yet) or a closed setup window shows onboarding, and nothing

@@ -1,5 +1,5 @@
 {
-  "_about": "App icon map: icon name -> <pack>/<file>. Packs live in frontend/vendor/icons/<pack>/ (pinned in build_icons.py). Edit a line and run python packaging/build_icons.py to swap one icon.",
+  "_about": "App icon map: icon name -> <pack>/<file>. Packs live in frontend/vendor/icons/<pack>/ (pinned in build_icons.py). Edit a line and run python packaging/build_icons.py to swap one icon. _variants: icon swaps for the Design menu's choices (dev only; remove a variant once a choice is final).",
   "refresh": "phosphor/arrow-clockwise",
   "settings": "phosphor/gear",
   "sun": "phosphor/sun",
@@ -72,5 +72,96 @@
   "t-file-video": "tabler/movie",
   "t-file-zip": "tabler/file-zip",
   "t-file-code": "tabler/file-code",
-  "t-file-text": "tabler/file-text"
+  "t-file-text": "tabler/file-text",
+  "_variants": {
+    "header-light": {
+      "selector": "html[data-d-hdricon=\"light\"] header .kl-ibtn .ic-{name}",
+      "icons": {
+        "refresh": "phosphor-light/arrow-clockwise-light",
+        "clock": "phosphor-light/clock-light",
+        "timer": "phosphor-light/timer-light",
+        "sun": "phosphor-light/sun-light",
+        "moon": "phosphor-light/moon-light",
+        "help": "phosphor-light/question-light",
+        "settings": "phosphor-light/gear-light"
+      }
+    },
+    "header-thin": {
+      "selector": "html[data-d-hdricon=\"thin\"] header .kl-ibtn .ic-{name}",
+      "icons": {
+        "refresh": "phosphor-thin/arrow-clockwise-thin",
+        "clock": "phosphor-thin/clock-thin",
+        "timer": "phosphor-thin/timer-thin",
+        "sun": "phosphor-thin/sun-thin",
+        "moon": "phosphor-thin/moon-thin",
+        "help": "phosphor-thin/question-thin",
+        "settings": "phosphor-thin/gear-thin"
+      }
+    },
+    "files-ph-outline": {
+      "selector": "html[data-d-fileicons=\"ph-outline\"] .kl-name-ic.ic-{name}",
+      "icons": {
+        "t-folder": "phosphor/folder",
+        "t-file": "phosphor/file",
+        "t-file-image": "phosphor/file-image",
+        "t-file-audio": "phosphor/file-audio",
+        "t-file-video": "phosphor/file-video",
+        "t-file-zip": "phosphor/file-zip",
+        "t-file-code": "phosphor/file-code",
+        "t-file-text": "phosphor/file-text"
+      }
+    },
+    "files-ph-fill": {
+      "selector": "html[data-d-fileicons=\"ph-fill\"] .kl-name-ic.ic-{name}",
+      "icons": {
+        "t-folder": "phosphor-fill/folder-fill",
+        "t-file": "phosphor-fill/file-fill",
+        "t-file-image": "phosphor-fill/file-image-fill",
+        "t-file-audio": "phosphor-fill/file-audio-fill",
+        "t-file-video": "phosphor-fill/file-video-fill",
+        "t-file-zip": "phosphor-fill/file-zip-fill",
+        "t-file-code": "phosphor-fill/file-code-fill",
+        "t-file-text": "phosphor-fill/file-text-fill"
+      }
+    },
+    "files-ph-duotone": {
+      "selector": "html[data-d-fileicons=\"ph-duotone\"] .kl-name-ic.ic-{name}",
+      "icons": {
+        "t-folder": "phosphor-duotone/folder-duotone",
+        "t-file": "phosphor-duotone/file-duotone",
+        "t-file-image": "phosphor-duotone/file-image-duotone",
+        "t-file-audio": "phosphor-duotone/file-audio-duotone",
+        "t-file-video": "phosphor-duotone/file-video-duotone",
+        "t-file-zip": "phosphor-duotone/file-zip-duotone",
+        "t-file-code": "phosphor-duotone/file-code-duotone",
+        "t-file-text": "phosphor-duotone/file-text-duotone"
+      }
+    },
+    "files-tb-filled": {
+      "selector": "html[data-d-fileicons=\"tb-filled\"] .kl-name-ic.ic-{name}",
+      "icons": {
+        "t-folder": "tabler-filled/folder",
+        "t-file": "tabler-filled/file",
+        "t-file-image": "tabler-filled/photo",
+        "t-file-audio": "tabler-filled/file-music",
+        "t-file-video": "tabler-filled/video",
+        "t-file-zip": "tabler-filled/archive",
+        "t-file-code": "tabler-filled/file-code",
+        "t-file-text": "tabler-filled/file-text"
+      }
+    },
+    "files-material": {
+      "selector": "html[data-d-fileicons=\"material\"] .kl-name-ic.ic-{name}",
+      "icons": {
+        "t-folder": "material/folder",
+        "t-file": "material/file",
+        "t-file-image": "material/image",
+        "t-file-audio": "material/audio",
+        "t-file-video": "material/video",
+        "t-file-zip": "material/zip",
+        "t-file-code": "material/json",
+        "t-file-text": "material/document"
+      }
+    }
+  }
 }

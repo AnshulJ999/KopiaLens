@@ -1,0 +1,8 @@
+            <div class="hd">Index updates</div>
+            <template x-for="p in indexPending" :key="p.repo">
+              <div class="flex items-center gap-3 px-3 py-1.5 text-sm whitespace-nowrap" :title="pendingTitle(p)">
+                <span class="font-medium" x-text="repoLabel(p.repo)"></span>
+                <span class="text-muted" x-text="pendingText(p)"></span>
+                <span class="ml-auto"><button x-show="p.reason !== 'first'" class="underline !p-0 !w-auto" @click="pendingRunNow(p.repo)">Update now</button></span>
+              </div>
+            </template>

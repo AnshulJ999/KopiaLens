@@ -338,6 +338,37 @@ const jobsPart = {
       this.activate();
     },
 
+    // ---- Header chip tray: the chips showing now, in order; past HEADER_CHIP_MAX the rest fold into "+N" ----
+    headerChips() {
+      const out = [];
+      if ((this.runningJobs || []).length) out.push("jobs");
+      if ((this.indexPending || []).length) out.push("pending");
+      if (this.indexUpdated && this.indexUpdated.repo === this.repo) out.push("updated");
+      if (this.repoKind === "kopia" && this.wm && this.wmMode() !== "full" && this.designIs("permsign", "chip", "icon")) out.push("wm");
+      if ((this.mounts || []).length) out.push("mounts");
+      return out;
+    },
+    chipShown(id) {
+      const i = this.headerChips().indexOf(id);
+      return i >= 0 && i < HEADER_CHIP_MAX;
+    },
+    chipMore() { return this.headerChips().slice(HEADER_CHIP_MAX); },
+    chipMoreTitle() {
+      const names = { jobs: "jobs", pending: "index updates", updated: "index updated", wm: "permissions", mounts: "mounts" };
+      return "More: " + this.chipMore().map((c) => names[c]).join(", ");
+    },
+    jobPct(j) { return j.total ? Math.round((j.done / j.total) * 100) + "%" : ""; },
+    jobChipTitle(j) {
+      return (j.state === "running" ? "Running: " : (j.state === "failed" ? "Failed: " : "Finished with errors: ")) + j.kind_label + ". Click to open.";
+    },
+    jobsFailed() { return (this.runningJobs || []).filter((j) => j.state !== "running").length; },
+    jobsChipText() {
+      const js = this.runningJobs || [];
+      const n = (s) => js.filter((j) => j.state === s).length;
+      const [run, failed, errs] = [n("running"), n("failed"), n("done")];
+      return [run ? `${run} running` : "", failed ? `${failed} failed` : "", errs ? `${errs} with errors` : ""].filter(Boolean).join(" · ");
+    },
+
     _jobCompleted(j) {
       // A finished mutating job means this repo's data is changing. The snapshots list reads
       // kopia's own listing - invalidated by the job's on_done - so it can reload right away.
@@ -400,4 +431,6 @@ const REINDEX_WATCH_IDLE = 600;
 // Header poll cadence: fast only while something is actually happening.
 const JOB_CHIP_POLL_ACTIVE = 5000;
 const JOB_CHIP_POLL_IDLE = 20000;
+// Header chips shown side by side; the rest fold into "+N".
+const HEADER_CHIP_MAX = 3;
 const JOB_LINE_NOISE = /^will remove file /i;
