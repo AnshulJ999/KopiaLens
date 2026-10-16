@@ -3,7 +3,7 @@
 // menu and the saved `kl` choices live in util.js.
 const TABLE_NAMES = {
   dashboardTable: "Dashboard", snapshotsTable: "Snapshots", treeTable: "Tree", searchTable: "Search",
-  groupTable: "Search: folders", churnTable_source: "Churn: sources", churnTable_folder: "Churn: folders",
+  groupTable: "Search: folders", searchViewTable: "Search: old versions", churnTable_source: "Churn: sources", churnTable_folder: "Churn: folders",
   churnTable_ext: "Churn: file types", excludedTable: "Excluded", simulateTable: "Simulate", tasksTable: "Tasks",
   fullListTable: "Full list",
 };

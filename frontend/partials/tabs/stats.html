@@ -101,7 +101,8 @@
               <div class="flex items-center gap-2">
                 <span class="text-sm font-medium">Versions worth pruning</span>
                 <span class="text-[0.6875rem] text-muted">Old versions of big files that free the most on their own</span>
-                <button @click="loadPruneOutliers()" :disabled="pruneOutliers && pruneOutliers.loading" class="ml-auto h-7 rounded border border-bd px-2 text-xs"
+                <button @click="openSearchView('prune')" class="ml-auto h-7 rounded border border-bd px-2 text-xs" title="The same list in Search: sorting, columns and CSV">Open in Search</button>
+                <button @click="loadPruneOutliers()" :disabled="pruneOutliers && pruneOutliers.loading" class="h-7 rounded border border-bd px-2 text-xs"
                         x-text="pruneOutliers ? 'Refresh' : 'Find them'"></button>
               </div>
               <template x-if="pruneOutliers">

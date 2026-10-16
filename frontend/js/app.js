@@ -72,6 +72,7 @@ document.addEventListener("alpine:init", () => {
     treeWeek: "",
     treeDeletedOnly: false, treeOverGb: false, treeExt: "", treeFlat: false, treeView: "list",
     query: "", deletedOnly: false, overOneGb: false, searchSource: "", searchExt: "", searchExtExclude: "", omniMeta: "",
+    searchView: "", searchViewRows: null, _searchViewSeq: 0,   // a ready-made Search view ("prune"), its rows
     groupByFolder: false, searchKind: "files", searchFolders: 0, searchSkipped: [], searchMaxDepth: 20000, groupDepth: 3, groupMinDepth: "", groupMinGb: 0, groupMinFiles: 0, groupLoose: false, folderVersions: {},
     churnDays: "30", churnDepth: 4, churnView: "source", churnData: null, churnMeta: "", _churnSeq: 0,
     _churnPhysSeq: 0, _churnPhysCache: {}, _churnPhysTimer: null,   // folder view: on-screen all-versions physical
@@ -579,6 +580,7 @@ document.addEventListener("alpine:init", () => {
       this.polMulti = { on: false, picked: [], fields: {}, plan: null, ticks: {}, busy: false };
       this.versionSizes = {};
       this.pruneOutliers = null;
+      this.searchViewRows = null;
       this.repoKind = this.kindOf(this.repo);
       if (this.repoPinned) {  // pinned tab: keep the choice in the URL, don't touch shared last_repo
         const u = new URL(location.href); u.searchParams.set("repo", this.repo); history.replaceState(null, "", u);
@@ -657,7 +659,7 @@ document.addEventListener("alpine:init", () => {
         if (this.active === "dashboard") return this.loadDashboard(true);
         if (this.active === "snapshots") return this.loadSnapshots(true);
         if (this.active === "tree") return this.loadTree();
-        if (this.active === "search") return this.loadSearch();
+        if (this.active === "search") return this.searchView ? this.loadSearchView(true) : this.loadSearch();
         if (this.active === "churn") return this.loadChurn(true);
         if (this.active === "stats") return this.loadStats(true);
         if (this.active === "logs") return this.loadLogs();

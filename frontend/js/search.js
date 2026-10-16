@@ -300,6 +300,7 @@ const searchPart = {
       try { row.reformat(); } catch (e) { /* the table was rebuilt meanwhile; the cache has the value */ }
     },
     async loadSearch(keepPage = false) {
+      if (this.searchView) return this.loadSearchView();
       if (this.groupByFolder) return this.loadGroupByFolder();
       const seq = ++this._searchSeq;
       if (!keepPage) this.searchPage = 1;
@@ -494,7 +495,69 @@ const searchPart = {
       ];
     },
 
+    // ---- Ready-made views: "prune" = old versions of big files that free the most on their own ----
+    openSearchView(view) {
+      this.searchView = view;
+      this.active = "search";
+      this.searchViewRows = null;
+      return this.loadSearchView();
+    },
+    closeSearchView() {
+      this.searchView = "";
+      this.searchViewRows = null;
+      return this.loadSearch();
+    },
+    async loadSearchView(refresh = false) {
+      const seq = ++this._searchViewSeq;
+      if (refresh || !this.searchViewRows) {
+        this.searchViewRows = { loading: true, rows: [], ready: true, error: "" };
+        try {
+          const r = await getJson(`/api/prune/outliers?repo=${encodeURIComponent(this.repo)}&limit=500`);
+          if (seq !== this._searchViewSeq) return;
+          this.searchViewRows = { loading: false, rows: r.rows || [], ready: r.ready !== false, error: "" };
+        } catch (e) {
+          if (seq === this._searchViewSeq) this.searchViewRows = { loading: false, rows: [], ready: true, error: e.message || String(e) };
+          return;
+        }
+      }
+      const q = this.query.trim().toLowerCase();
+      const rows = this.searchViewRows.rows.filter((r) => !q || r.full_path.toLowerCase().includes(q));
+      await this.$nextTick();
+      setTable("#searchViewTable", rows, [
+        { title: "File", field: "full_path", widthGrow: 5, minWidth: 260, formatter: (c) => itemIconHtml(c.getValue(), false) + escHtml(c.getValue()) },
+        { title: "Source", field: "source", widthGrow: 2, minWidth: 140, formatter: (c) => escHtml(this.shortSource(c.getValue())) },
+        { title: "Version from", field: "first", width: 130, formatter: (c) => escHtml(fmtDate(c.getValue())) },
+        { title: term("logical"), field: "size", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => fmtBytes(c.getValue()), headerTooltip: termTip("logical") },
+        { title: term("reclaimableOwn"), field: "frees", width: 130, hozAlign: "right", sorter: "number", formatter: (c) => `<b style="color:var(--ok)">${fmtPhys(c.getValue())}</b>`, headerTooltip: termTip("reclaimableOwn") },
+        { title: "Versions", field: "versions", width: 85, hozAlign: "right", sorter: "number", headerTooltip: "Versions of this file in the backups" },
+        { title: "", field: "_prune", download: false, headerSort: false, width: 90, hozAlign: "center",
+          formatter: () => `<button class="kl-btn quiet" data-act="prune" style="height:22px">Prune…</button>` },
+      ], {
+        initialSort: [{ column: "frees", dir: "desc" }],
+        placeholder: this.searchViewRows.loading ? "Looking…" : "No old version frees much on its own.",
+        onRowDblClick: (_e, row) => this.openFileDetail({ source: row.getData().source, full_path: row.getData().full_path }),
+        rowMenu: (_e, row) => {
+          const d = row.getData();
+          return [
+            this.wmItem({ label: "Prune old versions…" + this.proMenuTag("prune"), action: () => this.openPrune(d.full_path, d.source) }, "full"),
+            { label: "Open file panel", action: () => this.openFileDetail({ source: d.source, full_path: d.full_path }) },
+            { label: "Show in Search", action: () => { this.query = d.full_path; this.closeSearchView(); } },
+            { separator: true },
+            { label: "Copy path", action: () => this.copyText(d.full_path) },
+          ];
+        },
+      });
+      const t = document.querySelector("#searchViewTable");
+      if (t && t._tabulator && !t._tabulator._klPrune) {
+        t._tabulator._klPrune = true;
+        t._tabulator.on("cellClick", (e, cell) => {
+          if (e.target.closest && e.target.closest("[data-act=prune]")) this.openPrune(cell.getRow().getData().full_path, cell.getRow().getData().source);
+        });
+      }
+    },
+
     exportSearch() {
+      if (this.searchView) return downloadTable("#searchViewTable", this.fileName("old-versions", this.query.trim()));
       const about = this.query.trim();
       if (this.groupByFolder) return downloadTable("#groupTable", this.fileName("search-folders", about));
       if (this.searchAllRepos()) return downloadTable("#searchTable", this.fileName("search", about, "csv", "*"));

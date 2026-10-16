@@ -1,6 +1,31 @@
 {% from "partials/_macros.html" import selbar %}
       <section x-show="active==='search'" class="h-full flex flex-col gap-2">
-        <div class="kl-toolbar">
+        <!-- A ready-made view (search.js openSearchView): its own toolbar and table. -->
+        <div class="kl-toolbar" x-show="searchView === 'prune'" x-cloak data-testid="search-view-prune">
+          <span class="font-medium">Old versions that free the most</span>
+          <span class="text-xs text-muted">Old versions of big files, by the space each frees on its own</span>
+          <input x-show="!headerSearchOnly" x-model="query" @input.debounce.300ms="loadSearchView()" class="fld border border-bd bg-surface grow basis-36 min-w-[8rem] max-w-[22rem]" placeholder="Filter paths">
+          <span class="grow"></span>
+          <span class="text-xs text-muted" x-show="searchViewRows && !searchViewRows.loading" x-text="countOf(((searchViewRows && searchViewRows.rows) || []).length, 'version')"></span>
+          <button class="kl-btn icon" @click="loadSearchView(true)" title="Look again" aria-label="Refresh"><i class="ic ic-refresh"></i></button>
+          <button class="kl-btn" @click="closeSearchView()">Back to Search</button>
+          <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('search')" @keydown.enter.prevent="openDocs('search')" title="Each row is one old version of a file, priced on its own. Prune… picks which versions to delete.">?</span>
+          <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false">
+            <button class="kl-btn icon" @click="open = !open" title="More" aria-label="More"><i class="ic ic-more"></i></button>
+            <div class="kl-menu" x-show="open" x-cloak>
+              <button @click="open = false; exportSearch()">Export CSV</button>
+              <button @click="open = false; openTableLayout('#searchViewTable')">Table layout…</button>
+            </div>
+          </span>
+        </div>
+        <template x-if="searchView && searchViewRows">
+          <div class="text-sm text-muted">
+            <span x-show="searchViewRows.loading">Looking…</span>
+            <span x-show="searchViewRows.error" class="text-danger" x-text="searchViewRows.error"></span>
+            <span x-show="!searchViewRows.loading && !searchViewRows.ready">Available after the next index.</span>
+          </div>
+        </template>
+        <div class="kl-toolbar" x-show="!searchView">
           <input x-show="!headerSearchOnly" x-model="query" @input.debounce.300ms="loadSearch()" class="fld border border-bd bg-surface grow basis-36 min-w-[8rem] max-w-[30rem]" placeholder="Search paths" title="Matches anywhere in the full path">
           <select x-model="searchSource" @change="searchSourceChanged()" class="fld border border-bd bg-surface grow-[0.5] basis-28 min-w-[7rem] max-w-[16rem]" title="Source">
             <option value="*REPOS*">All repositories</option>
@@ -62,6 +87,9 @@
               <div class="hd">This search</div>
               <button @click="open = false; exportSearch()" x-text="groupByFolder ? 'Export CSV' : (searchAllRepos() || searchKind==='both') ? 'Export CSV (this page)' : 'Export CSV (all ' + searchTotal.toLocaleString(NUM_LOCALE) + ')'"></button>
               <button @click="open = false; openTableLayout(groupByFolder ? '#groupTable' : '#searchTable')">Table layout…</button>
+              <div class="sep"></div>
+              <div class="hd">Ready-made views</div>
+              <button @click="open = false; openSearchView('prune')" :disabled="searchAllRepos()" data-testid="search-view-prune-open">Old versions that free the most</button>
               <template x-if="searchKind==='files' && !searchAllRepos()">
                 <div><div class="sep"></div>
                   <button class="dg" @click="open = false; openRemoveFromSearch()" :disabled="searchDeleteTooBig()" x-text="'Delete all ' + searchTotal.toLocaleString(NUM_LOCALE) + ' matching…'"></button>
@@ -70,7 +98,7 @@
             </div>
           </span>
         </div>
-        <div x-show="searchKind!=='files' && !searchAllRepos()" class="kl-toolbar text-xs">
+        <div x-show="!searchView && searchKind!=='files' && !searchAllRepos()" class="kl-toolbar text-xs">
           <span class="font-medium">Folders</span>
           <label title="Hide folders shallower than this, to focus on deep ones">Min depth <input type="number" min="1" max="20" x-model.number="groupMinDepth" @input.debounce.400ms="changeGroupMinDepth()" class="fld h-7 w-16 border border-bd bg-surface" placeholder="1"></label>
           <label>Max depth <input type="number" min="1" max="20" x-model.number="groupDepth" @change="changeGroupDepth()" class="fld h-7 w-16 border border-bd bg-surface"></label>
@@ -79,11 +107,11 @@
           <label class="cursor-pointer" title="A folder above Max depth that also has subfolders gets a row for the files lying directly in it"><input type="checkbox" :checked="groupLoose" @change="toggleGroupLoose()"> Loose files as their own rows</label>
           <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('search', 'files-folders-or-both')" @keydown.enter.prevent="openDocs('search', 'files-folders-or-both')" title="Folders ranked by physical size. Double-click a folder to open it; right-click to see its files or delete it.">?</span>
         </div>
-        <div x-show="!groupByFolder && searchEmpty" class="flex flex-wrap items-center gap-2 text-sm text-muted">
+        <div x-show="!searchView && !groupByFolder && searchEmpty" class="flex flex-wrap items-center gap-2 text-sm text-muted">
           <span x-text="searchEmptyText()"></span>
           <button x-show="searchFiltersOn()" @click="clearFilters()" class="kl-btn">Clear filters</button>
         </div>
-        <div class="kl-tablefoot" x-show="omniMeta">
+        <div class="kl-tablefoot" x-show="!searchView && omniMeta">
           <b x-text="omniMeta"></b>
           <span class="grow"></span>
           <template x-if="!groupByFolder">
@@ -104,6 +132,7 @@
             </span>
           </template>
         </div>
-        <div id="searchTable" class="flex-1 min-h-0" x-show="!groupByFolder"></div>
-        <div id="groupTable" class="flex-1 min-h-0" x-show="groupByFolder"></div>
+        <div id="searchTable" class="flex-1 min-h-0" x-show="!searchView && !groupByFolder"></div>
+        <div id="groupTable" class="flex-1 min-h-0" x-show="!searchView && groupByFolder"></div>
+        <div id="searchViewTable" class="flex-1 min-h-0" x-show="searchView"></div>
       </section>
