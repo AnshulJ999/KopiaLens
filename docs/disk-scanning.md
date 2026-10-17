@@ -8,8 +8,8 @@ Choose the method in **Settings → Disk scanning → Read the disk with**:
 
 | Choice | What it does |
 |---|---|
-| **Everything** (default on Windows) | Windows only. Everything is a free file index by voidtools. It answers at once and never reads the disk itself. KopiaLens includes Everything's command-line tool, so you only install Everything |
 | **Automatic** | Windows only. Uses Everything when it's running, otherwise the KopiaLens scanner |
+| **Everything** (default on Windows) | Windows only. Everything is a free file index by voidtools. It answers at once and never reads the disk itself. KopiaLens includes Everything's command-line tool, so you only install Everything |
 | **KopiaLens scanner** | KopiaLens's own scanner. It works on Windows, Linux, macOS, in Docker and in Home Assistant |
 | **Off** (default on Linux and macOS) | KopiaLens doesn't read the disk. The Excluded tab and rule previews stay empty |
 

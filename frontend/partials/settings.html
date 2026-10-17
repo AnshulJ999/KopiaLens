@@ -366,8 +366,8 @@
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Read the disk with</span>
                   <select x-model="diskLookupMode" @change="saveKl('disk_lookup')" class="fld border border-bd bg-surface2" data-testid="disk-lookup-mode">
-                    <option value="everything" x-show="!diskLookup || !diskLookup.everything || diskLookup.everything.supported">Everything</option>
                     <option value="auto" x-show="!diskLookup || !diskLookup.everything || diskLookup.everything.supported">Automatic</option>
+                    <option value="everything" x-show="!diskLookup || !diskLookup.everything || diskLookup.everything.supported">Everything</option>
                     <option value="scan">KopiaLens scanner</option>
                     <option value="off">Off</option>
                   </select></div>
