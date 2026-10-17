@@ -367,11 +367,12 @@
                 <div class="flex items-center justify-between gap-3"><span>Read the disk with</span>
                   <select x-model="diskLookupMode" @change="saveKl('disk_lookup')" class="fld border border-bd bg-surface2" data-testid="disk-lookup-mode">
                     <option value="everything" x-show="!diskLookup || !diskLookup.everything || diskLookup.everything.supported">Everything</option>
-                    <option value="auto" x-show="!diskLookup || !diskLookup.everything || diskLookup.everything.supported">Everything, else the KopiaLens scanner</option>
+                    <option value="auto" x-show="!diskLookup || !diskLookup.everything || diskLookup.everything.supported">Automatic</option>
                     <option value="scan">KopiaLens scanner</option>
                     <option value="off">Off</option>
                   </select></div>
                 <p class="text-[0.6875rem] text-muted mt-1" x-show="diskLookupMode === 'everything'">Everything is a free Windows file index by voidtools. It answers at once and never reads the disk itself.</p>
+                <p class="text-[0.6875rem] text-muted mt-1" x-show="diskLookupMode === 'auto'">Automatic uses Everything when it's running, otherwise the KopiaLens scanner.</p>
                 <p class="text-[0.6875rem] text-muted mt-1" x-show="diskLookupMode === 'auto' || diskLookupMode === 'scan'">The KopiaLens scanner counts folders by reading the disk. It never changes a file, but a big drive stays busy while it's counted.</p>
                 <p class="text-[0.6875rem] mt-1" x-show="diskLookup" :style="diskLookup && diskLookup.available ? 'color:var(--ok)' : 'color:var(--warn)'"
                    x-text="diskLookupText()"></p>
