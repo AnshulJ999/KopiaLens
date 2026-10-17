@@ -655,8 +655,9 @@ def _send_sigterm(proc) -> bool:
 
 def _send_ctrl_break(proc) -> bool:
     """Try to deliver a real CTRL_BREAK to the child's own console - the graceful path that
-    kopia's create/mount/migrate handlers respond to. Returns False when undeliverable, which
-    is ALWAYS under pythonw (AttachConsole fails with err 6; verified 2026-09-09), so the
+    kopia's create/mount/migrate handlers respond to. The event goes to kopia's own process group
+    (jobs start it with CREATE_NEW_PROCESS_GROUP): group 0 would reach every process on that
+    console, the server included, which then exits. Returns False when undeliverable, so the
     caller terminates instead. Wrapped so the console dance can never take the server down."""
     import sys
     if sys.platform != "win32":
@@ -668,7 +669,7 @@ def _send_ctrl_break(proc) -> bool:
         ok = False
         if k.AttachConsole(int(proc.pid)):
             k.SetConsoleCtrlHandler(None, True)  # ignore the event ourselves
-            ok = bool(k.GenerateConsoleCtrlEvent(1, 0))  # 1 = CTRL_BREAK_EVENT, 0 = that console
+            ok = bool(k.GenerateConsoleCtrlEvent(1, int(proc.pid)))  # 1 = CTRL_BREAK_EVENT, to kopia's group only
             k.SetConsoleCtrlHandler(None, False)
             k.FreeConsole()
             k.AttachConsole(-1)  # back to our parent's console (dev mode); fails harmlessly under pythonw
