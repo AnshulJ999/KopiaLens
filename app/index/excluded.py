@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from config import REPOS, kopia_repos
 
 from ..core import paths as pathrules
-from ..core.disklookup import children as es_children, list_drives, recursive_count, recursive_size
+from ..core.disklookup import children as es_children, list_drives, mapping_for, quick_totals, recursive_count
 from .store import manifest_path, read_cursor
 
 
@@ -79,13 +79,23 @@ def _path_sql(fold: bool) -> str:
     return "lower(p.full_path)" if fold else "p.full_path"
 
 
-def kopia_backed_children(folder: str) -> dict[str, dict]:
+def _computer_sql(computer: str) -> tuple[str, str, list]:
+    """(join, condition, params) limiting ``pathx`` to one computer's backups; empty for any."""
+    if not computer:
+        return "", "", []
+    from .queries import _HOST_SQL
+    return "JOIN src s ON s.src_id = p.src_id", f" AND {_HOST_SQL} = ?", [computer.lower()]
+
+
+def kopia_backed_children(folder: str, computer: str = "") -> dict[str, dict]:
     """Per immediate child segment under `folder`, the backed-up (in_latest) coverage from BOTH
     kopia repos combined: {seg_lower: {logical bytes, files, has_file, last_seen, repos:set}}.
-    `logical` = kopia's stored file size (exact backed size, comparable to Everything's disk size)."""
+    `logical` = kopia's stored file size (exact backed size, comparable to Everything's disk size).
+    ``computer`` limits it to that computer's backups (a mapped network place)."""
     lo, hi, plen = _prefix_bounds(folder)
     sep, fold = _rules(folder)
     path = _path_sql(fold)
+    join, cond, cparams = _computer_sql(computer)
     agg: dict[str, dict] = {}
     for repo in coverage_repos():
         cur = read_cursor(repo)
@@ -102,13 +112,13 @@ def kopia_backed_children(folder: str) -> dict[str, dict]:
                            any_value(split_part(substr({path}, ?), ?, 1)) AS seg,
                            any_value(instr(substr({path}, ?), ?) = 0) AS is_file,
                            max(p.size) AS sz, max(p.last_seen) AS ls
-                    FROM pathx p
-                    WHERE p.in_latest AND {path} >= ? AND {path} < ?
+                    FROM pathx p {join}
+                    WHERE p.in_latest AND {path} >= ? AND {path} < ?{cond}
                     GROUP BY {path}
                 )
                 GROUP BY seg
                 """,
-                [plen + 1, sep, plen + 1, sep, lo, hi],
+                [plen + 1, sep, plen + 1, sep, lo, hi, *cparams],
             ).fetchall()
         finally:
             cur.close()
@@ -189,18 +199,26 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
     """Combine the disk listing (es.exe) with backup coverage (index) for one folder. BACKED bytes
     are exact (index sum of in_latest sizes). EXCLUDED bytes are disk - backed (approximate by the
     changed/deleted-file drift; the backed-file COUNT helps tell drift from real exclusion). A
-    folder counts as 'backed' when its excluded fraction is below `tolerance` (cuts partial noise)."""
+    folder counts as 'backed' when its excluded fraction is below `tolerance` (cuts partial noise).
+    A folder inside a mapped place (Settings > Disk scanning) is compared with its backed-up path."""
     sep, fold = _rules(folder)
     ckey = (_key(folder, fold), tolerance)
     cached = _list_cache_get(ckey)
     if cached and time.time() - cached[0] < _LIST_TTL:
         return cached[1]  # repeated navigation is instant (within TTL)
     disk = es_children(folder)
-    backed = backed_children(folder)
+    mapped = mapping_for(folder)
+    if mapped:
+        # Another computer's files: its own path rules, and Backblaze (this PC only) doesn't apply.
+        backed = kopia_backed_children(mapped["backup_folder"], mapped["computer"])
+        ifold = _rules(mapped["backup_folder"])[1]
+    else:
+        backed = backed_children(folder)
+        ifold = fold
     newest = _newest_snapshot()
     items: list[dict] = []
     for d in disk:
-        seg = _key(d["name"], fold)
+        seg = _key(d["name"], ifold)
         b = backed.get(seg)
         repos = sorted(b["repos"]) if b else []
         repo_label = "+".join(repos) if repos else ""  # N backends: e.g. "1", "1+2", "bz", "1+2+bz"
@@ -213,9 +231,11 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
             excl = max(0, db - bb)
             frac = (excl / db) if db else 0
             status = "excluded" if bb == 0 else ("backed" if frac <= tolerance else "partial")
+            if d["size"] is None:
+                status, excl, frac = "counting", 0, 0
             items.append({
                 "name": d["name"], "is_dir": True, "disk_bytes": db, "backed_bytes": bb,
-                "excluded_bytes": excl, "pct_excluded": round(frac * 100, 1),
+                "excluded_bytes": excl, "pct_excluded": None if status == "counting" else round(frac * 100, 1),
                 "backed_files": b["files"] if b else 0, "last_backed": last_backed,
                 "repo": repo_label, "bz_backed_bytes": bz_b, "bz_backed_files": bz_f,
                 "status": status, "mtime": d["mtime"],
@@ -239,6 +259,8 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
     dirs = [it for it in items if it["is_dir"]]
 
     def _cnt(it):
+        if it["status"] == "counting":
+            return None   # already queued for a background count
         return recursive_count(base + sep + it["name"])  # None when the disk lookup could not count
 
     counts = list(ThreadPoolExecutor(max_workers=16).map(_cnt, dirs)) if dirs else []
@@ -256,8 +278,11 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
         "total_excluded": sum(i["excluded_bytes"] for i in items),
         "total_backed": sum(i["backed_bytes"] for i in items),
         "count": len(items),
+        "counting": sum(1 for i in items if i["status"] == "counting"),
+        "backed_up_as": ({"path": mapped["backup_folder"], "computer": mapped["computer"]} if mapped else None),
     }
-    _list_cache_put(ckey, (time.time(), result))
+    if not result["counting"]:   # a listing still being counted is asked again shortly
+        _list_cache_put(ckey, (time.time(), result))
     return result
 
 
@@ -276,27 +301,28 @@ def _generation_key() -> tuple:
     return tuple(out)
 
 
-def _drive_backed(p: str, gen: tuple) -> tuple[int, int]:
-    hit = _DRIVE_BACKED.get(p)
+def _drive_backed(p: str, gen: tuple, computer: str = "") -> tuple[int, int]:
+    hit = _DRIVE_BACKED.get((p, computer))
     if hit and hit[0] == gen:
         return hit[1]
     lo, hi, _plen = _prefix_bounds(p)
     path = _path_sql(_rules(p)[1])
+    join, cond, cparams = _computer_sql(computer)
     bs = bc = 0
     for repo in coverage_repos():
         cur = read_cursor(repo)
         try:
             row = cur.execute(
-                f"SELECT sum(sz), count(*) FROM (SELECT max(p.size) AS sz FROM pathx p "
-                f"WHERE p.in_latest AND {path} >= ? AND {path} < ? GROUP BY {path})",
-                [lo, hi],
+                f"SELECT sum(sz), count(*) FROM (SELECT max(p.size) AS sz FROM pathx p {join} "
+                f"WHERE p.in_latest AND {path} >= ? AND {path} < ?{cond} GROUP BY {path})",
+                [lo, hi, *cparams],
             ).fetchone()
         finally:
             cur.close()
         bs += int(row[0] or 0)
         bc += int(row[1] or 0)
     if all(mt is not None for _r, mt in gen):
-        _DRIVE_BACKED[p] = (gen, (bs, bc))
+        _DRIVE_BACKED[(p, computer)] = (gen, (bs, bc))
     return bs, bc
 
 
@@ -317,14 +343,23 @@ def drive_stats() -> list[dict]:
 
     def _one(d: dict) -> dict:
         p = d["path"]
-        ts, tc = recursive_size(p), recursive_count(p)
-        bs, bc = _drive_backed(p, gen)
-        bzf, bzb = bz_by_letter.get(p[:1].upper(), (0, 0))
+        ts, tc = quick_totals(p)   # never waits: a drive still being counted says so
+        place = d.get("place")
+        mapped = mapping_for(p) if place else None
+        if mapped:
+            bs, bc = _drive_backed(mapped["backup_folder"], gen, mapped["computer"])
+            bzf = bzb = 0
+        else:
+            bs, bc = _drive_backed(p, gen)
+            bzf, bzb = bz_by_letter.get(p[:1].upper(), (0, 0)) if not place else (0, 0)
         return {
             "path": p, "used": d["used"], "total_size": ts, "total_files": tc,
+            "counting": ts is None,
             "backed_bytes": bs, "backed_files": bc,
             "excluded_bytes": max(0, (ts or 0) - bs), "excluded_files": max(0, (tc or 0) - bc),
             "bz_backed_bytes": bzb, "bz_backed_files": bzf,
+            "place": bool(place),
+            "backed_up_as": ({"path": mapped["backup_folder"], "computer": mapped["computer"]} if mapped else None),
         }
 
     return list(ThreadPoolExecutor(max_workers=8).map(_one, drives)) if drives else []

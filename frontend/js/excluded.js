@@ -1,7 +1,7 @@
-// Excluded browser: disk coverage gaps vs both repos (Everything es.exe disk side).
+// Excluded browser: disk coverage gaps vs both repos (the disk lookup's side: Everything or the scanner).
 const excludedPart = {
 
-    // ---- Excluded browser (local-disk coverage gaps vs both repos; es.exe disk side) ----
+    // ---- Excluded browser (disk coverage gaps vs both repos) ----
     async loadExcluded() {
       if (!this.excludedDrives.length) {
         const d = await getJson("/api/excluded/drives").catch(() => null);
@@ -10,11 +10,18 @@ const excludedPart = {
       if (this.excludedPath) return this.listExcluded(this.excludedPath);
       this.renderExcludedDrives();
     },
+    // A drive or place still being counted is asked again until it has its size.
+    _excludedAgain(fn) {
+      clearTimeout(this._excludedTimer);
+      this._excludedTimer = setTimeout(fn, 8000);
+    },
     renderExcludedDrives() {
       this.excludedPath = "";
-      this.excludedMeta = this.excludedOk ? countOf(this.excludedDrives.length, "drive") : "Disk lookup is not available";
+      this._excludedAs = null;
+      this.excludedMeta = this.excludedOk ? countOf(this.excludedDrives.length, "location") : "Disk lookup is not available";
       this.renderExcluded(this.excludedDrives.map((dr) => ({
         name: dr.path.replace(/\\$/, ""), path: dr.path, is_dir: true, status: "drive",
+        counting: !!dr.counting, backed_up_as: dr.backed_up_as || null,
         total_size: dr.total_size || 0, disk_bytes: dr.total_size || 0,
         backed_bytes: dr.backed_bytes || 0, excluded_bytes: dr.excluded_bytes || 0,
         pct_excluded: dr.total_size ? Math.round((dr.excluded_bytes / dr.total_size) * 1000) / 10 : null,
@@ -22,35 +29,84 @@ const excludedPart = {
         bz_backed_bytes: dr.bz_backed_bytes || 0, bz_backed_files: dr.bz_backed_files || 0,
         last_backed: "", repo: "", mtime: "",
       })));
+      if (this.excludedDrives.some((dr) => dr.counting)) {
+        this._excludedAgain(async () => {
+          if (this.active !== "excluded" || this.excludedPath) return;
+          const d = await getJson("/api/excluded/drives").catch(() => null);
+          if (!d || this.excludedPath) return;
+          this.excludedDrives = d.drives || [];
+          this.renderExcludedDrives();
+        });
+      }
     },
     excludedNav(path) { if (!path) return this.renderExcludedDrives(); this.listExcluded(path); },
-    async listExcluded(path) {
+    async listExcluded(path, quiet = false) {
       const seq = ++this._excludedSeq;
       this.excludedPath = path;
-      await this.wrap(async () => {
+      const load = async () => {
         const r = await getJson(`/api/excluded/list?path=${encodeURIComponent(path)}`);
         if (seq !== this._excludedSeq) return;  // a newer navigation superseded this one
-        this.excludedMeta = `${countOf(r.count, "item")} · ${fmtBytes(r.total_excluded)} not backed up`;
+        this._excludedAs = r.backed_up_as || null;
+        const as = r.backed_up_as ? ` · backed up as ${r.backed_up_as.path}${r.backed_up_as.computer ? " on " + r.backed_up_as.computer : ""}` : "";
+        this.excludedMeta = `${countOf(r.count, "item")} · ${fmtBytes(r.total_excluded)} not backed up${as}`;
         this.renderExcluded(r.items || []);
-      }, "Listing (Everything)…");
+        if (r.counting) {
+          this._excludedAgain(() => {
+            if (this.active === "excluded" && this.excludedPath === path) this.listExcluded(path, true);
+          });
+        }
+      };
+      if (quiet) return load().catch(() => {});
+      await this.wrap(load, "Listing…");
     },
     excludedRowOpen(row) {
       if (row.status === "drive") return this.listExcluded(row.path);
       if (!row.is_dir) return;
       this.listExcluded(joinPath(this.excludedPath, row.name));
     },
+    // The drive or added place a folder sits in (the longest match), so the path bar starts there.
+    _excludedRoot(path) {
+      const t = trimSep(path || "");
+      let best = null;
+      for (const d of this.excludedDrives) {
+        const r = trimSep(d.path);
+        const s = pathSep(r);
+        const fold = s === "\\";
+        const a = fold ? t.toLowerCase() : t;
+        const b = fold ? r.toLowerCase() : r;
+        const inside = a === b || a.startsWith(b.endsWith(s) ? b : b + s);
+        if (inside && (!best || r.length > trimSep(best.path).length)) best = d;
+      }
+      return best;
+    },
     excludedUp() {
       const p = trimSep(this.excludedPath || "");
       if (!p) return;
+      const root = this._excludedRoot(p);
+      if (root) {
+        const r = trimSep(root.path);
+        if (r === p) return this.renderExcludedDrives();
+        const up = p.slice(0, p.lastIndexOf(pathSep(p)));
+        return this.listExcluded(up.length <= r.length ? root.path : up);
+      }
       if (/^[A-Za-z]:$/.test(p) || p === "/") return this.renderExcludedDrives();
       if (pathSep(p) === "/") return this.listExcluded(parentPath(p));
       const idx = p.lastIndexOf("\\");
       this.listExcluded(idx <= 2 ? p.slice(0, 2) + "\\" : p.slice(0, idx));
     },
     excludedCrumbs() {
-      const out = [{ label: "This PC", path: "" }];
+      const out = [{ label: "Locations", path: "" }];
       if (!this.excludedPath) return out;
       const p = trimSep(this.excludedPath);
+      const root = this._excludedRoot(p);
+      if (root) {
+        const r = trimSep(root.path);
+        const s = pathSep(r);
+        out.push({ label: r, path: root.path });
+        let at = r === s ? "" : r;
+        p.slice(r.length).split(s).filter(Boolean).forEach((seg) => { at += s + seg; out.push({ label: seg, path: at }); });
+        return out;
+      }
       if (pathSep(p) === "/") {
         out.push({ label: "/", path: "/" });
         let at = "";
@@ -71,19 +127,26 @@ const excludedPart = {
       const items = (this._excludedItems || []).filter((it) => {
         if (f === "all" || it.status === "drive") return true;
         if (f === "backed") return it.status === "backed" || it.status === "partial";
-        return it.status !== "backed";  // "Not backed up" view = excluded / partial / new
+        return it.status !== "backed";  // "Not backed up" view = excluded / partial / new / counting
       });
       const pill = (s) => {
-        const m = { backed: ["var(--ok-bg)", "var(--ok)", "backed up"], excluded: ["var(--danger-bg)", "var(--danger)", "NOT backed up"], partial: ["var(--warn-bg)", "var(--warn)", "partial"], new: ["var(--accent-bg)", "var(--accent)", "new (not yet)"], drive: ["var(--surface2)", "var(--muted)", "drive"] };
+        const m = { backed: ["var(--ok-bg)", "var(--ok)", "backed up"], excluded: ["var(--danger-bg)", "var(--danger)", "NOT backed up"], partial: ["var(--warn-bg)", "var(--warn)", "partial"], new: ["var(--accent-bg)", "var(--accent)", "new (not yet)"], drive: ["var(--surface2)", "var(--muted)", "drive"], counting: ["var(--surface2)", "var(--muted)", "counting…"] };
         const [bg, fg, label] = m[s] || ["var(--surface2)", "var(--muted)", s];
         return `<span class="pill" style="background:${bg};color:${fg}">${label}</span>`;
       };
+      const counting = (c) => c.getRow().getData().counting || c.getRow().getData().status === "counting";
       const bytes = (c) => c.getValue() ? fmtBytes(c.getValue()) : "";
+      const total = (c) => counting(c) ? "<span style='color:var(--muted)'>Counting…</span>" : bytes(c);
       const num = (c) => c.getValue() ? Number(c.getValue()).toLocaleString(NUM_LOCALE) : "";
+      const name = (c) => {
+        const d = c.getRow().getData();
+        const as = d.backed_up_as ? `<span style="color:var(--muted)"> · backed up as ${escHtml(d.backed_up_as.path)}${d.backed_up_as.computer ? " on " + escHtml(d.backed_up_as.computer) : ""}</span>` : "";
+        return itemIconHtml(c.getValue(), d.is_dir) + escHtml(c.getValue()) + as;
+      };
       const cols = [
-        { title: "Name", field: "name", widthGrow: 4, minWidth: 220, formatter: (c) => itemIconHtml(c.getValue(), c.getRow().getData().is_dir) + escHtml(c.getValue()) },
+        { title: "Name", field: "name", widthGrow: 4, minWidth: 220, formatter: name },
         { title: "Status", field: "status", width: 115, formatter: (c) => pill(c.getValue()) },
-        { title: "Total", field: "total_size", width: 90, hozAlign: "right", sorter: "number", formatter: bytes },
+        { title: "Total", field: "total_size", width: 90, hozAlign: "right", sorter: "number", formatter: total },
         { title: "Backed Up", field: "backed_bytes", width: 105, hozAlign: "right", sorter: "number", formatter: bytes },
         { title: "Excluded", field: "excluded_bytes", width: 95, hozAlign: "right", sorter: "number", formatter: bytes },
         { title: "% Excl", field: "pct_excluded", width: 70, hozAlign: "right", sorter: "number", formatter: (c) => c.getValue() != null ? c.getValue() + "%" : "" },
@@ -105,7 +168,7 @@ const excludedPart = {
           { label: "Details", action: (_e, row) => this.openExcludedDetail(row.getData()) },
           { label: "Back this up…", action: (_e, row) => this.excludedInclude(row.getData()) },
           this.wmItem({ label: "Exclude…", action: (_e, row) => this.excludedExclude(row.getData()) }, "non_destructive"),
-          { label: "Policy…", action: (_e, row) => this.polPopFor("", this._excludedPath(row.getData())) },
+          { label: "Policy…", action: (_e, row) => this.polPopFor("", this._excludedBackupPath(row.getData())) },
           { label: "Copy path", action: (_e, row) => this.copyText(this._excludedPath(row.getData())) },
         ],
       });
@@ -113,6 +176,11 @@ const excludedPart = {
     _excludedPath(row) {
       if (row.status === "drive") return row.path;
       return joinPath(this.excludedPath, row.name);
+    },
+    // The same item as the backups name it: an added place can be backed up under another path.
+    _excludedBackupPath(row) {
+      if (row.status === "drive") return row.backed_up_as ? row.backed_up_as.path : row.path;
+      return this._excludedAs ? joinPath(this._excludedAs.path, row.name) : this._excludedPath(row);
     },
     async excludedInclude(row) {
       const path = this._excludedPath(row);
@@ -127,7 +195,7 @@ const excludedPart = {
       // The real Exclude dialog, not clipboard text: it resolves the backups holding the path and
       // writes the rule through the same review as everywhere else.
       if (row.status === "drive") { this.klNotify("Open a folder or file first - a whole drive is not a rule target.", "warn"); return; }
-      const path = this._excludedPath(row);
+      const path = this._excludedBackupPath(row);
       this.showExcludedDetail = false;
       this.openExclude({ kind: row.is_dir ? "folder" : "file", path });
     },

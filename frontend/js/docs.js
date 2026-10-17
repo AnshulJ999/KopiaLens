@@ -11,6 +11,7 @@ const SETTINGS_DOCS = {
   encryption: ["encryption"], remote: ["remote-access"], licence: ["licensing"], updates: ["usage-stats"],
   general: ["settings", "general"], appearance: ["settings", "appearance"], desktop: ["settings", "desktop-app"],
   indexing: ["settings", "indexing"], refresh: ["settings", "indexing"], backblaze: ["settings", "backblaze"],
+  diskscan: ["disk-scanning"],
   writemode: ["settings", "permissions"], tokens: ["api-tokens"], backups: ["settings", "config"], advanced: ["settings", "advanced"],
   about: ["settings", "about"],
 };

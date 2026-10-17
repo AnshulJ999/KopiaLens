@@ -368,7 +368,7 @@ def smoke_portable(zip_path: str, version: str) -> None:
     app_dir = os.path.join(root, "KopiaLens")
     port, ctl = free_port(), free_port()
     env = {**os.environ, "KOPIALENS_PORT": str(port), "KOPIALENS_TRAY_PORT": str(ctl),
-           "KOPIALENS_SINGLE_INSTANCE": "0"}
+           "KOPIALENS_SINGLE_INSTANCE": "0", "KOPIALENS_CONTROL_API": "1"}
     for k in ("KOPIALENS_DATA_DIR", "KOPIALENS_CONFIG_DIR", "KOPIALENS_HOME", "KOPIALENS_REPOS_FILE"):
         env.pop(k, None)
     proc = subprocess.Popen([os.path.join(app_dir, "KopiaLens.exe"), "--hidden"], cwd=app_dir, env=env)
@@ -494,6 +494,16 @@ def step_stage() -> None:
                 needs = sorted(set(re.findall(rb"(?i)(?:vcruntime|msvcp)\d+[a-z0-9_]*\.dll", fh.read())))
             if needs:
                 fail(f"bin/{name}.exe needs {b', '.join(needs).decode()}, which a fresh Windows doesn't have")
+    # The disk scanner sits next to the server program, where core/disklookup looks for it.
+    scanner_target = os.path.join(BUILD_ROOT, "scanner-target")
+    run(["cargo", "build", "--release", "--manifest-path", os.path.join(KL_ROOT, "shell", "disk-scanner", "Cargo.toml")],
+        KL_ROOT, "scanner.log",
+        {"CARGO_TARGET_DIR": scanner_target, **({"RUSTFLAGS": "-C target-feature=+crt-static"} if WINDOWS else {})})
+    scanner = os.path.join(server, "kopialens-scan" + EXE)
+    shutil.copy2(os.path.join(scanner_target, "release", "kopialens-scan" + EXE), scanner)
+    probe = subprocess.run([scanner, "--version"], capture_output=True, text=True, timeout=30)
+    if probe.returncode != 0:
+        fail(f"kopialens-scan --version failed ({probe.returncode}): {probe.stderr.strip()[:200]}")
     if WINDOWS:
         # Logo icons for desktop shortcuts (Properties > Change Icon); built by build_logos.py.
         shutil.copytree(os.path.join(SHELL, "icons", "shortcuts"), os.path.join(STAGE, "icons"))

@@ -9,14 +9,15 @@ The Excluded tab compares what is on your disks with what your backups hold. It 
 A file counts as backed up when the latest snapshot of any repository holds it. So a file that only an old snapshot holds counts as not backed up.
 
 - It checks the disks of the computer running KopiaLens. On Windows, that's the local fixed drives. On Linux, macOS and in Docker, it's the mounted folders a user could back up. System folders such as `/proc` and KopiaLens's own data folder are left out.
+- It also checks the places you add in **Settings → Disk scanning**, such as a network share of another computer ([Check other places](disk-scanning.md#check-other-places)).
 - Every kopia repository counts, unless you turn off **Counts as a backup** for it in **Settings → Repositories**. Turn it off for a test repository, so it doesn't make folders look backed up.
 - Backblaze Personal Backup doesn't count, but the **Also in BZ** column shows what it holds of each folder.
 
-To read the disk, KopiaLens uses the **Disk lookup** setting in **Settings → Advanced**. On Windows, Automatic uses Everything (a free file index by voidtools) when it's running, which answers at once. Otherwise KopiaLens scans the folder. A scan that takes longer than the **Folder scan time limit** (15 seconds by default) shows the size as not measured.
+To read the disk, KopiaLens uses the **Read the disk with** setting in **Settings → Disk scanning**. On Windows, Automatic uses Everything (a free file index by voidtools) when it's running, which answers at once. Otherwise the KopiaLens scanner counts the folder. A folder that takes longer than the **Scan time limit** (15 seconds by default) shows **Counting…** and fills in when the count is ready ([Disk scanning](disk-scanning.md)).
 
 ## Browse
 
-The tab opens on **This PC**, with one row per drive or mounted folder. Double-click a folder to open it, or use the path above the table to go back. **↑** goes up one level.
+The tab opens on **Locations**, with one row per drive, mounted folder or added place. Double-click a folder to open it, or use the path above the table to go back. **↑** goes up one level.
 
 The buttons at the top filter the list:
 
@@ -29,7 +30,7 @@ The buttons at the top filter the list:
 | Column | What it means |
 |---|---|
 | **Name** | The folder or file |
-| **Status** | **backed up**, **NOT backed up**, **partial** (part of the folder is excluded), or **new (not yet)**: changed after the latest snapshot, so the next snapshot will hold it |
+| **Status** | **backed up**, **NOT backed up**, **partial** (part of the folder is excluded), **new (not yet)**: changed after the latest snapshot, so the next snapshot will hold it, or **counting…**: its size isn't counted yet |
 | **Total** | Its size on disk |
 | **Backed Up**, **Excluded** | How much of it is backed up and how much isn't |
 | **% Excl** | The share that isn't backed up |
@@ -39,7 +40,7 @@ The buttons at the top filter the list:
 | **Also in BZ** | How much of it Backblaze holds |
 | **Modified** | When it last changed on disk |
 
-A folder counts as backed up when only a small share of it is excluded. The share is set by **Excluded-folder tolerance** in **Settings → Advanced**. It cuts noise from folders where only a few small files are left out.
+A folder counts as backed up when only a small share of it is excluded. The share is set by **Excluded-folder tolerance** in **Settings → Disk scanning**. It cuts noise from folders where only a few small files are left out.
 
 ## What you can do
 
@@ -53,8 +54,8 @@ Right-click a row:
 
 ## Limits
 
-- Only the computer running KopiaLens is checked. Folders that other computers back up into the same repository can't be compared.
-- On Windows, network drives and removable drives aren't listed.
+- Another computer's folders are checked only through a place you add, such as its network share ([Check other places](disk-scanning.md#check-other-places)).
+- On Windows, network drives and removable drives aren't listed as drives. Add a network share as a place instead.
 
 ## Related
 

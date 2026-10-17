@@ -55,6 +55,12 @@ const settingsPart = {
         this.usageStats = kl.usage_stats !== false;
         this.diskLookupMode = ["auto", "everything", "scan", "off"].includes(kl.disk_lookup) ? kl.disk_lookup : "auto";
         this.diskScanBudget = Number(kl.disk_scan_budget || 15);
+        this.diskScanThreads = Number(kl.disk_scan_threads || 0);
+        this.diskScanBackground = kl.disk_scan_background !== false;
+        this.diskCacheMinutes = Number(kl.disk_cache_minutes ?? 5);
+        this.diskShowLocal = kl.disk_show_local !== false;
+        this.diskPlaces = Array.isArray(kl.disk_paths) ? kl.disk_paths.filter((p) => p && p.path) : [];
+        this.diskPlaceForm = null;
         this.folderPicker = ["auto", "native", "browser"].includes(kl.folder_picker) ? kl.folder_picker : "auto";
         this.mountDir = kl.mount_dir || "";
         this.mountHostPath = kl.mount_host_path || "";
@@ -91,7 +97,7 @@ const settingsPart = {
       this.folderPrewarmBudget = Number(kl.folder_prewarm_budget ?? 900);
       this.startupDelay = Number(kl.startup_delay ?? 300);
       this.debugLog = kl.debug_log === true;
-      this.controlApi = kl.control_api !== false;
+      this.controlApi = kl.control_api === true;
       this.appPort = Number(kl.port || 7123);
       this.controlPort = Number(kl.control_port || 7124);
       this.savedPorts = { port: this.appPort, control_port: this.controlPort };
@@ -143,6 +149,10 @@ const settingsPart = {
       listing_backend: { s: "backend", top: true, t: "choice", of: ["subprocess", "server"], restart: true },
       disk_lookup: { s: "diskLookupMode", t: "choice", of: ["auto", "everything", "scan", "off"] },
       disk_scan_budget: { s: "diskScanBudget", t: "int", min: 1 },
+      disk_scan_threads: { s: "diskScanThreads", t: "int", min: 0, max: 64 },
+      disk_scan_background: { s: "diskScanBackground", t: "bool" },
+      disk_cache_minutes: { s: "diskCacheMinutes", t: "int", min: 0 },
+      disk_show_local: { s: "diskShowLocal", t: "bool" },
       folder_picker: { s: "folderPicker", t: "choice", of: ["auto", "native", "browser"] },
       mount_dir: { s: "mountDir", t: "str" },
       mount_host_path: { s: "mountHostPath", t: "str" },
@@ -239,6 +249,47 @@ const settingsPart = {
 
     // Save ONE key on change. The payload never carries a value the user did not touch, so a
     // save cannot stamp a browser-side default over a setting that was resolved elsewhere.
+    // Settings > Disk scanning: other places to check (a share, a mounted folder), optionally
+    // backed up under another path on another computer. The list saves as one value.
+    diskPlaceAdd() {
+      this.diskPlaceForm = { index: -1, path: "", backup_path: "", computer: "", error: "" };
+      this._loadDiskComputers();
+    },
+    diskPlaceEdit(i) {
+      const pl = this.diskPlaces[i];
+      this.diskPlaceForm = { index: i, path: pl.path, backup_path: pl.backup_path || "", computer: pl.computer || "", error: "" };
+      this._loadDiskComputers();
+    },
+    _loadDiskComputers() {
+      if (this._diskComputers) return;
+      getJson("/api/disk-lookup/computers").then((r) => { this._diskComputers = r.computers || []; }).catch(() => {});
+    },
+    diskPlaceComputers() { return this._diskComputers || []; },
+    async _saveDiskPlaces(list) {
+      await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kopialens: { disk_paths: list } }) });
+      this.diskPlaces = list;
+      this.excludedDrives = [];   // the Excluded tab re-reads its locations
+      getJson("/api/disk-lookup?refresh=true").then((s) => { this.diskLookup = s; }).catch(() => {});
+    },
+    async diskPlaceSave() {
+      const f = this.diskPlaceForm;
+      const entry = { path: f.path.trim(), backup_path: f.backup_path.trim(), computer: f.computer.trim() };
+      const clash = this.diskPlaces.findIndex((p, i) => i !== f.index && p.path.toLowerCase() === entry.path.toLowerCase());
+      if (clash >= 0) { f.error = "That place is already in the list."; return; }
+      const list = this.diskPlaces.slice();
+      if (f.index >= 0) list[f.index] = entry; else list.push(entry);
+      try {
+        await this._saveDiskPlaces(list);
+        this.diskPlaceForm = null;
+        this.klNotify(f.index >= 0 ? "Place saved" : "Place added");
+      } catch (e) { f.error = e.message || String(e); }
+    },
+    async diskPlaceRemove(i) {
+      const list = this.diskPlaces.filter((_p, j) => j !== i);
+      try { await this._saveDiskPlaces(list); this.klNotify("Place removed"); }
+      catch (e) { this.error = e.message || String(e); }
+    },
     saveKl(key) {
       const f = this.KL_FIELDS[key];
       if (!f) return;

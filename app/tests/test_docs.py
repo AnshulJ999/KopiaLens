@@ -163,6 +163,12 @@ def _worker_threads():
     return store.WORKER_THREADS
 
 
+def _scanner_threads():
+    """The disk scanner's automatic thread cap (shell/disk-scanner)."""
+    src = (Path(__file__).resolve().parents[2] / "shell" / "disk-scanner" / "src" / "main.rs").read_text(encoding="utf-8")
+    return int(re.search(r"available_parallelism\(\)[^;]*\.min\((\d+)\)", src).group(1))
+
+
 def _all_repos_depth():
     from app.api import search
     return search._ALL_REPOS_DEPTH
@@ -214,8 +220,11 @@ DEFAULTS = [
     ("settings.md", r"\*\*Quick refresh\*\* \| (\d+) minutes", _kl_in("light_interval", 60)),
     ("settings.md", r"\*\*Dashboard auto-refresh\*\* \| (\d+) minutes", _kl_in("dashboard_refresh", 60)),
     ("settings.md", r"\*\*Dashboard rebuild interval\*\* \| (\d+) hours", _kl_in("dashboard_interval", 3600)),
-    ("settings.md", r"\*\*Folder scan time limit\*\* \| (\d+) seconds", _kl("disk_scan_budget")),
-    ("settings.md", r"\*\*Excluded-folder tolerance\*\* \| (\d+)%", _kl_in("excluded_tolerance", 0.01)),
+    ("disk-scanning.md", r"\*\*Scan time limit\*\* \| (\d+) seconds", _kl("disk_scan_budget")),
+    ("disk-scanning.md", r"\*\*Scan time limit\*\* \((\d+) seconds by default\)", _kl("disk_scan_budget")),
+    ("disk-scanning.md", r"\*\*Excluded-folder tolerance\*\* \| (\d+)%", _kl_in("excluded_tolerance", 0.01)),
+    ("disk-scanning.md", r"\*\*Reuse folder sizes for\*\* \| (\d+) minutes", _kl("disk_cache_minutes")),
+    ("disk-scanning.md", r"Automatic uses up to (\d+)", _scanner_threads),
     ("settings.md", r"\*\*Indexing time limit\*\* \| (\d+) hours", _kl_in("index_worker_timeout", 3600)),
     ("settings.md", r"\*\*First index time limit\*\* \| (\d+) hours", _kl_in("index_first_timeout", 3600)),
     ("settings.md", r"unreachable repository after\*\* \| (\d+) minutes", _kl_in("index_wait_unreachable", 60)),

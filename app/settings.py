@@ -9,7 +9,7 @@ import time
 from copy import deepcopy
 from typing import Any
 
-from config import SETTINGS_FILE
+from config import COMPILED, SETTINGS_FILE
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
@@ -103,6 +103,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "es_path": "",               # Everything CLI for the Excluded browser; "" = find it (core/everything.es_path)
         "disk_lookup": "auto",       # what answers disk questions: auto | everything | scan | off
         "disk_scan_budget": 15,      # seconds one folder scan may take before it answers "not measured"
+        "disk_scan_threads": 0,      # scanner threads; 0 = automatic (up to 8). Lower it for hard disks and network shares
+        "disk_scan_background": True,  # keep counting a folder that ran out of time, for the next look
+        "disk_cache_minutes": 5,     # how long a counted folder's size is reused
+        "disk_show_local": True,     # the Excluded tab lists this computer's own drives (off for a server that only checks shares)
+        "disk_paths": [],            # extra places to scan: [{path, backup_path, computer}] (core/disklookup.places)
         "folder_picker": "auto",     # Browse... in a browser: auto (= in-app list) | native (Windows dialog, this PC only) | browser; see core/host.py
         "mount_dir": "",             # Linux/macOS snapshot mounts go under this folder; "" = <data>/mounts (env KOPIALENS_MOUNT_DIR wins)
         "mount_host_path": "",       # Docker: the host folder mapped to mount_dir, shown instead of the container path
@@ -122,7 +127,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "update_check": True,        # daily check for a newer version (docs/usage-stats.md)
         "usage_stats": True,         # anonymous usage stats sent with that check
         "debug_log": False,          # also write data/logs/kopialens-debug.log at DEBUG (env KOPIALENS_DEBUG_LOG overrides)
-        "control_api": True,         # the tray's local control port (restart/quit/status for scripts); read at tray start
+        # The desktop app's local control port (restart/quit/status for scripts and agents), read
+        # at its start: on in a source checkout, off in a released copy until turned on.
+        "control_api": not COMPILED,
         "port": 7123,                # the app's port, read at start by config.py and the desktop app (env KOPIALENS_PORT wins)
         "control_port": 7124,        # the tray's control port (env KOPIALENS_TRAY_PORT wins)
         "tray_click": "window",      # desktop app tray icon click: window | menu (right-click always shows the menu)

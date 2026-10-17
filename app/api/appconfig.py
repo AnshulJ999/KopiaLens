@@ -3,15 +3,12 @@
 
 from __future__ import annotations
 
-import json
 import os
 import platform
 import signal
 import sys
 import threading
 import time
-import urllib.error
-import urllib.request
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
@@ -45,14 +42,11 @@ def about() -> dict:
     }
 
 
-def _tray(path: str, method: str = "GET", timeout: float = 2.0) -> dict | None:
-    url = f"http://{config.TRAY_CONTROL_HOST}:{config.TRAY_CONTROL_PORT}{path}"
-    try:
-        req = urllib.request.Request(url, method=method, data=b"" if method == "POST" else None)
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, OSError, ValueError):
-        return None
+_restart_requested = False
+
+
+def restart_requested() -> bool:
+    return _restart_requested
 
 
 @router.get("/app/host")
@@ -64,34 +58,25 @@ def host_info(request: Request) -> dict:
 
 @router.post("/app/restart")
 def restart() -> dict:
-    """Ask the tray to restart KopiaLens. The tray answers only once the new server is up, so the
-    call is made after this reply has gone out. In Docker the server exits and the container's
-    restart rule starts it again."""
+    """Restart KopiaLens. Under the desktop app the request is held for its status poll (every few
+    seconds), which restarts this server; the control port is not needed. In Docker the server
+    exits and the container's restart rule starts it again."""
+    global _restart_requested
     from ..core import host
-    st = _tray("/status")
-    if st is not None and st.get("pid") != os.getpid():
-        # Another copy's desktop app holds the control port: never restart that one.
-        log.warning("restart requested: the desktop app on port %s runs another server (pid %s)",
-                    config.TRAY_CONTROL_PORT, st.get("pid"))
+    if os.environ.get("KOPIALENS_SHELL_TOKEN"):   # started by the desktop app
+        _restart_requested = True
+        log.info("restart requested: waiting for the desktop app to pick it up")
+        return {"ok": True}
+    if not host.in_docker():
         return {"ok": False, "reason": "no-tray"}
-    if st is None:
-        if not host.in_docker():
-            return {"ok": False, "reason": "no-tray"}
 
-        def _exit() -> None:
-            time.sleep(0.5)
-            log.warning("restart requested: exiting for the container to restart")
-            os.kill(os.getpid(), signal.SIGTERM)
-
-        threading.Thread(target=_exit, name="restart-request", daemon=True).start()
-        return {"ok": True, "how": "container"}
-
-    def _later() -> None:
+    def _exit() -> None:
         time.sleep(0.5)
-        _tray("/restart", "POST", timeout=90)
+        log.warning("restart requested: exiting for the container to restart")
+        os.kill(os.getpid(), signal.SIGTERM)
 
-    threading.Thread(target=_later, name="restart-request", daemon=True).start()
-    return {"ok": True}
+    threading.Thread(target=_exit, name="restart-request", daemon=True).start()
+    return {"ok": True, "how": "container"}
 
 
 # ---------------------------------------------------------------------------- pause indexing

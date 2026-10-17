@@ -130,7 +130,11 @@ def test_folder_browser_hides_windows_hidden_and_system_folders(tmp_path):
 
 def test_restart_without_a_tray_exits_only_in_docker(monkeypatch):
     from app.api import appconfig
-    monkeypatch.setattr(appconfig, "_tray", lambda *a, **k: None)
+    monkeypatch.setattr(appconfig, "_restart_requested", False)
+    monkeypatch.setenv("KOPIALENS_SHELL_TOKEN", "launch-1")   # under the desktop app: held for its poll
+    assert appconfig.restart() == {"ok": True} and appconfig.restart_requested()
+    monkeypatch.setattr(appconfig, "_restart_requested", False)
+    monkeypatch.delenv("KOPIALENS_SHELL_TOKEN")
     monkeypatch.setattr(host, "in_docker", lambda: False)
     assert appconfig.restart() == {"ok": False, "reason": "no-tray"}
     started = []

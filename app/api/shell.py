@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from config import APP_VERSION, DATA_DIR
 from ..core import engine, jobs, netaccess
 from ..core.applog import LOG_DIR
+from . import appconfig
 from ..settings import load_settings, mutate_settings
 
 router = APIRouter(prefix="/shell")
@@ -28,7 +29,7 @@ PREFS = {
 def _prefs(kl: dict) -> dict:
     out = {k: (kl.get(k) if kl.get(k) in allowed else allowed[0]) for k, allowed in PREFS.items()}
     out["quit_indexing"] = "stop" if kl.get("quit_indexing") == "stop" else "finish"
-    out["control_api"] = kl.get("control_api") is not False
+    out["control_api"] = bool(kl.get("control_api"))
     return out
 
 
@@ -49,6 +50,7 @@ def state() -> dict:
         "repos": fresh["repos"], "pause": fresh["pause"], "jobs": recent,
         "access": netaccess.STARTED.get("mode") or netaccess.mode(),
         "update": _update(),
+        "restart_requested": appconfig.restart_requested(),
         "backups": _backups(),
         "alerts": engine.alerts()[-20:],
     }

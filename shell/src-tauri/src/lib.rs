@@ -38,6 +38,7 @@ pub(crate) fn shell(app: &AppHandle) -> Arc<Shell> {
 
 // The user's last tray or window action, for the freeze watchdog's log line.
 static LAST_ACTION: Mutex<String> = Mutex::new(String::new());
+static RESTARTING: AtomicBool = AtomicBool::new(false);
 
 /// One shell.log line per user action (a few a day): the trail before a freeze.
 pub fn note_action(app: &AppHandle, what: &str) {
@@ -327,6 +328,21 @@ pub fn poll_once(app: &AppHandle) {
             if v.get("update").and_then(|u| u.get("install_requested")).and_then(Value::as_bool) == Some(true) {
                 update::install(app);
             }
+            // "Restart" in the app (after restoring settings): held by the server until this sees it.
+            if v.get("restart_requested").and_then(Value::as_bool) == Some(true)
+                && !RESTARTING.swap(true, Ordering::SeqCst)
+            {
+                let app = app.clone();
+                thread::spawn(move || {
+                    let sh = shell(&app);
+                    sh.server.log("app: restart");
+                    if !sh.server.restart() {
+                        tray::toast(&app, "Restart failed", "KopiaLens didn't start again. Check the logs folder.");
+                    }
+                    RESTARTING.store(false, Ordering::SeqCst);
+                    poll_once(&app);
+                });
+            }
         }
         Err(_) => *sh.state.lock().unwrap() = None,
     }
@@ -350,7 +366,7 @@ fn tray_note_once(app: &AppHandle) {
 
 /// Starts the server, tray, control port, watchdog and status polling, then opens the window.
 fn launch(handle: &AppHandle, sh: &Arc<Shell>, hidden: bool) -> tauri::Result<()> {
-    let control = control::bind(sh);
+    let control = control::bind(handle, sh);
     sh.server.start();
     tray::create(handle, sh)?;
     control::spawn(handle.clone(), sh.clone(), control);

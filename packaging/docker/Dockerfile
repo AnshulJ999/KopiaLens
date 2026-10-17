@@ -22,6 +22,12 @@ ENV KOPIALENS_BUILD_OUT=/out
 RUN --mount=type=cache,target=/root/.cache/Nuitka \
     python packaging/build_server.py || (tail -40 /out/build.log; exit 1)
 
+# ---- the disk scanner (shell/disk-scanner) ----------------------------------------------------
+FROM rust:1-slim-${DEBIAN} AS scanner
+WORKDIR /src
+COPY shell/disk-scanner .
+RUN cargo build --release --locked && ./target/release/kopialens-scan --version
+
 # ---- kopia, checksum-verified ------------------------------------------------------------------
 FROM debian:${DEBIAN}-slim AS kopia
 ARG KOPIA_VERSION=0.23.1
@@ -42,6 +48,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/kopialens.dist /app
 COPY --from=kopia /kopia /app/kopia
+COPY --from=scanner /src/target/release/kopialens-scan /app/kopialens-scan
 COPY packaging/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh /app/kopia/kopia
 # The command line: docker exec <container> klens status

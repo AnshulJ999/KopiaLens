@@ -156,10 +156,6 @@ def _setting_port(key: str, default: int) -> int:
 HOST, PORT = "127.0.0.1", _env_port("KOPIALENS_PORT", _setting_port("port", 7123))
 GUARD_HOST = "127.0.0.1"                                                # single-instance guard probes loopback (a 0.0.0.0 bind includes it; connecting to 0.0.0.0 is unreliable on Windows)
 
-# Control API of the desktop app (shell/). Restart/quit live there, not in the server: a process
-# cannot kill itself and still answer the request that asked it to. Loopback only.
-TRAY_CONTROL_HOST, TRAY_CONTROL_PORT = "127.0.0.1", _env_port("KOPIALENS_TRAY_PORT", _setting_port("control_port", 7124))
-
 def save_records(store: dict, strict: bool = False) -> None:
     """Persist the record store (see app.core.repos). ``strict`` raises OSError instead of
     swallowing it - a user's add/edit/remove must not report success when nothing was saved."""

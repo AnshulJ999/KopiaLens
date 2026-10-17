@@ -31,6 +31,7 @@ KopiaLens can reach these Home Assistant folders:
 | `/homeassistant` | Read only |
 
 - A repository on a NAS works when its network share is added in Home Assistant under **Settings → System → Storage**. It then appears under `/share`, `/media` or `/backup`.
+- To check what your other computers leave out of their backups, add their shares the same way, then add each one as a place in **Settings → Disk scanning** ([Check other places](disk-scanning.md#in-home-assistant)).
 - Cloud repositories (S3, B2, SFTP and the others) need no folder.
 
 Add repositories in first-time setup or in **Settings → Repositories** ([Repositories](repositories.md)).

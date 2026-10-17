@@ -187,11 +187,15 @@ document.addEventListener("alpine:init", () => {
     polMulti: { on: false, picked: [], fields: {}, plan: null, ticks: {}, busy: false }, _polMultiSeq: 0, _polMultiTimer: null,
     versionSizes: {}, _versionSeq: 0, _versionTimer: null,
     diskLookup: null, diskLookupMode: "auto", diskScanBudget: 15,
+    diskScanThreads: 0, diskScanBackground: true, diskCacheMinutes: 5, diskShowLocal: true, diskPlaces: [], diskPlaceForm: null, _diskComputers: null,
     diskLookupText() {
       const s = this.diskLookup;
       if (!s) return "";
       if (s.provider === "everything") return "In use: Everything.";
-      if (s.provider === "scan") return "In use: folder scan." + (s.everything && s.everything.supported && !s.everything.running ? (s.everything.installed ? " Everything is installed but not running." : " Everything is not installed.") : "");
+      if (s.provider === "scan") {
+        const what = s.scanner && s.scanner.found ? "In use: KopiaLens scanner." : "In use: basic folder scan. The KopiaLens scanner wasn't found.";
+        return what + (s.mode === "auto" && s.everything && s.everything.supported && !s.everything.running ? (s.everything.installed ? " Everything is installed but not running." : " Everything is not installed.") : "");
+      }
       return s.note || "Disk lookup is not available.";
     },
     // exclusion dialog: priced-before-commit pattern adder over the file/folder panels.

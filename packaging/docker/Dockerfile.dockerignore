@@ -8,6 +8,8 @@
 !frontend/
 !packaging/build_server.py
 !packaging/docker/entrypoint.sh
+!shell/disk-scanner/
+shell/disk-scanner/target
 app/tests
 app/backblaze/tests
 **/__pycache__

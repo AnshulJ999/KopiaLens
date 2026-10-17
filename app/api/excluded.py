@@ -30,6 +30,24 @@ def disk_lookup_status(refresh: bool = False) -> dict:
     return disklookup.status(refresh=refresh)
 
 
+@router.get("/disk-lookup/computers")
+def disk_lookup_computers() -> dict:
+    """Computers that appear in the backups, for Settings > Disk scanning's "On computer"."""
+    from ..core.sources import sources_index
+    from config import kopia_repos
+    found: set[str] = set()
+    for repo in kopia_repos():
+        try:
+            keys = sources_index(repo)
+        except Exception:  # noqa: BLE001 - an offline repository just adds no names
+            continue
+        for key in keys:
+            host = key.split(":", 1)[0].partition("@")[2]
+            if host:
+                found.add(host.lower())
+    return {"computers": sorted(found)}
+
+
 @router.get("/excluded/include-cmds")
 def include_cmds(path: str = "") -> dict:
     """Commands to ADD this path to Kopia (one per kopia repo). KopiaLens stays read-only on

@@ -81,6 +81,10 @@ These apply to the KopiaLens desktop app and its tray icon.
 | **Dashboard auto-refresh** | 15 minutes | How often an open Dashboard checks for new numbers |
 | **Dashboard rebuild interval** | 4 hours | With **Also rebuild during the day**: how often the size columns are rebuilt |
 
+## Disk scanning
+
+How KopiaLens reads your disks for the Excluded tab and rule previews, and the network shares and other places it checks. Every setting is on its own page: [Disk scanning](disk-scanning.md#settings).
+
 ## Backblaze
 
 | Setting | What it does |
@@ -128,15 +132,6 @@ Some changes affect who can get in or what KopiaLens may change: sign-in and rem
 
 These have sensible defaults. Change them when you have a reason.
 
-### Files on disk
-
-| Setting | Default | What it does |
-|---|---|---|
-| **Disk lookup** | Automatic | How KopiaLens reads what is on disk: for the Excluded tab, rule previews and space freed by maintenance. **Automatic** uses Everything when it runs, otherwise a folder scan. Or **Everything only**, **Folder scan**, **Off** |
-| **Folder scan time limit** | 15 seconds | A scan that takes longer answers "not measured" instead of making you wait |
-| **Everything (es.exe) path** | | Where `es.exe` is, if KopiaLens doesn't find it. Everything is a free Windows file index by voidtools, and it must be running |
-| **Excluded-folder tolerance** | 5% | In the Excluded tab, a folder counts as backed up when less than this share of it is excluded |
-
 ### Indexing
 
 | Setting | Default | What it does |
@@ -162,7 +157,7 @@ These have sensible defaults. Change them when you have a reason.
 | Setting | Default | What it does |
 |---|---|---|
 | **Debug log** | Off | Writes detailed diagnostics beside the normal app log. Turn it on only to find a problem |
-| **Local control port** | On | Lets scripts on this computer restart or quit KopiaLens through the tray. Nothing else can reach it (restart) |
+| **Local control port** | Off | Lets scripts and AI tools on the computer running KopiaLens check, restart or quit it through the desktop app. Web pages can't use it (restart) |
 | **Ports** | 7123 and 7124 | The app's port and the control port. Change them if another program uses them, or to run a second KopiaLens. A bookmark or reverse proxy then needs the new port (restart) |
 | **Log cleanup** | 90 days | How long job, dry-run and mount logs are kept. The newest 100 are always kept |
 | **Task history** | 90 days | How long finished backups and maintenance stay in the Tasks tab |

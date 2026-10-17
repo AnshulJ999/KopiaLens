@@ -90,7 +90,7 @@ def folder_roots() -> list[dict]:
         roots = sorted({p.mountpoint for p in psutil.disk_partitions(all=False) if ":" in (p.mountpoint or "")})
         return [{"name": r.rstrip("\\"), "path": r} for r in roots]
     out = [{"name": "/", "path": "/"}]
-    out += [{"name": d["path"], "path": d["path"]} for d in list_drives() if d["path"] != "/"]
+    out += [{"name": d["path"], "path": d["path"]} for d in list_drives(local=True) if d["path"] != "/"]
     return out
 
 
