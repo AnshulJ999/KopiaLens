@@ -64,7 +64,7 @@
       <div class="fixed inset-0 z-[46] bg-black/40 flex items-center justify-center p-4 sm:p-6" @click.self="srcDel = null" data-testid="srcdel-dialog">
         <div class="w-[34rem] max-w-full flex flex-col rounded-lg border border-bd bg-surface shadow-xl text-sm" role="dialog" aria-label="Delete source">
           <div class="flex items-center gap-2 shrink-0 border-b border-bd px-4 py-3">
-            <div class="font-medium min-w-0 truncate" x-text="'Delete ' + sourcePath(srcDel.source) + '?'"></div>
+            <div class="font-medium min-w-0 truncate" x-text="'Delete ' + shortSource(srcDel.source) + '?'"></div>
             <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('delete-snapshots', 'delete-a-source')" @keydown.enter.prevent="openDocs('delete-snapshots', 'delete-a-source')" title="Deleting every snapshot of a folder">?</span>
             <button @click="srcDel = null" class="ml-auto text-muted text-lg leading-none" aria-label="Close">&times;</button>
           </div>

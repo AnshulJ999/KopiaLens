@@ -19,7 +19,8 @@ from concurrent.futures import ThreadPoolExecutor
 from config import REPOS, kopia_repos
 
 from ..core import paths as pathrules
-from ..core.disklookup import children as es_children, list_drives, mapping_for, quick_totals, recursive_count
+from ..core import disklookup
+from ..core.disklookup import children as es_children, drive_totals, list_drives, mapping_for, recursive_count
 from .store import manifest_path, read_cursor
 
 
@@ -52,6 +53,12 @@ def _list_cache_put(ckey: tuple, val: tuple) -> None:
         _LIST_CACHE.move_to_end(ckey)
         while len(_LIST_CACHE) > _LIST_CACHE_MAX:
             _LIST_CACHE.popitem(last=False)
+
+
+def forget_listings() -> None:
+    """Drops remembered listings (a Count or Recount changes the disk side)."""
+    with _LIST_LOCK:
+        _LIST_CACHE.clear()
 
 
 def _rules(folder: str) -> tuple[str, bool]:
@@ -87,17 +94,28 @@ def _computer_sql(computer: str) -> tuple[str, str, list]:
     return "JOIN src s ON s.src_id = p.src_id", f" AND {_HOST_SQL} = ?", [computer.lower()]
 
 
-def kopia_backed_children(folder: str, computer: str = "") -> dict[str, dict]:
+def _repo_computer(repo: str, computer: str | None) -> str:
+    """The computer whose backups count: the given one ("" = any), or None = this computer, by the
+    name the repository's snapshots use for it. Another computer's backup of the same path is
+    another computer's files."""
+    if computer is not None:
+        return computer
+    from ..core.repos import client_host
+    return client_host(repo)
+
+
+def kopia_backed_children(folder: str, computer: str | None = None) -> dict[str, dict]:
     """Per immediate child segment under `folder`, the backed-up (in_latest) coverage from BOTH
     kopia repos combined: {seg_lower: {logical bytes, files, has_file, last_seen, repos:set}}.
     `logical` = kopia's stored file size (exact backed size, comparable to Everything's disk size).
-    ``computer`` limits it to that computer's backups (a mapped network place)."""
+    ``computer``: whose backups count - None = this computer's, "" = any computer's, or a name (a
+    mapped network place)."""
     lo, hi, plen = _prefix_bounds(folder)
     sep, fold = _rules(folder)
     path = _path_sql(fold)
-    join, cond, cparams = _computer_sql(computer)
     agg: dict[str, dict] = {}
     for repo in coverage_repos():
+        join, cond, cparams = _computer_sql(_repo_computer(repo, computer))
         cur = read_cursor(repo)
         try:
             # Dedupe by path FIRST: a file backed by several overlapping sources (e.g. the C:\
@@ -230,15 +248,20 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
             db = d["size"] or 0
             excl = max(0, db - bb)
             frac = (excl / db) if db else 0
-            status = "excluded" if bb == 0 else ("backed" if frac <= tolerance else "partial")
-            if d["size"] is None:
-                status, excl, frac = "counting", 0, 0
+            if d["size"] is None:   # the disk side isn't known: being counted, not counted, another disk
+                status = {"counting": "counting", "other_disk": "other_disk"}.get(d.get("state"), "not_counted")
+                excl, frac = 0, 0
+            elif db == 0:
+                status = "empty"   # nothing on disk to back up
+            else:
+                status = "excluded" if bb == 0 else ("backed" if frac <= tolerance else "partial")
             items.append({
                 "name": d["name"], "is_dir": True, "disk_bytes": db, "backed_bytes": bb,
-                "excluded_bytes": excl, "pct_excluded": None if status == "counting" else round(frac * 100, 1),
+                "excluded_bytes": excl, "pct_excluded": round(frac * 100, 1) if d["size"] is not None else None,
                 "backed_files": b["files"] if b else 0, "last_backed": last_backed,
                 "repo": repo_label, "bz_backed_bytes": bz_b, "bz_backed_files": bz_f,
-                "status": status, "mtime": d["mtime"],
+                "status": status, "mtime": d["mtime"], "_disk_files": d.get("files"),
+                "counted_at": d.get("counted_at"),
             })
         else:
             backed_file = bool(b and b.get("has_file"))
@@ -253,25 +276,30 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
                 "bz_backed_bytes": bz_b, "bz_backed_files": bz_f,
                 "status": status, "mtime": d["mtime"],
             })
-    # Recursive FILE counts: direct files = 1; child folders via parallel Everything count-queries
-    # (instant, index-computed). total_size = disk_bytes; excluded_files = total - backed.
+    # Recursive FILE counts: direct files = 1; the scanner counts files with sizes; Everything
+    # answers per child folder (parallel count queries, instant). excluded_files = total - backed.
     base = folder.rstrip(sep)
     dirs = [it for it in items if it["is_dir"]]
+    everything = disklookup.provider() == "everything"
 
     def _cnt(it):
-        if it["status"] == "counting":
-            return None   # already queued for a background count
-        return recursive_count(base + sep + it["name"])  # None when the disk lookup could not count
+        if it["_disk_files"] is not None:
+            return it["_disk_files"]
+        if not everything or it["status"] in ("counting", "not_counted", "other_disk"):
+            return None
+        return recursive_count(base + sep + it["name"])  # None when Everything could not count
 
     counts = list(ThreadPoolExecutor(max_workers=16).map(_cnt, dirs)) if dirs else []
     cmap = {id(it): n for it, n in zip(dirs, counts)}
     for it in items:
+        it.pop("_disk_files", None)
         it["total_size"] = it["disk_bytes"]
         tf = (cmap.get(id(it)) or 0) if it["is_dir"] else 1
         it["total_files"] = tf
         it["excluded_files"] = max(0, tf - it["backed_files"])
 
     items.sort(key=lambda x: (not x["is_dir"], -x["excluded_bytes"], x["name"].lower()))
+    stamps = [i["counted_at"] for i in items if i.get("counted_at")]
     result = {
         "folder": folder,
         "items": items,
@@ -279,6 +307,9 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
         "total_backed": sum(i["backed_bytes"] for i in items),
         "count": len(items),
         "counting": sum(1 for i in items if i["status"] == "counting"),
+        "not_counted": sum(1 for i in items if i["status"] == "not_counted"),
+        "counted_at": min(stamps) if stamps else None,
+        "notes": disklookup.notes_for(folder),
         "backed_up_as": ({"path": mapped["backup_folder"], "computer": mapped["computer"]} if mapped else None),
     }
     if not result["counting"]:   # a listing still being counted is asked again shortly
@@ -301,15 +332,15 @@ def _generation_key() -> tuple:
     return tuple(out)
 
 
-def _drive_backed(p: str, gen: tuple, computer: str = "") -> tuple[int, int]:
+def _drive_backed(p: str, gen: tuple, computer: str | None = None) -> tuple[int, int]:
     hit = _DRIVE_BACKED.get((p, computer))
     if hit and hit[0] == gen:
         return hit[1]
     lo, hi, _plen = _prefix_bounds(p)
     path = _path_sql(_rules(p)[1])
-    join, cond, cparams = _computer_sql(computer)
     bs = bc = 0
     for repo in coverage_repos():
+        join, cond, cparams = _computer_sql(_repo_computer(repo, computer))
         cur = read_cursor(repo)
         try:
             row = cur.execute(
@@ -343,7 +374,8 @@ def drive_stats() -> list[dict]:
 
     def _one(d: dict) -> dict:
         p = d["path"]
-        ts, tc = quick_totals(p)   # never waits: a drive still being counted says so
+        tot = drive_totals(p)   # never starts a count just by looking (unless the user asked for that)
+        ts, tc = tot["size"], tot["files"]
         place = d.get("place")
         mapped = mapping_for(p) if place else None
         if mapped:
@@ -354,7 +386,7 @@ def drive_stats() -> list[dict]:
             bzf, bzb = bz_by_letter.get(p[:1].upper(), (0, 0)) if not place else (0, 0)
         return {
             "path": p, "used": d["used"], "total_size": ts, "total_files": tc,
-            "counting": ts is None,
+            "counting": tot["state"] == "counting", "state": tot["state"], "counted_at": tot.get("counted_at"),
             "backed_bytes": bs, "backed_files": bc,
             "excluded_bytes": max(0, (ts or 0) - bs), "excluded_files": max(0, (tc or 0) - bc),
             "bz_backed_bytes": bzb, "bz_backed_files": bzf,

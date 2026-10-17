@@ -46,7 +46,7 @@ const tasksPart = {
       && (f.kind === "all" || t.kind === f.kind)
       && (!text || (t.description + " " + (t.error || "")).toLowerCase().includes(text)));
   },
-  taskWhat(t) { return t.source ? sourcePath(t.source) : t.description; },
+  taskWhat(t) { return t.source ? this.shortSource(t.source) : t.description; },
   taskStatusText(t) { return (TASK_STATUS[t.status] || [t.status || ""])[0]; },
   taskStatusClass(t) { return (TASK_STATUS[t.status] || ["", ""])[1]; },
   taskTook(t) {

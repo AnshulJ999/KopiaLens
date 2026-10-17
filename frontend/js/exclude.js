@@ -186,7 +186,7 @@ const excludePart = {
 
     exLabel(target) {
       if (target === "global") return "Global";
-      return target.includes(":") ? (sourcePath(target) || target) : target;
+      return target.includes(":") ? (this.shortSource(target) || target) : target;
     },
 
     exRuleWord(n) {

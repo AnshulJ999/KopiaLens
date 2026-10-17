@@ -141,7 +141,7 @@ const jobsPart = {
     },
 
     jobResultDiff(r) {
-      return { label: r.target === "global" ? "Global" : sourcePath(r.target), before: r.before, after: r.stored || r.after };
+      return { label: r.target === "global" ? "Global" : this.shortSource(r.target), before: r.before, after: r.stored || r.after };
     },
 
     async jobRunHeldDelete() {

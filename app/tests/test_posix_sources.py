@@ -134,10 +134,10 @@ def test_search_finds_a_name_in_either_unicode_form(gen):
 def test_excluded_coverage_follows_the_folder_s_own_rules(gen, monkeypatch):
     monkeypatch.setattr(excluded, "coverage_repos", lambda: ["t"])
     monkeypatch.setattr(excluded, "read_cursor", lambda _repo: gen.cursor())
-    kids = excluded.kopia_backed_children("/data/src")
+    kids = excluded.kopia_backed_children("/data/src", computer="")   # any computer's backups: path rules only
     assert {"case", "Case", "CASE", "docs", "back" + B + "slash dir"} <= set(kids)
     assert kids["case"]["files"] == 1
-    win = excluded.kopia_backed_children("C:" + B)
+    win = excluded.kopia_backed_children("C:" + B, computer="")
     assert win["users"]["files"] == 2          # Windows folds case
 
 

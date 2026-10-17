@@ -1,6 +1,6 @@
 # Disk scanning
 
-KopiaLens reads your disks to show what no backup covers, to preview exclusion rules and to size a folder before a new snapshot. This page explains how it reads the disk and how to add other places to check, such as a network share.
+KopiaLens reads your disks to show what no backup covers, to preview exclusion rules and to size a folder before a new snapshot. This page explains how it reads the disk, how to turn on the KopiaLens scanner, and how to add other places to check, such as a network share.
 
 ## How KopiaLens reads the disk
 
@@ -8,29 +8,54 @@ Choose the method in **Settings → Disk scanning → Read the disk with**:
 
 | Choice | What it does |
 |---|---|
-| **Automatic** (default) | Uses Everything when it's running, otherwise the KopiaLens scanner |
-| **Everything only** | Windows only. Everything is a free file index by voidtools. It answers at once, but it must be installed and running |
+| **Everything** (default on Windows) | Windows only. Everything is a free file index by voidtools. It answers at once and never reads the disk itself. KopiaLens includes Everything's command-line tool, so you only install Everything |
+| **Everything, else the KopiaLens scanner** | Windows only. Uses Everything when it's running, otherwise the KopiaLens scanner |
 | **KopiaLens scanner** | KopiaLens's own scanner. It works on Windows, Linux, macOS, in Docker and in Home Assistant |
-| **Off** | KopiaLens doesn't read the disk. The Excluded tab and rule previews stay empty |
+| **Off** (default on Linux and macOS) | KopiaLens doesn't read the disk. The Excluded tab and rule previews stay empty |
 
-The KopiaLens scanner reads many folders at the same time, so it's fast on a solid-state drive. A hard disk or a network share takes longer the first time.
+The KopiaLens scanner counts folders by reading the disk. It never changes, moves or deletes a file. A big drive stays busy while the scanner counts it, so the scanner is off until you choose it.
 
-When a folder takes longer than the **Scan time limit** (15 seconds by default), the Excluded tab shows **Counting…** instead of a size. KopiaLens keeps counting that folder in the background and fills in the size when it's ready. You don't need to reopen the folder.
+## What the KopiaLens scanner counts, and when
 
-Like kopia, the scanner doesn't follow links (symbolic links and junctions), so it counts what a snapshot would hold. Everything counts the files behind a link, so its totals can be a little higher.
+The scanner counts only what you ask for:
+
+- When you open a folder in the Excluded tab, KopiaLens counts that folder. It counts for up to the **Scan time limit** (15 seconds by default) while you wait. A subfolder that needs longer shows **Not counted**.
+- To count a folder or drive to the end, right-click it in the Excluded tab and select **Count size**. The count shows above the table with **Stop**.
+- The drive list shows **Not counted** until you count a drive. Hold the pointer over **Not counted** to see the used space of that drive.
+- When you leave the Excluded tab, KopiaLens stops the counts it started for you. A **Count size** keeps going.
+
+KopiaLens keeps each counted size until you count that folder again, or until KopiaLens restarts. **Keep counted sizes** changes that. The Excluded tab shows when the sizes were counted.
+
+The scanner counts at most one folder at a time on each disk. It uses fewer threads on hard disks, USB drives and network shares. If a disk stops answering, KopiaLens stops the count.
+
+Like kopia, the scanner doesn't follow links (symbolic links and junctions), so it counts what a snapshot holds. Everything counts the files behind a link, so its totals can be a little higher. To count what links point to, turn on **Follow links**.
+
+On Linux and macOS, another disk can be mounted inside a folder. The scanner doesn't go into it, and the Excluded tab shows it as **other disk**. Open it to count it on its own.
+
+The scanner never counts KopiaLens's own data folder or the folders where it mounts snapshots.
 
 ## Settings
 
 | Setting | Default | What it does |
 |---|---|---|
-| **Read the disk with** | Automatic | See the table above |
-| **Scan time limit** | 15 seconds | How long a folder can take before the Excluded tab shows **Counting…** |
-| **Keep counting in the background** | On | Counts a folder that ran out of time, one folder at a time, so it's ready next time |
-| **Scanner threads** | Automatic | How many folders the scanner reads at the same time. Automatic uses up to 8. Choose fewer for a hard disk or a network share |
-| **Reuse folder sizes for** | 5 minutes | How long a counted folder's size is used again before KopiaLens counts it again |
+| **Read the disk with** | Everything (Windows), Off (Linux and macOS) | See the table above |
+| **Scan time limit** | 15 seconds | How long a folder you open is counted while you wait |
+| **Keep counting after the time limit** | Off | A folder you open is counted to the end, even after you leave it |
+| **Count drives and places on their own** | Off | The Excluded tab counts each drive's total when it opens |
+| **Look for ignore files when indexing** | Off | Each index run searches the backed-up folders of the computer running KopiaLens for ignore files, such as `.kopiaignore`. With Everything, this search always runs, because it costs nothing |
+| **Follow links** | Off | Counts what links and junctions point to |
+| **Scanner threads** | Automatic | How many folders the scanner reads at the same time. Automatic uses up to 8 on an SSD and 2 on a hard disk, a USB drive or a network share |
+| **Keep counted sizes** | Until you recount | How long a counted size is used |
 | **Everything (es.exe) path** | | Where `es.exe` is, if KopiaLens doesn't find it |
 | **Excluded-folder tolerance** | 5% | In the Excluded tab, a folder counts as backed up when less than this share of it is excluded |
 | **Show this computer's drives** | On | Lists the drives of the computer running KopiaLens in the Excluded tab. Turn it off on a server that only checks shared folders |
+
+## Install Everything (Windows)
+
+1. Select **Get Everything** in the Excluded tab or in **Settings → Disk scanning**. The voidtools download page opens.
+2. Download and run the Everything installer.
+3. Keep Everything running. It starts with Windows by default.
+4. In KopiaLens, open the Excluded tab again.
 
 ## Check other places
 
@@ -53,7 +78,7 @@ The place now shows in the Excluded tab beside the drives. Inside it, KopiaLens 
 
 ### In Docker
 
-Mount the share into the container, then add the folder inside the container as a place. For example, mount the share at `/shares/sam-pc` and enter `/shares/sam-pc` in **Folder on this computer**. The KopiaLens scanner in Docker gets no notice when files change, so sizes are counted again after **Reuse folder sizes for**.
+Mount the share into the container, then add the folder inside the container as a place. For example, mount the share at `/shares/sam-pc` and enter `/shares/sam-pc` in **Folder on this computer**. Docker Desktop on Windows and macOS reads folders from the computer slowly, so a count there takes longer than on Linux.
 
 ### In Home Assistant
 

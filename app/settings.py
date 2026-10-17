@@ -101,11 +101,16 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         # KOPIALENS_KOPIA_CONFIG_LOCATION overrides it. See core/repoconnect.config_location().
         "kopia_config_location": "",
         "es_path": "",               # Everything CLI for the Excluded browser; "" = find it (core/everything.es_path)
-        "disk_lookup": "auto",       # what answers disk questions: auto | everything | scan | off
-        "disk_scan_budget": 15,      # seconds one folder scan may take before it answers "not measured"
-        "disk_scan_threads": 0,      # scanner threads; 0 = automatic (up to 8). Lower it for hard disks and network shares
-        "disk_scan_background": True,  # keep counting a folder that ran out of time, for the next look
-        "disk_cache_minutes": 5,     # how long a counted folder's size is reused
+        # What answers disk questions: everything | auto (Everything, else the scanner) | scan | off.
+        # The KopiaLens scanner reads the disk, so it is opt-in (auto or scan).
+        "disk_lookup": "everything",
+        "disk_scan_budget": 15,      # seconds a folder count may take while a screen waits
+        "disk_scan_threads": 0,      # scanner threads; 0 = automatic by disk type (SSD up to 8, hard disk and network 2)
+        "disk_scan_background": False,  # a folder that ran out of time keeps counting after you leave it
+        "disk_count_drives": False,  # the Excluded tab counts each drive and place's total size by itself
+        "disk_ignore_search": False,  # the nightly index looks for ignore files on disk with the scanner
+        "disk_follow_links": False,  # the scanner enters linked folders (kopia stores the link, not its target)
+        "disk_sizes_minutes": 0,     # how long a counted size is used; 0 = until Recount
         "disk_show_local": True,     # the Excluded tab lists this computer's own drives (off for a server that only checks shares)
         "disk_paths": [],            # extra places to scan: [{path, backup_path, computer}] (core/disklookup.places)
         "folder_picker": "auto",     # Browse... in a browser: auto (= in-app list) | native (Windows dialog, this PC only) | browser; see core/host.py

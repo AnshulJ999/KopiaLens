@@ -115,4 +115,4 @@ Check **Settings → Remote access → Who can open KopiaLens**. The desktop app
 
 ### The Excluded tab shows sizes as "not measured".
 
-KopiaLens counts a folder for at most 15 seconds by default, then shows **Counting…** and finishes in the background. On Windows, install and run Everything, and KopiaLens answers at once ([Disk scanning](disk-scanning.md)).
+The KopiaLens scanner counts a folder for at most 15 seconds by default while you wait. A subfolder that needs longer shows **Not counted**: right-click it and select **Count size**. On Windows, install and run Everything, and KopiaLens answers at once ([Disk scanning](disk-scanning.md)).

@@ -77,7 +77,7 @@ const indexPanelPart = {
       }
       const seed = p.seed || null;
       if (seed && seed.total) bits.push(`seed ${Number(seed.done || 0).toLocaleString(NUM_LOCALE)}/${Number(seed.total).toLocaleString(NUM_LOCALE)}`);
-      if (p.current_source) bits.push(sourcePath(p.current_source));
+      if (p.current_source) bits.push(this.shortSource(p.current_source));
       return bits.join(" · ");
     },
 

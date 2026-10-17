@@ -578,10 +578,11 @@ def _run(job: dict, cmds: list[list[str]]) -> None:
 
 
 def folder_size(path: str) -> int | None:
-    """Folder size from the disk lookup; None when it cannot answer in time."""
+    """Folder size from the disk lookup, counted now (never a remembered size); None when it
+    cannot answer in time."""
     from . import disklookup
     try:
-        return disklookup.recursive_size(path)
+        return disklookup.recursive_size(path, fresh=True)
     except Exception:  # noqa: BLE001 - the freed figure is optional
         return None
 

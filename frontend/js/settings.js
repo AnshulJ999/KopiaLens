@@ -53,18 +53,21 @@ const settingsPart = {
         this._readLook(kl);
         this.updateCheck = kl.update_check !== false;
         this.usageStats = kl.usage_stats !== false;
-        this.diskLookupMode = ["auto", "everything", "scan", "off"].includes(kl.disk_lookup) ? kl.disk_lookup : "auto";
+        this.diskLookupMode = ["everything", "auto", "scan", "off"].includes(kl.disk_lookup) ? kl.disk_lookup : "everything";
         this.diskScanBudget = Number(kl.disk_scan_budget || 15);
         this.diskScanThreads = Number(kl.disk_scan_threads || 0);
-        this.diskScanBackground = kl.disk_scan_background !== false;
-        this.diskCacheMinutes = Number(kl.disk_cache_minutes ?? 5);
+        this.diskScanBackground = kl.disk_scan_background === true;
+        this.diskCountDrives = kl.disk_count_drives === true;
+        this.diskIgnoreSearch = kl.disk_ignore_search === true;
+        this.diskFollowLinks = kl.disk_follow_links === true;
+        this.diskSizesMinutes = Number(kl.disk_sizes_minutes || 0);
         this.diskShowLocal = kl.disk_show_local !== false;
         this.diskPlaces = Array.isArray(kl.disk_paths) ? kl.disk_paths.filter((p) => p && p.path) : [];
         this.diskPlaceForm = null;
         this.folderPicker = ["auto", "native", "browser"].includes(kl.folder_picker) ? kl.folder_picker : "auto";
         this.mountDir = kl.mount_dir || "";
         this.mountHostPath = kl.mount_host_path || "";
-        getJson("/api/disk-lookup?refresh=true").then((s) => { this.diskLookup = s; }).catch(() => {});
+        this._refreshDiskLookup();
         this.sessionDays = Number(kl.session_days || 30);
         this.loadAccount();
         this.raLoad();
@@ -147,11 +150,14 @@ const settingsPart = {
     // saves nothing - that is the whole "silently dropped edit" class gone.
     KL_FIELDS: {
       listing_backend: { s: "backend", top: true, t: "choice", of: ["subprocess", "server"], restart: true },
-      disk_lookup: { s: "diskLookupMode", t: "choice", of: ["auto", "everything", "scan", "off"] },
+      disk_lookup: { s: "diskLookupMode", t: "choice", of: ["everything", "auto", "scan", "off"] },
       disk_scan_budget: { s: "diskScanBudget", t: "int", min: 1 },
       disk_scan_threads: { s: "diskScanThreads", t: "int", min: 0, max: 64 },
       disk_scan_background: { s: "diskScanBackground", t: "bool" },
-      disk_cache_minutes: { s: "diskCacheMinutes", t: "int", min: 0 },
+      disk_count_drives: { s: "diskCountDrives", t: "bool" },
+      disk_ignore_search: { s: "diskIgnoreSearch", t: "bool" },
+      disk_follow_links: { s: "diskFollowLinks", t: "bool" },
+      disk_sizes_minutes: { s: "diskSizesMinutes", t: "int", min: 0 },
       disk_show_local: { s: "diskShowLocal", t: "bool" },
       folder_picker: { s: "folderPicker", t: "choice", of: ["auto", "native", "browser"] },
       mount_dir: { s: "mountDir", t: "str" },
@@ -270,7 +276,14 @@ const settingsPart = {
         body: JSON.stringify({ kopialens: { disk_paths: list } }) });
       this.diskPlaces = list;
       this.excludedDrives = [];   // the Excluded tab re-reads its locations
-      getJson("/api/disk-lookup?refresh=true").then((s) => { this.diskLookup = s; }).catch(() => {});
+      this._refreshDiskLookup();
+    },
+    // Which reader answers here. On a computer without Everything, the Everything choice reads as Off.
+    _refreshDiskLookup() {
+      getJson("/api/disk-lookup?refresh=true").then((s) => {
+        this.diskLookup = s;
+        if (s.everything && !s.everything.supported && this.diskLookupMode === "everything") this.diskLookupMode = "off";
+      }).catch(() => {});
     },
     async diskPlaceSave() {
       const f = this.diskPlaceForm;
@@ -322,6 +335,7 @@ const settingsPart = {
         .then(() => {
           this.klNotify(f.restart ? "Saved - this setting needs a restart" : "Saved");
           if (key === "dashboard_refresh") this.armAutoRefresh();
+          if (key.startsWith("disk_") || key === "es_path") { this.excludedDrives = []; this._refreshDiskLookup(); }
           if (key in this.savedPorts) this.savedPorts[key] = v;
         })
         .catch((e) => {

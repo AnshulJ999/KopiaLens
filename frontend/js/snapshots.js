@@ -17,7 +17,7 @@ const snapshotsPart = {
         const server = this.repoKind === "server";   // no index: the space columns would stay empty
         const spaceCols = ["physical", "accum", "churn", "reclaimable"];
         const cols = [
-          ...(allSrc ? [{ title: "Source", field: "source", widthGrow: 2, minWidth: 200, formatter: (c) => sourcePath(c.getValue()) }] : []),
+          ...(allSrc ? [{ title: "Source", field: "source", widthGrow: 2, minWidth: 200, formatter: (c) => this.shortSource(c.getValue()) }] : []),
           { title: "Start", field: "start_time", width: 185, formatter: (c) => timeCell(c.getValue(), c) },
           { title: "Description", field: "description", widthGrow: 1, minWidth: 120, formatter: (c) => escHtml(c.getValue() || "") },
           { title: "Logical", field: "logical", width: 100, sorter: "number", formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
@@ -163,7 +163,7 @@ const snapshotsPart = {
       if (!this.wmGuard("non_destructive")) return;
       const r = await this.klConfirm({
         title: "Edit snapshot description",
-        facts: [["Folder", sourcePath(d.source)], ["Snapshot", humanTime(d.start_time)]],
+        facts: [["Folder", this.shortSource(d.source)], ["Snapshot", humanTime(d.start_time)]],
         input: { label: "Description", placeholder: "e.g. before the upgrade", value: d.description || "" },
         confirmLabel: "Save description", danger: false,
       });
@@ -249,7 +249,7 @@ const snapshotsPart = {
         title: `Delete ${p.count} snapshot${p.count === 1 ? "" : "s"}?`,
         facts: [
           ["Snapshots", `${p.count}` + (p.times.length ? ` · ${humanTime(p.times[0])}` + (p.times.length > 1 ? ` to ${humanTime(p.times[p.times.length - 1])}` : "") : "")],
-          [p.sources.length > 1 ? "Sources" : "Source", p.sources.length ? p.sources.map((s) => sourcePath(s)).join(", ") : sourcePath(this.snapSource)],
+          [p.sources.length > 1 ? "Sources" : "Source", p.sources.length ? p.sources.map((s) => this.shortSource(s)).join(", ") : this.shortSource(this.snapSource)],
           [term("reclaimable"), fmtPhys(p.combinedReclaim != null ? p.combinedReclaim : p.reclaim) + " after maintenance"],
           ["Kept", `${p.pinned} pinned · ${p.retained} kept by retention`],
         ],
@@ -298,7 +298,7 @@ const snapshotsPart = {
       if (!rows.length) { this.klNotify("Select one or more snapshots first.", "warn"); return; }
       const n = rows.length;
       const facts = [
-        ["Snapshots", rows.slice(0, 4).map((x) => `${sourcePath(x.source || this.snapSource)} · ${humanTime(x.start_time || x.startTime)}`).join("; ") + (n > 4 ? `; and ${n - 4} more` : "")],
+        ["Snapshots", rows.slice(0, 4).map((x) => `${this.shortSource(x.source || this.snapSource)} · ${humanTime(x.start_time || x.startTime)}`).join("; ") + (n > 4 ? `; and ${n - 4} more` : "")],
       ];
       if (remove) facts.push(["Pin", name], ["Pinned now", String(rows.filter((x) => (x.pins || []).includes(name)).length)]);
       const r = await this.klConfirm({

@@ -108,7 +108,7 @@ def delete_plan(body: PlanBody) -> dict:
         raise HTTPException(status_code=400, detail="pick at least one backup")
     repo = body.repo
     facts = selection_facts(repo, files)
-    selected = {fp for _, fp in files}
+    selected = {(pathrules.host(s), fp) for s, fp in files}   # one file = computer + path
     content_sources = sources_for_content(repo, facts["oids"])
     out: dict = {
         "repo": repo, "method": body.method, "by": body.by,
@@ -127,13 +127,13 @@ def delete_plan(body: PlanBody) -> dict:
         scope = resolve_scope(repo, body.by, body.sources, facts)
         cap = min(max(body.list_cap or LIST_CAP, 1), FULL_LIST_CAP)
         if body.by == "filename":
-            found = paths_named(repo, scope, facts["names"], cap=cap, mark=sorted(selected))
+            found = paths_named(repo, scope, facts["names"], cap=cap, mark=files)
             items, flag = facts["names"], "--filename"
         else:
             found = paths_for_contents(repo, facts["oids"], sources=scope, cap=cap,
-                                       mark=sorted(selected))
+                                       mark=files)
             items, flag = facts["oids"], "--object-id"
-        rows = [{**r, "selected": r["full_path"] in selected} for r in found["rows"]]
+        rows = [{**r, "selected": (pathrules.host(r["source"]), r["full_path"]) in selected} for r in found["rows"]]
         # Free installs get the full preview, never the command that runs it.
         pro = features.allowed("remove", repo)  # licence check: do not remove or bypass (KopiaLens License)
         cmds = remove_files_chunked_commands(repo, items, source=scope, commit=True,
@@ -166,7 +166,7 @@ def delete_plan(body: PlanBody) -> dict:
         held = holding_snapshots(repo, src, sorted(fps), snaps=index.get(src, []))
         for fp, rows in held.items():
             for r in rows:
-                if fp not in selected and r["obj"] not in facts["oids"]:
+                if (pathrules.host(src), fp) not in selected and r["obj"] not in facts["oids"]:
                     continue
                 snap = by_id.setdefault(r["snapshot_id"], {
                     "snapshot_id": r["snapshot_id"], "source": src, "start_time": r["start_time"],

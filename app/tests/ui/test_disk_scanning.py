@@ -55,3 +55,8 @@ def test_an_added_place_is_compared_with_its_backed_up_path(indexed_server, open
     assert folders, f"the fixture's newest snapshot has no top-level folders: {backed}"
     for name in folders:
         expect(rows.filter(has_text=name).first.locator(".pill")).to_have_text("backed up")
+    # The fixture's Archive folder is empty on disk: nothing to back up, listed under All only.
+    assert (share / "Archive").is_dir() and not any((share / "Archive").iterdir())
+    expect(rows.filter(has_text="Archive")).to_have_count(0)
+    page.get_by_role("button", name="All", exact=True).click()
+    expect(rows.filter(has_text="Archive").first.locator(".pill")).to_have_text("empty")

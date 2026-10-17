@@ -60,9 +60,11 @@ def test_folder_totals_two_levels_deep_match_a_walk(tree):
     assert got == want
 
 
-@pytest.mark.parametrize("pattern,dirs,fold", [("*.iso", False, True), ("f[12].*", False, False), ("b?", True, True)])
-def test_find_matches_fnmatch(tree, pattern, dirs, fold):
-    args = ["find", str(tree), pattern] + (["--dirs"] if dirs else []) + (["--fold"] if fold else [])
+@pytest.mark.parametrize("patterns,dirs,fold", [(["*.iso"], False, True), (["f[12].*"], False, False),
+                                                 (["b?"], True, True), (["f0.*", "*.ISO"], False, False)])
+def test_find_matches_fnmatch(tree, patterns, dirs, fold):
+    args = ["find", str(tree), patterns[0]] + [a for p in patterns[1:] for a in ("--or", p)]
+    args += (["--dirs"] if dirs else []) + (["--fold"] if fold else [])
     rows = _scan(*args)
     assert rows[-1]["complete"]
     got = sorted(r["path"] for r in rows[:-1])
@@ -70,6 +72,41 @@ def test_find_matches_fnmatch(tree, pattern, dirs, fold):
     for dp, dnames, fnames in os.walk(tree):
         names = dnames if dirs else fnames
         for n in names:
-            if fnmatch.fnmatchcase(n.lower() if fold else n, pattern.lower() if fold else pattern):
+            if any(fnmatch.fnmatchcase(n.lower() if fold else n, p.lower() if fold else p) for p in patterns):
                 want.append(os.path.join(dp, n))
     assert got == sorted(want) and got
+
+
+def test_the_scanner_exits_when_kopialens_goes_away(tree):
+    """A scan never outlives the program that started it: closing its stdin ends it."""
+    whole_disk = os.path.abspath(os.sep)   # far more than it can count before stdin closes
+    proc = subprocess.Popen([disklookup.scanner_path(), "totals", whole_disk, "--threads", "1", "--watch-stdin"],
+                            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc.stdin.close()
+    assert proc.wait(timeout=5) == 3
+
+
+def test_asking_again_while_a_folder_counts_starts_no_second_scan(tree, monkeypatch):
+    """The Excluded tab re-asks every few seconds; only the first ask may start a count."""
+    import threading
+    release = threading.Event()
+    started = []
+
+    def fake_execute(scan):
+        started.append(scan.path)
+        scan.state = "running"
+        release.wait(10)
+        disklookup._finish(scan, "stopped", "test")
+
+    monkeypatch.setattr(disklookup, "_kl", lambda: {"disk_lookup": "scan"})
+    monkeypatch.setattr(disklookup, "_execute", fake_execute)
+    monkeypatch.setattr(disklookup, "_FIRST_WAIT", 0.2)
+    disklookup.clear_cache()
+    monkeypatch.setattr(disklookup, "_status_cache", None)   # restored afterwards, so no other test sees "scan"
+    try:
+        for _ in range(4):
+            rows = disklookup.children(str(tree))
+        assert {r["state"] for r in rows if r["is_dir"]} == {"counting"}
+        assert started == [str(tree)]
+    finally:
+        release.set()

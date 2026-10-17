@@ -113,7 +113,8 @@ const policiesPart = {
     polRailLabel(t) {
       if (t.isGlobal) return "Global policy";
       const p = sourcePath(t.target).replace(/[\\/]+$/, "");
-      return p || t.target;
+      if (!p) return t.target;
+      return this.shortSource(t.target) !== this.shortSource(t.target, false) ? `${p} (${t.target.split(":")[0]})` : p;
     },
 
     polSelect(target) {
@@ -566,7 +567,7 @@ const policiesPart = {
       return out;
     },
     polDiffView(g) {
-      return { label: g.target === "global" ? "Global" : sourcePath(g.target), before: g.current_rules, after: g.resulting_rules };
+      return { label: g.target === "global" ? "Global" : this.shortSource(g.target), before: g.current_rules, after: g.resulting_rules };
     },
     // One diff request per staged target, rendered as one group each.
     async polOpenDiff(only) {
@@ -602,7 +603,7 @@ const policiesPart = {
         title: "Save policy changes?",
         facts: [
           ["Changes", `${nRules} across ${changes.length} polic${changes.length === 1 ? "y" : "ies"}`],
-          ["Policies", changes.map((c) => (c.target === "global" ? "Global" : sourcePath(c.target))).join(", ")],
+          ["Policies", changes.map((c) => (c.target === "global" ? "Global" : this.shortSource(c.target))).join(", ")],
         ],
         note: "A policy backup is taken before each write.",
         command: "", confirmLabel: "Save changes", danger: false,

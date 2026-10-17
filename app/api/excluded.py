@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from config import REPOS, repo_kind
 
 from ..core import disklookup
 from ..core.kopia import _kopia_exe, _repo_args
-from ..index.excluded import drive_stats, folder_listing
+from ..index.excluded import drive_stats, folder_listing, forget_listings
 from ..settings import load_settings
 from .errors import PASS_THROUGH
 
@@ -26,8 +27,41 @@ def drives() -> dict:
 
 @router.get("/disk-lookup")
 def disk_lookup_status(refresh: bool = False) -> dict:
-    """Which disk lookup provider answers (Everything, folder scan, or off) and why."""
+    """Which disk lookup provider answers (Everything, folder scan, or off) and why, plus the
+    scans queued or running."""
     return disklookup.status(refresh=refresh)
+
+
+class CountRequest(BaseModel):
+    path: str
+
+
+class StopRequest(BaseModel):
+    id: int
+
+
+@router.post("/disk-lookup/count")
+def disk_count(body: CountRequest) -> dict:
+    """Count (or recount) a folder, drive or place with the KopiaLens scanner, shown with Stop."""
+    if disklookup.provider() != "scan":
+        raise HTTPException(status_code=409, detail="The KopiaLens scanner is off.")
+    if not body.path.strip():
+        raise HTTPException(status_code=400, detail="path is required")
+    forget_listings()
+    return {"scan": disklookup.count(body.path.strip())}
+
+
+@router.post("/disk-lookup/stop")
+def disk_stop(body: StopRequest) -> dict:
+    forget_listings()
+    return {"stopped": disklookup.stop(body.id)}
+
+
+@router.post("/disk-lookup/left")
+def disk_left() -> dict:
+    """The Excluded tab was left: stop the counts it started (explicit counts keep going)."""
+    disklookup.stop_all_left()
+    return {"ok": True}
 
 
 @router.get("/disk-lookup/computers")
@@ -72,7 +106,7 @@ def list_folder(path: str = "") -> dict:
         raise HTTPException(status_code=400, detail="path is required (use /excluded/drives for roots)")
     try:
         tol = float(load_settings().get("kopialens", {}).get("excluded_tolerance", 0.05) or 0.05)
-        return folder_listing(path, tolerance=tol)
+        return {**folder_listing(path, tolerance=tol), "scans": disklookup.scans()}
     except PASS_THROUGH:
         raise
     except Exception as exc:  # noqa: BLE001

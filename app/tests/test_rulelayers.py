@@ -188,7 +188,7 @@ def test_discover_index_finds_only_the_declared_names(monkeypatch):
 def test_build_map_reads_only_changed_files_and_keeps_the_rest(monkeypatch, tmp_path):
     _index_fixture(monkeypatch)
     _wire(monkeypatch, [SRC], {})
-    monkeypatch.setattr(RL, "discover_disk", lambda repo, names, source: [])
+    monkeypatch.setattr(RL, "discover_disk", lambda repo, names, source: ([], True))
     import app.core.policy as pol
     monkeypatch.setattr(pol, "load_defined_policies",
                         lambda repo: {"policies": {"(global)": {"files": {

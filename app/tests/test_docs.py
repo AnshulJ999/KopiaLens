@@ -223,7 +223,6 @@ DEFAULTS = [
     ("disk-scanning.md", r"\*\*Scan time limit\*\* \| (\d+) seconds", _kl("disk_scan_budget")),
     ("disk-scanning.md", r"\*\*Scan time limit\*\* \((\d+) seconds by default\)", _kl("disk_scan_budget")),
     ("disk-scanning.md", r"\*\*Excluded-folder tolerance\*\* \| (\d+)%", _kl_in("excluded_tolerance", 0.01)),
-    ("disk-scanning.md", r"\*\*Reuse folder sizes for\*\* \| (\d+) minutes", _kl("disk_cache_minutes")),
     ("disk-scanning.md", r"Automatic uses up to (\d+)", _scanner_threads),
     ("settings.md", r"\*\*Indexing time limit\*\* \| (\d+) hours", _kl_in("index_worker_timeout", 3600)),
     ("settings.md", r"\*\*First index time limit\*\* \| (\d+) hours", _kl_in("index_first_timeout", 3600)),

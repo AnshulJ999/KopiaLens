@@ -134,7 +134,8 @@ def _config_facts(repo: str) -> dict:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
         data = data if isinstance(data, dict) else {}
-        facts = {"server": bool(data.get("apiServer")), "readonly": bool(data.get("readonly"))}
+        facts = {"server": bool(data.get("apiServer")), "readonly": bool(data.get("readonly")),
+                 "host": str(data.get("hostname") or "")}
     except (OSError, ValueError):
         facts = {}
     _CONFIG_FACTS[path] = (mtime, facts)
@@ -153,6 +154,13 @@ def kopia_readonly(repo: str) -> bool:
     """True when kopia itself holds this connection read-only (``repository connect --readonly``
     or ``set-client --read-only``): every repository write fails in kopia."""
     return bool(_config_facts(repo).get("readonly"))
+
+
+def client_host(repo: str) -> str:
+    """This computer's name in the repo's snapshots, lowercased: the connection file's hostname,
+    else kopia's default (the computer name)."""
+    import socket
+    return (str(_config_facts(repo).get("host") or "") or socket.gethostname()).lower()
 
 
 # Storage-config keys that must NEVER leave the machine. A kopia config file holds credentials in

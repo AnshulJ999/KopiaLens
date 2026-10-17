@@ -19,7 +19,7 @@ const treePart = {
       const holders = ((r && r.paths && r.paths[path]) || []).map((h) => h.source);
       if (!holders.length) { this.klNotify("No indexed source holds this path.", "warn"); return null; }
       if (holders.length > 1) {
-        this.klNotify(`Held by ${holders.length} sources. Showing ${sourcePath(holders[0])}; switch in the panel's "Backed up by" list.`, "info");
+        this.klNotify(`Held by ${holders.length} sources. Showing ${this.shortSource(holders[0])}; switch in the panel's "Backed up by" list.`, "info");
       }
       return holders[0];
     },

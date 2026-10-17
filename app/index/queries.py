@@ -800,11 +800,11 @@ def _file_rows(where_sql: str) -> str:
 
 
 def paths_named(repo: str, sources: list[str], names: list[str], cap: int = 500,
-                biggest_first: bool = False, mark: list[str] | None = None) -> dict:
+                biggest_first: bool = False, mark: list[tuple[str, str]] | None = None) -> dict:
     """Every file in ``sources`` whose name equals one of ``names`` - what kopia's
     ``remove-files --filename`` matches. ``{"rows": [{source, sources, full_path, size, physical,
     in_latest}], "total", "logical", "physical", "marked"}``, one row per file; the totals cover every
-    match, and ``marked`` counts the matches whose path is in ``mark``."""
+    match, and ``marked`` counts the matches that are one of the ``mark`` files."""
     empty = {"rows": [], "total": 0, "logical": 0, "physical": 0, "marked": 0}
     names = list(dict.fromkeys(n for n in names if n))
     if not names or not sources:
@@ -837,16 +837,19 @@ def paths_named(repo: str, sources: list[str], names: list[str], cap: int = 500,
             "physical": int(phys or 0), "marked": int(marked or 0)}
 
 
-def _mark_sql(mark: list[str] | None) -> tuple[str, list]:
-    """SQL counting the rows whose ``full_path`` is in ``mark`` (0 when none given)."""
-    paths = list(dict.fromkeys(m for m in (mark or []) if m))
-    if not paths:
+def _mark_sql(mark: list[tuple[str, str]] | None) -> tuple[str, list]:
+    """SQL counting the rows that are one of the ``mark`` files, each a (source, full path): the
+    same path on another computer is another file (0 when none given)."""
+    pairs = list(dict.fromkeys((pathrules.host(s), fp) for s, fp in (mark or []) if fp))
+    if not pairs:
         return "0", []
-    return "count(*) FILTER (WHERE full_path IN (%s))" % ",".join("?" * len(paths)), paths
+    host = "lower(regexp_extract(source, '^[^@]*@([^:]*)', 1))"
+    cond = " OR ".join(f"({host} = ? AND full_path = ?)" for _ in pairs)
+    return f"count(*) FILTER (WHERE {cond})", [v for pair in pairs for v in pair]
 
 
 def paths_for_contents(repo: str, object_ids: list[str], sources: list[str] | None = None,
-                       cap: int = 500, mark: list[str] | None = None) -> dict:
+                       cap: int = 500, mark: list[tuple[str, str]] | None = None) -> dict:
     """Every file holding any of these content objects in any version - what
     ``remove-files --object-id`` removes inside the scoped sources. One row per file, with
     ``sources`` listing the scoped sources that hold it."""

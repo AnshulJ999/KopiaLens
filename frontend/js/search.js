@@ -364,7 +364,10 @@ const searchPart = {
           { title: "Repo", field: "repo", headerSort: false, width: 90, visible: allRepos, formatter: (c) => (c.getValue() ? this.repoLabel(c.getValue()) : "") },
           H("Path", "full_path", { widthGrow: 5, minWidth: 320, formatter: (c) => {
             const d = c.getRow().getData();
-            return d.kind === "folder" ? this.folderRowLabel(c.getValue(), d) : itemIconHtml(c.getValue(), false) + escHtml(c.getValue());
+            if (d.kind === "folder") return this.folderRowLabel(c.getValue(), d);
+            const s = d.source || "";   // the same path on two computers: say whose this one is
+            const who = s && this.shortSource(s) !== this.shortSource(s, false) ? ` <span style="color:var(--muted)">· ${escHtml(s.split(":")[0])}</span>` : "";
+            return itemIconHtml(c.getValue(), false) + escHtml(c.getValue()) + who;
           } }),
           H("Size", "size", { width: 100, headerTooltip: "Logical size. " + termTip("logical"), formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" }),
           H(term("physical"), "physical", { width: 110, headerTooltip: termTip("physical"), hozAlign: "right",
@@ -398,7 +401,7 @@ const searchPart = {
           } }),
           H("Source", "source", { widthGrow: 2, minWidth: 180, formatter: (c) => {
             const d = c.getRow().getData();
-            return isFolder(c) && !d.source ? `<span style="color:var(--muted)">${countOf(d.sources || 0, "source")}</span>` : sourcePath(c.getValue());
+            return isFolder(c) && !d.source ? `<span style="color:var(--muted)">${countOf(d.sources || 0, "source")}</span>` : this.shortSource(c.getValue());
           } }),
         ];
         // Reuse the existing Tabulator (replaceData + header-title update) rather than

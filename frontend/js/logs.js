@@ -53,7 +53,7 @@ const logsPart = {
     auditSummary(r) {
       const s = r.summary || {}, n = (v) => Number(v || 0);
       const done = r.event === "executed" && s.dry !== true;
-      const from = s.source ? ` from ${sourcePath(s.source)}` : "";
+      const from = s.source ? ` from ${this.shortSource(s.source)}` : "";
       let line;
       switch (r.action) {
         case "prune-versions":

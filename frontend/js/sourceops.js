@@ -29,7 +29,7 @@ const sourceOpsPart = {
     const every = (n) => [[86400, "day"], [3600, "hour"], [60, "minute"], [1, "second"]].map(([u, w]) => n % u === 0 ? countOf(n / u, w) : "").find(Boolean);
     const when = p.manual ? "Manual only" : [p.interval ? "every " + every(p.interval) : "", ...(p.times || []).map((t) => "at " + t), ...(p.cron || [])].filter(Boolean).join(", ") || "Not scheduled";
     const keep = Object.entries(p.retention || {}).map(([k, v]) => `${v} ${k}`).join(", ") || "Keeps everything";
-    return [["Policy", p.own ? "This folder's own policy" : (p.from === "global" ? "Global policy" : "Inherited from " + sourcePath(p.from))],
+    return [["Policy", p.own ? "This folder's own policy" : (p.from === "global" ? "Global policy" : "Inherited from " + this.shortSource(p.from))],
       ["Schedule", when], ["Keeps", keep], ["Exclusion rules", String(p.rules)]];
   },
   async newSnapEstimate() {
@@ -98,7 +98,7 @@ const sourceOpsPart = {
   srcDelDry() {
     const g = this.srcDel;
     if (!g || !g.info) return;
-    this.startJob("source_delete", { source: g.source, delete_policy: g.policy && g.info.has_policy, dry: true }, sourcePath(g.source));
+    this.startJob("source_delete", { source: g.source, delete_policy: g.policy && g.info.has_policy, dry: true }, this.shortSource(g.source));
   },
   async srcDelRun() {
     const g = this.srcDel;
@@ -109,13 +109,13 @@ const sourceOpsPart = {
     if (g.info.pinned) facts.push(["Pinned", String(g.info.pinned) + " (deleted too)"]);
     if (row && row.freeable != null) facts.push([term("reclaimable"), fmtBytes(row.freeable)]);
     facts.push(["Policy", g.info.has_policy ? (g.policy ? "Deleted" : "Kept") : "None of its own"]);
-    const ok = await this.klConfirm({ title: `Delete every snapshot of ${sourcePath(g.source)}?`, facts,
+    const ok = await this.klConfirm({ title: `Delete every snapshot of ${this.shortSource(g.source)}?`, facts,
       callout: "This deletes every backup of this folder and can't be undone.", dangerCallout: true,
       note: "Space is freed after the next full maintenance.", typeToConfirm: "delete",
       confirmLabel: `Delete ${countOf(n, "snapshot")}`, danger: true });
     if (!ok) return;
     g.busy = true;
-    const id = await this.startJob("source_delete", { source: g.source, delete_policy: g.policy && g.info.has_policy }, sourcePath(g.source));
+    const id = await this.startJob("source_delete", { source: g.source, delete_policy: g.policy && g.info.has_policy }, this.shortSource(g.source));
     g.busy = false;
     if (id) this.srcDel = null;
   },
@@ -143,12 +143,12 @@ const sourceOpsPart = {
     const g = this.verifyDlg;
     if (!g) return;
     const sources = g.scope === "one" && g.source ? [g.source] : [];
-    const facts = [["Repository", this.repoName(this.repo)], ["Checks", sources.length ? sourcePath(sources[0]) : "Every snapshot"],
+    const facts = [["Repository", this.repoName(this.repo)], ["Checks", sources.length ? this.shortSource(sources[0]) : "Every snapshot"],
       ["Files read back", g.percent ? g.percent + "% of files, downloaded and checked" : "None (folders and file records only)"]];
     const ok = await this.klConfirm({ title: "Verify backups?", facts, callout: this.verifyBig() ? "On a repository this size, this can take hours." : "",
       note: "Reads only. Nothing in the repository changes.", confirmLabel: "Verify", danger: false });
     if (!ok) return;
-    const id = await this.startJob("snapshot_verify", { sources, percent: g.percent }, sources.length ? sourcePath(sources[0]) : "all sources");
+    const id = await this.startJob("snapshot_verify", { sources, percent: g.percent }, sources.length ? this.shortSource(sources[0]) : "all sources");
     if (id) this.verifyDlg = null;
   },
 };

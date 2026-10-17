@@ -363,6 +363,7 @@ _WRITES: dict[str, object] = {
     "POST /api/stats/description": REPO,
     "POST /api/jobs/start": _job,
     **{f"POST /api/{p}": APP for p in ("jobs/stop", "tasks/cancel", "engine/cancel")},   # any Stop
+    **{f"POST /api/disk-lookup/{p}": APP for p in ("count", "stop", "left")},   # reads the disk, keeps it busy
     **{f"POST /api/engine/{p}": REPO for p in ("choice", "identity", "snapshot", "snapshot-description")},
     "POST /api/engine/resume": APP,
     "POST /api/engine/source-resume": APP,

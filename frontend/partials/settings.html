@@ -365,41 +365,64 @@
               <p class="text-[0.6875rem] text-muted">How KopiaLens reads what is on disk: the Excluded tab, rule previews and folder sizes in New snapshot.</p>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Read the disk with</span>
-                  <select x-model="diskLookupMode" @change="saveKl('disk_lookup')" class="fld border border-bd bg-surface2">
-                    <option value="auto">Automatic</option>
-                    <option value="everything">Everything only</option>
+                  <select x-model="diskLookupMode" @change="saveKl('disk_lookup')" class="fld border border-bd bg-surface2" data-testid="disk-lookup-mode">
+                    <option value="everything" x-show="!diskLookup || !diskLookup.everything || diskLookup.everything.supported">Everything</option>
+                    <option value="auto" x-show="!diskLookup || !diskLookup.everything || diskLookup.everything.supported">Everything, else the KopiaLens scanner</option>
                     <option value="scan">KopiaLens scanner</option>
                     <option value="off">Off</option>
                   </select></div>
-                <p class="text-[0.6875rem] text-muted mt-1">Automatic uses Everything when it's running, otherwise the KopiaLens scanner.</p>
+                <p class="text-[0.6875rem] text-muted mt-1" x-show="diskLookupMode === 'everything'">Everything is a free Windows file index by voidtools. It answers at once and never reads the disk itself.</p>
+                <p class="text-[0.6875rem] text-muted mt-1" x-show="diskLookupMode === 'auto' || diskLookupMode === 'scan'">The KopiaLens scanner counts folders by reading the disk. It never changes a file, but a big drive stays busy while it's counted.</p>
                 <p class="text-[0.6875rem] mt-1" x-show="diskLookup" :style="diskLookup && diskLookup.available ? 'color:var(--ok)' : 'color:var(--warn)'"
                    x-text="diskLookupText()"></p>
+                <a x-show="diskLookup && diskLookup.everything && diskLookup.everything.supported && !diskLookup.everything.installed && (diskLookupMode === 'everything' || diskLookupMode === 'auto')"
+                   class="kl-btn mt-2 inline-flex" href="https://www.voidtools.com/downloads/" target="_blank" rel="noopener">Get Everything</a>
               </div>
-              <div x-show="diskLookupMode !== 'off'">
-                <div class="flex items-center justify-between gap-3"><span>Scan time limit</span>
-                  {{ duration('diskScanBudget', 'disk_scan_budget', 1) }}</div>
-                <p class="text-[0.6875rem] text-muted mt-1">A folder that takes longer shows "Counting…" instead of making you wait.</p>
-              </div>
-              <div x-show="diskLookupMode === 'auto' || diskLookupMode === 'scan'">
-                <div class="flex items-center justify-between gap-3"><span>Keep counting in the background</span>
-                  <button @click="diskScanBackground = !diskScanBackground; saveKl('disk_scan_background')" class="h-8 rounded border border-bd px-3" x-text="diskScanBackground ? 'On' : 'Off'"></button></div>
-                <p class="text-[0.6875rem] text-muted mt-1">A folder that ran out of time is counted one at a time, so it's ready next time you open it.</p>
-              </div>
-              <div x-show="diskLookupMode === 'auto' || diskLookupMode === 'scan'">
-                <div class="flex items-center justify-between gap-3"><span>Scanner threads</span>
-                  <select x-model.number="diskScanThreads" @change="saveKl('disk_scan_threads')" class="fld border border-bd bg-surface2">
-                    <option value="0">Automatic</option>
-                    <template x-for="n in [1, 2, 4, 8, 16]" :key="n"><option :value="n" x-text="n" :selected="n === diskScanThreads"></option></template>
-                  </select></div>
-                <p class="text-[0.6875rem] text-muted mt-1">Fewer threads put less load on hard disks and network shares. Automatic uses up to 8.</p>
-              </div>
-              <div x-show="diskLookupMode !== 'off'">
-                <div class="flex items-center justify-between gap-3"><span>Reuse folder sizes for</span>
-                  <select x-model.number="diskCacheMinutes" @change="saveKl('disk_cache_minutes')" class="fld border border-bd bg-surface2">
-                    <option value="0">Don't reuse</option>
-                    <template x-for="n in [1, 5, 15, 60]" :key="n"><option :value="n" x-text="n === 60 ? '1 hour' : n + (n === 1 ? ' minute' : ' minutes')" :selected="n === diskCacheMinutes"></option></template>
-                  </select></div>
-              </div>
+              <template x-if="diskLookupMode === 'auto' || diskLookupMode === 'scan'">
+                <div class="space-y-4" data-testid="disk-scanner-options">
+                  <div>
+                    <div class="flex items-center justify-between gap-3"><span>Scan time limit</span>
+                      {{ duration('diskScanBudget', 'disk_scan_budget', 1) }}</div>
+                    <p class="text-[0.6875rem] text-muted mt-1">How long a folder you open is counted while you wait. Folders that need longer show "Not counted".</p>
+                  </div>
+                  <div>
+                    <div class="flex items-center justify-between gap-3"><span>Keep counting after the time limit</span>
+                      <button @click="diskScanBackground = !diskScanBackground; saveKl('disk_scan_background')" class="h-8 rounded border border-bd px-3" x-text="diskScanBackground ? 'On' : 'Off'"></button></div>
+                    <p class="text-[0.6875rem] text-muted mt-1">A folder you open is counted to the end, even after you leave it. Shown in the Excluded tab with Stop.</p>
+                  </div>
+                  <div>
+                    <div class="flex items-center justify-between gap-3"><span>Count drives and places on their own</span>
+                      <button @click="diskCountDrives = !diskCountDrives; saveKl('disk_count_drives')" class="h-8 rounded border border-bd px-3" x-text="diskCountDrives ? 'On' : 'Off'"></button></div>
+                    <p class="text-[0.6875rem] text-muted mt-1">The Excluded tab counts each drive's total when it opens. A big drive takes a while.</p>
+                  </div>
+                  <div>
+                    <div class="flex items-center justify-between gap-3"><span>Look for ignore files when indexing</span>
+                      <button @click="diskIgnoreSearch = !diskIgnoreSearch; saveKl('disk_ignore_search')" class="h-8 rounded border border-bd px-3" x-text="diskIgnoreSearch ? 'On' : 'Off'"></button></div>
+                    <p class="text-[0.6875rem] text-muted mt-1">Each index run searches this computer's backed-up folders for ignore files (like .kopiaignore) that the backups leave out.</p>
+                  </div>
+                  <div>
+                    <div class="flex items-center justify-between gap-3"><span>Follow links</span>
+                      <button @click="diskFollowLinks = !diskFollowLinks; saveKl('disk_follow_links')" class="h-8 rounded border border-bd px-3" x-text="diskFollowLinks ? 'On' : 'Off'"></button></div>
+                    <p class="text-[0.6875rem] text-muted mt-1">Count what links and junctions point to. Backups keep the link itself, so sizes then come out larger than the backups.</p>
+                  </div>
+                  <div>
+                    <div class="flex items-center justify-between gap-3"><span>Scanner threads</span>
+                      <select x-model.number="diskScanThreads" @change="saveKl('disk_scan_threads')" class="fld border border-bd bg-surface2">
+                        <option value="0">Automatic</option>
+                        <template x-for="n in [1, 2, 4, 8, 16]" :key="n"><option :value="n" x-text="n" :selected="n === diskScanThreads"></option></template>
+                      </select></div>
+                    <p class="text-[0.6875rem] text-muted mt-1">Automatic uses up to 8 on an SSD and 2 on a hard disk, a USB drive or a network share.</p>
+                  </div>
+                  <div>
+                    <div class="flex items-center justify-between gap-3"><span>Keep counted sizes</span>
+                      <select x-model.number="diskSizesMinutes" @change="saveKl('disk_sizes_minutes')" class="fld border border-bd bg-surface2">
+                        <option value="0">Until you recount</option>
+                        <template x-for="n in [60, 15, 5]" :key="n"><option :value="n" x-text="n === 60 ? 'For 1 hour' : 'For ' + n + ' minutes'" :selected="n === diskSizesMinutes"></option></template>
+                      </select></div>
+                    <p class="text-[0.6875rem] text-muted mt-1">Sizes are kept while KopiaLens runs. To count a folder again, use Count size in the Excluded tab.</p>
+                  </div>
+                </div>
+              </template>
               <div x-show="diskLookupMode === 'auto' || diskLookupMode === 'everything'">
                 <div class="flex items-center justify-between gap-3"><span>Everything (es.exe) path</span>
                   <input x-model="esPath" @change="saveKl('es_path')" class="fld border border-bd bg-surface2 min-w-[18rem]" placeholder="es.exe path"></div>

@@ -65,10 +65,10 @@
                     <div class="space-y-4">
                       <div>
                         <div class="flex items-center justify-between gap-3"><span>Unlock automatically</span>
-                          <label class="flex items-center gap-2 text-xs" :class="encStatus.remember_state === 'unavailable' ? 'text-muted' : ''"><input type="checkbox" :checked="encStatus.remembered" :disabled="['waiting', 'unavailable'].includes(encStatus.remember_state)" @click.prevent="toggleRemember(!encStatus.remembered)">On this computer</label></div>
+                          <label class="flex items-center gap-2 text-xs" :class="encStatus.remember_state === 'unavailable' ? 'text-muted' : ''"><input type="checkbox" :checked="encStatus.remembered" :disabled="encStatus.remember_state === 'waiting'" @click.prevent="toggleRemember(!encStatus.remembered)">On this computer</label></div>
                         <p class="text-[0.6875rem] text-muted mt-1" x-show="!['waiting', 'unavailable'].includes(encStatus.remember_state)">Off: someone enters the password after every restart.</p>
                         <p class="text-[0.6875rem] mt-1" style="color:var(--warn)" x-show="encStatus.remember_state === 'waiting'">Waiting for this computer's keychain. If it asks for a password, answer it there.</p>
-                        <p class="text-[0.6875rem] mt-1" style="color:var(--warn)" x-show="encStatus.remember_state === 'unavailable'">Not available on this computer: its keychain didn't accept the key. Someone enters the password after every restart.</p>
+                        <p class="text-[0.6875rem] mt-1" style="color:var(--warn)" x-show="encStatus.remember_state === 'unavailable'">This computer's keychain didn't accept the key, so someone enters the password after every restart. Tick the box to try again.</p>
                       </div>
                       <div>
                         <div class="flex items-center justify-between gap-3"><span>Password</span>

@@ -202,7 +202,7 @@ const deletePart = {
 
     delFacts() {
       const p = this.delPanel, plan = p.plan;
-      const sources = this.delScopeSources().map((s) => sourcePath(s)).join(", ");
+      const sources = this.delScopeSources().map((s) => this.shortSource(s)).join(", ");
       const facts = [[p.files.length > 1 ? "Files" : "File",
         p.files.length > 1 ? `${p.files.length} selected` : p.files[0].full_path]];
       if (p.method === "remove") {
@@ -424,7 +424,7 @@ const deletePart = {
         ["Folder", p.label],
         ["Match", p.by === "filename" ? "File name" : "Exact content"],
         ["Removes", `${this.removeFilesSplit() || countOf(this.removeFileTotal(), "file")} · ${this.removeAllVersions() ? "every version" : "latest version"}`],
-        ["Sources", p.everywhere ? "Every source in the repository" : (p.sources_scope || []).map((s) => sourcePath(s)).join(", ")],
+        ["Sources", p.everywhere ? "Every source in the repository" : (p.sources_scope || []).map((s) => this.shortSource(s)).join(", ")],
         [term("reclaimable"), this.removeFreesText()],
       ];
     },
@@ -451,7 +451,7 @@ const deletePart = {
       const ok = await this.klConfirm({
         title: "Exclude and delete?",
         facts,
-        callout: still.length ? `Still backed up by ${still.map((s) => sourcePath(s)).join(", ")}. Its next snapshot backs this up again.` : "",
+        callout: still.length ? `Still backed up by ${still.map((s) => this.shortSource(s)).join(", ")}. Its next snapshot backs this up again.` : "",
         note: (dry && dry.done && dry.ok ? "" : "No dry run yet. ") + "Rules are added first. If one fails, the delete waits for you.",
         command: "", confirmLabel: "Exclude and delete", danger: true,
       });

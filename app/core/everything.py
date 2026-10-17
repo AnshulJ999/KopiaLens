@@ -27,10 +27,15 @@ def _install_locations() -> list[str]:
 
 
 def es_path() -> str:
-    """The configured es.exe, else one on PATH, else the Everything install folder, else "es"."""
+    """The configured es.exe, else the one shipped next to the server program, else one on PATH,
+    else the Everything install folder, else "es"."""
     configured = load_settings().get("kopialens", {}).get("es_path")
     if configured:
         return configured
+    import sys
+    shipped = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "es.exe")
+    if os.path.isfile(shipped):
+        return shipped
     if shutil.which("es"):
         return "es"
     for candidate in _install_locations():
@@ -52,6 +57,13 @@ def _run(args: list[str]) -> str:
     except Exception as exc:  # noqa: BLE001 - es missing / not running: surface empty, don't crash
         log.warning("es.exe failed: %s", exc)
         return ""
+
+
+def program_installed() -> bool:
+    """Everything itself (not just es.exe) is installed in a Program Files folder."""
+    import glob
+    roots = {os.environ.get(v) for v in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432")}
+    return any(glob.glob(os.path.join(r, "Everything*", "Everything*.exe")) for r in filter(None, roots))
 
 
 def available() -> bool:

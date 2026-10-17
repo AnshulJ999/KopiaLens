@@ -13,7 +13,7 @@ A file counts as backed up when the latest snapshot of any repository holds it. 
 - Every kopia repository counts, unless you turn off **Counts as a backup** for it in **Settings → Repositories**. Turn it off for a test repository, so it doesn't make folders look backed up.
 - Backblaze Personal Backup doesn't count, but the **Also in BZ** column shows what it holds of each folder.
 
-To read the disk, KopiaLens uses the **Read the disk with** setting in **Settings → Disk scanning**. On Windows, Automatic uses Everything (a free file index by voidtools) when it's running, which answers at once. Otherwise the KopiaLens scanner counts the folder. A folder that takes longer than the **Scan time limit** (15 seconds by default) shows **Counting…** and fills in when the count is ready ([Disk scanning](disk-scanning.md)).
+To read the disk, KopiaLens uses the **Read the disk with** setting in **Settings → Disk scanning**. On Windows, it uses Everything (a free file index by voidtools), which answers at once. The KopiaLens scanner is off until you choose it there. It counts the folder you open for up to the **Scan time limit** (15 seconds by default), and a subfolder that needs longer shows **Not counted**. Right-click it and select **Count size** to count it to the end ([Disk scanning](disk-scanning.md)).
 
 ## Browse
 
@@ -30,7 +30,7 @@ The buttons at the top filter the list:
 | Column | What it means |
 |---|---|
 | **Name** | The folder or file |
-| **Status** | **backed up**, **NOT backed up**, **partial** (part of the folder is excluded), **new (not yet)**: changed after the latest snapshot, so the next snapshot will hold it, or **counting…**: its size isn't counted yet |
+| **Status** | **backed up**, **NOT backed up**, **partial** (part of the folder is excluded), **new (not yet)**: changed after the latest snapshot, so the next snapshot will hold it, **counting…**: being counted now, **not counted**: select **Count size** to count it, **other disk**: another disk mounted there (Linux and macOS), or **empty**: nothing on disk, shown only under **All** |
 | **Total** | Its size on disk |
 | **Backed Up**, **Excluded** | How much of it is backed up and how much isn't |
 | **% Excl** | The share that isn't backed up |

@@ -301,24 +301,24 @@ const enginePart = {
       { label: "Custom…", action: () => this.engineSourcePause(source, "custom") }] }];
   },
   async engineSourcePause(source, hours) {
-    if (hours === "custom") { hours = await this.pauseCustomHours("Pause backups of " + sourcePath(source)); if (hours == null) return; }
+    if (hours === "custom") { hours = await this.pauseCustomHours("Pause backups of " + this.shortSource(source)); if (hours == null) return; }
     const s = this.engineSrc[source];
     if (s && s.status === "UPLOADING") {
       const ok = await this.klConfirm({ title: "Pause this folder's backups?",
-        facts: [["Folder", sourcePath(source)], ["Paused", hours ? "until " + humanTime(Date.now() / 1000 + hours * 3600) : "until you resume"]],
+        facts: [["Folder", this.shortSource(source)], ["Paused", hours ? "until " + humanTime(Date.now() / 1000 + hours * 3600) : "until you resume"]],
         callout: "The backup running now stops.", confirmLabel: "Pause backups", danger: false });
       if (!ok) return;
     }
     try {
       await getJson("/api/engine/source-pause", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source, hours }) });
-      this.klNotify("Backups paused for " + sourcePath(source));
+      this.klNotify("Backups paused for " + this.shortSource(source));
       setTimeout(() => this.loadEngineSources(), 800);
     } catch (e) { this.klNotify(e.message, "error"); }
   },
   async engineSourceResume(source) {
     try {
       await getJson("/api/engine/source-resume", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source }) });
-      this.klNotify("Backups resumed for " + sourcePath(source));
+      this.klNotify("Backups resumed for " + this.shortSource(source));
       setTimeout(() => this.loadEngineSources(), 800);
     } catch (e) { this.klNotify(e.message, "error"); }
   },
@@ -334,7 +334,7 @@ const enginePart = {
     if (this.askSnapshotNow) {
       const ok = await this.klConfirm({
         title: "Back up this folder now?",
-        facts: [["Folder", sourcePath(source)], ["Repository", this.repoName(this.repo)]],
+        facts: [["Folder", this.shortSource(source)], ["Repository", this.repoName(this.repo)]],
         note: "Kopia applies this folder's policy: its exclusions, compression and retention.",
         confirmLabel: "Back up now", danger: false, dontAsk: true,
       });
@@ -349,7 +349,7 @@ const enginePart = {
   },
   async engineCancel(source) {
     const ok = await this.klConfirm({
-      title: "Stop this backup?", facts: [["Folder", sourcePath(source)]],
+      title: "Stop this backup?", facts: [["Folder", this.shortSource(source)]],
       confirmLabel: "Stop backup", danger: true,
     });
     if (!ok) return;

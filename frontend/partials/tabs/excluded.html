@@ -12,10 +12,19 @@
             <button @click="setExcludedFilter('all')" :class="excludedFilter==='all' ? 'bg-sel font-medium' : ''" class="px-2 h-7 border-l border-bd">All</button>
           </div>
           <span class="grow"></span>
-          <span x-show="!excludedOk" class="text-xs text-danger font-medium" x-text="diskLookupText() || 'Disk lookup is not available.'"></span>
-          <span x-show="excludedOk && diskLookup && diskLookup.provider === 'scan' && !(diskLookup.scanner && diskLookup.scanner.found)" class="text-xs text-muted" title="The KopiaLens scanner wasn't found, so big folders can take a while to count">Basic folder scan</span>
-          <span class="text-xs text-muted" x-text="excludedMeta"></span>
+          <span class="text-xs text-muted" :title="_excludedNotes && _excludedNotes.unreadable.length ? 'Couldn\'t read:\n' + _excludedNotes.unreadable.join('\n') : ''" x-text="excludedMeta"></span>
           <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('excluded')" @keydown.enter.prevent="openDocs('excluded')" title="Not backed up means on disk but in no latest snapshot of any repository. Shows this computer's drives and the places added in Settings > Disk scanning.">?</span>
         </div>
-        <div id="excludedTable" class="flex-1 min-h-0"></div>
+        <div x-show="!excludedOk && diskLookup" class="rounded border border-bd p-3 text-sm flex flex-wrap items-center gap-3" data-testid="disk-help">
+          <span x-text="excludedHelpText()"></span>
+          <a x-show="excludedNeedsEverything()" class="kl-btn" href="https://www.voidtools.com/downloads/" target="_blank" rel="noopener">Get Everything</a>
+          <button class="kl-btn" @click="openDiskSettings()">Disk scanning settings</button>
+        </div>
+        <template x-for="s in excludedScans" :key="s.id">
+          <div class="flex items-center gap-2 text-xs text-muted px-1" data-testid="disk-scan">
+            <span class="truncate" :title="s.path" x-text="excludedScanText(s)"></span>
+            <button class="kl-btn quiet" @click="excludedStop(s.id)" :aria-label="'Stop counting ' + s.path">Stop</button>
+          </div>
+        </template>
+        <div id="excludedTable" class="flex-1 min-h-0" x-show="excludedOk || !diskLookup"></div>
       </section>

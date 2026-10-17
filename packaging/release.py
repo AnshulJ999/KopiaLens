@@ -278,6 +278,36 @@ def fetch_kopia(version: str) -> str:
     return path
 
 
+# Everything's command-line client (voidtools/ES, MIT), shipped on Windows so users only install
+# Everything itself. Pinned release + checksums.
+ES_VERSION = "1.1.0.37"
+ES_FILES = {
+    f"ES-{ES_VERSION}.x64.zip": "7a57670d9152068d05876c58858c82fe6d3915a9df2c819f4de8801e2929d3a7",
+    "LICENSE": "238dd2a1ba45db2355d3a43c139f0c0fae597ae63ee04a2bd63eda9e370937d5",
+}
+
+
+def stage_es(dest: str) -> None:
+    """es.exe and its licence next to the server program, where core/everything looks first."""
+    cache = os.path.join(BUILD_ROOT, "cache", f"es-{ES_VERSION}")
+    os.makedirs(cache, exist_ok=True)
+    urls = {f"ES-{ES_VERSION}.x64.zip": f"https://github.com/voidtools/ES/releases/download/{ES_VERSION}/ES-{ES_VERSION}.x64.zip",
+            "LICENSE": f"https://raw.githubusercontent.com/voidtools/ES/{ES_VERSION}/LICENSE"}
+    for fname, want in ES_FILES.items():
+        path = os.path.join(cache, fname)
+        if not os.path.isfile(path):
+            log(f"  downloading {urls[fname]}")
+            urllib.request.urlretrieve(urls[fname], path + ".part")
+            os.replace(path + ".part", path)
+        if sha256(path) != want:
+            fail(f"es {fname} does not match its pinned checksum")
+    with zipfile.ZipFile(os.path.join(cache, f"ES-{ES_VERSION}.x64.zip")) as zf, \
+            zf.open("es.exe") as src, open(os.path.join(dest, "es.exe"), "wb") as out:
+        shutil.copyfileobj(src, out)
+    shutil.copy2(os.path.join(cache, "LICENSE"), os.path.join(dest, "es-LICENSE.txt"))
+    log(f"  es.exe {ES_VERSION} checksum OK")
+
+
 def stage_kopia(archive: str, dest: str) -> None:
     os.makedirs(dest, exist_ok=True)
     wanted = {"kopia" + EXE, "LICENSE"}
@@ -505,6 +535,7 @@ def step_stage() -> None:
     if probe.returncode != 0:
         fail(f"kopialens-scan --version failed ({probe.returncode}): {probe.stderr.strip()[:200]}")
     if WINDOWS:
+        stage_es(server)
         # Logo icons for desktop shortcuts (Properties > Change Icon); built by build_logos.py.
         shutil.copytree(os.path.join(SHELL, "icons", "shortcuts"), os.path.join(STAGE, "icons"))
     log(f"  staged {server}")

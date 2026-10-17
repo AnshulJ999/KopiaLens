@@ -285,30 +285,38 @@ def discover_index(repo: str, names: list[str], source: str | None = None) -> li
              "content_id": r[4], "from": "index"} for r in rows]
 
 
-def discover_disk(repo: str, names: list[str], source: str) -> list[dict]:
-    """Dot-ignore files present ON DISK for a local source that the index does not hold (they are
-    excluded from the backup, but kopia still reads them). Best-effort: needs a disk provider."""
+def disk_search_allowed() -> bool:
+    """Everything always answers; the KopiaLens scanner only when the user turned this search on."""
+    from . import disklookup
+    p = disklookup.provider()
+    return p == "everything" or (p == "scan" and disklookup.ignore_search_on())
+
+
+def discover_disk(repo: str, names: list[str], source: str) -> tuple[list[dict], bool]:
+    """Dot-ignore files present ON DISK for a source of this computer that the index does not hold
+    (they are excluded from the backup, but kopia still reads them), and whether the search
+    finished. One search for all names. Best-effort: needs a disk provider."""
     from . import disklookup
     root = pathrules.source_root(source)
     sep = pathrules.sep(source)
     case_sensitive = pathrules.case_sensitive(source)
     out: list[dict] = []
-    for name in names:
-        try:
-            rows, _capped = disklookup.find(root, name, folders_only=False, limit=200)
-        except Exception as exc:  # noqa: BLE001 - a disk provider hiccup must not fail discovery
-            log.debug("disk lookup for %s under %s failed: %s", name, root, exc)
-            return out
-        for row in rows or []:
-            path = row.get("path") or row.get("full_path") or ""
-            if not path or not name_matches(os.path.basename(path), name, case_sensitive):
-                continue
-            folder = path.rsplit(sep, 1)[0] if sep in path else ""
-            if folder and not under(path, root, sep, not pathrules.case_sensitive(source)):
-                continue
-            out.append({"source": source, "path": path, "name": os.path.basename(path),
-                        "size": int(row.get("size") or 0), "content_id": None, "from": "disk"})
-    return out
+    try:
+        rows, complete = disklookup.find(root, names, folders_only=False, limit=200 * max(1, len(names)))
+    except Exception as exc:  # noqa: BLE001 - a disk provider hiccup must not fail discovery
+        log.debug("disk lookup for ignore files under %s failed: %s", root, exc)
+        return out, False
+    for row in rows or []:
+        path = row.get("path") or row.get("full_path") or ""
+        base = os.path.basename(path)
+        if not path or not any(name_matches(base, n, case_sensitive) for n in names):
+            continue
+        folder = path.rsplit(sep, 1)[0] if sep in path else ""
+        if folder and not under(path, root, sep, not case_sensitive):
+            continue
+        out.append({"source": source, "path": path, "name": base,
+                    "size": int(row.get("size") or 0), "content_id": None, "from": "disk"})
+    return out, complete
 
 
 def _entry_key(entry: dict) -> tuple[str, str]:
@@ -331,17 +339,25 @@ def build_map(repo: str, names: list[str] | None = None) -> dict:
             continue
         seen.add(key)
         entries.append(row)
-    sources = sorted(sources_index(repo))
     index_pairs = {_entry_key(r) for r in entries}
-    local = [s for s in sources if pathrules.source_root(s)[:1].isalpha()
-             and pathrules.source_root(s)[1:2] == ":"]
-    for source in local:
-        for row in discover_disk(repo, names, source):
-            key = _entry_key(row)
-            if key in index_pairs or key in seen:
-                continue
-            seen.add(key)
-            entries.append(row)
+    disk_search: dict[str, str] = {}
+    if names and disk_search_allowed():
+        from .repos import client_host
+        here = client_host(repo)
+        local = [s for s in sorted(sources_index(repo))
+                 if s.split(":", 1)[0].partition("@")[2].lower() == here and os.path.isdir(pathrules.source_root(s))]
+        for source in local:
+            rows, complete = discover_disk(repo, names, source)
+            disk_search[source] = "complete" if complete else "stopped early"
+            if not complete:
+                log.warning("ignore files repo=%s: the disk search under %s stopped early; some may be missing",
+                            repo, pathrules.source_root(source))
+            for row in rows:
+                key = _entry_key(row)
+                if key in index_pairs or key in seen:
+                    continue
+                seen.add(key)
+                entries.append(row)
 
     out: list[dict] = []
     read = 0
@@ -364,7 +380,7 @@ def build_map(repo: str, names: list[str] | None = None) -> dict:
         out.append(item)
 
     payload = {"version": _MAP_VERSION, "ts": time.time(), "names": names, "files": out,
-               "read": read}
+               "read": read, "disk_search": disk_search}
     if not _write_map(repo, payload):
         log.error("ignore-file map write failed repo=%s", repo)
     log.info("ignore files repo=%s: %d found, %d read, %d reused", repo, len(out), read,

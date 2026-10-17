@@ -114,7 +114,7 @@ const detailPart = {
       const s = this.detail && this.detail.pathStatus;
       if (!s) return "…";
       if (s.error) return "Couldn't read the policies";
-      const from = s.owner === "global" ? "Global" : sourcePath(s.owner || "") || s.owner;
+      const from = s.owner === "global" ? "Global" : this.shortSource(s.owner || "") || s.owner;
       const list = s.origin === "none" ? "No rules apply"
         : s.origin === "own" ? `Own list of ${s.rule_count} rule${s.rule_count === 1 ? "" : "s"}`
         : `Inherits ${s.rule_count} rule${s.rule_count === 1 ? "" : "s"} from ${from}`;
@@ -123,8 +123,8 @@ const detailPart = {
       const w = s.why;
       if (!w) return list + " · a rule leaves this out";
       const where = w.kind === "ignore_file" ? `${w.name || "an ignore file"} in ${w.anchor}`
-        : w.kind === "root" ? (s.owner === "global" ? "the Global policy" : `the policy of ${sourcePath(w.owner || "") || w.owner}`)
-        : `the policy of ${sourcePath(w.owner || "") || w.anchor}`;
+        : w.kind === "root" ? (s.owner === "global" ? "the Global policy" : `the policy of ${this.shortSource(w.owner || "") || w.owner}`)
+        : `the policy of ${this.shortSource(w.owner || "") || w.anchor}`;
       return `Left out by ${w.rule} (${where})` + (w.via ? `, which leaves out the folder ${w.via.split("/").pop()}` : "")
         + ". Not backed up any more; older snapshots still hold it.";
     },
@@ -517,7 +517,7 @@ const detailPart = {
       // Cross-source folder delete (By-folder view, Churn, the folder panel). No tree filters, and
       // no source scope unless one is given, so every source holding the folder is covered.
       this._removeBase = { repo: this.repo, source, prefix, deleted_only: false, over_gb: 0, ext: null };
-      this._removeLabel = "folder " + prefix + (source ? " (in " + sourcePath(source) + ")" : " (all sources)");
+      this._removeLabel = "folder " + prefix + (source ? " (in " + this.shortSource(source) + ")" : " (all sources)");
       this.buildRemovePlan();
     },
     // Several folders and files in one plan: parts = [{source|null, prefix}]. filters = Tree filters.
@@ -538,7 +538,7 @@ const detailPart = {
     removePathLine() {
       const b = this._removeBase || {};
       const filtered = b.deleted_only || b.over_gb || b.ext ? " · Tree filters applied" : "";
-      if (b.prefix) return b.prefix + (b.source ? ` · in ${sourcePath(b.source)}` : "") + filtered;
+      if (b.prefix) return b.prefix + (b.source ? ` · in ${this.shortSource(b.source)}` : "") + filtered;
       if (b.parts) return b.parts.slice(0, 3).map((x) => x.prefix).join("  ·  ") + (b.parts.length > 3 ? ` and ${b.parts.length - 3} more` : "") + filtered;
       return this._removeLabel || "";
     },
@@ -710,7 +710,7 @@ const detailPart = {
           ["What", p.label],
           ["Files", `${split || files} · ${this.removeAllVersions() ? "every version" : "latest version only"}${share}`],
           ["Match", p.by === "filename" ? `File name · ${countOf(p.name_count, "name")}` : "Exact content"],
-          ["Sources", p.everywhere ? "Every source in the repository" : (p.sources_scope || []).map((s) => sourcePath(s)).join(", ")],
+          ["Sources", p.everywhere ? "Every source in the repository" : (p.sources_scope || []).map((s) => this.shortSource(s)).join(", ")],
           [term("reclaimable"), this.removeFreesText()],
           ...(p.by === "filename" && p.detail && p.detail.kept_count
             ? [["Stays stored", `${fmtPhys(p.detail.kept)} · kept by ${countOf(p.detail.kept_count, "identical file")} with other names`]] : []),

@@ -138,7 +138,7 @@ const policyEditPart = {
     },
     polTargetLabel(key) {
       if (!key || key === "(global)" || key === "global") return "Global";
-      return key.includes(":") ? sourcePath(key) : key;
+      return key.includes(":") ? this.shortSource(key) : key;
     },
 
     // A plain field (zero = unset) that an ancestor set can be changed here but never cleared.

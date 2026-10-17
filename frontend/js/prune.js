@@ -179,7 +179,7 @@ const prunePart = {
         ["Keeps", countOf(kept.length, noun) + ": " + keptText],
         ["Removes", countOf(this.pruneTickCount(), noun) + " from " + countOf(price.snapshots, "snapshot")],
         [term("reclaimable"), fmtPhys(price.frees) + ", after full maintenance"],
-        [p.holders.length > 1 ? "Sources" : "Source", p.holders.map((s) => sourcePath(s)).join(", ")],
+        [p.holders.length > 1 ? "Sources" : "Source", p.holders.map((s) => this.shortSource(s)).join(", ")],
       ];
       const copies = this.pruneElsewhereTicked();
       if (copies) facts.splice(3, 0, ["Also", countOf(copies, "version") + " identical at another path in those snapshots"]);

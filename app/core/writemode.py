@@ -98,6 +98,7 @@ NO_REPO_WRITE = {
     "/api/write-mode", "/api/auth/login", "/api/auth/logout", "/api/auth/recover", "/api/index/stop",
     "/api/tokens", "/api/tokens/{token_id}", "/api/approvals/{approval_id}/approve",
     "/api/approvals/{approval_id}/deny",
+    "/api/disk-lookup/count", "/api/disk-lookup/stop", "/api/disk-lookup/left",   # read the disk only
 }
 # Prefixes whose write routes are KopiaLens's own (licence, onboarding, setup, encryption, shell,
 # Backblaze): connecting, creating and removing repositories is allowed in every mode.

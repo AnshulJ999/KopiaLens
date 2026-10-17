@@ -52,7 +52,7 @@ const simulatePart = {
       const known = del.filter((s) => s.frees != null).map((s) => s.frees).sort((a, b) => b - a);
       const topLine = del.length > 5 && known.length === del.length
         ? ` · the 5 biggest alone free at least ${fmtBytes(known.slice(0, 5).reduce((a, b) => a + b, 0))}` : "";
-      return `${sourcePath(r.source)} · keeps ${r.keep_snapshots} of ${countOf(r.total_snapshots, "snapshot")} · deletes ${r.delete_snapshots}`
+      return `${this.shortSource(r.source)} · keeps ${r.keep_snapshots} of ${countOf(r.total_snapshots, "snapshot")} · deletes ${r.delete_snapshots}`
         + ` · frees ${fmtBytes(r.reclaim)}${topLine}`;
     },
     // Reclaimable comes from the per-snapshot analysis; when it's missing, start it and fill the column in.
@@ -115,7 +115,7 @@ const simulatePart = {
           this.simMeta = `Frees ${fmtBytes(r.combined_reclaim)} in total · the sources' own figures add up to ${fmtBytes(r.sum_per_source)}; ${fmtBytes(r.shared_between_sources)} is shared between sources`
             + (r.cached ? ` · saved result${r.computed_at ? " from " + humanTime(r.computed_at) : ""}` : "");
           setTable("#simulateTable", r.rows || [], [
-            { title: "Source", field: "source", widthGrow: 4, minWidth: 240, sorter: srcSorter, formatter: (c) => sourcePath(c.getValue()) },
+            { title: "Source", field: "source", widthGrow: 4, minWidth: 240, sorter: srcSorter, formatter: (c) => this.shortSource(c.getValue()) },
             { title: "Total", field: "total_snapshots", width: 80, hozAlign: "right" },
             { title: "Keep", field: "keep_snapshots", width: 80, hozAlign: "right" },
             { title: "Delete", field: "delete_snapshots", width: 80, hozAlign: "right" },

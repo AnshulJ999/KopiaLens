@@ -25,7 +25,7 @@ const dashboardPart = {
         if (!refresh && dEl && dEl._tabulator && sig === this._dashSig) return;
         this._dashSig = sig;
         setTable("#dashboardTable", rows, [
-          { title: "Source", field: "source", widthGrow: 4, minWidth: 240, sorter: srcSorter, formatter: (c) => this.shortSource(c.getValue()), headerTooltip: "The folder kopia backs up" },
+          { title: "Source", field: "source", widthGrow: 4, minWidth: 240, sorter: srcSorter, formatter: (c) => this.shortSource(c.getValue(), false), headerTooltip: "The folder kopia backs up" },
           { title: "Owner", field: "owner", width: 150, headerTooltip: "The user and computer that back it up" },
           { title: "Snaps", field: "snaps", width: 70, hozAlign: "right", headerTooltip: "Snapshots of this folder" },
           { title: "Files", field: "files_latest", width: 100, hozAlign: "right", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE), headerTooltip: "Files in the latest snapshot" },
@@ -106,7 +106,7 @@ const dashboardPart = {
       if (this.askSnapshotNow) {
         const r = await this.klConfirm({
           title: "Take a snapshot now?",
-          facts: [["Folder", sourcePath(source)], ["Source", source], ["Repository", this.repoName(this.repo)],
+          facts: [["Folder", this.shortSource(source)], ["Source", source], ["Repository", this.repoName(this.repo)],
             ...(this.engineSrcPaused(source) ? [["Schedule", "Stays paused"]] : [])],
           note: "Kopia applies this folder's policy: its exclusions, compression and retention.",
           input: { label: "Description (optional)", placeholder: "e.g. before the upgrade" },
@@ -116,7 +116,7 @@ const dashboardPart = {
         this.snapshotNowDontAsk(r);
         description = r.value || "";
       }
-      await this.startJob("snapshot_create", { source, description }, sourcePath(source));
+      await this.startJob("snapshot_create", { source, description }, this.shortSource(source));
     },
 
     // "Don't ask again" in the Snapshot now confirm turns the setting off (Settings > General).

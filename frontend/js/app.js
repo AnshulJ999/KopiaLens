@@ -130,6 +130,7 @@ document.addEventListener("alpine:init", () => {
     jobMode: localStorage.getItem("kl-jobmode") || "clean", jobExpanded: false, runningJobs: [],
     _jobPoll: null, _jobChipPoll: null, _jobOpenSeq: 0, _handledJobs: null, _reindexWatch: {},
     excludedDrives: [], excludedOk: true, excludedPath: "", excludedFilter: "excluded", excludedMeta: "", _excludedItems: [], _excludedSeq: 0, excludedDetail: null, showExcludedDetail: false,
+    excludedScans: [], _excludedSeen: false, _excludedNotes: null, _excludedCountedAt: null,
     // Free/Pro (licence.js): GET /api/licence; proNotice = the open upgrade notice.
     lic: { state: "none", locked: [], features: {}, pricing_url: "" }, proNotice: null,
     licKey: "", licBusy: false, licError: "", licPatreonWaiting: false, licAdding: false,
@@ -186,17 +187,18 @@ document.addEventListener("alpine:init", () => {
     polPop: null,   // the policy editor as a popup over another tab: {} while open (policies.js polPopOpen)
     polMulti: { on: false, picked: [], fields: {}, plan: null, ticks: {}, busy: false }, _polMultiSeq: 0, _polMultiTimer: null,
     versionSizes: {}, _versionSeq: 0, _versionTimer: null,
-    diskLookup: null, diskLookupMode: "auto", diskScanBudget: 15,
-    diskScanThreads: 0, diskScanBackground: true, diskCacheMinutes: 5, diskShowLocal: true, diskPlaces: [], diskPlaceForm: null, _diskComputers: null,
+    diskLookup: null, diskLookupMode: "everything", diskScanBudget: 15,
+    diskScanThreads: 0, diskScanBackground: false, diskCountDrives: false, diskIgnoreSearch: false, diskFollowLinks: false,
+    diskSizesMinutes: 0, diskShowLocal: true, diskPlaces: [], diskPlaceForm: null, _diskComputers: null,
     diskLookupText() {
       const s = this.diskLookup;
       if (!s) return "";
       if (s.provider === "everything") return "In use: Everything.";
       if (s.provider === "scan") {
-        const what = s.scanner && s.scanner.found ? "In use: KopiaLens scanner." : "In use: basic folder scan. The KopiaLens scanner wasn't found.";
-        return what + (s.mode === "auto" && s.everything && s.everything.supported && !s.everything.running ? (s.everything.installed ? " Everything is installed but not running." : " Everything is not installed.") : "");
+        return "In use: KopiaLens scanner." + (s.mode === "auto" && s.everything && s.everything.supported && !s.everything.running
+          ? (s.everything.installed ? " Everything is installed but not running." : " Everything is not installed.") : "");
       }
-      return s.note || "Disk lookup is not available.";
+      return s.note || "Disk scanning isn't available.";
     },
     // exclusion dialog: priced-before-commit pattern adder over the file/folder panels.
     exDialog: null, showExclude: false, _exOpenSeq: 0, _exTargetsSeq: 0, _exPriceSeq: 0, _exCustomTimer: null, _exPriceTimer: null,
@@ -226,7 +228,15 @@ document.addEventListener("alpine:init", () => {
     humanTime(s) { return humanTime(s); },
     fmtDate(s) { return fmtDate(s); },
     fmtDur(s) { return fmtDur(s); },
-    shortSource(s) { return String(s || "").startsWith("BLINKDISK-DRAFT-") ? sourcePath(s) + " (BlinkDisk draft)" : sourcePath(s); },
+    // A source's folder; with its owner (user@computer) when another owner backs up the same folder here.
+    shortSource(s, owner = true) {
+      const raw = String(s || "");
+      const p = raw.startsWith("BLINKDISK-DRAFT-") ? sourcePath(s) + " (BlinkDisk draft)" : sourcePath(s);
+      if (!owner || !raw.includes("@")) return p;
+      const key = sourcePath(s).toLowerCase();
+      const shared = (this.sources || []).filter((x) => sourcePath(x).toLowerCase() === key).length > 1;
+      return shared ? `${p} (${raw.split(":")[0]})` : p;
+    },
     // A file held by nested sources: its first source, "+N" for the rest (full list in filesSourcesTip).
     fileSources(f) { const n = (f && f.sources || []).length; return this.shortSource(f && f.source) + (n > 1 ? ` +${n - 1}` : ""); },
     fileSourcesTip(f) { return ((f && f.sources) || [f && f.source]).map((s) => this.shortSource(s)).join("\n"); },
@@ -642,6 +652,7 @@ document.addEventListener("alpine:init", () => {
     },
 
     activate() {
+      if (this._excludedSeen && this.active !== "excluded") { this._excludedSeen = false; this.excludedLeft(); }
       if (this.repoKind === "backblaze") return this.bzActivate();
       // Snapshots reads kopia's own list, so it works before the first index too.
       if (["dashboard", "tree", "search", "churn", "stats"].includes(this.active)

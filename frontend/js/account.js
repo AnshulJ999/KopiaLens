@@ -246,7 +246,19 @@ const accountPart = {
         this._acctApply(r);
         const waiting = r && r.status && r.status.remember_state === "waiting";
         this.klNotify(waiting ? "Waiting for this computer's keychain" : (on ? "Unlocks automatically on this computer" : "Asks for the password after every restart"));
+        if (waiting) this._watchKeychain();
       } catch (e) { this.klNotify(e.message || String(e), "warn"); }
+    },
+    // The keychain answers in the background (a password window may be waiting); follow it until it does.
+    _watchKeychain() {
+      clearTimeout(this._keychainTimer);
+      this._keychainTimer = setTimeout(async () => {
+        const s = await getJson("/api/encryption/status").catch(() => null);
+        if (s) this.encStatus = s;
+        if (!s || s.remember_state === "waiting") return this._watchKeychain();
+        if (s.remember_state === "unavailable") this.klNotify("This computer's keychain didn't accept the key", "warn");
+        else this.klNotify(s.remembered ? "Unlocks automatically on this computer" : "Asks for the password after every restart");
+      }, 2000);
     },
     async lockNow() {
       const ok = await this.klConfirm({
