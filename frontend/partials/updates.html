@@ -3,7 +3,15 @@
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Check for updates</span>
                   <button @click="updateCheck = !updateCheck; saveKl('update_check')" class="h-8 rounded border border-bd px-3" x-text="updateCheck ? 'On' : 'Off'"></button></div>
-                <p class="text-[0.6875rem] text-muted mt-1">Sends the KopiaLens version, install type and operating system.</p>
+                <p class="text-[0.6875rem] text-muted mt-1">Sends the KopiaLens version, update channel, install type and operating system.</p>
+              </div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Update channel</span>
+                  <select x-model="updateChannel" @change="saveKl('update_channel')" class="fld border border-bd bg-surface2" data-testid="update-channel">
+                    <option value="stable">Stable</option>
+                    <option value="beta">Beta</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Beta offers test versions early. They may have more bugs.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Anonymous usage stats</span>

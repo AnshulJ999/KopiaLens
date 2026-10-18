@@ -84,42 +84,43 @@ def needed() -> bool:
     return not passed or passed.get("hash") != inputs_hash()
 
 
-def _config(in_dir: str, out_dir: str) -> str:
+def _config(in_dir: str, out_dir: str, script: str) -> str:
     return f"""<Configuration>
   <MemoryInMB>4096</MemoryInMB>
   <MappedFolders>
     <MappedFolder><HostFolder>{escape(in_dir)}</HostFolder><SandboxFolder>C:\\kltest\\in</SandboxFolder><ReadOnly>true</ReadOnly></MappedFolder>
     <MappedFolder><HostFolder>{escape(out_dir)}</HostFolder><SandboxFolder>C:\\kltest\\out</SandboxFolder><ReadOnly>false</ReadOnly></MappedFolder>
   </MappedFolders>
-  <LogonCommand><Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\kltest\\in\\installer_test_sandbox.ps1</Command></LogonCommand>
+  <LogonCommand><Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\kltest\\in\\{escape(script)}</Command></LogonCommand>
 </Configuration>
 """
 
 
-def run(setup: str, log=print) -> str:
-    """Runs the checks on one installer: "passed", "failed", "unavailable" (no Windows Sandbox) or
-    "timeout". A pass is recorded, so release.py can skip an unchanged installer."""
+def run_sandbox(name: str, files: dict[str, str], script: str, work: str, log=print) -> dict | str:
+    """Runs ``script`` (copied in from this folder) in Windows Sandbox with ``files`` ({name in the
+    Sandbox's C:\\kltest\\in: path here}). The script's result.json, or "unavailable" / "timeout"."""
     if not available():
-        log("  installer test: Windows Sandbox isn't set up (turn it on in Windows features, then restart)")
+        log(f"  {name}: Windows Sandbox isn't set up (turn it on in Windows features, then restart)")
         return "unavailable"
     # Windows runs one Sandbox at a time; a second start only shows an error box.
     if not _wait_closed(60):
-        log("  installer test: another Windows Sandbox is open; close it and run the test again")
+        log(f"  {name}: another Windows Sandbox is open; close it and run the test again")
         return "unavailable"
-    run_dir = os.path.join(WORK, time.strftime("%Y%m%d-%H%M%S"))
+    run_dir = os.path.join(work, time.strftime("%Y%m%d-%H%M%S"))
     in_dir, out_dir = os.path.join(run_dir, "in"), os.path.join(run_dir, "out")
     os.makedirs(in_dir)
     os.makedirs(out_dir)
-    shutil.copy2(setup, os.path.join(in_dir, "setup.exe"))
-    shutil.copy2(SANDBOX_SCRIPT, in_dir)
-    wsb = os.path.join(run_dir, "installer-test.wsb")
+    for dest, src in files.items():
+        shutil.copy2(src, os.path.join(in_dir, dest))
+    shutil.copy2(os.path.join(HERE, script), in_dir)
+    wsb = os.path.join(run_dir, "sandbox.wsb")
     with open(wsb, "w", encoding="utf-8") as fh:
-        fh.write(_config(in_dir, out_dir))
-    log(f"  installer test: {os.path.basename(setup)} in Windows Sandbox ({run_dir})")
+        fh.write(_config(in_dir, out_dir, script))
+    log(f"  {name}: Windows Sandbox ({run_dir})")
     try:
         subprocess.Popen([_sandbox_exe(), wsb])
     except OSError as e:
-        log(f"  installer test: Windows Sandbox didn't start ({e})")
+        log(f"  {name}: Windows Sandbox didn't start ({e})")
         return "unavailable"
 
     result_path, log_path = os.path.join(out_dir, "result.json"), os.path.join(out_dir, "log.txt")
@@ -128,7 +129,7 @@ def run(setup: str, log=print) -> str:
     while time.time() < end:
         time.sleep(3)
         if not os.path.isfile(log_path) and time.time() - started > START_TIMEOUT:
-            log(f"  installer test: the Sandbox didn't run the test within {START_TIMEOUT // 60} min;"
+            log(f"  {name}: the Sandbox didn't run the test within {START_TIMEOUT // 60} min;"
                 " close its window if one is open")
             return "unavailable"
         if os.path.isfile(log_path):
@@ -143,7 +144,7 @@ def run(setup: str, log=print) -> str:
         if os.path.isfile(result_path):
             break
     else:
-        log(f"  installer test: no result after {TIMEOUT // 60} min; close the Sandbox window yourself")
+        log(f"  {name}: no result after {TIMEOUT // 60} min; close the Sandbox window yourself")
         return "timeout"
 
     with open(result_path, encoding="utf-8-sig") as fh:
@@ -151,12 +152,22 @@ def run(setup: str, log=print) -> str:
     _wait_closed(60)  # it shuts itself down after writing the result
     failed = [c for c in result.get("checks") or [] if not c.get("ok")]
     if result.get("error"):
-        log(f"  installer test: the Sandbox script stopped: {result['error']}")
+        log(f"  {name}: the Sandbox script stopped: {result['error']}")
     for c in failed:
         log(f"  FAIL {c.get('name')}: {c.get('detail')}")
     crashes = os.path.join(out_dir, "crashes.txt")
     if os.path.isfile(crashes) and os.path.getsize(crashes):
         log(f"  program crashes inside the Sandbox: {crashes}")
+    return result
+
+
+def run(setup: str, log=print) -> str:
+    """Runs the checks on one installer: "passed", "failed", "unavailable" (no Windows Sandbox) or
+    "timeout". A pass is recorded, so release.py can skip an unchanged installer."""
+    log(f"  installer test: {os.path.basename(setup)}")
+    result = run_sandbox("installer test", {"setup.exe": setup}, os.path.basename(SANDBOX_SCRIPT), WORK, log)
+    if isinstance(result, str):
+        return result
     if not result.get("ok"):
         return "failed"
     with open(PASS_FILE, "w", encoding="utf-8") as fh:

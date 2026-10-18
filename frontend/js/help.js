@@ -1,7 +1,7 @@
 // Help menu, update notice, usage-stats settings and the diagnostics bundle.
 const helpPart = {
     helpMenu: false, help: null, showUpdate: false, usagePreview: null, checkingUpdates: false,
-    updateCheck: true, usageStats: true,
+    updateCheck: true, usageStats: true, updateChannel: "stable",
     zoomLevel: window.klZoom ? window.klZoom.level() : null,
     showDiag: false, diag: null, _diagSeq: 0,
 

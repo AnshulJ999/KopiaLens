@@ -66,6 +66,11 @@ def stats_enabled() -> bool:
     return not _env_off("KOPIALENS_NO_USAGE_STATS") and bool(_kl().get("usage_stats", True))
 
 
+def channel() -> str:
+    """The update channel: "beta" also offers beta versions; anything else is "stable"."""
+    return "beta" if _kl().get("update_channel") == "beta" else "stable"
+
+
 def note_request(path: str) -> None:
     """Called for each successful API request (the timing middleware)."""
     global _opened
@@ -158,7 +163,8 @@ def _tier() -> str:
 
 
 def build_payload(include_stats: bool) -> dict:
-    payload = {"schema": 1, "version": APP_VERSION, "install_type": install_type(), "os": _os_name()}
+    payload = {"schema": 1, "version": APP_VERSION, "install_type": install_type(), "os": _os_name(),
+               "channel": channel()}
     if include_stats:
         from . import repos as repos_mod
         kopia = [r for r, c in REPOS.items() if c.get("kind", "kopia") == "kopia" and not is_demo(r)]
@@ -263,7 +269,8 @@ def check_now(manual: bool = False) -> bool:
     if data is None:
         _write_state(retry_at=now + RETRY_AFTER_FAILURE)
         return False
-    _write_state(last_checkin_at=now, retry_at=0, update_info={**_clean_reply(data), "manual": manual})
+    _write_state(last_checkin_at=now, retry_at=0,
+                 update_info={**_clean_reply(data), "manual": manual, "channel": channel()})
     if want_stats:
         with _lock:
             _used.clear()
@@ -278,10 +285,17 @@ def _major(version: str | None) -> int | None:
         return None
 
 
+def _version_key(v: str) -> tuple:
+    """Semantic Versioning order: 1.0.0-beta.1 < 1.0.0-beta.2 < 1.0.0-rc.1 < 1.0.0."""
+    core, _, pre = v.lstrip("vV").split("+")[0].partition("-")
+    nums = tuple(int(x) if x.isdigit() else 0 for x in (core.split(".") + ["0", "0", "0"])[:3])
+    if not pre:
+        return nums, 1, ()
+    return nums, 0, tuple((0, int(p), "") if p.isdigit() else (1, 0, p) for p in pre.split("."))
+
+
 def _newer(a: str | None, b: str) -> bool:
-    def key(v):
-        return tuple(int(x) if x.isdigit() else 0 for x in re.split(r"[.+-]", v or "0"))
-    return bool(a) and key(a) > key(b)
+    return bool(a) and _version_key(a) > _version_key(b)
 
 
 def status() -> dict:
@@ -289,12 +303,16 @@ def status() -> dict:
     enabled = updates_enabled()
     state = _read_state()
     info = state.get("update_info") if isinstance(state.get("update_info"), dict) else {}
+    # An answer for the other channel no longer applies (the user switched since the last check).
+    if info.get("channel", "stable") != channel():
+        info = {}
     latest = info.get("latest")
     # With automatic checks off, only an answer the user asked for (Check now) is shown.
     shown = enabled or bool(info.get("manual"))
     available = bool(shown and _newer(latest, APP_VERSION))
     out = {
         "version": APP_VERSION,
+        "channel": channel(),
         "checks_enabled": enabled,
         "stats_enabled": stats_enabled(),
         "available": available,

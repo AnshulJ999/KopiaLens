@@ -16,7 +16,9 @@ build, so Cargo.toml and tauri.conf.json are never edited by hand.
 Output: <BUILD_ROOT>/release/<version>/ (or KOPIALENS_RELEASE_DIR) plus release.log there.
 KOPIALENS_RELEASE_SKIP_TESTS=1 skips the test step while iterating. --with-notes makes a testing build
 with the Notes widget (packaging/notes_bundle.py): its files are named -testing and it writes no
-update file, so it can never be published as an update. The banned licence list comes from the
+update file, so it can never be published as an update. --update-endpoint=<url> makes an update-test
+build (files named -updatetest, no update file) that asks only that address for updates
+(packaging/update_test.py). The banned licence list comes from the
 LicenseKit issuing tool on this PC, or from the licence service with KOPIALENS_BANNED_FROM=service
 (the pipeline). The updater key is private/updater.key (or TAURI_SIGNING_PRIVATE_KEY); its password
 is asked once and can be remembered (packaging/updater_key.py).
@@ -457,11 +459,24 @@ def smoke_server(version: str) -> None:
 # ---------------------------------------------------------------- steps
 
 def tag() -> str:
-    return "-testing" if _ctx["with_notes"] else ""
+    return "-testing" if _ctx["with_notes"] else "-updatetest" if _ctx["update_endpoint"] else ""
+
+
+def no_update_file() -> bool:
+    """Testing and update-test builds are never offered as an update."""
+    return _ctx["with_notes"] or bool(_ctx["update_endpoint"])
+
+
+def bundles() -> list[str]:
+    """This platform's packages. A beta on Linux is the AppImage only: deb and rpm would sort
+    1.0.0-beta.1 after 1.0.0, so the package manager would refuse the final release as a downgrade."""
+    if PLATFORM == "linux" and "-" in _ctx["version"]:
+        return ["appimage"]
+    return BUNDLES
 
 
 def asset(kind: str) -> str:
-    """A release file name: KopiaLens-<version>[-testing]-<platform>-<arch><kind>."""
+    """A release file name: KopiaLens-<version>[-testing|-updatetest]-<platform>-<arch><kind>."""
     return f"KopiaLens-{_ctx['version']}{tag()}-{PLATFORM}-{ARCH}{kind}"
 
 
@@ -560,12 +575,16 @@ def step_desktop() -> None:
     if WINDOWS:
         resources["release-stage/icons/"] = "icons/"
     release_conf = os.path.join(STAGE, "tauri.release.json")
+    conf = {**RELEASE_IDENTITY, "version": version,
+            "bundle": {"active": True, "targets": bundles(), "createUpdaterArtifacts": True, "resources": resources}}
+    if _ctx["update_endpoint"]:
+        # Update-test build: asks only this address (packaging/update_test.py), plain http allowed.
+        conf["plugins"] = {"updater": {"endpoints": [_ctx["update_endpoint"]],
+                                       "dangerousInsecureTransportProtocol": _ctx["update_endpoint"].startswith("http:")}}
     with open(release_conf, "w", encoding="utf-8") as fh:
-        json.dump({**RELEASE_IDENTITY, "version": version,
-                   "bundle": {"active": True, "targets": BUNDLES, "createUpdaterArtifacts": True,
-                              "resources": resources}}, fh)
+        json.dump(conf, fh)
     shutil.rmtree(os.path.join(SHELL_TARGET, "release", "bundle"), ignore_errors=True)
-    run(["cargo", "tauri", "build", "--config", release_conf, "--bundles", ",".join(BUNDLES)], SHELL, "tauri.log",
+    run(["cargo", "tauri", "build", "--config", release_conf, "--bundles", ",".join(bundles())], SHELL, "tauri.log",
         {"CARGO_TARGET_DIR": SHELL_TARGET, **signing_env()})
     exe = os.path.join(SHELL_TARGET, "release", "KopiaLens" + EXE)
     if not os.path.isfile(exe):
@@ -575,14 +594,16 @@ def step_desktop() -> None:
         shipped = {update: asset("-setup.exe")}
     elif PLATFORM == "linux":
         update = _one("appimage/*.AppImage")
-        shipped = {update: asset(".AppImage"), _one("deb/*.deb"): asset(".deb"), _one("rpm/*.rpm"): asset(".rpm")}
+        shipped = {update: asset(".AppImage")}
+        if "deb" in bundles():
+            shipped.update({_one("deb/*.deb"): asset(".deb"), _one("rpm/*.rpm"): asset(".rpm")})
     else:
         update = _one("macos/*.app.tar.gz")
         shipped = {update: asset(".app.tar.gz"), _one("dmg/*.dmg"): asset(".dmg")}
     for src, name in shipped.items():
         shutil.copy2(src, os.path.join(dest, name))
         log(f"  {name}  {os.path.getsize(src) / 1e6:.0f} MB")
-    if _ctx["with_notes"]:
+    if no_update_file():
         return
     sig = update + ".sig"
     if not os.path.isfile(sig):
@@ -598,8 +619,8 @@ def step_desktop() -> None:
 def step_update_file() -> None:
     """latest.json for the in-app updater, attached to the GitHub release (the check-in Worker passes
     it along): every platform's update-<target>.json in the release folder, merged."""
-    if _ctx["with_notes"]:
-        log("  skipped: testing builds write no update file")
+    if no_update_file():
+        log("  skipped: testing and update-test builds write no update file")
         return
     dest = _ctx["dest"]
     platforms = {}
@@ -708,7 +729,9 @@ def main() -> int:
     steps = args or DEFAULT_STEPS
     if not args and not WINDOWS:
         fail("the one-command release is Windows-only; name the steps (see the docstring)")
-    _ctx.update(version=release_version(), with_notes="--with-notes" in sys.argv[1:], steps=steps)
+    endpoint = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--update-endpoint=")), "")
+    _ctx.update(version=release_version(), with_notes="--with-notes" in sys.argv[1:], update_endpoint=endpoint,
+                steps=steps)
     dest = os.environ.get("KOPIALENS_RELEASE_DIR") or os.path.join(BUILD_ROOT, "release", _ctx["version"] + tag())
     _ctx["dest"] = dest
     os.makedirs(dest, exist_ok=True)
@@ -716,13 +739,15 @@ def main() -> int:
     log(f"KopiaLens {_ctx['version']} release ({PLATFORM}-{ARCH}): {', '.join(steps)}")
     if _ctx["with_notes"]:
         log("  TESTING BUILD: the Notes widget is included. Never publish it; it writes no latest.json.")
+    if endpoint:
+        log(f"  UPDATE-TEST BUILD: updates only from {endpoint}. Never publish it; it writes no latest.json.")
     for n, name in enumerate(steps, 1):
         log(f"{n}/{len(steps)} {name}")
         STEPS[name]()
     log(f"DONE: {dest}")
     if _ctx.get("installer_untested"):
         log("  WARNING: the installer was NOT tested in Windows Sandbox (installer-test).")
-    if _ctx["with_notes"]:
+    if no_update_file():
         log("  TESTING BUILD: for test copies only; do not publish.")
     elif not args:
         log(f"  publish: a GitHub release tagged v{_ctx['version']} on {RELEASE_REPO_URL} with the files in"

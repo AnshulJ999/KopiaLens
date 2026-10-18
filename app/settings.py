@@ -131,6 +131,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "retention_chip_color": "#2563eb",  # the custom chip colour
         "update_check": True,        # daily check for a newer version (docs/usage-stats.md)
         "usage_stats": True,         # anonymous usage stats sent with that check
+        "update_channel": "stable",  # stable | beta (beta also offers beta versions)
         "debug_log": False,          # also write data/logs/kopialens-debug.log at DEBUG (env KOPIALENS_DEBUG_LOG overrides)
         # The desktop app's local control port (restart/quit/status for scripts and agents), read
         # at its start: on in a source checkout, off in a released copy until turned on.

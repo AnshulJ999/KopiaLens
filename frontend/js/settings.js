@@ -53,6 +53,7 @@ const settingsPart = {
         this._readLook(kl);
         this.updateCheck = kl.update_check !== false;
         this.usageStats = kl.usage_stats !== false;
+        this.updateChannel = kl.update_channel === "beta" ? "beta" : "stable";
         this.diskLookupMode = ["everything", "auto", "scan", "off"].includes(kl.disk_lookup) ? kl.disk_lookup : "everything";
         this.diskScanBudget = Number(kl.disk_scan_budget || 15);
         this.diskScanThreads = Number(kl.disk_scan_threads || 0);
@@ -208,6 +209,7 @@ const settingsPart = {
       dashboard_page_size: { s: "dashPageSize", t: "choice", of: ["all", "25", "50", "100"] },
       update_check: { s: "updateCheck", t: "bool" },
       usage_stats: { s: "usageStats", t: "bool" },
+      update_channel: { s: "updateChannel", t: "choice", of: ["stable", "beta"] },
       bzdata_path: { s: "bzDataPath", t: "str", block: "backblaze", restart: true },
       store: { s: "bzStore", t: "choice", of: ["parquet", "sqlite"], block: "backblaze" },
       updates: { s: "bzUpdates", t: "choice", of: ["auto", "off"], block: "backblaze" },
@@ -337,6 +339,7 @@ const settingsPart = {
           if (key === "dashboard_refresh") this.armAutoRefresh();
           if (key.startsWith("disk_") || key === "es_path") { this.excludedDrives = []; this._refreshDiskLookup(); }
           if (key in this.savedPorts) this.savedPorts[key] = v;
+          if (key === "update_channel") { this.loadUsagePreview(); if (this.updateCheck) this.checkUpdatesNow(); }
         })
         .catch((e) => {
           this.error = e.message || String(e);

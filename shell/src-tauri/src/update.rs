@@ -66,19 +66,40 @@ fn wait_idle(app: &AppHandle, sh: &Shell) {
     }
 }
 
+/// On the beta channel, the configured endpoints with `channel=beta` added to the update service's
+/// address (GitHub's latest.json is stable only). None on the stable channel: the config is used as is.
+fn channel_endpoints(app: &AppHandle, sh: &Shell) -> Option<Vec<tauri::Url>> {
+    let beta = sh.state.lock().unwrap().as_ref()
+        .and_then(|st| st.get("update")).and_then(|u| u.get("channel")).and_then(Value::as_str) == Some("beta");
+    if !beta {
+        return None;
+    }
+    let list = app.config().plugins.0.get("updater").and_then(|u| u.get("endpoints")).and_then(Value::as_array)?;
+    let urls: Vec<tauri::Url> = list.iter().filter_map(Value::as_str).filter_map(|s| {
+        let mut url = tauri::Url::parse(s).ok()?;
+        if url.path().contains("/v1/update/") {
+            url.query_pairs_mut().append_pair("channel", "beta");
+        }
+        Some(url)
+    }).collect();
+    (!urls.is_empty()).then_some(urls)
+}
+
 fn run(app: &AppHandle, sh: &Arc<Shell>) -> Result<(), String> {
     wait_idle(app, sh);
     report(sh, "checking", None, None);
     let stopper = sh.clone();
     // Windows quits the app to run the installer: stop indexing (it saves and resumes) and the server first.
-    let updater = app.updater_builder()
+    let mut builder = app.updater_builder()
         .on_before_exit(move || {
             stopper.server.log("update: stopping indexing and the server for the installer");
             stopper.server.stop_workers();
             stopper.server.stop();
-        })
-        .build()
-        .map_err(|e| e.to_string())?;
+        });
+    if let Some(urls) = channel_endpoints(app, sh) {
+        builder = builder.endpoints(urls).map_err(|e| e.to_string())?;
+    }
+    let updater = builder.build().map_err(|e| e.to_string())?;
     let Some(update) = tauri::async_runtime::block_on(updater.check()).map_err(|e| e.to_string())? else {
         report(sh, "none", None, None);
         return Ok(());

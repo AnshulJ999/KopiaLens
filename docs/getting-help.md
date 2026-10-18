@@ -30,6 +30,10 @@ When an update is out, **Update available** in the top bar opens its details.
 
 If your licence covers an earlier major version (for example a lifetime licence for 2.x), KopiaLens tells you before you update to a version it doesn't cover, and points you to the newest version it does.
 
+### Beta versions
+
+To try new versions before they're released to everyone, set **Settings → Updates → Update channel** to **Beta**. KopiaLens then also offers beta versions (for example `1.3.0-beta.1`), which may have more bugs. Switching back to **Stable** keeps the version you have. You move back onto stable versions with the next stable release that is newer than it. Docker users pick the `beta` image tag instead of `latest`.
+
 ## Desktop app
 
 In the desktop app, the **?** menu also has:

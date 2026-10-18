@@ -6,7 +6,7 @@ Both are on by default, and you can turn off either one in **Settings → Update
 
 KopiaLens never installs anything by itself. When a newer version is out, it says so. The installed Windows app can install it when you click **Install and restart**. Other copies link to the download. Before installing, KopiaLens checks that the installer is signed by KopiaLens.
 
-When you click **Install and restart**, the app asks the update service for the installer's details, sending only its version and platform (`windows-x86_64`). If the service can't be reached, it asks GitHub instead.
+When you click **Install and restart**, the app asks the update service for the installer's details, sending only its version, platform (`windows-x86_64`) and, on the beta channel, `channel=beta`. If the service can't be reached, it asks GitHub instead.
 
 ## What's sent
 
@@ -15,6 +15,7 @@ When you click **Install and restart**, the app asks the update service for the 
 | Field | Example |
 |---|---|
 | KopiaLens version | `1.2.0` |
+| Update channel | `stable` or `beta` |
 | Install type | `windows`, `linux`, `macos`, `docker` or `source` |
 | Operating system | `windows`, `linux` or `macos` |
 
@@ -44,7 +45,7 @@ The service also records the **country** the request came from (worked out by Cl
 
 - Your IP address is **not** stored.
 - With usage stats on: one row per install with the fields above, the first and last day it checked in, and how many days it was opened. An install that hasn't checked in for 90 days is deleted.
-- Daily totals: how many checks came in per version, install type, OS and licence, how many installs were opened, and how many used each feature.
+- Daily totals: how many checks came in per version, install type, OS and licence, how many installs were opened, and how many used each feature. The update channel is kept only in the install's row.
 
 ## Revoked licences
 

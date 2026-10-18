@@ -41,7 +41,7 @@ def test_with_both_switches_off_nothing_is_sent(monkeypatch, sent):
 def test_the_update_check_alone_sends_no_install_id(monkeypatch, sent):
     _switches(monkeypatch, True, False)
     checkin.check_now()
-    assert set(sent[0]) == {"schema", "version", "install_type", "os"}
+    assert set(sent[0]) == {"schema", "version", "install_type", "os", "channel"}
 
 
 def test_usage_stats_send_feature_names_once(monkeypatch, sent):
@@ -97,7 +97,7 @@ def test_usage_stats_wait_for_a_day_old_persistent_install(monkeypatch, sent):
 def test_check_now_compares_even_with_automatic_checks_off(monkeypatch, sent):
     _switches(monkeypatch, False, False)
     assert checkin.check_now(manual=True) is True
-    assert set(sent[0]) == {"schema", "version", "install_type", "os"}
+    assert set(sent[0]) == {"schema", "version", "install_type", "os", "channel"}
     assert checkin.status()["available"] is True
     assert checkin.check_now() is False and len(sent) == 1   # the daily check stays off
 

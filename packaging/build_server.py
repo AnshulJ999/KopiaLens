@@ -68,7 +68,8 @@ def notes_args() -> list[str]:
 
 
 def nuitka_args() -> list[str]:
-    version = app_version()
+    # Windows file details take numbers only: a beta (1.2.0-beta.1) is stamped 1.2.0 there.
+    numeric = app_version().split("+")[0].split("-")[0]
     # Opt-in: Nuitka's own tool downloads (Dependency Walker; one-time, cached per user).
     downloads = ["--assume-yes-for-downloads"] if os.environ.get("KOPIALENS_BUILD_ALLOW_DOWNLOADS") else []
     windows = [
@@ -76,8 +77,8 @@ def nuitka_args() -> list[str]:
         f"--windows-icon-from-ico={os.path.join(KL_ROOT, 'shell', 'src-tauri', 'icons', 'icon.ico')}",
         "--product-name=KopiaLens",
         "--file-description=KopiaLens server",
-        f"--file-version={version}",
-        f"--product-version={version}",
+        f"--file-version={numeric}",
+        f"--product-version={numeric}",
     ] if WINDOWS else []
     return [
         sys.executable, "-m", "nuitka",

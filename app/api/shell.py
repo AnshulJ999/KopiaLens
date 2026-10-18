@@ -80,7 +80,7 @@ def _update() -> dict | None:
     if not st["available"]:
         return None
     return {"latest": st["latest"], "url": st["url"], "can_install": st["can_install"], "install": st["install"],
-            "install_requested": checkin.install_requested()}
+            "install_requested": checkin.install_requested(), "channel": st["channel"]}
 
 
 @router.post("/update-progress")
