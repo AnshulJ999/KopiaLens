@@ -196,6 +196,15 @@ def unlock(repo: str, payload: UnlockRequest) -> dict:
         raise _bad(exc) from exc
 
 
+@router.post("/setup/repos/{repo}/reconnect")
+def reconnect(repo: str, payload: UnlockRequest) -> dict:
+    """Rebuild a repository's missing connection file in place (same id and index)."""
+    try:
+        return repoconnect.reconnect(repo, payload.password)
+    except (ValueError, OSError) as exc:
+        raise _bad(exc) from exc
+
+
 class ReadonlyRequest(BaseModel):
     on: bool
     shared_ok: bool = False   # the user confirmed that another app's connection turns read-only too

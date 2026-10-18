@@ -56,10 +56,12 @@ def all_snapshots(repo: str) -> list[dict]:
     res = kopia(repo, ["snapshot", "list", "--json"])
     if res.returncode != 0:
         from .kopiabin import friendly_error
+        raw = (res.stderr or "").strip()[:300]
+        plain = friendly_error(raw)
+        if plain != raw:   # a known error already reads as a sentence
+            raise ListingFailed(f"repo {repo}: {plain}")
         raise ListingFailed(
-            f"repo {repo}: kopia snapshot list failed (exit {res.returncode}): "
-            f"{friendly_error((res.stderr or '').strip()[:300]) or 'no error output'}"
-        )
+            f"repo {repo}: kopia snapshot list failed (exit {res.returncode}): {raw or 'no error output'}")
     out = res.stdout
     return json.loads(out) if out.strip() else []
 

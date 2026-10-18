@@ -385,7 +385,17 @@ const reposPart = {
       let res;
       try { res = await _setupPost("/api/setup/probe", { repo: r.id }); }
       catch (e) { res = { ok: false, error: e.message || String(e) }; }
-      this.repoChecks = { ...this.repoChecks, [r.id]: { busy: false, ok: res.ok, error: res.error || "", pw: "" } };
+      this.repoChecks = { ...this.repoChecks, [r.id]: { busy: false, ok: res.ok, error: res.error || "", pw: "", missing: !!res.missing_config } };
+    },
+    async raReconnect(r) {
+      const chk = this.repoChecks[r.id];
+      if (!chk || !chk.pw || chk.busy) return;
+      this.repoChecks = { ...this.repoChecks, [r.id]: { ...chk, busy: true } };
+      try {
+        await _setupPost(`/api/setup/repos/${encodeURIComponent(r.id)}/reconnect`, { password: chk.pw });
+        this.klNotify(`${r.name} is connected again.`);
+        await this.raCheck(r);
+      } catch (e) { this.repoChecks = { ...this.repoChecks, [r.id]: { ...chk, busy: false, error: e.message || String(e) } }; }
     },
     async raUnlock(r) {
       const chk = this.repoChecks[r.id];

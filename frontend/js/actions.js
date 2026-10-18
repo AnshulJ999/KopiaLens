@@ -347,14 +347,12 @@ const actionsPart = {
             .catch((e) => { this.klNotify(`Couldn't open the folder window: ${e}`, "warn"); return null; });
         }
         if (this.host.folder_picker === "native") {
-          this.klNotify("Choose a folder in the window that opened.");
           try {
-            const r = await getJson("/api/actions/browse-folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial }) });
+            const pending = getJson("/api/actions/browse-folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initial }) });
+            this.klNotify("Choose a folder in the window that opened.");
+            const r = await pending;
             return r && r.path;
-          } catch (e) {
-            this.klNotify(e.message || "Couldn't open the folder window.", "warn");
-            return null;
-          }
+          } catch (e) { /* the system window can't open: KopiaLens's own folder list instead */ }
         }
         return await this.fbOpen(initial);
       } finally {

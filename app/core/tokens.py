@@ -390,7 +390,8 @@ _WRITES: dict[str, object] = {
     **{f"POST /api/onboarding/{p}": APP for p in ("begin", "finish", "restart", "start-indexing")},
     "POST /api/onboarding/setup-code": NEVER,
     **{f"POST /api/setup/{p}": APP for p in ("attach", "backblaze", "connect", "create",
-                                             "index/rebuild", "sample", "repos/{repo}/unlock")},
+                                             "index/rebuild", "sample", "repos/{repo}/unlock",
+                                             "repos/{repo}/reconnect")},
     "PATCH /api/setup/repos/{repo}": APP,
     "POST /api/setup/repos/{repo}/readonly": _kopia_readonly,   # turning it off is the unsafe side
     "DELETE /api/setup/repos/{repo}": PERSON,

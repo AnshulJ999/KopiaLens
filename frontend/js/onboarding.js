@@ -20,6 +20,7 @@ const onboardingPart = {
       const st = this.ob.state;
       await _setupPost("/api/onboarding/begin").catch(() => {});
       if (st.protection_chosen) this.ob.protected = st.has_account ? "account" : "skipped";
+      getJson("/api/app/host").then((h) => { this.host = h; }).catch(() => {});
       await this.cxOpen(st.repos || []);
     },
     obSteps() { return OB_STEPS; },
@@ -30,7 +31,8 @@ const onboardingPart = {
     // ---- Setup code (server install, setup window closed) -----------------------------------
     obNeedCode() {
       if (this.ob) this.ob.needsCode = true;
-      else location.reload();                 // the reload lands on the setup-code screen
+      // Before init's own onboarding check, that check shows the code screen; reloading here loops.
+      else if (this._obChecked) location.reload();   // the reload lands on the setup-code screen
     },
     async obSubmitCode() {
       const o = this.ob;

@@ -91,7 +91,7 @@ document.addEventListener("alpine:init", () => {
     fb: null,   // in-app folder browser (actions.js)
     folderPicker: "auto", mountDir: "", mountHostPath: "",
     // What the machine running KopiaLens can do (/api/app/host); Windows-on-this-PC until it answers.
-    host: { os: "windows", docker: false, can_open: true, file_manager: "Explorer", folder_picker: "native",
+    host: { os: "windows", docker: false, can_open: true, file_manager: "Explorer", folder_picker: "browser",
             native_picker_possible: true, mount: { ok: true, reason: "", dir: null, host_dir: "" }, data_persistent: true },
     // Settings Account + Encryption sections, their shared dialog, and the unlock box (lock.html).
     acct: null, encStatus: null, acctDialog: null, locked: null, sessionDays: 30,
@@ -384,7 +384,7 @@ document.addEventListener("alpine:init", () => {
       // A fresh install (no repository yet) or a closed setup window shows onboarding, and nothing
       // else loads until it is finished.
       try {
-        const obState = await getJson("/api/onboarding/state");
+        const obState = await getJson("/api/onboarding/state").finally(() => { this._obChecked = true; });
         if (obState.needed || !obState.setup_unlocked) {
           window.addEventListener("keydown", (e) => { if (e.key === "Escape") this.escClose(); });
           await this.obBegin(obState);

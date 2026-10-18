@@ -183,7 +183,7 @@ PROVIDERS: dict[str, dict] = {
             _field("keyfile", "--keyfile", "Private key file", "file", advanced=True),
             _field("key_data", "--key-data", "Private key data", "text", secret=True, advanced=True),
             _field("known_hosts", "--known-hosts", "Known hosts file", "file", advanced=True),
-            _field("known_hosts_data", "--known-hosts-data", "Known hosts entries", "text", advanced=True),
+            _field("known_hosts_data", "--known-hosts-data", "Known hosts entries", "lines", advanced=True),
             _bool("embed_credentials", "--embed-credentials", "Embed key and known hosts in the config",
                   advanced=True),
             _bool("external", "--external", "Use the system SSH command", advanced=True,
@@ -835,6 +835,10 @@ def probe(config_file: str | None = None, repo: str | None = None) -> dict:
             raise ValueError("Sample data has no kopia connection to check.")
         config_file = repos.config_path_for(repo)
     args = [kopiabin.exe()]
+    if repo and not os.path.isfile(repos.connection_file(repo)):
+        return {"ok": False, "config_file": config_file or "", "error": kopiabin.MISSING_CONNECTION,
+                "missing_config": True, "type": "", "kind": "", "unique_id": "", "capacity": None,
+                "available": None, "config": {}}
     if config_file:
         if not os.path.isfile(config_file):
             raise ValueError(f"config file not found: {config_file}")
@@ -982,6 +986,54 @@ def unlock(repo: str, password: str) -> dict:
                          "kopia could not open the repository with that password.")
     status = probe(repo=repo)
     return {"ok": True, "status": status}
+
+
+def _has_scrubbed(value) -> bool:
+    if isinstance(value, dict):
+        return any(_has_scrubbed(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_has_scrubbed(v) for v in value)
+    return value == repos.SCRUBBED
+
+
+def reconnect(repo: str, password: str) -> dict:
+    """Rebuild a missing connection file at its old path from the storage details KopiaLens kept,
+    so the repo keeps its id and index. Storage whose keys KopiaLens never stores can't be rebuilt."""
+    rec = next((r for r in repos.all_records() if str(r.get("id")) == str(repo)), None)
+    if rec is None or rec.get("kind", "kopia") != "kopia" or rec.get("demo"):
+        raise ValueError(f"unknown repo: {repo}")
+    if not (password or "").strip():
+        raise ValueError("Enter the repository password.")
+    cfg = repos.connection_file(repo)
+    if os.path.isfile(cfg):
+        raise ValueError("The connection file is there. Use Check to see what's wrong.")
+    storage = rec.get("storage") or {}
+    stype, sconf = storage.get("type"), storage.get("config") or {}
+    if not stype or stype == "server" or _has_scrubbed(sconf):
+        raise ValueError("KopiaLens didn't keep everything this storage needs, such as its keys. "
+                         "Remove this repository and add it again.")
+    os.makedirs(os.path.dirname(cfg), exist_ok=True)
+    tmp = cfg + ".reconnect.json"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"storage": {"type": stype, "config": sconf}}, fh)
+    try:
+        res = _run([kopiabin.exe(), "--config-file", cfg, "repository", "connect", "from-config",
+                    "--file", tmp, "--no-check-for-updates"], password, timeout=300.0)
+    finally:
+        os.remove(tmp)
+    ok = res["returncode"] == 0
+    audit.audit("executed", "repo-reconnect", repo=repo, summary={"ok": ok}, rc=res["returncode"])
+    if not ok:
+        _remove_config_files(cfg)   # it didn't exist before this attempt
+        raise ValueError(_last_meaningful_line(res.get("stderr") or "") or
+                         "kopia could not open the repository with that password.")
+    uid = _status_of(cfg).get("uniqueIDHex") or ""
+    if rec.get("unique_id") and uid and uid != rec["unique_id"]:
+        _disconnect(repo, cfg)
+        _remove_config_files(cfg)
+        raise ValueError("That storage now holds a different repository. Remove this one and add it again.")
+    log.warning("repo=%s connection file rebuilt at %s", repo, cfg)
+    return {"ok": True, "status": probe(repo=repo)}
 
 
 class SharedConnection(ValueError):

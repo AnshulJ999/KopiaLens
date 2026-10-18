@@ -52,12 +52,12 @@
                   <template x-if="repoChecks[r.id] && repoChecks[r.id].error">
                     <div class="space-y-2 pl-8">
                       <p class="text-xs break-words" style="color:var(--danger)" x-text="repoChecks[r.id].error"></p>
-                      <form @submit.prevent="raUnlock(r)" class="flex flex-wrap items-end gap-2">
+                      <form @submit.prevent="repoChecks[r.id].missing ? raReconnect(r) : raUnlock(r)" class="flex flex-wrap items-end gap-2">
                         <label class="flex flex-col gap-1 text-xs font-medium flex-1 min-w-[12rem]">Repository password
                           <input type="password" x-model="repoChecks[r.id].pw" autocomplete="off" class="fld border border-bd bg-surface2"></label>
-                        <button type="submit" class="kl-btn" :disabled="!repoChecks[r.id].pw">Save password</button>
+                        <button type="submit" class="kl-btn" :disabled="!repoChecks[r.id].pw || repoChecks[r.id].busy" x-text="repoChecks[r.id].missing ? 'Connect again' : 'Save password'"></button>
                       </form>
-                      <p class="kl-note">Only if kopia no longer remembers this repository's password. Not your KopiaLens password.</p>
+                      <p class="kl-note" x-text="repoChecks[r.id].missing ? 'Makes a new connection file from the storage details KopiaLens kept. Not your KopiaLens password.' : 'Only if kopia no longer remembers this repository\'s password. Not your KopiaLens password.'"></p>
                     </div>
                   </template>
                   <label x-show="r.kind !== 'backblaze'" class="flex items-center gap-2 text-xs pl-8">

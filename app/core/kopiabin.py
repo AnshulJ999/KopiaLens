@@ -323,12 +323,16 @@ def compat(ver: str | None) -> str:
 
 _FORMAT_ERRORS = ("can't handle repositories created using version", "unsupported format version",
                   "index version")
+MISSING_CONNECTION = ("KopiaLens can't find this repository's connection file, so it can't open it. "
+                      "Connect it again in Settings > Repositories.")
 
 
 def friendly_error(text: str) -> str:
     """kopia's own error, or a plain sentence when the repository's format is newer than this
     kopia can read (another app with a newer kopia upgraded it)."""
     low = (text or "").lower()
+    if "repository is not connected" in low:   # kopia's words when the connection file is gone
+        return MISSING_CONNECTION
     if any(k in low for k in _FORMAT_ERRORS) and ("supported" in low or "unsupported" in low):
         ver = version() or "this kopia"
         return (f"This repository uses a newer format than kopia {ver} can read. Point KopiaLens at a "
