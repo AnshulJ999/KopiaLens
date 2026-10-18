@@ -17,6 +17,7 @@ import threading
 import time
 import urllib.request
 
+from appversion import order_key
 from config import APP_VERSION, CHECKIN_URL, COMPILED, DATA_DIR, DEMO_INSTANCE, REPO_URL, REPOS, is_demo
 
 from .applog import get_logger
@@ -285,17 +286,8 @@ def _major(version: str | None) -> int | None:
         return None
 
 
-def _version_key(v: str) -> tuple:
-    """Semantic Versioning order: 1.0.0-beta.1 < 1.0.0-beta.2 < 1.0.0-rc.1 < 1.0.0."""
-    core, _, pre = v.lstrip("vV").split("+")[0].partition("-")
-    nums = tuple(int(x) if x.isdigit() else 0 for x in (core.split(".") + ["0", "0", "0"])[:3])
-    if not pre:
-        return nums, 1, ()
-    return nums, 0, tuple((0, int(p), "") if p.isdigit() else (1, 0, p) for p in pre.split("."))
-
-
 def _newer(a: str | None, b: str) -> bool:
-    return bool(a) and _version_key(a) > _version_key(b)
+    return bool(a) and order_key(a) > order_key(b)
 
 
 def status() -> dict:

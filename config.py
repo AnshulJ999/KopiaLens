@@ -8,6 +8,8 @@ import json
 import os
 import sys
 
+import appversion
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 # The program that relaunches KopiaLens roles (server, workers). A Nuitka build's sys.executable
 # names a python.exe that does not exist; its real binary is sys.argv[0].
@@ -15,16 +17,8 @@ COMPILED = "__compiled__" in globals()
 SELF_EXE = os.path.abspath(sys.argv[0]) if COMPILED else sys.executable
 
 
-def _read_app_version() -> str:
-    """The app version from the VERSION file (one place; the release build reads it too)."""
-    try:
-        with open(os.path.join(HERE, "VERSION"), encoding="utf-8") as fh:
-            return fh.read().strip() or "0.0.0"
-    except OSError:
-        return "0.0.0"
-
-
-APP_VERSION = _read_app_version()
+APP_VERSION = appversion.version()   # git tag in a source checkout, else the VERSION file a build wrote
+APP_COMMIT = appversion.commit()
 API_VERSION = 1   # the stable API's version (docs/api.md); matches klens.API_VERSION
 
 # Online addresses baked into every shipped copy. Final values before the first public build.

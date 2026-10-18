@@ -252,7 +252,7 @@ const appConfigPart = {
       const a = this.about;
       if (!a) return "";
       const k = a.kopia || {};
-      return [`KopiaLens ${a.version}`, `kopia ${k.version || "unknown"} (${k.path || "not found"})`,
+      return [`KopiaLens ${a.version}${a.commit ? ` (${a.commit})` : ""}`, `kopia ${k.version || "unknown"} (${k.path || "not found"})`,
         `Data format ${a.data_format}`, `${a.os} · Python ${a.python}${a.compiled ? " · compiled" : ""}`,
         `Running as ${a.profile === "desktop" ? "desktop app" : "server"}`, `Data folder ${a.data_dir}`].join("\n");
     },

@@ -49,7 +49,7 @@
               <p x-show="!about" class="kl-note">Loading…</p>
               <template x-if="about">
                 <div class="space-y-3">
-                  <div class="flex items-center justify-between gap-3"><span>KopiaLens</span><span class="text-xs" x-text="about.version"></span></div>
+                  <div class="flex items-center justify-between gap-3"><span>KopiaLens</span><span class="text-xs" :title="about.commit ? 'Built from ' + about.commit : null" x-text="about.version + (about.commit ? ' (' + about.commit + ')' : '')"></span></div>
                   <div class="flex items-center justify-between gap-3"><span>kopia</span>
                     <span class="text-xs text-right min-w-0 truncate" :title="about.kopia.path" x-text="about.kopia.available ? (about.kopia.version || 'version unknown') : 'not found'"></span></div>
                   <div class="flex items-center justify-between gap-3"><span>Running as</span><span class="text-xs" x-text="about.profile === 'desktop' ? 'Desktop app' : 'Server'"></span></div>

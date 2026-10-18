@@ -9,9 +9,10 @@ Steps: check, banned, tests, server, stage, desktop, portable, cli, smoke, insta
 update-file, checksums, cleanup. Run with the dev Python (it runs the tests); the server is compiled
 with the build venv (KOPIALENS_BUILD_PYTHON).
 
-Version: KOPIALENS_RELEASE_VERSION (the pipeline passes the release tag) wins over the VERSION file;
-`check` writes it into VERSION (the server ships that file) and `desktop` stamps it into the Tauri
-build, so Cargo.toml and tauri.conf.json are never edited by hand.
+Version (appversion.py): KOPIALENS_RELEASE_VERSION (the pipeline passes the release tag) > the newest
+kopialens/v* git tag > the VERSION file. `check` writes it into VERSION (the server ships that file)
+and the Home Assistant add-on's config.yaml; `desktop` stamps it into the Tauri build, so Cargo.toml
+and tauri.conf.json are never edited by hand.
 
 Output: <BUILD_ROOT>/release/<version>/ (or KOPIALENS_RELEASE_DIR) plus release.log there.
 KOPIALENS_RELEASE_SKIP_TESTS=1 skips the test step while iterating. --with-notes makes a testing build
@@ -42,6 +43,8 @@ import urllib.request
 import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(1, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import appversion  # noqa: E402
 import installer_test  # noqa: E402
 import notes_bundle  # noqa: E402
 import updater_key  # noqa: E402
@@ -128,9 +131,26 @@ def versions() -> dict:
 
 
 def release_version() -> str:
-    """The release tag (without "v") when the pipeline passes one, else the VERSION file."""
+    """The release tag (without "v") when the pipeline passes one, else appversion's answer (the
+    newest kopialens/v* tag, else the VERSION file). An unreadable tag is kept, so `check` refuses it."""
     tag = (os.environ.get("KOPIALENS_RELEASE_VERSION") or "").strip()
-    return (tag[1:] if tag.startswith("v") else tag) or versions()["app"]
+    return (appversion.normalize(tag) or tag) if tag else appversion.version()
+
+
+HA_CONFIG = os.path.join(KL_ROOT, "packaging", "homeassistant", "kopialens", "config.yaml")
+
+
+def stamp_ha_config(version: str) -> None:
+    """The add-on's config.yaml carries the version Home Assistant shows; it must match the image."""
+    with open(HA_CONFIG, encoding="utf-8") as fh:
+        text = fh.read()
+    new, n = re.subn(r'^version: .*$', f'version: "{version}"', text, count=1, flags=re.M)
+    if n != 1:
+        fail(f"no version line in {HA_CONFIG}")
+    if new != text:
+        with open(HA_CONFIG, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(new)
+        log(f"  Home Assistant add-on version set to {version}")
 
 
 def updater_keys() -> tuple[str, str]:
@@ -488,7 +508,11 @@ def step_check() -> None:
     if version != v["app"]:
         with open(os.path.join(KL_ROOT, "VERSION"), "w", encoding="utf-8", newline="\n") as fh:
             fh.write(version + "\n")
-        log(f"  VERSION file set to {version} (from the release tag; was {v['app']})")
+        log(f"  VERSION file set to {version} (was {v['app']})")
+    stamp_ha_config(version)
+    newest = appversion.tag_version()
+    if os.environ.get("KOPIALENS_RELEASE_VERSION") and newest and newest != version:
+        log(f"  WARNING: building {version}, but the newest kopialens/v* tag here is {newest}")
     if v["cargo"] != version or v["tauri"] != version:
         log(f"  note: Cargo.toml {v['cargo']} / tauri.conf.json {v['tauri']}; the build is stamped {version}")
     shell_key, server_key = updater_keys()

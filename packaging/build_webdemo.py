@@ -17,6 +17,9 @@ import time
 import zipfile
 
 KL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, KL_ROOT)
+import appversion  # noqa: E402
+
 BUILD_ROOT = os.environ.get("KOPIALENS_BUILD_ROOT") or r"J:\Excluded\KopiaLens-Build"
 WEBDEMO = os.path.join(KL_ROOT, "webdemo")
 
@@ -49,7 +52,7 @@ def zip_tree(out: str, items: list[tuple[str, str]]) -> float:
 
 
 def code_files() -> list[tuple[str, str]]:
-    items = [(os.path.join(KL_ROOT, n), n) for n in ("config.py", "VERSION")]
+    items = [(os.path.join(KL_ROOT, n), n) for n in ("config.py", "appversion.py", "VERSION")]
     items.append((os.path.join(WEBDEMO, "kl_web.py"), "kl_web.py"))
     for dirpath, dirs, files in os.walk(os.path.join(KL_ROOT, "app")):
         dirs[:] = [d for d in dirs if d not in ("__pycache__", "tests")]
@@ -95,8 +98,7 @@ def page(version: str, steps: list[dict]) -> str:
 
 
 def build(out: str, files: int) -> None:
-    with open(os.path.join(KL_ROOT, "VERSION"), encoding="utf-8") as f:
-        version = f.read().strip()
+    version = appversion.stamp()   # the demo's zip carries the VERSION file
     building = out + ".building"
     if os.path.isdir(building):
         shutil.rmtree(building)
@@ -168,8 +170,7 @@ def main() -> None:
     ap.add_argument("--reuse", action="store_true", help="skip the build when the site is up to date")
     ap.add_argument("--open", action="store_true", help="open the browser when serving")
     args = ap.parse_args()
-    with open(os.path.join(KL_ROOT, "VERSION"), encoding="utf-8") as f:
-        version = f.read().strip()
+    version = appversion.version()
     out = args.out or os.path.join(BUILD_ROOT, "webdemo", version)
     if args.reuse and current(out):
         log(f"up to date: {os.path.join(out, 'site')}")

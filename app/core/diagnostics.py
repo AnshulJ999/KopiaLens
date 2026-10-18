@@ -23,7 +23,7 @@ import sys
 import time
 import zipfile
 
-from config import APP_VERSION, DATA_DIR, REPOS
+from config import APP_COMMIT, APP_VERSION, DATA_DIR, REPOS
 
 from .applog import INDEX_LOG_DIR, LOG_FILE
 
@@ -117,7 +117,8 @@ def _licence_lines() -> list[str]:
 
 def _system_lines() -> list[str]:
     from . import checkin, kopiabin
-    lines = [f"KopiaLens version: {APP_VERSION}", f"Install type: {checkin.install_type()}",
+    lines = [f"KopiaLens version: {APP_VERSION}" + (f" (commit {APP_COMMIT})" if APP_COMMIT else ""),
+             f"Install type: {checkin.install_type()}",
              f"OS: {platform.platform()}", f"CPU: {platform.machine()} x{os.cpu_count()}",
              f"Python: {sys.version.split()[0]}"]
     from .host import ram_bytes

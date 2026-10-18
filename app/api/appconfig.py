@@ -30,6 +30,7 @@ def about() -> dict:
     from ..core import auth, dataupgrade, kopiabin
     return {
         "version": config.APP_VERSION,
+        "commit": config.APP_COMMIT,
         "profile": auth.profile(),
         "data_dir": config.DATA_DIR,
         "config_dir": config.CONFIG_DIR,

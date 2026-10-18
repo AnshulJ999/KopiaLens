@@ -18,6 +18,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt nuitka==4.2.2
 COPY . .
 ARG KOPIALENS_BUILD_NOTES=
+# The commit shown in About (the build context has no git); the release pipeline passes it.
+ARG KOPIALENS_COMMIT=
 ENV KOPIALENS_BUILD_OUT=/out
 RUN --mount=type=cache,target=/root/.cache/Nuitka \
     python packaging/build_server.py || (tail -40 /out/build.log; exit 1)

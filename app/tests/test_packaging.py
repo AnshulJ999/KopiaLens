@@ -10,6 +10,7 @@ from pathlib import Path
 import jinja2
 import pytest
 
+import appversion
 import config
 from app.core import dataupgrade, kopiabin
 
@@ -23,18 +24,20 @@ def _load(rel: str):
     return mod
 
 
-def test_the_app_reports_the_version_file():
-    """The release tag > VERSION is the one version; release.py stamps it into the Tauri build, so
-    Cargo.toml and tauri.conf.json are not kept in step by hand."""
-    assert config.APP_VERSION == (ROOT / "VERSION").read_text(encoding="utf-8").strip()
-
-
-def test_release_stamps_the_tag_over_the_version_file(monkeypatch):
+def test_the_app_and_the_release_report_one_version(monkeypatch):
+    """appversion is the one version (release tag > newest kopialens/v* tag > VERSION); release.py
+    stamps it into the Tauri build, so Cargo.toml and tauri.conf.json are not kept in step by hand."""
+    monkeypatch.delenv("KOPIALENS_RELEASE_VERSION", raising=False)
     release = _load("packaging/release.py")
+    assert config.APP_VERSION == appversion.version() == release.release_version()
     monkeypatch.setenv("KOPIALENS_RELEASE_VERSION", "v9.8.7")
     assert release.release_version() == "9.8.7"
-    monkeypatch.delenv("KOPIALENS_RELEASE_VERSION")
-    assert release.release_version() == (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+
+
+def test_tags_read_as_three_part_versions():
+    assert appversion.normalize("kopialens/v0.36") == "0.36.0"
+    assert appversion.normalize("refs/tags/kopialens/v1.1.0-beta.1") == "1.1.0-beta.1"
+    assert appversion.normalize("kopialens/v0.41-before-UI-refactor") is None   # a checkpoint, not a version
 
 
 def test_build_compiles_in_every_upgrade_step():

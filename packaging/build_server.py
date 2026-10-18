@@ -16,13 +16,15 @@ from importlib import metadata
 
 KL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.environ.get("KOPIALENS_BUILD_OUT") or r"J:\Excluded\KopiaLens-Build\out"
+COMMIT_FILE = os.path.join(OUT_DIR, "COMMIT")   # the commit shown in About, for a copy with no git
+sys.path.insert(0, KL_ROOT)
+import appversion  # noqa: E402
 WINDOWS = os.name == "nt"
 SERVER_EXE = "kopialens-server.exe" if WINDOWS else "kopialens-server"
 
 
 def app_version() -> str:
-    with open(os.path.join(KL_ROOT, "VERSION"), encoding="utf-8") as fh:
-        return fh.read().strip()
+    return appversion.version()
 
 
 def upgrade_step_modules() -> list[str]:
@@ -93,6 +95,7 @@ def nuitka_args() -> list[str]:
         f"--include-data-dir={os.path.join(KL_ROOT, 'frontend')}=frontend",
         f"--include-data-dir={os.path.join(KL_ROOT, 'docs')}=docs",
         f"--include-data-files={os.path.join(KL_ROOT, 'VERSION')}=VERSION",
+        *([f"--include-data-files={COMMIT_FILE}=COMMIT"] if appversion.commit() else []),
         f"--include-data-files={os.path.join(KL_ROOT, 'app', 'core', 'sample_profile.json')}=app/core/sample_profile.json",
         *[f"--include-module={m}" for m in upgrade_step_modules()],
         *notes_args(),
@@ -112,6 +115,13 @@ def main() -> int:
         print("Run: <venv python> -m pip install -r requirements.txt", file=sys.stderr)
         return 3
     os.makedirs(OUT_DIR, exist_ok=True)
+    appversion.stamp()
+    commit = appversion.commit()
+    if commit:
+        with open(COMMIT_FILE, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(commit + "\n")
+    elif os.path.exists(COMMIT_FILE):
+        os.remove(COMMIT_FILE)   # our own build output from an earlier run
     log_path = os.path.join(OUT_DIR, "build.log")
     started = time.time()
     with open(log_path, "w", encoding="utf-8") as log:

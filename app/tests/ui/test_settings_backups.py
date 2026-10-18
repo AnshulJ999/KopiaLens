@@ -48,7 +48,8 @@ def test_back_up_restore_pause_and_recover_a_damaged_file(fresh_server, fixture_
     expect(chip).to_be_hidden()
 
     page.locator("nav button", has_text="About").click()
-    expect(page.get_by_text(config.APP_VERSION, exact=True)).to_be_visible()
+    shown = config.APP_VERSION + (f" ({config.APP_COMMIT})" if config.APP_COMMIT else "")
+    expect(page.get_by_text(shown, exact=True)).to_be_visible()
 
     srv.stop()
     (srv.data / "settings.json").write_text("{torn", encoding="utf-8")
