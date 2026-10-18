@@ -15,8 +15,9 @@ and the Home Assistant add-on's config.yaml; `desktop` stamps it into the Tauri 
 and tauri.conf.json are never edited by hand.
 
 Output: <BUILD_ROOT>/release/<version>/ (or KOPIALENS_RELEASE_DIR) plus release.log there.
-KOPIALENS_RELEASE_SKIP_TESTS=1 skips the test step while iterating. --with-notes makes a testing build
-with the Notes widget (packaging/notes_bundle.py): its files are named -testing and it writes no
+KOPIALENS_RELEASE_SKIP_TESTS=1 skips the test step while iterating. Every build carries the Notes
+widget (Settings > Experimental, off by default). --testing (old name --with-notes) makes a testing
+build: Experimental and Notes start switched on, its files are named -testing and it writes no
 update file, so it can never be published as an update. --update-endpoint=<url> makes an update-test
 build (files named -updatetest, no update file) that asks only that address for updates
 (packaging/update_test.py). The banned licence list comes from the
@@ -479,12 +480,12 @@ def smoke_server(version: str) -> None:
 # ---------------------------------------------------------------- steps
 
 def tag() -> str:
-    return "-testing" if _ctx["with_notes"] else "-updatetest" if _ctx["update_endpoint"] else ""
+    return "-testing" if _ctx["testing"] else "-updatetest" if _ctx["update_endpoint"] else ""
 
 
 def no_update_file() -> bool:
     """Testing and update-test builds are never offered as an update."""
-    return _ctx["with_notes"] or bool(_ctx["update_endpoint"])
+    return _ctx["testing"] or bool(_ctx["update_endpoint"])
 
 
 def bundles() -> list[str]:
@@ -534,11 +535,9 @@ def step_tests() -> None:
 
 
 def step_server() -> None:
-    notes_env = {}
-    if _ctx["with_notes"]:
-        notes_env["KOPIALENS_BUILD_NOTES"] = notes_bundle.stage(os.path.join(BUILD_ROOT, "devnotes-stage"))
+    notes = notes_bundle.stage(os.path.join(BUILD_ROOT, "devnotes-stage"), testing=_ctx["testing"])
     run([BUILD_PYTHON, os.path.join(KL_ROOT, "packaging", "build_server.py")], KL_ROOT, "nuitka.log",
-        {"KOPIALENS_BUILD_OUT": OUT_DIR, "KOPIALENS_BUILD_NOTES": "", **notes_env})
+        {"KOPIALENS_BUILD_OUT": OUT_DIR, "KOPIALENS_BUILD_NOTES": notes})
 
 
 def step_stage() -> None:
@@ -754,15 +753,15 @@ def main() -> int:
     if not args and not WINDOWS:
         fail("the one-command release is Windows-only; name the steps (see the docstring)")
     endpoint = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--update-endpoint=")), "")
-    _ctx.update(version=release_version(), with_notes="--with-notes" in sys.argv[1:], update_endpoint=endpoint,
-                steps=steps)
+    testing = any(a in ("--testing", "--with-notes") for a in sys.argv[1:])
+    _ctx.update(version=release_version(), testing=testing, update_endpoint=endpoint, steps=steps)
     dest = os.environ.get("KOPIALENS_RELEASE_DIR") or os.path.join(BUILD_ROOT, "release", _ctx["version"] + tag())
     _ctx["dest"] = dest
     os.makedirs(dest, exist_ok=True)
     _log_fh = open(os.path.join(dest, "release.log"), "a" if args else "w", encoding="utf-8")
     log(f"KopiaLens {_ctx['version']} release ({PLATFORM}-{ARCH}): {', '.join(steps)}")
-    if _ctx["with_notes"]:
-        log("  TESTING BUILD: the Notes widget is included. Never publish it; it writes no latest.json.")
+    if _ctx["testing"]:
+        log("  TESTING BUILD: Experimental and Notes start on. Never publish it; it writes no latest.json.")
     if endpoint:
         log(f"  UPDATE-TEST BUILD: updates only from {endpoint}. Never publish it; it writes no latest.json.")
     for n, name in enumerate(steps, 1):

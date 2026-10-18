@@ -19,6 +19,8 @@ SELF_EXE = os.path.abspath(sys.argv[0]) if COMPILED else sys.executable
 
 APP_VERSION = appversion.version()   # git tag in a source checkout, else the VERSION file a build wrote
 APP_COMMIT = appversion.commit()
+# A testing build (release.py --testing): Experimental and Notes start switched on.
+TESTING_BUILD = os.path.isfile(os.path.join(HERE, "devnotes", "TESTING.txt"))
 API_VERSION = 1   # the stable API's version (docs/api.md); matches klens.API_VERSION
 
 # Online addresses baked into every shipped copy. Final values before the first public build.

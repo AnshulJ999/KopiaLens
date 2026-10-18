@@ -52,9 +52,7 @@ def test_every_browser_url_carries_the_prefix():
     hits = _hits(_js(), JS_SINKS)
     hits += _hits([FRONT / "index.html", *(FRONT / "partials").rglob("*.html")], [HTML_SINK])
     hits += _hits([p for p in (FRONT / "css").glob("*.css") if p.name != "tailwind.css"], [CSS_SINK])
-    # devnotes: the testing-build Notes widget (Widgets/, never in a release) does not support a prefix.
-    hits += _hits([p for p in (KL / "app").rglob("*.py") if "tests" not in p.parts and p.name != "devnotes.py"],
-                  PY_SINKS)
+    hits += _hits([p for p in (KL / "app").rglob("*.py") if "tests" not in p.parts], PY_SINKS)
     assert not hits, "app URLs without the prefix (use appUrl / {{ base }} / basepath.url):\n" + "\n".join(hits)
 
 

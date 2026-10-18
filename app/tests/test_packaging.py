@@ -43,9 +43,10 @@ def test_tags_read_as_three_part_versions():
 def test_build_compiles_in_every_upgrade_step():
     build = _load("packaging/build_server.py")
     assert build.upgrade_step_modules() == list(dataupgrade._STEP_MODULES)
-    args = build.nuitka_args()
+    args = build.nuitka_args("staged-notes")
     for mod in dataupgrade._STEP_MODULES:
         assert f"--include-module={mod}" in args
+    assert "--include-package=notes_server" in args   # every build carries Notes (Settings > Experimental)
     assert any(a.endswith("=VERSION") and a.startswith("--include-data-files=") for a in args)
     assert "--python-flag=no_docstrings" in args
 

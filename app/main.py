@@ -29,7 +29,7 @@ from .api import (access, account, actions, appconfig, audit, backblaze, cli, da
                   help, insights, jobs, licence, logs, newsnapshot, notify, onboarding, policies, prune, restore, search, setup, shell, simulate,
                   snapshots, stats, tree, writemode)
 from .api import tokens as tokens_api
-from .core import auth, basepath, checkin, devaddons, netaccess, pause, tokens
+from .core import auth, basepath, checkin, devaddons, devnotes, netaccess, pause, tokens
 from .core import engine as backup_engine
 from .core import jobs as jobrunner
 from .index.crypto import StoreLocked
@@ -1290,9 +1290,8 @@ app.include_router(tokens_api.router, prefix="/api")
 if not DEMO_INSTANCE or DEMO_BACKBLAZE:   # a demo reads only its own generated bzdata
     app.include_router(backblaze.router)  # router already carries prefix="/api/backblaze"
 devaddons.load(app, ROOT)
-if not devaddons.HTML:      # a source run with the Notes add-on keeps its own; a testing build gets this
-    from .core import devnotes
-    devnotes.load(app, ROOT, devaddons.HTML.append)
+if not devaddons.HTML:      # a source run with the Notes add-on keeps its own; a build gets this
+    devnotes.load(app, ROOT)
 
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
 
@@ -1350,8 +1349,9 @@ def _compose_html(client_host: str | None = None) -> str:
         sortarrows="all" if kl.get("sort_arrows") == "all" else "sorted",
         os_formats=os_formats,
     )
-    if devaddons.HTML:
-        html = html.replace("</body>", "\n".join(devaddons.HTML) + "\n</body>", 1)
+    extra = "\n".join(devaddons.HTML) if devaddons.HTML else devnotes.markup()
+    if extra:
+        html = html.replace("</body>", extra + "\n</body>", 1)
     return html
 
 

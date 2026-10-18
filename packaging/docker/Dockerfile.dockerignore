@@ -4,9 +4,11 @@
 !kopialens.py
 !main.py
 !config.py
+!appversion.py
 !app/
 !frontend/
 !packaging/build_server.py
+!packaging/notes_bundle.py
 !packaging/docker/entrypoint.sh
 !shell/disk-scanner/
 shell/disk-scanner/target

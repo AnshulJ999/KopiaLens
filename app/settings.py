@@ -9,7 +9,7 @@ import time
 from copy import deepcopy
 from typing import Any
 
-from config import COMPILED, SETTINGS_FILE
+from config import COMPILED, SETTINGS_FILE, TESTING_BUILD
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
@@ -133,6 +133,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "usage_stats": True,         # anonymous usage stats sent with that check
         "update_channel": "stable",  # stable | beta (beta also offers beta versions)
         "debug_log": False,          # also write data/logs/kopialens-debug.log at DEBUG (env KOPIALENS_DEBUG_LOG overrides)
+        # Settings > Experimental (shown when "experimental" is on); a testing build starts with both on.
+        "experimental": TESTING_BUILD,
+        "exp_notes": TESTING_BUILD,  # the Notes widget (app/core/devnotes.py); notes kept in <data>/notes
         # The desktop app's local control port (restart/quit/status for scripts and agents), read
         # at its start: on in a source checkout, off in a released copy until turned on.
         "control_api": not COMPILED,

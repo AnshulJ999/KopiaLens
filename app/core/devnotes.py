@@ -1,35 +1,51 @@
-"""Review notes in testing builds: the Notes widget ships only in a build made with
-``release.py --with-notes`` (or the Docker build arg), as ``devnotes/`` beside the server. Every
-note goes to another KopiaLens that keeps them all in one place, so notes from every test copy
-land in one list.
+"""The Notes widget (Settings > Experimental): a Notes button on every page for writing notes, with
+a screenshot. Every build ships it as ``devnotes/`` beside the server (packaging/notes_bundle.py);
+it runs only while "Experimental features" (Settings > Advanced) and "Notes" (Settings >
+Experimental) are on, and nothing of it is served otherwise.
 
-Where notes go: ``<data>/devnotes.json`` ``{"send_to": "http://<host>:7123", "token": "kl_...",
-"name": "installed"}``, or the variables KOPIALENS_NOTES_SEND_TO / _TOKEN / _NAME. The token is an
-API token of the receiving KopiaLens. Without a destination the widget stays off. A source run can
-point KOPIALENS_DEVNOTES_BUNDLE at a staged folder (packaging/notes_bundle.py).
+Notes are kept in ``<data>/notes`` by the widget's own store (Widgets/notes/notes_server). A copy can
+send every note to another KopiaLens instead, so test copies share one list: ``<data>/devnotes.json``
+``{"send_to": "http://<host>:7123", "token": "kl_...", "name": "installed"}`` or the variables
+KOPIALENS_NOTES_SEND_TO / _TOKEN / _NAME, read at start. The token is an API token of the receiving
+KopiaLens. A source run points KOPIALENS_DEVNOTES_BUNDLE at a staged ``web`` folder.
 """
 from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
 import httpx
-from fastapi import Request
+from fastapi import Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
+from . import basepath
 from .applog import get_logger
 
 log = get_logger("devnotes")
 
 FILES = ("notes-starter.js", "notes-widget.js", "notes-widget.css", "kopialens-notes.js")
 _MEDIA = {".js": "application/javascript", ".css": "text/css"}
+_loaded: dict = {}   # folder, stamp, name once load() found the bundle
 
 
 def bundle_dir(root: Path) -> Path | None:
     folder = Path(os.environ.get("KOPIALENS_DEVNOTES_BUNDLE") or root / "devnotes")
     return folder if (folder / "BUNDLE.txt").is_file() else None
+
+
+def active() -> bool:
+    """Both switches on (Settings > Advanced, Settings > Experimental)."""
+    from ..settings import load_settings
+    kl = load_settings()["kopialens"]
+    return kl.get("experimental") is True and kl.get("exp_notes") is True
+
+
+def _gate() -> None:
+    if not active():
+        raise HTTPException(status_code=404, detail="Not found")
 
 
 def _settings_file() -> str:
@@ -64,40 +80,48 @@ def _set_enabled(on: bool) -> None:
     os.replace(path + ".tmp", path)
 
 
-def load(app, root: Path, add_html) -> None:
-    """Serve the widget and pass notes on, when this build carries the bundle."""
-    folder = bundle_dir(root)
-    if folder is None:
-        return
-    from config import APP_VERSION, PORT
+def _notes_server():
+    """The widget's store and router: compiled into a build, else from this repo's Widgets/notes."""
+    try:
+        from notes_server.fastapi_router import make_router
+        from notes_server.notes_store import NotesStore
+    except ImportError:
+        from config import HERE
+        sys.path.insert(0, str(Path(HERE).parents[1] / "Widgets" / "notes"))
+        from notes_server.fastapi_router import make_router
+        from notes_server.notes_store import NotesStore
+    return make_router, NotesStore
 
-    @app.get("/devnotes/{name}", include_in_schema=False)
-    def devnotes_file(name: str):
-        if name not in FILES:
-            return JSONResponse({"error": "Not found"}, status_code=404)
-        return FileResponse(folder / name, media_type=_MEDIA[Path(name).suffix],
-                            headers={"Cache-Control": "no-cache"})
 
-    @app.get("/api/devnotes/state", include_in_schema=False)
+class _LazyStore:
+    """Makes the notes folder on first use, so a copy that never turns Notes on gets none."""
+
+    def __init__(self, cls, folder: Path):
+        self._cls, self._folder, self._store = cls, folder, None
+
+    def __getattr__(self, name: str):
+        if self._store is None:
+            self._store = self._cls(self._folder, app="KopiaLens")
+        return getattr(self._store, name)
+
+
+def _add_forwarding(app, gate: list) -> None:
+    """Send every note to another KopiaLens (devnotes.json / KOPIALENS_NOTES_*)."""
+
+    @app.get("/api/devnotes/state", include_in_schema=False, dependencies=gate)
     def get_state():
         return {"enabled": destination()["enabled"]}
 
-    @app.post("/api/devnotes/state", include_in_schema=False)
+    @app.post("/api/devnotes/state", include_in_schema=False, dependencies=gate)
     async def set_state(request: Request):
         body = await request.json()
-        if not destination()["send_to"]:
-            return JSONResponse({"error": "Notes have nowhere to go yet: set send_to in devnotes.json."},
-                                status_code=409)
         _set_enabled(bool((body or {}).get("enabled")))
         return {"enabled": destination()["enabled"]}
 
     @app.api_route("/api/devnotes/{path:path}", methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
-                   include_in_schema=False)
+                   include_in_schema=False, dependencies=gate)
     async def forward(path: str, request: Request):
         dest = destination()
-        if not dest["send_to"]:
-            return JSONResponse({"error": "Notes have nowhere to go yet: set send_to in devnotes.json."},
-                                status_code=503)
         headers = {"Authorization": f"Bearer {dest['token']}"} if dest["token"] else {}
         if request.headers.get("content-type"):
             headers["Content-Type"] = request.headers["content-type"]
@@ -115,12 +139,46 @@ def load(app, root: Path, add_html) -> None:
         return Response(res.content, status_code=res.status_code,
                         media_type=res.headers.get("content-type"))
 
-    stamp = int(max((folder / f).stat().st_mtime for f in FILES))
-    name = destination()["name"] or f"copy-{PORT}"
-    cfg = json.dumps({"instance": name, "build": APP_VERSION})
-    starter = json.dumps({"state": "/api/devnotes/state", "v": stamp,
-                          "files": ["/devnotes/notes-widget.css", "/devnotes/notes-widget.js",
-                                    "/devnotes/kopialens-notes.js"]})
-    add_html(f"<script>window.__KL_DEVNOTES = {cfg}; window.NotesStarterConfig = {starter};</script>"
-             f'<script src="/devnotes/notes-starter.js?v={stamp}"></script>')
-    log.info("notes widget bundled (testing build); notes go to %s", destination()["send_to"] or "nowhere yet")
+
+def load(app, root: Path) -> None:
+    """Register the widget's routes (they answer only while Notes is on)."""
+    folder = bundle_dir(root)
+    if folder is None:
+        return
+    from config import DATA_DIR, PORT
+    gate = [Depends(_gate)]
+
+    @app.get("/devnotes/{name}", include_in_schema=False, dependencies=gate)
+    def devnotes_file(name: str):
+        if name not in FILES:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        return FileResponse(folder / name, media_type=_MEDIA[Path(name).suffix],
+                            headers={"Cache-Control": "no-cache"})
+
+    dest = destination()
+    if dest["send_to"]:
+        _add_forwarding(app, gate)
+        where = dest["send_to"]
+    else:
+        make_router, store_cls = _notes_server()
+        app.include_router(make_router(_LazyStore(store_cls, Path(DATA_DIR) / "notes")), prefix="/api/devnotes",
+                           dependencies=gate, include_in_schema=False)
+        where = os.path.join(DATA_DIR, "notes")
+    _loaded.update(folder=folder, stamp=int(max((folder / f).stat().st_mtime for f in FILES)),
+                   name=dest["name"] or f"copy-{PORT}")
+    log.info("Notes widget available (Settings > Experimental); notes go to %s", where)
+
+
+def markup() -> str:
+    """The page's script tags while Notes is on; the starter loads the widget itself."""
+    if not _loaded or not active():
+        return ""
+    from config import APP_VERSION
+    u, stamp = basepath.url, _loaded["stamp"]
+    cfg = json.dumps({"instance": _loaded["name"], "build": APP_VERSION, "endpoint": u("/api/devnotes")})
+    starter = json.dumps({"state": u("/api/devnotes/state"), "v": stamp,
+                          "files": [u("/devnotes/notes-widget.css"), u("/devnotes/notes-widget.js"),
+                                    u("/devnotes/kopialens-notes.js")]})
+    script = u("/devnotes/notes-starter.js")
+    return (f"<script>window.__KL_DEVNOTES = {cfg}; window.NotesStarterConfig = {starter};</script>"
+            f'<script src="{script}?v={stamp}"></script>')

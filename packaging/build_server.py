@@ -58,18 +58,25 @@ def pin_mismatches() -> list[str]:
     return out
 
 
-def notes_args() -> list[str]:
-    """A testing build (KOPIALENS_BUILD_NOTES = a folder staged by notes_bundle.py) ships the Notes
-    widget as devnotes/; any other build leaves it out."""
+def notes_folder() -> str:
+    """The Notes widget (Settings > Experimental) ships in every build: a folder staged by
+    notes_bundle.py (KOPIALENS_BUILD_NOTES; the Docker build stages it first), else staged here."""
+    sys.path.insert(0, os.path.join(KL_ROOT, "packaging"))
+    import notes_bundle
     folder = os.environ.get("KOPIALENS_BUILD_NOTES", "").strip()
     if not folder:
-        return []
-    if not os.path.isfile(os.path.join(folder, "BUNDLE.txt")):
-        raise SystemExit(f"KOPIALENS_BUILD_NOTES={folder} is not a staged Notes folder (packaging/notes_bundle.py)")
-    return [f"--include-data-dir={folder}=devnotes"]
+        folder = notes_bundle.stage(os.path.join(OUT_DIR, "devnotes-stage"),
+                                    testing=bool(os.environ.get("KOPIALENS_BUILD_TESTING")))
+    if not notes_bundle.is_staged(folder):
+        raise SystemExit(f"{folder} is not a staged Notes folder (python packaging/notes_bundle.py <folder>)")
+    return folder
 
 
-def nuitka_args() -> list[str]:
+def notes_args(folder: str) -> list[str]:
+    return [f"--include-data-dir={os.path.join(folder, 'web')}=devnotes", "--include-package=notes_server"]
+
+
+def nuitka_args(notes: str) -> list[str]:
     # Windows file details take numbers only: a beta (1.2.0-beta.1) is stamped 1.2.0 there.
     numeric = app_version().split("+")[0].split("-")[0]
     # Opt-in: Nuitka's own tool downloads (Dependency Walker; one-time, cached per user).
@@ -98,7 +105,7 @@ def nuitka_args() -> list[str]:
         *([f"--include-data-files={COMMIT_FILE}=COMMIT"] if appversion.commit() else []),
         f"--include-data-files={os.path.join(KL_ROOT, 'app', 'core', 'sample_profile.json')}=app/core/sample_profile.json",
         *[f"--include-module={m}" for m in upgrade_step_modules()],
-        *notes_args(),
+        *notes_args(notes),
         # Our own test packages only - a *.tests wildcard also drops jinja2.tests, which jinja2 needs.
         "--nofollow-import-to=app.tests",
         "--nofollow-import-to=app.backblaze.tests",
@@ -122,13 +129,18 @@ def main() -> int:
             fh.write(commit + "\n")
     elif os.path.exists(COMMIT_FILE):
         os.remove(COMMIT_FILE)   # our own build output from an earlier run
+    notes = notes_folder()
+    # notes_server is compiled in from the staged folder.
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(
+        p for p in (os.path.join(notes, "py"), os.environ.get("PYTHONPATH", "")) if p)}
+    args = nuitka_args(notes)
     log_path = os.path.join(OUT_DIR, "build.log")
     started = time.time()
     with open(log_path, "w", encoding="utf-8") as log:
-        log.write(f"build started {time.strftime('%Y-%m-%d %H:%M:%S')}\n{' '.join(nuitka_args())}\n\n")
+        log.write(f"build started {time.strftime('%Y-%m-%d %H:%M:%S')}\n{' '.join(args)}\n\n")
         log.flush()
-        rc = subprocess.run(nuitka_args(), cwd=KL_ROOT, stdout=log, stderr=subprocess.STDOUT,
-                            stdin=subprocess.DEVNULL).returncode
+        rc = subprocess.run(args, cwd=KL_ROOT, stdout=log, stderr=subprocess.STDOUT,
+                            stdin=subprocess.DEVNULL, env=env).returncode
         log.write(f"\nbuild finished rc={rc} in {time.time() - started:.0f}s\n")
     print(f"rc={rc}, {time.time() - started:.0f}s, log: {log_path}")
     return rc

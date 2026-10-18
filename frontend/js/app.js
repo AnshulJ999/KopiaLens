@@ -139,7 +139,7 @@ document.addEventListener("alpine:init", () => {
     // Advanced settings. These existed in settings.json all along and had no UI, so the only way to
     // change them was to edit the file by hand. Defaults here mirror app/settings.py.
     lightInterval: 1800, dashboardInterval: 14400,
-    debugLog: false,
+    debugLog: false, experimental: false, expNotes: false,
     duckdbMemory: "", memoryAuto: "",  // memory limit override ("" = automatic) and what automatic resolves to
     indexWorkerTimeout: 14400, indexFirstTimeout: 86400, indexWaitUnreachable: 1800, indexStallTimeout: 3600, indexKeepVersions: 1, indexBackupDir: "", removePlanCap: 200000,
     indexRetryDelay: 900, indexMaxRetries: 1, reindexAfterDeleteDelay: 300, quitIndexing: "finish",

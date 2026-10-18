@@ -101,6 +101,8 @@ const settingsPart = {
       this.folderPrewarmBudget = Number(kl.folder_prewarm_budget ?? 900);
       this.startupDelay = Number(kl.startup_delay ?? 300);
       this.debugLog = kl.debug_log === true;
+      this.experimental = kl.experimental === true;
+      this.expNotes = kl.exp_notes === true;
       this.controlApi = kl.control_api === true;
       this.appPort = Number(kl.port || 7123);
       this.controlPort = Number(kl.control_port || 7124);
@@ -187,6 +189,8 @@ const settingsPart = {
       reindex_interval: { s: "reindexInterval", t: "int", min: 300 },
       startup_delay: { s: "startupDelay", t: "int", min: 0, restart: true },
       debug_log: { s: "debugLog", t: "bool" },
+      experimental: { s: "experimental", t: "bool", reload: true },
+      exp_notes: { s: "expNotes", t: "bool", reload: true },
       control_api: { s: "controlApi", t: "bool", restart: true },
       port: { s: "appPort", t: "int", min: 1024, max: 65535, restart: true },
       control_port: { s: "controlPort", t: "int", min: 1024, max: 65535, restart: true },
@@ -335,7 +339,9 @@ const settingsPart = {
         : { kopialens: { [key]: v } };
       return getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
         .then(() => {
-          this.klNotify(f.restart ? "Saved - this setting needs a restart" : "Saved");
+          this.klNotify(f.restart ? "Saved - this setting needs a restart"
+            : f.reload ? "Saved - reload the page to see the change" : "Saved");
+          if (key === "experimental" && !v && this.settingsTab === "experimental") this.settingsTab = "advanced";
           if (key === "dashboard_refresh") this.armAutoRefresh();
           if (key.startsWith("disk_") || key === "es_path") { this.excludedDrives = []; this._refreshDiskLookup(); }
           if (key in this.savedPorts) this.savedPorts[key] = v;

@@ -157,11 +157,20 @@ These have sensible defaults. Change them when you have a reason.
 | Setting | Default | What it does |
 |---|---|---|
 | **Debug log** | Off | Writes detailed diagnostics beside the normal app log. Turn it on only to find a problem |
+| **Experimental features** | Off | Shows the [Experimental](#experimental) section |
 | **Local control port** | Off | Lets scripts and AI tools on the computer running KopiaLens check, restart or quit it through the desktop app. Web pages can't use it (restart) |
 | **Ports** | 7123 and 7124 | The app's port and the control port. Change them if another program uses them, or to run a second KopiaLens. A bookmark or reverse proxy then needs the new port (restart) |
 | **Log cleanup** | 90 days | How long job, dry-run and mount logs are kept. The newest 100 are always kept |
 | **Task history** | 90 days | How long finished backups and maintenance stay in the Tasks tab |
 | **When another app stops running backups** | KopiaLens takes over again | Or **Wait for me to resume** ([Who runs backups](backups.md#who-runs-backups)) |
+
+## Experimental
+
+Shown when **Experimental features** is on (Advanced). These features are still being built and may change or go away. Reload the page after turning one on or off.
+
+| Setting | Default | What it does |
+|---|---|---|
+| **Notes** | Off | Adds a Notes button to every page, for writing notes about what you see, with a screenshot. Notes are kept in the `notes` folder inside KopiaLens's data folder |
 
 ## About
 

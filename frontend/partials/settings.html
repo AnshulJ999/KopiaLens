@@ -16,7 +16,7 @@
             <template x-for="g in [['App', [['general','General'],['appearance','Appearance'],['desktop','Desktop app'],['notifications','Notifications']]],
                                    ['Data', [['repositories','Repositories'],['indexing','Indexing'],['diskscan','Disk scanning'],['backblaze','Backblaze']]],
                                    ['Access', [['account','Account'],['encryption','Encryption'],['remote','Remote access'],['writemode','Permissions'],['tokens','API tokens']]],
-                                   ['More', [['licence','Licence'],['updates','Updates'],['backups','Config'],['advanced','Advanced'],['about','About']]]]" :key="g[0]">
+                                   ['More', [['licence','Licence'],['updates','Updates'],['backups','Config'],['advanced','Advanced'],...(experimental ? [['experimental','Experimental']] : []),['about','About']]]]" :key="g[0]">
               <div class="mb-2">
                 <div class="px-2 pt-1 pb-0.5 text-[0.6875rem] text-faint" x-text="g[0]"></div>
                 <template x-for="s in g[1]" :key="s[0]">
@@ -585,6 +585,11 @@
                 <p class="text-[0.6875rem] text-muted mt-1">Writes detailed diagnostics to <code>data/logs/kopialens-debug.log</code>, alongside the normal app log. Useful when troubleshooting; leave it off otherwise. Applies immediately.</p>
               </div>
               <div>
+                <div class="flex items-center justify-between gap-3"><span>Experimental features</span>
+                  <button @click="experimental = !experimental; saveKl('experimental')" class="h-8 rounded border border-bd px-3" x-text="experimental ? 'On' : 'Off'" data-testid="experimental-toggle"></button></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Shows the Experimental section in Settings: features that are still being built and may change or go away.</p>
+              </div>
+              <div>
                 <div class="flex items-center justify-between gap-3"><span>Local control port <span class="text-[0.625rem] text-warn">restart</span></span>
                   <button @click="controlApi = !controlApi; saveKl('control_api')" class="h-8 rounded border border-bd px-3" x-text="controlApi ? 'On' : 'Off'"></button></div>
                 <p class="text-[0.6875rem] text-muted mt-1">Lets scripts and AI tools on this computer check, restart or quit KopiaLens. Web pages can't use it. Off unless you use it.</p>
@@ -627,6 +632,15 @@
                     <option value="wait">Wait for me to resume</option>
                   </select></div>
                 <p class="text-[0.6875rem] text-muted mt-1">For repositories where you chose KopiaLens to run backups.</p>
+              </div>
+            </section>
+
+            <section x-show="settingsTab==='experimental' && experimental" class="space-y-4" data-testid="settings-experimental">
+              <p class="text-[0.6875rem] text-muted">Features that are still being built. They may change or go away.</p>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Notes</span>
+                  <button @click="expNotes = !expNotes; saveKl('exp_notes')" class="h-8 rounded border border-bd px-3" x-text="expNotes ? 'On' : 'Off'" data-testid="exp-notes-toggle"></button></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Adds a Notes button to every page, for writing notes about what you see, with a screenshot. Notes are kept in KopiaLens's data folder on this computer.</p>
               </div>
             </section>
 
