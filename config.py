@@ -37,7 +37,7 @@ CHECKIN_URL = os.environ.get("KOPIALENS_CHECKIN_URL") or "https://checkin.kopial
 DOCS_URL = os.environ.get("KOPIALENS_DOCS_URL") or "https://kopialens.com/docs"
 REPO_URL = os.environ.get("KOPIALENS_REPO_URL") or "https://github.com/AnshulJ999/KopiaLens"
 SUPPORT_EMAIL = os.environ.get("KOPIALENS_SUPPORT_EMAIL") or "support@kopialens.com"
-DISCORD_URL = os.environ.get("KOPIALENS_DISCORD_URL") or ""   # no server yet: the menu shows "Coming soon"
+DISCORD_URL = os.environ.get("KOPIALENS_DISCORD_URL") or "https://discord.gg/22EU4cqEf6"
 
 
 def user_data_root() -> str:
