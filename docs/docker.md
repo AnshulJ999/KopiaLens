@@ -69,7 +69,25 @@ Docker Desktop (Windows and macOS) runs containers inside a hidden Linux machine
 
 ## Who can reach it
 
-By default anyone who can reach the port can open KopiaLens, so turn on sign-in. To limit it to some addresses, set `KOPIALENS_ACCESS=addresses` and `KOPIALENS_ACCESS_ADDRESSES` (for example `192.168.1.0/24`), or choose **These addresses** in **Settings → Remote access**. Behind a reverse proxy, list the proxy under **Trusted proxy addresses**. Details: [Remote access and HTTPS](remote-access.md).
+Without sign-in, anyone who can reach the port can open KopiaLens. Sign-in is your choice: set it up in first-time setup or **Settings → Account**. To limit it to some addresses, set `KOPIALENS_ACCESS=addresses` and `KOPIALENS_ACCESS_ADDRESSES` (for example `192.168.1.0/24`), or choose **These addresses** in **Settings → Remote access**. Behind a reverse proxy, list the proxy under **Trusted proxy addresses**. Details: [Remote access and HTTPS](remote-access.md).
+
+## Encryption in Docker
+
+A container has no keychain to remember the encryption password. With encryption on, the index stays locked after each restart until someone enters the password, and the nightly index waits until then. If that's a problem, choose **Off** in setup, or give the container the password in a file so it unlocks on start:
+
+```yaml
+services:
+  kopialens:
+    environment:
+      KOPIALENS_KEY_FILE: /run/secrets/kopialens_key
+    secrets:
+      - kopialens_key
+secrets:
+  kopialens_key:
+    file: ./kopialens_key.txt
+```
+
+The file holds the encryption password (your KopiaLens password if you chose to use it for encryption too). Anyone who can read the file can unlock the index.
 
 ## Settings that differ in Docker
 

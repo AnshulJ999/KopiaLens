@@ -82,13 +82,23 @@ def reserve_id() -> str:
     The connect flow holds the id across a kopia call that takes seconds to minutes; allocating and
     only persisting at `add_record()` let two overlapping connects take the SAME id and the same
     managed config path, so the loser wrote the winner's file and one record could describe the
-    other's storage. Ids are never reused, so a failed connect just burns one number - that is the
-    intended trade."""
+    other's storage. A failed connect hands its number back (``release_id``)."""
     with _ID_LOCK:
         rid = next_id()
         _advance_id_mark(rid)
         config.save_records(config.RECORDS, strict=True)
     return rid
+
+
+def release_id(rid: str) -> None:
+    """Give back a reserved id whose connect failed, when it is still the newest one reserved and
+    nothing was recorded under it. Overlapping connects keep theirs: never two on one number."""
+    with _ID_LOCK:
+        mark = str(config.RECORDS.get("next_id") or "")
+        if not str(rid).isdigit() or mark != str(int(rid) + 1) or exists(rid):
+            return
+        config.RECORDS["next_id"] = int(rid)
+        config.save_records(config.RECORDS, strict=True)
 
 
 def all_records() -> list[dict]:
@@ -135,11 +145,22 @@ def _config_facts(repo: str) -> dict:
             data = json.load(fh)
         data = data if isinstance(data, dict) else {}
         facts = {"server": bool(data.get("apiServer")), "readonly": bool(data.get("readonly")),
-                 "host": str(data.get("hostname") or "")}
+                 "server_url": str((data.get("apiServer") or {}).get("url") or ""),
+                 "host": str(data.get("hostname") or ""), "user": str(data.get("username") or ""),
+                 "actions": bool(data.get("enableActions"))}
     except (OSError, ValueError):
         facts = {}
     _CONFIG_FACTS[path] = (mtime, facts)
     return facts
+
+
+def client_facts(repo: str) -> dict | None:
+    """This computer's kopia identity for the repo, from the connection file (kopia keeps the client
+    options at its top level). None when the file does not name both."""
+    facts = _config_facts(repo)
+    if not facts.get("user") or not facts.get("host"):
+        return None
+    return {"user": facts["user"], "host": facts["host"], "enable_actions": bool(facts.get("actions"))}
 
 
 def via_server(repo: str) -> bool:
@@ -245,6 +266,9 @@ def storage_info(repo: str) -> dict:
     an older version) must not leak a credential into a response even once."""
     rec = config.repo_record(repo)
     storage = rec.get("storage") or {}
+    if not storage.get("type") and via_server(repo):
+        # kopia's status names no storage for a server connection: the connection file has its address
+        storage = {"type": "server", "config": {"url": _config_facts(repo).get("server_url", "")}}
     return {
         "type": storage.get("type") or "",
         "kind": storage_kind(storage.get("type")),

@@ -45,7 +45,7 @@ def repo_states() -> list[dict]:
     from . import crypto
     want = crypto.level() != crypto.LEVEL_OFF
     out = []
-    for repo in REPOS:
+    for repo in list(REPOS):
         if repo_kind(repo) == "backblaze":
             continue                    # the BZ store follows on its own item ()
         manifest = store.read_manifest(repo)

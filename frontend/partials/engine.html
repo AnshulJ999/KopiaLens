@@ -62,12 +62,13 @@
 
                 <template x-if="engineDlg.choice === 'kopialens' && engineDlg.data.status.choice !== 'kopialens'">
                   <div class="space-y-2 pl-1">
-                    <template x-if="engineDlg.data.view.kopiaui_shares_file && !engineDefaultConfig(engineDlg.data.view)">
+                    <template x-if="engineDlg.data.view.kopiaui_shares_file">
                       <div class="space-y-2">
                         <label class="flex items-start gap-2 text-xs">
                           <input type="radio" value="move" x-model="engineDlg.how" class="mt-0.5">
                           <span><span class="font-medium">Move this repository out of KopiaUI</span>
-                            <span class="block text-muted">KopiaUI keeps its other repositories. It stops loading this one after it restarts. Handing back moves it back.</span></span>
+                            <span class="block text-muted">KopiaUI keeps its other repositories. It stops loading this one after it restarts. Handing back moves it back.</span>
+                            <span x-show="engineDefaultConfig(engineDlg.data.view)" class="block text-warn">This is kopia's default connection. After a move, kopia commands typed in a terminal no longer find this repository.</span></span>
                         </label>
                         <label class="flex items-start gap-2 text-xs">
                           <input type="radio" value="share" x-model="engineDlg.how" class="mt-0.5">
@@ -76,10 +77,7 @@
                         </label>
                       </div>
                     </template>
-                    <template x-if="engineDlg.data.view.kopiaui_shares_file && engineDefaultConfig(engineDlg.data.view)">
-                      <p class="kl-note">This is kopia's default connection, which KopiaUI also opens. Quit KopiaUI and turn off its Launch At Startup, or KopiaLens waits until KopiaUI is closed.</p>
-                    </template>
-                    <label x-show="engineDlg.how === 'move' && engineDlg.data.view.kopiaui_shares_file && !engineDefaultConfig(engineDlg.data.view)" class="flex flex-col gap-1 text-xs font-medium">Repository password
+                    <label x-show="engineDlg.how === 'move' && engineDlg.data.view.kopiaui_shares_file" class="flex flex-col gap-1 text-xs font-medium">Repository password
                       <input type="password" x-model="engineDlg.password" autocomplete="off" class="fld border border-bd bg-surface2" data-testid="engine-password"></label>
                     <p x-show="engineDlg.how === 'move' && engineDlg.data.view.kopiaui_running" class="kl-note">KopiaUI is open. KopiaLens takes over when KopiaUI restarts.</p>
                     <div x-show="engineDlg.data.view.conflict && engineDlg.how !== 'move'" class="kl-callout flex items-center gap-2">

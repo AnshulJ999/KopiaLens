@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from config import REPOS, repo_kind
 from . import freeids
 from .actions import FULL_LIST_CAP
-from .errors import PASS_THROUGH
+from .errors import PASS_THROUGH, RequestCancelled
 from ..core import exportname
 from ..core import paths as pathrules
 from ..index import foldercache
@@ -71,15 +71,27 @@ class FolderVersionsRequest(BaseModel):
 def search_folder_versions(body: FolderVersionsRequest) -> dict:
     """How many distinct states each folder on screen has had (): one tree walk per source
     for the whole page (capped at 100 folders)."""
+    from ..core.sources import sources_index
     from ..index.holding import folder_states
     folders = list(dict.fromkeys(f for f in body.folders if f))[:100]
     try:
-        states = folder_states(body.repo, folders)
+        index = sources_index(body.repo)
+        # Counted once per snapshot listing: a folder seen before answers from memory.
+        sig = (body.repo, tuple(sorted((s, len(v), (v[-1].get("id") if v else None)) for s, v in index.items())))
+        known = _FOLDER_VERSIONS.setdefault(sig, {})
+        while len(_FOLDER_VERSIONS) > 4:
+            _FOLDER_VERSIONS.pop(next(iter(_FOLDER_VERSIONS)))
+        todo = [f for f in folders if f not in known]
+        if todo:
+            known.update({f: st["versions"] for f, st in folder_states(body.repo, todo, index=index).items()})
     except PASS_THROUGH:
         raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return {"versions": {f: st["versions"] for f, st in states.items()}}
+    return {"versions": {f: known[f] for f in folders}}
+
+
+_FOLDER_VERSIONS: dict[tuple, dict[str, int]] = {}
 
 
 class FolderValuesRequest(BaseModel):
@@ -248,8 +260,16 @@ def search_mixed(
               first_from=first_from or None, min_versions=min_versions, shared_min=shared_min,
               dedupe=dedupe, dedupe_by=dedupe_by)
     desc = dir != "asc"
+    field = _FOLDER_SORT.get(sort)
     try:
-        page = search_paths(repo, limit=limit, offset=offset, **kw)
+        prev = None
+        if offset and field:
+            # One query for the page and the row before it (where this page's folders start).
+            page = search_paths(repo, limit=limit + 1, offset=offset - 1, **kw)
+            prev = page["rows"][0] if page["rows"] else None
+            page.update(rows=page["rows"][1:], offset=offset, limit=limit)
+        else:
+            page = search_paths(repo, limit=limit, offset=offset, **kw)
         groups = group_by_folder(
             repo, depth=depth, query=q, source=source or None, ext=ext or None,
             ext_exclude=ext_exclude or None, deleted_only=deleted_only,
@@ -257,8 +277,6 @@ def search_mixed(
             sort="logical" if sort == "size" else "physical", direction=dir, limit=500, min_depth=min_depth,
             loose=loose,
         )["rows"]
-        field = _FOLDER_SORT.get(sort)
-        prev = (search_paths(repo, limit=1, offset=offset - 1, **kw)["rows"] or [None])[0] if offset and field else None
     except PASS_THROUGH:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -315,7 +333,7 @@ def search_all_repos(
     total = 0
     searched: list[str] = []
     skipped: list[dict] = []
-    for rid in REPOS:
+    for rid in list(REPOS):
         if repo_kind(rid) != "kopia":
             continue
         try:
@@ -326,6 +344,8 @@ def search_all_repos(
                 first_from=first_from or None, min_versions=min_versions, shared_min=shared_min,
                 dedupe=dedupe, dedupe_by=dedupe_by,
             )
+        except RequestCancelled:
+            raise
         except PASS_THROUGH as exc:
             skipped.append({"repo": rid, "reason": type(exc).__name__})
             continue

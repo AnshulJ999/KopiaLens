@@ -12,7 +12,7 @@ import time
 from config import CACHEDIR
 
 from .applog import get_logger
-from .schedule import load_next_snapshots
+from .schedule import load_next_after_missed, load_next_snapshots
 from .sources import logical_stats, roots_of, sources_index, sources_meta
 
 log = get_logger("metrics")
@@ -243,6 +243,7 @@ def _compute_table_rows(repo: str, want_hash: str) -> dict:
     # csize, so the multi-million-entry dict this used to materialize per dashboard build is gone.
     meta = sources_meta(repo)
     nexts = load_next_snapshots(repo)  # computed next-snapshot times (subprocess mode)
+    afters = load_next_after_missed(repo)
     fcounts = _file_counts(repo)
     rows, elapsed, union_total = build_global(repo)
     ordered = []
@@ -269,6 +270,7 @@ def _compute_table_rows(repo: str, want_hash: str) -> dict:
                 "first_time": stats["first_time"],
                 "last_time": stats["last_time"],
                 "next_snapshot": nexts.get(key) or smeta.get("nextSnapshotTime"),
+                "next_after_missed": afters.get(key),
                 "status": smeta.get("status"),
                 "files_latest": (fcounts.get(key) or {}).get("latest", 0),
                 "files_distinct": (fcounts.get(key) or {}).get("distinct", 0),

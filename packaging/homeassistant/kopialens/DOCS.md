@@ -6,7 +6,7 @@ KopiaLens shows what your Kopia backups hold, what takes the space, and lets you
 
 Open **KopiaLens** in the sidebar. Home Assistant signs you in, and only admins see it.
 
-To open KopiaLens from another device without Home Assistant, enter a port under **Network** in the add-on's Configuration tab. That address asks for KopiaLens's own sign-in, which you set up in KopiaLens.
+To open KopiaLens from another device without Home Assistant, enter a port under **Network** in the add-on's Configuration tab. That address asks for KopiaLens's own sign-in if you set one up in KopiaLens. Without it, anyone who can reach the port can open KopiaLens.
 
 ## Your repositories
 

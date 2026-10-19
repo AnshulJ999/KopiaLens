@@ -35,6 +35,7 @@
           <button type="button" role="menuitem" x-show="repoKind === 'kopia' && wm && wmMode() !== 'full'" @click="repoMenu = false; await openSettings(); settingsTab = 'writemode'"
                   class="w-full text-left px-3 py-1.5 hover:bg-head pl-8" x-text="'Permissions: ' + (wm ? wmLabel(wmMode()) : '') + '…'"></button>
           <button type="button" role="menuitem" @click="openAddRepo()" class="w-full text-left px-3 py-1.5 hover:bg-head pl-8">Add repository…</button>
+          <button type="button" role="menuitem" x-show="repoKind === 'kopia' && !isSample()" @click="openTakeConnection(repo)" class="w-full text-left px-3 py-1.5 hover:bg-head pl-8">Move connection into KopiaLens…</button>
           <button type="button" role="menuitem" @click="openRepoAdmin()" class="w-full text-left px-3 py-1.5 hover:bg-head pl-8">Manage repositories…</button>
         </div>
       </div>

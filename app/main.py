@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import gc
 import ipaddress
@@ -23,6 +24,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, Redirec
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
+from config import repo_record as config_repo_record
 from config import API_VERSION, APP_VERSION, DATA_DIR, DEMO_BACKBLAZE, DEMO_INSTANCE, REPOS, is_demo, repo_kind
 
 from .api import (access, account, actions, appconfig, audit, backblaze, cli, dashboard, deleteplan, encryption, engine, excluded,
@@ -42,7 +44,8 @@ from .core.instrument import log_memory, memory_snapshot
 from .core.metrics import table_rows
 from .core.schedule import compute_next_snapshots
 from .core.server import SERVERS
-from .index import store, upgrade as index_upgrade
+from .core.sources import ListingFailed
+from .index import lanes, store, upgrade as index_upgrade
 from .index.schema import RepoOffline, offline_status
 from .index.schema import close_all as close_duckdb
 from .index.upgrade import IndexVersionMismatch
@@ -365,6 +368,11 @@ def _warm(repo: str) -> None:
     except Exception as exc:  # noqa: BLE001
         log.error("warm next_snapshots repo=%s failed: %s", repo, exc)
     try:
+        from .core import coexist                 # the Backups panel reads it on open
+        coexist.maintenance_info(repo)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("warm maintenance info repo=%s failed: %s", repo, exc)
+    try:
         from .api.stats import refresh_stats
         refresh_stats(repo)
     except Exception as exc:  # noqa: BLE001
@@ -373,8 +381,11 @@ def _warm(repo: str) -> None:
         from .index.queries import warm_landing
         kl = load_settings().get("kopialens", {}) or {}
         size = str(kl.get("page_size", 500))   # saved as the picker's text; "Infinite" is not cached
-        warm_landing(repo, limit=int(size) if size.isdigit() else 500,
-                     sort=kl.get("search_sort") or "size", direction=kl.get("search_dir") or "desc")
+        sort, direction = kl.get("search_sort") or "size", kl.get("search_dir") or "desc"
+        warm_landing(repo, limit=int(size) if size.isdigit() else 500, sort=sort, direction=direction)
+        from .index.queries import group_by_folder      # the Files + Folders view's folder list
+        group_by_folder(repo, depth=int(kl.get("group_depth", 3)), limit=500, direction=direction,
+                        sort="logical" if sort == "size" else "physical")
     except Exception as exc:  # noqa: BLE001
         log.error("warm search-landing repo=%s failed: %s", repo, exc)
     if not _dashboard_nightly_only() and not pause.active():  # opt-in daytime rebuild
@@ -399,7 +410,7 @@ def _light_pass() -> None:
         # Every read raises while the store is locked, and the nightly records its own skip.
         # One line here instead of one error per repo every interval.
         log.info("light pass skipped: the index is encrypted and locked")
-    for repo in REPOS:
+    for repo in list(REPOS):
         if _bg_stop.is_set():
             return
         if repo_kind(repo) == "backblaze":
@@ -441,7 +452,7 @@ def _bz_present() -> bool:
     PC without Backblaze) or with updates off, no BZ pass runs; a refresh started by hand still does."""
     if load_settings().get("backblaze", {}).get("updates") == "off":
         return False
-    return any(repo_kind(r) == "backblaze" for r in REPOS)
+    return any(repo_kind(r) == "backblaze" for r in list(REPOS))
 
 
 def _bz_reindex_due(now_ts: float) -> bool:
@@ -551,7 +562,7 @@ def _tick() -> None:
     # kopia lock), the nightly waits for a later tick instead of contending with it. A pause
     # holds every scheduled run; a slot that came due meanwhile runs once it ends.
     if not nightly.any_running() and not jobrunner.maintenance_running() and not pause.active():
-        for repo in REPOS:
+        for repo in list(REPOS):
             if _bg_stop.is_set():
                 return
             if repo_kind(repo) == "backblaze":
@@ -667,7 +678,9 @@ async def lifespan(_app: FastAPI):
         from .index import crypto
         if crypto.enabled() and not crypto.unlocked() and crypto.unlock_from_keychain():
             log.info("index unlocked from the keychain")
-        elif crypto.enabled():
+        elif crypto.enabled() and not crypto.unlocked() and crypto.unlock_from_file():
+            pass
+        elif crypto.enabled() and not crypto.unlocked():
             log.warning("the index is encrypted and locked - reads and the nightly wait for an unlock")
         gone = crypto.sweep_all()   # session databases a crashed process left behind
         if gone:
@@ -1106,6 +1119,57 @@ _POLL_PATHS = frozenset({
 _SLOW_REQUEST_MS = 3000.0
 _request_stats = RequestStats()
 
+# Column fills a screen asks for after it has drawn: background lane (lanes.py).
+_FILL_PATHS = frozenset({
+    ("POST", "/api/search/folder-values"), ("POST", "/api/search/folder-versions"),
+    ("POST", "/api/search/versions"), ("POST", "/api/tree/holders"), ("GET", "/api/search/breakdown"),
+})
+
+
+class LaneMiddleware:
+    """Puts each API request in its read lane and stops its index work when the client goes away.
+
+    The only reader of the server's ``receive``: messages are handed on to the app, and an
+    ``http.disconnect`` before the response finished cancels the request's scope."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        if scope["type"] != "http" or not path.startswith("/api"):
+            return await self.app(scope, receive, send)
+        key = (scope.get("method"), path)
+        lane = lanes.FREE if path in _POLL_PATHS else lanes.BG if key in _FILL_PATHS else lanes.FG
+        query = urllib.parse.parse_qs(scope.get("query_string", b"").decode("latin-1"))
+        live = any(v and v[0].lower() in ("1", "true") for k, v in query.items() if k in ("force", "live", "refresh"))
+        sc, token = lanes.open_scope(lane, scope.get("method", ""), path, live)
+        queue: asyncio.Queue = asyncio.Queue()
+        done = False
+
+        async def pump():
+            while True:
+                msg = await receive()
+                await queue.put(msg)
+                if msg["type"] == "http.disconnect":
+                    if not done:
+                        sc.cancel()
+                    return
+
+        async def app_receive():
+            msg = await queue.get()
+            if msg["type"] == "http.disconnect":
+                queue.put_nowait(msg)       # every later read sees the disconnect too
+            return msg
+
+        reader = asyncio.create_task(pump())
+        try:
+            await self.app(scope, app_receive, send)
+        finally:
+            done = True
+            reader.cancel()
+            lanes.close_scope(sc, token)
+
 
 @app.middleware("http")
 async def timing_middleware(request: Request, call_next):
@@ -1129,6 +1193,8 @@ async def timing_middleware(request: Request, call_next):
         line = "%s %s -> %s  %.0fms  db=%d/%.0fms  kopia_subproc=%d/%.0fms"
         if response.status_code >= 500:
             log.warning(line, *args)
+        elif response.status_code == 499:
+            log.debug("cancelled: " + line, *args)
         elif ms >= _SLOW_REQUEST_MS:
             log.info("slow request: " + line, *args)
         elif path in _POLL_PATHS:
@@ -1142,6 +1208,9 @@ async def timing_middleware(request: Request, call_next):
                 f"app;dur={ms:.1f}, db;dur={db[1] * 1000:.1f};desc=\"{db[0]} queries\", "
                 f"kopia;dur={kms:.1f};desc=\"{kc} calls\"")
     return response
+
+
+app.add_middleware(LaneMiddleware)     # outermost: the one reader of the request's receive
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -1158,6 +1227,21 @@ async def _http_exception_handler(request: Request, exc: StarletteHTTPException)
                   "".join(traceback.format_exception(cause)) if cause else "")
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail},
                         headers=getattr(exc, "headers", None))
+
+
+@app.exception_handler(lanes.RequestCancelled)
+async def _cancelled_handler(_request: Request, _exc: lanes.RequestCancelled):
+    """The browser gave up on the request; nobody reads this answer."""
+    return JSONResponse(status_code=499, content={"detail": "Cancelled."})
+
+
+@app.exception_handler(ListingFailed)
+async def _listing_failed_handler(_request: Request, exc: ListingFailed):
+    """kopia couldn't list the repository: the page shows one notice naming it (getJson)."""
+    name = (config_repo_record(exc.repo) or {}).get("name") or exc.repo
+    return JSONResponse(status_code=503, content={
+        "listing_failed": True, "repo": exc.repo, "name": name, "reason": exc.reason,
+        "detail": f"Couldn't list {name}: {exc.reason}"})
 
 
 @app.exception_handler(FileNotFoundError)
@@ -1214,7 +1298,7 @@ def gated_repos() -> list[str]:
     out = []
     try:
         from .index import store as _store
-        for repo in REPOS:
+        for repo in list(REPOS):
             if repo_kind(repo) == "backblaze":
                 continue
             if _store.generation_state(repo) and not crypto_mod.unlocked():

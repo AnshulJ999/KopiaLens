@@ -52,6 +52,41 @@ def _rows(cur, sql: str, params: list | None = None) -> list[dict]:
     return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
+# Answers that paging and re-sorting repeat (a search's total, a folder list), kept per generation:
+# a new generation is a new key, so nothing stale is ever served.
+_MEMO: dict[tuple, object] = {}
+_MEMO_MAX = 64
+_MEMO_LOCK = threading.Lock()
+
+
+def _memo_key(cur, *parts) -> tuple | None:
+    gen = getattr(cur, "generation", None)
+    ident = (getattr(gen, "repo", None), getattr(gen, "id", None), getattr(gen, "_mtime_ns", None))
+    if None in ident:
+        return None
+    key = (*ident, *parts)
+    try:
+        hash(key)
+    except TypeError:
+        return None
+    return key
+
+
+def _memo(key: tuple | None, compute):
+    if key is None:
+        return compute()
+    with _MEMO_LOCK:
+        if key in _MEMO:
+            _MEMO[key] = _MEMO.pop(key)     # most recently used last
+            return _MEMO[key]
+    value = compute()
+    with _MEMO_LOCK:
+        _MEMO[key] = value
+        while len(_MEMO) > _MEMO_MAX:
+            _MEMO.pop(next(iter(_MEMO)))
+    return value
+
+
 def index_summary(repo: str) -> dict:
     cur = read_cursor(repo)
     try:
@@ -257,9 +292,9 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
         where_sql = _where(where)
         by_path = dedupe and dedupe_by != "content"
         if by_path:
-            total = cur.execute(
+            total = _memo(_memo_key(cur, "total-path", where_sql, tuple(params)), lambda: cur.execute(
                 f"SELECT count(*) FROM (SELECT DISTINCT {_HOST_SQL}, p.full_path FROM pathx p "
-                f"JOIN src s ON s.src_id = p.src_id WHERE {where_sql})", params).fetchone()[0]
+                f"JOIN src s ON s.src_id = p.src_id WHERE {where_sql})", params).fetchone()[0])
             rows = _rows(
                 cur,
                 f"""
@@ -282,11 +317,11 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                 [*params, limit, offset],
             )
         elif dedupe:
-            total = cur.execute(
+            total = _memo(_memo_key(cur, "total-content", where_sql, tuple(params)), lambda: cur.execute(
                 f"SELECT count(DISTINCT p.cid_id) FROM pathx p "
                 f"WHERE {where_sql} AND p.cid_id IS NOT NULL",
                 params,
-            ).fetchone()[0]
+            ).fetchone()[0])
             rows = _rows(
                 cur,
                 f"""
@@ -310,7 +345,8 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                 [*params, limit, offset],
             )
         else:
-            total = cur.execute(f"SELECT count(*) FROM pathx p WHERE {where_sql}", params).fetchone()[0]
+            total = _memo(_memo_key(cur, "total", where_sql, tuple(params)), lambda: cur.execute(
+                f"SELECT count(*) FROM pathx p WHERE {where_sql}", params).fetchone()[0])
             rows = _rows(
                 cur,
                 f"""
@@ -729,40 +765,48 @@ def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | No
             conds.append(f"NOT {split}")
         order = {"physical": "phys", "logical": "logical", "files": "files"}.get(sort, "phys")
         dirn = "ASC" if direction == "asc" else "DESC"
-        rows = _rows(
-            cur,
-            f"""
-            WITH m AS (
-                SELECT {_folder_name_sql(cur, 'g')} AS folder, {split} AS loose,
-                       {_HOST_SQL} AS host, p.full_path, p.size, p.physical, p.in_latest,
-                       p.last_seen, p.first_seen, p.src_id
-                FROM pathx p JOIN src s ON s.src_id = p.src_id
-                {_rollup_join('p', d, 'g')}
-                LEFT JOIN (SELECT DISTINCT parent_id FROM dir) _gk ON _gk.parent_id = _gd.dir_id
-                WHERE {_where(conds)}),
-            pf AS (SELECT folder, loose, host, full_path, max(size) AS size, max(physical) AS physical,
-                          bool_or(in_latest) AS in_latest, max(last_seen) AS last_seen,
-                          min(first_seen) AS first_seen
-                   FROM m GROUP BY folder, loose, host, full_path),
-            ff AS (SELECT folder, loose, sum(physical) AS phys, sum(size) AS logical, count(*) AS files,
-                          count(*) FILTER (WHERE NOT in_latest) AS deleted_files,
-                          max(last_seen) AS last_seen, min(first_seen) AS first_seen
-                   FROM pf GROUP BY folder, loose),
-            fs AS (SELECT folder, loose, count(DISTINCT src_id) AS sources, min(src_id) AS src_one
-                   FROM m GROUP BY folder, loose)
-            SELECT ff.*, 0 AS excl, fs.sources, fs.src_one FROM ff JOIN fs USING (folder, loose)
-            WHERE ff.phys >= {int(min_size)} AND ff.files >= {int(min_files)}
-            ORDER BY {order} {dirn}, folder, loose LIMIT {int(limit)}
-            """,
-            params,
-        )
-        names = dict(cur.execute("SELECT src_id, source FROM src").fetchall())
-        for r in rows:
-            one = r.pop("src_one")
-            r["source"] = names.get(one) if r["sources"] == 1 else None
+        key = _memo_key(cur, "folders", d, tuple(conds), tuple(params), order, dirn, int(min_size),
+                        int(min_files), int(limit))
+        rows = [dict(r) for r in _memo(key, lambda: _group_rows(cur, conds, params, d, split, order, dirn,
+                                                                 min_size, min_files, limit))]
     finally:
         cur.close()
     return {"rows": rows, "depth": d}
+
+
+def _group_rows(cur, conds, params, d, split, order, dirn, min_size, min_files, limit) -> list[dict]:
+    rows = _rows(
+        cur,
+        f"""
+        WITH m AS (
+            SELECT {_folder_name_sql(cur, 'g')} AS folder, {split} AS loose,
+                   {_HOST_SQL} AS host, p.full_path, p.size, p.physical, p.in_latest,
+                   p.last_seen, p.first_seen, p.src_id
+            FROM pathx p JOIN src s ON s.src_id = p.src_id
+            {_rollup_join('p', d, 'g')}
+            LEFT JOIN (SELECT DISTINCT parent_id FROM dir) _gk ON _gk.parent_id = _gd.dir_id
+            WHERE {_where(conds)}),
+        pf AS (SELECT folder, loose, host, full_path, max(size) AS size, max(physical) AS physical,
+                      bool_or(in_latest) AS in_latest, max(last_seen) AS last_seen,
+                      min(first_seen) AS first_seen
+               FROM m GROUP BY folder, loose, host, full_path),
+        ff AS (SELECT folder, loose, sum(physical) AS phys, sum(size) AS logical, count(*) AS files,
+                      count(*) FILTER (WHERE NOT in_latest) AS deleted_files,
+                      max(last_seen) AS last_seen, min(first_seen) AS first_seen
+               FROM pf GROUP BY folder, loose),
+        fs AS (SELECT folder, loose, count(DISTINCT src_id) AS sources, min(src_id) AS src_one
+               FROM m GROUP BY folder, loose)
+        SELECT ff.*, 0 AS excl, fs.sources, fs.src_one FROM ff JOIN fs USING (folder, loose)
+        WHERE ff.phys >= {int(min_size)} AND ff.files >= {int(min_files)}
+        ORDER BY {order} {dirn}, folder, loose LIMIT {int(limit)}
+        """,
+        params,
+    )
+    names = dict(cur.execute("SELECT src_id, source FROM src").fetchall())
+    for r in rows:
+        one = r.pop("src_one")
+        r["source"] = names.get(one) if r["sources"] == 1 else None
+    return rows
 
 
 def holders_for_paths(repo: str, full_paths: list[str]) -> dict[str, list[str]]:

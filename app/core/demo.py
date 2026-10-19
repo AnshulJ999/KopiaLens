@@ -1055,7 +1055,7 @@ def menu() -> None:
         elif (name := _choose("Which copy", copies)):
             open_copy(name, 7323)
     elif action == "Make a demo copy":
-        real = [r for r, c in REPOS.items() if c.get("kind", "kopia") == "kopia" and not c.get("demo")]
+        real = [r for r, c in list(REPOS.items()) if c.get("kind", "kopia") == "kopia" and not c.get("demo")]
         options = {f"{r} - {REPOS[r]['name']}": r for r in real}
         if len(real) > 1:
             options[f"{' + '.join(real)} - all of them in one demo"] = ",".join(real)

@@ -136,10 +136,10 @@ const searchPart = {
       rows.forEach((r) => r.reformat());
       try {
         const r = await getJson("/api/search/folder-versions", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo, folders: paths }) });
+          body: JSON.stringify({ repo, folders: paths }), signal: viewSignal(sel === "#treeTable" ? "tree" : "search") });
         for (const p of paths) this.folderVersions[repo + ":" + p] = (r.versions || {})[p] ?? "error";
       } catch (e) {
-        for (const p of paths) this.folderVersions[repo + ":" + p] = "error";
+        for (const p of paths) { if (isAbort(e)) delete this.folderVersions[repo + ":" + p]; else this.folderVersions[repo + ":" + p] = "error"; }
       } finally {
         this._versionsFilling = false;
       }
@@ -185,6 +185,7 @@ const searchPart = {
       return rows.length ? rows[0] : null;
     },
     async loadGroupByFolder() {
+      const signal = viewRestart("search");
       await this.wrap(async () => {
         const p = new URLSearchParams({ repo: this.repo, depth: this.groupDepth, q: this.query || "", sort: "physical", direction: "desc", limit: 500 });
         if (this.groupMinDepth) p.set("min_depth", this.groupMinDepth);
@@ -195,7 +196,7 @@ const searchPart = {
         if (this.groupMinGb) p.set("min_gb", this.groupMinGb);
         if (this.groupMinFiles) p.set("min_files", this.groupMinFiles);
         if (this.groupLoose) p.set("loose", "1");
-        const data = await getJson(`/api/search/group-by-folder?${p.toString()}`);
+        const data = await getJson(`/api/search/group-by-folder?${p.toString()}`, { signal });
         const rows = data.rows || [];
         this.searchSelCount = 0;   // the table is rebuilt, so its selection goes
         this.omniMeta = `${countOf(rows.length, "folder")} · depth ${data.depth} · ranked by physical`;
@@ -289,12 +290,13 @@ const searchPart = {
       row.reformat();
       try {
         const r = await getJson("/api/search/folder-values", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo: this.repo, folder, loose: !!d.loose, ...this._folderFilters() }) });
+          body: JSON.stringify({ repo: this.repo, folder, loose: !!d.loose, ...this._folderFilters() }), signal: viewSignal("search") });
         this.groupReclaim[key] = { v: r.freeable ?? 0, p: r.physical_all ?? null, n: r.physical ?? null };
         // The Folders view sorts on the row's own Physical, so it takes the exact value.
         if (d.kind !== "folder" && d.physical == null && r.physical != null) row.update({ physical: r.physical });
         if (d.kind !== "folder" && d.physical_all == null && r.physical_all != null) row.update({ physical_all: r.physical_all });
       } catch (e) {
+        if (isAbort(e)) { delete this.groupReclaim[key]; return; }
         this.groupReclaim[key] = "error";
       }
       try { row.reformat(); } catch (e) { /* the table was rebuilt meanwhile; the cache has the value */ }
@@ -304,6 +306,7 @@ const searchPart = {
       if (this.groupByFolder) return this.loadGroupByFolder();
       const seq = ++this._searchSeq;
       if (!keepPage) this.searchPage = 1;
+      const signal = viewRestart("search");   // the previous query and its column fills stop
       await this.wrap(async () => {
         const infinite = this.searchPageSize === "Infinite";
         const size = infinite ? 100000 : (parseInt(this.searchPageSize, 10) || 500);
@@ -320,7 +323,7 @@ const searchPart = {
           if (this.groupMinDepth) p.set("min_depth", this.groupMinDepth);
         }
         const url = allRepos ? "/api/search/all-repos" : both ? "/api/search/mixed" : "/api/search";
-        const data = await getJson(`${url}?${p.toString()}`);
+        const data = await getJson(`${url}?${p.toString()}`, { signal });
         if (seq !== this._searchSeq) return;
         this.searchTotal = data.total || 0;
         this.searchFolders = both ? (data.folders || 0) : 0;
@@ -638,12 +641,13 @@ const searchPart = {
       try {
         await Promise.all(Object.entries(byRepo).map(async ([rid, list]) => {
           const r = await getJson("/api/search/versions", { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ repo: rid, rows: list.map((d) => ({ source: d.source, full_path: d.full_path })) }) });
+            body: JSON.stringify({ repo: rid, rows: list.map((d) => ({ source: d.source, full_path: d.full_path })) }),
+            signal: viewSignal("search") });
           for (const x of r.rows || []) this.versionSizes[rid + "|" + x.source + "|" + x.full_path] = { stored: x.stored, frees: x.frees };
         }));
       } catch (e) {
         for (const d of need) if (this.versionSizes[this._versionKey(d)] === "pending") delete this.versionSizes[this._versionKey(d)];
-        this.error = e.message || String(e);
+        if (!isAbort(e)) this.error = e.message || String(e);
         return;
       }
       if (repo !== this.repo) return;

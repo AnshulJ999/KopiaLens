@@ -89,7 +89,7 @@ def include_cmds(path: str = "") -> dict:
     if not path:
         raise HTTPException(status_code=400, detail="path is required")
     cmds = []
-    for repo, cfg in REPOS.items():
+    for repo, cfg in list(REPOS.items()):
         if repo_kind(repo) != "kopia":
             continue  # a non-kopia repo has no args: the bare command would target the DEFAULT repo
         parts = [_kopia_exe()] + _repo_args(repo) + ["snapshot", "create", path]

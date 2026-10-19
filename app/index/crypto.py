@@ -445,6 +445,26 @@ def unlock(password: str) -> bool:
     return unlock_detailed(password)[0]
 
 
+def unlock_from_file() -> bool:
+    """Unlock with the encryption password in the file ``KOPIALENS_KEY_FILE`` names (a Docker
+    secret, for installs with no keychain). False when unset, unreadable or wrong."""
+    path = (os.environ.get("KOPIALENS_KEY_FILE") or "").strip()
+    if not path:
+        return False
+    try:
+        with open(path, encoding="utf-8") as fh:
+            password = fh.read().strip()
+    except OSError as exc:
+        log.warning("the key file %s can't be read: %s", path, exc)
+        return False
+    ok, reason = unlock_detailed(password)
+    if ok:
+        log.info("index unlocked from the key file")
+    else:
+        log.warning("the key file didn't unlock the index (%s)", reason)
+    return ok
+
+
 def unlock_with_recovery_detailed(recovery_key: str) -> tuple[bool, str]:
     """Unlock with the recovery key. Same reasons as ``unlock_detailed``."""
     global _DATA_KEY, _SOURCE

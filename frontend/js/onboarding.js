@@ -9,7 +9,7 @@ const onboardingPart = {
         step: "connect", state, needsCode: !state.setup_unlocked, code: "", codeError: "", codeBusy: false,
         kopiaPath: "", kopiaError: "",
         username: "admin", pw: "", confirm: "", level: "index", usePw: true, encPw: "", encConfirm: "",
-        remember: true, hosts: (state.allowed_hosts || []).join(", "), busy: false, error: "",
+        remember: !state.docker, hosts: (state.allowed_hosts || []).join(", "), busy: false, error: "",
         recoveryKey: "", keySaved: false, keyNote: "", protected: "", sampleBusy: false, sampleError: "",
         auto: state.index_mode !== "off", time: state.index_time || "23:00", engine: {}, engineAuto: {},
       };
@@ -136,11 +136,13 @@ const onboardingPart = {
     async obSkipProtect() {
       const o = this.ob;
       if (o.state.profile === "server") {
+        const ha = !!o.state.ingress;
         const ok = await this.klConfirm({
           title: "Continue without a password?",
-          body: "Anyone who can reach this address can open KopiaLens and act on your repositories.",
+          body: ha ? "The Home Assistant sidebar still asks for Home Assistant's sign-in. If you give KopiaLens its own port, anyone who can reach that port can open it."
+            : "Anyone who can reach this address can open KopiaLens and act on your repositories.",
           note: "You can add a password any time in Settings → Account.",
-          confirmLabel: "Continue without a password", danger: true,
+          confirmLabel: "Continue without a password", danger: !ha,
         });
         if (!ok) return;
       }

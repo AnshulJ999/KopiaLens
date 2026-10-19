@@ -46,7 +46,6 @@ from .applog import get_logger
 
 log = get_logger("auth")
 
-COOKIE_NAME = "kopialens_session"
 _ITERATIONS = 200_000
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", ""}
 # The audit actor when nobody is signed in (sign-in off): the single-user identity.
@@ -238,7 +237,26 @@ def first_run_allowed(code: str = "", cookie: str = "") -> bool:
 
 # Entering the setup code once sets this cookie, so the rest of setup needs no code. Its value is
 # bound to this process's code, so a restart (which reopens the window anyway) invalidates it.
-SETUP_COOKIE = "kopialens_setup"
+_COOKIE_TAG = ""
+
+
+def cookie_tag() -> str:
+    """A short per-install suffix for cookie names. Browsers keep cookies per host, not per port,
+    so two copies on one address would otherwise share, and overwrite, one sign-in."""
+    global _COOKIE_TAG
+    if not _COOKIE_TAG:
+        from . import checkin
+        _COOKIE_TAG = hashlib.sha256(f"cookie:{checkin.install_id()}".encode()).hexdigest()[:8]
+    return _COOKIE_TAG
+
+
+def __getattr__(name: str) -> str:
+    # COOKIE_NAME / SETUP_COOKIE are read as module attributes; the tag needs the data folder.
+    if name == "COOKIE_NAME":
+        return f"kopialens_session_{cookie_tag()}"
+    if name == "SETUP_COOKIE":
+        return f"kopialens_setup_{cookie_tag()}"
+    raise AttributeError(name)
 
 
 def setup_cookie_value() -> str:

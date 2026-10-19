@@ -143,7 +143,8 @@
                               <input type="password" x-model="ob.encConfirm" autocomplete="new-password" class="fld border border-bd bg-surface2"></label>
                           </div>
                         </template>
-                        <label class="flex items-start gap-2 text-xs"><input type="checkbox" x-model="ob.remember" class="mt-0.5"><span>Unlock automatically on this computer<span class="block text-muted">Off: someone enters the password after every restart.</span></span></label>
+                        <label x-show="!ob.state.docker" class="flex items-start gap-2 text-xs"><input type="checkbox" x-model="ob.remember" class="mt-0.5"><span>Unlock automatically on this computer<span class="block text-muted">Off: someone enters the password after every restart.</span></span></label>
+                        <p x-show="ob.state.docker" class="kl-note">In Docker, the index stays locked after each restart until someone enters the password, and the nightly index waits until then. To unlock on start, give Docker the password in a key file (see the Docker help).</p>
                         <p class="kl-note">Next, you get a recovery key to save. It's the only way back in if you forget the password.</p>
                       </div>
                     </template>

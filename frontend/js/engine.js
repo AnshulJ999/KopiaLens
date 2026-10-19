@@ -53,14 +53,27 @@ const enginePart = {
       if (e.state === "write_mode") return `Backups: off in ${this.wmLabel(this.wmMode(repo))} mode`;
       return "Backups: KopiaLens";
     }
-    if (e.engine === "none") return "Backups: nothing runs them";
+    if (e.engine === "none") {
+      const ev = e.evidence || {};
+      if (!ev.known) return "Backups";
+      if (!ev.last_snapshot) return "Backups: none yet";
+      if (!ev.overdue && Date.now() - toDate(ev.last_snapshot).getTime() < 2 * 86400000) return "Backups: another app";
+      return "Backups: last " + fmtRel(ev.last_snapshot);
+    }
     return "Backups: " + this.engineAppName(e.engine);
+  },
+  // The evidence behind the backups line, for its tooltip.
+  backupsTip(repo) {
+    const e = this.engineFor(repo);
+    const ev = (e && e.evidence) || {};
+    if (!e || e.choice === "kopialens" || !ev.last_snapshot) return "Who runs this repository's backups";
+    return `Last snapshot ${fmtRel(ev.last_snapshot)}${ev.by ? " from " + ev.by : ""}` + (ev.overdue ? ". A backup is past its scheduled time." : "");
   },
   backupsClass(repo) {
     const e = this.engineFor(repo);
     if (!e) return "";
     if (e.choice === "kopialens" && ["blocked", "failed"].includes(e.state) && !e.until_restart) return "border-danger text-danger";
-    if (e.until_restart || e.state === "paused" || e.state === "write_mode" || (e.choice !== "kopialens" && e.engine === "none")) return "border-warn-bd text-warn";
+    if (e.until_restart || e.state === "paused" || e.state === "write_mode" || (e.choice !== "kopialens" && e.engine === "none" && (e.evidence || {}).overdue)) return "border-warn-bd text-warn";
     return "";
   },
   // Policy editor note: who makes the schedule actually run.
@@ -68,7 +81,7 @@ const enginePart = {
     const e = this.engineFor();
     if (!e) return "Schedules run while KopiaUI or a kopia server is running.";
     if (e.choice === "kopialens") return e.state === "paused" ? "KopiaLens runs these schedules. Backups are paused." : "KopiaLens runs these schedules while it's open.";
-    if (e.engine === "none") return "Nothing runs these schedules for this repository right now.";
+    if (e.engine === "none") return "KopiaLens doesn't see an app running these schedules on this computer.";
     return this.engineAppName(e.engine) + " runs these schedules for this repository.";
   },
   enginePauseText(p) {
@@ -327,7 +340,19 @@ const enginePart = {
     const next = (s && s.next) || row.next_snapshot;
     if (!next) return "—";
     const overdue = toDate(next).getTime() < Date.now() - 15 * 60 * 1000 && !(s && (s.status === "UPLOADING" || s.status === "PENDING"));
-    return timeCell(next, cell) + (overdue && (this.engineRuns() || row.next_snapshot) ? ' <span class="pill" style="background:var(--warn-bg);color:var(--warn)" title="This backup didn\'t start at its scheduled time">overdue</span>' : "");
+    if (!overdue || !(this.engineRuns() || row.next_snapshot)) return timeCell(next, cell);
+    // Another app runs the backups and is running: kopia saves no snapshot when nothing changed,
+    // so a missed slot means "unchanged", and the next slot is the one after it.
+    const e = this.engineFor();
+    const owner = !s && e && e.choice !== "kopialens" && e.engine && e.engine !== "none";
+    if (owner) {
+      const since = row.last_time ? fmtAbs(row.last_time) : "the last snapshot";
+      return timeCell(row.next_after_missed || next, cell) + ` <span class="text-muted" title="No changes since ${escHtml(since)}">· unchanged</span>`;
+    }
+    if (this.hideOverdue) return timeCell(next, cell);
+    const why = s ? "This backup didn't start at its scheduled time."
+      : "This backup didn't start at its scheduled time. No app is seen running these backups on this computer.";
+    return timeCell(next, cell) + ` <span class="pill" style="background:var(--warn-bg);color:var(--warn)" title="${why}">overdue</span>`;
   },
   async engineSnapshotNow(source) {
     if (!this.wmGuard("non_destructive")) return;

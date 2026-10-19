@@ -337,6 +337,8 @@ def friendly_error(text: str) -> str:
         ver = version() or "this kopia"
         return (f"This repository uses a newer format than kopia {ver} can read. Point KopiaLens at a "
                 f"newer kopia in Settings > Repositories.")
+    if "http response to https client" in low:   # kopia's text stays; the fix goes after it
+        return text + " The server uses plain HTTP: tick Use plain HTTP under Advanced options."
     return text
 
 

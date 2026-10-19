@@ -279,8 +279,10 @@ def tasks(repo: str = "all", limit: int = 1000) -> dict:
         by_id[f"job:{j.get('job_id')}"] = _job_task(j)
     rows = [t for t in by_id.values() if repo == "all" or str(t.get("repo")) == str(repo)]
     rows.sort(key=lambda t: t.get("start") or 0, reverse=True)
+    for t in rows:
+        t["routine"] = engine.is_routine(t)
     return {"tasks": rows[:limit], "running": sum(1 for t in rows if t.get("status") == "running"),
-            "history_days": engine.history_days()}
+            "history_days": engine.history_days(), "routine_seconds": engine.routine_seconds()}
 
 
 def _split(task_id: str) -> tuple[str, str, str, str]:

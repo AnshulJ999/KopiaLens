@@ -121,7 +121,7 @@ def test_index_queries_are_charged_to_the_current_request():
     from app.index import store
 
     cur = store._PinnedCursor(_FakeGen(), _FakeCursor())
-    assert cur.execute("x") is cur._cur              # outside a request: the raw cursor, untimed
+    cur.execute("x")                                 # outside a request: runs, nothing charged
     slot = [0, 0.0]
     token = store.REQUEST_DB.set(slot)
     try:

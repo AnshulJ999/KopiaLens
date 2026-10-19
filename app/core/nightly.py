@@ -243,7 +243,7 @@ def queued_repo(active: str) -> str | None:
     attempts = state.get("attempts") or {}
     stamps = state.get("nightly") or {}
     slot = float((attempts.get(active) or {}).get("slot") or stamps.get(active) or 0)
-    order = [r for r in REPOS if repo_kind(r) != "backblaze"]
+    order = [r for r in list(REPOS) if repo_kind(r) != "backblaze"]
     if not slot or active not in order:
         return None
     for repo in order[order.index(active) + 1:]:

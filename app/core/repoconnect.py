@@ -156,9 +156,8 @@ PROVIDERS: dict[str, dict] = {
         "cloud": False,
         "fields": [
             _field("path", "--path", "Folder", "path", required=True,
-                   help="The folder holding the repository, or where it will be created."),
-            _bool("flat", "--flat", "Flat layout", advanced=True,
-                  help="Store blobs directly in the folder instead of the sharded default."),
+                   help="The folder that holds the repository."),
+            _bool("flat", "--flat", "Flat layout", advanced=True),
             _field("owner_uid", "--owner-uid", "Owner UID", advanced=True),
             _field("owner_gid", "--owner-gid", "Owner GID", advanced=True),
             _field("file_mode", "--file-mode", "File mode", advanced=True),
@@ -369,6 +368,56 @@ for _key, _prov in PROVIDERS.items():
         connect_only=True))
 
 
+# One line under each field kopia's form leaves unexplained (from kopia's own flag help).
+_FIELD_HELP = {
+    "flat": "Keeps kopia's files in one folder instead of subfolders. Only for a repository made that way.",
+    "owner_uid": "User ID that owns the files kopia writes.",
+    "owner_gid": "Group ID that owns the files kopia writes.",
+    "file_mode": "Permissions for new files, such as 0600 (kopia's default).",
+    "dir_mode": "Permissions for new folders, such as 0700 (kopia's default).",
+    "keyfile": "The private key file used to sign in to the server.",
+    "key_data": "The private key itself, pasted in, instead of a file.",
+    "known_hosts": "A known_hosts file listing the server's key, so kopia can check it's the right server.",
+    "known_hosts_data": "The known_hosts lines themselves, pasted in, instead of a file.",
+    "ssh_command": "The SSH program to run, when it isn't ssh.",
+    "ssh_args": "Extra arguments for that SSH program.",
+    "session_token": "Only for temporary AWS credentials.",
+    "disable_tls": "For a server that only speaks plain HTTP, such as a local MinIO.",
+    "disable_tls_verification": "Accepts the server's certificate without checking it. Only for a self-signed certificate.",
+    "root_ca_pem_path": "A certificate authority file, for a server whose certificate this computer doesn't trust.",
+    "read_only": "Asks the storage for read-only access, so nothing can be written.",
+    "storage_domain": "Only for Azure clouds other than the public one.",
+    "tenant_id": "For signing in with an Azure service principal instead of a storage key.",
+    "client_id": "For signing in with an Azure service principal instead of a storage key.",
+    "client_secret": "The service principal's secret.",
+    "client_cert": "The service principal's certificate, instead of a secret.",
+    "azure_federated_token_file": "A file holding an Azure federated token (workload identity).",
+    "atomic_writes": "Tick when the server never shows half-written files. Leave it if unsure.",
+    "rclone_exe": "Where the rclone program is, when it isn't on the path.",
+    "rclone_args": "Extra arguments passed to rclone.",
+    "embed_rclone_config": "An rclone config file to keep inside the connection file.",
+    "server_cert_fingerprint": "The server certificate's SHA-256 fingerprint. Needed for a self-signed certificate.",
+}
+_EMBED_HELP = {"sftp": "Keeps the key and known hosts inside the connection file, so those files aren't needed later.",
+               "gcs": "Keeps the service account JSON inside the connection file.",
+               "gdrive": "Keeps the service account JSON inside the connection file."}
+# Shown on Create instead of the field's own help.
+_CREATE_HELP = {"path": "The folder where the repository will be created. An empty folder is best."}
+
+# `kopia repository create` format choices, kopia's default first (repo/hashing, repo/encryption,
+# repo/splitter, repo/ecc; cli/command_repository_create.go). Fixed once the repository exists.
+FORMAT_CHOICES = {
+    "encryption": ["AES256-GCM-HMAC-SHA256", "CHACHA20-POLY1305-HMAC-SHA256"],
+    "block_hash": ["BLAKE2B-256-128", "BLAKE2B-256", "BLAKE2S-128", "BLAKE2S-256", "BLAKE3-256",
+                   "BLAKE3-256-128", "HMAC-SHA256", "HMAC-SHA256-128", "HMAC-SHA224", "HMAC-SHA3-224",
+                   "HMAC-SHA3-256"],
+    "object_splitter": ["DYNAMIC-4M-BUZHASH", "DYNAMIC-1M-BUZHASH", "DYNAMIC-2M-BUZHASH", "DYNAMIC-8M-BUZHASH",
+                        "DYNAMIC-4M-RABINKARP", "FIXED-4M", "FIXED-1M", "FIXED-8M"],
+    "ecc_overhead_percent": ["0", "1", "2", "5", "10"],
+    "format_version": ["0", "2", "1"],
+}
+
+
 def provider_list() -> list[dict]:
     """The provider specs for the screens (/ UI) - one source with both flows."""
     out = []
@@ -385,8 +434,19 @@ def provider_list() -> list[dict]:
             # "fill at least one of these" groups, by field key, for the form
             "requires_any": [[g.strip("[]") for g in group] for group in spec.get("requires_any", [])],
             "requires_any_unless": spec.get("requires_any_unless", ""),
-            "fields": [dict(f) for f in spec["fields"]],
+            "fields": [_with_help(key, f) for f in spec["fields"]],
         })
+    return out
+
+
+def _with_help(provider: str, field: dict) -> dict:
+    out = dict(field)
+    if not out["help"]:
+        out["help"] = (_EMBED_HELP.get(provider, "") if out["key"] == "embed_credentials"
+                       else _FIELD_HELP.get(out["key"], ""))
+    out["help_create"] = _CREATE_HELP.get(out["key"], "")
+    if out["key"] == "kopia_readonly":
+        out["advanced"] = False          # always in view: it decides what KopiaLens may do here
     return out
 
 
@@ -417,7 +477,23 @@ def validate_fields(provider: str, fields: dict) -> list[str]:
             labels = " or ".join(next(f["label"] for f in spec["fields"] if f["key"] == k)
                                  for k in keys)
             missing.append(f"{labels} is required.")
-    return missing
+    return missing + _input_mistakes(provider, fields)
+
+
+def _input_mistakes(provider: str, fields: dict) -> list[str]:
+    """Obvious typing mistakes kopia would answer with a cryptic error. Anything else is left to
+    kopia, whose own message is shown."""
+    out = []
+    path = str(fields.get("path") or "").strip()
+    if provider == "filesystem" and path and not re.match(r"^([A-Za-z]:[\\/]|[\\/]|~)", path):
+        out.append("Enter the folder's full path, starting from the drive or /.")
+    host = str(fields.get("host") or "").strip()
+    if provider == "sftp" and host.count(":") == 1 and not host.startswith("["):
+        out.append("Enter the port in the Port field, not after the server name.")
+    endpoint = str(fields.get("endpoint") or "").strip().lower()
+    if provider == "s3" and endpoint.startswith(("http://", "https://")):
+        out.append("Enter the endpoint without http:// or https://. For plain HTTP, tick Use plain HTTP under Advanced options.")
+    return out
 
 
 # `kopia repository create` format options (cli/command_repository_create.go). They fix the
@@ -480,6 +556,8 @@ def _build_args(verb: str, provider: str, fields: dict, config_file: str,
         value = (options or {}).get(key)
         if value is None or str(value).strip() == "" or str(value).strip() == "0":
             continue
+        if key in FORMAT_CHOICES and str(value) not in FORMAT_CHOICES[key]:
+            raise ValueError(f"Unknown choice for {key}: {value}")
         args += [flag, str(value)]
     # kopia's own update check is not ours to run (it costs a network round trip and prints a
     # notice nobody sees here); KopiaLens checks for ITS updates separately.
@@ -675,7 +753,7 @@ def _establish(verb: str, provider: str, fields: dict, password: str, name: str,
                 "folder. Run KopiaLens as the user that writes the repository. In Docker, set "
                 "PUID/PGID to that user, or leave them unset if kopia runs as root.")
     # The id + the managed config path are RESERVED before the kopia call: two overlapping
-    # connects must never share an identity or a file (a failed connect just burns a number).
+    # connects must never share an identity or a file. A failed connect gives the number back.
     with _CONNECT_LOCK:
         rid = repos.reserve_id()
         config_file = managed_config_path(rid, location, folder)   # a free name: cleanup below only removes what kopia made
@@ -687,7 +765,9 @@ def _establish(verb: str, provider: str, fields: dict, password: str, name: str,
     res = _run(args, password, extra_env=extra_env, stdin_text=stdin_text)
     if res["returncode"] != 0:
         _remove_config_files(config_file)
+        repos.release_id(rid)
         detail = _last_meaningful_line((res.get("stderr") or "") + "\n" + (res.get("stdout") or ""))
+        log.warning("%s failed (%s): %s", verb, provider, detail or f"exit {res['returncode']}")
         audit.audit("generated", f"repo-{verb}", repo=rid,
                     summary={"provider": provider, "ok": False, "config": config_file},
                     rc=res["returncode"])
@@ -698,6 +778,7 @@ def _establish(verb: str, provider: str, fields: dict, password: str, name: str,
     if dup is not None:
         _disconnect(rid, config_file)
         _remove_config_files(config_file)
+        repos.release_id(rid)
         raise DuplicateRepo(str(dup.get("id")), dup.get("name") or str(dup.get("id")))
     record = repos.add_record({
         "id": rid, "name": name or f"{spec['label']}", "short_name": short_name,
@@ -815,6 +896,7 @@ def detect_configs() -> list[dict]:
                 "managed": is_managed_config(path),
                 "type": info["type"], "kind": info["kind"], "label": info["label"],
                 "config": info["config"],
+                "description": str(read_config_file(path).get("description") or ""),   # kopia's own name
                 "in_store": bool(known.get(key)),
                 "repo_id": known.get(key, ""),
             })
@@ -838,7 +920,7 @@ def probe(config_file: str | None = None, repo: str | None = None) -> dict:
     if repo and not os.path.isfile(repos.connection_file(repo)):
         return {"ok": False, "config_file": config_file or "", "error": kopiabin.MISSING_CONNECTION,
                 "missing_config": True, "type": "", "kind": "", "unique_id": "", "capacity": None,
-                "available": None, "config": {}}
+                "available": None, "config": {}, "reconnect": reconnect_needs(repo)}
     if config_file:
         if not os.path.isfile(config_file):
             raise ValueError(f"config file not found: {config_file}")
@@ -996,9 +1078,30 @@ def _has_scrubbed(value) -> bool:
     return value == repos.SCRUBBED
 
 
-def reconnect(repo: str, password: str) -> dict:
+# Labels for the storage keys KopiaLens never keeps, asked for again on "Connect again".
+_KEY_LABELS = {"secretAccessKey": "Secret access key", "sessionToken": "Session token",
+               "key": "Application key", "storageKey": "Storage account key", "sasToken": "SAS token",
+               "clientSecret": "Client secret", "password": "Password", "keyData": "Private key",
+               "credentialsJSON": "Service account JSON"}
+
+
+def reconnect_needs(repo: str) -> dict:
+    """What "Connect again" asks for: ``keys`` (top-level storage keys KopiaLens never kept), or
+    ``possible`` False when a key sits deeper than a field can fill (remove and add again)."""
+    rec = config.repo_record(repo)
+    storage = rec.get("storage") or {}
+    stype, sconf = storage.get("type"), storage.get("config") or {}
+    if not stype or stype == "server":
+        return {"possible": False, "keys": []}
+    keys = [k for k, v in sconf.items() if v == repos.SCRUBBED]
+    deeper = any(_has_scrubbed(v) for k, v in sconf.items() if k not in keys)
+    return {"possible": not deeper,
+            "keys": [{"key": k, "label": _KEY_LABELS.get(k, k)} for k in keys]}
+
+
+def reconnect(repo: str, password: str, keys: dict | None = None) -> dict:
     """Rebuild a missing connection file at its old path from the storage details KopiaLens kept,
-    so the repo keeps its id and index. Storage whose keys KopiaLens never stores can't be rebuilt."""
+    plus the storage keys the user enters again, so the repo keeps its id and index."""
     rec = next((r for r in repos.all_records() if str(r.get("id")) == str(repo)), None)
     if rec is None or rec.get("kind", "kopia") != "kopia" or rec.get("demo"):
         raise ValueError(f"unknown repo: {repo}")
@@ -1008,10 +1111,13 @@ def reconnect(repo: str, password: str) -> dict:
     if os.path.isfile(cfg):
         raise ValueError("The connection file is there. Use Check to see what's wrong.")
     storage = rec.get("storage") or {}
-    stype, sconf = storage.get("type"), storage.get("config") or {}
-    if not stype or stype == "server" or _has_scrubbed(sconf):
-        raise ValueError("KopiaLens didn't keep everything this storage needs, such as its keys. "
+    stype, sconf = storage.get("type"), dict(storage.get("config") or {})
+    needs = reconnect_needs(repo)
+    if not needs["possible"]:
+        raise ValueError("KopiaLens didn't keep everything this storage needs. "
                          "Remove this repository and add it again.")
+    for item in needs["keys"]:
+        sconf[item["key"]] = str((keys or {}).get(item["key"]) or "")
     os.makedirs(os.path.dirname(cfg), exist_ok=True)
     tmp = cfg + ".reconnect.json"
     with open(tmp, "w", encoding="utf-8") as fh:
@@ -1034,6 +1140,70 @@ def reconnect(repo: str, password: str) -> dict:
         raise ValueError("That storage now holds a different repository. Remove this one and add it again.")
     log.warning("repo=%s connection file rebuilt at %s", repo, cfg)
     return {"ok": True, "status": probe(repo=repo)}
+
+
+def _ours(path: str) -> bool:
+    folder = os.path.normcase(os.path.abspath(os.path.join(config.DATA_DIR, "configs")))
+    return os.path.normcase(os.path.dirname(os.path.abspath(path))) == folder
+
+
+def take_connection_preview(repo: str) -> dict:
+    """Moving or copying a repository's connection file into KopiaLens's folder: where from, where
+    to, and who else uses the file now."""
+    from . import coexist
+    if config.repo_kind(repo) != "kopia" or config.is_demo(repo) or not repos.exists(repo):
+        raise ValueError("This repository has no kopia connection file.")
+    src = repos.connection_file(repo)
+    if not os.path.isfile(src):
+        raise ValueError("The connection file is missing. Use Check connection first.")
+    view = coexist.repo_view(repo)
+    norm = lambda p: os.path.normcase(os.path.abspath(p))  # noqa: E731
+    users = sorted({r["label"] for r in view.get("running", [])
+                    if r.get("app") != "kopialens" and norm(r["config"]) == norm(src)})
+    shared = shared_with(src)
+    if shared and shared not in users:
+        users.append(shared)
+    return {"repo": repo, "from": src, "to": managed_config_path(repo, "data"), "ours": _ours(src),
+            "default": os.path.basename(src) == "repository.config", "used_by": users}
+
+
+def take_connection(repo: str, mode: str, password: str) -> dict:
+    """Make KopiaLens's own connection file from the current one (kopia files the password under
+    the new path). ``move`` renames the old file so the other app stops loading it at its next
+    start; ``copy`` leaves it."""
+    from . import engine
+    from .coexist import MOVED_SUFFIX
+    if mode not in ("move", "copy"):
+        raise ValueError("unknown mode")
+    pre = take_connection_preview(repo)
+    if pre["ours"]:
+        raise ValueError("This connection file is already in KopiaLens's folder.")
+    if not (password or "").strip():
+        raise ValueError("Enter the repository password.")
+    src, dst = pre["from"], pre["to"]
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    res = _run([kopiabin.exe(), "--config-file", dst, "repository", "connect", "from-config",
+                "--file", src, "--no-check-for-updates"], password, timeout=300.0)
+    if res["returncode"] != 0:
+        _remove_config_files(dst)
+        raise ValueError(_last_meaningful_line(res.get("stderr") or "")
+                         or "kopia couldn't open the repository with that password.")
+    fields = {"config_file": dst}
+    if mode == "move":
+        try:
+            os.replace(src, src + MOVED_SUFFIX)
+        except OSError as exc:
+            _disconnect(repo, dst)
+            _remove_config_files(dst)
+            raise ValueError(f"Couldn't rename the old connection file: {exc}") from exc
+        fields["engine_moved_from"] = src
+    repos.set_engine_fields(repo, fields)
+    audit.audit("executed", "repo-take-connection", repo=repo,
+                summary={"mode": mode, "from": src, "to": dst})
+    log.warning("repo=%s connection %s to %s", repo, "moved" if mode == "move" else "copied", dst)
+    if engine.running(repo) is not None:
+        engine.restart(repo, "connection file changed")
+    return {"ok": True, "repo": repos.detail(config.repo_record(repo)), "to": dst}
 
 
 class SharedConnection(ValueError):

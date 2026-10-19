@@ -49,6 +49,18 @@ def test_next_id_never_reuses_a_removed_id(store):
     assert repos.next_id() == "3"
 
 
+def test_a_failed_connect_gives_its_number_back(store):
+    """A number is used only by a real connection; overlapping connects never share one."""
+    from app.core import repos
+    repos.add_record({"name": "One"})
+    failed = repos.reserve_id()
+    repos.release_id(failed)
+    assert repos.next_id() == failed
+    first, second = repos.reserve_id(), repos.reserve_id()
+    repos.release_id(first)                    # a later reservation exists: keep the gap
+    assert repos.next_id() == str(int(second) + 1)
+
+
 def test_scrub_storage_config_hides_credentials_and_keeps_the_rest(store):
     """A kopia config file holds credentials in the clear; nothing secret may reach a response or
     repos.json. The display fields the screens need must survive."""

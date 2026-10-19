@@ -222,7 +222,7 @@ def index_freshness() -> dict:
     from ..core.sources import last_listing_error
 
     out = []
-    for key, cfg in REPOS.items():
+    for key, cfg in list(REPOS.items()):
         st = nightly_state(key)
         stored = nightly_error(key)
         row = {

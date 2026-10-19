@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from config import is_demo
 
-from ..core import auth, kopiabin, repos, users
+from ..core import auth, basepath, host, kopiabin, repos, users
 from ..index import crypto
 from ..settings import load_settings, mutate_settings, raw_kopialens_settings
 
@@ -49,6 +49,8 @@ def state(request: Request) -> dict:
         "first_run": first_run,
         "setup_unlocked": unlocked,
         "profile": auth.profile(),
+        "ingress": basepath.ingress_enabled(),
+        "docker": host.in_docker(),
     }
     if not unlocked:
         return out

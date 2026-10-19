@@ -241,9 +241,14 @@ _CLIENT_CACHE: dict[str, tuple[float, dict]] = {}
 
 
 def client_options(repo: str) -> dict:
-    """This computer's kopia client identity for the repo (user, host, actions), cached 10 min."""
+    """This computer's kopia client identity for the repo (user, host, actions): from the connection
+    file, else from kopia (cached 10 min)."""
     import json as _json
     import time as _time
+    from ..core import repos as _repos
+    facts = _repos.client_facts(repo)          # the connection file names them; no kopia needed
+    if facts is not None:
+        return facts
     hit = _CLIENT_CACHE.get(repo)
     if hit and _time.time() - hit[0] < 600:
         return hit[1]

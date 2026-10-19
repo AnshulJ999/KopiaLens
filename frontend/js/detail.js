@@ -21,11 +21,12 @@ const detailPart = {
       if (!prefix) return;
       if (!keepStack) this.panelStack = [];
       const seq = ++this._detailSeq;
+      const signal = viewRestart("panel");    // the previous panel's lookups stop
       this.detail = { kind: "folder", title: prefix, source, loading: true, heavyLoading: true, sources: [], children: [], panelTab: "overview" };
       try {
         const p = new URLSearchParams({ repo: this.repo, prefix });
         if (source) p.set("source", source);
-        const sum = await getJson(`/api/folder/summary?${p.toString()}`);
+        const sum = await getJson(`/api/folder/summary?${p.toString()}`, { signal });
         if (seq !== this._detailSeq || !this.detail) return;   // a newer panel, or this one was closed
         Object.assign(this.detail, sum, { loading: false, notFound: !sum.files && !sum.source_count });
       } catch (e) {
@@ -38,7 +39,7 @@ const detailPart = {
       // detail's is the DEDUPED chunk union across all versions. Overwriting made the headline
       // number silently drop - by 57% on a duplicate-heavy folder - with no explanation.
       getJson("/api/folder/detail", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repo: this.repo, prefix, source }) })
+        body: JSON.stringify({ repo: this.repo, prefix, source }), signal })
         .then((r) => {
           if (seq !== this._detailSeq || !this.detail) return;
           this.detail.physical_sum = this.detail.physical;   // keep the fast, additive figure
@@ -51,13 +52,13 @@ const detailPart = {
         .catch(() => { if (seq === this._detailSeq && this.detail) this.detail.heavyLoading = false; });
       // Folder versions walk every snapshot, so they fill in after the panel opens.
       this.detail.folderVersions = null;
-      getJson(`/api/folder/versions?${new URLSearchParams({ repo: this.repo, prefix, ...(source ? { source } : {}) })}`)
+      getJson(`/api/folder/versions?${new URLSearchParams({ repo: this.repo, prefix, ...(source ? { source } : {}) })}`, { signal })
         .then((r) => { if (seq === this._detailSeq && this.detail) this.detail.folderVersions = r; })
         .catch(() => { if (seq === this._detailSeq && this.detail) this.detail.folderVersions = "error"; });
       // Effective policy for this exact folder (kopia resolves inheritance), via its main source.
       const main = (this.detail.sources || []).find((s) => s.relation === "covers") || (this.detail.sources || [])[0];
       if (main) {
-        getJson(`/api/folder/policy?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(main.source)}&prefix=${encodeURIComponent(prefix)}`)
+        getJson(`/api/folder/policy?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(main.source)}&prefix=${encodeURIComponent(prefix)}`, { signal })
           .then((r) => { if (seq === this._detailSeq && this.detail) this.detail.effective_policy = r.policy; })
           .catch(() => {});
         this._loadPathStatus(seq, main.source, prefix, true);
@@ -67,7 +68,7 @@ const detailPart = {
     // Fills in after the panel opens: a second pass over the same pieces, so it never delays the cards.
     _loadBreakdown(seq, base) {
       this.detail.breakdown = "pending";
-      getJson(`/api/search/breakdown?${base}`)
+      getJson(`/api/search/breakdown?${base}`, { signal: viewSignal("panel") })
         .then((r) => { if (seq === this._detailSeq && this.detail) this.detail.breakdown = r; })
         .catch(() => { if (seq === this._detailSeq && this.detail) this.detail.breakdown = "error"; });
     },
@@ -409,6 +410,7 @@ const detailPart = {
     async openFileDetail(item, keepStack = false) {
       if (!keepStack) this.panelStack = [];
       const seq = ++this._detailSeq;
+      const signal = viewRestart("panel");
       // Render the panel immediately from the row we already have; the heavy fields (refcount,
       // dedup chunks, purge plan) fill in when they arrive. A second click bumps _detailSeq so a
       // stale in-flight response is dropped (no race).
@@ -424,9 +426,9 @@ const detailPart = {
       const base = `repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(item.source)}&full_path=${encodeURIComponent(item.full_path)}`;
       try {
         const [detail, vres, purge] = await Promise.all([
-          getJson(`/api/search/detail?${base}`),
-          getJson(`/api/search/versions?${base}`),
-          getJson(`/api/actions/purge-plan?${base}`),
+          getJson(`/api/search/detail?${base}`, { signal }),
+          getJson(`/api/search/versions?${base}`, { signal }),
+          getJson(`/api/actions/purge-plan?${base}`, { signal }),
         ]);
         if (seq !== this._detailSeq || !this.detail) return;  // a newer file was opened, or the panel closed - drop this result
         // A Free install gets the snapshots without ids or commands (the purge plan is Pro).

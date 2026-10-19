@@ -3,7 +3,7 @@
           <button class="kl-btn" @click="openNewSnap()" x-show="!isDemo()" data-testid="new-snapshot">New snapshot…</button>
           <span class="kl-dd" x-data="{ open: false }" @click.outside="open = false" @keydown.escape.stop="open = false" x-show="engineFor() && !isDemo()" x-cloak>
             <button class="kl-btn" :class="backupsClass()" @click="open = !open" :aria-expanded="open" data-testid="backups-chip"
-                    title="Who runs this repository's backups"><span x-text="backupsLine()"></span><i class="ic ic-caret-down"></i></button>
+                    :title="backupsTip()"><span x-text="backupsLine()"></span><i class="ic ic-caret-down"></i></button>
             <div class="kl-menu" style="left:0;right:auto" x-show="open" x-cloak>
               <button @click="open = false; openEngineDlg()">Who runs backups…</button>
               <div class="sep"></div>

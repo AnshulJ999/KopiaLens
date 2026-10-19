@@ -899,6 +899,11 @@ def _human(n: float) -> str:
     return f"{int(n)} B"
 
 
+# A made-up storage folder in this OS's own shape.
+_SAMPLE_STORAGE = (r"D:\Backups\Kopia" if sys.platform == "win32"
+                   else "/Volumes/Backup/Kopia" if sys.platform == "darwin" else "/mnt/backup/kopia")
+
+
 def identity(seed: int, taken=None) -> dict:
     """The sample's invented user, computer and storage, fixed by the seed. ``taken(name)`` says
     a name belongs to this install's real repos; those are skipped."""
@@ -907,7 +912,7 @@ def identity(seed: int, taken=None) -> dict:
     users = [u for u in fakenames.FIRST_NAMES if free(u)] or ["demo"]
     hosts = [h for h in _HOSTS if free(h)] or ["DEMO-PC"]
     return {"user": r.choice(users), "host": r.choice(hosts),
-            "storage": r"E:\Kopia", "unique_id": _hex(r, 256), "cache": _hex(r, 64)[:16],
+            "storage": _SAMPLE_STORAGE, "unique_id": _hex(r, 256), "cache": _hex(r, 64)[:16],
             "capacity": 4_000_787_030_016}
 
 
@@ -1105,7 +1110,7 @@ def _real_identity() -> set[str]:
     from ..index import store
     from . import demo
     sources: list[str] = []
-    for repo, cfg in REPOS.items():
+    for repo, cfg in list(REPOS.items()):
         if cfg.get("kind", "kopia") != "kopia" or cfg.get("demo"):
             continue
         try:

@@ -13,6 +13,7 @@ const tasksPart = {
       if (seq !== this._tasksSeq) return;
       this.taskRows = d.tasks || [];
       this.taskHistoryDays = d.history_days;
+      this.taskRoutineSeconds = d.routine_seconds || 2;
       this.renderTasks();
       if (this.taskSel) {
         const fresh = this.taskRows.find((t) => t.id === this.taskSel.id);
@@ -44,6 +45,7 @@ const tasksPart = {
       (f.repo === "all" || t.repo === f.repo)
       && (f.status === "all" || (f.status === "failed" ? t.status === "failed" || t.status === "warning" : t.status === "running"))
       && (f.kind === "all" || t.kind === f.kind)
+      && (!this.taskHideRoutine || !t.routine || (this.taskSel && this.taskSel.id === t.id))
       && (!text || (t.description + " " + (t.error || "")).toLowerCase().includes(text)));
   },
   taskWhat(t) { return t.source ? this.shortSource(t.source) : t.description; },
@@ -53,8 +55,16 @@ const tasksPart = {
     if (!t || !t.start) return "";
     return fmtDur((t.end || Date.now() / 1000) - t.start);
   },
+  // A counter's number from kopia's table (0 when it isn't there).
+  taskCount(t, name) { return Number((((t && t.counters) || {})[name] || {}).value || 0); },
   renderTasks() {
-    const rows = this.tasksFiltered();
+    const rows = this.tasksFiltered().map((t) => ({ ...t,
+      _took: t.start ? (t.end || Date.now() / 1000) - t.start : null,
+      _files: this.taskCount(t, "Hashed Files") + this.taskCount(t, "Cached Files"),
+      _hashed: this.taskCount(t, "Hashed Bytes"), _cached: this.taskCount(t, "Cached Bytes"),
+      _uploaded: this.taskCount(t, "Uploaded Bytes"), _errors: this.taskCount(t, "Errors") }));
+    const num = (v) => (v ? Number(v).toLocaleString(NUM_LOCALE) : "");
+    const bytes = (v) => (v ? fmtBytes(v) : "");
     const el = document.querySelector("#tasksTable");
     const sig = JSON.stringify(rows.map((t) => [t.id, t.status, t.end, t.progress]));
     if (el && el._tabulator && sig === this._tasksSig) return;
@@ -76,7 +86,12 @@ const tasksPart = {
           return span;
         } },
       { title: "Repository", field: "repo", width: 120, formatter: (c) => this.repoLabel(c.getValue()) },
-      { title: "Took", field: "end", width: 95, headerSort: false, formatter: (c) => this.taskTook(c.getRow().getData()) },
+      { title: "Took", field: "_took", width: 95, sorter: "number", hozAlign: "right", formatter: (c) => this.taskTook(c.getRow().getData()) },
+      { title: "Files", field: "_files", width: 85, sorter: "number", hozAlign: "right", headerTooltip: "Files read (hashed) plus files kopia knew were unchanged (cached)", formatter: (c) => num(c.getValue()) },
+      { title: "Hashed", field: "_hashed", width: 95, sorter: "number", hozAlign: "right", headerTooltip: "Data read and checked because it was new or changed", formatter: (c) => bytes(c.getValue()) },
+      { title: "Cached", field: "_cached", width: 95, sorter: "number", hozAlign: "right", headerTooltip: "Data skipped because it hadn't changed", formatter: (c) => bytes(c.getValue()) },
+      { title: "Uploaded", field: "_uploaded", width: 95, sorter: "number", hozAlign: "right", headerTooltip: "New data written to the repository", formatter: (c) => bytes(c.getValue()) },
+      { title: "Errors", field: "_errors", width: 70, sorter: "number", hozAlign: "right", formatter: (c) => (c.getValue() ? `<span class="text-danger">${num(c.getValue())}</span>` : "") },
     ], {
       initialSort: [{ column: "start", dir: "desc" }],
       placeholder: this.taskRows.length ? "No tasks match these filters" : "Backups, maintenance and actions show here when they run",

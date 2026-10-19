@@ -77,6 +77,7 @@
               </template>
 
               <div x-show="lic.renew_error && !licError" class="kl-callout" x-text="lic.renew_error"></div>
+              <p x-show="lic.pending_release" class="kl-note" data-testid="licence-pending-release">A removed licence still counts this computer. KopiaLens frees it the next time it reaches the licence service.</p>
               <div x-show="licError" class="kl-callout" x-text="licError"></div>
 
               <template x-if="lic.state !== 'none'">

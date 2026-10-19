@@ -78,6 +78,10 @@
       </select></div>
     <p class="text-[0.6875rem] text-muted mt-1">Applies to the file and folder detail panels. Classic shows every section in order; Tabbed keeps the summary cards on screen and groups the rest under Overview / Storage / Versions / Actions.</p>
   </div>
+  <label class="flex items-center gap-2 text-sm" data-testid="hide-overdue">
+    <input type="checkbox" x-model="hideOverdue" @change="klSet({ hide_overdue: hideOverdue }); rebuildTables && rebuildTables()">
+    <span><span class="font-medium">Hide overdue badges</span>
+      <span class="block text-[0.6875rem] text-muted">The Dashboard's Next snapshot column stops marking backups that didn't start on time.</span></span></label>
   <div>
     <div class="flex items-center justify-between gap-3"><span class="text-sm font-medium">Documentation opens as</span>
       <select x-model="docsView" @change="klSet({ docs_view: docsView })" class="fld border border-bd bg-surface2">

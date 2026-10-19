@@ -70,6 +70,28 @@ def _count_spawn(elapsed: float) -> None:
         slot[1] += elapsed
 
 
+# Only an action the user started may run kopia; a page load reads saved data. A page load that
+# starts kopia is logged once per route; KOPIALENS_STRICT_PAGE_KOPIA=1 (the browser suite) fails it.
+_PAGE_SPAWNS: set[tuple[str, str]] = set()
+
+
+class PageSpawn(RuntimeError):
+    """A page load started kopia (strict mode only)."""
+
+
+def _note_page_spawn(args: list[str]) -> None:
+    from ..index import lanes
+    sc = lanes.current()
+    if sc is None or sc.method != "GET" or sc.live:
+        return
+    what = " ".join(a for a in args[:2] if not a.startswith("-"))
+    if os.environ.get("KOPIALENS_STRICT_PAGE_KOPIA") == "1":
+        raise PageSpawn(f"GET {sc.path} started kopia ({what})")
+    if (sc.path, what) not in _PAGE_SPAWNS:
+        _PAGE_SPAWNS.add((sc.path, what))
+        log.warning("a page load started kopia: GET %s ran kopia %s", sc.path, what)
+
+
 @dataclass
 class KopiaResult:
     args: list[str]
@@ -186,6 +208,7 @@ def kopia(repo: str, args: list[str], ro: bool = True, timeout: float | None = N
         from . import demoreplies
         rc, out, err = demoreplies.reply(repo, args)
         return KopiaResult(args=full, returncode=rc, stdout=out, stderr=err, elapsed=0.0)
+    _note_page_spawn(args)
     limit = _timeout() if timeout is None else timeout
     start = time.time()
     try:

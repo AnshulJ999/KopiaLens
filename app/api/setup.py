@@ -122,7 +122,7 @@ def get_providers() -> dict:
     from ..core import host
     # In a container kopia's own folder isn't kept across a recreate, so it isn't offered there.
     return {"providers": repoconnect.provider_list(), "config_location": repoconnect.config_location(),
-            "kopia_folder_ok": not host.in_docker()}
+            "kopia_folder_ok": not host.in_docker(), "format_choices": repoconnect.FORMAT_CHOICES}
 
 
 @router.get("/setup/detect-configs")
@@ -196,11 +196,38 @@ def unlock(repo: str, payload: UnlockRequest) -> dict:
         raise _bad(exc) from exc
 
 
+class ReconnectRequest(BaseModel):
+    password: str = ""
+    keys: dict[str, str] = {}     # storage keys KopiaLens never kept, entered again
+
+
 @router.post("/setup/repos/{repo}/reconnect")
-def reconnect(repo: str, payload: UnlockRequest) -> dict:
+def reconnect(repo: str, payload: ReconnectRequest) -> dict:
     """Rebuild a repository's missing connection file in place (same id and index)."""
     try:
-        return repoconnect.reconnect(repo, payload.password)
+        return repoconnect.reconnect(repo, payload.password, payload.keys)
+    except (ValueError, OSError) as exc:
+        raise _bad(exc) from exc
+
+
+@router.get("/setup/repos/{repo}/take-connection")
+def take_connection_preview(repo: str) -> dict:
+    """Moving or copying the connection file into KopiaLens's folder: from, to, who uses it."""
+    try:
+        return repoconnect.take_connection_preview(repo)
+    except (ValueError, OSError) as exc:
+        raise _bad(exc) from exc
+
+
+class TakeConnectionRequest(BaseModel):
+    mode: str = "move"            # move | copy
+    password: str = ""
+
+
+@router.post("/setup/repos/{repo}/take-connection")
+def take_connection(repo: str, payload: TakeConnectionRequest) -> dict:
+    try:
+        return repoconnect.take_connection(repo, payload.mode, payload.password)
     except (ValueError, OSError) as exc:
         raise _bad(exc) from exc
 

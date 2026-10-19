@@ -96,10 +96,10 @@ document.addEventListener("alpine:init", () => {
     // Settings Account + Encryption sections, their shared dialog, and the unlock box (lock.html).
     acct: null, encStatus: null, acctDialog: null, locked: null, sessionDays: 30,
     // Settings backups, the damaged-file notice, pausing indexing and About (appconfig.js).
-    cfg: null, cfgError: false, cfgNotices: [], ixNotices: [], ixBackups: null, ixCopyRunning: false, cfgDlg: null, cfgBusy: "", cfgExportAccounts: false, cfgExportKeys: false,
+    cfg: null, cfgError: false, cfgNotices: [], ixNotices: [], listingNotices: [], ixBackups: null, ixCopyRunning: false, cfgDlg: null, cfgBusy: "", cfgExportAccounts: false, cfgExportKeys: false,
     indexPause: { paused: false }, about: null, controlApi: true, appPort: 7123, controlPort: 7124, savedPorts: {}, trayClick: "window", trayDoubleClick: "window", notifyLevel: "warnings",
     // Onboarding (onboarding.js) and repositories (repos.js): the shared connect form is `cx`.
-    ob: null, cx: null, repoMenu: false, repoAdd: false, repoDlg: null, repoChecks: {}, kopiaInfo: null, repoKopiaEdit: null,
+    ob: null, cx: null, repoMenu: false, repoAdd: false, repoDlg: null, tcDlg: null, repoChecks: {}, kopiaInfo: null, repoKopiaEdit: null,
     policyKeys: ["latest", "hourly", "daily", "weekly", "monthly", "annual"],
     policy: { latest: 100, hourly: 96, daily: 30, weekly: 52, monthly: 36, annual: 5 },
     _simOne: null, _simFreesSeq: 0,   // Simulate one source: the last result, its own-frees fill
@@ -165,7 +165,7 @@ document.addEventListener("alpine:init", () => {
     raBz: null,   // Backblaze on this computer (GET /api/setup/backblaze), for Settings
     analyzingAll: false, showDelete: false, deletePlan: null, _autoRefresh: null,
     // detail-panel layout ("classic" | "tabbed"), persisted server-side, default Classic.
-    panelLayout: "classic",
+    panelLayout: "classic", hideOverdue: false,
     confirmBox: null,  // the shared confirm dialog; truthy while it is open
     // Policies tab: overview + per-target detail from /api/policies/*; edits stage in
     // polStaged and reach kopia only through Review + save (sync POST, fail-closed backup
@@ -218,7 +218,7 @@ document.addEventListener("alpine:init", () => {
     tokEdit: null, apList: null, apWaiting: 0, apReview: null, apPassword: "", apBusy: false, apHasAccount: false,
     notifyHook: null, notifyForm: null, notifyProfiles: null, notifyRepo: "", _klSettings: null,
     engine: null, engineDlg: null, engineSrc: {}, _engineTimer: null, _engineSrcTimer: null, _alertSeen: -1, tasksRunning: 0,
-    taskRows: [], taskFilter: { repo: "all", status: "all", kind: "all", text: "" }, taskSel: null, taskLines: [], taskCursor: 0,
+    taskRows: [], taskFilter: { repo: "all", status: "all", kind: "all", text: "" }, taskHideRoutine: true, taskRoutineSeconds: 2, taskRoutineSecs: 2, taskRoutineHours: 48, taskSel: null, taskLines: [], taskCursor: 0,
     taskLogMode: "own", taskLogSkipped: false,   // a command-line job's own output or kopia's full log
     taskHistoryDays: 0, _tasksSeq: 0, _tasksPoll: null, _taskPoll: null, _tasksSig: "",
     _restoreSeq: 0, _restoreFromSeq: 0, _restoreTimer: null, _restoreTargets: {},
@@ -329,7 +329,7 @@ document.addEventListener("alpine:init", () => {
       }
       if (this.polLeaveBox) { this.polLeaveBox = null; return; }
       if (this.polNewBox) { this.polNewBox = null; return; }
-      if (this.detail) { this.detail = null; return; }
+      if (this.detail) { this.detail = null; viewAbort("panel"); return; }
       const t = this._activeTable();   // nothing open: Escape clears the table's selection
       if (t) t.deselectRow();
     },
@@ -374,8 +374,14 @@ document.addEventListener("alpine:init", () => {
       if (this._inited) return;
       this._inited = true;
       this.$watch("actionText", (v) => this.pushNotice(v, "info"));
+      this.$watch("active", (_v, old) => viewAbort(old));   // a tab left behind stops its requests
+      this.$watch("repo", () => { viewAbort("tree"); viewAbort("search"); });
       window.addEventListener("kl-locked", (e) => this.showLock(e.detail));
       window.addEventListener("kl-setup-code", () => this.obNeedCode());
+      window.addEventListener("kl-listing-failed", (e) => {
+        const n = e.detail;
+        this.listingNotices = [n, ...this.listingNotices.filter((x) => x.repo !== n.repo)];
+      });
       window.addEventListener("kl-table-layout", (e) => this.openTableLayout(e.detail.key));
       window.addEventListener("kl-table-rebuild", () => this.rebuildTables());
       window.addEventListener("design-change", (e) => { this.design = { ...this.design, [e.detail.key]: e.detail.value }; });
@@ -439,6 +445,7 @@ document.addEventListener("alpine:init", () => {
         this.clock = String(kl.clock || "system");
         setFormatStyles(kl);
         this.panelLayout = kl.panel_layout === "tabbed" ? "tabbed" : "classic";  //
+        this.hideOverdue = kl.hide_overdue === true;
         this.docsView = kl.docs_view === "side" ? "side" : "popup";
         this.polLayout = kl.policy_layout === "scroll" ? "scroll" : "tabs";
         this.polFolded = Object.fromEntries((kl.policy_folded || []).map((k) => [k, true]));
@@ -527,7 +534,7 @@ document.addEventListener("alpine:init", () => {
 
     async wrap(fn, label = "") {
       this.error = ""; this.busy = label;
-      try { return await fn(); } catch (err) { this.error = err.message || String(err); } finally { this.busy = ""; }
+      try { return await fn(); } catch (err) { if (!isAbort(err) && !err.notice) this.error = err.message || String(err); } finally { this.busy = ""; }
     },
 
     toggleTimeFmt() {

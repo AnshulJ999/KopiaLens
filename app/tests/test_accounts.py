@@ -176,7 +176,7 @@ def test_creating_the_first_account_after_the_window_needs_the_code(env, monkeyp
     resp = account.create(account.CreateRequest(username="admin", password="correct horse",
                                                 code=auth.setup_code()))
     assert _body(resp)["state"]["protected"] is True
-    assert "kopialens_session=" in resp.headers["set-cookie"]
+    assert f"{auth.COOKIE_NAME}=" in resp.headers["set-cookie"]
 
 
 # ---- shared password --------------------------------------------------------------------------
@@ -233,7 +233,7 @@ def test_renaming_keeps_the_browser_signed_in(env):
         cookies = {auth.COOKIE_NAME: token}
     resp = account.change_username(account.UsernameRequest(username="anshul"), _Req())
     assert users.find("anshul") and users.find("admin") is None
-    new_token = resp.headers["set-cookie"].split("kopialens_session=")[1].split(";")[0]
+    new_token = resp.headers["set-cookie"].split(f"{auth.COOKIE_NAME}=")[1].split(";")[0]
     assert auth.session_user(new_token)["username"] == "anshul"
     assert "max-age" not in resp.headers["set-cookie"].lower()          # still a session cookie
 
@@ -274,7 +274,7 @@ def test_the_recovery_key_resets_a_shared_password_and_unlocks(env):
         assert client.post("/api/auth/recover", data=form, follow_redirects=False).status_code == 401
         form["recovery_key"] = key
         ok = client.post("/api/auth/recover", data=form, follow_redirects=False)
-        assert ok.status_code == 303 and "kopialens_session=" in ok.headers["set-cookie"]
+        assert ok.status_code == 303 and f"{auth.COOKIE_NAME}=" in ok.headers["set-cookie"]
         assert auth.authenticate("admin", "battery staple") is not None
         assert crypto.unlocked() and users.find("admin")["unlocks_encryption"] is True
         crypto.lock()
@@ -295,7 +295,7 @@ def test_turning_sign_in_on_keeps_this_browser_signed_in(env):
     _account()
     auth.set_enabled(False)
     resp = account.set_enabled(account.EnabledRequest(on=True))
-    assert auth.enabled() and "kopialens_session=" in resp.headers["set-cookie"]
+    assert auth.enabled() and f"{auth.COOKIE_NAME}=" in resp.headers["set-cookie"]
 
 
 def test_the_local_reset_sets_a_new_sign_in_password_only(env, monkeypatch):

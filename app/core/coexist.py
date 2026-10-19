@@ -250,10 +250,28 @@ def is_blinkdisk_vault(unique_id_hex: str | None) -> bool:
 # ---- per-repository view ---------------------------------------------------------------------
 
 def maintenance_info(repo: str, force: bool = False) -> dict:
-    """`maintenance info --json`, cached (it is read-only and quick, but never per poll)."""
+    """`maintenance info --json`, cached. An old answer is served while a background thread asks
+    kopia again, so a page load waits for kopia only the first time."""
     hit = _owner_cache.get(repo)
-    if hit and not force and time.time() - hit[0] < _OWNER_TTL:
+    if hit and not force:
+        if time.time() - hit[0] >= _OWNER_TTL and repo not in _owner_refreshing:
+            _owner_refreshing.add(repo)
+            threading.Thread(target=_refresh_maintenance_info, args=(repo,), daemon=True).start()
         return hit[1]
+    return _read_maintenance_info(repo)
+
+
+_owner_refreshing: set[str] = set()
+
+
+def _refresh_maintenance_info(repo: str) -> None:
+    try:
+        _read_maintenance_info(repo)
+    finally:
+        _owner_refreshing.discard(repo)
+
+
+def _read_maintenance_info(repo: str) -> dict:
     from .kopia import kopia
     data: dict = {}
     try:
@@ -314,8 +332,8 @@ def repo_view(repo: str, with_owner: bool = False) -> dict:
         view["conflict"] = f"{others[0]['label']} is running backups for this repository."
     elif any(r["app"] == "kopialens" for r in view["running"]):
         view["engine"] = "kopialens"
-    elif view["kopiaui_installed"] and view["kopiaui_config"] and view["choice"] != "kopialens":
-        view["engine"] = "kopiaui"
+    elif view["kopiaui_running"] and view["kopiaui_config"] and view["choice"] != "kopialens":
+        view["engine"] = "kopiaui"     # KopiaUI open, its server not seen yet: it starts one per file
     elif view["blinkdisk"] and view["choice"] != "kopialens":
         view["engine"] = "blinkdisk"
     if with_owner:

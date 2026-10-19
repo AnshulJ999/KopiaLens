@@ -43,7 +43,12 @@ def pin_for_run() -> None:
 
 class ListingFailed(RuntimeError):
     """kopia could not list this repo's snapshots. Deliberately NOT an empty list: everything
-    downstream reads "no sources" as "every source was removed" and cleans up accordingly."""
+    downstream reads "no sources" as "every source was removed" and cleans up accordingly.
+    ``reason`` is kopia's message, made plain where KopiaLens knows it."""
+
+    def __init__(self, repo: str, reason: str):
+        super().__init__(f"repo {repo}: {reason}")
+        self.repo, self.reason = repo, reason
 
 
 def all_snapshots(repo: str) -> list[dict]:
@@ -59,9 +64,8 @@ def all_snapshots(repo: str) -> list[dict]:
         raw = (res.stderr or "").strip()[:300]
         plain = friendly_error(raw)
         if plain != raw:   # a known error already reads as a sentence
-            raise ListingFailed(f"repo {repo}: {plain}")
-        raise ListingFailed(
-            f"repo {repo}: kopia snapshot list failed (exit {res.returncode}): {raw or 'no error output'}")
+            raise ListingFailed(repo, plain)
+        raise ListingFailed(repo, raw or f"kopia stopped with exit code {res.returncode}.")
     out = res.stdout
     return json.loads(out) if out.strip() else []
 
@@ -118,7 +122,7 @@ def _build_now(repo: str) -> dict:
             meta = {}
     except Exception as exc:  # noqa: BLE001 - record it, keep the old entry, let the caller decide
         with _LOCK:
-            _LAST_ERROR[repo] = str(exc)[:500]
+            _LAST_ERROR[repo] = str(getattr(exc, "reason", exc))[:500]
             _REFRESHING.discard(repo)
         log.error("sources_index repo=%s listing FAILED, keeping the previous listing: %s", repo, exc)
         raise
@@ -191,6 +195,21 @@ def sources_index(repo: str, force: bool = False) -> dict[str, list[dict]]:
 def sources_meta(repo: str, force: bool = False) -> dict[str, dict]:
     """Per-source server metadata (server backend only): nextSnapshotTime/status/lastSnapshot."""
     return _ensure(repo, force)["meta"]
+
+
+def cached_index(repo: str) -> dict[str, list[dict]] | None:
+    """The listing already in memory, or None. Never runs kopia (for polled status routes)."""
+    with _LOCK:
+        entry = _CACHE.get(repo)
+    return entry["srcs"] if entry else None
+
+
+def rebuild(repo: str) -> None:
+    """Rebuild the listing now, in the caller's (background) thread. A failure keeps the old one."""
+    try:
+        _build_now(repo)
+    except Exception:  # noqa: BLE001 - already logged by _build_now; the previous listing stands
+        pass
 
 
 def invalidate(repo: str | None = None) -> None:

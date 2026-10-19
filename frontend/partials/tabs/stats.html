@@ -50,7 +50,9 @@
                 <div class="text-xs flex items-center gap-1">
                   <span x-show="statsData.parsed?.maintenance?.owner_match === false" class="text-warn"><i class="ic ic-warning"></i></span>
                   <span class="break-all" x-text="'owner ' + (statsData.parsed?.maintenance?.owner || '?')"></span></div>
-                <div class="text-xs mt-1" x-show="statsData.parsed?.maintenance?.last_run" x-text="'last run ' + humanTime(statsData.parsed?.maintenance?.last_run) + (statsData.parsed?.maintenance?.last_run_age_days != null ? ' (' + statsData.parsed.maintenance.last_run_age_days + 'd ago)' : '')"></div>
+                <div class="text-xs mt-1" x-show="statsData.parsed?.maintenance?.last_quick" x-text="'last quick ' + humanTime(statsData.parsed?.maintenance?.last_quick)"></div>
+                <div class="text-xs" x-show="statsData.parsed?.maintenance?.last_full" :class="statsData.parsed?.maintenance?.last_full_success === false ? 'text-warn' : ''" x-text="'last full ' + humanTime(statsData.parsed?.maintenance?.last_full) + (statsData.parsed?.maintenance?.last_full_success === false ? ' (failed)' : '')"></div>
+                <div class="text-xs mt-1" x-show="statsData.parsed?.maintenance?.last_run && !statsData.parsed?.maintenance?.last_quick && !statsData.parsed?.maintenance?.last_full" x-text="'last run ' + humanTime(statsData.parsed?.maintenance?.last_run)"></div>
                 <div class="text-[0.6875rem] text-muted" x-show="statsData.parsed?.maintenance?.next_quick" x-text="'next quick ' + humanTime(statsData.parsed?.maintenance?.next_quick)"></div>
                 <div class="text-[0.6875rem] text-muted" x-show="statsData.parsed?.maintenance?.next_full" x-text="'next full ' + humanTime(statsData.parsed?.maintenance?.next_full)"></div>
                 <button class="kl-btn mt-2" style="height:24px" @click="openMaint()">Run maintenance…</button>

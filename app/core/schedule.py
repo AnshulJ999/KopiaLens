@@ -364,6 +364,14 @@ def load_next_snapshots(repo: str) -> dict[str, str]:
     return data if isinstance(data, dict) else {}
 
 
+def load_next_after_missed(repo: str) -> dict[str, str]:
+    """For sources whose slot was missed: the slot after it. A running scheduler that found nothing
+    changed saves no snapshot, and moves on to this one ()."""
+    from ..index import sidecache
+    data = sidecache.read(_cache_name(repo) + "_after")
+    return data if isinstance(data, dict) else {}
+
+
 def _to_local_naive(iso: str | None, fallback: dt.datetime) -> dt.datetime:
     if not iso:
         return fallback
@@ -420,6 +428,7 @@ def compute_next_snapshots(repo: str, force: bool = False) -> dict[str, str]:
     prev = load_next_snapshots(repo) if not force else {}
     pols = _recent_policies(repo)
     out: dict[str, str] = {}
+    after: dict[str, str] = {}
     spawned = reused = 0
     for key, snaps in srcs.items():
         cached = prev.get(key)
@@ -443,11 +452,16 @@ def compute_next_snapshots(repo: str, force: bool = False) -> dict[str, str]:
             nt = next_time(sched, last_dt, now)
             if nt:
                 out[key] = nt.isoformat()
+                if nt <= now:
+                    na = next_time(sched, now, now + dt.timedelta(seconds=1))
+                    if na:
+                        after[key] = na.isoformat()
         except Exception as exc:  # noqa: BLE001 - per-source, keep going
             log.debug("next_snapshot compute failed for %s: %s", key, exc)
     try:
         from ..index import sidecache
         sidecache.write(_cache_name(repo), out)
+        sidecache.write(_cache_name(repo) + "_after", after)
     except Exception:  # noqa: BLE001 - a cache write must never fail the computation
         pass
     log.debug("next_snapshots repo=%s: %d sources (%d via policy show, %d from the policy cache)",

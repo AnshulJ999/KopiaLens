@@ -395,6 +395,7 @@ _WRITES: dict[str, object] = {
     "PATCH /api/setup/repos/{repo}": APP,
     "POST /api/setup/repos/{repo}/readonly": _kopia_readonly,   # turning it off is the unsafe side
     "DELETE /api/setup/repos/{repo}": PERSON,
+    "POST /api/setup/repos/{repo}/take-connection": PERSON,   # renames another app's file
     "POST /api/setup/kopia": PERSON,             # picks the program KopiaLens runs
     **{f"POST /api/licence{p}": APP for p in ("", "/activate", "/renew", "/patreon/start",
                                               "/patreon/claim")},

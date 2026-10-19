@@ -61,6 +61,17 @@
           </template>
         </div>
       </template>
+      <!-- kopia couldn't list a repository's snapshots: name it once, with kopia's own reason. -->
+      <template x-for="n in listingNotices" :key="n.repo">
+        <div class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm" data-testid="listing-failed-notice">
+          <div class="min-w-0 flex-1">
+            <div class="font-medium" x-text="'Couldn't list the snapshots in ' + n.name"></div>
+            <div class="text-xs text-muted break-words" x-text="n.reason"></div>
+          </div>
+          <button @click="openRepoAdmin()" class="kl-btn">Repository settings</button>
+          <button @click="listingNotices = listingNotices.filter((x) => x.repo !== n.repo)" class="kl-btn quiet">Dismiss</button>
+        </div>
+      </template>
       <template x-for="n in ixNotices" :key="n.id">
         <div class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm" data-testid="index-recovered-notice">
           <div class="min-w-0 flex-1">

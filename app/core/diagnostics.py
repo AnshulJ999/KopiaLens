@@ -160,7 +160,7 @@ def _repo_lines() -> list[str]:
     from .runhistory import read_tail
     sizes = _index_sizes()
     lines = []
-    for rid, rec in REPOS.items():
+    for rid, rec in list(REPOS.items()):
         kind = rec.get("kind", "kopia")
         if kind != "kopia":
             lines.append(f"Repository {rid}: {kind}")
@@ -256,7 +256,7 @@ def _jobs() -> list[dict]:
 def _kopia_status() -> str:
     from . import repos as repos_mod
     lines = []
-    for rid, rec in REPOS.items():
+    for rid, rec in list(REPOS.items()):
         if rec.get("kind", "kopia") != "kopia" or rec.get("demo") or repos_mod.via_server(rid):
             continue
         st = repos_mod.read_status(rid, timeout=STATUS_TIMEOUT)

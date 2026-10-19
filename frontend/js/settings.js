@@ -123,6 +123,9 @@ const settingsPart = {
       this.trayIcon = TRAY_ICONS.some((t) => t[0] === kl.tray_icon) ? kl.tray_icon : "k3g";
       this.askSnapshotNow = kl.ask_snapshot_now !== false;
       this.taskView = kl.task_view === "panel" ? "panel" : "popup";
+      this.taskHideRoutine = kl.task_hide_routine !== false;
+      this.taskRoutineSecs = Number(kl.task_routine_seconds ?? 2);
+      this.taskRoutineHours = Number(kl.task_routine_hours ?? 48);
       this.retentionChips = ["uniform", "custom"].includes(kl.retention_chips) ? kl.retention_chips : "kopiaui";
       this.retentionChipColor = /^#[0-9a-f]{6}$/i.test(kl.retention_chip_color || "") ? kl.retention_chip_color : "#2563eb";
       this.tableAlign = ALIGNS.some((a) => a[0] === kl.table_align) ? kl.table_align : "auto";
@@ -200,6 +203,8 @@ const settingsPart = {
       duckdb_memory: { s: "duckdbMemory", t: "choice", of: ["", ...MEMORY_CHOICES], restart: true },
       log_cleanup_days: { s: "logCleanupDays", t: "int", min: 0 },
       task_history_days: { s: "taskHistoryKeep", t: "int", min: 0 },
+      task_routine_seconds: { s: "taskRoutineSecs", t: "int", min: 1 },
+      task_routine_hours: { s: "taskRoutineHours", t: "int", min: 1 },
       engine_takeback: { s: "engineTakeback", t: "choice", of: ["auto", "wait"] },
       rank_count: { s: "rankCount", t: "int", min: 0 },
       repo_labels: { s: "repoLabels", t: "choice", of: ["short", "full"] },

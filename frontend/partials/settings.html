@@ -626,6 +626,24 @@
                 <p class="text-[0.6875rem] text-muted mt-1">How long finished backups and maintenance stay in the Tasks tab.</p>
               </div>
               <div>
+                <div class="flex items-center justify-between gap-3"><span>Routine tasks</span>
+                  <select x-model.number="taskRoutineSecs" @change="saveKl('task_routine_seconds')" class="fld border border-bd bg-surface2" data-testid="task-routine-seconds">
+                    <option value="1">Under 1 second</option>
+                    <option value="2">Under 2 seconds</option>
+                    <option value="5">Under 5 seconds</option>
+                    <option value="10">Under 10 seconds</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">A task that finishes this fast without errors found nothing to back up. The Tasks tab can hide these.</p>
+              </div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Keep routine tasks</span>
+                  <select x-model.number="taskRoutineHours" @change="saveKl('task_routine_hours')" class="fld border border-bd bg-surface2" data-testid="task-routine-hours">
+                    <option value="24">1 day</option>
+                    <option value="48">2 days</option>
+                    <option value="168">7 days</option>
+                  </select></div>
+              </div>
+              <div>
                 <div class="flex items-center justify-between gap-3"><span>When another app stops running backups</span>
                   <select x-model="engineTakeback" @change="saveKl('engine_takeback')" class="fld border border-bd bg-surface2" data-testid="engine-takeback">
                     <option value="auto">KopiaLens takes over again</option>

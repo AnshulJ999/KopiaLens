@@ -30,7 +30,7 @@ import duckdb
 from config import DATA_DIR, REPOS
 
 from ..core.applog import get_logger
-from . import crypto, upgrade
+from . import crypto, lanes, upgrade
 
 log = get_logger("store")
 
@@ -365,7 +365,7 @@ class _PinnedCursor:
 
     def __getattr__(self, name):
         attr = getattr(self._cur, name)
-        if name in _TIMED and REQUEST_DB.get() is not None:
+        if name in _TIMED:
             return lambda *a, **kw: self._timed(attr, name, a, kw)
         return attr
 
@@ -373,11 +373,15 @@ class _PinnedCursor:
         slot = REQUEST_DB.get()
         start = time.perf_counter()
         try:
-            out = fn(*args, **kwargs)
-        finally:
-            slot[1] += time.perf_counter() - start
             if name.startswith("execute"):
-                slot[0] += 1
+                out = lanes.run(self._cur, lambda: fn(*args, **kwargs))
+            else:
+                out = fn(*args, **kwargs)
+        finally:
+            if slot is not None:
+                slot[1] += time.perf_counter() - start
+                if name.startswith("execute"):
+                    slot[0] += 1
         return self if out is self._cur else out  # keep chained fetches timed
 
     def close(self) -> None:

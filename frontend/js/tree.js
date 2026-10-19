@@ -138,9 +138,10 @@ const treePart = {
       if (!this.selectedSource) return;
       if (this.selectedSource !== "*ALL*" && this.treeMode !== "all" && !this.selectedSnapshot) return;
       const seq = ++this._treeSeq;
+      const signal = viewRestart("tree");   // the previous folder's list and fills stop
       await this.wrap(async () => {
         const tree = this.treeView === "tree";
-        const data = await getJson(this._treeUrl(this.treePrefix, this.treeFlat && !tree));
+        const data = await getJson(this._treeUrl(this.treePrefix, this.treeFlat && !tree), { signal });
         if (seq !== this._treeSeq) return;  // a newer navigation superseded this one
         const children = data.children || [];
         if (!children.length && !(this.indexStatus.indexed_snapshots > 0)) this.error = "Snapshot not indexed yet - click Index (top right).";
@@ -225,7 +226,8 @@ const treePart = {
       const repo = this.repo, src = this.selectedSource;
       const alive = () => t && el._tabulator === t && this.active === "tree" && this.repo === repo && this.selectedSource === src;
       const todo = () => t.getRows("visible").filter((r) => { const d = r.getData(); return !d._ph && this.treeExtra[this._treeExtraKey(d)] === undefined; });
-      const post = (url, body) => getJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const signal = viewSignal("tree");
+      const post = (url, body) => getJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal });
       try {
         if (!alive()) return;
         this.fillFolderVersions("#treeTable", (d) => (!d._ph && d.type === "folder" ? d.path : null));
@@ -248,7 +250,7 @@ const treePart = {
               this.treeExtra[this._treeExtraKey(d)] = x ? { pa: x.stored, rc: x.frees, n: holders[d.path].length } : "error";
             }
           } catch (e) {
-            ds.forEach((d) => { this.treeExtra[this._treeExtraKey(d)] = "error"; });
+            ds.forEach((d) => { if (isAbort(e)) delete this.treeExtra[this._treeExtraKey(d)]; else this.treeExtra[this._treeExtraKey(d)] = "error"; });
           }
           if (alive()) files.forEach((r) => { try { r.reformat(); } catch (e) { /* rebuilt meanwhile */ } });
         }
@@ -262,6 +264,7 @@ const treePart = {
             const r = await post("/api/search/folder-values", { repo, folder: d.path, ...(src === "*ALL*" ? {} : { source: src }) });
             this.treeExtra[key] = { pa: r.physical_all ?? null, rc: r.freeable ?? null };
           } catch (e) {
+            if (isAbort(e)) { delete this.treeExtra[key]; break; }
             this.treeExtra[key] = "error";
           }
           try { row.reformat(); } catch (e) { /* rebuilt meanwhile; the cache has the value */ }

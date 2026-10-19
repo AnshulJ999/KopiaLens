@@ -22,7 +22,7 @@ import time
 
 from ..core import paths as pathrules
 from ..core.applog import get_logger
-from . import sidecache
+from . import lanes, sidecache
 from .physical import folder_detail
 from .queries import _ESC, dir_scope_sql, group_by_folder, like_literal
 from .store import read_cursor
@@ -178,20 +178,43 @@ def compute(repo: str, prefix: str, source: str | None = None, allow_stale: bool
     return _compute_now(repo, prefix, source)
 
 
+_REFRESH_QUEUE: dict[tuple, tuple] = {}   # newest request last; one entry per folder
+_REFRESH_MAX = 200
+_REFRESH_WAKE = threading.Event()
+_REFRESH_THREAD: threading.Thread | None = None
+
+
 def _kick_refresh(repo: str, prefix: str, source: str | None) -> None:
-    """Recompute in the background. Non-blocking single-flight - if one is already running for this
-    folder we simply do not start another."""
+    """Queue a background recompute. One refresh thread works the queue newest first, in the
+    background read lane, so a screen full of stale rows never starts a recompute per row."""
+    global _REFRESH_THREAD
     ck = (repo, _key(prefix, source))
     with _LOCK:
-        lk = _INFLIGHT.setdefault(ck, threading.Lock())
-    if lk.locked():
-        return
-    def _go() -> None:
-        try:
-            _compute_now(repo, prefix, source)
-        except Exception as exc:  # noqa: BLE001 - a background refresh must never surface
-            log.debug("repo=%s background folder refresh failed for %s: %s", repo, prefix, exc)
-    threading.Thread(target=_go, daemon=True).start()
+        _REFRESH_QUEUE.pop(ck, None)
+        _REFRESH_QUEUE[ck] = (repo, prefix, source)
+        while len(_REFRESH_QUEUE) > _REFRESH_MAX:
+            _REFRESH_QUEUE.pop(next(iter(_REFRESH_QUEUE)))
+        if _REFRESH_THREAD is None or not _REFRESH_THREAD.is_alive():
+            _REFRESH_THREAD = threading.Thread(target=_refresh_loop, name="folder-refresh", daemon=True)
+            _REFRESH_THREAD.start()
+    _REFRESH_WAKE.set()
+
+
+def _refresh_loop() -> None:
+    while True:
+        _REFRESH_WAKE.wait(60)
+        _REFRESH_WAKE.clear()
+        while True:
+            with _LOCK:
+                if not _REFRESH_QUEUE:
+                    break
+                ck = next(reversed(_REFRESH_QUEUE))
+                repo, prefix, source = _REFRESH_QUEUE.pop(ck)
+            try:
+                with lanes.background():
+                    _compute_now(repo, prefix, source)
+            except Exception as exc:  # noqa: BLE001 - a background refresh must never surface
+                log.debug("repo=%s background folder refresh failed for %s: %s", repo, prefix, exc)
 
 
 def _compute_now(repo: str, prefix: str, source: str | None = None) -> dict:

@@ -198,15 +198,25 @@ const getJson = async (url, options = {}) => {
   if (res.status === 423 && data && data.locked) window.dispatchEvent(new CustomEvent("kl-locked", { detail: data }));
   // Setup closed mid-way on a server install: onboarding asks for the setup code.
   if (res.status === 403 && data && data.setup_code) window.dispatchEvent(new CustomEvent("kl-setup-code"));
+  // kopia couldn't list a repository: one notice at the top of the page, not an error per view.
+  if (res.status === 503 && data && data.listing_failed) window.dispatchEvent(new CustomEvent("kl-listing-failed", { detail: data }));
   // A Pro refusal means the screen's licence state is stale.
   if (res.status === 403 && res.headers.get("X-KopiaLens-Pro")) window.dispatchEvent(new CustomEvent("kl-pro-denied"));
   if (!res.ok) {
     const err = new Error((data && (data.detail || data.error)) || text || res.statusText);
-    err.status = res.status; err.data = data;
+    err.status = res.status; err.data = data; err.notice = !!(data && data.listing_failed);
     throw err;
   }
   return data;
 };
+
+// Requests that belong to one view (a tab's list and its column fills, an open panel). A new load
+// of the view, or leaving it, aborts the old ones, and the server stops working on them.
+const _views = {};
+const viewSignal = (view) => (_views[view] || (_views[view] = new AbortController())).signal;
+const viewAbort = (view) => { if (_views[view]) { _views[view].abort(); delete _views[view]; } };
+const viewRestart = (view) => { viewAbort(view); return viewSignal(view); };
+const isAbort = (e) => !!e && e.name === "AbortError";
 
 // A log line reads as a warning when a failure word appears WITHOUT a zero count in front of it:
 // the index worker's stage summaries legitimately print "0 failed"/"0 errors" on a clean pass, and

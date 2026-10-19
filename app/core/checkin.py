@@ -168,7 +168,7 @@ def build_payload(include_stats: bool) -> dict:
                "channel": channel()}
     if include_stats:
         from . import repos as repos_mod
-        kopia = [r for r, c in REPOS.items() if c.get("kind", "kopia") == "kopia" and not is_demo(r)]
+        kopia = [r for r, c in list(REPOS.items()) if c.get("kind", "kopia") == "kopia" and not is_demo(r)]
         storages = sorted({repos_mod.storage_info(r).get("type") or "unknown" for r in kopia})
         with _lock:
             used, opened = sorted(_used), _opened
@@ -178,7 +178,7 @@ def build_payload(include_stats: bool) -> dict:
             tier=_tier(),
             repos=len(kopia),
             storage_types=storages,
-            backblaze=any(c.get("kind") == "backblaze" for c in REPOS.values()),
+            backblaze=any(c.get("kind") == "backblaze" for c in list(REPOS.values())),
             opened=opened,
             features_used=used,
         )

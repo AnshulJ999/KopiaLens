@@ -13,6 +13,7 @@ history (kopia keeps them in memory only) and kept for `task_history_days`.
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import secrets
@@ -453,6 +454,7 @@ def _poll_one(srv: _Server) -> None:
         tasks = (_get(srv.ui, "/api/v1/tasks") or {}).get("tasks") or []
     except Exception:  # noqa: BLE001
         return
+    changed = False
     for t in tasks:
         srv.tasks[t["id"]] = t
         if t["id"] in srv.recorded:
@@ -462,10 +464,13 @@ def _poll_one(srv: _Server) -> None:
         else:
             srv.recorded.add(t["id"])
             _record(srv, t)
-            if t.get("kind") != "Repository":
-                from .sources import invalidate
-                invalidate(srv.repo)    # a backup or maintenance changed kopia's snapshot list
-                _done_seq[srv.repo] = _done_seq.get(srv.repo, 0) + 1
+            changed = changed or t.get("kind") != "Repository"
+    if changed:
+        # A backup or maintenance changed kopia's snapshot list: rebuild it here, off any page
+        # load, before the screens are told to reload.
+        from .sources import rebuild
+        rebuild(srv.repo)
+        _done_seq[srv.repo] = _done_seq.get(srv.repo, 0) + 1
 
 
 def _poll_loop() -> None:
@@ -734,16 +739,39 @@ def history_days() -> int:
         return 90
 
 
+def _kl_number(key: str, default: float) -> float:
+    from ..settings import load_settings
+    try:
+        return float((load_settings().get("kopialens") or {}).get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def routine_seconds() -> float:
+    return _kl_number("task_routine_seconds", 2)
+
+
+def is_routine(rec: dict) -> bool:
+    """A task that finished without errors in under ``task_routine_seconds``: a scheduled backup
+    that found nothing to do. The Tasks tab hides these by default and keeps them a short time."""
+    if rec.get("status") != "success" or rec.get("error"):
+        return False
+    if any((c or {}).get("value") for name, c in (rec.get("counters") or {}).items() if "error" in name.lower()):
+        return False
+    start, end = rec.get("start"), rec.get("end")
+    return bool(start and end) and end - start < routine_seconds()
+
+
 def _prune_history() -> None:
-    """Drop task records (and their log files) older than `task_history_days`, once a day."""
+    """Drop task records (and their log files) older than `task_history_days`, and routine ones
+    older than `task_routine_hours`, once a day."""
     global _last_prune
     if time.time() - _last_prune < 86400:
         return
     _last_prune = time.time()
     days = history_days()
-    if days <= 0:
-        return
-    cutoff = time.time() - days * 86400
+    routine_cut = time.time() - _kl_number("task_routine_hours", 48) * 3600
+    cutoff = time.time() - days * 86400 if days > 0 else 0
     with _hist_lock:
         lines = filecrypto.read_lines(HISTORY_FILE)
         keep, gone = [], []
@@ -752,7 +780,9 @@ def _prune_history() -> None:
                 rec = json.loads(line)
             except ValueError:
                 continue
-            (keep if (rec.get("end") or rec.get("start") or 0) >= cutoff else gone).append((line, rec))
+            at = rec.get("end") or rec.get("start") or 0
+            old = at < cutoff or (at < routine_cut and is_routine(rec))
+            (gone if old else keep).append((line, rec))
         if not gone:
             return
         filecrypto.write_lines(HISTORY_FILE, [ln for ln, _ in keep])
@@ -813,9 +843,6 @@ def set_choice(repo: str, choice: str, how: str = "share", password: str = "") -
         src = view["config"]
         if not view["kopiaui_config"] or not view["kopiaui_shares_file"]:
             raise ValueError("This repository doesn't use KopiaUI's connection file.")
-        if os.path.basename(src) == "repository.config":
-            raise ValueError("kopia's default connection stays where it is. Quit KopiaUI and turn off "
-                             "its Launch At Startup instead.")
         if not (password or "").strip():
             raise ValueError("Enter the repository password.")
         dst = os.path.join(config.DATA_DIR, "configs", f"repo{repo}.config")
@@ -866,10 +893,35 @@ def repo_status(repo: str) -> dict:
         "conflict": view["conflict"], "until_restart": until_restart, "pause": pause_state(repo), "next": nxt,
         "paused_sources": len(source_pauses(repo)),
         "done_seq": _done_seq.get(repo, 0),
+        "evidence": snapshot_evidence(repo) if view["choice"] != "kopialens" else {},
         "error": f.get("error") if state == "failed" else "",
         "retry_at": f.get("next_try") if state == "failed" else None,
         "connecting": bool(pending and not pending.connected_at),
     }
+
+
+def snapshot_evidence(repo: str) -> dict:
+    """What the snapshot list says about backups run elsewhere: the newest snapshot, which computer
+    made it, and whether a source is past its scheduled time. From memory only (no kopia)."""
+    from . import schedule
+    from .sources import cached_index
+    index = cached_index(repo)
+    if index is None:
+        return {}
+    newest, by = "", ""
+    for key, snaps in index.items():
+        if snaps:
+            at = snaps[-1].get("endTime") or snaps[-1].get("startTime") or ""
+            if at > newest:
+                newest, by = at, key.split(":", 1)[0]
+    late = time.time() - 15 * 60
+    overdue = False
+    for when in (schedule.load_next_snapshots(repo) or {}).values():
+        try:
+            overdue = overdue or datetime.datetime.fromisoformat(when).timestamp() < late
+        except (TypeError, ValueError):
+            continue
+    return {"known": True, "last_snapshot": newest or None, "by": by, "overdue": overdue}
 
 
 def health(repo: str) -> list[dict]:

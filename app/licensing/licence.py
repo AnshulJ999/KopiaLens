@@ -220,7 +220,7 @@ def _iso(dt) -> str | None:
 def status() -> dict:
     lic = current()
     state = lic.state.value if lic.state is not None else "none"
-    out = {"state": state, "reason": getattr(lic, "reason", "")}
+    out = {"state": state, "reason": getattr(lic, "reason", ""), "pending_release": pending_releases()}
     if state != "none" and lic.state is not None:
         out.update({
             "id": lic.id, "plan": lic.plan, "name": lic.name, "email": lic.email,
@@ -337,21 +337,49 @@ def remove(lic_id: str = "") -> None:
         # A replaced licence shares its install with the new one; free it only when nothing else uses it.
         shared = any(m.get("activation_id") == meta.get("activation_id") for m in _read_meta().values())
         if meta.get("key") and meta.get("activation_id") and not shared:
-            threading.Thread(target=_deactivate, args=(lic_id, meta["key"], meta["activation_id"]),
-                             name="licence-deactivate", daemon=True).start()
+            # Kept until the store confirms, so an offline removal is retried later.
+            _set_meta(_RELEASE + lic_id, {"release": True, "key": meta["key"],
+                                          "activation_id": meta["activation_id"], "since": time.time(), "tries": 0})
+            threading.Thread(target=_deactivate, args=(lic_id,), name="licence-deactivate", daemon=True).start()
     _forget()
 
 
-def _deactivate(lic_id: str, key: str, activation_id: str) -> None:
-    """Give the install back to the store, so it doesn't count toward the key's limit. Best-effort."""
-    try:
-        res = _service().deactivate(key, activation_id)
-    except LicenceError:
-        return
-    if res.ok:
-        log.info(f"licence {lic_id}: install freed at the store")
-    else:
-        log.info(f"licence {lic_id}: install not freed ({res.error or res.status} {res.message})")
+_RELEASE = "release:"           # a removed licence whose install the store hasn't freed yet
+_RELEASE_MAX_TRIES = 30
+_RELEASE_LOCK = threading.Lock()
+
+
+def _deactivate(lic_id: str) -> None:
+    """Give the install back to the store, so it doesn't count toward the key's limit. A failure
+    to reach the store keeps the release for ``retry_releases``."""
+    with _RELEASE_LOCK:
+        pend = _meta_for(_RELEASE + lic_id)
+        if not pend.get("key"):
+            return
+        try:
+            res = _service().deactivate(pend["key"], pend["activation_id"])
+        except LicenceError:
+            return
+        from .licensekit.online import UNAVAILABLE_STATUS
+        tries = int(pend.get("tries") or 0) + 1
+        if res.ok:
+            log.info(f"licence {lic_id}: install freed at the store")
+        elif (res.status == 0 or res.status in UNAVAILABLE_STATUS) and tries < _RELEASE_MAX_TRIES:
+            _set_meta(_RELEASE + lic_id, {**pend, "tries": tries, "error": res.message or res.error})
+            log.info(f"licence {lic_id}: install not freed yet, will retry ({res.error or res.status})")
+            return
+        else:
+            log.warning(f"licence {lic_id}: install not freed ({res.error or res.status} {res.message})")
+        _set_meta(_RELEASE + lic_id, None)
+
+
+def retry_releases() -> None:
+    for key in [k for k in _read_meta() if k.startswith(_RELEASE)]:
+        _deactivate(key[len(_RELEASE):])
+
+
+def pending_releases() -> int:
+    return sum(1 for k in _read_meta() if k.startswith(_RELEASE))
 
 
 def held_tokens() -> list:
@@ -431,6 +459,10 @@ def _renew_loop() -> None:
             renew_if_due()
         except Exception as exc:  # noqa: BLE001 - renewal is best-effort
             log.warning(f"licence renewal failed: {exc}")
+        try:
+            retry_releases()
+        except Exception as exc:  # noqa: BLE001 - best-effort, tried again next round
+            log.warning(f"licence release retry failed: {exc}")
         time.sleep(RENEW_EVERY)
 
 

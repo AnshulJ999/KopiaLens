@@ -74,7 +74,7 @@ const reposPart = {
     async cxOpen(existing) {
       this.cx = {
         loading: true, error: "", busy: false,
-        detected: [], picked: {}, providers: [], bz: null, bzPicked: false,
+        detected: [], picked: {}, providers: [], bz: null, bzPicked: false, confirm: "", format: {}, formatChoices: {},
         mode: "", provider: "", fields: {}, password: "", name: "", serverOk: false,
         cfgLoc: "data", cfgFolder: "", kopiaFolderOk: true,
         added: (existing || []).map((r) => this._cxEntry(r)),
@@ -86,6 +86,7 @@ const reposPart = {
         this.cx.providers = p.providers || [];
         this.cx.cfgLoc = p.config_location || "data";
         this.cx.kopiaFolderOk = p.kopia_folder_ok !== false;
+        this.cx.formatChoices = p.format_choices || {};
         this.cx.bz = bz;
         this.cx.bzPicked = !!(bz && bz.found && !bz.added);   // found = offered ticked
       } catch (e) { this.cx.error = e.message || String(e); }
@@ -116,12 +117,15 @@ const reposPart = {
     },
     cxTypeLabel(type) { return REPO_TYPE_LABELS[type] || type || "Unknown storage"; },
     cxWhere(c) { return repoWhereOf(c.type, c.config); },
-    cxDefaultName(type, config, fallback) {
+    // A new repository's name: kopia's own description when the connection has one, else the
+    // storage type and where it is ("Local folder (E:\Kopia)", "S3 (my-bucket)").
+    cxDefaultName(type, config, fallback, description = "") {
       const where = repoWhereOf(type, config);
-      const tail = where.replace(/[\\/:]+$/, "").split(/[\\/:]/).filter(Boolean).pop();
+      const kind = type === "filesystem" ? (isUnc(where) ? "Network folder" : "Local folder") : this.cxTypeLabel(type);
+      const base = (description || "").trim() || (where ? `${kind} (${where})` : (fallback || kind));
       const taken = new Set((this.repos || []).map((r) => r.name).concat(((this.cx && this.cx.added) || []).map((a) => a.name)));
-      let name = tail || fallback || this.cxTypeLabel(type);
-      for (let i = 2; taken.has(name); i++) name = `${tail || fallback} ${i}`;
+      let name = base;
+      for (let i = 2; taken.has(name); i++) name = `${base} ${i}`;
       return name;
     },
     async cxUseSelected() {
@@ -138,7 +142,7 @@ const reposPart = {
       }
       for (const c of chosen) {
         try {
-          const name = this.cxDefaultName(c.type, c.config, c.filename.replace(/\.config$/, ""));
+          const name = this.cxDefaultName(c.type, c.config, c.filename.replace(/\.config$/, ""), c.description);
           const body = { config_file: c.config_file, name };   // the server names it "Repo <id>"
           const r = await this._cxAdd("/api/setup/attach", body);
           if (!r) continue;
@@ -164,7 +168,8 @@ const reposPart = {
     },
     cxStart(mode) {
       const cx = this.cx;
-      cx.mode = mode; cx.error = "";
+      cx.mode = mode; cx.error = ""; cx.confirm = "";
+      cx.format = Object.fromEntries(Object.entries(cx.formatChoices || {}).map(([k, v]) => [k, v[0]]));
       const list = this.cxProviderList();
       if (!list.some((p) => p.key === cx.provider)) this.cxSetProvider(list.length ? list[0].key : "");
     },
@@ -179,6 +184,20 @@ const reposPart = {
       const spec = this.cxSpec();
       cx.fields = {};
       for (const f of (spec ? spec.fields : [])) cx.fields[f.key] = f.default == null ? (f.kind === "bool" ? false : "") : f.default;
+    },
+    // Only choices that differ from kopia's defaults are sent; kopia applies its own for the rest.
+    cxFormatOptions() {
+      const out = {};
+      for (const [k, v] of Object.entries(this.cx.format || {})) {
+        if (v === ((this.cx.formatChoices || {})[k] || [])[0]) continue;
+        out[k] = ["ecc_overhead_percent", "format_version"].includes(k) ? Number(v) : v;
+      }
+      return out;
+    },
+    cxFormatLabel(key, v) {
+      if (key === "ecc_overhead_percent") return v === "0" ? "Off" : `${v}% extra space`;
+      if (key === "format_version") return v === "0" ? "Latest" : `Version ${v}`;
+      return v;
     },
     cxFieldList(advanced) {
       const s = this.cxSpec();
@@ -209,14 +228,16 @@ const reposPart = {
       const cfg = { path: fields.path, bucket: fields.bucket, prefix: fields.prefix, host: fields.host, url: fields.url,
                     container: fields.container, remotePath: fields.remote_path, folderID: fields.folder_id };
       const name = cx.name.trim() || this.cxDefaultName(spec.key === "azure" ? "azureBlob" : spec.key, cfg, spec.label);
+      if (cx.mode === "create" && spec.password && cx.password !== cx.confirm) { cx.error = "The passwords don't match."; return; }
       cx.busy = true; cx.error = "";
       try {
         const url = cx.mode === "create" ? "/api/setup/create" : "/api/setup/connect";
         const r = await this._cxAdd(url, { provider: spec.key, fields, password: cx.password, name,
-                                           config_location: cx.cfgLoc, config_folder: cx.cfgFolder.trim() });
+                                           config_location: cx.cfgLoc, config_folder: cx.cfgFolder.trim(),
+                                           ...(cx.mode === "create" ? { options: this.cxFormatOptions() } : {}) });
         if (!r) { cx.busy = false; return; }
         cx.added.push({ ...this._cxEntry(r.repo), managed: true });
-        cx.mode = ""; cx.password = ""; cx.name = "";
+        cx.mode = ""; cx.password = ""; cx.confirm = ""; cx.name = "";
         this.cxSummary(cx.added[cx.added.length - 1]);   // the tracked copy, so the card updates
         await this._cxRefreshRepos();
       } catch (e) { cx.error = e.message || String(e); }
@@ -385,14 +406,15 @@ const reposPart = {
       let res;
       try { res = await _setupPost("/api/setup/probe", { repo: r.id }); }
       catch (e) { res = { ok: false, error: e.message || String(e) }; }
-      this.repoChecks = { ...this.repoChecks, [r.id]: { busy: false, ok: res.ok, error: res.error || "", pw: "", missing: !!res.missing_config } };
+      this.repoChecks = { ...this.repoChecks, [r.id]: { busy: false, ok: res.ok, error: res.error || "", pw: "", missing: !!res.missing_config,
+        reconnect: res.reconnect || { possible: true, keys: [] }, keys: {} } };
     },
     async raReconnect(r) {
       const chk = this.repoChecks[r.id];
       if (!chk || !chk.pw || chk.busy) return;
       this.repoChecks = { ...this.repoChecks, [r.id]: { ...chk, busy: true } };
       try {
-        await _setupPost(`/api/setup/repos/${encodeURIComponent(r.id)}/reconnect`, { password: chk.pw });
+        await _setupPost(`/api/setup/repos/${encodeURIComponent(r.id)}/reconnect`, { password: chk.pw, keys: chk.keys || {} });
         this.klNotify(`${r.name} is connected again.`);
         await this.raCheck(r);
       } catch (e) { this.repoChecks = { ...this.repoChecks, [r.id]: { ...chk, busy: false, error: e.message || String(e) } }; }
@@ -471,6 +493,36 @@ const reposPart = {
         ["Kopia repository", "Not touched"],
         ["Connection file", p.managed_config ? p.config_file : (p.config_file ? "Kept (KopiaLens didn't create it)" : "kopia's default, kept")],
       ];
+    },
+    // Move (or copy) a repository's connection file into KopiaLens's folder.
+    async openTakeConnection(id) {
+      this.repoMenu = false;
+      const r = this.repos.find((x) => x.id === id);
+      if (!r) return;
+      this.tcDlg = { repo: r, preview: null, pw: "", busy: "", error: "" };
+      try { this.tcDlg.preview = await getJson(`/api/setup/repos/${encodeURIComponent(id)}/take-connection`); }
+      catch (e) { if (this.tcDlg) this.tcDlg.error = e.message || String(e); }
+    },
+    tcWarnings() {
+      const p = this.tcDlg && this.tcDlg.preview;
+      if (!p || p.ours) return [];
+      const out = [];
+      if (p.used_by.length) out.push(`${p.used_by.join(" and ")} uses this file. After a move, it stops connecting to this repository the next time it starts.`);
+      if (p.default) out.push("This is kopia's default connection. After a move, kopia commands typed in a terminal no longer find this repository.");
+      return out;
+    },
+    async tcSubmit(mode) {
+      const d = this.tcDlg;
+      if (!d || d.busy || !d.pw) return;
+      d.busy = mode; d.error = "";
+      try {
+        await _setupPost(`/api/setup/repos/${encodeURIComponent(d.repo.id)}/take-connection`, { mode, password: d.pw });
+        this.tcDlg = null;
+        await this._cxRefreshRepos();
+        this.klNotify(mode === "move" ? "Connection moved into KopiaLens's folder" : "Connection copied into KopiaLens's folder");
+      } catch (e) {
+        d.busy = ""; d.error = e.message || String(e);
+      }
     },
     async repoDlgSubmit() {
       const d = this.repoDlg;

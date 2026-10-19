@@ -40,7 +40,6 @@ log = get_logger("netaccess")
 
 MODES = ("window", "computer", "addresses", "network")
 HTTPS_MODES = ("off", "auto", "files")
-WINDOW_COOKIE = "kopialens_window"
 CERT_DAYS = 825                 # the longest validity browsers accept for a leaf certificate
 RENEW_DAYS = 30                 # a certificate this close to expiry is replaced at start
 _CODE_TTL = 120.0
@@ -342,3 +341,10 @@ def cert_info(cert_path: str) -> dict:
 
 # What the running server actually started with (set by main.run); Settings compares against it.
 STARTED: dict = {}
+
+
+def __getattr__(name: str) -> str:
+    if name == "WINDOW_COOKIE":       # per install, like the sign-in cookie (auth.cookie_tag)
+        from .auth import cookie_tag
+        return f"kopialens_window_{cookie_tag()}"
+    raise AttributeError(name)

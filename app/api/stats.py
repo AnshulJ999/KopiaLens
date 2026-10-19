@@ -110,6 +110,9 @@ def _kopia_cmd(repo: str, args: list[str]) -> str:
     return " ".join([_q(_kopia_exe())] + [_q(a) for a in _repo_args(repo)] + [_q(a) for a in args])
 
 
+_FULL_ONLY_TASKS = frozenset({"snapshot-gc", "extend-blob-retention-time"})
+
+
 def _maintenance_health(repo: str, maint: dict, status: dict) -> tuple[dict, list[dict]]:
     """Parse `maintenance info --json` into card fields + the two maintenance health checks."""
     health: list[dict] = []
@@ -117,15 +120,23 @@ def _maintenance_health(repo: str, maint: dict, status: dict) -> tuple[dict, lis
             "next_full": (maint.get("schedule") or {}).get("nextFullMaintenance"),
             "next_quick": (maint.get("schedule") or {}).get("nextQuickMaintenance"),
             "last_run": None, "last_run_success": None}
-    # Newest run of any task: schedule.runs maps task-name -> [{start, end, success}, ...]
-    newest, newest_ok = None, None
-    for runs in (maint.get("schedule") or {}).get("runs", {}).values():
+    # Newest run of any task, and of the tasks only a quick or only a full run does: schedule.runs
+    # maps task-name -> [{start, end, success}, ...] (kopia repo/maintenance/maintenance_run.go).
+    newest: dict[str, tuple] = {}
+    for task, runs in (maint.get("schedule") or {}).get("runs", {}).items():
+        kind = ("quick" if task.startswith("quick-") else
+                "full" if task.startswith("full-") or task in _FULL_ONLY_TASKS else "")
         for run in runs:
             start = _parse_ts(run.get("start") or "")
-            if start and (newest is None or start > newest):
-                newest, newest_ok = start, bool(run.get("success"))
-    card["last_run"] = newest.isoformat(timespec="seconds") if newest else None
-    card["last_run_success"] = newest_ok
+            if not start:
+                continue
+            for key in ("any", kind) if kind else ("any",):
+                if key not in newest or start > newest[key][0]:
+                    newest[key] = (start, bool(run.get("success")))
+    for key, field in (("any", "last_run"), ("quick", "last_quick"), ("full", "last_full")):
+        start, ok = newest.get(key, (None, None))
+        card[field] = start.isoformat(timespec="seconds") if start else None
+        card[field + "_success"] = ok
 
     # Owner check: the owner that actually runs maintenance is user@host of whichever client was
     # first. A mismatch means THIS machine will never run it - GC dies silently (5.5 months once).

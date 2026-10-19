@@ -819,10 +819,37 @@ def price_objects(repo: str, object_ids: list[str], sources: list[str] | None = 
         cur.close()
 
 
+_PRICED: dict[tuple, object] = {}   # the newest few files priced, per generation
+_PRICED_MAX = 4
+_PRICED_LOCK = threading.Lock()
+
+
 def _price_file(repo: str, source: str, full_path: str):
     """One file's pricing state, shared by the file panel and its storage breakdown: every version
     in every holder, the pieces they use, and which of those pieces deleting the file frees.
-    None when the path is unknown."""
+    None when the path is unknown. The panel's card and its breakdown price the same file, so the
+    last few answers are kept for their generation."""
+    cur = read_cursor(repo)
+    try:
+        gen = getattr(cur, "generation", None)
+        ident = (getattr(gen, "id", None), getattr(gen, "_mtime_ns", None))
+    finally:
+        cur.close()
+    if None in ident:
+        return _price_file_now(repo, source, full_path)
+    key = (repo, *ident, source, full_path)
+    with _PRICED_LOCK:
+        if key in _PRICED:
+            return _PRICED[key]
+    st = _price_file_now(repo, source, full_path)
+    with _PRICED_LOCK:
+        _PRICED[key] = st
+        while len(_PRICED) > _PRICED_MAX:
+            _PRICED.pop(next(iter(_PRICED)))
+    return st
+
+
+def _price_file_now(repo: str, source: str, full_path: str):
     cur = read_cursor(repo)
     try:
         sid = resolve.src_id(cur, source)
