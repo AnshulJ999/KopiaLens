@@ -17,7 +17,7 @@ import time
 
 from ..settings import load_settings
 from .applog import get_logger
-from .kopia import kopia
+from .kopia import kopia, page_kopia_ok
 from .server import SERVERS
 
 log = get_logger("sources")
@@ -173,7 +173,8 @@ def _ensure(repo: str, force: bool = False) -> dict:
                 entry = _CACHE.get(repo)
             if entry is not None:
                 return entry
-            return _build_now(repo)
+            with page_kopia_ok("no snapshot list in memory yet"):
+                return _build_now(repo)
     if force:
         try:
             return _build_now(repo)

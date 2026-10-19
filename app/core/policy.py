@@ -18,7 +18,7 @@ import time
 from config import CACHEDIR
 
 from .applog import get_logger
-from .kopia import kopia
+from .kopia import kopia, page_kopia_ok
 from .paths import path_sep
 
 log = get_logger("policy")
@@ -267,16 +267,42 @@ def load_defined_policies(repo: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+_DEFINED_REFRESHING: set[str] = set()
+_DEFINED_REFRESH_LOCK = threading.Lock()
+
+
+def _refresh_defined_later(repo: str) -> None:
+    """Re-export in the background; the caller serves the saved copy meanwhile."""
+    with _DEFINED_REFRESH_LOCK:
+        if repo in _DEFINED_REFRESHING:
+            return
+        _DEFINED_REFRESHING.add(repo)
+
+    def run() -> None:
+        try:
+            refresh_defined_policies(repo, force=True)
+        finally:
+            with _DEFINED_REFRESH_LOCK:
+                _DEFINED_REFRESHING.discard(repo)
+    threading.Thread(target=run, name=f"policy-export-{repo}", daemon=True).start()
+
+
 def refresh_defined_policies(repo: str, force: bool = False) -> tuple[dict, bool]:
-    """(defined policies, fresh) - re-exports every defined policy when the cache is older than
-    ``_DEFINED_TTL``. A FAILED export keeps serving the previous cache and reports ``fresh=False``
-    - stale definitions beat no definitions (the tab marks itself stale instead of going blank)."""
+    """(defined policies, fresh). A saved export is served at once; one older than ``_DEFINED_TTL``
+    is re-exported in the background. A FAILED export keeps serving the previous cache and reports
+    ``fresh=False`` - stale definitions beat no definitions (the tab marks itself stale)."""
+    cached = load_defined_policies(repo)
+    if not force and cached.get("policies"):
+        if time.time() - float(cached.get("ts") or 0) >= _DEFINED_TTL:
+            _refresh_defined_later(repo)
+        return cached, True
+    with page_kopia_ok("no saved policy list yet"):
+        return _export_defined(repo, cached)
+
+
+def _export_defined(repo: str, cached: dict) -> tuple[dict, bool]:
     import tempfile
 
-    cached = load_defined_policies(repo)
-    if not force and cached.get("policies") and \
-            time.time() - float(cached.get("ts") or 0) < _DEFINED_TTL:
-        return cached, True
     os.makedirs(CACHEDIR, exist_ok=True)
     fd, tmp = tempfile.mkstemp(suffix=".json", dir=CACHEDIR)
     os.close(fd)

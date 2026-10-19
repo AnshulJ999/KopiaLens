@@ -190,14 +190,16 @@ def test_repositories_rename_add_reorder_and_remove(fresh_server, open_page, fix
     page.get_by_role("button", name="Create a new repository").click()
     page.get_by_role("textbox", name="Folder The folder").fill(str(tmp_path / "second-repo"))
     page.get_by_label("Repository password").first.fill("second repo password")
+    page.get_by_label("Confirm password").fill("second repo password")
     page.get_by_role("button", name="Create repository").click()
     expect(page.get_by_text("No snapshots yet")).to_be_visible(timeout=60_000)
     page.get_by_role("button", name="Done").click()
 
     names = page.locator("span.font-medium[x-text='r.name']")
-    expect(names).to_have_text(["Main backups", "second-repo"])
+    second = f"Local folder ({tmp_path / 'second-repo'})"   # the default name: type + where
+    expect(names).to_have_text(["Main backups", second])
     page.get_by_role("button", name="Move down").first.click()
-    expect(names).to_have_text(["second-repo", "Main backups"])
+    expect(names).to_have_text([second, "Main backups"])
 
     page.get_by_role("button", name="Remove…").first.click()
     page.get_by_role("button", name="Remove repository").click()

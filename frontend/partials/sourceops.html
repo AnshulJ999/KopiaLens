@@ -1,3 +1,4 @@
+{% from "partials/_macros.html" import task_counters %}
 
     <!-- New snapshot of any folder (sourceops.js) -->
     <template x-if="newSnap">
@@ -36,6 +37,10 @@
                 </div>
                 <template x-if="newSnap.est">
                   <div class="space-y-1.5">
+                    <div class="text-xs text-muted truncate" x-show="newSnap.est.state === 'running' && newSnap.est.progress" x-text="newSnap.est.progress" data-testid="newsnap-est-progress"></div>
+                    <template x-if="taskCounters(newSnap.est).length">
+                      <div class="max-h-48 overflow-auto">{{ task_counters('newSnap.est') }}</div>
+                    </template>
                     <template x-for="l in newSnap.est.summary" :key="l"><div class="text-xs" x-text="l"></div></template>
                     <div class="text-xs text-danger" x-show="newSnap.est.state === 'failed'">The estimate didn't finish.</div>
                     <details class="text-xs">

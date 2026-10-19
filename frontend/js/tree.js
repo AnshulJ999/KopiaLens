@@ -227,7 +227,7 @@ const treePart = {
       const alive = () => t && el._tabulator === t && this.active === "tree" && this.repo === repo && this.selectedSource === src;
       const todo = () => t.getRows("visible").filter((r) => { const d = r.getData(); return !d._ph && this.treeExtra[this._treeExtraKey(d)] === undefined; });
       const signal = viewSignal("tree");
-      const post = (url, body) => getJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal });
+      const post = (url, body) => fillJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal });
       try {
         if (!alive()) return;
         this.fillFolderVersions("#treeTable", (d) => (!d._ph && d.type === "folder" ? d.path : null));

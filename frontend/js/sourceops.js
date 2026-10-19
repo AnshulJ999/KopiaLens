@@ -52,6 +52,8 @@ const sourceOpsPart = {
       if (!this.newSnap || this.newSnap.est !== est) return;
       est.lines = [...est.lines, ...(s.lines || []).map((l) => l.replace(/^\d\d:\d\d:\d\d /, ""))].slice(-400);
       est.cursor = s.cursor || est.cursor;
+      est.counters = s.counters || {};
+      est.progress = s.state === "running" ? (s.progress_text || "") : "";
       est.summary = est.lines.filter((l) => /^(Snapshot (includes|excludes)|Encountered|Estimated upload time)/.test(l));
       if (s.state === "running") { setTimeout(() => this._newSnapPoll(), 800); return; }
       est.state = s.state === "done" && !s.error ? "done" : (s.state === "stopped" ? "stopped" : "failed");

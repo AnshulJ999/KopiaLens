@@ -24,7 +24,7 @@ import threading
 
 from ..core import repos
 from ..core.applog import get_logger
-from ..core.kopia import kopia
+from ..core.kopia import kopia, page_kopia_ok
 from . import resolve, tree
 from .store import NoIndex, read_cursor
 
@@ -207,7 +207,8 @@ def children_of(repo: str, oids: list[str], *, cursor=None) -> dict[str, list[di
                 out.update(_from_tree(cur, id_of))
         unresolved = [o for o in missing if o not in out]
         if unresolved:
-            out.update(_from_kopia(repo, unresolved))
+            with page_kopia_ok("the index doesn't hold these folders"):
+                out.update(_from_kopia(repo, unresolved))
     finally:
         if own and cur is not None:
             cur.close()

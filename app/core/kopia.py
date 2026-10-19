@@ -9,6 +9,7 @@ dry-run counterparts run the same commands without the mutating flag.
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import os
 import queue
@@ -79,10 +80,23 @@ class PageSpawn(RuntimeError):
     """A page load started kopia (strict mode only)."""
 
 
+_PAGE_OK: contextvars.ContextVar = contextvars.ContextVar("kopialens_page_kopia_ok", default="")
+
+
+@contextlib.contextmanager
+def page_kopia_ok(reason: str):
+    """A page load that genuinely needs kopia: no saved answer exists. ``reason`` says why."""
+    token = _PAGE_OK.set(reason)
+    try:
+        yield
+    finally:
+        _PAGE_OK.reset(token)
+
+
 def _note_page_spawn(args: list[str]) -> None:
     from ..index import lanes
     sc = lanes.current()
-    if sc is None or sc.method != "GET" or sc.live:
+    if sc is None or sc.method != "GET" or sc.live or _PAGE_OK.get():
         return
     what = " ".join(a for a in args[:2] if not a.startswith("-"))
     if os.environ.get("KOPIALENS_STRICT_PAGE_KOPIA") == "1":
@@ -270,6 +284,7 @@ def kopia_lines(repo: str, args: list[str], ro: bool = True, timeout: float | No
             raise RuntimeError(err)
         yield from out.splitlines()
         return
+    _note_page_spawn(args)
     limit = _timeout() if timeout is None else timeout
     start = time.time()
     try:
@@ -1228,7 +1243,7 @@ def snapshot_estimate_command(repo: str, path: str) -> list[str]:
     local disk only; nothing is written to the repository."""
     if not path or any(c in path for c in (chr(10), chr(13))):
         raise ValueError("invalid path")
-    return [_kopia_exe()] + _repo_args(repo) + ["snapshot", "estimate", path, "--quiet",
+    return [_kopia_exe()] + _repo_args(repo) + ["snapshot", "estimate", path,
                                                  "--max-examples-per-bucket=3"]
 
 

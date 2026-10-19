@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, Response
 from config import APP_VERSION, DISCORD_URL, DOCS_URL, REPO_URL, SUPPORT_EMAIL
 
 from ..core import checkin, diagnostics, exportname, netaccess
+from ..core.kopia import page_kopia_ok
 
 router = APIRouter(tags=["help"])
 
@@ -104,15 +105,17 @@ def _days(days: int) -> int:
 
 @router.get("/diagnostics/preview")
 def diagnostics_preview(request: Request, sections: str = "", anonymise: bool = True, days: int = 7) -> dict:
-    return diagnostics.build(_sections(sections), anonymise=anonymise, days=_days(days),
-                             browser=request.headers.get("user-agent", ""))
+    with page_kopia_ok("the user is building a diagnostics report"):
+        return diagnostics.build(_sections(sections), anonymise=anonymise, days=_days(days),
+                                 browser=request.headers.get("user-agent", ""))
 
 
 @router.get("/diagnostics/download")
 def diagnostics_download(request: Request, sections: str = "", anonymise: bool = True, id: str = "",
                          days: int = 7) -> Response:
-    bundle = diagnostics.build(_sections(sections), anonymise=anonymise, bundle_id=id or None, days=_days(days),
-                               browser=request.headers.get("user-agent", ""))
+    with page_kopia_ok("the user is building a diagnostics report"):
+        bundle = diagnostics.build(_sections(sections), anonymise=anonymise, bundle_id=id or None, days=_days(days),
+                                   browser=request.headers.get("user-agent", ""))
     name = exportname.export_name("diagnostics", bundle["id"], ext="zip")
     return Response(diagnostics.zip_bytes(bundle), media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})

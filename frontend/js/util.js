@@ -218,6 +218,32 @@ const viewAbort = (view) => { if (_views[view]) { _views[view].abort(); delete _
 const viewRestart = (view) => { viewAbort(view); return viewSignal(view); };
 const isAbort = (e) => !!e && e.name === "AbortError";
 
+// Column fills (values worked out in the background) keep at most two requests open, so a click
+// always finds a free connection: browsers allow six per site, and the server runs one fill at a
+// time anyway. A fill still waiting when its view is left is dropped, never sent.
+const FILL_LIMIT = 2;
+let _fillsOpen = 0;
+const _fillWaiting = [];
+const _abortError = () => new DOMException("The view was left", "AbortError");
+const _fillNext = () => { while (_fillsOpen < FILL_LIMIT && _fillWaiting.length) _fillWaiting.shift()(); };
+const fillJson = (url, options = {}) => new Promise((resolve, reject) => {
+  const signal = options.signal;
+  const start = () => {
+    if (signal && signal.aborted) { reject(_abortError()); return; }
+    _fillsOpen++;
+    const headers = { ...(options.headers || {}), "X-KopiaLens-Fill": "1" };
+    getJson(url, { ...options, headers, priority: "low" }).then(resolve, reject)
+      .finally(() => { _fillsOpen--; _fillNext(); });
+  };
+  if (signal && signal.aborted) { reject(_abortError()); return; }
+  if (_fillsOpen < FILL_LIMIT) { start(); return; }
+  _fillWaiting.push(start);
+  if (signal) signal.addEventListener("abort", () => {
+    const i = _fillWaiting.indexOf(start);
+    if (i >= 0) { _fillWaiting.splice(i, 1); reject(_abortError()); }
+  }, { once: true });
+});
+
 // A log line reads as a warning when a failure word appears WITHOUT a zero count in front of it:
 // the index worker's stage summaries legitimately print "0 failed"/"0 errors" on a clean pass, and
 // colouring those amber made every normal nightly look alarming. Shared by the job and index panes.

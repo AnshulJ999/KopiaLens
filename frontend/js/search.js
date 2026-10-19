@@ -135,7 +135,7 @@ const searchPart = {
       for (const p of paths) this.folderVersions[repo + ":" + p] = "pending";
       rows.forEach((r) => r.reformat());
       try {
-        const r = await getJson("/api/search/folder-versions", { method: "POST", headers: { "Content-Type": "application/json" },
+        const r = await fillJson("/api/search/folder-versions", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ repo, folders: paths }), signal: viewSignal(sel === "#treeTable" ? "tree" : "search") });
         for (const p of paths) this.folderVersions[repo + ":" + p] = (r.versions || {})[p] ?? "error";
       } catch (e) {
@@ -289,7 +289,7 @@ const searchPart = {
       this.groupReclaim[key] = "pending";
       row.reformat();
       try {
-        const r = await getJson("/api/search/folder-values", { method: "POST", headers: { "Content-Type": "application/json" },
+        const r = await fillJson("/api/search/folder-values", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ repo: this.repo, folder, loose: !!d.loose, ...this._folderFilters() }), signal: viewSignal("search") });
         this.groupReclaim[key] = { v: r.freeable ?? 0, p: r.physical_all ?? null, n: r.physical ?? null };
         // The Folders view sorts on the row's own Physical, so it takes the exact value.
@@ -640,7 +640,7 @@ const searchPart = {
       for (const d of need) (byRepo[d.repo || repo] = byRepo[d.repo || repo] || []).push(d);
       try {
         await Promise.all(Object.entries(byRepo).map(async ([rid, list]) => {
-          const r = await getJson("/api/search/versions", { method: "POST", headers: { "Content-Type": "application/json" },
+          const r = await fillJson("/api/search/versions", { method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ repo: rid, rows: list.map((d) => ({ source: d.source, full_path: d.full_path })) }),
             signal: viewSignal("search") });
           for (const x of r.rows || []) this.versionSizes[rid + "|" + x.source + "|" + x.full_path] = { stored: x.stored, frees: x.frees };

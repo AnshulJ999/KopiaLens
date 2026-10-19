@@ -22,7 +22,7 @@ from config import DATA_DIR
 
 from ..core.applog import get_logger
 from ..core import audit
-from ..core.kopia import kopia
+from ..core.kopia import kopia, page_kopia_ok
 from ..index import sidecache
 
 router = APIRouter(tags=["stats"])
@@ -120,23 +120,35 @@ def _maintenance_health(repo: str, maint: dict, status: dict) -> tuple[dict, lis
             "next_full": (maint.get("schedule") or {}).get("nextFullMaintenance"),
             "next_quick": (maint.get("schedule") or {}).get("nextQuickMaintenance"),
             "last_run": None, "last_run_success": None}
-    # Newest run of any task, and of the tasks only a quick or only a full run does: schedule.runs
-    # maps task-name -> [{start, end, success}, ...] (kopia repo/maintenance/maintenance_run.go).
-    newest: dict[str, tuple] = {}
-    for task, runs in (maint.get("schedule") or {}).get("runs", {}).items():
-        kind = ("quick" if task.startswith("quick-") else
-                "full" if task.startswith("full-") or task in _FULL_ONLY_TASKS else "")
-        for run in runs:
+    # schedule.runs maps task-name -> [{start, end, success}, ...] (kopia repo/maintenance/
+    # maintenance_run.go) with no run mode. Full runs are known by their full-only tasks; a quick run
+    # on an epoch repository records only shared tasks, so any run outside a full run's time is quick.
+    runs: list[tuple] = []
+    full_windows: list[tuple] = []
+    pad = dt.timedelta(minutes=30)
+    for task, task_runs in (maint.get("schedule") or {}).get("runs", {}).items():
+        full_task = task.startswith("full-") or task in _FULL_ONLY_TASKS
+        for run in task_runs:
             start = _parse_ts(run.get("start") or "")
             if not start:
                 continue
-            for key in ("any", kind) if kind else ("any",):
-                if key not in newest or start > newest[key][0]:
-                    newest[key] = (start, bool(run.get("success")))
+            end = _parse_ts(run.get("end") or "") or start
+            runs.append((start, bool(run.get("success")), full_task))
+            if full_task:
+                full_windows.append((start - pad, end + pad))
+    latest: dict[str, tuple] = {}
+    for start, ok, full_task in runs:
+        in_full = full_task or any(lo <= start <= hi for lo, hi in full_windows)
+        for key in ("any", "full" if in_full else "quick"):
+            if key == "full" and not full_task:
+                continue                # a shared task inside a full run doesn't date the full run
+            if key not in latest or start > latest[key][0]:
+                latest[key] = (start, ok)
     for key, field in (("any", "last_run"), ("quick", "last_quick"), ("full", "last_full")):
-        start, ok = newest.get(key, (None, None))
+        start, ok = latest.get(key, (None, None))
         card[field] = start.isoformat(timespec="seconds") if start else None
         card[field + "_success"] = ok
+    newest = latest.get("any", (None, None))[0]
 
     # Owner check: the owner that actually runs maintenance is user@host of whichever client was
     # first. A mismatch means THIS machine will never run it - GC dies silently (5.5 months once).
@@ -425,7 +437,8 @@ def stats(repo: str, refresh: bool = False) -> dict:
     if cached is None and not refresh:
         cached = _load_saved(repo)
     if cached is None or refresh:
-        cached = _compute_stats(repo)  # nothing saved yet, or asked for: compute synchronously
+        with page_kopia_ok("no saved stats yet"):
+            cached = _compute_stats(repo)  # nothing saved yet, or asked for: compute synchronously
     with _stats_lock:
         at = _stats_ts.get(repo, 0)
     if time.time() - at > _STATS_TTL:  # stale: serve now, refresh in background

@@ -145,8 +145,8 @@
                                 <template x-if="f.kind === 'bool'"><input type="checkbox" x-model="cx.fields[f.key]" class="mt-0.5"></template>
                                 <span><span x-text="f.label"></span>
                                   <span x-show="f.kind === 'bool' && f.help" class="block font-normal text-muted" x-text="f.help"></span></span>
-                                <template x-if="f.kind === 'lines'"><textarea x-model="cx.fields[f.key]" rows="3" autocomplete="off" spellcheck="false" class="fld border border-bd bg-surface2 font-normal font-mono"></textarea></template>
-                                <template x-if="f.kind !== 'bool' && f.kind !== 'lines'"><input :type="cxInputType(f)" x-model="cx.fields[f.key]" autocomplete="off" spellcheck="false" class="fld border border-bd bg-surface2 font-normal"></template>
+                                <template x-if="f.kind === 'lines'"><textarea x-model="cx.fields[f.key]" :aria-label="f.label" rows="3" autocomplete="off" spellcheck="false" class="fld border border-bd bg-surface2 font-normal font-mono"></textarea></template>
+                                <template x-if="f.kind !== 'bool' && f.kind !== 'lines'"><input :type="cxInputType(f)" x-model="cx.fields[f.key]" :aria-label="f.label" autocomplete="off" spellcheck="false" class="fld border border-bd bg-surface2 font-normal"></template>
                                 <span x-show="f.kind !== 'bool' && f.help" class="kl-note font-normal" x-text="f.help"></span>
                               </label>
                             </template>

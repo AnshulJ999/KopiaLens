@@ -25,6 +25,24 @@ def test_maintenance_fix_commands_target_their_own_repo():
                for h in health1), health1
 
 
+def test_recorded_runs_give_the_last_quick_and_full_run_and_the_age():
+    """kopia's `maintenance info --json` runs carry no mode: a full run is known by its full-only
+    tasks, and a quick run on an epoch repository records only shared tasks (kopia
+    runQuickMaintenance). The newest of all feeds the age check (a refresh once crashed here)."""
+    now = dt.datetime.now(dt.timezone.utc)
+    recent, older = (now - dt.timedelta(hours=3)).isoformat(), (now - dt.timedelta(days=2)).isoformat()
+    maint = {"owner": "", "full": {"enabled": True}, "schedule": {"runs": {
+        "advance-epoch": [{"start": recent, "end": recent, "success": True},
+                          {"start": older, "end": older, "success": True}],
+        "snapshot-gc": [{"start": older, "end": older, "success": True}]}}}
+    card, health = stats_api._maintenance_health("1", maint, {})
+    assert card["last_quick"] == card["last_run"] and card["last_quick"] != card["last_full"]
+    gap = stats_api._parse_ts(card["last_full"]) - stats_api._parse_ts(older)
+    assert abs(gap.total_seconds()) < 1
+    assert card["last_run_age_days"] < 1
+    assert not any(h["id"] in ("maintenance-never", "maintenance-stale") for h in health)
+
+
 def test_index_health_reports_the_index_size(monkeypatch):
     """Artifacts are immutable, so the useful facts are how big the live index is - not bloat
     against a compaction baseline, which no longer exists."""

@@ -714,6 +714,8 @@ def _record(srv: _Server, t: dict) -> None:
     if t.get("kind") == "Repository" and (t.get("status") or "").upper() == "SUCCESS":
         return                      # the server opening the repository: noise on every start
     rec = task_record(srv.repo, t, srv.tag)
+    if rec["id"] in _HIDDEN:
+        return
     log_path = collect_task_log(srv, t["id"])     # the last lines; earlier ones were appended as it ran
     srv.log_seen.pop(t["id"], None)
     rec["log_path"] = log_path if os.path.isfile(log_path) else ""
@@ -795,6 +797,14 @@ def _prune_history() -> None:
                 pass
 
 
+_HIDDEN: set[str] = set()
+
+
+def hide_task(repo: str, tag: str, task_id: str) -> None:
+    """A server task KopiaLens started for one of its own jobs: the job is what Tasks lists."""
+    _HIDDEN.add(f"engine:{repo}:{tag}.{task_id}")
+
+
 def live_tasks(repo: str | None = None) -> list[dict]:
     with _lock:
         servers = [s for r, s in _servers.items() if repo in (None, r)]
@@ -803,7 +813,9 @@ def live_tasks(repo: str | None = None) -> list[dict]:
         for t in list(srv.tasks.values()):
             if t.get("kind") == "Repository" and (t.get("status") or "").upper() == "SUCCESS":
                 continue
-            out.append(task_record(srv.repo, t, srv.tag))
+            rec = task_record(srv.repo, t, srv.tag)
+            if rec["id"] not in _HIDDEN:
+                out.append(rec)
     return out
 
 

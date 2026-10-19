@@ -79,7 +79,8 @@ const jobsPart = {
       const wasRunning = this.jobPanel.state === "running";
       Object.assign(this.jobPanel, { state: s.state, rc: s.rc, error: s.error, total: s.total,
         done: s.done, errors: s.errors, line_count: s.line_count, elapsed: s.elapsed, skipped: s.skipped || 0,
-        results: s.results || [], held: !!s.held, freed: s.freed || null });
+        results: s.results || [], held: !!s.held, freed: s.freed || null, counters: s.counters || {},
+        progress_pct: s.progress_pct ?? null, progress_text: s.progress_text || "" });
       if (s.lines && s.lines.length) {
         this.jobLines.push(...s.lines);
         if (this.jobLines.length > 5000) {  // render buffer cap; the log file always has everything
@@ -122,13 +123,14 @@ const jobsPart = {
 
     jobProgress() {
       const p = this.jobPanel;
+      if (p && p.progress_pct != null) return Math.round(p.progress_pct);   // kopia's own estimate
       return p && p.total ? Math.min(100, Math.round((p.done / p.total) * 100)) : null;
     },
 
     // A one-step job has nothing to count: the bar pulses instead of sitting empty.
     jobIndeterminate() {
       const p = this.jobPanel;
-      return !!(p && p.state === "running" && p.total <= 1);
+      return !!(p && p.state === "running" && p.total <= 1 && p.progress_pct == null);
     },
 
     jobProgressLabel() {
@@ -136,6 +138,7 @@ const jobsPart = {
       if (!p) return "";
       const unit = p.kind === "policy_write" ? "step" : "batch";
       if (p.total > 1) return `${p.done} of ${p.total} ${unit}s · ${this.jobProgress()}%` + (p.errors ? ` · ${p.errors} failed` : "");
+      if (p.state === "running" && p.progress_text) return p.progress_text;
       if (p.state === "running") return "Working…";
       return "";
     },

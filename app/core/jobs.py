@@ -248,7 +248,11 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
         meta = {"snapshots": len(ids), "remove": bool(params.get("remove")), "dry": False,
                 "pin": name, "rename_from": params.get("rename_from") or ""}
     elif kind == "snapshot_estimate":
-        cmds, meta = [snapshot_estimate_command(repo, params["path"])], {"path": params["path"], "dry": False}
+        cmd = snapshot_estimate_command(repo, params["path"])
+        from . import engine  # lazy: engine reads the job history
+        # KopiaLens's own server reports live counts; the command line only names folders.
+        cmds = [_server_estimate(repo, params["path"], cmd) if engine.running(repo) else cmd]
+        meta = {"path": params["path"], "dry": False}
     elif kind == "source_delete":
         cmds = source_delete_commands(repo, params["source"], bool(params.get("delete_policy")), dry)
         meta = {"source": params["source"], "policy": bool(params.get("delete_policy")), "dry": dry}
@@ -379,6 +383,7 @@ def _new_job(kind: str, repo: str, label: str, meta: dict, cmds: list[list[str]]
         "commands_text": "\n".join(" ".join(_quote_arg(a) for a in c) for c in pasteable
                                    if not callable(c)),
         "dry_summary": {},  # incremental dry-run summary (entries/snapshots/final_line)
+        "progress_pct": None, "progress_text": "",   # a snapshot's live percent and time left
         "stop_requested": False, "_stream": None, "on_done": on_done,
     }
 
@@ -447,7 +452,8 @@ def _run_args(job: dict, index: int) -> list[str]:
         return []
     extra = ["--log-file", f"{job['log_path'][:-4]}-kopia-{index}.log", "--file-log-level=info"]
     if job["kind"] == "snapshot_create":
-        extra.append("--json")
+        # kopia prints its progress line only to a terminal unless asked.
+        extra += ["--json", "--progress", "--progress-update-interval=1s"]
     return extra
 
 
@@ -481,6 +487,106 @@ def _snapshot_counters(job: dict, manifest: dict) -> dict:
     return out
 
 
+_PROGRESS_RE = re.compile(
+    r"^\s*\S?\s*(\d+) hashing, (\d+) hashed \(([^)]*)\), (\d+) cached \(([^)]*)\), uploaded ([^,(]+?)"
+    r"(?: \((\d+) fatal errors\))?(?: \((\d+) errors ignored\))?"
+    r"(?:, estimated ([^(]+?) \(([\d.]+)%\) (.+?) left)?(?:, estimating\.\.\.)?\s*$")
+_UNITS = {"": 0, "K": 1, "M": 2, "G": 3, "T": 4, "P": 5, "E": 6}
+
+
+def _kopia_bytes(text: str) -> int:
+    """kopia's own size text ("9.2 MB", "1.5 GiB") back to bytes."""
+    m = re.match(r"\s*([\d.]+)\s*([KMGTPE]?)(i?)B", text or "")
+    if not m:
+        return 0
+    return int(float(m.group(1)) * (1024 if m.group(3) else 1000) ** _UNITS[m.group(2)])
+
+
+def _live_progress(job: dict, line: str) -> bool:
+    """A snapshot's progress line: live counters, percent and time left. True when it was one."""
+    m = _PROGRESS_RE.match(line)
+    if not m:
+        return False
+    def c(value, units="", level=""):
+        return {"value": int(value or 0), "units": units, "level": level}
+    counters = {
+        "Hashing now": c(m.group(1)), "Hashed files": c(m.group(2)), "Hashed size": c(_kopia_bytes(m.group(3)), "bytes"),
+        "Cached files": c(m.group(4)), "Cached size": c(_kopia_bytes(m.group(5)), "bytes"),
+        "Uploaded": c(_kopia_bytes(m.group(6)), "bytes"),
+        "Errors": c(m.group(7), level="error"), "Ignored errors": c(m.group(8), level="warning"),
+    }
+    if m.group(9):
+        counters["Estimated size"] = c(_kopia_bytes(m.group(9)), "bytes")
+        job["progress_pct"] = min(100.0, float(m.group(10)))
+        job["progress_text"] = f"{m.group(10)}% · {m.group(11)} left"
+    job["counters"] = counters
+    job["_last_progress"] = line.strip()
+    return True
+
+
+def _kopia_size(n: int) -> str:
+    """kopia's own size text (units.BytesString, decimal)."""
+    f, i = float(n or 0), 0
+    while f >= 1000 and i < 6:
+        f, i = f / 1000, i + 1
+    return f"{(f'{f:.1f}').rstrip('0').rstrip('.')} {['', 'K', 'M', 'G', 'T', 'P', 'E'][i]}B"
+
+
+def _server_estimate(repo: str, path: str, cli_cmd: list[str]):
+    """An estimate run by KopiaLens's own kopia server: live counters while it scans, then the same
+    summary lines the command line prints. Falls back to the command line if the server can't."""
+    def run(job: dict, lf) -> tuple[int, str]:
+        from . import engine
+        srv = engine.running(repo)
+        try:
+            r = srv.ui.post("/api/v1/estimate", json={"root": path, "maxExamplesPerBucket": 3})
+            r.raise_for_status()
+            tid = r.json()["id"]
+        except Exception as exc:  # noqa: BLE001 - the command line still works
+            log.warning("server estimate for %s: %s - using the command line", path, exc)
+            return _stream_one(job, cli_cmd, lf)
+        engine.hide_task(repo, srv.tag, tid)          # the job is the task; don't list it twice
+        cancelled, t = False, {}
+        while True:
+            if job["stop_requested"] and not cancelled:
+                cancelled = True
+                try:
+                    srv.ui.post(f"/api/v1/tasks/{tid}/cancel", json={})
+                except Exception:  # noqa: BLE001 - the server may already be gone
+                    break
+            try:
+                t = srv.ui.get(f"/api/v1/tasks/{tid}").json()
+            except Exception as exc:  # noqa: BLE001
+                return 1, f"KopiaLens's kopia server stopped answering: {exc}"
+            job["counters"] = {k: {"value": int(v.get("value") or 0), "units": v.get("units") or "",
+                                   "level": v.get("level") or ""} for k, v in (t.get("counters") or {}).items()}
+            if t.get("endTime"):
+                break
+            time.sleep(0.5)
+        try:
+            entries = (srv.ui.get(f"/api/v1/tasks/{tid}/logs").json() or {}).get("logs") or []
+        except Exception:  # noqa: BLE001
+            entries = []
+        c = {k: v["value"] for k, v in job["counters"].items()}
+        lines = [engine._log_text(e) for e in entries]
+        if (t.get("status") or "").upper() == "SUCCESS":
+            lines += [f"Snapshot includes {c.get('Files', 0)} file(s), total size {_kopia_size(c.get('Bytes', 0))}",
+                      f"Snapshot excludes {c.get('Excluded Files', 0)} file(s), total size {_kopia_size(c.get('Excluded Bytes', 0))}"
+                      if c.get("Excluded Files") else "Snapshot excludes no files.",
+                      f"Snapshot excludes {c.get('Excluded Directories', 0)} directories."
+                      if c.get("Excluded Directories") else "Snapshot excludes no directories."]
+            if c.get("Errors"):
+                lines.append(f"Encountered {c['Errors']} error(s).")
+        for line in lines:
+            job["buffer"].append(time.strftime("%H:%M:%S ") + line)
+            job["line_count"] += 1
+            lf.write(line + "\n")
+        lf.flush()
+        ok = (t.get("status") or "").upper() == "SUCCESS"
+        return (0, "") if ok else (1, t.get("errorMessage") or "The estimate was cancelled.")
+    return run
+
+
 def _stream_one(job: dict, cmd: list[str], lf) -> tuple[int, str]:
     """Run one command, stamping every line into the ring buffer and appending the raw line
     to the job log. Returns (rc, last stderr line) - the last line feeds the error text."""
@@ -495,10 +601,22 @@ def _stream_one(job: dict, cmd: list[str], lf) -> tuple[int, str]:
             try:                                   # --json: the saved snapshot, one line
                 manifest = json.loads(line)
                 job["snapshot_id"] = manifest.get("id")
-                job["counters"] = _snapshot_counters(job, manifest)
+                live = {k: v for k, v in (job.get("counters") or {}).items()
+                        if k in ("Hashed size", "Cached size", "Uploaded")}
+                job["counters"] = {**live, **_snapshot_counters(job, manifest)}
+                job["progress_pct"], job["progress_text"] = 100.0, ""
                 line =f"Saved snapshot {manifest.get('id')}"
             except ValueError:
                 pass
+        if job["kind"] == "snapshot_create" and stream == "stderr" and _live_progress(job, line):
+            continue                               # counters, not output lines (one per second)
+        if job["kind"] == "snapshot_estimate" and stream == "stderr" and line.startswith("Analyzing ") and line.endswith("..."):
+            job["_folders"] = job.get("_folders", 0) + 1     # one line per folder: progress, not output
+            name = line[10:-3]                               # relative to the folder; "." is the folder itself
+            if name in ("", "."):
+                name = (job.get("detail") or {}).get("path") or "the folder"
+            job["progress_text"] = f"Scanning {name} · {job['_folders']:,} folders"
+            continue
         job["buffer"].append(time.strftime("%H:%M:%S ") + line)
         job["line_count"] += 1
         lf.write(line + "\n")
@@ -506,6 +624,8 @@ def _stream_one(job: dict, cmd: list[str], lf) -> tuple[int, str]:
             parser(line, job["dry_summary"])
         if stream == "stderr" and line.strip():
             last_err = line
+    if job.get("_last_progress"):
+        lf.write(job.pop("_last_progress") + "\n")   # the final counts, once
     lf.flush()
     return int(result.get("returncode") or 0), last_err
 
@@ -722,7 +842,7 @@ def maintenance_running(repo: str | None = None) -> bool:
 
 def _serialize(job: dict) -> dict:
     out = {k: v for k, v in job.items()
-           if k not in ("buffer", "_stream", "on_done", "detail", "_cmd_index")}
+           if k not in ("buffer", "_stream", "on_done", "detail", "_cmd_index", "_last_progress", "_folders")}
     out["elapsed"] = round(max(0.0, (job["finished"] or time.time()) - (job["started"] or job["created"])), 1)
     if job["dry_summary"]:
         out["summary"] = dict(job["dry_summary"])

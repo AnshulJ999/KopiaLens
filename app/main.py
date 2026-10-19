@@ -1120,10 +1120,6 @@ _SLOW_REQUEST_MS = 3000.0
 _request_stats = RequestStats()
 
 # Column fills a screen asks for after it has drawn: background lane (lanes.py).
-_FILL_PATHS = frozenset({
-    ("POST", "/api/search/folder-values"), ("POST", "/api/search/folder-versions"),
-    ("POST", "/api/search/versions"), ("POST", "/api/tree/holders"), ("GET", "/api/search/breakdown"),
-})
 
 
 class LaneMiddleware:
@@ -1139,8 +1135,9 @@ class LaneMiddleware:
         path = scope.get("path", "")
         if scope["type"] != "http" or not path.startswith("/api"):
             return await self.app(scope, receive, send)
-        key = (scope.get("method"), path)
-        lane = lanes.FREE if path in _POLL_PATHS else lanes.BG if key in _FILL_PATHS else lanes.FG
+        # The page marks its column fills (fillJson); the same route asked for by a click stays in front.
+        fill = any(k == b"x-kopialens-fill" for k, _ in scope.get("headers") or [])
+        lane = lanes.FREE if path in _POLL_PATHS else lanes.BG if fill else lanes.FG
         query = urllib.parse.parse_qs(scope.get("query_string", b"").decode("latin-1"))
         live = any(v and v[0].lower() in ("1", "true") for k, v in query.items() if k in ("force", "live", "refresh"))
         sc, token = lanes.open_scope(lane, scope.get("method", ""), path, live)

@@ -68,7 +68,7 @@ const detailPart = {
     // Fills in after the panel opens: a second pass over the same pieces, so it never delays the cards.
     _loadBreakdown(seq, base) {
       this.detail.breakdown = "pending";
-      getJson(`/api/search/breakdown?${base}`, { signal: viewSignal("panel") })
+      fillJson(`/api/search/breakdown?${base}`, { signal: viewSignal("panel") })
         .then((r) => { if (seq === this._detailSeq && this.detail) this.detail.breakdown = r; })
         .catch(() => { if (seq === this._detailSeq && this.detail) this.detail.breakdown = "error"; });
     },

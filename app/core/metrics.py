@@ -232,7 +232,9 @@ def table_rows(repo: str, refresh: bool = False) -> dict:
             valid = _read_cache(repo, want_hash)
             if valid is not None:
                 return valid
-        return _compute_table_rows(repo, want_hash)
+        from .kopia import page_kopia_ok
+        with page_kopia_ok("no saved dashboard yet"):
+            return _compute_table_rows(repo, want_hash)
     finally:
         lock.release()
 

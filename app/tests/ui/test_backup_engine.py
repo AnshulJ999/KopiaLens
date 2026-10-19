@@ -84,6 +84,7 @@ def test_kopialens_runs_backups_and_steps_back_for_another_engine(engine_server,
     _wait(lambda: _snapshot_count(kopia, engine_repo) > before, "the backup did not create a snapshot", engine_server)
 
     h.go_tab(page, "Tasks")
+    page.get_by_test_id("task-hide-routine").uncheck()   # a test snapshot takes under 2 s: routine
     expect(page.locator("#tasksTable").get_by_text("Succeeded").first).to_be_visible(timeout=30_000)
 
     rival = _rival(kopia, engine_repo)

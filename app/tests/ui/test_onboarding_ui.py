@@ -54,6 +54,7 @@ def test_create_repository_then_skip_protection_and_indexing(fresh_server, open_
     page.get_by_role("button", name="Create a new repository").click()
     page.get_by_role("textbox", name="Folder The folder").fill(str(tmp_path / "new-repo"))
     page.get_by_label("Repository password").first.fill("new repo password")
+    page.get_by_label("Confirm password").fill("new repo password")
     page.get_by_role("button", name="Create repository").click()
     expect(page.get_by_text("No snapshots yet")).to_be_visible(timeout=60_000)
     _footer(page, "Continue").click()

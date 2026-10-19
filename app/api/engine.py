@@ -229,7 +229,7 @@ def _job_task(j: dict) -> dict:
         "kind": _JOB_KIND.get(j.get("kind") or "", j.get("kind_label") or ""),
         "description": (j.get("label") or "") + (" (dry run)" if j.get("dry") else ""),
         "source": "", "status": status, "start": j.get("started") or j.get("created"),
-        "end": j.get("finished"), "error": j.get("error") or "", "progress": "",
+        "end": j.get("finished"), "error": j.get("error") or "", "progress": j.get("progress_text") or "",
         "counters": j.get("counters") or {}, "done": j.get("done"), "total": j.get("total"),
     }
 

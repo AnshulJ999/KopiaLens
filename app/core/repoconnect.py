@@ -959,21 +959,18 @@ def probe(config_file: str | None = None, repo: str | None = None) -> dict:
 
 
 def summary(repo: str) -> dict:
-    """What a connected repository holds, from one snapshot listing (an explicit user action):
-    source, computer and snapshot counts, when the newest snapshot finished, and the first-index
-    size and time estimate."""
-    from .sources import ListingFailed, _key_of, all_snapshots
+    """What a connected repository holds, from the shared snapshot listing: source, computer and
+    snapshot counts, when the newest snapshot finished, and the first-index size and time estimate."""
+    from .sources import ListingFailed, sources_index
     if not repos.exists(repo):
         raise ValueError(f"unknown repo: {repo}")
     try:
-        snaps = all_snapshots(repo)
+        by_source = sources_index(repo)
     except ListingFailed as exc:
         raise ValueError(str(exc)) from exc
     from ..index.estimate import from_listing
+    snaps = [s for lst in by_source.values() for s in lst]
     srcs = [s.get("source") or {} for s in snaps]
-    by_source: dict[str, list[dict]] = {}
-    for snap, src in zip(snaps, srcs):
-        by_source.setdefault(_key_of(src), []).append(snap)
     return {
         "repo": repo,
         "snapshots": len(snaps),

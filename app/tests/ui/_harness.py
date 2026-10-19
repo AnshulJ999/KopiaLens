@@ -107,6 +107,7 @@ def isolated_env(root: Path, kopia: str) -> dict:
                KOPIALENS_KOPIA=kopia, KOPIA_CHECK_FOR_UPDATES="false",
                KOPIALENS_DEV_ADDONS="",   # empty beats a developer's .env.dev: no dev add-ons in tests
                KOPIALENS_NO_UPDATE_CHECK="1", KOPIALENS_NO_USAGE_STATS="1",
+               KOPIALENS_STRICT_PAGE_KOPIA="1",   # a page load that starts kopia fails the flow
                KOPIALENS_CHECKIN_URL=DEAD_URL, KOPIALENS_LICENCE_SERVICE=DEAD_URL)
     (root / "appdata").mkdir(parents=True, exist_ok=True)
     (root / "localappdata").mkdir(parents=True, exist_ok=True)

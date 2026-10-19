@@ -33,6 +33,14 @@ const enginePart = {
         else if (this.active === "snapshots") this.loadSnapshots(true);
       }
       this._doneSeq = seq;
+      // Who runs the backups decides "overdue" vs "unchanged" in Next snapshot: redraw when it changes
+      // (the table is often drawn before this answer arrives).
+      const owner = e ? `${e.repo}:${e.choice}:${e.engine}:${e.state}` : "";
+      if (owner !== this._ownerSig) {
+        this._ownerSig = owner;
+        const t = document.querySelector("#dashboardTable")?._tabulator;
+        if (t) t.getRows().forEach((r) => { try { r.reformat(); } catch (err) { /* rebuilt meanwhile */ } });
+      }
     } catch (e) { /* the status line is optional */ }
     if (!this.isDemo()) this.loadMounts();
   },
@@ -67,7 +75,7 @@ const enginePart = {
     const e = this.engineFor(repo);
     const ev = (e && e.evidence) || {};
     if (!e || e.choice === "kopialens" || !ev.last_snapshot) return "Who runs this repository's backups";
-    return `Last snapshot ${fmtRel(ev.last_snapshot)}${ev.by ? " from " + ev.by : ""}` + (ev.overdue ? ". A backup is past its scheduled time." : "");
+    return `Last snapshot ${fmtRel(ev.last_snapshot)}${ev.by ? " from " + ev.by : ""}` + (ev.overdue && e.engine === "none" ? ". A backup is past its scheduled time." : "");
   },
   backupsClass(repo) {
     const e = this.engineFor(repo);
