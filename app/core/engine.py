@@ -750,7 +750,7 @@ def _kl_number(key: str, default: float) -> float:
 
 
 def routine_seconds() -> float:
-    return _kl_number("task_routine_seconds", 2)
+    return _kl_number("task_routine_seconds", 1)
 
 
 def is_routine(rec: dict) -> bool:

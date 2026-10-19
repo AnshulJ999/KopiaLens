@@ -403,6 +403,46 @@ _EMBED_HELP = {"sftp": "Keeps the key and known hosts inside the connection file
                "gdrive": "Keeps the service account JSON inside the connection file."}
 # Shown on Create instead of the field's own help.
 _CREATE_HELP = {"path": "The folder where the repository will be created. An empty folder is best."}
+# Example values shown inside empty advanced boxes.
+_FIELD_HINT = {
+    "owner_uid": "1000", "owner_gid": "1000", "file_mode": "0600", "dir_mode": "0700",
+    "keyfile": "~/.ssh/id_ed25519", "key_data": "-----BEGIN OPENSSH PRIVATE KEY-----",
+    "known_hosts": "~/.ssh/known_hosts", "known_hosts_data": "nas.example.com ssh-ed25519 AAAA...",
+    "ssh_command": "ssh", "ssh_args": "-o Port=2222", "root_ca_pem_path": "ca.pem",
+    "storage_domain": "blob.core.usgovcloudapi.net", "tenant_id": "00000000-0000-0000-0000-000000000000",
+    "client_id": "00000000-0000-0000-0000-000000000000", "client_cert": "principal.pem",
+    "azure_federated_token_file": "/var/run/secrets/azure/tokens/azure-identity-token",
+    "rclone_exe": "rclone", "rclone_args": "--fast-list", "embed_rclone_config": "rclone.conf",
+    "credentials_file": "service-account.json", "server_cert_fingerprint": "64 hexadecimal characters",
+}
+# Shown when the box is ticked. kopia saves a storage's folder layout in a `.shards` file at
+# create time (repo/blob/sharded); only a storage without one takes, and saves, this setting.
+_FIELD_WARN = {
+    "flat": ("Only for a repository created with a flat layout. On an older repository the tick is "
+             "saved into it, and a wrong one leaves it unreadable.",
+             "Every file kopia stores goes into one folder, which gets slow with many files. "
+             "This can't be changed later."),
+}
+_IDENTITY_KEYS = {"override_username": "username", "override_hostname": "hostname",
+                  "username": "username", "hostname": "hostname"}
+
+
+def default_identity() -> dict:
+    """The user and computer names kopia connects as when "Connect as" is left empty: a fixed
+    identity from the environment, else kopia's own rule (repo/userhost.go: the user without its
+    Windows domain; the host name up to the first dot, lowercased)."""
+    import getpass
+    import socket
+    user = os.environ.get(_IDENTITY_ENV["override_username"], "").strip()
+    host = os.environ.get(_IDENTITY_ENV["override_hostname"], "").strip()
+    if not user:
+        try:
+            user = getpass.getuser()
+        except Exception:  # noqa: BLE001
+            user = ""
+    if not host:
+        host = socket.gethostname().split(".")[0].lower()
+    return {"username": user, "hostname": host}
 
 # `kopia repository create` format choices, kopia's default first (repo/hashing, repo/encryption,
 # repo/splitter, repo/ecc; cli/command_repository_create.go). Fixed once the repository exists.
@@ -421,6 +461,7 @@ FORMAT_CHOICES = {
 def provider_list() -> list[dict]:
     """The provider specs for the screens (/ UI) - one source with both flows."""
     out = []
+    ident = default_identity()
     for key, spec in PROVIDERS.items():
         out.append({
             "key": key,
@@ -434,19 +475,25 @@ def provider_list() -> list[dict]:
             # "fill at least one of these" groups, by field key, for the form
             "requires_any": [[g.strip("[]") for g in group] for group in spec.get("requires_any", [])],
             "requires_any_unless": spec.get("requires_any_unless", ""),
-            "fields": [_with_help(key, f) for f in spec["fields"]],
+            "fields": [_with_help(key, f, ident) for f in spec["fields"]],
         })
     return out
 
 
-def _with_help(provider: str, field: dict) -> dict:
+def _with_help(provider: str, field: dict, ident: dict | None = None) -> dict:
     out = dict(field)
     if not out["help"]:
         out["help"] = (_EMBED_HELP.get(provider, "") if out["key"] == "embed_credentials"
                        else _FIELD_HELP.get(out["key"], ""))
     out["help_create"] = _CREATE_HELP.get(out["key"], "")
+    out["placeholder"] = _FIELD_HINT.get(out["key"], "")
+    out["warn"], out["warn_create"] = _FIELD_WARN.get(out["key"], ("", ""))
     if out["key"] == "kopia_readonly":
         out["advanced"] = False          # always in view: it decides what KopiaLens may do here
+    # The identity kopia connects as: in view, with the name it uses when left empty as the hint.
+    if out["key"] in _IDENTITY_KEYS and out["flag"].startswith("--override-"):
+        out["advanced"] = False
+        out["placeholder"] = (ident or {}).get(_IDENTITY_KEYS[out["key"]], "")
     return out
 
 

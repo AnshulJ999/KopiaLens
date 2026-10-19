@@ -445,3 +445,8 @@ def sign_in(page, server: Server, password: str = PASSWORD) -> None:
 
 def go_tab(page, label: str) -> None:
     page.locator("button.tab", has_text=label).first.click()
+
+
+def panel_tab(page, label: str) -> None:
+    """Open one tab of the file or folder panel (panels are Tabbed by default)."""
+    page.locator(".kl-tabs .t", has_text=label).locator("visible=true").first.click()

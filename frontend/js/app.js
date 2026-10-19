@@ -165,7 +165,7 @@ document.addEventListener("alpine:init", () => {
     raBz: null,   // Backblaze on this computer (GET /api/setup/backblaze), for Settings
     analyzingAll: false, showDelete: false, deletePlan: null, _autoRefresh: null,
     // detail-panel layout ("classic" | "tabbed"), persisted server-side, default Classic.
-    panelLayout: "classic", hideOverdue: false,
+    panelLayout: "tabbed", hideOverdue: false,
     confirmBox: null,  // the shared confirm dialog; truthy while it is open
     // Policies tab: overview + per-target detail from /api/policies/*; edits stage in
     // polStaged and reach kopia only through Review + save (sync POST, fail-closed backup
@@ -218,7 +218,7 @@ document.addEventListener("alpine:init", () => {
     tokEdit: null, apList: null, apWaiting: 0, apReview: null, apPassword: "", apBusy: false, apHasAccount: false,
     notifyHook: null, notifyForm: null, notifyProfiles: null, notifyRepo: "", _klSettings: null,
     engine: null, engineDlg: null, engineSrc: {}, _engineTimer: null, _engineSrcTimer: null, _alertSeen: -1, tasksRunning: 0,
-    taskRows: [], taskFilter: { repo: "all", status: "all", kind: "all", text: "" }, taskHideRoutine: true, taskRoutineSeconds: 2, taskRoutineSecs: 2, taskRoutineHours: 48, taskSel: null, taskLines: [], taskCursor: 0,
+    taskRows: [], taskFilter: { repo: "all", status: "all", kind: "all", text: "" }, taskHideRoutine: true, taskRoutineSeconds: 1, taskRoutineSecs: 1, taskRoutineHours: 48, taskSel: null, taskLines: [], taskCursor: 0,
     taskLogMode: "own", taskLogSkipped: false,   // a command-line job's own output or kopia's full log
     taskHistoryDays: 0, _tasksSeq: 0, _tasksPoll: null, _taskPoll: null, _tasksSig: "",
     _restoreSeq: 0, _restoreFromSeq: 0, _restoreTimer: null, _restoreTargets: {},
@@ -384,7 +384,10 @@ document.addEventListener("alpine:init", () => {
       });
       window.addEventListener("kl-table-layout", (e) => this.openTableLayout(e.detail.key));
       window.addEventListener("kl-table-rebuild", () => this.rebuildTables());
-      window.addEventListener("design-change", (e) => { this.design = { ...this.design, [e.detail.key]: e.detail.value }; });
+      window.addEventListener("design-change", (e) => {
+        this.design = { ...this.design, [e.detail.key]: e.detail.value };
+        if (e.detail.key === "depthmode" && this.active === "search" && this.searchKind !== "files") this.loadSearch();
+      });
       this.initHelp();
       this.wmLoad();
       // A fresh install (no repository yet) or a closed setup window shows onboarding, and nothing
@@ -444,7 +447,7 @@ document.addEventListener("alpine:init", () => {
         this.dateStyle = kl.date_style || "system";
         this.clock = String(kl.clock || "system");
         setFormatStyles(kl);
-        this.panelLayout = kl.panel_layout === "tabbed" ? "tabbed" : "classic";  //
+        this.panelLayout = kl.panel_layout === "classic" ? "classic" : "tabbed";  //
         this.hideOverdue = kl.hide_overdue === true;
         this.docsView = kl.docs_view === "side" ? "side" : "popup";
         this.polLayout = kl.policy_layout === "scroll" ? "scroll" : "tabs";

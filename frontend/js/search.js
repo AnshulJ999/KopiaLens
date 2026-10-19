@@ -95,6 +95,11 @@ const searchPart = {
     changeGroupDepth() { this.klSet({ group_depth: Number(this.groupDepth) || 3 }); this.loadSearch(); },
     changeGroupMinDepth() { this.klSet({ group_min_depth: Number(this.groupMinDepth) || 0 }); this.loadSearch(); },
     toggleGroupLoose() { this.groupLoose = !this.groupLoose; this.klSet({ group_loose: this.groupLoose }); this.loadSearch(); },
+    // How Min/Max depth pick the folder rows: a Design menu trial (old, current, range, own).
+    groupDepthMode() { return ["old", "range", "own"].find((m) => this.designIs("depthmode", m, "current")) || "current"; },
+    groupDepthNote() {
+      return Number(this.groupMinDepth) > Number(this.groupDepth) ? " · Min depth is above Max depth, so no folder matches" : "";
+    },
     // A folder row's exact values cover the files it stands for: the whole folder, or only its loose
     // files, and with a filter on only the matching ones. Cached per repo, row kind and filters.
     _folderFilters() {
@@ -196,10 +201,11 @@ const searchPart = {
         if (this.groupMinGb) p.set("min_gb", this.groupMinGb);
         if (this.groupMinFiles) p.set("min_files", this.groupMinFiles);
         if (this.groupLoose) p.set("loose", "1");
+        if (this.groupDepthMode() !== "current") p.set("mode", this.groupDepthMode());
         const data = await getJson(`/api/search/group-by-folder?${p.toString()}`, { signal });
         const rows = data.rows || [];
         this.searchSelCount = 0;   // the table is rebuilt, so its selection goes
-        this.omniMeta = `${countOf(rows.length, "folder")} · depth ${data.depth} · ranked by physical`;
+        this.omniMeta = `${countOf(rows.length, "folder")} · depth ${data.depth} · ranked by physical` + this.groupDepthNote();
         const cols = [
           { title: "Repo", field: "repo", width: 90, visible: false, headerSort: false, headerTooltip: "The repository this folder is in",
             accessorDownload: () => this.repoLabel(this.repo), formatter: () => this.repoLabel(this.repo) },
@@ -321,6 +327,7 @@ const searchPart = {
           if (this.groupMinGb) p.set("folder_min_gb", this.groupMinGb);
           if (this.groupMinFiles) p.set("folder_min_files", this.groupMinFiles);
           if (this.groupMinDepth) p.set("min_depth", this.groupMinDepth);
+          if (this.groupDepthMode() !== "current") p.set("mode", this.groupDepthMode());
         }
         const url = allRepos ? "/api/search/all-repos" : both ? "/api/search/mixed" : "/api/search";
         const data = await getJson(`${url}?${p.toString()}`, { signal });
@@ -339,7 +346,7 @@ const searchPart = {
         const skipped = this.searchSkipped.length ? ` · not searched: ${this.searchSkipped.map((s) => this.repoLabel(s.repo)).join(", ")}` : "";
         const depthNote = allRepos && this.searchTotal > this.searchMaxDepth ? ` · only the first ${this.searchMaxDepth.toLocaleString(NUM_LOCALE)} can be shown; narrow the search to see the rest` : "";
         this.omniMeta = this.searchEmpty ? ""
-          : head + (infinite || this.searchTotal <= size ? "" : ` · showing ${shownFrom.toLocaleString(NUM_LOCALE)}–${shownTo.toLocaleString(NUM_LOCALE)}`) + depthNote + skipped;
+          : head + (infinite || this.searchTotal <= size ? "" : ` · showing ${shownFrom.toLocaleString(NUM_LOCALE)}–${shownTo.toLocaleString(NUM_LOCALE)}`) + depthNote + skipped + (both ? this.groupDepthNote() : "");
         // Headers do NOT sort locally (headerSort:false) - a click re-queries the server so the
         // sort is always over the ENTIRE result set, never just the visible page. Active column
         // shows a ▼/▲ arrow.
@@ -412,8 +419,18 @@ const searchPart = {
         const sEl = document.querySelector("#searchTable");
         if (sEl && sEl._tabulator) {
           const t = sEl._tabulator;
-          // pass the full def (keeps headerClick + formatter) so only the rows + sort arrow change
-          cols.forEach((c) => { try { t.updateColumnDefinition(c.field, c); } catch (e) {} });
+          // Only the sort arrows change between loads, so rewrite the header text in place: redefining
+          // the columns rebuilt every row once per column (a 5 s freeze on a big repo).
+          for (const c of cols) {
+            const col = t.getColumn(c.field);
+            const def = col && col.getDefinition();
+            if (!def || def.title === c.title) continue;
+            def.title = c.title;
+            const el = col.getElement().querySelector(".tabulator-col-title");
+            if (!el) continue;
+            for (const n of [...el.childNodes]) if (n.nodeType === Node.TEXT_NODE) n.remove();
+            el.appendChild(document.createTextNode(c.title));
+          }
           try { if (allRepos) t.showColumn("repo"); else t.hideColumn("repo"); } catch (e) {}
           t.replaceData(data.results || []).then(() => { this.searchSelCount = t.getSelectedData().length; this.fillVersionSizes(); });
         } else {

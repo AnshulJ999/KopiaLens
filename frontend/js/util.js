@@ -150,11 +150,12 @@ const fmtRel = (s) => {
 let TIME_FMT = localStorage.getItem("kl-timefmt") || "absolute";
 const humanTime = (s) => (TIME_FMT === "relative" ? fmtRel(s) : fmtAbs(s));
 // A time in a table cell; ``cell`` (the Tabulator cell) lets a column keep its own choice (column menu > Times).
-const timeCell = (s, cell) => {
+const timeCell = (s, cell, note = "") => {   // ``note``: an extra tooltip line before the time
   if (!s) return "—";
   const abs = fmtAbs(s), rel = fmtRel(s);
   const mode = cellTimeMode(cell) || (TIME_FMT === "relative" ? "rel" : "abs");
-  return mode === "rel" ? `<span title="${abs}">${rel}</span>` : `<span title="${rel}">${abs}</span>`;
+  const tip = (t) => escHtml(note ? `${note}\n${t}` : t);
+  return mode === "rel" ? `<span title="${tip(abs)}">${rel}</span>` : `<span title="${tip(rel)}">${abs}</span>`;
 };
 
 const sourcePath = (s) => (s && s.includes(":") ? s.split(":").slice(1).join(":") : (s || ""));

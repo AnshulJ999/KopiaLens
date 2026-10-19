@@ -33,7 +33,7 @@ const enginePart = {
         else if (this.active === "snapshots") this.loadSnapshots(true);
       }
       this._doneSeq = seq;
-      // Who runs the backups decides "overdue" vs "unchanged" in Next snapshot: redraw when it changes
+      // Who runs the backups decides whether a missed slot shows "overdue" in Next snapshot: redraw when it changes
       // (the table is often drawn before this answer arrives).
       const owner = e ? `${e.repo}:${e.choice}:${e.engine}:${e.state}` : "";
       if (owner !== this._ownerSig) {
@@ -350,12 +350,12 @@ const enginePart = {
     const overdue = toDate(next).getTime() < Date.now() - 15 * 60 * 1000 && !(s && (s.status === "UPLOADING" || s.status === "PENDING"));
     if (!overdue || !(this.engineRuns() || row.next_snapshot)) return timeCell(next, cell);
     // Another app runs the backups and is running: kopia saves no snapshot when nothing changed,
-    // so a missed slot means "unchanged", and the next slot is the one after it.
+    // so a missed slot is no warning: show the next slot like any other row, the reason on hover.
     const e = this.engineFor();
     const owner = !s && e && e.choice !== "kopialens" && e.engine && e.engine !== "none";
     if (owner) {
       const since = row.last_time ? fmtAbs(row.last_time) : "the last snapshot";
-      return timeCell(row.next_after_missed || next, cell) + ` <span class="text-muted" title="No changes since ${escHtml(since)}">· unchanged</span>`;
+      return timeCell(row.next_after_missed || next, cell, `No changes since ${since}`);
     }
     if (this.hideOverdue) return timeCell(next, cell);
     const why = s ? "This backup didn't start at its scheduled time."

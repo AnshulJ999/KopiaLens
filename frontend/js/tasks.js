@@ -13,7 +13,7 @@ const tasksPart = {
       if (seq !== this._tasksSeq) return;
       this.taskRows = d.tasks || [];
       this.taskHistoryDays = d.history_days;
-      this.taskRoutineSeconds = d.routine_seconds || 2;
+      this.taskRoutineSeconds = d.routine_seconds || 1;
       this.renderTasks();
       if (this.taskSel) {
         const fresh = this.taskRows.find((t) => t.id === this.taskSel.id);

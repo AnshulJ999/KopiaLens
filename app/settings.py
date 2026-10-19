@@ -51,7 +51,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "folder_prewarm_budget": 900,  # max seconds the nightly spends pre-computing folder reclaim
         "log_cleanup_days": 90,      # days of job/dry-run/mount logs to keep; 0 = keep everything
         "task_history_days": 90,     # days of backup/maintenance task history (Tasks tab); 0 = keep everything
-        "task_routine_seconds": 2,   # a task that finished without errors faster than this is routine
+        "task_routine_seconds": 1,   # a task that finished without errors faster than this is routine
         "task_routine_hours": 48,    # how long routine tasks stay in the history
         "engine_takeback": "auto",
         "notify_webhook": {},        # KopiaLens's own notifications: {url, format text|json, headers [..], level info|warn|error}   # when another app stops running a repo's backups: auto = take over again | wait = stay paused
@@ -89,7 +89,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "recent_backup": "",       # default "Backed up" filter in days ("" = Any); user changes persist
         "tree_dedupe": False,      # persisted dedupe toggle (tree)
         "docs_view": "popup",       # the docs browser: "popup" | "side"
-        "panel_layout": "classic",  # detail-panel layout (): "classic" | "tabbed"
+        "panel_layout": "tabbed",  # detail-panel layout (): "classic" | "tabbed"
         "hide_overdue": False,      # Dashboard: no "overdue" badge on Next snapshot
         "policy_layout": "tabs",    # policy editor: "tabs" (one section at a time) | "scroll" (stacked, jump strip)
         "policy_leave": "ask",      # leaving a policy with unsaved changes: "ask" | "keep" (drafts stay until saved)

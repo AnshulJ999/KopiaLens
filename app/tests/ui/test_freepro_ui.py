@@ -13,6 +13,7 @@ def test_free_sees_pro_tags_and_the_upgrade_notice(app_server, open_page):
     h.go_tab(page, "Search")
     page.get_by_placeholder("Search paths", exact=True).fill("needle")
     page.get_by_role("row", name="needle-report.txt", exact=False).dblclick()
+    h.panel_tab(page, "Actions")
 
     # The file panel hands off to the Delete panel, whose red button carries the Pro lock.
     page.locator("#kl-file-remove").get_by_role("button", name="Remove from snapshots…").click()

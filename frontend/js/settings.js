@@ -72,7 +72,7 @@ const settingsPart = {
         this.sessionDays = Number(kl.session_days || 30);
         this.loadAccount();
         this.raLoad();
-        this.panelLayout = kl.panel_layout === "tabbed" ? "tabbed" : "classic";  //
+        this.panelLayout = kl.panel_layout === "classic" ? "classic" : "tabbed";  //
         this.docsView = kl.docs_view === "side" ? "side" : "popup";
         this._readAdvanced(kl);
         this._readBackblaze(data.settings?.backblaze || {});
@@ -124,7 +124,7 @@ const settingsPart = {
       this.askSnapshotNow = kl.ask_snapshot_now !== false;
       this.taskView = kl.task_view === "panel" ? "panel" : "popup";
       this.taskHideRoutine = kl.task_hide_routine !== false;
-      this.taskRoutineSecs = Number(kl.task_routine_seconds ?? 2);
+      this.taskRoutineSecs = Number(kl.task_routine_seconds ?? 1);
       this.taskRoutineHours = Number(kl.task_routine_hours ?? 48);
       this.retentionChips = ["uniform", "custom"].includes(kl.retention_chips) ? kl.retention_chips : "kopiaui";
       this.retentionChipColor = /^#[0-9a-f]{6}$/i.test(kl.retention_chip_color || "") ? kl.retention_chip_color : "#2563eb";
@@ -203,7 +203,7 @@ const settingsPart = {
       duckdb_memory: { s: "duckdbMemory", t: "choice", of: ["", ...MEMORY_CHOICES], restart: true },
       log_cleanup_days: { s: "logCleanupDays", t: "int", min: 0 },
       task_history_days: { s: "taskHistoryKeep", t: "int", min: 0 },
-      task_routine_seconds: { s: "taskRoutineSecs", t: "int", min: 1 },
+      task_routine_seconds: { s: "taskRoutineSecs", t: "num" },
       task_routine_hours: { s: "taskRoutineHours", t: "int", min: 1 },
       engine_takeback: { s: "engineTakeback", t: "choice", of: ["auto", "wait"] },
       rank_count: { s: "rankCount", t: "int", min: 0 },

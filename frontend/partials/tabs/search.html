@@ -101,10 +101,10 @@
         <div x-show="!searchView && searchKind!=='files' && !searchAllRepos()" class="kl-toolbar text-xs">
           <span class="font-medium">Folders</span>
           <label title="Hide folders shallower than this, to focus on deep ones">Min depth <input type="number" min="1" max="20" x-model.number="groupMinDepth" @input.debounce.400ms="changeGroupMinDepth()" class="fld h-7 w-16 border border-bd bg-surface" placeholder="1"></label>
-          <label>Max depth <input type="number" min="1" max="20" x-model.number="groupDepth" @change="changeGroupDepth()" class="fld h-7 w-16 border border-bd bg-surface"></label>
+          <label>Max depth <input type="number" min="1" max="20" x-model.number="groupDepth" @input.debounce.400ms="changeGroupDepth()" class="fld h-7 w-16 border border-bd bg-surface"></label>
           <label>Min GB <input type="number" min="0" step="0.1" x-model.number="groupMinGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>
           <label>Min files <input type="number" min="0" x-model.number="groupMinFiles" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>
-          <label class="cursor-pointer" title="A folder above Max depth that also has subfolders gets a row for the files lying directly in it"><input type="checkbox" :checked="groupLoose" @change="toggleGroupLoose()"> Loose files as their own rows</label>
+          <label x-show="groupDepthMode() === 'current'" class="cursor-pointer" title="A folder above Max depth that also has subfolders gets a row for the files lying directly in it"><input type="checkbox" :checked="groupLoose" @change="toggleGroupLoose()"> Loose files as their own rows</label>
           <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('search', 'files-folders-or-both')" @keydown.enter.prevent="openDocs('search', 'files-folders-or-both')" title="Folders ranked by physical size. Double-click a folder to open it; right-click to see its files or delete it.">?</span>
         </div>
         <div x-show="!searchView && !groupByFolder && searchEmpty" class="flex flex-wrap items-center gap-2 text-sm text-muted">

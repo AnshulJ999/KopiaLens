@@ -739,52 +739,133 @@ def folder_file_filter(cur, query: str = "", source: str | None = None, ext: str
     return conds, params
 
 
+DEPTH_MODES = ("current", "old", "range", "own")
+
+
 def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | None = None,
                     ext: str | None = None, deleted_only: bool = False, min_size: int = 0,
                     min_files: int = 0, sort: str = "physical", direction: str = "desc",
                     limit: int = 500, ext_exclude: str | None = None, min_depth: int = 0,
-                    loose: bool = False) -> dict:
-    """Bloat finder: backed-up folders at ``depth``, each row a WHOLE folder (everything under it).
-    A folder shallower than ``depth`` gets a row only when it has no subfolders (it ends there, so
-    it is whole too). ``loose`` adds a row for the files lying directly in a shallower folder that
-    does have subfolders (``loose: true``; every column covers just those files).
+                    loose: bool = False, mode: str = "current") -> dict:
+    """Bloat finder: backed-up folders, ranked. ``mode`` picks how Min/Max depth choose the rows
+    (four candidates, compared through the Design menu):
 
-    Counts are per file: a path held by nested sources is one file (). ``phys`` adds up the
-    files' own Physical - a ranking estimate, since identical pieces count again; the exact
-    newest-versions Physical comes from ``physical.folder_detail`` ()."""
+    - ``current``: whole folders (everything under them) at ``depth``, plus shallower folders with
+      no subfolders; ``loose`` adds a row for the files directly in a shallower folder that has
+      subfolders. ``min_depth`` hides rows above it.
+    - ``old``: each file under its folder cut at ``depth``, so a shallower folder's row holds only
+      the files directly in it (the rule before 2026-10-12).
+    - ``range``: every folder from ``min_depth`` to ``depth``, each with everything under it, so a
+      folder and its subfolders can both be listed.
+    - ``own``: every folder from ``min_depth`` to ``depth``, each with only the files directly in it.
+
+    Levels count a network share like a drive letter (both level 1). Counts are per file: a path
+    held by nested sources is one file (). ``phys`` adds up the files' own Physical - a
+    ranking estimate, since identical pieces count again; the exact newest-versions Physical comes
+    from ``physical.folder_detail`` ()."""
     cur = read_cursor(repo)
     try:
         conds, params = folder_file_filter(cur, query, source, ext, ext_exclude, deleted_only)
+        mode = mode if mode in DEPTH_MODES else "current"
         d = max(1, int(depth))
-        if min_depth and int(min_depth) > 1:
-            conds.append(f"_gd.depth >= {int(min_depth)}")   # hides folders shallower than this
-        # shallow: the file's folder is above `depth`; split: that folder also has subfolders, so
-        # its own files are only part of it.
-        split = "(_ga.anc_id IS NULL AND _gk.parent_id IS NOT NULL)"
-        if not loose:
-            conds.append(f"NOT {split}")
+        lo = max(1, int(min_depth or 1))
+        off = _level_off_sql(cur, "p.src_id")
+        if mode in ("current", "old"):
+            join = (f"{_rollup_join('p', d, 'g', off)} "
+                    "LEFT JOIN (SELECT DISTINCT parent_id FROM dir) _gk ON _gk.parent_id = _gd.dir_id")
+            # split: the file's folder is above `depth` and also has subfolders, so its own files
+            # are only part of it. Such rows are marked loose, so they never get whole-folder values.
+            split = "(_ga.anc_id IS NULL AND _gk.parent_id IS NOT NULL)"
+            loose_sql = split
+            if mode == "current" and not loose:
+                conds.append(f"NOT {split}")
+            if lo > 1:
+                conds.append(f"(_gd.depth - {off}) >= {lo}")
+        elif mode == "own":
+            join = "JOIN dir _gd ON _gd.dir_id = p.dir_id"
+            conds.append(f"(_gd.depth - {off}) BETWEEN {lo} AND {d}")
+            loose_sql = "true"    # each row is the files directly in the folder
         order = {"physical": "phys", "logical": "logical", "files": "files"}.get(sort, "phys")
         dirn = "ASC" if direction == "asc" else "DESC"
-        key = _memo_key(cur, "folders", d, tuple(conds), tuple(params), order, dirn, int(min_size),
-                        int(min_files), int(limit))
-        rows = [dict(r) for r in _memo(key, lambda: _group_rows(cur, conds, params, d, split, order, dirn,
-                                                                 min_size, min_files, limit))]
+        key = _memo_key(cur, "folders", mode, lo, d, tuple(conds), tuple(params), order, dirn,
+                        int(min_size), int(min_files), int(limit))
+        if mode == "range":
+            build = lambda: _range_rows(cur, conds, params, lo, d, order, dirn, min_size, min_files, limit)
+        else:
+            build = lambda: _group_rows(cur, conds, params, join, loose_sql, order, dirn,
+                                        min_size, min_files, limit)
+        rows = [dict(r) for r in _memo(key, build)]
     finally:
         cur.close()
-    return {"rows": rows, "depth": d}
+    return {"rows": rows, "depth": d, "mode": mode}
 
 
-def _group_rows(cur, conds, params, d, split, order, dirn, min_size, min_files, limit) -> list[dict]:
+def _level_off_sql(cur, src_col: str) -> str:
+    """SQL: how many ``dir`` levels a source's folders sit below the level the user counts. A drive
+    letter is level 1; a network share sits three deeper ('', the separator, the host), so its
+    sources are shifted by 3 to put the share at level 1 too."""
+    unc = []
+    for src_id, key in cur.execute("SELECT src_id, source FROM src").fetchall():
+        s = pathrules.sep(str(key))
+        if pathrules.source_root(str(key)).startswith(s + s):
+            unc.append(int(src_id))
+    return f"(CASE WHEN {src_col} IN ({_id_list(unc)}) THEN 3 ELSE 0 END)" if unc else "0"
+
+
+def _range_rows(cur, conds, params, lo, d, order, dirn, min_size, min_files, limit) -> list[dict]:
+    """``range`` mode: every folder from level ``lo`` to ``d``, each with everything under it. Files
+    are made unique first (one row per computer + path) and only then spread over their folders,
+    so the fan-out carries numbers, not paths."""
+    off = _level_off_sql(cur, "_gd.src_id")
+    rows = _rows(
+        cur,
+        f"""
+        WITH f AS (
+            SELECT {_HOST_SQL} AS host, p.full_path, min(p.dir_id) AS dir_id, max(p.size) AS size,
+                   max(p.physical) AS physical, bool_or(p.in_latest) AS in_latest,
+                   max(p.last_seen) AS last_seen, min(p.first_seen) AS first_seen
+            FROM pathx p JOIN src s ON s.src_id = p.src_id
+            WHERE {_where(conds)} GROUP BY 1, 2),
+        lv AS (SELECT a.dir_id, a.anc_id FROM anc a JOIN dir _gd ON _gd.dir_id = a.anc_id
+               WHERE (_gd.depth - {off}) BETWEEN {int(lo)} AND {int(d)}),
+        g AS (SELECT lv.anc_id, sum(f.physical) AS phys, sum(f.size) AS logical, count(*) AS files,
+                     count(*) FILTER (WHERE NOT f.in_latest) AS deleted_files,
+                     max(f.last_seen) AS last_seen, min(f.first_seen) AS first_seen
+              FROM f JOIN lv ON lv.dir_id = f.dir_id GROUP BY lv.anc_id),
+        ff AS (SELECT {_folder_name_sql(cur, 'g')} AS folder, sum(g.phys) AS phys, sum(g.logical) AS logical,
+                      sum(g.files) AS files, sum(g.deleted_files) AS deleted_files,
+                      max(g.last_seen) AS last_seen, min(g.first_seen) AS first_seen
+               FROM g JOIN dir _gd ON _gd.dir_id = g.anc_id GROUP BY 1),
+        ds AS (SELECT DISTINCT p.dir_id, p.src_id FROM pathx p JOIN src s ON s.src_id = p.src_id
+               WHERE {_where(conds)}),
+        fs AS (SELECT {_folder_name_sql(cur, 'g')} AS folder, count(DISTINCT ds.src_id) AS sources,
+                      min(ds.src_id) AS src_one
+               FROM ds JOIN lv ON lv.dir_id = ds.dir_id JOIN dir _gd ON _gd.dir_id = lv.anc_id GROUP BY 1)
+        SELECT ff.folder, false AS loose, ff.phys, ff.logical, ff.files, ff.deleted_files, ff.last_seen,
+               ff.first_seen, 0 AS excl, fs.sources, fs.src_one
+        FROM ff JOIN fs USING (folder)
+        WHERE ff.phys >= {int(min_size)} AND ff.files >= {int(min_files)}
+        ORDER BY {order} {dirn}, folder LIMIT {int(limit)}
+        """,
+        [*params, *params],
+    )
+    names = dict(cur.execute("SELECT src_id, source FROM src").fetchall())
+    for r in rows:
+        one = r.pop("src_one")
+        r["source"] = names.get(one) if r["sources"] == 1 else None
+    return rows
+
+
+def _group_rows(cur, conds, params, join, loose_sql, order, dirn, min_size, min_files, limit) -> list[dict]:
     rows = _rows(
         cur,
         f"""
         WITH m AS (
-            SELECT {_folder_name_sql(cur, 'g')} AS folder, {split} AS loose,
+            SELECT {_folder_name_sql(cur, 'g')} AS folder, {loose_sql} AS loose,
                    {_HOST_SQL} AS host, p.full_path, p.size, p.physical, p.in_latest,
                    p.last_seen, p.first_seen, p.src_id
             FROM pathx p JOIN src s ON s.src_id = p.src_id
-            {_rollup_join('p', d, 'g')}
-            LEFT JOIN (SELECT DISTINCT parent_id FROM dir) _gk ON _gk.parent_id = _gd.dir_id
+            {join}
             WHERE {_where(conds)}),
         pf AS (SELECT folder, loose, host, full_path, max(size) AS size, max(physical) AS physical,
                       bool_or(in_latest) AS in_latest, max(last_seen) AS last_seen,
@@ -1201,10 +1282,12 @@ def _child_sql(cur, prefix: str, scope_alias: str = "p", row_alias: str | None =
     return _Children(scope, join, name, "_cd.dir_id IS NOT NULL", base, sep)
 
 
-def _rollup_join(alias: str, depth: int, tag: str) -> str:
+def _rollup_join(alias: str, depth: int, tag: str, off: str = "") -> str:
     """Join ``_<tag>d``: each row's folder capped at ``depth`` (its ancestor that many levels
-    down, or its own folder when shallower) - a folder rollup with no path cutting."""
-    return (f"LEFT JOIN anc _{tag}a ON _{tag}a.dir_id = {alias}.dir_id AND _{tag}a.depth = {int(depth)} "
+    down, or its own folder when shallower) - a folder rollup with no path cutting. ``off`` is an
+    optional per-row level shift (``_level_off_sql``)."""
+    want = f"{int(depth)} + {off}" if off and off != "0" else str(int(depth))
+    return (f"LEFT JOIN anc _{tag}a ON _{tag}a.dir_id = {alias}.dir_id AND _{tag}a.depth = {want} "
             f"JOIN dir _{tag}d ON _{tag}d.dir_id = coalesce(_{tag}a.anc_id, {alias}.dir_id)")
 
 
