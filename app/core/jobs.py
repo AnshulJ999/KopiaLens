@@ -248,11 +248,7 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
         meta = {"snapshots": len(ids), "remove": bool(params.get("remove")), "dry": False,
                 "pin": name, "rename_from": params.get("rename_from") or ""}
     elif kind == "snapshot_estimate":
-        cmd = snapshot_estimate_command(repo, params["path"])
-        from . import engine  # lazy: engine reads the job history
-        # KopiaLens's own server reports live counts; the command line only names folders.
-        cmds = [_server_estimate(repo, params["path"], cmd) if engine.running(repo) else cmd]
-        meta = {"path": params["path"], "dry": False}
+        cmds, meta = [snapshot_estimate_command(repo, params["path"])], {"path": params["path"], "dry": False}
     elif kind == "source_delete":
         cmds = source_delete_commands(repo, params["source"], bool(params.get("delete_policy")), dry)
         meta = {"source": params["source"], "policy": bool(params.get("delete_policy")), "dry": dry}
@@ -307,6 +303,11 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
         if c[:len(prefix)] != prefix:
             raise RuntimeError(f"job builder output lacks the kopia+repo-args prefix: {c[:4]}")
         stripped.append(c[len(prefix):])
+    if kind == "snapshot_estimate":
+        from . import engine  # lazy: engine reads the job history
+        # KopiaLens's own server reports live counts; the command line only names folders.
+        if engine.running(repo):
+            stripped = [_server_estimate(repo, params["path"], stripped[0])]
     return stripped, meta
 
 
@@ -568,7 +569,7 @@ def _server_estimate(repo: str, path: str, cli_cmd: list[str]):
         except Exception:  # noqa: BLE001
             entries = []
         c = {k: v["value"] for k, v in job["counters"].items()}
-        lines = [engine._log_text(e) for e in entries]
+        lines = [engine._log_text(e).split(" ", 1)[-1] for e in entries]   # the job adds its own time
         if (t.get("status") or "").upper() == "SUCCESS":
             lines += [f"Snapshot includes {c.get('Files', 0)} file(s), total size {_kopia_size(c.get('Bytes', 0))}",
                       f"Snapshot excludes {c.get('Excluded Files', 0)} file(s), total size {_kopia_size(c.get('Excluded Bytes', 0))}"
