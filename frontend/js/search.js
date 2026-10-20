@@ -95,8 +95,9 @@ const searchPart = {
     changeGroupDepth() { this.klSet({ group_depth: Number(this.groupDepth) || 3 }); this.loadSearch(); },
     changeGroupMinDepth() { this.klSet({ group_min_depth: Number(this.groupMinDepth) || 0 }); this.loadSearch(); },
     toggleGroupLoose() { this.groupLoose = !this.groupLoose; this.klSet({ group_loose: this.groupLoose }); this.loadSearch(); },
-    // How Min/Max depth pick the folder rows: a Design menu trial (old, current, range, own).
-    groupDepthMode() { return ["old", "range", "own"].find((m) => this.designIs("depthmode", m, "current")) || "current"; },
+    // How Min/Max depth pick the folder rows: deepest, nested or own (queries.DEPTH_MODES).
+    groupDepthMode() { return this.groupMode || "deepest"; },
+    setGroupMode(m) { this.groupMode = m; this.klSet({ group_depth_mode: m }); this.loadSearch(); },
     groupDepthNote() {
       return Number(this.groupMinDepth) > Number(this.groupDepth) ? " · Min depth is above Max depth, so no folder matches" : "";
     },
@@ -111,7 +112,9 @@ const searchPart = {
     },
     _folderValKey(folder, loose) { return this.repo + ":" + (loose ? "loose:" : "") + folder + "|" + JSON.stringify(this._folderFilters()); },
     folderRowLabel(path, d) {
-      return itemIconHtml(path, true) + escHtml(path) + (d.loose ? ` <span style="color:var(--muted)">(files directly in it)</span>` : "")
+      const pill = d.loose && this.groupDepthMode() !== "own"
+        ? ` <span class="pill" title="Only the files directly in this folder, not its subfolders">own files</span>` : "";
+      return itemIconHtml(path, true) + escHtml(path) + pill
         + (d.kind === "folder" ? ` <span style="color:var(--muted)">· ${countOf(d.files || 0, "file")}</span>` : "");
     },
     // Versions of a folder row: how many distinct states the whole folder has had.
@@ -201,7 +204,7 @@ const searchPart = {
         if (this.groupMinGb) p.set("min_gb", this.groupMinGb);
         if (this.groupMinFiles) p.set("min_files", this.groupMinFiles);
         if (this.groupLoose) p.set("loose", "1");
-        if (this.groupDepthMode() !== "current") p.set("mode", this.groupDepthMode());
+        p.set("mode", this.groupDepthMode());
         const data = await getJson(`/api/search/group-by-folder?${p.toString()}`, { signal });
         const rows = data.rows || [];
         this.searchSelCount = 0;   // the table is rebuilt, so its selection goes
@@ -327,7 +330,7 @@ const searchPart = {
           if (this.groupMinGb) p.set("folder_min_gb", this.groupMinGb);
           if (this.groupMinFiles) p.set("folder_min_files", this.groupMinFiles);
           if (this.groupMinDepth) p.set("min_depth", this.groupMinDepth);
-          if (this.groupDepthMode() !== "current") p.set("mode", this.groupDepthMode());
+          p.set("mode", this.groupDepthMode());
         }
         const url = allRepos ? "/api/search/all-repos" : both ? "/api/search/mixed" : "/api/search";
         const data = await getJson(`${url}?${p.toString()}`, { signal });

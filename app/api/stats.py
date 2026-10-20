@@ -71,6 +71,15 @@ def _parse_size(text: str) -> int:
     return int(float(m.group(1)) * _SIZE_MULT[m.group(2).lower()])
 
 
+def _size_text(n: int) -> str:
+    """Decimal size in the largest unit that keeps it at 1 or more ('412 MB', '1.25 GB')."""
+    for unit, mult in (("TB", 10**12), ("GB", 10**9), ("MB", 10**6), ("KB", 10**3)):
+        if n >= mult:
+            v = n / mult
+            return f"{v:.2f} {unit}" if v < 10 else f"{v:.0f} {unit}"
+    return f"{n} B"
+
+
 def _parse_ts(s: str) -> dt.datetime | None:
     if not s:
         return None
@@ -233,7 +242,7 @@ def _index_health(repo: str) -> list[dict]:
                    for d, _s, fs in os.walk(pool) for f in fs)
         stats = manifest.get("stats", {})
         return [{"id": "index-size", "status": "ok",
-                 "title": f"Index: {size / 10**9:.2f} GB",
+                 "title": f"Index: {_size_text(size)}",
                  "tip": f"Index generation {manifest.get('generation')}",
                  "detail": f"{stats.get('paths', 0):,} paths, {stats.get('file_versions', 0):,} "
                            f"file versions."}]

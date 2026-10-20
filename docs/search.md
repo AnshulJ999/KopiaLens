@@ -28,6 +28,12 @@ The list at the top left sets where Search looks:
 - **Folders** ranks folders by the space they take, to find the biggest ones. It works within one repository.
 - **Both** lists files and folders together.
 
+Min depth and Max depth set which folder levels to look at. A drive, a network share and `/` are level 1. The list next to them picks how folders are chosen:
+
+- **Deepest folders**: folders at Max depth, each with everything inside it. A shallower folder with no subfolders is listed too. With **Loose files** ticked, a shallower folder that does have subfolders also gets a row for the files lying directly in it, marked *own files*.
+- **Nested**: every folder from Min to Max depth, each with everything inside it. A folder and its subfolders can both appear, so their sizes overlap.
+- **Own files**: every folder from Min to Max depth, counting only the files directly inside it. Nothing overlaps.
+
 ## What it shows
 
 | Column | What it means |

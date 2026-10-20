@@ -82,6 +82,12 @@ def test_kopialens_runs_backups_and_steps_back_for_another_engine(engine_server,
     row_button.click()
     page.locator("button[x-text='confirmBox.confirmLabel']").click()
     _wait(lambda: _snapshot_count(kopia, engine_repo) > before, "the backup did not create a snapshot", engine_server)
+    # Snapshot now follows the server's task in the job panel: kopia's counters, then a close button.
+    job = page.locator("div[x-show='showJob']")
+    expect(job).to_contain_text("Uploaded Bytes", timeout=30_000)
+    close = job.locator("button[aria-label='Close']")
+    expect(close).to_be_visible(timeout=30_000)
+    close.click()
 
     h.go_tab(page, "Tasks")
     page.get_by_test_id("task-hide-routine").uncheck()   # a test snapshot takes under 2 s: routine

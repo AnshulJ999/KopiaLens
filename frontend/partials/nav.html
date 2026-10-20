@@ -43,7 +43,7 @@
       <div class="relative flex-1 min-w-[10rem] max-w-[clamp(14rem,30vw,30rem)]">
         <!-- No @focus: switching tab on focus left Search blank until the first keystroke. Typing
              switches and loads; clicking in only focuses. -->
-        <input x-model="query" @input.debounce.300ms="headerSearch()"
+        <input type="search" name="kl-search" autocomplete="off" aria-label="Search" x-model="query" @input.debounce.300ms="headerSearch()"
           class="fld w-full border border-bd bg-surface2 pl-9"
           :disabled="repoKind==='server'" :title="repoKind==='server' ? 'Search needs the index, and a kopia server connection has none' : ''"
           :placeholder="repoKind==='backblaze' ? 'Search Backblaze files…' : (repoKind==='server' ? 'Search needs the index' : 'Search files across all snapshots...')">

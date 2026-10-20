@@ -55,7 +55,7 @@ def test_index_health_reports_the_index_size(monkeypatch):
     monkeypatch.setattr(stats_api.os.path, "getsize", lambda p: 378 * 10**6)
     entries = stats_api._index_health("1")
     assert entries[0]["status"] == "ok"
-    assert "0.38 GB" in entries[0]["title"]
+    assert "378 MB" in entries[0]["title"]
     assert "5,333,248 paths" in entries[0]["detail"]
 
 

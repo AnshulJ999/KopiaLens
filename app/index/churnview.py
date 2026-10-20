@@ -27,7 +27,7 @@ import uuid
 from ..core import paths as pathrules
 from ..core.applog import get_logger
 from . import sidecache
-from .queries import _folder_name_sql, _rollup_join
+from .queries import _folder_name_sql, _level_off_sql, _rollup_join
 from .store import read_cursor
 
 log = get_logger("churnview")
@@ -42,7 +42,7 @@ _MAX_LIMIT = 2000  # rows retained per view in the cache; requests slice this do
 
 # Bumped whenever the qualifying rule changes semantics, so on-disk rollups built by the old
 # rule cannot be served as current (the index stamp alone does not change on a code fix).
-_CACHE_VERSION = 4
+_CACHE_VERSION = 5
 
 # A file's extension, from its own name column (never by cutting the path).
 _EXT = ("CASE WHEN len(string_split(t.name, '.')) > 1 "
@@ -142,13 +142,13 @@ _WINDOW_SQL = ("CREATE OR REPLACE TEMPORARY TABLE {tmp} AS SELECT source, full_p
                "name, cid_id, size, packed FROM {shared} WHERE " + _WINDOW_RULE)
 
 
-def _base_sql(tmp: str, depth: int, folder: str) -> str:
+def _base_sql(tmp: str, depth: int, folder: str, off: str = "") -> str:
     return f"""
 SELECT t.source, {folder} AS folder, {_EXT} AS ext,
        sum(t.packed) AS bytes, count(*) AS versions, count(DISTINCT t.full_path) AS files,
        sum(t.size) AS logical
 FROM {tmp} t
-{_rollup_join('t', depth, 'f')}
+{_rollup_join('t', depth, 'f', off)}
 GROUP BY t.source, folder, ext
 """
 
@@ -164,7 +164,7 @@ def _current(repo: str, depth: int) -> dict[str, dict]:
             "source": ("SELECT s.source, sum(t.size), sum(t.physical) FROM pathx t "
                        "JOIN src s ON s.src_id = t.src_id WHERE t.in_latest GROUP BY 1"),
             "folder": (f"SELECT {_folder_name_sql(cur, 'f')}, sum(t.size), sum(t.physical) FROM pathx t "
-                       f"{_rollup_join('t', depth, 'f')} WHERE t.in_latest GROUP BY 1"),
+                       f"{_rollup_join('t', depth, 'f', _level_off_sql(cur, 't.src_id'))} WHERE t.in_latest GROUP BY 1"),
             "ext": f"SELECT {_EXT}, sum(t.size), sum(t.physical) FROM pathx t WHERE t.in_latest GROUP BY 1",
         }
         for view, sql in sqls.items():
@@ -284,7 +284,7 @@ def _compute(repo: str, depth: int, cutoff: str, shared: tuple | None = None) ->
              "bytes": int(r[3] or 0), "versions": int(r[4] or 0), "files": int(r[5] or 0),
              "logical": int(r[6] or 0)}
             for r in cur.execute(
-                _base_sql(tmp, depth, _folder_name_sql(cur, 'f')),
+                _base_sql(tmp, depth, _folder_name_sql(cur, 'f'), _level_off_sql(cur, 't.src_id')),
             ).fetchall()
         ]
         deduped = int(cur.execute(_deduped_sql(tmp)).fetchone()[0] or 0)
@@ -417,7 +417,10 @@ def cached_folder_window(repo: str, folder: str, days: int = 30, depth: int = 4)
     """New data under one folder (its whole subtree) from an already-built rollup. None when the
     rollup is not cached or the folder is deeper than the rollup's ``depth``. Never computes."""
     want, sep = pathrules.folder_key(folder)
-    if sep is None or len(want.split(sep)) > depth:   # a stored folder's depth = its part count
+    if sep is None:
+        return None
+    level = len(want.split(sep)) - (3 if want.startswith(sep * 2) else 0)   # a share counts as level 1
+    if level > depth:
         return None
     hit = _cache_get((repo, days, depth), _index_hash(repo))
     if hit is None:

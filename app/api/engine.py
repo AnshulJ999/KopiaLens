@@ -273,10 +273,13 @@ def tasks(repo: str = "all", limit: int = 1000) -> dict:
         by_id[t["id"]] = t
     for t in engine.live_tasks():
         by_id[t["id"]] = {**by_id.get(t["id"], {}), **t}
+    # A job that followed a server task (Snapshot now) is listed as that task, not twice.
     for j in jobs.read_job_history(limit=limit):
-        by_id.setdefault(f"job:{j.get('job_id')}", _job_task(j))
+        if not (j.get("detail") or {}).get("server_task"):
+            by_id.setdefault(f"job:{j.get('job_id')}", _job_task(j))
     for j in jobs.list_jobs():
-        by_id[f"job:{j.get('job_id')}"] = _job_task(j)
+        if not j.get("server_task"):
+            by_id[f"job:{j.get('job_id')}"] = _job_task(j)
     rows = [t for t in by_id.values() if repo == "all" or str(t.get("repo")) == str(repo)]
     rows.sort(key=lambda t: t.get("start") or 0, reverse=True)
     for t in rows:

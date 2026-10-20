@@ -71,7 +71,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "churn_view": "source",      # Churn tab: "source" | "folder" | "ext"
         "group_depth": 3,            # Search "By folder" rollup depth; folder prewarm follows it
         "group_min_depth": 0,        # Search "By folder": hide folders shallower than this (0 = none)
-        "group_loose": False,        # Search folders: a row for the files lying directly in a shallower folder
+        "group_loose": True,         # Search folders: a row for the files lying directly in a shallower folder
+        "group_depth_mode": "deepest",  # Search folders: deepest | nested | own (queries.DEPTH_MODES)
         "delete_top_n": 0,           # folder delete: 0 = everything matched, else only the N biggest by physical
         "churn_default": False,      # show churn column by default
         "tree_mode": "full",       # default tree view mode

@@ -202,6 +202,20 @@ def _kick_bg_recompute(repo: str) -> None:
 
 
 def table_rows(repo: str, refresh: bool = False) -> dict:
+    """The dashboard table, with next-snapshot times and statuses read fresh on every call: the
+    saved table is rebuilt only when the snapshot set changes, and an unchanged folder saves none."""
+    data = _table_rows(repo, refresh)
+    nexts, afters, meta = load_next_snapshots(repo), load_next_after_missed(repo), sources_meta(repo)
+    for row in data.get("rows") or []:
+        key = row.get("source")
+        smeta = meta.get(key) or {}
+        row["next_snapshot"] = nexts.get(key) or smeta.get("nextSnapshotTime")
+        row["next_after_missed"] = afters.get(key)
+        row["status"] = smeta.get("status")
+    return data
+
+
+def _table_rows(repo: str, refresh: bool = False) -> dict:
     """Single-flight + serve-stale-while-revalidate dashboard build. A hash-valid cache serves
     instantly; a hash-STALE (but schema-valid) cache also serves instantly and triggers a
     background recompute - so the dashboard is never slow, freshness arrives in the background.

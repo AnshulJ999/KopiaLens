@@ -38,7 +38,7 @@ def search_group_by_folder(
     repo: str, depth: int = 3, q: str = "", source: str | None = None, ext: str | None = None,
     ext_exclude: str | None = None, deleted_only: bool = False, min_gb: float = 0, min_files: int = 0,
     sort: str = "physical", direction: str = "desc", limit: int = 500, min_depth: int = 0,
-    loose: bool = False, mode: str = "current",
+    loose: bool = False, mode: str = "deepest",
 ) -> dict:
     """Bloat finder: whole backed-up folders at `depth` (plus loose-files rows when asked), ranked by
     physical. Each row carries the saved exact values when it has them."""
@@ -249,7 +249,7 @@ def search_mixed(
     sort: str = "size", dir: str = "desc", limit: int = 500, offset: int = 0,
     min_gb: float = 0, max_gb: float = 0, date_from: str | None = None, date_to: str | None = None,
     first_from: str | None = None, min_versions: int = 0, shared_min: int = 0,
-    dedupe: bool = False, dedupe_by: str = "path", loose: bool = False, mode: str = "current",
+    dedupe: bool = False, dedupe_by: str = "path", loose: bool = False, mode: str = "deepest",
 ) -> dict:
     """Files and folders in one list. Files page exactly as /search; the folder rollups (top 500)
     are placed into the page their sort position falls in, so every folder appears once."""

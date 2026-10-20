@@ -739,23 +739,20 @@ def folder_file_filter(cur, query: str = "", source: str | None = None, ext: str
     return conds, params
 
 
-DEPTH_MODES = ("current", "old", "range", "own")
+DEPTH_MODES = ("deepest", "nested", "own")
 
 
 def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | None = None,
                     ext: str | None = None, deleted_only: bool = False, min_size: int = 0,
                     min_files: int = 0, sort: str = "physical", direction: str = "desc",
                     limit: int = 500, ext_exclude: str | None = None, min_depth: int = 0,
-                    loose: bool = False, mode: str = "current") -> dict:
-    """Bloat finder: backed-up folders, ranked. ``mode`` picks how Min/Max depth choose the rows
-    (four candidates, compared through the Design menu):
+                    loose: bool = False, mode: str = "deepest") -> dict:
+    """Bloat finder: backed-up folders, ranked. ``mode`` picks how Min/Max depth choose the rows:
 
-    - ``current``: whole folders (everything under them) at ``depth``, plus shallower folders with
+    - ``deepest``: whole folders (everything under them) at ``depth``, plus shallower folders with
       no subfolders; ``loose`` adds a row for the files directly in a shallower folder that has
       subfolders. ``min_depth`` hides rows above it.
-    - ``old``: each file under its folder cut at ``depth``, so a shallower folder's row holds only
-      the files directly in it (the rule before 2026-10-12).
-    - ``range``: every folder from ``min_depth`` to ``depth``, each with everything under it, so a
+    - ``nested``: every folder from ``min_depth`` to ``depth``, each with everything under it, so a
       folder and its subfolders can both be listed.
     - ``own``: every folder from ``min_depth`` to ``depth``, each with only the files directly in it.
 
@@ -766,18 +763,18 @@ def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | No
     cur = read_cursor(repo)
     try:
         conds, params = folder_file_filter(cur, query, source, ext, ext_exclude, deleted_only)
-        mode = mode if mode in DEPTH_MODES else "current"
+        mode = mode if mode in DEPTH_MODES else "deepest"
         d = max(1, int(depth))
         lo = max(1, int(min_depth or 1))
         off = _level_off_sql(cur, "p.src_id")
-        if mode in ("current", "old"):
+        if mode == "deepest":
             join = (f"{_rollup_join('p', d, 'g', off)} "
                     "LEFT JOIN (SELECT DISTINCT parent_id FROM dir) _gk ON _gk.parent_id = _gd.dir_id")
             # split: the file's folder is above `depth` and also has subfolders, so its own files
             # are only part of it. Such rows are marked loose, so they never get whole-folder values.
             split = "(_ga.anc_id IS NULL AND _gk.parent_id IS NOT NULL)"
             loose_sql = split
-            if mode == "current" and not loose:
+            if not loose:
                 conds.append(f"NOT {split}")
             if lo > 1:
                 conds.append(f"(_gd.depth - {off}) >= {lo}")
@@ -789,8 +786,8 @@ def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | No
         dirn = "ASC" if direction == "asc" else "DESC"
         key = _memo_key(cur, "folders", mode, lo, d, tuple(conds), tuple(params), order, dirn,
                         int(min_size), int(min_files), int(limit))
-        if mode == "range":
-            build = lambda: _range_rows(cur, conds, params, lo, d, order, dirn, min_size, min_files, limit)
+        if mode == "nested":
+            build = lambda: _nested_rows(cur, conds, params, lo, d, order, dirn, min_size, min_files, limit)
         else:
             build = lambda: _group_rows(cur, conds, params, join, loose_sql, order, dirn,
                                         min_size, min_files, limit)
@@ -812,7 +809,7 @@ def _level_off_sql(cur, src_col: str) -> str:
     return f"(CASE WHEN {src_col} IN ({_id_list(unc)}) THEN 3 ELSE 0 END)" if unc else "0"
 
 
-def _range_rows(cur, conds, params, lo, d, order, dirn, min_size, min_files, limit) -> list[dict]:
+def _nested_rows(cur, conds, params, lo, d, order, dirn, min_size, min_files, limit) -> list[dict]:
     """``range`` mode: every folder from level ``lo`` to ``d``, each with everything under it. Files
     are made unique first (one row per computer + path) and only then spread over their folders,
     so the fan-out carries numbers, not paths."""

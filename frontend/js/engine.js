@@ -374,11 +374,9 @@ const enginePart = {
       if (!ok) return;
       this.snapshotNowDontAsk(ok);
     }
-    try {
-      await getJson("/api/engine/snapshot", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: this.repo, source }) });
-      this.klNotify("Backup started", "ok", { label: "Show in Tasks", run: () => { this.active = "tasks"; this.activate(); } });
-      setTimeout(() => this.loadEngineSources(), 1000);
-    } catch (e) { this.klNotify(e.message, "error"); }
+    // KopiaLens's own server takes the snapshot; the job panel follows its task.
+    await this.startJob("snapshot_create", { source, via_server: true }, this.shortSource(source));
+    setTimeout(() => this.loadEngineSources(), 1000);
   },
   async engineCancel(source) {
     const ok = await this.klConfirm({

@@ -134,7 +134,8 @@ def _resolve_params(kind: str, repo: str, params: dict) -> dict:
         path = source_root(source)
         if not os.path.exists(path):
             raise jobs.JobRefused(f"{path} is not on this computer")
-        return {"path": path, "description": (params.get("description") or "").strip()}
+        return {"path": path, "description": (params.get("description") or "").strip(),
+                "source": source, "via_server": bool(params.get("via_server"))}
     if kind == "snapshot_estimate":
         path = (params.get("path") or "").strip()
         if not path or not os.path.exists(path):

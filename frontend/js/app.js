@@ -78,7 +78,7 @@ document.addEventListener("alpine:init", () => {
     treeDeletedOnly: false, treeOverGb: false, treeExt: "", treeFlat: false, treeView: "list",
     query: "", deletedOnly: false, overOneGb: false, searchSource: "", searchExt: "", searchExtExclude: "", omniMeta: "",
     searchView: "", searchViewRows: null, _searchViewSeq: 0,   // a ready-made Search view ("prune"), its rows
-    groupByFolder: false, searchKind: "files", searchFolders: 0, searchSkipped: [], searchMaxDepth: 20000, groupDepth: 3, groupMinDepth: "", groupMinGb: 0, groupMinFiles: 0, groupLoose: false, folderVersions: {},
+    groupByFolder: false, searchKind: "files", searchFolders: 0, searchSkipped: [], searchMaxDepth: 20000, groupDepth: 3, groupMinDepth: "", groupMinGb: 0, groupMinFiles: 0, groupLoose: true, groupMode: "deepest", folderVersions: {},
     churnDays: "30", churnDepth: 4, churnView: "source", churnData: null, churnMeta: "", _churnSeq: 0,
     _churnPhysSeq: 0, _churnPhysCache: {}, _churnPhysTimer: null,   // folder view: on-screen all-versions physical
     indexMode: "daily", indexTime: "23:00", indexInterval: 86400, dashboardMode: "nightly",
@@ -335,7 +335,8 @@ document.addEventListener("alpine:init", () => {
     },
     // The multi-select table on the open tab, if any.
     _activeTable() {
-      const id = { search: "#searchTable", tree: "#treeTable", snapshots: "#snapshotsTable" }[this.active];
+      const search = this.groupByFolder ? "#groupTable" : "#searchTable";
+      const id = { search, tree: "#treeTable", snapshots: "#snapshotsTable" }[this.active];
       const el = id && document.querySelector(id);
       return el && el._tabulator ? el._tabulator : null;
     },
@@ -386,7 +387,6 @@ document.addEventListener("alpine:init", () => {
       window.addEventListener("kl-table-rebuild", () => this.rebuildTables());
       window.addEventListener("design-change", (e) => {
         this.design = { ...this.design, [e.detail.key]: e.detail.value };
-        if (e.detail.key === "depthmode" && this.active === "search" && this.searchKind !== "files") this.loadSearch();
       });
       this.initHelp();
       this.wmLoad();
@@ -470,7 +470,8 @@ document.addEventListener("alpine:init", () => {
         this.reindexInterval = Number(kl.reindex_interval || 1800);
         this.groupDepth = Number(kl.group_depth || 3);
         this.groupMinDepth = Number(kl.group_min_depth) > 1 ? Number(kl.group_min_depth) : "";
-        this.groupLoose = !!kl.group_loose;
+        this.groupLoose = kl.group_loose !== false;
+        this.groupMode = ["deepest", "nested", "own"].includes(kl.group_depth_mode) ? kl.group_depth_mode : "deepest";
         this.churnDays = String(kl.churn_days || 30);
         this.churnDepth = Number(kl.churn_depth || 4);
         this.churnView = kl.churn_view || "source";

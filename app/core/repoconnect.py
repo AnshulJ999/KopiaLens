@@ -418,10 +418,10 @@ _FIELD_HINT = {
 # Shown when the box is ticked. kopia saves a storage's folder layout in a `.shards` file at
 # create time (repo/blob/sharded); only a storage without one takes, and saves, this setting.
 _FIELD_WARN = {
-    "flat": ("Only for a repository created with a flat layout. On an older repository the tick is "
-             "saved into it, and a wrong one leaves it unreadable.",
-             "Every file kopia stores goes into one folder, which gets slow with many files. "
-             "This can't be changed later."),
+    "flat": ("Not recommended. Tick this only if the repository was created with a flat layout. "
+             "On any other repository it can make the backups unreadable.",
+             "Not recommended. Every file kopia stores goes into one folder, which gets slow as "
+             "backups grow. This can't be changed later."),
 }
 _IDENTITY_KEYS = {"override_username": "username", "override_hostname": "hostname",
                   "username": "username", "hostname": "hostname"}
@@ -493,6 +493,7 @@ def _with_help(provider: str, field: dict, ident: dict | None = None) -> dict:
     # The identity kopia connects as: in view, with the name it uses when left empty as the hint.
     if out["key"] in _IDENTITY_KEYS and out["flag"].startswith("--override-"):
         out["advanced"] = False
+        out["identity"] = _IDENTITY_KEYS[out["key"]]
         out["placeholder"] = (ident or {}).get(_IDENTITY_KEYS[out["key"]], "")
     return out
 

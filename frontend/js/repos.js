@@ -201,7 +201,12 @@ const reposPart = {
     },
     cxFieldList(advanced) {
       const s = this.cxSpec();
-      return s ? s.fields.filter((f) => !!f.advanced === advanced && !(f.connect_only && this.cx.mode === "create")) : [];
+      return s ? s.fields.filter((f) => !!f.advanced === advanced && !f.identity && !(f.connect_only && this.cx.mode === "create")) : [];
+    },
+    // "Connect as": the user and computer names kopia connects as, shown side by side.
+    cxIdentityFields() {
+      const s = this.cxSpec();
+      return s ? s.fields.filter((f) => f.identity) : [];
     },
     cxPasswordNote() {
       if (this.cx.provider === "server") return "Your account's password on the kopia server. Not your KopiaLens password.";

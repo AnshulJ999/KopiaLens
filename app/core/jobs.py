@@ -308,6 +308,11 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
         # KopiaLens's own server reports live counts; the command line only names folders.
         if engine.running(repo):
             stripped = [_server_estimate(repo, params["path"], stripped[0])]
+    if kind == "snapshot_create" and params.get("via_server"):
+        from . import engine
+        # Snapshot now on a repository KopiaLens runs: its own server takes it, the job follows it.
+        if engine.running(repo):
+            stripped = [_server_snapshot(repo, params["source"], stripped[0])]
     return stripped, meta
 
 
@@ -479,10 +484,10 @@ def _snapshot_counters(job: dict, manifest: dict) -> dict:
     out = {"Size": c(summ.get("size"), "bytes"), "Files": c(summ.get("files")), "Folders": c(summ.get("dirs"))}
     if stats:
         out.update({
-            "Hashed files": c(stats.get("nonCachedFiles")), "Cached files": c(stats.get("cachedFiles")),
-            "Excluded files": c(stats.get("excludedFileCount")), "Excluded folders": c(stats.get("excludedDirCount")),
-            "Excluded size": c(stats.get("excludedTotalSize"), "bytes"),
-            "Ignored errors": c(stats.get("ignoredErrorCount"), level="warning"),
+            "Hashed Files": c(stats.get("nonCachedFiles")), "Cached Files": c(stats.get("cachedFiles")),
+            "Excluded Files": c(stats.get("excludedFileCount")), "Excluded Directories": c(stats.get("excludedDirCount")),
+            "Excluded Bytes": c(stats.get("excludedTotalSize"), "bytes"),
+            "Ignored Errors": c(stats.get("ignoredErrorCount"), level="warning"),
         })
     out["Errors"] = c(errors, level="error")
     return out
@@ -510,14 +515,19 @@ def _live_progress(job: dict, line: str) -> bool:
         return False
     def c(value, units="", level=""):
         return {"value": int(value or 0), "units": units, "level": level}
+    # kopia server's own counter names (snapshot/upload/upload_progress.go), plus what only the
+    # command line reports.
+    hashed, cached = _kopia_bytes(m.group(3)), _kopia_bytes(m.group(5))
     counters = {
-        "Hashing now": c(m.group(1)), "Hashed files": c(m.group(2)), "Hashed size": c(_kopia_bytes(m.group(3)), "bytes"),
-        "Cached files": c(m.group(4)), "Cached size": c(_kopia_bytes(m.group(5)), "bytes"),
-        "Uploaded": c(_kopia_bytes(m.group(6)), "bytes"),
-        "Errors": c(m.group(7), level="error"), "Ignored errors": c(m.group(8), level="warning"),
+        "Hashing Files": c(m.group(1)), "Hashed Files": c(m.group(2)), "Hashed Bytes": c(hashed, "bytes"),
+        "Cached Files": c(m.group(4)), "Cached Bytes": c(cached, "bytes"),
+        "Processed Files": c(int(m.group(2) or 0) + int(m.group(4) or 0)),
+        "Processed Bytes": c(hashed + cached, "bytes"),
+        "Uploaded Bytes": c(_kopia_bytes(m.group(6)), "bytes"),
+        "Errors": c(m.group(7), level="error"), "Ignored Errors": c(m.group(8), level="warning"),
     }
     if m.group(9):
-        counters["Estimated size"] = c(_kopia_bytes(m.group(9)), "bytes")
+        counters["Estimated Bytes"] = c(_kopia_bytes(m.group(9)), "bytes")
         job["progress_pct"] = min(100.0, float(m.group(10)))
         job["progress_text"] = f"{m.group(10)}% · {m.group(11)} left"
     job["counters"] = counters
@@ -588,6 +598,66 @@ def _server_estimate(repo: str, path: str, cli_cmd: list[str]):
     return run
 
 
+def _server_snapshot(repo: str, source: str, cli_cmd: list[str]):
+    """Snapshot now through KopiaLens's own kopia server: trigger it, find the server's task (the
+    trigger returns no id) and follow it - counters, log lines, Stop. Tasks lists the server's task,
+    not this job. Falls back to the command line if the server can't start it."""
+    def _snap_tasks(srv) -> list[dict]:
+        tasks = (srv.ui.get("/api/v1/tasks").json() or {}).get("tasks") or []
+        # kopia names a snapshot task "<user@host:path> at <time>" (internal/server/server.go).
+        return [t for t in tasks if t.get("kind") == "Snapshot"
+                and str(t.get("description") or "").startswith(source + " at ")]
+
+    def run(job: dict, lf) -> tuple[int, str]:
+        from . import engine
+        srv = engine.running(repo)
+        try:
+            before = _snap_tasks(srv)
+            live = next((t for t in before if not t.get("endTime")), None)
+            if live is None:
+                engine.trigger_snapshot(repo, source)
+                seen = {t.get("id") for t in before}
+                deadline = time.time() + 30
+                while live is None and time.time() < deadline and not job["stop_requested"]:
+                    time.sleep(0.5)
+                    live = next((t for t in _snap_tasks(srv) if t.get("id") not in seen), None)
+            if live is None:
+                return 1, "KopiaLens's kopia server didn't start the snapshot."
+            tid = live["id"]
+        except Exception as exc:  # noqa: BLE001 - the command line still works
+            log.warning("server snapshot for %s: %s - using the command line", source, exc)
+            return _stream_one(job, cli_cmd, lf)
+        job["server_task"] = job["detail"]["server_task"] = f"engine:{repo}:{srv.tag}.{tid}"
+        cancelled, t, shown = False, {}, 0
+        while True:
+            if job["stop_requested"] and not cancelled:
+                cancelled = True
+                try:
+                    srv.ui.post(f"/api/v1/tasks/{tid}/cancel", json={})
+                except Exception:  # noqa: BLE001 - the server may already be gone
+                    break
+            try:
+                t = srv.ui.get(f"/api/v1/tasks/{tid}").json()
+                entries = (srv.ui.get(f"/api/v1/tasks/{tid}/logs").json() or {}).get("logs") or []
+            except Exception as exc:  # noqa: BLE001
+                return 1, f"KopiaLens's kopia server stopped answering: {exc}"
+            job["counters"] = {k: {"value": int(v.get("value") or 0), "units": v.get("units") or "",
+                                   "level": v.get("level") or ""} for k, v in (t.get("counters") or {}).items()}
+            for e in entries[shown:]:                     # kopia keeps the newest 1000 lines
+                line = engine._log_text(e).split(" ", 1)[-1]
+                job["buffer"].append(time.strftime("%H:%M:%S ") + line)
+                job["line_count"] += 1
+                lf.write(line + "\n")
+            shown = max(shown, len(entries))
+            lf.flush()
+            if t.get("endTime"):
+                break
+            time.sleep(1)
+        ok = (t.get("status") or "").upper() == "SUCCESS"
+        return (0, "") if ok else (1, t.get("errorMessage") or "The snapshot was cancelled.")
+    return run
+
+
 def _stream_one(job: dict, cmd: list[str], lf) -> tuple[int, str]:
     """Run one command, stamping every line into the ring buffer and appending the raw line
     to the job log. Returns (rc, last stderr line) - the last line feeds the error text."""
@@ -603,7 +673,7 @@ def _stream_one(job: dict, cmd: list[str], lf) -> tuple[int, str]:
                 manifest = json.loads(line)
                 job["snapshot_id"] = manifest.get("id")
                 live = {k: v for k, v in (job.get("counters") or {}).items()
-                        if k in ("Hashed size", "Cached size", "Uploaded")}
+                        if k in ("Hashed Bytes", "Cached Bytes", "Uploaded Bytes")}
                 job["counters"] = {**live, **_snapshot_counters(job, manifest)}
                 job["progress_pct"], job["progress_text"] = 100.0, ""
                 line =f"Saved snapshot {manifest.get('id')}"
