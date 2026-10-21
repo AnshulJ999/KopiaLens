@@ -63,6 +63,7 @@
                               x-text="update().available ? 'See update' : (checkingUpdates ? 'Checking…' : 'Check now')"></button></span></div>
                   <div x-show="about.notices" class="flex items-center justify-between gap-3"><span>Third-party notices</span>
                     <a class="kl-btn" :href="appUrl('/api/app/notices')" download>Download</a></div>
+                  <p class="text-[0.6875rem] text-muted">Built on Kopia, by Jarek Kowalski and contributors. Not affiliated with or endorsed by the Kopia project.</p>
                   <div class="flex items-center justify-between gap-3 pt-2"><span class="text-[0.6875rem] text-muted">For bug reports.</span>
                     <span class="flex items-center gap-2">
                       <button @click="copyAbout()" class="kl-btn">Copy details</button>

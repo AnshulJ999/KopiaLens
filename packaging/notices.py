@@ -102,6 +102,7 @@ class Notices:
 
     def render(self) -> str:
         out = ["KopiaLens third-party notices", "",
+               "Built on Kopia, by Jarek Kowalski and contributors. Not affiliated with or endorsed by the Kopia project.", "",
                "KopiaLens includes the software listed below. Each component is used under its own licence;",
                "the full licence texts follow the list.", ""]
         for title, lines in self.listing:

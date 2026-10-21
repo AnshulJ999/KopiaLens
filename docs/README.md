@@ -91,3 +91,7 @@ KopiaLens is an app for exploring, analysing and managing [Kopia](https://kopia.
 - [Maintenance](maintenance.md): run kopia's maintenance by hand.
 - [New snapshot](new-snapshot.md): back up any folder now.
 - [Job panel](job-panel.md): a running action's progress and result.
+
+## Thanks to Kopia
+
+Thank you to the Kopia team and contributors. KopiaLens wouldn't exist without Kopia. It's one of the best backup engines out there: fast, secure and dependable, and I'm grateful to be able to build on it. KopiaLens is an independent project, not affiliated with or endorsed by the Kopia project.
