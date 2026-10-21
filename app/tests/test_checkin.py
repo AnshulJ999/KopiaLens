@@ -41,7 +41,8 @@ def test_with_both_switches_off_nothing_is_sent(monkeypatch, sent):
 def test_the_update_check_alone_sends_no_install_id(monkeypatch, sent):
     _switches(monkeypatch, True, False)
     checkin.check_now()
-    assert set(sent[0]) == {"schema", "version", "install_type", "os", "channel"}
+    assert set(sent[0]) == {"schema", "version", "install_type", "os", "channel", "stats"}
+    assert sent[0]["stats"] == "off"
 
 
 def test_usage_stats_send_feature_names_once(monkeypatch, sent):
@@ -97,7 +98,7 @@ def test_usage_stats_wait_for_a_day_old_persistent_install(monkeypatch, sent):
 def test_check_now_compares_even_with_automatic_checks_off(monkeypatch, sent):
     _switches(monkeypatch, False, False)
     assert checkin.check_now(manual=True) is True
-    assert set(sent[0]) == {"schema", "version", "install_type", "os", "channel"}
+    assert set(sent[0]) == {"schema", "version", "install_type", "os", "channel", "stats"}
     assert checkin.status()["available"] is True
     assert checkin.check_now() is False and len(sent) == 1   # the daily check stays off
 
@@ -118,3 +119,30 @@ def test_usage_stats_name_the_plan(monkeypatch, status, tier):
     from app.licensing import licence
     monkeypatch.setattr(licence, "status", lambda: status)
     assert checkin._tier() == tier and re.fullmatch(r"[a-z0-9_-]{1,30}", tier)
+
+
+def test_switching_usage_stats_off_is_counted_once_without_an_id(monkeypatch, sent):
+    """opt-outs must be visible, with nothing that identifies the install."""
+    _switches(monkeypatch, True, True)
+    checkin.check_now()
+    _switches(monkeypatch, True, False)
+    checkin.check_now()
+    checkin.check_now()
+    assert "install_id" in sent[0]
+    assert sent[1]["stats_turned_off"] is True and "install_id" not in sent[1]
+    assert "stats_turned_off" not in sent[2] and sent[2]["stats"] == "off"
+
+
+def test_a_failed_in_app_update_reports_its_step_once(monkeypatch, sent):
+    _switches(monkeypatch, True, True)
+    checkin.set_install_progress("downloading", 40)
+    checkin.set_install_progress("failed", error="network")
+    checkin.check_now()
+    checkin.check_now()
+    assert sent[0]["update_failed_at"] == "downloading"
+    assert "update_failed_at" not in sent[1]
+
+
+@pytest.mark.parametrize("size,name", [(0, "under_100mb"), (2 * 1024 ** 3, "1_5gb"), (30 * 1024 ** 3, "over_20gb")])
+def test_index_size_goes_out_as_a_class_only(size, name):
+    assert checkin._size_class(size, checkin._INDEX_CLASSES, "over_20gb") == name

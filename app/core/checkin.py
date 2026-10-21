@@ -18,7 +18,7 @@ import time
 import urllib.request
 
 from appversion import order_key
-from config import APP_VERSION, CHECKIN_URL, COMPILED, DATA_DIR, DEMO_INSTANCE, REPO_URL, REPOS, is_demo
+from config import APP_VERSION, CHECKIN_URL, COMPILED, DATA_DIR, DEMO_INSTANCE, REPO_URL, REPOS, is_demo, repo_record
 
 from .applog import get_logger
 
@@ -163,25 +163,74 @@ def _tier() -> str:
     return tier[:30]
 
 
+_GB = 1024 ** 3
+_INDEX_CLASSES = ((0.1 * _GB, "under_100mb"), (_GB, "100mb_1gb"), (5 * _GB, "1_5gb"), (20 * _GB, "5_20gb"))
+_MEMORY_CLASSES = ((4 * _GB, "under_4gb"), (8 * _GB, "4_8gb"), (16 * _GB, "8_16gb"))
+
+
+def _size_class(size: int, classes: tuple, top: str) -> str:
+    return next((name for limit, name in classes if size < limit), top)
+
+
+def _index_bytes(repos: list[str]) -> int:
+    """KopiaLens's own index on disk (the repoN folders), never anything from the backups."""
+    from ..index import store
+    total = 0
+    for r in repos:
+        for root, _dirs, files in os.walk(store.repo_dir(r)):
+            for f in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, f))
+                except OSError:
+                    pass
+    return total
+
+
+def _stats_state() -> str:
+    """Why usage stats are or aren't sent: on, off, or waiting (first day, or a data folder that isn't kept)."""
+    if not stats_enabled():
+        return "off"
+    return "on" if stats_ready() else "waiting"
+
+
 def build_payload(include_stats: bool) -> dict:
-    payload = {"schema": 1, "version": APP_VERSION, "install_type": install_type(), "os": _os_name(),
+    payload = {"schema": 2, "version": APP_VERSION, "install_type": install_type(), "os": _os_name(),
                "channel": channel()}
-    if include_stats:
-        from . import repos as repos_mod
-        kopia = [r for r, c in list(REPOS.items()) if c.get("kind", "kopia") == "kopia" and not is_demo(r)]
-        storages = sorted({repos_mod.storage_info(r).get("type") or "unknown" for r in kopia})
-        with _lock:
-            used, opened = sorted(_used), _opened
-        payload.update(
-            install_id=install_id(),
-            arch=platform.machine().lower(),
-            tier=_tier(),
-            repos=len(kopia),
-            storage_types=storages,
-            backblaze=any(c.get("kind") == "backblaze" for c in list(REPOS.values())),
-            opened=opened,
-            features_used=used,
-        )
+    if not include_stats:
+        payload["stats"] = _stats_state()
+        if payload["stats"] == "off" and _read_state().get("stats_last") is True:
+            payload["stats_turned_off"] = True
+        return payload
+    from ..api.onboarding import needed as setup_needed
+    from ..index import store
+    from . import host, kopiabin
+    from . import repos as repos_mod
+    kopia = [r for r, c in list(REPOS.items()) if c.get("kind", "kopia") == "kopia" and not is_demo(r)]
+    storages = sorted({repos_mod.storage_info(r).get("type") or "unknown" for r in kopia})
+    with _lock:
+        used, opened = sorted(_used), _opened
+    kopia_info = kopiabin.info()
+    ram = host.ram_bytes()
+    payload.update(
+        install_id=install_id(),
+        arch=platform.machine().lower(),
+        tier=_tier(),
+        repos=len(kopia),
+        storage_types=storages,
+        backblaze=any(c.get("kind") == "backblaze" for c in list(REPOS.values())),
+        opened=opened,
+        features_used=used,
+        setup="not_yet" if setup_needed() else "finished",
+        first_index=any(os.path.exists(store.manifest_path(r)) for r in kopia),
+        kopia_version=kopia_info.get("version") or "unknown",
+        kopia_bundled=bool(kopia_info.get("bundled")),
+        own_server=any(repo_record(r).get("engine") == "kopialens" for r in kopia),
+        index_class=_size_class(_index_bytes(kopia), _INDEX_CLASSES, "over_20gb"),
+        memory_class=_size_class(ram, _MEMORY_CLASSES, "over_16gb") if ram else "unknown",
+    )
+    failed_at = _read_state().get("update_failed_at")
+    if isinstance(failed_at, str) and failed_at:
+        payload["update_failed_at"] = failed_at
     return payload
 
 
@@ -270,9 +319,10 @@ def check_now(manual: bool = False) -> bool:
     if data is None:
         _write_state(retry_at=now + RETRY_AFTER_FAILURE)
         return False
-    _write_state(last_checkin_at=now, retry_at=0,
+    _write_state(last_checkin_at=now, retry_at=0, stats_last=stats_enabled(),
                  update_info={**_clean_reply(data), "manual": manual, "channel": channel()})
     if want_stats:
+        _write_state(update_failed_at=None)
         with _lock:
             _used.clear()
             _opened = False
@@ -350,6 +400,9 @@ def set_install_progress(state: str, pct: int | None = None, error: str | None =
     failed. Taking it up ends the request."""
     global _install_requested
     _install_requested = False
+    if state == "failed":   # the step it stopped at goes out once with the next usage stats
+        step = _install.get("state")
+        _write_state(update_failed_at=step if step in ("waiting", "checking", "downloading", "installing") else "unknown")
     _install.clear()
     _install.update(state=state, pct=pct, error=error, at=time.time())
 

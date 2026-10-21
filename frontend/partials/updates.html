@@ -3,7 +3,7 @@
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Check for updates</span>
                   <button @click="updateCheck = !updateCheck; saveKl('update_check')" class="h-8 rounded border border-bd px-3" x-text="updateCheck ? 'On' : 'Off'"></button></div>
-                <p class="text-[0.6875rem] text-muted mt-1">Sends the KopiaLens version, update channel, install type and operating system.</p>
+                <p class="text-[0.6875rem] text-muted mt-1">Sends the KopiaLens version, update channel, install type, operating system and whether usage stats are on.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Update channel</span>
@@ -16,7 +16,7 @@
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Anonymous usage stats</span>
                   <button @click="usageStats = !usageStats; saveKl('usage_stats')" class="h-8 rounded border border-bd px-3" x-text="usageStats ? 'On' : 'Off'"></button></div>
-                <p class="text-[0.6875rem] text-muted mt-1">Adds a random install id, Free or Pro, how many repositories and which storage types, and the names of features used. Never paths, file names, sizes or anything from your backups.</p>
+                <p class="text-[0.6875rem] text-muted mt-1">Adds a random install id, Free or Pro, how many repositories and which storage types, the names of features used, your kopia version, and rough size classes of KopiaLens's index and this computer's memory. Never paths, file names or anything from your backups.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span class="font-medium">What's sent</span>
