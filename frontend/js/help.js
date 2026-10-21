@@ -23,11 +23,6 @@ const helpPart = {
       this.helpMenu = !this.helpMenu;
       if (this.helpMenu) { this.loadHelp(); if (!this.acct) this.loadAccount(); }
     },
-    helpLink(which) {
-      this.helpMenu = false;
-      const url = this.help && this.help.links && this.help.links[which];
-      if (url) window.open(url, "_blank", "noopener");
-    },
     isDesktopWindow() { return !!window.klZoom; },
     zoomStep(dir) { if (window.klZoom) window.klZoom.step(dir); },
     zoomReset() { if (window.klZoom) window.klZoom.reset(); },

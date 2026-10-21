@@ -61,6 +61,8 @@
                       <span x-text="update().available ? update().latest + ' is out' : (update().checked_at ? 'Up to date' : 'Not checked yet')"></span>
                       <button class="kl-btn" @click="update().available ? (showUpdate = true) : checkUpdatesNow()" :disabled="checkingUpdates"
                               x-text="update().available ? 'See update' : (checkingUpdates ? 'Checking…' : 'Check now')"></button></span></div>
+                  <div x-show="about.notices" class="flex items-center justify-between gap-3"><span>Third-party notices</span>
+                    <a class="kl-btn" :href="appUrl('/api/app/notices')" download>Download</a></div>
                   <div class="flex items-center justify-between gap-3 pt-2"><span class="text-[0.6875rem] text-muted">For bug reports.</span>
                     <span class="flex items-center gap-2">
                       <button @click="copyAbout()" class="kl-btn">Copy details</button>

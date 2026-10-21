@@ -11,7 +11,7 @@ import threading
 import time
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 import config
@@ -25,10 +25,25 @@ router = APIRouter(tags=["app"])
 
 # ---------------------------------------------------------------------------- about + restart
 
+def _notices_path() -> str | None:
+    """THIRD-PARTY-NOTICES.txt, which release builds put beside the server program."""
+    path = os.path.join(os.path.dirname(config.SELF_EXE), "THIRD-PARTY-NOTICES.txt")
+    return path if config.COMPILED and os.path.isfile(path) else None
+
+
+@router.get("/app/notices")
+def notices() -> FileResponse:
+    path = _notices_path()
+    if not path:
+        raise HTTPException(status_code=404, detail="This copy has no third-party notices file.")
+    return FileResponse(path, filename="KopiaLens-third-party-notices.txt", media_type="text/plain; charset=utf-8")
+
+
 @router.get("/app/about")
 def about() -> dict:
     from ..core import auth, dataupgrade, kopiabin
     return {
+        "notices": _notices_path() is not None,
         "version": config.APP_VERSION,
         "commit": config.APP_COMMIT,
         "profile": auth.profile(),

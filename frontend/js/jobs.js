@@ -248,6 +248,15 @@ const jobsPart = {
           confirmLabel: "Stop maintenance", danger: true,
         });
         if (!ok || !this.jobPanel || this.jobPanel.state !== "running") return;
+      } else if (this.jobPanel.kind === "restore") {
+        const target = this.jobPanel.target;
+        const ok = await this.klConfirm({
+          title: "Stop this restore?",
+          facts: [["Repo", this.jobPanel.repo], ...(target ? [["Restoring to", target]] : []), ["Running", this.jobElapsed()]],
+          callout: "Files already restored stay where they are. The file being written right now may be left incomplete.",
+          confirmLabel: "Stop restore", danger: true,
+        });
+        if (!ok || !this.jobPanel || this.jobPanel.state !== "running") return;
       }
       await getJson("/api/jobs/stop", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ job_id: this.jobPanel.job_id }) }).catch((e) => { this.error = e.message; });

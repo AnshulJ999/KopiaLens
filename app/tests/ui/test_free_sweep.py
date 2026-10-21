@@ -133,7 +133,12 @@ def test_free_replies_carry_no_delete_ingredients(app_server, fixture_repo, kopi
     assert h.wait_until(lambda: srv.get(f"/api/jobs/status?job_id={job['job_id']}").get("state")
                         not in ("queued", "running"), wait=60)
     ctx["job_id"] = job["job_id"]
+    prune_plan = {"repo": repo, "source": row["source"], "full_path": row["full_path"]}
+    prune_token = (_call(srv, "POST", "/api/prune/plan", prune_plan) or {}).get("token")
     previews = [
+        ("/api/prune/plan", prune_plan),
+        *([("/api/prune/price", {"token": prune_token, "remove": [0]})] if prune_token else []),
+        ("/api/policies/preview", {"repo": repo, "target": row["source"], "pattern": "*.txt"}),
         ("/api/delete/plan", {"repo": repo, "files": [item], "method": "remove"}),
         ("/api/delete/plan", {"repo": repo, "files": [item], "method": "remove", "by": "filename"}),
         ("/api/delete/plan", {"repo": repo, "files": [item], "method": "snapshots"}),

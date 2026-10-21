@@ -16,6 +16,10 @@ No. KopiaLens includes kopia, and can create repositories, run backups on schedu
 
 No file names, paths or backup contents ever leave your computer. KopiaLens checks for updates once a day and sends anonymous usage numbers with it. Both can be turned off ([Update checks and usage stats](usage-stats.md)).
 
+### Why does KopiaLens start kopia with `--insecure`?
+
+When KopiaLens runs backups for a repository, or when **Listing backend** is set to keep a kopia server running, it starts a kopia server in the background. That server listens only on this computer (`127.0.0.1`), on a random port, with a random password made for each start, and nothing on your network can reach it. `--insecure` means the server doesn't use HTTPS, which a connection that never leaves the computer doesn't need. `--disable-csrf-token-checks` turns off a protection for kopia's own web page in a browser; KopiaLens talks to the server directly, not through a browser. Your repository stays encrypted as always.
+
 ### Where does KopiaLens keep its data?
 
 In its data folder. **Settings → About** shows where it is. It holds the settings, the index, logs and history, never your backups.

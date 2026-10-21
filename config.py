@@ -27,7 +27,7 @@ API_VERSION = 1   # the stable API's version (docs/api.md); matches klens.API_VE
 # Sandbox (Polar test purchases) until the production switch; never ship this default.
 LICENCE_SERVICE_URL = os.environ.get("KOPIALENS_LICENCE_SERVICE") or "https://licensekit-sandbox.anshuljain.workers.dev"
 PRICING_URL = os.environ.get("KOPIALENS_PRICING_URL") or "https://kopialens.com/#pricing"
-# Daily update check + usage stats (docs/usage-stats.md). Placeholder host until the domain exists.
+# Daily update check + usage stats (docs/usage-stats.md).
 CHECKIN_URL = os.environ.get("KOPIALENS_CHECKIN_URL") or "https://checkin.kopialens.com/v1/checkin"
 # Help menu.
 DOCS_URL = os.environ.get("KOPIALENS_DOCS_URL") or "https://kopialens.com/docs"

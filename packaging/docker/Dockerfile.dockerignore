@@ -9,6 +9,7 @@
 !frontend/
 !packaging/build_server.py
 !packaging/notes_bundle.py
+!packaging/notices.py
 !packaging/docker/entrypoint.sh
 !shell/disk-scanner/
 shell/disk-scanner/target

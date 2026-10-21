@@ -27,7 +27,8 @@ RUN --mount=type=cache,target=/root/.cache/Nuitka \
 FROM rust:1-slim-${DEBIAN} AS scanner
 WORKDIR /src
 COPY shell/disk-scanner .
-RUN cargo build --release --locked && ./target/release/kopialens-scan --version
+RUN cargo build --release --locked && ./target/release/kopialens-scan --version \
+    && cargo metadata --format-version 1 --locked --filter-platform "$(rustc -vV | sed -n 's/^host: //p')" > /src/cargo-metadata.json
 
 # ---- kopia, checksum-verified ------------------------------------------------------------------
 FROM debian:${DEBIAN}-slim AS kopia
@@ -42,6 +43,14 @@ RUN set -eux; \
     grep " $f\$" checksums.txt | sha256sum -c -; \
     tar -xzf "$f"; mkdir -p /kopia; mv kopia-*/kopia kopia-*/LICENSE /kopia/
 
+# ---- third-party notices (packaging/notices.py) ------------------------------------------------
+FROM build AS notices
+COPY --from=kopia /kopia/LICENSE /tmp/kopia-LICENSE
+COPY --from=scanner /usr/local/cargo/registry /usr/local/cargo/registry
+COPY --from=scanner /src/cargo-metadata.json /tmp/cargo-metadata.json
+RUN python packaging/notices.py /out/THIRD-PARTY-NOTICES.txt --kopia-license /tmp/kopia-LICENSE \
+    --cargo-metadata /tmp/cargo-metadata.json
+
 # ---- final image -------------------------------------------------------------------------------
 FROM debian:${DEBIAN}-slim
 RUN apt-get update \
@@ -50,6 +59,7 @@ RUN apt-get update \
 COPY --from=build /out/kopialens.dist /app
 COPY --from=kopia /kopia /app/kopia
 COPY --from=scanner /src/target/release/kopialens-scan /app/kopialens-scan
+COPY --from=notices /out/THIRD-PARTY-NOTICES.txt /app/THIRD-PARTY-NOTICES.txt
 COPY packaging/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh /app/kopia/kopia
 # The command line: docker exec <container> klens status

@@ -167,9 +167,8 @@
             <button type="button" role="menuitem" @click="openDocs('README')" class="w-full text-left px-3 py-1.5 hover:bg-head">Documentation</button>
             <button type="button" role="menuitem" @click="openDiagnostics(true)" class="w-full text-left px-3 py-1.5 hover:bg-head">Report a problem…</button>
             <button type="button" role="menuitem" @click="openDiagnostics(false)" class="w-full text-left px-3 py-1.5 hover:bg-head">Create diagnostics bundle…</button>
-            <button type="button" role="menuitem" @click="helpLink('discord')" :disabled="!(help && help.links && help.links.discord)"
-                    data-placeholder="discord" :title="help && help.links && help.links.discord ? '' : 'Coming soon'"
-                    class="w-full text-left px-3 py-1.5 hover:bg-head disabled:opacity-50 disabled:hover:bg-transparent">Discord</button>
+            <a x-show="help && help.links && help.links.discord" role="menuitem" :href="help && help.links && help.links.discord" target="_blank" rel="noopener"
+               @click="helpMenu = false" class="block w-full text-left px-3 py-1.5 hover:bg-head">Discord</a>
             <div class="my-1 border-t border-bd"></div>
             <button type="button" role="menuitem" @click="checkUpdatesNow()" :disabled="checkingUpdates" class="w-full text-left px-3 py-1.5 hover:bg-head"
                     x-text="checkingUpdates ? 'Checking for updates…' : 'Check for updates'"></button>

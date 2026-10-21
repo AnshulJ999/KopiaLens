@@ -576,6 +576,14 @@ def step_stage() -> None:
         stage_es(server)
         # Logo icons for desktop shortcuts (Properties > Change Icon); built by build_logos.py.
         shutil.copytree(os.path.join(SHELL, "icons", "shortcuts"), os.path.join(STAGE, "icons"))
+    notices = [sys.executable, os.path.join(KL_ROOT, "packaging", "notices.py"),
+               os.path.join(server, "THIRD-PARTY-NOTICES.txt"), "--python", BUILD_PYTHON,
+               "--kopia-license", os.path.join(server, "kopia", "LICENSE")]
+    if WINDOWS:
+        notices += ["--es-license", os.path.join(server, "es-LICENSE.txt")]
+    for crate in (SHELL, os.path.join(KL_ROOT, "shell", "cli-launcher"), os.path.join(KL_ROOT, "shell", "disk-scanner")):
+        notices += ["--cargo", os.path.join(crate, "Cargo.toml")]
+    run(notices, KL_ROOT, "notices.log")
     log(f"  staged {server}")
 
 
