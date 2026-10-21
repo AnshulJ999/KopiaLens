@@ -17,6 +17,7 @@ The new one is a normal release build (its folder has latest.json and the setup.
 import http.server
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -119,6 +120,26 @@ def _version() -> str | None:
         return None
 
 
+def _setup_version(setup: str) -> str:
+    m = re.match(r"KopiaLens-(.+?)-updatetest-", os.path.basename(setup))
+    if not m:
+        raise SystemExit(f"Not an update-test installer: {setup}")
+    return m.group(1)
+
+
+def _installed_version() -> str | None:
+    """The version the installer recorded (written last), for everyone or for this user."""
+    import winreg
+    key = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\KopiaLens"
+    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        try:
+            with winreg.OpenKey(hive, key, 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as k:
+                return winreg.QueryValueEx(k, "DisplayVersion")[0]
+        except OSError:
+            continue
+    return None
+
+
 def _wait(cond, seconds: int) -> bool:
     deadline = time.time() + seconds
     while time.time() < deadline:
@@ -146,10 +167,19 @@ def here(old_setup: str, new_dir: str) -> int:
             print("  closing the installed copy")
             subprocess.run([HERE_EXE, "--quit"], env={**os.environ, "KOPIALENS_DATA_DIR": HERE_DATA}, timeout=120)
             _wait(lambda: not _version(), 60)
-        print("  installing the old build (answer Yes if Windows asks)")
-        rc = subprocess.run([old_setup, "/S"]).returncode
-        if not check("old version installs", rc == 0, f"exit {rc}"):
-            return 1
+        # Passive, not silent: a silent upgrade of an install for everyone never asks for admin. Passive
+        # relaunches itself elevated and this copy exits at once (code 2 when it hands over), so the
+        # exit code says nothing; the installed version in the registry, written last, says when it is done.
+        want = _setup_version(old_setup)
+        if _installed_version() == want:
+            print(f"  the old build ({want}) is already installed")
+        else:
+            print("  installing the old build: answer Yes when Windows asks")
+            rc = subprocess.run([old_setup, "/P"]).returncode
+            done = _wait(lambda: _installed_version() == want, 600)
+            if not check("old version installs", done, f"exit {rc}, installed {_installed_version()}"):
+                return 1
+            time.sleep(5)
         env = {**os.environ, "KOPIALENS_CHECKIN_URL": f"http://127.0.0.1:{PORT}/v1/checkin"}
         subprocess.Popen([HERE_EXE], env=env, close_fds=True)
         if not check("old version starts", _wait(_version, 180), f"version {_version()}"):
