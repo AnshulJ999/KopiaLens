@@ -501,6 +501,18 @@ def asset(kind: str) -> str:
     return f"KopiaLens-{_ctx['version']}{tag()}-{PLATFORM}-{ARCH}{kind}"
 
 
+def sandbox_licensing() -> str:
+    """What still points at the sandbox licence service in the shipped code ("" when nothing)."""
+    found = []
+    with open(os.path.join(KL_ROOT, "config.py"), encoding="utf-8") as fh:
+        if re.search(r'^LICENCE_SERVICE_URL\b.*sandbox', fh.read(), re.M):
+            found.append("LICENCE_SERVICE_URL in config.py")
+    with open(KEYS_FILE, encoding="utf-8") as fh:
+        if re.search(r'^\s*"s1"\s*:', fh.read(), re.M):
+            found.append("key s1 in app/licensing/keys.py")
+    return ", ".join(found)
+
+
 def step_check() -> None:
     v = versions()
     version = _ctx["version"]
@@ -516,6 +528,12 @@ def step_check() -> None:
         log(f"  WARNING: building {version}, but the newest kopialens/v* tag here is {newest}")
     if v["cargo"] != version or v["tauri"] != version:
         log(f"  note: Cargo.toml {v['cargo']} / tauri.conf.json {v['tauri']}; the build is stamped {version}")
+    sandbox = sandbox_licensing()
+    if sandbox and "-" not in version and not _ctx["testing"] and not _ctx["update_endpoint"]:
+        msg = f"a final version ({version}) still uses the sandbox licence service: {sandbox}"
+        if os.environ.get("GITHUB_ACTIONS"):
+            fail(msg)
+        log(f"  WARNING: {msg}. Fine for a local test build; the release pipeline refuses it.")
     shell_key, server_key = updater_keys()
     if not shell_key:
         fail("no updater public key in shell/src-tauri/tauri.conf.json (plugins.updater.pubkey)")
