@@ -5,11 +5,11 @@ purpose: a loose file next to it could be swapped for someone's own key."""
 
 PRODUCT = "kopialens"
 
-# kid -> PASERK public key. m1 = master key (manual licences), s1 = sandbox licence service
-# (test purchases; remove before the first public build), w1 = production service (not created yet).
+# kid -> PASERK public key. m1 = master key (manual licences), w1 = licence service (store and
+# Patreon licences). The sandbox key s1 is never trusted, so test purchases can't unlock a real build.
 PUBLIC_KEYS = {
     "m1": "k4.public.CA5tbNuOoF-1TmwqggfVSQrY_jkvDJFKXjo39QwYtDo",
-    "s1": "k4.public.TK_dcau5q2fE8Z3Y8iH_Cc97Ws_FDDKFDdEfz-i3W6o",
+    "w1": "k4.public.DzC7IkTuiro34R86DnVXzLvhH7ouhKL_ZuJhpSyPjZw",
 }
 
 # Refunded or leaked licence ids (the issuing tool exports this list for each release).

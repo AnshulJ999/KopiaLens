@@ -24,8 +24,7 @@ TESTING_BUILD = os.path.isfile(os.path.join(HERE, "devnotes", "TESTING.txt"))
 API_VERSION = 1   # the stable API's version (docs/api.md); matches klens.API_VERSION
 
 # Online addresses baked into every shipped copy. Final values before the first public build.
-# Sandbox (Polar test purchases) until the production switch; never ship this default.
-LICENCE_SERVICE_URL = os.environ.get("KOPIALENS_LICENCE_SERVICE") or "https://licensekit-sandbox.anshuljain.workers.dev"
+LICENCE_SERVICE_URL = os.environ.get("KOPIALENS_LICENCE_SERVICE") or "https://licence.kopialens.com"
 PRICING_URL = os.environ.get("KOPIALENS_PRICING_URL") or "https://kopialens.com/#pricing"
 # Daily update check + usage stats (docs/usage-stats.md).
 CHECKIN_URL = os.environ.get("KOPIALENS_CHECKIN_URL") or "https://checkin.kopialens.com/v1/checkin"
