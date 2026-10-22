@@ -1,4 +1,4 @@
-<h1 align="center"><a href="https://kopialens.com"><img src="assets/logo.svg" width="48" height="48" align="absmiddle" alt="KopiaLens logo"></a> KopiaLens</h1>
+<h1 align="center"><a href="https://kopialens.com"><img src="assets/logo-heading.svg" width="48" height="56" align="absmiddle" alt="KopiaLens logo"></a> KopiaLens</h1>
 
 <p align="center"><b>Find what's bloating your Kopia backups. Get the space back.</b></p>
 
