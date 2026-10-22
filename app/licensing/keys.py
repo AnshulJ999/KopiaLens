@@ -14,5 +14,7 @@ PUBLIC_KEYS = {
 
 # Refunded or leaked licence ids (the issuing tool exports this list for each release).
 BANNED_IDS: frozenset = frozenset({
+    "94X3-MG6G-7RN9",
     "AVEE-S6G7-PBFN",
+    "L246-R3SJ-PXAY",
 })
