@@ -1021,6 +1021,7 @@ def build(out: str | None = None, *, files: int = DEFAULT_FILES, seed: int = DEF
         os.remove(check)
     lines = [ln for ln in (res.stdout or "").splitlines() if ln.startswith("{")]
     if res.returncode != 0 or not lines:
+        log.error("sample build failed (exit %s):\n%s", res.returncode, res.stderr or "(no output)")
         raise RuntimeError(f"sample build failed (exit {res.returncode}): {(res.stderr or '')[-800:]}")
     child = json.loads(lines[-1])
     demo.prune(building, [repo])

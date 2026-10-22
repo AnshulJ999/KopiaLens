@@ -857,10 +857,10 @@ def _hash(salt: str, text: str) -> str:
 
 
 def _child_env(folder: str) -> dict:
-    env = dict(os.environ, KOPIALENS_DATA_DIR=folder, PYTHONIOENCODING="utf-8")
-    for k in ("KOPIALENS_CACHE_DIR", "KOPIALENS_CONFIG_DIR", "KOPIALENS_REPOS_FILE"):
-        env.pop(k, None)
-    return env
+    # Every folder is named: in a portable build the marker beats KOPIALENS_DATA_DIR for the rest.
+    return dict(os.environ, KOPIALENS_DATA_DIR=folder, KOPIALENS_CONFIG_DIR=folder,
+                KOPIALENS_REPOS_FILE=os.path.join(folder, "repos.json"),
+                KOPIALENS_CACHE_DIR=os.path.join(folder, "cache"), PYTHONIOENCODING="utf-8")
 
 
 def _finish(folder: str, forbidden: set[str]) -> dict:
