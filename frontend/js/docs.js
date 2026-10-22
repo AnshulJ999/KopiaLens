@@ -69,6 +69,7 @@ const docsPart = {
       const p = this.docs && this._docsLoaded && this._docsLoaded.pages[this.docs.page];
       if (!p) return "";
       const files = new Set(this._docsLoaded.files || []);
+      const dark = this.themeIsDark();   // read here so a theme switch re-renders the page
       const renderer = {
         heading({ tokens, depth, text }) {
           return `<h${depth} id="doc-${docSlug(text)}">${this.parser.parseInline(tokens)}</h${depth}>`;
@@ -82,10 +83,13 @@ const docsPart = {
           return `<a href="${escHtml(href)}" target="_blank" rel="noopener"${tip}>${inner}</a>`;
         },
         // A screenshot not taken yet shows as a labelled box until its file exists in docs/.
+        // In a dark theme, `x-dark.png` next to `x.png` is shown instead when it exists.
         image({ href, text }) {
           if (/^https?:/.test(href || "")) return `<img src="${escHtml(href)}" alt="${escHtml(text)}">`;
           if (!files.has(href)) return `<span class="kl-doc-ph">${escHtml(text || "Screenshot")}</span>`;
-          return `<img src="${appUrl("/api/help/docs/file")}?path=${encodeURIComponent(href)}" alt="${escHtml(text)}">`;
+          const darkHref = href.replace(/(\.\w+)$/, "-dark$1");
+          const src = dark && files.has(darkHref) ? darkHref : href;
+          return `<img src="${appUrl("/api/help/docs/file")}?path=${encodeURIComponent(src)}" alt="${escHtml(text)}">`;
         },
       };
       return window.marked.marked.parse(p.md, { gfm: true, renderer: Object.assign(new window.marked.Renderer(), renderer) });
