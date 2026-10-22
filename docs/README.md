@@ -11,7 +11,6 @@ KopiaLens is an app for exploring, analysing and managing [Kopia](https://kopia.
 - [Home Assistant](home-assistant.md): the add-on, opening it from the sidebar or its own port, and its folders.
 - [Backups](backups.md): who runs a repository's backups, snapshots by hand, pausing, Tasks, snapshot scripts and checking backups.
 - [Notifications](notifications.md): alerts in the app and tray, KopiaLens's webhook (works with ntfy), and kopia's email, Pushover and webhook profiles.
-- [Using KopiaLens with BlinkDisk](blinkdisk.md): connecting a vault, who runs backups and maintenance, the computer name, and merging split histories.
 
 ## Guides
 
@@ -34,6 +33,7 @@ KopiaLens is an app for exploring, analysing and managing [Kopia](https://kopia.
 - [Why deleting frees space only after maintenance](deleting-and-space.md): what kopia does with deleted data, and when the space comes back.
 - [How indexing works](how-indexing-works.md): what the index holds, how it's built, and what it costs your computer.
 - [KopiaLens alongside KopiaUI](kopiaui.md): sharing repositories with KopiaUI safely.
+- [Using KopiaLens with BlinkDisk](blinkdisk.md): connecting a vault, who runs backups and maintenance, the computer name, and merging split histories.
 - [Hardware and memory](hardware.md): memory, disk space and the setups KopiaLens is measured on.
 - [Glossary](glossary.md): every term KopiaLens uses, in one place.
 
