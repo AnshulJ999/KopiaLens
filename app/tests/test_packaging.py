@@ -27,8 +27,9 @@ def _load(rel: str):
 def test_the_app_and_the_release_report_one_version(monkeypatch):
     """appversion is the one version (release tag > newest kopialens/v* tag > VERSION); release.py
     stamps it into the Tauri build, so Cargo.toml and tauri.conf.json are not kept in step by hand."""
-    monkeypatch.delenv("KOPIALENS_RELEASE_VERSION", raising=False)
     release = _load("packaging/release.py")
+    # Same conditions as config's import (a build-as-version setting included), so a local build of
+    # an untagged version still agrees.
     assert config.APP_VERSION == appversion.version() == release.release_version()
     monkeypatch.setenv("KOPIALENS_RELEASE_VERSION", "v9.8.7")
     assert release.release_version() == "9.8.7"
