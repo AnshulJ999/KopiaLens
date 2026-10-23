@@ -99,6 +99,23 @@
 </div>
 {%- endmacro %}
 
+{#- The same daily time choices as a segmented control at field height, for a Settings row.
+    Times only; the names show on hover. -#}
+{% macro time_seg(model, change='') -%}
+<div class="flex items-center gap-2" x-data="{ custom: false }" data-testid="time-seg">
+  <span class="kl-seg lg" role="radiogroup" aria-label="Time">
+    <template x-for="c in timeChips()" :key="c[0]">
+      <button type="button" role="radio" :aria-checked="!custom && {{ model }} === c[0]" :class="!custom && {{ model }} === c[0] ? 'on' : ''" :title="c[1]"
+              @click="custom = false; {{ model }} = c[0]; {{ change }}" x-text="c[0]"></button>
+    </template>
+    <button type="button" role="radio" :aria-checked="custom || !timeChips().some((c) => c[0] === {{ model }})"
+            :class="custom || !timeChips().some((c) => c[0] === {{ model }}) ? 'on' : ''" @click="custom = true">Custom…</button>
+  </span>
+  <input x-show="custom || !timeChips().some((c) => c[0] === {{ model }})" type="time" x-model="{{ model }}" @change="{{ change }}"
+         class="fld border border-bd bg-surface2" aria-label="Custom time">
+</div>
+{%- endmacro %}
+
 {#- A duration setting: a free number plus a unit, stored in seconds (klDur in settings.js). -#}
 {% macro duration(prop, key, min=0) -%}
 <div class="flex items-center gap-2" x-data="klDur('{{ prop }}', '{{ key }}')">

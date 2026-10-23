@@ -810,7 +810,12 @@ def _establish(verb: str, provider: str, fields: dict, password: str, name: str,
     args = _build_args(verb, provider, fields, config_file, options)
     extra_env, stdin_text = secret_inputs(provider, fields)
     log.info("%s repo=%s provider=%s config=%s", verb, rid, provider, config_file)
-    res = _run(args, password, extra_env=extra_env, stdin_text=stdin_text)
+    try:
+        res = _run(args, password, extra_env=extra_env, stdin_text=stdin_text)
+    except Exception:
+        _remove_config_files(config_file)
+        repos.release_id(rid)
+        raise
     if res["returncode"] != 0:
         _remove_config_files(config_file)
         repos.release_id(rid)
@@ -1060,13 +1065,17 @@ def attach(config_file: str | None, name: str = "", short_name: str = "",
             raise DuplicateRepo(str(dup.get("id")), dup.get("name") or str(dup.get("id")))
     with _CONNECT_LOCK:
         rid = repos.reserve_id()
-    record = repos.add_record({
-        "id": rid, "name": name or f"Repo {rid}", "short_name": short_name, "kind": "kopia",
-        "config_file": cfg, "source": "attached", "counts_as_backup": bool(counts_as_backup),
-        # Seed the type from the config file itself so the UI knows what it is before any kopia
-        # call; a live status capture (below) can refine it with capacity.
-        "storage": {"type": facts.get("type") or "", "config": facts.get("config") or {}},
-    })
+    try:
+        record = repos.add_record({
+            "id": rid, "name": name or f"Repo {rid}", "short_name": short_name, "kind": "kopia",
+            "config_file": cfg, "source": "attached", "counts_as_backup": bool(counts_as_backup),
+            # Seed the type from the config file itself so the UI knows what it is before any kopia
+            # call; a live status capture (below) can refine it with capacity.
+            "storage": {"type": facts.get("type") or "", "config": facts.get("config") or {}},
+        })
+    except Exception:
+        repos.release_id(rid)
+        raise
     repos.capture_status(rid, status or None)   # live status; an offline repo just stays uncaptured
     audit.audit("executed", "repo-attach", repo=rid,
                 summary={"config": cfg or "(default)", "type": facts.get("type")})

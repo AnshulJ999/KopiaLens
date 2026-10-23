@@ -45,12 +45,7 @@
         <button @click="obResume()" class="kl-btn primary">Finish setup</button>
         <button x-show="!noRepos" @click="obDismissSetup()" class="kl-btn quiet">Dismiss</button>
       </div>
-      <!-- Offered once after setup when the finish screen is off. -->
-      <div x-show="!ob && tourOffer" x-cloak class="mb-4 rounded-md border border-bd bg-surface2 px-4 py-2 flex flex-wrap items-center gap-3 text-sm" data-testid="tour-offer">
-        <div class="min-w-0 flex-1">Want a quick look around?</div>
-        <button @click="tourOffer = false; startTour()" class="kl-btn primary">Take the tour</button>
-        <button @click="tourOffer = false" class="kl-btn quiet">No thanks</button>
-      </div>
+
       <div x-show="noRepos" x-cloak class="rounded-md border border-dashed border-bd bg-surface px-4 py-10 text-center text-muted" data-testid="no-repos">
         <div>No repositories yet.</div>
         <button type="button" @click="openAddRepo()" class="mt-1 text-fg underline underline-offset-2">Connect a repository</button>

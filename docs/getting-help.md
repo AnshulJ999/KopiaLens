@@ -27,7 +27,7 @@ A bundle never contains passwords, keys, licence codes or the encryption key. Yo
 
 ## Give feedback
 
-**? → Give feedback…** sends a short message to us, the KopiaLens developer. A rating and your email address are optional. Leave an email if you'd like a reply. KopiaLens adds only its version and install type, and sends nothing until you select **Send**. To have your feedback deleted, email support@kopialens.com.
+**? → Give feedback…** sends a short message to us, the KopiaLens developer. A rating and your email address are optional. Leave an email if you'd like a reply. KopiaLens adds only its version and install type, and sends nothing until you select **Send**. Feedback may be quoted on kopialens.com without your name, unless you untick that box before sending. To have your feedback deleted, email support@kopialens.com.
 
 ## Take the tour
 

@@ -37,7 +37,7 @@ class SkipRequest(BaseModel):
     code: str = ""
 
 
-_STEPS = ("connect", "protect", "start")
+_STEPS = ("connect", "protect", "start", "summary")
 
 
 def needed() -> bool:

@@ -53,8 +53,9 @@
                         <label class="flex items-start gap-3 p-3 cursor-pointer hover:bg-head">
                           <input type="checkbox" class="mt-0.5" x-model="cx.picked[c.config_file]">
                           <span class="min-w-0 flex-1">
-                            <span class="block font-medium truncate" x-text="c.folder === 'blinkdisk' ? 'BlinkDisk vault' : c.filename"></span>
+                            <span class="block font-medium truncate" x-text="c.folder === 'blinkdisk' ? 'BlinkDisk vault' : ((c.description || '').trim() || cxWhere(c) || c.filename)"></span>
                             <span class="block text-xs text-muted truncate" :title="cxWhere(c)" x-text="[cxTypeLabel(c.type), cxWhere(c)].filter(Boolean).join(' · ') + (c.kopiaui ? ' · also used by KopiaUI' : '') + (c.folder === 'blinkdisk' ? ' · needs the vault password' : '')"></span>
+                            <span x-show="c.folder !== 'blinkdisk'" class="block text-[0.6875rem] text-faint truncate" x-text="c.filename"></span>
                             <template x-if="c.type === 'server'">
                               <span class="block text-xs mt-1" style="color:var(--warn)">Through a kopia server: browse-only. Space analysis and cleanup need direct access to the storage.</span>
                             </template>

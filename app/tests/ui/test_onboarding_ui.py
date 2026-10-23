@@ -37,9 +37,17 @@ def test_attach_found_repository_protect_and_index(fresh_server, open_page):
     continue_btn.click()
 
     expect(page.get_by_text("Under a minute")).to_be_visible()
+    _footer(page, "Continue").click()
+    summary = page.get_by_test_id("ob-summary")
+    expect(summary.get_by_text("Every day at 02:00")).to_be_visible()
+    # Change goes to that step, and Continue comes straight back to the summary.
+    summary.locator(".r", has_text="Updates the index").get_by_role("button", name="Change").click()
+    expect(page.get_by_text("Keep the index up to date")).to_be_visible()
+    _footer(page, "Continue").click()
     page.get_by_role("button", name="Start indexing").click()
-    expect(page.get_by_text("You're set up")).to_be_visible(timeout=30_000)
-    _footer(page, "Open KopiaLens").click()
+    # A first setup ends in the tour.
+    expect(page.locator(".driver-popover")).to_be_visible(timeout=30_000)
+    page.locator(".driver-popover-close-btn").click()
     expect(page.get_by_text("Building the first index…")).to_be_visible(timeout=30_000)
     # The app lands on the dashboard and fills it in by itself once the first index is published.
     expect(page.get_by_role("row", name="3 33 35", exact=False)).to_be_visible(timeout=120_000)
@@ -66,9 +74,9 @@ def test_create_repository_then_skip_protection_and_indexing(fresh_server, open_
     page.get_by_role("button", name="Skip protection").click()
     page.get_by_role("button", name="Continue without a password").click()
 
+    _footer(page, "Continue").click()
     _footer(page, "Skip for now").click()
     page.get_by_role("button", name="Skip for now").last.click()
-    _footer(page, "Open KopiaLens").click()
 
     expect(page.get_by_text("This repository isn't indexed yet")).to_be_visible(timeout=30_000)
     assert fresh_server.get("/api/onboarding/state")["needed"] is False

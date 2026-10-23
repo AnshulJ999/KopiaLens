@@ -37,7 +37,7 @@ DISCORD_URL = os.environ.get("KOPIALENS_DISCORD_URL") or "https://discord.gg/22E
 # Settings > About: ways to support development (same links as SyncLyrics).
 SUPPORT_LINKS = [
     {"label": "GitHub Sponsors", "url": "https://github.com/sponsors/AnshulJ999", "icon": "github"},
-    {"label": "Patreon", "url": "https://www.patreon.com/AnshulJain", "icon": "patreon", "note": "includes Pro"},
+    {"label": "Patreon", "url": "https://www.patreon.com/AnshulJain", "icon": "patreon"},
     {"label": "Ko-fi", "url": "https://ko-fi.com/anshul99", "icon": "coffee"},
     {"label": "PayPal", "url": "https://paypal.me/AnshulJain99", "icon": "paypal"},
 ]

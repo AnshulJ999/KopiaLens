@@ -119,6 +119,7 @@ class FeedbackRequest(BaseModel):
     message: str = ""
     email: str = ""
     rating: int | None = None
+    quote: bool = True
 
 
 @router.post("/help/feedback")
@@ -128,7 +129,7 @@ def feedback(payload: FeedbackRequest) -> dict:
     if not message:
         raise HTTPException(status_code=400, detail="Write a message first.")
     body = {"message": message[:2000], "email": payload.email.strip() or None,
-            "rating": payload.rating if payload.rating in (1, 2, 3, 4, 5) else None,
+            "rating": payload.rating if payload.rating in (1, 2, 3, 4, 5) else None, "quote": bool(payload.quote),
             "version": APP_VERSION, "install_type": checkin.install_type(), "os": checkin._os_name()}
     req = urllib.request.Request(FEEDBACK_URL, data=json.dumps(body).encode("utf-8"), method="POST",
                                  headers={"Content-Type": "application/json", "User-Agent": f"KopiaLens/{APP_VERSION}"})

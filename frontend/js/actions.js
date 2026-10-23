@@ -373,6 +373,8 @@ const actionsPart = {
       fb.loading = true; fb.error = "";
       try {
         const r = await getJson("/api/actions/folders?path=" + encodeURIComponent(path || ""));
+        // One root (Linux and Docker without other disks): open it instead of listing just "/".
+        if (!path && !r.path && r.folders.length === 1) { fb.loading = false; return this.fbGo(r.folders[0].path); }
         Object.assign(fb, { path: r.path, input: r.path, parent: r.parent, folders: r.folders, truncated: r.truncated });
       } catch (e) {
         fb.error = e.message || String(e);

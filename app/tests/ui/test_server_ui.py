@@ -32,9 +32,11 @@ def test_server_repository_is_browse_only(fresh_server, open_page, kopia_server)
 
     page.get_by_role("button", name="Skip protection").click()
     page.get_by_role("button", name="Continue without a password").click()
+    _footer(page, "Continue").click()
     _footer(page, "Skip for now").click()
     page.get_by_role("button", name="Skip for now").last.click()
-    _footer(page, "Open KopiaLens").click()
+    expect(page.locator(".driver-popover")).to_be_visible(timeout=30_000)   # the tour after a first setup
+    page.locator(".driver-popover-close-btn").click()
 
     expect(page.get_by_text("Browse-only: this repository is reached through a kopia server")).to_be_visible(timeout=30_000)
     expect(page.locator("button.tab")).to_have_text(["Snapshots", "Policies", "Tasks", "Logs"])

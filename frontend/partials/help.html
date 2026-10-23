@@ -46,10 +46,20 @@
               <label class="flex items-center gap-2"><input type="checkbox" x-model="report.attach">Attach a diagnostics file <span class="text-muted">(names hidden)</span></label>
               <button type="button" class="underline underline-offset-2" @click="openDiagnostics(false)">Preview</button>
             </div>
+            <div class="text-xs" data-testid="report-how">
+              <div class="font-medium mb-1">How it works</div>
+              <ol class="space-y-0.5">
+                <template x-for="(s, i) in reportSteps()" :key="i">
+                  <li class="flex gap-2"><span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[0.625rem]" :class="s[1] ? 'border-ok-bd text-ok' : 'border-bd text-muted'"><i x-show="s[1]" class="ic ic-check"></i><span x-show="!s[1]" x-text="i + 1"></span></span><span x-text="s[0]"></span></li>
+                </template>
+              </ol>
+            </div>
             <div x-show="report.saved" class="kl-callout" style="border-color:var(--ok-bd);background:var(--ok-bg);color:var(--ok)">
               <span x-text="report.saved"></span>
               <a x-show="report.openUrl" :href="report.openUrl" target="_blank" rel="noopener" class="underline underline-offset-2 ml-1" x-text="report.openLabel"></a>
             </div>
+            <p x-show="report.mailTo" class="text-xs text-muted">No email app opened? Write to <span class="text-fg" x-text="report.mailTo"></span>
+              <button type="button" class="kl-btn ml-1" style="height:22px" @click="copyText(report.mailTo)">Copy</button></p>
             <p class="text-xs" style="color:var(--danger)" x-show="report.error" x-text="report.error"></p>
           </div>
           <div class="kl-footer">
@@ -79,12 +89,13 @@
                 <span class="flex items-center" role="radiogroup" aria-label="Rating">
                   <template x-for="n in [1, 2, 3, 4, 5]" :key="n">
                     <button type="button" class="px-0.5 text-base" role="radio" :aria-checked="fbk.rating === n" :aria-label="n + ' of 5'"
-                            :class="fbk.rating && n <= fbk.rating ? 'text-warn' : 'text-faint'" @click="fbk.rating = fbk.rating === n ? null : n"><i class="ic ic-star"></i></button>
+                            :class="fbk.rating && n <= fbk.rating ? 'text-warn' : 'text-faint'" @click="fbk.rating = fbk.rating === n ? null : n"><i class="ic" :class="fbk.rating && n <= fbk.rating ? 'ic-star-fill' : 'ic-star'"></i></button>
                   </template>
                 </span>
               </div>
               <label class="flex flex-col gap-1 text-xs font-medium"><span>Email, if you'd like a reply <span class="font-normal text-muted">(optional)</span></span>
                 <input type="email" x-model="fbk.email" autocomplete="email" class="fld border border-bd bg-surface2 font-normal"></label>
+              <label class="flex items-center gap-2 text-xs"><input type="checkbox" x-model="fbk.quote">KopiaLens may quote this on its website, without your name</label>
               <p class="kl-note" x-text="'Also sent: KopiaLens ' + ((help && help.version) || '') + ', ' + ((help && help.install_type) || '') + '.'"></p>
               <p class="text-xs text-muted">Found a bug? <button type="button" class="text-fg underline underline-offset-2" @click="showFeedback = false; openReport()">Report a problem</button> instead.</p>
               <p class="text-xs" style="color:var(--danger)" x-show="fbk.error" x-text="fbk.error"></p>
@@ -149,7 +160,9 @@
             </div>
           </div>
           <div class="kl-footer">
-            <span class="kl-note">Download the bundle, then attach it to your report.</span>
+            <span class="kl-note" x-show="!diag.mailed">Download the bundle, then attach it to your report.</span>
+            <span class="kl-note" x-show="diag.mailed">No email app opened? Write to <span class="text-fg" x-text="help && help.links && help.links.support_email"></span>
+              <button type="button" class="kl-btn ml-1" style="height:22px" @click="copyText(help.links.support_email)">Copy</button></span>
             <span class="spacer"></span>
             <button class="kl-btn" @click="diagDownload()" :disabled="!diag.files || diag.loading">Download bundle</button>
             <button class="kl-btn" @click="diagOpenIssue()" :disabled="!diag.id">Open a GitHub issue</button>

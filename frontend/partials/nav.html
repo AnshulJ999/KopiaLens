@@ -167,11 +167,12 @@
             <button type="button" role="menuitem" @click="openDocs('README')" class="w-full text-left px-3 py-1.5 hover:bg-head">Documentation</button>
             <button type="button" role="menuitem" @click="startTour()" :disabled="noRepos" :title="noRepos ? 'Connect a repository first' : ''"
                     class="w-full text-left px-3 py-1.5 hover:bg-head disabled:opacity-50" data-testid="help-tour">Take the tour</button>
-            <button type="button" role="menuitem" @click="openReport()" class="w-full text-left px-3 py-1.5 hover:bg-head">Report a problem…</button>
-            <button type="button" role="menuitem" @click="openDiagnostics(false)" class="w-full text-left px-3 py-1.5 hover:bg-head">Create diagnostics bundle…</button>
-            <button type="button" role="menuitem" @click="openFeedback()" class="w-full text-left px-3 py-1.5 hover:bg-head" data-testid="help-feedback">Give feedback…</button>
             <a x-show="help && help.links && help.links.discord" role="menuitem" :href="help && help.links && help.links.discord" target="_blank" rel="noopener"
-               @click="helpMenu = false" class="block w-full text-left px-3 py-1.5 hover:bg-head">Discord</a>
+               @click="helpMenu = false" class="block w-full text-left px-3 py-1.5 hover:bg-head">Join our Discord</a>
+            <div class="my-1 border-t border-bd"></div>
+            <button type="button" role="menuitem" @click="openReport()" class="w-full text-left px-3 py-1.5 hover:bg-head">Report a problem…</button>
+            <button type="button" role="menuitem" @click="openDiagnostics(false)" class="w-full text-left px-3 py-1.5 hover:bg-head">Diagnostics bundle…</button>
+            <button type="button" role="menuitem" @click="openFeedback()" class="w-full text-left px-3 py-1.5 hover:bg-head" data-testid="help-feedback">Give feedback…</button>
             <div class="my-1 border-t border-bd"></div>
             <button type="button" role="menuitem" @click="checkUpdatesNow()" :disabled="checkingUpdates" class="w-full text-left px-3 py-1.5 hover:bg-head"
                     x-text="checkingUpdates ? 'Checking for updates…' : 'Check for updates'"></button>

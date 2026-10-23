@@ -205,7 +205,8 @@ const jobsPart = {
       if (p.kind === "maintenance") return "Kopia reclaims space during this run.";
       if (p.kind === "restore") return p.target ? `Writes to ${p.target}` : "";
       if (p.kind === "policy_write" && p.kind_label !== "Excluding and deleting") return "Takes effect from each backup's next snapshot.";
-      return "Space frees after the next full maintenance.";
+      const deletes = ["remove_files", "prune_versions", "snapshot_delete"].includes(p.kind) || p.kind === "policy_write";
+      return deletes ? "Space frees after the next full maintenance." : "";
     },
 
     jobElapsed() {

@@ -1,22 +1,21 @@
-// First-run onboarding: Welcome -> Connect -> Protect -> Build the index -> You're set up
+// First-run onboarding: Welcome -> Connect -> Protect -> Index -> Summary
 // (partials/onboarding.html). Shown instead of the app while /api/onboarding/state says it is needed.
 // Everything it sets is changeable in Settings. Also the in-app tour (Driver.js).
-const OB_STEPS = [["connect", "Connect"], ["protect", "Protect"], ["start", "Build the index"]];
+const OB_STEPS = [["welcome", "Welcome"], ["connect", "Connect"], ["protect", "Protect"], ["start", "Index"], ["summary", "Summary"]];
 
-// The "You're set up" screen after the last step. Off: setup opens the app straight away and the app
-// offers the tour once instead.
+// The Summary step at the end. Off: setup ends on the index step, which starts indexing.
 const OB_FINISH_SCREEN = true;
 
 const OB_TIME_CHIPS = [["02:00", "Overnight"], ["08:00", "Morning"], ["20:00", "Evening"]];
 
 const onboardingPart = {
-    noRepos: false, setupSkipped: false, tourOffer: false,
+    noRepos: false, setupSkipped: false,
 
     async obBegin(state) {
       const step = state.rerun ? "connect" : (state.resume_step || (state.kopia_user ? "connect" : "welcome"));
       this.ob = {
         step, state, needsCode: !state.setup_unlocked, code: "", codeError: "", codeBusy: false,
-        rerun: !!state.rerun, kopiaUser: state.kopia_user || "yes", indexStarted: false,
+        rerun: !!state.rerun, kopiaUser: state.kopia_user || "yes", returnTo: "",
         kopiaPath: "", kopiaError: "",
         username: "admin", pw: "", confirm: "", level: "index", usePw: true, encPw: "", encConfirm: "",
         remember: !state.docker, hosts: (state.allowed_hosts || []).join(", "), busy: false, error: "",
@@ -35,14 +34,27 @@ const onboardingPart = {
       getJson("/api/app/host").then((h) => { this.host = h; }).catch(() => {});
       await this.cxOpen(st.repos || []);
     },
-    obSteps() { return OB_STEPS; },
+    // Run setup again starts at Connect; the code switch drops Summary.
+    obSteps() {
+      const rerun = !!(this.ob && this.ob.rerun);
+      return OB_STEPS.filter(([s]) => (s !== "welcome" || !rerun) && (s !== "summary" || OB_FINISH_SCREEN));
+    },
+    obFinishScreen() { return OB_FINISH_SCREEN; },
     obStepIndex(step) {
-      if (step === "done") return OB_STEPS.length;
       const s = step === "key" ? "protect" : step;
-      return OB_STEPS.findIndex((x) => x[0] === s);
+      return this.obSteps().findIndex((x) => x[0] === s);
     },
     obStepDone(step) { return this.obStepIndex(step) < this.obStepIndex(this.ob.step); },
     obGo(step) { if (this.obStepDone(step)) { this.ob.step = step; this.ob.error = ""; } },
+    // The step after `from`, or back to Summary after a Change from there.
+    obNext(from) {
+      const o = this.ob;
+      const order = this.obSteps().map((s) => s[0]);
+      let next = order[order.indexOf(from === "key" ? "protect" : from) + 1];
+      if (o.returnTo && from !== o.returnTo) { next = o.returnTo; o.returnTo = ""; }
+      if (next) { o.step = next; o.error = ""; }
+    },
+    obChange(step) { this.ob.returnTo = "summary"; this.ob.step = step; this.ob.error = ""; },
     obNewcomer() { return !!(this.ob && !this.ob.rerun && this.ob.kopiaUser === "no"); },
     timeChips() { return OB_TIME_CHIPS; },
 
@@ -53,7 +65,7 @@ const onboardingPart = {
       try {
         await _setupPost("/api/onboarding/answer", { kopia_user: o.kopiaUser });
         o.state.kopia_user = o.kopiaUser;
-        o.step = "connect";
+        this.obNext("welcome");
       } catch (e) { o.error = e.message || String(e); }
       o.busy = false;
     },
@@ -214,10 +226,10 @@ const onboardingPart = {
           o.recoveryKey = r.recovery_key || "";
           o.rememberState = (r.status && r.status.remember_state) || "";
           o.pw = o.confirm = o.encPw = o.encConfirm = "";
-          o.step = o.recoveryKey ? "key" : "start";
+          if (o.recoveryKey) o.step = "key"; else this.obNext("protect");
         } else {
           o.pw = o.confirm = "";
-          o.step = "start";
+          this.obNext("protect");
         }
       } catch (e) { o.error = e.message || String(e); }
       o.busy = false;
@@ -246,7 +258,7 @@ const onboardingPart = {
         await _setupPost("/api/account/enabled", { on: false });
         await this._obSaveHosts();
         o.protected = "skipped";
-        o.step = "start";
+        this.obNext("protect");
       } catch (e) { o.error = e.message || String(e); }
       o.busy = false;
     },
@@ -339,12 +351,8 @@ const onboardingPart = {
         }
         await _setupPost("/api/settings", { kopialens: kl, last_repo: ids[0] || "" });
         await _setupPost("/api/onboarding/finish");
-        if (index && toIndex.length) {
-          await _setupPost("/api/onboarding/start-indexing", { repos: toIndex });
-          o.indexStarted = true;
-        }
-        if (OB_FINISH_SCREEN && !o.rerun) { o.step = "done"; o.busy = false; return; }
-        this._obAfterSetup(o.rerun ? "" : "offer");
+        if (index && toIndex.length) await _setupPost("/api/onboarding/start-indexing", { repos: toIndex });
+        this._obAfterSetup(o.rerun ? "" : "tour");
         location.reload();
       } catch (e) {
         o.error = e.message || String(e);
@@ -352,48 +360,40 @@ const onboardingPart = {
       }
     },
 
-    // ---- You're set up ------------------------------------------------------------------------
-    obDoneRows() {
+    // ---- Summary ------------------------------------------------------------------------------
+    // [label, value, step its Change opens ("" = none: an account set here changes in Settings)].
+    obSummaryRows() {
       const o = this.ob;
-      const rows = this.obSummary().map((r) => (r[1] === "Unchanged" ? [r[0], "Off"] : r));
-      const kopia = this.obKopiaAdded().map((a) => a.name);
-      if (this.obSampleOnly()) rows.push(["Index", "Sample data, ready"]);
-      else if (o.indexStarted && kopia.length) rows.push(["Index", kopia.length > 1 ? `Building ${kopia[0]}, then ${kopia.slice(1).join(", ")}` : `Building ${kopia[0]}`]);
-      else if (kopia.length) rows.push(["Index", "Not started yet"]);
-      if (kopia.length) rows.push(["Updates the index", !o.auto ? "Off" : (this.obInterval() ? "At the interval set in Settings" : `Every day at ${o.time}`)]);
+      const protect = o.protected === "account" ? "" : "protect";
+      const rows = this.obSummary().map((r) => [r[0], !o.rerun && r[1] === "Unchanged" ? "Off" : r[1], r[0] === "Repositories" ? "connect" : protect]);
+      const kopia = this.obKopiaAdded();
+      if (kopia.length) {
+        rows.push(["Backups", kopia.map((a) => `${a.name}: ${this.obEngineLine(a)}`).join(", "), "start"]);
+        rows.push(["Updates the index", !o.auto ? "Off" : (this.obInterval() ? "At the interval set in Settings" : `Every day at ${o.time}`), "start"]);
+      }
       return rows;
     },
-    obThingsToTry() {
+    // Help pages only: they open over setup, so the final button still finishes it.
+    obWhereToStart() {
       return [
-        this.obNewcomer() && this.obKopiaAdded().length ? ["backup", "Set up your first backup"] : ["dashboard", "See your backups on the Dashboard"],
-        ["space", "Find what takes the most space"],
-        ["docs", "Read Getting started"],
+        this.obNewcomer() && this.obKopiaAdded().length ? ["guide-start-from-scratch", "Set up your first backup"] : ["dashboard", "See your backups on the Dashboard"],
+        ["guide-find-space", "Find what takes the most space"],
+        ["getting-started", "Read Getting started"],
       ];
     },
-    obAfter(action) {
-      if (action === "docs") { this.openDocs("getting-started"); return; }
-      this._obAfterSetup(action);
-      location.reload();
-    },
-    // What the app does once after setup's reload: offer the tour, start it, or open a place.
+    // What the app does once after setup's reload: start the tour.
     _obAfterSetup(action) {
       try { if (action) sessionStorage.setItem("kl-after-setup", action); } catch (e) { /* storage blocked: the app just opens */ }
     },
     _tourAfterSetup() {
       let a = "";
       try { a = sessionStorage.getItem("kl-after-setup") || ""; sessionStorage.removeItem("kl-after-setup"); } catch (e) { /* storage blocked */ }
-      if (!a || this.noRepos) return;
-      if (a === "offer") this.tourOffer = true;
-      else if (a === "tour") setTimeout(() => this.startTour(), 800);
-      else if (a === "space" && this.repoKind === "kopia") this.active = "tree";
-      else if (a === "dashboard" && this.repoKind === "kopia") this.active = "dashboard";
-      else if (a === "backup") setTimeout(() => this.openNewSnap(), 800);
+      if (a === "tour" && !this.noRepos) setTimeout(() => this.startTour(), 800);
     },
 
     // ---- The tour (Help > Take the tour) -------------------------------------------------------
     startTour() {
       this.helpMenu = false;
-      this.tourOffer = false;
       if (this.noRepos || !(window.driver && window.driver.js)) return;
       if (this.repoKind === "kopia" && this.active !== "dashboard") { this.active = "dashboard"; this.activate(); }
       setTimeout(() => {

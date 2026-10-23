@@ -6,7 +6,7 @@
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="font-semibold text-lg">Kopia<span class="text-ok">Lens</span></div>
             <div class="flex items-center gap-2">
-              <ol x-show="!ob.needsCode && obStepIndex(ob.step) >= 0 && ob.step !== 'done'" class="flex items-center gap-1 text-xs" aria-label="Setup steps">
+              <ol x-show="!ob.needsCode && obStepIndex(ob.step) >= 0" class="flex flex-wrap items-center gap-1 text-xs" aria-label="Setup steps">
                 <template x-for="(s, i) in obSteps()" :key="s[0]">
                   <li class="flex items-center gap-1">
                     <span x-show="i > 0" class="w-5 border-t border-bd"></span>
@@ -67,11 +67,12 @@
                       <span><b>No, I'm new to kopia</b><span class="block text-xs text-muted">Create a repository for your first backup.</span></span></label>
                   </fieldset>
                   <div>
-                    <div class="font-medium mb-1">Setup takes three steps</div>
+                    <div class="font-medium mb-1">Next</div>
                     <ol class="list-decimal pl-5 space-y-0.5">
                       <li>Connect your repositories</li>
                       <li>Protect KopiaLens <span class="text-xs text-muted">(optional)</span></li>
-                      <li>Build the index</li>
+                      <li>Choose when the index updates</li>
+                      <li x-show="obFinishScreen()">Check the summary and start</li>
                     </ol>
                   </div>
                   <p class="text-xs" style="color:var(--danger)" x-show="ob.error" x-text="ob.error"></p>
@@ -124,7 +125,8 @@
                     <span class="kl-bar busy w-24"><i style="width:30%"></i></span><span class="whitespace-nowrap" x-text="sampleProgText()"></span></span>
                   <span x-show="ob.sampleError" class="text-xs" style="color:var(--danger)" x-text="ob.sampleError"></span>
                   <span class="spacer"></span>
-                  <button type="button" @click="ob.step = 'protect'" class="kl-btn primary" :disabled="!obConnectReady()">Continue</button>
+                  <button type="button" x-show="!ob.rerun" @click="ob.step = 'welcome'" class="kl-btn">Back</button>
+                  <button type="button" @click="obNext('connect')" class="kl-btn primary" :disabled="!obConnectReady()">Continue</button>
                 </div>
               </div>
             </template>
@@ -149,7 +151,7 @@
                 <div class="kl-footer">
                   <button type="button" @click="ob.step = 'connect'" class="kl-btn">Back</button>
                   <span class="spacer"></span>
-                  <button type="button" @click="ob.step = 'start'" class="kl-btn primary">Continue</button>
+                  <button type="button" @click="obNext('protect')" class="kl-btn primary">Continue</button>
                 </div>
               </div>
             </template>
@@ -240,7 +242,7 @@
                   <label class="flex items-center gap-2 text-xs"><input type="checkbox" x-model="ob.keySaved">I've saved my recovery key</label>
                 </div>
                 <div class="kl-footer"><span class="spacer"></span>
-                  <button type="button" @click="ob.step = 'start'" class="kl-btn primary" :disabled="!ob.keySaved">Continue</button></div>
+                  <button type="button" @click="obNext('key')" class="kl-btn primary" :disabled="!ob.keySaved">Continue</button></div>
               </div>
             </template>
 
@@ -284,7 +286,7 @@
                     <p class="kl-note">Only new snapshots are read. Change this any time in Settings → Indexing.</p>
                   </div>
 
-                  <div class="kl-facts">
+                  <div class="kl-facts" x-show="!obFinishScreen()">
                     <template x-for="row in obSummary()" :key="row[0]">
                       <div class="r"><span class="k" x-text="row[0]"></span><span x-text="row[1]"></span></div>
                     </template>
@@ -294,6 +296,44 @@
                 <div class="kl-footer">
                   <button type="button" @click="ob.step = 'protect'" class="kl-btn" :disabled="ob.busy">Back</button>
                   <span class="spacer"></span>
+                  <button type="button" x-show="obFinishScreen()" @click="obNext('start')" class="kl-btn primary">Continue</button>
+                  <button type="button" x-show="!obFinishScreen() && !obSampleOnly()" @click="obSkipIndex()" class="kl-btn quiet" :disabled="ob.busy">Skip for now</button>
+                  <button type="button" x-show="!obFinishScreen() && !obSampleOnly()" @click="obFinish(true)" class="kl-btn primary" :disabled="ob.busy" x-text="ob.busy ? 'Starting…' : 'Start indexing'"></button>
+                  <button type="button" x-show="!obFinishScreen() && obSampleOnly()" @click="obFinish(false)" class="kl-btn primary" :disabled="ob.busy" x-text="ob.busy ? 'Opening…' : 'Open KopiaLens'"></button>
+                </div>
+              </div>
+            </template>
+
+            <!-- 4. Summary (OB_FINISH_SCREEN in onboarding.js): the last step, which starts indexing -->
+            <template x-if="!ob.needsCode && ob.step === 'summary'">
+              <div x-init="obLoadEngine()" data-testid="ob-summary">
+                <div class="p-5 space-y-4">
+                  <div>
+                    <h1 class="text-lg font-semibold">Summary</h1>
+                    <p class="text-muted">Check what you chose. Change anything before you start.</p>
+                  </div>
+                  <div class="kl-facts">
+                    <template x-for="row in obSummaryRows()" :key="row[0]">
+                      <div class="r"><span class="k" x-text="row[0]"></span>
+                        <span class="flex items-center gap-2 min-w-0"><span class="truncate" x-text="row[1]" :title="row[1]"></span>
+                          <button type="button" x-show="row[2]" @click="obChange(row[2])" class="kl-btn shrink-0" style="height:22px" :disabled="ob.busy">Change</button></span></div>
+                    </template>
+                    <div class="r" x-show="obEstimate()"><span class="k">Estimated index time</span><span x-text="obEstimate() ? capFirst(fmtDurRange(obEstimate().seconds)) : ''"></span></div>
+                  </div>
+                  <div>
+                    <div class="font-medium mb-1">Where to start</div>
+                    <ul class="space-y-1">
+                      <template x-for="t in obWhereToStart()" :key="t[0]">
+                        <li class="flex items-center gap-2"><i class="ic ic-arrow-right text-muted shrink-0"></i>
+                          <button type="button" class="text-left underline underline-offset-2" @click="openDocs(t[0])" x-text="t[1]"></button></li>
+                      </template>
+                    </ul>
+                  </div>
+                  <p class="text-xs" style="color:var(--danger)" x-show="ob.error" x-text="ob.error"></p>
+                </div>
+                <div class="kl-footer">
+                  <button type="button" @click="ob.step = 'start'" class="kl-btn" :disabled="ob.busy">Back</button>
+                  <span class="spacer"></span>
                   <button type="button" x-show="!obSampleOnly()" @click="obSkipIndex()" class="kl-btn quiet" :disabled="ob.busy">Skip for now</button>
                   <button type="button" x-show="!obSampleOnly()" @click="obFinish(true)" class="kl-btn primary" :disabled="ob.busy" x-text="ob.busy ? 'Starting…' : 'Start indexing'"></button>
                   <button type="button" x-show="obSampleOnly()" @click="obFinish(false)" class="kl-btn primary" :disabled="ob.busy" x-text="ob.busy ? 'Opening…' : 'Open KopiaLens'"></button>
@@ -301,38 +341,10 @@
               </div>
             </template>
 
-            <!-- 4. You're set up (OB_FINISH_SCREEN in onboarding.js) -->
-            <template x-if="!ob.needsCode && ob.step === 'done'">
-              <div data-testid="ob-done">
-                <div class="p-5 space-y-4">
-                  <h1 class="text-lg font-semibold">You're set up</h1>
-                  <div class="kl-facts">
-                    <template x-for="row in obDoneRows()" :key="row[0]">
-                      <div class="r"><span class="k" x-text="row[0]"></span><span x-text="row[1]"></span></div>
-                    </template>
-                  </div>
-                  <div>
-                    <div class="font-medium mb-1">Things to try</div>
-                    <ul class="space-y-1">
-                      <template x-for="t in obThingsToTry()" :key="t[0]">
-                        <li class="flex items-center gap-2"><i class="ic ic-arrow-right text-muted shrink-0"></i>
-                          <button type="button" class="text-left underline underline-offset-2" @click="obAfter(t[0])" x-text="t[1]"></button></li>
-                      </template>
-                    </ul>
-                  </div>
-                </div>
-                <div class="kl-footer">
-                  <button type="button" @click="obAfter('tour')" class="kl-btn" data-testid="ob-tour">Take a quick tour</button>
-                  <span class="spacer"></span>
-                  <button type="button" @click="obAfter('')" class="kl-btn primary">Open KopiaLens</button>
-                </div>
-              </div>
-            </template>
-
           </div>
 
           <!-- Help and the way out, under the card -->
-          <div x-show="!ob.needsCode && ob.step !== 'done'" class="flex flex-wrap items-center justify-between gap-3 text-xs text-muted" data-testid="ob-below">
+          <div x-show="!ob.needsCode" class="flex flex-wrap items-center justify-between gap-3 text-xs text-muted" data-testid="ob-below">
             <span x-show="ob.step === 'welcome'">Need help? <button type="button" class="text-fg underline underline-offset-2" @click="openDocs('getting-started')">Getting started</button></span>
             <span>Having trouble? <button type="button" class="text-fg underline underline-offset-2" @click="openReport()">Report a problem</button></span>
             <button type="button" x-show="ob.step !== 'welcome' && ob.step !== 'key' && !ob.rerun" @click="obSkip()" :disabled="ob.busy"

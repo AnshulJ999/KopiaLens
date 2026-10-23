@@ -144,16 +144,30 @@ const helpPart = {
       const id = (this.diag && this.diag.id) || "";
       const subject = `KopiaLens problem (bundle ${id})`;
       const body = `What happened:\n\nWhat I expected:\n\nKopiaLens ${h.version || ""}, ${h.install_type || ""}. Diagnostics bundle ${id} is attached.`;
-      window.open(`mailto:${(h.links && h.links.support_email) || ""}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_blank");
+      this._openMail(`mailto:${(h.links && h.links.support_email) || ""}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
+      this.diag.mailed = true;
     },
+    // In place, not a new tab: a mail link in a new tab leaves a blank tab behind. The desktop app
+    // hands it to the mail app.
+    _openMail(url) { location.href = url; },
 
     // ---- Report a problem ----
     openReport() {
       this.helpMenu = false;
       if (!this.help) this.loadHelp();
-      this.report = { what: "", expected: "", attach: true, busy: false, error: "", saved: "", openUrl: "", openLabel: "" };
+      this.report = { what: "", expected: "", attach: true, busy: false, error: "", saved: "", openUrl: "", openLabel: "", mailTo: "" };
       this.showReport = true;
       this._focusIn("[data-testid=report-dialog] textarea");
+    },
+    // "How it works" in Report a problem: [text, done]; ticks fill in once the file is saved.
+    reportSteps() {
+      const r = this.report || {};
+      const done = !!r.saved;
+      return [
+        ...(r.attach ? [["KopiaLens saves the diagnostics bundle to Downloads.", done]] : []),
+        ["A new GitHub issue opens with your text. It needs a free GitHub account.", done && !r.mailTo],
+        ...(r.attach ? [["Drag the bundle into the issue, then submit it.", false]] : []),
+      ];
     },
     // The first box of a dialog that just opened; it is drawn after the state change.
     _focusIn(sel) {
@@ -190,9 +204,14 @@ const helpPart = {
         }
         const where = kind === "email" ? "the email" : "the issue";
         r.saved = file ? `Saved ${file} to Downloads. ${kind === "email" ? "Attach it to the email." : "Drag it into the issue."}` : `Opened ${where}.`;
-        const w = url ? window.open(url, "_blank") : null;   // "noopener" would always return null
-        if (w) w.opener = null;
-        if (!w && url) { r.openUrl = url; r.openLabel = kind === "email" ? "Open the email" : "Open the issue"; }
+        if (kind === "email") {
+          this._openMail(url);
+          r.mailTo = (h.links && h.links.support_email) || "";
+        } else {
+          const w = window.open(url, "_blank");   // "noopener" would always return null
+          if (w) w.opener = null;
+          else { r.openUrl = url; r.openLabel = "Open the issue"; }
+        }
       } catch (e) {
         r.error = e.message || String(e);
       } finally {
@@ -204,7 +223,7 @@ const helpPart = {
     openFeedback() {
       this.helpMenu = false;
       if (!this.help) this.loadHelp();
-      this.fbk = { message: "", rating: null, email: "", busy: false, error: "", sent: false };
+      this.fbk = { message: "", rating: null, email: "", quote: true, busy: false, error: "", sent: false };
       this.showFeedback = true;
       this._focusIn("[data-testid=feedback-dialog] textarea");
     },
@@ -215,7 +234,7 @@ const helpPart = {
       f.busy = true; f.error = "";
       try {
         await getJson("/api/help/feedback", { method: "POST", headers: { "Content-Type": "application/json" },
-                                             body: JSON.stringify({ message: f.message, rating: f.rating, email: f.email }) });
+                                             body: JSON.stringify({ message: f.message, rating: f.rating, email: f.email, quote: f.quote }) });
         f.sent = true;
       } catch (e) {
         f.error = e.message || String(e);

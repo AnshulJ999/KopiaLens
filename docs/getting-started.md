@@ -1,6 +1,6 @@
 # First-time setup
 
-The first time you open KopiaLens, a welcome screen says what it does and asks whether you've used kopia before. Setup then walks you through three steps: **Connect**, **Protect** and **Build the index**. Everything you choose here can be changed later in Settings.
+The first time you open KopiaLens, a welcome screen says what it does and asks whether you've used kopia before. Setup then walks you through **Connect**, **Protect** and **Build the index**, and ends on a **Summary** where you can change anything before indexing starts. Everything you choose here can be changed later in Settings.
 
 Each step has a **?** next to its title that opens its help. **Report a problem**, under each step, works before setup is finished.
 
@@ -55,9 +55,11 @@ Once indexing starts, the progress bar narrows the estimate. The pages open as s
 
 A repository that hasn't been indexed yet shows a notice at the top of the page with a **Start indexing** button.
 
-## When setup is done
+## The summary and the tour
 
-KopiaLens shows what was set up and a few places to start. **Take a quick tour** walks you through the main parts of the screen. The tour is also in **? → Take the tour**.
+The last step is a **Summary** of what you chose: repositories, sign-in, encryption, who runs your backups and when the index updates. **Change** next to a row takes you back to that step. **Start indexing** finishes setup and starts the first index; **Skip for now** finishes without it. **Where to start** links open help pages without leaving setup.
+
+When KopiaLens opens, a short tour walks you through the main parts of the screen. Close it any time with ✕; it's always in **? → Take the tour**.
 
 ## Skip setup or finish it later
 

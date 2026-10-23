@@ -42,6 +42,7 @@
   "info": "phosphor/info",
   "prohibit": "phosphor/prohibit",
   "star": "phosphor/star",
+  "star-fill": "phosphor-fill/star-fill",
   "github": "phosphor/github-logo",
   "patreon": "phosphor/patreon-logo",
   "paypal": "phosphor/paypal-logo",

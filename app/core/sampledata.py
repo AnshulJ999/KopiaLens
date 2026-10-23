@@ -1086,7 +1086,11 @@ def install(*, files: int = DEFAULT_FILES, seed: int = DEFAULT_SEED) -> dict:
     rid = repos.reserve_id()
     tmp = os.path.join(DATA_DIR, "demo", f"sample-build-{rid}")
     try:
-        build(tmp, files=files, seed=seed, repo=rid, backblaze=False, on_step=_set_step)
+        try:
+            build(tmp, files=files, seed=seed, repo=rid, backblaze=False, on_step=_set_step)
+        except Exception:
+            repos.release_id(rid)   # nothing was moved under this id yet
+            raise
         _set_step("adding")
         for entry in os.listdir(tmp):
             src = os.path.join(tmp, entry)
