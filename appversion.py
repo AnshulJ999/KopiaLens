@@ -1,12 +1,16 @@
 """The KopiaLens version and build commit, from one place.
 
-Version: KOPIALENS_RELEASE_VERSION (a release build's tag) > the highest kopialens/v* git tag (a source
-checkout) > the VERSION file, which builds write and installed copies, Docker and the web demo read.
+Version: KOPIALENS_RELEASE_VERSION (a release build's tag) > the highest kopialens/v* git tag on the
+current branch (a source checkout) > the VERSION file, which builds write and installed copies, Docker
+and the web demo read.
 Commit: KOPIALENS_COMMIT (builds) > the COMMIT file a build ships > git's HEAD (a source checkout).
-Git's own files are read directly; git itself is never run.
+Git's own files are read directly; git is run only to list the tags on the current branch, and without
+git every tag counts.
 """
 import os
 import re
+import subprocess
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 COMPILED = "__compiled__" in globals()
@@ -78,12 +82,27 @@ def _refs(common: str, prefix: str) -> dict[str, str]:
     return out
 
 
+def _merged_tags() -> list[str] | None:
+    """kopialens/ tags reachable from HEAD (so a release branch ignores newer tags on main); None
+    when git can't answer."""
+    try:
+        out = subprocess.run(["git", "-C", HERE, "tag", "--merged", "HEAD", "--list", TAG_PREFIX + "v*"],
+                             capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.split() if out.returncode == 0 else None
+
+
 def tag_version() -> str | None:
-    """The highest kopialens/v* tag in a source checkout, or None."""
+    """The highest kopialens/v* tag on the current branch of a source checkout, or None."""
     dirs = _git_dirs()
     if not dirs:
         return None
-    found = [v for v in (normalize(n) for n in _refs(dirs[1], "refs/tags/" + TAG_PREFIX)) if v]
+    names = _merged_tags()
+    if names is None:
+        names = list(_refs(dirs[1], "refs/tags/" + TAG_PREFIX))
+    found = [v for v in (normalize(n) for n in names) if v]
     return max(found, key=order_key) if found else None
 
 

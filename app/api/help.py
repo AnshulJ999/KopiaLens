@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
-from config import APP_VERSION, DISCORD_URL, DOCS_URL, REPO_URL, SUPPORT_EMAIL
+from config import APP_VERSION, DISCORD_URL, DOCS_URL, REPO_URL, SUPPORT_EMAIL, SUPPORT_LINKS
 
 from ..core import checkin, diagnostics, exportname, netaccess
 from ..core.kopia import page_kopia_ok
@@ -65,7 +65,7 @@ def info() -> dict:
         "pro": state == "active",
         "access": netaccess.STARTED.get("mode") or netaccess.mode(),
         "links": {"docs": DOCS_URL, "repo": REPO_URL, "issues": REPO_URL.rstrip("/") + "/issues/new/choose",
-                  "support_email": SUPPORT_EMAIL, "discord": DISCORD_URL},
+                  "support_email": SUPPORT_EMAIL, "discord": DISCORD_URL, "support": SUPPORT_LINKS},
         "update": checkin.status(),
     }
 

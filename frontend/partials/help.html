@@ -76,15 +76,11 @@
             </div>
           </div>
           <div class="kl-footer">
-            <span class="kl-note" x-show="diag.report">Download the bundle, then attach it to your report.</span>
+            <span class="kl-note">Download the bundle, then attach it to your report.</span>
             <span class="spacer"></span>
             <button class="kl-btn" @click="diagDownload()" :disabled="!diag.files || diag.loading">Download bundle</button>
-            <template x-if="diag.report">
-              <span class="flex items-center gap-2">
-                <button class="kl-btn" @click="diagOpenIssue()" :disabled="!diag.id">Open a GitHub issue</button>
-                <button class="kl-btn" x-show="help && help.pro" @click="diagEmail()" :disabled="!diag.id">Email support</button>
-              </span>
-            </template>
+            <button class="kl-btn" @click="diagOpenIssue()" :disabled="!diag.id">Open a GitHub issue</button>
+            <button class="kl-btn" x-show="help && help.pro" @click="diagEmail()" :disabled="!diag.id">Email support</button>
           </div>
         </div>
       </template>

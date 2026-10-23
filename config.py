@@ -33,6 +33,13 @@ DOCS_URL = os.environ.get("KOPIALENS_DOCS_URL") or "https://kopialens.com/docs"
 REPO_URL = os.environ.get("KOPIALENS_REPO_URL") or "https://github.com/AnshulJ999/KopiaLens"
 SUPPORT_EMAIL = os.environ.get("KOPIALENS_SUPPORT_EMAIL") or "support@kopialens.com"
 DISCORD_URL = os.environ.get("KOPIALENS_DISCORD_URL") or "https://discord.gg/22EU4cqEf6"
+# Settings > About: ways to support development (same links as SyncLyrics).
+SUPPORT_LINKS = [
+    {"label": "GitHub Sponsors", "url": "https://github.com/sponsors/AnshulJ999"},
+    {"label": "Patreon", "url": "https://www.patreon.com/AnshulJain"},
+    {"label": "Ko-fi", "url": "https://ko-fi.com/anshul99"},
+    {"label": "PayPal", "url": "https://paypal.me/AnshulJain99"},
+]
 
 
 def user_data_root() -> str:

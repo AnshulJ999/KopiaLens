@@ -91,7 +91,10 @@
               <div>
                 <div class="p-5 space-y-3">
                   <h1 class="text-lg font-semibold">Protect KopiaLens</h1>
-                  <p x-text="ob.protected === 'account' ? 'Sign-in is set up.' : 'KopiaLens opens without a password.'"></p>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <p x-text="ob.protected === 'account' ? 'Sign-in is set up.' : 'KopiaLens opens without a password.'"></p>
+                    <button type="button" x-show="ob.protected === 'skipped'" @click="ob.protected = ''" class="kl-btn" data-testid="ob-protect-change">Change</button>
+                  </div>
                   <p x-show="!ob.recoveryKey && ob.state.encryption_level && ob.state.encryption_level !== 'off'">Encryption is on. If you didn't save your recovery key, create a new one in Settings &rarr; Encryption.</p>
                   <p class="kl-note">Change sign-in and encryption any time in Settings.</p>
                 </div>

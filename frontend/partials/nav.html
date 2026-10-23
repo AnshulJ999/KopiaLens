@@ -172,6 +172,7 @@
             <div class="my-1 border-t border-bd"></div>
             <button type="button" role="menuitem" @click="checkUpdatesNow()" :disabled="checkingUpdates" class="w-full text-left px-3 py-1.5 hover:bg-head"
                     x-text="checkingUpdates ? 'Checking for updates…' : 'Check for updates'"></button>
+            <button type="button" role="menuitem" @click="helpMenu = false; settingsTab = 'about'; openSettings()" class="w-full text-left px-3 py-1.5 hover:bg-head">Support KopiaLens…</button>
             <button type="button" role="menuitem" @click="helpMenu = false; settingsTab = 'about'; openSettings()" class="w-full text-left px-3 py-1.5 hover:bg-head">About KopiaLens</button>
             <template x-if="isDesktopWindow()">
               <div>

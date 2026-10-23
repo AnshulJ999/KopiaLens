@@ -407,7 +407,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--no-wait", action="store_true", help="don't wait when a request needs approval")
     p.add_argument("--insecure", action="store_true",
                    help="accept any HTTPS certificate (KopiaLens's own one on this computer is always accepted)")
-    sub = p.add_subparsers(dest="command", required=True, metavar="command")
+    sub = p.add_subparsers(dest="command", metavar="command")
 
     def cmd(name, text, repo=False):
         s = sub.add_parser(name, help=text, description=text)
@@ -487,7 +487,11 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if not args.command:
+        parser.print_help()
+        return 0
     cfg = _load_config()
     url = (args.url or os.environ.get("KOPIALENS_URL") or cfg.get("url") or DEFAULT_URL).rstrip("/")
     fallback = url == DEFAULT_URL and not args.url
