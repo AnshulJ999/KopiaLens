@@ -1,6 +1,6 @@
 # How indexing works
 
-KopiaUI asks kopia for every answer while you wait. KopiaLens reads your snapshots ahead of time and keeps the answers in its own [index](glossary.md#index). This page explains what the index holds, how it's built, and what that means for your computer.
+KopiaLens reads your kopia repositories and snapshots ahead of time and keeps the answers in its own [index](glossary.md#index). This page explains what the index holds, how it's built, and what that means for your computer.
 
 ## What KopiaLens reads
 
