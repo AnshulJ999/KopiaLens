@@ -66,6 +66,7 @@ class RememberRequest(BaseModel):
 
 class LevelRequest(BaseModel):
     level: str = "full"
+    password: str = ""                    # the encryption password, needed to lower the level
 
 
 def _set_level(level: str) -> None:
@@ -238,6 +239,12 @@ def set_level(payload: LevelRequest) -> dict:
         raise HTTPException(status_code=409, detail="Set up encryption before turning it on.")
     if crypto.configured() and not crypto.unlocked():
         raise HTTPException(status_code=409, detail="Unlock KopiaLens first.")
+    if crypto.configured() and crypto.LEVELS.index(level) < crypto.LEVELS.index(crypto.level()):
+        if not payload.password:
+            raise HTTPException(status_code=401, detail="Enter the encryption password to lower encryption.")
+        ok, reason = crypto.unlock_detailed(payload.password)
+        if not ok:
+            raise _refuse(reason)
     _set_level(level)
     try:
         # 'all' is deliberate: this job is install-wide, not a repo write, and it defers any

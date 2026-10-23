@@ -89,6 +89,11 @@
                 </template>
               </fieldset>
             </template>
+            <template x-if="acctDialog.mode === 'level' && encLowering(acctDialog.level)">
+              <label class="flex flex-col gap-1 text-xs font-medium" data-testid="enc-lower-password">
+                <span x-text="acctSharedPw() ? 'Password' : 'Encryption password'"></span>
+                <input type="password" x-model="acctDialog.current" autocomplete="current-password" class="fld border border-bd bg-surface2"></label>
+            </template>
 
             <template x-if="acctDialog.mode === 'password'">
               <div>

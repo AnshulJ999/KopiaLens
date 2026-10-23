@@ -1,5 +1,5 @@
 """Onboarding end to end, on a fresh server: the found-connection path with protection and a first
-index, and the create path that skips both."""
+index, the create path that skips both, and skipping setup altogether."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ def test_attach_found_repository_protect_and_index(fresh_server, open_page):
     page = open_page(fresh_server, signed_in=False)
     page.goto(fresh_server.url + "/")
 
+    _footer(page, "Start setup").click()
     expect(page.get_by_role("button", name="Try with sample data")).to_be_enabled()
     page.locator("label", has_text="repository.config").locator("input[type=checkbox]").check()
     page.get_by_role("button", name="Use this repository").click()
@@ -37,6 +38,8 @@ def test_attach_found_repository_protect_and_index(fresh_server, open_page):
 
     expect(page.get_by_text("Under a minute")).to_be_visible()
     page.get_by_role("button", name="Start indexing").click()
+    expect(page.get_by_text("You're set up")).to_be_visible(timeout=30_000)
+    _footer(page, "Open KopiaLens").click()
     expect(page.get_by_text("Building the first index…")).to_be_visible(timeout=30_000)
     # The app lands on the dashboard and fills it in by itself once the first index is published.
     expect(page.get_by_role("row", name="3 33 35", exact=False)).to_be_visible(timeout=120_000)
@@ -51,6 +54,7 @@ def test_create_repository_then_skip_protection_and_indexing(fresh_server, open_
     page = open_page(fresh_server, signed_in=False)
     page.goto(fresh_server.url + "/")
 
+    _footer(page, "Start setup").click()
     page.get_by_role("button", name="Create a new repository").click()
     page.get_by_role("textbox", name="Folder The folder").fill(str(tmp_path / "new-repo"))
     page.get_by_label("Repository password").first.fill("new repo password")
@@ -64,6 +68,25 @@ def test_create_repository_then_skip_protection_and_indexing(fresh_server, open_
 
     _footer(page, "Skip for now").click()
     page.get_by_role("button", name="Skip for now").last.click()
+    _footer(page, "Open KopiaLens").click()
 
     expect(page.get_by_text("This repository isn't indexed yet")).to_be_visible(timeout=30_000)
     assert fresh_server.get("/api/onboarding/state")["needed"] is False
+
+
+def test_skip_setup_opens_an_empty_app_and_finish_setup_returns(fresh_server, open_page):
+    page = open_page(fresh_server, signed_in=False)
+    page.goto(fresh_server.url + "/")
+
+    _footer(page, "Skip setup").click()
+    expect(page.get_by_text("Skip setup?")).to_be_visible()
+    page.get_by_role("button", name="Skip setup").last.click()
+
+    expect(page.get_by_text("Setup isn't finished: no repository is connected.")).to_be_visible(timeout=30_000)
+    expect(page.get_by_text("No repositories yet.")).to_be_visible()
+    expect(page.locator("[data-tour=tabs]")).to_be_hidden()
+    state = fresh_server.get("/api/onboarding/state")
+    assert state["needed"] is False and state["setup_skipped"] is True
+
+    page.get_by_role("button", name="Finish setup").click()
+    expect(page.get_by_text("Welcome to KopiaLens")).to_be_visible(timeout=30_000)

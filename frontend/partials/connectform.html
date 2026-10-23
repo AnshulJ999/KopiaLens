@@ -77,8 +77,8 @@
                       <button type="button" @click="cxStart('existing')" class="rounded-md border border-bd p-3 text-left hover:bg-head">
                         <span class="block font-medium">Connect to an existing one</span>
                         <span class="block text-xs text-muted">A folder, B2, S3, SFTP, a kopia server…</span></button>
-                      <button type="button" @click="cxStart('create')" class="rounded-md border border-bd p-3 text-left hover:bg-head">
-                        <span class="block font-medium">Create a new repository</span>
+                      <button type="button" @click="cxStart('create')" class="rounded-md border border-bd p-3 text-left hover:bg-head" :class="obNewcomer() ? 'order-first' : ''">
+                        <span class="block font-medium">Create a new repository<span x-show="obNewcomer()" class="pill ok ml-1.5">Recommended</span></span>
                         <span class="block text-xs text-muted">Start backing up with kopia</span></button>
                     </div>
                   </div>

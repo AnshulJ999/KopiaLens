@@ -63,19 +63,24 @@
                               x-text="update().available ? 'See update' : (checkingUpdates ? 'Checking…' : 'Check now')"></button></span></div>
                   <div x-show="about.notices" class="flex items-center justify-between gap-3"><span>Third-party notices</span>
                     <a class="kl-btn" :href="appUrl('/api/app/notices')" download>Download</a></div>
-                  <p class="text-[0.6875rem] text-muted">Built on Kopia, by Jarek Kowalski and contributors. Not affiliated with or endorsed by the Kopia project.</p>
-                  <div x-show="help && help.links && help.links.support" class="space-y-1.5 pt-1" data-testid="about-support">
-                    <p class="text-xs">If you'd like to support KopiaLens's development beyond a licence:</p>
-                    <div class="flex flex-wrap gap-2">
-                      <template x-for="l in (help && help.links && help.links.support) || []" :key="l.url">
-                        <a class="kl-btn" :href="l.url" target="_blank" rel="noopener" x-text="l.label"></a>
-                      </template>
+                  <div x-show="help && help.links && help.links.support" class="flex items-start justify-between gap-3" data-testid="about-support">
+                    <span class="shrink-0">Support KopiaLens</span>
+                    <div class="min-w-0 flex flex-col items-end gap-1">
+                      <div class="flex flex-wrap justify-end gap-1.5">
+                        <template x-for="l in (help && help.links && help.links.support) || []" :key="l.url">
+                          <a class="kl-btn" :href="l.url" target="_blank" rel="noopener">
+                            <i class="ic" :class="'ic-' + l.icon"></i><span x-text="l.label"></span><span x-show="l.note" class="text-muted" x-text="'· ' + l.note"></span></a>
+                        </template>
+                      </div>
+                      <span x-show="designIs('supportcopy', 'a', 'none')" class="text-[0.6875rem] text-muted">If you'd like to give more than a licence.</span>
+                      <span x-show="designIs('supportcopy', 'b', 'none')" class="text-[0.6875rem] text-muted">Built by a solo indie dev. Thanks for helping it grow.</span>
                     </div>
                   </div>
-                  <div class="flex items-center justify-between gap-3 pt-2"><span class="text-[0.6875rem] text-muted">For bug reports.</span>
+                  <div class="flex items-center justify-between gap-3"><span>For bug reports</span>
                     <span class="flex items-center gap-2">
                       <button @click="copyAbout()" class="kl-btn">Copy details</button>
                       <button @click="openDiagnostics(false)" class="kl-btn">Create diagnostics bundle…</button></span></div>
+                  <p class="text-[0.6875rem] text-muted pt-2">Built on Kopia, by Jarek Kowalski and contributors. Not affiliated with or endorsed by the Kopia project.</p>
                 </div>
               </template>
             </section>

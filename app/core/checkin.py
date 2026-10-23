@@ -201,7 +201,7 @@ def build_payload(include_stats: bool) -> dict:
         if payload["stats"] == "off" and _read_state().get("stats_last") is True:
             payload["stats_turned_off"] = True
         return payload
-    from ..api.onboarding import needed as setup_needed
+    from ..api.onboarding import kopia_user, needed as setup_needed, skipped as setup_skipped
     from ..index import store
     from . import host, kopiabin
     from . import repos as repos_mod
@@ -220,7 +220,8 @@ def build_payload(include_stats: bool) -> dict:
         backblaze=any(c.get("kind") == "backblaze" for c in list(REPOS.values())),
         opened=opened,
         features_used=used,
-        setup="not_yet" if setup_needed() else "finished",
+        setup="skipped" if setup_skipped() else ("not_yet" if setup_needed() else "finished"),
+        kopia_user=kopia_user(),
         first_index=any(os.path.exists(store.manifest_path(r)) for r in kopia),
         kopia_version=kopia_info.get("version") or "unknown",
         kopia_bundled=bool(kopia_info.get("bundled")),

@@ -11,9 +11,9 @@
         <span x-show="lic.state === 'active' && showProBadge" x-cloak class="pro-mark" :title="lic.plan + (lic.name ? ', licensed to ' + lic.name : '')">Pro</span>
       </div>
       <div class="relative shrink-0" @click.outside="repoMenu = false">
-        <button type="button" @click="repoMenu = !repoMenu" class="fld border border-bd bg-surface flex items-center gap-2 max-w-[16rem]"
+        <button type="button" @click="repoMenu = !repoMenu" class="fld border border-bd bg-surface flex items-center gap-2 max-w-[16rem]" data-tour="repo"
                 aria-haspopup="menu" :aria-expanded="repoMenu" title="Switch repository">
-          <span class="truncate" x-text="repoName(repo)"></span>
+          <span class="truncate" x-text="noRepos ? 'No repository' : repoName(repo)"></span>
           <i x-show="repoKind === 'kopia' && wm && wmMode() !== 'full' && designIs('permsign', 'icon', 'icon')" x-cloak data-testid="wm-icon"
              class="ic text-warn" :class="wmMode() === 'read_only' ? 'ic-eye' : 'ic-lock'" :title="wm ? 'Permissions: ' + wmLabel(wmMode()) : ''"></i>
           <i class="ic ic-caret-down text-muted"></i>
@@ -40,12 +40,12 @@
         </div>
       </div>
       <!-- Grows and shrinks with the window instead of holding a fixed wide box. -->
-      <div class="relative flex-1 min-w-[10rem] max-w-[clamp(14rem,30vw,30rem)]">
+      <div class="relative flex-1 min-w-[10rem] max-w-[clamp(14rem,30vw,30rem)]" data-tour="search">
         <!-- No @focus: switching tab on focus left Search blank until the first keystroke. Typing
              switches and loads; clicking in only focuses. -->
         <input type="search" name="kl-search" autocomplete="off" aria-label="Search" x-model="query" @input.debounce.300ms="headerSearch()"
           class="fld w-full border border-bd bg-surface2 pl-9"
-          :disabled="repoKind==='server'" :title="repoKind==='server' ? 'Search needs the index, and a kopia server connection has none' : ''"
+          :disabled="repoKind==='server' || noRepos" :title="repoKind==='server' ? 'Search needs the index, and a kopia server connection has none' : ''"
           :placeholder="repoKind==='backblaze' ? 'Search Backblaze files…' : (repoKind==='server' ? 'Search needs the index' : 'Search files across all snapshots...')">
         <i class="ic ic-search absolute left-3 top-1/2 -translate-y-1/2 text-faint"></i>
       </div>
@@ -118,7 +118,7 @@
         </span>
         <!-- Index status: click for the panel. While a pass runs it carries the live percentage
              (only when one honestly exists - the tree sync reports counters instead). -->
-        <button x-show="repoKind!=='backblaze' && !isDemo()" @click="openIndexPanel()"
+        <button x-show="repoKind!=='backblaze' && !isDemo() && !noRepos" @click="openIndexPanel()"
                 class="h-8 rounded border px-2 flex items-center gap-1.5"
                 :class="indexStatus.building ? 'border-warn-bd bg-warn-bg text-warn' : 'border-bd bg-surface2'"
                 :title="indexTooltip()">
@@ -130,7 +130,7 @@
         <span x-show="repoKind==='backblaze'" class="rounded border border-bd bg-surface2 px-2 py-1" x-text="bzStatusLine()" :title="bzStatusTitle()"></span>
         <span x-show="repoKind==='backblaze' && bzRefreshResult" class="text-xs px-2 py-1 rounded" :class="bzRefreshResult.includes('FAILED') ? 'bg-danger-bg text-danger' : 'bg-ok-bg text-ok'" x-text="bzRefreshResult"></span>
         <button x-show="repoKind==='backblaze'" @click="bzRefresh()" class="kl-fill h-8 rounded px-3 flex items-center gap-1.5" title="Re-scan the read-only Backblaze index"><i class="ic ic-refresh"></i>Index BZ</button>
-        <button @click="refreshAll()" class="h-8 w-8 rounded border border-bd kl-ibtn" title="Refresh this view and the snapshot list" aria-label="Refresh"><i class="ic ic-refresh"></i></button>
+        <button x-show="!noRepos" @click="refreshAll()" class="h-8 w-8 rounded border border-bd kl-ibtn" title="Refresh this view and the snapshot list" aria-label="Refresh"><i class="ic ic-refresh"></i></button>
         <div class="relative" @click.outside="timeMenu = false">
           <button @click="toggleTimeFmt()" @contextmenu.prevent="timeMenu = !timeMenu" class="h-8 w-8 rounded border border-bd kl-ibtn" :aria-label="timeFmt==='relative' ? 'Times: how long ago' : 'Times: dates'"
                   :title="(timeFmt==='relative' ? 'Times shown as how long ago. Click to show dates.' : 'Times shown as dates. Click to show how long ago.') + ' Right-click for columns with their own choice.'">
@@ -162,17 +162,21 @@
         <button x-show="update().available" x-cloak @click="showUpdate = true" class="h-8 rounded border border-ok-bd bg-ok-bg text-ok px-2"
                 :title="'KopiaLens ' + update().latest + ' is out'">Update available</button>
         <div class="relative" @click.outside="helpMenu = false">
-          <button @click="toggleHelpMenu()" class="h-8 w-8 rounded border border-bd kl-ibtn" :title="acct && acct.sign_in_on ? 'Help and account' : 'Help'" aria-label="Help" aria-haspopup="menu" :aria-expanded="helpMenu"><i class="ic ic-help"></i></button>
+          <button @click="toggleHelpMenu()" data-tour="help" class="h-8 w-8 rounded border border-bd kl-ibtn" :title="acct && acct.sign_in_on ? 'Help and account' : 'Help'" aria-label="Help" aria-haspopup="menu" :aria-expanded="helpMenu"><i class="ic ic-help"></i></button>
           <div x-show="helpMenu" x-cloak role="menu" class="absolute right-0 top-full mt-1 z-50 w-64 rounded-md border border-bd bg-surface shadow-lg py-1 text-sm">
             <button type="button" role="menuitem" @click="openDocs('README')" class="w-full text-left px-3 py-1.5 hover:bg-head">Documentation</button>
-            <button type="button" role="menuitem" @click="openDiagnostics(true)" class="w-full text-left px-3 py-1.5 hover:bg-head">Report a problem…</button>
+            <button type="button" role="menuitem" @click="startTour()" :disabled="noRepos" :title="noRepos ? 'Connect a repository first' : ''"
+                    class="w-full text-left px-3 py-1.5 hover:bg-head disabled:opacity-50" data-testid="help-tour">Take the tour</button>
+            <button type="button" role="menuitem" @click="openReport()" class="w-full text-left px-3 py-1.5 hover:bg-head">Report a problem…</button>
             <button type="button" role="menuitem" @click="openDiagnostics(false)" class="w-full text-left px-3 py-1.5 hover:bg-head">Create diagnostics bundle…</button>
+            <button type="button" role="menuitem" @click="openFeedback()" class="w-full text-left px-3 py-1.5 hover:bg-head" data-testid="help-feedback">Give feedback…</button>
             <a x-show="help && help.links && help.links.discord" role="menuitem" :href="help && help.links && help.links.discord" target="_blank" rel="noopener"
                @click="helpMenu = false" class="block w-full text-left px-3 py-1.5 hover:bg-head">Discord</a>
             <div class="my-1 border-t border-bd"></div>
             <button type="button" role="menuitem" @click="checkUpdatesNow()" :disabled="checkingUpdates" class="w-full text-left px-3 py-1.5 hover:bg-head"
                     x-text="checkingUpdates ? 'Checking for updates…' : 'Check for updates'"></button>
-            <button type="button" role="menuitem" @click="helpMenu = false; settingsTab = 'about'; openSettings()" class="w-full text-left px-3 py-1.5 hover:bg-head">Support KopiaLens…</button>
+            <!-- Hidden for now; kept for a later decision. -->
+            <button type="button" role="menuitem" x-show="false" @click="helpMenu = false; settingsTab = 'about'; openSettings()" class="w-full text-left px-3 py-1.5 hover:bg-head">Support KopiaLens…</button>
             <button type="button" role="menuitem" @click="helpMenu = false; settingsTab = 'about'; openSettings()" class="w-full text-left px-3 py-1.5 hover:bg-head">About KopiaLens</button>
             <template x-if="isDesktopWindow()">
               <div>
@@ -204,7 +208,7 @@
          wraps to a second row (zoom, big text, many repos) instead of running off the edge. -->
     <nav class="kl-chrome shrink-0 border-b border-bd-soft bg-surface px-3 py-1.5 flex flex-wrap items-center gap-1">
       <!-- Drag a tab to reorder (kopia repositories); right-click for Reset tab order. -->
-      <div class="relative flex flex-wrap items-center gap-1" @click.outside="tabMenu = false" @contextmenu.prevent="if (repoKind === 'kopia') tabMenu = !tabMenu">
+      <div x-show="!noRepos" data-tour="tabs" class="relative flex flex-wrap items-center gap-1" @click.outside="tabMenu = false" @contextmenu.prevent="if (repoKind === 'kopia') tabMenu = !tabMenu">
         <template x-for="t in currentTabs()" :key="t.id">
           <button class="tab" @click="active=t.id; activate()" :title="t.tip || ''" :draggable="repoKind === 'kopia' ? 'true' : 'false'"
                   @dragstart="tabDrag = t.id; $event.dataTransfer.effectAllowed = 'move'" @dragend="tabDrag = ''; tabOver = ''"

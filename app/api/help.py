@@ -2,13 +2,17 @@
 user docs for the in-app docs browser."""
 from __future__ import annotations
 
+import json
 import re
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel
 
-from config import APP_VERSION, DISCORD_URL, DOCS_URL, REPO_URL, SUPPORT_EMAIL, SUPPORT_LINKS
+from config import APP_VERSION, DISCORD_URL, DOCS_URL, FEEDBACK_URL, REPO_URL, SUPPORT_EMAIL, SUPPORT_LINKS
 
 from ..core import checkin, diagnostics, exportname, netaccess
 from ..core.kopia import page_kopia_ok
@@ -106,8 +110,40 @@ def _days(days: int) -> int:
 @router.get("/diagnostics/preview")
 def diagnostics_preview(request: Request, sections: str = "", anonymise: bool = True, days: int = 7) -> dict:
     with page_kopia_ok("the user is building a diagnostics report"):
-        return diagnostics.build(_sections(sections), anonymise=anonymise, days=_days(days),
-                                 browser=request.headers.get("user-agent", ""))
+        out = diagnostics.build(_sections(sections), anonymise=anonymise, days=_days(days),
+                                browser=request.headers.get("user-agent", ""))
+    return {**out, "file_name": exportname.export_name("diagnostics", out["id"], ext="zip")}
+
+
+class FeedbackRequest(BaseModel):
+    message: str = ""
+    email: str = ""
+    rating: int | None = None
+
+
+@router.post("/help/feedback")
+def feedback(payload: FeedbackRequest) -> dict:
+    """Help > Give feedback: passed to the check-in service, with only the version and system added."""
+    message = payload.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Write a message first.")
+    body = {"message": message[:2000], "email": payload.email.strip() or None,
+            "rating": payload.rating if payload.rating in (1, 2, 3, 4, 5) else None,
+            "version": APP_VERSION, "install_type": checkin.install_type(), "os": checkin._os_name()}
+    req = urllib.request.Request(FEEDBACK_URL, data=json.dumps(body).encode("utf-8"), method="POST",
+                                 headers={"Content-Type": "application/json", "User-Agent": f"KopiaLens/{APP_VERSION}"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resp.read(4096)
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read(4096)).get("error")
+        except (ValueError, AttributeError):
+            detail = None
+        raise HTTPException(status_code=502, detail=detail or "Couldn't send your feedback. Try again later.") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=502, detail="Couldn't send your feedback. Check the internet connection and try again.") from exc
+    return {"ok": True}
 
 
 @router.get("/diagnostics/download")

@@ -3,7 +3,7 @@ const helpPart = {
     helpMenu: false, help: null, showUpdate: false, usagePreview: null, checkingUpdates: false,
     updateCheck: true, usageStats: true, updateChannel: "stable",
     zoomLevel: window.klZoom ? window.klZoom.level() : null,
-    showDiag: false, diag: null, _diagSeq: 0,
+    showDiag: false, diag: null, _diagSeq: 0, showReport: false, report: null, showFeedback: false, fbk: null,
 
     async loadHelp() {
       try { this.help = await getJson("/api/help/info"); } catch (e) { /* the menu still opens; links wait */ }
@@ -123,13 +123,17 @@ const helpPart = {
       p.set("id", this.diag.id);
       window.open(appUrl(`/api/diagnostics/download?${p.toString()}`), "_blank");
     },
-    diagIssueUrl() {
+    // A new issue from the bug report form, its fields filled in (field ids: .github/ISSUE_TEMPLATE/bug_report.yml).
+    _issueUrl(fields) {
       const h = this.help || {};
       const base = h.links && h.links.repo ? h.links.repo.replace(/\/$/, "") : "";
       if (!base) return "";
-      const p = new URLSearchParams({ template: "bug_report.yml", version: h.version || "",
-                                      install: h.install_type || "", bundle: (this.diag && this.diag.id) || "" });
+      const p = new URLSearchParams({ template: "bug_report.yml", version: h.version || "", ...fields });
       return `${base}/issues/new?${p.toString()}`;
+    },
+    diagIssueUrl() {
+      const id = (this.diag && this.diag.id) || "";
+      return this._issueUrl(id ? { logs: `Diagnostics bundle ${id} (attached).` } : {});
     },
     diagOpenIssue() {
       const url = this.diagIssueUrl();
@@ -141,5 +145,82 @@ const helpPart = {
       const subject = `KopiaLens problem (bundle ${id})`;
       const body = `What happened:\n\nWhat I expected:\n\nKopiaLens ${h.version || ""}, ${h.install_type || ""}. Diagnostics bundle ${id} is attached.`;
       window.open(`mailto:${(h.links && h.links.support_email) || ""}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_blank");
+    },
+
+    // ---- Report a problem ----
+    openReport() {
+      this.helpMenu = false;
+      if (!this.help) this.loadHelp();
+      this.report = { what: "", expected: "", attach: true, busy: false, error: "", saved: "", openUrl: "", openLabel: "" };
+      this.showReport = true;
+      this._focusIn("[data-testid=report-dialog] textarea");
+    },
+    // The first box of a dialog that just opened; it is drawn after the state change.
+    _focusIn(sel) {
+      setTimeout(() => { const el = document.querySelector(sel); if (el) el.focus(); }, 50);
+    },
+    // Saves the diagnostics file (names hidden, every section), then opens the issue or email with
+    // the text filled in. A browser that blocks the new window gets a link instead.
+    async reportSend(kind) {
+      const r = this.report;
+      if (!r || r.busy) return;
+      if (!r.what.trim()) { r.error = "Describe what happened."; return; }
+      r.busy = true; r.error = ""; r.saved = ""; r.openUrl = "";
+      try {
+        if (!this.help) await this.loadHelp();
+        let id = "", file = "";
+        if (r.attach) {
+          const q = new URLSearchParams({ sections: "problems,app_log,index_logs,history,settings,kopia_status", anonymise: "true", days: "7" });
+          const b = await getJson(`/api/diagnostics/preview?${q.toString()}`);
+          id = b.id; file = b.file_name;
+          q.set("id", id);
+          const a = document.createElement("a");
+          a.href = appUrl(`/api/diagnostics/download?${q.toString()}`);
+          a.download = file;
+          a.click();
+        }
+        const h = this.help || {};
+        const what = r.what.trim() + (r.expected.trim() ? `\n\nWhat I expected:\n${r.expected.trim()}` : "");
+        let url;
+        if (kind === "email") {
+          const body = `${what}\n\nKopiaLens ${h.version || ""}, ${h.install_type || ""}.${id ? ` Diagnostics file ${id} is attached.` : ""}`;
+          url = `mailto:${(h.links && h.links.support_email) || ""}?subject=${encodeURIComponent("KopiaLens problem")}&body=${encodeURIComponent(body)}`;
+        } else {
+          url = this._issueUrl({ title: r.what.trim().split("\n")[0].slice(0, 80), what, ...(id ? { logs: `Diagnostics file ${id} (attached).` } : {}) });
+        }
+        const where = kind === "email" ? "the email" : "the issue";
+        r.saved = file ? `Saved ${file} to Downloads. ${kind === "email" ? "Attach it to the email." : "Drag it into the issue."}` : `Opened ${where}.`;
+        const w = url ? window.open(url, "_blank") : null;   // "noopener" would always return null
+        if (w) w.opener = null;
+        if (!w && url) { r.openUrl = url; r.openLabel = kind === "email" ? "Open the email" : "Open the issue"; }
+      } catch (e) {
+        r.error = e.message || String(e);
+      } finally {
+        r.busy = false;
+      }
+    },
+
+    // ---- Give feedback ----
+    openFeedback() {
+      this.helpMenu = false;
+      if (!this.help) this.loadHelp();
+      this.fbk = { message: "", rating: null, email: "", busy: false, error: "", sent: false };
+      this.showFeedback = true;
+      this._focusIn("[data-testid=feedback-dialog] textarea");
+    },
+    async feedbackSend() {
+      const f = this.fbk;
+      if (!f || f.busy) return;
+      if (!f.message.trim()) { f.error = "Write a message first."; return; }
+      f.busy = true; f.error = "";
+      try {
+        await getJson("/api/help/feedback", { method: "POST", headers: { "Content-Type": "application/json" },
+                                             body: JSON.stringify({ message: f.message, rating: f.rating, email: f.email }) });
+        f.sent = true;
+      } catch (e) {
+        f.error = e.message || String(e);
+      } finally {
+        f.busy = false;
+      }
     },
 };

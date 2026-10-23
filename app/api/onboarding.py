@@ -28,14 +28,50 @@ class StartRequest(BaseModel):
     repos: list[str] = []
 
 
+class AnswerRequest(BaseModel):
+    kopia_user: str = ""
+
+
+class SkipRequest(BaseModel):
+    step: str = ""
+    code: str = ""
+
+
+_STEPS = ("connect", "protect", "start")
+
+
 def needed() -> bool:
-    if raw_kopialens_settings().get("onboarded") is False:
+    kl = raw_kopialens_settings()
+    if kl.get("onboarded") is False:
         return True
+    if kl.get("setup_skipped"):
+        return False
     return not repos.all_records()
 
 
+def skipped() -> bool:
+    return bool(raw_kopialens_settings().get("setup_skipped"))
+
+
+def kopia_user() -> str:
+    """The Welcome screen's answer for usage stats: yes, no, or unanswered."""
+    value = raw_kopialens_settings().get("kopia_user")
+    return value if value in ("yes", "no") else "unanswered"
+
+
+def _update(**values) -> None:
+    def change(s):
+        kl = s.setdefault("kopialens", {})
+        for key, value in values.items():
+            if value is None:
+                kl.pop(key, None)
+            else:
+                kl[key] = value
+    mutate_settings(change)
+
+
 def _set_onboarded(value: bool) -> None:
-    mutate_settings(lambda s: s.setdefault("kopialens", {}).__setitem__("onboarded", value))
+    _update(onboarded=value)
 
 
 @router.get("/onboarding/state")
@@ -51,17 +87,23 @@ def state(request: Request) -> dict:
         "profile": auth.profile(),
         "ingress": basepath.ingress_enabled(),
         "docker": host.in_docker(),
+        "setup_skipped": skipped(),
     }
     if not unlocked:
         return out
     kl = load_settings().get("kopialens", {})
+    raw = raw_kopialens_settings()
     out.update({
+        "rerun": bool(raw.get("setup_rerun")),
+        "resume_step": raw.get("setup_step") if raw.get("setup_step") in _STEPS else "",
+        "kopia_user": raw.get("kopia_user") if raw.get("kopia_user") in ("yes", "no") else "",
         "protection_chosen": auth.protection_chosen(),
         "has_account": users.has_accounts(),
         "encryption_level": crypto.level() if crypto.configured() else "off",
         "kopia": kopiabin.info(with_version=False),
         "index_mode": kl.get("index_mode", "daily"),
         "index_time": kl.get("index_time", "23:00"),
+        "index_time_set": "index_time" in raw,
         "allowed_hosts": kl.get("allowed_hosts") or [],
         "repos": [repos.detail(r) for r in repos.all_records()],
     })
@@ -92,7 +134,50 @@ def begin() -> dict:
 @router.post("/onboarding/restart")
 def restart() -> dict:
     """Run setup again on an install that is already set up; nothing is reset."""
-    _set_onboarded(False)
+    _update(onboarded=False, setup_rerun=True)
+    return {"ok": True}
+
+
+@router.post("/onboarding/answer")
+def answer(payload: AnswerRequest) -> dict:
+    """The Welcome screen's "Have you used kopia before?" answer."""
+    if payload.kopia_user not in ("yes", "no"):
+        raise HTTPException(status_code=400, detail="Answer yes or no.")
+    _update(kopia_user=payload.kopia_user)
+    return {"ok": True}
+
+
+@router.post("/onboarding/skip")
+def skip(payload: SkipRequest, request: Request) -> dict:
+    """Skip setup, or leave it for later: the app opens with a Finish setup banner. With no
+    protection choice yet, sign-in is switched off, as Skip protection does."""
+    if not auth.protection_chosen():
+        if not auth.first_run_allowed(payload.code, request.cookies.get(auth.SETUP_COOKIE, "")):
+            raise HTTPException(status_code=403, detail="Setup is closed. Enter the setup code from the KopiaLens log.")
+        auth.set_enabled(False)
+    _update(onboarded=True, setup_skipped=True, setup_rerun=None,
+            setup_step=payload.step if payload.step in _STEPS else None)
+    return {"ok": True}
+
+
+@router.post("/onboarding/resume")
+def resume() -> dict:
+    """Finish setup from the banner: setup opens again at the step it was left on."""
+    _update(onboarded=False, setup_rerun=None)
+    return {"ok": True}
+
+
+@router.post("/onboarding/close")
+def close() -> dict:
+    """Close "Run setup again" without finishing it; nothing it already saved is undone."""
+    _update(onboarded=True, setup_rerun=None)
+    return {"ok": True}
+
+
+@router.post("/onboarding/dismiss")
+def dismiss() -> dict:
+    """Hide the Finish setup banner for good."""
+    _update(setup_skipped=None, setup_step=None)
     return {"ok": True}
 
 
@@ -100,7 +185,7 @@ def restart() -> dict:
 def finish() -> dict:
     if not repos.all_records():
         raise HTTPException(status_code=400, detail="Connect a repository first.")
-    _set_onboarded(True)
+    _update(onboarded=True, setup_skipped=None, setup_step=None, setup_rerun=None)
     return {"ok": True}
 
 

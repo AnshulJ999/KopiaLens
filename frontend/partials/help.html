@@ -29,8 +29,81 @@
       </div>
     </div>
 
+    <!-- Report a problem: describe it; one click saves the diagnostics file and opens the issue or email. -->
+    <div x-show="showReport" @click.self="showReport = false" x-cloak class="fixed inset-0 z-[56] bg-black/50 flex items-center justify-center p-6">
+      <template x-if="report">
+        <div class="w-[32rem] max-w-full rounded-lg border border-bd bg-surface text-sm" role="dialog" aria-labelledby="reportTitle" data-testid="report-dialog">
+          <div class="flex items-center gap-2 px-4 pt-3 pb-2 border-b border-bd">
+            <div id="reportTitle" class="font-medium">Report a problem</div>
+            <button @click="showReport = false" class="ml-auto kl-btn quiet" title="Close">&times;</button>
+          </div>
+          <div class="p-4 space-y-3">
+            <label class="flex flex-col gap-1 text-xs font-medium">What happened?
+              <textarea x-model="report.what" rows="4" class="fld border border-bd bg-surface2 font-normal resize-y"></textarea></label>
+            <label class="flex flex-col gap-1 text-xs font-medium"><span>What did you expect? <span class="font-normal text-muted">(optional)</span></span>
+              <textarea x-model="report.expected" rows="2" class="fld border border-bd bg-surface2 font-normal resize-y"></textarea></label>
+            <div class="flex flex-wrap items-center gap-2 text-xs">
+              <label class="flex items-center gap-2"><input type="checkbox" x-model="report.attach">Attach a diagnostics file <span class="text-muted">(names hidden)</span></label>
+              <button type="button" class="underline underline-offset-2" @click="openDiagnostics(false)">Preview</button>
+            </div>
+            <div x-show="report.saved" class="kl-callout" style="border-color:var(--ok-bd);background:var(--ok-bg);color:var(--ok)">
+              <span x-text="report.saved"></span>
+              <a x-show="report.openUrl" :href="report.openUrl" target="_blank" rel="noopener" class="underline underline-offset-2 ml-1" x-text="report.openLabel"></a>
+            </div>
+            <p class="text-xs" style="color:var(--danger)" x-show="report.error" x-text="report.error"></p>
+          </div>
+          <div class="kl-footer">
+            <button class="kl-btn" @click="showReport = false">Cancel</button>
+            <span class="spacer"></span>
+            <button class="kl-btn" x-show="help && help.pro" @click="reportSend('email')" :disabled="report.busy">Email support</button>
+            <button class="kl-btn primary" @click="reportSend('issue')" :disabled="report.busy" x-text="report.busy ? 'Preparing…' : 'Open a GitHub issue'"></button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Give feedback: a short message to the developer, through the check-in service. -->
+    <div x-show="showFeedback" @click.self="showFeedback = false" x-cloak class="fixed inset-0 z-[56] bg-black/50 flex items-center justify-center p-6">
+      <template x-if="fbk">
+        <div class="w-[30rem] max-w-full rounded-lg border border-bd bg-surface text-sm" role="dialog" aria-labelledby="fbTitle" data-testid="feedback-dialog">
+          <div class="flex items-center gap-2 px-4 pt-3 pb-2 border-b border-bd">
+            <div id="fbTitle" class="font-medium">Give feedback</div>
+            <button @click="showFeedback = false" class="ml-auto kl-btn quiet" title="Close">&times;</button>
+          </div>
+          <template x-if="!fbk.sent">
+            <div class="p-4 space-y-3">
+              <label class="flex flex-col gap-1 text-xs font-medium">What's on your mind?
+                <textarea x-model="fbk.message" rows="5" maxlength="2000" class="fld border border-bd bg-surface2 font-normal resize-y"></textarea></label>
+              <div class="flex flex-wrap items-center gap-2 text-xs">
+                <span class="font-medium">How's KopiaLens so far? <span class="font-normal text-muted">(optional)</span></span>
+                <span class="flex items-center" role="radiogroup" aria-label="Rating">
+                  <template x-for="n in [1, 2, 3, 4, 5]" :key="n">
+                    <button type="button" class="px-0.5 text-base" role="radio" :aria-checked="fbk.rating === n" :aria-label="n + ' of 5'"
+                            :class="fbk.rating && n <= fbk.rating ? 'text-warn' : 'text-faint'" @click="fbk.rating = fbk.rating === n ? null : n"><i class="ic ic-star"></i></button>
+                  </template>
+                </span>
+              </div>
+              <label class="flex flex-col gap-1 text-xs font-medium"><span>Email, if you'd like a reply <span class="font-normal text-muted">(optional)</span></span>
+                <input type="email" x-model="fbk.email" autocomplete="email" class="fld border border-bd bg-surface2 font-normal"></label>
+              <p class="kl-note" x-text="'Also sent: KopiaLens ' + ((help && help.version) || '') + ', ' + ((help && help.install_type) || '') + '.'"></p>
+              <p class="text-xs text-muted">Found a bug? <button type="button" class="text-fg underline underline-offset-2" @click="showFeedback = false; openReport()">Report a problem</button> instead.</p>
+              <p class="text-xs" style="color:var(--danger)" x-show="fbk.error" x-text="fbk.error"></p>
+            </div>
+          </template>
+          <template x-if="fbk.sent">
+            <div class="p-4">Thanks, your feedback was sent.</div>
+          </template>
+          <div class="kl-footer">
+            <span class="spacer"></span>
+            <button class="kl-btn" @click="showFeedback = false" x-text="fbk.sent ? 'Close' : 'Cancel'"></button>
+            <button class="kl-btn primary" x-show="!fbk.sent" @click="feedbackSend()" :disabled="fbk.busy" x-text="fbk.busy ? 'Sending…' : 'Send'"></button>
+          </div>
+        </div>
+      </template>
+    </div>
+
     <!-- Diagnostics bundle: choose what goes in, preview it, download it, report the problem. -->
-    <div x-show="showDiag" @click.self="showDiag = false" x-cloak class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
+    <div x-show="showDiag" @click.self="showDiag = false" x-cloak class="fixed inset-0 z-[57] bg-black/50 flex items-center justify-center p-6">
       <template x-if="diag">
         <div class="w-[56rem] max-w-full max-h-[90vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col" role="dialog" aria-labelledby="diagTitle">
           <div class="shrink-0 flex items-center gap-2 px-4 pt-3 pb-2 border-b border-bd">

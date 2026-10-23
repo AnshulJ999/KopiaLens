@@ -373,6 +373,7 @@ _WRITES: dict[str, object] = {
                                              "pause", "pending/run", "resume", "stop")},
     "POST /api/app/restart": APP,
     "POST /api/help/install-update": PERSON,     # stops indexing and jobs, then restarts the app
+    "POST /api/help/feedback": PERSON,           # sends a message to the developer
     **{f"POST /api/backblaze/{p}": APP for p in ("exclusions/generate", "import-archive", "refresh")},
     "POST /api/config-backups": APP,
     "POST /api/config-backups/notices/{notice_id}/dismiss": APP,
@@ -387,7 +388,9 @@ _WRITES: dict[str, object] = {
     "POST /api/settings/table": APP,
     "POST /api/write-mode": _write_mode,
     "POST /api/access": _access,
-    **{f"POST /api/onboarding/{p}": APP for p in ("begin", "finish", "restart", "start-indexing")},
+    **{f"POST /api/onboarding/{p}": APP for p in ("begin", "finish", "restart", "start-indexing",
+                                                   "answer", "resume", "close", "dismiss")},
+    "POST /api/onboarding/skip": PERSON,   # can switch sign-in off on a fresh install
     "POST /api/onboarding/setup-code": NEVER,
     **{f"POST /api/setup/{p}": APP for p in ("attach", "backblaze", "connect", "create",
                                              "index/rebuild", "sample", "repos/{repo}/unlock",

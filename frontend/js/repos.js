@@ -347,6 +347,7 @@ const reposPart = {
       this.cx = null;
       if (added.length) {
         await this._cxRefreshRepos();
+        if (this.noRepos && this.repos.length) { location.reload(); return; }
         this.klNotify(added.length === 1 ? `${added[0].name} added` : `${added.length} repositories added`);
         this.raLoad();
       }

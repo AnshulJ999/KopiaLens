@@ -32,7 +32,8 @@ When you click **Install and restart**, the app asks the update service for the 
 | Backblaze | Whether the Backblaze view is set up |
 | Opened | Whether KopiaLens was opened since the last check (not just running in the background) |
 | Features used | The names of the features used since the last check: `search`, `tree`, `prune`, `restore`, `csv_export`, ... Names only, no counts. |
-| Setup | `finished` or `not_yet` |
+| Setup | `finished`, `skipped` or `not_yet` |
+| Used kopia before | The answer on the welcome screen: `yes` or `no`. `unanswered` when setup was skipped |
 | First index | Whether a repository has been indexed |
 | kopia | kopia's version, and whether it's the copy that came with KopiaLens |
 | Own kopia server | Whether KopiaLens runs the backups for a repository |
@@ -55,6 +56,10 @@ The service also records the **country** the request came from (worked out by Cl
 - Your IP address is **not** stored.
 - With usage stats on: one row per install with the fields above, the first and last day it checked in, and how many days it was opened. An install that hasn't checked in for 90 days is deleted.
 - Daily totals: how many checks came in per version, install type, OS and licence, how many installs were opened, and how many used each feature. For checks without usage stats: whether stats were off or not started yet, and how many installs turned them off that day. The update channel is kept only in the install's row.
+
+## Feedback
+
+**? → Give feedback…** is separate from these checks. It sends only what you type, plus the KopiaLens version and install type, and only when you select **Send**. No install ID is sent with it. The update service uses your IP address only to limit how many messages one address can send in a minute, and doesn't store it.
 
 ## Revoked licences
 

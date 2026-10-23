@@ -1,25 +1,30 @@
-
+{% from "partials/_macros.html" import time_chips %}
     <!-- First-run onboarding (onboarding.js): shown instead of the app while it is needed. -->
     <template x-if="ob">
       <div class="fixed inset-0 z-[50] bg-canvas overflow-y-auto text-sm">
-        <div class="mx-auto max-w-2xl px-4 py-8 sm:py-12 space-y-5">
+        <div class="mx-auto max-w-3xl px-4 py-8 sm:py-12 space-y-5">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div class="font-semibold text-lg">Kopia<span class="text-ok">Lens</span></div>
-            <ol x-show="!ob.needsCode" class="flex items-center gap-1 text-xs" aria-label="Setup steps">
-              <template x-for="(s, i) in obSteps()" :key="s[0]">
-                <li class="flex items-center gap-1">
-                  <span x-show="i > 0" class="w-5 border-t border-bd"></span>
-                  <button type="button" @click="obGo(s[0])" :disabled="!obStepDone(s[0]) || ob.busy"
-                          class="flex items-center gap-1.5 rounded-full px-2 py-1"
-                          :class="obStepIndex(ob.step) === i ? 'bg-sel font-medium text-fg' : (obStepDone(s[0]) ? 'text-fg hover:bg-head' : 'text-muted')"
-                          :aria-current="obStepIndex(ob.step) === i ? 'step' : null">
-                    <span class="inline-flex h-4 w-4 items-center justify-center rounded-full border text-[0.625rem]"
-                          :class="obStepDone(s[0]) ? 'border-ok-bd text-ok' : 'border-bd'" ><i x-show="obStepDone(s[0])" class="ic ic-check"></i><span x-show="!obStepDone(s[0])" x-text="i + 1"></span></span>
-                    <span x-text="s[1]"></span>
-                  </button>
-                </li>
-              </template>
-            </ol>
+            <div class="flex items-center gap-2">
+              <ol x-show="!ob.needsCode && obStepIndex(ob.step) >= 0 && ob.step !== 'done'" class="flex items-center gap-1 text-xs" aria-label="Setup steps">
+                <template x-for="(s, i) in obSteps()" :key="s[0]">
+                  <li class="flex items-center gap-1">
+                    <span x-show="i > 0" class="w-5 border-t border-bd"></span>
+                    <button type="button" @click="obGo(s[0])" :disabled="!obStepDone(s[0]) || ob.busy"
+                            class="flex items-center gap-1.5 rounded-full px-2 py-1"
+                            :class="obStepIndex(ob.step) === i ? 'bg-sel font-medium text-fg' : (obStepDone(s[0]) ? 'text-fg hover:bg-head' : 'text-muted')"
+                            :aria-current="obStepIndex(ob.step) === i ? 'step' : null">
+                      <span class="inline-flex h-4 w-4 items-center justify-center rounded-full border text-[0.625rem]"
+                            :class="obStepDone(s[0]) ? 'border-ok-bd text-ok' : 'border-bd'" ><i x-show="obStepDone(s[0])" class="ic ic-check"></i><span x-show="!obStepDone(s[0])" x-text="i + 1"></span></span>
+                      <span x-text="s[1]"></span>
+                      <span x-show="s[0] === 'protect'" class="text-[0.6875rem] font-normal text-muted">optional</span>
+                    </button>
+                  </li>
+                </template>
+              </ol>
+              <button type="button" x-show="ob.rerun && !ob.needsCode" @click="obClose()" :disabled="ob.busy"
+                      class="h-8 w-8 rounded border border-bd bg-surface kl-ibtn" title="Close setup" aria-label="Close setup" data-testid="ob-close"><i class="ic ic-close"></i></button>
+            </div>
           </div>
 
           <div class="rounded-lg border border-bd bg-surface shadow-sm">
@@ -40,13 +45,53 @@
               </form>
             </template>
 
+            <!-- Welcome (first run only) -->
+            <template x-if="!ob.needsCode && ob.step === 'welcome'">
+              <div data-testid="ob-welcome">
+                <div class="p-5 space-y-4">
+                  <div>
+                    <h1 class="text-lg font-semibold">Welcome to KopiaLens</h1>
+                    <p class="text-muted">Browse, search and clean up your kopia backups, and run them on a schedule.</p>
+                  </div>
+                  <ul class="space-y-1">
+                    <li class="flex gap-2"><i class="ic ic-check text-ok mt-0.5 shrink-0"></i><span>Works alongside however you use kopia today: KopiaUI, BlinkDisk or the command line.</span></li>
+                    <li class="flex gap-2"><i class="ic ic-check text-ok mt-0.5 shrink-0"></i><span>Nothing in your backups changes unless you choose to.</span></li>
+                  </ul>
+                  <fieldset class="rounded-md border border-bd p-3 space-y-2">
+                    <legend class="font-medium px-1">Have you used kopia before?</legend>
+                    <label class="flex gap-2 items-start rounded-md border p-2.5 cursor-pointer" :class="ob.kopiaUser === 'yes' ? 'border-fg bg-sel' : 'border-bd hover:bg-head'">
+                      <input type="radio" value="yes" x-model="ob.kopiaUser" class="mt-0.5">
+                      <span><b>Yes, I already have kopia backups</b><span class="block text-xs text-muted">Connect the repositories you use.</span></span></label>
+                    <label class="flex gap-2 items-start rounded-md border p-2.5 cursor-pointer" :class="ob.kopiaUser === 'no' ? 'border-fg bg-sel' : 'border-bd hover:bg-head'">
+                      <input type="radio" value="no" x-model="ob.kopiaUser" class="mt-0.5">
+                      <span><b>No, I'm new to kopia</b><span class="block text-xs text-muted">Create a repository for your first backup.</span></span></label>
+                  </fieldset>
+                  <div>
+                    <div class="font-medium mb-1">Setup takes three steps</div>
+                    <ol class="list-decimal pl-5 space-y-0.5">
+                      <li>Connect your repositories</li>
+                      <li>Protect KopiaLens <span class="text-xs text-muted">(optional)</span></li>
+                      <li>Build the index</li>
+                    </ol>
+                  </div>
+                  <p class="text-xs" style="color:var(--danger)" x-show="ob.error" x-text="ob.error"></p>
+                </div>
+                <div class="kl-footer">
+                  <button type="button" @click="obSkip()" class="kl-btn quiet" :disabled="ob.busy" data-testid="ob-skip">Skip setup</button>
+                  <span class="spacer"></span>
+                  <button type="button" @click="obStartSetup()" class="kl-btn primary" :disabled="ob.busy">Start setup</button>
+                </div>
+              </div>
+            </template>
+
             <!-- 1. Connect -->
             <template x-if="!ob.needsCode && ob.step === 'connect'">
               <div>
                 <div class="p-5 space-y-4">
                   <div>
-                    <h1 class="text-lg font-semibold">Connect a repository</h1>
-                    <p class="text-muted">Pick the kopia repositories you already use, or add one.</p>
+                    <h1 class="text-lg font-semibold flex items-center gap-2">Connect a repository
+                      <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('getting-started', '1-connect-your-repositories')" @keydown.enter.prevent="openDocs('getting-started', '1-connect-your-repositories')" title="Open help: Connect your repositories">?</span></h1>
+                    <p class="text-muted" x-text="obNewcomer() ? 'Create a repository for your first backup.' : 'Pick the kopia repositories you already use, or add one.'"></p>
                   </div>
                   <template x-if="obKopiaMissing()">
                     <form @submit.prevent="obKopiaSave()" class="space-y-2">
@@ -90,13 +135,16 @@
             <template x-if="!ob.needsCode && ob.step === 'protect' && ob.protected && !ob.busy && !ob.error">
               <div>
                 <div class="p-5 space-y-3">
-                  <h1 class="text-lg font-semibold">Protect KopiaLens</h1>
-                  <div class="flex flex-wrap items-center gap-2">
-                    <p x-text="ob.protected === 'account' ? 'Sign-in is set up.' : 'KopiaLens opens without a password.'"></p>
-                    <button type="button" x-show="ob.protected === 'skipped'" @click="ob.protected = ''" class="kl-btn" data-testid="ob-protect-change">Change</button>
+                  <h1 class="text-lg font-semibold flex items-center gap-2">Protect KopiaLens
+                    <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('getting-started', '2-protect-kopialens')" @keydown.enter.prevent="openDocs('getting-started', '2-protect-kopialens')" title="Open help: Sign-in and encryption">?</span></h1>
+                  <div class="kl-facts">
+                    <div class="r"><span class="k">Sign-in</span>
+                      <span class="flex items-center gap-2"><span x-text="ob.protected === 'account' ? 'On' : 'Off'"></span>
+                        <button type="button" x-show="ob.protected === 'skipped'" @click="ob.protected = ''" class="kl-btn" style="height:22px" data-testid="ob-protect-change">Change</button></span></div>
+                    <div class="r"><span class="k">Encryption</span><span x-text="obEncryptionText()"></span></div>
                   </div>
-                  <p x-show="!ob.recoveryKey && ob.state.encryption_level && ob.state.encryption_level !== 'off'">Encryption is on. If you didn't save your recovery key, create a new one in Settings &rarr; Encryption.</p>
-                  <p class="kl-note">Change sign-in and encryption any time in Settings.</p>
+                  <p x-show="!ob.recoveryKey && ob.state.encryption_level && ob.state.encryption_level !== 'off'">If you didn't save your recovery key, create a new one in Settings &rarr; Encryption.</p>
+                  <p class="kl-note">You can also change these any time in Settings.</p>
                 </div>
                 <div class="kl-footer">
                   <button type="button" @click="ob.step = 'connect'" class="kl-btn">Back</button>
@@ -110,7 +158,8 @@
               <form @submit.prevent="obProtect()">
                 <fieldset class="p-5 space-y-5 min-w-0" :disabled="ob.busy">
                   <div>
-                    <h1 class="text-lg font-semibold">Protect KopiaLens</h1>
+                    <h1 class="text-lg font-semibold flex items-center gap-2">Protect KopiaLens
+                      <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('getting-started', '2-protect-kopialens')" @keydown.enter.prevent="openDocs('getting-started', '2-protect-kopialens')" title="Open help: Sign-in and encryption">?</span></h1>
                     <p class="text-muted">Who can open KopiaLens, and how its index is stored.</p>
                   </div>
 
@@ -127,11 +176,12 @@
                   </fieldset>
 
                   <fieldset class="space-y-2">
-                    <legend class="font-medium mb-1">Encryption</legend>
+                    <legend class="font-medium mb-1 flex items-center gap-2">Encryption
+                      <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('encryption', 'levels')" @keydown.enter.prevent="openDocs('encryption', 'levels')" title="Open help: Encryption">?</span></legend>
                     <template x-for="l in ['off', 'index', 'full']" :key="l">
-                      <label class="flex gap-2 items-start rounded-md border p-2.5 cursor-pointer" :class="ob.level === l ? 'border-fg bg-sel' : 'border-bd hover:bg-head'">
+                      <label class="flex gap-2 items-start rounded-md border p-2.5 cursor-pointer" :class="ob.level === l ? 'border-fg bg-sel' : 'border-bd hover:bg-head'" :title="obLevelTip(l)">
                         <input type="radio" :value="l" x-model="ob.level" class="mt-0.5">
-                        <span><b x-text="encLevelLabel(l)"></b><span x-show="l === 'index'" class="pill ok ml-1.5">Recommended</span>
+                        <span><b class="cursor-help underline decoration-dotted underline-offset-2" x-text="encLevelLabel(l)"></b><span x-show="l === 'index'" class="pill ok ml-1.5">Recommended</span>
                           <span class="block text-xs text-muted" x-text="encLevelNote(l)"></span></span>
                       </label>
                     </template>
@@ -146,7 +196,8 @@
                               <input type="password" x-model="ob.encConfirm" autocomplete="new-password" class="fld border border-bd bg-surface2"></label>
                           </div>
                         </template>
-                        <label x-show="!ob.state.docker" class="flex items-start gap-2 text-xs"><input type="checkbox" x-model="ob.remember" class="mt-0.5"><span>Unlock automatically on this computer<span class="block text-muted">Off: someone enters the password after every restart.</span></span></label>
+                        <label x-show="!ob.state.docker" class="flex items-center gap-2 text-xs"><input type="checkbox" x-model="ob.remember">
+                          <span class="cursor-help underline decoration-dotted underline-offset-2" title="On: KopiaLens unlocks the index by itself after a restart. Off: someone types the password after every restart.">Unlock automatically on this computer</span></label>
                         <p x-show="ob.state.docker" class="kl-note">In Docker, the index stays locked after each restart until someone enters the password, and the nightly index waits until then. To unlock on start, give Docker the password in a key file (see the Docker help).</p>
                         <p class="kl-note">Next, you get a recovery key to save. It's the only way back in if you forget the password.</p>
                       </div>
@@ -177,7 +228,8 @@
             <template x-if="!ob.needsCode && ob.step === 'key'">
               <div>
                 <div class="p-5 space-y-3">
-                  <h1 class="text-lg font-semibold">Save your recovery key</h1>
+                  <h1 class="text-lg font-semibold flex items-center gap-2">Save your recovery key
+                    <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('encryption', 'the-recovery-key')" @keydown.enter.prevent="openDocs('encryption', 'the-recovery-key')" title="Open help: The recovery key">?</span></h1>
                   <input type="text" readonly :value="ob.recoveryKey" @focus="$el.select()" class="fld border border-bd bg-surface2 w-full font-mono text-center">
                   <div class="flex gap-2">
                     <button type="button" @click="copyRecoveryKey(ob.recoveryKey)" class="kl-btn">Copy</button>
@@ -192,24 +244,26 @@
               </div>
             </template>
 
-            <!-- 3. Start -->
+            <!-- 3. Build the index -->
             <template x-if="!ob.needsCode && ob.step === 'start'">
               <div x-init="obLoadEngine()">
                 <div class="p-5 space-y-5">
                   <div>
-                    <h1 class="text-lg font-semibold" x-text="obSampleOnly() ? 'Ready to look around' : 'Build the index'">Build the index</h1>
+                    <h1 class="text-lg font-semibold flex items-center gap-2"><span x-text="obSampleOnly() ? 'Ready to look around' : 'Build the index'">Build the index</span>
+                      <span x-show="!obSampleOnly()" class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('indexing', 'first-index')" @keydown.enter.prevent="openDocs('indexing', 'first-index')" title="Open help: Indexing">?</span></h1>
                     <p class="text-muted" x-show="!obSampleOnly() && !obBackblazeOnly()">KopiaLens reads your snapshots once to build its index. After that it only reads what changed.</p>
                     <p class="text-muted" x-show="obBackblazeOnly()">KopiaLens reads Backblaze's file lists to build its index, and updates it when they change.</p>
                     <p class="text-muted" x-show="obSampleOnly()">The sample data is ready. Connect your own repository any time from the repository menu.</p>
                   </div>
                   <div class="kl-facts" x-show="obEstimate()">
-                    <div class="r"><span class="k">Estimated time</span><span x-text="obEstimate() ? capFirst(fmtDurRange(obEstimate().seconds)) : ''"></span></div>
+                    <div class="r"><span class="k cursor-help underline decoration-dotted underline-offset-2" title="A rough guess from the number of snapshots and files in them. Later updates read only new snapshots, so they're much faster.">Estimated time</span><span x-text="obEstimate() ? capFirst(fmtDurRange(obEstimate().seconds)) : ''"></span></div>
                     <div class="r"><span class="k">Index size</span><span x-text="obEstimate() ? capFirst(fmtBytesRange(obEstimate().bytes)) : ''"></span></div>
                   </div>
                   <p class="kl-note -mt-3" x-show="!obSampleOnly()">You can keep using KopiaLens while it runs. With several repositories, they're indexed one after another.</p>
 
                   <div class="space-y-1" x-show="obKopiaAdded().length" data-testid="ob-backups">
-                    <div class="font-medium">Backups</div>
+                    <div class="font-medium flex items-center gap-2"><span class="cursor-help underline decoration-dotted underline-offset-2" title="The app that takes snapshots on schedule. One app per repository should do it.">Backups</span>
+                      <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('backups', 'who-runs-backups')" @keydown.enter.prevent="openDocs('backups', 'who-runs-backups')" title="Open help: Who runs your backups">?</span></div>
                     <template x-for="a in obKopiaAdded()" :key="a.id">
                       <div class="flex items-center gap-2 text-xs">
                         <span class="min-w-0 truncate" x-text="a.name"></span>
@@ -220,14 +274,13 @@
                     <p class="kl-note">Who takes snapshots on schedule. Change it any time from the Dashboard's Backups button.</p>
                   </div>
 
-                  <div class="space-y-1" x-show="obKopiaAdded().length">
+                  <div class="space-y-1.5" x-show="obKopiaAdded().length">
                     <div class="font-medium">Keep the index up to date</div>
-                    <label class="flex flex-wrap items-center gap-2 text-xs">
+                    <label class="flex items-center gap-2 text-xs">
                       <input type="checkbox" x-model="ob.auto">
-                      <span x-show="!obInterval()">Update automatically every day at</span>
-                      <input x-show="!obInterval()" type="time" x-model="ob.time" :disabled="!ob.auto" class="fld border border-bd bg-surface2 disabled:opacity-50">
-                      <span x-show="obInterval()">Update automatically at the interval set in Settings</span>
+                      <span x-text="obInterval() ? 'Update automatically at the interval set in Settings' : 'Update automatically every day'"></span>
                     </label>
+                    <div x-show="!obInterval()">{{ time_chips('ob.time', '', '!ob.auto') }}</div>
                     <p class="kl-note">Only new snapshots are read. Change this any time in Settings → Indexing.</p>
                   </div>
 
@@ -248,6 +301,42 @@
               </div>
             </template>
 
+            <!-- 4. You're set up (OB_FINISH_SCREEN in onboarding.js) -->
+            <template x-if="!ob.needsCode && ob.step === 'done'">
+              <div data-testid="ob-done">
+                <div class="p-5 space-y-4">
+                  <h1 class="text-lg font-semibold">You're set up</h1>
+                  <div class="kl-facts">
+                    <template x-for="row in obDoneRows()" :key="row[0]">
+                      <div class="r"><span class="k" x-text="row[0]"></span><span x-text="row[1]"></span></div>
+                    </template>
+                  </div>
+                  <div>
+                    <div class="font-medium mb-1">Things to try</div>
+                    <ul class="space-y-1">
+                      <template x-for="t in obThingsToTry()" :key="t[0]">
+                        <li class="flex items-center gap-2"><i class="ic ic-arrow-right text-muted shrink-0"></i>
+                          <button type="button" class="text-left underline underline-offset-2" @click="obAfter(t[0])" x-text="t[1]"></button></li>
+                      </template>
+                    </ul>
+                  </div>
+                </div>
+                <div class="kl-footer">
+                  <button type="button" @click="obAfter('tour')" class="kl-btn" data-testid="ob-tour">Take a quick tour</button>
+                  <span class="spacer"></span>
+                  <button type="button" @click="obAfter('')" class="kl-btn primary">Open KopiaLens</button>
+                </div>
+              </div>
+            </template>
+
+          </div>
+
+          <!-- Help and the way out, under the card -->
+          <div x-show="!ob.needsCode && ob.step !== 'done'" class="flex flex-wrap items-center justify-between gap-3 text-xs text-muted" data-testid="ob-below">
+            <span x-show="ob.step === 'welcome'">Need help? <button type="button" class="text-fg underline underline-offset-2" @click="openDocs('getting-started')">Getting started</button></span>
+            <span>Having trouble? <button type="button" class="text-fg underline underline-offset-2" @click="openReport()">Report a problem</button></span>
+            <button type="button" x-show="ob.step !== 'welcome' && ob.step !== 'key' && !ob.rerun" @click="obSkip()" :disabled="ob.busy"
+                    class="text-fg underline underline-offset-2" data-testid="ob-later">Finish setup later</button>
           </div>
         </div>
       </div>

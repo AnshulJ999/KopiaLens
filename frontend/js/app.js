@@ -283,6 +283,8 @@ document.addEventListener("alpine:init", () => {
       if (this.cfgDlg) { if (!this.cfgDlg.busy) this.cfgDlg = null; return; }
       if (this.helpMenu) { this.helpMenu = false; return; }
       if (this.showDiag) { this.showDiag = false; return; }
+      if (this.showReport) { this.showReport = false; return; }
+      if (this.showFeedback) { this.showFeedback = false; return; }
       if (this.showUpdate) { this.showUpdate = false; return; }
       if (this.locked) return;    // the unlock box has no close: nothing behind it has data
       if (this.ob) return;        // onboarding is the whole page
@@ -399,6 +401,7 @@ document.addEventListener("alpine:init", () => {
           await this.obBegin(obState);
           return;
         }
+        this.setupSkipped = !!obState.setup_skipped;
       } catch (e) { /* an older server or a network hiccup: the app loads as usual */ }
       try {   // a note carried across a reload (start over)
         const flash = sessionStorage.getItem("kl-flash");
@@ -408,6 +411,8 @@ document.addEventListener("alpine:init", () => {
         TABLE_PREFS = await getJson("/api/settings/tables").catch(() => ({})) || {};
         const data = await getJson("/api/repos");
         this.repos = data.repos;
+        // Setup skipped before any repository: an empty app with the way to add one.
+        this.noRepos = !data.repos.length;
         const kl = data.settings?.kopialens || {};
         // URL ?repo= pins this tab to a repo (survives refresh, never writes last_repo) -> two
         // browser tabs can hold different repos without the last_repo setting flip-flopping.
@@ -417,9 +422,9 @@ document.addEventListener("alpine:init", () => {
           // A saved repo that no longer exists (or none saved) falls back to the first real repo.
           const saved = data.settings?.last_repo;
           const first = data.repos.find((r) => r.kind !== "backblaze") || data.repos[0];
-          this.repo = data.repos.some((r) => r.id === saved) ? saved : (first ? first.id : "1");
+          this.repo = data.repos.some((r) => r.id === saved) ? saved : (first ? first.id : "");
         }
-        this.repoKind = this.kindOf(this.repo);
+        this.repoKind = this.noRepos ? "" : this.kindOf(this.repo);
         const urlDocs = new URLSearchParams(location.search).get("docs");   // "Open in a new window" from the docs browser
         if (urlDocs) { this._docsWindow = true; this.openDocs(urlDocs, decodeURIComponent(location.hash.slice(1))); }
         this.loadLicence();
@@ -490,7 +495,10 @@ document.addEventListener("alpine:init", () => {
         this.initTheme(kl);  // sync theme/density state (server stamp already painted)
         if (kl.time_format) { TIME_FMT = kl.time_format; this.timeFmt = kl.time_format; }
         if (this.bzApplySettings) this.bzApplySettings(kl);  // restore persisted BZ prefs (tree drive, depths, toggles)
-        if (this.repoKind === "backblaze") {
+        this._tourAfterSetup();
+        if (this.noRepos) {
+          // Nothing to load; adding the first repository reloads into the normal app (closeAddRepo).
+        } else if (this.repoKind === "backblaze") {
           this.active = "bz-dashboard";
           await this.bzInit();
         } else {
@@ -503,10 +511,12 @@ document.addEventListener("alpine:init", () => {
           await this.activate();
         }
       });
-      this.armAutoRefresh();
-      this.armFreshness();
-      this.armJobChip();
-      this.armEngine();
+      if (!this.noRepos) {
+        this.armAutoRefresh();
+        this.armFreshness();
+        this.armJobChip();
+        this.armEngine();
+      }
       // One Escape handler for every panel: it closes the TOPMOST one and nothing else, so a
       // confirm never resolves and closes the panel under it in the same keypress.
       window.addEventListener("keydown", (e) => { if (e.key === "Escape") this.escClose(); else this._selectAllKey(e); });

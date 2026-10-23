@@ -39,6 +39,7 @@ class UsernameRequest(BaseModel):
 class EnabledRequest(BaseModel):
     on: bool
     code: str = ""
+    password: str = ""                    # the sign-in password, needed to switch sign-in off
 
 
 class SplitRequest(BaseModel):
@@ -200,6 +201,11 @@ def set_enabled(payload: EnabledRequest, request: Request = None):
         return _signed_in({"ok": True, "state": _state()}, user)   # this browser stays signed in
     if not auth.protection_chosen():
         _first_run_gate(payload.code, request)
+    elif auth.enabled():
+        user = _account()
+        if not auth.verify_password(payload.password, user["password_hash"]):
+            raise HTTPException(status_code=401, detail="Your password is wrong." if payload.password
+                                else "Enter your password to turn off sign-in.")
     auth.set_enabled(False)
     return {"ok": True, "state": _state()}
 

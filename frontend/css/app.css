@@ -311,4 +311,14 @@ html[data-selbar="float"] .kl-selbar .kl-menu { top: auto; bottom: calc(100% + 4
 .kl-tablefoot b { color: var(--fg); font-weight: 600; }
 .kl-tablefoot .grow { flex: 1; }
 
+/* The in-app tour (Driver.js) in the app's colours, fonts and themes. */
+.driver-popover.kl-tour { font-family: inherit; background: var(--surface); color: var(--fg); border: 1px solid var(--bd); border-radius: 8px; max-width: 320px; }
+.driver-popover.kl-tour .driver-popover-title { font-size: var(--fs-md); font-weight: 600; }
+.driver-popover.kl-tour .driver-popover-description { font-size: var(--fs-sm); }
+.driver-popover.kl-tour .driver-popover-progress-text { color: var(--muted); font-size: var(--fs-xs); }
+.driver-popover.kl-tour .driver-popover-footer-btn { color: var(--fg); background: var(--surface); border-color: var(--bd); border-radius: 6px; padding: 3px 10px; text-shadow: none; }
+.driver-popover.kl-tour .driver-popover-footer-btn:hover, .driver-popover.kl-tour .driver-popover-footer-btn:focus-visible { background: var(--hover); }
+.driver-popover.kl-tour .driver-popover-close-btn { color: var(--muted); }
+.driver-popover.kl-tour .driver-popover-arrow { display: none; }
+
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

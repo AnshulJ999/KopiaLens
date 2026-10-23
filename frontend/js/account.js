@@ -50,6 +50,11 @@ const accountPart = {
       return s.unlocked ? ["On · unlocked", "ok"] : ["On · locked", "warn"];
     },
     encLevelLabel(l) { return { off: "Off", index: "Index", full: "Full" }[l] || l; },
+    // Lowering the level asks for the encryption password (the server checks it too).
+    encLowering(l) {
+      const s = this.encStatus, order = ["off", "index", "full"];
+      return !!(s && s.configured) && order.indexOf(l) < order.indexOf(s.level);
+    },
     encLevelNote(l) {
       return {
         off: "The index is stored as plain files.",
@@ -93,6 +98,7 @@ const accountPart = {
     _acctCheck(d) {
       if ((d.mode === "create" || d.mode === "username") && !d.username.trim()) return "Enter a username.";
       if (["password", "split", "join", "encpw", "recovery-new"].includes(d.mode) && !d.current) return "Enter your current password.";
+      if (d.mode === "level" && this.encLowering(d.level) && !d.current) return "Enter the encryption password to lower encryption.";
       const setsNew = ACCT_NEW_PASSWORD.includes(d.mode) || (d.mode === "enc-setup" && !d.usePw);
       if (setsNew || d.mode === "join" || d.mode === "enc-setup") {
         if (!d.pw) return "Enter a password.";
@@ -154,7 +160,7 @@ const accountPart = {
           this.klNotify("Encryption password changed");
           return;
         case "level":
-          r = await _acctPost("/api/encryption/level", { level: d.level });
+          r = await _acctPost("/api/encryption/level", { level: d.level, password: this.encLowering(d.level) ? d.current : "" });
           this._acctApply(r); this.acctDialog = null;
           this.klNotify(`Changing encryption to ${this.encLevelLabel(d.level)}. Progress is in the jobs panel.`);
           return;
@@ -208,17 +214,20 @@ const accountPart = {
 
     // ---- Direct actions ----------------------------------------------------------------------
     async toggleSignIn(on) {
+      let password = "";
       if (!on) {
         const ok = await this.klConfirm({
           title: "Turn off sign-in?",
           callout: "Anyone who can reach this address will be able to browse and act on the repositories.",
           note: "Your account is kept. Turning sign-in back on needs no new password.",
+          input: this.acct && this.acct.protected ? { label: "Your password", type: "password" } : null,
           confirmLabel: "Turn off sign-in", danger: true,
         });
         if (!ok) return;
+        password = (ok && ok.value) || "";
       }
       try {
-        this._acctApply(await _acctPost("/api/account/enabled", { on }));
+        this._acctApply(await _acctPost("/api/account/enabled", { on, password }));
         this.klNotify(on ? "Sign-in is on" : "Sign-in is off");
       } catch (e) { this.klNotify(e.message || String(e), "warn"); }
     },

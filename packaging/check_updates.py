@@ -12,7 +12,7 @@ import urllib.request
 KL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHELL = os.path.join(KL_ROOT, "shell", "src-tauri")
 BUILD_PYTHON = os.environ.get("KOPIALENS_BUILD_PYTHON") or r"J:\Excluded\KopiaLens-Build\venv\Scripts\python.exe"
-VENDOR_PACKAGES = {"alpine": "alpinejs", "tabulator": "tabulator-tables", "marked": "marked"}
+VENDOR_PACKAGES = {"alpine": "alpinejs", "tabulator": "tabulator-tables", "marked": "marked", "driver": "driver.js"}
 
 
 def fetch_json(url: str) -> dict:

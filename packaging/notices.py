@@ -148,6 +148,7 @@ def add_web(n: Notices) -> None:
         ("Alpine.js", _vendor_version("alpine-*.min.js"), "MIT", [os.path.join(VENDOR, "alpine-LICENSE.txt")]),
         ("Tabulator", _vendor_version("tabulator-*.min.js"), "MIT", [os.path.join(VENDOR, "tabulator-LICENSE.txt")]),
         ("marked", _vendor_version("marked-*.min.js"), "MIT", [os.path.join(VENDOR, "marked-LICENSE.txt")]),
+        ("Driver.js", _vendor_version("driver-*.min.js"), "MIT", [os.path.join(VENDOR, "driver-LICENSE.txt")]),
         ("Tailwind CSS (compiled styles)", "", "MIT", [os.path.join(VENDOR, "tailwind-LICENSE.txt")]),
     ]
     for lic in sorted(glob.glob(os.path.join(VENDOR, "fonts", "*-LICENSE.txt"))):

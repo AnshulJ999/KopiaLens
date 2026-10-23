@@ -22,6 +22,8 @@
   <link href="{{ base }}/static/vendor/tabulator-6.6.1.simple.min.css" rel="stylesheet">
   <script src="{{ base }}/static/vendor/tabulator-6.6.1.min.js"></script>
   <script src="{{ base }}/static/vendor/marked-18.0.14.min.js"></script>
+  <script src="{{ base }}/static/vendor/driver-1.9.0.min.js"></script>
+  <link href="{{ base }}/static/vendor/driver-1.9.0.min.css" rel="stylesheet">
   <link href="{{ base }}/static/css/tokens.css?v={{ asset_v }}" rel="stylesheet">
   <link href="{{ base }}/static/css/app.css?v={{ asset_v }}" rel="stylesheet">
   <link href="{{ base }}/static/css/icons.css?v={{ asset_v }}" rel="stylesheet">
@@ -36,6 +38,22 @@
       <div x-show="!ob && isSample()" x-cloak class="mb-4 rounded-md border border-bd bg-surface2 px-4 py-2 flex flex-wrap items-center gap-3 text-sm">
         <div class="min-w-0 flex-1">You're looking at sample data. Actions here change nothing.</div>
         <button x-show="!window.KL_WEB_DEMO" @click="openAddRepo()" class="kl-btn primary">Connect your repository</button>
+      </div>
+      <!-- Setup was skipped or left for later: what's missing, and the way back to it. -->
+      <div x-show="!ob && setupSkipped" x-cloak class="mb-4 rounded-md border border-warn-bd bg-warn-bg px-4 py-2 flex flex-wrap items-center gap-3 text-sm" data-testid="setup-banner">
+        <div class="min-w-0 flex-1" x-text="noRepos ? 'Setup isn\'t finished: no repository is connected.' : 'Setup isn\'t finished.'"></div>
+        <button @click="obResume()" class="kl-btn primary">Finish setup</button>
+        <button x-show="!noRepos" @click="obDismissSetup()" class="kl-btn quiet">Dismiss</button>
+      </div>
+      <!-- Offered once after setup when the finish screen is off. -->
+      <div x-show="!ob && tourOffer" x-cloak class="mb-4 rounded-md border border-bd bg-surface2 px-4 py-2 flex flex-wrap items-center gap-3 text-sm" data-testid="tour-offer">
+        <div class="min-w-0 flex-1">Want a quick look around?</div>
+        <button @click="tourOffer = false; startTour()" class="kl-btn primary">Take the tour</button>
+        <button @click="tourOffer = false" class="kl-btn quiet">No thanks</button>
+      </div>
+      <div x-show="noRepos" x-cloak class="rounded-md border border-dashed border-bd bg-surface px-4 py-10 text-center text-muted" data-testid="no-repos">
+        <div>No repositories yet.</div>
+        <button type="button" @click="openAddRepo()" class="mt-1 text-fg underline underline-offset-2">Connect a repository</button>
       </div>
       <!-- A config file was damaged and restored (or reset) at startup: say so until dismissed. -->
       <template x-for="n in cfgNotices" :key="n.id">
@@ -107,6 +125,7 @@
         <div class="font-medium">Browse-only: this repository is reached through a kopia server</div>
         <div class="text-xs text-muted">Snapshots, folders, restore, pins and policies work here. You see the snapshots your server account may see. Space analysis, dedup and cleanup need direct access to the storage: run KopiaLens on the computer that runs the kopia server, or connect to the storage itself.</div>
       </div>
+      <div x-show="!noRepos" class="contents">
 {% include "partials/tabs/dashboard.html" %}
 
 {% include "partials/tabs/snapshots.html" %}
@@ -130,6 +149,7 @@
 {% include "partials/tabs/tasks.html" %}
 
 {% include "partials/backblaze.html" %}
+      </div>
     </main>
 {% include "partials/settings.html" %}
 {% include "partials/detail.html" %}

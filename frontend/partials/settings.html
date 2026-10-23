@@ -1,4 +1,4 @@
-{% from "partials/_macros.html" import duration, needs_kopia %}
+{% from "partials/_macros.html" import duration, needs_kopia, time_chips %}
     <div x-show="showSettings" @click.self="showSettings=false" x-cloak class="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4 sm:p-6">
       <!-- One fixed height with a scrolling body, so the section list never moves. Every control
            SAVES ITSELF on change (saveKl), so the footer carries no Save button and closing the
@@ -133,8 +133,8 @@
                     <option value="interval">Every N hours</option>
                     <option value="off">Off, only when I start it</option>
                   </select></div>
-                <div class="flex items-center justify-between gap-3 mt-2" x-show="indexMode==='daily'"><span>Run at</span>
-                  <input type="time" x-model="indexTime" @change="saveKl('index_time')" class="fld border border-bd bg-surface2"></div>
+                <div class="flex items-center justify-between gap-3 mt-2" x-show="indexMode==='daily'"><span class="shrink-0">Run at</span>
+                  {{ time_chips('indexTime', "saveKl('index_time')") }}</div>
                 <div class="flex items-center justify-between gap-3 mt-2" x-show="indexMode==='interval'"><span>Every</span>
                   <select x-model.number="indexInterval" @change="saveKl('index_interval')" class="fld border border-bd bg-surface2">
                     <option value="14400">4 hours</option>

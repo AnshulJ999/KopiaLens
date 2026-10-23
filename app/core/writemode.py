@@ -84,7 +84,7 @@ NO_REPO_WRITE = {
     "/api/index/backups/copy", "/api/index/notices/{notice_id}/dismiss",
     "/api/delete/plan", "/api/delete/stats",
     "/api/engine/pause", "/api/engine/resume", "/api/engine/source-pause", "/api/engine/source-resume",
-    "/api/help/check-updates", "/api/help/install-update", "/api/folder/detail", "/api/jobs/stop",
+    "/api/help/check-updates", "/api/help/install-update", "/api/help/feedback", "/api/folder/detail", "/api/jobs/stop",
     "/api/tasks/cancel", "/api/engine/cancel",   # stopping writes nothing
     "/api/notify/profile/test", "/api/notify/webhook/test",
     "/api/policies/resolve", "/api/policies/multi-plan", "/api/policies/preview", "/api/policies/price",

@@ -1,21 +1,33 @@
-// First-run onboarding: Connect -> Protect -> Start (partials/onboarding.html). Shown instead of the
-// app while /api/onboarding/state says it is needed. Everything it sets is changeable in Settings.
-const OB_STEPS = [["connect", "Connect"], ["protect", "Protect"], ["start", "Start"]];
+// First-run onboarding: Welcome -> Connect -> Protect -> Build the index -> You're set up
+// (partials/onboarding.html). Shown instead of the app while /api/onboarding/state says it is needed.
+// Everything it sets is changeable in Settings. Also the in-app tour (Driver.js).
+const OB_STEPS = [["connect", "Connect"], ["protect", "Protect"], ["start", "Build the index"]];
+
+// The "You're set up" screen after the last step. Off: setup opens the app straight away and the app
+// offers the tour once instead.
+const OB_FINISH_SCREEN = true;
+
+const OB_TIME_CHIPS = [["02:00", "Overnight"], ["08:00", "Morning"], ["20:00", "Evening"]];
 
 const onboardingPart = {
+    noRepos: false, setupSkipped: false, tourOffer: false,
 
     async obBegin(state) {
+      const step = state.rerun ? "connect" : (state.resume_step || (state.kopia_user ? "connect" : "welcome"));
       this.ob = {
-        step: "connect", state, needsCode: !state.setup_unlocked, code: "", codeError: "", codeBusy: false,
+        step, state, needsCode: !state.setup_unlocked, code: "", codeError: "", codeBusy: false,
+        rerun: !!state.rerun, kopiaUser: state.kopia_user || "yes", indexStarted: false,
         kopiaPath: "", kopiaError: "",
         username: "admin", pw: "", confirm: "", level: "index", usePw: true, encPw: "", encConfirm: "",
         remember: !state.docker, hosts: (state.allowed_hosts || []).join(", "), busy: false, error: "",
         recoveryKey: "", keySaved: false, keyNote: "", protected: "", sampleBusy: false, sampleError: "",
-        auto: state.index_mode !== "off", time: state.index_time || "23:00", engine: {}, engineAuto: {},
+        auto: state.index_mode !== "off", time: this._obTime(state), engine: {}, engineAuto: {},
       };
       if (this.ob.needsCode) return;
       await this._obStart();
     },
+    // A first setup suggests Overnight; a time already chosen stays.
+    _obTime(state) { return state.index_time_set ? (state.index_time || "02:00") : "02:00"; },
     async _obStart() {
       const st = this.ob.state;
       await _setupPost("/api/onboarding/begin").catch(() => {});
@@ -24,9 +36,76 @@ const onboardingPart = {
       await this.cxOpen(st.repos || []);
     },
     obSteps() { return OB_STEPS; },
-    obStepIndex(step) { const s = step === "key" ? "protect" : step; return OB_STEPS.findIndex((x) => x[0] === s); },
+    obStepIndex(step) {
+      if (step === "done") return OB_STEPS.length;
+      const s = step === "key" ? "protect" : step;
+      return OB_STEPS.findIndex((x) => x[0] === s);
+    },
     obStepDone(step) { return this.obStepIndex(step) < this.obStepIndex(this.ob.step); },
     obGo(step) { if (this.obStepDone(step)) { this.ob.step = step; this.ob.error = ""; } },
+    obNewcomer() { return !!(this.ob && !this.ob.rerun && this.ob.kopiaUser === "no"); },
+    timeChips() { return OB_TIME_CHIPS; },
+
+    // ---- Welcome, skip, close ------------------------------------------------------------------
+    async obStartSetup() {
+      const o = this.ob;
+      o.busy = true; o.error = "";
+      try {
+        await _setupPost("/api/onboarding/answer", { kopia_user: o.kopiaUser });
+        o.state.kopia_user = o.kopiaUser;
+        o.step = "connect";
+      } catch (e) { o.error = e.message || String(e); }
+      o.busy = false;
+    },
+    // Skip setup (Welcome) or Finish setup later (any step): the app opens with a Finish setup banner.
+    async obSkip() {
+      const o = this.ob;
+      if (o.busy) return;
+      const welcome = o.step === "welcome";
+      await this.loadFreshness();
+      const added = (this.cx && this.cx.added) || [];
+      const kopia = this.obKopiaAdded().map((a) => a.id);
+      const fresh = (this.freshness || []).filter((f) => kopia.includes(f.repo));
+      const index = !kopia.length ? "Not built" : (fresh.some((f) => f.running) ? "Building"
+        : (fresh.some((f) => f.last_index) ? "Built" : "Not built"));
+      const open = o.state.profile === "server" && o.protected !== "account";
+      const ha = !!o.state.ingress;
+      const ok = await this.klConfirm({
+        title: welcome ? "Skip setup?" : "Finish setup later?",
+        callout: !open ? "" : (ha ? "The Home Assistant sidebar still asks for Home Assistant's sign-in. If you give KopiaLens its own port, anyone who can reach that port can open it."
+          : "Anyone who can reach this address can open KopiaLens and act on your repositories."),
+        facts: [["Repositories", added.map((a) => a.name).join(", ") || "None connected"],
+                ["Sign-in", o.protected === "account" ? "On" : "Off"], ["Index", index]],
+        note: "Finish setup any time from the banner at the top.",
+        confirmLabel: welcome ? "Skip setup" : "Finish later", danger: open && !ha,
+      });
+      if (!ok) return;
+      o.busy = true; o.error = "";
+      try {
+        await this._obSaveHosts();
+        await _setupPost("/api/onboarding/skip", { step: welcome ? "" : (o.step === "key" ? "start" : o.step) });
+        location.reload();
+      } catch (e) { o.error = e.message || String(e); o.busy = false; }
+    },
+    // "Run setup again": close without finishing; what was already saved stays.
+    async obClose() {
+      try {
+        await _setupPost("/api/onboarding/close");
+        location.reload();
+      } catch (e) { this.ob.error = e.message || String(e); }
+    },
+    async obResume() {
+      try {
+        await _setupPost("/api/onboarding/resume");
+        location.reload();
+      } catch (e) { this.klNotify(e.message || String(e), "warn"); }
+    },
+    async obDismissSetup() {
+      try {
+        await _setupPost("/api/onboarding/dismiss");
+        this.setupSkipped = false;
+      } catch (e) { this.klNotify(e.message || String(e), "warn"); }
+    },
 
     // ---- Setup code (server install, setup window closed) -----------------------------------
     obNeedCode() {
@@ -45,7 +124,10 @@ const onboardingPart = {
           o.state = await getJson("/api/onboarding/state");
           o.hosts = (o.state.allowed_hosts || []).join(", ");
           o.auto = o.state.index_mode !== "off";
-          o.time = o.state.index_time || "23:00";
+          o.time = this._obTime(o.state);
+          o.rerun = !!o.state.rerun;
+          o.kopiaUser = o.state.kopia_user || "yes";
+          o.step = o.rerun ? "connect" : (o.state.resume_step || (o.state.kopia_user ? "connect" : "welcome"));
           await this._obStart();
         }
       } catch (e) { o.codeError = e.message || String(e); }
@@ -86,6 +168,19 @@ const onboardingPart = {
     },
 
     // ---- Protect ----------------------------------------------------------------------------
+    obLevelTip(l) {
+      return {
+        off: "Anyone who can open KopiaLens's data folder can read the file names in the index.",
+        index: "The same protection kopia gives your backups: file names in the index need the password.",
+        full: "Stricter than kopia: also history, logs and policy backups need the password.",
+      }[l] || "";
+    },
+    obEncryptionText() {
+      const o = this.ob;
+      if (o.recoveryKey) return this.encLevelLabel(o.level);
+      const l = o.state.encryption_level;
+      return l && l !== "off" ? this.encLevelLabel(l) : "Off";
+    },
     _obProtectCheck() {
       const o = this.ob;
       if (!o.username.trim()) return "Enter a username.";
@@ -156,7 +251,7 @@ const onboardingPart = {
       o.busy = false;
     },
 
-    // ---- Start ------------------------------------------------------------------------------
+    // ---- Build the index --------------------------------------------------------------------
     // Who runs each repository's backups. A repository created in this setup has nothing else
     // running it, so KopiaLens takes it on; everything else stays as it is unless changed here.
     async obLoadEngine() {
@@ -212,7 +307,7 @@ const onboardingPart = {
       const o = this.ob;
       if (!o.auto) return "";
       if (this.obInterval()) return "within the update interval set in Settings";
-      const [hh, mm] = String(o.time || "23:00").split(":").map(Number);
+      const [hh, mm] = String(o.time || "02:00").split(":").map(Number);
       const now = new Date();
       const at = new Date(now); at.setHours(hh || 0, mm || 0, 0, 0);
       return `at ${o.time} ${at > now ? "today" : "tomorrow"}`;
@@ -240,15 +335,81 @@ const onboardingPart = {
         const kl = {};
         if (this.obKopiaAdded().length) {   // the kopia schedule is only asked when a kopia repository was added
           kl.index_mode = o.auto ? (this.obInterval() ? "interval" : "daily") : "off";
-          if (o.auto && !this.obInterval()) kl.index_time = o.time || "23:00";
+          if (o.auto && !this.obInterval()) kl.index_time = o.time || "02:00";
         }
         await _setupPost("/api/settings", { kopialens: kl, last_repo: ids[0] || "" });
         await _setupPost("/api/onboarding/finish");
-        if (index && toIndex.length) await _setupPost("/api/onboarding/start-indexing", { repos: toIndex });
+        if (index && toIndex.length) {
+          await _setupPost("/api/onboarding/start-indexing", { repos: toIndex });
+          o.indexStarted = true;
+        }
+        if (OB_FINISH_SCREEN && !o.rerun) { o.step = "done"; o.busy = false; return; }
+        this._obAfterSetup(o.rerun ? "" : "offer");
         location.reload();
       } catch (e) {
         o.error = e.message || String(e);
         o.busy = false;
       }
+    },
+
+    // ---- You're set up ------------------------------------------------------------------------
+    obDoneRows() {
+      const o = this.ob;
+      const rows = this.obSummary().map((r) => (r[1] === "Unchanged" ? [r[0], "Off"] : r));
+      const kopia = this.obKopiaAdded().map((a) => a.name);
+      if (this.obSampleOnly()) rows.push(["Index", "Sample data, ready"]);
+      else if (o.indexStarted && kopia.length) rows.push(["Index", kopia.length > 1 ? `Building ${kopia[0]}, then ${kopia.slice(1).join(", ")}` : `Building ${kopia[0]}`]);
+      else if (kopia.length) rows.push(["Index", "Not started yet"]);
+      if (kopia.length) rows.push(["Updates the index", !o.auto ? "Off" : (this.obInterval() ? "At the interval set in Settings" : `Every day at ${o.time}`)]);
+      return rows;
+    },
+    obThingsToTry() {
+      return [
+        this.obNewcomer() && this.obKopiaAdded().length ? ["backup", "Set up your first backup"] : ["dashboard", "See your backups on the Dashboard"],
+        ["space", "Find what takes the most space"],
+        ["docs", "Read Getting started"],
+      ];
+    },
+    obAfter(action) {
+      if (action === "docs") { this.openDocs("getting-started"); return; }
+      this._obAfterSetup(action);
+      location.reload();
+    },
+    // What the app does once after setup's reload: offer the tour, start it, or open a place.
+    _obAfterSetup(action) {
+      try { if (action) sessionStorage.setItem("kl-after-setup", action); } catch (e) { /* storage blocked: the app just opens */ }
+    },
+    _tourAfterSetup() {
+      let a = "";
+      try { a = sessionStorage.getItem("kl-after-setup") || ""; sessionStorage.removeItem("kl-after-setup"); } catch (e) { /* storage blocked */ }
+      if (!a || this.noRepos) return;
+      if (a === "offer") this.tourOffer = true;
+      else if (a === "tour") setTimeout(() => this.startTour(), 800);
+      else if (a === "space" && this.repoKind === "kopia") this.active = "tree";
+      else if (a === "dashboard" && this.repoKind === "kopia") this.active = "dashboard";
+      else if (a === "backup") setTimeout(() => this.openNewSnap(), 800);
+    },
+
+    // ---- The tour (Help > Take the tour) -------------------------------------------------------
+    startTour() {
+      this.helpMenu = false;
+      this.tourOffer = false;
+      if (this.noRepos || !(window.driver && window.driver.js)) return;
+      if (this.repoKind === "kopia" && this.active !== "dashboard") { this.active = "dashboard"; this.activate(); }
+      setTimeout(() => {
+        const shown = (sel) => { const el = document.querySelector(sel); return !!(el && el.offsetParent); };
+        const steps = [
+          { element: "[data-tour=repo]", popover: { title: "Your repositories", description: "Switch between repositories here, or add another one." } },
+          { element: "[data-tour=tabs]", popover: { title: "Tabs", description: "Each tab shows the selected repository a different way: snapshots, folders, search, what changed and more." } },
+          { element: "[data-tour=search]", popover: { title: "Search", description: "Find any file in every snapshot. Start typing to search." } },
+          { popover: { title: "File and folder panels", description: "Click a file or folder anywhere to open its panel: its versions, the space it takes and the snapshots that hold it." } },
+          { element: "[data-testid=backups-chip]", popover: { title: "Backups", description: "Which app takes your snapshots on schedule. Pause them from here when you need to." } },
+          { element: "[data-tour=help]", popover: { title: "Help", description: "Documentation, Report a problem, and this tour again any time." } },
+        ].filter((s) => !s.element || shown(s.element));
+        window.driver.js.driver({
+          steps, showProgress: true, progressText: "{{current}} of {{total}}",
+          nextBtnText: "Next", prevBtnText: "Back", doneBtnText: "Done", popoverClass: "kl-tour",
+        }).drive();
+      }, 300);
     },
 };

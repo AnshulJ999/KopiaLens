@@ -85,6 +85,20 @@
 </div>
 {%- endmacro %}
 
+{#- A daily time: three common times plus Custom, which shows a typed time box. `model` is the bound
+    property, `change` runs after a pick (e.g. a save), `disabled` an expression. -#}
+{% macro time_chips(model, change='', disabled='false') -%}
+<div class="flex flex-wrap items-center gap-1.5" x-data="{ custom: false }" data-testid="time-chips">
+  <template x-for="c in timeChips()" :key="c[0]">
+    <button type="button" class="kl-chip" :class="!custom && {{ model }} === c[0] ? 'on' : ''" :disabled="{{ disabled }}"
+            @click="custom = false; {{ model }} = c[0]; {{ change }}" x-text="c[1] + ', ' + c[0]"></button>
+  </template>
+  <button type="button" class="kl-chip" :class="custom || !timeChips().some((c) => c[0] === {{ model }}) ? 'on' : ''" :disabled="{{ disabled }}" @click="custom = true">Custom…</button>
+  <input x-show="custom || !timeChips().some((c) => c[0] === {{ model }})" type="time" x-model="{{ model }}" @change="{{ change }}" :disabled="{{ disabled }}"
+         class="fld border border-bd bg-surface2 disabled:opacity-50" aria-label="Time">
+</div>
+{%- endmacro %}
+
 {#- A duration setting: a free number plus a unit, stored in seconds (klDur in settings.js). -#}
 {% macro duration(prop, key, min=0) -%}
 <div class="flex items-center gap-2" x-data="klDur('{{ prop }}', '{{ key }}')">
