@@ -55,27 +55,37 @@ def user_data_root() -> str:
 
 
 # A portable copy keeps its data in data\ beside the app, or in the folder a ``data=<path>`` line
-# in the marker names (relative paths are beside the app). The marker sits next to the desktop
-# app, one level above the server folder; it beats KOPIALENS_DATA_DIR, and the desktop app passes
-# the same folder on. shell/src-tauri/src/server.rs reads the marker the same way.
+# names (relative paths are beside the app): in PORTABLE_DATA_FILE, which the portable zip never
+# contains so extracting a new version over the copy keeps it, else in the marker (older copies).
+# The marker sits next to the desktop app, one level above the server folder; it beats
+# KOPIALENS_DATA_DIR, and the desktop app passes the same folder on. shell/src-tauri/src/server.rs
+# reads both files the same way.
 PORTABLE_MARKER = "KopiaLens-portable.txt"
+PORTABLE_DATA_FILE = "KopiaLens-data.txt"
+
+
+def _data_line(path: str) -> str | None:
+    try:
+        with open(path, encoding="utf-8-sig", errors="replace") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        key, sep, value = line.partition("=")
+        value = value.strip().strip('"')
+        if sep and key.strip().lower() == "data" and value:
+            return value
+    return None
 
 
 def portable_dir_of(app_dir: str) -> str | None:
     marker = os.path.join(app_dir, PORTABLE_MARKER)
     if not os.path.isfile(marker):
         return None
-    try:
-        with open(marker, encoding="utf-8-sig", errors="replace") as fh:
-            lines = fh.read().splitlines()
-    except OSError:
-        lines = []
-    for line in lines:
-        key, sep, value = line.partition("=")
-        value = value.strip().strip('"')
-        if sep and key.strip().lower() == "data" and value:
-            return value if os.path.isabs(value) else os.path.join(app_dir, value)
-    return os.path.join(app_dir, "data")
+    value = _data_line(os.path.join(app_dir, PORTABLE_DATA_FILE)) or _data_line(marker)
+    if not value:
+        return os.path.join(app_dir, "data")
+    return value if os.path.isabs(value) else os.path.join(app_dir, value)
 
 
 def portable_data_dir() -> str | None:

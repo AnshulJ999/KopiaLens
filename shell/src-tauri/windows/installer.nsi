@@ -72,6 +72,8 @@ Var StartupBox
 Var PathBox
 Var DeleteDataBox
 Var DeleteDataState
+Var PrevVersion
+Var KlWelcome
 
 Name "${PRODUCTNAME}"
 BrandingText "${COPYRIGHT}"
@@ -100,6 +102,7 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 
 ; ---------------------------------------------------------------- installer pages
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
+!define MUI_WELCOMEPAGE_TEXT "$KlWelcome"
 !insertmacro MUI_PAGE_WELCOME
 
 Page custom PageMode PageModeLeave
@@ -153,6 +156,10 @@ LangString klClosing ${LANG_ENGLISH} "Closing KopiaLens..."
 LangString klUninstallTop ${LANG_ENGLISH} "KopiaLens will be removed from this computer. Your backups and kopia repositories are not touched."
 LangString klDeleteData ${LANG_ENGLISH} "Also delete KopiaLens settings and index"
 LangString klSilentNoAdmin ${LANG_ENGLISH} "Installing for everyone needs administrator rights.$\n"
+LangString klWelcomeNew ${LANG_ENGLISH} "Setup will install KopiaLens on this computer.$\r$\n$\r$\nClick Next to continue."
+LangString klWelcomeUpdate ${LANG_ENGLISH} "KopiaLens $PrevVersion is installed. Setup will update it to ${VERSION}.$\r$\n$\r$\nYour settings, index and repositories stay as they are.$\r$\n$\r$\nClick Next to continue."
+LangString klWelcomeReinstall ${LANG_ENGLISH} "KopiaLens ${VERSION} is already installed. Setup will install it again.$\r$\n$\r$\nYour settings, index and repositories stay as they are.$\r$\n$\r$\nClick Next to continue."
+LangString klWelcomeOlder ${LANG_ENGLISH} "KopiaLens $PrevVersion is installed, which is newer than this version (${VERSION}).$\r$\n$\r$\nIf you continue, KopiaLens may not open its settings and index until you install a newer version again.$\r$\n$\r$\nClick Next to continue anyway, or Cancel."
 
 ; ---------------------------------------------------------------- helpers
 !macro IsAdmin _out
@@ -179,6 +186,65 @@ FunctionEnd
 
 Function SkipIfPassive
   ${IfThen} $PassiveMode = 1 ${|} Abort ${|}
+FunctionEnd
+
+; Splits $R0 at the first "-" into $R1 (the numbers) and $R2 (the pre-release tag, "" for a
+; release), with the tag's label made numeric (alpha 1, beta 2, rc 3) for ${VersionCompare}.
+Function KlSplitVersion
+  StrCpy $R1 $R0
+  StrCpy $R2 ""
+  StrLen $R3 $R0
+  StrCpy $R4 0
+  ${DoWhile} $R4 < $R3
+    StrCpy $R5 $R0 1 $R4
+    ${If} $R5 == "-"
+      StrCpy $R1 $R0 $R4
+      IntOp $R4 $R4 + 1
+      StrCpy $R2 $R0 "" $R4
+      ${WordReplace} $R2 "alpha" "1" "+" $R2
+      ${WordReplace} $R2 "beta" "2" "+" $R2
+      ${WordReplace} $R2 "rc" "3" "+" $R2
+      ${Break}
+    ${EndIf}
+    IntOp $R4 $R4 + 1
+  ${Loop}
+FunctionEnd
+
+; The Welcome page text: a new install, an update, a reinstall, or an older version over a newer one.
+; Needs ApplyMode first (SHCTX).
+Function KlWelcomeText
+  StrCpy $KlWelcome "$(klWelcomeNew)"
+  ${If} $PrevInstall = 1
+    ReadRegStr $PrevVersion SHCTX "${UNINSTKEY}" "DisplayVersion"
+    ${If} $PrevVersion != ""
+      StrCpy $R0 $PrevVersion
+      Call KlSplitVersion
+      StrCpy $R6 $R1
+      StrCpy $R7 $R2
+      StrCpy $R0 "${VERSION}"
+      Call KlSplitVersion
+      ${VersionCompare} $R6 $R1 $R8
+      ${If} $R8 = 0
+        ; Same numbers: a release is newer than any of its pre-releases.
+        ${If} $R7 == $R2
+          StrCpy $R8 0
+        ${ElseIf} $R7 == ""
+          StrCpy $R8 1
+        ${ElseIf} $R2 == ""
+          StrCpy $R8 2
+        ${Else}
+          ${VersionCompare} $R7 $R2 $R8
+        ${EndIf}
+      ${EndIf}
+      ${If} $R8 = 0
+        StrCpy $KlWelcome "$(klWelcomeReinstall)"
+      ${ElseIf} $R8 = 1
+        StrCpy $KlWelcome "$(klWelcomeOlder)"
+      ${Else}
+        StrCpy $KlWelcome "$(klWelcomeUpdate)"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
 FunctionEnd
 
 ; Adds (_add 1) or removes (_add 0) <install>\bin on the PATH of the chosen mode, through klens.exe
@@ -457,6 +523,7 @@ Function .onInit
   ${EndIf}
 
   Call ApplyMode
+  Call KlWelcomeText
 
   ; Defaults: on for a new install; an upgrade keeps what the user has now.
   StrCpy $WantDesktop 1

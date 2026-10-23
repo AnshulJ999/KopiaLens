@@ -77,19 +77,32 @@ fn dev_env(root: &Path, name: &str) -> Option<String> {
     })
 }
 
-/// The portable data folder: `data/` beside the app, or the marker's `data=<path>` line
-/// (relative paths are beside the app). Mirrors config.portable_dir_of.
+fn data_line(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    text.trim_start_matches('\u{feff}').lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        let value = value.trim().trim_matches('"');
+        (key.trim().eq_ignore_ascii_case("data") && !value.is_empty()).then(|| value.to_string())
+    })
+}
+
+/// The portable data folder: `data/` beside the app, or a `data=<path>` line (relative paths are
+/// beside the app) in the data file, else in the marker (older copies). Mirrors
+/// config.portable_dir_of. A marker line is copied into the data file, which the portable zip
+/// never contains, so a later update can't erase it.
 fn portable_dir(app_dir: &Path) -> Option<PathBuf> {
     let marker = app_dir.join(PORTABLE_MARKER);
     if !marker.is_file() {
         return None;
     }
-    let text = std::fs::read_to_string(&marker).unwrap_or_default();
-    let custom = text.trim_start_matches('\u{feff}').lines().find_map(|line| {
-        let (key, value) = line.split_once('=')?;
-        let value = value.trim().trim_matches('"');
-        (key.trim().eq_ignore_ascii_case("data") && !value.is_empty()).then(|| PathBuf::from(value))
-    });
+    let data_file = app_dir.join(PORTABLE_DATA_FILE);
+    let custom = data_line(&data_file).or_else(|| {
+        let value = data_line(&marker)?;
+        if !data_file.exists() {
+            let _ = std::fs::write(&data_file, format!("data={value}\r\n"));
+        }
+        Some(value)
+    }).map(PathBuf::from);
     Some(match custom {
         Some(p) if p.is_absolute() => p,
         Some(p) => app_dir.join(p),
@@ -101,8 +114,9 @@ fn server_exe_name() -> &'static str {
     if cfg!(windows) { "kopialens-server.exe" } else { "kopialens-server" }
 }
 
-/// Same name as config.PORTABLE_MARKER.
+/// Same names as config.PORTABLE_MARKER and config.PORTABLE_DATA_FILE.
 const PORTABLE_MARKER: &str = "KopiaLens-portable.txt";
+const PORTABLE_DATA_FILE: &str = "KopiaLens-data.txt";
 
 fn installed_in(dir: &Path) -> Option<(Layout, PathBuf)> {
     let root = dir.join("server");

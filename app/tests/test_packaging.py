@@ -87,6 +87,15 @@ def test_portable_marker_keeps_data_beside_the_app(monkeypatch, tmp_path):
     assert config.portable_data_dir() is None, "running from source never switches to portable"
 
 
+def test_portable_data_location_survives_a_zip_update(tmp_path):
+    marker = tmp_path / config.PORTABLE_MARKER
+    marker.write_text("data=old place\r\n", encoding="utf-8")
+    assert config.portable_dir_of(str(tmp_path)) == str(tmp_path / "old place")
+    (tmp_path / config.PORTABLE_DATA_FILE).write_text("data=kl data\r\n", encoding="utf-8")
+    marker.write_text("marker text from the new zip\r\n", encoding="utf-8")
+    assert config.portable_dir_of(str(tmp_path)) == str(tmp_path / "kl data")
+
+
 def test_every_page_file_is_present():
     import app.main as m
     assert m.missing_partials() == []
