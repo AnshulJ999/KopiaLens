@@ -704,8 +704,7 @@ def step_portable() -> None:
         zf.writestr(f"KopiaLens/{PORTABLE_MARKER}",
                     "This file makes KopiaLens keep its settings and index in the data folder next to it.\r\n"
                     "Without it, KopiaLens uses its normal per-user folder.\r\n"
-                    "To keep them somewhere else, create KopiaLens-data.txt next to this file with a line like:\r\n"
-                    "data=D:\\KopiaLens data\r\n"
+                    "To keep them somewhere else, create KopiaLens-data.txt next to this file with a line like: data=D:\\KopiaLens data\r\n"
                     "To update, close KopiaLens, then extract the new zip over this folder and replace all files.\r\n")
         for dirpath, _dirs, files in os.walk(server):
             for f in files:
