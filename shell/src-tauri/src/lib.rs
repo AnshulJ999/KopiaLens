@@ -291,7 +291,7 @@ pub fn on_menu(app: &AppHandle, id: &str) {
         ["notify", level] => act(app, "Couldn't change notifications", "/api/shell/prefs".into(), json!({"notifications": level})),
         ["autostart"] => {
             let auto = app.autolaunch();
-            let res = if auto.is_enabled().unwrap_or(false) { auto.disable() } else { auto.enable() };
+            let res = if tray::autostart_on(app) { auto.disable() } else { auto.enable() };
             if let Err(e) = res {
                 sh.server.log(&format!("start at logon change failed: {e}"));
                 tray::toast(app, "Couldn't change Start at logon", &e.to_string());

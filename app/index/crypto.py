@@ -43,6 +43,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import threading
 
 import duckdb
@@ -835,48 +836,57 @@ def cursor_search_path(session: _Session | None) -> str | None:
     That is exactly what the store did before this existed - the read side of an encrypted
     install was broken end to end, and nobody had turned encryption on to find out.
     """
-    return None if session is None else f"{SESSION_ALIAS}.main"
+    return None if session is None or session.path is None else f"{SESSION_ALIAS}.main"
 
 
 class _Session:
-    """The throwaway encrypted database attached to one connection, removed when it closes."""
+    """One connection's private temp folder, plus the encrypted database attached to it when
+    encryption is on. Both are removed when the connection closes."""
 
-    def __init__(self, path: str):
+    def __init__(self, folder: str, path: str | None = None):
+        self.folder = folder
         self.path = path
 
     def cleanup(self) -> None:
-        for p in (self.path, self.path + ".wal"):
-            try:
-                if os.path.exists(p):
-                    os.remove(p)
-            except OSError:
-                pass
+        if self.path:
+            for p in (self.path, self.path + ".wal"):
+                try:
+                    if os.path.exists(p):
+                        os.remove(p)
+                except OSError:
+                    pass
+        shutil.rmtree(self.folder, ignore_errors=True)   # anything still held goes at the startup sweep
 
 
 def apply(con, temp_dir: str, memory_limit: str, threads: int | None,
-          encrypted: bool | None = None) -> _Session | None:
-    """Configure one DuckDB connection: limits, temp directory, and the encrypted session.
+          encrypted: bool | None = None) -> _Session:
+    """Configure one DuckDB connection: limits, a private temp folder, and the encrypted session.
 
-    When the connection's files are encrypted this attaches a fresh encrypted database and
+    The temp folder is a fresh subfolder of ``temp_dir`` for this connection alone: DuckDB names
+    its spill files the same in every connection (``duckdb_temp_storage_S64K-0.tmp``), so two
+    connections sharing a folder overwrite each other's ("Corrupt temporary file", or a crash).
+
+    When the connection's files are encrypted this also attaches a fresh encrypted database and
     switches the connection to it, because an in-memory session spills PLAINTEXT to
-    ``temp_directory`` even while every input is encrypted Parquet (P6). The attached file is
-    this connection's alone and is deleted when the session is cleaned up.
+    ``temp_directory`` even while every input is encrypted Parquet (P6).
 
+    The returned session owns both; call ``cleanup`` after closing the connection.
     ``encrypted`` is explicit for readers bound to one manifest; None follows the setting.
     """
-    os.makedirs(temp_dir, exist_ok=True)
-    con.execute("SET temp_directory='%s'" % _sql(temp_dir))
+    key = _check_key(data_key()) if _resolve(encrypted) else None
+    folder = os.path.join(temp_dir, "c%d_%s" % (os.getpid(), secrets.token_hex(6)))
+    os.makedirs(folder, exist_ok=True)
+    con.execute("SET temp_directory='%s'" % _sql(folder))
     con.execute("SET memory_limit='%s'" % memory_limit)
     if threads:               # None keeps the caller's own thread setting (the BZ store)
         con.execute("SET threads=%d" % threads)
     # Rule 1 of the store: results stay in DuckDB until the final small answer, and nothing
     # depends on input order. Insertion order costs memory in every hash aggregate.
     con.execute("SET preserve_insertion_order=false")
-    if not _resolve(encrypted):
-        return None
-    key = _check_key(data_key())
-    path = os.path.join(temp_dir, "session_%d_%s.db" % (os.getpid(), secrets.token_hex(6)))
-    session = _Session(path)
+    session = _Session(folder)
+    if key is None:
+        return session
+    path = session.path = os.path.join(folder, "session.db")
     try:
         con.execute("ATTACH '%s' AS %s (ENCRYPTION_KEY '%s')" % (_sql(path), SESSION_ALIAS, key))
         con.execute("USE %s" % SESSION_ALIAS)
@@ -936,12 +946,13 @@ def register_key(con, encrypted: bool | None = None) -> None:
         con.execute("PRAGMA add_parquet_key('%s', '%s')" % (KEY_NAME, _check_key(data_key())))
 
 
-_SESSION_PID = re.compile(r"^session_(\d+)_")
+_SESSION_PID = re.compile(r"^(?:session_|c)(\d+)_")
+_PRIVATE_DIR = re.compile(r"^c\d+_[0-9a-f]+$")
 
 
 def _owner_alive(fn: str) -> bool:
-    """The session file's process (its pid is in the name) is still running. POSIX lets a live
-    file be unlinked, so a worker the app took over at startup would lose its session."""
+    """The session file's or private folder's process (its pid is in the name) is still running.
+    POSIX lets a live file be unlinked, so a worker the app took over at startup would lose it."""
     m = _SESSION_PID.match(fn)
     if not m or int(m.group(1)) == os.getpid():
         return False
@@ -953,26 +964,31 @@ def _owner_alive(fn: str) -> bool:
 
 
 def sweep_sessions(temp_dir: str) -> int:
-    """Remove session databases a crashed process left behind. Returns how many went."""
+    """Remove session databases and private temp folders a crashed process left behind. Returns
+    how many went."""
     gone = 0
     try:
         for fn in os.listdir(temp_dir):
+            path = os.path.join(temp_dir, fn)
             if fn.startswith("session_") and (fn.endswith(".db") or fn.endswith(".db.wal")):
                 if _owner_alive(fn):
                     continue
                 try:
-                    os.remove(os.path.join(temp_dir, fn))
+                    os.remove(path)
                     gone += 1
                 except OSError:
                     pass               # still held by a live process
+            elif _PRIVATE_DIR.match(fn) and os.path.isdir(path) and not _owner_alive(fn):
+                shutil.rmtree(path, ignore_errors=True)
+                gone += not os.path.exists(path)
     except OSError:
         pass
     return gone
 
 
 def temp_dirs() -> list[str]:
-    """Every directory a connection may have left a session database in: the read temp dirs
-    (``data/duck_tmp_repo<N>``) and each repo's staging tmp."""
+    """Every directory a connection may have left a session database or private temp folder in:
+    the read temp dirs (``data/duck_tmp_*``), each repo's staging tmp and the Backblaze store's."""
     out = []
     try:
         for name in os.listdir(DATA_DIR):
@@ -982,18 +998,20 @@ def temp_dirs() -> list[str]:
             staging = os.path.join(path, "_staging", "tmp")
             if name.startswith("repo") and os.path.isdir(staging):
                 out.append(staging)
+            if name == "bz" and os.path.isdir(os.path.join(path, "_tmp")):
+                out.append(os.path.join(path, "_tmp"))
     except OSError:
         pass
     return out
 
 
 def sweep_all() -> int:
-    """Startup hygiene: remove the session databases a crashed process left behind.
+    """Startup hygiene: remove the session databases and temp folders a crashed process left behind.
 
     They are encrypted when encryption is on, but they accumulate unboundedly - a crash leaves
     one file per connection, and nothing else ever looks in those directories.
     """
     gone = sum(sweep_sessions(d) for d in temp_dirs())
     if gone:
-        log.info("removed %d leftover session database file(s)", gone)
+        log.info("removed %d leftover session database(s) or temp folder(s)", gone)
     return gone

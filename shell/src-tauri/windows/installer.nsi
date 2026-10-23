@@ -64,6 +64,7 @@ Var ModeFromCmdline
 Var DirFromCmdline
 Var WantDesktop
 Var WantStartup
+Var HadStartup
 Var WantPath
 Var ModeRadioAll
 Var DesktopBox
@@ -460,6 +461,7 @@ Function .onInit
   ; Defaults: on for a new install; an upgrade keeps what the user has now.
   StrCpy $WantDesktop 1
   StrCpy $WantStartup 1
+  StrCpy $HadStartup 0
   StrCpy $WantPath 1
   ${If} $PrevInstall = 1
     ClearErrors
@@ -471,9 +473,13 @@ Function .onInit
     ${If} ${FileExists} "$DESKTOP\${PRODUCTNAME}.lnk"
       StrCpy $WantDesktop 1
     ${EndIf}
+    ; Only our own entry counts: another copy of KopiaLens may own the name.
+    StrCpy $WantStartup 0
     ReadRegStr $0 HKCU "${RUNKEY}" "${PRODUCTNAME}"
-    ${If} $0 == ""
-      StrCpy $WantStartup 0
+    ${WordFind} $0 "$INSTDIR\${MAINBINARYNAME}.exe" "E+1{" $1
+    ${IfNot} ${Errors}
+      StrCpy $WantStartup 1
+      StrCpy $HadStartup 1
     ${EndIf}
   ${EndIf}
   ${GetOptions} $CMDLINE "/NOSTARTUP" $0
@@ -603,7 +609,10 @@ Section Install
 
   ${If} $WantStartup = 1
     WriteRegStr HKCU "${RUNKEY}" "${PRODUCTNAME}" "$\"$INSTDIR\${MAINBINARYNAME}.exe$\" --hidden"
-    WriteRegBin HKCU "${STARTUPAPPROVEDKEY}" "${PRODUCTNAME}" 020000000000000000000000
+    ; An entry we already had keeps its Task Manager state (the user may have disabled it there).
+    ${If} $HadStartup <> 1
+      WriteRegBin HKCU "${STARTUPAPPROVEDKEY}" "${PRODUCTNAME}" 020000000000000000000000
+    ${EndIf}
   ${ElseIf} $UpdateMode <> 1
     ; Only our own entry: another copy of KopiaLens may own the name.
     ReadRegStr $0 HKCU "${RUNKEY}" "${PRODUCTNAME}"

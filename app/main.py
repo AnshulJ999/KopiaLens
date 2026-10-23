@@ -682,9 +682,7 @@ async def lifespan(_app: FastAPI):
             pass
         elif crypto.enabled() and not crypto.unlocked():
             log.warning("the index is encrypted and locked - reads and the nightly wait for an unlock")
-        gone = crypto.sweep_all()   # session databases a crashed process left behind
-        if gone:
-            log.info("removed %d leftover session database file(s)", gone)
+        crypto.sweep_all()   # session databases and temp folders a crashed process left behind
     except Exception as exc:  # noqa: BLE001 - never block startup on the keystore
         log.error("keystore check failed: %s", exc)
     try:

@@ -159,10 +159,16 @@ def test_lock_forgets_the_file_key(full):
 def test_the_startup_sweep_keeps_a_live_processs_session(tmp_path):
     live = tmp_path / f"session_{os.getppid()}_aa.db"
     dead = tmp_path / "session_999999_bb.db"
+    live_dir = tmp_path / f"c{os.getppid()}_aa"
+    dead_dir = tmp_path / "c999999_bb"
     live.write_bytes(b"x")
     dead.write_bytes(b"x")
-    assert crypto.sweep_sessions(str(tmp_path)) == 1
+    live_dir.mkdir()
+    dead_dir.mkdir()
+    (dead_dir / "duckdb_temp_storage_S64K-0.tmp").write_bytes(b"x")
+    assert crypto.sweep_sessions(str(tmp_path)) == 2
     assert live.exists() and not dead.exists()
+    assert live_dir.exists() and not dead_dir.exists()
 
 
 def test_a_disconnected_repos_queued_rebuild_is_dropped(monkeypatch):

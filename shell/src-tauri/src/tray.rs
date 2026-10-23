@@ -68,6 +68,31 @@ fn light_taskbar(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
+/// Start at logon is on for THIS copy. The autostart plugin checks only the entry's name, which
+/// every KopiaLens copy with the same product name shares (installed and portable).
+pub fn autostart_on(app: &AppHandle) -> bool {
+    app.autolaunch().is_enabled().unwrap_or(false) && own_autostart_entry(app)
+}
+
+#[cfg(windows)]
+fn own_autostart_entry(app: &AppHandle) -> bool {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    let Ok(exe) = std::env::current_exe() else { return true };
+    let exe = exe.display().to_string().to_lowercase();
+    [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE].into_iter().any(|hive| {
+        winreg::RegKey::predef(hive)
+            .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+            .and_then(|k| k.get_value::<String, _>(&app.package_info().name))
+            .map(|v| v.to_lowercase().contains(&exe))
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(not(windows))]
+fn own_autostart_entry(_app: &AppHandle) -> bool {
+    true
+}
+
 /// macOS tints a template icon to match its menu bar; only the one-colour choice suits that.
 fn as_template(choice: &str) -> bool {
     cfg!(target_os = "macos") && choice == "mono"
@@ -321,7 +346,7 @@ fn build_menu(app: &AppHandle, h: Health, state: Option<&Value>) -> tauri::Resul
             menu.append(&MenuItem::with_id(app, "status:none", text, false, None::<&str>)?)?;
         }
     }
-    let autostart = app.autolaunch().is_enabled().unwrap_or(false);
+    let autostart = autostart_on(app);
     menu.append(&CheckMenuItem::with_id(app, "autostart", "Start at logon", true, autostart, None::<&str>)?)?;
     menu.append(&sep()?)?;
     menu.append(&MenuItem::with_id(app, "data", "Open data folder", true, None::<&str>)?)?;
@@ -358,7 +383,7 @@ pub fn create(app: &AppHandle, shell: &Arc<Shell>) -> tauri::Result<()> {
     let click = pref(state.as_ref(), "tray_click", "window");
     *shell.tray_click.lock().unwrap() = click.clone();
     let h = *shell.health.lock().unwrap();
-    shell.server.log(&format!("start at logon: {:?}", app.autolaunch().is_enabled()));
+    shell.server.log(&format!("start at logon: {}", autostart_on(app)));
     let menu = build_menu(app, h, state.as_ref())?;
     drop(app.remove_tray_by_id(TRAY_ID));
     let choice = pref(state.as_ref(), "tray_icon", "k3g");
@@ -428,7 +453,7 @@ pub fn refresh(app: &AppHandle, shell: &Arc<Shell>, h: Health) {
         let bp = backups_paused(st).map(|u| u.map(|t| ((t - now()) / 60.0).round() as i64));
         json!([rows, paused(st).map(|u| pause_text(u)), bp, pref(Some(st), "notifications", "warnings"), s(st, "version"), s(st, "access"), st.get("update").cloned()]).to_string()
     });
-    let autostart = app.autolaunch().is_enabled().unwrap_or(false);
+    let autostart = autostart_on(app);
     let sig = format!("{:?}|{}|{}", menu_view, h as u8, autostart);
     *shell.health.lock().unwrap() = h;
     let _ = tray.set_tooltip(Some(tip));

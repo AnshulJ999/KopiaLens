@@ -323,10 +323,27 @@ def test_a_cursor_sees_the_views_of_the_encrypted_session(keystore, tmp_path):
 def test_apply_is_a_plain_connection_when_encryption_is_off(tmp_path, monkeypatch):
     monkeypatch.setattr(crypto, "enabled", lambda: False)
     con = duckdb.connect()
-    assert crypto.apply(con, str(tmp_path / "tmp"), "512MB", 4) is None
+    session = crypto.apply(con, str(tmp_path / "tmp"), "512MB", 4)
+    assert session.path is None and crypto.cursor_search_path(session) is None
     assert crypto.copy_options() == "FORMAT parquet, COMPRESSION zstd"
     assert "encryption_config" not in crypto.parquet_read("x.parquet")
     con.close()
+    session.cleanup()
+
+
+def test_each_connection_spills_into_its_own_temp_folder(tmp_path, monkeypatch):
+    """DuckDB names spill files the same in every connection, so two sharing a folder overwrite
+    each other's ("Corrupt temporary file")."""
+    monkeypatch.setattr(crypto, "enabled", lambda: False)
+    base = str(tmp_path / "tmp")
+    cons = [duckdb.connect(), duckdb.connect()]
+    sessions = [crypto.apply(c, base, "512MB", 2) for c in cons]
+    dirs = [c.execute("SELECT current_setting('temp_directory')").fetchone()[0] for c in cons]
+    assert dirs[0] != dirs[1]
+    for c, s in zip(cons, sessions):
+        c.close()
+        s.cleanup()
+    assert os.listdir(base) == []
 
 
 def test_sweep_removes_session_databases_a_crash_left_behind(tmp_path):
