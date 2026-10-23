@@ -9,6 +9,7 @@ packaging/release.py runs this as its first build step; the Docker image runs it
 import ast
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -72,6 +73,28 @@ def notes_folder() -> str:
     return folder
 
 
+def tracked(name: str) -> str:
+    """A copy of KL_ROOT/<name> holding only the files git tracks, so git-ignored leftovers in a
+    developer's checkout never ship. Outside a git checkout (the Docker build) the folder itself."""
+    src = os.path.join(KL_ROOT, name)
+    try:
+        out = subprocess.run(["git", "-C", KL_ROOT, "ls-files", "-z", "--", name],
+                             capture_output=True, check=True, timeout=60).stdout
+    except (OSError, subprocess.SubprocessError):
+        return src
+    files = [f for f in out.decode("utf-8").split("\0") if f]
+    if not files:
+        return src
+    root = os.path.join(OUT_DIR, "tracked")
+    shutil.rmtree(os.path.join(root, name), ignore_errors=True)   # our own copy from an earlier run
+    for rel in files:
+        path = os.path.join(KL_ROOT, rel)
+        if os.path.isfile(path):   # a tracked file deleted in the checkout ships nothing
+            os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+            shutil.copy2(path, os.path.join(root, rel))
+    return os.path.join(root, name)
+
+
 def notes_args(folder: str) -> list[str]:
     return [f"--include-data-dir={os.path.join(folder, 'web')}=devnotes", "--include-package=notes_server"]
 
@@ -99,8 +122,8 @@ def nuitka_args(notes: str) -> list[str]:
         # kopialens.py dispatches "-m app.index.worker" itself; Nuitka blocks self "-m" calls by default.
         "--no-deployment-flag=self-execution",
         "--python-flag=no_docstrings",
-        f"--include-data-dir={os.path.join(KL_ROOT, 'frontend')}=frontend",
-        f"--include-data-dir={os.path.join(KL_ROOT, 'docs')}=docs",
+        f"--include-data-dir={tracked('frontend')}=frontend",
+        f"--include-data-dir={tracked('docs')}=docs",
         f"--include-data-files={os.path.join(KL_ROOT, 'VERSION')}=VERSION",
         *([f"--include-data-files={COMMIT_FILE}=COMMIT"] if appversion.commit() else []),
         f"--include-data-files={os.path.join(KL_ROOT, 'app', 'core', 'sample_profile.json')}=app/core/sample_profile.json",

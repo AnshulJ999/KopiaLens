@@ -5,7 +5,7 @@ platform, then `update-file` and `checksums` once over every platform's files.
     python packaging\\release.py                     full local Windows release (DEFAULT_STEPS)
     python packaging/release.py <step> [<step>...]   only these steps, in the order given
 
-Steps: check, banned, tests, server, stage, desktop, portable, cli, smoke, installer-test,
+Steps: check, banned, tests, server, stage, desktop, portable, cli, smoke, leak-scan, installer-test,
 update-file, checksums, cleanup. Run with the dev Python (it runs the tests); the server is compiled
 with the build venv (KOPIALENS_BUILD_PYTHON).
 
@@ -82,7 +82,7 @@ KOPIA_ASSET = {"windows": "windows-x64.zip", "linux": f"linux-{ARCH}.tar.gz", "m
 SEMVER = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 
 DEFAULT_STEPS = ["check", "banned", "tests", "server", "stage", "desktop", "update-file", "portable", "cli",
-                 "smoke", "installer-test", "checksums", "cleanup"]
+                 "smoke", "leak-scan", "installer-test", "checksums", "cleanup"]
 
 _log_fh = None
 _ctx: dict = {}
@@ -161,6 +161,13 @@ def updater_keys() -> tuple[str, str]:
     with open(os.path.join(KL_ROOT, "app", "core", "checkin.py"), encoding="utf-8") as fh:
         m = re.search(r'^UPDATE_PUBKEY = "([^"]*)"', fh.read(), re.M)
     return shell_key, m.group(1) if m else ""
+
+
+def rust_env(*flags: str) -> dict:
+    """Compiler flags for a Rust build: the builder's home folder is written as "~" in the
+    binaries (cargo embeds dependency source paths, which name the user)."""
+    home = os.path.expanduser("~")
+    return {"CARGO_ENCODED_RUSTFLAGS": "\x1f".join([*flags, f"--remap-path-prefix={home}=~"])}
 
 
 def signing_env() -> dict:
@@ -569,7 +576,7 @@ def step_stage() -> None:
     # Windows: static C runtime, since a fresh Windows has no VCRUNTIME140.dll and bin\ ships none.
     run(["cargo", "build", "--release", "--manifest-path", os.path.join(KL_ROOT, "shell", "cli-launcher", "Cargo.toml")],
         KL_ROOT, "launcher.log",
-        {"CARGO_TARGET_DIR": launcher_target, **({"RUSTFLAGS": "-C target-feature=+crt-static"} if WINDOWS else {})})
+        {"CARGO_TARGET_DIR": launcher_target, **rust_env(*(["-C", "target-feature=+crt-static"] if WINDOWS else []))})
     bindir = os.path.join(STAGE, "bin")
     os.makedirs(bindir)
     for name in ("klens", "kopialens-cli"):
@@ -584,7 +591,7 @@ def step_stage() -> None:
     scanner_target = os.path.join(BUILD_ROOT, "scanner-target")
     run(["cargo", "build", "--release", "--manifest-path", os.path.join(KL_ROOT, "shell", "disk-scanner", "Cargo.toml")],
         KL_ROOT, "scanner.log",
-        {"CARGO_TARGET_DIR": scanner_target, **({"RUSTFLAGS": "-C target-feature=+crt-static"} if WINDOWS else {})})
+        {"CARGO_TARGET_DIR": scanner_target, **rust_env(*(["-C", "target-feature=+crt-static"] if WINDOWS else []))})
     scanner = os.path.join(server, "kopialens-scan" + EXE)
     shutil.copy2(os.path.join(scanner_target, "release", "kopialens-scan" + EXE), scanner)
     probe = subprocess.run([scanner, "--version"], capture_output=True, text=True, timeout=30)
@@ -634,7 +641,7 @@ def step_desktop() -> None:
         json.dump(conf, fh)
     shutil.rmtree(os.path.join(SHELL_TARGET, "release", "bundle"), ignore_errors=True)
     run(["cargo", "tauri", "build", "--config", release_conf, "--bundles", ",".join(bundles())], SHELL, "tauri.log",
-        {"CARGO_TARGET_DIR": SHELL_TARGET, **signing_env()})
+        {"CARGO_TARGET_DIR": SHELL_TARGET, **rust_env(), **signing_env()})
     exe = os.path.join(SHELL_TARGET, "release", "KopiaLens" + EXE)
     if not os.path.isfile(exe):
         fail(f"Tauri output missing: {exe}")
@@ -726,6 +733,47 @@ def step_smoke() -> None:
         smoke_server(_ctx["version"])
 
 
+# Text that must never ship: the private repo, this PC's folders, the developer's accounts. Matched
+# case-insensitively in UTF-8 and UTF-16 (Windows resources).
+LEAK_TEXT = ["personal-stuff", "g:\\github", "h:\\claude", "j:\\excluded", "kopialens-experiments",
+             "\\users\\anshul", "/users/anshul", "/home/anshul", "anshulaj999"]
+
+
+def leak_hits(paths: list[str]) -> dict[str, list[str]]:
+    """{file: [text found]} for every file under paths (folders are walked)."""
+    needles = [(t, t.encode()) for t in LEAK_TEXT] + [(t, t.encode("utf-16-le")) for t in LEAK_TEXT]
+    files = []
+    for p in paths:
+        if os.path.isfile(p):
+            files.append(p)
+        for dirpath, _dirs, names in os.walk(p):
+            files += [os.path.join(dirpath, n) for n in names]
+    hits: dict[str, list[str]] = {}
+    for path in files:
+        with open(path, "rb") as fh:
+            data = fh.read().lower()
+        found = sorted({t for t, needle in needles if needle in data})
+        if found:
+            hits[path] = found
+    return hits
+
+
+def step_leak_scan() -> None:
+    """Warns loudly when a built file carries private text; it never stops the build."""
+    hits = leak_hits([STAGE, os.path.join(SHELL_TARGET, "release", "KopiaLens" + EXE)])
+    if not hits:
+        log("  no private text in the built files")
+        return
+    _ctx["leaks"] = hits
+    log("  " + "!" * 70)
+    log(f"  WARNING: private text in {len(hits)} built file(s). Do not publish until it is removed:")
+    for path, found in sorted(hits.items()):
+        log(f"    {os.path.relpath(path, SHELL)}: {', '.join(found)}")
+        if os.environ.get("GITHUB_ACTIONS"):
+            print(f"::warning::private text in {os.path.basename(path)}: {', '.join(found)}", flush=True)
+    log("  " + "!" * 70)
+
+
 def step_installer_test() -> None:
     if not WINDOWS:
         log("  skipped: the installer test is Windows-only")
@@ -763,7 +811,8 @@ def step_cleanup() -> None:
 
 STEPS = {"check": step_check, "banned": step_banned, "tests": step_tests, "server": step_server,
          "stage": step_stage, "desktop": step_desktop, "update-file": step_update_file, "portable": step_portable,
-         "cli": step_cli, "smoke": step_smoke, "installer-test": step_installer_test, "checksums": step_checksums,
+         "cli": step_cli, "smoke": step_smoke, "leak-scan": step_leak_scan, "installer-test": step_installer_test,
+         "checksums": step_checksums,
          "cleanup": step_cleanup}
 
 
@@ -796,6 +845,8 @@ def main() -> int:
     log(f"DONE: {dest}")
     if _ctx.get("installer_untested"):
         log("  WARNING: the installer was NOT tested in Windows Sandbox (installer-test).")
+    if _ctx.get("leaks"):
+        log(f"  WARNING: private text in {len(_ctx['leaks'])} built file(s) (leak-scan above). Do not publish.")
     if no_update_file():
         log("  TESTING BUILD: for test copies only; do not publish.")
     elif not args:
