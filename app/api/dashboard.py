@@ -64,9 +64,11 @@ def repos() -> dict:
     # server - anyone holding it could mint valid sessions. The UI only needs yes/no.
     kl.pop("auth_password_hash", None)
     kl["auth_protected"] = auth.enabled()
-    from ..index.store import auto_limits, resolve_limits, worker_auto_threads
-    kl["memory_auto"], kl["threads_auto"] = auto_limits()  # what "Automatic" means on this PC
-    kl["threads_worker"] = worker_auto_threads(resolve_limits()[0])
+    from ..index.store import app_auto_threads, auto_limits, resolve_limits, worker_auto_threads
+    kl["memory_auto"] = auto_limits()[0]  # what "Automatic" means on this PC
+    limit = resolve_limits()[0]           # automatic threads follow the memory limit in use
+    kl["threads_auto"] = app_auto_threads(limit)
+    kl["threads_worker"] = worker_auto_threads(limit)
     kl["cpu_count"] = os.cpu_count() or 1
     return {
         # Every record, with the fields the repo UI needs: short label, connection source,

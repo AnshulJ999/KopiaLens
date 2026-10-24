@@ -468,6 +468,19 @@ def test_the_index_worker_caps_threads_but_an_explicit_setting_wins(monkeypatch)
     assert store.resolve_limits() == ("3GB", 12)
 
 
+@pytest.mark.usefixtures("_fixed_machine")
+def test_a_lower_memory_limit_lowers_the_app_threads(monkeypatch):
+    # 12 threads on a 512 MB limit ran the folder list out of memory.
+    import psutil
+    monkeypatch.setattr(psutil, "virtual_memory", lambda: type("m", (), {"total": 64 * 1024 ** 3})())
+    monkeypatch.setattr(store.os, "cpu_count", lambda: 24)
+    monkeypatch.delenv("KOPIALENS_DUCKDB_MEMORY", raising=False)
+    monkeypatch.setattr("app.settings.load_settings",
+                        lambda: {"kopialens": {"duckdb_memory": "512MB", "duckdb_threads": 0}})
+    assert store.auto_limits() == ("3GB", 12)
+    assert store.resolve_limits() == ("512MB", 2)
+
+
 
 
 

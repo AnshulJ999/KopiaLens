@@ -61,8 +61,14 @@ def auto_limits() -> tuple[str, int]:
     from ..core.host import ram_bytes
     ram_mb = ram_bytes() // 2 ** 20            # 0 when unknown: the minimum
     mb = min(MAX_MEMORY_MB, max(MIN_MEMORY_MB, ram_mb // MEMORY_SHARE))
-    threads = max(1, min((os.cpu_count() or 2) // 2, mb // MB_PER_THREAD))
-    return (f"{mb // 1024}GB" if mb % 1024 == 0 else f"{mb}MB"), threads
+    limit = f"{mb // 1024}GB" if mb % 1024 == 0 else f"{mb}MB"
+    return limit, app_auto_threads(limit)
+
+
+def app_auto_threads(limit: str) -> int:
+    """Threads app reads use when none is set, for memory ``limit``."""
+    mb = _limit_bytes(limit) // 2 ** 20
+    return max(1, min((os.cpu_count() or 2) // 2, mb // MB_PER_THREAD))
 
 
 def worker_auto_threads(limit: str | None = None) -> int:
@@ -78,10 +84,9 @@ def resolve_limits() -> tuple[str, int]:
         kl = load_settings()["kopialens"]
     except Exception:  # noqa: BLE001 - a settings problem must not stop the store opening
         kl = {}
-    limit, threads = auto_limits()
-    limit = (kl.get("duckdb_memory") or os.environ.get("KOPIALENS_DUCKDB_MEMORY") or limit)
-    if _in_worker:
-        threads = worker_auto_threads(str(limit))
+    limit = str(kl.get("duckdb_memory") or os.environ.get("KOPIALENS_DUCKDB_MEMORY")
+                or auto_limits()[0])
+    threads = worker_auto_threads(limit) if _in_worker else app_auto_threads(limit)
     threads = int(kl.get("duckdb_threads") or threads)
     return str(limit), max(1, threads)
 

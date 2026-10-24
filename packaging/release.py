@@ -4,6 +4,7 @@ platform, then `update-file` and `checksums` once over every platform's files.
 
     python packaging\\release.py                     full local Windows release (DEFAULT_STEPS)
     python packaging/release.py <step> [<step>...]   only these steps, in the order given
+    python packaging/release.py --help               this text
 
 Steps: check, banned, tests, server, stage, desktop, portable, cli, smoke, leak-scan, installer-test,
 update-file, checksums, cleanup. Run with the dev Python (it runs the tests); the server is compiled
@@ -825,8 +826,18 @@ STEPS = {"check": step_check, "banned": step_banned, "tests": step_tests, "serve
 
 # ---------------------------------------------------------------- main
 
+FLAGS = ("--testing", "--with-notes", "--installer-test", "--update-endpoint=")
+
+
 def main() -> int:
     global _log_fh
+    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+        print(__doc__)
+        return 0
+    bad = [a for a in sys.argv[1:] if a.startswith("-") and not any(
+        a == f or (f.endswith("=") and a.startswith(f)) for f in FLAGS)]
+    if bad:
+        fail(f"unknown option(s) {', '.join(bad)}; options: {', '.join(FLAGS)}, --help")
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     unknown = [a for a in args if a not in STEPS]
     if unknown:
