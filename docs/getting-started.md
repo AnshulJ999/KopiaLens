@@ -59,7 +59,7 @@ A repository that hasn't been indexed yet shows a notice at the top of the page 
 
 The last step is a **Summary** of what you chose: repositories, sign-in, encryption, who runs your backups and when the index updates. **Change** next to a row takes you back to that step. **Start indexing** finishes setup and starts the first index; **Skip for now** finishes without it. **Where to start** links open help pages without leaving setup.
 
-When KopiaLens opens, a short tour walks you through the main parts of the screen. Close it any time with ✕; it's always in **? → Take the tour**.
+When KopiaLens opens, a short tour walks you through the main parts of the screen. Close it any time with ✕ or Esc; it's always in **? → Take the tour**.
 
 ## Skip setup or finish it later
 

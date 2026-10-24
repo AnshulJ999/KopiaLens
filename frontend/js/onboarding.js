@@ -409,6 +409,7 @@ const onboardingPart = {
         window.driver.js.driver({
           steps, showProgress: true, progressText: "{{current}} of {{total}}",
           nextBtnText: "Next", prevBtnText: "Back", doneBtnText: "Done", popoverClass: "kl-tour",
+          overlayClickBehavior: () => {},   // only ✕ or Esc close it: a stray click shouldn't lose the tour
         }).drive();
       }, 300);
     },

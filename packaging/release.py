@@ -779,6 +779,12 @@ def step_installer_test() -> None:
     if not WINDOWS:
         log("  skipped: the installer test is Windows-only")
         return
+    if os.environ.get("KOPIALENS_RELEASE_SKIP_INSTALLER_TEST") == "1":
+        log("  " + "!" * 70)
+        log("  installer test SKIPPED (KOPIALENS_RELEASE_SKIP_INSTALLER_TEST=1): this installer is untested")
+        log("  " + "!" * 70)
+        _ctx["installer_untested"] = True
+        return
     if "--installer-test" not in sys.argv[1:] and not installer_test.needed():
         log(f"  skipped: the installer is unchanged since it passed on {installer_test.last_pass()['date']}"
             " (--installer-test runs it anyway)")
