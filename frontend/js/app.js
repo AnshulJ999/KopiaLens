@@ -141,6 +141,7 @@ document.addEventListener("alpine:init", () => {
     lightInterval: 1800, dashboardInterval: 14400,
     debugLog: false, experimental: false, expNotes: false,
     duckdbMemory: "", memoryAuto: "",  // memory limit override ("" = automatic) and what automatic resolves to
+    duckdbThreads: 0, threadsAuto: 0, threadsWorker: 0, cpuCount: 0,  // thread override (0 = automatic) and the automatic values
     indexWorkerTimeout: 14400, indexFirstTimeout: 86400, indexWaitUnreachable: 1800, indexStallTimeout: 3600, indexKeepVersions: 1, indexBackupDir: "", removePlanCap: 200000,
     indexRetryDelay: 900, indexMaxRetries: 1, reindexAfterDeleteDelay: 300, quitIndexing: "finish",
     folderPrewarmBudget: 900, startupDelay: 300, logCleanupDays: 90, taskHistoryKeep: 90, engineTakeback: "auto", rankCount: 10000,

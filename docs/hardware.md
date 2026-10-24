@@ -15,7 +15,7 @@ KopiaLens limits the memory its index may use to an eighth of the computer's mem
 
 The limit is a ceiling, used only while big queries run: the memory is released after 30 minutes without use, and when an indexing run ends. It applies per repository, in the app and during indexing. To change it, set **Settings → Advanced → Memory limit** and restart KopiaLens.
 
-While you browse, KopiaLens uses at most half the computer's processor cores, and fewer with a small memory limit, so the computer stays responsive.
+While you browse, KopiaLens uses at most half the computer's processor cores, and fewer with a small memory limit, so the computer stays responsive. Indexing uses up to 4. To change either, set **Settings → Advanced → Processor threads** and restart KopiaLens.
 
 Both repositories in [Tested setups](#tested-setups) built their full first index within the smallest limit, 512 MB. A smaller limit makes some work slower, not impossible.
 

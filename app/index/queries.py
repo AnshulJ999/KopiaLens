@@ -933,42 +933,60 @@ def _group_rows(cur, conds, params, join, loose_sql, order, dirn, min_size, min_
     """Rows keyed by numbers, not paths: ``dm`` gives every ``dir`` row the id of the first dir with
     its display name (``cfold``) and of the first dir with the same path on the same computer
     (``cdir``), so a file is (cdir, name) and a folder is cfold. Grouping by the path strings held
-    every full path in memory at once (2 GB+ on a 5M-path repo)."""
+    every full path in memory at once (2 GB+ on a 5M-path repo). The totals and the source counts
+    are separate statements: in one statement DuckDB holds both at once."""
     folder = _folder_name_sql(cur, "g")
-    rows = _rows(
-        cur,
-        f"""
+    base = f"""
         WITH dm AS (
             SELECT _gd.dir_id,
                    min(_gd.dir_id) OVER (PARTITION BY {_HOST_SQL}, _gd.dir_path) AS cdir,
                    min(_gd.dir_id) OVER (PARTITION BY {folder}) AS cfold
             FROM dir _gd JOIN src s ON s.src_id = _gd.src_id),
-        m AS NOT MATERIALIZED (
+        m AS (
             SELECT _fm.cfold AS fk, {loose_sql} AS loose, _pm.cdir, p.name, p.size, p.physical,
                    p.in_latest, p.last_seen, p.first_seen, p.src_id
             FROM pathx p JOIN src s ON s.src_id = p.src_id
             {join}
             JOIN dm _pm ON _pm.dir_id = p.dir_id
             JOIN dm _fm ON _fm.dir_id = _gd.dir_id
-            WHERE {_where(conds)}),
-        pf AS (SELECT fk, loose, max(size) AS size, max(physical) AS physical,
-                      bool_or(in_latest) AS in_latest, max(last_seen) AS last_seen,
-                      min(first_seen) AS first_seen
-               FROM m GROUP BY fk, loose, cdir, name),
-        ff AS (SELECT fk, loose, sum(physical) AS phys, sum(size) AS logical, count(*) AS files,
-                      count(*) FILTER (WHERE NOT in_latest) AS deleted_files,
-                      max(last_seen) AS last_seen, min(first_seen) AS first_seen
-               FROM pf GROUP BY fk, loose),
-        fs AS (SELECT fk, loose, count(DISTINCT src_id) AS sources, min(src_id) AS src_one
-               FROM m GROUP BY fk, loose)
-        SELECT {folder} AS folder, ff.loose, ff.phys, ff.logical, ff.files, ff.deleted_files,
-               ff.last_seen, ff.first_seen, 0 AS excl, fs.sources, fs.src_one
-        FROM ff JOIN fs USING (fk, loose) JOIN dir _gd ON _gd.dir_id = ff.fk
-        WHERE ff.phys >= {int(min_size)} AND ff.files >= {int(min_files)}
-        ORDER BY {order} {dirn}, folder, ff.loose LIMIT {int(limit)}
-        """,
-        params,
-    )
+            WHERE {_where(conds)})"""
+    tag = uuid.uuid4().hex[:12]
+    ff, fs = f"_folders_ff_{tag}", f"_folders_fs_{tag}"
+    try:
+        cur.execute(
+            f"""CREATE TEMP TABLE {ff} AS {base},
+            pf AS (SELECT fk, loose, max(size) AS size, max(physical) AS physical,
+                          bool_or(in_latest) AS in_latest, max(last_seen) AS last_seen,
+                          min(first_seen) AS first_seen
+                   FROM m GROUP BY fk, loose, cdir, name)
+            SELECT fk, loose, sum(physical) AS phys, sum(size) AS logical, count(*) AS files,
+                   count(*) FILTER (WHERE NOT in_latest) AS deleted_files,
+                   max(last_seen) AS last_seen, min(first_seen) AS first_seen
+            FROM pf GROUP BY fk, loose""",
+            params,
+        )
+        cur.execute(
+            f"""CREATE TEMP TABLE {fs} AS {base}
+            SELECT fk, loose, count(DISTINCT src_id) AS sources, min(src_id) AS src_one
+            FROM m GROUP BY fk, loose""",
+            params,
+        )
+        rows = _rows(
+            cur,
+            f"""
+            SELECT {folder} AS folder, ff.loose, ff.phys, ff.logical, ff.files, ff.deleted_files,
+                   ff.last_seen, ff.first_seen, 0 AS excl, fs.sources, fs.src_one
+            FROM {ff} ff JOIN {fs} fs USING (fk, loose) JOIN dir _gd ON _gd.dir_id = ff.fk
+            WHERE ff.phys >= {int(min_size)} AND ff.files >= {int(min_files)}
+            ORDER BY {order} {dirn}, folder, ff.loose LIMIT {int(limit)}
+            """,
+        )
+    finally:
+        for table in (ff, fs):
+            try:
+                cur.execute(f"DROP TABLE IF EXISTS {table}")
+            except Exception:  # noqa: BLE001 - a temp-table cleanup must never fail the request
+                pass
     names = dict(cur.execute("SELECT src_id, source FROM src").fetchall())
     for r in rows:
         one = r.pop("src_one")

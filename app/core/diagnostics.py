@@ -132,10 +132,12 @@ def _system_lines() -> list[str]:
         from ..index.store import resolve_limits
         from ..settings import load_settings
         limit, threads = resolve_limits()
-        how = ("set in Settings" if (load_settings().get("kopialens") or {}).get("duckdb_memory")
+        kl = load_settings().get("kopialens") or {}
+        how = ("set in Settings" if kl.get("duckdb_memory")
                else "set by KOPIALENS_DUCKDB_MEMORY" if os.environ.get("KOPIALENS_DUCKDB_MEMORY")
                else "automatic")
-        lines.append(f"Database memory limit: {limit}, {threads} threads ({how})")
+        lines.append(f"Database memory limit: {limit} ({how}), {threads} threads "
+                     f"({'set in Settings' if kl.get('duckdb_threads') else 'automatic'})")
     except Exception:  # noqa: BLE001
         pass
     try:

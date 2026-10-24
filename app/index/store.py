@@ -41,7 +41,8 @@ log = get_logger("store")
 # Threads, never left at the DuckDB default (it tracks core count, and every thread needs its own
 # aggregate memory): app reads use at most half the logical processors and give each thread
 # MB_PER_THREAD (4 threads at 512 MB ran a 5M-path folder list out of memory; 2 fit). The index
-# worker keeps WORKER_THREADS, measured fastest for builds. Explicit settings win over both.
+# worker uses up to WORKER_THREADS, measured fastest for builds, also at MB_PER_THREAD each.
+# Explicit settings win over both.
 MIN_MEMORY_MB, MAX_MEMORY_MB = 512, 3072
 MEMORY_SHARE = 8
 MB_PER_THREAD = 256
@@ -64,6 +65,12 @@ def auto_limits() -> tuple[str, int]:
     return (f"{mb // 1024}GB" if mb % 1024 == 0 else f"{mb}MB"), threads
 
 
+def worker_auto_threads(limit: str | None = None) -> int:
+    """Threads the index worker uses when none is set, for memory ``limit`` (default: automatic)."""
+    mb = _limit_bytes(limit or auto_limits()[0]) // 2 ** 20
+    return max(1, min(os.cpu_count() or WORKER_THREADS, WORKER_THREADS, mb // MB_PER_THREAD))
+
+
 def resolve_limits() -> tuple[str, int]:
     """(memory_limit, threads) for this machine: explicit settings win, then env, then the tier."""
     try:
@@ -72,17 +79,20 @@ def resolve_limits() -> tuple[str, int]:
     except Exception:  # noqa: BLE001 - a settings problem must not stop the store opening
         kl = {}
     limit, threads = auto_limits()
-    if _in_worker:
-        threads = min(os.cpu_count() or WORKER_THREADS, WORKER_THREADS)
     limit = (kl.get("duckdb_memory") or os.environ.get("KOPIALENS_DUCKDB_MEMORY") or limit)
+    if _in_worker:
+        threads = worker_auto_threads(str(limit))
     threads = int(kl.get("duckdb_threads") or threads)
     return str(limit), max(1, threads)
 
 
 def memory_limit_bytes() -> int:
     """The resolved DuckDB memory limit in bytes (512 MB if it cannot be parsed)."""
+    return _limit_bytes(resolve_limits()[0])
+
+
+def _limit_bytes(limit: str) -> int:
     import re
-    limit, _threads = resolve_limits()
     m = re.fullmatch(r"\s*([\d.]+)\s*([KMGT]?)i?B?\s*", str(limit).upper())
     mult = {"": 1, "K": 2**10, "M": 2**20, "G": 2**30, "T": 2**40}
     return int(float(m.group(1)) * mult[m.group(2)]) if m else 512 * 2**20

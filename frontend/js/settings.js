@@ -1,6 +1,7 @@
 // Settings modal: every control in it saves itself on change (one key per save, never a full
 // payload of browser-side defaults - that is what stamped values the user never chose).
 const MEMORY_CHOICES = ["512MB", "1GB", "2GB", "3GB", "4GB", "6GB", "8GB"];
+const THREAD_CHOICES = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64];
 // Tray icon choices (the desktop app draws them from shell/src-tauri/icons/tray/). First = default.
 const TRAY_ICONS = [
   ["k3g", "Disc"], ["k6s", "K"], ["k3a", "Ring"], ["tile", "Tile"], ["mono", "K in one colour"], ["q3", "Q with a glint"],
@@ -116,6 +117,10 @@ const settingsPart = {
       this.rankCount = Number(kl.rank_count ?? 10000);
       this.duckdbMemory = String(kl.duckdb_memory || "").toUpperCase();
       this.memoryAuto = kl.memory_auto || "";
+      this.duckdbThreads = Number(kl.duckdb_threads || 0);
+      this.threadsAuto = Number(kl.threads_auto || 0);
+      this.threadsWorker = Number(kl.threads_worker || 0);
+      this.cpuCount = Number(kl.cpu_count || 0);
     },
     // Logo, retention chips and the Snapshot now confirm: read at startup and on each Settings open.
     _readLook(kl) {
@@ -142,6 +147,7 @@ const settingsPart = {
     TRAY_ICONS,
     MEMORY_CHOICES,
     fmtLimit(v) { return String(v || "").replace(/(\d)\s*([KMGT]B)$/i, "$1 $2"); },
+    threadChoices() { return THREAD_CHOICES.filter((n) => n <= (this.cpuCount || 64)); },
     _readBackblaze(bz) {
       this.bzDataPath = bz.bzdata_path || "";
       this.bzUpdates = bz.updates === "off" ? "off" : "auto";
@@ -201,6 +207,7 @@ const settingsPart = {
       tray_double_click: { s: "trayDoubleClick", t: "choice", of: ["window", "none"] },
       notifications: { s: "notifyLevel", t: "choice", of: ["all", "warnings", "off"] },
       duckdb_memory: { s: "duckdbMemory", t: "choice", of: ["", ...MEMORY_CHOICES], restart: true },
+      duckdb_threads: { s: "duckdbThreads", t: "int", min: 0, max: 256, restart: true },
       log_cleanup_days: { s: "logCleanupDays", t: "int", min: 0 },
       task_history_days: { s: "taskHistoryKeep", t: "int", min: 0 },
       task_routine_seconds: { s: "taskRoutineSecs", t: "num" },

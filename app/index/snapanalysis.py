@@ -30,6 +30,8 @@ from .store import read_cursor
 
 log = get_logger("analysis")
 
+REACH_BATCH_ROWS = 2_000_000   # (snapshot, folder) pairs per recursive pass in _analyse
+
 # (repo, snapshot_id) -> reclaimable files. LRU-bounded: these lists can be large and were
 # previously never evicted (a slow unbounded leak as snapshots were viewed over a long session).
 _RECL_FILES_CACHE: collections.OrderedDict[tuple, list] = collections.OrderedDict()
@@ -388,14 +390,27 @@ def _analyse(repo: str, snaps: list[dict], heavy: bool,
         cur.execute(f"""CREATE OR REPLACE TEMP TABLE {ns}rcid AS
             SELECT a.rank, c.cid_id FROM {ns}roots a JOIN cid c ON c.content_id = a.obj
             WHERE c.cid_id IS NOT NULL""")
-        cur.execute(f"""CREATE OR REPLACE TEMP TABLE {ns}reach AS
-            WITH RECURSIVE r(rank, dir_id) AS (
-                SELECT a.rank, t.dir_id FROM {ns}roots a
-                  JOIN cid c ON c.content_id = a.obj
-                  JOIN tdir t ON t.cid_id = c.cid_id
-                UNION
-                SELECT r.rank, l.child FROM r JOIN {link} l ON l.dir_id = r.dir_id)
-            SELECT rank, dir_id FROM r""")
+        # Built a batch of snapshots at a time: the recursive UNION keeps every (rank, dir_id) pair
+        # in one in-memory hash table that cannot spill. The newest snapshot alone sizes the batches.
+        ranks = sorted(r for r, _o in live)
+        i, size = 0, 1
+        while i < len(ranks):
+            lo, hi = ranks[i], ranks[min(i + size, len(ranks)) - 1]
+            head = f"CREATE OR REPLACE TEMP TABLE {ns}reach AS" if i == 0 else f"INSERT INTO {ns}reach"
+            cur.execute(f"""{head}
+                WITH RECURSIVE r(rank, dir_id) AS (
+                    SELECT a.rank, t.dir_id FROM {ns}roots a
+                      JOIN cid c ON c.content_id = a.obj
+                      JOIN tdir t ON t.cid_id = c.cid_id
+                    WHERE a.rank BETWEEN {lo} AND {hi}
+                    UNION
+                    SELECT r.rank, l.child FROM r JOIN {link} l ON l.dir_id = r.dir_id)
+                SELECT rank, dir_id FROM r""")
+            if i == 0:
+                per = cur.execute(f"SELECT count(*) FROM {ns}reach").fetchone()[0] or 1
+                i, size = 1, max(1, REACH_BATCH_ROWS // per)
+            else:
+                i += size
         cur.unregister(ns + "roots")
         # One row per folder: the newest rank reaching it and the oldest. A folder's snapshot
         # coverage can have gaps, and these two numbers deliberately ignore them - they are only

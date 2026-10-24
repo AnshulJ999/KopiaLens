@@ -497,6 +497,15 @@
                 <p class="text-[0.6875rem] text-muted mt-1">The most memory each repository's index can use, in the app and while indexing. Automatic is based on this PC's memory.</p>
               </div>
               <div>
+                <div class="flex items-center justify-between gap-3"><span>Processor threads <span class="text-[0.625rem] text-warn">restart</span></span>
+                  <select x-model.number="duckdbThreads" @change="saveKl('duckdb_threads')" class="fld border border-bd bg-surface2 w-40" data-testid="thread-limit">
+                    <option :value="0" x-text="threadsAuto ? 'Automatic (' + threadsAuto + ')' : 'Automatic'"></option>
+                    <template x-for="n in threadChoices()" :key="n"><option :value="n" x-text="n" :selected="n === duckdbThreads"></option></template>
+                    <template x-if="duckdbThreads && !threadChoices().includes(duckdbThreads)"><option :value="duckdbThreads" x-text="duckdbThreads" selected></option></template>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1"><span>How many processor threads each repository's index can use, in the app and while indexing.</span> <span x-show="threadsAuto" x-text="'Automatic: ' + threadsAuto + ' in the app, ' + threadsWorker + ' while indexing.'"></span> More threads are faster but need more memory.</p>
+              </div>
+              <div>
                 <div class="flex items-center justify-between gap-3"><span>Indexing time limit</span>
                   {{ duration('indexWorkerTimeout', 'index_worker_timeout', 600) }}</div>
                 <p class="text-[0.6875rem] text-muted mt-1">An indexing run that takes longer is stopped. The next run continues where it left off.</p>

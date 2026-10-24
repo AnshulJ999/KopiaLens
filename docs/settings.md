@@ -137,6 +137,7 @@ These have sensible defaults. Change them when you have a reason.
 | Setting | Default | What it does |
 |---|---|---|
 | **Memory limit** | Automatic | The most memory each repository's index may use, in the app and while indexing. Automatic is based on the computer's memory (restart) |
+| **Processor threads** | Automatic | How many processor threads each repository's index may use, in the app and while indexing. Automatic is up to half the computer's processors in the app (fewer with a small memory limit) and up to 4 while indexing. More threads are faster but need more memory (restart) |
 | **Indexing time limit** | 4 hours | A run that takes longer is stopped. The next run continues where it left off |
 | **First index time limit** | 24 hours | The same for a first index |
 | **Give up on an unreachable repository after** | 30 minutes | The run stops, keeps its progress, and the next repository can index |
