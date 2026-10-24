@@ -35,17 +35,17 @@ from . import crypto, lanes, upgrade
 log = get_logger("store")
 
 
-# ---------------------------------------------------------------------------- RAM tiers
-# Auto-detected from total RAM ( plan 4d). 8 GB is the design floor and was proven to
-# carry the heaviest query (P10: the layer-3 rebuild at 512 MB / 4 threads, both repos).
-#
-# Threads are pinned explicitly in EVERY tier, never left at the DuckDB default: the default
-# tracks core count (24 here), and a high thread count inflates hash-aggregate memory enough to
-# OOM the small tier. Measured at 512 MB, 4 threads was as fast or faster than 24.
-# (max GB, memory_limit, threads) - the FIRST tier whose ceiling this machine is under wins;
-# 0 is the catch-all. Named as a ceiling because that is how it is compared.
-_TIERS = ((8, "512MB", 4), (16, "1GB", 8), (32, "2GB", 8), (0, "3GB", 16))
-WORKER_THREADS = 4      # the index worker's cap: the build measured slower with more threads
+# ---------------------------------------------------------------------------- automatic limits
+# Memory: an eighth of this machine's RAM (or its container limit), within MIN..MAX. It is a
+# ceiling: idle close and the worker's exit give it back.
+# Threads, never left at the DuckDB default (it tracks core count, and every thread needs its own
+# aggregate memory): app reads use at most half the logical processors and give each thread
+# MB_PER_THREAD (4 threads at 512 MB ran a 5M-path folder list out of memory; 2 fit). The index
+# worker keeps WORKER_THREADS, measured fastest for builds. Explicit settings win over both.
+MIN_MEMORY_MB, MAX_MEMORY_MB = 512, 3072
+MEMORY_SHARE = 8
+MB_PER_THREAD = 256
+WORKER_THREADS = 4
 _in_worker = False
 
 
@@ -56,15 +56,12 @@ def mark_worker() -> None:
 
 
 def auto_limits() -> tuple[str, int]:
-    """(memory_limit, threads) from this machine's RAM tier, ignoring any override."""
+    """(memory_limit, threads) for app reads on this machine, ignoring any override."""
     from ..core.host import ram_bytes
-    total_gb = ram_bytes() / (1024 ** 3)   # 0 when unknown: the smallest tier
-    mem, thr = _TIERS[-1][1], _TIERS[-1][2]
-    for max_gb, tier_mem, tier_thr in _TIERS:
-        if total_gb <= max_gb or max_gb == 0:
-            mem, thr = tier_mem, tier_thr
-            break
-    return mem, min(thr, os.cpu_count() or thr)   # more threads than processors only adds overhead
+    ram_mb = ram_bytes() // 2 ** 20            # 0 when unknown: the minimum
+    mb = min(MAX_MEMORY_MB, max(MIN_MEMORY_MB, ram_mb // MEMORY_SHARE))
+    threads = max(1, min((os.cpu_count() or 2) // 2, mb // MB_PER_THREAD))
+    return (f"{mb // 1024}GB" if mb % 1024 == 0 else f"{mb}MB"), threads
 
 
 def resolve_limits() -> tuple[str, int]:
@@ -76,7 +73,7 @@ def resolve_limits() -> tuple[str, int]:
         kl = {}
     limit, threads = auto_limits()
     if _in_worker:
-        threads = min(threads, WORKER_THREADS)
+        threads = min(os.cpu_count() or WORKER_THREADS, WORKER_THREADS)
     limit = (kl.get("duckdb_memory") or os.environ.get("KOPIALENS_DUCKDB_MEMORY") or limit)
     threads = int(kl.get("duckdb_threads") or threads)
     return str(limit), max(1, threads)

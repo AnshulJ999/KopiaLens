@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import functools
 import threading
 import time
 
@@ -47,10 +48,52 @@ class _Scope:
 
 
 _SCOPE: contextvars.ContextVar = contextvars.ContextVar("kopialens_lane", default=None)
+_HEAVY: threading.Semaphore | None = None
+_HEAVY_INIT = threading.Lock()
+_HEAVY_HELD = threading.local()
 _CV = threading.Condition()
 _BG_SLOT = threading.Semaphore(1)   # one background job at a time (they share the CPU)
 _fg_running = 0
 _bg_running: dict = {}              # raw cursor -> [preempted flag]
+
+
+def _heavy_slots() -> threading.Semaphore:
+    global _HEAVY
+    with _HEAVY_INIT:
+        if _HEAVY is None:
+            from .store import memory_limit_bytes
+            _HEAVY = threading.Semaphore(1 if memory_limit_bytes() <= 2 ** 30 else 2)
+        return _HEAVY
+
+
+@contextlib.contextmanager
+def heavy():
+    """Memory-hungry reads someone is waiting for take turns: one at a time up to a 1 GB limit, two
+    above it, since each can need most of a small limit. Background work is already one job at a
+    time and steps aside for these, so it never waits here."""
+    scope = _SCOPE.get()
+    if scope is None or scope.lane != FG or getattr(_HEAVY_HELD, "on", False):
+        yield
+        return
+    slots = _heavy_slots()
+    while not slots.acquire(timeout=0.5):
+        if scope.cancelled:
+            raise RequestCancelled()
+    _HEAVY_HELD.on = True
+    try:
+        yield
+    finally:
+        _HEAVY_HELD.on = False
+        slots.release()
+
+
+def heavy_read(fn):
+    """Decorator form of :func:`heavy`."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with heavy():
+            return fn(*args, **kwargs)
+    return wrapper
 
 
 def _interrupt(cur) -> None:

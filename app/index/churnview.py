@@ -26,7 +26,7 @@ import uuid
 
 from ..core import paths as pathrules
 from ..core.applog import get_logger
-from . import sidecache
+from . import lanes, sidecache
 from .queries import _folder_name_sql, _level_off_sql, _rollup_join
 from .store import read_cursor
 
@@ -290,6 +290,7 @@ def _build_lock(ck: tuple) -> threading.Lock:
         return _BUILD_LOCKS.setdefault(ck, threading.Lock())
 
 
+@lanes.heavy_read
 def _compute(repo: str, depth: int, cutoff: str, shared: tuple | None = None) -> tuple[list[dict], int]:
     """``shared`` = (cursor, table) from ``_shared_set``: filter that set instead of re-grouping."""
     # Unique table name per call: concurrent builds for different windows must never collide on it.

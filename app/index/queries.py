@@ -16,7 +16,7 @@ from typing import NamedTuple
 from config import DEMO_INSTANCE, is_demo
 
 from ..core import paths as pathrules
-from . import entries, resolve
+from . import entries, lanes, resolve
 from .store import read_cursor
 
 # LIKE wildcard escaping. `_` matches ANY single character and `%` matches anything, so a literal
@@ -252,6 +252,7 @@ def _order_clause(sort: str, direction: str, tiebreak: str = "source, full_path"
     return f"ORDER BY {col} {dirn}{tail}, last_seen DESC, {tiebreak}"
 
 
+@lanes.heavy_read
 def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_size: int = 0,
                  source: str | None = None, ext: str | None = None, limit: int = 500, offset: int = 0,
                  sort: str = "size", direction: str = "desc", confirm_exists: bool = False,
@@ -816,6 +817,7 @@ def folder_file_filter(cur, query: str = "", source: str | None = None, ext: str
 DEPTH_MODES = ("deepest", "nested", "own")
 
 
+@lanes.heavy_read
 def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | None = None,
                     ext: str | None = None, deleted_only: bool = False, min_size: int = 0,
                     min_files: int = 0, sort: str = "physical", direction: str = "desc",

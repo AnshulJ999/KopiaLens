@@ -152,10 +152,9 @@ def _ports():
     return kl["port"], kl["control_port"]
 
 
-def _memory_tiers():
+def _memory_range():
     from app.index import store
-    return tuple(n for max_gb, mem, _t in store._TIERS[:-1] for n in (max_gb, int(mem.rstrip("GMB")))) + \
-        (int(store._TIERS[-1][1].rstrip("GMB")),)
+    return store.MEMORY_SHARE, store.MIN_MEMORY_MB, store.MAX_MEMORY_MB // 1024
 
 
 def _worker_threads():
@@ -243,14 +242,13 @@ DEFAULTS = [
     ("guide-accidental-backup.md", r"A plan holds at most (\d+) files by default", _kl("remove_plan_cap")),
     ("restore.md", r"With more than ([\d,]+) files, the preview checks the first ([\d,]+)",
      lambda: (_restore_preview_cap(), _restore_preview_cap())),
-    ("hardware.md", r"\| (\d+) GB or less \| (\d+) MB \|\n\| Up to (\d+) GB \| (\d+) GB \|\n\| Up to (\d+) GB \| (\d+) GB \|\n"
-                    r"\| More than \d+ GB \| (\d+) GB \|", _memory_tiers),
+    ("hardware.md", r"to an (eighth) of the computer's memory, between (\d+) MB and (\d+) GB", _memory_range),
     ("hardware.md", r"up to (\d+) processor cores", _worker_threads),
     ("hardware.md", r"it waits (\d+) minutes by default", _kl_in("startup_delay", 60)),
     ("faq.md", r"for at most (\d+) seconds by default", _kl("disk_scan_budget")),
 ]
 WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "twelve": 12, "24": 24,
-         "once": 1}
+         "once": 1, "eighth": 8}
 
 
 def _number(s: str) -> int:

@@ -11,6 +11,7 @@ range scan per repo (bounded to that subtree), aggregated by immediate child seg
 from __future__ import annotations
 
 import collections
+import contextvars
 import os
 import threading
 import time
@@ -21,6 +22,7 @@ from config import REPOS, kopia_repos
 from ..core import paths as pathrules
 from ..core import disklookup
 from ..core.disklookup import children as es_children, drive_totals, list_drives, mapping_for, recursive_count
+from . import lanes
 from .store import manifest_path, read_cursor
 
 
@@ -378,12 +380,13 @@ def drive_stats() -> list[dict]:
         ts, tc = tot["size"], tot["files"]
         place = d.get("place")
         mapped = mapping_for(p) if place else None
-        if mapped:
-            bs, bc = _drive_backed(mapped["backup_folder"], gen, mapped["computer"])
-            bzf = bzb = 0
-        else:
-            bs, bc = _drive_backed(p, gen)
-            bzf, bzb = bz_by_letter.get(p[:1].upper(), (0, 0)) if not place else (0, 0)
+        with lanes.heavy():         # one index query per drive in parallel can outgrow a small limit
+            if mapped:
+                bs, bc = _drive_backed(mapped["backup_folder"], gen, mapped["computer"])
+                bzf = bzb = 0
+            else:
+                bs, bc = _drive_backed(p, gen)
+                bzf, bzb = bz_by_letter.get(p[:1].upper(), (0, 0)) if not place else (0, 0)
         return {
             "path": p, "used": d["used"], "total_size": ts, "total_files": tc,
             "counting": tot["state"] == "counting", "state": tot["state"], "counted_at": tot.get("counted_at"),
@@ -394,4 +397,5 @@ def drive_stats() -> list[dict]:
             "backed_up_as": ({"path": mapped["backup_folder"], "computer": mapped["computer"]} if mapped else None),
         }
 
-    return list(ThreadPoolExecutor(max_workers=8).map(_one, drives)) if drives else []
+    ctx = contextvars.copy_context()        # the request's lane, so the drive queries take turns
+    return list(ThreadPoolExecutor(max_workers=8).map(lambda d: ctx.copy().run(_one, d), drives)) if drives else []

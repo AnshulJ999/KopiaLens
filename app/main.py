@@ -16,6 +16,7 @@ import urllib.parse
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import duckdb
 import jinja2
 from fastapi import Depends, FastAPI, Request
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -1343,6 +1344,13 @@ async def _index_version_handler(_request: Request, exc: IndexVersionMismatch):
     """Not `offline` (nothing comes back on its own): the message says which way the mismatch runs
     and what actually happens next."""
     return JSONResponse(status_code=503, content=_index_mismatch_payload(exc))
+
+
+@app.exception_handler(duckdb.OutOfMemoryException)
+async def _out_of_memory_handler(request: Request, exc: duckdb.OutOfMemoryException):
+    """The plain message from the store, without the exception's name; the store logged the detail."""
+    log.warning("%s %s ran out of memory", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
 
 
 @app.exception_handler(Exception)

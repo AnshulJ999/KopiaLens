@@ -413,10 +413,9 @@ def _fixed_machine(monkeypatch):
     monkeypatch.setattr(store.os, "cpu_count", lambda: 64)
 
 
-@pytest.mark.parametrize("total_gb, expect", [(8, ("512MB", 4)), (7.6, ("512MB", 4)),
-                                              (15.8, ("1GB", 8)), (16, ("1GB", 8)),
-                                              (24, ("2GB", 8)), (31.8, ("2GB", 8)),
-                                              (32, ("2GB", 8)), (64, ("3GB", 16))])
+@pytest.mark.parametrize("total_gb, expect", [(4, ("512MB", 2)), (6, ("768MB", 3)), (7.6, ("972MB", 3)),
+                                              (8, ("1GB", 4)), (12, ("1536MB", 6)), (16, ("2GB", 8)),
+                                              (24, ("3GB", 12)), (64, ("3GB", 12)), (0, ("512MB", 2))])
 @pytest.mark.usefixtures("_fixed_machine")
 def test_ram_tiers_follow_total_memory(total_gb, expect, monkeypatch):
     import psutil
@@ -436,11 +435,13 @@ def test_explicit_settings_beat_the_detected_tier(monkeypatch):
 
 
 @pytest.mark.usefixtures("_fixed_machine")
-def test_auto_threads_never_exceed_the_processor_count(monkeypatch):
+def test_auto_threads_use_at_most_half_the_processors(monkeypatch):
     import psutil
     monkeypatch.setattr(psutil, "virtual_memory", lambda: type("m", (), {"total": 64 * 1024 ** 3})())
     monkeypatch.setattr(store.os, "cpu_count", lambda: 6)
-    assert store.auto_limits() == ("3GB", 6)
+    assert store.auto_limits() == ("3GB", 3)
+    monkeypatch.setattr(store.os, "cpu_count", lambda: 1)
+    assert store.auto_limits() == ("3GB", 1)
 
 
 @pytest.mark.usefixtures("_fixed_machine")
@@ -450,7 +451,7 @@ def test_auto_limits_ignore_the_override(monkeypatch):
     monkeypatch.setattr(psutil, "virtual_memory", lambda: type("m", (), {"total": 16 * 1024 ** 3})())
     monkeypatch.setattr("app.settings.load_settings",
                         lambda: {"kopialens": {"duckdb_memory": "7GB", "duckdb_threads": 2}})
-    assert store.auto_limits() == ("1GB", 8)
+    assert store.auto_limits() == ("2GB", 8)
     assert store.resolve_limits() == ("7GB", 2)
 
 
@@ -467,10 +468,7 @@ def test_the_index_worker_caps_threads_but_an_explicit_setting_wins(monkeypatch)
     assert store.resolve_limits() == ("3GB", 12)
 
 
-def test_threads_are_never_left_at_the_duckdb_default():
-    # Every tier pins a thread count on purpose: the machine default tracks core count, and a
-    # high count inflates hash-aggregate memory enough to OOM the small tier.
-    assert all(isinstance(t, int) and t > 0 for _gb, _mem, t in store._TIERS)
+
 
 
 # ---------------------------------------------------------------------------- idle close
