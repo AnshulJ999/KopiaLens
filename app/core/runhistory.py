@@ -29,7 +29,7 @@ _LOCK = threading.Lock()
 
 # Fields copied from the worker summary onto every record (absent on the app-side shapes).
 _SUMMARY_FIELDS = ("stages", "errors", "skipped", "analysis_failed_sources",
-                   "refcount_misses", "unreadable_dirs")
+                   "refcount_misses", "unreadable_dirs", "warnings")
 
 
 def _runs_dir() -> str:

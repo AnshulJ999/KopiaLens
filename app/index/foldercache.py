@@ -214,7 +214,7 @@ def _refresh_loop() -> None:
                 with lanes.background():
                     _compute_now(repo, prefix, source)
             except Exception as exc:  # noqa: BLE001 - a background refresh must never surface
-                log.debug("repo=%s background folder refresh failed for %s: %s", repo, prefix, exc)
+                log.warning("repo=%s background folder refresh failed for %s: %s", repo, prefix, exc)
 
 
 def _compute_now(repo: str, prefix: str, source: str | None = None) -> dict:
@@ -316,6 +316,7 @@ def prewarm(repo: str, top: int = _PREWARM_TOP, depths=None) -> None:
     depths = depths or _prewarm_depths()
     seen: set[str] = set()
     done = failed = skipped = skipped_unchanged = 0
+    first_error = ""
     need_versions: list[str] = []
     start = time.time()
     stopped_early = False
@@ -368,11 +369,14 @@ def prewarm(repo: str, top: int = _PREWARM_TOP, depths=None) -> None:
                 need_versions.append(prefix)
             except Exception as exc:  # noqa: BLE001 - one bad folder must not end the pass
                 failed += 1
+                first_error = first_error or f"{prefix}: {str(exc).splitlines()[0][:300]}"
                 log.debug("repo=%s folder prewarm failed for %s: %s", repo, prefix, exc)
     if need_versions:
         _save_versions(repo, need_versions)
     log.debug("repo=%s prewarm depths=%s", repo, depths)
-    log.info("repo=%s folder reclaim prewarm: %d computed, %d skipped (unchanged), "
-             "%d skipped (too large), %d failed, %.0fs%s",
-             repo, done, skipped_unchanged, skipped, failed, time.time() - start,
-             " (stopped at the time budget)" if stopped_early else "")
+    (log.warning if failed else log.info)(
+        "repo=%s folder reclaim prewarm: %d computed, %d skipped (unchanged), "
+        "%d skipped (too large), %d failed, %.0fs%s%s",
+        repo, done, skipped_unchanged, skipped, failed, time.time() - start,
+        " (stopped at the time budget)" if stopped_early else "",
+        f"; first error: {first_error}" if first_error else "")

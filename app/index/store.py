@@ -346,6 +346,8 @@ def current(repo: str) -> Generation:
 
 # Per-request [queries, seconds] slot, set by the request timing middleware.
 REQUEST_DB: contextvars.ContextVar = contextvars.ContextVar("kopialens_db_time", default=None)
+OUT_OF_MEMORY = "Not enough memory to show this. Narrow the view, or raise Settings > Advanced > Memory limit."
+
 _TIMED = frozenset({"execute", "executemany", "fetchall", "fetchone", "fetchmany", "fetchdf", "df",
                     "fetchnumpy", "arrow", "fetch_arrow_table", "pl"})
 
@@ -377,6 +379,10 @@ class _PinnedCursor:
                 out = lanes.run(self._cur, lambda: fn(*args, **kwargs))
             else:
                 out = fn(*args, **kwargs)
+        except duckdb.OutOfMemoryException as exc:
+            log.warning("query ran out of memory (limit %s): %s", resolve_limits()[0],
+                        str(exc).splitlines()[0])
+            raise duckdb.OutOfMemoryException(OUT_OF_MEMORY) from exc
         finally:
             if slot is not None:
                 slot[1] += time.perf_counter() - start

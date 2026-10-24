@@ -232,6 +232,9 @@ def run(repo: str, full: bool = False, skip_index: bool = False) -> dict:
     summary: dict = {"repo": repo, "ok": True, "full": full, "stages": {},
                      "errors": {}, "skipped": []}
     started = time.time()
+    from ..core.applog import RunWarnings
+    warned = RunWarnings()
+    warned_on = warned.attach()
 
     def stage(name: str, fn) -> bool:
         rep.set_stage(name)
@@ -397,6 +400,10 @@ def run(repo: str, full: bool = False, skip_index: bool = False) -> dict:
                 summary["unreadable_dirs"] = {"count": len(unread), "sample": unread[:5]}
         except Exception:  # noqa: BLE001 - a diagnostic must never affect the run
             pass
+        for lg in warned_on:
+            lg.removeHandler(warned)
+        if warned.count:
+            summary["warnings"] = {"count": warned.count, "first": warned.messages}
         from .store import close_all
         try:
             close_all()  # release the DuckDB file before we exit so the app can reopen it promptly

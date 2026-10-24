@@ -75,6 +75,17 @@ def test_copies_column_counts_locations_not_source_rows(cur):
     assert by_path["C:" + SEP + "a" + SEP + "dup.txt"]["copies"] == 2, "a real duplicate pair"
 
 
+def test_a_file_held_by_two_overlapping_sources_counts_once(cur):
+    """The folder list and Search's one-row-per-file view merge a path held by nested sources
+    into one file, while still counting both sources ()."""
+    users = "C:" + SEP + "Users"
+    row = next(r for r in queries.group_by_folder("1", depth=2)["rows"] if r["folder"] == users)
+    assert (row["files"], row["sources"], row["logical"]) == (1, 2, 10)
+    merged = [r for r in queries.search_paths("1", dedupe=True, dedupe_by="path")["rows"]
+              if r["full_path"] == users + SEP + "over.txt"]
+    assert len(merged) == 1 and merged[0]["content_id"] == "AAA"
+
+
 def test_search_still_accepts_a_comma_separated_source_list(cur):
     """The multi-source interface keeps its splitting - only the single-source callers changed."""
     got = queries.search_paths("1", source="u@h:C:,u@h:C:" + SEP + "Users")["total"]

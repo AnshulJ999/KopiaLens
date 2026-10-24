@@ -151,6 +151,43 @@ def setup_logging(level: int = logging.INFO) -> None:
         root.info("logs: moved %d legacy log file(s) into app/, indexing/ and jobs/", moved)
 
 
+class _WorkerFormatter(logging.Formatter):
+    """Time and message; warnings and errors also name their level, so they can be found later."""
+
+    def formatMessage(self, record: logging.LogRecord) -> str:
+        record.lvl = f"{record.levelname} " if record.levelno >= logging.WARNING else ""
+        return super().formatMessage(record)
+
+
+WORKER_FORMAT = "%(asctime)s  %(lvl)s%(message)s"
+
+
+class RunWarnings(logging.Handler):
+    """Collects a run's warnings and errors for its run record: a stage can finish 'ok' while
+    work inside it failed."""
+
+    KEEP = 10
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.count = 0
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.count += 1
+        if len(self.messages) < self.KEEP:
+            self.messages.append(record.getMessage().splitlines()[0][:300])
+
+    def attach(self) -> list[logging.Logger]:
+        loggers = [logging.getLogger()]
+        app = logging.getLogger("kopialens")
+        if not app.propagate:
+            loggers.append(app)
+        for lg in loggers:
+            lg.addHandler(self)
+        return loggers
+
+
 def setup_worker_logging(path: str | None = None) -> None:
     """Logging for a worker process.
 
@@ -159,14 +196,14 @@ def setup_worker_logging(path: str | None = None) -> None:
     wrapper), so the child writes it itself - encrypted per line when the files layer is live.
     Without a path it keeps the old behaviour, stderr.
     """
-    handlers: list[logging.Handler] = []
     if path:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        h = _CryptoRotatingFileHandler(path, maxBytes=1_000_000, backupCount=10, encoding="utf-8")
-        h.setFormatter(logging.Formatter("%(asctime)s  %(message)s", datefmt="%H:%M:%S"))
-        handlers.append(h)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S",
-                        handlers=handlers or None, force=True)
+        h: logging.Handler = _CryptoRotatingFileHandler(path, maxBytes=1_000_000, backupCount=10,
+                                                        encoding="utf-8")
+    else:
+        h = logging.StreamHandler()
+    h.setFormatter(_WorkerFormatter(WORKER_FORMAT, datefmt="%H:%M:%S"))
+    logging.basicConfig(level=logging.INFO, handlers=[h], force=True)
 
 
 def debug_log_wanted(settings: dict | None) -> bool:

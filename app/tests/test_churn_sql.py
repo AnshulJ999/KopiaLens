@@ -27,8 +27,7 @@ from __future__ import annotations
 import duckdb
 import pytest
 
-from app.index.churnview import (_MATERIALIZE_SQL, _SHARED_SQL, _WINDOW_SQL, _base_sql, _deduped_sql,
-                                 _qualify_params)
+from app.index.churnview import _SHARED_SQL, _base_sql, _deduped_sql, _qualify_params, materialize
 
 SEP = chr(92)
 CUTOFF = "2026-07-22 00:00:00"
@@ -148,9 +147,9 @@ def _materialize(con) -> str:
     Every assertion below is unchanged, so they also prove the rewrite returns identical rows."""
     if _path["mode"] == "shared":
         con.execute(_SHARED_SQL.format(tmp="_t_shared"), _qualify_params(WIDEST))
-        con.execute(_WINDOW_SQL.format(tmp=TMP, shared="_t_shared"), _qualify_params(CUTOFF))
+        materialize(con, TMP, CUTOFF, "_t_shared")
     else:
-        con.execute(_MATERIALIZE_SQL.format(tmp=TMP), _qualify_params(CUTOFF))
+        materialize(con, TMP, CUTOFF)
     return TMP
 
 

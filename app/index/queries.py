@@ -291,28 +291,49 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                                       date_from, date_to, min_versions, shared_min, ext_exclude, first_from)
         where_sql = _where(where)
         by_path = dedupe and dedupe_by != "content"
+        # Merged rows: the grouping carries numbers plus one representative row (the newest
+        # version's path_id, the highest one on a tie, so every text column comes from the same
+        # row on every run); text comes from that row once the page is picked. Text aggregates
+        # over every group need all of it in memory. A text sort column is the exception: it is
+        # aggregated, since the order needs it for every group.
+        rank_sql = ", max(r.value) AS ranked_value" if mat else ""
+        texts = {"source": "s.source", "full_path": "p.full_path", "name": "p.name", "ext": "p.ext"}
+        tcol = _SEARCH_SORT.get(sort)
+
+        def _text(col: str, row: str) -> str:
+            return f"g.{col}" if tcol == col else f"{row}.{col}"
+
+        def _sorted_text(keys: tuple) -> str:
+            return f", arg_max({texts[tcol]}, p.last_seen) AS {tcol}" if tcol in texts and tcol not in keys else ""
+
+        def _attach(order: str, extra: str = "") -> str:
+            return (f"FROM g JOIN pathx rp ON rp.path_id = g.rep JOIN src rs ON rs.src_id = rp.src_id {extra}"
+                    f" {order}")
         if by_path:
             total = _memo(_memo_key(cur, "total-path", where_sql, tuple(params)), lambda: cur.execute(
                 f"SELECT count(*) FROM (SELECT DISTINCT {_HOST_SQL}, p.full_path FROM pathx p "
                 f"JOIN src s ON s.src_id = p.src_id WHERE {where_sql})", params).fetchone()[0])
+            order = _order_clause(sort, direction, "full_path", nulls_last=bool(mat))
             rows = _rows(
                 cur,
                 f"""
-                SELECT arg_max(s.source, p.last_seen) AS source, p.full_path,
-                       arg_max(p.name, p.last_seen) AS name, arg_max(p.ext, p.last_seen) AS ext,
-                       arg_max(p.size, p.last_seen) AS size, arg_max(p.physical, p.last_seen) AS physical,
-                       max(p.exclusive) AS exclusive, max(p.versions) AS versions,
-                       min(p.first_seen) AS first_seen, max(p.last_seen) AS last_seen,
-                       bool_or(p.in_latest) AS in_latest, arg_max(c.content_id, p.last_seen) AS content_id
-                       {", max(r.value) AS ranked_value" if mat else ""}
-                FROM pathx p
-                JOIN src s ON s.src_id = p.src_id
-                LEFT JOIN cid c ON c.cid_id = p.cid_id
-                {join_sql}
-                WHERE {where_sql}
-                GROUP BY {_HOST_SQL}, p.full_path
-                {_order_clause(sort, direction, "p.full_path", nulls_last=bool(mat))}
-                LIMIT ? OFFSET ?
+                WITH g AS (
+                    SELECT p.full_path, max(struct_pack(ls := coalesce(p.last_seen, TIMESTAMP '1970-01-01'), pid := p.path_id)).pid AS rep,
+                           arg_max(p.size, p.last_seen) AS size, arg_max(p.physical, p.last_seen) AS physical,
+                           max(p.exclusive) AS exclusive, max(p.versions) AS versions,
+                           min(p.first_seen) AS first_seen, max(p.last_seen) AS last_seen,
+                           bool_or(p.in_latest) AS in_latest {_sorted_text(("full_path",))} {rank_sql}
+                    FROM pathx p
+                    JOIN src s ON s.src_id = p.src_id
+                    {join_sql}
+                    WHERE {where_sql}
+                    GROUP BY {_HOST_SQL}, p.full_path
+                    {order}
+                    LIMIT ? OFFSET ?)
+                SELECT {_text("source", "rs")} AS source, g.full_path, {_text("name", "rp")} AS name,
+                       {_text("ext", "rp")} AS ext, g.size, g.physical, g.exclusive, g.versions,
+                       g.first_seen, g.last_seen, g.in_latest, c.content_id {", g.ranked_value" if mat else ""}
+                {_attach(order, "LEFT JOIN cid c ON c.cid_id = rp.cid_id")}
                 """,
                 [*params, limit, offset],
             )
@@ -322,44 +343,97 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
                 f"WHERE {where_sql} AND p.cid_id IS NOT NULL",
                 params,
             ).fetchone()[0])
-            rows = _rows(
-                cur,
-                f"""
-                SELECT arg_max(s.source, p.last_seen) AS source, arg_max(p.full_path, p.last_seen) AS full_path,
-                       arg_max(p.name, p.last_seen) AS name, arg_max(p.ext, p.last_seen) AS ext,
-                       max(p.size) AS size, max(p.physical) AS physical, max(p.versions) AS versions,
-                       max(p.exclusive) AS exclusive,
-                       min(p.first_seen) AS first_seen, max(p.last_seen) AS last_seen,
-                       bool_or(p.in_latest) AS in_latest, c.content_id, count(DISTINCT p.full_path) AS copies,
-                       count(DISTINCT p.src_id) AS sources
-                       {", max(r.value) AS ranked_value" if mat else ""}
-                FROM pathx p
-                JOIN src s ON s.src_id = p.src_id
-                LEFT JOIN cid c ON c.cid_id = p.cid_id
-                {join_sql}
-                WHERE {where_sql} AND p.cid_id IS NOT NULL
-                GROUP BY p.cid_id, c.content_id
-                {_order_clause(sort, direction, "c.content_id", nulls_last=bool(mat))}
-                LIMIT ? OFFSET ?
-                """,
-                [*params, limit, offset],
-            )
+            order = _order_clause(sort, direction, "content_id", nulls_last=bool(mat))
+            if tcol == "full_path":
+                # Sorting merged contents by path: the representative's path is joined while the page
+                # is picked, so only the page's paths are held. Ties fall to cid_id: two contents
+                # never share a path and its last-seen time (a path holds one content per snapshot).
+                dirn = "ASC" if str(direction).lower() == "asc" else "DESC"
+                rows = _rows(
+                    cur,
+                    f"""
+                    WITH g AS (
+                        SELECT p.cid_id, max(struct_pack(ls := coalesce(p.last_seen, TIMESTAMP '1970-01-01'), pid := p.path_id)).pid AS rep,
+                               max(p.size) AS size, max(p.physical) AS physical, max(p.versions) AS versions,
+                               max(p.exclusive) AS exclusive, min(p.first_seen) AS first_seen,
+                               max(p.last_seen) AS last_seen, bool_or(p.in_latest) AS in_latest {rank_sql}
+                        FROM pathx p
+                        {join_sql}
+                        WHERE {where_sql} AND p.cid_id IS NOT NULL
+                        GROUP BY p.cid_id),
+                    pg AS (
+                        SELECT g.*, rp.full_path FROM g JOIN pathx rp ON rp.path_id = g.rep
+                        ORDER BY full_path {dirn}, last_seen DESC, cid_id
+                        LIMIT ? OFFSET ?)
+                    SELECT rs.source, pg.full_path, rp.name, rp.ext, pg.size, pg.physical, pg.versions,
+                           pg.exclusive, pg.first_seen, pg.last_seen, pg.in_latest, c.content_id, pg.cid_id
+                           {", pg.ranked_value" if mat else ""}
+                    FROM pg JOIN pathx rp ON rp.path_id = pg.rep JOIN src rs ON rs.src_id = rp.src_id
+                    LEFT JOIN cid c ON c.cid_id = pg.cid_id
+                    ORDER BY pg.full_path {dirn}, pg.last_seen DESC, pg.cid_id
+                    """,
+                    [*params, limit, offset],
+                )
+            else:
+                rows = _rows(
+                    cur,
+                    f"""
+                    WITH g AS (
+                        SELECT p.cid_id, c.content_id, max(struct_pack(ls := coalesce(p.last_seen, TIMESTAMP '1970-01-01'), pid := p.path_id)).pid AS rep,
+                               max(p.size) AS size, max(p.physical) AS physical, max(p.versions) AS versions,
+                               max(p.exclusive) AS exclusive,
+                               min(p.first_seen) AS first_seen, max(p.last_seen) AS last_seen,
+                               bool_or(p.in_latest) AS in_latest {_sorted_text(())} {rank_sql}
+                        FROM pathx p
+                        JOIN src s ON s.src_id = p.src_id
+                        LEFT JOIN cid c ON c.cid_id = p.cid_id
+                        {join_sql}
+                        WHERE {where_sql} AND p.cid_id IS NOT NULL
+                        GROUP BY p.cid_id, c.content_id
+                        {order}
+                        LIMIT ? OFFSET ?)
+                    SELECT {_text("source", "rs")} AS source, {_text("full_path", "rp")} AS full_path,
+                           {_text("name", "rp")} AS name, {_text("ext", "rp")} AS ext, g.size, g.physical,
+                           g.versions, g.exclusive, g.first_seen, g.last_seen, g.in_latest, g.content_id,
+                           g.cid_id {", g.ranked_value" if mat else ""}
+                    {_attach(order)}
+                    """,
+                    [*params, limit, offset],
+                )
+            # Copies and sources for the page's contents only, over the same filtered rows: counting
+            # distinct paths for every content group holds every path in memory.
+            ids = [r["cid_id"] for r in rows]
+            counts = {cid: (n, srcs) for cid, n, srcs in cur.execute(
+                f"SELECT p.cid_id, count(DISTINCT p.full_path), count(DISTINCT p.src_id) FROM pathx p "
+                f"WHERE {where_sql} AND p.cid_id IN ({_id_list(ids)}) GROUP BY p.cid_id",
+                params).fetchall()} if ids else {}
+            for r in rows:
+                r["copies"], r["sources"] = counts.get(r.pop("cid_id"), (1, 1))
         else:
             total = _memo(_memo_key(cur, "total", where_sql, tuple(params)), lambda: cur.execute(
                 f"SELECT count(*) FROM pathx p WHERE {where_sql}", params).fetchone()[0])
+            # The page is picked first and only its rows get a content id: joining cid to every
+            # row first needs the whole cid table in memory.
+            order = _order_clause(sort, direction, nulls_last=bool(mat))
             rows = _rows(
                 cur,
                 f"""
-                SELECT s.source AS source, p.full_path, p.name, p.ext, p.size, p.physical, p.exclusive,
-                       p.versions, p.first_seen, p.last_seen, p.in_latest, c.content_id
-                       {value_sql}
-                FROM pathx p
-                JOIN src s ON s.src_id = p.src_id
-                LEFT JOIN cid c ON c.cid_id = p.cid_id
-                {join_sql}
-                WHERE {where_sql}
-                {_order_clause(sort, direction, nulls_last=bool(mat))}
-                LIMIT ? OFFSET ?
+                SELECT t.source, t.full_path, t.name, t.ext, t.size, t.physical, t.exclusive,
+                       t.versions, t.first_seen, t.last_seen, t.in_latest, c.content_id
+                       {", t.ranked_value" if mat else ""}
+                FROM (
+                    SELECT s.source AS source, p.full_path, p.name, p.ext, p.size, p.physical, p.exclusive,
+                           p.versions, p.first_seen, p.last_seen, p.in_latest, p.cid_id
+                           {value_sql}
+                    FROM pathx p
+                    JOIN src s ON s.src_id = p.src_id
+                    {join_sql}
+                    WHERE {where_sql}
+                    {order}
+                    LIMIT ? OFFSET ?
+                ) t
+                LEFT JOIN cid c ON c.cid_id = t.cid_id
+                {order}
                 """,
                 [*params, limit, offset],
             )
@@ -854,29 +928,42 @@ def _nested_rows(cur, conds, params, lo, d, order, dirn, min_size, min_files, li
 
 
 def _group_rows(cur, conds, params, join, loose_sql, order, dirn, min_size, min_files, limit) -> list[dict]:
+    """Rows keyed by numbers, not paths: ``dm`` gives every ``dir`` row the id of the first dir with
+    its display name (``cfold``) and of the first dir with the same path on the same computer
+    (``cdir``), so a file is (cdir, name) and a folder is cfold. Grouping by the path strings held
+    every full path in memory at once (2 GB+ on a 5M-path repo)."""
+    folder = _folder_name_sql(cur, "g")
     rows = _rows(
         cur,
         f"""
-        WITH m AS (
-            SELECT {_folder_name_sql(cur, 'g')} AS folder, {loose_sql} AS loose,
-                   {_HOST_SQL} AS host, p.full_path, p.size, p.physical, p.in_latest,
-                   p.last_seen, p.first_seen, p.src_id
+        WITH dm AS (
+            SELECT _gd.dir_id,
+                   min(_gd.dir_id) OVER (PARTITION BY {_HOST_SQL}, _gd.dir_path) AS cdir,
+                   min(_gd.dir_id) OVER (PARTITION BY {folder}) AS cfold
+            FROM dir _gd JOIN src s ON s.src_id = _gd.src_id),
+        m AS NOT MATERIALIZED (
+            SELECT _fm.cfold AS fk, {loose_sql} AS loose, _pm.cdir, p.name, p.size, p.physical,
+                   p.in_latest, p.last_seen, p.first_seen, p.src_id
             FROM pathx p JOIN src s ON s.src_id = p.src_id
             {join}
+            JOIN dm _pm ON _pm.dir_id = p.dir_id
+            JOIN dm _fm ON _fm.dir_id = _gd.dir_id
             WHERE {_where(conds)}),
-        pf AS (SELECT folder, loose, host, full_path, max(size) AS size, max(physical) AS physical,
+        pf AS (SELECT fk, loose, max(size) AS size, max(physical) AS physical,
                       bool_or(in_latest) AS in_latest, max(last_seen) AS last_seen,
                       min(first_seen) AS first_seen
-               FROM m GROUP BY folder, loose, host, full_path),
-        ff AS (SELECT folder, loose, sum(physical) AS phys, sum(size) AS logical, count(*) AS files,
+               FROM m GROUP BY fk, loose, cdir, name),
+        ff AS (SELECT fk, loose, sum(physical) AS phys, sum(size) AS logical, count(*) AS files,
                       count(*) FILTER (WHERE NOT in_latest) AS deleted_files,
                       max(last_seen) AS last_seen, min(first_seen) AS first_seen
-               FROM pf GROUP BY folder, loose),
-        fs AS (SELECT folder, loose, count(DISTINCT src_id) AS sources, min(src_id) AS src_one
-               FROM m GROUP BY folder, loose)
-        SELECT ff.*, 0 AS excl, fs.sources, fs.src_one FROM ff JOIN fs USING (folder, loose)
+               FROM pf GROUP BY fk, loose),
+        fs AS (SELECT fk, loose, count(DISTINCT src_id) AS sources, min(src_id) AS src_one
+               FROM m GROUP BY fk, loose)
+        SELECT {folder} AS folder, ff.loose, ff.phys, ff.logical, ff.files, ff.deleted_files,
+               ff.last_seen, ff.first_seen, 0 AS excl, fs.sources, fs.src_one
+        FROM ff JOIN fs USING (fk, loose) JOIN dir _gd ON _gd.dir_id = ff.fk
         WHERE ff.phys >= {int(min_size)} AND ff.files >= {int(min_files)}
-        ORDER BY {order} {dirn}, folder, loose LIMIT {int(limit)}
+        ORDER BY {order} {dirn}, folder, ff.loose LIMIT {int(limit)}
         """,
         params,
     )

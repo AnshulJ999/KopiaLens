@@ -127,6 +127,8 @@ const logsPart = {
         const failed = r.analysis_failed_sources || [];
         const bits = Object.entries(errs).map(([k, v]) => `${k}: ${v}`);
         if (failed.length) bits.push(`${countOf(failed.length, "source")} failed analysis`);
+        const warned = r.warnings || {};
+        if (warned.count) bits.push(`${countOf(warned.count, "warning")}: ${(warned.first || [])[0] || ""}`);
         return bits.join(" · ");
       }
       return r.reason || "failed";

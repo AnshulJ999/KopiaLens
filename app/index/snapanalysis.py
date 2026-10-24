@@ -548,6 +548,7 @@ def prewarm(repo: str, with_reclaim: bool = False) -> dict | None:
     caller surfaces the list so a nightly cannot report a clean pass that lost sources."""
     from ..core.sources import sources_index
     failed: list[str] = []
+    first_error = ""
     recomputed = 0
     compute_secs = 0.0
     t_stage = time.perf_counter()
@@ -570,13 +571,13 @@ def prewarm(repo: str, with_reclaim: bool = False) -> dict | None:
                 log.debug("repo=%s analysis source %s", repo, key)
             except Exception as exc:  # noqa: BLE001 - one source failing must not abort the stage
                 failed.append(key)
+                first_error = first_error or str(exc).splitlines()[0][:300]
                 log.debug("repo=%s analysis failed for %s: %s", repo, key, exc)
                 continue
     log.info("repo=%s analysis stage: %d of %d source(s) recomputed in %.1fs of %.1fs total",
              repo, recomputed, len(srcs), compute_secs, time.perf_counter() - t_stage)
     if failed:
-        log.warning("repo=%s analysis stage: %d source(s) failed (partial results published)",
-                    repo, len(failed))
-        log.debug("repo=%s analysis failed sources: %s", repo, ", ".join(failed[:10]))
+        log.warning("repo=%s analysis stage: %d source(s) failed (partial results published): %s; first error: %s",
+                    repo, len(failed), ", ".join(failed[:10]), first_error)
         return {"failed_sources": failed}
     return None

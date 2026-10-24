@@ -85,7 +85,7 @@ WITH pc AS (
   FROM pc
 )"""
 _QUALIFY_CTE = _HIST_CTE + """, newc AS (
-  SELECT s.source, p.full_path, p.dir_id, p.src_id, p.name, hist.cid_id, COALESCE(hist.size, 0) AS size,
+  SELECT hist.path_id, hist.cid_id, COALESCE(hist.size, 0) AS size,
          COALESCE(cs.packed, ip.packed, 0) AS packed
   FROM hist
   LEFT JOIN pathx p ON p.path_id = hist.path_id
@@ -115,6 +115,13 @@ def _qualify_params(cutoff: str) -> list:
 # per window against 5.4s for the old, wrong query - most of the remaining gap).
 _MATERIALIZE_SQL = f"CREATE OR REPLACE TEMPORARY TABLE {{tmp}} AS {_QUALIFY_CTE} SELECT * FROM newc"
 
+# The qualifying set holds ids only; paths and names are attached afterwards, in their own statement,
+# to the few rows that qualify. Carrying them through the qualifying join (or joining in the same
+# statement, where DuckDB may build its hash table from pathx) needs every path in memory.
+_ATTACH_SQL = ("CREATE OR REPLACE TEMPORARY TABLE {tmp} AS SELECT s.source, p.full_path, p.dir_id, p.src_id, "
+               "p.name, n.cid_id, n.size, n.packed FROM {ids} n JOIN pathx p ON p.path_id = n.path_id "
+               "JOIN src s ON s.src_id = p.src_id")
+
 # Several windows from ONE grouping pass. The rule is monotone in the cutoff (a pair that qualifies
 # for a later cutoff qualifies for every earlier one), so the widest window's set is materialized
 # once with the facts the rule reads, and each window filters it. next_ts is the source's first
@@ -123,7 +130,7 @@ _MATERIALIZE_SQL = f"CREATE OR REPLACE TEMPORARY TABLE {{tmp}} AS {_QUALIFY_CTE}
 _WINDOW_RULE = ("first_seen >= ? OR (first_seen IS NULL AND first_ts >= ?) "
                 "OR (rn > 1 AND (next_ts IS NULL OR next_ts >= ?))")
 _SHARED_SQL = "CREATE OR REPLACE TEMPORARY TABLE {tmp} AS " + _HIST_CTE + f""", q AS (
-  SELECT s.source, p.full_path, p.dir_id, p.src_id, p.name, hist.cid_id, COALESCE(hist.size, 0) AS size,
+  SELECT hist.path_id, p.src_id, hist.cid_id, COALESCE(hist.size, 0) AS size,
          COALESCE(cs.packed, ip.packed, 0) AS packed, p.first_seen, hist.first_ts, hist.rn, hist.prev_last
   FROM hist
   LEFT JOIN pathx p ON p.path_id = hist.path_id
@@ -135,11 +142,25 @@ _SHARED_SQL = "CREATE OR REPLACE TEMPORARY TABLE {tmp} AS " + _HIST_CTE + f""", 
   FROM q ASOF LEFT JOIN (SELECT src_id, start_time FROM snap) nx
     ON q.src_id = nx.src_id AND q.prev_last < nx.start_time
 )
-SELECT source, full_path, dir_id, src_id, name, cid_id, size, packed, first_seen, first_ts, rn, next_ts
+SELECT path_id, cid_id, size, packed, first_seen, first_ts, rn, next_ts
 FROM r WHERE {_WINDOW_RULE}
 """
-_WINDOW_SQL = ("CREATE OR REPLACE TEMPORARY TABLE {tmp} AS SELECT source, full_path, dir_id, src_id, "
-               "name, cid_id, size, packed FROM {shared} WHERE " + _WINDOW_RULE)
+_WINDOW_SQL = ("CREATE OR REPLACE TEMPORARY TABLE {tmp} AS SELECT path_id, cid_id, size, packed "
+               "FROM {shared} WHERE " + _WINDOW_RULE)
+
+
+def materialize(cur, tmp: str, cutoff: str, shared: str | None = None) -> None:
+    """Build the window's qualifying rows into ``tmp``, from its own grouping or by filtering the
+    prewarm's ``shared`` set."""
+    ids = f"{tmp}_ids"
+    if shared:
+        cur.execute(_WINDOW_SQL.format(tmp=ids, shared=shared), _qualify_params(cutoff))
+    else:
+        cur.execute(_MATERIALIZE_SQL.format(tmp=ids), _qualify_params(cutoff))
+    try:
+        cur.execute(_ATTACH_SQL.format(tmp=tmp, ids=ids))
+    finally:
+        cur.execute(f"DROP TABLE IF EXISTS {ids}")
 
 
 def _base_sql(tmp: str, depth: int, folder: str, off: str = "") -> str:
@@ -275,10 +296,7 @@ def _compute(repo: str, depth: int, cutoff: str, shared: tuple | None = None) ->
     tmp = f"_churn_newc_{uuid.uuid4().hex[:12]}"
     cur = shared[0] if shared else read_cursor(repo)
     try:
-        if shared:
-            cur.execute(_WINDOW_SQL.format(tmp=tmp, shared=shared[1]), _qualify_params(cutoff))
-        else:
-            cur.execute(_MATERIALIZE_SQL.format(tmp=tmp), _qualify_params(cutoff))
+        materialize(cur, tmp, cutoff, shared[1] if shared else None)
         rows = [
             {"source": r[0], "folder": r[1], "ext": r[2],
              "bytes": int(r[3] or 0), "versions": int(r[4] or 0), "files": int(r[5] or 0),

@@ -36,6 +36,9 @@ PROBLEM_GROUPS = 300
 FAILED_RUNS = 3
 
 _PROBLEM_LINE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+\s+(WARNING|ERROR|CRITICAL)\s+(\S+) \| (.*)$")
+# Index worker logs carry only the time; the date comes from the run header above each run.
+_RUN_HEADER = re.compile(r"^===== run started (\d{4}-\d{2}-\d{2}) ")
+_INDEX_PROBLEM = re.compile(r"^(\d{2}:\d{2}:\d{2})\s+(WARNING|ERROR|CRITICAL) (.*)$")
 
 STATUS_TIMEOUT = 20   # seconds per repo: an offline remote repository must not hold the bundle
 
@@ -121,9 +124,20 @@ def _system_lines() -> list[str]:
              f"Install type: {checkin.install_type()}",
              f"OS: {platform.platform()}", f"CPU: {platform.machine()} x{os.cpu_count()}",
              f"Python: {sys.version.split()[0]}"]
-    from .host import ram_bytes
+    from .host import _cgroup_memory_limit, ram_bytes
     if ram := ram_bytes():
-        lines.append(f"Memory: {ram // (1024 ** 2)} MB")
+        capped = ram == _cgroup_memory_limit()
+        lines.append(f"Memory: {ram // (1024 ** 2)} MB" + (" (container limit)" if capped else ""))
+    try:
+        from ..index.store import resolve_limits
+        from ..settings import load_settings
+        limit, threads = resolve_limits()
+        how = ("set in Settings" if (load_settings().get("kopialens") or {}).get("duckdb_memory")
+               else "set by KOPIALENS_DUCKDB_MEMORY" if os.environ.get("KOPIALENS_DUCKDB_MEMORY")
+               else "automatic")
+        lines.append(f"Database memory limit: {limit}, {threads} threads ({how})")
+    except Exception:  # noqa: BLE001
+        pass
     try:
         lines.append(f"Free disk (data folder): {shutil.disk_usage(DATA_DIR).free // (1024 ** 3)} GB")
     except OSError:
@@ -216,21 +230,36 @@ def _problems(days: int) -> str:
     from . import filecrypto
     cutoff = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - days * 86400))
     groups: dict[tuple, dict] = {}
-    paths = [LOG_FILE] + [f"{LOG_FILE}.{i}" for i in range(1, 20)]
-    for path in paths:
+
+    def add(ts: str, level: str, logger: str, msg: str) -> None:
+        if ts < cutoff:
+            return
+        key = (level, logger, re.sub(r"\d+", "#", msg)[:200])
+        g = groups.setdefault(key, {"count": 0, "first": ts, "last": ts, "msg": msg})
+        g["count"] += 1
+        g["first"], g["last"] = min(g["first"], ts), max(g["last"], ts)
+        if ts >= g["last"]:
+            g["msg"] = msg
+
+    for path in [LOG_FILE] + [f"{LOG_FILE}.{i}" for i in range(1, 20)]:
         if not os.path.exists(path):
             continue
         for line in filecrypto.read_lines(path):
-            m = _PROBLEM_LINE.match(line)
-            if not m or m.group(1) < cutoff:
+            if m := _PROBLEM_LINE.match(line):
+                add(*m.groups())
+    names = sorted(n for n in os.listdir(INDEX_LOG_DIR) if n.endswith(".log")) if os.path.isdir(INDEX_LOG_DIR) else []
+    for name in names:
+        logger = "index " + name.removesuffix(".log").removeprefix("index_worker_")
+        base = os.path.join(INDEX_LOG_DIR, name)
+        for path in [f"{base}.{i}" for i in range(10, 0, -1)] + [base]:   # oldest first
+            if not os.path.exists(path):
                 continue
-            ts, level, logger, msg = m.groups()
-            key = (level, logger, re.sub(r"\d+", "#", msg)[:200])
-            g = groups.setdefault(key, {"count": 0, "first": ts, "last": ts, "msg": msg})
-            g["count"] += 1
-            g["first"], g["last"] = min(g["first"], ts), max(g["last"], ts)
-            if ts >= g["last"]:
-                g["msg"] = msg
+            day = None
+            for line in filecrypto.read_lines(path):
+                if h := _RUN_HEADER.match(line):
+                    day = h.group(1)
+                elif day and (m := _INDEX_PROBLEM.match(line)):
+                    add(f"{day} {m.group(1)}", m.group(2), logger, m.group(3))
     head = f"Warnings and errors since {cutoff} ({days} day{'' if days == 1 else 's'})"
     if not groups:
         return head + "\nNone.\n"

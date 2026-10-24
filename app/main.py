@@ -358,6 +358,35 @@ def _refresh_dashboard(repo: str) -> None:
         log.error("dashboard refresh repo=%s failed: %s", repo, exc)
 
 
+_warm_search_failed: dict[str, int] = {}   # repo -> manifest stamp of the index the warm failed on
+
+
+def _warm_search(repo: str) -> None:
+    """Pre-load the Search landing list and folder list. A failure is logged once and not retried
+    until the next index: retrying the same query on the same index fails the same way."""
+    from .index.store import NoIndex, manifest_path
+    try:
+        stamp = os.stat(manifest_path(repo)).st_mtime_ns
+    except OSError:
+        return                                  # not indexed yet: nothing to pre-load
+    if _warm_search_failed.get(repo) == stamp:
+        return
+    try:
+        from .index.queries import group_by_folder, warm_landing
+        kl = load_settings().get("kopialens", {}) or {}
+        size = str(kl.get("page_size", 500))   # saved as the picker's text; "Infinite" is not cached
+        sort, direction = kl.get("search_sort") or "size", kl.get("search_dir") or "desc"
+        warm_landing(repo, limit=int(size) if size.isdigit() else 500, sort=sort, direction=direction)
+        group_by_folder(repo, depth=int(kl.get("group_depth", 3)), limit=500, direction=direction,
+                        sort="logical" if sort == "size" else "physical")   # Files + Folders view
+        _warm_search_failed.pop(repo, None)
+    except NoIndex:
+        return
+    except Exception as exc:  # noqa: BLE001
+        _warm_search_failed[repo] = stamp
+        log.warning("warm search-landing repo=%s failed (not retried until the next index): %s", repo, exc)
+
+
 def _warm(repo: str) -> None:
     """LIGHT warm pass, in-process, on the light interval. Everything here is cheap - a couple of
     already-cached kopia calls and one small query. The heavy work (index build, snapshot analysis,
@@ -377,17 +406,7 @@ def _warm(repo: str) -> None:
         refresh_stats(repo)
     except Exception as exc:  # noqa: BLE001
         log.error("warm stats repo=%s failed: %s", repo, exc)
-    try:
-        from .index.queries import warm_landing
-        kl = load_settings().get("kopialens", {}) or {}
-        size = str(kl.get("page_size", 500))   # saved as the picker's text; "Infinite" is not cached
-        sort, direction = kl.get("search_sort") or "size", kl.get("search_dir") or "desc"
-        warm_landing(repo, limit=int(size) if size.isdigit() else 500, sort=sort, direction=direction)
-        from .index.queries import group_by_folder      # the Files + Folders view's folder list
-        group_by_folder(repo, depth=int(kl.get("group_depth", 3)), limit=500, direction=direction,
-                        sort="logical" if sort == "size" else "physical")
-    except Exception as exc:  # noqa: BLE001
-        log.error("warm search-landing repo=%s failed: %s", repo, exc)
+    _warm_search(repo)
     if not _dashboard_nightly_only() and not pause.active():  # opt-in daytime rebuild
         now = time.time()
         if now - _last_dashboard.get(repo, 0.0) >= _dashboard_interval():
