@@ -66,7 +66,6 @@ const actionsPart = {
     // An item without a source (a path held by several sources) gets its holders looked up; the
     // newest backup is picked and the panel offers the others.
     async openRestore(items, opts = {}) {
-      if (!this.wmGuard("restores")) return;
       const list = (Array.isArray(items) ? items : [items]).filter((i) => i && i.full_path)
         .map((i) => ({ ...i, source: i.source || null }));
       if (!list.length) { this.error = "Nothing to restore."; return; }
@@ -306,7 +305,7 @@ const actionsPart = {
 
     async restoreExecute() {
       const r = this.restore;
-      if (!r || r.loading) return;
+      if (!r || r.loading || !this.wmGuard("restores")) return;
       if (!r.plan || (r.mode === "folder" && !r.target.trim())) { r.error = "Pick a destination folder."; return; }
       if (!r.plan.previewed) await this.restoreLoad(true);
       if (!this.restore || !r.plan || r.error) return;
@@ -406,12 +405,17 @@ const actionsPart = {
     // item: {source, full_path, snapshot_id?, content_id?}; size/kind known from a plan when available.
     async downloadItem(item) {
       if (this.isDemo()) { this.klNotify("Downloading isn't available in the demo.", "warn"); return; }
+      if (this.downloading) return;   // one at a time: a slow repository must not queue repeats
+      // Its button reads "Preparing…"; from a menu, a notice says so once it takes a moment.
+      this.downloading = (item.source || "") + "|" + item.full_path;
+      const slow = setTimeout(() => this.klNotify(`Preparing ${baseName(item.full_path)}…`), 600);
       let info = null;
       try {
         const plan = await getJson("/api/restore/plan", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ repo: this.repo, items: [item], target_mode: "folder", target: "_", preview: false }) });
         info = plan.items[0];
       } catch (e) { this.error = e.message || String(e); return; }
+      finally { clearTimeout(slow); this.downloading = ""; }
       if (info.size > DOWNLOAD_WARN_BYTES) {
         const facts = [["Size", fmtBytes(info.size)], ["Files", Number(info.files).toLocaleString(NUM_LOCALE)], ["Snapshot", this.humanTime(info.snap_time)]];
         if (info.expired) facts.push(["Modified time", "Not restored: the snapshot has expired"]);

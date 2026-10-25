@@ -39,7 +39,7 @@ const snapshotsPart = {
           const items = [];
           if (n === 1) items.push(
             { label: "Show in Tree", action: () => this.browseSnapshot(d) },
-            this.wmItem({ label: "Restore this snapshot…", action: () => this.openRestore([{ source: d.source, full_path: sourcePath(d.source), snapshot_id: d.id }], { label: "snapshot " + this.humanTime(d.start_time) }) }, "restores"),
+            { label: "Restore this snapshot…", action: () => this.openRestore([{ source: d.source, full_path: sourcePath(d.source), snapshot_id: d.id }], { label: "snapshot " + this.humanTime(d.start_time) }) },
             { label: this.mountOpenLabel(), action: () => this.mountOpen(d.id, d.source, sourcePath(d.source)) },
             ...(server || this.isDemo() ? [] : [this.wmItem({ label: "Edit description…", action: () => this.editDescription(d) }, "non_destructive")]),
             { separator: true });
@@ -55,7 +55,7 @@ const snapshotsPart = {
             { label: "Select unretained snapshots", action: () => this.selectUnretained() },
             { label: "Select identical duplicates", action: () => this.selectIdenticalDuplicates() },
             { separator: true },
-            this.wmItem({ label: many("Delete") + "…", action: () => this.planDelete() }, "full"));
+            { label: many("Delete") + "…", action: () => this.planDelete() });
           items.push({ separator: true },
             { label: n === 1 ? "Copy snapshot ID" : "Copy snapshot IDs", action: () => this.copyText(this.snapSelected().map((x) => x.id).join("\n")) });
           return items;
@@ -184,7 +184,6 @@ const snapshotsPart = {
       } catch (e) { this.klNotify(e.message, "error"); }
     },
     planDelete() {  // build a confirm plan from the currently-selected snapshot rows
-      if (!this.wmGuard("full")) return;
       const rows = this.snapSelected();
       if (!rows.length) { this.klNotify("Select one or more snapshots first.", "warn"); return; }
       const reclaimVals = rows.map((r) => r.reclaimable).filter((v) => v !== null && v !== undefined);
@@ -242,7 +241,7 @@ const snapshotsPart = {
       return !!(st && st.done && st.ok && !st.running);
     },
     async executeDelete() {
-      if (!this.deletePlan) return;
+      if (!this.deletePlan || !this.wmGuard("full")) return;
       const p = this.deletePlan;
       const warnN = (p.pinned || 0) + (p.retained || 0);
       const ok = await this.klConfirm({

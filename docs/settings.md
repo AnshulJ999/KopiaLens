@@ -1,6 +1,6 @@
 # Settings
 
-Settings holds everything you can change in KopiaLens. Open it with the gear button at the top right. Changes save as you make them. A few are marked **restart**: they apply after you quit and reopen KopiaLens.
+Settings holds everything you can change in KopiaLens. Open it with the gear button at the top right. Changes save as you make them. A few are marked **restart**: they apply after KopiaLens restarts. **Restart…** at the bottom of Settings, next to Close, restarts it (desktop app, Docker and Home Assistant).
 
 ![Screenshot: Settings, open on General](images/settings.png)
 
@@ -42,6 +42,7 @@ The other sections are described below.
 | **Table alignment** | How table columns line up unless a table or column has its own choice ([Tables](tables.md#table-layout)). **Auto**, the default, puts numbers on the right and text on the left |
 | **Tab order** | **Reset to default** puts the tabs back in their first order. To move a tab, drag it in the tab row |
 | **Font** | The font for the whole app |
+| **File and folder icons** | The icons before names in Tree, Search, Churn, Excluded and the panels: **Material** (the default, an icon per file type), **Filled**, **Outline** or **Emoji** |
 | **Sort arrows in table headers** | **Sorted column only** or **Every column** |
 | **Detail panel layout** | **Classic** shows every section of the file and folder panels in one scroll. **Tabbed** keeps the summary on screen and groups the rest |
 | **Documentation opens as** | **A popup** or **A side panel** |
@@ -60,6 +61,7 @@ These apply to the KopiaLens desktop app and its tray icon.
 
 | Setting | What it does |
 |---|---|
+| **Start at logon** | KopiaLens starts in the tray when you sign in to the computer. The same switch as in the tray menu |
 | **Clicking the tray icon** | **Opens KopiaLens** or **Shows the menu**. Right-clicking always shows the menu |
 | **Double-clicking the tray icon** | **Opens KopiaLens** or **Does nothing** |
 | **Tray icon** | The icon in the system tray |

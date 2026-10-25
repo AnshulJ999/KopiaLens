@@ -79,11 +79,12 @@ def restart() -> dict:
     exits and the container's restart rule starts it again."""
     global _restart_requested
     from ..core import host
-    if os.environ.get("KOPIALENS_SHELL_TOKEN"):   # started by the desktop app
+    kind = host.restart_kind()
+    if kind == "desktop":
         _restart_requested = True
         log.info("restart requested: waiting for the desktop app to pick it up")
         return {"ok": True}
-    if not host.in_docker():
+    if not kind:
         return {"ok": False, "reason": "no-tray"}
 
     def _exit() -> None:
@@ -93,6 +94,27 @@ def restart() -> dict:
 
     threading.Thread(target=_exit, name="restart-request", daemon=True).start()
     return {"ok": True, "how": "container"}
+
+
+class AutostartRequest(BaseModel):
+    on: bool
+
+
+@router.get("/app/autostart")
+def autostart() -> dict:
+    """Start at logon, as the desktop app last reported it (``available`` false elsewhere)."""
+    from . import shell
+    return shell.autostart_state()
+
+
+@router.post("/app/autostart")
+def set_autostart(body: AutostartRequest) -> dict:
+    """Turn Start at logon on or off: the desktop app applies it on its next status poll."""
+    from . import shell
+    if not os.environ.get("KOPIALENS_SHELL_TOKEN"):
+        raise HTTPException(status_code=409, detail="Only the desktop app starts at logon.")
+    shell.request_autostart(body.on)
+    return shell.autostart_state()
 
 
 # ---------------------------------------------------------------------------- pause indexing

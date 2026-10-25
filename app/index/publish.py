@@ -14,6 +14,7 @@ import time
 
 from ..core.applog import get_logger
 from .store import repo_dir
+from ..core import atomicfile
 
 log = get_logger("store")
 
@@ -38,7 +39,7 @@ def move_into_pool(root: str, moves: list[tuple[str, str]]) -> None:
     for staged, rel in moves:
         dst = os.path.join(root, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        os.replace(staged, dst)
+        atomicfile.replace(staged, dst)
 
 
 def write_manifest(root: str, manifest: dict) -> None:
@@ -52,7 +53,7 @@ def write_manifest(root: str, manifest: dict) -> None:
         os.fsync(fh.fileno())
     for attempt in range(12):
         try:
-            os.replace(tmp, path)
+            atomicfile.replace(tmp, path)
             return
         except PermissionError:
             if attempt == 11:

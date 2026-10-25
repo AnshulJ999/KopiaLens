@@ -2,13 +2,13 @@
         <div class="kl-toolbar items-end">
           <button class="kl-btn" @click="active = 'snapshots'; activate()" title="Back to Snapshots"><i class="ic ic-arrow-left"></i> Snapshots</button>
           <label class="flex-col !items-start !gap-0.5 text-muted" title="The same source as Snapshots">Source
-            <select x-model="snapSource" @change="simSourceChanged()" class="fld border border-bd bg-surface max-w-[22rem] text-fg">
+            <select autocomplete="off" x-model="snapSource" @change="simSourceChanged()" class="fld border border-bd bg-surface max-w-[22rem] text-fg">
               <option value="*ALL*">All sources</option>
               <template x-for="s in sources" :key="s"><option :value="s" :selected="s == snapSource" x-text="shortSource(s)"></option></template>
             </select></label>
           <template x-for="k in policyKeys" :key="k">
             <label class="flex-col !items-start !gap-0.5 text-muted"><span x-text="simPolicyLabel(k)"></span>
-              <input type="number" min="0" x-model.number="policy[k]" class="fld w-20 border border-bd bg-surface text-fg"></label>
+              <input autocomplete="off" type="number" min="0" x-model.number="policy[k]" class="fld w-20 border border-bd bg-surface text-fg"></label>
           </template>
           <button @click="runSimulate()" class="kl-btn primary">Run</button>
           <span class="grow"></span>

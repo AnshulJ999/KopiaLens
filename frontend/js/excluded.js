@@ -244,7 +244,7 @@ const excludedPart = {
       }
       menu.push(
         { label: "Back this up…", action: (_e, row) => this.excludedInclude(row.getData()) },
-        this.wmItem({ label: "Exclude…", action: (_e, row) => this.excludedExclude(row.getData()) }, "non_destructive"),
+        { label: "Exclude…", action: (_e, row) => this.excludedExclude(row.getData()) },
         { label: "Policy…", action: (_e, row) => this.polPopFor("", this._excludedBackupPath(row.getData())) },
         { label: "Copy path", action: (_e, row) => this.copyText(this._excludedPath(row.getData())) },
       );

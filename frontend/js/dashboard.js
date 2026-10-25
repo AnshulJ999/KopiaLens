@@ -20,7 +20,9 @@ const dashboardPart = {
         // computed_at flips on every cache REBUILD, covering same-hash rebuilds that only moved
         // e.g. next_snapshot times; polls of an untouched cache keep matching and never re-render.
         const rows = (data.rows || []).filter((r) => this.ownerMatch(r.source)).map((r) => ({ ...r, owner: this.ownerOf(r.source) }));
-        const sig = `${this.dashPageSize}|${TIME_FMT}|${NUM_LOCALE}|${_dateStyle}|${_clock}|${this.repo}|${this.ownerFilter()}|${this.myOwner()}|${data.hash || ""}|${data.computed_at || ""}|${data.union_total}|${(data.rows || []).length}|${(data.rows && data.rows[0] && data.rows[0].last_time) || ""}`;
+        // Next times and missed slots are read fresh on every call, so they join the signature.
+        const nexts = (data.rows || []).map((r) => `${r.next_snapshot || ""}${r.missed_at ? (r.quiet ? "q" : r.overdue ? "o" : "m") : ""}`).join(",");
+        const sig = `${this.dashPageSize}|${TIME_FMT}|${NUM_LOCALE}|${_dateStyle}|${_clock}|${this.repo}|${this.ownerFilter()}|${this.myOwner()}|${data.hash || ""}|${data.computed_at || ""}|${data.union_total}|${(data.rows || []).length}|${(data.rows && data.rows[0] && data.rows[0].last_time) || ""}|${nexts}`;
         const dEl = document.querySelector("#dashboardTable");
         if (!refresh && dEl && dEl._tabulator && sig === this._dashSig) return;
         this._dashSig = sig;
@@ -47,7 +49,10 @@ const dashboardPart = {
               if (live && this.engineSrc[src] && this.engineSrc[src].status === "UPLOADING")
                 return live + " <button class='kl-btn quiet' data-act='cancel' style='height:22px'>Cancel</button>";
               if (live) return live;
-              return "<button class='kl-btn quiet' data-act='snap' style='height:22px'>Snapshot now</button><button class='kl-btn quiet' data-act='policy' style='height:22px'>Policy</button>";
+              const snap = this.snapStarting[src]
+                ? "<button class='kl-btn quiet' disabled style='height:22px'>Starting…</button>"
+                : "<button class='kl-btn quiet' data-act='snap' style='height:22px'>Snapshot now</button>";
+              return snap + "<button class='kl-btn quiet' data-act='policy' style='height:22px'>Policy</button>";
             } },
         ], {
           initialSort: [{ column: "source", dir: "asc" }],
@@ -66,7 +71,7 @@ const dashboardPart = {
               { separator: true },
               { label: "Copy source", action: () => this.copyText(src) },
               { separator: true },
-              this.wmItem({ label: "Delete this source…", action: () => this.openDeleteSource(src) }, "full"),
+              { label: "Delete this source…", action: () => this.openDeleteSource(src) },
             ];
           },
         });
@@ -99,7 +104,29 @@ const dashboardPart = {
     // the table, a task in Tasks), otherwise as a job on the command line.
     // A paused folder is still backed up once on request: kopia's server skips paused folders, so
     // that one run goes through the command line and the schedule stays paused.
-    snapshotNowAny(source) { return this.engineRuns() && !this.engineSrcPaused(source) ? this.engineSnapshotNow(source) : this.snapshotNow(source); },
+    snapshotNowAny(source) {
+      if (this.snapStarting[source]) return;
+      return this.engineRuns() && !this.engineSrcPaused(source) ? this.engineSnapshotNow(source) : this.snapshotNow(source);
+    },
+    // Snapshot now answers at once: the row's button reads "Starting…" until the start is answered,
+    // which on an unreachable folder can take a while, and a second click starts nothing.
+    async snapStart(source, start) {
+      if (this.snapStarting[source]) return null;
+      const redraw = () => {
+        const t = document.querySelector("#dashboardTable")?._tabulator;
+        if (t) t.getRows().forEach((r) => { if (r.getData().source === source) { try { r.reformat(); } catch (e) { /* rebuilt */ } } });
+      };
+      this.snapStarting = { ...this.snapStarting, [source]: true };
+      redraw();
+      try {
+        return await start();
+      } finally {
+        const rest = { ...this.snapStarting };
+        delete rest[source];
+        this.snapStarting = rest;
+        redraw();
+      }
+    },
 
     async snapshotNow(source) {
       let description = "";
@@ -116,7 +143,7 @@ const dashboardPart = {
         this.snapshotNowDontAsk(r);
         description = r.value || "";
       }
-      await this.startJob("snapshot_create", { source, description }, this.shortSource(source));
+      await this.snapStart(source, () => this.startJob("snapshot_create", { source, description }, this.shortSource(source)));
     },
 
     // "Don't ask again" in the Snapshot now confirm turns the setting off (Settings > General).

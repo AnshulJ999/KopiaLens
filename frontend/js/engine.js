@@ -344,23 +344,28 @@ const enginePart = {
     } catch (e) { this.klNotify(e.message, "error"); }
   },
   nextCellHtml(row, cell) {
+    const pill = (why) => ` <span class="pill" style="background:var(--warn-bg);color:var(--warn)" title="${why}">overdue</span>`;
     const s = this.engineSrc[row.source];
-    const next = (s && s.next) || row.next_snapshot;
-    if (!next) return "—";
-    const overdue = toDate(next).getTime() < Date.now() - 15 * 60 * 1000 && !(s && (s.status === "UPLOADING" || s.status === "PENDING"));
-    if (!overdue || !(this.engineRuns() || row.next_snapshot)) return timeCell(next, cell);
-    // Another app runs the backups and is running: kopia saves no snapshot when nothing changed,
-    // so a missed slot is no warning: show the next slot like any other row, the reason on hover.
-    const e = this.engineFor();
-    const owner = !s && e && e.choice !== "kopialens" && e.engine && e.engine !== "none";
-    if (owner) {
-      const since = row.last_time ? fmtAbs(row.last_time) : "the last snapshot";
-      return timeCell(row.next_after_missed || next, cell, `No changes since ${since}`);
+    if (s) {   // KopiaLens runs these backups: kopia's own next time
+      const next = s.next || row.next_snapshot;
+      if (!next) return "—";
+      const late = toDate(next).getTime() < Date.now() - 15 * 60 * 1000 && s.status !== "UPLOADING" && s.status !== "PENDING";
+      if (!late || this.hideOverdue) return timeCell(next, cell);
+      return timeCell(next, cell) + pill("This backup didn't start at its scheduled time.");
     }
-    if (this.hideOverdue) return timeCell(next, cell);
-    const why = s ? "This backup didn't start at its scheduled time."
-      : "This backup didn't start at its scheduled time. No app is seen running these backups on this computer.";
-    return timeCell(next, cell) + ` <span class="pill" style="background:var(--warn-bg);color:var(--warn)" title="${why}">overdue</span>`;
+    const next = row.next_snapshot;   // always the next slot; a missed one comes as missed_at
+    if (!next) return "—";
+    if (!row.missed_at) return timeCell(next, cell);
+    // kopia saves no snapshot when nothing changed, so a missed slot is no warning when this
+    // computer's backup app is seen running or saved another folder since.
+    const e = this.engineFor();
+    const owner = e && e.choice !== "kopialens" && e.engine && e.engine !== "none";
+    if (row.quiet || owner) {
+      const since = row.last_time ? fmtAbs(row.last_time) : "the last snapshot";
+      return timeCell(next, cell, `No changes since ${since}`);
+    }
+    if (!row.overdue || this.hideOverdue) return timeCell(next, cell);
+    return timeCell(next, cell) + pill(`This backup didn't start at its scheduled time (${fmtAbs(row.missed_at)}). No app is seen running these backups on this computer.`);
   },
   async engineSnapshotNow(source) {
     if (!this.wmGuard("non_destructive")) return;
@@ -375,7 +380,7 @@ const enginePart = {
       this.snapshotNowDontAsk(ok);
     }
     // KopiaLens's own server takes the snapshot; the job panel follows its task.
-    await this.startJob("snapshot_create", { source, via_server: true }, this.shortSource(source));
+    await this.snapStart(source, () => this.startJob("snapshot_create", { source, via_server: true }, this.shortSource(source)));
     setTimeout(() => this.loadEngineSources(), 1000);
   },
   async engineCancel(source) {

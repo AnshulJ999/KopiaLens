@@ -60,10 +60,10 @@
                   <fieldset class="rounded-md border border-bd p-3 space-y-2">
                     <legend class="font-medium px-1">Have you used kopia before?</legend>
                     <label class="flex gap-2 items-start rounded-md border p-2.5 cursor-pointer" :class="ob.kopiaUser === 'yes' ? 'border-fg bg-sel' : 'border-bd hover:bg-head'">
-                      <input type="radio" value="yes" x-model="ob.kopiaUser" class="mt-0.5">
+                      <input autocomplete="off" type="radio" value="yes" x-model="ob.kopiaUser" class="mt-0.5">
                       <span><b>Yes, I already have kopia backups</b><span class="block text-xs text-muted">Connect the repositories you use.</span></span></label>
                     <label class="flex gap-2 items-start rounded-md border p-2.5 cursor-pointer" :class="ob.kopiaUser === 'no' ? 'border-fg bg-sel' : 'border-bd hover:bg-head'">
-                      <input type="radio" value="no" x-model="ob.kopiaUser" class="mt-0.5">
+                      <input autocomplete="off" type="radio" value="no" x-model="ob.kopiaUser" class="mt-0.5">
                       <span><b>No, I'm new to kopia</b><span class="block text-xs text-muted">Create a repository for your first backup.</span></span></label>
                   </fieldset>
                   <div>
@@ -99,7 +99,7 @@
                       <div class="kl-callout">KopiaLens couldn't find kopia on this computer. Enter where kopia is installed.</div>
                       <div class="flex flex-wrap items-end gap-2">
                         <label class="flex flex-col gap-1 text-xs font-medium flex-1 min-w-[14rem]">Path to kopia
-                          <input type="text" x-model="ob.kopiaPath" spellcheck="false" class="fld border border-bd bg-surface2"></label>
+                          <input autocomplete="off" type="text" x-model="ob.kopiaPath" spellcheck="false" class="fld border border-bd bg-surface2"></label>
                         <button type="submit" class="kl-btn" :disabled="!ob.kopiaPath.trim()">Use this kopia</button>
                       </div>
                       <p class="text-xs" style="color:var(--danger)" x-show="ob.kopiaError" x-text="ob.kopiaError"></p>
@@ -182,14 +182,14 @@
                       <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('encryption', 'levels')" @keydown.enter.prevent="openDocs('encryption', 'levels')" title="Open help: Encryption">?</span></legend>
                     <template x-for="l in ['off', 'index', 'full']" :key="l">
                       <label class="flex gap-2 items-start rounded-md border p-2.5 cursor-pointer" :class="ob.level === l ? 'border-fg bg-sel' : 'border-bd hover:bg-head'" :title="obLevelTip(l)">
-                        <input type="radio" :value="l" x-model="ob.level" class="mt-0.5">
+                        <input autocomplete="off" type="radio" :value="l" x-model="ob.level" class="mt-0.5">
                         <span><b class="cursor-help underline decoration-dotted underline-offset-2" x-text="encLevelLabel(l)"></b><span x-show="l === 'index'" class="pill ok ml-1.5">Recommended</span>
                           <span class="block text-xs text-muted" x-text="encLevelNote(l)"></span></span>
                       </label>
                     </template>
                     <template x-if="ob.level !== 'off'">
                       <div class="space-y-2 pt-1">
-                        <label class="flex items-center gap-2 text-xs"><input type="checkbox" x-model="ob.usePw">Use my KopiaLens password for encryption too</label>
+                        <label class="flex items-center gap-2 text-xs"><input autocomplete="off" type="checkbox" x-model="ob.usePw">Use my KopiaLens password for encryption too</label>
                         <template x-if="!ob.usePw">
                           <div class="grid gap-2 sm:grid-cols-2">
                             <label class="flex flex-col gap-1 text-xs font-medium">Encryption password
@@ -198,7 +198,7 @@
                               <input type="password" x-model="ob.encConfirm" autocomplete="new-password" class="fld border border-bd bg-surface2"></label>
                           </div>
                         </template>
-                        <label x-show="!ob.state.docker" class="flex items-center gap-2 text-xs"><input type="checkbox" x-model="ob.remember">
+                        <label x-show="!ob.state.docker" class="flex items-center gap-2 text-xs"><input autocomplete="off" type="checkbox" x-model="ob.remember">
                           <span class="cursor-help underline decoration-dotted underline-offset-2" title="On: KopiaLens unlocks the index by itself after a restart. Off: someone types the password after every restart.">Unlock automatically on this computer</span></label>
                         <p x-show="ob.state.docker" class="kl-note">In Docker, the index stays locked after each restart until someone enters the password, and the nightly index waits until then. To unlock on start, give Docker the password in a key file (see the Docker help).</p>
                         <p class="kl-note">Next, you get a recovery key to save. It's the only way back in if you forget the password.</p>
@@ -210,7 +210,7 @@
                     <fieldset class="space-y-1">
                       <legend class="font-medium mb-1">Remote access</legend>
                       <label class="flex flex-col gap-1 text-xs font-medium"><span>Domain names you open KopiaLens from <span class="font-normal text-muted">(optional)</span></span>
-                        <input type="text" x-model="ob.hosts" spellcheck="false" placeholder="backups.example.com" class="fld border border-bd bg-surface2 font-normal"></label>
+                        <input autocomplete="off" type="text" x-model="ob.hosts" spellcheck="false" placeholder="backups.example.com" class="fld border border-bd bg-surface2 font-normal"></label>
                       <p class="kl-note">Not needed for an IP address or localhost. Separate several with commas.</p>
                     </fieldset>
                   </template>
@@ -232,14 +232,14 @@
                 <div class="p-5 space-y-3">
                   <h1 class="text-lg font-semibold flex items-center gap-2">Save your recovery key
                     <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('encryption', 'the-recovery-key')" @keydown.enter.prevent="openDocs('encryption', 'the-recovery-key')" title="Open help: The recovery key">?</span></h1>
-                  <input type="text" readonly :value="ob.recoveryKey" @focus="$el.select()" class="fld border border-bd bg-surface2 w-full font-mono text-center">
+                  <input autocomplete="off" type="text" readonly :value="ob.recoveryKey" @focus="$el.select()" class="fld border border-bd bg-surface2 w-full font-mono text-center">
                   <div class="flex gap-2">
                     <button type="button" @click="copyRecoveryKey(ob.recoveryKey)" class="kl-btn">Copy</button>
                     <button type="button" @click="downloadRecoveryKey(ob.recoveryKey)" class="kl-btn">Save as file</button>
                   </div>
                   <div class="kl-callout">If you forget your password, this key is the only way to unlock the index. Store it somewhere safe, away from this computer. It won't be shown again.</div>
                   <div class="kl-callout" x-show="ob.keyNote" x-text="ob.keyNote"></div>
-                  <label class="flex items-center gap-2 text-xs"><input type="checkbox" x-model="ob.keySaved">I've saved my recovery key</label>
+                  <label class="flex items-center gap-2 text-xs"><input autocomplete="off" type="checkbox" x-model="ob.keySaved">I've saved my recovery key</label>
                 </div>
                 <div class="kl-footer"><span class="spacer"></span>
                   <button type="button" @click="obNext('key')" class="kl-btn primary" :disabled="!ob.keySaved">Continue</button></div>
@@ -279,7 +279,7 @@
                   <div class="space-y-1.5" x-show="obKopiaAdded().length">
                     <div class="font-medium">Keep the index up to date</div>
                     <label class="flex items-center gap-2 text-xs">
-                      <input type="checkbox" x-model="ob.auto">
+                      <input autocomplete="off" type="checkbox" x-model="ob.auto">
                       <span x-text="obInterval() ? 'Update automatically at the interval set in Settings' : 'Update automatically every day'"></span>
                     </label>
                     <div x-show="!obInterval()">{{ time_chips('ob.time', '', '!ob.auto') }}</div>

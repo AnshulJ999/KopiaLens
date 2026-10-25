@@ -26,6 +26,20 @@ PREFS = {
 }
 
 
+# Start at logon belongs to the desktop app: it reports the real setting on its status poll, and a
+# change asked for in Settings waits here until the app applies it.
+_AUTOSTART: dict = {"on": None, "request": None}
+
+
+def autostart_state() -> dict:
+    return {"available": _AUTOSTART["on"] is not None, "on": bool(_AUTOSTART["on"]),
+            "pending": _AUTOSTART["request"] is not None}
+
+
+def request_autostart(on: bool) -> None:
+    _AUTOSTART["request"] = bool(on)
+
+
 def _prefs(kl: dict) -> dict:
     out = {k: (kl.get(k) if kl.get(k) in allowed else allowed[0]) for k, allowed in PREFS.items()}
     out["quit_indexing"] = "stop" if kl.get("quit_indexing") == "stop" else "finish"
@@ -51,6 +65,7 @@ def state() -> dict:
         "access": netaccess.STARTED.get("mode") or netaccess.mode(),
         "update": _update(),
         "restart_requested": appconfig.restart_requested(),
+        "autostart": _AUTOSTART["on"], "autostart_request": _AUTOSTART["request"],
         "backups": _backups(),
         "alerts": engine.alerts()[-20:],
     }
@@ -94,6 +109,14 @@ def update_progress(payload: dict) -> dict:
     error = payload.get("error")
     checkin.set_install_progress(state, pct if isinstance(pct, int) else None,
                                  str(error)[:300] if error else None)
+    return {"ok": True}
+
+
+@router.post("/autostart")
+def autostart_report(payload: dict) -> dict:
+    """The desktop app reports Start at logon (after applying any request)."""
+    _AUTOSTART["on"] = bool(payload.get("on"))
+    _AUTOSTART["request"] = None
     return {"ok": True}
 
 

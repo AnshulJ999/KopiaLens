@@ -14,6 +14,7 @@ as background.
 
 from __future__ import annotations
 
+import collections
 import contextlib
 import contextvars
 import functools
@@ -21,6 +22,10 @@ import threading
 import time
 
 import duckdb
+
+from ..core.applog import get_logger
+
+log = get_logger("lanes")
 
 FG, BG, FREE = "fg", "bg", "free"   # FREE: polled status reads, neither wait nor interrupt
 _MAX_PREEMPT = 3          # a background statement interrupted this often then runs alongside
@@ -44,7 +49,7 @@ class _Scope:
         with _CV:
             running = list(self.running)
         for cur in running:
-            _interrupt(cur)
+            _interrupt(cur, "request cancelled")
 
 
 _SCOPE: contextvars.ContextVar = contextvars.ContextVar("kopialens_lane", default=None)
@@ -55,6 +60,7 @@ _CV = threading.Condition()
 _BG_SLOT = threading.Semaphore(1)   # one background job at a time (they share the CPU)
 _fg_running = 0
 _bg_running: dict = {}              # raw cursor -> [preempted flag]
+_RECENT = collections.deque(maxlen=64)   # (cursor id, time, who, thread) of recent interrupts
 
 
 def _heavy_slots() -> threading.Semaphore:
@@ -96,11 +102,20 @@ def heavy_read(fn):
     return wrapper
 
 
-def _interrupt(cur) -> None:
+def _interrupt(cur, who: str) -> None:
+    _RECENT.append((id(cur), time.monotonic(), who, threading.current_thread().name))
     try:
         cur.interrupt()
     except Exception:  # noqa: BLE001 - the statement may have finished already
         pass
+
+
+def _who_interrupted(cur) -> str:
+    now = time.monotonic()
+    for cid, at, who, thread in reversed(_RECENT):
+        if cid == id(cur):
+            return f"{who} from thread {thread}, {now - at:.2f} s ago"
+    return "nothing in this app's lanes"
 
 
 @contextlib.contextmanager
@@ -165,26 +180,31 @@ def run(cur, fn):
     if lane == FREE:
         return fn()
     if lane == FG:
-        with _CV:
-            _fg_running += 1
-            for c, flag in _bg_running.items():
-                if flag[1] < _MAX_PREEMPT:
-                    flag[0] = True
-                    _interrupt(c)
-            if sc is not None:
-                sc.running.add(cur)
-        try:
-            return fn()
-        except duckdb.InterruptException:
-            if sc is not None and sc.cancelled:
-                raise RequestCancelled() from None
-            raise
-        finally:
+        for attempt in (1, 2):
             with _CV:
-                _fg_running -= 1
+                _fg_running += 1
+                for c, flag in _bg_running.items():
+                    if flag[1] < _MAX_PREEMPT:
+                        flag[0] = True
+                        _interrupt(c, "foreground preempt")
                 if sc is not None:
-                    sc.running.discard(cur)
-                _CV.notify_all()
+                    sc.running.add(cur)
+            try:
+                return fn()
+            except duckdb.InterruptException:
+                if sc is not None and sc.cancelled:
+                    raise RequestCancelled() from None
+                log.debug("foreground statement interrupted without a cancel (%s %s, attempt %d); "
+                          "interrupted by %s", sc.method if sc else "", sc.path if sc else "",
+                          attempt, _who_interrupted(cur))
+                if attempt == 2:
+                    raise
+            finally:
+                with _CV:
+                    _fg_running -= 1
+                    if sc is not None:
+                        sc.running.discard(cur)
+                    _CV.notify_all()
     if sc is not None and not sc.holds_bg:
         _take_slot(sc)
     preempts = 0

@@ -30,8 +30,8 @@
                   <a :href="cfgExportUrl()" class="kl-btn" download>Download export</a>
                 </div>
                 <p class="text-[0.6875rem] text-muted mt-1">Settings and repository list, for moving to another computer or keeping a copy off this disk.</p>
-                <label class="flex items-center gap-2 text-xs mt-2"><input type="checkbox" x-model="cfgExportAccounts">Include sign-in accounts</label>
-                <label class="flex items-center gap-2 text-xs mt-1"><input type="checkbox" x-model="cfgExportKeys">Include encryption key files</label>
+                <label class="flex items-center gap-2 text-xs mt-2"><input autocomplete="off" type="checkbox" x-model="cfgExportAccounts">Include sign-in accounts</label>
+                <label class="flex items-center gap-2 text-xs mt-1"><input autocomplete="off" type="checkbox" x-model="cfgExportKeys">Include encryption key files</label>
                 <p x-show="cfgExportAccounts || cfgExportKeys" class="text-[0.6875rem] mt-1" style="color:var(--warn)">The file then holds password hashes or your locked encryption key. Keep it somewhere private.</p>
               </div>
 

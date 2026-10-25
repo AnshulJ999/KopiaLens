@@ -408,9 +408,11 @@
             </div>
             <div class="flex items-start gap-2">
               <div class="font-medium break-all flex-1" x-text="detail.title"></div>
-              <span class="kl-help" tabindex="0" role="button" data-doc x-show="detail.kind === 'file'" @click="openDocs('file-panel')" @keydown.enter.prevent="openDocs('file-panel')" title="Versions, space and copies of this file">?</span>
-              <span class="kl-help" tabindex="0" role="button" data-doc x-show="detail.kind !== 'file'" @click="openDocs('folder-panel')" @keydown.enter.prevent="openDocs('folder-panel')" title="Contents, space and sources of this folder">?</span>
-              <button @click="detail=null" class="kl-btn quiet" title="Close" aria-label="Close">&times;</button>
+              <span class="flex items-center gap-1.5 shrink-0">
+                <span class="kl-help" style="vertical-align:baseline;margin-left:0" tabindex="0" role="button" data-doc x-show="detail.kind === 'file'" @click="openDocs('file-panel')" @keydown.enter.prevent="openDocs('file-panel')" title="Versions, space and copies of this file">?</span>
+                <span class="kl-help" style="vertical-align:baseline;margin-left:0" tabindex="0" role="button" data-doc x-show="detail.kind !== 'file'" @click="openDocs('folder-panel')" @keydown.enter.prevent="openDocs('folder-panel')" title="Contents, space and sources of this folder">?</span>
+                <button @click="detail=null" class="kl-btn quiet" title="Close" aria-label="Close">&times;</button>
+              </span>
             </div>
             <div class="kl-note mt-0.5 break-all">
               <template x-if="detail.kind === 'file'">
@@ -509,7 +511,7 @@
                   <span class="flex items-center gap-2">
                     <button class="kl-btn" @click="mountFileOpen({source: detail.source, full_path: detail.title})" :title="host.can_open ? 'Mount the latest snapshot carrying this file and open it in ' + host.file_manager : 'Mount the latest snapshot carrying this file'" x-text="host.can_open ? 'Mount &amp; open' : 'Mount'"></button>
                     <button class="kl-btn" @click="restoreFromDetail()">Restore</button>
-                    <button class="kl-btn" @click="downloadItem({source: detail.source, full_path: detail.title})" title="Download the latest backed-up copy">Download</button>
+                    <button class="kl-btn" @click="downloadItem({source: detail.source, full_path: detail.title})" :disabled="!!downloading" title="Download the latest backed-up copy" x-text="downloading ? 'Preparing…' : 'Download'"></button>
                     <button class="kl-btn quiet" @click="copyText(detail.title)">Copy path</button>
                   </span>
                 </template>
@@ -608,7 +610,7 @@
                   <span class="flex items-center gap-2">
                     <button class="kl-btn" @click="mountFileOpen({source: detail.source, full_path: detail.title})" :title="host.can_open ? 'Mount the latest snapshot carrying this file and open it in ' + host.file_manager : 'Mount the latest snapshot carrying this file'" x-text="host.can_open ? 'Mount &amp; open' : 'Mount'"></button>
                     <button class="kl-btn" @click="restoreFromDetail()">Restore</button>
-                    <button class="kl-btn" @click="downloadItem({source: detail.source, full_path: detail.title})" title="Download the latest backed-up copy">Download</button>
+                    <button class="kl-btn" @click="downloadItem({source: detail.source, full_path: detail.title})" :disabled="!!downloading" title="Download the latest backed-up copy" x-text="downloading ? 'Preparing…' : 'Download'"></button>
                     <button class="kl-btn quiet" @click="copyText(detail.title)">Copy path</button>
                   </span>
                 </template>

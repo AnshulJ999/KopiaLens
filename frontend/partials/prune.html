@@ -37,7 +37,7 @@
                   <button class="kl-btn" :class="prune.keep.firstLast ? 'bg-sel' : ''" @click="pruneKeep('firstLast')">First and last</button>
                   <span class="flex items-center gap-1">
                     <button class="kl-btn" :class="prune.keep.newest ? 'bg-sel' : ''" @click="pruneKeep('newest')">Newest</button>
-                    <input type="number" min="1" x-model.number="prune.newestN" @change="pruneApplyKeep()" class="fld w-14 border border-bd bg-surface2 text-xs" aria-label="How many of the newest to keep">
+                    <input autocomplete="off" type="number" min="1" x-model.number="prune.newestN" @change="pruneApplyKeep()" class="fld w-14 border border-bd bg-surface2 text-xs" aria-label="How many of the newest to keep">
                   </span>
                   <button class="kl-btn" :class="prune.keep.monthly ? 'bg-sel' : ''" @click="pruneKeep('monthly')">One per month</button>
                   <button class="kl-btn" :class="prune.keep.pinned ? 'bg-sel' : ''" @click="pruneKeep('pinned')" title="Pinned snapshots stay whatever else is picked">Pinned snapshots</button>
@@ -45,7 +45,7 @@
                   <span class="text-xs font-medium">Remove</span>
                   <span class="flex items-center gap-1">
                     <button class="kl-btn" @click="pruneBiggest()" title="The ones that free the most on their own">Biggest savers</button>
-                    <input type="number" min="1" x-model.number="prune.biggestN" class="fld w-14 border border-bd bg-surface2 text-xs" aria-label="How many to remove">
+                    <input autocomplete="off" type="number" min="1" x-model.number="prune.biggestN" class="fld w-14 border border-bd bg-surface2 text-xs" aria-label="How many to remove">
                   </span>
                   <button class="kl-btn quiet" @click="pruneClear()">Clear ticks</button>
                 </div>
@@ -56,7 +56,7 @@
                   <div class="kl-list" style="max-height:18rem">
                     <template x-for="r in pruneRowsNewestFirst()" :key="r.id">
                       <label class="li cursor-pointer" :class="prune.tick[r.id] ? 'bg-danger-bg' : ''">
-                        <input type="checkbox" :checked="!!prune.tick[r.id]" @change="pruneToggle(r.id)" class="shrink-0">
+                        <input autocomplete="off" type="checkbox" :checked="!!prune.tick[r.id]" @change="pruneToggle(r.id)" class="shrink-0">
                         <span class="num shrink-0" style="width:11rem" x-text="pruneWhen(r)"></span>
                         <span class="num shrink-0 text-right" style="width:5.5rem;color:var(--muted)" x-text="fmtB(r.size)"></span>
                         <span class="num shrink-0 text-right" style="width:6rem" :title="term('reclaimableOwn') + (r.since_index ? ' (pieces newer than the last index are not counted yet)' : '')"
@@ -106,8 +106,9 @@
           <div class="kl-footer shrink-0">
             <span class="kl-note">Space comes back after the next full maintenance.</span>
             <span class="spacer"></span>
+            <span class="kl-note text-warn" x-show="wmWhy('full')" x-text="wmWhy('full')"></span>
             <button class="kl-btn" @click="closePrune()">Cancel</button>
-            <button class="kl-btn danger" @click="pruneExecute($event)" :disabled="prune.loading || prune.dry.running || !pruneCanRun()" :title="pruneBlockReason()">
+            <button class="kl-btn danger" @click="pruneExecute($event)" :disabled="prune.loading || prune.dry.running || !pruneCanRun() || !!wmOff('full')" :title="pruneBlockReason()">
               <span x-text="pruneConfirmLabel() + '…'"></span> <span class="protag" x-show="proTag('prune')" :title="proTagTitle()">PRO</span>
             </button>
           </div>

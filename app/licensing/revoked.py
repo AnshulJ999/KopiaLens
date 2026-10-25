@@ -20,6 +20,7 @@ from config import APP_VERSION, DATA_DIR, LICENCE_SERVICE_URL
 
 from ..core.applog import get_logger
 from .keys import PRODUCT, PUBLIC_KEYS
+from ..core import atomicfile
 
 log = get_logger("licence")
 
@@ -63,7 +64,7 @@ def _write(data: dict) -> None:
     tmp = LIST_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2)
-    os.replace(tmp, LIST_FILE)
+    atomicfile.replace(tmp, LIST_FILE)
 
 
 def banned() -> frozenset:

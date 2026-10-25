@@ -1,11 +1,12 @@
       <section x-show="active==='churn'" class="h-full flex flex-col gap-2">
         <div class="kl-toolbar">
+          <span class="font-medium">Churn</span>
           <div class="inline-flex rounded border border-bd overflow-hidden">
             <button @click="setChurnView('source')" class="px-3 h-7 text-xs" :class="churnView==='source' ? 'bg-sel font-medium' : ''">By source</button>
             <button @click="setChurnView('folder')" class="px-3 h-7 text-xs border-l border-bd" :class="churnView==='folder' ? 'bg-sel font-medium' : ''">By folder</button>
             <button @click="setChurnView('ext')" class="px-3 h-7 text-xs border-l border-bd" :class="churnView==='ext' ? 'bg-sel font-medium' : ''">By file type</button>
           </div>
-          <select x-model="churnDays" @change="changeChurn()" class="fld border border-bd bg-surface" title="Time window">
+          <select autocomplete="off" x-model="churnDays" @change="changeChurn()" class="fld border border-bd bg-surface" title="Time window">
             <option value="1">Last 24 hours</option>
             <option value="3">Last 3 days</option>
             <option value="7">Last 7 days</option>
@@ -15,7 +16,7 @@
             <option value="365">Last year</option>
           </select>
           <label x-show="churnView==='folder'" title="How many folder levels deep to group by">Depth
-            <select x-model.number="churnDepth" @change="changeChurn()" class="fld border border-bd bg-surface">
+            <select autocomplete="off" x-model.number="churnDepth" @change="changeChurn()" class="fld border border-bd bg-surface">
               <template x-for="d in [2,3,4,5,6,7,8]" :key="d"><option :value="d" :selected="d == churnDepth" x-text="d"></option></template>
             </select></label>
           <span class="grow"></span>

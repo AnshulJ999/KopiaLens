@@ -503,7 +503,6 @@ const detailPart = {
       this.buildRemovePlan();
     },
     openRemoveFolder(row) {  // delete a Tree folder/file, honoring the active Tree filters
-      if (!this.wmGuard("full")) return;
       this._removeBase = {
         // All-sources mode is a scope marker, not a source: with no source the plan covers every
         // backup holding the folder.
@@ -515,7 +514,6 @@ const detailPart = {
       this.buildRemovePlan();
     },
     openRemoveFolderPath(prefix, source = null) {
-      if (!this.wmGuard("full")) return;
       // Cross-source folder delete (By-folder view, Churn, the folder panel). No tree filters, and
       // no source scope unless one is given, so every source holding the folder is covered.
       this._removeBase = { repo: this.repo, source, prefix, deleted_only: false, over_gb: 0, ext: null };
@@ -701,7 +699,7 @@ const detailPart = {
       this.klNotify(`Downloaded ${r.filename} (${r.batches} batches). Run it - kopia's output logs next to it.`);
     },
     async removeRun(ev) {
-      if (!this.removePlan || !this.proGate("remove", ev)) return;
+      if (!this.removePlan || !this.wmGuard("full") || !this.proGate("remove", ev)) return;
       const p = this.removePlan;
       const files = countOf(this.removeFileTotal(), "file");
       const share = p.capped && this.removeCoverage() != null ? ` · ${this.removeCoverage()}% of the match` : "";

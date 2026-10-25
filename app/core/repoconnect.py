@@ -32,6 +32,7 @@ import config
 from . import audit, kopiabin, repos
 from .applog import get_logger
 from .kopia import MISSING_KOPIA
+from . import atomicfile
 
 log = get_logger("repoconnect")
 
@@ -1245,7 +1246,7 @@ def take_connection(repo: str, mode: str, password: str) -> dict:
     fields = {"config_file": dst}
     if mode == "move":
         try:
-            os.replace(src, src + MOVED_SUFFIX)
+            atomicfile.replace(src, src + MOVED_SUFFIX)
         except OSError as exc:
             _disconnect(repo, dst)
             _remove_config_files(dst)

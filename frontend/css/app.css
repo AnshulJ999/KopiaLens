@@ -187,28 +187,17 @@ html.dark { --folder-ic: #f0b93a; }
 html[data-d-chrome="tint"] .kl-chrome { background: var(--chrome-tint, var(--surface)); }
 html[data-d-hdrsize="15"] header .kl-ibtn .ic { font-size: 0.8125rem; }
 html[data-d-hdrsize="14"] header .kl-ibtn .ic { font-size: 0.75rem; }
-/* Solid sets: one colour per file kind. */
-html:is([data-d-fileicons="ph-fill"], [data-d-fileicons="ph-duotone"], [data-d-fileicons="tb-filled"]) {
-  --ft-image: #0891b2; --ft-audio: #9333ea; --ft-video: #dc2626; --ft-zip: #a16207; --ft-code: #16a34a; --ft-text: #2563eb; --ft-file: #64748b; }
-html.dark:is([data-d-fileicons="ph-fill"], [data-d-fileicons="ph-duotone"], [data-d-fileicons="tb-filled"]) {
-  --ft-image: #22d3ee; --ft-audio: #c084fc; --ft-video: #f87171; --ft-zip: #facc15; --ft-code: #4ade80; --ft-text: #60a5fa; --ft-file: #94a3b8; }
-html:is([data-d-fileicons="ph-fill"], [data-d-fileicons="ph-duotone"], [data-d-fileicons="tb-filled"]) .kl-name-ic.ic-t-file-image { color: var(--ft-image); }
-html:is([data-d-fileicons="ph-fill"], [data-d-fileicons="ph-duotone"], [data-d-fileicons="tb-filled"]) .kl-name-ic.ic-t-file-audio { color: var(--ft-audio); }
-html:is([data-d-fileicons="ph-fill"], [data-d-fileicons="ph-duotone"], [data-d-fileicons="tb-filled"]) .kl-name-ic.ic-t-file-video { color: var(--ft-video); }
-html:is([data-d-fileicons="ph-fill"], [data-d-fileicons="ph-duotone"], [data-d-fileicons="tb-filled"]) .kl-name-ic.ic-t-file-zip { color: var(--ft-zip); }
-html:is([data-d-fileicons="ph-fill"], [data-d-fileicons="ph-duotone"], [data-d-fileicons="tb-filled"]) .kl-name-ic.ic-t-file-code { color: var(--ft-code); }
-html:is([data-d-fileicons="ph-fill"], [data-d-fileicons="ph-duotone"], [data-d-fileicons="tb-filled"]) .kl-name-ic.ic-t-file-text { color: var(--ft-text); }
-html:is([data-d-fileicons="ph-fill"], [data-d-fileicons="ph-duotone"], [data-d-fileicons="tb-filled"]) .kl-name-ic.ic-t-file { color: var(--ft-file); }
-html[data-d-fileicons="material"] .kl-name-ic { -webkit-mask: none; mask: none; background: var(--ic) center / contain no-repeat; }
-html[data-d-fileicons="emoji"] .kl-name-ic { -webkit-mask: none; mask: none; background: none; width: auto; height: auto; vertical-align: baseline; font-style: normal; line-height: 1; }
-html[data-d-fileicons="emoji"] .kl-name-ic.ic-t-folder::before { content: "\1F4C1"; }
-html[data-d-fileicons="emoji"] .kl-name-ic.ic-t-file::before { content: "\1F4C4"; }
-html[data-d-fileicons="emoji"] .kl-name-ic.ic-t-file-image::before { content: "\1F5BC\FE0F"; }
-html[data-d-fileicons="emoji"] .kl-name-ic.ic-t-file-audio::before { content: "\1F3B5"; }
-html[data-d-fileicons="emoji"] .kl-name-ic.ic-t-file-video::before { content: "\1F3AC"; }
-html[data-d-fileicons="emoji"] .kl-name-ic.ic-t-file-zip::before { content: "\1F4E6"; }
-html[data-d-fileicons="emoji"] .kl-name-ic.ic-t-file-code::before { content: "\1F4BB"; }
-html[data-d-fileicons="emoji"] .kl-name-ic.ic-t-file-text::before { content: "\1F4DD"; }
+/* File and folder icons (Settings > Appearance; util.js itemIconHtml). Filled colours one per kind. */
+:root { --ft-image: #0891b2; --ft-audio: #9333ea; --ft-video: #dc2626; --ft-zip: #a16207; --ft-code: #16a34a;
+  --ft-text: #475569; --ft-pdf: #e11d48; --ft-doc: #2563eb; --ft-sheet: #059669; --ft-slides: #ea580c;
+  --ft-exe: #4f46e5; --ft-disk: #7c3aed; --ft-db: #0d9488; --ft-font: #db2777; --ft-file: #64748b; }
+html.dark { --ft-image: #22d3ee; --ft-audio: #c084fc; --ft-video: #f87171; --ft-zip: #facc15; --ft-code: #4ade80;
+  --ft-text: #cbd5e1; --ft-pdf: #fb7185; --ft-doc: #60a5fa; --ft-sheet: #34d399; --ft-slides: #fb923c;
+  --ft-exe: #a5b4fc; --ft-disk: #c4b5fd; --ft-db: #5eead4; --ft-font: #f472b6; --ft-file: #94a3b8; }
+/* Material and Fluent Emoji are images: --icd, or --icl where a set has a light-theme version. */
+.ic.kl-img-ic { -webkit-mask: none; mask: none; background: var(--icd) center / contain no-repeat; }
+html:not(.dark) .ic.kl-img-ic { background-image: var(--icl, var(--icd)); }
+.kl-emoji-ic { display: inline-block; width: 1.15em; text-align: center; font-style: normal; line-height: 1; }
 .pro-mark { font-size: 9.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; line-height: 1; margin: 3px 0 0 3px; color: var(--ok); cursor: default; }
 .kl-btn.patreon { background: #000; border-color: #000; color: #fff; display: inline-flex; align-items: center; gap: 6px; }
 .kl-btn.patreon:hover:not(:disabled) { background: #222; border-color: #222; }

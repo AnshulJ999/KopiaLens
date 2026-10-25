@@ -180,6 +180,7 @@ def _write_records(store: dict, strict: bool = False) -> None:
     stop the app."""
     from app.core import configbackup
     from app.core.filelock import locked
+    from app.core.atomicfile import replace as _atomic_replace
     try:
         os.makedirs(os.path.dirname(REPOS_FILE), exist_ok=True)
         with locked(REPOS_FILE):
@@ -189,7 +190,7 @@ def _write_records(store: dict, strict: bool = False) -> None:
                 json.dump(store, fh, indent=2)
                 fh.flush()
                 os.fsync(fh.fileno())
-            os.replace(tmp, REPOS_FILE)
+            _atomic_replace(tmp, REPOS_FILE)
         configbackup.remember("repos.json")
     except OSError:
         if strict:

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="{{ theme }}" data-density="{{ density }}" data-font="{{ font }}" data-sortarrows="{{ sortarrows }}"{% if density == "custom" %} style="--kl-density-pct:{{ density_pct }}"{% endif %}>
+<html lang="en" data-theme="{{ theme }}" data-density="{{ density }}" data-font="{{ font }}" data-sortarrows="{{ sortarrows }}" data-fileicons="{{ fileicons }}"{% if density == "custom" %} style="--kl-density-pct:{{ density_pct }}"{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -18,12 +18,12 @@
       document.documentElement.classList.toggle('dark', dark);
     })();
   </script>
-  <script defer src="{{ base }}/static/vendor/alpine-3.17.4.min.js"></script>
-  <link href="{{ base }}/static/vendor/tabulator-6.6.1.simple.min.css" rel="stylesheet">
-  <script src="{{ base }}/static/vendor/tabulator-6.6.1.min.js"></script>
-  <script src="{{ base }}/static/vendor/marked-18.0.14.min.js"></script>
-  <script src="{{ base }}/static/vendor/driver-1.9.0.min.js"></script>
-  <link href="{{ base }}/static/vendor/driver-1.9.0.min.css" rel="stylesheet">
+  <script defer src="{{ base }}/static/vendor/alpine-3.17.5.min.js"></script>
+  <link href="{{ base }}/static/vendor/tabulator-6.7.1.simple.min.css" rel="stylesheet">
+  <script src="{{ base }}/static/vendor/tabulator-6.7.1.min.js"></script>
+  <script src="{{ base }}/static/vendor/marked-18.1.1.min.js"></script>
+  <script src="{{ base }}/static/vendor/driver-1.10.2.min.js"></script>
+  <link href="{{ base }}/static/vendor/driver-1.10.2.min.css" rel="stylesheet">
   <link href="{{ base }}/static/css/tokens.css?v={{ asset_v }}" rel="stylesheet">
   <link href="{{ base }}/static/css/app.css?v={{ asset_v }}" rel="stylesheet">
   <link href="{{ base }}/static/css/icons.css?v={{ asset_v }}" rel="stylesheet">
@@ -33,7 +33,7 @@
 <body class="bg-canvas text-fg">
   <div id="app" x-data="kopiaLens()" x-init="init()" x-cloak class="h-screen flex flex-col" :class="ob ? 'overflow-hidden' : ''">
 {% include "partials/nav.html" %}
-    <main class="min-w-0 flex-1 overflow-auto px-4 pb-4 pt-2">
+    <main class="min-w-0 flex-1 overflow-auto px-4 pb-4 pt-2 transition-opacity" :class="repoSwitching ? 'opacity-50' : ''" :aria-busy="repoSwitching ? 'true' : 'false'">
       <!-- The sample data is open: say so, with the way to a real repository. -->
       <div x-show="!ob && isSample()" x-cloak class="mb-4 rounded-md border border-bd bg-surface2 px-4 py-2 flex flex-wrap items-center gap-3 text-sm">
         <div class="min-w-0 flex-1">You're looking at sample data. Actions here change nothing.</div>
@@ -172,6 +172,7 @@
 {% include "partials/docs.html" %}
   </div>
   <script>window.KL_OS_FORMATS = {{ os_formats }};</script>
+  <script src="{{ base }}/static/js/fileicons-material.js?v={{ asset_v }}"></script>
   <script src="{{ base }}/static/js/util.js?v={{ asset_v }}"></script>
   <script src="{{ base }}/static/js/tables.js?v={{ asset_v }}"></script>
   <script src="{{ base }}/static/js/terms.js?v={{ asset_v }}"></script>

@@ -1,7 +1,7 @@
 {% from "partials/_macros.html" import selbar %}
       <section x-show="active==='tree'" class="h-full flex flex-col gap-2">
         <div class="kl-toolbar">
-          <select x-model="selectedSource" @change="treeSourceChanged()" class="fld border border-bd bg-surface max-w-[20rem]" title="Source">
+          <select autocomplete="off" x-model="selectedSource" @change="treeSourceChanged()" class="fld border border-bd bg-surface max-w-[20rem]" title="Source">
             <option value="*ALL*">All sources</option>
             <template x-for="s in sources" :key="s"><option :value="s" :selected="s == selectedSource" x-text="shortSource(s)"></option></template>
           </select>
@@ -10,17 +10,17 @@
             <button :class="treeView==='tree' ? 'on' : ''" @click="setTreeView('tree')" title="Expand folders in place with the arrow, like TreeSize">Tree</button>
           </span>
           <span class="text-xs text-muted">Show</span>
-          <select x-model="treeMode" @change="treeModeChanged()" class="fld border border-bd bg-surface" title="What the tree lists">
+          <select autocomplete="off" x-model="treeMode" @change="treeModeChanged()" class="fld border border-bd bg-surface" title="What the tree lists">
             <option value="full">Full snapshot</option>
             <option value="changed">Changed in this snapshot</option>
             <option value="reclaimable">Reclaimable if deleted</option>
             <option value="all">All snapshots</option>
           </select>
-          <select x-show="selectedSource==='*ALL*'" x-model="treeWeek" @change="treeWeekChanged()" class="fld border border-bd bg-surface" title="What each source backed up that week. Files that did not change are not listed.">
+          <select autocomplete="off" x-show="selectedSource==='*ALL*'" x-model="treeWeek" @change="treeWeekChanged()" class="fld border border-bd bg-surface" title="What each source backed up that week. Files that did not change are not listed.">
             <option value="">Latest</option>
             <template x-for="w in treeWeekOptions" :key="w.v"><option :value="w.v" :selected="w.v == treeWeek" x-text="'Week ' + w.label"></option></template>
           </select>
-          <select x-show="treeMode!=='all' && selectedSource!=='*ALL*'" x-model="selectedSnapshot" @change="treePrefix=sourceRoot(); loadTree()" class="fld border border-bd bg-surface" title="Snapshot">
+          <select autocomplete="off" x-show="treeMode!=='all' && selectedSource!=='*ALL*'" x-model="selectedSnapshot" @change="treePrefix=sourceRoot(); loadTree()" class="fld border border-bd bg-surface" title="Snapshot">
             <!-- Built only while shown: the Snapshots tab fills the same list with every source. -->
             <template x-for="sn in (active === 'tree' && treeMode !== 'all' && selectedSource !== '*ALL*' ? snapshots : [])" :key="sn.id"><option :value="sn.id" :selected="sn.id == selectedSnapshot" x-text="humanTime(sn.start_time)"></option></template>
           </select>
@@ -31,9 +31,9 @@
             </template>
           </span>
           <span class="grow"></span>
-          <label :class="(treeMode!=='all' && selectedSource!=='*ALL*') ? 'opacity-40' : ''" title="Only folders holding files deleted from disk (All snapshots or All sources)"><input type="checkbox" x-model="treeDeletedOnly" :disabled="treeMode!=='all' && selectedSource!=='*ALL*'" @change="treeFilterChanged()"> Deleted</label>
-          <label title="Only files of 1 GB or more"><input type="checkbox" x-model="treeOverGb" @change="treeFilterChanged()"> Over 1 GB</label>
-          <input x-model="treeExt" @input.debounce.400ms="treeFilterChanged()" class="fld w-28 border border-bd bg-surface text-xs" placeholder="ext: iso, 7z" title="Only these extensions">
+          <label :class="(treeMode!=='all' && selectedSource!=='*ALL*') ? 'opacity-40' : ''" title="Only folders holding files deleted from disk (All snapshots or All sources)"><input autocomplete="off" type="checkbox" x-model="treeDeletedOnly" :disabled="treeMode!=='all' && selectedSource!=='*ALL*'" @change="treeFilterChanged()"> Deleted</label>
+          <label title="Only files of 1 GB or more"><input autocomplete="off" type="checkbox" x-model="treeOverGb" @change="treeFilterChanged()"> Over 1 GB</label>
+          <input autocomplete="off" x-model="treeExt" @input.debounce.400ms="treeFilterChanged()" class="fld w-28 border border-bd bg-surface text-xs" placeholder="ext: iso, 7z" title="Only these extensions">
           <button @click="toggleTreeFlat()" class="kl-btn" :class="treeFlat && treeView!=='tree' ? 'on' : ''" :disabled="treeView==='tree'" :title="treeView==='tree' ? 'Flat works in List view' : 'List every file under this folder, without folders'">Flat</button>
           <button @click="toggleTreeDedupe()" class="kl-btn" :class="treeDedupe ? 'on' : ''" title="Show files with identical content once">Dedupe</button>
           {{ selbar('tree', 'treeSelCount') }}

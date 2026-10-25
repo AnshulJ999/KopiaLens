@@ -21,6 +21,7 @@ from appversion import order_key
 from config import APP_VERSION, CHECKIN_URL, COMPILED, DATA_DIR, DEMO_INSTANCE, REPO_URL, REPOS, is_demo, repo_record
 
 from .applog import get_logger
+from . import atomicfile
 
 log = get_logger("checkin")
 
@@ -108,7 +109,7 @@ def _write_state(**changes) -> dict:
         os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(state, fh, indent=2)
-        os.replace(tmp, STATE_FILE)
+        atomicfile.replace(tmp, STATE_FILE)
         return state
 
 

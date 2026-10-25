@@ -51,6 +51,7 @@ import duckdb
 from config import CONFIG_DIR, DATA_DIR
 
 from ..core.applog import get_logger
+from ..core import atomicfile
 
 log = get_logger("crypto")
 
@@ -127,7 +128,7 @@ def _write_meta(meta: dict) -> None:
         json.dump(meta, fh, indent=2)
         fh.flush()
         os.fsync(fh.fileno())
-    os.replace(tmp, _meta_path())
+    atomicfile.replace(tmp, _meta_path())
 
 
 def _store_wrapped(kind: str, kek: str, data_key: str) -> None:
@@ -148,7 +149,7 @@ def _store_wrapped(kind: str, kek: str, data_key: str) -> None:
         con.execute("DETACH ks")
     finally:
         con.close()
-    os.replace(tmp, path)
+    atomicfile.replace(tmp, path)
 
 
 class StoreLocked(PermissionError):
@@ -701,7 +702,7 @@ def _rewrap_password(key: str, new: str) -> None:
         tmp = prev + ".tmp"
         with open(wrap, "rb") as src, open(tmp, "wb") as dst:
             dst.write(src.read())
-        os.replace(tmp, prev)
+        atomicfile.replace(tmp, prev)
     meta = _read_meta()
     meta["kdf_prev"] = old_kdf
     _write_meta(meta)                      # crash here: the current pair still opens the old way

@@ -1,5 +1,5 @@
 {
-  "_about": "App icon map: icon name -> <pack>/<file>. Packs live in frontend/vendor/icons/<pack>/ (pinned in build_icons.py). Edit a line and run python packaging/build_icons.py to swap one icon. _variants: icon swaps for the Design menu's choices (dev only; remove a variant once a choice is final).",
+  "_about": "App icon map: icon name -> <pack>/<file>. Packs live in frontend/vendor/icons/<pack>/ (pinned in build_icons.py). Edit a line and run python packaging/build_icons.py to swap one icon. _variants: icon swaps for the Design menu's choices (dev only; remove a variant once a choice is final). _fluent: the Fluent Emoji files (Design menu). _material: the Material Icon Theme version and extensions its manifest lacks or maps wrongly for backups (the file-type map is generated into js/fileicons-material.js).",
   "refresh": "phosphor/arrow-clockwise",
   "settings": "phosphor/gear",
   "sun": "phosphor/sun",
@@ -78,6 +78,30 @@
   "t-file-zip": "tabler/file-zip",
   "t-file-code": "tabler/file-code",
   "t-file-text": "tabler/file-text",
+  "t-file-pdf": "tabler/file-type-pdf",
+  "t-file-doc": "tabler/file-type-doc",
+  "t-file-sheet": "tabler/file-spreadsheet",
+  "t-file-slides": "tabler/presentation",
+  "t-file-exe": "tabler/app-window",
+  "t-file-disk": "tabler/disc",
+  "t-file-db": "tabler/database",
+  "t-file-font": "tabler/file-typography",
+  "tf-folder": "tabler-filled/folder",
+  "tf-file": "tabler-filled/file",
+  "tf-file-image": "tabler-filled/photo",
+  "tf-file-audio": "tabler-filled/file-music",
+  "tf-file-video": "tabler-filled/video",
+  "tf-file-zip": "tabler-filled/archive",
+  "tf-file-code": "tabler-filled/file-code",
+  "tf-file-text": "tabler-filled/file-text",
+  "tf-file-pdf": "tabler-filled/file-description",
+  "tf-file-doc": "tabler-filled/file-description",
+  "tf-file-sheet": "tabler-filled/table",
+  "tf-file-slides": "tabler-filled/presentation",
+  "tf-file-exe": "tabler-filled/app-window",
+  "tf-file-disk": "tabler-filled/disc",
+  "tf-file-db": "tabler-filled/database",
+  "tf-file-font": "tabler-filled/file-typography",
   "_variants": {
     "header-light": {
       "selector": "html[data-d-hdricon=\"light\"] header .kl-ibtn .ic-{name}",
@@ -113,7 +137,15 @@
         "t-file-video": "phosphor/file-video",
         "t-file-zip": "phosphor/file-zip",
         "t-file-code": "phosphor/file-code",
-        "t-file-text": "phosphor/file-text"
+        "t-file-text": "phosphor/file-text",
+        "t-file-pdf": "phosphor/file-pdf",
+        "t-file-doc": "phosphor/file-doc",
+        "t-file-sheet": "phosphor/file-xls",
+        "t-file-slides": "phosphor/file-ppt",
+        "t-file-exe": "phosphor/app-window",
+        "t-file-disk": "phosphor/disc",
+        "t-file-db": "phosphor/database",
+        "t-file-font": "phosphor/text-aa"
       }
     },
     "files-ph-fill": {
@@ -126,7 +158,15 @@
         "t-file-video": "phosphor-fill/file-video-fill",
         "t-file-zip": "phosphor-fill/file-zip-fill",
         "t-file-code": "phosphor-fill/file-code-fill",
-        "t-file-text": "phosphor-fill/file-text-fill"
+        "t-file-text": "phosphor-fill/file-text-fill",
+        "t-file-pdf": "phosphor-fill/file-pdf-fill",
+        "t-file-doc": "phosphor-fill/file-doc-fill",
+        "t-file-sheet": "phosphor-fill/file-xls-fill",
+        "t-file-slides": "phosphor-fill/file-ppt-fill",
+        "t-file-exe": "phosphor-fill/app-window-fill",
+        "t-file-disk": "phosphor-fill/disc-fill",
+        "t-file-db": "phosphor-fill/database-fill",
+        "t-file-font": "phosphor-fill/text-aa-fill"
       }
     },
     "files-ph-duotone": {
@@ -139,34 +179,66 @@
         "t-file-video": "phosphor-duotone/file-video-duotone",
         "t-file-zip": "phosphor-duotone/file-zip-duotone",
         "t-file-code": "phosphor-duotone/file-code-duotone",
-        "t-file-text": "phosphor-duotone/file-text-duotone"
+        "t-file-text": "phosphor-duotone/file-text-duotone",
+        "t-file-pdf": "phosphor-duotone/file-pdf-duotone",
+        "t-file-doc": "phosphor-duotone/file-doc-duotone",
+        "t-file-sheet": "phosphor-duotone/file-xls-duotone",
+        "t-file-slides": "phosphor-duotone/file-ppt-duotone",
+        "t-file-exe": "phosphor-duotone/app-window-duotone",
+        "t-file-disk": "phosphor-duotone/disc-duotone",
+        "t-file-db": "phosphor-duotone/database-duotone",
+        "t-file-font": "phosphor-duotone/text-aa-duotone"
       }
+    }
+  },
+  "_fluent": {
+    "commit": "1ffb34c752ecf5d402f04cfb4b392c77f57c54bc",
+    "icons": {
+      "folder": "File folder/file_folder",
+      "file": "Page facing up/page_facing_up",
+      "file-image": "Framed picture/framed_picture",
+      "file-audio": "Musical note/musical_note",
+      "file-video": "Clapper board/clapper_board",
+      "file-zip": "Package/package",
+      "file-code": "Laptop/laptop",
+      "file-text": "Memo/memo",
+      "file-pdf": "Closed book/closed_book",
+      "file-doc": "Page with curl/page_with_curl",
+      "file-sheet": "Bar chart/bar_chart",
+      "file-slides": "Film projector/film_projector",
+      "file-exe": "Gear/gear",
+      "file-disk": "Optical disk/optical_disk",
+      "file-db": "File cabinet/file_cabinet",
+      "file-font": "Input latin letters/input_latin_letters"
+    }
+  },
+  "_material": {
+    "version": "5.27.0",
+    "language_ext": {
+      "js": "javascript",
+      "mjs": "javascript",
+      "cjs": "javascript",
+      "jsx": "react",
+      "ts": "typescript",
+      "mts": "typescript",
+      "cts": "typescript",
+      "tsx": "react_ts",
+      "html": "html",
+      "htm": "html",
+      "xhtml": "html",
+      "php": "php",
+      "yaml": "yaml",
+      "yml": "yaml"
     },
-    "files-tb-filled": {
-      "selector": "html[data-d-fileicons=\"tb-filled\"] .kl-name-ic.ic-{name}",
-      "icons": {
-        "t-folder": "tabler-filled/folder",
-        "t-file": "tabler-filled/file",
-        "t-file-image": "tabler-filled/photo",
-        "t-file-audio": "tabler-filled/file-music",
-        "t-file-video": "tabler-filled/video",
-        "t-file-zip": "tabler-filled/archive",
-        "t-file-code": "tabler-filled/file-code",
-        "t-file-text": "tabler-filled/file-text"
-      }
-    },
-    "files-material": {
-      "selector": "html[data-d-fileicons=\"material\"] .kl-name-ic.ic-{name}",
-      "icons": {
-        "t-folder": "material/folder",
-        "t-file": "material/file",
-        "t-file-image": "material/image",
-        "t-file-audio": "material/audio",
-        "t-file-video": "material/video",
-        "t-file-zip": "material/zip",
-        "t-file-code": "material/json",
-        "t-file-text": "material/document"
-      }
+    "override_ext": {
+      "vhd": "disc",
+      "vhdx": "disc",
+      "img": "disc",
+      "qcow2": "disc",
+      "vdi": "disc",
+      "wim": "disc",
+      "esd": "disc",
+      "appimage": "exe"
     }
   }
 }

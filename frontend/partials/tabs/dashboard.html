@@ -17,7 +17,7 @@
               </template>
             </div>
           </span>
-          <select x-show="showOwnerFilter()" x-cloak @change="setOwnerFilter($event.target.value)" class="fld border border-bd bg-surface max-w-[16rem]" title="Whose backups to show" data-testid="owner-filter">
+          <select autocomplete="off" x-show="showOwnerFilter()" x-cloak @change="setOwnerFilter($event.target.value)" class="fld border border-bd bg-surface max-w-[16rem]" title="Whose backups to show" data-testid="owner-filter">
             <option value="all" :selected="ownerFilter() === 'all'">All computers</option>
             <option value="me" :selected="ownerFilter() === 'me'" x-text="myOwner() ? 'This computer (' + myOwner() + ')' : 'This computer'"></option>
             <template x-for="o in otherOwners()" :key="o"><option :value="o" :selected="ownerFilter() === o" x-text="o"></option></template>

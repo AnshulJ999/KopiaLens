@@ -9,7 +9,7 @@
           <div class="flex items-center gap-2 border-b border-bd px-4 py-2.5 shrink-0">
             <i class="ic ic-help text-muted"></i>
             <div class="font-medium">Documentation</div>
-            <input type="search" x-model="docs.query" placeholder="Search documentation" aria-label="Search documentation"
+            <input autocomplete="off" type="search" x-model="docs.query" placeholder="Search documentation" aria-label="Search documentation"
                    class="fld h-8 border border-bd bg-surface2 ml-2 min-w-0 flex-1" :class="docs.view === 'side' ? '' : 'max-w-[22rem]'">
             <span class="grow" x-show="docs.view !== 'side'"></span>
             <button class="kl-btn icon" x-show="docs.view !== 'window'" @click="docsSetView(docs.view === 'popup' ? 'side' : 'popup')"
@@ -44,7 +44,7 @@
             </nav>
             <div class="flex-1 min-w-0 flex flex-col">
               <div class="border-b border-bd px-4 py-2 shrink-0" x-show="docs.view === 'side' && !docs.query">
-                <select class="fld h-8 w-full border border-bd bg-surface2" aria-label="Documentation page" @change="docsGo($event.target.value)">
+                <select autocomplete="off" class="fld h-8 w-full border border-bd bg-surface2" aria-label="Documentation page" @change="docsGo($event.target.value)">
                   <option value="README" :selected="docs.page === 'README'">Contents</option>
                   <template x-for="g in (_docsLoaded ? _docsLoaded.groups : [])" :key="g.title">
                     <optgroup :label="g.title">

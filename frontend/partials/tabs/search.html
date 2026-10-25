@@ -4,7 +4,7 @@
         <div class="kl-toolbar" x-show="searchView === 'prune'" x-cloak data-testid="search-view-prune">
           <span class="font-medium">Old versions that free the most</span>
           <span class="text-xs text-muted">Old versions of big files, by the space each frees on its own</span>
-          <input x-show="!headerSearchOnly" x-model="query" @input.debounce.300ms="loadSearchView()" class="fld border border-bd bg-surface grow basis-36 min-w-[8rem] max-w-[22rem]" placeholder="Filter paths">
+          <input autocomplete="off" x-show="!headerSearchOnly" x-model="query" @input.debounce.300ms="loadSearchView()" class="fld border border-bd bg-surface grow basis-36 min-w-[8rem] max-w-[22rem]" placeholder="Filter paths">
           <span class="grow"></span>
           <span class="text-xs text-muted" x-show="searchViewRows && !searchViewRows.loading" x-text="countOf(((searchViewRows && searchViewRows.rows) || []).length, 'version')"></span>
           <button class="kl-btn icon" @click="loadSearchView(true)" title="Look again" aria-label="Refresh"><i class="ic ic-refresh"></i></button>
@@ -26,14 +26,14 @@
           </div>
         </template>
         <div class="kl-toolbar" x-show="!searchView">
-          <input x-show="!headerSearchOnly" x-model="query" @input.debounce.300ms="loadSearch()" class="fld border border-bd bg-surface grow basis-36 min-w-[8rem] max-w-[30rem]" placeholder="Search paths" title="Matches anywhere in the full path">
-          <select x-model="searchSource" @change="searchSourceChanged()" class="fld border border-bd bg-surface grow-[0.5] basis-28 min-w-[7rem] max-w-[16rem]" title="Source">
+          <input autocomplete="off" x-show="!headerSearchOnly" x-model="query" @input.debounce.300ms="loadSearch()" class="fld border border-bd bg-surface grow basis-36 min-w-[8rem] max-w-[30rem]" placeholder="Search paths" title="Matches anywhere in the full path">
+          <select autocomplete="off" x-model="searchSource" @change="searchSourceChanged()" class="fld border border-bd bg-surface grow-[0.5] basis-28 min-w-[7rem] max-w-[16rem]" title="Source">
             <option value="*REPOS*">All repositories</option>
             <option value="">All sources</option>
             <template x-for="s in sources" :key="s"><option :value="s" :selected="s == searchSource" x-text="shortSource(s)"></option></template>
           </select>
-          <label title="Only files that are no longer on disk"><input type="checkbox" x-model="deletedOnly" @change="loadSearch()"> Deleted from disk</label>
-          <label title="Only files of 1 GB or more"><input type="checkbox" x-model="overOneGb" @change="loadSearch()"> Over 1 GB</label>
+          <label title="Only files that are no longer on disk"><input autocomplete="off" type="checkbox" x-model="deletedOnly" @change="loadSearch()"> Deleted from disk</label>
+          <label title="Only files of 1 GB or more"><input autocomplete="off" type="checkbox" x-model="overOneGb" @change="loadSearch()"> Over 1 GB</label>
           <template x-if="searchChips().length <= 3">
             <span class="inline-flex flex-wrap gap-1">
               <template x-for="c in searchChips()" :key="c.key">
@@ -48,27 +48,27 @@
             <button class="kl-btn" :class="open ? 'on' : ''" @click="open = !open" :aria-expanded="open" data-testid="search-more-filters">More filters<i class="ic ic-caret-down"></i></button>
             <div class="kl-menu p-3 space-y-2 text-xs" style="left:0;right:auto;min-width:430px" x-show="open" x-cloak>
               <div class="flex items-center gap-2"><span class="w-28 text-muted">Extensions</span>
-                <input x-model="searchExt" @input.debounce.300ms="loadSearch()" class="fld h-7 w-28 border border-bd bg-surface" placeholder="iso, 7z" title="Only these extensions">
+                <input autocomplete="off" x-model="searchExt" @input.debounce.300ms="loadSearch()" class="fld h-7 w-28 border border-bd bg-surface" placeholder="iso, 7z" title="Only these extensions">
                 <span class="text-muted">Hide</span>
-                <input x-model="searchExtExclude" @input.debounce.300ms="loadSearch()" class="fld h-7 w-28 border border-bd bg-surface" placeholder="mp4, mkv" title="Leave out these extensions"></div>
+                <input autocomplete="off" x-model="searchExtExclude" @input.debounce.300ms="loadSearch()" class="fld h-7 w-28 border border-bd bg-surface" placeholder="mp4, mkv" title="Leave out these extensions"></div>
               <div class="flex items-center gap-2"><span class="w-28 text-muted">First backed up</span>
-                <select x-model="recentBackup" @change="changeRecentBackup()" class="fld h-7 border border-bd bg-surface" title="When the file first appeared in a snapshot">
+                <select autocomplete="off" x-model="recentBackup" @change="changeRecentBackup()" class="fld h-7 border border-bd bg-surface" title="When the file first appeared in a snapshot">
                   <option value="">Any time</option>
                   <option value="1">In the last 24 hours</option>
                   <option value="7">In the last 7 days</option>
                   <option value="30">In the last 30 days</option>
                 </select></div>
               <div class="flex items-center gap-2"><span class="w-28 text-muted">Size (GB)</span>
-                <input type="number" min="0" step="0.1" x-model="minGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="min">
+                <input autocomplete="off" type="number" min="0" step="0.1" x-model="minGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="min">
                 <span>–</span>
-                <input type="number" min="0" step="0.1" x-model="maxGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="max"></div>
+                <input autocomplete="off" type="number" min="0" step="0.1" x-model="maxGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="max"></div>
               <div class="flex items-center gap-2"><span class="w-28 text-muted">Last seen</span>
-                <input type="date" x-model="dateFrom" @change="loadSearch()" class="fld h-7 border border-bd bg-surface">
+                <input autocomplete="off" type="date" x-model="dateFrom" @change="loadSearch()" class="fld h-7 border border-bd bg-surface">
                 <span>–</span>
-                <input type="date" x-model="dateTo" @change="loadSearch()" class="fld h-7 border border-bd bg-surface"></div>
+                <input autocomplete="off" type="date" x-model="dateTo" @change="loadSearch()" class="fld h-7 border border-bd bg-surface"></div>
               <div class="flex items-center gap-2"><span class="w-28 text-muted">At least</span>
-                <input type="number" min="0" x-model="minVersions" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-bd bg-surface" placeholder="0"> versions
-                <input type="number" min="0" x-model="sharedMin" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-bd bg-surface ml-2" placeholder="2" title="Files whose exact content sits at this many paths or more"> paths with the same content</div>
+                <input autocomplete="off" type="number" min="0" x-model="minVersions" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-bd bg-surface" placeholder="0"> versions
+                <input autocomplete="off" type="number" min="0" x-model="sharedMin" @input.debounce.400ms="loadSearch()" class="fld h-7 w-16 border border-bd bg-surface ml-2" placeholder="2" title="Files whose exact content sits at this many paths or more"> paths with the same content</div>
               <div class="flex justify-end"><button @click="clearFilters()" class="kl-btn quiet">Clear filters</button></div>
             </div>
           </span>
@@ -100,17 +100,17 @@
         </div>
         <div x-show="!searchView && searchKind!=='files' && !searchAllRepos()" class="kl-toolbar text-xs">
           <span class="font-medium">Folders</span>
-          <label title="Hide folders shallower than this, to focus on deep ones">Min depth <input type="number" min="1" max="20" x-model.number="groupMinDepth" @input.debounce.400ms="changeGroupMinDepth()" class="fld h-7 w-16 border border-bd bg-surface" placeholder="1"></label>
-          <label>Max depth <input type="number" min="1" max="20" x-model.number="groupDepth" @input.debounce.400ms="changeGroupDepth()" class="fld h-7 w-16 border border-bd bg-surface"></label>
-          <label>Min GB <input type="number" min="0" step="0.1" x-model.number="groupMinGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>
-          <label>Min files <input type="number" min="0" x-model.number="groupMinFiles" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>
-          <select :value="groupDepthMode()" @change="setGroupMode($event.target.value)" class="fld h-7 border border-bd bg-surface" aria-label="Which folders to list"
+          <label title="Hide folders shallower than this, to focus on deep ones">Min depth <input autocomplete="off" type="number" min="1" max="20" x-model.number="groupMinDepth" @input.debounce.400ms="changeGroupMinDepth()" class="fld h-7 w-16 border border-bd bg-surface" placeholder="1"></label>
+          <label>Max depth <input autocomplete="off" type="number" min="1" max="20" x-model.number="groupDepth" @input.debounce.400ms="changeGroupDepth()" class="fld h-7 w-16 border border-bd bg-surface"></label>
+          <label>Min GB <input autocomplete="off" type="number" min="0" step="0.1" x-model.number="groupMinGb" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>
+          <label>Min files <input autocomplete="off" type="number" min="0" x-model.number="groupMinFiles" @input.debounce.400ms="loadSearch()" class="fld h-7 w-20 border border-bd bg-surface" placeholder="0"></label>
+          <select autocomplete="off" :value="groupDepthMode()" @change="setGroupMode($event.target.value)" class="fld h-7 border border-bd bg-surface" aria-label="Which folders to list"
             :title="{ deepest: 'Folders at Max depth, each with everything inside it', nested: 'Every folder from Min to Max depth, each with everything inside it. A folder and its subfolders can both appear.', own: 'Every folder from Min to Max depth, counting only the files directly inside it' }[groupDepthMode()]">
             <option value="deepest">Deepest folders</option>
             <option value="nested">Nested</option>
             <option value="own">Own files</option>
           </select>
-          <label x-show="groupDepthMode() === 'deepest'" class="cursor-pointer" title="A shallower folder that also has subfolders gets a row for the files directly in it"><input type="checkbox" :checked="groupLoose" @change="toggleGroupLoose()"> Loose files</label>
+          <label x-show="groupDepthMode() === 'deepest'" class="cursor-pointer" title="A shallower folder that also has subfolders gets a row for the files directly in it"><input autocomplete="off" type="checkbox" :checked="groupLoose" @change="toggleGroupLoose()"> Loose files</label>
           <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('search', 'files-folders-or-both')" @keydown.enter.prevent="openDocs('search', 'files-folders-or-both')" title="Folders ranked by physical size. Double-click a folder to open it; right-click to see its files or delete it.">?</span>
         </div>
         <div x-show="!searchView && !groupByFolder && searchEmpty" class="flex flex-wrap items-center gap-2 text-sm text-muted">
@@ -123,7 +123,7 @@
           <template x-if="!groupByFolder">
             <span class="flex items-center gap-1.5">
               <span>Per page</span>
-              <select x-model="searchPageSize" @change="changePageSize()" class="fld h-6 border border-bd bg-surface text-xs">
+              <select autocomplete="off" x-model="searchPageSize" @change="changePageSize()" class="fld h-6 border border-bd bg-surface text-xs">
                 <template x-for="n in pageSizes" :key="n"><option :value="n" :selected="n == searchPageSize" x-text="n"></option></template>
               </select>
               <template x-if="searchPageSize!=='Infinite' && searchPages() > 1">

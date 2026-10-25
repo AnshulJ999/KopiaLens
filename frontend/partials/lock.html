@@ -14,7 +14,7 @@
             <label class="flex flex-col gap-1 text-xs font-medium">Recovery key
               <input type="text" x-model="locked.key" autocomplete="off" spellcheck="false" x-init="$nextTick(() => $el.focus())" class="fld border border-bd bg-surface2 font-mono"></label>
           </template>
-          <label x-show="!locked.remembered" class="flex items-center gap-2 text-xs"><input type="checkbox" x-model="locked.remember">Unlock automatically on this computer from now on</label>
+          <label x-show="!locked.remembered" class="flex items-center gap-2 text-xs"><input autocomplete="off" type="checkbox" x-model="locked.remember">Unlock automatically on this computer from now on</label>
           <p class="text-xs" style="color:var(--danger)" x-show="locked.error" x-text="locked.error"></p>
           <button type="submit" class="kl-btn primary justify-center" :disabled="locked.busy" x-text="locked.busy ? 'Unlocking…' : 'Unlock'"></button>
           <div class="flex justify-between gap-3 text-xs">
@@ -55,10 +55,10 @@
               <div class="space-y-3">
                 <fieldset class="space-y-1.5">
                   <legend class="text-xs font-medium mb-1">Level</legend>
-                  <label class="flex gap-2 items-start text-xs"><input type="radio" value="index" x-model="acctDialog.level" class="mt-0.5"><span><b>Index</b> (recommended) <span class="text-muted" x-text="encLevelNote('index')"></span></span></label>
-                  <label class="flex gap-2 items-start text-xs"><input type="radio" value="full" x-model="acctDialog.level" class="mt-0.5"><span><b>Full</b> <span class="text-muted" x-text="encLevelNote('full')"></span></span></label>
+                  <label class="flex gap-2 items-start text-xs"><input autocomplete="off" type="radio" value="index" x-model="acctDialog.level" class="mt-0.5"><span><b>Index</b> (recommended) <span class="text-muted" x-text="encLevelNote('index')"></span></span></label>
+                  <label class="flex gap-2 items-start text-xs"><input autocomplete="off" type="radio" value="full" x-model="acctDialog.level" class="mt-0.5"><span><b>Full</b> <span class="text-muted" x-text="encLevelNote('full')"></span></span></label>
                 </fieldset>
-                <label x-show="acct && acct.has_account" class="flex items-center gap-2 text-xs"><input type="checkbox" x-model="acctDialog.usePw">Use my KopiaLens password</label>
+                <label x-show="acct && acct.has_account" class="flex items-center gap-2 text-xs"><input autocomplete="off" type="checkbox" x-model="acctDialog.usePw">Use my KopiaLens password</label>
               </div>
             </template>
 
@@ -79,13 +79,13 @@
             </template>
 
             <template x-if="acctDialog.mode === 'enc-setup'">
-              <label class="flex items-start gap-2 text-xs"><input type="checkbox" x-model="acctDialog.remember" class="mt-0.5"><span>Unlock automatically on this computer<span class="block text-muted">Off: someone enters the password after every restart.</span></span></label>
+              <label class="flex items-start gap-2 text-xs"><input autocomplete="off" type="checkbox" x-model="acctDialog.remember" class="mt-0.5"><span>Unlock automatically on this computer<span class="block text-muted">Off: someone enters the password after every restart.</span></span></label>
             </template>
 
             <template x-if="acctDialog.mode === 'level'">
               <fieldset class="space-y-1.5">
                 <template x-for="l in ['off', 'index', 'full']" :key="l">
-                  <label class="flex gap-2 items-start text-xs"><input type="radio" :value="l" x-model="acctDialog.level" class="mt-0.5"><span><b x-text="encLevelLabel(l)"></b> <span class="text-muted" x-text="encLevelNote(l)"></span></span></label>
+                  <label class="flex gap-2 items-start text-xs"><input autocomplete="off" type="radio" :value="l" x-model="acctDialog.level" class="mt-0.5"><span><b x-text="encLevelLabel(l)"></b> <span class="text-muted" x-text="encLevelNote(l)"></span></span></label>
                 </template>
               </fieldset>
             </template>
@@ -108,7 +108,7 @@
 
             <template x-if="acctDialog.mode === 'showkey'">
               <div class="space-y-3">
-                <input type="text" readonly :value="acctDialog.key" @focus="$el.select()" class="fld border border-bd bg-surface2 w-full font-mono text-center">
+                <input autocomplete="off" type="text" readonly :value="acctDialog.key" @focus="$el.select()" class="fld border border-bd bg-surface2 w-full font-mono text-center">
                 <div class="flex gap-2">
                   <button type="button" @click="copyRecoveryKey(acctDialog.key)" class="kl-btn">Copy</button>
                   <button type="button" @click="downloadRecoveryKey(acctDialog.key)" class="kl-btn">Download</button>
@@ -127,8 +127,8 @@
                 <div class="kl-callout">Only if both the password and the recovery key are lost. Encryption is turned off and the index is rebuilt from kopia.</div>
                 <fieldset class="space-y-2">
                   <legend class="text-xs font-medium mb-1">The encrypted files</legend>
-                  <label class="flex gap-2 items-start text-xs"><input type="radio" value="delete" x-model="acctDialog.choice" class="mt-0.5"><span><b>Delete them permanently</b><span class="block text-muted">The disk space is freed now.</span></span></label>
-                  <label class="flex gap-2 items-start text-xs"><input type="radio" value="aside" x-model="acctDialog.choice" class="mt-0.5"><span><b>Move them aside</b><span class="block text-muted break-all" x-text="'Only if you might still find the password. They go into a new encryption-reset folder in ' + (acctDialog.preview && acctDialog.preview.aside_dir || 'the data folder') + ', and you delete it when you no longer need it.'"></span></span></label>
+                  <label class="flex gap-2 items-start text-xs"><input autocomplete="off" type="radio" value="delete" x-model="acctDialog.choice" class="mt-0.5"><span><b>Delete them permanently</b><span class="block text-muted">The disk space is freed now.</span></span></label>
+                  <label class="flex gap-2 items-start text-xs"><input autocomplete="off" type="radio" value="aside" x-model="acctDialog.choice" class="mt-0.5"><span><b>Move them aside</b><span class="block text-muted break-all" x-text="'Only if you might still find the password. They go into a new encryption-reset folder in ' + (acctDialog.preview && acctDialog.preview.aside_dir || 'the data folder') + ', and you delete it when you no longer need it.'"></span></span></label>
                 </fieldset>
               </div>
             </template>

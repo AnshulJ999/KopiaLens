@@ -17,7 +17,6 @@ const excludePart = {
     // ctx: {kind: "file"|"folder", path, source?, spec?: {shape, level, where, leaf}, preset?} or
     // {items: [{kind, path, source}]}; mode: "exclude"|"delete".
     async openExclude(ctx, mode = "exclude", ev = null) {
-      if (!this.wmGuard(mode === "delete" ? "full" : "non_destructive")) return;
       if (mode === "delete" && !this.proGate("exclude_delete", ev)) return;
       if (this.flow) this.flowCancel();
       const items = (ctx.items || []).filter((i) => i && i.path);
@@ -635,6 +634,7 @@ const excludePart = {
         return;
       }
       if (d.mode === "delete") return this.flowStart();
+      if (!this.wmGuard("non_destructive")) return;
       let facts, drops = [];
       if (d.multi) {
         facts = writes.map((w) => [this.exLabel(w.target), w.add.length === 1 ? w.add[0] : `${w.add.length} rules`]);

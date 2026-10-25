@@ -24,6 +24,16 @@ const tasksPart = {
     } catch (e) { this.error = e.message; }
     this.armTasksPoll();
   },
+  // The Refresh button: a spinning icon while the list reloads, shown long enough to be seen.
+  async refreshTasks() {
+    if (this.tasksRefreshing) return;
+    this.tasksRefreshing = true;
+    try {
+      await Promise.all([this.loadTasks(), new Promise((r) => setTimeout(r, 400))]);
+    } finally {
+      this.tasksRefreshing = false;
+    }
+  },
   armTasksPoll() {
     if (this._tasksPoll) clearInterval(this._tasksPoll);
     this._tasksPoll = setInterval(() => {

@@ -4,7 +4,6 @@ const deletePart = {
 
     // files: [{source, full_path}]; opts: {method, by, every, copies, flow}
     openDeletePanel(files, opts = {}) {
-      if (!this.wmGuard("full")) return;
       const list = (files || []).filter((f) => f && f.source && f.full_path);
       if (!list.length) { this.klNotify("Select one or more files first.", "warn"); return; }
       this.delPanel = {
@@ -247,7 +246,7 @@ const deletePart = {
 
     async delExecute(ev) {
       const p = this.delPanel;
-      if (!this.delReady() || !this.proGate(this.delFeature(), ev)) return;
+      if (!this.delReady() || !this.wmGuard("full") || !this.proGate(this.delFeature(), ev)) return;
       const ok = await this.klConfirm({
         title: p.method === "remove" ? `Remove ${this.delFileLabel()} from snapshots?` : `Delete ${countOf(p.plan.snapshots.length, "snapshot")}?`,
         facts: this.delFacts(), callout: this.delCallout(),
@@ -440,7 +439,7 @@ const deletePart = {
     },
 
     async flowExecute() {
-      if (!this.flow || !this.flow.writes) return;
+      if (!this.flow || !this.flow.writes || !this.wmGuard("full")) return;
       const then = this.flowDeleteSpec();
       const still = this.flowStillBackedUp();
       const dry = this.flowDryState();

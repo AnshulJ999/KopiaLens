@@ -40,7 +40,7 @@
                   <div class="space-y-2">
                     <label class="flex flex-col gap-1 text-xs font-medium">Repository password
                       <input type="password" x-model="tcDlg.pw" autocomplete="off" x-init="$nextTick(() => $el.focus())" class="fld border border-bd bg-surface2"></label>
-                    <p class="kl-note">Copy keeps the old file, so both apps stay connected. If both run backups, each takes its own snapshots.</p>
+                    <p class="kl-note">Copy keeps the old file, so both apps stay connected. KopiaLens runs backups only if you choose it, and never while another app is running them.</p>
                   </div>
                 </template>
               </div>
@@ -70,9 +70,9 @@
             <template x-if="repoDlg.mode === 'edit'">
               <div class="grid gap-2 sm:grid-cols-[1fr_9rem]">
                 <label class="flex flex-col gap-1 text-xs font-medium">Name
-                  <input type="text" x-model="repoDlg.name" x-init="$nextTick(() => $el.focus())" class="fld border border-bd bg-surface2"></label>
+                  <input autocomplete="off" type="text" x-model="repoDlg.name" x-init="$nextTick(() => $el.focus())" class="fld border border-bd bg-surface2"></label>
                 <label class="flex flex-col gap-1 text-xs font-medium">Short name
-                  <input type="text" x-model="repoDlg.short_name" maxlength="12" class="fld border border-bd bg-surface2"></label>
+                  <input autocomplete="off" type="text" x-model="repoDlg.short_name" maxlength="12" class="fld border border-bd bg-surface2"></label>
               </div>
             </template>
             <template x-if="repoDlg.mode === 'remove'">
@@ -84,7 +84,7 @@
                 </div>
                 <p class="kl-note" x-show="repoDlg.repo.kind !== 'backblaze'">KopiaLens deletes its index and history for this repository. The backups stay in the kopia repository, and you can add it again later.</p>
                 <label x-show="repoDlg.preview && repoDlg.preview.managed_config" class="flex items-start gap-2 text-xs">
-                  <input type="checkbox" x-model="repoDlg.deleteConfig" class="mt-0.5">
+                  <input autocomplete="off" type="checkbox" x-model="repoDlg.deleteConfig" class="mt-0.5">
                   <span>Also delete the connection file KopiaLens created<span class="block text-muted">KopiaUI and the kopia command line can use it too. Keep it if they do.</span></span></label>
               </div>
             </template>

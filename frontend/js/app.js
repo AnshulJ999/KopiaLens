@@ -114,7 +114,7 @@ document.addEventListener("alpine:init", () => {
     appLogDebugAvailable: false, appLogTruncated: false, _logsSeq: 0,
     groupReclaim: {},  // "repo:folder" -> {v: freeable, capped} - keyed by repo so one repo's
                        // numbers can never render in another repo's table
-    dashboardMeta: "", busy: "", error: "", detail: null, panelStack: [], snapSource: "*ALL*", _poll: null, _searchSeq: 0, _detailSeq: 0,
+    dashboardMeta: "", busy: "", error: "", repoSwitching: false, _repoSwitchSeq: 0, detail: null, panelStack: [], snapSource: "*ALL*", _poll: null, _searchSeq: 0, _detailSeq: 0,
     _rankedNotice: {},   // "repo|column" -> shown once per session (Search sort falls back to physical)
     // Action results shown in the corner: a click that reports only on the Actions tab looks
     // like it did nothing, so every action raises one of these too.
@@ -149,6 +149,10 @@ document.addEventListener("alpine:init", () => {
     logo: "k3g",          // header logo: k3g | k6s | k3a | tile | none (Settings > Appearance)
     trayIcon: "k3g",      // desktop app tray icon (Settings > Desktop app; TRAY_ICONS in settings.js)
     askSnapshotNow: true, // confirm before Snapshot now (Settings > General; the confirm's "Don't ask again")
+    snapStarting: {},     // source -> true while its Snapshot now start is in flight
+    downloading: "",      // the item a Download is being prepared for
+    tasksRefreshing: false,
+    autostart: null, autostartBusy: false,   // Start at logon (Settings > Desktop app)
     retentionChips: "kopiaui", retentionChipColor: "#2563eb",   // Snapshots retention chips: kopiaui | uniform | custom
     treeExtra: {}, _treeFilling: false,   // Tree: Physical (all) / Reclaimable / sources worked out for the rows on screen
     fullList: null, _fullListSeq: 0,      // the "Show all" popup (fulllist.js)
@@ -637,18 +641,25 @@ document.addEventListener("alpine:init", () => {
       } else {
         getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ last_repo: this.repo }) }).catch(() => {});
       }
-      await this.wrap(async () => {
-        if (this.repoKind === "backblaze") {  // BZ repo selected -> its own tabs + loaders
-          if (!String(this.active).startsWith("bz-")) this.active = "bz-dashboard";
-          return this.bzInit();
-        }
-        if (String(this.active).startsWith("bz-")) this.active = "dashboard";  // coming back from BZ
-        if (this.repoKind === "server" && !this.serverTabs.some((t) => t.id === this.active)) this.active = "snapshots";
-        await this.refreshBase(true);
-        this.selectedSource = this._rememberedTreeSource();
-        this.snapSource = this.snapSourceByRepo[this.repo] || "*ALL*";
-        await this.activate();
-      });
+      // The old repo's view stays on screen until the new one loads: dim it and say what loads.
+      const seq = ++this._repoSwitchSeq;
+      this.repoSwitching = true;
+      try {
+        await this.wrap(async () => {
+          if (this.repoKind === "backblaze") {  // BZ repo selected -> its own tabs + loaders
+            if (!String(this.active).startsWith("bz-")) this.active = "bz-dashboard";
+            return this.bzInit();
+          }
+          if (String(this.active).startsWith("bz-")) this.active = "dashboard";  // coming back from BZ
+          if (this.repoKind === "server" && !this.serverTabs.some((t) => t.id === this.active)) this.active = "snapshots";
+          await this.refreshBase(true);
+          this.selectedSource = this._rememberedTreeSource();
+          this.snapSource = this.snapSourceByRepo[this.repo] || "*ALL*";
+          await this.activate();
+        }, `Loading ${this.repoName(this.repo)}…`);
+      } finally {
+        if (seq === this._repoSwitchSeq) this.repoSwitching = false;
+      }
     },
     // The Tree's saved source for this repo when it still exists, else the first source.
     _rememberedTreeSource() {

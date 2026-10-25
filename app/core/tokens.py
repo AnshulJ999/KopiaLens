@@ -330,6 +330,10 @@ def _kopia_readonly(body: dict, _q: dict) -> str:
     return APP if body.get("on") is True and not body.get("shared_ok") else PERSON
 
 
+def _autostart(body: dict, _query: dict) -> str:
+    return APP if body.get("on") is True else PERSON     # off: backups may not run after a restart
+
+
 def _export(_body: dict, query: dict) -> str:
     groups = {g for g in str(query.get("groups") or "settings,repos").split(",") if g}
     return READ if groups <= {"settings", "repos"} else NEVER    # accounts and keys are secrets
@@ -372,6 +376,7 @@ _WRITES: dict[str, object] = {
     **{f"POST /api/index/{p}": APP for p in ("backups/copy", "build", "notices/{notice_id}/dismiss",
                                              "pause", "pending/run", "resume", "stop")},
     "POST /api/app/restart": APP,
+    "POST /api/app/autostart": _autostart,
     "POST /api/help/install-update": PERSON,     # stops indexing and jobs, then restarts the app
     "POST /api/help/feedback": PERSON,           # sends a message to the developer
     **{f"POST /api/backblaze/{p}": APP for p in ("exclusions/generate", "import-archive", "refresh")},
@@ -414,7 +419,7 @@ _WRITES: dict[str, object] = {
     **{f"POST /api/account/{p}": NEVER for p in ("create", "password", "encryption/split",
                                                  "encryption/join")},
     **{f"POST /api/auth/{p}": NEVER for p in ("login", "logout", "recover")},
-    **{f"POST /api/shell/{p}": NEVER for p in ("open-code", "prefs", "update-progress")},
+    **{f"POST /api/shell/{p}": NEVER for p in ("open-code", "prefs", "update-progress", "autostart")},
     "POST /api/tokens": NEVER,
     "PATCH /api/tokens/{token_id}": NEVER,
     "DELETE /api/tokens/{token_id}": NEVER,

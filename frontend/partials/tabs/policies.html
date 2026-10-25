@@ -5,7 +5,7 @@
      :class="!polMulti.on && polSel === t.target ? 'bg-sel' : 'hover:bg-head'"
      @click="polMulti.on ? (t.target !== 'global' && polMultiPick(t.target)) : polTryLeave(t.target)">
   <template x-if="polMulti.on">
-    <input type="checkbox" class="shrink-0" :disabled="t.target === 'global'" :checked="polMulti.picked.includes(t.target)" @click.stop="t.target !== 'global' && polMultiPick(t.target)">
+    <input autocomplete="off" type="checkbox" class="shrink-0" :disabled="t.target === 'global'" :checked="polMulti.picked.includes(t.target)" @click.stop="t.target !== 'global' && polMultiPick(t.target)">
   </template>
   <template x-if="!polMulti.on">
     <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="polHasStaged(t.target) ? 'bg-warn' : 'bg-transparent'"></span>
@@ -37,7 +37,7 @@
        x-text="'This policy\'s ' + countOf(polRuleRows().length, 'rule') + (polRuleRows().length === 1 ? ' replaces' : ' replace') + ' Global\'s ' + countOf(polData && polData.global ? polData.global.rule_count : 0, 'rule') + ' here.'"></div>
   <template x-if="polTextShown()">
     <div class="space-y-2">
-      <textarea x-model="polText.text" rows="12" spellcheck="false" aria-label="Exclusion rules, one per line"
+      <textarea autocomplete="off" x-model="polText.text" rows="12" spellcheck="false" aria-label="Exclusion rules, one per line"
                 class="fld w-full border border-bd bg-surface2 font-mono text-xs" style="height:auto;max-height:calc(100vh - 24rem)" data-testid="pol-text"></textarea>
       <div class="flex items-center gap-2">
         <span class="kl-note grow">One rule per line.</span>
@@ -68,7 +68,7 @@
   </div>
   <div class="kl-note" x-show="polDetail && !polRuleRows().length">No exclusion rules defined here.</div>
   <div class="flex items-center gap-2">
-    <input x-model="polAddText" @input="polAddInput()" @keydown.enter="polStageAdd()"
+    <input autocomplete="off" x-model="polAddText" @input="polAddInput()" @keydown.enter="polStageAdd()"
            class="fld flex-1 border border-bd bg-surface2 font-mono text-xs" placeholder="Add a pattern (kopia ignore syntax)…">
     <button class="kl-btn" @click="polStageAdd()" :disabled="!polAddText.trim()" title="Added to the changes you review before saving">Add</button>
   </div>
@@ -202,7 +202,7 @@
                 x-text="((polData && polData.sources ? polData.sources.length : 0) + ' source policies' + ((polData && polData.global && polData.global.defined) ? ' + Global' : ''))"></span>
           <span class="pill warn" x-show="polData && polData.stale" title="The defined-policy export failed; an older cached copy is being shown.">stale export</span>
           <span class="grow"></span>
-          <input x-model="polFilter" class="fld w-52 border border-bd bg-surface text-xs" placeholder="Filter policies…">
+          <input autocomplete="off" x-model="polFilter" class="fld w-52 border border-bd bg-surface text-xs" placeholder="Filter policies…">
           <button @click="polOpenNew()" class="h-7 rounded border border-bd px-2 text-xs" x-show="polData && !polMulti.on">New policy…</button>
           <button @click="polMultiToggle()" class="h-7 rounded border border-bd px-2 text-xs" :class="polMulti.on ? 'bg-sel' : ''" x-text="polMulti.on ? 'Editing several' : 'Edit several…'"></button>
           <button @click="loadPolicies(true)" class="h-7 rounded border border-bd px-2 text-xs">Refresh</button>

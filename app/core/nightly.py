@@ -24,6 +24,7 @@ from config import DATA_DIR, HERE as _KL_ROOT, REPOS, SELF_EXE, is_demo, repo_ki
 
 from .applog import get_logger
 from ..settings import load_settings
+from . import atomicfile
 
 log = get_logger("nightly")
 
@@ -390,8 +391,8 @@ def _roll_worker_log(path: str, max_bytes: int = WORKER_LOG_MAX_BYTES,
         for i in range(keep - 1, 0, -1):
             src = f"{path}.{i}"
             if os.path.exists(src):
-                os.replace(src, f"{path}.{i + 1}")
-        os.replace(path, f"{path}.1")
+                atomicfile.replace(src, f"{path}.{i + 1}")
+        atomicfile.replace(path, f"{path}.1")
     except OSError as exc:
         log.warning("worker log rotation failed for %s: %s", path, exc)
 

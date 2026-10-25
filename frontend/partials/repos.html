@@ -68,10 +68,10 @@
                     </div>
                   </template>
                   <label x-show="r.kind !== 'backblaze'" class="flex items-center gap-2 text-xs pl-8">
-                    <input type="checkbox" :checked="r.counts_as_backup" @change="raCountsAsBackup(r, $event.target.checked)">
+                    <input autocomplete="off" type="checkbox" :checked="r.counts_as_backup" @change="raCountsAsBackup(r, $event.target.checked)">
                     <span>Counts as a backup <span class="text-muted">· the Excluded view treats files in it as backed up</span></span></label>
                   <label x-show="r.kind !== 'backblaze' && !r.demo" class="flex items-center gap-2 text-xs pl-8" data-testid="ra-kopia-readonly">
-                    <input type="checkbox" :checked="r.kopia_readonly" @change="raKopiaReadonly(r, $event.target.checked, false, $event.target)">
+                    <input autocomplete="off" type="checkbox" :checked="r.kopia_readonly" @change="raKopiaReadonly(r, $event.target.checked, false, $event.target)">
                     <span>Read-only connection <span class="text-muted">· kopia refuses every change: no backups, deletes or policy edits from here</span></span></label>
                 </div>
               </template>
@@ -100,7 +100,7 @@
                 <template x-if="repoKopiaEdit">
                   <form @submit.prevent="raKopiaSave(repoKopiaEdit.path)" class="mt-2 space-y-2">
                     <label class="flex flex-col gap-1 text-xs font-medium">Path to kopia
-                      <input type="text" x-model="repoKopiaEdit.path" spellcheck="false" class="fld border border-bd bg-surface2 font-normal"></label>
+                      <input autocomplete="off" type="text" x-model="repoKopiaEdit.path" spellcheck="false" class="fld border border-bd bg-surface2 font-normal"></label>
                     <div class="flex gap-2 justify-end">
                       <button type="button" @click="raKopiaSave('')" class="kl-btn">Find automatically</button>
                       <button type="button" @click="repoKopiaEdit = null" class="kl-btn">Cancel</button>

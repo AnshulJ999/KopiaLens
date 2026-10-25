@@ -12,7 +12,7 @@
           <div class="min-h-0 flex-1 overflow-y-auto p-4 space-y-3">
             <label class="flex flex-col gap-1 text-xs font-medium">Folder or file to back up
               <span class="flex gap-2">
-                <input x-model="newSnap.path" @change="newSnapCheck()" @keydown.enter.prevent="newSnapCheck()" list="newsnap-paths"
+                <input autocomplete="off" x-model="newSnap.path" @change="newSnapCheck()" @keydown.enter.prevent="newSnapCheck()" list="newsnap-paths"
                        class="fld grow border border-bd bg-surface2 font-mono" :placeholder="host && host.os === 'windows' ? 'D:\\Photos' : '/home/me/photos'" data-testid="newsnap-path">
                 <button type="button" class="kl-btn" @click="newSnapBrowse()">Browse…</button>
               </span>
@@ -50,15 +50,16 @@
                   </div>
                 </template>
                 <label class="flex flex-col gap-1 text-xs font-medium">Description (optional)
-                  <input x-model="newSnap.description" class="fld border border-bd bg-surface2" placeholder="e.g. before the upgrade"></label>
+                  <input autocomplete="off" x-model="newSnap.description" class="fld border border-bd bg-surface2" placeholder="e.g. before the upgrade"></label>
               </div>
             </template>
           </div>
           <div class="kl-footer">
             <span class="kl-note" x-show="newSnap.check && engineRuns()">Later backups follow the policy's schedule.</span>
             <span class="spacer"></span>
+            <span class="kl-note text-warn" x-show="wmWhy('non_destructive')" x-text="wmWhy('non_destructive')"></span>
             <button type="button" @click="closeNewSnap()" class="kl-btn">Cancel</button>
-            <button type="button" class="kl-btn primary" :disabled="!newSnap.check || newSnap.busy" @click="newSnapStart()" data-testid="newsnap-start">Snapshot now</button>
+            <button type="button" class="kl-btn primary" :disabled="!newSnap.check || newSnap.busy || !!wmOff('non_destructive')" @click="newSnapStart()" data-testid="newsnap-start">Snapshot now</button>
           </div>
         </div>
       </div>
@@ -84,15 +85,16 @@
                   <div class="r" x-show="srcDel.info.pinned"><span class="k">Pinned</span><span class="text-warn" x-text="srcDel.info.pinned + ' (deleted too)'"></span></div>
                 </div>
                 <label class="flex items-center gap-2 text-xs" x-show="srcDel.info.has_policy">
-                  <input type="checkbox" x-model="srcDel.policy"> Also delete this source's policy</label>
+                  <input autocomplete="off" type="checkbox" x-model="srcDel.policy"> Also delete this source's policy</label>
               </div>
             </template>
           </div>
           <div class="kl-footer">
             <span class="spacer"></span>
+            <span class="kl-note text-warn" x-show="wmWhy('full')" x-text="wmWhy('full')"></span>
             <button type="button" @click="srcDel = null" class="kl-btn">Cancel</button>
             <button type="button" class="kl-btn" :disabled="!srcDel.info" @click="srcDelDry()">Dry run</button>
-            <button type="button" class="kl-btn danger" :disabled="!srcDel.info || srcDel.busy" @click="srcDelRun()"
+            <button type="button" class="kl-btn danger" :disabled="!srcDel.info || srcDel.busy || !!wmOff('full')" @click="srcDelRun()"
                     x-text="srcDel.info ? 'Delete ' + countOf(srcDel.info.snapshots, 'snapshot') + '…' : 'Delete…'"></button>
           </div>
         </div>
@@ -129,15 +131,15 @@
           <div class="p-4 space-y-3">
             <p class="text-xs text-muted">Checks that every snapshot's folders and file records can be read back from the repository.</p>
             <div class="flex items-center gap-3 text-xs">
-              <label class="flex items-center gap-1.5"><input type="radio" value="all" x-model="verifyDlg.scope"> Every source</label>
-              <label class="flex items-center gap-1.5"><input type="radio" value="one" x-model="verifyDlg.scope"> One source</label>
+              <label class="flex items-center gap-1.5"><input autocomplete="off" type="radio" value="all" x-model="verifyDlg.scope"> Every source</label>
+              <label class="flex items-center gap-1.5"><input autocomplete="off" type="radio" value="one" x-model="verifyDlg.scope"> One source</label>
             </div>
-            <select x-show="verifyDlg.scope === 'one'" x-model="verifyDlg.source" class="fld border border-bd bg-surface2 w-full text-xs" aria-label="Source">
+            <select autocomplete="off" x-show="verifyDlg.scope === 'one'" x-model="verifyDlg.source" class="fld border border-bd bg-surface2 w-full text-xs" aria-label="Source">
               <option value="">Pick a source</option>
               <template x-for="s in sources" :key="s"><option :value="s" :selected="s == verifyDlg.source" x-text="s"></option></template>
             </select>
             <label class="flex items-center justify-between gap-3 text-xs">Also download and check files
-              <select x-model.number="verifyDlg.percent" class="fld border border-bd bg-surface2">
+              <select autocomplete="off" x-model.number="verifyDlg.percent" class="fld border border-bd bg-surface2">
                 <option value="0">None</option>
                 <option value="1">1% of files</option>
                 <option value="5">5% of files</option>

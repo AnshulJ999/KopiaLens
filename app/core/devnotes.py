@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 
 from . import basepath
 from .applog import get_logger
+from . import atomicfile
 
 log = get_logger("devnotes")
 
@@ -77,7 +78,7 @@ def _set_enabled(on: bool) -> None:
     path = _settings_file()
     with open(path + ".tmp", "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2)
-    os.replace(path + ".tmp", path)
+    atomicfile.replace(path + ".tmp", path)
 
 
 def _notes_server():

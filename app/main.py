@@ -1437,6 +1437,7 @@ def _compose_html(client_host: str | None = None) -> str:
                "midnight", "obsidian", "lens", "graphite", "ink")
     _DENSITY = ("comfortable", "normal", "compact", "dense", "custom")
     _FONTS = ("inter", "geist", "plex", "system")
+    _FILE_ICONS = ("material", "filled", "outline", "emoji")
     theme = "lens" if kl.get("theme") == "pine" else kl.get("theme")   # Pine was removed
     try:
         pct = min(115, max(80, int(kl.get("density_pct", 100))))
@@ -1453,6 +1454,7 @@ def _compose_html(client_host: str | None = None) -> str:
         density_pct=pct,
         font=kl.get("font") if kl.get("font") in _FONTS else "inter",
         sortarrows="all" if kl.get("sort_arrows") == "all" else "sorted",
+        fileicons=kl.get("file_icons") if kl.get("file_icons") in _FILE_ICONS else "material",
         os_formats=os_formats,
     )
     extra = "\n".join(devaddons.HTML) if devaddons.HTML else devnotes.markup()

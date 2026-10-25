@@ -63,8 +63,9 @@ const churnPart = {
         cols = [
           { title: "Source", field: "source", widthGrow: 3, minWidth: 220, formatter: (c) => {
               const r = c.getRow().getData();
+              const icon = itemIconHtml(sourcePath(c.getValue()), true);
               const warn = r.nested_in ? ` <span title="Also covered by ${this.shortSource(r.nested_in)}, so this data is snapshotted twice and counted in both rows" style="color:var(--warn)"><i class="ic ic-warning"></i> inside ${this.shortSource(r.nested_in)}</span>` : "";
-              return this.shortSource(c.getValue()) + warn;
+              return icon + this.shortSource(c.getValue()) + warn;
             } },
           bytesCol, rateCol, verCol, rewriteCol, fileCol, ...sizeCols, physAllCol(false),
           { title: "Mostly from", field: "top_folder", widthGrow: 2, minWidth: 180, headerSort: false,
@@ -81,7 +82,7 @@ const churnPart = {
       } else if (this.churnView === "folder") {
         rows = (d.by_folder || []).map(enrich);
         cols = [
-          { title: "Folder", field: "folder", widthGrow: 4, minWidth: 280 },
+          { title: "Folder", field: "folder", widthGrow: 4, minWidth: 280, formatter: (c) => itemIconHtml(c.getValue(), true) + escHtml(c.getValue()) },
           bytesCol, rateCol, verCol, rewriteCol, fileCol, ...sizeCols, physAllCol(true),
           { title: "Sources", field: "source_count", width: 90, hozAlign: "right", sorter: "number",
             headerTooltip: "How many backup sources contributed churn in this folder. Several usually means sub-folders with their own policies, not duplication - open the folder to see which actually cover it.",
@@ -91,9 +92,9 @@ const churnPart = {
         menu = [
           { label: "Details", action: (_e, row) => this.openFolderPanel(row.getData().folder) },
           { label: "Show in Search", action: (_e, row) => { this.query = row.getData().folder; this.searchSource = ""; this.active = "search"; this.loadSearch(); } },
-          this.wmItem({ label: "Exclude & delete…" + this.proMenuTag("exclude_delete"), action: (_e, row) => this.openExclude({ kind: "folder", path: row.getData().folder }, "delete") }, "full"),
+          { label: "Exclude & delete…" + this.proMenuTag("exclude_delete"), action: (_e, row) => this.openExclude({ kind: "folder", path: row.getData().folder }, "delete") },
           { label: "Copy path", action: (_e, row) => this.copyText(row.getData().folder) },
-          this.wmItem({ label: "Delete folder from backups…" + this.proMenuTag("remove"), action: (_e, row) => this.openRemoveFolderPath(row.getData().folder) }, "full"),
+          { label: "Delete folder from backups…" + this.proMenuTag("remove"), action: (_e, row) => this.openRemoveFolderPath(row.getData().folder) },
         ];
       } else {
         rows = (d.by_ext || []).map((r) => enrich({ ...r, ext: r.ext || "(no extension)" }));

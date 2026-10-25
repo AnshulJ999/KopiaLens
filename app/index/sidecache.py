@@ -37,6 +37,7 @@ from config import CACHEDIR
 
 from ..core.applog import get_logger
 from . import crypto
+from ..core import atomicfile
 
 log = get_logger("sidecache")
 
@@ -75,7 +76,7 @@ def write(name: str, payload: dict, base: str | None = None) -> bool:
                             % (_sql(tmp), crypto.copy_options()))
             finally:
                 con.close()
-            os.replace(tmp, target)
+            atomicfile.replace(tmp, target)
         except Exception:
             try:
                 os.remove(tmp)

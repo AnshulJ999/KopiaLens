@@ -24,7 +24,7 @@
             </details>
             <template x-if="apReview.needs_password && apHasAccount">
               <label class="block"><span class="text-xs text-muted">KopiaLens password</span>
-                <input type="password" x-model="apPassword" @keydown.enter.prevent="apDecide(apReview, true)" class="fld border border-bd bg-surface2 w-full mt-1 text-xs"></label>
+                <input autocomplete="off" type="password" x-model="apPassword" @keydown.enter.prevent="apDecide(apReview, true)" class="fld border border-bd bg-surface2 w-full mt-1 text-xs"></label>
             </template>
           </div>
           <div class="kl-footer">

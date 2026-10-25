@@ -129,6 +129,65 @@ const appConfigPart = {
       } catch (e) { d.error = e.message || String(e); }
       finally { d.busy = false; }
     },
+    // Settings' Restart: confirm with what happens on this install, then reload once it's back.
+    async appRestart() {
+      const kind = this.host && this.host.restart;
+      if (!kind) return;
+      const running = (this.runningJobs || []).filter((j) => j.state === "running").length;
+      const how = {
+        desktop: "KopiaLens closes and starts again.",
+        addon: "KopiaLens stops, and Home Assistant starts it again.",
+        container: "KopiaLens stops, and Docker starts it again. That needs a restart rule on the container, such as restart: unless-stopped.",
+      }[kind];
+      const ok = await this.klConfirm({
+        title: "Restart KopiaLens?", body: `${how} This page reconnects by itself.`,
+        callout: running ? `${countOf(running, "running job")} will stop.` : "",
+        confirmLabel: "Restart", danger: running > 0,
+      });
+      if (!ok) return;
+      let r = null;
+      try { r = await getJson("/api/app/restart", { method: "POST" }); } catch (e) { this.klNotify(e.message || String(e), "error"); return; }
+      if (!r || !r.ok) { this.klNotify("Restart KopiaLens from the service that runs it.", "warn"); return; }
+      this.showSettings = false;
+      this.klNotify("Restarting KopiaLens…");
+      this._reloadWhenBack();
+    },
+    // Wait for the server to go away (or 15 s), then for it to answer again, then reload.
+    async _reloadWhenBack() {
+      const up = async () => { try { await getJson("/health", { cache: "no-store" }); return true; } catch (e) { return false; } };
+      const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+      const start = Date.now();
+      while (Date.now() - start < 15000 && await up()) await wait(1000);
+      while (Date.now() - start < 120000) {
+        if (await up()) { location.reload(); return; }
+        await wait(1500);
+      }
+      this.klNotify("KopiaLens hasn't come back yet. Reload the page in a moment.", "warn");
+    },
+
+    // Start at logon (Settings > Desktop app): the desktop app holds it; the server passes it on.
+    async loadAutostart() {
+      try { this.autostart = await getJson("/api/app/autostart"); } catch (e) { this.autostart = null; }
+    },
+    async setAutostart(on) {
+      if (this.autostartBusy) return;
+      this.autostartBusy = true;
+      try {
+        let s = await getJson("/api/app/autostart", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }) });
+        for (let i = 0; i < 20 && s.pending; i++) {
+          await new Promise((res) => setTimeout(res, 500));
+          s = await getJson("/api/app/autostart");
+        }
+        this.autostart = s;
+        if (s.pending) this.klNotify("The desktop app didn't answer. Try again in a moment.", "warn");
+        else if (s.on !== on) this.klNotify("Couldn't change Start at logon.", "warn");
+      } catch (e) {
+        this.klNotify(e.message || String(e), "error");
+      } finally {
+        this.autostartBusy = false;
+      }
+    },
+
     async cfgRestart() {
       try {
         const r = await _cfgPost("/api/app/restart");

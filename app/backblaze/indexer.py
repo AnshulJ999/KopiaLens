@@ -22,6 +22,7 @@ import time
 from . import bbdb, parsers, paths, pq, queries, rules
 from .safety import open_ro
 from ..core.paths import prefix_bounds
+from ..core import atomicfile
 
 log = logging.getLogger("kopialens.bz.indexer")  # under the app's logger so in-process calls reach the log files
 
@@ -57,7 +58,7 @@ def _write_progress(stage: str) -> None:
         tmp = _progress_path() + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
-        os.replace(tmp, _progress_path())
+        atomicfile.replace(tmp, _progress_path())
     except Exception:  # noqa: BLE001 - progress reporting must never affect the real work
         pass
 

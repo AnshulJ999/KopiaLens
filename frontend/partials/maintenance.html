@@ -48,9 +48,10 @@
           <div class="kl-footer shrink-0">
             <span class="kl-note">Runs as a job. Kopia usually needs a few runs to return all space.</span>
             <span class="spacer"></span>
+            <span class="kl-note text-warn" x-show="wmWhy('non_destructive', maint.repo)" x-text="wmWhy('non_destructive', maint.repo)"></span>
             <button class="kl-btn" @click="closeMaint()">Cancel</button>
             <button class="kl-btn" :class="maint.safety === 'none' ? 'danger' : 'primary'" @click="maintStart()"
-                    :disabled="maint.loading || maintNotOwner()" x-text="'Run ' + (maint.full ? 'full' : 'quick') + ' maintenance…'"></button>
+                    :disabled="maint.loading || maintNotOwner() || !!wmOff('non_destructive', maint.repo)" x-text="'Run ' + (maint.full ? 'full' : 'quick') + ' maintenance…'"></button>
           </div>
         </div>
       </template>

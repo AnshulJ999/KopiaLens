@@ -91,8 +91,9 @@
         <div class="kl-footer shrink-0">
           <span class="kl-note">Space comes back after the next full maintenance. Files also in other snapshots stay.</span>
           <span class="spacer"></span>
+          <span class="kl-note text-warn" x-show="wmWhy('full')" x-text="wmWhy('full')"></span>
           <button class="kl-btn" @click="showDelete=false">Cancel</button>
-          <button class="kl-btn danger" @click="executeDelete()" :disabled="deletePlan.dry.running"
+          <button class="kl-btn danger" @click="executeDelete()" :disabled="deletePlan.dry.running || !!wmOff('full')"
                   x-text="'Delete ' + countOf(deletePlan.count, 'snapshot') + '…'"></button>
         </div>
       </div>
@@ -168,7 +169,7 @@
                     <span :class="removePlan.top_n === n ? 'on' : ''" @click="setRemoveTopN(n)" x-text="'Largest ' + n"></span>
                   </template>
                 </span>
-                <input type="number" min="1" placeholder="custom" class="fld h-7 w-20 border border-bd bg-surface2 text-xs" aria-label="Delete only the largest this many files"
+                <input autocomplete="off" type="number" min="1" placeholder="custom" class="fld h-7 w-20 border border-bd bg-surface2 text-xs" aria-label="Delete only the largest this many files"
                        :value="([0,100,500,1000].includes(removePlan.top_n) ? '' : removePlan.top_n)"
                        @change="setRemoveTopN(parseInt($event.target.value, 10) || 0)">
               </span>
@@ -345,8 +346,9 @@
           <span class="spacer"></span>
           <template x-if="!removePlan.flow">
             <span class="flex items-center gap-2">
+              <span class="kl-note text-warn" x-show="wmWhy('full')" x-text="wmWhy('full')"></span>
               <button class="kl-btn" @click="closeRemove()">Cancel</button>
-              <button class="kl-btn danger" @click="removeRun($event)" :disabled="removePlan.loading || removePlan.dry.running || !removePlan.file_count"><span x-text="removeConfirmLabel() + '…'"></span> <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
+              <button class="kl-btn danger" @click="removeRun($event)" :disabled="removePlan.loading || removePlan.dry.running || !removePlan.file_count || !!wmOff('full')"><span x-text="removeConfirmLabel() + '…'"></span> <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button>
             </span>
           </template>
           <template x-if="removePlan.flow">
@@ -385,7 +387,7 @@
                 <template x-for="row in restoreFromRows()" :key="row.i">
                   <div class="flex items-center gap-2 mb-1">
                     <span class="font-mono trunc grow" x-show="restore.items.length > 1" x-text="row.path"></span>
-                    <select class="fld border border-bd bg-surface2" @change="restorePickSource(row.i, $event.target.value)">
+                    <select autocomplete="off" class="fld border border-bd bg-surface2" @change="restorePickSource(row.i, $event.target.value)">
                       <template x-for="h in row.holders" :key="h.source">
                         <option :value="h.source" :selected="h.source === restore.items[row.i].source" x-text="restoreHolderLabel(h, row.holders)"></option>
                       </template>
@@ -412,7 +414,7 @@
                 <span :class="restore.mode === 'beside' ? 'on' : ''" x-show="!restoreHasDirs()" @click="restoreSetMode('beside')" title="A dated copy next to the original, e.g. notes (2026-09-01).txt">Next to the original</span>
               </span>
               <div class="flex items-center gap-2 mt-2" x-show="restore.mode === 'folder'">
-                <input x-model="restore.target" @input="restoreTargetInput()" class="fld flex-1 border border-bd bg-surface2 font-mono" placeholder="D:\Restored   or   D:\out.zip">
+                <input autocomplete="off" x-model="restore.target" @input="restoreTargetInput()" class="fld flex-1 border border-bd bg-surface2 font-mono" placeholder="D:\Restored   or   D:\out.zip">
                 <button @click="browseFolder()" class="kl-btn" title="Pick a folder on the computer running KopiaLens">Browse…</button>
               </div>
               <div class="kl-note mt-1" x-show="restore.mode === 'folder' && restore.items.length > 1">Files go straight into this folder. Same names get a number.</div>
@@ -433,24 +435,24 @@
             <details class="kl-sec" :open="restore.preset === 'custom'">
               <summary class="h cursor-pointer select-none">More options <span class="text-faint font-normal">(ownership, overwrite, speed)</span></summary>
               <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs mt-2">
-                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.restore_owners"> Restore ownership</label>
-                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.restore_permissions"> Restore permissions</label>
-                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.restore_times"> Restore modified time</label>
-                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.skip_existing" @change="restoreChanged()"> Skip existing</label>
-                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.ignore_errors"> Continue on errors</label>
-                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.write_files_atomically"> Write atomically</label>
-                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.write_sparse_files"> Sparse files</label>
-                <label class="flex items-center gap-1.5"><input type="checkbox" x-model="restore.options.ignore_permission_errors"> Ignore permission errors</label>
-                <label class="flex items-center gap-1.5 text-warn"><input type="checkbox" x-model="restore.options.overwrite_files" @change="restoreChanged()"> Overwrite files</label>
-                <label class="flex items-center gap-1.5 text-warn"><input type="checkbox" x-model="restore.options.overwrite_directories" @change="restoreChanged()"> Overwrite folders</label>
-                <label class="flex items-center gap-1.5 text-warn"><input type="checkbox" x-model="restore.options.overwrite_symlinks" @change="restoreChanged()"> Overwrite symlinks</label>
-                <label class="flex items-center gap-1.5 text-danger"><input type="checkbox" x-model="restore.options.delete_extra" @change="restoreChanged()"> Delete extra files</label>
+                <label class="flex items-center gap-1.5"><input autocomplete="off" type="checkbox" x-model="restore.options.restore_owners"> Restore ownership</label>
+                <label class="flex items-center gap-1.5"><input autocomplete="off" type="checkbox" x-model="restore.options.restore_permissions"> Restore permissions</label>
+                <label class="flex items-center gap-1.5"><input autocomplete="off" type="checkbox" x-model="restore.options.restore_times"> Restore modified time</label>
+                <label class="flex items-center gap-1.5"><input autocomplete="off" type="checkbox" x-model="restore.options.skip_existing" @change="restoreChanged()"> Skip existing</label>
+                <label class="flex items-center gap-1.5"><input autocomplete="off" type="checkbox" x-model="restore.options.ignore_errors"> Continue on errors</label>
+                <label class="flex items-center gap-1.5"><input autocomplete="off" type="checkbox" x-model="restore.options.write_files_atomically"> Write atomically</label>
+                <label class="flex items-center gap-1.5"><input autocomplete="off" type="checkbox" x-model="restore.options.write_sparse_files"> Sparse files</label>
+                <label class="flex items-center gap-1.5"><input autocomplete="off" type="checkbox" x-model="restore.options.ignore_permission_errors"> Ignore permission errors</label>
+                <label class="flex items-center gap-1.5 text-warn"><input autocomplete="off" type="checkbox" x-model="restore.options.overwrite_files" @change="restoreChanged()"> Overwrite files</label>
+                <label class="flex items-center gap-1.5 text-warn"><input autocomplete="off" type="checkbox" x-model="restore.options.overwrite_directories" @change="restoreChanged()"> Overwrite folders</label>
+                <label class="flex items-center gap-1.5 text-warn"><input autocomplete="off" type="checkbox" x-model="restore.options.overwrite_symlinks" @change="restoreChanged()"> Overwrite symlinks</label>
+                <label class="flex items-center gap-1.5 text-danger"><input autocomplete="off" type="checkbox" x-model="restore.options.delete_extra" @change="restoreChanged()"> Delete extra files</label>
               </div>
               <div class="mt-2 flex items-center gap-3 text-xs">
-                <label class="flex items-center gap-1">Parallel <input type="number" min="1" x-model.number="restore.options.parallel" class="fld h-7 w-16 border border-bd bg-surface2"></label>
-                <label class="flex items-center gap-1" title="Folders this deep become placeholder files">Shallow depth <input type="number" min="0" x-model="restore.options.shallow" class="fld h-7 w-20 border border-bd bg-surface2" placeholder="full"></label>
-                <label class="flex items-center gap-1" x-show="restore.options.shallow !== '' && restore.options.shallow != null" title="In a shallow restore, files smaller than this are restored in full instead of as placeholders">Full files under <input type="number" min="0" x-model="restore.options.shallow_minsize_kb" class="fld h-7 w-20 border border-bd bg-surface2" placeholder="0"> KB</label>
-                <label class="flex items-center gap-1.5" x-show="/\.zip$/i.test(restore.target || '')"><input type="checkbox" x-model="restore.options.zip_uncompressed"> Uncompressed .zip</label>
+                <label class="flex items-center gap-1">Parallel <input autocomplete="off" type="number" min="1" x-model.number="restore.options.parallel" class="fld h-7 w-16 border border-bd bg-surface2"></label>
+                <label class="flex items-center gap-1" title="Folders this deep become placeholder files">Shallow depth <input autocomplete="off" type="number" min="0" x-model="restore.options.shallow" class="fld h-7 w-20 border border-bd bg-surface2" placeholder="full"></label>
+                <label class="flex items-center gap-1" x-show="restore.options.shallow !== '' && restore.options.shallow != null" title="In a shallow restore, files smaller than this are restored in full instead of as placeholders">Full files under <input autocomplete="off" type="number" min="0" x-model="restore.options.shallow_minsize_kb" class="fld h-7 w-20 border border-bd bg-surface2" placeholder="0"> KB</label>
+                <label class="flex items-center gap-1.5" x-show="/\.zip$/i.test(restore.target || '')"><input autocomplete="off" type="checkbox" x-model="restore.options.zip_uncompressed"> Uncompressed .zip</label>
               </div>
             </details>
 
@@ -522,9 +524,10 @@
             <span class="kl-note">Kopia has no restore dry run. Preview compares the snapshot with the destination.</span>
             <span class="spacer"></span>
             <button class="kl-btn quiet" x-show="restore.plan && restore.plan.items.length === 1"
-                    @click="downloadItem(restore.items[0])" x-text="restore.plan && restore.plan.items[0] && restore.plan.items[0].type === 'd' ? 'Download .zip' : 'Download'"></button>
+                    @click="downloadItem(restore.items[0])" :disabled="!!downloading" x-text="downloading ? 'Preparing…' : restore.plan && restore.plan.items[0] && restore.plan.items[0].type === 'd' ? 'Download .zip' : 'Download'"></button>
             <button class="kl-btn" @click="restoreLoad(true)" :disabled="restore.loading">Preview</button>
-            <button class="kl-btn" :class="restoreDanger() ? 'danger' : 'primary'" @click="restoreExecute()" :disabled="restore.loading">Restore…</button>
+            <span class="kl-note text-warn" x-show="wmWhy('restores')" x-text="wmWhy('restores')"></span>
+            <button class="kl-btn" :class="restoreDanger() ? 'danger' : 'primary'" @click="restoreExecute()" :disabled="restore.loading || !!wmOff('restores')">Restore…</button>
           </div>
         </div>
       </template>
@@ -539,7 +542,7 @@
             <h3 class="text-[0.9375rem] font-semibold leading-snug">Choose a folder</h3>
             <form class="flex items-center gap-2" @submit.prevent="fbGo(fb.input)">
               <button type="button" class="kl-btn shrink-0" :disabled="!fb.path" @click="fbGo(fb.parent)" title="Up one folder">Up</button>
-              <input x-model="fb.input" class="fld flex-1 min-w-0 border border-bd bg-surface2 font-mono" aria-label="Folder path"
+              <input autocomplete="off" x-model="fb.input" class="fld flex-1 min-w-0 border border-bd bg-surface2 font-mono" aria-label="Folder path"
                      :placeholder="host.os === 'windows' ? 'D:\\Restored' : '/data/restored'">
               <button type="submit" class="kl-btn shrink-0">Go</button>
             </form>
@@ -599,12 +602,12 @@
         <div class="mt-2 text-[0.75rem] text-muted">KopiaLens never writes to Backblaze (read-only). This generates a paste-ready rule + how to apply it.</div>
         <div class="mt-3 flex items-center gap-2">
           <span class="text-[0.6875rem] uppercase text-muted">Kind</span>
-          <select x-model="bzGen.kind" @change="bzDoGen()" class="fld border border-bd bg-surface2 text-xs">
+          <select autocomplete="off" x-model="bzGen.kind" @change="bzDoGen()" class="fld border border-bd bg-surface2 text-xs">
             <option value="folder">Folder (relative, all drives)</option>
             <option value="editable_endswith">Ends with</option>
             <option value="editable_contains">Contains</option>
           </select>
-          <input x-model="bzGen.value" @input.debounce.300ms="bzDoGen()" class="fld flex-1 border border-bd bg-surface2 font-mono text-xs">
+          <input autocomplete="off" x-model="bzGen.value" @input.debounce.300ms="bzDoGen()" class="fld flex-1 border border-bd bg-surface2 font-mono text-xs">
         </div>
         <template x-if="bzGen.result">
           <div class="mt-3 space-y-2">

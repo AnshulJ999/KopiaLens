@@ -12,7 +12,7 @@ import time
 from config import CACHEDIR
 
 from .applog import get_logger
-from .schedule import load_next_after_missed, load_next_snapshots
+from .schedule import fresh_next, load_next_snapshots, missed_state
 from .sources import logical_stats, roots_of, sources_index, sources_meta
 
 log = get_logger("metrics")
@@ -202,15 +202,23 @@ def _kick_bg_recompute(repo: str) -> None:
 
 
 def table_rows(repo: str, refresh: bool = False) -> dict:
-    """The dashboard table, with next-snapshot times and statuses read fresh on every call: the
-    saved table is rebuilt only when the snapshot set changes, and an unchanged folder saves none."""
+    """The dashboard table, with next-snapshot times, missed slots and statuses read fresh on every
+    call: the saved table is rebuilt only when the snapshot set changes, and an unchanged folder
+    saves none."""
     data = _table_rows(repo, refresh)
-    nexts, afters, meta = load_next_snapshots(repo), load_next_after_missed(repo), sources_meta(repo)
-    for row in data.get("rows") or []:
+    rows = data.get("rows") or []
+    last = {r.get("source"): r.get("last_time") for r in rows}
+    nexts, passed = fresh_next(repo, load_next_snapshots(repo), last)
+    meta = sources_meta(repo)
+    missed = missed_state(repo, last, passed)
+    for row in rows:
         key = row.get("source")
         smeta = meta.get(key) or {}
+        m = missed.get(key) or {}
         row["next_snapshot"] = nexts.get(key) or smeta.get("nextSnapshotTime")
-        row["next_after_missed"] = afters.get(key)
+        row["missed_at"] = m.get("missed_at")
+        row["quiet"] = bool(m.get("quiet"))
+        row["overdue"] = bool(m.get("overdue"))
         row["status"] = smeta.get("status")
     return data
 
@@ -259,7 +267,6 @@ def _compute_table_rows(repo: str, want_hash: str) -> dict:
     # csize, so the multi-million-entry dict this used to materialize per dashboard build is gone.
     meta = sources_meta(repo)
     nexts = load_next_snapshots(repo)  # computed next-snapshot times (subprocess mode)
-    afters = load_next_after_missed(repo)
     fcounts = _file_counts(repo)
     rows, elapsed, union_total = build_global(repo)
     ordered = []
@@ -286,7 +293,6 @@ def _compute_table_rows(repo: str, want_hash: str) -> dict:
                 "first_time": stats["first_time"],
                 "last_time": stats["last_time"],
                 "next_snapshot": nexts.get(key) or smeta.get("nextSnapshotTime"),
-                "next_after_missed": afters.get(key),
                 "status": smeta.get("status"),
                 "files_latest": (fcounts.get(key) or {}).get("latest", 0),
                 "files_distinct": (fcounts.get(key) or {}).get("distinct", 0),

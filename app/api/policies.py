@@ -38,6 +38,7 @@ from ..core.policy import (
 from ..core.policybackup import BackupError
 from ..core.policytargets import TargetError
 from ..index import policypricing
+from ..core import atomicfile
 
 router = APIRouter(tags=["policies"])
 
@@ -367,7 +368,7 @@ def set_scripts(body: ScriptsRequest) -> dict:
         tmp = path + ".kopialens-tmp"
         with open(tmp, "w", encoding="utf-8", newline="") as fh:
             _json.dump(data, fh, indent=2)
-        _os.replace(tmp, path)
+        atomicfile.replace(tmp, path)
     _CLIENT_CACHE.pop(body.repo, None)
     from ..core import audit, engine
     restarted = engine.restart(body.repo, "scripts setting changed")

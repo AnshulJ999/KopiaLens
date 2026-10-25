@@ -27,13 +27,13 @@
                     <div class="font-medium">New token</div>
                     <div class="flex flex-wrap items-end gap-2">
                       <label class="flex flex-col gap-1 text-xs min-w-[12rem] flex-1"><span>Name</span>
-                        <input x-model="tokForm.name" maxlength="40" @keydown.enter.prevent="tokCreate()" class="fld border border-bd bg-surface2" placeholder="Claude on this PC" data-testid="tok-name"></label>
+                        <input autocomplete="off" x-model="tokForm.name" maxlength="40" @keydown.enter.prevent="tokCreate()" class="fld border border-bd bg-surface2" placeholder="Claude on this PC" data-testid="tok-name"></label>
                       <label class="flex flex-col gap-1 text-xs"><span>Permission</span>
-                        <select x-model="tokForm.mode" class="fld border border-bd bg-surface2 w-44" data-testid="tok-mode">
+                        <select autocomplete="off" x-model="tokForm.mode" class="fld border border-bd bg-surface2 w-44" data-testid="tok-mode">
                           <template x-for="m in tok.modes" :key="m"><option :value="m" x-text="tok.labels[m]" :selected="m === tokForm.mode"></option></template>
                         </select></label>
                       <label class="flex flex-col gap-1 text-xs"><span>Expires after</span>
-                        <select x-model="tokForm.days" class="fld border border-bd bg-surface2 w-32" data-testid="tok-days">
+                        <select autocomplete="off" x-model="tokForm.days" class="fld border border-bd bg-surface2 w-32" data-testid="tok-days">
                           <template x-for="d in tok.expiry_days" :key="d"><option :value="String(d)" x-text="TOKEN_EXPIRY[d]" :selected="String(d) === String(tokForm.days)"></option></template>
                         </select></label>
                       <button @click="tokCreate()" :disabled="tokBusy" class="kl-btn" data-testid="tok-create" x-text="tokBusy ? 'Creating…' : 'Create token'"></button>
@@ -44,7 +44,7 @@
                   <div x-show="tokNew" class="rounded border border-bd bg-head px-3 py-2 space-y-2" data-testid="tok-new">
                     <div class="text-xs"><span class="font-medium" x-text="tokNew && tokNew.name"></span>: copy this token now. You won't see it again.</div>
                     <div class="flex items-center gap-2">
-                      <input readonly :value="tokNew && tokNew.secret" @focus="$event.target.select()" class="fld border border-bd bg-surface2 flex-1 min-w-0 font-mono text-xs" aria-label="New token" data-testid="tok-secret">
+                      <input autocomplete="off" readonly :value="tokNew && tokNew.secret" @focus="$event.target.select()" class="fld border border-bd bg-surface2 flex-1 min-w-0 font-mono text-xs" aria-label="New token" data-testid="tok-secret">
                       <button @click="tokCopy()" class="kl-btn">Copy</button>
                       <button @click="tokNew = null" class="kl-btn quiet">Done</button>
                     </div>
@@ -71,13 +71,13 @@
                               <template x-if="tokEdit && tokEdit.id === t.id">
                                 <div class="flex flex-wrap items-end gap-2">
                                   <label class="flex flex-col gap-1 min-w-[12rem] flex-1"><span>Name</span>
-                                    <input x-model="tokEdit.name" maxlength="40" @keydown.enter.prevent="tokSaveEdit()" class="fld border border-bd bg-surface2"></label>
+                                    <input autocomplete="off" x-model="tokEdit.name" maxlength="40" @keydown.enter.prevent="tokSaveEdit()" class="fld border border-bd bg-surface2"></label>
                                   <label class="flex flex-col gap-1"><span>Permission</span>
-                                    <select x-model="tokEdit.mode" class="fld border border-bd bg-surface2 w-44">
+                                    <select autocomplete="off" x-model="tokEdit.mode" class="fld border border-bd bg-surface2 w-44">
                                       <template x-for="m in tok.modes" :key="m"><option :value="m" x-text="tok.labels[m]" :selected="m === tokEdit.mode"></option></template>
                                     </select></label>
                                   <label class="flex flex-col gap-1"><span>Expires</span>
-                                    <select x-model="tokEdit.days" class="fld border border-bd bg-surface2 w-40">
+                                    <select autocomplete="off" x-model="tokEdit.days" class="fld border border-bd bg-surface2 w-40">
                                       <option value="">Keep current</option>
                                       <template x-for="d in tok.expiry_days" :key="d"><option :value="String(d)" x-text="d ? TOKEN_EXPIRY[d] + ' from now' : 'Never'"></option></template>
                                     </select></label>

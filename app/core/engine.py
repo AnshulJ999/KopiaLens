@@ -13,7 +13,6 @@ history (kopia keeps them in memory only) and kept for `task_history_days`.
 
 from __future__ import annotations
 
-import datetime
 import json
 import os
 import secrets
@@ -31,6 +30,7 @@ from config import DATA_DIR
 from . import filecrypto
 from .applog import LOG_DIR, get_logger
 from .coexist import MOVED_SUFFIX
+from . import atomicfile
 
 log = get_logger("engine")
 
@@ -248,7 +248,7 @@ def _free_port() -> int:
 def _log_line(srv: _Server, text: str) -> None:
     try:
         if os.path.isfile(srv.log_path) and os.path.getsize(srv.log_path) > LOG_ROTATE_BYTES:
-            os.replace(srv.log_path, srv.log_path + ".1")
+            atomicfile.replace(srv.log_path, srv.log_path + ".1")
         filecrypto.append_line(srv.log_path, time.strftime("%Y-%m-%d %H:%M:%S ") + text)
     except Exception:  # noqa: BLE001 - logging must never break the reader
         pass
@@ -841,7 +841,7 @@ def set_choice(repo: str, choice: str, how: str = "share", password: str = "") -
         moved = rec.get("engine_moved_from") or ""
         if moved and os.path.isfile(moved + MOVED_SUFFIX) and not os.path.exists(moved):
             try:
-                os.replace(moved + MOVED_SUFFIX, moved)
+                atomicfile.replace(moved + MOVED_SUFFIX, moved)
             except OSError as exc:
                 raise ValueError(f"Couldn't put KopiaUI's connection file back: {exc}") from exc
             fields.update(config_file=moved, engine_moved_from="")
@@ -866,7 +866,7 @@ def set_choice(repo: str, choice: str, how: str = "share", password: str = "") -
             raise ValueError(repoconnect._last_meaningful_line(res.get("stderr") or "")
                              or "kopia couldn't open the repository with that password.")
         try:
-            os.replace(src, src + MOVED_SUFFIX)
+            atomicfile.replace(src, src + MOVED_SUFFIX)
         except OSError as exc:
             raise ValueError(f"KopiaLens connected, but couldn't rename KopiaUI's file: {exc}") from exc
         repos.set_engine_fields(repo, {"config_file": dst, "engine_moved_from": src})
@@ -921,18 +921,15 @@ def snapshot_evidence(repo: str) -> dict:
     if index is None:
         return {}
     newest, by = "", ""
+    last: dict[str, str] = {}
     for key, snaps in index.items():
         if snaps:
             at = snaps[-1].get("endTime") or snaps[-1].get("startTime") or ""
+            last[key] = at
             if at > newest:
                 newest, by = at, key.split(":", 1)[0]
-    late = time.time() - 15 * 60
-    overdue = False
-    for when in (schedule.load_next_snapshots(repo) or {}).values():
-        try:
-            overdue = overdue or datetime.datetime.fromisoformat(when).timestamp() < late
-        except (TypeError, ValueError):
-            continue
+    _nexts, passed = schedule.fresh_next(repo, schedule.load_next_snapshots(repo), last)
+    overdue = any(m["overdue"] for m in schedule.missed_state(repo, last, passed).values())
     return {"known": True, "last_snapshot": newest or None, "by": by, "overdue": overdue}
 
 

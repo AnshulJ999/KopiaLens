@@ -364,12 +364,91 @@ def load_next_snapshots(repo: str) -> dict[str, str]:
     return data if isinstance(data, dict) else {}
 
 
-def load_next_after_missed(repo: str) -> dict[str, str]:
-    """For sources whose slot was missed: the slot after it. A running scheduler that found nothing
-    changed saves no snapshot, and moves on to this one ()."""
+def load_missed(repo: str) -> dict[str, str]:
+    """For sources whose scheduled slot passed with no snapshot saved: that slot."""
     from ..index import sidecache
-    data = sidecache.read(_cache_name(repo) + "_after")
+    data = sidecache.read(_cache_name(repo) + "_missed")
     return data if isinstance(data, dict) else {}
+
+
+MISSED_GRACE = 15 * 60     # seconds past a missed slot before it counts as overdue
+
+
+def _iso_ts(iso: str | None) -> float | None:
+    """Epoch seconds of a kopia time (UTC, "Z") or a saved slot (local, no zone)."""
+    if not iso:
+        return None
+    try:
+        return dt.datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _next_and_missed(sched: dict, last_dt: dt.datetime, now: dt.datetime) -> tuple[dt.datetime | None, dt.datetime | None]:
+    """(the next slot, never in the past; the slot that passed with no snapshot, or None)."""
+    nt = next_time(sched, last_dt, now)
+    if not nt or nt > now:
+        return nt, None
+    slot = next_time({**sched, "runMissed": False}, last_dt, last_dt + dt.timedelta(seconds=1))
+    return next_time(sched, now, now + dt.timedelta(seconds=1)), min(slot or nt, nt)
+
+
+def fresh_next(repo: str, nexts: dict[str, str], last_by_source: dict[str, str]) -> tuple[dict, dict]:
+    """The saved next times, with any that passed since they were worked out moved on to the next
+    slot from the saved policies (no kopia), plus the slots that passed that way."""
+    now = dt.datetime.now()
+    stale = []
+    for key, when in nexts.items():
+        try:
+            if dt.datetime.fromisoformat(when) <= now:
+                stale.append(key)
+        except (TypeError, ValueError):
+            continue
+    if not stale:
+        return nexts, {}
+    from .policy import load_policies
+    pols = load_policies(repo).get("policies") or {}
+    out, missed = dict(nexts), {}
+    for key in stale:
+        pol = pols.get(key)
+        if not pol:
+            continue
+        last_dt = _to_local_naive(last_by_source.get(key), now)
+        nt, slot = _next_and_missed(pol.get("scheduling") or {}, last_dt, now)
+        if nt:
+            out[key] = nt.isoformat()
+        if slot:
+            missed[key] = slot.isoformat()
+    return out, missed
+
+
+def missed_state(repo: str, last_by_source: dict[str, str], extra: dict[str, str] | None = None) -> dict[str, dict]:
+    """Sources whose slot passed with no snapshot since: {source: {missed_at, quiet, overdue}}.
+
+    ``quiet``: the same computer (user@host) saved a snapshot after the slot, so its backup app ran
+    and this folder had nothing new (kopia saves no snapshot then). ``overdue``: not quiet, and the
+    slot is ``MISSED_GRACE`` old. Worked out when served, since it ages with the clock (trap 85)."""
+    missed = {**load_missed(repo), **(extra or {})}
+    if not missed:
+        return {}
+    newest: dict[str, float] = {}
+    for src, at in last_by_source.items():
+        ts = _iso_ts(at)
+        if ts is not None and src:
+            host = src.split(":", 1)[0]
+            newest[host] = max(newest.get(host, 0.0), ts)
+    now = time.time()
+    out: dict[str, dict] = {}
+    for src, when in missed.items():
+        slot = _iso_ts(when)
+        if slot is None:
+            continue
+        last = _iso_ts(last_by_source.get(src))
+        if last is not None and last >= slot:
+            continue
+        quiet = newest.get(src.split(":", 1)[0], 0.0) >= slot
+        out[src] = {"missed_at": when, "quiet": quiet, "overdue": not quiet and slot < now - MISSED_GRACE}
+    return out
 
 
 def _to_local_naive(iso: str | None, fallback: dt.datetime) -> dt.datetime:
@@ -420,15 +499,18 @@ def compute_next_snapshots(repo: str, force: bool = False) -> dict[str, str]:
     source on every background cycle we REUSE any cached next-time that is still in the future
     and only recompute sources that are missing or past-due (``force`` recomputes all). A
     past-due cached time means a snapshot likely just ran, so recomputing then keeps it fresh.
+    A saved time is never in the past: for a missed slot (kopia's "run it now") it is the slot
+    after, and the missed slot is saved on its own (``load_missed``).
     """
     from .sources import sources_index  # local import avoids a circular dependency
 
     srcs = sources_index(repo)
     now = dt.datetime.now()
     prev = load_next_snapshots(repo) if not force else {}
+    prev_missed = load_missed(repo) if not force else {}
     pols = _recent_policies(repo)
     out: dict[str, str] = {}
-    after: dict[str, str] = {}
+    missed: dict[str, str] = {}
     spawned = reused = 0
     for key, snaps in srcs.items():
         cached = prev.get(key)
@@ -436,6 +518,8 @@ def compute_next_snapshots(repo: str, force: bool = False) -> dict[str, str]:
             try:
                 if dt.datetime.fromisoformat(cached) > now:  # still in the future -> trust it, skip kopia
                     out[key] = cached
+                    if key in prev_missed:
+                        missed[key] = prev_missed[key]
                     continue
             except Exception:
                 pass
@@ -449,19 +533,17 @@ def compute_next_snapshots(repo: str, force: bool = False) -> dict[str, str]:
                 reused += 1
             sched = pol.get("scheduling", {}) or {}
             last_dt = _to_local_naive(snaps[-1].get("startTime") if snaps else None, now)
-            nt = next_time(sched, last_dt, now)
+            nt, slot = _next_and_missed(sched, last_dt, now)
+            if slot:
+                missed[key] = slot.isoformat()
             if nt:
                 out[key] = nt.isoformat()
-                if nt <= now:
-                    na = next_time(sched, now, now + dt.timedelta(seconds=1))
-                    if na:
-                        after[key] = na.isoformat()
         except Exception as exc:  # noqa: BLE001 - per-source, keep going
             log.debug("next_snapshot compute failed for %s: %s", key, exc)
     try:
         from ..index import sidecache
         sidecache.write(_cache_name(repo), out)
-        sidecache.write(_cache_name(repo) + "_after", after)
+        sidecache.write(_cache_name(repo) + "_missed", missed)
     except Exception:  # noqa: BLE001 - a cache write must never fail the computation
         pass
     log.debug("next_snapshots repo=%s: %d sources (%d via policy show, %d from the policy cache)",

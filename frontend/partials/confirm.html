@@ -22,7 +22,7 @@
             <div class="kl-callout" :class="confirmBox.dangerCallout && 'danger'" x-show="confirmBox.callout" x-text="confirmBox.callout"></div>
             <template x-if="confirmBox.input">
               <label class="block"><span class="text-xs text-muted" x-text="confirmBox.input.label"></span>
-                <input class="fld border border-bd bg-surface2 w-full mt-1 text-xs" x-model="confirmBox.value" :type="confirmBox.input.type || 'text'" :min="confirmBox.input.min || null" :placeholder="confirmBox.input.placeholder || ''"></label>
+                <input autocomplete="off" class="fld border border-bd bg-surface2 w-full mt-1 text-xs" x-model="confirmBox.value" :type="confirmBox.input.type || 'text'" :min="confirmBox.input.min || null" :placeholder="confirmBox.input.placeholder || ''"></label>
             </template>
             <template x-if="confirmBox.typeToConfirm">
               <label class="block"><span class="text-xs text-muted">Type <b class="text-fg" x-text="confirmBox.typeToConfirm"></b> to confirm</span>
@@ -32,7 +32,7 @@
           </div>
           <div class="kl-footer">
             <label x-show="confirmBox.dontAsk" class="flex items-center gap-1.5 text-xs text-muted" data-testid="confirm-dont-ask">
-              <input type="checkbox" x-model="confirmBox.dontAskOn">Don't ask again</label>
+              <input autocomplete="off" type="checkbox" x-model="confirmBox.dontAskOn">Don't ask again</label>
             <button x-show="confirmBox.command" @click="copyText(confirmBox.command)" class="kl-btn quiet">Copy command</button>
             <span class="spacer"></span>
             <button @click="confirmResolve(false)" class="kl-btn" data-cf="cancel">Cancel</button>

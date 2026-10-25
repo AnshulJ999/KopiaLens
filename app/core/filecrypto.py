@@ -46,6 +46,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from .applog import get_logger
+from . import atomicfile
 
 log = get_logger("filecrypto")
 
@@ -214,7 +215,7 @@ def _atomic_write(path: str, payload: bytes) -> None:
         fh.write(payload)
         fh.flush()
         os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    atomicfile.replace(tmp, path, quiet=True)
 
 
 def read_text(path: str) -> str | None:
@@ -666,7 +667,7 @@ def _replace_verified(path: str, payload: bytes, verify) -> None:
         with open(tmp, "rb") as fh:
             if not verify(fh.read()):
                 raise RuntimeError("the rewritten copy does not match the original")
-        os.replace(tmp, path)
+        atomicfile.replace(tmp, path, quiet=True)
     finally:
         for stale in (tmp,):
             try:

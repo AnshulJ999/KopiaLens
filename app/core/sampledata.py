@@ -34,6 +34,7 @@ from config import APP_VERSION, CACHEDIR, DATA_DIR, HERE, SELF_EXE
 from . import demoreplies, fakenames
 from .applog import get_logger
 from .sampleprofile import PROFILE_PATH
+from . import atomicfile
 
 log = get_logger("sampledata")
 
@@ -1036,7 +1037,7 @@ def build(out: str | None = None, *, files: int = DEFAULT_FILES, seed: int = DEF
         log.warning("sample data: words outside the generator's lists: %s", names["examples"])
     if os.path.isdir(target):
         shutil.rmtree(target)
-    os.replace(building, target)
+    atomicfile.replace(building, target)
     size = sum(os.path.getsize(os.path.join(dp, f)) for dp, _d, fs in os.walk(target) for f in fs)
     return {"path": target, "bytes": size, "warnings": warnings or None, **{k: child.get(k) for k in (
         "files", "folders", "snapshots", "contents", "stored", "stages", "errors", "backblaze",

@@ -30,13 +30,23 @@ const fmtBytes = (value) => {
 const escHtml = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\x22/g, "&quot;");
 // Icons (css/icons.css, built from packaging/icons.json) for HTML built in JS.
 const iconHtml = (name, cls = "") => `<i class="ic ic-${name}${cls ? " " + cls : ""}"></i>`;
+// File kinds: one icon per kind in every set except Material, which picks by extension, file
+// name or folder name from the theme's own map (js/fileicons-material.js).
 const _FILE_KINDS = [
-  ["file-image", "jpg jpeg png gif webp heic heif bmp tif tiff svg ico raw cr2 cr3 nef arw dng psd"],
-  ["file-audio", "mp3 flac wav m4a aac ogg opus wma aiff alac"],
-  ["file-video", "mp4 mkv mov avi wmv webm m4v mts m2ts ts flv mpg mpeg"],
-  ["file-zip", "zip 7z rar tar gz tgz bz2 xz zst iso cab"],
+  ["file-image", "jpg jpeg png gif webp heic heif avif jxl bmp tif tiff svg ico raw cr2 cr3 nef arw dng psd"],
+  ["file-audio", "mp3 flac wav m4a aac ogg opus wma aiff alac mid midi"],
+  ["file-video", "mp4 mkv mov avi wmv webm m4v mts m2ts ts flv mpg mpeg 3gp"],
+  ["file-zip", "zip 7z rar tar gz tgz bz2 xz zst cab lz4 lzma tbz2 txz"],
+  ["file-disk", "iso img vhd vhdx vmdk qcow2 dmg wim esd vdi"],
+  ["file-exe", "exe msi dll appimage deb rpm apk msix appx sys pkg"],
+  ["file-pdf", "pdf"],
+  ["file-doc", "doc docx rtf odt pages"],
+  ["file-sheet", "xls xlsx xlsm ods csv tsv numbers"],
+  ["file-slides", "ppt pptx odp key"],
+  ["file-db", "db sqlite sqlite3 mdb accdb dbf"],
+  ["file-font", "ttf otf woff woff2 fon"],
   ["file-code", "py js ts jsx tsx json html htm css c cpp h hpp cs go rs java kt sh bat cmd ps1 xml yml yaml toml ini sql lua rb php"],
-  ["file-text", "txt md log csv pdf doc docx rtf odt xls xlsx ppt pptx"],
+  ["file-text", "txt md log nfo"],
 ].map(([icon, exts]) => [icon, new Set(exts.split(" "))]);
 const fileIconName = (name) => {
   const m = /\.([^.\\/]+)$/.exec(String(name || ""));
@@ -44,12 +54,61 @@ const fileIconName = (name) => {
   const hit = ext && _FILE_KINDS.find(([, set]) => set.has(ext));
   return hit ? hit[0] : "file";
 };
-// The icon in front of a file or folder name in tables: Tabler's set ("t-" icons). Folders are
-// tinted like the old folder emoji. Other sets come from the Design menu (kl-name-ic, app.css).
-const NAME_ICON_PREFIX = "t-";
-const itemIconHtml = (name, folder) => (folder
-  ? iconHtml(NAME_ICON_PREFIX + "folder", "kl-name-ic kl-folder-ic mr-1")
-  : iconHtml(NAME_ICON_PREFIX + fileIconName(name), "kl-name-ic text-muted mr-1"));
+// The icon in front of a file or folder name: the set from Settings > Appearance (stamped on
+// <html> as data-fileicons). The Design menu (dev add-on) can try others: Phosphor and Fluent.
+const FILE_ICON_SETS = ["material", "filled", "outline", "emoji"];
+const fileIconSet = () => {
+  const el = document.documentElement;
+  const tried = el.getAttribute("data-d-fileicons");
+  if (tried && tried !== "setting") return tried;
+  const s = el.getAttribute("data-fileicons");
+  return FILE_ICON_SETS.includes(s) ? s : "material";
+};
+const _FILE_EMOJI = {
+  folder: "\u{1F4C1}", file: "\u{1F4C4}", "file-image": "\u{1F5BC}️", "file-audio": "\u{1F3B5}",
+  "file-video": "\u{1F3AC}", "file-zip": "\u{1F4E6}", "file-code": "\u{1F4BB}", "file-text": "\u{1F4DD}",
+  "file-pdf": "\u{1F4D5}", "file-doc": "\u{1F4C3}", "file-sheet": "\u{1F4CA}", "file-slides": "\u{1F4FD}️",
+  "file-exe": "⚙️", "file-disk": "\u{1F4BF}", "file-db": "\u{1F5C4}️", "file-font": "\u{1F524}",
+};
+let _matIndex = null;
+const _materialIcon = (name, folder) => {
+  if (typeof MATERIAL_ICONS === "undefined") return folder ? "folder" : "file";
+  if (!_matIndex) {
+    const index = (groups) => {
+      const out = new Map();
+      for (const [icon, keys] of Object.entries(groups)) for (const k of keys.split("|")) out.set(k, icon);
+      return out;
+    };
+    _matIndex = { ext: index(MATERIAL_ICONS.ext), names: index(MATERIAL_ICONS.names), folders: index(MATERIAL_ICONS.folders) };
+  }
+  const base = baseName(String(name || "")).toLowerCase();
+  if (folder) return _matIndex.folders.get(base) || MATERIAL_ICONS.folder;
+  const named = _matIndex.names.get(base);
+  if (named) return named;
+  for (let i = base.indexOf("."); i >= 0; i = base.indexOf(".", i + 1)) {   // longest extension first
+    const hit = _matIndex.ext.get(base.slice(i + 1));
+    if (hit) return hit;
+  }
+  return MATERIAL_ICONS.file;
+};
+const _iconFile = (pack, file) => appUrl(`/static/vendor/icons/${pack}/${file}.svg`);
+// set: one of FILE_ICON_SETS or a Design menu set; leave it out for the current one.
+const itemIconHtml = (name, folder, set = fileIconSet()) => {
+  const kind = folder ? "folder" : fileIconName(name);
+  if (set === "material" || set === "fluent") {
+    const file = set === "material" ? _materialIcon(name, folder) : kind;
+    const pack = set === "material" ? "material" : "fluent-emoji";
+    const light = set === "material" && typeof MATERIAL_ICONS !== "undefined" && MATERIAL_ICONS.light[file];
+    const vars = `--icd:url('${_iconFile(pack, file)}')` + (light ? `;--icl:url('${_iconFile(pack, light)}')` : "");
+    return `<i class="ic kl-name-ic kl-img-ic mr-1" style="${vars}" aria-hidden="true"></i>`;
+  }
+  if (set === "emoji") return `<span class="kl-name-ic kl-emoji-ic mr-1" aria-hidden="true">${_FILE_EMOJI[kind]}</span>`;
+  const solid = set === "filled" || set === "ph-fill" || set === "ph-duotone";
+  const tint = folder ? "kl-folder-ic" : solid ? "" : "text-muted";
+  const colour = solid && !folder ? ` style="color:var(--ft-${kind.replace("file-", "") || "file"})"` : "";
+  const icon = (set === "filled" ? "tf-" : "t-") + kind;   // icons.css swaps the t- icons for Phosphor
+  return `<i class="ic ic-${icon} kl-name-ic ${tint} mr-1"${colour} aria-hidden="true"></i>`;
+};
 // One list for every pause menu (indexing and backups, app and tray). 0 = until resumed.
 const PAUSE_CHOICES = [[1, "1 hour"], [4, "4 hours"], [12, "12 hours"], [24, "1 day"], [72, "3 days"], [168, "1 week"], [0, "Until I resume"]];
 const fmtPhys = (v) => (v === null || v === undefined ? "—" : fmtBytes(v));

@@ -94,7 +94,7 @@
             @click="custom = false; {{ model }} = c[0]; {{ change }}" x-text="c[1] + ', ' + c[0]"></button>
   </template>
   <button type="button" class="kl-chip" :class="custom || !timeChips().some((c) => c[0] === {{ model }}) ? 'on' : ''" :disabled="{{ disabled }}" @click="custom = true">Custom…</button>
-  <input x-show="custom || !timeChips().some((c) => c[0] === {{ model }})" type="time" x-model="{{ model }}" @change="{{ change }}" :disabled="{{ disabled }}"
+  <input autocomplete="off" x-show="custom || !timeChips().some((c) => c[0] === {{ model }})" type="time" x-model="{{ model }}" @change="{{ change }}" :disabled="{{ disabled }}"
          class="fld border border-bd bg-surface2 disabled:opacity-50" aria-label="Time">
 </div>
 {%- endmacro %}
@@ -111,7 +111,7 @@
     <button type="button" role="radio" :aria-checked="custom || !timeChips().some((c) => c[0] === {{ model }})"
             :class="custom || !timeChips().some((c) => c[0] === {{ model }}) ? 'on' : ''" @click="custom = true">Custom…</button>
   </span>
-  <input x-show="custom || !timeChips().some((c) => c[0] === {{ model }})" type="time" x-model="{{ model }}" @change="{{ change }}"
+  <input autocomplete="off" x-show="custom || !timeChips().some((c) => c[0] === {{ model }})" type="time" x-model="{{ model }}" @change="{{ change }}"
          class="fld border border-bd bg-surface2" aria-label="Custom time">
 </div>
 {%- endmacro %}
@@ -119,8 +119,8 @@
 {#- A duration setting: a free number plus a unit, stored in seconds (klDur in settings.js). -#}
 {% macro duration(prop, key, min=0) -%}
 <div class="flex items-center gap-2" x-data="klDur('{{ prop }}', '{{ key }}')">
-  <input type="number" :min="{{ min }} / Number(unit)" step="any" x-model.number="n" @change="commit()" class="fld border border-bd bg-surface2 w-24" aria-label="Amount">
-  <select x-model="unit" @change="relabel()" class="fld border border-bd bg-surface2" aria-label="Unit">
+  <input autocomplete="off" type="number" :min="{{ min }} / Number(unit)" step="any" x-model.number="n" @change="commit()" class="fld border border-bd bg-surface2 w-24" aria-label="Amount">
+  <select autocomplete="off" x-model="unit" @change="relabel()" class="fld border border-bd bg-surface2" aria-label="Unit">
     <option value="1">seconds</option>
     <option value="60">minutes</option>
     <option value="3600">hours</option>

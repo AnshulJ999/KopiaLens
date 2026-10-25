@@ -28,7 +28,11 @@ const themePart = {
   ],
   DENSITY_PCT: { min: 80, max: 115 },
   theme: "system", density: "normal", densityPct: 100, font: "inter",
-  lightTheme: "daylight", darkTheme: "lens", sortArrows: "sorted",
+  lightTheme: "daylight", darkTheme: "lens", sortArrows: "sorted", fileIcons: "material",
+  FILE_ICON_CHOICES: [
+    { id: "material", label: "Material" }, { id: "filled", label: "Filled" },
+    { id: "outline", label: "Outline" }, { id: "emoji", label: "Emoji" },
+  ],
 
   _themeIsDark(id) {
     const t = this.THEMES.find((x) => x.id === id);
@@ -108,6 +112,18 @@ const themePart = {
     this.klSet({ font: id });
   },
 
+  // Icons before file and folder names; open tables redraw in the new set.
+  setFileIcons(v) {
+    this.fileIcons = FILE_ICON_SETS.includes(v) ? v : "material";
+    document.documentElement.dataset.fileicons = this.fileIcons;
+    this._redrawTables();
+    this.klSet({ file_icons: this.fileIcons });
+  },
+  // A few sample names in one set, for the choice in Settings > Appearance.
+  fileIconPreview(set) {
+    return [["Documents", true], ["photo.jpg"], ["song.mp3"], ["report.pdf"], ["budget.xlsx"], ["backup.zip"]]
+      .map(([n, folder]) => itemIconHtml(n, !!folder, set)).join("");
+  },
   // Table header sort arrows: "sorted" shows one only on the sorted column (and on hover).
   setSortArrows(v) {
     this.sortArrows = v === "all" ? "all" : "sorted";
@@ -143,5 +159,7 @@ const themePart = {
     el.dataset.font = this.font;
     this.sortArrows = kl.sort_arrows === "all" ? "all" : "sorted";
     el.dataset.sortarrows = this.sortArrows;
+    this.fileIcons = FILE_ICON_SETS.includes(kl.file_icons) ? kl.file_icons : "material";
+    el.dataset.fileicons = this.fileIcons;
   },
 };

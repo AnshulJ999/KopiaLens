@@ -7,7 +7,7 @@
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Update channel</span>
-                  <select x-model="updateChannel" @change="saveKl('update_channel')" class="fld border border-bd bg-surface2" data-testid="update-channel">
+                  <select autocomplete="off" x-model="updateChannel" @change="saveKl('update_channel')" class="fld border border-bd bg-surface2" data-testid="update-channel">
                     <option value="stable">Stable</option>
                     <option value="beta">Beta</option>
                   </select></div>

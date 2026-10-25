@@ -44,7 +44,7 @@
                 </span>
               </div>
               <label class="flex items-center gap-1.5 text-xs cursor-pointer" x-show="delPanel.method === 'snapshots'" title="Also delete snapshots holding identical copies at other paths">
-                <input type="checkbox" :checked="delPanel.copies" @change="delToggleCopies()"> Include identical copies
+                <input autocomplete="off" type="checkbox" :checked="delPanel.copies" @change="delToggleCopies()"> Include identical copies
               </label>
             </div>
 
@@ -58,7 +58,7 @@
                   <div class="kl-list" style="max-height:132px">
                     <template x-for="c in delCandidates()" :key="c.source">
                       <label class="li cursor-pointer">
-                        <input type="checkbox" class="shrink-0" :checked="delTicked(c.source)" @change="delToggleSource(c.source)">
+                        <input autocomplete="off" type="checkbox" class="shrink-0" :checked="delTicked(c.source)" @change="delToggleSource(c.source)">
                         <span class="font-mono break-all grow" x-text="shortSource(c.source)"></span>
                         <span class="pill shrink-0" :class="c.holds ? 'ok' : ''" x-text="c.holds ? 'holds it' : 'same content'"
                               :title="c.holds ? 'Backs up this path' : 'Holds identical content at another path'"></span>
@@ -165,8 +165,9 @@
             <span class="spacer"></span>
             <template x-if="!delPanel.flow">
               <span class="flex items-center gap-2">
+                <span class="kl-note text-warn" x-show="wmWhy('full')" x-text="wmWhy('full')"></span>
                 <button class="kl-btn" @click="closeDelete()">Cancel</button>
-                <button class="kl-btn danger" @click="delExecute($event)" :disabled="!delReady() || delPanel.dry.running"><span x-text="delConfirmLabel() + '…'"></span> <span class="protag" x-show="proTag(delFeature())" :title="proTagTitle()">PRO</span></button>
+                <button class="kl-btn danger" @click="delExecute($event)" :disabled="!delReady() || delPanel.dry.running || !!wmOff('full')"><span x-text="delConfirmLabel() + '…'"></span> <span class="protag" x-show="proTag(delFeature())" :title="proTagTitle()">PRO</span></button>
               </span>
             </template>
             <template x-if="delPanel.flow">
@@ -257,8 +258,9 @@
           <div class="kl-footer shrink-0">
             <span class="kl-note">Rules are added first. A policy backup is taken before each.</span>
             <span class="spacer"></span>
+            <span class="kl-note text-warn" x-show="wmWhy('full')" x-text="wmWhy('full')"></span>
             <button class="kl-btn" @click="flowBackToDelete()">Back</button>
-            <button class="kl-btn danger" @click="flowExecute()">Exclude and delete…</button>
+            <button class="kl-btn danger" @click="flowExecute()" :disabled="!!wmOff('full')">Exclude and delete…</button>
           </div>
         </div>
       </template>

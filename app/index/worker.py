@@ -37,6 +37,7 @@ import os
 import sys
 import threading
 import time
+from ..core import atomicfile
 
 # Support being run directly (not via -m) too, mirroring app/backblaze/worker.py.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -81,7 +82,7 @@ def write_progress(repo: str, payload: dict) -> None:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(status, fh)
-        os.replace(tmp, path)
+        atomicfile.replace(tmp, path)
         from ..core import filecrypto
         filecrypto.write_json(detail_path(repo), {k: payload.get(k) for k in DETAIL_KEYS})
     except Exception:  # noqa: BLE001 - progress reporting must never affect the real work

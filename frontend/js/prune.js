@@ -3,7 +3,6 @@
 const prunePart = {
 
     async openPrune(fullPath, source = null) {
-      if (!this.wmGuard("full")) return;
       if (!fullPath) return;
       const seq = ++this._pruneSeq;
       ++this._prunePriceSeq;
@@ -169,7 +168,7 @@ const prunePart = {
       return this.klDry("/api/prune/dry-run", { repo: this.repo, items: p.price.commands, full_path: p.full_path }, p.dry);
     },
     async pruneExecute(ev) {
-      if (!this.proGate("prune", ev) || !this.pruneCanRun()) return;
+      if (!this.wmGuard("full") || !this.proGate("prune", ev) || !this.pruneCanRun()) return;
       const p = this.prune, price = p.price, noun = this.pruneNoun();
       const kept = p.rows.filter((r) => !p.tick[r.id]);
       const keptText = kept.length <= 4 ? kept.map((r) => fmtDate(r.last)).join(", ")

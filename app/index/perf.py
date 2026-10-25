@@ -18,6 +18,7 @@ import time
 from contextlib import contextmanager
 
 from ..core.applog import get_logger
+from ..core import atomicfile
 
 log = get_logger("perf")
 
@@ -303,7 +304,7 @@ def finish(summary: dict) -> dict | None:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")
-        os.replace(tmp, path)
+        atomicfile.replace(tmp, path)
     except Exception as exc:  # noqa: BLE001 - a record that fails to save must not fail the run
         log.warning("perf record for repo=%s not saved: %s", run.repo, exc)
     log.info("perf: peak rss %d MB, kopia rss %d MB, spill %d MB; counts %s; inputs %s; "

@@ -28,6 +28,7 @@ import pyarrow.parquet as pqt
 from config import DATA_DIR
 
 from ..core.applog import get_logger
+from ..core import atomicfile
 
 log = get_logger("bz.pq")
 
@@ -169,7 +170,7 @@ def ensure_staged_state(staged: str) -> bool:
                        crypto.copy_options(encrypted=True)))
     finally:
         con.close()
-    os.replace(tmp, staged)
+    atomicfile.replace(tmp, staged)
     return True
 
 
@@ -200,7 +201,7 @@ def publish(gen: int, drive_rels: dict[str, str], moves: list[tuple[str, str]],
     for staged, rel in moves:
         dst = os.path.join(r, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        os.replace(staged, dst)
+        atomicfile.replace(staged, dst)
     # The same self-check the index build runs: every file this generation will name must be
     # in the state the manifest is about to declare. A PyArrow write that skipped the
     # re-encode would otherwise land plaintext under an `encrypted: true` manifest.
@@ -225,7 +226,7 @@ def publish(gen: int, drive_rels: dict[str, str], moves: list[tuple[str, str]],
         os.fsync(fh.fileno())
     for attempt in range(12):
         try:
-            os.replace(tmp, path)
+            atomicfile.replace(tmp, path)
             break
         except PermissionError:
             if attempt == 11:

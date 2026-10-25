@@ -27,6 +27,7 @@ from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 
 from config import DATA_DIR
+from . import atomicfile
 
 LOG_DIR = os.path.join(DATA_DIR, "logs")
 APP_LOG_DIR = os.path.join(LOG_DIR, "app")
@@ -89,7 +90,7 @@ def migrate() -> int:
         if os.path.exists(dest):
             continue
         try:
-            os.replace(os.path.join(LOG_DIR, name), dest)
+            atomicfile.replace(os.path.join(LOG_DIR, name), dest)
         except OSError as exc:  # noqa: BLE001 - a locked file must not stop the others
             logging.getLogger("kopialens.applog").warning("could not move legacy log %s: %s",
                                                            name, exc)

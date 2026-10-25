@@ -1,28 +1,29 @@
 {% from "partials/_macros.html" import task_counters %}
       <section x-show="active==='tasks'" class="h-full flex flex-col gap-2 min-h-0" data-testid="tasks-tab">
         <div class="kl-toolbar flex-wrap">
+          <span class="font-medium">Tasks</span>
           <span class="kl-seg">
             <span :class="taskFilter.status === 'all' ? 'on' : ''" @click="taskFilter.status = 'all'; renderTasks()">All</span>
             <span :class="taskFilter.status === 'running' ? 'on' : ''" @click="taskFilter.status = 'running'; renderTasks()">Running</span>
             <span :class="taskFilter.status === 'failed' ? 'on' : ''" @click="taskFilter.status = 'failed'; renderTasks()">Failed</span>
           </span>
-          <select x-model="taskFilter.kind" @change="renderTasks()" class="fld h-7 border border-bd bg-surface text-xs" style="width:auto" aria-label="Kind">
+          <select autocomplete="off" x-model="taskFilter.kind" @change="renderTasks()" class="fld h-7 border border-bd bg-surface text-xs" style="width:auto" aria-label="Kind">
             <option value="all">All kinds</option>
             <template x-for="k in taskKinds()" :key="k"><option :value="k" :selected="k == taskFilter.kind" x-text="k"></option></template>
           </select>
-          <select x-model="taskFilter.repo" @change="renderTasks()" class="fld h-7 border border-bd bg-surface text-xs" style="width:auto" aria-label="Repository">
+          <select autocomplete="off" x-model="taskFilter.repo" @change="renderTasks()" class="fld h-7 border border-bd bg-surface text-xs" style="width:auto" aria-label="Repository">
             <option value="all">All repositories</option>
             <template x-for="r in repos.filter((x) => x.kind !== 'backblaze')" :key="r.id"><option :value="r.id" :selected="r.id == taskFilter.repo" x-text="r.name"></option></template>
           </select>
           <label class="flex items-center gap-1.5 text-xs" :title="'Tasks that finished without errors in under ' + countOf(taskRoutineSeconds, 'second')">
-            <input type="checkbox" x-model="taskHideRoutine" @change="klSet({ task_hide_routine: taskHideRoutine }); renderTasks()" data-testid="task-hide-routine">Hide routine</label>
-          <input x-model="taskFilter.text" @input.debounce.200ms="renderTasks()" placeholder="Filter by folder or text"
+            <input autocomplete="off" type="checkbox" x-model="taskHideRoutine" @change="klSet({ task_hide_routine: taskHideRoutine }); renderTasks()" data-testid="task-hide-routine">Hide routine</label>
+          <input autocomplete="off" x-model="taskFilter.text" @input.debounce.200ms="renderTasks()" placeholder="Filter by folder or text"
                  class="fld h-7 border border-bd bg-surface2 text-xs w-56" aria-label="Filter tasks">
           <span class="grow"></span>
           <span class="text-xs text-muted" x-show="taskHistoryDays" x-text="'Kept ' + taskHistoryDays + ' days'"
                 title="How long finished backups and maintenance stay here. Change it in Settings, Advanced."></span>
-          <button class="kl-btn" @click="loadTasks()" title="Reload the list"><i class="ic ic-refresh"></i> Refresh</button>
           <span class="kl-help" tabindex="0" role="button" data-doc @click="openDocs('tasks')" @keydown.enter.prevent="openDocs('tasks')" title="Backups, maintenance and KopiaLens jobs, running and finished.">?</span>
+          <button class="kl-btn" @click="refreshTasks()" :disabled="tasksRefreshing" title="Reload the list"><i class="ic ic-refresh" :class="tasksRefreshing ? 'animate-spin' : ''"></i> <span x-text="tasksRefreshing ? 'Refreshing…' : 'Refresh'"></span></button>
         </div>
         <template x-if="mounts.length">
           <div class="shrink-0">

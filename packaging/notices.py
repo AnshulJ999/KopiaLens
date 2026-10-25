@@ -1,7 +1,11 @@
 """Write THIRD-PARTY-NOTICES.txt: the licences of everything a KopiaLens build ships.
 
     python packaging/notices.py <out file> [--python <exe>] [--kopia-license <file>] [--es-license <file>]
-        [--cargo <Cargo.toml>]... [--cargo-metadata <json>]... [--target <rust triple>]
+        [--cargo <Cargo.toml>]... [--cargo-metadata <json>]... [--target <rust triple>] [--parts <json>]
+    python packaging/notices.py merge <out file> <parts json>...
+
+`--parts` also saves the notices as data; `merge` joins several platforms' parts into one file
+(the release's own THIRD-PARTY-NOTICES.txt, covering every platform).
 
 Python packages are read from the interpreter that compiles the server (the build venv): every
 package requirements.txt pulls in, plus Python itself and Nuitka's runtime. Rust crates come from
@@ -99,6 +103,20 @@ class Notices:
 
     def section(self, title: str, lines: list[str]) -> None:
         self.listing.append((title, lines))
+
+    def to_parts(self) -> dict:
+        return {"listing": self.listing, "groups": self.groups}
+
+    def merge_parts(self, parts: dict) -> None:
+        titles = {title: lines for title, lines in self.listing}
+        for title, lines in parts["listing"]:
+            if title not in titles:
+                titles[title] = []
+                self.listing.append((title, titles[title]))
+            titles[title].extend(ln for ln in lines if ln not in titles[title])
+        for key, group in parts["groups"].items():
+            mine = self.groups.setdefault(key, {"text": group["text"], "users": []})
+            mine["users"].extend(u for u in group["users"] if u not in mine["users"])
 
     def render(self) -> str:
         out = ["KopiaLens third-party notices", "",
@@ -244,7 +262,23 @@ def add_rust(n: Notices, metas: list[dict]) -> None:
     n.section("Rust crates (desktop app, command-line launcher, disk scanner)", lines)
 
 
+def merge(out: str, parts: list[str]) -> None:
+    n = Notices()
+    for path in parts:
+        with open(path, encoding="utf-8") as fh:
+            n.merge_parts(json.load(fh))
+    with open(out, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(n.render())
+    print(f"notices: {out} merged from {len(parts)} part(s) ({len(n.groups)} licence texts)")
+
+
 def main(argv: list[str] | None = None) -> None:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["merge"]:
+        if len(argv) < 3:
+            raise SystemExit("usage: notices.py merge <out file> <parts json>...")
+        merge(argv[1], argv[2:])
+        return
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("out")
     ap.add_argument("--python", default=sys.executable)
@@ -253,6 +287,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--cargo", action="append", default=[], help="a Cargo.toml whose crates ship")
     ap.add_argument("--cargo-metadata", action="append", default=[], help="saved `cargo metadata` JSON")
     ap.add_argument("--target", help="Rust target triple for --cargo (default: this machine's)")
+    ap.add_argument("--parts", help="also save the notices as data here, for `merge`")
     args = ap.parse_args(argv)
     if args.cargo and not args.target:
         host = subprocess.run(["rustc", "-vV"], capture_output=True, text=True, timeout=60).stdout
@@ -269,6 +304,9 @@ def main(argv: list[str] | None = None) -> None:
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(n.render())
+    if args.parts:
+        with open(args.parts, "w", encoding="utf-8", newline="\n") as fh:
+            json.dump(n.to_parts(), fh)
     print(f"notices: {args.out} ({len(n.groups)} licence texts)")
 
 

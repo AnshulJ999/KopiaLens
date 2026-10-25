@@ -35,6 +35,7 @@ import time
 
 from ..settings import load_settings, raw_kopialens_settings
 from .applog import get_logger
+from . import atomicfile
 
 log = get_logger("netaccess")
 
@@ -280,10 +281,10 @@ def ensure_self_signed() -> tuple[str, str]:
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as fh:
         fh.write(key_pem)
-    os.replace(tmp, key_path)
+    atomicfile.replace(tmp, key_path)
     with open(cert_path + ".tmp", "wb") as fh:
         fh.write(cert.public_bytes(serialization.Encoding.PEM))
-    os.replace(cert_path + ".tmp", cert_path)
+    atomicfile.replace(cert_path + ".tmp", cert_path)
     log.info("made a self-signed HTTPS certificate for %s (valid %d days)", ", ".join(dns + ips), CERT_DAYS)
     return cert_path, key_path
 

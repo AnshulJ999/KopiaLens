@@ -26,6 +26,7 @@ import threading
 import time
 import zipfile
 import zlib
+from . import atomicfile
 
 log = logging.getLogger("kopialens.configbackup")
 
@@ -111,7 +112,7 @@ def _atomic_write(path: str, data: bytes) -> None:
         fh.write(data)
         fh.flush()
         os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    atomicfile.replace(tmp, path)
 
 
 def _valid(name: str, data: bytes) -> bool:
@@ -205,7 +206,7 @@ def create(kind: str, note: str = "") -> dict | None:
                     "files": sorted(live)}
             with open(os.path.join(tmp, "info.json"), "w", encoding="utf-8") as fh:
                 json.dump(info, fh, indent=2)
-            os.replace(tmp, final)
+            atomicfile.replace(tmp, final)
         except OSError as exc:
             log.warning("config backup (%s) failed: %s", kind, exc)
             shutil.rmtree(tmp, ignore_errors=True)
@@ -515,7 +516,7 @@ def recover(name: str) -> bool:
         kept = None
         if os.path.exists(path):
             kept = f"{path}.damaged-{time.strftime('%Y%m%d-%H%M%S')}"
-            os.replace(path, kept)
+            atomicfile.replace(path, kept)
         source = None
         last_good = os.path.join(root(), "last-good", name)
         candidates = [({"id": "last-good", "at": os.path.getmtime(last_good)}, last_good)

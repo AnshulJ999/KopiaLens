@@ -77,7 +77,7 @@ NO_REPO_WRITE = {
     "/api/actions/remove-detail", "/api/actions/remove-list", "/api/actions/remove-plan-dry-run",
     "/api/actions/snapshot-delete-dry-run", "/api/actions/browse-folder", "/api/actions/folder-reclaim",
     "/api/actions/batch-detail", "/api/actions/compact",
-    "/api/app/restart", "/api/index/pause", "/api/index/resume", "/api/config-backups",
+    "/api/app/restart", "/api/app/autostart", "/api/index/pause", "/api/index/resume", "/api/config-backups",
     "/api/config-backups/{backup_id}/restore", "/api/config-backups/import",
     "/api/config-backups/import/apply", "/api/config-backups/notices/{notice_id}/dismiss",
     "/api/index/pending/run", "/api/index/build", "/api/settings", "/api/settings/table",

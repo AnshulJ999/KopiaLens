@@ -391,6 +391,15 @@ class _PinnedCursor:
                 out = lanes.run(self._cur, lambda: fn(*args, **kwargs))
             else:
                 out = fn(*args, **kwargs)
+        except duckdb.InterruptException:
+            # DuckDB can do the work while rows are fetched, outside lanes.run: a request the
+            # browser abandoned is a cancel there too, not a 500.
+            sc = lanes.current()
+            if sc is not None and sc.cancelled:
+                raise lanes.RequestCancelled() from None
+            log.debug("%s interrupted without a cancel (%s %s); interrupted by %s", name,
+                      sc.method if sc else "", sc.path if sc else "", lanes._who_interrupted(self._cur))
+            raise
         except duckdb.OutOfMemoryException as exc:
             log.warning("query ran out of memory (limit %s): %s", resolve_limits()[0],
                         str(exc).splitlines()[0])

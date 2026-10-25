@@ -36,6 +36,7 @@ from config import APP_VERSION, CACHEDIR, DATA_DIR, HERE
 from ..index import store
 from . import demoreplies, fakenames
 from .applog import get_logger
+from . import atomicfile
 
 log = get_logger("demo")
 
@@ -539,7 +540,7 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True) -> dict:
     warnings = _leak_warnings(leaks, finished)
     if os.path.isdir(target):
         shutil.rmtree(target)
-    os.replace(building, target)
+    atomicfile.replace(building, target)
     totals = {k: sum(p[k] for p in per_repo.values())
               for k in ("renamed", "re_rolled", "kept_by_design", "recorded")}
     result = {"path": target, "rows": per_repo[ids[0]]["rows"] if len(ids) == 1 else

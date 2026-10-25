@@ -3,7 +3,6 @@
 const sourceOpsPart = {
   // ---- New snapshot ----
   openNewSnap(path) {
-    if (!this.wmGuard("non_destructive")) return;
     const keep = this.newSnap && !path ? this.newSnap.path : "";
     this.newSnap = { path: path || keep, check: null, checking: false, error: "", est: null, description: "", busy: false };
     if (this.newSnap.path) this.newSnapCheck();
@@ -76,7 +75,7 @@ const sourceOpsPart = {
   },
   async newSnapStart() {
     const g = this.newSnap;
-    if (!g || !g.check || g.busy) return;
+    if (!g || !g.check || g.busy || !this.wmGuard("non_destructive")) return;
     g.busy = true;
     const id = await this.startJob("snapshot_create", { source: g.check.source, description: g.description || "" }, g.check.path);
     g.busy = false;
@@ -85,7 +84,6 @@ const sourceOpsPart = {
 
   // ---- Delete a whole source ----
   async openDeleteSource(source) {
-    if (!this.wmGuard("full")) return;
     this.srcDel = { source, info: null, policy: false, error: "", busy: false };
     try {
       const d = await getJson(`/api/newsnap/source?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(source)}`);
@@ -104,7 +102,7 @@ const sourceOpsPart = {
   },
   async srcDelRun() {
     const g = this.srcDel;
-    if (!g || !g.info || g.busy) return;
+    if (!g || !g.info || g.busy || !this.wmGuard("full")) return;
     const row = this.srcDelRow();
     const n = g.info.snapshots;
     const facts = [["Source", g.source], ["Snapshots", String(n)]];

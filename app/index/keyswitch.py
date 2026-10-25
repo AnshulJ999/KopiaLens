@@ -30,6 +30,7 @@ from config import CACHEDIR, DATA_DIR, REPOS, repo_kind
 
 from ..core.applog import get_logger
 from . import crypto, publish, store
+from ..core import atomicfile
 
 log = get_logger("keyswitch")
 
@@ -389,7 +390,7 @@ def switch_caches(on: bool, say=None) -> dict:
                                    % crypto.parquet_read(_fwd(tmp), encrypted=on)).fetchone()[0]
                 if back != rows:
                     raise RuntimeError(f"row count changed {rows} -> {back}")
-                os.replace(tmp, path)
+                atomicfile.replace(tmp, path)
                 done += 1
             except Exception as exc:  # noqa: BLE001 - one cache must not stop the rest
                 log.warning("cache %s could not be rewritten (%s) - dropping it so it rebuilds "

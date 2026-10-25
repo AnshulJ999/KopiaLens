@@ -284,6 +284,18 @@ def os_formats() -> dict:
     return dict(_FORMATS)
 
 
+def restart_kind() -> str:
+    """How the app's Restart works here: "desktop" (the desktop app restarts its server), "addon"
+    (Home Assistant's watchdog), "container" (Docker's restart rule), or "" (a service or a source
+    run, where whatever started KopiaLens restarts it)."""
+    if os.environ.get("KOPIALENS_SHELL_TOKEN"):
+        return "desktop"
+    if not in_docker():
+        return ""
+    from .basepath import ingress_enabled
+    return "addon" if ingress_enabled() else "container"
+
+
 def info(client_host: str | None) -> dict:
     return {
         # Applies only when the browser runs on this computer; elsewhere its own language decides.
@@ -296,4 +308,5 @@ def info(client_host: str | None) -> dict:
         "native_picker_possible": native_picker_possible(),
         "mount": {**mount_support(), "dir": mount_dir(), "host_dir": mount_host_dir()},
         "data_persistent": data_persistent(),
+        "restart": restart_kind(),
     }

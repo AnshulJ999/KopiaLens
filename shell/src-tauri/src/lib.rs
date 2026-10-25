@@ -343,6 +343,7 @@ pub fn poll_once(app: &AppHandle) {
                     poll_once(&app);
                 });
             }
+            sync_autostart(app, &sh, v);
         }
         Err(_) => *sh.state.lock().unwrap() = None,
     }
@@ -350,6 +351,26 @@ pub fn poll_once(app: &AppHandle) {
         h = Health::Starting;
     }
     tray::refresh(app, &sh, h);
+}
+
+/// Start at logon in Settings: apply a change the server holds, and report the real setting
+/// whenever the server's copy differs (it forgets it on every restart).
+fn sync_autostart(app: &AppHandle, sh: &Shell, v: &Value) {
+    let request = v.get("autostart_request").and_then(Value::as_bool);
+    if let Some(want) = request {
+        if want != tray::autostart_on(app) {
+            let auto = app.autolaunch();
+            let res = if want { auto.enable() } else { auto.disable() };
+            if let Err(e) = res {
+                sh.server.log(&format!("start at logon change failed: {e}"));
+                tray::toast(app, "Couldn't change Start at logon", &e.to_string());
+            }
+        }
+    }
+    let on = tray::autostart_on(app);
+    if request.is_some() || v.get("autostart").and_then(Value::as_bool) != Some(on) {
+        let _ = sh.server.post("/api/shell/autostart", json!({ "on": on }));
+    }
 }
 
 /// The first time the last window closes, say that KopiaLens keeps running in the tray.

@@ -4,7 +4,7 @@
 {%- macro pol_editor() -%}
 <div class="pe-ed">
   <template x-if="f.type === 'int' || f.type === 'loglevel'">
-    <input type="number" min="0" :max="f.type === 'loglevel' ? 10 : null" class="fld border border-bd bg-surface2 w-28 text-right"
+    <input autocomplete="off" type="number" min="0" :max="f.type === 'loglevel' ? 10 : null" class="fld border border-bd bg-surface2 w-28 text-right"
            :value="edGet(f.path) ?? ''" placeholder="inherit" :disabled="polGlobalOnly(f)"
            @change="edNum(f.path, $event.target.value)">
   </template>
@@ -31,15 +31,15 @@
   </template>
   <template x-if="f.type === 'bytes'">
     <span class="flex items-center gap-1">
-      <input type="number" min="0" step="any" class="fld border border-bd bg-surface2 w-24 text-right" placeholder="inherit"
+      <input autocomplete="off" type="number" min="0" step="any" class="fld border border-bd bg-surface2 w-24 text-right" placeholder="inherit"
              :value="edBytesParts(f.path).num" @change="edBytes(f.path, $event.target.value, $event.target.nextElementSibling.value)">
-      <select class="fld border border-bd bg-surface2" @change="edBytes(f.path, $event.target.previousElementSibling.value, $event.target.value)">
+      <select autocomplete="off" class="fld border border-bd bg-surface2" @change="edBytes(f.path, $event.target.previousElementSibling.value, $event.target.value)">
         <template x-for="u in polUnits()" :key="u[0]"><option :value="u[0]" :selected="edBytesParts(f.path).unit === u[0]" x-text="u[0]"></option></template>
       </select>
     </span>
   </template>
   <template x-if="f.type === 'interval'">
-    <select class="fld border border-bd bg-surface2" @change="edSet(f.path, $event.target.value ? Number($event.target.value) : null)">
+    <select autocomplete="off" class="fld border border-bd bg-surface2" @change="edSet(f.path, $event.target.value ? Number($event.target.value) : null)">
       <option value="" :selected="!edGet(f.path)">Not set</option>
       <template x-for="iv in polIntervals()" :key="iv[0]"><option :value="iv[0]" :selected="edGet(f.path) === iv[0]" x-text="'Every ' + iv[1]"></option></template>
       <template x-if="edGet(f.path) && !polIntervals().some((iv) => iv[0] === edGet(f.path))">
@@ -48,13 +48,13 @@
     </select>
   </template>
   <template x-if="f.type === 'select'">
-    <select class="fld border border-bd bg-surface2" @change="edSet(f.path, $event.target.value || null)">
+    <select autocomplete="off" class="fld border border-bd bg-surface2" @change="edSet(f.path, $event.target.value || null)">
       <option value="" :selected="!edGet(f.path)">Inherit</option>
       <template x-for="o in polOptions(f)" :key="o"><option :value="o" :selected="edGet(f.path) === o" x-text="o"></option></template>
     </select>
   </template>
   <template x-if="f.type === 'strlist'">
-    <input class="fld border border-bd bg-surface2 w-full font-mono text-xs" placeholder="inherit · comma-separated"
+    <input autocomplete="off" class="fld border border-bd bg-surface2 w-full font-mono text-xs" placeholder="inherit · comma-separated"
            :value="(edGet(f.path) || []).join(', ')" @change="edList(f.path, $event.target.value)">
   </template>
   <template x-if="f.type === 'tod'">
@@ -63,14 +63,14 @@
         <span class="pill font-mono"><span x-text="String(t.hour).padStart(2, '0') + ':' + String(t.min).padStart(2, '0')"></span>
           <button class="ml-1" title="Remove" @click="edTodDel(f.path, i)">&times;</button></span>
       </template>
-      <input class="fld border border-bd bg-surface2 w-20 font-mono text-xs" placeholder="HH:MM"
+      <input autocomplete="off" class="fld border border-bd bg-surface2 w-20 font-mono text-xs" placeholder="HH:MM"
              @keydown.enter="edTodAdd(f.path, $event.target.value) && ($event.target.value = '')">
       <button class="kl-btn quiet" @click="edTodAdd(f.path, $event.target.previousElementSibling.value) && ($event.target.previousElementSibling.value = '')">Add</button>
     </div>
   </template>
   <template x-if="f.type === 'cron'">
     <div class="w-full space-y-1">
-      <textarea rows="2" class="fld border border-bd bg-surface2 w-full font-mono text-xs py-1" style="height:auto" placeholder="inherit · one line per schedule"
+      <textarea autocomplete="off" rows="2" class="fld border border-bd bg-surface2 w-full font-mono text-xs py-1" style="height:auto" placeholder="inherit · one line per schedule"
                 :value="(edGet(f.path) || []).join('\n')" @change="edCron(f.path, $event.target.value)"></textarea>
       <template x-if="!polMulti.on">
         <div class="space-y-0.5">
@@ -83,10 +83,10 @@
   </template>
   <template x-if="f.type === 'action'">
     <div class="w-full grid grid-cols-2 gap-1">
-      <input class="fld border border-bd bg-surface2 font-mono text-xs col-span-2" placeholder="Program or script path" :value="(edGet(f.path) || {}).path || ''" @change="edAction(f.path, 'path', $event.target.value)">
-      <input class="fld border border-bd bg-surface2 font-mono text-xs col-span-2" placeholder="Arguments" :value="((edGet(f.path) || {}).args || []).join(' ')" @change="edAction(f.path, 'args', $event.target.value)">
-      <input type="number" min="0" class="fld border border-bd bg-surface2 text-xs" placeholder="Timeout (seconds)" :value="(edGet(f.path) || {}).timeout ?? ''" @change="edAction(f.path, 'timeout', $event.target.value)">
-      <select class="fld border border-bd bg-surface2 text-xs" @change="edAction(f.path, 'mode', $event.target.value)">
+      <input autocomplete="off" class="fld border border-bd bg-surface2 font-mono text-xs col-span-2" placeholder="Program or script path" :value="(edGet(f.path) || {}).path || ''" @change="edAction(f.path, 'path', $event.target.value)">
+      <input autocomplete="off" class="fld border border-bd bg-surface2 font-mono text-xs col-span-2" placeholder="Arguments" :value="((edGet(f.path) || {}).args || []).join(' ')" @change="edAction(f.path, 'args', $event.target.value)">
+      <input autocomplete="off" type="number" min="0" class="fld border border-bd bg-surface2 text-xs" placeholder="Timeout (seconds)" :value="(edGet(f.path) || {}).timeout ?? ''" @change="edAction(f.path, 'timeout', $event.target.value)">
+      <select autocomplete="off" class="fld border border-bd bg-surface2 text-xs" @change="edAction(f.path, 'mode', $event.target.value)">
         <option value="" :selected="!(edGet(f.path) || {}).mode">Must succeed</option>
         <option value="optional" :selected="(edGet(f.path) || {}).mode === 'optional'">Optional</option>
         <option value="async" :selected="(edGet(f.path) || {}).mode === 'async'">Run in background</option>
@@ -233,9 +233,9 @@
       <div class="px-4 pt-3 pb-2 border-b border-bd font-medium">New policy</div>
       <div class="p-4 space-y-3">
         <label class="block"><span class="text-xs text-muted">Folder</span>
-          <input class="fld border border-bd bg-surface2 w-full font-mono text-xs mt-1" placeholder="D:\Projects" x-model="polNewBox.path" @keydown.enter="polCreateNew()"></label>
+          <input autocomplete="off" class="fld border border-bd bg-surface2 w-full font-mono text-xs mt-1" placeholder="D:\Projects" x-model="polNewBox.path" @keydown.enter="polCreateNew()"></label>
         <label class="block"><span class="text-xs text-muted">Computer and user</span>
-          <select class="fld border border-bd bg-surface2 w-full mt-1" @change="polNewBox.owner = $event.target.value">
+          <select autocomplete="off" class="fld border border-bd bg-surface2 w-full mt-1" @change="polNewBox.owner = $event.target.value">
             <template x-for="o in polNewBox.owners" :key="o"><option :value="o" :selected="polNewBox.owner === o" x-text="o"></option></template>
           </select></label>
         <div class="kl-note">The policy applies to this folder and everything below it. Nothing is saved until you review and save.</div>
@@ -264,7 +264,7 @@
           <span :class="polPreview.mode === 'index' ? 'on' : ''" @click="polPreview.mode = 'index'; polRunPreview()">In the backups</span>
         </span>
         <template x-if="polPreview.data && (polPreview.data.scope || []).length > 1">
-          <select class="fld border border-bd bg-surface2 text-xs" @change="polPreview.source = $event.target.value; polRunPreview()">
+          <select autocomplete="off" class="fld border border-bd bg-surface2 text-xs" @change="polPreview.source = $event.target.value; polRunPreview()">
             <template x-for="s in polPreview.data.scope" :key="s"><option :value="s" :selected="polPreview.source === s" x-text="shortSource(s)"></option></template>
           </select>
         </template>
@@ -334,12 +334,12 @@
               <thead class="text-left text-muted"><tr><th class="p-1.5"></th><th class="p-1.5">Policy</th><th class="p-1.5">Today</th><th class="p-1.5"></th></tr></thead>
               <tbody>
                 <template x-if="p.common_parent && polMulti.ticks[p.field + '|parent:' + p.common_parent]">
-                  <tr class="border-t border-bd-soft"><td class="p-1.5"><input type="checkbox" checked @change="polMultiTick(p.field, 'parent:' + p.common_parent)"></td>
+                  <tr class="border-t border-bd-soft"><td class="p-1.5"><input autocomplete="off" type="checkbox" checked @change="polMultiTick(p.field, 'parent:' + p.common_parent)"></td>
                     <td class="p-1.5 font-mono break-all" x-text="polTargetLabel(p.common_parent)"></td><td class="p-1.5">parent</td><td></td></tr>
                 </template>
                 <template x-for="row in p.rows" :key="row.target">
                   <tr class="border-t border-bd-soft">
-                    <td class="p-1.5"><input type="checkbox" :checked="!!polMulti.ticks[p.field + '|' + row.target]" @change="polMultiTick(p.field, row.target)"></td>
+                    <td class="p-1.5"><input autocomplete="off" type="checkbox" :checked="!!polMulti.ticks[p.field + '|' + row.target]" @change="polMultiTick(p.field, row.target)"></td>
                     <td class="p-1.5 font-mono break-all" x-text="polTargetLabel(row.target)"></td>
                     <td class="p-1.5" x-text="polShow(polFieldSpec(p.field) || {}, row.effective) + (row.inherits ? ' · from ' + polTargetLabel(row.from) : ' · set here')"></td>
                     <td class="p-1.5">

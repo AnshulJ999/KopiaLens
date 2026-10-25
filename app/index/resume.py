@@ -21,6 +21,7 @@ import time
 
 from ..core import filecrypto
 from ..core.applog import get_logger
+from ..core import atomicfile
 
 log = get_logger("store")
 
@@ -149,7 +150,7 @@ def _settle(staging: str) -> None:
     for leftover in (final + ".tmp", final + ".old"):
         if os.path.exists(_stamp(leftover)):
             shutil.rmtree(final, ignore_errors=True)
-            os.replace(leftover, final)
+            atomicfile.replace(leftover, final)
             return
 
 
@@ -166,8 +167,8 @@ def save_tree(staging: str, write, state: dict) -> dict[str, str]:
     _write(_stamp(tmp), {**state, "format": FORMAT, "saved_at": time.time()})
     shutil.rmtree(old, ignore_errors=True)
     if os.path.exists(final):
-        os.replace(final, old)
-    os.replace(tmp, final)
+        atomicfile.replace(final, old)
+    atomicfile.replace(tmp, final)
     shutil.rmtree(old, ignore_errors=True)
     clear(staging)
     return {name: os.path.join(final, f"{name}.parquet") for name in TREE_FILES}

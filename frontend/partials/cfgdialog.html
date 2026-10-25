@@ -18,7 +18,7 @@
                 <div class="space-y-2">
                   <template x-for="g in CFG_GROUPS.filter((x) => cfgDlg.available.includes(x[0]))" :key="g[0]">
                     <div>
-                      <label class="flex items-center gap-2 text-xs font-medium"><input type="checkbox" x-model="cfgDlg.groups[g[0]]"><span x-text="g[1]"></span></label>
+                      <label class="flex items-center gap-2 text-xs font-medium"><input autocomplete="off" type="checkbox" x-model="cfgDlg.groups[g[0]]"><span x-text="g[1]"></span></label>
                       <p x-show="CFG_GROUP_NOTE[g[0]] && cfgDlg.groups[g[0]]" class="ml-6 text-[0.6875rem]" style="color:var(--warn)" x-text="CFG_GROUP_NOTE[g[0]]"></p>
                     </div>
                   </template>
@@ -49,7 +49,7 @@
                             </template>
                             <template x-if="it.risky">
                               <label class="shrink-0 flex items-center gap-1 text-[0.6875rem] whitespace-nowrap" title="Leave this as it is now">
-                                <input type="checkbox" :checked="!!cfgDlg.keep[it.id]" @change="cfgDlg.keep = { ...cfgDlg.keep, [it.id]: $event.target.checked }"> Keep current</label>
+                                <input autocomplete="off" type="checkbox" :checked="!!cfgDlg.keep[it.id]" @change="cfgDlg.keep = { ...cfgDlg.keep, [it.id]: $event.target.checked }"> Keep current</label>
                             </template>
                           </div>
                         </template>

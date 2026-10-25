@@ -21,6 +21,7 @@ from config import DATA_DIR
 
 from ..core import filecrypto
 from ..core.applog import get_logger
+from ..core import atomicfile
 
 log = get_logger("store")
 
@@ -62,7 +63,7 @@ def _atomic_json(path: str, body: dict) -> None:
         json.dump(body, fh)
         fh.flush()
         os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    atomicfile.replace(tmp, path)
 
 
 def _read_json(path: str) -> dict | None:
@@ -195,7 +196,7 @@ def recover(repo: str, reason: str) -> dict | None:
         mp = store.manifest_path(repo)
         if os.path.exists(mp):
             try:
-                os.replace(mp, os.path.join(root, f"manifest.damaged-{int(time.time())}.json"))
+                atomicfile.replace(mp, os.path.join(root, f"manifest.damaged-{int(time.time())}.json"))
             except OSError:
                 pass
         publish.write_manifest(root, new)
@@ -301,7 +302,7 @@ def _copy(src: str, dst: str) -> None:
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     tmp = f"{dst}.{secrets.token_hex(4)}.part"
     shutil.copyfile(src, tmp)
-    os.replace(tmp, dst)
+    atomicfile.replace(tmp, dst)
 
 
 def _unique_id(repo: str) -> str:

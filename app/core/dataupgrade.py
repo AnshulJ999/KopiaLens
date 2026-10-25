@@ -37,6 +37,7 @@ import time
 from config import DATA_DIR, SETTINGS_FILE
 
 from .applog import get_logger
+from . import atomicfile
 
 log = get_logger("dataupgrade")
 
@@ -126,7 +127,7 @@ def atomic_json(path: str, data: object) -> None:
         json.dump(data, fh, indent=2)
         fh.flush()
         os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    atomicfile.replace(tmp, path)
 
 
 def atomic_bytes(path: str, data: bytes) -> None:
@@ -136,7 +137,7 @@ def atomic_bytes(path: str, data: bytes) -> None:
         fh.write(data)
         fh.flush()
         os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    atomicfile.replace(tmp, path)
 
 
 def prune_dead_settings() -> list[str]:

@@ -604,7 +604,8 @@ def step_stage() -> None:
         shutil.copytree(os.path.join(SHELL, "icons", "shortcuts"), os.path.join(STAGE, "icons"))
     notices = [sys.executable, os.path.join(KL_ROOT, "packaging", "notices.py"),
                os.path.join(server, "THIRD-PARTY-NOTICES.txt"), "--python", BUILD_PYTHON,
-               "--kopia-license", os.path.join(server, "kopia", "LICENSE")]
+               "--kopia-license", os.path.join(server, "kopia", "LICENSE"),
+               "--parts", os.path.join(_ctx["dest"], f"{NOTICES_PART}{PLATFORM}-{ARCH}.json")]
     if WINDOWS:
         notices += ["--es-license", os.path.join(server, "es-LICENSE.txt")]
     for crate in (SHELL, os.path.join(KL_ROOT, "shell", "cli-launcher"), os.path.join(KL_ROOT, "shell", "disk-scanner")):
@@ -803,9 +804,26 @@ def step_installer_test() -> None:
 _NOT_SHIPPED = re.compile(r"(\.sig|\.log|^update-.*\.json|^SHA256SUMS\.txt)$")
 
 
+NOTICES_PART = "THIRD-PARTY-NOTICES.part-"
+
+
+def merge_notices(dest: str) -> None:
+    """One THIRD-PARTY-NOTICES.txt for the release, joined from every platform build's parts."""
+    parts = sorted(glob.glob(os.path.join(dest, NOTICES_PART + "*.json")))
+    if not parts:
+        log("  THIRD-PARTY-NOTICES.txt: no platform parts in the folder, left as it is")
+        return
+    run([sys.executable, os.path.join(KL_ROOT, "packaging", "notices.py"), "merge",
+         os.path.join(dest, "THIRD-PARTY-NOTICES.txt"), *parts], KL_ROOT, "notices.log")
+    for p in parts:
+        os.remove(p)
+    log(f"  THIRD-PARTY-NOTICES.txt: merged from {len(parts)} platform(s)")
+
+
 def step_checksums() -> None:
     """SHA256SUMS.txt over every release file in the folder (all platforms, when merged)."""
     dest = _ctx["dest"]
+    merge_notices(dest)
     names = sorted(n for n in os.listdir(dest) if os.path.isfile(os.path.join(dest, n)) and not _NOT_SHIPPED.search(n))
     with open(os.path.join(dest, "SHA256SUMS.txt"), "w", encoding="utf-8", newline="\n") as fh:
         for name in names:

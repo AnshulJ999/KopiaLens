@@ -14,7 +14,7 @@
                 <div class="space-y-4">
                   <div>
                     <div class="flex items-center justify-between gap-3"><span>Sign-in</span>
-                      <label class="flex items-center gap-2 text-xs"><input type="checkbox" :checked="acct.sign_in_on" @click.prevent="toggleSignIn(!acct.sign_in_on)">Require a password to open KopiaLens</label></div>
+                      <label class="flex items-center gap-2 text-xs"><input autocomplete="off" type="checkbox" :checked="acct.sign_in_on" @click.prevent="toggleSignIn(!acct.sign_in_on)">Require a password to open KopiaLens</label></div>
                     <p class="text-[0.6875rem] mt-1" x-show="!acct.sign_in_on" style="color:var(--warn)">Anyone who can reach this address can browse and act on the repositories.</p>
                   </div>
                   <div class="flex items-center justify-between gap-3"><span>Username</span>
@@ -39,7 +39,7 @@
                   <div class="pt-3 border-t border-bd">
                     <div class="text-[0.6875rem] uppercase tracking-wide text-muted mb-2">Advanced</div>
                     <div class="flex items-center justify-between gap-3"><span>Stay signed in for</span>
-                      <select x-model.number="sessionDays" @change="saveKl('session_days')" class="fld border border-bd bg-surface2">
+                      <select autocomplete="off" x-model.number="sessionDays" @change="saveKl('session_days')" class="fld border border-bd bg-surface2">
                         <template x-for="d in acct.session_choices" :key="d"><option :value="d" :selected="d === sessionDays" x-text="daysLabel(d)"></option></template>
                       </select></div>
                     <p class="text-[0.6875rem] text-muted mt-1">Applies when "Keep me signed in" is ticked; unticked, sign-in ends when the browser closes. A shorter time also signs out browsers that signed in longer ago.</p>
@@ -65,7 +65,7 @@
                     <div class="space-y-4">
                       <div>
                         <div class="flex items-center justify-between gap-3"><span>Unlock automatically</span>
-                          <label class="flex items-center gap-2 text-xs" :class="encStatus.remember_state === 'unavailable' ? 'text-muted' : ''"><input type="checkbox" :checked="encStatus.remembered" :disabled="encStatus.remember_state === 'waiting'" @click.prevent="toggleRemember(!encStatus.remembered)">On this computer</label></div>
+                          <label class="flex items-center gap-2 text-xs" :class="encStatus.remember_state === 'unavailable' ? 'text-muted' : ''"><input autocomplete="off" type="checkbox" :checked="encStatus.remembered" :disabled="encStatus.remember_state === 'waiting'" @click.prevent="toggleRemember(!encStatus.remembered)">On this computer</label></div>
                         <p class="text-[0.6875rem] text-muted mt-1" x-show="!['waiting', 'unavailable'].includes(encStatus.remember_state)">Off: someone enters the password after every restart.</p>
                         <p class="text-[0.6875rem] mt-1" style="color:var(--warn)" x-show="encStatus.remember_state === 'waiting'">Waiting for this computer's keychain. If it asks for a password, answer it there.</p>
                         <p class="text-[0.6875rem] mt-1" style="color:var(--warn)" x-show="encStatus.remember_state === 'unavailable'">This computer's keychain didn't accept the key, so someone enters the password after every restart. Tick the box to try again.</p>

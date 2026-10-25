@@ -24,6 +24,7 @@ from .store import read_cursor          # status reads come from the published g
 from .schema import offline_status
 from ..core.applog import get_logger
 from ..core.sources import sources_index
+from ..core import atomicfile
 
 log = get_logger("index")
 
@@ -198,7 +199,7 @@ def _write_status_cache(repo: str, summary: dict) -> None:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(entry, fh)
-        os.replace(tmp, path)
+        atomicfile.replace(tmp, path)
     except Exception as exc:  # noqa: BLE001 - never fail the request on cache-write housekeeping
         log.warning("repo=%s index_summary cache write failed: %s", repo, exc)
 

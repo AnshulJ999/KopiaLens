@@ -1,5 +1,6 @@
 // Write modes: what KopiaLens may change in a repository (Settings > Permissions). The server refuses
-// what a mode doesn't allow; these helpers grey actions and stop panels opening for nothing.
+// what a mode doesn't allow; these helpers grey direct actions. Panels open in every mode, since
+// they show what an action would do; only their final button is off, with the reason beside it.
 const WM_ORDER = ["read_only", "restores", "non_destructive", "full"];
 
 const writeModePart = {
@@ -30,12 +31,17 @@ const writeModePart = {
     const off = this.wmOff(need);
     return off ? this.offMenuItem(item.label.replace(/<[^>]*>/g, ""), off) : item;
   },
+  // Why ``need`` is refused, with where to change it; "" when it is allowed.
+  wmWhy(need, repo) {
+    const off = this.wmOff(need, repo);
+    if (!off) return "";
+    return `${off} Change it in ${this.wmKopiaReadonly(repo) ? "Settings > Repositories" : "Settings > Permissions"}.`;
+  },
   // Call at the start of a write action: false (with a notice) when the mode refuses it.
   wmGuard(need, repo) {
-    const off = this.wmOff(need, repo);
-    if (!off) return true;
-    const where = this.wmKopiaReadonly(repo) ? "Settings > Repositories" : "Settings > Permissions";
-    this.klNotify(`${off} Change it in ${where}.`, "warn");
+    const why = this.wmWhy(need, repo);
+    if (!why) return true;
+    this.klNotify(why, "warn");
     return false;
   },
   async wmSet(repo, mode) {

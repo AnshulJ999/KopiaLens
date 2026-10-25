@@ -49,12 +49,12 @@
 
                 <div class="space-y-2" role="radiogroup" aria-label="Who runs backups">
                   <label class="flex items-start gap-2 rounded border p-2.5 cursor-pointer" :class="engineDlg.choice === 'external' ? 'border-fg' : 'border-bd'">
-                    <input type="radio" value="external" x-model="engineDlg.choice" class="mt-0.5">
+                    <input autocomplete="off" type="radio" value="external" x-model="engineDlg.choice" class="mt-0.5">
                     <span><span class="font-medium" x-text="engineOtherApp(engineDlg.data) === 'another app' ? 'Another app, or nothing' : engineOtherApp(engineDlg.data)"></span>
                       <span class="block text-xs text-muted">KopiaLens shows and analyses the backups, and acts when you ask.</span></span>
                   </label>
                   <label class="flex items-start gap-2 rounded border p-2.5 cursor-pointer" :class="engineDlg.choice === 'kopialens' ? 'border-fg' : 'border-bd'">
-                    <input type="radio" value="kopialens" x-model="engineDlg.choice" class="mt-0.5">
+                    <input autocomplete="off" type="radio" value="kopialens" x-model="engineDlg.choice" class="mt-0.5">
                     <span><span class="font-medium">KopiaLens</span>
                       <span class="block text-xs text-muted">KopiaLens runs kopia's schedules and maintenance for this repository while it's open.</span></span>
                   </label>
@@ -65,13 +65,13 @@
                     <template x-if="engineDlg.data.view.kopiaui_shares_file">
                       <div class="space-y-2">
                         <label class="flex items-start gap-2 text-xs">
-                          <input type="radio" value="move" x-model="engineDlg.how" class="mt-0.5">
+                          <input autocomplete="off" type="radio" value="move" x-model="engineDlg.how" class="mt-0.5">
                           <span><span class="font-medium">Move this repository out of KopiaUI</span>
                             <span class="block text-muted">KopiaUI keeps its other repositories. It stops loading this one after it restarts. Handing back moves it back.</span>
                             <span x-show="engineDefaultConfig(engineDlg.data.view)" class="block text-warn">This is kopia's default connection. After a move, kopia commands typed in a terminal no longer find this repository.</span></span>
                         </label>
                         <label class="flex items-start gap-2 text-xs">
-                          <input type="radio" value="share" x-model="engineDlg.how" class="mt-0.5">
+                          <input autocomplete="off" type="radio" value="share" x-model="engineDlg.how" class="mt-0.5">
                           <span><span class="font-medium">Keep sharing the connection with KopiaUI</span>
                             <span class="block text-muted">Quit KopiaUI and turn off its Launch At Startup, or KopiaLens waits until KopiaUI is closed.</span></span>
                         </label>
@@ -92,7 +92,7 @@
                   <div class="flex items-center gap-2 text-xs flex-wrap">
                     <span class="text-muted">Pause this repository's backups</span>
                     <template x-if="!(engineDlg.data.status.pause && engineDlg.data.status.pause.on)">
-                      <select class="fld border border-bd bg-surface2" style="height:24px" aria-label="Pause for"
+                      <select autocomplete="off" class="fld border border-bd bg-surface2" style="height:24px" aria-label="Pause for"
                               @change="engineDlgPause($event)">
                         <option value="">Pause for…</option>
                         <template x-for="c in pauseChoices()" :key="c[0]"><option :value="c[0]" x-text="c[1]"></option></template>

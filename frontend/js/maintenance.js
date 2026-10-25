@@ -2,7 +2,6 @@
 const maintenancePart = {
 
     async openMaint(repo) {
-      if (!this.wmGuard("non_destructive", repo)) return;
       const id = repo || this.repo;
       const seq = ++this._maintSeq;
       this.maint = { repo: id, full: true, safety: "full", info: null, loading: true, error: "" };
@@ -52,7 +51,7 @@ const maintenancePart = {
 
     async maintStart() {
       const m = this.maint;
-      if (!m || m.loading || this.maintNotOwner()) return;
+      if (!m || m.loading || this.maintNotOwner() || !this.wmGuard("non_destructive", m.repo)) return;
       const none = m.safety === "none";
       const ok = await this.klConfirm({
         title: `Run ${m.full ? "full" : "quick"} maintenance?`,
