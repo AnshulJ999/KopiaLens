@@ -18,7 +18,7 @@ No file names, paths or backup contents ever leave your computer. KopiaLens chec
 
 ### Why does KopiaLens start kopia with `--insecure`?
 
-When KopiaLens runs backups for a repository, or when **Listing backend** is set to keep a kopia server running, it starts a kopia server in the background. That server listens only on this computer (`127.0.0.1`), on a random port, with a random password made for each start, and nothing on your network can reach it. `--insecure` means the server doesn't use HTTPS, which a connection that never leaves the computer doesn't need. `--disable-csrf-token-checks` turns off a protection for kopia's own web page in a browser; KopiaLens talks to the server directly, not through a browser. Your repository stays encrypted as always.
+When KopiaLens runs backups for a repository, or when **Listing backend** is set to keep a kopia server running, it starts a kopia server in the background. That server listens only on this computer (`127.0.0.1`), on a random port, with a random password made for each start, and nothing on your network can reach it. `--insecure` means the server doesn't use HTTPS, which a connection that never leaves the computer doesn't need. `--disable-csrf-token-checks` turns off a protection for kopia's own web page in a browser. KopiaLens talks to the server directly, not through a browser. Your repository stays encrypted as always.
 
 ### Where does KopiaLens keep its data?
 
@@ -32,7 +32,7 @@ Use **Export to a file** in **Settings → Config** on the old computer, and **I
 
 ### Why didn't the repository get smaller after a delete?
 
-Kopia frees the space at its next full maintenance, usually a day or two later ([Why deleting frees space only after maintenance](deleting-and-space.md)).
+Kopia frees the space during its full maintenance runs, usually a few days later ([Why deleting frees space only after maintenance](deleting-and-space.md)).
 
 ### I deleted a big file, but Reclaimable said it frees almost nothing. Why?
 

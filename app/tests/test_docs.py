@@ -13,7 +13,7 @@ DOCS = ROOT / "docs"
 FRONTEND = ROOT / "frontend"
 
 LEAK = re.compile(r"\b(?:KL|REL|BZ|CH|PERF|STO)\d+\b|\bAnshul\b")
-INTERNAL = re.compile(r"\bgenerations?\b|\bcid\b|content objects?|delta index|owner role|freeable|—",
+INTERNAL = re.compile(r"\bgenerations?\b|\bcid\b|content objects?|delta index|owner role|freeable|—|;",
                       re.IGNORECASE)
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)\)")
 PAGE_LINK = re.compile(r"^([\w.-]+)\.md(?:#(.*))?$")
@@ -178,6 +178,11 @@ def _restore_preview_cap():
     return restore.LIST_CAP
 
 
+def _size_chart_versions():
+    m = re.search(r"\.versions\) \|\| \[\]\)\.slice\(0, (\d+)\)", (FRONTEND / "js" / "detail.js").read_text(encoding="utf-8"))
+    return int(m.group(1))
+
+
 def _search_delete_max():
     m = re.search(r"const SEARCH_DELETE_MAX = ([\d_]+)", (FRONTEND / "js" / "search.js").read_text(encoding="utf-8"))
     return int(m.group(1).replace("_", ""))
@@ -246,6 +251,7 @@ DEFAULTS = [
     ("hardware.md", r"up to (\d+) processor cores", _worker_threads),
     ("hardware.md", r"it waits (\d+) minutes by default", _kl_in("startup_delay", 60)),
     ("faq.md", r"for at most (\d+) seconds by default", _kl("disk_scan_budget")),
+    ("file-panel.md", r"up to the newest (\d+)\)", _size_chart_versions),
 ]
 WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "twelve": 12, "24": 24,
          "once": 1, "eighth": 8}

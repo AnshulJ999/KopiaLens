@@ -25,7 +25,7 @@ The other sections are described below.
 |---|---|
 | **Numbers** | How numbers are written, for example `1,234,567.8` or `1.234.567,8`. **System** follows your computer |
 | **Sizes** | **Decimal** (1 GB = 1000 MB, as kopia shows them) or **Binary** (1 GiB = 1024 MiB) |
-| **Dates**, **Times** | How dates and clock times are written. **Automatic** (the default) shows how long ago for recent activity (Dashboard, Tasks, backups) and dates for history (Snapshots, Search, Tree, versions); **Relative** always shows how long ago; **Exact** always shows the time. The clock button in the header switches between them; right-click a time column's header to give it its own choice, including date and how long ago together |
+| **Dates**, **Times** | How dates and clock times are written. **Automatic** (the default) shows how long ago for recent activity (Dashboard, Tasks, backups) and dates for history (Snapshots, Search, Tree, versions). **Relative** always shows how long ago. **Exact** always shows the time. The clock button in the header switches between them. Right-click a time column's header to give it its own choice, including date and how long ago together |
 | **Search boxes** | **Header and Search tab**, or **Header only**: the Search tab then uses the box at the top of the window |
 | **Dedupe in Search merges** | What **Dedupe** in Search merges: **Same path** or **Identical content** ([Search](search.md#filters)) |
 | **Ask before Snapshot now** | On by default. Off: **Snapshot now** starts straight away, as in KopiaUI |

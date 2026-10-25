@@ -1,6 +1,6 @@
 # Why deleting frees space only after maintenance
 
-When you delete snapshots or remove files from them, the repository doesn't get smaller straight away. This page explains what kopia does with deleted data, and why the space comes back a day or two later.
+When you delete snapshots or remove files from them, the repository doesn't get smaller straight away. This page explains what kopia does with deleted data, and why the space comes back a few days later.
 
 ## What a delete changes
 
@@ -18,7 +18,7 @@ The pieces stay in storage. Some are still used by other snapshots, other paths 
 **Full maintenance** finds the unused pieces and removes them. It runs in steps:
 
 1. It goes through every snapshot and marks the pieces that none of them uses.
-2. On a later run, it checks again. Pieces that are still unused are dropped.
+2. On the next run, it checks again. On the run after that, pieces that are still unused are dropped.
 3. Packed files that now hold mostly unused pieces are rewritten, keeping only the pieces in use.
 4. Packed files that hold nothing in use are deleted from storage. This is when the space comes back.
 
@@ -30,11 +30,11 @@ Another computer, or another app, may be backing up into the same repository at 
 
 So with kopia's default **Normal** safety:
 
-- A piece is dropped only after two full maintenance runs, at least 4 hours apart, have both found it unused.
+- A piece is dropped only on the run after two full maintenance runs, at least 4 hours apart, have both found it unused.
 - Data written in the last 24 hours is never collected.
 - A packed file is deleted from storage only when it's more than 24 hours old.
 
-Full maintenance runs once a day by default. Together, these rules mean the space usually comes back a day or two after a delete.
+Full maintenance runs once a day by default. Together, these rules mean most of the space comes back two or three days after a delete.
 
 ## An example
 
@@ -44,8 +44,9 @@ You delete a 50 GB folder from all snapshots on Monday at 10:00.
 |---|---|---|
 | Monday 10:05 | The delete finishes. The snapshots no longer list the folder | Unchanged |
 | Monday night | Full maintenance marks the folder's pieces as unused | Unchanged |
-| Tuesday night | Full maintenance finds them unused again, drops them and rewrites the packed files that held them | Shrinks as old packed files go |
-| Wednesday | The last packed files, now old enough, are deleted | About 50 GB smaller |
+| Tuesday night | Full maintenance finds them unused again | Unchanged |
+| Wednesday night | Full maintenance drops them. Packed files that hold nothing in use are deleted, on this run or the next | Shrinks as old packed files go |
+| Thursday or Friday night | Packed files that held both kinds are rewritten, and the old copies are deleted on a following run | About 50 GB smaller |
 
 The exact days depend on when maintenance runs on your repository.
 
