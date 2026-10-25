@@ -261,6 +261,11 @@ document.addEventListener("alpine:init", () => {
       const r = (this.repos || []).find((x) => x.id === (id || this.repo));
       return !!(r && r.demo);
     },
+    // A showcase demo copy reads as ordinary repos; its "Demo" badge has its own switch.
+    demoBadge(id) {
+      const r = (this.repos || []).find((x) => x.id === (id || this.repo));
+      return !!(r && r.demo_badge);
+    },
     repoName(id) {
       const r = this.repos.find((x) => x.id === id);
       return (r && r.name) || (id === "bz" ? "Backblaze Personal Backup" : "Repo " + id);

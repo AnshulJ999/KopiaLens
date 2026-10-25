@@ -13,7 +13,7 @@ import os
 import re
 import threading
 
-from config import DATA_DIR, HERE
+from config import DATA_DIR, DEMO_REAL_PATHS, HERE
 
 # Shown in commands generated for a demo repo. It does not exist, and kopia.py refuses any
 # command that carries it.
@@ -29,6 +29,8 @@ else:
     _DISPLAY = ((DATA_DIR, "/home/demo/.local/share/kopialens"),
                 (HERE, "/opt/kopialens"),
                 (os.path.expanduser("~"), "/home/demo"))
+if DEMO_REAL_PATHS:   # a balanced copy shows the real folders; only its own data folder is hidden
+    _DISPLAY = _DISPLAY[:1]
 
 _LOCK = threading.Lock()
 _CACHE: dict[str, dict] = {}

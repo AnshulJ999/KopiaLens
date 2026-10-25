@@ -304,6 +304,25 @@ def _demo_meta() -> dict:
 # A demo folder with its own generated bzdata shows the Backblaze screens (app.core.demobz).
 DEMO_BACKBLAZE = DEMO_INSTANCE and bool(_demo_meta().get("backblaze"))
 
+# A showcase copy (demo.json "show"): the page sees ordinary repos, so the whole UI is there, and
+# every action is still simulated. The switches turn the demo's own marks back on.
+DEMO_SHOW = ({"badge": False, "pro_tags": False, "pro_hint": False, "job_note": False,
+              **(_demo_meta().get("show") or {})} if DEMO_INSTANCE and "show" in _demo_meta() else None)
+DEMO_REAL_PATHS = DEMO_INSTANCE and bool(_demo_meta().get("real_paths"))
+# The demo's clock: starts at demo.json "now" (a few hours after its newest snapshot) and runs on,
+# so every "N hours ago" reads the same each time. The copy's own cache build runs 2 hours earlier.
+DEMO_NOW = _demo_meta().get("now") if DEMO_INSTANCE else None
+if DEMO_NOW:
+    try:
+        import datetime as _dt
+        import time_machine
+        _travel_to = _dt.datetime.fromisoformat(DEMO_NOW).timestamp()
+        if os.environ.get("KOPIALENS_DEMO_CHECK"):
+            _travel_to -= 2 * 3600
+        time_machine.travel(_travel_to, tick=True).start()
+    except (ImportError, ValueError) as _exc:
+        print(f"demo clock not set: {_exc}", file=sys.stderr)
+
 
 def kopia_repos() -> list:
     """Repo ids backed by kopia/DuckDB. Use this (NOT `REPOS`) in any loop that opens a

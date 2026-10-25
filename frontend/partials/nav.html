@@ -18,7 +18,7 @@
              class="ic text-warn" :class="wmMode() === 'read_only' ? 'ic-eye' : 'ic-lock'" :title="wm ? 'Permissions: ' + wmLabel(wmMode()) : ''"></i>
           <i class="ic ic-caret-down text-muted"></i>
         </button>
-        <span x-show="isDemo()" x-cloak class="absolute -top-1.5 -right-2 rounded border border-warn-bd bg-warn-bg text-warn px-1 text-[0.625rem] font-medium leading-4"
+        <span x-show="isDemo() || demoBadge()" x-cloak class="absolute -top-1.5 -right-2 rounded border border-warn-bd bg-warn-bg text-warn px-1 text-[0.625rem] font-medium leading-4"
               title="Invented names, real numbers. Actions are simulated and change nothing. Pro features are unlocked.">Demo</span>
         <div x-show="repoMenu" x-cloak role="menu" class="absolute left-0 top-full mt-1 z-50 w-64 rounded-md border border-bd bg-surface shadow-lg py-1 text-sm">
           <template x-for="item in repos" :key="item.id">

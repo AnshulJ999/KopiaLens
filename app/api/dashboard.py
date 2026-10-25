@@ -8,7 +8,7 @@ import time
 
 from fastapi import APIRouter, HTTPException, Query
 
-from config import REPOS, is_demo, kopia_repos, repo_kind
+from config import DEMO_SHOW, REPOS, is_demo, kopia_repos, repo_kind
 
 from ..core.metrics import table_rows
 from ..core.nightly import start_index_pass_async, state as nightly_state, worker_progress
@@ -53,6 +53,13 @@ def _ordered(rows: list[dict], order: list) -> list[dict]:
     return sorted(rows, key=lambda r: rank.get(r["id"], len(rank)))
 
 
+def _showcase(rec: dict) -> dict:
+    """A showcase demo copy's repos read as ordinary ones to the page (config.DEMO_SHOW)."""
+    if DEMO_SHOW is not None and rec.get("demo"):
+        rec = {**rec, "demo": False, "demo_badge": bool(DEMO_SHOW["badge"])}
+    return rec
+
+
 @router.get("/repos")
 def repos() -> dict:
     from ..core import auth, dataupgrade, kopiabin
@@ -73,7 +80,7 @@ def repos() -> dict:
     return {
         # Every record, with the fields the repo UI needs: short label, connection source,
         # "counts as a backup", and the cached storage facts (no kopia call on a polled route).
-        "repos": _ordered([repo_store.detail(rec) for rec in repo_store.all_records()],
+        "repos": _ordered([_showcase(repo_store.detail(rec)) for rec in repo_store.all_records()],
                           kl.get("repo_order") or []),
         # Where the kopia program is (resolved, or not found). The version is read once at
         # startup, so this route never spawns anything.
@@ -243,6 +250,8 @@ def index_freshness() -> dict:
             "error": st.get("error") or stored.get("reason") or (last_listing_error(key) or None),
             "error_at": stored.get("at"),
         }
+        if DEMO_SHOW is not None and is_demo(key) and not row["last_index"]:
+            row["last_index"] = row["last_attempt"] = time.time() - 2 * 3600   # never "never indexed"
         if cfg.get("kind") == "backblaze":
             #: the badge shows REBUILD age - how old the data actually is.
             # Verification age ("checked Xm ago") rides the row tooltip; a detected

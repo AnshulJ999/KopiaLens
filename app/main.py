@@ -1453,7 +1453,19 @@ def _compose_html(client_host: str | None = None) -> str:
     extra = "\n".join(devaddons.HTML) if devaddons.HTML else devnotes.markup()
     if extra:
         html = html.replace("</body>", extra + "\n</body>", 1)
+    from config import DEMO_NOW
+    if DEMO_NOW:   # the page's clock follows the demo's (server-side it is already moved)
+        html = html.replace("<head>", "<head>\n" + _DEMO_CLOCK.replace("NOW_MS", str(int(time.time() * 1000))), 1)
     return html
+
+
+_DEMO_CLOCK = """<script>(function () {
+  var D = Date, off = NOW_MS - D.now();
+  function S() { return arguments.length ? new (Function.prototype.bind.apply(D, [null].concat([].slice.call(arguments))))()
+                                         : (this instanceof S ? new D(D.now() + off) : new D(D.now() + off).toString()); }
+  S.now = function () { return D.now() + off; }; S.parse = D.parse; S.UTC = D.UTC; S.prototype = D.prototype;
+  window.Date = S;
+})();</script>"""
 
 
 _INCLUDE_RE = re.compile(r'\{%-?\s*include\s+"([^"]+)"')

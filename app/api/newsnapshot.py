@@ -21,8 +21,17 @@ router = APIRouter(tags=["newsnapshot"])
 
 
 def _need_kopia(repo: str) -> None:
-    if repo not in config.REPOS or config.repo_kind(repo) != "kopia" or config.is_demo(repo):
+    demo_refused = config.is_demo(repo) and config.DEMO_SHOW is None   # a showcase copy plays it
+    if repo not in config.REPOS or config.repo_kind(repo) != "kopia" or demo_refused:
         raise HTTPException(status_code=404, detail=f"unknown repository: {repo}")
+
+
+def _exists(repo: str, path: str) -> bool:
+    """A demo never reads this disk: a path exists when the copy has backed it up."""
+    if config.is_demo(repo):
+        from ..core.demosim import path_known
+        return path_known(repo, path)
+    return os.path.exists(path)
 
 
 def _policy_summary(repo: str, source: str) -> dict:
@@ -59,11 +68,12 @@ def check(repo: str, path: str) -> dict:
     client = client_options(repo)
     if not client["host"]:
         return {"ok": False, "error": "Couldn't read this computer's connection to the repository."}
-    if not os.path.exists(norm):
+    if not _exists(repo, norm):
         return {"ok": False, "path": norm, "error": "That path doesn't exist on this computer."}
     source = policyresolve.make_key(client["user"], client["host"], norm)
     snaps = sources_index(repo).get(source) or []
-    return {"ok": True, "path": norm, "kind": "dir" if os.path.isdir(norm) else "file",
+    kind = "dir" if config.is_demo(repo) or os.path.isdir(norm) else "file"
+    return {"ok": True, "path": norm, "kind": kind,
             "source": source, "identity": f"{client['user']}@{client['host']}",
             "snapshots": len(snaps), "policy": _policy_summary(repo, source)}
 

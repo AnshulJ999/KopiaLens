@@ -1,0 +1,3 @@
+# Developer tools only, never shipped.
+# Demo copies (app/core/demo.py): the copy's own clock in config.py.
+time-machine==3.6.0

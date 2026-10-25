@@ -62,7 +62,8 @@ class _Index:
 
     def file_hits(self, oids: list[str], names: list[str], sources: list[str]) -> list[tuple]:
         """(snapshot_id, source, start_time, full_path) for every snapshot holding a target."""
-        cids = [o[1:] if o[:1] in ("I", "Z") else o for o in oids]
+        # The index keeps big files' ids with their "I" prefix; other forms come without one.
+        cids = list(oids) + [o[1:] for o in oids if o[:1] in ("I", "Z")]
         return self.cur.execute("""
             SELECT s.snapshot_id, sr.source, s.start_time, p.full_path FROM filev f
             JOIN pathx p ON p.path_id = f.path_id AND p.src_id = f.src_id
@@ -95,6 +96,14 @@ class _Index:
             return int(files or 0), int(dirs or 0), int(s_size or 0)
         return 1, 0, int(size or 0)
 
+    def under(self, path: str) -> tuple[int, int]:
+        """(files, bytes) in the latest snapshots at or under ``path``."""
+        low = path.lower().rstrip("\\/")
+        return self.cur.execute("""
+            SELECT count(*), coalesce(sum(size), 0)::BIGINT FROM pathx WHERE in_latest
+              AND (lower(full_path) = ? OR starts_with(lower(full_path), ? || '\\')
+                   OR starts_with(lower(full_path), ? || '/'))""", [low, low, low]).fetchone()
+
     def storage(self) -> tuple[int, int]:
         """(stored bytes, snapshots) of the demo repo."""
         try:
@@ -103,6 +112,18 @@ class _Index:
             packed = self.cur.execute("SELECT coalesce(sum(size), 0) FROM pathx").fetchone()[0]
         snaps = self.cur.execute("SELECT count(*) FROM snap").fetchone()[0]
         return int(packed), int(snaps)
+
+
+def path_known(repo: str, path: str) -> bool:
+    """A path a demo can snapshot: one of its sources, or inside one."""
+    from .paths import source_root
+    from .sources import sources_index
+    low = path.lower().rstrip("\\/")
+    for src in sources_index(repo):
+        root = source_root(src).lower().rstrip("\\/")
+        if low == root or low.startswith(root + "\\") or low.startswith(root + "/"):
+            return True
+    return False
 
 
 def _kopia_bytes(n: float) -> str:
@@ -193,9 +214,18 @@ def _lines(repo: str, args: list[str]) -> tuple[list[tuple[str, str]], int]:
                 say(f"{word} snapshot {sid} of {source}")
         elif head[:2] == ["snapshot", "create"]:
             path = (_positional(args, 2) or [""])[0]
+            files, size = idx.under(path)
             say(f"Snapshotting {path} ...", "stderr")
-            say(" * 0 hashing, 0 hashed (0 B), 0 cached (0 B), uploaded 0 B, estimating...", "stderr")
+            say(f" * 0 hashing, {files} hashed ({_kopia_bytes(size)}), 0 cached (0 B), uploaded 0 B, "
+                "estimating...", "stderr")
             say("Created snapshot.", "stderr")
+        elif head[:2] == ["snapshot", "estimate"]:
+            path = (_positional(args, 2) or [""])[0]
+            files, size = idx.under(path)
+            say("Analyzing . ...", "stderr")
+            say(f"Snapshot includes {files} file(s), total size {_kopia_bytes(size)}")
+            say("Snapshot excludes no files.")
+            say("Snapshot excludes no directories.")
         elif head[:2] == ["blob", "stats"]:
             for line in blob_stats_lines(*idx.storage()):
                 say(line)
@@ -205,7 +235,9 @@ def _lines(repo: str, args: list[str]) -> tuple[list[tuple[str, str]], int]:
             say(f"kopia {' '.join(head)}: done.")
     finally:
         idx.close()
-    say(DONE_NOTE, "stderr")
+    from config import DEMO_SHOW
+    if DEMO_SHOW is None or DEMO_SHOW["job_note"]:
+        say(DONE_NOTE, "stderr")
     return out, 0
 
 

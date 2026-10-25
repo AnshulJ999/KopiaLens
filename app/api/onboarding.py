@@ -197,8 +197,9 @@ def start_indexing(payload: StartRequest) -> dict:
     known = [r for r in payload.repos if repos.exists(r)]
     if not known:
         raise HTTPException(status_code=400, detail="No repository to index.")
-    # browse-only repos have no index; the sample data comes indexed
-    wanted = [r for r in known if not repos.via_server(r) and not is_demo(r)]
+    # browse-only repos have no index; the sample data comes indexed; a showcase copy plays it
+    from config import DEMO_SHOW
+    wanted = [r for r in known if not repos.via_server(r) and (DEMO_SHOW is not None or not is_demo(r))]
     if not wanted:
         return {"ok": True, "queued": [], "started": False}
     for rid in wanted:

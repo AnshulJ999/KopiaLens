@@ -60,7 +60,27 @@ _GENERATED = re.compile(r"[0-9a-f]{12,}|\d{4}-\d{2}-\d{2}|v?\d+(\.\d+)+|"
                         r"(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{6,}")
 _DEMO_SETTINGS = {"kopialens": {"onboarded": True, "auth_enabled": False, "index_mode": "off",
                                 "disk_lookup": "off", "encryption_level": "off"}}
-_SWEEP_SKIP = ("pick", "open", "browse", "download", "restart", "quit", "shutdown", "mount")
+_SWEEP_SKIP = ("pick", "open", "browse", "download", "restart", "quit", "shutdown", "mount", "devnotes")
+RULES_FILE = os.path.join(DEMO_DIR, "name-rules.json")   # in the data folder; never copied
+# demo.json "show": the demo's own marks. All off by default, so screens look like a real install.
+SHOW_DEFAULTS = {"badge": False, "pro_tags": False, "pro_hint": False, "job_note": False}
+# Inside a hidden area, names under these folders are ordinary package names: never collected.
+_PACKAGE_DIRS = r"/(node_modules|\.git|site-packages|__pycache__|\.?venv|dist|build|lib)(/|$)"
+_NOW_AFTER_LATEST = 3 * 3600   # the demo's clock: this long after its newest snapshot
+
+
+def load_rules() -> dict:
+    """Name rules for a balanced copy (``<data>/demo/name-rules.json``): ``hidden_areas`` (path
+    globs with forward slashes; every name inside is replaced), ``hide_words`` (a name with one
+    is replaced), ``keep_names`` (never replaced) and ``strict_repos`` (named the strict way)."""
+    try:
+        with open(os.path.join(DATA_DIR, RULES_FILE), encoding="utf-8") as fh:
+            rules = json.load(fh)
+    except (OSError, ValueError):
+        rules = {}
+    return {"hidden_areas": [a.lower().replace("\\", "/").rstrip("/") for a in rules.get("hidden_areas", [])],
+            "hide_words": list(rules.get("hide_words", [])), "keep_names": list(rules.get("keep_names", [])),
+            "strict_repos": [str(r) for r in rules.get("strict_repos", [])]}
 
 
 def _repo_ids(repos: str | list[str]) -> list[str]:
@@ -123,6 +143,8 @@ class _Names:
     def _identity_ext(self, name: str) -> bool:
         """A short user or computer name after the last dot reads as an extension ("notes.pcbox"):
         it must not survive as one."""
+        if self.namer.style == "balanced":
+            return False
         ext = fakenames.split_ext(name)[1]
         return bool(ext) and ext[1:].lower() in self.identity
 
@@ -134,6 +156,8 @@ class _Names:
         """Kept by design: a technical name, or (generic style) a name of common words only."""
         if _is_root_segment(real) or real.lower() in fakenames.TECHNICAL:
             return True
+        if self.namer.style == "balanced":
+            return self.get(kind, real) == real
         if self.namer.style != "generic" or (kind == "f" and self._identity_ext(real)):
             return False
         stem = real if kind == "d" else fakenames.split_ext(real)[0]
@@ -209,8 +233,9 @@ def _resolve_collisions(cur, names: _Names, tables: set[str]) -> int:
         losers: set[tuple[str, str]] = set()
 
         def settle(members: set[int]) -> None:
+            # A name kept as it is wins: only replaced names are re-rolled.
             ranked = sorted((keys[m] for m in members),
-                            key=lambda k: names.namer._pick(k[0], k[1], "order", n=1 << 62))
+                            key=lambda k: (not names.kept(*k), names.namer._pick(k[0], k[1], "order", n=1 << 62)))
             losers.update(ranked[1:])
 
         group, members = None, set()
@@ -372,11 +397,13 @@ class _Faker:
         if isinstance(storage, dict):
             cfg = storage.get("config") if isinstance(storage.get("config"), dict) else {}
             fake: dict = {}
+            balanced = self.namer.style == "balanced"
             for k, v in cfg.items():
                 if not isinstance(v, str):
                     fake[k] = v
                 elif k == "path":
-                    fake[k] = r"D:\Backups\Kopia" if re.match(r"[A-Za-z]:|\\\\", v) else "/srv/backups/kopia"
+                    fake[k] = v if balanced else (r"D:\Backups\Kopia" if re.match(r"[A-Za-z]:|\\\\", v)
+                                                  else "/srv/backups/kopia")
                 elif k in ("bucket", "container", "share"):
                     fake[k] = "demo-backups"
             storage["config"] = fake
@@ -386,7 +413,7 @@ class _Faker:
                 opts["hostname"] = self.namer.host(opts["hostname"])
             if opts.get("username"):
                 opts["username"] = self.namer.user(opts["username"])
-            if "description" in opts:
+            if "description" in opts and self.namer.style != "balanced":
                 opts["description"] = "Demo repository"
         for k in ("uniqueIDHex", "uniqueID"):
             if isinstance(st.get(k), str):
@@ -410,8 +437,9 @@ class _Faker:
         return self.scrub(info)
 
     def cache_info(self, text: str) -> str:
-        text = re.sub(r"[A-Za-z]:\\Users\\[^\\\r\n]+\\", r"C:\\Users\\demo\\", text)
-        text = re.sub(r"/home/[^/\r\n]+/", "/home/demo/", text)
+        if self.namer.style != "balanced":
+            text = re.sub(r"[A-Za-z]:\\Users\\[^\\\r\n]+\\", r"C:\\Users\\demo\\", text)
+            text = re.sub(r"/home/[^/\r\n]+/", "/home/demo/", text)
         return self.text(text)
 
 
@@ -432,6 +460,9 @@ def _record(repo: str, fk: _Faker, cur, tables: set[str]) -> dict:
 
     res = run(["snapshot", "list", "--json"])
     snaps = json.loads(res.stdout) if res.returncode == 0 and res.stdout.strip() else []
+    if "isnaps" in tables:   # a snapshot taken after the last index run has nothing behind it here
+        indexed = {r[0] for r in cur.execute("SELECT snapshot_id FROM isnaps").fetchall()}
+        snaps = [s for s in snaps if s.get("id") in indexed]
     put(["snapshot", "list", "--json"], res.returncode, json.dumps(fk.snapshots(snaps)))
 
     fd, tmp = tempfile.mkstemp(suffix=".json")
@@ -493,11 +524,26 @@ def _write(cur, sql: str, out_path: str) -> int:
     return rows
 
 
+def _unlock_index() -> None:
+    """An encrypted index is read with the key remembered on this machine, else the developer
+    password in .env.dev."""
+    from ..index import crypto
+    if not crypto.enabled() or crypto.unlocked() or crypto.unlock_from_keychain(wait=15):
+        return
+    from config import _dev_env
+    password = os.environ.get("KOPIALENS_PASSWORD") or _dev_env("KOPIALENS_PASSWORD")
+    if not (password and crypto.unlock(password)):
+        raise RuntimeError("the index is encrypted and locked: remember the key on this machine or "
+                           "set KOPIALENS_PASSWORD")
+
+
 def make_copy(repos: str | list[str], style: str, finish: bool = True) -> dict:
     """Write a demo copy of one or more repos (demo ids 1, 2, ... in the given order).
     Returns counts only, never names."""
+    _unlock_index()
     ids = _repo_ids(repos)
-    namer = fakenames.Namer(fakenames.load_key(DATA_DIR), style)
+    key = fakenames.load_key(DATA_DIR)
+    rules = load_rules() if style == "balanced" else {}
     target = copy_dir(ids, style)
     building = target + ".building"
     if os.path.isdir(building):
@@ -506,19 +552,25 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True) -> dict:
     records, forbidden, per_repo = [], set(), {}
     allowed: set[str] = set()   # every repo's fake names and extensions
     identity: set[str] = set()  # user and computer names: never allowed
+    styles, latest = {}, 0.0
     for n, repo in enumerate(ids, 1):
         demo_id = str(n)
         if len(ids) > 1:
             _step(f"repo {repo} as demo repo {demo_id}")
-        part = _copy_repo(repo, demo_id, building, namer)
-        records.append(_demo_record(part.pop("replies"), demo_id,
-                                    "Demo" if len(ids) == 1 else f"Demo {demo_id}"))
+        repo_style = "generic" if repo in rules.get("strict_repos", []) else style
+        styles[demo_id] = repo_style
+        part = _copy_repo(repo, demo_id, building, key, repo_style, rules)
+        latest = max(latest, part.pop("latest") or 0.0)
+        records.append(_demo_record(part.pop("replies"), demo_id, _repo_name(repo, demo_id, len(ids), style, repo_style)))
         forbidden |= part.pop("forbidden")
         allowed |= part.pop("allowed")
         identity |= part.pop("identity")
         per_repo[repo] = part
     # One repo's fake name or extension may equal another repo's real name.
     forbidden -= allowed - identity
+    if style == "balanced" and latest:   # stamps fall before the demo's clock, never after it
+        for rec in records:
+            rec["status_at"] = latest + _NOW_AFTER_LATEST - 2 * 3600
 
     from .demobz import BZ_RECORD
     _dump(os.path.join(building, "repos.json"), {"version": 1, "cache_dir": None,
@@ -527,9 +579,13 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True) -> dict:
     _dump(os.path.join(building, "data_version.json"),
           {"version": DATA_VERSION, "app": DATA_VERSION, "at": _dt.datetime.now().timestamp()})
     _dump(os.path.join(building, "settings.json"), _DEMO_SETTINGS)
-    _dump(os.path.join(building, "demo.json"),
-          {"style": style, "source_repos": ids, "app_version": APP_VERSION, "backblaze": True,
-           "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")})
+    meta = {"style": style, "source_repos": ids, "app_version": APP_VERSION, "backblaze": True,
+            "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")}
+    if style == "balanced":
+        meta.update(styles=styles, real_paths=True, show=dict(SHOW_DEFAULTS),
+                    now=_dt.datetime.fromtimestamp(latest + _NOW_AFTER_LATEST, _dt.timezone.utc)
+                    .isoformat(timespec="seconds") if latest else None)
+    _dump(os.path.join(building, "demo.json"), meta)
 
     _step("building caches and checking screens")
     finished = _finish(building, forbidden) if finish else {}
@@ -554,7 +610,41 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True) -> dict:
     return result
 
 
-def _copy_repo(repo: str, demo_id: str, building: str, namer: fakenames.Namer) -> dict:
+def _repo_name(repo: str, demo_id: str, count: int, style: str, repo_style: str) -> str:
+    """A balanced copy keeps each repo's real name; a strict repo inside one gets a plain name."""
+    if style == "balanced":
+        from config import REPOS
+        return REPOS.get(repo, {}).get("name") if repo_style == "balanced" else f"Kopia Backup {demo_id}"
+    return "Demo" if count == 1 else f"Demo {demo_id}"
+
+
+_HEXLIKE = re.compile(r"[0-9a-fA-F._ -]+")
+
+
+def _hidden_names(cur, tables: set[str], areas: list[str]) -> set[str]:
+    """Names to replace for the hidden areas: each area's own name, and every name found inside
+    one that appears nowhere outside them (an ordinary name like "plugins" or a language folder
+    shows up elsewhere and stays). Package folders inside an area (node_modules, .git, ...) count
+    as outside; hash-like names identify nothing and stay."""
+    if not areas or "dir" not in tables:
+        return set()
+    own = " OR ".join("p GLOB ?" for _ in areas)
+    below = " OR ".join("p GLOB ?" for _ in areas)
+    cur.execute(f"""CREATE OR REPLACE TEMP TABLE _demo_hid AS SELECT dir_id, name, ({own}) AS root FROM (
+                        SELECT dir_id, name, replace(lower(dir_path), '\\', '/') AS p FROM dir)
+                    WHERE (({own}) OR ({below})) AND NOT regexp_matches(p, ?)""",
+                list(areas) + list(areas) + [a + "/*" for a in areas] + [_PACKAGE_DIRS])
+    parts = ["SELECT lower(name) AS n, true AS inside FROM _demo_hid",
+             "SELECT lower(name), false FROM dir WHERE dir_id NOT IN (SELECT dir_id FROM _demo_hid)"]
+    if "pathx" in tables:
+        parts += ["SELECT lower(name), dir_id IN (SELECT dir_id FROM _demo_hid) FROM pathx"]
+    names = {r[0] for r in cur.execute(
+        "SELECT n FROM (" + " UNION ALL ".join(parts) + ") WHERE n <> '' GROUP BY n HAVING bool_and(inside)").fetchall()}
+    names |= {r[0].lower() for r in cur.execute("SELECT name FROM _demo_hid WHERE root").fetchall()}
+    return {n for n in names if not _HEXLIKE.fullmatch(fakenames.split_ext(n)[0])}
+
+
+def _copy_repo(repo: str, demo_id: str, building: str, key: bytes, style: str, rules: dict) -> dict:
     """One repo's faked index, manifest, recorded replies and size map as ``repo<demo_id>``."""
     pool = os.path.join(building, f"repo{demo_id}", "pool")
     os.makedirs(pool)
@@ -566,6 +656,11 @@ def _copy_repo(repo: str, demo_id: str, building: str, namer: fakenames.Namer) -
         import psutil
         cur.execute(f"SET memory_limit = '{max(store.memory_limit_bytes(), psutil.virtual_memory().total // 4)}B'")
         tables = _tables(gen)
+        if style == "balanced":
+            _step("collecting names in hidden areas")
+        replace = _hidden_names(cur, tables, rules.get("hidden_areas", [])) if style == "balanced" else set()
+        namer = fakenames.Namer(key, style, replace, rules.get("hide_words", ()), rules.get("keep_names", ()))
+        latest = cur.execute("SELECT epoch(max(start_time)) FROM isnaps").fetchone()[0] if "isnaps" in tables else None
         real_sources = [r[0] for r in cur.execute("SELECT source FROM src").fetchall()] if "src" in tables else []
         names = _Names(namer, _categories(cur, tables),
                        _identity(real_sources + list(gen.manifest.get("sources", {}))))
@@ -669,7 +764,8 @@ def _copy_repo(repo: str, demo_id: str, building: str, namer: fakenames.Namer) -
     return {"rows": written, "renamed": len(names.fake), "re_rolled": bumped,
             "kept_by_design": sum(1 for k in names.fake if names.kept(*k)), "recorded": len(replies),
             "replies": replies, "forbidden": forbidden_names(names, src_map, exts),
-            "allowed": {f.lower() for f in names.fake.values()} | exts, "identity": _identity(src_map)}
+            "allowed": {f.lower() for f in names.fake.values()} | exts,
+            "identity": _identity(src_map) if style != "balanced" else set(), "latest": latest}
 
 
 def prune(folder: str, repo_ids: list[str]) -> None:
@@ -689,6 +785,8 @@ def _demo_record(replies: dict, demo_id: str, name: str) -> dict:
     """The demo's repos.json record, with storage facts from the faked repository status."""
     from .repos import scrub_storage_config
     rec = {"id": demo_id, "name": name, "short_name": name, "kind": "kopia", "demo": True}
+    if name.endswith(")") and " (" in name:   # "Main Kopia Backup (E:\Kopia)": short is the label
+        rec["short_name"] = name.rsplit(" (", 1)[0]
     raw = replies.get(demoreplies.key(["repository", "status", "--json"]), {}).get("out") or "{}"
     status = json.loads(raw)
     storage, volume = status.get("storage") or {}, status.get("volume") or {}
@@ -747,7 +845,8 @@ def forbidden_names(names: _Names, real_sources, exts: set[str] = frozenset()) -
     forbidden -= set(exts) | _DOT_IGNORE_KEPT | _KOPIA_WORDS | _app_vocabulary()
     # A fake name that equals a real name elsewhere comes from the word lists, not from the data.
     forbidden -= {fake.lower() for fake in names.fake.values()}
-    return forbidden | _identity(real_sources)
+    # A balanced copy keeps the real user and computer names.
+    return forbidden | (_identity(real_sources) if names.namer.style != "balanced" else set())
 
 
 def _identity(real_sources) -> set[str]:
@@ -1076,7 +1175,7 @@ def main() -> None:
     import argparse
     ap = argparse.ArgumentParser(description="Demo copies of a repo's index.")
     ap.add_argument("--repo", help='a repo id, or several in one demo: "1,2"')
-    ap.add_argument("--style", choices=fakenames.STYLES, default="generic")
+    ap.add_argument("--style", choices=fakenames.STYLES, default="balanced")
     ap.add_argument("--open", metavar="COPY", help="run KopiaLens on a demo copy")
     ap.add_argument("--port", type=int, default=7323)
     ap.add_argument("--finish", action="store_true", help=argparse.SUPPRESS)

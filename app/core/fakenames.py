@@ -4,10 +4,14 @@ Every fake name is picked from fixed word lists by an HMAC of the real name, so 
 name always gives the same fake name, and without the key nothing can be tested against it.
 The key lives in the data folder and never goes into a copy or an export.
 
-Two styles:
+Three styles:
 - ``codename``: obviously a demo ("Amber Fox", "amber-fox-27.jpg").
-- ``generic``: realistic. A name made only of common words is kept with its numbers re-rolled;
+- ``generic``: strict. A name made only of common words is kept with its numbers re-rolled;
   anything else becomes a file-type or contents-based name ("IMG_4821.jpg", "Books 2023").
+- ``balanced``: names stay real. Only risky names are replaced (the strict way): the ``replace``
+  set the copy maker builds (hidden areas, the always-hide list), names carrying a piracy or NSFW
+  marker, disc and ROM images. Account numbers, phone numbers, emails and browser site folders
+  are rewritten in place, keeping their shape.
 
 Mapping is by name alone (never by place), which is what keeps Tree, Search and paths in step.
 Callers resolve sibling collisions by asking again with a higher ``attempt``.
@@ -21,7 +25,7 @@ import os
 import re
 import secrets
 
-STYLES = ("codename", "generic")
+STYLES = ("codename", "generic", "balanced")
 KEY_FILE = os.path.join("demo", "name.key")
 
 # Kept as-is in both styles: technical names that say nothing about their owner.
@@ -62,19 +66,31 @@ _EXT_CATEGORY = {e: c for c, es in CATEGORY_EXTS.items() for e in es}
 
 FOLDER_WORDS = {
     "Photos": ["Photos", "Camera Roll", "Pictures", "Trip", "Family", "Screenshots", "Holiday",
-               "Wedding", "Phone Photos", "Edited", "Raw", "Prints"],
-    "Videos": ["Videos", "Clips", "Recordings", "Movies", "Footage", "Edits", "Phone Videos"],
-    "Music": ["Music", "Albums", "Playlists", "Audio", "Stems", "Mixes", "Samples"],
-    "Books": ["Books", "Library", "Reading", "Ebooks", "Manuals", "Papers", "Magazines"],
-    "Code": ["Projects", "Source", "Scripts", "Tools", "Repos", "Experiments", "Prototypes"],
-    "Archives": ["Archives", "Installers", "Packages", "Old Backups", "Setup Files", "Drivers"],
+               "Wedding", "Phone Photos", "Edited", "Raw", "Prints", "Camera Uploads", "Exports",
+               "Weekend", "Birthday", "Scans", "Wallpapers", "Road Trip", "Beach", "Selected",
+               "Album", "Shoot", "Portraits"],
+    "Videos": ["Videos", "Clips", "Recordings", "Movies", "Footage", "Edits", "Phone Videos",
+               "Captures", "Renders", "Highlights", "Screen Recordings", "Raw Footage", "Exports",
+               "Vlogs", "Timelapse", "Gameplay"],
+    "Music": ["Music", "Albums", "Playlists", "Audio", "Stems", "Mixes", "Samples", "Sessions",
+              "Bounces", "Demos", "Loops", "Takes", "Masters", "Recordings", "Drums", "Guitars"],
+    "Books": ["Books", "Library", "Reading", "Ebooks", "Manuals", "Papers", "Magazines", "Guides",
+              "Courses", "Notes", "Comics", "Textbooks"],
+    "Code": ["Projects", "Source", "Scripts", "Tools", "Repos", "Experiments", "Prototypes",
+             "Playground", "Sandbox", "Utilities", "Plugins", "Templates"],
+    "Archives": ["Archives", "Installers", "Packages", "Old Backups", "Setup Files", "Drivers",
+                 "Disk Images", "Firmware", "Downloads", "Releases", "Bundles", "Portable"],
     "Documents": ["Documents", "Reports", "Paperwork", "Spreadsheets", "Taxes", "Statements",
-                  "Letters", "Invoices"],
+                  "Letters", "Invoices", "Receipts", "Forms", "Contracts", "Notes", "Plans",
+                  "Records", "Bills", "Manuals"],
     "Mixed": ["Files", "Shared", "Misc", "Work", "Personal", "Old Laptop", "Data", "Inbox",
               "Sorted", "Unsorted", "Transfer", "Old PC", "Phone Backup", "Keep", "Current",
-              "Set A", "Set B", "Part 2", "Batch", "Exports"],
+              "Set A", "Set B", "Part 2", "Batch", "Exports", "Library", "Collection", "Storage",
+              "Stuff", "Extras", "Media", "Content", "Workspace", "Resources", "Saved", "Main",
+              "Imported"],
 }
-QUALIFIERS = [""] * 9 + [" 2019", " 2021", " 2022", " 2023", " 2024", " (old)", " Backup", " v2"]
+QUALIFIERS = [""] * 12 + [" 2019", " 2020", " 2021", " 2022", " 2023", " 2024", " 2025", " (old)",
+                          " Backup", " v2", " - Copy", " New", " Archive", " Final", " 2"]
 PROJECT_WORDS = ["inventory", "budget", "weather", "notes", "tracker", "photo", "media", "home",
                  "task", "recipe", "habit", "chat", "invoice", "music", "garden", "travel"]
 PROJECT_SUFFIXES = ["-app", "-tool", "-sync", "-site", "-bot", "-api", "-cli", "-web"]
@@ -100,6 +116,39 @@ CODE_NOUN = ["badger", "beacon", "canyon", "comet", "falcon", "fern", "fox", "ge
              "valley", "wren", "yak", "atlas", "bison", "cobalt", "delta", "glade", "isle"]
 FIRST_NAMES = ["alex", "sam", "jordan", "taylor", "casey", "morgan", "riley", "jamie", "robin",
                "drew", "quinn", "avery", "kai", "noor", "maya", "leo"]
+
+# Balanced style: a name with one of these words is replaced whole (lowercase match).
+MARKERS = set("""
+fitgirl elamigos razor1911 skidrow onlinefix keygen keygens crack cracked crackfix cracks repack
+repacks yts yify rarbg 1337x piratebay steamless torrent torrents debrid realdebrid torbox zilean
+bitmagnet magnetarr prowlarr jackett sonarr radarr qbittorrent torrentio mediafusion aiostreams
+stremio nuvio zurg hydralauncher ascendara scrawler popcorn stash dmmhashlists emulator emulators
+pcsx2 rpcs3 ppsspp vita3k yuzu ryujinx citron sudachi cemu bios roms
+porn porno xxx nsfw nude nudes hentai onlyfans fetish erotic sex
+""".split())
+# Scene group names that are ordinary words in lowercase: matched only as an all-caps word.
+MARKERS_UPPER = {"RUNE", "CODEX", "PLAZA", "CPY", "FLT", "EMPRESS", "TENOKE", "DODI", "GSE", "R2R",
+                 "HOODLUM", "RELOADED", "PROPHET", "DARKSIDERS"}
+# Disc and ROM images: always replaced.
+IMAGE_EXTS = {"iso", "cso", "chd", "nsp", "xci", "nsz", "wbfs", "wud", "wux", "rpx", "vpk", "gba",
+              "nds", "3ds", "cia", "pbp", "gcm", "rvz", "z64", "n64", "sfc", "smc", "gb", "gbc"}
+COMMON_SITES = ["www.google.com", "www.youtube.com", "github.com", "en.wikipedia.org", "www.reddit.com",
+                "www.amazon.com", "mail.google.com", "docs.google.com", "drive.google.com",
+                "www.microsoft.com", "outlook.live.com", "stackoverflow.com", "www.netflix.com",
+                "open.spotify.com", "www.bbc.com", "www.nytimes.com", "news.ycombinator.com",
+                "www.linkedin.com", "x.com", "www.twitch.tv", "store.steampowered.com",
+                "www.dropbox.com", "web.whatsapp.com", "translate.google.com", "maps.google.com",
+                "www.imdb.com", "www.apple.com", "chatgpt.com", "claude.ai", "www.notion.so",
+                "calendar.google.com", "photos.google.com", "www.figma.com", "www.canva.com",
+                "medium.com", "www.pinterest.com", "www.instagram.com", "www.facebook.com",
+                "www.ebay.com", "weather.com", "www.speedtest.net", "app.slack.com"]
+EMAIL_DOMAINS = ["gmail.com", "outlook.com", "yahoo.com", "proton.me", "icloud.com"]
+_ORIGIN = re.compile(r"^(https?|chrome-extension)_(.+?)_(\d+)(\..*)?$", re.IGNORECASE)
+_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+\.)+(com|net|org|in|io|me|co|ai|dev|app|edu|"
+                    r"gov|uk|us|de|info|biz|xyz)\b", re.IGNORECASE)
+_STEAM64 = re.compile(r"7656119(\d{10})")
+_PHONE = re.compile(r"(?<!\d)(\+?91[ -]?)?([6-9]\d{9})(?!\d)")
+_WORD = re.compile(r"[A-Za-z0-9]+")
 
 _TOKEN_SPLIT = re.compile(r"[\s_\-.()\[\],&+#'!~@]+")
 
@@ -151,6 +200,12 @@ def is_generic(stem: str) -> bool:
     return bool(words) and all(w in GENERIC for w in words if w)
 
 
+def marked(name: str) -> bool:
+    """True when a word of the name is a piracy or NSFW marker."""
+    words = _WORD.findall(name)
+    return any(w.lower() in MARKERS or w in MARKERS_UPPER for w in words)
+
+
 def split_ext(name: str) -> tuple[str, str]:
     dot = name.rfind(".")
     if dot <= 0 or dot == len(name) - 1 or len(name) - dot > 9 or " " in name[dot:]:
@@ -159,11 +214,66 @@ def split_ext(name: str) -> tuple[str, str]:
 
 
 class Namer:
-    def __init__(self, key: bytes, style: str):
+    def __init__(self, key: bytes, style: str, replace=frozenset(), hide=frozenset(), keep=frozenset()):
         if style not in STYLES:
             raise ValueError(f"unknown name style {style!r}")
         self._key = key
         self.style = style
+        # Balanced style: whole names replaced the strict way, extra marker words, names never replaced.
+        self.replace = {r.lower() for r in replace}
+        self.hide = {h.lower() for h in hide}
+        self.keep = {k.lower() for k in keep}
+
+    def risky(self, name: str, kind: str = "d") -> bool:
+        """Balanced style: replaced whole, not kept."""
+        low = name.lower()
+        if low in self.keep:
+            return False
+        if low in self.replace or marked(name) or any(w.lower() in self.hide for w in _WORD.findall(name)):
+            return True
+        return kind == "f" and split_ext(name)[1][1:].lower() in IMAGE_EXTS
+
+    def _digits(self, digits: str, seed: str, tag: str) -> str:
+        first = "6789"[self._pick(seed, tag, "f", n=4)] if tag == "phone" else digits[0]
+        rest = str(self._pick(seed, tag, n=10 ** (len(digits) - 1))).zfill(len(digits) - 1)
+        return first + rest
+
+    def in_place(self, name: str) -> str:
+        """Balanced style: rewrite account numbers, phones, emails and browser site folders,
+        keeping the name's shape."""
+        m = _ORIGIN.match(name)
+        if m and ("." in m.group(2) or m.group(2).lower() == "localhost") and m.group(1).lower() != "chrome-extension":
+            site = self._choice(COMMON_SITES, m.group(2).lower(), "site")
+            return f"{m.group(1)}_{site}_{m.group(3)}{m.group(4) or ''}"
+        seed = name.lower()
+        out = _EMAIL.sub(lambda e: (self._choice(FIRST_NAMES, e.group(0).lower(), "em")
+                                    + str(self._pick(e.group(0).lower(), "en", n=100)) + "@"
+                                    + self._choice(EMAIL_DOMAINS, e.group(0).lower(), "ed")), name)
+        out = _STEAM64.sub(lambda s: "7656119" + self._digits(s.group(1), s.group(0), "steam"), out)
+
+        wordy = bool(re.search(r"[g-zG-Z]{2}", out))
+
+        def phone(tok: re.Match) -> str:
+            word = tok.group(0)
+            # Hex ids are not phones; a bare number counts only in a name that also has words.
+            if not (re.search(r"[g-zG-Z]", word) or (word.isdigit() and wordy)):
+                return word
+            return _PHONE.sub(lambda p: (p.group(1) or "") + self._digits(p.group(2), seed, "phone"), word)
+        return _WORD.sub(phone, out)
+
+    def _strict_folder(self, name: str, category: str) -> str:
+        seed = name.lower()
+        if is_generic(name):
+            return self._reroll_digits(name, seed)
+        if category == "Code" and self._pick(seed, "proj", n=2):
+            return self._choice(PROJECT_WORDS, seed, "pw") + self._choice(PROJECT_SUFFIXES, seed, "ps")
+        words = FOLDER_WORDS.get(category, FOLDER_WORDS["Mixed"])
+        return self._choice(words, seed, "f") + self._choice(QUALIFIERS, seed, "q")
+
+    def _strict_file(self, stem: str, ext: str, seed: str) -> str:
+        if is_generic(stem):
+            return self._reroll_digits(stem, seed)
+        return self._fill(self._choice(FILE_TEMPLATES[ext_category(ext)], seed, "t"), seed)
 
     def _pick(self, *parts: object, n: int) -> int:
         msg = "\x1f".join(str(p) for p in parts).encode("utf-8")
@@ -201,13 +311,10 @@ class Namer:
         if self.style == "codename":
             base = (self._choice(CODE_ADJ, seed, "a").title() + " "
                     + self._choice(CODE_NOUN, seed, "b").title())
-        elif is_generic(name):
-            base = self._reroll_digits(name, seed)
-        elif category == "Code" and self._pick(seed, "proj", n=2):
-            base = self._choice(PROJECT_WORDS, seed, "pw") + self._choice(PROJECT_SUFFIXES, seed, "ps")
+        elif self.style == "balanced" and not self.risky(name):
+            base = self.in_place(name)
         else:
-            words = FOLDER_WORDS.get(category, FOLDER_WORDS["Mixed"])
-            base = self._choice(words, seed, "f") + self._choice(QUALIFIERS, seed, "q")
+            base = self._strict_folder(name, category)
         return self._bump(base, seed, attempt, " ")
 
     def file(self, name: str, attempt: int = 0) -> str:
@@ -219,17 +326,19 @@ class Namer:
             base = (self._choice(CODE_ADJ, seed, "a") + "-" + self._choice(CODE_NOUN, seed, "b")
                     + "-" + str(self._pick(seed, "n", n=100)).zfill(2))
             return self._bump(base, seed, attempt) + ext.lower()
-        if is_generic(stem):
-            base = self._reroll_digits(stem, seed)
-        else:
-            base = self._fill(self._choice(FILE_TEMPLATES[ext_category(ext)], seed, "t"), seed)
-        return self._bump(base, seed, attempt) + ext
+        if self.style == "balanced" and not self.risky(name, "f"):
+            return self._bump(self.in_place(stem), seed, attempt) + ext
+        return self._bump(self._strict_file(stem, ext, seed), seed, attempt) + ext
 
     def user(self, name: str) -> str:
+        if self.style == "balanced":
+            return name
         return "demo" if self.style == "codename" else self._choice(FIRST_NAMES, name.lower(), "u")
 
     def host(self, name: str) -> str:
         seed = name.lower()
+        if self.style == "balanced":
+            return name
         if self.style == "codename":
             return self._choice(CODE_ADJ, seed, "ha") + "-" + self._choice(CODE_NOUN, seed, "hb") + "-pc"
         chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"

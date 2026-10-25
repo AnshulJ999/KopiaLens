@@ -20,6 +20,15 @@ from ..core.sources import invalidate as invalidate_sources
 from ..licensing import features
 from . import freeids
 
+
+def _on_this_computer(repo: str, path: str) -> bool:
+    """A demo never reads this disk: a path exists when the copy has backed it up."""
+    from config import is_demo
+    if is_demo(repo):
+        from ..core.demosim import path_known
+        return path_known(repo, path)
+    return os.path.exists(path)
+
 router = APIRouter(tags=["jobs"])
 
 
@@ -132,13 +141,13 @@ def _resolve_params(kind: str, repo: str, params: dict) -> dict:
         if user.lower() != client["user"].lower() or host.lower() != client["host"].lower():
             raise jobs.JobRefused(f"{user}@{host} is another computer; snapshots run on the computer they back up")
         path = source_root(source)
-        if not os.path.exists(path):
+        if not _on_this_computer(repo, path):
             raise jobs.JobRefused(f"{path} is not on this computer")
         return {"path": path, "description": (params.get("description") or "").strip(),
                 "source": source, "via_server": bool(params.get("via_server"))}
     if kind == "snapshot_estimate":
         path = (params.get("path") or "").strip()
-        if not path or not os.path.exists(path):
+        if not path or not _on_this_computer(repo, path):
             raise jobs.JobRefused(f"{path or 'That path'} is not on this computer")
         return {"path": path}
     if kind == "source_delete":

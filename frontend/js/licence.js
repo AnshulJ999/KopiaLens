@@ -38,7 +38,7 @@ const licencePart = {
       const locked = (lic.locked || []).includes(feature);
       return locked && (PRO_TAGS_ON_DEMO || !this.isDemo());
     },
-    proTagTitle() { return this.isDemo() || (this.lic && this.lic.demo) ? "Pro feature. Free to try in the demo." : null; },
+    proTagTitle() { return this.isDemo() || (this.lic && this.lic.demo_hint) ? "Pro feature. Free to try in the demo." : null; },
     // The same mark inside a table's right-click menu, whose labels are HTML.
     proMenuTag(feature) { return this.proTag(feature) ? ' <span class="protag">PRO</span>' : ""; },
 

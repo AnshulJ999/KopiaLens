@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from config import DEMO_INSTANCE, LICENCE_SERVICE_URL, PRICING_URL
+from config import DEMO_INSTANCE, DEMO_SHOW, LICENCE_SERVICE_URL, PRICING_URL
 
 from ..licensing import features, licence
 
@@ -33,7 +33,9 @@ def _state() -> dict:
     return {**licence.status(), "locked": features.locked(), "features": features.PRO,
             "pricing_url": PRICING_URL, "offline_url": LICENCE_SERVICE_URL.rstrip("/") + "/offline",
             "check_host": urlparse(LICENCE_SERVICE_URL).netloc,
-            "demo": DEMO_INSTANCE}
+            # A showcase copy shows PRO tags and the "free to try" hint only when switched on.
+            "demo": DEMO_INSTANCE and (DEMO_SHOW is None or DEMO_SHOW["pro_tags"]),
+            "demo_hint": DEMO_INSTANCE and (DEMO_SHOW is None or DEMO_SHOW["pro_hint"])}
 
 
 def _run(fn, *args):

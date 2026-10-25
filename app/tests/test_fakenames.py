@@ -11,9 +11,10 @@ from app.core.fakenames import Namer
 
 KEY_A = b"a" * 32
 KEY_B = b"b" * 32
+STRICT = ("codename", "generic")
 
 
-@pytest.mark.parametrize("style", fakenames.STYLES)
+@pytest.mark.parametrize("style", STRICT)
 def test_same_name_same_fake_and_key_changes_it(style):
     a, b = Namer(KEY_A, style), Namer(KEY_B, style)
     assert a.file("Holiday Budget Final.xlsx") == a.file("Holiday Budget Final.xlsx")
@@ -22,7 +23,7 @@ def test_same_name_same_fake_and_key_changes_it(style):
     assert [a.file(n) for n in names] != [b.file(n) for n in names]
 
 
-@pytest.mark.parametrize("style", fakenames.STYLES)
+@pytest.mark.parametrize("style", STRICT)
 def test_private_words_never_survive(style):
     n = Namer(KEY_A, style)
     for real, fake in [("Priya Sharma Passport.pdf", n.file("Priya Sharma Passport.pdf")),
@@ -46,6 +47,29 @@ def test_generic_style_keeps_common_word_names_and_rerolls_digits():
     assert fake.startswith("IMG_") and fake.endswith(".jpg")
     assert n.folder("Mystery Vault", "Photos") in {
         w + q for w in fakenames.FOLDER_WORDS["Photos"] for q in fakenames.QUALIFIERS}
+
+
+def test_balanced_keeps_names_and_replaces_only_risky_ones():
+    n = Namer(KEY_A, "balanced", replace={"Acme Studio Mix"})
+    assert n.folder("Program Files (x86)") == "Program Files (x86)"
+    assert n.file("Killswitch Engage - My Curse.rpp") == "Killswitch Engage - My Curse.rpp"
+    assert n.user("anshul") == "anshul"
+    for name in ("Acme Studio Mix", "Game [FitGirl Repack]", "RUNE", "Stash"):
+        assert name.lower() not in n.folder(name).lower()
+    assert n.folder("Rune Factory") == "Rune Factory"          # all-caps scene groups only
+    assert n.file("Some Game.iso").endswith(".iso") and "Some Game" not in n.file("Some Game.iso")
+
+
+def test_balanced_rewrites_ids_contacts_and_sites_in_place():
+    n = Namer(KEY_A, "balanced")
+    steam = n.folder("76561198088033968")
+    assert steam.startswith("7656119") and len(steam) == 17 and steam != "76561198088033968"
+    assert "9831275513" not in n.file("disruption of 9831275513 sim.pdf")
+    assert n.file("e94d8278230228a9@v2") == "e94d8278230228a9@v2"      # hex ids are not phones
+    assert n.file("icon18_safari@2x.png") == "icon18_safari@2x.png"    # not an email
+    assert "me.real@gmail.com" not in n.file("me.real@gmail.com.txt")
+    site = n.folder("https_www.private-site.com_0.indexeddb.leveldb")
+    assert site.startswith("https_") and "private-site" not in site and site.endswith(".indexeddb.leveldb")
 
 
 def test_codename_style_is_obviously_a_demo():

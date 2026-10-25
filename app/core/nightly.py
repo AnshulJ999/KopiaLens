@@ -20,6 +20,7 @@ import subprocess
 import threading
 import time
 
+import config
 from config import DATA_DIR, HERE as _KL_ROOT, REPOS, SELF_EXE, is_demo, repo_kind
 
 from .applog import get_logger
@@ -29,6 +30,7 @@ from . import atomicfile
 log = get_logger("nightly")
 
 _DEFAULT_TIMEOUT = 4 * 3600  # a full rebuild of the big repo is tens of minutes; leave real headroom
+_DEMO_PASS_SECONDS = 6       # a showcase demo copy's pretend index pass
 
 _LOCKS_GUARD = threading.Lock()
 _RESERVED: str | None = None     # the repo currently allowed to run a heavy pass; None = free
@@ -731,7 +733,7 @@ def run_index_pass(repo: str, full: bool = False, _owned: bool = False,
         if _owned:
             _release(repo)   # the caller reserved for us; bailing must not strand the slot
         return {"ok": False, "skipped": True, "reason": f"unknown repo {repo}"}
-    if is_demo(repo):
+    if is_demo(repo) and config.DEMO_SHOW is None:
         if _owned:
             _release(repo)
         return {"ok": False, "skipped": True, "reason": "a demo copy is not indexed"}
@@ -743,7 +745,11 @@ def run_index_pass(repo: str, full: bool = False, _owned: bool = False,
                     "last": _STATE.get(repo, {}).get("last")}
     started = time.time()
     try:
-        summary = _run_kopia(repo, full, trigger) if repo_kind(repo) != "backblaze" else _run_backblaze(repo)
+        if is_demo(repo):   # a showcase copy: the Index button plays a short pass that changes nothing
+            time.sleep(_DEMO_PASS_SECONDS)
+            summary = {"ok": True, "simulated": True}
+        else:
+            summary = _run_kopia(repo, full, trigger) if repo_kind(repo) != "backblaze" else _run_backblaze(repo)
     except Exception as exc:  # noqa: BLE001 - a failed pass must never kill the scheduler loop
         log.exception("repo=%s index pass failed", repo)
         summary = {"ok": False, "reason": str(exc)[:500]}
@@ -775,7 +781,7 @@ def start_index_pass_async(repo: str, full: bool = False, on_done=None,
     if repo_store.via_server(repo):
         return {"started": False, "repo": repo,
                 "reason": "reached through a kopia server, which cannot be indexed"}
-    if is_demo(repo):
+    if is_demo(repo) and config.DEMO_SHOW is None:
         return {"started": False, "repo": repo, "reason": "a demo copy is not indexed"}
     if not _reserve(repo):    # synchronous, so a "started" answer is never a guess
         busy = reserved_repo()
