@@ -235,8 +235,8 @@ _STAND_IN = {"stored_all_versions", "frees_all_versions"}
 
 
 def _ranked_cmp(field: str, desc: bool, by_path: bool):
-    """Comparator matching the SQL order of a ranked sort: rows with a value first by value, the
-    rest by last seen (newest first), then source and path."""
+    """Comparator matching the SQL order of a search sort: rows with a value first by value, ties
+    and the rest by last seen (newest first), then source and path."""
     def cmp(a: dict, b: dict) -> int:
         va, vb = _sort_value(a, field), _sort_value(b, field)
         if va is not None and vb is not None and va != vb:
@@ -313,8 +313,8 @@ def search_mixed(
     if field is None:
         merged = (folders if offset == 0 else []) + files
     else:
-        cmp = (_ranked_cmp(field, desc, dedupe and dedupe_by != "content") if sort in ("stored", "frees")
-               and field != "physical" else _row_cmp(field, desc))
+        # Must break ties exactly like the SQL order, or a folder fits two page windows.
+        cmp = _ranked_cmp(field, desc, dedupe and dedupe_by != "content")
         last = files[-1] if files else None
         final = offset + len(files) >= page["total"]
         pick = [f for f in folders

@@ -102,7 +102,7 @@
   "tf-file-disk": "tabler-filled/disc",
   "tf-file-db": "tabler-filled/database",
   "tf-file-font": "tabler-filled/file-typography",
-  "time-auto": "phosphor/clock-clockwise",
+  "time-auto": "phosphor/calendar-dots",
   "view-tabs": "phosphor/tabs",
   "view-rows": "phosphor/rows",
   "_variants": {
@@ -199,16 +199,40 @@
         "time-auto": "phosphor/clock-countdown"
       }
     },
-    "time-auto-calendar": {
-      "selector": "html[data-d-timeauto=\"calendar\"] .ic-{name}",
+    "time-auto-clockwise": {
+      "selector": "html[data-d-timeauto=\"clockwise\"] .ic-{name}",
       "icons": {
-        "time-auto": "phosphor/calendar-dots"
+        "time-auto": "phosphor/clock-clockwise"
       }
     },
     "time-auto-user": {
       "selector": "html[data-d-timeauto=\"user\"] .ic-{name}",
       "icons": {
         "time-auto": "phosphor/clock-user"
+      }
+    },
+    "view-tabs-browsers": {
+      "selector": "html[data-d-tabsicon=\"browsers\"] .ic-{name}",
+      "icons": {
+        "view-tabs": "phosphor/browsers"
+      }
+    },
+    "view-tabs-cards": {
+      "selector": "html[data-d-tabsicon=\"cards\"] .ic-{name}",
+      "icons": {
+        "view-tabs": "phosphor/cards"
+      }
+    },
+    "view-tabs-window": {
+      "selector": "html[data-d-tabsicon=\"window\"] .ic-{name}",
+      "icons": {
+        "view-tabs": "phosphor/app-window"
+      }
+    },
+    "view-tabs-squares": {
+      "selector": "html[data-d-tabsicon=\"squares\"] .ic-{name}",
+      "icons": {
+        "view-tabs": "phosphor/squares-four"
       }
     }
   },
@@ -252,6 +276,10 @@
       "yml": "yaml"
     },
     "override_ext": {
+      "ts": "video",
+      "mts": "video",
+      "m2ts": "video",
+      "ogg": "audio",
       "vhd": "disc",
       "vhdx": "disc",
       "img": "disc",

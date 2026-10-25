@@ -338,8 +338,13 @@ document.addEventListener("alpine:init", () => {
       if (this.polLeaveBox) { this.polLeaveBox = null; return; }
       if (this.polNewBox) { this.polNewBox = null; return; }
       if (this.detail) { this.detail = null; viewAbort("panel"); return; }
+      if (this.taskSel && this.active === "tasks") { this.closeTask(); return; }
       const t = this._activeTable();   // nothing open: Escape clears the table's selection
-      if (t) t.deselectRow();
+      if (t) { t.deselectRow(); return; }
+      // Single-select tables only highlight the clicked row; clear it on the visible ones.
+      document.querySelectorAll(".tabulator").forEach((el) => {
+        if (el._tabulator && el.offsetParent !== null) el._tabulator.deselectRow();
+      });
     },
     // The multi-select table on the open tab, if any.
     _activeTable() {
