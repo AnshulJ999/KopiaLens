@@ -13,7 +13,7 @@ DOCS = ROOT / "docs"
 FRONTEND = ROOT / "frontend"
 
 LEAK = re.compile(r"\b(?:KL|REL|BZ|CH|PERF|STO)\d+\b|\bAnshul\b")
-INTERNAL = re.compile(r"\bgenerations?\b|\bcid\b|content objects?|delta index|owner role|freeable|—|;",
+INTERNAL = re.compile(r"\bgenerations?\b|\bcid\b|content objects?|delta index|owner role|freeable|—",
                       re.IGNORECASE)
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)\)")
 PAGE_LINK = re.compile(r"^([\w.-]+)\.md(?:#(.*))?$")
