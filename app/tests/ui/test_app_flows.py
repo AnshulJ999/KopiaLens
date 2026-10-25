@@ -208,7 +208,7 @@ def test_repositories_rename_add_reorder_and_remove(fresh_server, open_page, fix
 
 def test_restart_keeps_settings_and_signing_in_unlocks_the_index(indexed_server, open_page):
     page = open_page(indexed_server)
-    fmt = page.get_by_role("button", name="Times: dates")
+    fmt = page.get_by_role("button", name="Times: automatic")
     fmt.click()
     expect(page.get_by_role("button", name="Times: how long ago")).to_be_visible()
 

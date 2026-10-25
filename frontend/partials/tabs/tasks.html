@@ -53,8 +53,8 @@
               </div>
               <div class="px-3 py-2 border-b border-bd text-xs flex flex-wrap gap-x-6 gap-y-1">
                 <span :class="taskStatusClass(taskSel)" class="font-medium break-all" x-text="taskSummary(taskSel)"></span>
-                <span><span class="text-muted">Started</span> <span x-text="humanTime(taskSel.start)"></span></span>
-                <span x-show="taskSel.end"><span class="text-muted">Finished</span> <span x-text="humanTime(taskSel.end)"></span></span>
+                <span><span class="text-muted">Started</span> <span x-text="freshTime(taskSel.start)"></span></span>
+                <span x-show="taskSel.end"><span class="text-muted">Finished</span> <span x-text="freshTime(taskSel.end)"></span></span>
                 <span x-show="taskSel.start"><span class="text-muted">Duration</span> <span x-text="taskTook(taskSel)"></span></span>
                 <span x-show="taskSel.total"><span class="text-muted">Steps</span> <span x-text="taskSel.done + ' of ' + taskSel.total"></span></span>
               </div>

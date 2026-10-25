@@ -102,6 +102,9 @@
   "tf-file-disk": "tabler-filled/disc",
   "tf-file-db": "tabler-filled/database",
   "tf-file-font": "tabler-filled/file-typography",
+  "time-auto": "phosphor/clock-clockwise",
+  "view-tabs": "phosphor/tabs",
+  "view-rows": "phosphor/rows",
   "_variants": {
     "header-light": {
       "selector": "html[data-d-hdricon=\"light\"] header .kl-ibtn .ic-{name}",
@@ -188,6 +191,24 @@
         "t-file-disk": "phosphor-duotone/disc-duotone",
         "t-file-db": "phosphor-duotone/database-duotone",
         "t-file-font": "phosphor-duotone/text-aa-duotone"
+      }
+    },
+    "time-auto-countdown": {
+      "selector": "html[data-d-timeauto=\"countdown\"] .ic-{name}",
+      "icons": {
+        "time-auto": "phosphor/clock-countdown"
+      }
+    },
+    "time-auto-calendar": {
+      "selector": "html[data-d-timeauto=\"calendar\"] .ic-{name}",
+      "icons": {
+        "time-auto": "phosphor/calendar-dots"
+      }
+    },
+    "time-auto-user": {
+      "selector": "html[data-d-timeauto=\"user\"] .ic-{name}",
+      "icons": {
+        "time-auto": "phosphor/clock-user"
       }
     }
   },

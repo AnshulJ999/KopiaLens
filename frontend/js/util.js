@@ -43,9 +43,9 @@ const _FILE_KINDS = [
   ["file-doc", "doc docx rtf odt pages"],
   ["file-sheet", "xls xlsx xlsm ods csv tsv numbers"],
   ["file-slides", "ppt pptx odp key"],
-  ["file-db", "db sqlite sqlite3 mdb accdb dbf"],
+  ["file-db", "db sqlite sqlite3 mdb accdb dbf sql"],
   ["file-font", "ttf otf woff woff2 fon"],
-  ["file-code", "py js ts jsx tsx json html htm css c cpp h hpp cs go rs java kt sh bat cmd ps1 xml yml yaml toml ini sql lua rb php"],
+  ["file-code", "py js ts jsx tsx json html htm css c cpp h hpp cs go rs java kt sh bat cmd ps1 xml yml yaml toml ini lua rb php"],
   ["file-text", "txt md log nfo"],
 ].map(([icon, exts]) => [icon, new Set(exts.split(" "))]);
 const fileIconName = (name) => {
@@ -55,8 +55,8 @@ const fileIconName = (name) => {
   return hit ? hit[0] : "file";
 };
 // The icon in front of a file or folder name: the set from Settings > Appearance (stamped on
-// <html> as data-fileicons). The Design menu (dev add-on) can try others: Phosphor and Fluent.
-const FILE_ICON_SETS = ["material", "filled", "outline", "emoji"];
+// <html> as data-fileicons). The Design menu (dev add-on) can try others, such as Phosphor.
+const FILE_ICON_SETS = ["material", "filled", "outline", "fluent", "emoji"];
 const fileIconSet = () => {
   const el = document.documentElement;
   const tried = el.getAttribute("data-d-fileicons");
@@ -64,6 +64,11 @@ const fileIconSet = () => {
   const s = el.getAttribute("data-fileicons");
   return FILE_ICON_SETS.includes(s) ? s : "material";
 };
+// Rows carry the set's own markup, so a set tried from the Design menu redraws the tables.
+new MutationObserver(() => document.querySelectorAll(".tabulator").forEach((el) => {
+  const t = typeof Tabulator !== "undefined" && Tabulator.findTable(el);
+  if (t && t[0]) t[0].redraw(true);
+})).observe(document.documentElement, { attributes: true, attributeFilter: ["data-d-fileicons"] });
 const _FILE_EMOJI = {
   folder: "\u{1F4C1}", file: "\u{1F4C4}", "file-image": "\u{1F5BC}️", "file-audio": "\u{1F3B5}",
   "file-video": "\u{1F3AC}", "file-zip": "\u{1F4E6}", "file-code": "\u{1F4BB}", "file-text": "\u{1F4DD}",
@@ -206,14 +211,19 @@ const fmtRel = (s) => {
   }
   return future ? "in a moment" : "just now";
 };
-let TIME_FMT = localStorage.getItem("kl-timefmt") || "absolute";
-const humanTime = (s) => (TIME_FMT === "relative" ? fmtRel(s) : fmtAbs(s));
+let TIME_FMT = localStorage.getItem("kl-timefmt") || "auto";
+// Automatic: how long ago where a time says how fresh something is, a date where it is a record.
+const _FRESH_TABLES = new Set(["tabulator-dashboardTable", "tabulator-tasksTable"]);
+const _timeMode = (fresh) => (TIME_FMT === "relative" ? "rel" : TIME_FMT === "absolute" ? "abs" : fresh ? "rel" : "abs");
+const humanTime = (s) => (_timeMode(false) === "rel" ? fmtRel(s) : fmtAbs(s));
+const freshTime = (s) => (_timeMode(true) === "rel" ? fmtRel(s) : fmtAbs(s));
 // A time in a table cell; ``cell`` (the Tabulator cell) lets a column keep its own choice (column menu > Times).
 const timeCell = (s, cell, note = "") => {   // ``note``: an extra tooltip line before the time
   if (!s) return "—";
   const abs = fmtAbs(s), rel = fmtRel(s);
-  const mode = cellTimeMode(cell) || (TIME_FMT === "relative" ? "rel" : "abs");
+  const mode = cellTimeMode(cell) || _timeMode(!!(cell && cell.getTable && _FRESH_TABLES.has(tableKey(cell.getTable()))));
   const tip = (t) => escHtml(note ? `${note}\n${t}` : t);
+  if (mode === "both") return `<span title="${tip(rel)}">${abs} <span class="text-muted">· ${rel}</span></span>`;
   return mode === "rel" ? `<span title="${tip(abs)}">${rel}</span>` : `<span title="${tip(rel)}">${abs}</span>`;
 };
 
@@ -428,9 +438,25 @@ function timeOverrides() {
   const out = [];
   for (const [key, cfg] of Object.entries(TABLE_PREFS)) {
     const t = cfg && cfg.kl && cfg.kl.time;
-    for (const [field, v] of Object.entries(t || {})) out.push({ key, field, title: v.title || field, mode: v.mode });
+    const live = _tablesByPid[key];
+    for (const [field, v] of Object.entries(t || {})) {
+      const col = live && live.getColumn && live.getColumn(field);   // the column's title today, if it was renamed
+      out.push({ key, field, title: (col && col.getDefinition().title) || v.title || field, mode: v.mode });
+    }
   }
   return out;
+}
+function clearTimeOverride(key, field) {
+  const cfg = TABLE_PREFS[key];
+  if (!(cfg && cfg.kl && cfg.kl.time && cfg.kl.time[field])) return;
+  const time = { ...cfg.kl.time };
+  delete time[field];
+  const kl = { ...cfg.kl, time };
+  if (!Object.keys(time).length) delete kl.time;
+  TABLE_PREFS[key] = { ...cfg, kl };
+  _queueTableSave(key);
+  const t = _tablesByPid[key];
+  if (t && t.element && document.contains(t.element)) t.getRows().forEach((r) => r.reformat());
 }
 function clearTimeOverrides() {
   for (const [key, cfg] of Object.entries(TABLE_PREFS)) {
@@ -464,6 +490,7 @@ function colHeaderMenu(e, column) {
       { label: _menuMark(!cur) + "Default (header button)", action: () => setTime("") },
       { label: _menuMark(cur === "rel") + "How long ago", action: () => setTime("rel") },
       { label: _menuMark(cur === "abs") + "Date", action: () => setTime("abs") },
+      { label: _menuMark(cur === "both") + "Date and how long ago", action: () => setTime("both") },
     ] });
   }
   const pinned = (kl.frozen || []).includes(f);

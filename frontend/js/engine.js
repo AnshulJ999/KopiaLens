@@ -52,7 +52,7 @@ const enginePart = {
     const e = this.engineFor(repo);
     if (!e) return "";
     if (e.choice === "kopialens") {
-      if (e.state === "running") return "Backups: KopiaLens" + (e.next ? " · next " + humanTime(e.next) : "");
+      if (e.state === "running") return "Backups: KopiaLens" + (e.next ? " · next " + freshTime(e.next) : "");
       if (e.state === "starting") return "Backups: KopiaLens · starting…";
       if (e.state === "paused") return "Backups: paused";
       if (e.state === "blocked" && e.until_restart) return "Backups: KopiaLens takes over when KopiaUI restarts";
@@ -143,7 +143,7 @@ const enginePart = {
     if (v.blinkdisk) rows.push(["BlinkDisk", "This is a BlinkDisk vault"]);
     if (v.identity) rows.push(["Connected as", v.identity]);
     if (v.owner) rows.push(["Maintenance owner", v.owner + (v.owner_is_us ? " (this connection)" : "")]);
-    if (s.choice === "kopialens" && s.next) rows.push(["Next backup", humanTime(s.next)]);
+    if (s.choice === "kopialens" && s.next) rows.push(["Next backup", freshTime(s.next)]);
     if (s.pause && s.pause.on) rows.push(["Paused", this.enginePauseText(s.pause)]);
     return rows;
   },

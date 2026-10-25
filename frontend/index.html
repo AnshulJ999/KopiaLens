@@ -110,7 +110,7 @@
         <div class="mb-4 rounded-md border border-danger bg-danger-bg px-4 py-3 flex flex-wrap items-center gap-3 text-sm" data-testid="engine-banner">
           <div class="min-w-0 flex-1">
             <div class="font-medium" x-text="engineFor().state === 'blocked' ? engineFor().conflict + ' KopiaLens stopped its own backups here.' : 'KopiaLens stopped running backups for this repository.'"></div>
-            <div class="text-xs text-muted break-all" x-text="engineFor().state === 'blocked' ? 'Close the other app, or hand the backups back to it.' : (engineFor().error || '') + (engineFor().retry_at ? ' Trying again ' + humanTime(engineFor().retry_at) + '.' : '')"></div>
+            <div class="text-xs text-muted break-all" x-text="engineFor().state === 'blocked' ? 'Close the other app, or hand the backups back to it.' : (engineFor().error || '') + (engineFor().retry_at ? ' Trying again ' + freshTime(engineFor().retry_at) + '.' : '')"></div>
           </div>
           <button @click="openEngineDlg()" class="kl-btn">Who runs backups…</button>
         </div>

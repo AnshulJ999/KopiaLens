@@ -40,7 +40,7 @@
                 <template x-for="row in maintFacts()" :key="row[0]">
                   <div class="r"><span class="k" x-text="row[0]"></span><span class="break-all" x-text="row[1]"></span></div>
                 </template>
-                <div class="r" x-show="maint.info.next_full"><span class="k">Next scheduled full</span><span x-text="humanTime(maint.info.next_full)"></span></div>
+                <div class="r" x-show="maint.info.next_full"><span class="k">Next scheduled full</span><span x-text="freshTime(maint.info.next_full)"></span></div>
               </div>
             </template>
           </div>

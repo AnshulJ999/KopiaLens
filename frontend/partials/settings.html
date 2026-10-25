@@ -66,11 +66,12 @@
                       <option value="24">24-hour</option>
                     </select>
                     <select autocomplete="off" :value="timeFmt" @change="setTimeFmt($event.target.value)" class="fld border border-bd bg-surface2">
-                      <option value="absolute">Exact (9:14 PM)</option>
+                      <option value="auto">Automatic</option>
                       <option value="relative">Relative (5 min ago)</option>
+                      <option value="absolute">Exact (9:14 PM)</option>
                     </select>
                   </span></div>
-                <p class="text-[0.6875rem] text-muted mt-1">Changes every table at once. The header's clock button switches exact and relative too.</p>
+                <p class="text-[0.6875rem] text-muted mt-1">Automatic shows how long ago for recent activity (Dashboard, Tasks, backups) and dates for history (Snapshots, Search, Tree, versions). The header's clock button switches too, and a column can keep its own choice: right-click its header.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Search boxes</span>
@@ -569,11 +570,7 @@
                   {{ duration('startupDelay', 'startup_delay') }}</div>
                 <p class="text-[0.6875rem] text-muted mt-1">How long after launch before background work starts, so starting the PC isn't followed by a burst of disk and CPU.</p>
               </div>
-              <div>
-                <div class="flex items-center justify-between gap-3"><span>Gap between background runs</span>
-                  {{ duration('reindexInterval', 'reindex_interval', 300) }}</div>
-                <p class="text-[0.6875rem] text-muted mt-1">With indexing set to every N hours: the least time between two runs, also right after a restart.</p>
-              </div>
+
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Ranked files</span>
                   <select autocomplete="off" x-model.number="rankCount" @change="saveKl('rank_count')" class="fld border border-bd bg-surface2">

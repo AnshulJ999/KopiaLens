@@ -91,7 +91,7 @@ const simulatePart = {
           this._simOne = r;
           this.simMeta = this.simOneLine(r);
           setTable("#simulateTable", r.snapshots || [], [
-            { title: "Start", field: "start_time", width: 185, formatter: (c) => timeCell(c.getValue(), c) },
+            { title: "Snap time", field: "start_time", width: 185, formatter: (c) => timeCell(c.getValue(), c) },
             { title: "Result", field: "kept", width: 90, formatter: (c) => (c.getValue()
               ? '<span class="pill" style="background:var(--ok-bg);color:var(--ok)">kept</span>'
               : '<span class="pill" style="background:var(--danger-bg);color:var(--danger)">deleted</span>'),

@@ -42,9 +42,9 @@ const maintenancePart = {
         ["Safety", m.safety === "none" ? "None" : "Normal"],
         ["Owner", i.owner || "unknown"],
       ];
-      if (i.last_quick) facts.push(["Last quick run", this.humanTime(i.last_quick)]);
-      if (i.last_full) facts.push(["Last full run", this.humanTime(i.last_full)]);
-      if (i.last_run && !i.last_quick && !i.last_full) facts.push(["Last run", this.humanTime(i.last_run)]);
+      if (i.last_quick) facts.push(["Last quick run", this.freshTime(i.last_quick)]);
+      if (i.last_full) facts.push(["Last full run", this.freshTime(i.last_full)]);
+      if (i.last_run && !i.last_quick && !i.last_full) facts.push(["Last run", this.freshTime(i.last_run)]);
       if (st.capacity) facts.push(["Disk", `${fmtBytes(st.available || 0)} free of ${fmtBytes(st.capacity)}`]);
       return facts;
     },

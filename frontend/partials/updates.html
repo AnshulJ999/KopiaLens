@@ -26,7 +26,7 @@
                 <p class="text-[0.6875rem] text-muted mt-1">Your IP address is never stored. An install not seen for 90 days is deleted.</p>
               </div>
               <div class="flex items-center justify-between gap-3">
-                <span class="text-xs" x-text="update().checked_at ? 'Last checked ' + humanTime(new Date(update().checked_at * 1000).toISOString()) : 'Not checked yet'"></span>
+                <span class="text-xs" x-text="update().checked_at ? 'Last checked ' + freshTime(new Date(update().checked_at * 1000).toISOString()) : 'Not checked yet'"></span>
                 <button class="kl-btn" @click="checkUpdatesNow()" :disabled="checkingUpdates" x-text="checkingUpdates ? 'Checking…' : 'Check now'"></button>
               </div>
             </section>

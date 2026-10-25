@@ -59,7 +59,7 @@ FRONTEND = ROOT / "frontend"
 
 _bg_stop = threading.Event()
 _TICK = 60.0                       # scheduler heartbeat - the clock check must be finer than the work interval
-_DEFAULT_REINDEX_INTERVAL = 1800   # fallback seconds between background passes (overridable in settings)
+
 _DEFAULT_LIGHT_INTERVAL = 1800     # cheap warm pass: next-snapshot times, stats, search landing
 _DEFAULT_INDEX_INTERVAL = 86400    # used only when index_mode == "interval"
 _DEFAULT_INDEX_TIME = "23:00"      # daily mode: local wall-clock time for the heavy pass
@@ -79,13 +79,7 @@ def _kl() -> dict:
         return {}
 
 
-def _reindex_interval() -> float:
-    """Background-pass interval, read live from settings so a change takes effect without restart."""
-    try:
-        val = float(_kl().get("reindex_interval", _DEFAULT_REINDEX_INTERVAL))
-        return max(60.0, val)  # never tighter than 1 minute
-    except Exception:
-        return _DEFAULT_REINDEX_INTERVAL
+
 
 
 def _index_mode() -> str:
@@ -321,14 +315,13 @@ def _max_retries() -> int:
 def _startup_wait() -> float:
     """Seconds to wait before the FIRST bg pass after this process started: at least
     startup_delay (flat boot/restart quiet period), and never less than whatever remains of
-    reindex_interval since the last completed cycle - so a restart soon after a real cycle
-    doesn't re-trigger one early just because the process happened to restart."""
+    the index interval since the last completed cycle - so a restart doesn't bring a run forward."""
     if _index_mode() == "daily":
         return _startup_delay()  # the clock decides when the heavy pass runs; nothing to defer to
     last = _read_last_cycle_ts()
     if last is None:
         return _startup_delay()
-    remaining = _reindex_interval() - (time.time() - last)
+    remaining = _index_interval() - (time.time() - last)
     return max(_startup_delay(), remaining)
 
 
@@ -376,7 +369,7 @@ def _warm_search(repo: str) -> None:
         from .index.queries import group_by_folder, warm_landing
         kl = load_settings().get("kopialens", {}) or {}
         size = str(kl.get("page_size", 500))   # saved as the picker's text; "Infinite" is not cached
-        sort, direction = kl.get("search_sort") or "size", kl.get("search_dir") or "desc"
+        sort, direction = kl.get("search_sort") or "stored", kl.get("search_dir") or "desc"
         warm_landing(repo, limit=int(size) if size.isdigit() else 500, sort=sort, direction=direction)
         group_by_folder(repo, depth=int(kl.get("group_depth", 3)), limit=500, direction=direction,
                         sort="logical" if sort == "size" else "physical")   # Files + Folders view
@@ -1437,7 +1430,7 @@ def _compose_html(client_host: str | None = None) -> str:
                "midnight", "obsidian", "lens", "graphite", "ink")
     _DENSITY = ("comfortable", "normal", "compact", "dense", "custom")
     _FONTS = ("inter", "geist", "plex", "system")
-    _FILE_ICONS = ("material", "filled", "outline", "emoji")
+    _FILE_ICONS = ("material", "filled", "outline", "fluent", "emoji")
     theme = "lens" if kl.get("theme") == "pine" else kl.get("theme")   # Pine was removed
     try:
         pct = min(115, max(80, int(kl.get("density_pct", 100))))

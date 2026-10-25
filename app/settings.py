@@ -21,7 +21,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "columns": [],
         "last_panel": "dashboard",
         "window": {},
-        "time_format": "absolute",
+        "time_format": "auto",
         "number_style": "system",    # system | en-US | de-DE | fr-FR | en-IN (shown by example)
         "byte_units": "decimal",     # decimal (GB, kopia's default) | binary (GiB)
         "date_style": "system",      # system | dmy (9 Oct 2026) | mdy (Oct 9, 2026) | iso (2026-10-09)
@@ -35,7 +35,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "density_pct": 100,          # density="custom": root text size in percent (80-115)
         "font": "inter",             # inter|geist|plex|system (bundled in frontend/vendor/fonts)
         "sort_arrows": "sorted",     # sorted|all - table header sort arrows
-        "file_icons": "material",    # material|filled|outline|emoji - icons before file and folder names
+        "file_icons": "material",    # material|filled|outline|fluent|emoji - icons before file and folder names
         "table_align": "auto",       # auto|left|center|right - every table's starting alignment (a table or column can override)
         "dashboard_page_size": "all",   # all|25|50|100 - Dashboard rows per page
         "tab_order": [],             # tab ids in the order the user dragged them; [] = the default order
@@ -65,21 +65,20 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "light_interval": 1800,      # cheap in-process warm pass: next-snapshot times, stats, search landing
         "dashboard_mode": "nightly",  # "nightly" (rebuild with the heavy pass) | "interval" (also during the day)
         "dashboard_interval": 14400,  # dashboard_mode="interval" only: seconds between rebuilds
-        "reindex_interval": 1800,    # legacy interval, still used for the restart-quiet-period calculation
         "startup_delay": 300,        # quiet period after every process start before any background work
-        "dashboard_refresh": 900,    # seconds: how often the open Dashboard view re-fetches the cache (0 = off)
+        "dashboard_refresh": 1800,   # seconds: how often the open Dashboard view re-fetches the cache (0 = off)
         "churn_days": 30,            # Churn tab: default window (1 / 3 / 7 / 30 / 90 / 180 / 365)
         "churn_depth": 4,            # Churn tab: folder-rollup depth
         "churn_view": "source",      # Churn tab: "source" | "folder" | "ext"
-        "group_depth": 3,            # Search "By folder" rollup depth; folder prewarm follows it
-        "group_min_depth": 0,        # Search "By folder": hide folders shallower than this (0 = none)
+        "group_depth": 6,            # Search "By folder" rollup depth; folder prewarm follows it
+        "group_min_depth": 3,        # Search "By folder": hide folders shallower than this (0 = none)
         "group_loose": True,         # Search folders: a row for the files lying directly in a shallower folder
         "group_depth_mode": "deepest",  # Search folders: deepest | nested | own (queries.DEPTH_MODES)
         "delete_top_n": 0,           # folder delete: 0 = everything matched, else only the N biggest by physical
         "churn_default": False,      # show churn column by default
         "tree_mode": "full",       # default tree view mode
         "tree_view": "list",       # Tree tab: "list" (drill in) | "tree" (expand folders in place)
-        "search_sort": "size",     # persisted search sort column
+        "search_sort": "stored",   # persisted search sort column (Physical (all))
         "search_dir": "desc",      # persisted search sort direction
         "search_dedupe": False,    # persisted dedupe toggle (search)
         "search_kind": "files",    # Search lists "files" | "folders" (rolled up by depth) | "both"

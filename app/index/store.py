@@ -371,6 +371,7 @@ class _PinnedCursor:
         self._gen = gen
         self._cur = cur
         self._closed = False
+        self._last_exec = None   # (method, args, kwargs) of the last execute, to re-run on a fetch interrupt
 
     @property
     def generation(self) -> Generation:
@@ -389,16 +390,29 @@ class _PinnedCursor:
         try:
             if name.startswith("execute"):
                 out = lanes.run(self._cur, lambda: fn(*args, **kwargs))
+                self._last_exec = (name, args, kwargs)
             else:
-                out = fn(*args, **kwargs)
+                try:
+                    out = fn(*args, **kwargs)
+                except duckdb.InterruptException:
+                    # An interrupt meant for the statement can land as it returns and surface here,
+                    # outside lanes.run: run the statement once more and fetch again.
+                    sc = lanes.current()
+                    if self._last_exec is None or (sc is not None and sc.cancelled):
+                        raise
+                    log.debug("%s interrupted without a cancel (%s %s); interrupted by %s; running it again",
+                              name, sc.method if sc else "", sc.path if sc else "",
+                              lanes._who_interrupted(self._cur))
+                    ename, eargs, ekwargs = self._last_exec
+                    lanes.run(self._cur, lambda: getattr(self._cur, ename)(*eargs, **ekwargs))
+                    out = getattr(self._cur, name)(*args, **kwargs)
         except duckdb.InterruptException:
-            # DuckDB can do the work while rows are fetched, outside lanes.run: a request the
-            # browser abandoned is a cancel there too, not a 500.
+            # A request the browser abandoned is a cancel, not a 500.
             sc = lanes.current()
             if sc is not None and sc.cancelled:
                 raise lanes.RequestCancelled() from None
-            log.debug("%s interrupted without a cancel (%s %s); interrupted by %s", name,
-                      sc.method if sc else "", sc.path if sc else "", lanes._who_interrupted(self._cur))
+            log.warning("%s interrupted without a cancel (%s %s); interrupted by %s", name,
+                        sc.method if sc else "", sc.path if sc else "", lanes._who_interrupted(self._cur))
             raise
         except duckdb.OutOfMemoryException as exc:
             log.warning("query ran out of memory (limit %s): %s", resolve_limits()[0],

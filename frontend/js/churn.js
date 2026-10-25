@@ -63,9 +63,8 @@ const churnPart = {
         cols = [
           { title: "Source", field: "source", widthGrow: 3, minWidth: 220, formatter: (c) => {
               const r = c.getRow().getData();
-              const icon = itemIconHtml(sourcePath(c.getValue()), true);
               const warn = r.nested_in ? ` <span title="Also covered by ${this.shortSource(r.nested_in)}, so this data is snapshotted twice and counted in both rows" style="color:var(--warn)"><i class="ic ic-warning"></i> inside ${this.shortSource(r.nested_in)}</span>` : "";
-              return icon + this.shortSource(c.getValue()) + warn;
+              return this.shortSource(c.getValue()) + warn;
             } },
           bytesCol, rateCol, verCol, rewriteCol, fileCol, ...sizeCols, physAllCol(false),
           { title: "Mostly from", field: "top_folder", widthGrow: 2, minWidth: 180, headerSort: false,

@@ -31,7 +31,8 @@ const themePart = {
   lightTheme: "daylight", darkTheme: "lens", sortArrows: "sorted", fileIcons: "material",
   FILE_ICON_CHOICES: [
     { id: "material", label: "Material" }, { id: "filled", label: "Filled" },
-    { id: "outline", label: "Outline" }, { id: "emoji", label: "Emoji" },
+    { id: "outline", label: "Outline" }, { id: "fluent", label: "Fluent Emoji" },
+    { id: "emoji", label: "System Emoji" },
   ],
 
   _themeIsDark(id) {

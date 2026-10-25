@@ -18,7 +18,10 @@ const snapshotsPart = {
         const spaceCols = ["physical", "accum", "churn", "reclaimable"];
         const cols = [
           ...(allSrc ? [{ title: "Source", field: "source", widthGrow: 2, minWidth: 200, formatter: (c) => this.shortSource(c.getValue()) }] : []),
-          { title: "Start", field: "start_time", width: 185, formatter: (c) => timeCell(c.getValue(), c) },
+          { title: "Snap time", field: "start_time", width: 185, formatter: (c) => timeCell(c.getValue(), c) },
+          { title: "Age", field: "age", width: 120, visible: false,
+            sorter: (a, b, ra, rb) => String(rb.getData().start_time || "").localeCompare(String(ra.getData().start_time || "")),
+            formatter: (c) => { const s = c.getRow().getData().start_time; return s ? `<span title="${escHtml(fmtAbs(s))}">${fmtRel(s)}</span>` : "—"; } },
           { title: "Description", field: "description", widthGrow: 1, minWidth: 120, formatter: (c) => escHtml(c.getValue() || "") },
           { title: "Logical", field: "logical", width: 100, sorter: "number", formatter: (c) => fmtBytes(c.getValue()), hozAlign: "right" },
           { title: "Physical", field: "physical", width: 100, sorter: "number", formatter: (c) => fmtPhys(c.getValue()), hozAlign: "right" },

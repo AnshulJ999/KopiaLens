@@ -60,7 +60,7 @@ document.addEventListener("alpine:init", () => {
       if (this.theme === "system") return window.matchMedia("(prefers-color-scheme: dark)").matches;
       return this.themeIsDark();
     },
-    timeFmt: localStorage.getItem("kl-timefmt") || "absolute",
+    timeFmt: localStorage.getItem("kl-timefmt") || "auto",
     polRailW: Number(localStorage.getItem("kl-pol-rail")) || 288,   // Policies list width (drag handle)
     numberStyle: "system", dateStyle: "system", clock: "system", byteUnits: "decimal",   // Settings > General (util.js setFormatStyles)
     indexStatus: {},
@@ -83,7 +83,7 @@ document.addEventListener("alpine:init", () => {
     _churnPhysSeq: 0, _churnPhysCache: {}, _churnPhysTimer: null,   // folder view: on-screen all-versions physical
     indexMode: "daily", indexTime: "23:00", indexInterval: 86400, dashboardMode: "nightly",
     freshness: [], _freshTimer: null,
-    searchTotal: 0, searchEmpty: false, searchPage: 1, searchPageSize: "500", searchSort: "size", searchDir: "desc",
+    searchTotal: 0, searchEmpty: false, searchPage: 1, searchPageSize: "500", searchSort: "stored", searchDir: "desc",
     pageSizes: ["100", "200", "500", "1000", "2000", "5000", "10000", "Infinite"],
     showFilters: false, minGb: "", maxGb: "", dateFrom: "", dateTo: "", minVersions: "", sharedMin: "", recentBackup: "",
     dedupe: false, dedupeBy: "path", headerSearchOnly: false, treeDedupe: false, reclaimMap: {},
@@ -134,7 +134,7 @@ document.addEventListener("alpine:init", () => {
     // Free/Pro (licence.js): GET /api/licence; proNotice = the open upgrade notice.
     lic: { state: "none", locked: [], features: {}, pricing_url: "" }, proNotice: null,
     licKey: "", licBusy: false, licError: "", licPatreonWaiting: false, licAdding: false,
-    showSettings: false, settingsTab: "general", backend: "subprocess", repoPinned: false, reindexInterval: 1800, dashRefresh: 900,
+    showSettings: false, settingsTab: "general", backend: "subprocess", repoPinned: false, dashRefresh: 1800,
     excludedTolerance: 0.05, esPath: "",
     // Advanced settings. These existed in settings.json all along and had no UI, so the only way to
     // change them was to edit the file by hand. Defaults here mirror app/settings.py.
@@ -231,6 +231,7 @@ document.addEventListener("alpine:init", () => {
     fmtB(v) { return fmtBytes(v); },
     fmtPhys(v) { return fmtPhys(v); },
     humanTime(s) { return humanTime(s); },
+    freshTime(s) { return freshTime(s); },
     fmtDate(s) { return fmtDate(s); },
     fmtDur(s) { return fmtDur(s); },
     // A source's folder; with its owner (user@computer) when another owner backs up the same folder here.
@@ -466,7 +467,7 @@ document.addEventListener("alpine:init", () => {
         this.repoLabels = kl.repo_labels === "full" ? "full" : "short";
         this.showProBadge = kl.show_pro_badge !== false;
         this._readLook(kl);
-        this.searchSort = kl.search_sort || "size";
+        this.searchSort = kl.search_sort || "stored";
         this.searchDir = kl.search_dir || "desc";
         this.dedupe = !!kl.search_dedupe;
         this.dedupeBy = kl.search_dedupe_by === "content" ? "content" : "path";
@@ -477,8 +478,7 @@ document.addEventListener("alpine:init", () => {
         this.treeDedupe = !!kl.tree_dedupe;
         this.treeMode = kl.tree_mode || "full";
         this.treeView = kl.tree_view === "tree" ? "tree" : "list";
-        this.reindexInterval = Number(kl.reindex_interval || 1800);
-        this.groupDepth = Number(kl.group_depth || 3);
+        this.groupDepth = Number(kl.group_depth || 6);
         this.groupMinDepth = Number(kl.group_min_depth) > 1 ? Number(kl.group_min_depth) : "";
         this.groupLoose = kl.group_loose !== false;
         this.groupMode = ["deepest", "nested", "own"].includes(kl.group_depth_mode) ? kl.group_depth_mode : "deepest";
@@ -489,7 +489,7 @@ document.addEventListener("alpine:init", () => {
         this.indexTime = kl.index_time || "23:00";
         this.indexInterval = Number(kl.index_interval || 86400);
         this.dashboardMode = kl.dashboard_mode || "nightly";
-        this.dashRefresh = Number(kl.dashboard_refresh ?? 900);
+        this.dashRefresh = Number(kl.dashboard_refresh ?? 1800);
         this.excludedTolerance = Number(kl.excluded_tolerance ?? 0.05);
         this.esPath = kl.es_path || "";
         // Also at startup, not only in openSettings: if that re-fetch ever fails, the advanced
@@ -556,13 +556,7 @@ document.addEventListener("alpine:init", () => {
       try { return await fn(); } catch (err) { if (!isAbort(err) && !err.notice) this.error = err.message || String(err); } finally { this.busy = ""; }
     },
 
-    toggleTimeFmt() {
-      TIME_FMT = TIME_FMT === "relative" ? "absolute" : "relative";
-      this.timeFmt = TIME_FMT;
-      localStorage.setItem("kl-timefmt", TIME_FMT);
-      this.klSet({ time_format: TIME_FMT });  // permanent in backend too
-      this.activate();
-    },
+    toggleTimeFmt() { this.setTimeFmt({ auto: "relative", relative: "absolute" }[TIME_FMT] || "auto"); },
     copyText(t) { try { navigator.clipboard.writeText(t); } catch (e) {} },
     _downloadText(name, text) {  // trigger a browser download of generated text (e.g. a .bat)
       const blob = new Blob([text], { type: "text/plain" });

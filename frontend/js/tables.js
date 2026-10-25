@@ -49,7 +49,14 @@ const tablesPart = {
   },
   // Right-click on the header's time button: the columns that keep their own choice.
   timeOverrideList() {
-    return timeOverrides().map((o) => ({ ...o, where: tableName(o.key) + ": " + o.title, label: o.mode === "rel" ? "How long ago" : "Date" }));
+    const labels = { rel: "How long ago", abs: "Date", both: "Date and how long ago" };
+    return timeOverrides().map((o) => ({ ...o, where: tableName(o.key) + ": " + o.title, label: labels[o.mode] || "Date" }));
   },
   resetTimeOverrides() { clearTimeOverrides(); this.timeMenu = false; },
+  dropTimeOverride(o) { clearTimeOverride(o.key, o.field); },
+  timeFmtChoices: [["auto", "Automatic"], ["relative", "How long ago"], ["absolute", "Dates"]],
+  timeFmtLabel() {
+    return { relative: "how long ago", absolute: "dates" }[this.timeFmt]
+      || "automatic (how long ago for recent activity, dates for history)";
+  },
 };

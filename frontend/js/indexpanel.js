@@ -66,7 +66,7 @@ const indexPanelPart = {
       if (p.phase) bits.push(INDEX_PHASES[p.phase] || p.phase);
       const sync = p.sync || null;
       if (sync && sync.waiting_since) {
-        bits.push(`Waiting for the repository since ${humanTime(sync.waiting_since)}`);
+        bits.push(`Waiting for the repository since ${freshTime(sync.waiting_since)}`);
       } else if (sync && sync.pieces) {
         bits.push(`large files: ${fmtNum(sync.pieces_read)} of ${fmtNum(sync.pieces)}`);
       } else if (sync && sync.read != null) {

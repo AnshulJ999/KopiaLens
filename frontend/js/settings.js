@@ -37,8 +37,7 @@ const settingsPart = {
         this._klSettings = kl;
         this.notifyHook = null; this.notifyForm = null;
         this.backend = data.settings?.listing_backend || "subprocess";
-        this.reindexInterval = Number(kl.reindex_interval || 1800);
-        this.groupDepth = Number(kl.group_depth || 3);
+        this.groupDepth = Number(kl.group_depth || 6);
         this.churnDays = String(kl.churn_days || 30);
         this.churnDepth = Number(kl.churn_depth || 4);
         this.churnView = kl.churn_view || "source";
@@ -46,7 +45,7 @@ const settingsPart = {
         this.indexTime = kl.index_time || "23:00";
         this.indexInterval = Number(kl.index_interval || 86400);
         this.dashboardMode = kl.dashboard_mode || "nightly";
-        this.dashRefresh = Number(kl.dashboard_refresh ?? 900);
+        this.dashRefresh = Number(kl.dashboard_refresh ?? 1800);
         this.excludedTolerance = Number(kl.excluded_tolerance ?? 0.05);
         this.esPath = kl.es_path || "";
         this.repoLabels = kl.repo_labels === "full" ? "full" : "short";
@@ -195,7 +194,7 @@ const settingsPart = {
       index_max_retries: { s: "indexMaxRetries", t: "int", min: 0, max: 5 },
       quit_indexing: { s: "quitIndexing", t: "choice", of: ["finish", "stop"] },
       folder_prewarm_budget: { s: "folderPrewarmBudget", t: "int", min: 0 },
-      reindex_interval: { s: "reindexInterval", t: "int", min: 300 },
+
       startup_delay: { s: "startupDelay", t: "int", min: 0, restart: true },
       debug_log: { s: "debugLog", t: "bool" },
       experimental: { s: "experimental", t: "bool", reload: true },
@@ -242,7 +241,14 @@ const settingsPart = {
       header_search_only: { s: "headerSearchOnly", t: "bool" },
     },
 
-    setTimeFmt(v) { if (v !== TIME_FMT) this.toggleTimeFmt(); },
+    setTimeFmt(v) {
+      if (v === TIME_FMT) return;
+      TIME_FMT = v;
+      this.timeFmt = v;
+      localStorage.setItem("kl-timefmt", v);
+      this.klSet({ time_format: v });  // permanent in backend too
+      this.activate();
+    },
 
     // ---- Remote access (read at start: a change needs a restart) ----
     async loadAccess() {

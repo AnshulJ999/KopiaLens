@@ -201,9 +201,10 @@ def search(
 
 def _sort_value(row: dict, field: str):
     """A row's value for the sort. A folder with no exact Physical is placed by its rollup's own
-    estimate, the order the Folders view ranks by; the exact value still fills in on screen."""
+    Physical; so is a folder whose Stored or Frees can only be worked out on screen (filtered
+    search, own files), so it lands near its place instead of after every file."""
     v = row.get(field)
-    if v is None and field == "physical":
+    if v is None and (field == "physical" or (field in _STAND_IN and row.get("_stand_in"))):
         return row.get("_physical_rank")
     return v
 
@@ -229,8 +230,8 @@ _FOLDER_SORT = {"size": "size", "physical": "physical", "full_path": "full_path"
                 "last_seen": "last_seen", "first_seen": "first_seen", "source": "source",
                 "stored": "stored_all_versions", "frees": "frees_all_versions",
                 "versions": "versions"}
-# Folder values only saved for whole, unfiltered folders; the rest are worked out on screen.
-_FILLED_ON_SCREEN = {"stored_all_versions", "frees_all_versions", "versions"}
+# Saved only for whole, unfiltered folders; other rows are placed by their Physical meanwhile.
+_STAND_IN = {"stored_all_versions", "frees_all_versions"}
 
 
 def _ranked_cmp(field: str, desc: bool, by_path: bool):
@@ -263,8 +264,7 @@ def search_mixed(
     dedupe: bool = False, dedupe_by: str = "path", loose: bool = False, mode: str = "deepest",
 ) -> dict:
     """Files and folders in one list. Files page exactly as /search; the folder rollups (top 500)
-    are placed into the page their sort position falls in, so every folder appears once. Folders
-    with no value for the sort (worked out on screen) are listed first on page 1."""
+    are placed into the page their sort position falls in, so every folder appears once."""
     min_size, max_size = _bounds(over_gb, largest, min_gb, max_gb)
     kw = dict(query=q, deleted_only=deleted_only, min_size=min_size, source=source or None,
               ext=ext or None, ext_exclude=ext_exclude or None, sort=sort, direction=dir,
@@ -294,7 +294,8 @@ def search_mixed(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     files = page["rows"]
-    saved = _saved_folder_values(repo, groups, bool(q or source or ext or ext_exclude or deleted_only))
+    filtered = bool(q or source or ext or ext_exclude or deleted_only)
+    saved = _saved_folder_values(repo, groups, filtered)
     folders = []
     for g in groups:
         s = saved.get(g["folder"]) or {}
@@ -304,7 +305,8 @@ def search_mixed(
                         "deleted_files": g["deleted_files"], "last_seen": g["last_seen"],
                         "first_seen": g["first_seen"], "sources": g["sources"], "source": g["source"],
                         "stored_all_versions": s.get("physical"), "frees_all_versions": s.get("freeable"),
-                        "versions": s.get("versions"), "_physical_rank": g.get("phys")})
+                        "versions": s.get("versions"), "_physical_rank": g.get("phys"),
+                        "_stand_in": filtered or bool(g.get("loose"))})
     ranked = page.get("ranked") or {}
     if sort in ("stored", "frees") and not ranked.get("available"):
         field = "physical"     # no nightly list yet: files fell back to Physical, folders follow
@@ -313,16 +315,14 @@ def search_mixed(
     else:
         cmp = (_ranked_cmp(field, desc, dedupe and dedupe_by != "content") if sort in ("stored", "frees")
                and field != "physical" else _row_cmp(field, desc))
-        unknown = [f for f in folders if field in _FILLED_ON_SCREEN and f.get(field) is None]
-        placed = [f for f in folders if not (field in _FILLED_ON_SCREEN and f.get(field) is None)]
-        unknown.sort(key=lambda f: -(f.get("_physical_rank") or 0))
         last = files[-1] if files else None
         final = offset + len(files) >= page["total"]
-        pick = [f for f in placed
+        pick = [f for f in folders
                 if (prev is None or cmp(f, prev) >= 0) and (final or last is None or cmp(f, last) < 0)]
-        merged = (unknown if offset == 0 else []) + sorted(pick + files, key=cmp_to_key(cmp))
+        merged = sorted(pick + files, key=cmp_to_key(cmp))
     for r in merged:
         r.pop("_physical_rank", None)
+        r.pop("_stand_in", None)
     return {"results": _no_ids(merged), "total": page["total"], "folders": len(folders),
             "offset": page["offset"], "limit": page["limit"]}
 

@@ -411,6 +411,9 @@
               <span class="flex items-center gap-1.5 shrink-0">
                 <span class="kl-help" style="vertical-align:baseline;margin-left:0" tabindex="0" role="button" data-doc x-show="detail.kind === 'file'" @click="openDocs('file-panel')" @keydown.enter.prevent="openDocs('file-panel')" title="Versions, space and copies of this file">?</span>
                 <span class="kl-help" style="vertical-align:baseline;margin-left:0" tabindex="0" role="button" data-doc x-show="detail.kind !== 'file'" @click="openDocs('folder-panel')" @keydown.enter.prevent="openDocs('folder-panel')" title="Contents, space and sources of this folder">?</span>
+                <button @click="panelLayout = panelLayout === 'classic' ? 'tabbed' : 'classic'; klSet({ panel_layout: panelLayout })" class="kl-btn quiet" data-testid="panel-view-switch"
+                        :title="panelLayout === 'classic' ? 'Show as tabs' : 'Show everything on one page'" :aria-label="panelLayout === 'classic' ? 'Tabs' : 'One page'">
+                  <i class="ic" :class="panelLayout === 'classic' ? 'ic-view-tabs' : 'ic-view-rows'"></i></button>
                 <button @click="detail=null" class="kl-btn quiet" title="Close" aria-label="Close">&times;</button>
               </span>
             </div>
