@@ -234,9 +234,10 @@ _FOLDER_SORT = {"size": "size", "physical": "physical", "full_path": "full_path"
 _STAND_IN = {"stored_all_versions", "frees_all_versions"}
 
 
-def _ranked_cmp(field: str, desc: bool, by_path: bool):
-    """Comparator matching the SQL order of a search sort: rows with a value first by value, ties
-    and the rest by last seen (newest first), then source and path."""
+def _ranked_cmp(field: str, desc: bool):
+    """Comparator matching the leading keys of a search sort's SQL order: rows with a value first
+    by value, ties and the rest by last seen (newest first). Rows equal on both compare equal: the
+    SQL's further tiebreaks differ by mode, so folders are placed by these two keys only."""
     def cmp(a: dict, b: dict) -> int:
         va, vb = _sort_value(a, field), _sort_value(b, field)
         if va is not None and vb is not None and va != vb:
@@ -247,9 +248,7 @@ def _ranked_cmp(field: str, desc: bool, by_path: bool):
         la, lb = a.get("last_seen") or "", b.get("last_seen") or ""
         if la != lb:
             return -1 if la > lb else 1
-        ka = (a.get("full_path") or "",) if by_path else (a.get("source") or "", a.get("full_path") or "")
-        kb = (b.get("full_path") or "",) if by_path else (b.get("source") or "", b.get("full_path") or "")
-        return (ka > kb) - (ka < kb)
+        return 0
     return cmp
 
 
@@ -313,13 +312,15 @@ def search_mixed(
     if field is None:
         merged = (folders if offset == 0 else []) + files
     else:
-        # Must break ties exactly like the SQL order, or a folder fits two page windows.
-        cmp = _ranked_cmp(field, desc, dedupe and dedupe_by != "content")
+        # Each page takes the folders in [row before it, its last row): the windows of consecutive
+        # pages meet without overlapping, so every folder lands on exactly one page. The sort is
+        # stable and files go first, so files keep the SQL order and a tied folder follows them.
+        cmp = _ranked_cmp(field, desc)
         last = files[-1] if files else None
         final = offset + len(files) >= page["total"]
         pick = [f for f in folders
                 if (prev is None or cmp(f, prev) >= 0) and (final or last is None or cmp(f, last) < 0)]
-        merged = sorted(pick + files, key=cmp_to_key(cmp))
+        merged = sorted(files + pick, key=cmp_to_key(cmp))
     for r in merged:
         r.pop("_physical_rank", None)
         r.pop("_stand_in", None)

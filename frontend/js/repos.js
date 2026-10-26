@@ -547,7 +547,7 @@ const reposPart = {
         this.repoDlg = null;
         await this._cxRefreshRepos();
         const left = (res.failed || []).length;
-        this.klNotify(left ? `${d.repo.name} removed. ${countOf(left, "file")} couldn't be deleted; see the log.` : `${d.repo.name} removed`, left ? "warn" : "");
+        this.klNotify(left ? `${d.repo.name} removed. ${countOf(left, "file")} couldn't be deleted; see the log.` : `${d.repo.name} removed`, left ? "warn" : "ok");
         if (!this.repos.length) { location.reload(); return; }
         if (d.repo.kind === "backblaze") this.raLoad();
         if (!this.repos.some((r) => r.id === this.repo)) this.pickRepo((this.repos.find((r) => r.kind !== "backblaze") || this.repos[0]).id);

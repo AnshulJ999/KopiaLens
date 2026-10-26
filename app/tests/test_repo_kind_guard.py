@@ -75,10 +75,8 @@ def test_repo_args_allows_a_real_kopia_repo():
 # The destructive builders, called directly - belt and braces alongside the source invariant.
 DESTRUCTIVE = [
     ("snapshot_delete_commands", lambda: kopia.snapshot_delete_commands("bz", ["abc"])),
-    ("snapshot_delete_execute", lambda: kopia.snapshot_delete_execute("bz", ["abc"])),
     ("remove_files_command", lambda: kopia.remove_files_command("bz", object_ids=["abc"])),
     ("remove_files_chunked_commands", lambda: kopia.remove_files_chunked_commands("bz", ["abc"])),
-    ("restore_command", lambda: kopia.restore_command("bz", "abc", "C:/tmp")),
     ("restore_command_full", lambda: kopia.restore_command_full("bz", "abc", "C:/tmp")),
     ("maintenance_run_command", lambda: kopia.maintenance_run_command("bz")),
     ("snapshot_pin_command", lambda: kopia.snapshot_pin_command("bz", ["abc"])),

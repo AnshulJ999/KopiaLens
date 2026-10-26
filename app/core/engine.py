@@ -753,15 +753,16 @@ def routine_seconds() -> float:
     return _kl_number("task_routine_seconds", 1)
 
 
-def is_routine(rec: dict) -> bool:
-    """A task that finished without errors in under ``task_routine_seconds``: a scheduled backup
-    that found nothing to do. The Tasks tab hides these by default and keeps them a short time."""
+def is_routine(rec: dict, seconds: float | None = None) -> bool:
+    """A task that finished without errors in under ``task_routine_seconds`` (or ``seconds``, read
+    once by a caller checking many): a scheduled backup that found nothing to do. The Tasks tab
+    hides these by default and keeps them a short time."""
     if rec.get("status") != "success" or rec.get("error"):
         return False
     if any((c or {}).get("value") for name, c in (rec.get("counters") or {}).items() if "error" in name.lower()):
         return False
     start, end = rec.get("start"), rec.get("end")
-    return bool(start and end) and end - start < routine_seconds()
+    return bool(start and end) and end - start < (routine_seconds() if seconds is None else seconds)
 
 
 def _prune_history() -> None:
@@ -774,6 +775,7 @@ def _prune_history() -> None:
     days = history_days()
     routine_cut = time.time() - _kl_number("task_routine_hours", 48) * 3600
     cutoff = time.time() - days * 86400 if days > 0 else 0
+    routine = routine_seconds()
     with _hist_lock:
         lines = filecrypto.read_lines(HISTORY_FILE)
         keep, gone = [], []
@@ -783,7 +785,7 @@ def _prune_history() -> None:
             except ValueError:
                 continue
             at = rec.get("end") or rec.get("start") or 0
-            old = at < cutoff or (at < routine_cut and is_routine(rec))
+            old = at < cutoff or (at < routine_cut and is_routine(rec, routine))
             (gone if old else keep).append((line, rec))
         if not gone:
             return

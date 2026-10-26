@@ -106,7 +106,7 @@
     </template>
     <template x-if="!polMulti.on">
       <div>
-        <div class="num" x-text="polShow(f, polEff(f.path))"></div>
+        <div class="num" x-text="polRes() ? polShow(f, polEff(f.path)) : (polResolveError ? '' : 'Loading…')"></div>
         <div class="kl-note" x-show="!edStaged(f.path)">
           <template x-if="polFromTarget(f.path)">
             <button class="underline" style="color:var(--link)" @click="polTryLeave(polFromTarget(f.path))" x-text="polFromText(f.path)"></button>

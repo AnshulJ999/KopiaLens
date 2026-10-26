@@ -194,7 +194,7 @@ const appConfigPart = {
         if (r.ok) {
           this.cfgDlg = null;
           this.klNotify("Restarting KopiaLens…");
-          setTimeout(() => location.reload(), 6000);
+          this._reloadWhenBack();
         } else {
           this.cfgDlg.error = "Restart KopiaLens from its tray icon or the service that runs it.";
         }

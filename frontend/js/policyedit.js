@@ -36,6 +36,7 @@ const policyEditPart = {
       if (this._polResolveTimer) clearTimeout(this._polResolveTimer);
       const run = async () => {
         const seq = ++this._polResolveSeq;
+        if (!this.polRes()) this.polResolveError = "";   // another policy: its own load decides
         const changes = this.polStagedChanges(target);
         const impact = Object.keys(changes.fields).some((p) => p.startsWith("retention."));
         try {
@@ -43,6 +44,7 @@ const policyEditPart = {
             body: JSON.stringify({ repo: this.repo, target, changes: { ...changes, delete_policy: false }, impact }) });
           if (seq !== this._polResolveSeq) return;
           this.polResolved = { ...this.polResolved, [target]: r };
+          this.polResolveError = "";
         } catch (e) {
           if (seq === this._polResolveSeq) this.polResolveError = e.message || String(e);
         }

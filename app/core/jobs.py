@@ -451,6 +451,32 @@ def kopia_log_files(job: dict) -> list[str]:
     return [os.path.join(folder, n) for n in sorted(found, key=lambda n: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", n)])]
 
 
+_KOPIA_LOG_SETTLE = 15   # seconds after a job ends before its kopia log is rewritten (a viewer's last poll)
+
+
+def encrypt_kopia_logs(job: dict | None = None) -> None:
+    """At the Full level, kopia's own job logs (kopia writes them in the clear) are encrypted once
+    their job has ended: ``job``'s, or with no job every one whose job isn't running (a job that
+    died before it could)."""
+    if not filecrypto.available():
+        return
+    if job is not None:
+        paths = kopia_log_files(job)
+    else:
+        from .applog import JOB_LOG_DIR
+        with _JOBS_LOCK:
+            live = tuple(os.path.basename(j["log_path"][:-4]) + "-kopia-"
+                         for j in _JOBS.values() if j["state"] == "running")
+        try:
+            names = os.listdir(JOB_LOG_DIR)
+        except OSError:
+            return
+        paths = [os.path.join(JOB_LOG_DIR, n) for n in names
+                 if "-kopia-" in n and n.endswith(".log") and not n.startswith(live)]
+    for path in paths:
+        filecrypto.encrypt_line_file(path)
+
+
 def _run_args(job: dict, index: int) -> list[str]:
     """Flags added when a job's command runs (not in the pasteable command): kopia's full log in the
     job's own log folder, and the snapshot as JSON so its numbers can fill the task's counters."""
@@ -618,7 +644,7 @@ def _server_snapshot(repo: str, source: str, cli_cmd: list[str]):
                 engine.trigger_snapshot(repo, source)
                 seen = {t.get("id") for t in before}
                 deadline = time.time() + 30
-                while live is None and time.time() < deadline and not job["stop_requested"]:
+                while live is None and time.time() < deadline:   # after a Stop too: found, it is cancelled
                     time.sleep(0.5)
                     live = next((t for t in _snap_tasks(srv) if t.get("id") not in seen), None)
             if live is None:
@@ -628,7 +654,7 @@ def _server_snapshot(repo: str, source: str, cli_cmd: list[str]):
             log.warning("server snapshot for %s: %s - using the command line", source, exc)
             return _stream_one(job, cli_cmd, lf)
         job["server_task"] = job["detail"]["server_task"] = f"engine:{repo}:{srv.tag}.{tid}"
-        cancelled, t, shown = False, {}, 0
+        cancelled, t, seen = False, {}, []
         while True:
             if job["stop_requested"] and not cancelled:
                 cancelled = True
@@ -643,12 +669,14 @@ def _server_snapshot(repo: str, source: str, cli_cmd: list[str]):
                 return 1, f"KopiaLens's kopia server stopped answering: {exc}"
             job["counters"] = {k: {"value": int(v.get("value") or 0), "units": v.get("units") or "",
                                    "level": v.get("level") or ""} for k, v in (t.get("counters") or {}).items()}
-            for e in entries[shown:]:                     # kopia keeps the newest 1000 lines
-                line = engine._log_text(e).split(" ", 1)[-1]
+            new, gap = engine._new_log_entries(seen, entries)   # kopia keeps the newest 1000 lines
+            seen = entries
+            lines = (["… kopia dropped some log lines before KopiaLens could read them"] if gap else []) + \
+                [engine._log_text(e).split(" ", 1)[-1] for e in new]
+            for line in lines:
                 job["buffer"].append(time.strftime("%H:%M:%S ") + line)
                 job["line_count"] += 1
                 lf.write(line + "\n")
-            shown = max(shown, len(entries))
             lf.flush()
             if t.get("endTime"):
                 break
@@ -751,6 +779,8 @@ def _run(job: dict, cmds: list[list[str]]) -> None:
     finally:
         job["finished"] = time.time()
         job["_stream"] = None
+        if filecrypto.available() and not is_demo(job["repo"]):
+            threading.Timer(_KOPIA_LOG_SETTLE, encrypt_kopia_logs, args=(job,)).start()
         _prune_history()
         _record_history(job)
         audit.audit("generated" if job["dry"] else "executed", AUDIT_ACTION.get(job["kind"], job["kind"]),

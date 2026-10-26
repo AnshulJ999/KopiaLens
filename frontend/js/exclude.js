@@ -628,9 +628,9 @@ const excludePart = {
       if (!d) return;
       if (this.exSmartShape(d.shape) && !this.proGate("exclude_smart", ev)) return;
       const writes = this.exWrites();
-      if (!writes.length) { this.error = "Pick where the rule goes."; return; }
+      if (!writes.length) { this.klNotify("Pick where the rule goes.", "warn"); return; }
       if (!this.exCanCommit()) {
-        this.error = d.pricing ? "Still checking the index. Try again in a moment." : (this.exPriceNote() || "Not checked yet.");
+        this.klNotify(d.pricing ? "Still checking the index. Try again in a moment." : (this.exPriceNote() || "Not checked yet."), "warn");
         return;
       }
       if (d.mode === "delete") return this.flowStart();
@@ -711,7 +711,7 @@ const excludePart = {
       d.loading = true; d.prices = {}; d.diffs = {};
       let refresh = true;
       const queue = [...d.items];
-      const worker = async () => {
+      const worker = async (once = false) => {
         while (queue.length) {
           const it = queue.shift();
           const shape = d.shape === "extension" && it.kind === "folder" ? "exact" : d.shape;
@@ -735,9 +735,10 @@ const excludePart = {
           } finally {
             it.loading = false;
           }
+          if (once) break;
         }
       };
-      await worker();                                   // first call refreshes policies once
+      await worker(true);                               // the first item alone refreshes policies once
       await Promise.all([worker(), worker(), worker()]);
       if (seq !== this._exTargetsSeq || !this.exDialog) return;
       d.loading = false;

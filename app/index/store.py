@@ -113,6 +113,17 @@ def _limit_bytes(limit: str) -> int:
 # scope (None) and resolve per call.
 _PIN: contextvars.ContextVar = contextvars.ContextVar("kopialens_generation_pins", default=None)
 
+
+class _Pins(dict):
+    """A pin scope's repo -> Generation dict. Parallel reads in one request share it, so the
+    check-then-pin step holds its lock (two threads pinning one repo leaked a reference)."""
+
+    __slots__ = ("lock",)
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.lock = threading.Lock()
+
 _GENS: dict[str, "Generation"] = {}   # repo -> current generation handle
 # Superseded generations whose readers have not finished. Closing one out from under a live
 # cursor is the same class of bug as mixing generations, so a replaced generation is retired
@@ -372,6 +383,7 @@ class _PinnedCursor:
         self._cur = cur
         self._closed = False
         self._last_exec = None   # (method, args, kwargs) of the last execute, to re-run on a fetch interrupt
+        self._fetched = False    # rows were fetched since that execute, so re-running it would repeat them
 
     @property
     def generation(self) -> Generation:
@@ -391,14 +403,17 @@ class _PinnedCursor:
             if name.startswith("execute"):
                 out = lanes.run(self._cur, lambda: fn(*args, **kwargs))
                 self._last_exec = (name, args, kwargs)
+                self._fetched = False
             else:
                 try:
                     out = fn(*args, **kwargs)
+                    self._fetched = True
                 except duckdb.InterruptException:
                     # An interrupt meant for the statement can land as it returns and surface here,
-                    # outside lanes.run: run the statement once more and fetch again.
+                    # outside lanes.run: run the statement once more and fetch again. Only before
+                    # the first fetch: after one, a re-run would return the fetched rows again.
                     sc = lanes.current()
-                    if self._last_exec is None or (sc is not None and sc.cancelled):
+                    if self._last_exec is None or self._fetched or (sc is not None and sc.cancelled):
                         raise
                     log.debug("%s interrupted without a cancel (%s %s); interrupted by %s; running it again",
                               name, sc.method if sc else "", sc.path if sc else "",
@@ -406,6 +421,7 @@ class _PinnedCursor:
                     ename, eargs, ekwargs = self._last_exec
                     lanes.run(self._cur, lambda: getattr(self._cur, ename)(*eargs, **ekwargs))
                     out = getattr(self._cur, name)(*args, **kwargs)
+                    self._fetched = True
         except duckdb.InterruptException:
             # A request the browser abandoned is a cancel, not a 500.
             sc = lanes.current()
@@ -415,9 +431,12 @@ class _PinnedCursor:
                         sc.method if sc else "", sc.path if sc else "", lanes._who_interrupted(self._cur))
             raise
         except duckdb.OutOfMemoryException as exc:
-            log.warning("query ran out of memory (limit %s): %s", resolve_limits()[0],
-                        str(exc).splitlines()[0])
-            raise duckdb.OutOfMemoryException(OUT_OF_MEMORY) from exc
+            limit = resolve_limits()[0]
+            log.warning("query ran out of memory (limit %s): %s", limit, str(exc).splitlines()[0])
+            sc = lanes.current()
+            if sc is not None and sc.method:   # a request: the on-screen wording
+                raise duckdb.OutOfMemoryException(OUT_OF_MEMORY) from exc
+            raise duckdb.OutOfMemoryException(f"out of memory at the {limit} memory limit") from exc
         finally:
             if slot is not None:
                 slot[1] += time.perf_counter() - start
@@ -444,14 +463,15 @@ def read_cursor(repo: str):
     repo arrives in the JSON body get the same guarantee as query-param routes. Outside a scope
     (background threads) each call resolves the current generation."""
     pins = _PIN.get()
-    gen = pins.get(repo) if pins is not None else None
-    if gen is not None:
-        gen.acquire()             # the cursor's own reference; released by cursor.close()
+    if pins is None:
+        gen = current(repo)           # returned with one reference held: the cursor's
     else:
-        gen = current(repo)       # returned with one reference held ...
-        if pins is not None:
-            pins[repo] = gen      # ... and that reference now belongs to the pin scope
-            gen.acquire()         # the cursor takes its own, on top of the scope's
+        with pins.lock:
+            gen = pins.get(repo)
+            if gen is None:
+                gen = current(repo)   # the scope's reference
+                pins[repo] = gen
+            gen.acquire()             # the cursor's own reference; released by cursor.close()
     try:
         return _PinnedCursor(gen, gen.cursor())
     except Exception:
@@ -461,7 +481,7 @@ def read_cursor(repo: str):
 
 def begin_pins():
     """Open a request pin scope (see ``read_cursor``). Returns the contextvar token."""
-    return _PIN.set({})
+    return _PIN.set(_Pins())
 
 
 def end_pins(token) -> None:
@@ -482,12 +502,14 @@ def pinned(repo: str):
     except FileNotFoundError:     # not indexed yet: nothing to pin, let callers raise normally
         yield None
         return
-    token = _PIN.set({repo: gen})
+    pins = _Pins({repo: gen})
+    token = _PIN.set(pins)
     try:
         yield gen
     finally:
         _PIN.reset(token)
-        gen.release()
+        for held in list(pins.values()):   # other repos read inside the block are pinned too
+            held.release()
 
 
 def close_all() -> None:

@@ -61,7 +61,10 @@ const runbarPart = {
       if (st._timer) clearInterval(st._timer);
       st._timer = setInterval(async () => {
         if (seq !== st.seq) { clearInterval(st._timer); st._timer = null; return; }
+        if (st._polling) return;   // a slow reply: the next tick would repeat its lines
+        st._polling = true;
         const s = await getJson(`/api/jobs/status?job_id=${encodeURIComponent(jobId)}&after=${st.cursor}`).catch(() => null);
+        st._polling = false;
         if (!s || seq !== st.seq) return;
         if (s.lines && s.lines.length) {
           st.lines.push(...s.lines);

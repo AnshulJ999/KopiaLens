@@ -193,7 +193,7 @@ const indexPanelPart = {
         }
       } catch (e) {
         if (seq === this._indexLogSeq && this.showIndex) {
-          this.indexLogNote = "The live worker log is not available from this build.";
+          this.indexLogNote = `Couldn’t read the worker log: ${e.message || e}`;
         }
       }
       const s = await getJson(`/api/index/status?repo=${encodeURIComponent(repo)}`).catch(() => null);
@@ -235,7 +235,7 @@ const indexPanelPart = {
         if (r && r.stopped === false && r.reason) this.klNotify(`Could not stop: ${r.reason}`, "warn");
         else this.klNotify(reading ? "Stopping. Saving what's read so far…" : "Indexing stopped.");
       } catch (e) {
-        this.klNotify("Stopping an index run is not available from this build.", "warn");
+        this.klNotify(`Couldn’t stop indexing: ${e.message || e}`, "warn");
       }
       const s = await getJson(`/api/index/status?repo=${encodeURIComponent(repo)}`).catch(() => null);
       if (s) {

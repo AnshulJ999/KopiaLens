@@ -298,6 +298,7 @@ document.addEventListener("alpine:init", () => {
       if (this.showFeedback) { this.showFeedback = false; return; }
       if (this.showUpdate) { this.showUpdate = false; return; }
       if (this.locked) return;    // the unlock box has no close: nothing behind it has data
+      if (this.engineDlg) { this.engineDlg = null; return; }   // opens over onboarding too
       if (this.ob) return;        // onboarding is the whole page
       if (this.repoMenu) { this.repoMenu = false; return; }
       if (this.chipMenu) { this.chipMenu = ""; return; }
@@ -305,7 +306,6 @@ document.addEventListener("alpine:init", () => {
       if (this.tabMenu) { this.tabMenu = false; return; }
       if (this.tblLayout) { this.tblLayout = null; return; }
       if (this.repoDlg) { this.repoDlg = null; return; }
-      if (this.engineDlg) { this.engineDlg = null; return; }
       if (this.polPop && !this.cliBox && !this.showPolDiff) {
         if (this.polPreview) { this.polPreview = null; return; }
         if (this.polLeaveBox) { this.polLeaveBox = null; return; }
@@ -313,14 +313,15 @@ document.addEventListener("alpine:init", () => {
         this.polPopClose(); return;
       }
       if (this.newSnap) { this.closeNewSnap(); return; }
+      // Same z-index: the one later in the page is on top (index panel > maintenance > job > review).
+      if (this.showIndex) { this.closeIndexPanel(); return; }
+      if (this.showMaint) { this.closeMaint(); return; }
+      if (this.showJob) { this.closeJob(); return; }
+      if (this.showReview) { this.flowCancel(); return; }
       if (this.srcDel) { this.srcDel = null; return; }
       if (this.verifyDlg) { this.verifyDlg = null; return; }
       if (this.cliBox) { this.cliBox = null; return; }
       if (this.repoAdd) { this.closeAddRepo(); return; }
-      if (this.showIndex) { this.closeIndexPanel(); return; }
-      if (this.showJob) { this.closeJob(); return; }
-      if (this.showReview) { this.flowCancel(); return; }
-      if (this.showMaint) { this.closeMaint(); return; }
       if (this.showPrune) { this.closePrune(); return; }
       if (this.showDel) { this.closeDelete(); return; }
       if (this.showExclude) { return this.escCloseExclude(); }
@@ -329,8 +330,8 @@ document.addEventListener("alpine:init", () => {
       if (this.browse) { this.closeBrowse(); return; }
       if (this.showDiff) { this.showDiff = false; return; }
       if (this.showRemove) { this.closeRemove(); return; }
+      if (this.showPolDiff) { this.showPolDiff = false; return; }   // Review restore opens over the backups list
       if (this.showPolBackups) { this.showPolBackups = false; return; }
-      if (this.showPolDiff) { this.showPolDiff = false; return; }
       if (this.showExcludedDetail) { this.showExcludedDetail = false; return; }
       if (this.bzShowGen) { this.bzShowGen = false; return; }
       if (this.bzDetail) { this.bzDetail = null; return; }
@@ -342,7 +343,7 @@ document.addEventListener("alpine:init", () => {
       }
       if (this.polLeaveBox) { this.polLeaveBox = null; return; }
       if (this.polNewBox) { this.polNewBox = null; return; }
-      if (this.detail) { this.detail = null; viewAbort("panel"); return; }
+      if (this.detail) { this.closeDetail(); return; }
       if (this.taskSel && this.active === "tasks") { this.closeTask(); return; }
       const t = this._activeTable();   // nothing open: Escape clears the table's selection
       if (t) { t.deselectRow(); return; }
@@ -554,7 +555,7 @@ document.addEventListener("alpine:init", () => {
       // tab never silently shows stale numbers. The signature guard skips re-render when unchanged.
       if (this._autoRefresh) { clearInterval(this._autoRefresh); this._autoRefresh = null; }
       const sec = Number(this.dashRefresh) || 0;
-      if (sec > 0) this._autoRefresh = setInterval(() => { if (this.active === "dashboard" && !this.busy) this.loadDashboard(); }, sec * 1000);
+      if (sec > 0) this._autoRefresh = setInterval(() => { if (this.active === "dashboard" && !this.busy && !document.hidden) this.loadDashboard(); }, sec * 1000);
     },
 
     klSet(patch) {  // persist a kopialens settings patch in the backend (all prefs are permanent)
@@ -562,8 +563,10 @@ document.addEventListener("alpine:init", () => {
     },
 
     async wrap(fn, label = "") {
+      const mine = {};   // a later wrap owns the label; this one must not clear it
+      this._busyOwner = mine;
       this.error = ""; this.busy = label;
-      try { return await fn(); } catch (err) { if (!isAbort(err) && !err.notice) this.error = err.message || String(err); } finally { this.busy = ""; }
+      try { return await fn(); } catch (err) { if (!isAbort(err) && !err.notice) this.error = err.message || String(err); } finally { if (this._busyOwner === mine) this.busy = ""; }
     },
 
     toggleTimeFmt() { this.setTimeFmt({ auto: "relative", relative: "absolute" }[TIME_FMT] || "auto"); },
@@ -594,7 +597,16 @@ document.addEventListener("alpine:init", () => {
         const f = await getJson("/api/index/freshness");
         this.freshness = f.repos || [];
         this.indexPause = f.pause || { paused: false };
+        const seen = this._lastIndexSeen || {};
+        if (this.freshness.some((r) => r.repo in seen && seen[r.repo] !== r.last_index)) this.forgetRowValues();
+        this._lastIndexSeen = Object.fromEntries(this.freshness.map((r) => [r.repo, r.last_index]));
       } catch (e) { /* non-critical */ }
+    },
+    // Values worked out per row and remembered (Tree, Search folders, Churn, Excluded, versions)
+    // are stale once an index changes; they are worked out again as rows show.
+    forgetRowValues() {
+      this.treeExtra = {}; this.groupReclaim = {}; this.folderVersions = {};
+      this._churnPhysCache = {}; this.versionSizes = {}; this.excludedDrives = [];
     },
     freshAge(row) {
       if (row.via_server) return "browse-only";
@@ -637,6 +649,8 @@ document.addEventListener("alpine:init", () => {
       this.polMeta = null; this.polResolved = {}; this.polNewTargets = [];
       this.polMulti = { on: false, picked: [], fields: {}, plan: null, ticks: {}, busy: false };
       this.versionSizes = {};
+      this._simOne = null;
+      this._stopAnalyzePoll();
       this.pruneOutliers = null;
       this.searchViewRows = null;
       this.repoKind = this.kindOf(this.repo);
@@ -819,13 +833,13 @@ document.addEventListener("alpine:init", () => {
     },
     };
     // Duplicate-key guard: two parts declaring the same key would compose silently last-wins.
-    const parts = [["core", core], ["toastPart", toastPart], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["browsePart", browsePart], ["treePart", treePart], ["searchPart", searchPart], ["indexPanelPart", indexPanelPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["prunePart", prunePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["accountPart", accountPart], ["appConfigPart", appConfigPart], ["reposPart", reposPart], ["onboardingPart", onboardingPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart], ["licencePart", licencePart], ["helpPart", helpPart], ["tasksPart", tasksPart], ["enginePart", enginePart], ["sourceOpsPart", sourceOpsPart], ["notifyPart", notifyPart], ["writeModePart", writeModePart], ["fullListPart", fullListPart], ["docsPart", docsPart], ["tablesPart", tablesPart]];
+    const parts = [["core", core], ["toastPart", toastPart], ["tokensPart", tokensPart], ["bzIndexPart", bzIndexPart], ["bzDashboardPart", bzDashboardPart], ["bzSearchPart", bzSearchPart], ["bzTreePart", bzTreePart], ["bzExcludedPart", bzExcludedPart], ["bzExclusionsPart", bzExclusionsPart], ["bzChurnPart", bzChurnPart], ["bzHealthPart", bzHealthPart], ["dashboardPart", dashboardPart], ["snapshotsPart", snapshotsPart], ["browsePart", browsePart], ["treePart", treePart], ["searchPart", searchPart], ["indexPanelPart", indexPanelPart], ["churnPart", churnPart], ["simulatePart", simulatePart], ["statsPart", statsPart], ["logsPart", logsPart], ["excludedPart", excludedPart], ["actionsPart", actionsPart], ["confirmPart", confirmPart], ["runbarPart", runbarPart], ["detailPart", detailPart], ["excludePart", excludePart], ["deletePart", deletePart], ["prunePart", prunePart], ["diffviewPart", diffviewPart], ["jobsPart", jobsPart], ["maintenancePart", maintenancePart], ["settingsPart", settingsPart], ["accountPart", accountPart], ["appConfigPart", appConfigPart], ["reposPart", reposPart], ["onboardingPart", onboardingPart], ["themePart", themePart], ["policiesPart", policiesPart], ["policyEditPart", policyEditPart], ["licencePart", licencePart], ["helpPart", helpPart], ["tasksPart", tasksPart], ["enginePart", enginePart], ["sourceOpsPart", sourceOpsPart], ["notifyPart", notifyPart], ["writeModePart", writeModePart], ["fullListPart", fullListPart], ["docsPart", docsPart], ["tablesPart", tablesPart]];
     const seen = new Map();
     for (const [owner, part] of parts)
       for (const k of Object.keys(part)) {
         if (seen.has(k)) console.error(`kopiaLens: duplicate key "${k}" declared in both ${seen.get(k)} and ${owner}`);
         else seen.set(k, owner);
       }
-    return Object.assign(core, toastPart, indexPanelPart, bzIndexPart, bzDashboardPart, bzSearchPart, bzTreePart, bzExcludedPart, bzExclusionsPart, bzChurnPart, bzHealthPart, dashboardPart, snapshotsPart, browsePart, treePart, searchPart, churnPart, simulatePart, statsPart, logsPart, excludedPart, actionsPart, confirmPart, runbarPart, detailPart, excludePart, deletePart, prunePart, diffviewPart, jobsPart, maintenancePart, settingsPart, accountPart, appConfigPart, reposPart, onboardingPart, themePart, policiesPart, policyEditPart, licencePart, helpPart, tasksPart, enginePart, sourceOpsPart, notifyPart, writeModePart, tokensPart, fullListPart, docsPart, tablesPart);
+    return Object.assign(...parts.map(([, part]) => part));   // the same list the guard checked
   });
 });

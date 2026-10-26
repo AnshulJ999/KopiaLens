@@ -187,13 +187,15 @@ def _read_cache(repo: str, want_hash: str | None) -> dict | None:
 def _kick_bg_recompute(repo: str) -> None:
     """Recompute the dashboard cache in the background (single-flight). Used by serve-stale."""
     def run() -> None:
+        from ..index import lanes
         lock = _build_lock(repo)
         if not lock.acquire(blocking=False):
             return  # a build is already running
         try:
-            want = _table_snaphash(repo)
-            if _read_cache(repo, want) is None:  # still stale
-                _compute_table_rows(repo, want)
+            with lanes.background():
+                want = _table_snaphash(repo)
+                if _read_cache(repo, want) is None:  # still stale
+                    _compute_table_rows(repo, want)
         except Exception as exc:  # noqa: BLE001
             log.warning("bg dashboard recompute repo=%s failed: %s", repo, exc)
         finally:

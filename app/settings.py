@@ -55,6 +55,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "task_history_days": 90,     # days of backup/maintenance task history (Tasks tab); 0 = keep everything
         "task_routine_seconds": 1,   # a task that finished without errors faster than this is routine
         "task_routine_hours": 48,    # how long routine tasks stay in the history
+        "task_hide_routine": True,   # Tasks tab hides routine tasks
         "engine_takeback": "auto",
         "notify_webhook": {},        # KopiaLens's own notifications: {url, format text|json, headers [..], level info|warn|error}   # when another app stops running a repo's backups: auto = take over again | wait = stay paused
         "rank_count": 10000,         # exact top entries the nightly ranks for the Search columns
@@ -228,40 +229,83 @@ OWN_ROUTE_SETTINGS = {
 }
 
 
+# Readers use the last parsed file while its stat is unchanged, so they never wait on a save that
+# is retrying a held file. A write from any process changes the stat.
+_CACHE: tuple[tuple, dict[str, Any]] | None = None
+_READ_LOCK = threading.RLock()
+
+
+def _file_key() -> tuple:
+    st = os.stat(SETTINGS_FILE)
+    return (SETTINGS_FILE, st.st_ino, st.st_mtime_ns, st.st_size)
+
+
+def _read_disk(strict: bool) -> tuple[dict[str, Any] | None, tuple | None]:
+    """(parsed file, its stat key). None = the file exists but could not be opened."""
+    from .core import configbackup
+    for attempt in range(2):
+        try:
+            key = _file_key()
+        except FileNotFoundError:
+            return {}, None
+        except OSError:
+            key = None
+        for _ in range(3):
+            try:
+                with open(SETTINGS_FILE, encoding="utf-8") as handle:
+                    raw = handle.read()
+                break
+            except FileNotFoundError:
+                return {}, None
+            except OSError:
+                time.sleep(0.1)
+        else:
+            if strict:
+                raise OSError(f"settings file could not be read: {SETTINGS_FILE}")
+            return None, None
+        try:
+            loaded = json.loads(raw)
+            if isinstance(loaded, dict):
+                return loaded, key
+        except ValueError:
+            pass
+        if attempt == 0 and not configbackup.recover("settings.json"):
+            return {}, None
+    return {}, None
+
+
 def _read_settings_file(strict: bool = False) -> dict[str, Any]:
     """The file exactly as written - defaults do NOT fill absent keys. That distinction is the
     only way to tell an explicit user choice from an absent one, which both the profile-aware
     bind default and the save path need.
 
     A damaged file is moved aside and the newest good backup put back (core/configbackup). A file
-    that cannot be OPENED (briefly held by another program) is not damaged: reads fall back to
-    defaults, and ``strict`` (the save path) raises instead, so a save never writes a near-empty
-    file over settings it could not read."""
-    from .core import configbackup
-    with _SETTINGS_LOCK:
-        for attempt in range(2):
-            if not os.path.exists(SETTINGS_FILE):
-                return {}
-            for _ in range(3):
-                try:
-                    with open(SETTINGS_FILE, encoding="utf-8") as handle:
-                        raw = handle.read()
-                    break
-                except OSError:
-                    time.sleep(0.1)
-            else:
-                if strict:
-                    raise OSError(f"settings file could not be read: {SETTINGS_FILE}")
-                return {}
-            try:
-                loaded = json.loads(raw)
-                if isinstance(loaded, dict):
-                    return loaded
-            except ValueError:
-                pass
-            if attempt == 0 and not configbackup.recover("settings.json"):
-                return {}
+    that cannot be OPENED (briefly held by another program) is not damaged: reads keep the last
+    copy read (defaults when there is none), and ``strict`` (the save path) always reads the file
+    and raises instead, so a save never writes a near-empty file over settings it could not read."""
+    global _CACHE
+    if strict:
+        with _SETTINGS_LOCK:
+            return _read_disk(True)[0] or {}
+    try:
+        key = _file_key()
+    except FileNotFoundError:
         return {}
+    except OSError:
+        key = None
+    cached = _CACHE
+    if key is not None and cached is not None and cached[0] == key:
+        return deepcopy(cached[1])
+    with _READ_LOCK:
+        cached = _CACHE
+        if key is not None and cached is not None and cached[0] == key:
+            return deepcopy(cached[1])
+        loaded, read_key = _read_disk(False)
+        if loaded is None:
+            return deepcopy(cached[1]) if cached is not None else {}
+        if read_key is not None:
+            _CACHE = (read_key, deepcopy(loaded))
+        return loaded
 
 
 def raw_kopialens_settings() -> dict[str, Any]:
@@ -270,23 +314,23 @@ def raw_kopialens_settings() -> dict[str, Any]:
 
 
 def load_settings() -> dict[str, Any]:
-    with _SETTINGS_LOCK:
-        settings = deepcopy(DEFAULT_SETTINGS)
-        loaded = _read_settings_file()
-        if not loaded:
-            return settings
-        settings.update(loaded)
-        kl = loaded.get("kopialens") if isinstance(loaded.get("kopialens"), dict) else {}
-        bz = loaded.get("backblaze") if isinstance(loaded.get("backblaze"), dict) else {}
-        settings["kopialens"] = {**DEFAULT_SETTINGS["kopialens"], **kl}
-        settings["backblaze"] = {**DEFAULT_SETTINGS["backblaze"], **bz}
+    settings = deepcopy(DEFAULT_SETTINGS)
+    loaded = _read_settings_file()
+    if not loaded:
         return settings
+    settings.update(loaded)
+    kl = loaded.get("kopialens") if isinstance(loaded.get("kopialens"), dict) else {}
+    bz = loaded.get("backblaze") if isinstance(loaded.get("backblaze"), dict) else {}
+    settings["kopialens"] = {**DEFAULT_SETTINGS["kopialens"], **kl}
+    settings["backblaze"] = {**DEFAULT_SETTINGS["backblaze"], **bz}
+    return settings
 
 
 def save_settings(settings: dict[str, Any]) -> None:
     """Atomic write under the lock: write a temp file, fsync, then os.replace() (atomic on Windows
     + POSIX). A concurrent reader can never catch the file mid-truncate, so load_settings can't fall
     back to defaults from a partial read."""
+    global _CACHE
     with _SETTINGS_LOCK:
         os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
         tmp = SETTINGS_FILE + ".tmp"
@@ -295,6 +339,10 @@ def save_settings(settings: dict[str, Any]) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         atomicfile.replace(tmp, SETTINGS_FILE)
+        try:
+            _CACHE = (_file_key(), json.loads(json.dumps(settings)))
+        except OSError:
+            _CACHE = None
     from .core import configbackup
     configbackup.remember("settings.json")
 

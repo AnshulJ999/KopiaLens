@@ -312,6 +312,7 @@ def folder_listing(folder: str, tolerance: float = 0.05) -> dict:
         "not_counted": sum(1 for i in items if i["status"] == "not_counted"),
         "counted_at": min(stamps) if stamps else None,
         "notes": disklookup.notes_for(folder),
+        "not_indexed": everything and not disk and disklookup.not_indexed(folder),
         "backed_up_as": ({"path": mapped["backup_folder"], "computer": mapped["computer"]} if mapped else None),
     }
     if not result["counting"]:   # a listing still being counted is asked again shortly

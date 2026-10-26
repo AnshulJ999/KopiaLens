@@ -517,15 +517,6 @@ def unmount(pid: int) -> bool:
     return mounts.unmount(pid)
 
 
-def restore_command(repo: str, source: str, destination: str, overwrite: bool = False) -> list[str]:
-    """Return a restore command preview; v1 does not execute restores."""
-
-    args = [_kopia_exe()] + _repo_args(repo) + ["restore", source, destination]
-    if overwrite:
-        args.append("--overwrite")
-    return args
-
-
 # IDs per `kopia snapshot delete` call. A single call with thousands of 32-hex ids would exceed the
 # Windows CreateProcess command-line limit (~32k chars); 200 ids ~= 6.6k chars, comfortably under.
 _SNAP_DELETE_CHUNK = 200
@@ -553,53 +544,6 @@ def snapshot_delete_commands(repo: str, snapshot_ids: list[str], batch: bool = F
     return [prefix + [sid, "--delete"] for sid in snapshot_ids]
 
 
-def snapshot_delete_execute(repo: str, snapshot_ids: list[str]) -> dict:
-    """ACTUALLY delete snapshots, CHUNKED into <=200-id ``kopia snapshot delete ... --delete`` calls.
-    Chunking is REQUIRED at scale - a single call with thousands of ids overflows the Windows
-    command-line limit and fails. Synchronous, per-chunk; a partial failure still commits the earlier
-    chunks (snapshot manifests are independent), and the aggregate returncode is non-zero if ANY chunk
-    failed. Only mutating kopia call; bypasses the RO allowlist deliberately; logged. Space is reclaimed
-    only after a later ``maintenance run --full``. (For very large bulk deletes the standalone
-    Kopia-Delete.py is preferable - this call blocks for the whole run.)"""
-    if not snapshot_ids:
-        return {"deleted": 0, "returncode": 0, "stdout": "", "stderr": "no ids", "command": None, "chunks": 0}
-    prefix = [_kopia_exe()] + _repo_args(repo) + ["snapshot", "delete"]
-    chunks = [snapshot_ids[i:i + _SNAP_DELETE_CHUNK] for i in range(0, len(snapshot_ids), _SNAP_DELETE_CHUNK)]
-    log.warning("EXECUTING snapshot delete repo=%s count=%d chunks=%d", repo, len(snapshot_ids), len(chunks))
-    deleted, rc, outs, errs, first_cmd = 0, 0, [], [], None
-    for ci, chunk in enumerate(chunks, 1):
-        full = prefix + chunk + ["--delete", "--no-progress"]
-        _refuse_demo(full)
-        if first_cmd is None:
-            first_cmd = full
-        res = subprocess.run(
-            full, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            stdin=subprocess.DEVNULL,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        if res.returncode == 0:
-            deleted += len(chunk)
-        else:
-            rc = res.returncode
-            err = (res.stderr or "").strip()[:300]
-            errs.append(err)
-            log.warning("snapshot delete repo=%s chunk %d/%d rc=%d stderr=%s", repo, ci, len(chunks), res.returncode, err)
-        if res.stdout:
-            outs.append(res.stdout)
-    log.warning("snapshot delete repo=%s done deleted=%d/%d rc=%d", repo, deleted, len(snapshot_ids), rc)
-    audit.audit("executed", "snapshot-delete", repo=repo,
-                summary={"ids": len(snapshot_ids), "deleted": deleted, "chunks": len(chunks)},
-                rc=rc)
-    return {
-        "deleted": deleted,
-        "returncode": rc,
-        "stdout": "\n".join(outs),
-        "stderr": "\n".join(e for e in errs if e),
-        "command": first_cmd,
-        "chunks": len(chunks),
-    }
-
-
 def filename_arg(name: str) -> str:
     """A real file name as a ``--filename`` value. kopia matches it with Go's ``path.Match``, where
     ``* ? [ ]`` are wildcards and ``\\`` escapes on every OS, so they are escaped: the delete then
@@ -625,31 +569,6 @@ def remove_files_command(repo: str, object_ids: list[str] | None = None, filenam
     if commit:
         cmd.append("--commit")
     return cmd
-
-
-def remove_files_execute(repo: str, object_ids: list[str] | None = None, filenames: list[str] | None = None,
-                         source: str | None = None) -> dict:
-    """ACTUALLY run remove-files with --commit (mutating: rewrites snapshot manifests). Logged.
-    Space is reclaimed only after a later ``maintenance run --full``."""
-    if not object_ids and not filenames:
-        return {"returncode": 1, "stdout": "", "stderr": "nothing specified (object_ids or filenames required)"}
-    full = remove_files_command(repo, object_ids, filenames, source, commit=True) + ["--no-progress"]
-    _refuse_demo(full)
-    log.warning("EXECUTING remove-files repo=%s filenames=%d object_ids=%d",
-                repo, len(filenames or []), len(object_ids or []))
-    log.debug("remove-files scope source=%r", source)
-    t0 = time.time()
-    res = subprocess.run(
-        full, capture_output=True, text=True, encoding="utf-8", errors="replace",
-        stdin=subprocess.DEVNULL,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    log.warning("remove-files repo=%s rc=%d stderr=%s", repo, res.returncode, (res.stderr or "").strip()[:300])
-    audit.audit("executed", "remove-files", repo=repo,
-                summary={"filenames": len(filenames or []), "object_ids": len(object_ids or []),
-                         "source": source},
-                rc=res.returncode, duration_s=time.time() - t0)
-    return {"returncode": res.returncode, "stdout": res.stdout, "stderr": res.stderr, "command": full}
 
 
 def _quote_arg(a: str) -> str:
@@ -892,15 +811,6 @@ def _remove_bat_lines(commands: list[list[str]], log_setter: str) -> list[str]:
     return lines
 
 
-def remove_files_save_bat(commands: list[list[str]], bat_path: str, log_path: str) -> str:
-    """Write the chunked commands to a .bat the user can run + watch. Each batch appends kopia's
-    own output to ``log_path`` so the run is fully inspectable."""
-    lines = _remove_bat_lines(commands, f'set "LOG={log_path}"')
-    with open(bat_path, "w", encoding="utf-8", newline="\r\n") as f:
-        f.write("\n".join(lines))
-    return bat_path
-
-
 def remove_files_bat_text(commands: list[list[str]], log_name: str) -> str:
     """Return the .bat text (for browser download - no server file). It logs kopia output to
     ``log_name`` NEXT TO the .bat (`%~dp0`) so the run is self-contained + inspectable."""
@@ -983,56 +893,6 @@ def remove_files_script(commands: list[list[str]], log_stem: str) -> tuple[str, 
     if os.name == "nt":
         return ".bat", remove_files_bat_text(commands, log_stem + ".log")
     return ".sh", "\n".join(_remove_sh_lines(commands, log_stem + ".log")) + "\n"
-
-
-_REMOVE_JOBS: dict[str, dict] = {}
-
-
-def remove_files_chunked_execute(repo: str, items: list[str], source: str | list[str] | None,
-                                 job_id: str, log_path: str, flag: str = "--object-id") -> dict:
-    """Run the chunked remove-files commands sequentially (--commit), appending kopia output to
-    ``log_path`` and updating ``_REMOVE_JOBS[job_id]`` for progress polling. ``flag`` selects
-    object-id vs filename. Mutating + logged. Space frees only after ``maintenance run --full``."""
-    cmds = remove_files_chunked_commands(repo, items, source, commit=True, max_chars=32000, flag=flag)
-    job = _REMOVE_JOBS.setdefault(job_id, {})
-    job.update({"total": len(cmds), "done": 0, "running": True, "errors": 0,
-                "log": log_path, "objects": len(items), "rc": 0})
-    log.warning("EXECUTING chunked remove-files repo=%s flag=%s items=%d batches=%d",
-                repo, flag, len(items), len(cmds))
-    log.debug("chunked remove-files scope source=%r", source)
-    t0 = time.time()
-    try:
-        from . import filecrypto
-        with filecrypto.open_text(log_path) as lf:
-            lf.write(f"=== chunked remove-files repo={repo} {flag} items={len(items)} batches={len(cmds)} ===\n")
-            lf.flush()
-            for i, cmd in enumerate(cmds, 1):
-                lf.write(f"\n--- batch {i}/{len(cmds)} ---\n"); lf.flush()
-                _refuse_demo(cmd)
-                res = subprocess.run(
-                    cmd + ["--no-progress"], capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
-                lf.write(res.stdout or "")
-                if res.stderr:
-                    lf.write("\n[stderr]\n" + res.stderr)
-                lf.flush()
-                job["done"] = i
-                if res.returncode != 0:
-                    job["errors"] += 1
-                    job["rc"] = res.returncode
-            lf.write("\n=== done. Run: kopia maintenance run --full to reclaim. ===\n")
-    except Exception as exc:  # noqa: BLE001
-        job["error"] = str(exc)
-        log.error("chunked remove-files repo=%s failed: %s", repo, exc)
-    finally:
-        job["running"] = False
-    audit.audit("executed", "remove-files-chunked", repo=repo,
-                summary={"items": len(items), "batches": len(cmds), "errors": job.get("errors", 0),
-                         "flag": flag, "source": source},
-                rc=job.get("rc", 0), duration_s=time.time() - t0, log_file=log_path)
-    return job
 
 
 _DRY_OUTPUT_CAP = 256 * 1024  # bytes of kopia output carried in an API response

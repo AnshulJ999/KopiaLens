@@ -294,7 +294,7 @@ const accountPart = {
       return [
         ["Encrypted files", fmtBytes(p.bytes || 0)],
         ["Re-indexed", (p.reindex || []).map((r) => this.repoLabel(r)).join(", ") || "None"],
-        ["History lost", p.history_lost ? `${p.history_lost} encrypted history file(s)` : "None"],
+        ["History lost", p.history_lost ? countOf(p.history_lost, "encrypted history file") : "None"],
         ["Kopia repositories", "Not touched"],
       ];
     },

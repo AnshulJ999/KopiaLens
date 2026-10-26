@@ -58,17 +58,19 @@ const simulatePart = {
     // Reclaimable comes from the per-snapshot analysis; when it's missing, start it and fill the column in.
     async _simFillFrees(source) {
       const seq = ++this._simFreesSeq;
+      const one = this._simOne, repo = this.repo;   // the result on screen when the fill started
       const q = `repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(source)}`;
       await getJson(`/api/snapshots/analyze?${q}`, { method: "POST" }).catch(() => null);
       for (let i = 0; i < 120; i++) {
         await new Promise((ok) => setTimeout(ok, 3000));
-        if (seq !== this._simFreesSeq || this.active !== "simulate" || !this._simOne) return;
+        if (seq !== this._simFreesSeq || this.active !== "simulate" || !one || this._simOne !== one
+            || this.simMode !== "one" || this.repo !== repo) return;
         const s = await getJson(`/api/snapshots?${q}`).catch(() => null);
         if (!s || s.analyzing || !s.analysis_fresh) continue;
         const by = Object.fromEntries((s.snapshots || []).map((x) => [x.id, x.reclaimable]));
         for (const row of this._simOne.snapshots || []) if (by[row.id] != null) row.frees = by[row.id];
         const el = document.querySelector("#simulateTable");
-        if (el && el._tabulator) el._tabulator.updateData((this._simOne.snapshots || []).map((x) => ({ id: x.id, frees: x.frees })));
+        if (el && el._tabulator) el._tabulator.updateData((this._simOne.snapshots || []).map((x) => ({ id: x.id, frees: x.frees }))).catch(() => {});
         this.simMeta = this.simOneLine(this._simOne);
         return;
       }
@@ -112,6 +114,7 @@ const simulatePart = {
           });
           if (!r.frees_ready) this._simFillFrees(r.source);
         } else {
+          this._simOne = null;
           this.simMeta = `Frees ${fmtBytes(r.combined_reclaim)} in total · the sources' own figures add up to ${fmtBytes(r.sum_per_source)}; ${fmtBytes(r.shared_between_sources)} is shared between sources`
             + (r.cached ? ` · saved result${r.computed_at ? " from " + humanTime(r.computed_at) : ""}` : "");
           setTable("#simulateTable", r.rows || [], [

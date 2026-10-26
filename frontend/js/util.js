@@ -19,6 +19,7 @@ const fmtFix = (n, d) => {
 // Decimal (1 GB = 10^9 bytes, kopia's default) or binary (1 GiB = 2^30 bytes) - Settings > Appearance.
 const fmtBytes = (value) => {
   const n = Number(value || 0);
+  if (n < 0) return "-" + fmtBytes(-n);
   const [k, u] = _byteUnits === "binary" ? [1024, ["KiB", "MiB", "GiB", "TiB"]] : [1000, ["KB", "MB", "GB", "TB"]];
   if (n >= k ** 4) return `${fmtFix(n / k ** 4, 2)} ${u[3]}`;
   if (n >= k ** 3) return `${fmtFix(n / k ** 3, 2)} ${u[2]}`;

@@ -347,6 +347,12 @@ def prepared(repo: str):
         cur.close()
 
 
+def _reach_bound(snap: dict) -> int | None:
+    """The most (snapshot, folder) pairs one snapshot can add to the reach: its folders + the root."""
+    dirs = ((snap.get("rootEntry") or {}).get("summ") or {}).get("dirs")
+    return int(dirs) + 1 if isinstance(dirs, int) and dirs >= 0 else None
+
+
 def _analyse(repo: str, snaps: list[dict], heavy: bool,
              prep: dict | None = None) -> tuple[dict, dict, dict]:
     """Churn, physical and reclaimable for EVERY snapshot of one source, as set operations.
@@ -391,11 +397,22 @@ def _analyse(repo: str, snaps: list[dict], heavy: bool,
             SELECT a.rank, c.cid_id FROM {ns}roots a JOIN cid c ON c.content_id = a.obj
             WHERE c.cid_id IS NOT NULL""")
         # Built a batch of snapshots at a time: the recursive UNION keeps every (rank, dir_id) pair
-        # in one in-memory hash table that cannot spill. The newest snapshot alone sizes the batches.
+        # in one in-memory hash table that cannot spill. A snapshot adds at most its folder count
+        # (kopia's root summary) plus the root, so batches fill up to REACH_BATCH_ROWS by that
+        # bound; a snapshot without one is sized from the most an earlier snapshot added.
         ranks = sorted(r for r, _o in live)
-        i, size = 0, 1
+        by_id = {s.get("id"): s for s in snaps}
+        bound = {r: _reach_bound(by_id.get(of_rank[r]) or {}) for r in ranks}
+        i, total, seen = 0, 0, 0
         while i < len(ranks):
-            lo, hi = ranks[i], ranks[min(i + size, len(ranks)) - 1]
+            n, used = 0, 0
+            while i + n < len(ranks):
+                b = bound[ranks[i + n]] or seen
+                if n and (not b or used + b > REACH_BATCH_ROWS):
+                    break
+                used += b
+                n += 1
+            lo, hi = ranks[i], ranks[i + n - 1]
             head = f"CREATE OR REPLACE TEMP TABLE {ns}reach AS" if i == 0 else f"INSERT INTO {ns}reach"
             cur.execute(f"""{head}
                 WITH RECURSIVE r(rank, dir_id) AS (
@@ -406,11 +423,10 @@ def _analyse(repo: str, snaps: list[dict], heavy: bool,
                     UNION
                     SELECT r.rank, l.child FROM r JOIN {link} l ON l.dir_id = r.dir_id)
                 SELECT rank, dir_id FROM r""")
-            if i == 0:
-                per = cur.execute(f"SELECT count(*) FROM {ns}reach").fetchone()[0] or 1
-                i, size = 1, max(1, REACH_BATCH_ROWS // per)
-            else:
-                i += size
+            now = cur.execute(f"SELECT count(*) FROM {ns}reach").fetchone()[0] or 0
+            seen = max(seen, -(-(now - total) // n))
+            total = now
+            i += n
         cur.unregister(ns + "roots")
         # One row per folder: the newest rank reaching it and the oldest. A folder's snapshot
         # coverage can have gaps, and these two numbers deliberately ignore them - they are only

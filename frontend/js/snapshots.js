@@ -229,7 +229,7 @@ const snapshotsPart = {
       this.deletePlan.previewLoading = true;
       this.deletePlan.previewError = false;
       const r = await getJson(`/api/snapshots/delete-preview?repo=${encodeURIComponent(this.repo)}&ids=${encodeURIComponent(ids)}&precise=${precise ? 1 : 0}&limit=40`)
-        .catch((e) => { if (this.deletePlan) { this.deletePlan.previewError = true; this.error = e.message || String(e); } return null; });
+        .catch((e) => { if (this.deletePlan) { this.deletePlan.previewError = true; this.klNotify(e.message || String(e), "warn"); } return null; });
       if (!this.deletePlan) return;
       this.deletePlan.previewLoading = false;
       if (r) { this.deletePlan.preview = r.files || []; this.deletePlan.precise = precise; this.deletePlan.previewExact = !!r.exact; }
@@ -268,13 +268,21 @@ const snapshotsPart = {
       }, "Deleting snapshots…");
     },
 
+    // One analyze followed at a time, for the repo and source it was started on; a repo switch stops it.
+    _stopAnalyzePoll() {
+      if (this._analyzePoll) { clearInterval(this._analyzePoll); this._analyzePoll = null; }
+      this.analyzingAll = false;
+    },
     async analyzeAll() {  // churn + reclaimable for the whole repo, cached
+      if (this._analyzePoll) return;
+      const repo = this.repo;
       await this.wrap(async () => {
-        await getJson(`/api/snapshots/analyze-all?repo=${encodeURIComponent(this.repo)}&reclaim=true`, { method: "POST" });
+        await getJson(`/api/snapshots/analyze-all?repo=${encodeURIComponent(repo)}&reclaim=true`, { method: "POST" });
         this.analyzingAll = true;
-        const poll = setInterval(async () => {
-          const d = await getJson(`/api/snapshots/analyze-status?repo=${encodeURIComponent(this.repo)}`).catch(() => null);
-          if (d && !d.analyzing_all) { clearInterval(poll); this.analyzingAll = false; if (this.active === "snapshots") this.loadSnapshots(); }
+        this._analyzePoll = setInterval(async () => {
+          if (this.repo !== repo) return this._stopAnalyzePoll();
+          const d = await getJson(`/api/snapshots/analyze-status?repo=${encodeURIComponent(repo)}`).catch(() => null);
+          if (d && !d.analyzing_all && this.repo === repo) { this._stopAnalyzePoll(); if (this.active === "snapshots") this.loadSnapshots(); }
         }, 5000);
       }, "Analyzing every snapshot…");
     },
@@ -282,12 +290,15 @@ const snapshotsPart = {
     async analyzeSnapshots() {
       if (!this.snapSource) this.snapSource = "*ALL*";
       if (this.snapSource === "*ALL*") return this.analyzeAll();  // all-sources view -> repo-wide
+      if (this._analyzePoll) return;
+      const repo = this.repo, source = this.snapSource;
       await this.wrap(async () => {
-        await getJson(`/api/snapshots/analyze?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.snapSource)}&reclaim=true`, { method: "POST" });
+        await getJson(`/api/snapshots/analyze?repo=${encodeURIComponent(repo)}&source=${encodeURIComponent(source)}&reclaim=true`, { method: "POST" });
         this.analyzing = true;
-        const poll = setInterval(async () => {
-          const d = await getJson(`/api/snapshots?repo=${encodeURIComponent(this.repo)}&source=${encodeURIComponent(this.snapSource)}`).catch(() => null);
-          if (d && !d.analyzing) { clearInterval(poll); this.loadSnapshots(); }
+        this._analyzePoll = setInterval(async () => {
+          if (this.repo !== repo) return this._stopAnalyzePoll();
+          const d = await getJson(`/api/snapshots?repo=${encodeURIComponent(repo)}&source=${encodeURIComponent(source)}`).catch(() => null);
+          if (d && !d.analyzing && this.repo === repo) { this._stopAnalyzePoll(); this.loadSnapshots(); }
         }, 4000);
       }, "Analyzing snapshots…");
     },

@@ -177,8 +177,9 @@
           </div>
 
           <div class="kl-note" x-show="removePlan.loading">Checking what this touches…</div>
+          <div class="kl-callout" x-show="!removePlan.loading && removePlan.error" x-text="'Couldn’t check what this touches: ' + removePlan.error"></div>
 
-          <template x-if="!removePlan.loading">
+          <template x-if="!removePlan.loading && !removePlan.error">
             <div class="space-y-4">
               <div class="kl-cards">
                 <div class="kl-card"><div class="k">Files</div><div class="v" x-text="removeFileTotal().toLocaleString(NUM_LOCALE)"></div></div>

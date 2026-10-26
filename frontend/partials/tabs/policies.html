@@ -155,6 +155,8 @@
     </div>
   </div>
 
+  <div class="kl-callout" x-show="polResolveError && !polRes()" x-text="'Couldn’t load this policy’s settings: ' + polResolveError"></div>
+
   <!-- section navigation -->
   <div class="sticky top-0 z-10 bg-canvas">
     <div class="kl-tabs" style="padding:0">
@@ -284,7 +286,7 @@
 
     <!-- Policy diff: reviews staged edits before save, and a backup before restore.
          One component, two jobs - polDiffMode picks the footer. -->
-    <div x-show="showPolDiff" @click.self="showPolDiff=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+    <div x-show="showPolDiff" @click.self="showPolDiff=false" x-cloak class="fixed inset-0 z-[55] bg-black/40 flex items-center justify-center p-6">
       <div class="w-[56rem] max-w-full max-h-[88vh] overflow-hidden rounded-lg border border-bd bg-surface text-sm flex flex-col">
         <div class="shrink-0 px-4 pt-3 pb-2 border-b border-bd flex items-center gap-2">
           <div class="font-medium" x-text="polDiffMode === 'restore' ? 'Restore review' : 'Review policy changes'"></div>

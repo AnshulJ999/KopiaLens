@@ -68,10 +68,15 @@ const jobsPart = {
     },
 
     async _jobTick() {
-      if (!this.jobPanel) return;
-      const s = await getJson(`/api/jobs/status?job_id=${encodeURIComponent(this.jobPanel.job_id)}&after=${this.jobCursor}`).catch(() => null);
-      if (!s || !this.jobPanel || s.job_id !== this.jobPanel.job_id) return;
-      this._jobApply(s);
+      if (!this.jobPanel || this._jobTickBusy) return;   // a slow reply: the next tick would repeat its lines
+      this._jobTickBusy = true;
+      try {
+        const s = await getJson(`/api/jobs/status?job_id=${encodeURIComponent(this.jobPanel.job_id)}&after=${this.jobCursor}`).catch(() => null);
+        if (!s || !this.jobPanel || s.job_id !== this.jobPanel.job_id) return;
+        this._jobApply(s);
+      } finally {
+        this._jobTickBusy = false;
+      }
     },
 
     _jobApply(s) {
@@ -284,10 +289,12 @@ const jobsPart = {
     // within one idle interval.
     armJobChip() {
       if (this._jobChipPoll) { clearTimeout(this._jobChipPoll); clearInterval(this._jobChipPoll); this._jobChipPoll = null; }
+      const gen = this._jobChipGen = (this._jobChipGen || 0) + 1;   // a newer arm replaces this chain
       const tick = async () => {
         if (!document.hidden) {
           try { await this._jobChipTick(); } catch (e) { /* the next tick retries */ }
         }
+        if (gen !== this._jobChipGen) return;
         const busy = (this.runningJobs || []).length > 0 || (this.indexPending || []).length > 0
           || !!this.indexStatus.building;
         this._jobChipPoll = setTimeout(tick, busy ? JOB_CHIP_POLL_ACTIVE : JOB_CHIP_POLL_IDLE);
@@ -348,6 +355,7 @@ const jobsPart = {
     },
     reloadAfterIndex() {
       this.indexUpdated = null;
+      this.forgetRowValues();
       this.activate();
     },
 

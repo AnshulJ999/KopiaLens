@@ -404,11 +404,18 @@ def validate_retention(repo: str, source: str) -> dict:
     the source of truth, and it includes every snapshot kopia actually keeps."""
     key, srcs = resolve_source(repo, source=source)
     snaps = srcs[key]
-    policy, raw = parse_policy_retention(repo, key)
-    try:
-        json.loads(raw)        # all-zero is a KEEP-EVERYTHING policy now, not a parse failure ()
-    except Exception:          # noqa: BLE001 - unreadable output is the failure this guard is for
-        return {"source": key, "ok": False, "error": "could not parse policy retention", "raw": raw[:1200]}
+    from .policy import load_policies                  # lazy: core must not import index at load
+    saved = (load_policies(repo).get("policies") or {}).get(key)
+    if isinstance(saved, dict) and saved:
+        policy = _retention_counts(saved)
+    else:
+        from .kopia import page_kopia_ok
+        with page_kopia_ok("no saved policy for this source"):
+            policy, raw = parse_policy_retention(repo, key)
+        try:
+            json.loads(raw)    # all-zero is a KEEP-EVERYTHING policy now, not a parse failure ()
+        except Exception:      # noqa: BLE001 - unreadable output is the failure this guard is for
+            return {"source": key, "ok": False, "error": "could not parse policy retention", "raw": raw[:1200]}
 
     mine, _ = retention_keep(snaps, policy)
     kopia_keep = kopia_kept_ids(snaps)

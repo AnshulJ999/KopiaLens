@@ -370,9 +370,18 @@ def _warm_search(repo: str) -> None:
         kl = load_settings().get("kopialens", {}) or {}
         size = str(kl.get("page_size", 500))   # saved as the picker's text; "Infinite" is not cached
         sort, direction = kl.get("search_sort") or "stored", kl.get("search_dir") or "desc"
-        warm_landing(repo, limit=int(size) if size.isdigit() else 500, sort=sort, direction=direction)
-        group_by_folder(repo, depth=int(kl.get("group_depth", 3)), limit=500, direction=direction,
-                        sort="logical" if sort == "size" else "physical")   # Files + Folders view
+        kind = kl.get("search_kind") or "files"
+        with lanes.background():
+            warm_landing(repo, limit=int(size) if size.isdigit() else 500, sort=sort, direction=direction)
+            if kind in ("folders", "both"):
+                # The same arguments the page sends (search.js loadGroupByFolder / search_mixed),
+                # so the warmed result is the one the page reads.
+                fsort, fdir = (("physical", "desc") if kind == "folders"
+                               else ("logical" if sort == "size" else "physical", direction))
+                group_by_folder(repo, depth=int(kl.get("group_depth") or 6), limit=500, sort=fsort,
+                                direction=fdir, min_depth=int(kl.get("group_min_depth") or 0),
+                                loose=kl.get("group_loose") is not False,
+                                mode=kl.get("group_depth_mode") or "deepest")
         _warm_search_failed.pop(repo, None)
     except NoIndex:
         return
@@ -405,7 +414,8 @@ def _warm(repo: str) -> None:
         now = time.time()
         if now - _last_dashboard.get(repo, 0.0) >= _dashboard_interval():
             _last_dashboard[repo] = now
-            _refresh_dashboard(repo)
+            with lanes.background():
+                _refresh_dashboard(repo)
 
 
 def _light_pass() -> None:
@@ -415,6 +425,11 @@ def _light_pass() -> None:
         cleanup_jobs()          # log_cleanup_days; OFF (0) does nothing
     except Exception as exc:  # noqa: BLE001 - housekeeping must never stop the warm pass
         log.warning("log cleanup failed: %s", exc)
+    try:
+        from .core.jobs import encrypt_kopia_logs
+        encrypt_kopia_logs()    # Full level: kopia logs of jobs that ended without encrypting theirs
+    except Exception as exc:  # noqa: BLE001 - housekeeping must never stop the warm pass
+        log.warning("kopia log encryption failed: %s", exc)
     from .core import configbackup
     configbackup.maybe_weekly()   # never raises
     from .index import crypto
@@ -710,6 +725,8 @@ async def lifespan(_app: FastAPI):
         reindexq.load()
     except Exception as exc:  # noqa: BLE001 - never block startup
         log.warning("index update queue could not be resumed: %s", exc)
+    import shutil   # folder-download zips a quit left behind; none can be in flight before serving
+    shutil.rmtree(os.path.join(DATA_DIR, "tmp", "downloads"), ignore_errors=True)
     threading.Thread(target=_mount_cleanup, name="mount-cleanup", daemon=True).start()
     try:  # point the read-only Backblaze backend at the configured bzdata root
         from .backblaze import paths as bz_paths
@@ -1010,14 +1027,15 @@ async def auth_login(request: Request):
     if wait:
         return HTMLResponse(_login_html(f"Too many attempts. Try again in {int(wait)} s.", username),
                             status_code=429, headers={"Retry-After": str(int(wait) + 1)})
-    user = auth.authenticate(username, password)
+    from starlette.concurrency import run_in_threadpool   # password hashing is slow on purpose
+    user = await run_in_threadpool(auth.authenticate, username, password)
     if user is None:
         auth.record_login_failure(address)
         log.warning("failed login attempt from %s", address)
         return HTMLResponse(_login_html("Wrong username or password.", username), status_code=401)
     auth.record_login_success(address)
     from .api.account import unlock_if_linked
-    unlock_if_linked(user, password)
+    await run_in_threadpool(unlock_if_linked, user, password)
     resp = RedirectResponse(basepath.url("/"), status_code=303)
     resp.set_cookie(auth.COOKIE_NAME, auth.issue_session(user, persist), **auth.cookie_kwargs(persist))
     return resp

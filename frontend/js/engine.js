@@ -231,7 +231,8 @@ const enginePart = {
       });
       if (!ok) return;
     }
-    await this.startJob("move_history", params, `${idc.merge_from} -> ${idc.suggested}`, g.repo);
+    // The job panel sits below this dialog: close it so the job shows.
+    if (await this.startJob("move_history", params, `${idc.merge_from} -> ${idc.suggested}`, g.repo)) this.engineDlg = null;
   },
 
   // ---- Pause ----

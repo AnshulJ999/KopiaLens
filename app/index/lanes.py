@@ -130,9 +130,16 @@ def scope(lane: str):
         release(sc)
 
 
+@contextlib.contextmanager
 def background():
-    """A background job outside a request (cache refresh, warmup)."""
-    return scope(BG)
+    """A background job outside a request (cache refresh, warmup). Inside one already, it shares
+    that job's slot (the slot is not reentrant)."""
+    sc = _SCOPE.get()
+    if sc is not None and sc.lane == BG:
+        yield sc
+        return
+    with scope(BG) as sc:
+        yield sc
 
 
 def open_scope(lane: str, method: str = "", path: str = "", live: bool = False):

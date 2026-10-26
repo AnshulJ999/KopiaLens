@@ -466,7 +466,10 @@ const policiesPart = {
       if (!this.polOwnPatterns().includes(pat)) return;
       const st = this.polStagedFor(this.polSel);
       st.remove.push(pat);
-      if (st.order) st.order = st.order.filter((p) => p !== pat);
+      if (st.order) {
+        (st.removedAt = st.removedAt || {})[pat] = st.order.indexOf(pat);   // where Undo puts it back
+        st.order = st.order.filter((p) => p !== pat);
+      }
       this.polResolve();
     },
     // The own rules as one text box, one rule per line, like KopiaUI. Apply turns the edit into
@@ -507,7 +510,11 @@ const policiesPart = {
       if (kind === "add") { st.add = st.add.filter((p) => p !== pat); if (st.order) st.order = st.order.filter((p) => p !== pat); }
       if (kind === "remove") {
         st.remove = st.remove.filter((p) => p !== pat);
-        if (st.order) st.order.splice(Math.min(this.polOwnPatterns().indexOf(pat), st.order.length), 0, pat);
+        if (st.order) {
+          const at = st.removedAt && pat in st.removedAt ? st.removedAt[pat] : this.polOwnPatterns().indexOf(pat);
+          st.order.splice(Math.min(Math.max(at, 0), st.order.length), 0, pat);
+        }
+        if (st.removedAt) delete st.removedAt[pat];
       }
       if (kind === "policy") st.removePolicy = false;
       if (kind === "order") st.order = null;
@@ -709,14 +716,21 @@ const policiesPart = {
       });
       if (!ok) return;
       await this.wrap(async () => {
-        const r = await getJson("/api/policies/restore", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo: this.repo, name, mode: this.polRestoreMode, confirmed: true }) });
-        if (r.ok) {
-          this.actionText = `Policies restored from ${name}.`;
-          this.klNotify(`Policies restored from ${name}.`);
-        } else {
-          this.error = `kopia exited ${r.returncode} - ${(r.output_tail || "").slice(-300)}`;
+        // A failure keeps the review open and says so on top of it.
+        let r;
+        try {
+          r = await getJson("/api/policies/restore", { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ repo: this.repo, name, mode: this.polRestoreMode, confirmed: true }) });
+        } catch (e) {
+          this.klNotify(`Couldn’t restore the policies: ${e.message || e}`, "warn");
+          return;
         }
+        if (!r.ok) {
+          this.klNotify(`Couldn’t restore the policies: kopia exited ${r.returncode} - ${(r.output_tail || "").slice(-300)}`, "warn");
+          return;
+        }
+        this.actionText = `Policies restored from ${name}.`;
+        this.klNotify(`Policies restored from ${name}.`);
         this.showPolDiff = false;
         await this.loadPolicies(true);
       }, "Restoring policies...");

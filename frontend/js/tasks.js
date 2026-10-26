@@ -76,8 +76,11 @@ const tasksPart = {
     const num = (v) => (v ? Number(v).toLocaleString(NUM_LOCALE) : "");
     const bytes = (v) => (v ? fmtBytes(v) : "");
     const el = document.querySelector("#tasksTable");
-    const sig = JSON.stringify(rows.map((t) => [t.id, t.status, t.end, t.progress]));
-    if (el && el._tabulator && sig === this._tasksSig) return;
+    const sig = JSON.stringify(rows.map((t) => t.id));
+    if (el && el._tabulator && sig === this._tasksSig) {
+      el._tabulator.updateData(rows).catch(() => {});   // same tasks: refresh their cells, keep scroll and selection
+      return;
+    }
     this._tasksSig = sig;
     const sel = this.taskSel && this.taskSel.id;
     const table = setTable("#tasksTable", rows, [

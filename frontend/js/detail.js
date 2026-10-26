@@ -428,7 +428,8 @@ const detailPart = {
         const [detail, vres, purge] = await Promise.all([
           getJson(`/api/search/detail?${base}`, { signal }),
           getJson(`/api/search/versions?${base}`, { signal }),
-          getJson(`/api/actions/purge-plan?${base}`, { signal }),
+          // optional: a failed purge plan leaves only its own section empty
+          getJson(`/api/actions/purge-plan?${base}`, { signal }).catch((e) => { if (isAbort(e)) throw e; return {}; }),
         ]);
         if (seq !== this._detailSeq || !this.detail) return;  // a newer file was opened, or the panel closed - drop this result
         // A Free install gets the snapshots without ids or commands (the purge plan is Pro).
@@ -457,8 +458,13 @@ const detailPart = {
         this._loadExtraFacts(seq, this.detail.source, item.full_path);
         this._loadBreakdown(seq, base);
       } catch (err) {
-        if (seq === this._detailSeq && this.detail) this.error = err.message || String(err);
+        if (isAbort(err)) return;
+        if (seq === this._detailSeq && this.detail) Object.assign(this.detail, { loading: false, error: err.message || String(err) });
       }
+    },
+    closeDetail() {
+      this.detail = null;
+      viewAbort("panel");   // the panel's requests stop with it
     },
 
     // ---- Actions tab: each delete section opens the Delete panel, preset to its mode ----
@@ -561,11 +567,14 @@ const detailPart = {
       if (!this.removePlan) return;
       const seq = ++this._removePlanSeq;
       this.removePlan.loading = true;
+      this.removePlan.error = "";
       this.removePlan.detail = null;  // freeable/shared depends on the matched set
       ++this._removeDetailSeq;
       this.removePlan.detailLoading = false;
-      const r = await getJson("/api/actions/remove-plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { this.error = e.message; return null; });
+      let failed = "";   // shown inside the panel: an error behind it read as "0 files"
+      const r = await getJson("/api/actions/remove-plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(this._removeBody()) }).catch((e) => { failed = e.message || String(e); return null; });
       if (seq !== this._removePlanSeq || !this.removePlan) return;  // a newer toggle superseded this fetch
+      this.removePlan.error = failed;
       if (r) Object.assign(this.removePlan, r);
       this.removePlan.shown = 100;
       this.removePlan.loading = false;

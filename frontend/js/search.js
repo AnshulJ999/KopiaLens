@@ -534,8 +534,8 @@ const searchPart = {
       return this.loadSearch();
     },
     async loadSearchView(refresh = false) {
-      const seq = ++this._searchViewSeq;
       if (refresh || !this.searchViewRows) {
+        const seq = ++this._searchViewSeq;   // bumped by a new fetch only: filtering must not drop it
         this.searchViewRows = { loading: true, rows: [], ready: true, error: "" };
         try {
           const r = await getJson(`/api/prune/outliers?repo=${encodeURIComponent(this.repo)}&limit=500`);
@@ -545,6 +545,8 @@ const searchPart = {
           if (seq === this._searchViewSeq) this.searchViewRows = { loading: false, rows: [], ready: true, error: e.message || String(e) };
           return;
         }
+      } else if (this.searchViewRows.loading) {
+        return;   // the fetch in flight renders with the filter as it is then
       }
       const q = this.query.trim().toLowerCase();
       const rows = this.searchViewRows.rows.filter((r) => !q || r.full_path.toLowerCase().includes(q));

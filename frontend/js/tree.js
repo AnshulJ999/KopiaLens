@@ -289,7 +289,7 @@ const treePart = {
           { label: `Exclude ${what}…`, action: () => this.selExclude("tree") },
           { separator: true },
           { label: `Delete ${what} from backups…` + this.proMenuTag("remove"), action: () => this.selDelete("tree") },
-          { label: `Exclude & delete ${what}…`, action: () => this.selExclude("tree", "delete") },
+          { label: `Exclude & delete ${what}…` + this.proMenuTag("exclude_delete"), action: () => this.selExclude("tree", "delete") },
           { separator: true },
           { label: `Copy ${sel.length} paths`, action: () => this.copyText(sel.map((r) => r.path).join("\n")) },
           { label: "Clear selection", action: () => this.clearSelection("tree") },

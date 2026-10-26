@@ -204,6 +204,7 @@ def _refresh_loop() -> None:
     while True:
         _REFRESH_WAKE.wait(60)
         _REFRESH_WAKE.clear()
+        failed, first = 0, None
         while True:
             with _LOCK:
                 if not _REFRESH_QUEUE:
@@ -214,7 +215,12 @@ def _refresh_loop() -> None:
                 with lanes.background():
                     _compute_now(repo, prefix, source)
             except Exception as exc:  # noqa: BLE001 - a background refresh must never surface
-                log.warning("repo=%s background folder refresh failed for %s: %s", repo, prefix, exc)
+                failed += 1
+                first = first or (repo, prefix, exc)
+                log.debug("repo=%s background folder refresh failed for %s: %s", repo, prefix, exc)
+        if failed:   # one line per queue drained: a low-memory spell fails most of a queue alike
+            log.warning("repo=%s %d background folder refresh(es) failed; first: %s: %s",
+                        first[0], failed, first[1], first[2])
 
 
 def _compute_now(repo: str, prefix: str, source: str | None = None) -> dict:

@@ -417,6 +417,8 @@ def fresh_next(repo: str, nexts: dict[str, str], last_by_source: dict[str, str])
         nt, slot = _next_and_missed(pol.get("scheduling") or {}, last_dt, now)
         if nt:
             out[key] = nt.isoformat()
+        else:
+            out.pop(key, None)    # no schedule any more (Manual): no next time, not a past one
         if slot:
             missed[key] = slot.isoformat()
     return out, missed
@@ -431,6 +433,9 @@ def missed_state(repo: str, last_by_source: dict[str, str], extra: dict[str, str
     missed = {**load_missed(repo), **(extra or {})}
     if not missed:
         return {}
+    from .policy import load_policies
+    pols = load_policies(repo).get("policies") or {}
+    today = dt.datetime.now()
     newest: dict[str, float] = {}
     for src, at in last_by_source.items():
         ts = _iso_ts(at)
@@ -446,6 +451,9 @@ def missed_state(repo: str, last_by_source: dict[str, str], extra: dict[str, str
         last = _iso_ts(last_by_source.get(src))
         if last is not None and last >= slot:
             continue
+        pol = pols.get(src)
+        if isinstance(pol, dict) and pol and next_time(pol.get("scheduling") or {}, today, today) is None:
+            continue    # switched to Manual since: nothing is overdue
         quiet = newest.get(src.split(":", 1)[0], 0.0) >= slot
         out[src] = {"missed_at": when, "quiet": quiet, "overdue": not quiet and slot < now - MISSED_GRACE}
     return out

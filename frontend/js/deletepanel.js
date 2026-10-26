@@ -355,7 +355,7 @@ const deletePart = {
     async flowReview() {
       if (!this.flow) return;
       const writes = this.exWrites();
-      if (!writes.length) { this.error = "Pick where the rule goes."; return; }
+      if (!writes.length) { this.klNotify("Pick where the rule goes.", "warn"); return; }
       if (this.flow.kind === "files" && !this.delReady()) return;
       if (this.flow.kind === "folder" && !(this.removePlan && !this.removePlan.loading && this.removePlan.item_count)) return;
       this.flow.step = 3;

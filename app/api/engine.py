@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 import config
 
-from ..core import approvals, audit, coexist, engine, jobs, pause as index_pause
+from ..core import approvals, audit, coexist, engine, filecrypto, jobs, pause as index_pause
 from ..core.applog import get_logger
 
 log = get_logger("api.engine")
@@ -268,7 +268,18 @@ def _kopia_log(log_path: str, after: int) -> tuple[list[str], int, bool]:
     lines = text[:end].split("\n")
     if skipped and lines:
         lines = lines[1:]          # the first line was cut in the middle
-    return lines, after + used, skipped
+    return [p for p in map(_plain_line, lines) if p is not None], after + used, skipped
+
+
+def _plain_line(line: str) -> str | None:
+    """A kopia log line as text: encrypted once its job ended at the Full level. None = unreadable."""
+    line = line.rstrip("\r")
+    if not filecrypto.is_encrypted_line(line):
+        return line
+    try:
+        return filecrypto.decrypt_line(line)
+    except Exception:  # noqa: BLE001 - a torn or foreign line is skipped
+        return None
 
 
 @router.get("/tasks")
@@ -287,10 +298,11 @@ def tasks(repo: str = "all", limit: int = 1000) -> dict:
             by_id[f"job:{j.get('job_id')}"] = _job_task(j)
     rows = [t for t in by_id.values() if repo == "all" or str(t.get("repo")) == str(repo)]
     rows.sort(key=lambda t: t.get("start") or 0, reverse=True)
+    routine = engine.routine_seconds()
     for t in rows:
-        t["routine"] = engine.is_routine(t)
+        t["routine"] = engine.is_routine(t, routine)
     return {"tasks": rows[:limit], "running": sum(1 for t in rows if t.get("status") == "running"),
-            "history_days": engine.history_days(), "routine_seconds": engine.routine_seconds()}
+            "history_days": engine.history_days(), "routine_seconds": routine}
 
 
 def _split(task_id: str) -> tuple[str, str, str, str]:

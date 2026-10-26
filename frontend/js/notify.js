@@ -20,18 +20,18 @@ const notifyPart = {
     this.notifyLoad();
   },
   notifyRepos() { return (this.repos || []).filter((r) => r.kind === "kopia" && !r.demo); },
-  async notifyHookSave() {
+  async notifyHookSave(quiet = false) {
     const h = this.notifyHook;
     const val = { url: h.url.trim(), format: h.format, level: h.level, headers: h.headers.split("\n").map((s) => s.trim()).filter(Boolean) };
     try {
       await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kopialens: { notify_webhook: val } }) });
       if (this._klSettings) this._klSettings.notify_webhook = val;
-      this.klNotify("Saved");
+      if (!quiet) this.klNotify("Saved");
       return true;
     } catch (e) { this.klNotify(e.message, "error"); return false; }
   },
   async notifyHookTest() {
-    if (!(await this.notifyHookSave())) return;
+    if (!(await this.notifyHookSave(true))) return;   // one notice: the test's
     this.notifyHook.busy = true;
     try {
       await getJson("/api/notify/webhook/test", { method: "POST" });

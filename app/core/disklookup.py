@@ -294,6 +294,9 @@ def counted(path: str) -> tuple[int, int, float] | None:
 def _remember(path: str, size: int, files: int, at: float) -> None:
     with _TOTALS_LOCK:
         key = _ckey(path)
+        old = _TOTALS.get(key)
+        if old is not None and old[0] > at:
+            return   # a count that started later (of this folder or below it) already answered
         _TOTALS[key] = (at, size, files)
         _TOTALS.move_to_end(key)
         _UNFINISHED.pop(key, None)
@@ -414,10 +417,12 @@ def _lane_worker(key: tuple[str, str]) -> None:
                 return
             scan = q.popleft()
         if scan.state == "queued":
-            if scan.lease_until is not None and time.time() > scan.lease_until:
-                _finish(scan, "stopped", "left")
-            else:
-                with _PROCS:
+            with _PROCS:   # waits while other scans run; a Stop or a leave can land meanwhile
+                if scan.done.is_set() or scan.state != "queued":
+                    pass
+                elif scan.lease_until is not None and time.time() > scan.lease_until:
+                    _finish(scan, "stopped", "left")
+                else:
                     _execute(scan)
         _forget_old()
 
@@ -525,10 +530,13 @@ def _execute(scan: Scan) -> None:
 
 def _store_totals(scan: Scan) -> None:
     at = scan.started
+    # A place that could not be read at all (an offline share) is not counted, not "0 bytes".
+    # Unreadable folders below it keep the partial total plus a note.
+    root_unreadable = any(_ckey(p) == _ckey(scan.path) for p in scan.end.get("unreadable") or [])
     for r in scan.rows:
         rel = r.get("rel") or []
         full = os.path.join(scan.path, *rel) if rel else scan.path
-        if r.get("complete"):
+        if r.get("complete") and not (root_unreadable and not rel):
             _remember(full, int(r["size"]), int(r["files"]), at)
         else:
             with _TOTALS_LOCK:
@@ -721,7 +729,8 @@ def children(folder: str) -> list[dict]:
     rows = []
     for e in entries:
         try:
-            link = e.is_symlink()
+            # A Windows junction is a link too; the scanner doesn't follow either unless asked.
+            link = e.is_symlink() or bool(getattr(e, "is_junction", lambda: False)())
             if link and not follow:
                 continue   # not followed, like kopia, which stores the link itself
             st = e.stat(follow_symlinks=link)
@@ -759,6 +768,15 @@ def children(folder: str) -> list[dict]:
     return out
 
 
+def not_indexed(path: str) -> bool:
+    """Everything reported nothing here, yet the folder holds something: Everything doesn't index it."""
+    try:
+        with os.scandir(path) as it:
+            return next(it, None) is not None
+    except OSError:
+        return False
+
+
 def _children_plain(rows) -> list[dict]:
     return [{"name": e.name, "is_dir": d, "size": None if d else st.st_size, "files": None if d else 1,
              "state": "not_counted" if d else None,
@@ -781,7 +799,10 @@ def drive_totals(path: str) -> dict:
     counted_at}. With "Count drives automatically" on, an uncounted one starts a long count."""
     p = provider()
     if p == "everything":
-        return {"size": recursive_size(path), "files": recursive_count(path), "state": "counted"}
+        size, files = recursive_size(path), recursive_count(path)
+        if not size and not files and not_indexed(path):
+            return {"size": None, "files": None, "state": "not_indexed"}
+        return {"size": size, "files": files, "state": "counted"}
     if p != "scan":
         return {"size": None, "files": None, "state": "not_counted"}
     hit = counted(path)
@@ -789,7 +810,7 @@ def drive_totals(path: str) -> dict:
         return {"size": hit[0], "files": hit[1], "state": "counted", "counted_at": hit[2]}
     if any(s.kind == "totals" and _ckey(s.path) == _ckey(path) for s in _active()):
         return {"size": None, "files": None, "state": "counting"}
-    if _opt("disk_count_drives") and scanner_path():
+    if _opt("disk_count_drives") and scanner_path() and not _unfinished(path):
         _totals_scan(path, lane="long", budget=_LONG_BUDGET, depth=2, lease=False, why="drive")
         return {"size": None, "files": None, "state": "counting"}
     return {"size": None, "files": None, "state": "not_counted"}

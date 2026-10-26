@@ -129,10 +129,13 @@ const churnPart = {
         let v = this._churnPhysCache[key];
         if (v === undefined) {
           try {
-            const d = await getJson("/api/folder/detail", { method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ repo: this.repo, prefix: folder }) });
+            const d = await fillJson("/api/folder/detail", { method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ repo: this.repo, prefix: folder }), signal: viewSignal("churn") });
             v = d && d.physical != null ? Number(d.physical) : false;
-          } catch (e) { v = false; }
+          } catch (e) {
+            if (isAbort(e)) { busy = false; return; }   // the tab was left
+            v = false;
+          }
           if (v !== false) this._churnPhysCache[key] = v;
         }
         busy = false;

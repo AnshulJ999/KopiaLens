@@ -16,8 +16,11 @@ from typing import NamedTuple
 from config import DEMO_INSTANCE, is_demo
 
 from ..core import paths as pathrules
+from ..core.applog import get_logger
 from . import entries, lanes, resolve
 from .store import read_cursor
+
+log = get_logger("queries")
 
 # LIKE wildcard escaping. `_` matches ANY single character and `%` matches anything, so a literal
 # one in a user's query or folder name silently broadens the match: `Backup_2024` also matches
@@ -483,6 +486,19 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
 # Keyed by sort as well as repo: the tab opens on the user's saved sort, not always on size.
 _LANDING: dict[tuple, dict] = {}
 _LANDING_TTL = 300.0
+_LANDING_REFRESH: set[tuple] = set()   # keys with a stale refresh in flight
+_LANDING_LOCK = threading.Lock()
+
+
+def _refresh_landing(repo: str, limit: int, sort: str, direction: str) -> None:
+    try:
+        with lanes.background():
+            warm_landing(repo, limit, sort, direction)
+    except Exception as exc:  # noqa: BLE001 - a background refresh must never surface
+        log.warning("repo=%s search landing refresh failed: %s", repo, exc)
+    finally:
+        with _LANDING_LOCK:
+            _LANDING_REFRESH.discard((repo, limit, sort, direction))
 
 
 def warm_landing(repo: str, limit: int = 500, sort: str = "size", direction: str = "desc") -> dict:
@@ -496,7 +512,12 @@ def landing(repo: str, limit: int = 500, sort: str = "size", direction: str = "d
     if c and c.get("limit") == limit:
         if time.time() - c["ts"] < _LANDING_TTL:
             return c["result"]
-        threading.Thread(target=warm_landing, args=(repo, limit, sort, direction), daemon=True).start()
+        key = (repo, limit, sort, direction)
+        with _LANDING_LOCK:
+            start = key not in _LANDING_REFRESH
+            _LANDING_REFRESH.add(key)
+        if start:
+            threading.Thread(target=_refresh_landing, args=key, daemon=True).start()
         return c["result"]
     return warm_landing(repo, limit, sort, direction)
 
@@ -886,7 +907,7 @@ def _level_off_sql(cur, src_col: str) -> str:
 
 
 def _nested_rows(cur, conds, params, lo, d, order, dirn, min_size, min_files, limit) -> list[dict]:
-    """``range`` mode: every folder from level ``lo`` to ``d``, each with everything under it. Files
+    """``nested`` mode: every folder from level ``lo`` to ``d``, each with everything under it. Files
     are made unique first (one row per computer + path) and only then spread over their folders,
     so the fan-out carries numbers, not paths."""
     off = _level_off_sql(cur, "_gd.src_id")

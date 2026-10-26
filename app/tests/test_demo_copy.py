@@ -296,8 +296,6 @@ def test_demo_repo_answers_from_recordings_and_never_runs_kopia(demo_repo, tmp_p
         list(k.kopia_lines("1", ["content", "list", "-l"]))
     assert k._repo_args("1") == ["--config-file", DISPLAY_CONFIG]
     with pytest.raises(PermissionError):
-        k.snapshot_delete_execute("1", ["snapA"])
-    with pytest.raises(PermissionError):
         k.restore_execute("1", "kRootA", str(tmp_path / "out"))
     with pytest.raises(k.MountError):
         k.mount_snapshot("1", "snapA", str(tmp_path / "m"))

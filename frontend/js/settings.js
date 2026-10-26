@@ -325,7 +325,7 @@ const settingsPart = {
     async diskPlaceRemove(i) {
       const list = this.diskPlaces.filter((_p, j) => j !== i);
       try { await this._saveDiskPlaces(list); this.klNotify("Place removed"); }
-      catch (e) { this.error = e.message || String(e); }
+      catch (e) { this.klNotify(e.message || String(e), "warn"); }
     },
     saveKl(key) {
       const f = this.KL_FIELDS[key];
@@ -366,7 +366,7 @@ const settingsPart = {
           if (key === "update_channel") { this.loadUsagePreview(); if (this.updateCheck) this.checkUpdatesNow(); }
         })
         .catch((e) => {
-          this.error = e.message || String(e);
+          this.klNotify(e.message || String(e), "warn");   // Settings is open over the header
           if (key in this.savedPorts) this[f.s] = this.savedPorts[key];  // refused: show what is saved
         });
     },

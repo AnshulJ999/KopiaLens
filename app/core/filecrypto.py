@@ -704,6 +704,21 @@ def _render_lines(lines: list[str], on: bool) -> bytes:
     return "".join((encrypt_line(l) if on else l) + "\n" for l in lines).encode()
 
 
+def encrypt_line_file(path: str) -> bool:
+    """Encrypt one line file another program wrote in the clear (kopia's own job log), now.
+    False when the layer isn't live, the file is already encrypted, or the rewrite failed."""
+    if not available() or not os.path.isfile(path) or file_state(path) in (None, "encrypted"):
+        return False
+    try:
+        broken = _switch_one(path, "lines", True)
+    except Exception as exc:  # noqa: BLE001 - the next sweep tries again
+        log.warning("could not encrypt %s: %s", os.path.basename(path), exc)
+        return False
+    if broken:
+        log.warning("%s: %d unreadable line(s) dropped by the rewrite", os.path.basename(path), broken)
+    return True
+
+
 def pending_files() -> list[str]:
     """Covered files that are not in the state the level asks for (the file-layer 'pending')."""
     from ..index import crypto

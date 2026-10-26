@@ -70,7 +70,7 @@
         <template x-for="r in folderContentRows()" :key="r.child">
           <tr class="cursor-pointer hover:bg-head border-t" style="border-color:var(--bd-soft)" @click="folderOpenChild(r)">
             <td class="px-2 py-1 font-mono break-all">
-              <span x-text="r.child + (r.is_folder ? '\\' : '')"></span>
+              <span x-text="r.child + (r.is_folder ? pathSep(detail.title) : '')"></span>
               <span class="pill" x-show="!r.is_folder && r.deleted_files">deleted from disk</span>
             </td>
             <td class="px-2 py-1 text-right num" x-text="fmtPhys(r.physical)"></td>
@@ -188,7 +188,7 @@
 
 {%- macro file_dup() -%}
 <div class="kl-sec" x-show="copyCount() > 0">
-  <div class="h">Identical copies <span class="count" x-text="copyCount().toLocaleString(NUM_LOCALE) + ' other paths · ' + detail.locations + ' backups' + (detail.others.length < copyCount() ? ' · first ' + detail.others.length.toLocaleString(NUM_LOCALE) + ' listed' : '')"></span>
+  <div class="h">Identical copies <span class="count" x-text="copyCount().toLocaleString(NUM_LOCALE) + ' other paths · ' + countOf(detail.locations, 'backup') + (detail.others.length < copyCount() ? ' · first ' + detail.others.length.toLocaleString(NUM_LOCALE) + ' listed' : '')"></span>
     <span class="acts"><button class="kl-btn quiet" style="height:22px" x-show="fullListOffer(detail.others.length, copyCount())" @click="detailShowCopies()"
       x-text="fullListLabel(detail.others.length, copyCount())"></button></span></div>
   <div class="kl-list">
@@ -394,7 +394,7 @@
 </div>
 {%- endmacro -%}
 
-    <div x-show="detail" @click.self="detail=null" x-cloak class="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-3 sm:p-6">
+    <div x-show="detail" @click.self="closeDetail()" x-cloak class="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-3 sm:p-6">
       <template x-if="detail">
         <div class="w-[62rem] max-w-[94vw] h-[min(88vh,50rem)] overflow-hidden rounded-lg border text-sm flex flex-col"
              style="border-color:var(--bd);background:var(--surface);color:var(--fg)">
@@ -414,7 +414,7 @@
                 <button @click="panelLayout = panelLayout === 'classic' ? 'tabbed' : 'classic'; klSet({ panel_layout: panelLayout })" class="kl-btn quiet" data-testid="panel-view-switch"
                         :title="panelLayout === 'classic' ? 'Show as tabs' : 'Show everything on one page'" :aria-label="panelLayout === 'classic' ? 'Tabs' : 'One page'">
                   <i class="ic" :class="panelLayout === 'classic' ? 'ic-view-tabs' : 'ic-view-rows'"></i></button>
-                <button @click="detail=null" class="kl-btn quiet" title="Close" aria-label="Close">&times;</button>
+                <button @click="closeDetail()" class="kl-btn quiet" title="Close" aria-label="Close">&times;</button>
               </span>
             </div>
             <div class="kl-note mt-0.5 break-all">
@@ -527,7 +527,7 @@
                 <span class="spacer"></span>
                 <template x-if="detail.kind === 'file'"><span class="flex items-center gap-2">{{ panel_actions('file') }}</span></template>
                 <template x-if="detail.kind === 'folder'"><span class="flex items-center gap-2">{{ panel_actions('folder') }}</span></template>
-                <button class="kl-btn" @click="detail=null">Close</button>
+                <button class="kl-btn" @click="closeDetail()">Close</button>
               </div>
             </div>
           </template>
@@ -602,7 +602,7 @@
                     </div>
                     <div class="kl-sec">
                       <div class="h">Delete this folder</div>
-                      <div class="kl-note">Everything under this folder, with a dry run before anything happens.</div>
+                      <div class="kl-note">Everything under this folder.</div>
                       <div><button class="kl-btn danger" @click="folderDeleteFromPanel()">Delete folder… <span class="protag" x-show="proTag('remove')" :title="proTagTitle()">PRO</span></button></div>
                     </div>
                   </div>
@@ -626,7 +626,7 @@
                 <span class="spacer"></span>
                 <template x-if="detail.kind === 'file'"><span class="flex items-center gap-2">{{ panel_actions('file') }}</span></template>
                 <template x-if="detail.kind === 'folder'"><span class="flex items-center gap-2">{{ panel_actions('folder') }}</span></template>
-                <button class="kl-btn" @click="detail=null">Close</button>
+                <button class="kl-btn" @click="closeDetail()">Close</button>
               </div>
             </div>
           </template>

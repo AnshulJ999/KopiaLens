@@ -59,9 +59,9 @@ def write(root: str, files: list[tuple[str, int, float]], *, user: str, host: st
     """Write ``root`` (a ``bzdata`` folder) for ``files``: (full path, size, mtime)."""
     r = random.Random(f"bz-{seed}")
     now = now or _dt.datetime.now().timestamp()
-    # One row per path: several repos can hold the same file, and Backblaze counts it once.
-    every = list({f[0].lower(): f for f in files if len(f[0]) > 3 and f[0][1:3] == ":\\"}.values()) \
-        + _extras(user, now, r)
+    # One row per path: several repos (and the extras) can hold the same file; Backblaze counts it once.
+    every = list({f[0].lower(): f for f in [f for f in files if len(f[0]) > 3 and f[0][1:3] == ":\\"]
+                  + _extras(user, now, r)}.values())
     drives: dict[str, list] = {}
     for f in every:
         drives.setdefault(f[0][0].upper(), []).append(f)

@@ -41,7 +41,8 @@ def test_tags_read_as_three_part_versions():
     assert appversion.normalize("kopialens/v0.41-before-UI-refactor") is None   # a checkpoint, not a version
 
 
-def test_build_compiles_in_every_upgrade_step():
+def test_build_compiles_in_every_upgrade_step(monkeypatch, tmp_path):
+    monkeypatch.setenv("KOPIALENS_BUILD_OUT", str(tmp_path))   # the args copy tracked files there
     build = _load("packaging/build_server.py")
     assert build.upgrade_step_modules() == list(dataupgrade._STEP_MODULES)
     args = build.nuitka_args("staged-notes")

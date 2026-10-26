@@ -414,7 +414,7 @@ const actionsPart = {
         const plan = await getJson("/api/restore/plan", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ repo: this.repo, items: [item], target_mode: "folder", target: "_", preview: false }) });
         info = plan.items[0];
-      } catch (e) { this.error = e.message || String(e); return; }
+      } catch (e) { this.klNotify(e.message || String(e), "warn"); return; }   // the file panel is open over the header
       finally { clearTimeout(slow); this.downloading = ""; }
       if (info.size > DOWNLOAD_WARN_BYTES) {
         const facts = [["Size", fmtBytes(info.size)], ["Files", Number(info.files).toLocaleString(NUM_LOCALE)], ["Snapshot", this.humanTime(info.snap_time)]];
