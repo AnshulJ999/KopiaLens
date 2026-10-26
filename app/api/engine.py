@@ -350,6 +350,8 @@ def task_detail(id: str, after: int = 0, log: str = "") -> dict:
     else:
         from ..core import filecrypto
         path = rec.get("log_path") or ""
+        if path and not os.path.isfile(path):   # a moved data folder or a mirrored demo copy: same name here
+            path = os.path.join(engine.ENGINE_LOG_DIR, os.path.basename(path))
         lines = filecrypto.read_lines(path) if path and os.path.isfile(path) else []
     return {**rec, "lines": lines[max(0, int(after)):], "cursor": len(lines)}
 

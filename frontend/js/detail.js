@@ -407,6 +407,14 @@ const detailPart = {
     },
 
     // ---------- File / folder detail ----------
+    // Reload the open file or folder panel after a failed load.
+    detailRetry() {
+      const d = this.detail;
+      if (!d) return;
+      if (d.kind === "folder") this.openFolderPanel(d.title, d.source, true);
+      else if (d.kind === "file") this.openFileDetail({ source: d.source, full_path: d.title }, true);
+    },
+
     async openFileDetail(item, keepStack = false) {
       if (!keepStack) this.panelStack = [];
       const seq = ++this._detailSeq;

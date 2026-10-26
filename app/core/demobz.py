@@ -71,6 +71,7 @@ def write(root: str, files: list[tuple[str, int, float]], *, user: str, host: st
     def excluded(path: str) -> bool:
         p = path.lower()
         return (p[1:].startswith(r":\windows" + "\\") or p[1:].startswith(r":\program files" + "\\")
+                or "\\appdata\\local\\temp\\" in p   # Backblaze's mandatory rule, every user's Temp
                 or any(p.startswith(d.lower()) for d in excluded_dirs)
                 or p.rsplit(".", 1)[-1] in exts)
 

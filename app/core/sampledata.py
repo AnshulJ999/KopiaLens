@@ -50,12 +50,25 @@ _MAX_DEPTH = 14
 
 # Sources: (key, path, share of files, file categories, files-per-folder bin shift).
 THEMES = (
-    ("projects", r"D:\Projects", 0.50, None, 0),
-    ("documents", r"C:\Users\{user}\Documents", 0.18, {"Documents", "Books"}, 0),
-    ("photos", r"C:\Users\{user}\Pictures", 0.16, {"Photos", "Videos"}, 2),
-    ("music", r"D:\Music", 0.09, {"Music"}, 1),
-    ("downloads", r"C:\Users\{user}\Downloads", 0.07, {"Archives", "Documents", "Books"}, 1),
+    ("projects", r"D:\Projects", 0.40, None, 0),
+    ("documents", r"C:\Users\{user}\Documents", 0.15, {"Documents", "Books"}, 0),
+    ("photos", r"C:\Users\{user}\Pictures", 0.13, {"Photos", "Videos"}, 2),
+    ("music", r"D:\Music", 0.08, {"Music"}, 1),
+    ("downloads", r"C:\Users\{user}\Downloads", 0.06, {"Archives", "Documents", "Books"}, 1),
+    ("videos", r"C:\Users\{user}\Videos", 0.004, {"Videos"}, 1),
+    ("vms", r"D:\Virtual Machines", 0.0, None, 0),
+    ("old_projects", r"D:\Old Projects", 0.06, None, 0),
+    ("desktop", r"C:\Users\{user}\Desktop", 0.015, {"Documents"}, 0),
+    ("laptop_docs", r"C:\Users\{user}\OneDrive", 0.06, {"Documents", "Books"}, 0),
+    ("laptop_photos", r"D:\Photos", 0.03, {"Photos", "Videos"}, 2),
 )
+# A source generated like another theme; the second computer's sources; sources with a few huge
+# files; a source no longer backed up (days since its last snapshot).
+THEME_OF = {"old_projects": "projects", "desktop": "documents", "laptop_docs": "documents",
+            "laptop_photos": "photos"}
+LAPTOP = {"laptop_docs", "laptop_photos"}
+FIXED_FILES = {"vms": 7}
+ENDED_DAYS_AGO = {"old_projects": 200}
 # Snapshot schedule per source: days between snapshots, history length, per-source retention.
 SCHEDULE = {
     "projects": (1, 420, None),
@@ -65,6 +78,13 @@ SCHEDULE = {
     "music": (3, 300, None),
     "downloads": (1, 120, {"keepLatest": 5, "keepHourly": 0, "keepDaily": 7, "keepWeekly": 4,
                            "keepMonthly": 0, "keepAnnual": 0}),
+    "videos": (7, 300, None),
+    "vms": (7, 180, {"keepLatest": 4, "keepHourly": 0, "keepDaily": 0, "keepWeekly": 4,
+                     "keepMonthly": 3, "keepAnnual": 0}),
+    "old_projects": (1, 300, None),
+    "desktop": (1, 6, None),
+    "laptop_docs": (2, 120, None),
+    "laptop_photos": (7, 200, None),
 }
 _GLOBAL_RETENTION = {"keepLatest": 10, "keepHourly": 48, "keepDaily": 7, "keepWeekly": 4,
                      "keepMonthly": 24, "keepAnnual": 3}
@@ -81,11 +101,14 @@ FALLBACK_TYPES = {
     "downloads": [("zip", 0.24, 6_000_000, 1.3), ("exe", 0.20, 9_000_000, 1.1), ("msi", 0.08, 20_000_000, 0.9),
                   ("pdf", 0.33, 1_200_000, 1.1), ("iso", 0.005, 3_100_000_000, 0.2), ("7z", 0.06, 15_000_000, 1.2),
                   ("jpg", 0.085, 1_500_000, 0.8)],
+    "videos": [("mp4", 0.7, 600_000_000, 1.0), ("mkv", 0.15, 1_800_000_000, 0.6), ("mov", 0.15, 900_000_000, 0.8)],
+    "vms": [("vhdx", 0.6, 28_000_000_000, 0.4), ("iso", 0.4, 4_500_000_000, 0.3)],
 }
 # Ratio of stored to original bytes when the profile has no figure for a type.
 _PACKED = {"jpg": 1.0, "png": 0.99, "heic": 1.0, "dng": 0.9, "mp4": 1.0, "mp3": 1.0, "flac": 1.0,
            "ogg": 1.0, "wav": 0.82, "zip": 1.0, "7z": 1.0, "iso": 0.97, "exe": 0.6, "msi": 0.95,
-           "pdf": 0.9, "docx": 0.98, "xlsx": 0.97, "pptx": 0.98, "epub": 0.97}
+           "pdf": 0.9, "docx": 0.98, "xlsx": 0.97, "pptx": 0.98, "epub": 0.97, "mkv": 1.0, "mov": 1.0,
+           "vhdx": 0.55}
 
 CODE_DIRS = ["src", "lib", "components", "utils", "assets", "tests", "docs", "scripts", "config",
              "models", "views", "static", "public", "images", "styles", "templates", "api", "core",
@@ -105,8 +128,13 @@ MUSIC_DIRS = ["Albums", "Mixes", "Stems", "Samples", "Recordings", "Demos", "Liv
               "Projects", "Masters", "Drafts"]
 DOWNLOAD_DIRS = ["Installers", "Drivers", "Manuals", "Wallpapers", "Fonts", "Archives", "Receipts",
                  "Tools", "Setup Files", "Papers"]
+VM_NAMES = ["Ubuntu Server", "Windows 11 Dev", "Home Assistant", "Debian Test", "Windows Server Lab",
+            "Linux Mint Desktop"]
+VM_DISKS = ["Virtual Disk", "system", "data", "boot"]
+STORY_DIR = "Camera Import"      # copied in, then deleted a week later: a churn spike
 _IGNORE_TEXT = "# Not worth backing up\n*.log\n*.tmp\ncoverage/\n.cache/\n"
 _HOSTS = ["DESKTOP-4QK7M2P", "DESKTOP-9TR3XW8", "STUDIO-PC", "WORKSTATION-01", "HOME-PC"]
+_LAPTOPS = ["LAPTOP-7HQ2K9D", "LAPTOP-3MV8RTA", "TRAVEL-LAPTOP"]
 
 
 def load_profile(path: str = PROFILE_PATH) -> dict:
@@ -202,8 +230,10 @@ class _Dir:
 
 
 class _Source:
-    def __init__(self, key: str, path: str, user: str, host: str):
+    def __init__(self, key: str, path: str, user: str, host: str, theme: str = ""):
         self.key, self.path, self.user, self.host = key, path, user, host
+        self.theme = theme or key        # how its files and folders are made
+        self.spike: dict | None = None
         self.root: _Dir | None = None
         self.files: list[_File] = []
         self.dirs: list[_Dir] = []
@@ -264,9 +294,11 @@ class Sample:
         self.empty = _hex(self.rng)
         self.contents[self.empty] = (0, 0, self.now)
         user, host = self.identity["user"], self.identity["host"]
-        self.sources = [_Source(k, path.format(user=user), user, host) for k, path, *_ in THEMES]
+        self.sources = [_Source(k, path.format(user=user), user, self.identity["host2"] if k in LAPTOP else host,
+                                THEME_OF.get(k, k)) for k, path, *_ in THEMES]
         for src, (key, _path, share, _cats, shift) in zip(self.sources, THEMES):
-            self._grow(src, max(50, int(files * share)), shift)
+            self._grow(src, FIXED_FILES.get(key) or max(50, int(files * share)), shift)
+        self._stories()
         self.policies = self._policies()
 
     # ---- types and names ---------------------------------------------------------------
@@ -297,6 +329,10 @@ class Sample:
 
     def _file_name(self, key: str, ext: str, t: float) -> str:
         r = self.rng
+        if key == "vms":
+            if ext == "iso":
+                return self._fill(r.choice(fakenames.DISC_TEMPLATES), t) + ".iso"
+            return f"{r.choice(VM_DISKS)}.{ext}"
         if key == "projects" and ext == "":
             return r.choice(["LICENSE", "Makefile", "Dockerfile", "README", "Procfile", "VERSION",
                              "CODEOWNERS", "AUTHORS"])
@@ -312,8 +348,12 @@ class Sample:
 
     def _folder_name(self, src: _Source, parent: _Dir, t: float) -> tuple[str, str]:
         """(name, kind) for a new folder; kind marks project roots."""
-        r, key, depth = self.rng, src.key, parent.depth + 1
+        r, key, depth = self.rng, src.theme, parent.depth + 1
         q = r.choice(fakenames.QUALIFIERS)
+        if key == "vms":
+            return r.choice(VM_NAMES), ""
+        if key == "videos":
+            return r.choice(fakenames.FOLDER_WORDS["Videos"]) + q, ""
         if key == "projects":
             if depth == 1:
                 return r.choice(fakenames.PROJECT_WORDS) + r.choice(fakenames.PROJECT_SUFFIXES), "project"
@@ -411,9 +451,11 @@ class Sample:
         parent.dirty()
         return d
 
-    def _heat(self, key: str) -> float:
+    def _heat(self, key: str, ext: str = "") -> float:
+        if key == "vms":
+            return self.rng.uniform(0.03, 0.08) if ext == "vhdx" else 0.0
         r = self.rng.random()
-        hot, warm = (0.01, 0.04) if key in ("photos", "music") else (0.08, 0.17)
+        hot, warm = (0.01, 0.04) if key in ("photos", "music", "videos") else (0.08, 0.17)
         if r < hot:
             return self.rng.uniform(0.03, 0.3)
         if r < hot + warm:
@@ -421,10 +463,10 @@ class Sample:
         return 0.0
 
     def _make_file(self, src: _Source, t: float, ext_type: _Type | None = None) -> _File:
-        tp = ext_type or self._pick_type(src.key)
+        tp = ext_type or self._pick_type(src.theme)
         size = 0 if self.rng.random() < self.p["zero_size_share"] else tp.sizes.draw(self.rng)
         mtime = t - self.age.draw(self.rng)
-        f = _File(self._file_name(src.key, tp.ext, t), tp.ext, size, mtime, self._heat(src.key),
+        f = _File(self._file_name(src.theme, tp.ext, t), tp.ext, size, mtime, self._heat(src.theme, tp.ext),
                   tp.packed)
         self._new_content(f, t)
         return f
@@ -434,14 +476,16 @@ class Sample:
         every, days, _ret = SCHEDULE[src.key]
         start = self.now - days * _DAY
         # The source grows to n_files by its last snapshot; it starts a bit over half that size.
-        n0 = max(30, int(n_files * 0.55))
+        n0 = n_files if src.key in FIXED_FILES else max(30, int(n_files * 0.55))
         src.root = _Dir(src.path.rstrip("\\").split("\\")[-1] or src.path, None, start - 400 * _DAY)
         mean_files = self._mean(self.p["files_per_dir"], shift)
         self._tree(src, max(4, int(n0 / mean_files)), start)
         self._place_files(src, n0, shift, start)
-        if src.key == "projects":
+        if src.theme == "projects":
             self._project_extras(src, start)
         self._dupes(src, start)
+        if src.key == "downloads":
+            src.spike = {"add": self.now - 21 * _DAY, "del": self.now - 13 * _DAY, "dir": None}
         self._history(src, start, every, days, n_files)
 
     @staticmethod
@@ -528,7 +572,7 @@ class Sample:
 
     def _dupes(self, src: _Source, t: float) -> None:
         """Copies of existing files elsewhere in the source ("(2)", backups, exports)."""
-        share = self.p["dupes"]["share"] * (0.5 if src.key == "projects" else 0.15)
+        share = self.p["dupes"]["share"] * (0.5 if src.theme == "projects" else 0.15)
         target = int(len(src.files) * share / 2.5)
         pool = [f for f in src.files if f.size > 0]
         for _ in range(target):
@@ -565,7 +609,7 @@ class Sample:
         day0 = math.floor(start / _DAY) * _DAY
         snap_days = [day0 + i * _DAY + hh + r.uniform(0, 300) for i in range(0, days + 1, every)
                      if r.random() > 0.06 or i == days]
-        snap_days = [s for s in snap_days if s <= self.now]
+        snap_days = [s for s in snap_days if s <= self.now - ENDED_DAYS_AGO.get(src.key, 0) * _DAY]
         policy = SCHEDULE[src.key][2] or _GLOBAL_RETENTION
         keep = retention(snap_days, policy)
         prev_files: set[str] = set()
@@ -609,6 +653,39 @@ class Sample:
             f = self._make_file(src, t)
             f.mtime = t - r.uniform(0, 6 * 3600)
             self._add_file(src, d, f)
+        sp = src.spike
+        if sp and sp["dir"] is None and sp["add"] <= t < sp["del"]:
+            sp["dir"] = self._add_dir(src, src.root, t, STORY_DIR)
+            video = self.types["videos"][0]
+            for _ in range(24):
+                f = self._make_file(src, t, video)
+                f.heat, f.mtime = 0.0, t - r.uniform(0, 3 * _DAY)
+                self._add_file(src, sp["dir"], f)
+        elif sp and sp["dir"] is not None and t >= sp["del"]:
+            d = sp["dir"]
+            for f in list(d.files.values()):
+                self._remove_file(src, f)
+            del src.root.dirs[d.name]
+            src.dirs.remove(d)
+            src.root.dirty()
+            sp["dir"], sp["add"] = None, float("inf")
+
+    def _stories(self) -> None:
+        """Pins and one backup with errors: what a lived-in repository has."""
+        by = {s.key: s for s in self.sources}
+
+        def near(snaps: list[dict], days_ago: float) -> dict:
+            cut = self.now - days_ago * _DAY
+            return min(snaps, key=lambda s: abs(_dt.datetime.fromisoformat(
+                s["startTime"].replace("Z", "+00:00")).timestamp() - cut))
+        for key, pin, days_ago in (("documents", "initial-backup", None), ("projects", "before-cleanup", 60),
+                                   ("downloads", "keep", 14)):
+            snaps = by[key].snapshots if key in by else []
+            if snaps:
+                (snaps[0] if days_ago is None else near(snaps, days_ago)).setdefault("pins", []).append(pin)
+        if by.get("downloads") and len(by["downloads"].snapshots) > 3:
+            stats = by["downloads"].snapshots[-3]["stats"]
+            stats["errorCount"], stats["ignoredErrorCount"] = 2, 1
 
     def _serialize(self, d: _Dir) -> tuple[str, dict, float]:
         """(object id, summary, newest mtime) of a folder; unchanged folders keep their object."""
@@ -692,9 +769,9 @@ class Sample:
                 pol["retention"] = ret
             if every != 1:
                 pol["scheduling"] = {"intervalSeconds": every * 86400}
-            if src.key == "projects":
+            if src.theme == "projects":
                 pol["files"] = {"ignore": ["node_modules/.cache", "*.pyc", "__pycache__/", "dist/"]}
-            if src.key in ("photos", "music"):
+            if src.theme in ("photos", "music", "videos", "vms"):
                 pol["compression"] = {"compressorName": "none"}
             if pol:
                 out[src.target] = pol
@@ -912,9 +989,10 @@ def identity(seed: int, taken=None) -> dict:
     free = (lambda n: not taken(n.lower())) if taken else (lambda n: True)
     users = [u for u in fakenames.FIRST_NAMES if free(u)] or ["demo"]
     hosts = [h for h in _HOSTS if free(h)] or ["DEMO-PC"]
+    laptops = [h for h in _LAPTOPS if free(h)] or ["LAPTOP-PC"]
     return {"user": r.choice(users), "host": r.choice(hosts),
             "storage": _SAMPLE_STORAGE, "unique_id": _hex(r, 256), "cache": _hex(r, 64)[:16],
-            "capacity": 4_000_787_030_016}
+            "capacity": 4_000_787_030_016, "host2": r.choice(laptops)}
 
 
 def vocabulary() -> set[str]:
@@ -922,7 +1000,8 @@ def vocabulary() -> set[str]:
     words: set[str] = set()
     lists = [CODE_DIRS, CODE_ROOT_FILES, PACKAGES, PACKAGE_FILES, PHOTO_EVENTS, MONTHS, MUSIC_DIRS,
              DOWNLOAD_DIRS, fakenames.PROJECT_WORDS, fakenames.PROJECT_SUFFIXES, fakenames.QUALIFIERS,
-             fakenames.FIRST_NAMES, _HOSTS, [p for _k, p, *_ in THEMES],
+             fakenames.FIRST_NAMES, _HOSTS, _LAPTOPS, VM_NAMES, VM_DISKS, [STORY_DIR],
+             [re.sub(r"\{[a-z0-9]+\}", " ", t) for t in fakenames.DISC_TEMPLATES], [p for _k, p, *_ in THEMES],
              ["LICENSE", "Makefile", "Dockerfile", "README", "Procfile", "VERSION", "CODEOWNERS",
               "AUTHORS", "icon", "logo", "banner", "bg", "node_modules", ".kopiaignore", "package.json",
               "users", "projects", "kopia"]]
@@ -981,9 +1060,11 @@ def _record(seed: int, repo: str = REPO_ID, name: str = "Sample") -> dict:
 
 
 def build(out: str | None = None, *, files: int = DEFAULT_FILES, seed: int = DEFAULT_SEED,
-          repo: str = REPO_ID, backblaze: bool = True, on_step=None) -> dict:
-    """Write a complete sample data folder: index, caches and recorded replies.
-    ``on_step(key)`` is told each step: "making", then "checking"."""
+          repo: str = REPO_ID, backblaze: bool = True, on_step=None, checks: bool = True) -> dict:
+    """Write a complete sample data folder: index, caches, recorded replies and an invented task
+    history. ``on_step(key)`` is told each step: "making", then "checking". ``checks``: also sweep
+    every screen and scan every file for real names (development and tests; the word-list check
+    always runs)."""
     from . import demo
     on_step = on_step or (lambda key: None)
     from .dataupgrade import DATA_VERSION
@@ -1012,7 +1093,8 @@ def build(out: str | None = None, *, files: int = DEFAULT_FILES, seed: int = DEF
     env = demo._child_env(building)
     env.update(KOPIALENS_DEMO_CHECK=check, KOPIALENS_DEMO_SALT=salt,
                KOPIALENS_SAMPLE_SEED=str(seed), KOPIALENS_SAMPLE_FILES=str(files),
-               KOPIALENS_SAMPLE_REPO=repo, KOPIALENS_SAMPLE_BZ="1" if backblaze else "0")
+               KOPIALENS_SAMPLE_REPO=repo, KOPIALENS_SAMPLE_BZ="1" if backblaze else "0",
+               KOPIALENS_SAMPLE_CHECKS="1" if checks else "0")
     try:
         res = subprocess.run([SELF_EXE, "-m", "app.core.sampledata", "--child"], cwd=HERE,
                              env=env, capture_output=True, text=True, encoding="utf-8",
@@ -1029,8 +1111,8 @@ def build(out: str | None = None, *, files: int = DEFAULT_FILES, seed: int = DEF
     demo._step("checking names")
     on_step("checking")
     names = check_names(building, repo)
-    leaks = demo.leak_check(building, forbidden, demoreplies.machine_paths())
-    warnings = demo._leak_warnings(leaks, child) or {}
+    leaks = demo.leak_check(building, forbidden, demoreplies.machine_paths()) if checks else {}
+    warnings = (demo._leak_warnings(leaks, child) if checks else None) or {}
     if names["unknown_words"]:
         # The flagged words come from this generator, never from a real repo, so naming them is safe.
         warnings["unknown_words"] = names["examples"]
@@ -1041,7 +1123,7 @@ def build(out: str | None = None, *, files: int = DEFAULT_FILES, seed: int = DEF
     size = sum(os.path.getsize(os.path.join(dp, f)) for dp, _d, fs in os.walk(target) for f in fs)
     return {"path": target, "bytes": size, "warnings": warnings or None, **{k: child.get(k) for k in (
         "files", "folders", "snapshots", "contents", "stored", "stages", "errors", "backblaze",
-        "swept", "failed")}}
+        "history", "swept", "failed")}}
 
 
 SAMPLE_NAME = "Sample data"
@@ -1088,7 +1170,7 @@ def install(*, files: int = DEFAULT_FILES, seed: int = DEFAULT_SEED) -> dict:
     tmp = os.path.join(DATA_DIR, "demo", f"sample-build-{rid}")
     try:
         try:
-            build(tmp, files=files, seed=seed, repo=rid, backblaze=False, on_step=_set_step)
+            build(tmp, files=files, seed=seed, repo=rid, backblaze=False, on_step=_set_step, checks=False)
         except Exception:
             repos.release_id(rid)   # nothing was moved under this id yet
             raise
@@ -1158,7 +1240,14 @@ def _child() -> None:
                           seed=int(os.environ["KOPIALENS_SAMPLE_SEED"]))
         bz_index = demobz.index(bz_root)
         demobz.trim(bz_root)
-    sweep = demo._sweep(os.environ["KOPIALENS_DEMO_SALT"], os.environ["KOPIALENS_DEMO_CHECK"], [repo])
+    history: dict = {}
+    try:
+        from . import demohistory
+        history = demohistory.write([repo], sample.now, seed=int(os.environ["KOPIALENS_SAMPLE_SEED"]))
+    except Exception as exc:  # noqa: BLE001 - an empty Tasks tab is still a working sample
+        log.warning("sample: task history not written: %s", exc)
+    sweep = demo._sweep(os.environ["KOPIALENS_DEMO_SALT"], os.environ["KOPIALENS_DEMO_CHECK"], [repo]) \
+        if os.environ.get("KOPIALENS_SAMPLE_CHECKS", "1") == "1" else {}
     print(json.dumps({
         "files": sum(len(s.files) for s in sample.sources),
         "folders": sum(len(s.dirs) + 1 for s in sample.sources),
@@ -1166,7 +1255,7 @@ def _child() -> None:
         "contents": len(sample.contents), "stored": sample.stored_bytes(),
         "stages": sorted(summary.get("stages") or {}), "errors": summary.get("errors") or None,
         "backblaze": {"files": bz["files"], "backed": bz["backed"], "ok": bz_index.get("ok", True)},
-        **sweep}))
+        "history": history, **sweep}))
 
 
 def main(argv: list[str] | None = None) -> int:

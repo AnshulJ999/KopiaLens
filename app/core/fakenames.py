@@ -107,9 +107,13 @@ FILE_TEMPLATES = {
     "Mixed": ["file-{n3}", "data-{n3}", "item-{n3}", "doc-{n3}"],
 }
 # Disc and ROM images (IMAGE_EXTS): plain installer and backup discs.
-DISC_TEMPLATES = ["Windows 10 21H2", "Windows 11 23H2", "Ubuntu 22.04", "Ubuntu 24.04", "Office 2019",
-                  "Linux Mint 21", "Debian 12", "Fedora 39", "Driver Disc {n2}", "Recovery Disc {n2}",
-                  "Backup Disc {yr}", "Install Disc {n2}", "Photos {yr}", "Archive Disc {n2}"]
+DISC_TEMPLATES = ["Windows 10 21H2", "Windows 10 22H2", "Windows 11 22H2", "Windows 11 23H2", "Windows 11 24H2",
+                  "Windows Server 2022", "Ubuntu 20.04", "Ubuntu 22.04", "Ubuntu 24.04", "Ubuntu Server 24.04",
+                  "Office 2019", "Office 2021", "Linux Mint 21", "Linux Mint 22", "Debian 11", "Debian 12",
+                  "Fedora 39", "Fedora 40", "Pop!_OS 22.04", "Kali Linux 2024.2", "Arch Linux 2024.06",
+                  "TrueNAS Scale 24.04", "Proxmox VE 8.2", "Hiren's Boot CD", "GParted Live", "Clonezilla Live",
+                  "Driver Disc {n2}", "Recovery Disc {n2}", "Backup Disc {yr}", "Install Disc {n2}",
+                  "Photos {yr}", "Archive Disc {n2}", "System Image {date}", "Family Videos {yr}"]
 CODE_ADJ = ["amber", "azure", "brisk", "cedar", "copper", "coral", "crimson", "dusky", "ember",
             "fable", "frosty", "gentle", "glacial", "golden", "hazel", "ivory", "jade", "lunar",
             "maple", "misty", "mossy", "nimble", "olive", "pearl", "quartz", "rapid", "rustic",
@@ -338,7 +342,10 @@ class Namer:
             return self._bump(base, seed, attempt) + ext.lower()
         if self.style == "balanced" and not self.risky(name, "f"):
             return self._bump(self.in_place(stem), seed, attempt) + ext
-        return self._bump(self._strict_file(stem, ext, seed), seed, attempt) + ext
+        if 0 < attempt < 8 and ext[1:].lower() in IMAGE_EXTS:   # a clash tries another disc name first
+            return self._strict_file(stem, ext, f"{seed}\x1f{attempt}") + ext
+        return self._bump(self._strict_file(stem, ext, seed), seed, max(0, attempt - 7) if ext[1:].lower()
+                          in IMAGE_EXTS else attempt) + ext
 
     def user(self, name: str) -> str:
         if name.lower() in self.users:

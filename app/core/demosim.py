@@ -226,6 +226,20 @@ def _lines(repo: str, args: list[str]) -> tuple[list[tuple[str, str]], int]:
             say(f"Snapshot includes {files} file(s), total size {_kopia_bytes(size)}")
             say("Snapshot excludes no files.")
             say("Snapshot excludes no directories.")
+        elif head[:2] == ["snapshot", "verify"]:
+            stored, snapshots = idx.storage()
+            pct = next((float(a.split("=", 1)[1]) for a in args if a.startswith("--verify-files-percent=")), 0.0)
+            blobs = max(1, stored // _PACK) + snapshots * 2
+            objects = max(snapshots * 40, blobs * 3)
+            say("Listing blobs...", "stderr")
+            for n in range(10000, blobs, 10000):
+                say(f"  {n} blobs...", "stderr")
+            say(f"Listed {blobs} blobs.", "stderr")
+            for i in range(3):
+                say(f"Processed {objects * i // 3} objects ({_kopia_bytes(stored * i / 3)}). "
+                    f"Read {int(objects * pct / 100) * i // 3} files ({_kopia_bytes(stored * pct / 100 * i / 3)}).", "stderr")
+            say(f"Finished processing {objects} objects ({_kopia_bytes(stored)}). "
+                f"Read {int(objects * pct / 100)} files ({_kopia_bytes(stored * pct / 100)}).", "stderr")
         elif head[:2] == ["blob", "stats"]:
             for line in blob_stats_lines(*idx.storage()):
                 say(line)

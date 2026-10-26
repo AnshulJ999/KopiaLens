@@ -434,7 +434,7 @@
               <template x-if="detail.kind === 'selection'"><span x-text="selectionLine()"></span></template>
             </div>
             <div class="kl-note mt-1" x-show="detail.loading">Loading details…</div>
-            <div class="kl-callout mt-1" x-show="detail.error" x-text="'Could not load the details: ' + detail.error"></div>
+            <div class="kl-callout mt-1 flex items-center gap-3" x-show="detail.error"><span x-text="'Could not load the details: ' + detail.error"></span><button class="kl-btn quiet" x-show="detail.kind === 'file' || detail.kind === 'folder'" @click="detailRetry()">Try again</button></div>
             <div class="kl-callout mt-1" x-show="detail.notFound">Not in this repository's index.</div>
           </div>
 

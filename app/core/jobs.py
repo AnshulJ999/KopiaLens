@@ -980,9 +980,13 @@ def history_status(job_id: str, after: int = 0) -> dict | None:
     rec = next((r for r in read_job_history(limit=HISTORY_FILE_LINES) if r.get("job_id") == job_id), None)
     if rec is None:
         return None
-    lines = filecrypto.read_lines(rec.get("log_path") or "")[-HISTORY_TAIL_LINES:]
+    path = rec.get("log_path") or ""
+    if path and not os.path.isfile(path):   # a moved data folder or a mirrored demo copy: same name here
+        from .applog import JOB_LOG_DIR
+        path = os.path.join(JOB_LOG_DIR, os.path.basename(path))
+    lines = filecrypto.read_lines(path)[-HISTORY_TAIL_LINES:] if path else []
     lines = [("--:--:-- " + ln) for ln in lines]   # the panel expects a time prefix
-    return {**rec, "results": [], "held": False, "freed": None, "target": None, "commands_text": "",
+    return {**rec, "log_path": path, "results": [], "held": False, "freed": None, "target": None, "commands_text": "",
             "from_history": True, "line_count": len(lines), "cursor": len(lines), "skipped": 0,
             "lines": lines[max(0, int(after)):]}
 

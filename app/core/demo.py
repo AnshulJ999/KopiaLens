@@ -47,6 +47,7 @@ _TEXT_SPLIT = r"[\\/@:\r\n\t\",]"
 _KEPT_COLUMNS = {"ext", "repo"}
 # What a finished demo folder holds; everything else the cache build wrote is removed.
 _KEEP = {"cache", "demo.json", "repos.json", "settings.json", "ui_state.json", "data_version.json"}
+_KEEP_LOGS = {"jobs", "engine"}   # the invented task history's logs (demohistory)
 # A demo with Backblaze also keeps its generated bzdata, the BZ index (and kopialens_bz.sqlite*).
 BZ_KEEP = {"bzdata", "bz"}
 _DOT_IGNORE_KEPT = {".kopiaignore", ".gitignore", ".nobackup", ".backupignore"}
@@ -81,7 +82,8 @@ def load_rules() -> dict:
     """Name rules for a balanced copy (``<data>/demo/name-rules.json``): ``hidden_areas`` (path
     globs with forward slashes; every name inside is replaced), ``hide_words`` (a name with one
     is replaced), ``keep_names`` (never replaced), ``rename`` (text in a name -> what to show,
-    any case), ``repo_names`` (repo id -> full name), ``bz_name``, ``strict_repos``, ``users`` and
+    any case), ``rename_paths`` (one folder's path, forward slashes -> the name it shows),
+    ``repo_names`` (repo id -> full name), ``bz_name``, ``strict_repos``, ``users`` and
     ``hosts`` (real -> shown, any style), ``storage`` (repo id -> storage folder shown)."""
     try:
         with open(os.path.join(DATA_DIR, RULES_FILE), encoding="utf-8") as fh:
@@ -91,6 +93,7 @@ def load_rules() -> dict:
     return {"hidden_areas": [a.lower().replace("\\", "/").rstrip("/") for a in rules.get("hidden_areas", [])],
             "hide_words": list(rules.get("hide_words", [])), "keep_names": list(rules.get("keep_names", [])),
             "rename": {str(k).lower(): str(v) for k, v in (rules.get("rename") or {}).items() if k and v},
+            "rename_paths": {_path_key(k): str(v) for k, v in (rules.get("rename_paths") or {}).items() if k and v},
             "repo_names": {str(k): str(v) for k, v in (rules.get("repo_names") or {}).items()},
             "bz_name": str(rules.get("bz_name") or "Backblaze"),
             "strict_repos": [str(r) for r in rules.get("strict_repos", [])],
@@ -167,6 +170,10 @@ def _join(parent: str, name: str, sep: str) -> str:
 
 def _is_root_segment(seg: str) -> bool:
     return seg == "" or bool(re.fullmatch(r"[A-Za-z]:", seg))
+
+
+def _path_key(path: str) -> str:
+    return path.lower().replace("\\", "/").rstrip("/")
 
 
 class _Names:
@@ -839,6 +846,9 @@ def _copy_repo(repo: str, demo_id: str, building: str, key: bytes, style: str, r
                                "ORDER BY depth, dir_id").fetchall()
             fake_dir: dict[int, str] = {}
             rows = {"dir_id": [], "dir_path": [], "name": [], "sep": []}
+            # One folder shown under another name (rules "rename_paths"), and its entry in its parent's listing.
+            by_path = rules.get("rename_paths") if style == "balanced" else None
+            over = {"dir_id": [], "real": [], "fake": []}
             for dir_id, src_id, dir_path, name, parent_id in dirs:
                 sep = _sep_for(_source_parts(sources[src_id])[2]) if src_id in sources else "\\"
                 if parent_id is None or parent_id not in fake_dir:
@@ -846,6 +856,11 @@ def _copy_repo(repo: str, demo_id: str, building: str, key: bytes, style: str, r
                     fname = fpath.split(sep)[-1] if name else name
                 else:
                     fname = names.get("d", name)
+                    if by_path and _path_key(dir_path) in by_path:
+                        fname = by_path[_path_key(dir_path)]
+                        over["dir_id"].append(parent_id)
+                        over["real"].append(name)
+                        over["fake"].append(fname)
                     fpath = _join(fake_dir[parent_id], fname, sep)
                 fake_dir[dir_id] = fpath
                 rows["dir_id"].append(dir_id)
@@ -853,6 +868,11 @@ def _copy_repo(repo: str, demo_id: str, building: str, key: bytes, style: str, r
                 rows["name"].append(fname)
                 rows["sep"].append(sep)
             cur.register("_demo_dir", pa.table(rows))
+        else:
+            over = {"dir_id": [], "real": [], "fake": []}
+        cur.register("_demo_over", pa.table({"dir_id": pa.array(over["dir_id"], pa.int64()),
+                                             "real": pa.array(over["real"], pa.string()),
+                                             "fake": pa.array(over["fake"], pa.string())}))
 
         cur.register("_demo_names", names.table())
         if style == "balanced":   # the names page's real-to-shown list: changed names only, outside the copy
@@ -882,12 +902,13 @@ def _copy_repo(repo: str, demo_id: str, building: str, key: bytes, style: str, r
                         FROM pathx t JOIN _demo_dir f USING (dir_id)
                         JOIN _demo_names n ON n.kind = 'f' AND n.real = t.name
                         ORDER BY t.src_id, t.path_id""",
-            "tent": """SELECT * FROM (SELECT t.* REPLACE (n.fake AS name,
+            "tent": """SELECT * FROM (SELECT t.* REPLACE (coalesce(o.fake, n.fake) AS name,
                             (min(t.pos) OVER (PARTITION BY t.dir_id)
-                             + row_number() OVER (PARTITION BY t.dir_id ORDER BY n.fake) - 1) AS pos,
+                             + row_number() OVER (PARTITION BY t.dir_id ORDER BY coalesce(o.fake, n.fake)) - 1) AS pos,
                             NULL::VARCHAR AS s_errors, NULL::VARCHAR AS extra)
                        FROM tent t JOIN _demo_names n
-                         ON n.kind = (CASE WHEN t.etype = 1 THEN 'd' ELSE 'f' END) AND n.real = t.name)
+                         ON n.kind = (CASE WHEN t.etype = 1 THEN 'd' ELSE 'f' END) AND n.real = t.name
+                       LEFT JOIN _demo_over o ON t.etype = 1 AND o.dir_id = t.dir_id AND o.real = t.name)
                        ORDER BY dir_id, pos""",
         }
         for name in sorted(tables):
@@ -935,12 +956,19 @@ def prune(folder: str, repo_ids: list[str]) -> None:
     """Remove what the cache build wrote that a finished demo does not need. Kept: the fixed
     files, the Backblaze data, and every file that belongs to one of the demo's repos (stage
     outputs such as ignore_files_repo<N>.parquet live next to the index); temp folders go."""
+    from .demohistory import HISTORY_FILES
     from .repos import _belongs_to
     for entry in os.listdir(folder):
         own = any(_belongs_to(entry, r) for r in repo_ids) and not entry.startswith("duck_tmp")
-        if own or entry in _KEEP | BZ_KEEP or entry.startswith("kopialens_bz.sqlite"):
+        if own or entry in _KEEP | BZ_KEEP | set(HISTORY_FILES) or entry.startswith("kopialens_bz.sqlite"):
             continue
         path = os.path.join(folder, entry)
+        if entry == "logs" and os.path.isdir(path):
+            for sub in os.listdir(path):
+                if sub not in _KEEP_LOGS:
+                    p = os.path.join(path, sub)
+                    shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
+            continue
         shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
 
 
@@ -1170,9 +1198,18 @@ def _finish_child() -> None:
         stages.add("backblaze")
     except Exception as exc:  # noqa: BLE001 - the copy is still a full kopia demo without it
         errors["bz"] = str(exc)[:300]
+    history = {}
+    try:
+        from config import DEMO_NOW
+
+        from . import demohistory
+        now = _dt.datetime.fromisoformat(DEMO_NOW).timestamp() if DEMO_NOW else _dt.datetime.now().timestamp()
+        history = demohistory.write(kopia_repos(), now)
+    except Exception as exc:  # noqa: BLE001 - an empty Tasks tab is still a working demo
+        errors["history"] = str(exc)[:300]
     sweep = _sweep(os.environ["KOPIALENS_DEMO_SALT"], os.environ["KOPIALENS_DEMO_CHECK"], kopia_repos()) \
         if os.environ.get("KOPIALENS_DEMO_CHECK") else {}
-    print(json.dumps({"stages": sorted(stages), "errors": errors or None, **sweep}))
+    print(json.dumps({"stages": sorted(stages), "errors": errors or None, "history": history, **sweep}))
 
 
 def _demo_backblaze(repos: list[str]) -> None:

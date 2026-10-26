@@ -250,7 +250,9 @@ def index_freshness() -> dict:
             "error": st.get("error") or stored.get("reason") or (last_listing_error(key) or None),
             "error_at": stored.get("at"),
         }
-        if DEMO_SHOW is not None and is_demo(key) and not row["last_index"]:
+        # A demo's clock restarts at demo.json "now" on every start, so a pass saved in an earlier
+        # session can read as later than now.
+        if DEMO_SHOW is not None and is_demo(key) and (not row["last_index"] or row["last_index"] > time.time()):
             row["last_index"] = row["last_attempt"] = time.time() - 2 * 3600   # never "never indexed"
         if cfg.get("kind") == "backblaze":
             #: the badge shows REBUILD age - how old the data actually is.

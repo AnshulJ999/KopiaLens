@@ -177,7 +177,7 @@
           </div>
 
           <div class="kl-note" x-show="removePlan.loading">Checking what this touches…</div>
-          <div class="kl-callout" x-show="!removePlan.loading && removePlan.error" x-text="'Couldn’t check what this touches: ' + removePlan.error"></div>
+          <div class="kl-callout flex items-center gap-3" x-show="!removePlan.loading && removePlan.error"><span x-text="'Couldn’t check what this touches: ' + removePlan.error"></span><button class="kl-btn quiet" @click="_fetchRemovePlan()">Try again</button></div>
 
           <template x-if="!removePlan.loading && !removePlan.error">
             <div class="space-y-4">

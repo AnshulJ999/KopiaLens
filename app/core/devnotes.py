@@ -91,7 +91,23 @@ def _notes_server():
         sys.path.insert(0, str(Path(HERE).parents[1] / "Widgets" / "notes"))
         from notes_server.fastapi_router import make_router
         from notes_server.notes_store import NotesStore
+    _real_clock(sys.modules[NotesStore.__module__])
     return make_router, NotesStore
+
+
+def _real_clock(store_module) -> None:
+    """A demo copy runs on a moved clock (config.DEMO_NOW); its notes keep the real time."""
+    from config import DEMO_NOW
+    if not DEMO_NOW:
+        return
+    try:
+        import datetime as dt
+
+        import time_machine
+    except ImportError:
+        return
+    real = time_machine.escape_hatch.datetime.datetime
+    store_module._now = lambda: real.now(dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 class _LazyStore:
