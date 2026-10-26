@@ -73,13 +73,16 @@ _BROWSE_CONFIG = os.path.join(HERE, "devtools", "demo-copies", "demo-copies.json
 _LOOK_DROP = {"bind_host", "allowed_hosts", "es_path", "index_backup_dir", "duckdb_memory", "duckdb_threads",
               "window", "usage_stats", "update_check", "debug_log", "startup_delay", "tray_click", "tray_icon",
               "snap_source"}
+# Next to each repo of a finished copy: what it was built from, so an unchanged repo is reused.
+_BUILD_FILE = "demo-build.json"
 
 
 def load_rules() -> dict:
     """Name rules for a balanced copy (``<data>/demo/name-rules.json``): ``hidden_areas`` (path
     globs with forward slashes; every name inside is replaced), ``hide_words`` (a name with one
     is replaced), ``keep_names`` (never replaced), ``rename`` (text in a name -> what to show,
-    any case), ``repo_names`` (repo id -> full name), ``bz_name`` and ``strict_repos``."""
+    any case), ``repo_names`` (repo id -> full name), ``bz_name``, ``strict_repos``, ``users`` and
+    ``hosts`` (real -> shown, any style), ``storage`` (repo id -> storage folder shown)."""
     try:
         with open(os.path.join(DATA_DIR, RULES_FILE), encoding="utf-8") as fh:
             rules = json.load(fh)
@@ -90,7 +93,10 @@ def load_rules() -> dict:
             "rename": {str(k).lower(): str(v) for k, v in (rules.get("rename") or {}).items() if k and v},
             "repo_names": {str(k): str(v) for k, v in (rules.get("repo_names") or {}).items()},
             "bz_name": str(rules.get("bz_name") or "Backblaze"),
-            "strict_repos": [str(r) for r in rules.get("strict_repos", [])]}
+            "strict_repos": [str(r) for r in rules.get("strict_repos", [])],
+            "users": {str(k): str(v) for k, v in (rules.get("users") or {}).items()},
+            "hosts": {str(k): str(v) for k, v in (rules.get("hosts") or {}).items()},
+            "storage": {str(k): str(v) for k, v in (rules.get("storage") or {}).items()}}
 
 
 def _look_source(name: str) -> tuple[str, bool]:
@@ -342,17 +348,20 @@ _EXT_LIKE = re.compile(r"\.[A-Za-z0-9]{1,6}")
 class _Faker:
     """Fakes the names inside kopia's own replies with the copy's name map."""
 
-    def __init__(self, names: _Names, src_map: dict[str, str]):
+    def __init__(self, names: _Names, src_map: dict[str, str], storage: str | None = None):
         self.names = names
         self.namer = names.namer
         self.src_map = src_map
+        self.storage = storage      # the storage folder shown, when the rules give one
         # Whole real strings (source keys, paths, user@host, user, host) -> fake, longest first:
         # the safety net for any field the structured fakers below do not know about.
         pairs: dict[str, str] = {}
         for real, fake in src_map.items():
             ru, rh, rp = _source_parts(real)
             fu, fh, fp = _source_parts(fake)
-            pairs.update({real: fake, f"{ru}@{rh}": f"{fu}@{fh}", rp: fp, ru: fu, rh: fh})
+            pairs.update({real: fake, f"{ru}@{rh}": f"{fu}@{fh}", rp: fp, rh: fh})
+            if ru.lower() != fu.lower():   # a user shown in another case only stays as it is in paths
+                pairs[ru] = fu
         pairs = {k: v for k, v in pairs.items() if len(k) >= 3 and not _is_root_segment(k)}
         self._pairs = pairs
         self._re = (re.compile("|".join(re.escape(k) for k in sorted(pairs, key=len, reverse=True)),
@@ -463,8 +472,8 @@ class _Faker:
                 if not isinstance(v, str):
                     fake[k] = v
                 elif k == "path":
-                    fake[k] = v if balanced else (r"D:\Backups\Kopia" if re.match(r"[A-Za-z]:|\\\\", v)
-                                                  else "/srv/backups/kopia")
+                    fake[k] = self.storage or (v if balanced else (r"D:\Backups\Kopia" if re.match(r"[A-Za-z]:|\\\\", v)
+                                                                   else "/srv/backups/kopia"))
                 elif k in ("bucket", "container", "share"):
                     fake[k] = "demo-backups"
             storage["config"] = fake
@@ -598,9 +607,12 @@ def _unlock_index() -> None:
                            "set KOPIALENS_PASSWORD")
 
 
-def make_copy(repos: str | list[str], style: str, finish: bool = True, check: bool = False) -> dict:
+def make_copy(repos: str | list[str], style: str, finish: bool = True, check: bool = False,
+              fresh: bool = False) -> dict:
     """Write a demo copy of one or more repos (demo ids 1, 2, ... in the given order).
-    ``check``: also count real names in its files and screens. Returns counts only, never names."""
+    ``check``: also count real names in its files and screens. Returns counts only, never names.
+    A repo whose index, rules, key and app code are unchanged since the last build is taken from
+    that build, caches included (not with ``check`` or ``fresh``)."""
     _unlock_index()
     ids = _repo_ids(repos)
     key = fakenames.load_key(DATA_DIR)
@@ -614,13 +626,24 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True, check: bo
     allowed: set[str] = set()   # every repo's fake names and extensions
     identity: set[str] = set()  # user and computer names: never allowed
     styles, latest = {}, 0.0
+    reused: list[str] = []
+    code = None if check or fresh else _code_hash()
     for n, repo in enumerate(ids, 1):
         demo_id = str(n)
         if len(ids) > 1:
             _step(f"repo {repo} as demo repo {demo_id}")
         repo_style = "generic" if repo in rules.get("strict_repos", []) else style
         styles[demo_id] = repo_style
-        part = _copy_repo(repo, demo_id, building, key, repo_style, rules)
+        fp = _fingerprint(repo, demo_id, repo_style, rules, key, code) if code else None
+        part = _reuse(target, building, demo_id, fp) if fp else None
+        if part is not None:
+            _step(f"repo {repo} unchanged: taken from the last build")
+            reused.append(demo_id)
+        else:
+            part = _copy_repo(repo, demo_id, building, key, repo_style, rules)
+            _dump(os.path.join(building, f"repo{demo_id}", _BUILD_FILE), {
+                "fingerprint": fp, **{k: part[k] for k in ("rows", "renamed", "re_rolled", "kept_by_design",
+                                                           "recorded", "latest")}})
         latest = max(latest, part.pop("latest") or 0.0)
         records.append(_demo_record(part.pop("replies"), demo_id,
                                     _repo_name(repo, demo_id, len(ids), style, repo_style, rules)))
@@ -636,10 +659,10 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True, check: bo
 
     from .demobz import BZ_RECORD
     bz_record = dict(BZ_RECORD)
-    if style == "balanced":   # the app's own short labels: Repo 1, Repo 2, BZ
-        bz_record["name"] = rules["bz_name"]
-        for rec in records + [bz_record]:
-            rec.pop("short_name", None)
+    if style == "balanced":   # short labels as the app would show them: Repo 1, Repo 2, BZ
+        bz_record["name"], bz_record["short_name"] = rules["bz_name"], "BZ"
+        for rec in records:
+            rec["short_name"] = f"Repo {rec['id']}"
     _dump(os.path.join(building, "repos.json"), {"version": 1, "cache_dir": None,
                                                  "repos": records + [bz_record]})
     from .dataupgrade import DATA_VERSION
@@ -659,7 +682,7 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True, check: bo
     _dump(os.path.join(building, "demo.json"), meta)
 
     _step("building caches and checking screens" if check else "building caches")
-    finished = _finish(building, forbidden, check) if finish else {}
+    finished = _finish(building, forbidden, check, reused) if finish else {}
     prune(building, [r["id"] for r in records])
 
     warnings = None
@@ -681,6 +704,63 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True, check: bo
     log.info("demo copy of repos %s (%s): %s names, %s re-rolled", ",".join(ids), style,
              totals["renamed"], totals["re_rolled"])
     return result
+
+
+def _code_hash() -> str:
+    """The app's own Python code (tests aside): a change rebuilds every repo."""
+    h = hashlib.sha256()
+    root = os.path.join(HERE, "app")
+    for folder, dirs, files in sorted(os.walk(root)):
+        dirs[:] = sorted(d for d in dirs if d not in ("tests", "__pycache__"))
+        for name in sorted(files):
+            if name.endswith(".py"):
+                path = os.path.join(folder, name)
+                h.update(os.path.relpath(path, root).encode())
+                with open(path, "rb") as fh:
+                    h.update(fh.read())
+    return h.hexdigest()
+
+
+def _fingerprint(repo: str, demo_id: str, repo_style: str, rules: dict, key: bytes, code: str) -> str:
+    """What one repo's part of a copy is built from. A strict repo ignores the name rules."""
+    gen = store.current(repo)
+    try:
+        generation = gen.manifest.get("generation")
+    finally:
+        gen.release()
+    used = rules if repo_style == "balanced" else {
+        k: rules.get(k) for k in ("users", "hosts", "strict_repos")}
+    blob = json.dumps({"repo": repo, "demo_id": demo_id, "style": repo_style, "generation": generation,
+                       "rules": used, "storage": (rules.get("storage") or {}).get(repo),
+                       "key": hashlib.sha256(key).hexdigest(), "code": code}, sort_keys=True)
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def _reuse(prev: str, building: str, demo_id: str, fp: str) -> dict | None:
+    """Copy repo ``demo_id``'s files (index, replies, its caches) from the last finished copy when
+    it was built from the same inputs; the part summary ``make_copy`` needs, else None."""
+    try:
+        with open(os.path.join(prev, f"repo{demo_id}", _BUILD_FILE), encoding="utf-8") as fh:
+            built = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if built.get("fingerprint") != fp:
+        return None
+    from .repos import _belongs_to
+    for sub in ("", "cache"):
+        src = os.path.join(prev, sub)
+        if not os.path.isdir(src):
+            continue
+        os.makedirs(os.path.join(building, sub), exist_ok=True)
+        for entry in os.listdir(src):
+            if not _belongs_to(entry, demo_id):
+                continue
+            a, b = os.path.join(src, entry), os.path.join(building, sub, entry)
+            shutil.copytree(a, b) if os.path.isdir(a) else shutil.copyfile(a, b)
+    with open(demoreplies.replies_path(demo_id, building), encoding="utf-8") as fh:
+        replies = json.load(fh)
+    return {**{k: built[k] for k in ("rows", "renamed", "re_rolled", "kept_by_design", "recorded", "latest")},
+            "replies": replies, "forbidden": set(), "allowed": set(), "identity": set()}
 
 
 def _repo_name(repo: str, demo_id: str, count: int, style: str, repo_style: str, rules: dict) -> str:
@@ -734,7 +814,8 @@ def _copy_repo(repo: str, demo_id: str, building: str, key: bytes, style: str, r
         if style == "balanced":
             _step("collecting names in hidden areas")
         replace = _hidden_names(cur, tables, rules.get("hidden_areas", [])) if style == "balanced" else set()
-        namer = fakenames.Namer(key, style, replace, rules.get("hide_words", ()), rules.get("keep_names", ()))
+        namer = fakenames.Namer(key, style, replace, rules.get("hide_words", ()), rules.get("keep_names", ()),
+                                rules.get("users"), rules.get("hosts"))
         latest = cur.execute("SELECT epoch(max(start_time)) FROM isnaps").fetchone()[0] if "isnaps" in tables else None
         real_sources = [r[0] for r in cur.execute("SELECT source FROM src").fetchall()] if "src" in tables else []
         names = _Names(namer, _categories(cur, tables),
@@ -816,7 +897,7 @@ def _copy_repo(repo: str, demo_id: str, building: str, key: bytes, style: str, r
         real_rows = {name: cur.execute(f"SELECT count(*) FROM {name}").fetchone()[0]
                      for name in tables}
         _step("recording kopia replies")
-        replies = _record(repo, _Faker(names, src_map), cur, tables)
+        replies = _record(repo, _Faker(names, src_map, (rules.get("storage") or {}).get(repo)), cur, tables)
         exts = ({r[0] for r in cur.execute("SELECT DISTINCT ext FROM read_parquet(?)",
                                              [os.path.join(pool, "pathx.parquet")]).fetchall() if r[0]}
                 if "pathx" in tables else set())
@@ -1045,11 +1126,12 @@ def _child_env(folder: str) -> dict:
                 KOPIALENS_CACHE_DIR=os.path.join(folder, "cache"), PYTHONIOENCODING="utf-8")
 
 
-def _finish(folder: str, forbidden: set[str], sweep: bool = True) -> dict:
+def _finish(folder: str, forbidden: set[str], sweep: bool = True, reused: list[str] = ()) -> dict:
     """Build the copy's caches (and with ``sweep``, sweep its screens) in a process whose data
-    folder IS the copy. The child gets salted hashes of the forbidden names, never the names."""
+    folder IS the copy. The child gets salted hashes of the forbidden names, never the names.
+    ``reused``: demo repos whose caches came with them from the last build."""
     env = _child_env(folder)
-    env.update(KOPIALENS_DEMO_BUILD="1")
+    env.update(KOPIALENS_DEMO_BUILD="1", KOPIALENS_DEMO_REUSED=",".join(reused))
     check = folder + ".check"
     if sweep:
         salt = secrets.token_hex(8)
@@ -1075,7 +1157,10 @@ def _finish_child() -> None:
 
     from ..index import worker
     stages, errors = set(), {}
+    reused = set(filter(None, os.environ.get("KOPIALENS_DEMO_REUSED", "").split(",")))
     for repo in kopia_repos():
+        if repo in reused:
+            continue
         summary = worker.run(repo, skip_index=True)
         stages |= set(summary.get("stages") or {})
         if summary.get("errors"):
@@ -1265,6 +1350,7 @@ def main() -> None:
     ap.add_argument("--open", metavar="COPY", help="run KopiaLens on a demo copy")
     ap.add_argument("--port", type=int, default=7323)
     ap.add_argument("--check", action="store_true", help="also count real names in the copy's files and screens")
+    ap.add_argument("--fresh", action="store_true", help="rebuild every repo, even unchanged ones")
     ap.add_argument("--finish", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
     if args.finish:
@@ -1272,7 +1358,7 @@ def main() -> None:
     elif args.open:
         open_copy(args.open, args.port)
     elif args.repo:
-        r = make_copy(args.repo, args.style, check=args.check)
+        r = make_copy(args.repo, args.style, check=args.check, fresh=args.fresh)
         print(json.dumps({k: v for k, v in r.items() if k != "path"}, indent=1))
         print("written to", r["path"])
     else:

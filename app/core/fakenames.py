@@ -106,6 +106,10 @@ FILE_TEMPLATES = {
                   "statement-{date}", "letter-{n3}"],
     "Mixed": ["file-{n3}", "data-{n3}", "item-{n3}", "doc-{n3}"],
 }
+# Disc and ROM images (IMAGE_EXTS): plain installer and backup discs.
+DISC_TEMPLATES = ["Windows 10 21H2", "Windows 11 23H2", "Ubuntu 22.04", "Ubuntu 24.04", "Office 2019",
+                  "Linux Mint 21", "Debian 12", "Fedora 39", "Driver Disc {n2}", "Recovery Disc {n2}",
+                  "Backup Disc {yr}", "Install Disc {n2}", "Photos {yr}", "Archive Disc {n2}"]
 CODE_ADJ = ["amber", "azure", "brisk", "cedar", "copper", "coral", "crimson", "dusky", "ember",
             "fable", "frosty", "gentle", "glacial", "golden", "hazel", "ivory", "jade", "lunar",
             "maple", "misty", "mossy", "nimble", "olive", "pearl", "quartz", "rapid", "rustic",
@@ -214,7 +218,8 @@ def split_ext(name: str) -> tuple[str, str]:
 
 
 class Namer:
-    def __init__(self, key: bytes, style: str, replace=frozenset(), hide=frozenset(), keep=frozenset()):
+    def __init__(self, key: bytes, style: str, replace=frozenset(), hide=frozenset(), keep=frozenset(),
+                 users: dict | None = None, hosts: dict | None = None):
         if style not in STYLES:
             raise ValueError(f"unknown name style {style!r}")
         self._key = key
@@ -223,6 +228,9 @@ class Namer:
         self.replace = {r.lower() for r in replace}
         self.hide = {h.lower() for h in hide}
         self.keep = {k.lower() for k in keep}
+        # Shown user and computer names, any style (lowercased real -> shown).
+        self.users = {k.lower(): v for k, v in (users or {}).items()}
+        self.hosts = {k.lower(): v for k, v in (hosts or {}).items()}
 
     def risky(self, name: str, kind: str = "d") -> bool:
         """Balanced style: replaced whole, not kept."""
@@ -271,6 +279,8 @@ class Namer:
         return self._choice(words, seed, "f") + self._choice(QUALIFIERS, seed, "q")
 
     def _strict_file(self, stem: str, ext: str, seed: str) -> str:
+        if ext[1:].lower() in IMAGE_EXTS:
+            return self._fill(self._choice(DISC_TEMPLATES, seed, "t"), seed)
         if is_generic(stem):
             return self._reroll_digits(stem, seed)
         return self._fill(self._choice(FILE_TEMPLATES[ext_category(ext)], seed, "t"), seed)
@@ -331,12 +341,16 @@ class Namer:
         return self._bump(self._strict_file(stem, ext, seed), seed, attempt) + ext
 
     def user(self, name: str) -> str:
+        if name.lower() in self.users:
+            return self.users[name.lower()]
         if self.style == "balanced":
             return name
         return "demo" if self.style == "codename" else self._choice(FIRST_NAMES, name.lower(), "u")
 
     def host(self, name: str) -> str:
         seed = name.lower()
+        if seed in self.hosts:
+            return self.hosts[seed]
         if self.style == "balanced":
             return name
         if self.style == "codename":

@@ -61,11 +61,8 @@ const churnPart = {
       if (this.churnView === "source") {
         rows = (d.by_source || []).map(enrich);
         cols = [
-          { title: "Source", field: "source", widthGrow: 3, minWidth: 220, formatter: (c) => {
-              const r = c.getRow().getData();
-              const warn = r.nested_in ? ` <span title="Also covered by ${this.shortSource(r.nested_in)}, so this data is snapshotted twice and counted in both rows" style="color:var(--warn)"><i class="ic ic-warning"></i> inside ${this.shortSource(r.nested_in)}</span>` : "";
-              return this.shortSource(c.getValue()) + warn;
-            } },
+          // Nested sources are common, so no mark for them here (rows still carry nested_in).
+          { title: "Source", field: "source", widthGrow: 3, minWidth: 220, formatter: (c) => this.shortSource(c.getValue()) },
           bytesCol, rateCol, verCol, rewriteCol, fileCol, ...sizeCols, physAllCol(false),
           { title: "Mostly from", field: "top_folder", widthGrow: 2, minWidth: 180, headerSort: false,
             formatter: (c) => { const r = c.getRow().getData(); return r.top_folder ? `${r.top_folder} <span style="opacity:.6">(${fmtPhys(r.top_folder_bytes)})</span>` : ""; } },

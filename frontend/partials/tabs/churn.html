@@ -2,8 +2,8 @@
         <div class="kl-toolbar">
           <span class="font-medium">Churn</span>
           <div class="inline-flex rounded border border-bd overflow-hidden">
-            <button @click="setChurnView('source')" class="px-3 h-7 text-xs" :class="churnView==='source' ? 'bg-sel font-medium' : ''">By source</button>
-            <button @click="setChurnView('folder')" class="px-3 h-7 text-xs border-l border-bd" :class="churnView==='folder' ? 'bg-sel font-medium' : ''">By folder</button>
+            <button @click="setChurnView('folder')" class="px-3 h-7 text-xs" :class="churnView==='folder' ? 'bg-sel font-medium' : ''">By folder</button>
+            <button @click="setChurnView('source')" class="px-3 h-7 text-xs border-l border-bd" :class="churnView==='source' ? 'bg-sel font-medium' : ''">By source</button>
             <button @click="setChurnView('ext')" class="px-3 h-7 text-xs border-l border-bd" :class="churnView==='ext' ? 'bg-sel font-medium' : ''">By file type</button>
           </div>
           <select autocomplete="off" x-model="churnDays" @change="changeChurn()" class="fld border border-bd bg-surface" title="Time window">

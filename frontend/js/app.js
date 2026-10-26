@@ -79,7 +79,7 @@ document.addEventListener("alpine:init", () => {
     query: "", deletedOnly: false, overOneGb: false, searchSource: "", searchExt: "", searchExtExclude: "", omniMeta: "",
     searchView: "", searchViewRows: null, _searchViewSeq: 0,   // a ready-made Search view ("prune"), its rows
     groupByFolder: false, searchKind: "files", searchFolders: 0, searchSkipped: [], searchMaxDepth: 20000, groupDepth: 3, groupMinDepth: "", groupMinGb: 0, groupMinFiles: 0, groupLoose: true, groupMode: "deepest", folderVersions: {},
-    churnDays: "30", churnDepth: 4, churnView: "source", churnData: null, churnMeta: "", _churnSeq: 0,
+    churnDays: "30", churnDepth: 4, churnView: "folder", churnData: null, churnMeta: "", _churnSeq: 0,
     _churnPhysSeq: 0, _churnPhysCache: {}, _churnPhysTimer: null,   // folder view: on-screen all-versions physical
     indexMode: "daily", indexTime: "23:00", indexInterval: 86400, dashboardMode: "nightly",
     freshness: [], _freshTimer: null,
@@ -494,7 +494,7 @@ document.addEventListener("alpine:init", () => {
         this.groupMode = ["deepest", "nested", "own"].includes(kl.group_depth_mode) ? kl.group_depth_mode : "deepest";
         this.churnDays = String(kl.churn_days || 30);
         this.churnDepth = Number(kl.churn_depth || 4);
-        this.churnView = kl.churn_view || "source";
+        this.churnView = kl.churn_view || "folder";
         this.indexMode = kl.index_mode || "daily";
         this.indexTime = kl.index_time || "23:00";
         this.indexInterval = Number(kl.index_interval || 86400);

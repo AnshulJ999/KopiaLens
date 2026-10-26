@@ -42,6 +42,11 @@ def status() -> dict:
 
 @router.get("/engine/repo")
 def repo_detail(repo: str) -> dict:
+    if config.DEMO_SHOW is not None and config.is_demo(repo):
+        # A showcase demo copy: backups read as run by KopiaLens; nothing behind it runs.
+        return {"status": {"repo": repo, "choice": "kopialens"},
+                "view": {"engine": "kopialens", "running": [], "conflict": False},
+                "health": None, "hints": [], "identity": None, "sources": []}
     _need_repo(repo)
     return {"status": engine.repo_status(repo), "view": coexist.repo_view(repo, with_owner=True),
             "health": engine.health(repo), "hints": engine.hints(repo),

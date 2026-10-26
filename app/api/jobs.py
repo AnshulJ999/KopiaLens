@@ -286,6 +286,9 @@ def _on_done(job: dict) -> None:
     if kind not in ("remove_files", "snapshot_delete", "prune_versions", "source_delete", "move_history"):
         return
     invalidate_sources(job["repo"])
+    from config import is_demo
+    if is_demo(job["repo"]):   # a demo's delete only played back: its index has nothing to catch up
+        return
     try:
         from ..core import reindexq
         reindexq.request(job["repo"])

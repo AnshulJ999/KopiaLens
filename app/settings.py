@@ -69,7 +69,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "dashboard_refresh": 1800,   # seconds: how often the open Dashboard view re-fetches the cache (0 = off)
         "churn_days": 30,            # Churn tab: default window (1 / 3 / 7 / 30 / 90 / 180 / 365)
         "churn_depth": 4,            # Churn tab: folder-rollup depth
-        "churn_view": "source",      # Churn tab: "source" | "folder" | "ext"
+        "churn_view": "folder",      # Churn tab: "folder" | "source" | "ext"
         "group_depth": 6,            # Search "By folder" rollup depth; folder prewarm follows it
         "group_min_depth": 3,        # Search "By folder": hide folders shallower than this (0 = none)
         "group_loose": True,         # Search folders: a row for the files lying directly in a shallower folder
