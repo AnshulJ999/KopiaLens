@@ -713,14 +713,20 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True, check: bo
     return result
 
 
+# The code a repo's part of a copy is built from; other app changes reuse the last build (--fresh forces one).
+_BUILD_CODE = ("index",) + tuple(f"core{os.sep}{n}.py" for n in (
+    "demo", "demoreplies", "demobz", "demohistory", "demosim", "fakenames", "store", "filecrypto"))
+
+
 def _code_hash() -> str:
-    """The app's own Python code (tests aside): a change rebuilds every repo."""
+    """The copy builder's own code: a change rebuilds every repo."""
     h = hashlib.sha256()
     root = os.path.join(HERE, "app")
     for folder, dirs, files in sorted(os.walk(root)):
         dirs[:] = sorted(d for d in dirs if d not in ("tests", "__pycache__"))
         for name in sorted(files):
-            if name.endswith(".py"):
+            rel = os.path.relpath(os.path.join(folder, name), root)
+            if name.endswith(".py") and (rel in _BUILD_CODE or rel.split(os.sep)[0] in _BUILD_CODE):
                 path = os.path.join(folder, name)
                 h.update(os.path.relpath(path, root).encode())
                 with open(path, "rb") as fh:

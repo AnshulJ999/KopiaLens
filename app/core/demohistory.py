@@ -327,7 +327,8 @@ def _job(w: _Writer, info: _Repo, t: float, kind: str, opts: dict, rng: random.R
     job_id = "%012x" % rng.getrandbits(48)
     stamp = _dt.datetime.fromtimestamp(t).strftime("%Y%m%d_%H%M%S")
     log_path = w.log(os.path.join(JOB_LOG_DIR, f"job_{kind}_repo{repo}_{stamp}_{job_id}.log"),
-                     [f"=== job {job_id} {kind} repo={repo} execute 1 command(s) ===", "", "--- command 1/1 ---"] + lines)
+                     [f"=== job {job_id} {kind} repo={repo} execute 1 command(s) ===", "", "--- command 1/1 ---"]
+                     + [f"{_clock(t + took * (i + 1) / len(lines))} {x}" for i, x in enumerate(lines)])
     detail["dry"] = dry
     state = "failed" if error else "done"
     w.jobs.append({"job_id": job_id, "kind": kind, "kind_label": KINDS[kind]["label"], "repo": repo,

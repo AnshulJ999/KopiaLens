@@ -107,9 +107,10 @@ AUDIT_ACTION = {
 
 def say(job: dict, lf, text: str) -> None:
     """One output line from a Python step (policy writes), same shape as kopia's lines."""
-    job["buffer"].append(time.strftime("%H:%M:%S ") + text)
+    entry = time.strftime("%H:%M:%S ") + text
+    job["buffer"].append(entry)
     job["line_count"] += 1
-    lf.write(text + "\n")
+    lf.write(entry + "\n")
     lf.flush()
 
 
@@ -615,9 +616,10 @@ def _server_estimate(repo: str, path: str, cli_cmd: list[str]):
             if c.get("Errors"):
                 lines.append(f"Encountered {c['Errors']} error(s).")
         for line in lines:
-            job["buffer"].append(time.strftime("%H:%M:%S ") + line)
+            entry = time.strftime("%H:%M:%S ") + line
+            job["buffer"].append(entry)
             job["line_count"] += 1
-            lf.write(line + "\n")
+            lf.write(entry + "\n")
         lf.flush()
         ok = (t.get("status") or "").upper() == "SUCCESS"
         return (0, "") if ok else (1, t.get("errorMessage") or "The estimate was cancelled.")
@@ -674,9 +676,10 @@ def _server_snapshot(repo: str, source: str, cli_cmd: list[str]):
             lines = (["… kopia dropped some log lines before KopiaLens could read them"] if gap else []) + \
                 [engine._log_text(e).split(" ", 1)[-1] for e in new]
             for line in lines:
-                job["buffer"].append(time.strftime("%H:%M:%S ") + line)
+                entry = time.strftime("%H:%M:%S ") + line
+                job["buffer"].append(entry)
                 job["line_count"] += 1
-                lf.write(line + "\n")
+                lf.write(entry + "\n")
             lf.flush()
             if t.get("endTime"):
                 break
@@ -716,9 +719,10 @@ def _stream_one(job: dict, cmd: list[str], lf) -> tuple[int, str]:
                 name = (job.get("detail") or {}).get("path") or "the folder"
             job["progress_text"] = f"Scanning {name} · {job['_folders']:,} folders"
             continue
-        job["buffer"].append(time.strftime("%H:%M:%S ") + line)
+        entry = time.strftime("%H:%M:%S ") + line
+        job["buffer"].append(entry)
         job["line_count"] += 1
-        lf.write(line + "\n")
+        lf.write(entry + "\n")
         if parser is not None:
             parser(line, job["dry_summary"])
         if stream == "stderr" and line.strip():
@@ -973,6 +977,7 @@ def job_status(job_id: str, after: int = 0) -> dict | None:
 
 
 HISTORY_TAIL_LINES = 400
+_TIMED = re.compile(r"\d\d:\d\d:\d\d ")
 
 
 def history_status(job_id: str, after: int = 0) -> dict | None:
@@ -985,7 +990,7 @@ def history_status(job_id: str, after: int = 0) -> dict | None:
         from .applog import JOB_LOG_DIR
         path = os.path.join(JOB_LOG_DIR, os.path.basename(path))
     lines = filecrypto.read_lines(path)[-HISTORY_TAIL_LINES:] if path else []
-    lines = [("--:--:-- " + ln) for ln in lines]   # the panel expects a time prefix
+    lines = [ln if _TIMED.match(ln) else "--:--:-- " + ln for ln in lines]   # the panel expects a time prefix
     return {**rec, "log_path": path, "results": [], "held": False, "freed": None, "target": None, "commands_text": "",
             "from_history": True, "line_count": len(lines), "cursor": len(lines), "skipped": 0,
             "lines": lines[max(0, int(after)):]}
