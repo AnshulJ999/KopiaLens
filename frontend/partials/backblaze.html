@@ -81,8 +81,8 @@
             <option value="*ALL*">All drives</option>
             <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" :selected="d.drive == bzTreeDrive" x-text="d.drive + ':\\'"></option></template>
           </select>
-          <button @click="bzTreeUp()" class="h-8 rounded border border-bd px-3 text-sm" title="Up one level">⬆ Up</button>
-          <span class="text-xs text-muted">📁 = folder · status shows backed / excluded / mixed</span>
+          <button @click="bzTreeUp()" class="h-8 rounded border border-bd px-3 text-sm" title="Up one level"><i class="ic ic-arrow-up"></i> Up</button>
+          <span class="text-xs text-muted">Status shows backed, excluded or mixed</span>
         </div>
         <div class="flex items-center gap-1 text-sm flex-wrap px-1">
           <template x-for="(c, i) in bzTreeCrumbs()" :key="i">
@@ -95,7 +95,7 @@
       <section x-show="active==='bz-excluded'" class="h-full flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-2">
           <button @click="bzExclNav('')" class="h-8 rounded border border-bd px-3 text-sm" title="All drives"><i class="ic ic-desktop"></i> All drives</button>
-          <button @click="bzExclUp()" class="h-8 rounded border border-bd px-3 text-sm" title="Up one level">⬆ Up</button>
+          <button @click="bzExclUp()" class="h-8 rounded border border-bd px-3 text-sm" title="Up one level"><i class="ic ic-arrow-up"></i> Up</button>
           <div class="inline-flex rounded border border-bd overflow-hidden text-sm">
             <button @click="bzSetExclFilter('excluded')" :class="bzExclFilter==='excluded' ? 'bg-sel' : ''" class="px-2 h-8">Not backed up</button>
             <button @click="bzSetExclFilter('backed')" :class="bzExclFilter==='backed' ? 'bg-sel' : ''" class="px-2 h-8 border-l border-bd">Backed up</button>
@@ -121,7 +121,7 @@
         </div>
         <div class="rounded border border-accent-bd bg-accent-bg p-3">
           <div class="font-medium text-sm mb-1">Naming-gap hunter</div>
-          <div class="text-[0.6875rem] text-muted mb-2">Rules match exact paths, so the same data can be excluded in one place and backed up in another. Type a name (e.g. <span class="font-mono">takeout</span>, <span class="font-mono">aeroinsta</span>) to find every folder with that name and its backed-vs-excluded state.</div>
+          <div class="text-[0.6875rem] text-muted mb-2">Rules match exact paths, so the same data can be excluded in one place and backed up in another. Type a name (e.g. <span class="font-mono">Downloads</span>, <span class="font-mono">cache</span>) to find every folder with that name and its backed-vs-excluded state.</div>
           <div class="flex items-center gap-2">
             <input autocomplete="off" x-model="bzNamingQuery" @keydown.enter="bzNamingGap()" class="fld border border-bd bg-surface min-w-[18rem]" placeholder="folder name fragment">
             <button @click="bzNamingGap()" class="h-8 rounded bg-accent-solid px-3 text-sm text-white">Find gaps</button>
@@ -138,7 +138,7 @@
 
       <section x-show="active==='bz-churn'" class="h-full flex flex-col gap-2">
         <div class="rounded border border-warn-bd bg-warn-bg/20 p-2" x-show="bzChurnAlerts().length">
-          <div class="text-xs font-medium text-warn"><i class="ic ic-warning"></i> Watch these — high recent churn, not an intentional Kopia repo:</div>
+          <div class="text-xs font-medium text-warn"><i class="ic ic-warning"></i> High recent churn outside Kopia repositories:</div>
           <template x-for="(a,i) in bzChurnAlerts()" :key="i">
             <div class="text-[0.75rem] flex items-center gap-2"><span class="text-warn w-12 text-right" x-text="a.pct + '%'"></span><span class="break-all" x-text="a.folder"></span></div>
           </template>
@@ -149,7 +149,7 @@
           <select autocomplete="off" x-model.number="bzChurnDepth" @change="bzChurnChanged()" class="fld h-8 border border-bd bg-surface text-xs">
             <template x-for="n in [1,2,3,4,5,6,7,8]" :key="n"><option :value="n" :selected="n == bzChurnDepth" x-text="n"></option></template>
           </select>
-          <button @click="bzChurnCollapse=!bzChurnCollapse; bzChurnChanged()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzChurnCollapse ? 'bg-sel' : ''" title="Roll the Kopia repos up to one row each">⧉ Collapse Kopia</button>
+          <button @click="bzChurnCollapse=!bzChurnCollapse; bzChurnChanged()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzChurnCollapse ? 'bg-sel' : ''" title="Roll the Kopia repos up to one row each"><i class="ic ic-collapse"></i> Collapse Kopia</button>
           <button @click="bzToggleChurnActive()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzChurnActiveOnly ? 'bg-sel' : ''" title="Show only folders that still have backed files (hide excluded / deleted)"><span x-text="bzChurnActiveOnly ? 'Active only' : 'Showing all'"></span></button>
           <select autocomplete="off" x-model="bzChurnDrive" @change="_bzDrawChurn()" class="fld h-8 border border-bd bg-surface text-xs">
             <option value="">All drives</option>
@@ -166,7 +166,7 @@
           <select autocomplete="off" x-model.number="bzQueueDepth" @change="bzQueueChanged()" class="fld h-8 border border-bd bg-surface text-xs">
             <template x-for="n in [1,2,3,4,5,6,7,8]" :key="n"><option :value="n" :selected="n == bzQueueDepth" x-text="n"></option></template>
           </select>
-          <button @click="bzQueueCollapse=!bzQueueCollapse; bzQueueChanged()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzQueueCollapse ? 'bg-sel' : ''" title="Roll the Kopia repos up to one row each">⧉ Collapse Kopia</button>
+          <button @click="bzQueueCollapse=!bzQueueCollapse; bzQueueChanged()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzQueueCollapse ? 'bg-sel' : ''" title="Roll the Kopia repos up to one row each"><i class="ic ic-collapse"></i> Collapse Kopia</button>
         </div>
         <div class="flex flex-wrap items-center gap-3 text-sm" x-show="bzQueue">
           <span class="font-medium">Upload queue (scheduled for backup)</span>
@@ -204,7 +204,7 @@
           <div id="bzUploadsTable" class="min-h-[12rem]"></div>
         </div>
         <div x-show="bzSessions && bzSessions.deletion_events && bzSessions.deletion_events.length">
-          <div class="text-sm font-medium mb-1 text-danger">Mass-deletion events <span class="text-muted text-xs font-normal">(big bz_done files = the F: filelist-bug signature)</span></div>
+          <div class="text-sm font-medium mb-1 text-danger">Mass-deletion events <span class="text-muted text-xs font-normal">(large bz_done files)</span></div>
           <div class="rounded border border-danger-bd">
             <template x-for="(d,i) in (bzSessions ? bzSessions.deletion_events : [])" :key="i">
               <div class="text-[0.75rem] flex items-center gap-2 border-b border-bd-soft px-2 py-0.5">
@@ -224,6 +224,6 @@
             <div class="text-[0.75rem] text-danger">• <span x-text="iss"></span></div>
           </template>
         </div>
-        <div class="text-[0.6875rem] text-muted px-1">The F: filelist bug signature: a drive showing 0 backed files, a stub filelist, or a recent &gt;100 MB bz_done (mass-deletion event). <span x-show="bzHealth && bzHealth.remaining && bzHealth.remaining.remaining_files">Files remaining to upload: <span class="font-medium" x-text="bzHealth && Number(bzHealth.remaining.remaining_files||0).toLocaleString(NUM_LOCALE)"></span>.</span></div>
+        <div class="text-[0.6875rem] text-muted px-1">Signs of a lost file list: a drive showing 0 backed files, a stub file list, or a recent bz_done over 100 MB (a mass deletion). <span x-show="bzHealth && bzHealth.remaining && bzHealth.remaining.remaining_files">Files remaining to upload: <span class="font-medium" x-text="bzHealth && Number(bzHealth.remaining.remaining_files||0).toLocaleString(NUM_LOCALE)"></span>.</span></div>
         <div id="bzHealthTable" class="min-h-[14rem]"></div>
       </section>

@@ -22,7 +22,7 @@ The scanner counts only what you ask for:
 - When you open a folder in the Excluded tab, KopiaLens counts that folder. It counts for up to the **Scan time limit** (15 seconds by default) while you wait. A subfolder that needs longer shows **Not counted**.
 - To count a folder or drive to the end, right-click it in the Excluded tab and select **Count size**. The count shows above the table with **Stop**.
 - The drive list shows **Not counted** until you count a drive. Hold the pointer over **Not counted** to see the used space of that drive.
-- When you leave the Excluded tab, KopiaLens stops the counts it started for you. A **Count size** keeps going.
+- When you leave the Excluded tab, KopiaLens stops the counts it started for you, unless **Keep counting after the time limit** is on. A **Count size** keeps going.
 
 KopiaLens keeps each counted size until you count that folder again, or until KopiaLens restarts. **Keep counted sizes** changes that. The Excluded tab shows when the sizes were counted.
 
@@ -88,6 +88,7 @@ Add the share in Home Assistant's **Settings → System → Storage → Add netw
 
 - On Windows, network drives and removable drives don't show as drives. Add a network share as a place instead.
 - A folder on a network share takes longer to count than a local folder.
+- Everything counts only the places it indexes. For a place it doesn't index, the Excluded tab shows **Not indexed**.
 - KopiaLens only reads folders. It never changes, moves or deletes a file on disk.
 
 ## Related

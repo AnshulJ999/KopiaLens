@@ -20,6 +20,10 @@
           <a x-show="excludedNeedsEverything()" class="kl-btn" href="https://www.voidtools.com/downloads/" target="_blank" rel="noopener">Get Everything</a>
           <button class="kl-btn" @click="openDiskSettings()">Disk scanning settings</button>
         </div>
+        <div x-show="_excludedNotIndexed" class="rounded border border-bd p-3 text-sm flex flex-wrap items-center gap-3" data-testid="not-indexed">
+          <span>Everything doesn't index this location.</span>
+          <button class="kl-btn" @click="openDiskSettings()">Disk scanning settings</button>
+        </div>
         <template x-for="s in excludedScans" :key="s.id">
           <div class="flex items-center gap-2 text-xs text-muted px-1" data-testid="disk-scan">
             <span class="truncate" :title="s.path" x-text="excludedScanText(s)"></span>

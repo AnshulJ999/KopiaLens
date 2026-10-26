@@ -33,11 +33,11 @@ const bzSearchPart = {
         const self = this;
         const H = (title, field, extra) => Object.assign({ title: title + arrow(field), field, headerSort: false, headerClick: () => self.bzSetSearchSort(field) }, extra || {});
         setTable("#bzSearchTable", data.rows || [], [
-          H("Path", "full_path", { widthGrow: 5, minWidth: 320, formatter: (c) => `${c.getRow().getData().excluded ? iconHtml("prohibit", "text-danger mr-1") : iconHtml("check", "text-ok mr-1")}${c.getValue()}` }),
+          H("Path", "full_path", { widthGrow: 5, minWidth: 320, formatter: (c) => `${c.getRow().getData().excluded ? iconHtml("prohibit", "text-danger mr-1") : iconHtml("check", "text-ok mr-1")}${escHtml(c.getValue())}` }),
           H("Size", "size", { width: 100, hozAlign: "right", formatter: (c) => bzFmt(c.getValue()) }),
           H("Ext", "ext", { width: 70 }),
           { title: "Status", field: "excluded", headerSort: false, width: 95, formatter: (c) => statusPill(c.getValue() ? "excluded" : "backed") },
-          { title: "Excluded by", field: "excl_rule", headerSort: false, widthGrow: 2, minWidth: 160, formatter: (c) => c.getValue() || "" },
+          { title: "Excluded by", field: "excl_rule", headerSort: false, widthGrow: 2, minWidth: 160, formatter: (c) => escHtml(c.getValue() || "") },
           H("Drive", "drive", { width: 70, formatter: (c) => c.getValue() + ":" }),
         ], {
           persistSort: false,

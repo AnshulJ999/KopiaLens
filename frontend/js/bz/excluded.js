@@ -78,7 +78,7 @@ const bzExcludedPart = {
         { title: "Excluded", field: "excluded_bytes", width: 105, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
         { title: "Backed Files", field: "backed_files", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
         { title: "Excl Files", field: "excluded_files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
-        { title: "Excluded by", field: "excl_rule", widthGrow: 2, minWidth: 150, formatter: (c) => c.getValue() || "" },
+        { title: "Excluded by", field: "excl_rule", widthGrow: 2, minWidth: 150, formatter: (c) => escHtml(c.getValue() || "") },
         { title: "Also in Kopia", field: "kopia_backed_bytes", width: 130, hozAlign: "right", sorter: "number", formatter: (c) => { const d = c.getRow().getData(); const v = c.getValue(); if (v === null || v === undefined) return "<span style='color:#cbd5e1'>…</span>"; return d.kopia_backed_files ? `${reposBadges(d.kopia_repos)} ${bzFmt(v)}` : "<span style='color:#94a3b8'>—</span>"; } },
       ], {
         persistSort: !isDrives,

@@ -49,8 +49,10 @@ const dashboardPart = {
               if (live && this.engineSrc[src] && this.engineSrc[src].status === "UPLOADING")
                 return live + " <button class='kl-btn quiet' data-act='cancel' style='height:22px'>Cancel</button>";
               if (live) return live;
+              const off = this.wmOff("non_destructive");   // greyed like its right-click entry
               const snap = this.snapStarting[src]
                 ? "<button class='kl-btn quiet' disabled style='height:22px'>Starting…</button>"
+                : off ? `<button class='kl-btn quiet' disabled title="${escHtml(off)}" style='height:22px'>Snapshot now</button>`
                 : "<button class='kl-btn quiet' data-act='snap' style='height:22px'>Snapshot now</button>";
               return snap + "<button class='kl-btn quiet' data-act='policy' style='height:22px'>Policy</button>";
             } },

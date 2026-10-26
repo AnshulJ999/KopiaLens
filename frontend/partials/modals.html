@@ -568,7 +568,7 @@
 
     <div x-show="showDiff" @click.self="showDiff=false" x-cloak class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
       <div class="w-[52rem] max-w-full max-h-[85vh] overflow-auto rounded-lg border border-bd bg-surface p-4 text-sm">
-        <div class="flex items-center gap-2"><div class="font-medium">Snapshot diff</div><span class="text-xs text-warn" x-show="diffBusy">running…</span><button @click="showDiff=false" class="ml-auto text-muted text-lg leading-none">&times;</button></div>
+        <div class="flex items-center gap-2"><div class="font-medium">Snapshot diff</div><span class="text-xs text-muted" x-text="diffRange"></span><span class="text-xs text-warn" x-show="diffBusy">running…</span><button @click="showDiff=false" class="ml-auto text-muted text-lg leading-none">&times;</button></div>
         <pre class="mt-2 text-[0.6875rem] whitespace-pre-wrap bg-surface2 rounded p-2 max-h-[70vh] overflow-auto" x-text="diffText"></pre>
       </div>
     </div>

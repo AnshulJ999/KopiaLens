@@ -607,7 +607,7 @@
                   <button @click="controlApi = !controlApi; saveKl('control_api')" class="h-8 rounded border border-bd px-3" x-text="controlApi ? 'On' : 'Off'"></button></div>
                 <p class="text-[0.6875rem] text-muted mt-1">Lets scripts and AI tools on this computer check, restart or quit KopiaLens. Web pages can't use it. Off unless you use it.</p>
               </div>
-              <div x-show="!(host && host.in_docker)" data-testid="port-settings">
+              <div x-show="!(host && host.docker)" data-testid="port-settings">
                 <div class="flex items-center justify-between gap-3"><span>Ports <span class="text-[0.625rem] text-warn">restart</span></span>
                   <span class="flex items-center gap-2">
                     <label class="flex items-center gap-1 text-xs">App <input autocomplete="off" type="number" min="1024" max="65535" x-model.number="appPort" @change="saveKl('port')" class="fld border border-bd bg-surface2 w-24"></label>
@@ -729,12 +729,12 @@
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Collapse prefixes <span class="text-[0.625rem] text-muted">(advanced)</span></span>
-                  <input autocomplete="off" x-model="bzCollapsePrefixes" @change="saveKl('collapse_prefixes')" class="fld border border-bd bg-surface2 min-w-[18rem]" placeholder="E:\Kopia, I:\Kopia Big Backup"></div>
+                  <input autocomplete="off" x-model="bzCollapsePrefixes" @change="saveKl('collapse_prefixes')" class="fld border border-bd bg-surface2 min-w-[18rem]" placeholder="D:\Kopia, E:\Backups\Kopia"></div>
                 <p class="text-[0.6875rem] text-muted mt-1">Comma-separated paths that show as one row in the Queue, Churn and by-folder views instead of splitting into their chunk-named subfolders.</p>
               </div>
               <div>
                 <div class="flex items-center justify-between gap-3"><span>Session history folder <span class="text-[0.625rem] text-muted">(advanced)</span></span>
-                  <input autocomplete="off" x-model="bzEventlogArchive" @change="saveKl('eventlog_archive_path')" class="fld border border-bd bg-surface2 min-w-[18rem]" placeholder="D:\Backblaze eventlog copy"></div>
+                  <input autocomplete="off" x-model="bzEventlogArchive" @change="saveKl('eventlog_archive_path')" class="fld border border-bd bg-surface2 min-w-[18rem]" placeholder="D:\Backblaze logs"></div>
                 <p class="text-[0.6875rem] text-muted mt-1">Readable copy of the rotated Backblaze event logs, used by "Import archived history" on the Sessions tab. Leave empty to skip.</p>
               </div>
             </section>

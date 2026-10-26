@@ -364,7 +364,7 @@ const onboardingPart = {
     // [label, value, step its Change opens ("" = none: an account set here changes in Settings)].
     obSummaryRows() {
       const o = this.ob;
-      const protect = o.protected === "account" ? "" : "protect";
+      const protect = o.protected === "account" ? "settings" : "protect";   // sign-in exists: changed in Settings
       const rows = this.obSummary().map((r) => [r[0], !o.rerun && r[1] === "Unchanged" ? "Off" : r[1], r[0] === "Repositories" ? "connect" : protect]);
       const kopia = this.obKopiaAdded();
       if (kopia.length) {
@@ -402,7 +402,7 @@ const onboardingPart = {
           { element: "[data-tour=repo]", popover: { title: "Your repositories", description: "Switch between repositories here, or add another one." } },
           { element: "[data-tour=tabs]", popover: { title: "Tabs", description: "Each tab shows the selected repository a different way: snapshots, folders, search, what changed and more." } },
           { element: "[data-tour=search]", popover: { title: "Search", description: "Find any file in every snapshot. Start typing to search." } },
-          { popover: { title: "File and folder panels", description: "Click a file or folder anywhere to open its panel: its versions, the space it takes and the snapshots that hold it." } },
+          { popover: { title: "File and folder panels", description: "Double-click a file or folder anywhere to open its panel: its versions, the space it takes and the snapshots that hold it." } },
           { element: "[data-testid=backups-chip]", popover: { title: "Backups", description: "Which app takes your snapshots on schedule. Pause them from here when you need to." } },
           { element: "[data-tour=help]", popover: { title: "Help", description: "Documentation, Report a problem, and this tour again any time." } },
         ].filter((s) => !s.element || shown(s.element));

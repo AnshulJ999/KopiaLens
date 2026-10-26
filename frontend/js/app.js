@@ -87,7 +87,7 @@ document.addEventListener("alpine:init", () => {
     pageSizes: ["100", "200", "500", "1000", "2000", "5000", "10000", "Infinite"],
     showFilters: false, minGb: "", maxGb: "", dateFrom: "", dateTo: "", minVersions: "", sharedMin: "", recentBackup: "",
     dedupe: false, dedupeBy: "path", headerSearchOnly: false, treeDedupe: false, reclaimMap: {},
-    showRestore: false, restore: null, showDiff: false, diffText: "", diffBusy: false,
+    showRestore: false, restore: null, showDiff: false, diffText: "", diffBusy: false, diffRange: "",
     fb: null,   // in-app folder browser (actions.js)
     folderPicker: "auto", mountDir: "", mountHostPath: "",
     // What the machine running KopiaLens can do (/api/app/host); Windows-on-this-PC until it answers.
@@ -130,7 +130,7 @@ document.addEventListener("alpine:init", () => {
     jobMode: localStorage.getItem("kl-jobmode") || "clean", jobExpanded: false, runningJobs: [],
     _jobPoll: null, _jobChipPoll: null, _jobOpenSeq: 0, _handledJobs: null, _reindexWatch: {},
     excludedDrives: [], excludedOk: true, excludedPath: "", excludedFilter: "excluded", excludedMeta: "", _excludedItems: [], _excludedSeq: 0, excludedDetail: null, showExcludedDetail: false,
-    excludedScans: [], _excludedSeen: false, _excludedNotes: null, _excludedCountedAt: null,
+    excludedScans: [], _excludedSeen: false, _excludedNotes: null, _excludedCountedAt: null, _excludedNotIndexed: false,
     // Free/Pro (licence.js): GET /api/licence; proNotice = the open upgrade notice.
     lic: { state: "none", locked: [], features: {}, pricing_url: "" }, proNotice: null,
     licKey: "", licBusy: false, licError: "", licPatreonWaiting: false, licAdding: false,
@@ -563,8 +563,9 @@ document.addEventListener("alpine:init", () => {
     },
 
     async wrap(fn, label = "") {
-      const mine = {};   // a later wrap owns the label; this one must not clear it
-      this._busyOwner = mine;
+      // A later wrap owns the label; this one must not clear it. A number, not an object: Alpine
+      // hands back a proxy for an object read off its state, so === would never match.
+      const mine = this._busyOwner = (this._busyOwner || 0) + 1;
       this.error = ""; this.busy = label;
       try { return await fn(); } catch (err) { if (!isAbort(err) && !err.notice) this.error = err.message || String(err); } finally { if (this._busyOwner === mine) this.busy = ""; }
     },

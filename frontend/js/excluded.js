@@ -28,6 +28,7 @@ const excludedPart = {
       this.excludedPath = "";
       this._excludedAs = null;
       this._excludedNotes = null;
+      this._excludedNotIndexed = false;
       this.excludedMeta = this.excludedOk ? countOf(this.excludedDrives.length, "location") : "";
       this.renderExcluded(this.excludedDrives.map((dr) => ({
         name: dr.path.replace(/\\$/, ""), path: dr.path, is_dir: true, status: "drive",
@@ -59,6 +60,7 @@ const excludedPart = {
         if (seq !== this._excludedSeq) return;  // a newer navigation superseded this one
         this._excludedAs = r.backed_up_as || null;
         this._excludedNotes = r.notes || null;
+        this._excludedNotIndexed = !!r.not_indexed;
         this._excludedCountedAt = r.counted_at || null;
         this.excludedScans = r.scans || [];
         const as = r.backed_up_as ? ` · backed up as ${r.backed_up_as.path}${r.backed_up_as.computer ? " on " + r.backed_up_as.computer : ""}` : "";
@@ -210,6 +212,7 @@ const excludedPart = {
         if (state === "counting" || d.counting) return muted("Counting…");
         if (state === "not_counted") return muted("Not counted", d.status === "drive" && d.used ? `${fmtBytes(d.used)} used on this drive` : "");
         if (state === "other_disk") return muted("Other disk", "Another disk mounted here. Open it to count it.");
+        if (state === "not_indexed") return muted("Not indexed", "Everything doesn't index this location");
         return bytes(c);
       };
       const num = (c) => c.getValue() ? Number(c.getValue()).toLocaleString(NUM_LOCALE) : "";

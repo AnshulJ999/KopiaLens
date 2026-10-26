@@ -339,9 +339,12 @@ const snapshotsPart = {
     async diffSelected() {
       const rows = this.snapSelected();
       if (rows.length !== 2) { this.klNotify("Select 2 snapshots to compare.", "warn"); return; }
+      // Older first, whatever order they were ticked in: kopia lists what changed from id1 to id2.
+      const [older, newer] = [...rows].sort((a, b) => String(a.start_time || "").localeCompare(String(b.start_time || "")));
+      this.diffRange = `From ${this.humanTime(older.start_time)} to ${this.humanTime(newer.start_time)}`;
       this.showDiff = true; this.diffText = "Running diff…"; this.diffBusy = true;
       try {
-        const r = await getJson(`/api/snapshots/diff?repo=${encodeURIComponent(this.repo)}&id1=${encodeURIComponent(rows[0].id)}&id2=${encodeURIComponent(rows[1].id)}&run=true`);
+        const r = await getJson(`/api/snapshots/diff?repo=${encodeURIComponent(this.repo)}&id1=${encodeURIComponent(older.id)}&id2=${encodeURIComponent(newer.id)}&run=true`);
         this.diffText = r.output || r.command || "(no output)";
       } catch (e) { this.diffText = "(diff failed: " + (e.message || e) + ")"; }
       finally { this.diffBusy = false; }

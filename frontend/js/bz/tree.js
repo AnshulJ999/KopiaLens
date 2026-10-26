@@ -48,7 +48,7 @@ const bzTreePart = {
           { title: "Backed Up", field: "backed_bytes", width: 105, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
           { title: "Excluded", field: "excluded_bytes", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
           { title: "Files", field: "total_files", width: 85, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
-          { title: "Excluded by", field: "excl_rule", widthGrow: 2, minWidth: 140, formatter: (c) => c.getValue() || "" },
+          { title: "Excluded by", field: "excl_rule", widthGrow: 2, minWidth: 140, formatter: (c) => escHtml(c.getValue() || "") },
         ], {
           initialSort: [{ column: atRoot ? "name" : "total_bytes", dir: atRoot ? "asc" : "desc" }],
           onRowDblClick: (_e, row) => { const d = row.getData(); if (d._root) return this.bzTreeNav(d._root); if (d.is_dir) this.bzTreeNav(this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); },

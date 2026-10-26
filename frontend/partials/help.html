@@ -96,7 +96,7 @@
               <label class="flex flex-col gap-1 text-xs font-medium"><span>Email, if you'd like a reply <span class="font-normal text-muted">(optional)</span></span>
                 <input type="email" x-model="fbk.email" autocomplete="email" class="fld border border-bd bg-surface2 font-normal"></label>
               <label class="flex items-center gap-2 text-xs"><input autocomplete="off" type="checkbox" x-model="fbk.quote">KopiaLens may quote this on its website, without your name</label>
-              <p class="kl-note" x-text="'Also sent: KopiaLens ' + ((help && help.version) || '') + ', ' + ((help && help.install_type) || '') + '.'"></p>
+              <p class="kl-note" x-text="'Also sent: KopiaLens ' + ((help && help.version) || '') + ', ' + ((help && help.install_type) || '') + (help && help.os && help.os !== help.install_type ? ' on ' + help.os : '') + '.'"></p>
               <p class="text-xs text-muted">Found a bug? <button type="button" class="text-fg underline underline-offset-2" @click="showFeedback = false; openReport()">Report a problem</button> instead.</p>
               <p class="text-xs" style="color:var(--danger)" x-show="fbk.error" x-text="fbk.error"></p>
             </div>

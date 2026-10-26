@@ -26,11 +26,15 @@ from ..core.applog import get_logger
 from ..core.sources import resolve_source
 from . import entries, layer2, tree
 from .physical import _chunks_for_objs, _refcount_map, _size_map
-from .store import read_cursor
+from .store import memory_limit_bytes, read_cursor
 
 log = get_logger("analysis")
 
-REACH_BATCH_ROWS = 2_000_000   # (snapshot, folder) pairs per recursive pass in _analyse
+REACH_BATCH_ROWS = 2_000_000   # (snapshot, folder) pairs per recursive pass in _analyse, per 512 MB of memory limit
+
+
+def _reach_budget() -> int:
+    return REACH_BATCH_ROWS * max(1, memory_limit_bytes() // (512 * 2**20))
 
 # (repo, snapshot_id) -> reclaimable files. LRU-bounded: these lists can be large and were
 # previously never evicted (a slow unbounded leak as snapshots were viewed over a long session).
@@ -398,17 +402,19 @@ def _analyse(repo: str, snaps: list[dict], heavy: bool,
             WHERE c.cid_id IS NOT NULL""")
         # Built a batch of snapshots at a time: the recursive UNION keeps every (rank, dir_id) pair
         # in one in-memory hash table that cannot spill. A snapshot adds at most its folder count
-        # (kopia's root summary) plus the root, so batches fill up to REACH_BATCH_ROWS by that
-        # bound; a snapshot without one is sized from the most an earlier snapshot added.
+        # (kopia's root summary) plus the root, so batches fill up to the budget by that bound; a
+        # snapshot without one is sized from the most an earlier snapshot added. (Sizing from the
+        # newest snapshot's real rows went wrong when it was small or not indexed yet.)
         ranks = sorted(r for r, _o in live)
         by_id = {s.get("id"): s for s in snaps}
         bound = {r: _reach_bound(by_id.get(of_rank[r]) or {}) for r in ranks}
+        budget = _reach_budget()
         i, total, seen = 0, 0, 0
         while i < len(ranks):
             n, used = 0, 0
             while i + n < len(ranks):
                 b = bound[ranks[i + n]] or seen
-                if n and (not b or used + b > REACH_BATCH_ROWS):
+                if n and (not b or used + b > budget):
                     break
                 used += b
                 n += 1

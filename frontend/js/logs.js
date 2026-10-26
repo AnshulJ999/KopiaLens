@@ -99,6 +99,7 @@ const logsPart = {
     logsJobs() {
       return this.jobHistory.filter((j) => this.logsRepo === "all" || j.repo === this.logsRepo);
     },
+    jobStateText(j) { const s = j.state || ""; return s.charAt(0).toUpperCase() + s.slice(1); },
     jobStateClass(j) {
       if (j.state === "running") return "text-warn";
       if (j.state === "failed" || j.errors > 0) return "text-danger";

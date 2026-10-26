@@ -316,7 +316,8 @@
                     <template x-for="row in obSummaryRows()" :key="row[0]">
                       <div class="r"><span class="k" x-text="row[0]"></span>
                         <span class="flex items-center gap-2 min-w-0"><span class="truncate" x-text="row[1]" :title="row[1]"></span>
-                          <button type="button" x-show="row[2]" @click="obChange(row[2])" class="kl-btn shrink-0" style="height:22px" :disabled="ob.busy">Change</button></span></div>
+                          <button type="button" x-show="row[2] && row[2] !== 'settings'" @click="obChange(row[2])" class="kl-btn shrink-0" style="height:22px" :disabled="ob.busy">Change</button>
+                          <span x-show="row[2] === 'settings'" class="kl-note shrink-0">Change in Settings</span></span></div>
                     </template>
                     <div class="r" x-show="obEstimate()"><span class="k">Estimated index time</span><span x-text="obEstimate() ? capFirst(fmtDurRange(obEstimate().seconds)) : ''"></span></div>
                   </div>

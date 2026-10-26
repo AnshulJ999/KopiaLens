@@ -66,6 +66,7 @@ def info() -> dict:
     return {
         "version": APP_VERSION,
         "install_type": checkin.install_type(),
+        "os": checkin._os_name(),          # feedback sends it too
         "pro": state == "active",
         "access": netaccess.STARTED.get("mode") or netaccess.mode(),
         "links": {"docs": DOCS_URL, "repo": REPO_URL, "issues": REPO_URL.rstrip("/") + "/issues/new/choose",

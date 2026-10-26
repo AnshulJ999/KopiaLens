@@ -63,7 +63,7 @@ const enginePart = {
     }
     if (e.engine === "none") {
       const ev = e.evidence || {};
-      if (!ev.known) return "Backups";
+      if (!ev.known) return "Backups: checking…";
       if (!ev.last_snapshot) return "Backups: none yet";
       if (!ev.overdue && Date.now() - toDate(ev.last_snapshot).getTime() < 2 * 86400000) return "Backups: another app";
       return "Backups: last " + fmtRel(ev.last_snapshot);

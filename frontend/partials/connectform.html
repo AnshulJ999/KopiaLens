@@ -135,7 +135,7 @@
                                 <input type="text" x-model="cx.fields[f.key]" :aria-label="f.label" :placeholder="f.placeholder || ''" autocomplete="off" spellcheck="false" class="fld border border-bd bg-surface2"></label>
                             </template>
                           </div>
-                          <p class="kl-note" x-text="cx.provider === 'server' ? 'Your account on the kopia server. Leave empty to use this computer\'s names.' : 'Leave empty to use this computer\'s names. Fill in to continue another computer\'s backups.'"></p>
+                          <p class="kl-note" x-text="cx.provider === 'server' ? 'Your account on the kopia server. Leave empty to use this computer\'s names.' : cx.mode === 'create' ? 'Leave empty to use this computer\'s names.' : 'Leave empty to use this computer\'s names. Fill in to continue another computer\'s backups.'"></p>
                         </div>
                         <div class="grid gap-2 sm:grid-cols-2" data-testid="cx-config-location">
                           <label class="flex flex-col gap-1 text-xs font-medium" title="The file where kopia keeps this connection: where the repository is and how to reach it">Connection file

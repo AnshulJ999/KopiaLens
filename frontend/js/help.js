@@ -163,9 +163,14 @@ const helpPart = {
     reportSteps() {
       const r = this.report || {};
       const done = !!r.saved;
+      if (r.mailTo) return [   // sent by email (Pro)
+        ...(r.attach ? [["KopiaLens saves the diagnostics bundle to Downloads.", done]] : []),
+        ["Your email app opens a message to support with your text.", done],
+        ...(r.attach ? [["Attach the bundle to the email, then send it.", false]] : []),
+      ];
       return [
         ...(r.attach ? [["KopiaLens saves the diagnostics bundle to Downloads.", done]] : []),
-        ["A new GitHub issue opens with your text. It needs a free GitHub account.", done && !r.mailTo],
+        ["A new GitHub issue opens with your text. It needs a free GitHub account.", done],
         ...(r.attach ? [["Drag the bundle into the issue, then submit it.", false]] : []),
       ];
     },
@@ -231,6 +236,10 @@ const helpPart = {
       const f = this.fbk;
       if (!f || f.busy) return;
       if (!f.message.trim()) { f.error = "Write a message first."; return; }
+      // The same check the feedback service makes; it drops an address that fails it.
+      if (f.email.trim() && !/^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/.test(f.email.trim())) {
+        f.error = "Check the email address, or leave it empty."; return;
+      }
       f.busy = true; f.error = "";
       try {
         await getJson("/api/help/feedback", { method: "POST", headers: { "Content-Type": "application/json" },
