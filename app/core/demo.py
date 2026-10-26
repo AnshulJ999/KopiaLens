@@ -592,7 +592,7 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True) -> dict:
     prune(building, [r["id"] for r in records])
 
     _step("checking files for real names")
-    leaks = leak_check(building, forbidden, demoreplies.machine_paths())
+    leaks = leak_check(building, forbidden, demoreplies.machine_paths(own_only=style == "balanced"))
     warnings = _leak_warnings(leaks, finished)
     if os.path.isdir(target):
         shutil.rmtree(target)

@@ -36,16 +36,17 @@ _LOCK = threading.Lock()
 _CACHE: dict[str, dict] = {}
 
 
-def machine_paths() -> list[str]:
+def machine_paths(own_only: bool = False) -> list[str]:
     """This PC's own folders in every spelling a reply can carry (raw, escaped once or twice,
-    forward slashes), lowercased, longest first."""
-    return [p.lower() for p, _d in _variants()]
+    forward slashes), lowercased, longest first. ``own_only``: just the data folder, as a
+    balanced copy shows the rest."""
+    return [p.lower() for p, _d in _variants(own_only)]
 
 
-@functools.lru_cache(maxsize=1)
-def _variants() -> tuple[tuple[str, str], ...]:
+@functools.lru_cache(maxsize=2)
+def _variants(own_only: bool = False) -> tuple[tuple[str, str], ...]:
     out = []
-    for real, shown in sorted(_DISPLAY, key=lambda p: -len(p[0])):
+    for real, shown in sorted(_DISPLAY[:1] if own_only else _DISPLAY, key=lambda p: -len(p[0])):
         real = os.path.normpath(real)
         if len(real) <= 3:   # never rewrite a bare drive
             continue
