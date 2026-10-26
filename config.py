@@ -317,7 +317,7 @@ if DEMO_NOW:
         import datetime as _dt
         import time_machine
         _travel_to = _dt.datetime.fromisoformat(DEMO_NOW).timestamp()
-        if os.environ.get("KOPIALENS_DEMO_CHECK"):
+        if os.environ.get("KOPIALENS_DEMO_BUILD") or os.environ.get("KOPIALENS_DEMO_CHECK"):
             _travel_to -= 2 * 3600
         time_machine.travel(_travel_to, tick=True).start()
     except (ImportError, ValueError) as _exc:

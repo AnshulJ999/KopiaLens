@@ -46,7 +46,7 @@ _SEG_SPLIT = r"[\\/@:]"
 _TEXT_SPLIT = r"[\\/@:\r\n\t\",]"
 _KEPT_COLUMNS = {"ext", "repo"}
 # What a finished demo folder holds; everything else the cache build wrote is removed.
-_KEEP = {"cache", "demo.json", "repos.json", "settings.json", "data_version.json"}
+_KEEP = {"cache", "demo.json", "repos.json", "settings.json", "ui_state.json", "data_version.json"}
 # A demo with Backblaze also keeps its generated bzdata, the BZ index (and kopialens_bz.sqlite*).
 BZ_KEEP = {"bzdata", "bz"}
 _DOT_IGNORE_KEPT = {".kopiaignore", ".gitignore", ".nobackup", ".backupignore"}
@@ -67,12 +67,19 @@ SHOW_DEFAULTS = {"badge": False, "pro_tags": False, "pro_hint": False, "job_note
 # Inside a hidden area, names under these folders are ordinary package names: never collected.
 _PACKAGE_DIRS = r"/(node_modules|\.git|site-packages|__pycache__|\.?venv|dist|build|lib)(/|$)"
 _NOW_AFTER_LATEST = 3 * 3600   # the demo's clock: this long after its newest snapshot
+# A copy's settings and UI state: the copy the developer browses (demo-copies dev add-on) once it has run.
+_BROWSE_CONFIG = os.path.join(HERE, "devtools", "demo-copies", "demo-copies.json")
+# This PC's own settings, left out when a copy takes this install's settings.
+_LOOK_DROP = {"bind_host", "allowed_hosts", "es_path", "index_backup_dir", "duckdb_memory", "duckdb_threads",
+              "window", "usage_stats", "update_check", "debug_log", "startup_delay", "tray_click", "tray_icon",
+              "snap_source"}
 
 
 def load_rules() -> dict:
     """Name rules for a balanced copy (``<data>/demo/name-rules.json``): ``hidden_areas`` (path
     globs with forward slashes; every name inside is replaced), ``hide_words`` (a name with one
-    is replaced), ``keep_names`` (never replaced) and ``strict_repos`` (named the strict way)."""
+    is replaced), ``keep_names`` (never replaced), ``rename`` (text in a name -> what to show,
+    any case), ``repo_names`` (repo id -> full name), ``bz_name`` and ``strict_repos``."""
     try:
         with open(os.path.join(DATA_DIR, RULES_FILE), encoding="utf-8") as fh:
             rules = json.load(fh)
@@ -80,7 +87,50 @@ def load_rules() -> dict:
         rules = {}
     return {"hidden_areas": [a.lower().replace("\\", "/").rstrip("/") for a in rules.get("hidden_areas", [])],
             "hide_words": list(rules.get("hide_words", [])), "keep_names": list(rules.get("keep_names", [])),
+            "rename": {str(k).lower(): str(v) for k, v in (rules.get("rename") or {}).items() if k and v},
+            "repo_names": {str(k): str(v) for k, v in (rules.get("repo_names") or {}).items()},
+            "bz_name": str(rules.get("bz_name") or "Backblaze"),
             "strict_repos": [str(r) for r in rules.get("strict_repos", [])]}
+
+
+def _look_source(name: str) -> tuple[str, bool]:
+    """Folder to take a copy's settings and UI state from, and whether it is the browsed copy."""
+    try:
+        with open(_BROWSE_CONFIG, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+    except (OSError, ValueError):
+        cfg = {}
+    if cfg.get("work") and any(c.get("name") == name for c in cfg.get("copies", [])):
+        work = os.path.join(cfg["work"], name)
+        if os.path.isfile(os.path.join(work, "settings.json")):
+            return work, True
+    return DATA_DIR, False
+
+
+def _write_look(building: str, name: str, shown_ids: dict[str, str]) -> None:
+    """settings.json and ui_state.json for a balanced copy, with the demo's own settings on top.
+    ``shown_ids``: real repo id -> demo id, for the repos shown with real names."""
+    src, browsed = _look_source(name)
+    try:
+        with open(os.path.join(src, "settings.json"), encoding="utf-8") as fh:
+            settings = json.load(fh)
+    except (OSError, ValueError):
+        settings = {}
+    if not browsed:
+        kl = {k: v for k, v in (settings.get("kopialens") or {}).items() if k not in _LOOK_DROP}
+        for k, v in list(kl.items()):
+            if k.endswith("_by_repo") and isinstance(v, dict):   # a faked repo's real sources stay out
+                kl[k] = {shown_ids[r]: x for r, x in v.items() if r in shown_ids}
+        bz = settings.get("backblaze") or {}
+        settings = {**{k: settings[k] for k in ("listing_backend",) if k in settings},
+                    "kopialens": kl, "last_repo": "1",
+                    "backblaze": {k: bz[k] for k in ("history_days", "bz_reindex_min_gap") if k in bz}}
+    settings.setdefault("kopialens", {}).update(_DEMO_SETTINGS["kopialens"])
+    _dump(os.path.join(building, "settings.json"), settings)
+    ui = os.path.join(src, "ui_state.json")
+    if os.path.isfile(ui):
+        shutil.copyfile(ui, os.path.join(building, "ui_state.json"))
+    log.info("demo copy settings from %s", "the browsed copy" if browsed else "this install")
 
 
 def _repo_ids(repos: str | list[str]) -> list[str]:
@@ -116,12 +166,17 @@ def _is_root_segment(seg: str) -> bool:
 class _Names:
     """real name -> fake name, per kind ('d' folder, 'f' file)."""
 
-    def __init__(self, namer: fakenames.Namer, categories: dict[str, str], identity=frozenset()):
+    def __init__(self, namer: fakenames.Namer, categories: dict[str, str], identity=frozenset(),
+                 rename: dict[str, str] | None = None):
         self.namer = namer
         self.categories = categories
         self.identity = identity          # the real user and computer names, lowercased
         self.attempt: dict[tuple[str, str], int] = {}
         self.fake: dict[tuple[str, str], str] = {}
+        self.rename = rename or {}        # lowercased text in a name -> what to show
+        self._rename_re = re.compile(
+            r"(?<![A-Za-z0-9])(" + "|".join(re.escape(k) for k in sorted(self.rename, key=len, reverse=True))
+            + r")(?![A-Za-z0-9])", re.IGNORECASE) if self.rename else None
 
     def get(self, kind: str, real: str) -> str:
         key = (kind, real)
@@ -134,6 +189,12 @@ class _Names:
         n = self.attempt.get(key, 0)
         if _is_root_segment(real):
             self.fake[key] = real
+        elif self._rename_re and real.lower() not in self.namer.keep and self._rename_re.search(real):
+            shown = self._rename_re.sub(lambda m: self.rename[m.group(0).lower()], real)
+            if n:   # a collision: same name, numbered
+                stem, ext = (shown, "") if kind == "d" else fakenames.split_ext(shown)
+                shown = f"{stem} ({n + 1}){ext}"
+            self.fake[key] = shown
         elif kind == "d":
             self.fake[key] = self.namer.folder(real, self.categories.get(real.lower(), "Mixed"), n)
         else:
@@ -537,9 +598,9 @@ def _unlock_index() -> None:
                            "set KOPIALENS_PASSWORD")
 
 
-def make_copy(repos: str | list[str], style: str, finish: bool = True) -> dict:
+def make_copy(repos: str | list[str], style: str, finish: bool = True, check: bool = False) -> dict:
     """Write a demo copy of one or more repos (demo ids 1, 2, ... in the given order).
-    Returns counts only, never names."""
+    ``check``: also count real names in its files and screens. Returns counts only, never names."""
     _unlock_index()
     ids = _repo_ids(repos)
     key = fakenames.load_key(DATA_DIR)
@@ -561,7 +622,8 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True) -> dict:
         styles[demo_id] = repo_style
         part = _copy_repo(repo, demo_id, building, key, repo_style, rules)
         latest = max(latest, part.pop("latest") or 0.0)
-        records.append(_demo_record(part.pop("replies"), demo_id, _repo_name(repo, demo_id, len(ids), style, repo_style)))
+        records.append(_demo_record(part.pop("replies"), demo_id,
+                                    _repo_name(repo, demo_id, len(ids), style, repo_style, rules)))
         forbidden |= part.pop("forbidden")
         allowed |= part.pop("allowed")
         identity |= part.pop("identity")
@@ -573,12 +635,21 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True) -> dict:
             rec["status_at"] = latest + _NOW_AFTER_LATEST - 2 * 3600
 
     from .demobz import BZ_RECORD
+    bz_record = dict(BZ_RECORD)
+    if style == "balanced":   # the app's own short labels: Repo 1, Repo 2, BZ
+        bz_record["name"] = rules["bz_name"]
+        for rec in records + [bz_record]:
+            rec.pop("short_name", None)
     _dump(os.path.join(building, "repos.json"), {"version": 1, "cache_dir": None,
-                                                 "repos": records + [BZ_RECORD]})
+                                                 "repos": records + [bz_record]})
     from .dataupgrade import DATA_VERSION
     _dump(os.path.join(building, "data_version.json"),
           {"version": DATA_VERSION, "app": DATA_VERSION, "at": _dt.datetime.now().timestamp()})
-    _dump(os.path.join(building, "settings.json"), _DEMO_SETTINGS)
+    if style == "balanced":
+        _write_look(building, os.path.basename(target),
+                    {repo: str(n) for n, repo in enumerate(ids, 1) if styles[str(n)] == "balanced"})
+    else:
+        _dump(os.path.join(building, "settings.json"), _DEMO_SETTINGS)
     meta = {"style": style, "source_repos": ids, "app_version": APP_VERSION, "backblaze": True,
             "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")}
     if style == "balanced":
@@ -587,13 +658,15 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True) -> dict:
                     .isoformat(timespec="seconds") if latest else None)
     _dump(os.path.join(building, "demo.json"), meta)
 
-    _step("building caches and checking screens")
-    finished = _finish(building, forbidden) if finish else {}
+    _step("building caches and checking screens" if check else "building caches")
+    finished = _finish(building, forbidden, check) if finish else {}
     prune(building, [r["id"] for r in records])
 
-    _step("checking files for real names")
-    leaks = leak_check(building, forbidden, demoreplies.machine_paths(own_only=style == "balanced"))
-    warnings = _leak_warnings(leaks, finished)
+    warnings = None
+    if check:
+        _step("checking files for real names")
+        leaks = leak_check(building, forbidden, demoreplies.machine_paths(own_only=style == "balanced"))
+        warnings = _leak_warnings(leaks, finished)
     if os.path.isdir(target):
         shutil.rmtree(target)
     atomicfile.replace(building, target)
@@ -610,9 +683,11 @@ def make_copy(repos: str | list[str], style: str, finish: bool = True) -> dict:
     return result
 
 
-def _repo_name(repo: str, demo_id: str, count: int, style: str, repo_style: str) -> str:
-    """A balanced copy keeps each repo's real name; a strict repo inside one gets a plain name."""
+def _repo_name(repo: str, demo_id: str, count: int, style: str, repo_style: str, rules: dict) -> str:
+    """A balanced copy: the rules' name for the repo, else its real name (a strict repo: a plain one)."""
     if style == "balanced":
+        if rules.get("repo_names", {}).get(repo):
+            return rules["repo_names"][repo]
         from config import REPOS
         return REPOS.get(repo, {}).get("name") if repo_style == "balanced" else f"Kopia Backup {demo_id}"
     return "Demo" if count == 1 else f"Demo {demo_id}"
@@ -663,7 +738,8 @@ def _copy_repo(repo: str, demo_id: str, building: str, key: bytes, style: str, r
         latest = cur.execute("SELECT epoch(max(start_time)) FROM isnaps").fetchone()[0] if "isnaps" in tables else None
         real_sources = [r[0] for r in cur.execute("SELECT source FROM src").fetchall()] if "src" in tables else []
         names = _Names(namer, _categories(cur, tables),
-                       _identity(real_sources + list(gen.manifest.get("sources", {}))))
+                       _identity(real_sources + list(gen.manifest.get("sources", {}))),
+                       rules.get("rename") if style == "balanced" else None)
         _step("resolving name collisions")
         bumped = _resolve_collisions(cur, names, tables)
 
@@ -698,6 +774,12 @@ def _copy_repo(repo: str, demo_id: str, building: str, key: bytes, style: str, r
             cur.register("_demo_dir", pa.table(rows))
 
         cur.register("_demo_names", names.table())
+        if style == "balanced":   # the names page's real-to-shown list: changed names only, outside the copy
+            changed = [k for k in names.fake if names.fake[k] != k[1]]
+            os.makedirs(names_dir := building[:-len(".building")] + ".names", exist_ok=True)
+            pq.write_table(pa.table({"kind": [k for k, _ in changed], "real": [r for _, r in changed],
+                                     "shown": [names.fake[k] for k in changed]}),
+                           os.path.join(names_dir, f"repo{demo_id}.parquet"))
         written: dict[str, int] = {}
         selects = {
             "src": "SELECT t.src_id, m.fake AS source FROM src t JOIN _demo_src m ON m.real = t.source",
@@ -963,20 +1045,23 @@ def _child_env(folder: str) -> dict:
                 KOPIALENS_CACHE_DIR=os.path.join(folder, "cache"), PYTHONIOENCODING="utf-8")
 
 
-def _finish(folder: str, forbidden: set[str]) -> dict:
-    """Build the copy's caches and sweep its screens, in a process whose data folder IS the copy.
-    The child gets salted hashes of the forbidden names, never the names."""
-    salt = secrets.token_hex(8)
-    check = folder + ".check"
-    _dump(check, sorted(_hash(salt, f) for f in forbidden))
+def _finish(folder: str, forbidden: set[str], sweep: bool = True) -> dict:
+    """Build the copy's caches (and with ``sweep``, sweep its screens) in a process whose data
+    folder IS the copy. The child gets salted hashes of the forbidden names, never the names."""
     env = _child_env(folder)
-    env.update(KOPIALENS_DEMO_CHECK=check, KOPIALENS_DEMO_SALT=salt)
+    env.update(KOPIALENS_DEMO_BUILD="1")
+    check = folder + ".check"
+    if sweep:
+        salt = secrets.token_hex(8)
+        _dump(check, sorted(_hash(salt, f) for f in forbidden))
+        env.update(KOPIALENS_DEMO_CHECK=check, KOPIALENS_DEMO_SALT=salt)
     try:
         res = subprocess.run([sys.executable, "-m", "app.core.demo", "--finish"], cwd=HERE, env=env,
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
                              timeout=3600)
     finally:
-        os.remove(check)
+        if os.path.isfile(check):
+            os.remove(check)
     lines = [ln for ln in (res.stdout or "").splitlines() if ln.startswith("{")]
     if res.returncode != 0 or not lines:
         raise RuntimeError(f"demo cache build failed (exit {res.returncode}): {(res.stderr or '')[-600:]}")
@@ -1000,7 +1085,8 @@ def _finish_child() -> None:
         stages.add("backblaze")
     except Exception as exc:  # noqa: BLE001 - the copy is still a full kopia demo without it
         errors["bz"] = str(exc)[:300]
-    sweep = _sweep(os.environ["KOPIALENS_DEMO_SALT"], os.environ["KOPIALENS_DEMO_CHECK"], kopia_repos())
+    sweep = _sweep(os.environ["KOPIALENS_DEMO_SALT"], os.environ["KOPIALENS_DEMO_CHECK"], kopia_repos()) \
+        if os.environ.get("KOPIALENS_DEMO_CHECK") else {}
     print(json.dumps({"stages": sorted(stages), "errors": errors or None, **sweep}))
 
 
@@ -1178,6 +1264,7 @@ def main() -> None:
     ap.add_argument("--style", choices=fakenames.STYLES, default="balanced")
     ap.add_argument("--open", metavar="COPY", help="run KopiaLens on a demo copy")
     ap.add_argument("--port", type=int, default=7323)
+    ap.add_argument("--check", action="store_true", help="also count real names in the copy's files and screens")
     ap.add_argument("--finish", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
     if args.finish:
@@ -1185,7 +1272,7 @@ def main() -> None:
     elif args.open:
         open_copy(args.open, args.port)
     elif args.repo:
-        r = make_copy(args.repo, args.style)
+        r = make_copy(args.repo, args.style, check=args.check)
         print(json.dumps({k: v for k, v in r.items() if k != "path"}, indent=1))
         print("written to", r["path"])
     else:

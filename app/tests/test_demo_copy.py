@@ -221,7 +221,7 @@ def test_copy_fakes_every_name_and_keeps_numbers(live, monkeypatch, style):
 def test_leak_check_reports_a_real_name_and_the_copy_still_finishes(live, monkeypatch):
     # Content stats are passed through unfaked (numbers only), so a path there is a real leak.
     monkeypatch.setitem(REPLIES, "content stats", f"Count: 3 in {ACME}")
-    r = demo.make_copy("7", "codename", finish=False)
+    r = demo.make_copy("7", "codename", finish=False, check=True)
     assert r["leak_warnings"]["file_hits"] >= 1
     assert r["leak_warnings"]["files"] == ["demo_replies_repo1.json"]
     assert os.path.isdir(demo.copy_dir("7", "codename"))
