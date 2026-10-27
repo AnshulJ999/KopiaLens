@@ -399,13 +399,15 @@ def _status_path() -> str:
     return os.path.join(DATA_DIR, _STATUS)
 
 
+def _read_status() -> dict:
+    data = filecrypto.read_json(_status_path(), {})
+    return data if isinstance(data, dict) else {}
+
+
 def _write_status(repo: str, status: dict) -> None:
-    data = _read_json(_status_path()) or {}
+    data = _read_status()
     data[str(repo)] = status
-    try:
-        _atomic_json(_status_path(), data)
-    except OSError as exc:
-        log.warning("could not record the index copy status: %s", exc)
+    filecrypto.write_json(_status_path(), data)
 
 
 def report(repo: str) -> dict:
@@ -427,4 +429,4 @@ def report(repo: str) -> dict:
                          "published_at": (man.get("kept") or {}).get("published_at"),
                          "bytes": size})
     return {"repo": repo, "versions": versions, "copying": copying(repo),
-            "copy": (_read_json(_status_path()) or {}).get(str(repo))}
+            "copy": _read_status().get(str(repo))}

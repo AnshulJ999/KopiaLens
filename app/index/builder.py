@@ -147,12 +147,10 @@ def index_status(repo: str) -> dict:
             "never_indexed": True, "building": False, "error": job.get("error"),
         }
     try:
-        indexed = cur.execute("SELECT COUNT(*) FROM isnaps").fetchone()[0]
         # Only snapshots kopia still lists: one deleted since the last index must not count.
         listed = [s["id"] for snaps in srcs.values() for s in snaps if s.get("id")]
-        if listed:
-            indexed = cur.execute("SELECT COUNT(*) FROM isnaps WHERE list_contains(?, snapshot_id)",
-                                  [listed]).fetchone()[0]
+        indexed = cur.execute("SELECT COUNT(*) FROM isnaps WHERE snapshot_id IN (SELECT unnest(?::VARCHAR[]))",
+                              [listed]).fetchone()[0] if listed else 0
         files = cur.execute("SELECT COUNT(*) FROM filev").fetchone()[0]
         last = cur.execute("SELECT max(indexed_at) FROM isnaps").fetchone()[0]
     finally:

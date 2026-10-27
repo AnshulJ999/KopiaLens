@@ -299,7 +299,7 @@ const settingsPart = {
       await getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ kopialens: { disk_paths: list } }) });
       this.diskPlaces = list;
-      this.excludedDrives = [];   // the Excluded tab re-reads its locations
+      this._excludedDrivesStale = true;   // the Excluded tab re-reads its locations
       this._refreshDiskLookup();
     },
     // Which reader answers here. On a computer without Everything, the Everything choice reads as Off.
@@ -361,7 +361,7 @@ const settingsPart = {
             : f.reload ? "Saved - reload the page to see the change" : "Saved");
           if (key === "experimental" && !v && this.settingsTab === "experimental") this.settingsTab = "advanced";
           if (key === "dashboard_refresh") this.armAutoRefresh();
-          if (key.startsWith("disk_") || key === "es_path") { this.excludedDrives = []; this._refreshDiskLookup(); }
+          if (key.startsWith("disk_") || key === "es_path") { this._excludedDrivesStale = true; this._refreshDiskLookup(); }
           if (key in this.savedPorts) this.savedPorts[key] = v;
           if (key === "update_channel") { this.loadUsagePreview(); if (this.updateCheck) this.checkUpdatesNow(); }
         })

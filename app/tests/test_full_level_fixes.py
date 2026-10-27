@@ -82,13 +82,28 @@ def test_the_worker_result_reads_back(full):
 
 
 def test_plain_operational_files_are_never_covered(full):
-    for name in ("data_version.json", "index_progress_repo1.json", "index_progress_repobz.json"):
+    for name in ("data_version.json", "index_progress_repo1.json", "index_progress_repobz.json",
+                 "server.json", "desktop-instance.json"):
         (full / name).write_text("{}", encoding="utf-8")
     (full / "index_progress_detail_repo1.json").write_text("{}", encoding="utf-8")
     covered = {os.path.basename(p) for p in filecrypto.covered_paths()}
     assert "data_version.json" not in covered
     assert "index_progress_repo1.json" not in covered and "index_progress_repobz.json" not in covered
+    assert "server.json" not in covered and "desktop-instance.json" not in covered   # the desktop app has no key
     assert "index_progress_detail_repo1.json" in covered
+
+
+def test_checkin_and_index_copy_status_read_back(full, monkeypatch):
+    from app.core import checkin
+    from app.index import versions
+    monkeypatch.setattr(checkin, "STATE_FILE", str(full / "checkin.json"))
+    monkeypatch.setattr(versions, "DATA_DIR", str(full))
+    iid = checkin.install_id()
+    assert filecrypto.is_encrypted_file(str(full / "checkin.json"))
+    assert checkin.install_id() == iid                         # read as {} gave a new id each time
+    versions._write_status("1", {"ok": True})
+    assert filecrypto.is_encrypted_file(str(full / "index_backup_status.json"))
+    assert versions._read_status() == {"1": {"ok": True}}
 
 
 def test_files_read_before_unlock_stay_plain_at_full(full):

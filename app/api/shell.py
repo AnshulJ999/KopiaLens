@@ -53,9 +53,11 @@ def state() -> dict:
     settings = load_settings()
     kl = settings.get("kopialens") or {}
     fresh = index_freshness()
+    # Running jobs first: the updater waits on this list, so one must never fall past the cut.
+    listed = sorted((j for j in jobs.list_jobs() if not j.get("dry")), key=lambda j: j.get("state") != "running")
     recent = [
         {k: j.get(k) for k in ("job_id", "kind_label", "label", "repo", "state", "error", "finished")}
-        for j in jobs.list_jobs()[:20] if not j.get("dry")
+        for j in listed[:20]
     ]
     return {
         "version": APP_VERSION, "platform": sys.platform,

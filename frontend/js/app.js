@@ -129,7 +129,7 @@ document.addEventListener("alpine:init", () => {
     showJob: false, jobPanel: null, jobLines: [], jobEarly: 0, jobCursor: 0, jobFollow: true,
     jobMode: localStorage.getItem("kl-jobmode") || "clean", jobExpanded: false, runningJobs: [],
     _jobPoll: null, _jobChipPoll: null, _jobOpenSeq: 0, _handledJobs: null, _reindexWatch: {},
-    excludedDrives: [], excludedOk: true, excludedPath: "", excludedFilter: "excluded", excludedMeta: "", _excludedItems: [], _excludedSeq: 0, excludedDetail: null, showExcludedDetail: false,
+    excludedDrives: [], _excludedDrivesStale: false, excludedOk: true, excludedPath: "", excludedFilter: "excluded", excludedMeta: "", _excludedItems: [], _excludedSeq: 0, excludedDetail: null, showExcludedDetail: false,
     excludedScans: [], _excludedSeen: false, _excludedNotes: null, _excludedCountedAt: null, _excludedNotIndexed: false,
     // Free/Pro (licence.js): GET /api/licence; proNotice = the open upgrade notice.
     lic: { state: "none", locked: [], features: {}, pricing_url: "" }, proNotice: null,
@@ -607,7 +607,7 @@ document.addEventListener("alpine:init", () => {
     // are stale once an index changes; they are worked out again as rows show.
     forgetRowValues() {
       this.treeExtra = {}; this.groupReclaim = {}; this.folderVersions = {};
-      this._churnPhysCache = {}; this.versionSizes = {}; this.excludedDrives = [];
+      this._churnPhysCache = {}; this.versionSizes = {}; this._excludedDrivesStale = true;
     },
     freshAge(row) {
       if (row.via_server) return "browse-only";

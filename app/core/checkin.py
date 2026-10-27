@@ -21,7 +21,7 @@ from appversion import order_key
 from config import APP_VERSION, CHECKIN_URL, COMPILED, DATA_DIR, DEMO_INSTANCE, REPO_URL, REPOS, is_demo, repo_record
 
 from .applog import get_logger
-from . import atomicfile
+from . import filecrypto
 
 log = get_logger("checkin")
 
@@ -93,23 +93,15 @@ def note_feature(name: str) -> None:
 
 
 def _read_state() -> dict:
-    try:
-        with open(STATE_FILE, encoding="utf-8") as fh:
-            data = json.load(fh)
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    data = filecrypto.read_json(STATE_FILE, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _write_state(**changes) -> dict:
     with _lock:
         state = _read_state()
         state.update(changes)
-        tmp = STATE_FILE + ".tmp"
-        os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(state, fh, indent=2)
-        atomicfile.replace(tmp, STATE_FILE)
+        filecrypto.write_json(STATE_FILE, state)
         return state
 
 
@@ -310,7 +302,8 @@ def check_now(manual: bool = False) -> bool:
     the setting only switches the daily automatic check. True on success."""
     global _opened
     want_updates, want_stats = updates_enabled() or manual, stats_enabled() and stats_ready()
-    if not (want_updates or want_stats) or DEMO_INSTANCE:
+    # Locked at Full: the state can't be read or saved, so the install id would change every time.
+    if not (want_updates or want_stats) or DEMO_INSTANCE or filecrypto.writes_blocked():
         return False
     try:
         data = _post(build_payload(want_stats))

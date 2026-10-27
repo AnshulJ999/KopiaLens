@@ -61,9 +61,10 @@ _WRITE_LOCK = threading.RLock()               # every writer + the switch (see t
 _CACHE: tuple[str, bytes] | None = None      # (data key as handed out, derived sub-key)
 _OPEN: dict[str, "CryptoStream"] = {}        # streams this process holds open, by path
 
-# Plain on purpose: the version stamp is read before anything can unlock, and the worker status
-# file (pid, stage, counts - no paths) is read by the keyless tray and by Stop.
-_NEVER_COVERED = re.compile(r"^(data_version\.json|index_progress_repo[^_]*\.json)$")
+# Plain on purpose: the version stamp is read before anything can unlock, the worker status
+# file (pid, stage, counts - no paths) is read by the keyless tray and by Stop, and the desktop
+# app (no key) reads the server and instance records (pid, port, token).
+_NEVER_COVERED = re.compile(r"^(data_version\.json|index_progress_repo[^_]*\.json|server\.json|desktop-instance\.json)$")
 # Config read before an unlock (sign-in, repo list, key, table layouts): plain at every level.
 _PLAIN_CONFIG = ("settings.json", "repos.json", "keystore.json", "users.json", "ui_state.json",
                  "tokens.json")

@@ -4,9 +4,10 @@ const excludedPart = {
     // ---- Excluded browser (disk coverage gaps vs both repos) ----
     async loadExcluded() {
       this._excludedSeen = true;
-      if (!this.excludedDrives.length) {
+      if (!this.excludedDrives.length || this._excludedDrivesStale) {
         const d = await getJson("/api/excluded/drives").catch(() => null);
         if (d) {
+          this._excludedDrivesStale = false;
           this.excludedDrives = d.drives || []; this.excludedOk = !!d.everything_ok;
           this.diskLookup = d.disk_lookup || null; this.excludedScans = (d.disk_lookup && d.disk_lookup.scans) || [];
         }
@@ -51,7 +52,9 @@ const excludedPart = {
         });
       }
     },
-    excludedNav(path) { if (!path) return this.renderExcludedDrives(); this.listExcluded(path); },
+    excludedNav(path) { if (!path) return this.excludedHome(); this.listExcluded(path); },
+    // Back to the locations list; read again when an index or a setting changed it.
+    excludedHome() { this.excludedPath = ""; return this.loadExcluded(); },
     async listExcluded(path, quiet = false) {
       const seq = ++this._excludedSeq;
       this.excludedPath = path;
@@ -103,11 +106,11 @@ const excludedPart = {
       const root = this._excludedRoot(p);
       if (root) {
         const r = trimSep(root.path);
-        if (r === p) return this.renderExcludedDrives();
+        if (r === p) return this.excludedHome();
         const up = p.slice(0, p.lastIndexOf(pathSep(p)));
         return this.listExcluded(up.length <= r.length ? root.path : up);
       }
-      if (/^[A-Za-z]:$/.test(p) || p === "/") return this.renderExcludedDrives();
+      if (/^[A-Za-z]:$/.test(p) || p === "/") return this.excludedHome();
       if (pathSep(p) === "/") return this.listExcluded(parentPath(p));
       const idx = p.lastIndexOf("\\");
       this.listExcluded(idx <= 2 ? p.slice(0, 2) + "\\" : p.slice(0, idx));
@@ -152,14 +155,14 @@ const excludedPart = {
       const r = await this._diskPost("/api/disk-lookup/count", { path }).catch((e) => { this.klNotify(e.message, "warn"); return null; });
       if (!r) return;
       if (this.excludedPath) return this.listExcluded(this.excludedPath, true);
-      this.excludedDrives = [];
+      this._excludedDrivesStale = true;
       return this.loadExcluded();
     },
     async excludedStop(id) {
       await this._diskPost("/api/disk-lookup/stop", { id }).catch(() => null);
       this.excludedScans = this.excludedScans.filter((s) => s.id !== id);
       if (this.excludedPath) return this.listExcluded(this.excludedPath, true);
-      this.excludedDrives = [];
+      this._excludedDrivesStale = true;
       return this.loadExcluded();
     },
     // What to do when nothing can read the disk here.

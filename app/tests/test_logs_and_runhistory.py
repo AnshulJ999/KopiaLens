@@ -157,7 +157,7 @@ def test_index_status_normal_repo_is_not_flagged(monkeypatch):
         def close(self):
             return None
 
-        def execute(self, q):
+        def execute(self, q, params=None):
             class R:
                 def __init__(self, v):
                     self.v = v
@@ -173,7 +173,7 @@ def test_index_status_normal_repo_is_not_flagged(monkeypatch):
                 return R(952)
             return R(None)
 
-    monkeypatch.setattr(builder, "sources_index", lambda repo: {"u@h:C:": []})
+    monkeypatch.setattr(builder, "sources_index", lambda repo: {"u@h:C:": [{"id": f"s{i}"} for i in range(4)]})
     monkeypatch.setattr(builder, "_has_index", lambda repo: True)
     monkeypatch.setattr(builder, "read_cursor", lambda repo: _FakeCur())
     monkeypatch.setattr(builder, "_JOBS", {})

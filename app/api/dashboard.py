@@ -53,6 +53,10 @@ def _ordered(rows: list[dict], order: list) -> list[dict]:
     return sorted(rows, key=lambda r: rank.get(r["id"], len(rank)))
 
 
+# A showcase copy's stand-in index time, fixed once per run so each poll doesn't read as a new index.
+_SHOW_INDEXED: dict[str, float] = {}
+
+
 def _showcase(rec: dict) -> dict:
     """A showcase demo copy's repos read as ordinary ones to the page (config.DEMO_SHOW)."""
     if DEMO_SHOW is not None and rec.get("demo"):
@@ -253,7 +257,7 @@ def index_freshness() -> dict:
         # A demo's clock restarts at demo.json "now" on every start, so a pass saved in an earlier
         # session can read as later than now.
         if DEMO_SHOW is not None and is_demo(key) and (not row["last_index"] or row["last_index"] > time.time()):
-            row["last_index"] = row["last_attempt"] = time.time() - 2 * 3600   # never "never indexed"
+            row["last_index"] = row["last_attempt"] = _SHOW_INDEXED.setdefault(key, time.time() - 2 * 3600)
         if cfg.get("kind") == "backblaze":
             #: the badge shows REBUILD age - how old the data actually is.
             # Verification age ("checked Xm ago") rides the row tooltip; a detected
