@@ -32,8 +32,11 @@ body { font-family: var(--font-sans); }
 .crumb { cursor: pointer; color: var(--fg); }
 .crumb:hover { text-decoration: underline; }
 .tabulator .tabulator-placeholder, .tabulator .tabulator-placeholder-contents { color: var(--muted); }
-.tabulator .tabulator-menu { background: var(--surface); color: var(--fg); border: 1px solid var(--bd); }
-.tabulator .tabulator-menu .tabulator-menu-item:hover { background: var(--hover); }
+/* Tabulator mounts menus on <body>, outside .tabulator */
+.tabulator-menu.tabulator-popup-container { background: var(--surface); color: var(--fg); border: 1px solid var(--bd); }
+.tabulator-menu .tabulator-menu-item:not(.tabulator-menu-item-disabled):hover { background: var(--hover); }
+.tabulator-menu .tabulator-menu-separator { border-top-color: var(--bd); }
+.tabulator-menu .tabulator-menu-item.tabulator-menu-item-submenu:after { border-color: var(--muted); }
 
 .pill { display: inline-block; font-size: 0.65625rem; padding: 1px 6px; border-radius: 9px; margin: 1px; border: 1px solid var(--bd); background: var(--surface2); color: var(--muted); }
 .pill.ok { color: var(--ok); border-color: var(--ok-bd); background: var(--ok-bg); }
