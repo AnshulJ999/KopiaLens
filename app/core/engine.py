@@ -767,6 +767,9 @@ def _record(srv: _Server, t: dict) -> None:
         alert(srv.repo, "error", f"Backup failed: {rec['source'].split(':', 1)[-1]}", rec["error"][:200])
     elif rec["kind"] == "Maintenance" and rec["status"] == "failed":
         alert(srv.repo, "error", f"Maintenance failed on {_repo_label(srv.repo)}", rec["error"][:200])
+    if rec["kind"] == "Maintenance":
+        from . import coexist           # its last and next run times changed
+        threading.Thread(target=coexist.read_maintenance_info, args=(srv.repo,), daemon=True).start()
 
 
 def history(limit: int = 2000) -> list[dict]:

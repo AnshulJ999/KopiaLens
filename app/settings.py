@@ -63,7 +63,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "index_max_retries": 1,      # retries per scheduled slot; 0 = never retry until the next slot
         "quit_indexing": "finish",   # tray Quit: "finish" leaves a running index worker to complete, "stop" ends it
         "reindex_after_delete_delay": 300,  # quiet seconds after the last delete before the index updates
-        "light_interval": 1800,      # cheap in-process warm pass: next-snapshot times, stats, search landing
+        "light_interval": 3600,      # light pass: next-snapshot times and the Search start page
+        "light_mode": "in_use",      # when the light pass may run kopia: in_use (someone used KopiaLens within the interval) | always | off
         "dashboard_mode": "nightly",  # "nightly" (rebuild with the heavy pass) | "interval" (also during the day)
         "dashboard_interval": 14400,  # dashboard_mode="interval" only: seconds between rebuilds
         "startup_delay": 300,        # quiet period after every process start before any background work
@@ -228,6 +229,39 @@ OWN_ROUTE_SETTINGS = {
     "kopia_path": "Settings > Repositories",
     "write_mode": "Settings > Permissions",
 }
+
+# A saved value equal to its default is not kept, so a changed default reaches every install that
+# never chose otherwise. These keep an explicit value: they have their own route, code reads the
+# file's own value on purpose, or their default depends on the build.
+KEEP_EXPLICIT = frozenset(OWN_ROUTE_SETTINGS) | {
+    "auth_enabled", "bind_host", "base_path", "encryption", "encryption_level", "kopia_path",
+    "experimental", "exp_notes", "control_api"}
+
+
+def _same(a: Any, b: Any) -> bool:
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
+    return a == b
+
+
+def drop_defaults(settings: dict[str, Any], keys: set[tuple[str, str]] | None = None) -> list[str]:
+    """Remove saved values equal to their default, in place. ``keys`` limits it to (block, key)
+    pairs ("" = the top level); None checks every key. Returns the keys removed."""
+    removed: list[str] = []
+    for block, defaults in (("", DEFAULT_SETTINGS), ("kopialens", DEFAULT_SETTINGS["kopialens"]),
+                            ("backblaze", DEFAULT_SETTINGS["backblaze"])):
+        target = settings.get(block) if block else settings
+        if not isinstance(target, dict):
+            continue
+        for key in list(target):
+            if keys is not None and (block, key) not in keys:
+                continue
+            if key in KEEP_EXPLICIT or key not in defaults or (not block and isinstance(defaults[key], dict)):
+                continue
+            if _same(target[key], defaults[key]):
+                del target[key]
+                removed.append(f"{block}.{key}" if block else key)
+    return removed
 
 
 # Readers use the last parsed file while its stat is unchanged, so they never wait on a save that

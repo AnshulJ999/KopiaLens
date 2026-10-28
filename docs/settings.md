@@ -4,7 +4,9 @@ Settings holds everything you can change in KopiaLens. Open it with the gear but
 
 ![Screenshot: Settings, open on General](images/settings.png)
 
-To find a setting, type in **Search settings** above the section list (or press **Ctrl+F** or **/** while Settings is open). Pick a result to open its section with the setting highlighted.
+To find a setting, type in **Search settings** above the section list (or press **Ctrl+F** or **/** while Settings is open). Pick a result to open its section with the setting highlighted. Type **changed** to list every setting you changed.
+
+A dot before a setting's name marks one you changed; hover it to see the default. The reset button next to the name puts that setting back, and **Reset this page** at the bottom of a section does the whole section. **Reset all…** is in [Config](#config).
 
 Each section has a **?** button that opens its help. Some sections have their own page:
 
@@ -82,7 +84,7 @@ These apply to the KopiaLens desktop app and its tray icon.
 | **Dashboard numbers** | Rebuild with nightly indexing | Or **Also rebuild during the day**. The Dashboard's refresh button rebuilds them at any time |
 | **Full rebuild** | | **Rebuild full index** reads every snapshot again. Rarely needed, and much slower |
 | **Index backups** | | Older versions of the index and a copy in another folder ([Index backups](indexing.md#index-backups)) |
-| **Quick refresh** | 30 minutes | How often next snapshot times, repository details and the Search start page are brought up to date |
+| **Quick refresh** | 1 hour, while you use KopiaLens | How often next snapshot times and the Search start page are brought up to date. **While you use KopiaLens** skips it when nobody has used KopiaLens in that time; **Off, nightly only** leaves it to the nightly run. Repository details refresh once a day, and when you open them |
 | **Dashboard auto-refresh** | 30 minutes | How often an open Dashboard checks for new numbers |
 | **Dashboard rebuild interval** | 4 hours | With **Also rebuild during the day**: how often the size columns are rebuilt |
 
@@ -132,6 +134,8 @@ Some changes affect who can get in or what KopiaLens may change: sign-in and rem
 **Export to a file** saves your settings and repository list as one file, to move KopiaLens to another computer or to keep a copy elsewhere. Tick **Include sign-in accounts** or **Include encryption key files** to add them. The file then holds password hashes or your locked encryption key, so keep it somewhere private.
 
 **Import from a file** reads an exported file. You see the same list of changes, with **Keep current**, before anything is replaced.
+
+**Reset all…** puts every changed setting back to its default, after making a backup. Sign-in, encryption, remote access, repositories, the ports, update checks and usage stats stay as they are; reset those one at a time.
 
 ## Advanced
 

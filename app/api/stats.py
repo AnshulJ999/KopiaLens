@@ -34,7 +34,7 @@ _blob_cache: dict[str, str] = {}   # the last `blob stats` job's output per repo
 # Repo stats change rarely but cost 4 kopia subprocess calls (~4.5s). Cache + serve-stale:
 # return the cached blocks instantly and refresh in the background (also driven by the bg warm
 # pass), so opening the Stats tab is never slow.
-_STATS_TTL = 300.0
+_STATS_TTL = 3600.0
 _stats_cache: dict[str, dict] = {}      # repo -> data
 _stats_ts: dict[str, float] = {}        # repo -> last computed
 _stats_refreshing: set[str] = set()
@@ -338,8 +338,9 @@ def _repo_details(status: dict) -> dict:
 
 
 def _compute_stats(repo: str) -> dict:
+    from ..core import coexist
     status = _json(repo, ["repository", "status", "--json"])
-    maint = _json(repo, ["maintenance", "info", "--json"])
+    maint = coexist.read_maintenance_info(repo)   # one kopia call fills the Backups panel's copy too
     data = {
         "repo": repo,
         "repository_status": status or _text(repo, ["repository", "status"]),
@@ -421,6 +422,21 @@ def _load_saved(repo: str) -> dict | None:
         _stats_cache.setdefault(repo, saved["data"])
         _stats_ts.setdefault(repo, float(saved.get("at") or 0))
         return _stats_cache[repo]
+
+
+def stats_age(repo: str) -> float:
+    """Seconds since this repository's details were read (saved copies included)."""
+    with _stats_lock:
+        at = _stats_ts.get(repo)
+    if at is None:
+        _load_saved(repo)
+        with _stats_lock:
+            at = _stats_ts.get(repo, 0.0)
+    return time.time() - at
+
+
+def refresh_stats_later(repo: str) -> None:
+    threading.Thread(target=refresh_stats, args=(repo,), name=f"stats-{repo}", daemon=True).start()
 
 
 def refresh_stats(repo: str) -> None:

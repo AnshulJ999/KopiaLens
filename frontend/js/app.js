@@ -138,7 +138,7 @@ document.addEventListener("alpine:init", () => {
     excludedTolerance: 0.05, esPath: "",
     // Advanced settings. These existed in settings.json all along and had no UI, so the only way to
     // change them was to edit the file by hand. Defaults here mirror app/settings.py.
-    lightInterval: 1800, dashboardInterval: 14400,
+    lightInterval: 3600, lightMode: "in_use", _klDefaults: null, dashboardInterval: 14400,
     debugLog: false, experimental: false, expNotes: false,
     duckdbMemory: "", memoryAuto: "",  // memory limit override ("" = automatic) and what automatic resolves to
     duckdbThreads: 0, threadsAuto: 0, threadsWorker: 0, cpuCount: 0,  // thread override (0 = automatic) and the automatic values

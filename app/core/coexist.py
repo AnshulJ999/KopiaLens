@@ -28,7 +28,7 @@ log = get_logger("coexist")
 _SCAN_TTL = 10.0
 _scan_lock = threading.Lock()
 _scan_cache: tuple[float, tuple[list[dict], bool]] = (0.0, ([], False))
-_OWNER_TTL = 1800.0
+_OWNER_TTL = 3600.0
 _owner_cache: dict[str, tuple[float, dict]] = {}
 
 MOVED_SUFFIX = ".moved-to-kopialens"   # a KopiaUI config KopiaLens took over (engine.set_choice)
@@ -262,6 +262,11 @@ def maintenance_info(repo: str, force: bool = False) -> dict:
 
 
 _owner_refreshing: set[str] = set()
+
+
+def read_maintenance_info(repo: str) -> dict:
+    """Ask kopia now and keep the answer for the Backups panel ({} when kopia can't answer)."""
+    return _read_maintenance_info(repo)
 
 
 def _refresh_maintenance_info(repo: str) -> None:

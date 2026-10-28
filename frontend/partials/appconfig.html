@@ -43,6 +43,15 @@
                 </div>
                 <p class="text-[0.6875rem] text-muted mt-1">You see what would change before anything is replaced.</p>
               </div>
+
+              <div class="border-t border-bd pt-4">
+                <div class="flex items-center justify-between gap-3">
+                  <span>Reset all settings</span>
+                  <button @click="klResetAll()" :disabled="!klAllChanged().length" class="kl-btn" data-testid="settings-reset-all"
+                          :title="klAllChanged().length ? '' : 'Every setting is at its default'">Reset all…</button>
+                </div>
+                <p class="text-[0.6875rem] text-muted mt-1">Puts every changed setting back to its default, after a backup. Sign-in, encryption, remote access, repositories, ports, update checks and usage stats stay as they are.</p>
+              </div>
             </section>
 
             <section x-show="settingsTab==='about'" class="space-y-3">

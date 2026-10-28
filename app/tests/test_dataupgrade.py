@@ -142,20 +142,23 @@ def test_a_newer_folder_says_only_the_migration_is_refused(folder):
 def test_the_shipped_steps_are_registered_and_bring_a_folder_to_this_version(
         folder, monkeypatch):
     """The shipped registry: an unversioned folder runs v1 -> v2 (encryption level),
-    v2 -> v3 (accounts) and v3 -> v4 (table layouts out of settings), in order."""
+    v2 -> v3 (accounts), v3 -> v4 (table layouts out of settings) and v4 -> v5 (settings keep only
+    values that differ from the defaults), in order."""
     import importlib
 
-    from app.core import encryption_upgrade, filecrypto, users, users_upgrade, uistate_upgrade
+    from app.core import (encryption_upgrade, filecrypto, settings_upgrade, users, users_upgrade,
+                          uistate_upgrade)
     monkeypatch.setattr(filecrypto, "upgrade_step", lambda: {"changed": ["stub"]})
     monkeypatch.setattr(users, "migrate_legacy", lambda: {"moved": False})
     importlib.reload(encryption_upgrade)          # re-register onto the fixture's empty registry
     importlib.reload(users_upgrade)
     importlib.reload(uistate_upgrade)
-    assert dataupgrade.DATA_VERSION == 4
+    importlib.reload(settings_upgrade)
+    assert dataupgrade.DATA_VERSION == 5
     out = dataupgrade.run_pending()
-    assert out["version"] == 4
-    assert [r["name"] for r in out["ran"]] == ["encryption-level", "accounts", "ui-state"]
-    assert json.loads((folder / "data_version.json").read_text(encoding="utf-8"))["version"] == 4
+    assert out["version"] == 5
+    assert [r["name"] for r in out["ran"]] == ["encryption-level", "accounts", "ui-state", "settings-defaults"]
+    assert json.loads((folder / "data_version.json").read_text(encoding="utf-8"))["version"] == 5
 
 
 def test_atomic_writers_leave_no_temp_and_replace_in_one_step(folder):

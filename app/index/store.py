@@ -603,6 +603,11 @@ def touch() -> None:
     _LAST_TOUCH = time.time()
 
 
+def last_activity() -> float:
+    """When a user last made a request (startup counts as one)."""
+    return _LAST_TOUCH
+
+
 def idle_seconds() -> int:
     try:
         from ..settings import load_settings

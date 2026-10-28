@@ -15,7 +15,7 @@ from ..core.nightly import start_index_pass_async, state as nightly_state, worke
 from ..core.sources import sources_index
 from .errors import PASS_THROUGH
 from ..index.builder import index_status_with_summary
-from ..settings import load_settings, mutate_settings
+from ..settings import drop_defaults, load_settings, mutate_settings
 
 router = APIRouter(tags=["dashboard"])
 
@@ -302,6 +302,10 @@ def post_settings(payload: dict) -> dict:
             settings["kopialens"] = {**settings.get("kopialens", {}), **kl}
         if isinstance(bz, dict):
             settings["backblaze"] = {**settings.get("backblaze", {}), **bz}
+        # Saving a default removes the key, so the setting follows the default from then on.
+        drop_defaults(settings, {("", k) for k in payload}
+                      | {("kopialens", k) for k in (kl if isinstance(kl, dict) else {})}
+                      | {("backblaze", k) for k in (bz if isinstance(bz, dict) else {})})
 
     saved = mutate_settings(_apply)
     try:  # the debug log toggle applies immediately, no restart
@@ -310,6 +314,13 @@ def post_settings(payload: dict) -> dict:
     except Exception:  # noqa: BLE001 - a logging toggle must never fail a settings save
         pass
     return saved
+
+
+@router.get("/settings/defaults")
+def get_setting_defaults() -> dict:
+    """The built-in defaults: Settings marks what differs from them and resets to them."""
+    from ..settings import DEFAULT_SETTINGS
+    return DEFAULT_SETTINGS
 
 
 @router.get("/settings/tables")

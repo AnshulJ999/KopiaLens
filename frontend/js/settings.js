@@ -81,6 +81,91 @@ function _settingsRow(el) {
 }
 const SETTINGS_INDEX = _settingsIndex();
 
+// Changed settings (x-kl-default on a label): [{key, label}] per Settings section, read from the page.
+// A key may be "a,b" for a row that holds two settings.
+function _klTabKeys() {
+  const out = {};
+  for (const sec of document.querySelectorAll('section[x-show^="settingsTab"]')) {
+    const tab = (/settingsTab==='(\w+)'/.exec(sec.getAttribute("x-show")) || [])[1];
+    if (!tab) continue;
+    const walk = (root) => {
+      for (const el of root.querySelectorAll("[x-kl-default], template")) {
+        if (el.tagName === "TEMPLATE") { walk(el.content); continue; }
+        const label = [...el.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent).join(" ").replace(/\s+/g, " ").trim();
+        (out[tab] = out[tab] || []).push({ key: el.getAttribute("x-kl-default").trim(), label });
+      }
+    };
+    walk(sec);
+  }
+  return out;
+}
+const KL_TAB_KEYS = _klTabKeys();
+// Reset one at a time only: a port change needs a restart, and update checks and usage stats are
+// the user's privacy choice.
+const KL_RESET_SKIP = new Set(["port", "control_port", "update_check", "usage_stats"]);
+// Settings saved by their own setter rather than saveKl: [state field, setter].
+const KL_LOOK = {
+  theme: ["theme", (vm, v) => vm.setTheme(v)],
+  density: ["density", (vm, v) => vm.setDensity(v)],
+  font: ["font", (vm, v) => vm.setFont(v)],
+  file_icons: ["fileIcons", (vm, v) => vm.setFileIcons(v)],
+  sort_arrows: ["sortArrows", (vm, v) => vm.setSortArrows(v)],
+  table_align: ["tableAlign", (vm, v) => vm.setTableAlign(v)],
+  panel_layout: ["panelLayout", (vm, v) => { vm.panelLayout = v; vm.klSet({ panel_layout: v }); }],
+  docs_view: ["docsView", (vm, v) => { vm.docsView = v; vm.klSet({ docs_view: v }); }],
+  policy_layout: ["polLayout", (vm, v) => { vm.polLayout = v; vm.klSet({ policy_layout: v }); }],
+  policy_leave: ["polLeave", (vm, v) => { vm.polLeave = v; vm.klSet({ policy_leave: v }); }],
+};
+const KL_DURATIONS = new Set(["disk_scan_budget", "index_worker_timeout", "index_first_timeout", "index_wait_unreachable",
+  "index_stall_timeout", "reindex_after_delete_delay", "index_retry_delay", "folder_prewarm_budget", "startup_delay"]);
+// How a default reads where the control's own options can't say it (keyed by the value as text).
+const KL_DEFAULT_TEXT = {
+  header_search_only: { false: "Header and Search tab", true: "Header only" },
+  show_pro_badge: { true: "Shown", false: "Hidden" },
+  index_backup_dir: { "": "Off" },
+  es_path: { "": "Found automatically" },
+  bzdata_path: { "": "Found automatically" },
+  mount_dir: { "": "In KopiaLens's data folder" },
+};
+function _klSecs(s) {
+  if (s % 86400 === 0) return s / 86400 + (s === 86400 ? " day" : " days");
+  if (s % 3600 === 0) return s / 3600 + (s === 3600 ? " hour" : " hours");
+  if (s % 60 === 0) return s / 60 + (s === 60 ? " minute" : " minutes");
+  return s + " seconds";
+}
+
+// x-kl-default="key" on a setting's label: a dot when the value differs from its default, and a
+// reset button shown on hover or keyboard focus (always on touch screens).
+document.addEventListener("alpine:init", () => {
+  Alpine.directive("kl-default", (el, { expression }, { effect }) => {
+    const keys = expression.trim();
+    const label = [...el.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent).join(" ").replace(/\s+/g, " ").trim();
+    el.classList.add("kl-setting");
+    const dot = document.createElement("span");
+    dot.className = "kl-changed-dot";
+    dot.setAttribute("role", "img");
+    dot.setAttribute("aria-label", "Changed");
+    dot.hidden = true;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "kl-reset-one";
+    btn.title = "Reset to default";
+    btn.setAttribute("aria-label", `Reset ${label} to default`);
+    btn.innerHTML = '<i class="ic ic-restore"></i>';
+    btn.hidden = true;
+    btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); Alpine.$data(el).klResetOne(keys); });
+    el.prepend(dot);
+    el.append(btn);
+    effect(() => {
+      const vm = Alpine.$data(el);
+      const changed = vm.klChanged(keys);
+      dot.hidden = btn.hidden = !changed;
+      if (changed) el.title = "Changed. Default: " + vm.klDefaultText(keys);
+      else el.removeAttribute("title");
+    });
+  });
+});
+
 const settingsPart = {
 
     settingsNav() {
@@ -92,6 +177,10 @@ const settingsPart = {
       if (!q) return [];
       const words = q.split(/\s+/);
       const titles = Object.fromEntries(this.settingsNav().flatMap((g) => g[1]));
+      if (q === "changed") {   // every setting that differs from its default
+        return Object.entries(KL_TAB_KEYS).flatMap(([tab, ks]) => !titles[tab] ? []
+          : ks.filter((k) => this.klChanged(k.key)).map((k, n) => ({ tab, label: k.label, desc: "", title: titles[tab], n })));
+      }
       const hits = [];
       SETTINGS_INDEX.forEach((r, n) => {
         if (!titles[r.tab]) return;
@@ -131,8 +220,129 @@ const settingsPart = {
       }
     },
 
+    // ---- Changed settings: the dot, and reset (one setting, a page, all) ----
+    async _klLoadDefaults() {
+      if (this._klDefaults) return;
+      try { this._klDefaults = await getJson("/api/settings/defaults"); } catch (e) { /* no markers until it loads */ }
+    },
+    _klDef(key) {
+      const d = this._klDefaults;
+      if (!d) return undefined;
+      // Without Everything on this computer, its choice reads as Off (_refreshDiskLookup).
+      if (key === "disk_lookup" && this.diskLookup && this.diskLookup.everything && !this.diskLookup.everything.supported) return "off";
+      const f = this.KL_FIELDS[key];
+      if (f && f.top) return d[key];
+      if (f && f.block === "backblaze") return (d.backblaze || {})[key];
+      return (d.kopialens || {})[key];
+    },
+    _klNow(key) {
+      if (KL_LOOK[key]) return this[KL_LOOK[key][0]];
+      const f = this.KL_FIELDS[key];
+      if (!f) return undefined;
+      const v = this[f.s];
+      if (f.t === "int" || f.t === "num") return Number(v);
+      if (f.t === "bool") return !!v;
+      if (f.t === "list") return String(v || "").split(",").map((p) => p.trim()).filter(Boolean);
+      return v == null ? "" : String(v);
+    },
+    klChanged(keys) {
+      return keys.split(",").some((key) => {
+        const d = this._klDef(key);
+        if (d === undefined) return false;
+        const v = this._klNow(key);
+        if (d !== null && typeof d === "object") return JSON.stringify(v) !== JSON.stringify(d);
+        return typeof d === "number" ? Number(v) !== d : v !== d;
+      });
+    },
+    // The default as the control shows it: the matching option's text where there is one.
+    klDefaultText(keys) {
+      const el = document.querySelector(`[data-testid="settings-modal"] [x-kl-default="${keys}"]`);
+      const row = el && el.parentElement;
+      const sels = row ? [...row.querySelectorAll("select")] : [];
+      return keys.split(",").map((key, i) => {
+        const d = this._klDef(key);
+        const named = (KL_DEFAULT_TEXT[key] || {})[Array.isArray(d) ? d.join(", ") : String(d)];
+        if (named) return named;
+        if (key === "logo" || key === "tray_icon") return (TRAY_ICONS.find((t) => t[0] === d) || [d, d])[1];
+        if (KL_DURATIONS.has(key)) return d ? _klSecs(Number(d)) : "Off";
+        const opt = sels[i] && [...sels[i].options].find((o) => o.value === String(d));
+        if (opt) return opt.textContent.trim();
+        if (typeof d === "boolean") return d ? "On" : "Off";
+        if (d === "" || (Array.isArray(d) && !d.length)) return "None";
+        if (typeof d === "string") return d.charAt(0).toUpperCase() + d.slice(1);
+        return String(d);
+      }).join(", ");
+    },
+    klTabChanged(tab) {
+      return (KL_TAB_KEYS[tab] || []).some((k) => this.klChanged(k.key));
+    },
+    klPageChanged() {
+      const tab = this.settingsTab === "refresh" ? "indexing" : this.settingsTab;
+      return (KL_TAB_KEYS[tab] || []).filter((k) => !k.key.split(",").some((x) => KL_RESET_SKIP.has(x)) && this.klChanged(k.key));
+    },
+    klAllChanged() {
+      return Object.values(KL_TAB_KEYS).flat().filter((k) => !k.key.split(",").some((x) => KL_RESET_SKIP.has(x)) && this.klChanged(k.key));
+    },
+    // Puts each setting back through its control's own save; the backend then drops the saved value.
+    async klResetKeys(keys) {
+      await this._klLoadDefaults();
+      let done = 0, restart = false;
+      for (const key of keys) {
+        const d = this._klDef(key);
+        if (d === undefined) continue;
+        if (KL_LOOK[key]) { KL_LOOK[key][1](this, d); done++; continue; }
+        const f = this.KL_FIELDS[key];
+        if (!f) continue;
+        this[f.s] = f.t === "list" ? (d || []).join(", ") : d;
+        if (await this.saveKl(key, true)) { done++; restart = restart || !!f.restart; }
+      }
+      return { done, restart };
+    },
+    async klResetOne(keys) {
+      const r = await this.klResetKeys(keys.split(","));
+      if (r.done) this.klNotify(r.restart ? "Reset to default - this setting needs a restart" : "Reset to default");
+    },
+    _klResetDone(r) {
+      if (!r.done) return;
+      const what = r.done === 1 ? "Reset 1 setting" : `Reset ${r.done} settings`;
+      this.klNotify(r.restart ? `${what}. Some need a restart.` : what);
+    },
+    _klResetFacts(items) {
+      const facts = items.slice(0, 12).map((k) => [k.label, this.klDefaultText(k.key)]);
+      if (items.length > 12) facts.push(["", `and ${items.length - 12} more`]);
+      return facts;
+    },
+    async klResetPage() {
+      const items = this.klPageChanged();
+      if (!items.length) return;
+      const n = items.length;
+      const ok = await this.klConfirm({
+        title: n === 1 ? "Reset 1 setting on this page?" : `Reset ${n} settings on this page?`,
+        body: "These go back to their defaults:", facts: this._klResetFacts(items),
+        confirmLabel: n === 1 ? "Reset 1 setting" : `Reset ${n} settings`,
+      });
+      if (!ok) return;
+      this._klResetDone(await this.klResetKeys(items.flatMap((k) => k.key.split(","))));
+    },
+    async klResetAll() {
+      const items = this.klAllChanged();
+      if (!items.length) return;
+      const n = items.length;
+      const ok = await this.klConfirm({
+        title: n === 1 ? "Reset 1 changed setting?" : `Reset all ${n} changed settings?`,
+        body: "These go back to their defaults. A backup of your settings is made first, so you can undo this from the list above.",
+        facts: this._klResetFacts(items), confirmLabel: n === 1 ? "Reset 1 setting" : `Reset ${n} settings`,
+      });
+      if (!ok) return;
+      try { await _cfgPost("/api/config-backups"); }
+      catch (e) { this.klNotify(`Couldn't back up your settings, so nothing was reset. ${e.message || ""}`.trim(), "warn"); return; }
+      this._klResetDone(await this.klResetKeys(items.flatMap((k) => k.key.split(","))));
+      this.loadCfg();
+    },
+
     async openSettings() {  // re-read the live settings file each open so the modal can't show stale state
       this.acc = null; this.accErr = "";
+      this._klLoadDefaults();
       try {
         const data = await getJson("/api/repos");
         const kl = data.settings?.kopialens || {};
@@ -185,7 +395,8 @@ const settingsPart = {
       this.showSettings = true;
     },
     _readAdvanced(kl) {
-      this.lightInterval = Number(kl.light_interval || 1800);
+      this.lightInterval = Number(kl.light_interval || 3600);
+      this.lightMode = ["always", "off"].includes(kl.light_mode) ? kl.light_mode : "in_use";
       this.dashboardInterval = Number(kl.dashboard_interval || 14400);
       this.indexWorkerTimeout = Number(kl.index_worker_timeout || 14400);
       this.indexFirstTimeout = Number(kl.index_first_timeout || 86400);
@@ -283,6 +494,7 @@ const settingsPart = {
       index_interval: { s: "indexInterval", t: "int", min: 3600 },
       dashboard_mode: { s: "dashboardMode", t: "choice", of: ["nightly", "interval"] },
       light_interval: { s: "lightInterval", t: "int", min: 60 },
+      light_mode: { s: "lightMode", t: "choice", of: ["in_use", "always", "off"] },
       dashboard_refresh: { s: "dashRefresh", t: "int", min: 0 },
       dashboard_interval: { s: "dashboardInterval", t: "int", min: 900 },
       index_worker_timeout: { s: "indexWorkerTimeout", t: "int", min: 600 },
@@ -431,9 +643,9 @@ const settingsPart = {
       try { await this._saveDiskPlaces(list); this.klNotify("Place removed"); }
       catch (e) { this.klNotify(e.message || String(e), "warn"); }
     },
-    saveKl(key) {
+    saveKl(key, quiet = false) {   // quiet: no "Saved" notice (a reset says what it did itself)
       const f = this.KL_FIELDS[key];
-      if (!f) return;
+      if (!f) return Promise.resolve(false);
       let v = this[f.s];
       if (f.t === "int") {
         v = Math.round(Number(v));
@@ -461,17 +673,19 @@ const settingsPart = {
         : { kopialens: { [key]: v } };
       return getJson("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
         .then(() => {
-          this.klNotify(f.restart ? "Saved - this setting needs a restart"
+          if (!quiet) this.klNotify(f.restart ? "Saved - this setting needs a restart"
             : f.reload ? "Saved - reload the page to see the change" : "Saved");
           if (key === "experimental" && !v && this.settingsTab === "experimental") this.settingsTab = "advanced";
           if (key === "dashboard_refresh") this.armAutoRefresh();
           if (key.startsWith("disk_") || key === "es_path") { this._excludedDrivesStale = true; this._refreshDiskLookup(); }
           if (key in this.savedPorts) this.savedPorts[key] = v;
           if (key === "update_channel") { this.loadUsagePreview(); if (this.updateCheck) this.checkUpdatesNow(); }
+          return true;
         })
         .catch((e) => {
           this.klNotify(e.message || String(e), "warn");   // Settings is open over the header
           if (key in this.savedPorts) this[f.s] = this.savedPorts[key];  // refused: show what is saved
+          return false;
         });
     },
 };

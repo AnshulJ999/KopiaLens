@@ -221,7 +221,7 @@ DEFAULTS = [
     ("indexing.md", r"unreachable repository after\*\* \| (\d+) minutes", _kl_in("index_wait_unreachable", 60)),
     ("indexing.md", r"makes no progress after\*\* \| (\d+) minutes", _kl_in("index_stall_timeout", 60)),
     ("settings.md", r"Once a day at (\d+):(\d+)", _index_time),
-    ("settings.md", r"\*\*Quick refresh\*\* \| (\d+) minutes", _kl_in("light_interval", 60)),
+    ("settings.md", r"\*\*Quick refresh\*\* \| (\d+) hours?", _kl_in("light_interval", 3600)),
     ("settings.md", r"\*\*Dashboard auto-refresh\*\* \| (\d+) minutes", _kl_in("dashboard_refresh", 60)),
     ("settings.md", r"\*\*Dashboard rebuild interval\*\* \| (\d+) hours", _kl_in("dashboard_interval", 3600)),
     ("disk-scanning.md", r"\*\*Scan time limit\*\* \| (\d+) seconds", _kl("disk_scan_budget")),

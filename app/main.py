@@ -61,7 +61,8 @@ FRONTEND = ROOT / "frontend"
 _bg_stop = threading.Event()
 _TICK = 60.0                       # scheduler heartbeat - the clock check must be finer than the work interval
 
-_DEFAULT_LIGHT_INTERVAL = 1800     # cheap warm pass: next-snapshot times, stats, search landing
+_DEFAULT_LIGHT_INTERVAL = 3600     # light pass: next-snapshot times, search landing
+_DETAILS_MAX_AGE = 22 * 3600       # repository details (status, content stats, cache, maintenance) once a day
 _DEFAULT_INDEX_INTERVAL = 86400    # used only when index_mode == "interval"
 _DEFAULT_INDEX_TIME = "23:00"      # daily mode: local wall-clock time for the heavy pass
 _DEFAULT_DASHBOARD_INTERVAL = 14400
@@ -104,6 +105,17 @@ def _index_interval() -> float:
         return max(300.0, float(_kl().get("index_interval", _DEFAULT_INDEX_INTERVAL)))
     except Exception:
         return _DEFAULT_INDEX_INTERVAL
+
+
+def _light_kopia_ok() -> bool:
+    """Whether the light pass may run kopia: Settings > Indexing > Quick refresh. "in_use" needs a
+    user request within the interval, so an unused KopiaLens stays quiet."""
+    mode = _kl().get("light_mode")
+    if mode == "off":
+        return False
+    if mode == "always":
+        return True
+    return time.time() - store.last_activity() < _light_interval() + 120
 
 
 def _light_interval() -> float:
@@ -275,6 +287,12 @@ def mark_nightly_result(repo: str, ok: bool, reason: str | None = None) -> None:
     if ok:
         data.setdefault("success", {})[repo] = time.time()
         errors.pop(repo, None)
+        if repo != "bz":
+            try:
+                from .api.stats import refresh_stats_later
+                refresh_stats_later(repo)      # the daily repository details, right after the index
+            except Exception as exc:  # noqa: BLE001 - the details pass catches up later
+                log.debug("details after index repo=%s: %s", repo, exc)
     else:
         errors[repo] = {"at": time.time(), "reason": (reason or "index pass failed")[:500]}
     _write_state(data)
@@ -392,26 +410,17 @@ def _warm_search(repo: str) -> None:
         log.warning("warm search-landing repo=%s failed (not retried until the next index): %s", repo, exc)
 
 
-def _warm(repo: str) -> None:
-    """LIGHT warm pass, in-process, on the light interval. Everything here is cheap - a couple of
-    already-cached kopia calls and one small query. The heavy work (index build, snapshot analysis,
-    reclaimable, churn rollup, the global-refcount dashboard rebuild) moved to the nightly worker
-    SUBPROCESS, which is what keeps this long-lived process's memory flat."""
-    try:
-        compute_next_snapshots(repo)
-        REPEATS.cleared(log, ("warm-next", repo), "warm next_snapshots repo=%s works again", repo)
-    except Exception as exc:  # noqa: BLE001 - the last answer stays cached
-        REPEATS.failed(log, logging.WARNING, ("warm-next", repo), "warm next_snapshots repo=%s failed: %s", repo, exc)
-    try:
-        from .core import coexist                 # the Backups panel reads it on open
-        coexist.maintenance_info(repo)
-    except Exception as exc:  # noqa: BLE001
-        log.debug("warm maintenance info repo=%s failed: %s", repo, exc)
-    try:
-        from .api.stats import refresh_stats
-        refresh_stats(repo)
-    except Exception as exc:  # noqa: BLE001
-        log.error("warm stats repo=%s failed: %s", repo, exc)
+def _warm(repo: str, kopia_ok: bool) -> None:
+    """LIGHT warm pass, in-process, on the light interval: next-snapshot times (the snapshot list,
+    plus a policy export when the saved one is over an hour old) and the Search start page.
+    Repository details are read once a day instead (``_details_pass``). The heavy work runs in the
+    nightly worker SUBPROCESS, which is what keeps this long-lived process's memory flat."""
+    if kopia_ok:
+        try:
+            compute_next_snapshots(repo)
+            REPEATS.cleared(log, ("warm-next", repo), "warm next_snapshots repo=%s works again", repo)
+        except Exception as exc:  # noqa: BLE001 - the last answer stays cached
+            REPEATS.failed(log, logging.WARNING, ("warm-next", repo), "warm next_snapshots repo=%s failed: %s", repo, exc)
     _warm_search(repo)
     if not _dashboard_nightly_only() and not pause.active():  # opt-in daytime rebuild
         now = time.time()
@@ -443,6 +452,7 @@ def _light_pass() -> None:
         REPEATS.failed(log, logging.INFO, ("light-locked",), "light pass skipped: the index is encrypted and locked")
     else:
         REPEATS.cleared(log, ("light-locked",), "light pass running again: the index is unlocked")
+    kopia_ok = _light_kopia_ok()
     for repo in list(REPOS):
         if _bg_stop.is_set():
             return
@@ -453,12 +463,32 @@ def _light_pass() -> None:
         if locked or nightly.is_running(repo) or offline_status(repo):
             continue  # locked, or the worker owns the DuckDB right now
         try:
-            _warm(repo)
+            _warm(repo, kopia_ok)
             REPEATS.cleared(log, ("light", repo), "light pass repo=%s works again", repo)
         except RepoOffline:
             continue  # raced with the start of a nightly pass; nothing to do
         except Exception as exc:  # noqa: BLE001
             REPEATS.failed(log, logging.ERROR, ("light", repo), "light pass repo=%s failed: %s", repo, exc)
+
+
+def _details_pass() -> None:
+    """Repository details once a day per repository: after its nightly index (mark_nightly_result),
+    or here when the saved copy is older than a day (no nightly, or the PC was off). Opening the
+    Repository screen also refreshes a copy older than an hour."""
+    from .api.stats import refresh_stats_later, stats_age
+    from .index import crypto
+    if crypto.enabled() and not crypto.unlocked():
+        return
+    for repo in list(REPOS):
+        if repo_kind(repo) == "backblaze" or repos_store.via_server(repo) or is_demo(repo):
+            continue
+        if nightly.is_running(repo) or offline_status(repo):
+            continue
+        try:
+            if stats_age(repo) >= _DETAILS_MAX_AGE:
+                refresh_stats_later(repo)
+        except Exception as exc:  # noqa: BLE001 - the saved copy stays on screen
+            log.debug("details pass repo=%s: %s", repo, exc)
 
 
 _DEFAULT_BZ_REINDEX_GAP = 21600   #: min seconds between real BZ reindexes (detect runs far more often)
@@ -636,6 +666,7 @@ def _tick() -> None:
     if now_ts - _last_light >= _light_interval():
         _last_light = now_ts
         _light_pass()
+        _details_pass()
         _bz_detect_pass()
         _bz_transmit_pass()
         gc.collect()  # return the pass's transient arenas (pymalloc will not on its own)
@@ -653,6 +684,7 @@ def _bg_worker() -> None:
         return  # shutdown requested during the startup delay
     _last_light = time.time()
     _light_pass()
+    _details_pass()
     _bz_detect_pass()  # BZ catch-up: after the PC was off, the first detect flags any missed change
     _bz_transmit_pass()  #: the pill/queue/dashboard cards are fresh from the first tick
     gc.collect()
