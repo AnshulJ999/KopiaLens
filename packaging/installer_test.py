@@ -87,6 +87,7 @@ def needed() -> bool:
 def _config(in_dir: str, out_dir: str, script: str) -> str:
     return f"""<Configuration>
   <MemoryInMB>4096</MemoryInMB>
+  <vGPU>Disable</vGPU>
   <MappedFolders>
     <MappedFolder><HostFolder>{escape(in_dir)}</HostFolder><SandboxFolder>C:\\kltest\\in</SandboxFolder><ReadOnly>true</ReadOnly></MappedFolder>
     <MappedFolder><HostFolder>{escape(out_dir)}</HostFolder><SandboxFolder>C:\\kltest\\out</SandboxFolder><ReadOnly>false</ReadOnly></MappedFolder>
