@@ -149,6 +149,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "control_port": 7124,        # the tray's control port (env KOPIALENS_TRAY_PORT wins)
         "tray_click": "window",      # desktop app tray icon click: window | menu (right-click always shows the menu)
         "tray_double_click": "window",  # tray icon double-click (Windows): window | none
+        "desktop_signin": False,     # the desktop app's window opens signed in; browsers still sign in
         "notifications": "warnings",  # desktop app toasts: all | warnings | off
         # ---- unified store () ---------------------------------------------------------
         # Encryption at rest (). Three levels, decided in onboarding ():

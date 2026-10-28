@@ -14,9 +14,11 @@ history (kopia keeps them in memory only) and kept for `task_history_days`.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 import socket
+import ssl
 import subprocess
 import threading
 import time
@@ -28,7 +30,7 @@ import config
 from config import DATA_DIR
 
 from . import filecrypto
-from .applog import LOG_DIR, get_logger
+from .applog import LOG_DIR, REPEATS, get_logger
 from .coexist import MOVED_SUFFIX
 from . import atomicfile
 
@@ -37,6 +39,7 @@ log = get_logger("engine")
 STATE_FILE = os.path.join(DATA_DIR, "engine_state.json")
 HISTORY_FILE = os.path.join(DATA_DIR, "engine_tasks.jsonl")
 ENGINE_LOG_DIR = os.path.join(LOG_DIR, "engine")
+TLS_DIR = os.path.join(DATA_DIR, "tls")
 RECONCILE_EVERY = 20.0
 POLL_EVERY = 5.0
 CONNECT_TIMEOUT = 900.0      # opening a very large repository can take minutes
@@ -56,16 +59,19 @@ _stop = threading.Event()
 _threads: list[threading.Thread] = []
 _hist_lock = threading.Lock()
 _last_prune = 0.0
+_tls_failed = False                  # a server on HTTPS never came up: plain HTTP until restart
 _hint_cache: dict[str, tuple[float, list[dict]]] = {}
 
 
 class _Server:
     def __init__(self, repo: str, proc: subprocess.Popen, port: int, ui_pw: str, ctl_pw: str,
-                 log_path: str) -> None:
-        self.repo, self.proc, self.port = repo, proc, port
-        self.ui = httpx.Client(base_url=f"http://127.0.0.1:{port}", auth=("kopia", ui_pw),
+                 log_path: str, cert: str | None = None) -> None:
+        self.repo, self.proc, self.port, self.tls = repo, proc, port, bool(cert)
+        base = f"{'https' if cert else 'http'}://127.0.0.1:{port}"
+        verify = ssl.create_default_context(cafile=cert) if cert else True
+        self.ui = httpx.Client(base_url=base, auth=("kopia", ui_pw), verify=verify,
                                timeout=httpx.Timeout(30.0, connect=5.0))
-        self.ctl = httpx.Client(base_url=f"http://127.0.0.1:{port}", auth=("server-control", ctl_pw),
+        self.ctl = httpx.Client(base_url=base, auth=("server-control", ctl_pw), verify=verify,
                                 timeout=httpx.Timeout(30.0, connect=5.0))
         self.started = time.time()
         self.tag = str(int(self.started))   # kopia numbers tasks from 1 on every start
@@ -275,13 +281,37 @@ def _reader(srv: _Server) -> None:
         pass
 
 
+def _tls_pair() -> tuple[str, str] | None:
+    """The engine's own certificate for 127.0.0.1, or None (plain HTTP) when it can't be made or
+    a server on it failed to start this session."""
+    if _tls_failed:
+        return None
+    from . import netaccess
+    try:
+        return netaccess.ensure_cert(TLS_DIR, "engine", ["localhost"], ["127.0.0.1"])
+    except Exception as exc:  # noqa: BLE001 - best effort: plain HTTP on loopback still works
+        log.warning("engine: could not make its HTTPS certificate (%s) - using plain HTTP", exc)
+        return None
+
+
+def _tls_broke(srv: _Server) -> None:
+    """A server started on HTTPS never answered: later starts use plain HTTP."""
+    global _tls_failed
+    if srv.tls and srv.connected_at is None and not _tls_failed:
+        _tls_failed = True
+        log.warning("engine repo=%s: kopia server on HTTPS never came up - using plain HTTP until "
+                    "KopiaLens restarts", srv.repo)
+
+
 def _start(repo: str) -> _Server | None:
     from . import kopiabin
     from .kopia import _kopia_exe, _repo_args
     port = _free_port()
     ui_pw, ctl_pw = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
-    cmd = [_kopia_exe()] + _repo_args(repo) + [
-        "server", "start", "--insecure", "--disable-csrf-token-checks", "--no-grpc",
+    pair = _tls_pair()
+    tls = [f"--tls-cert-file={pair[0]}", f"--tls-key-file={pair[1]}"] if pair else ["--insecure"]
+    cmd = [_kopia_exe()] + _repo_args(repo) + ["server", "start"] + tls + [
+        "--disable-csrf-token-checks", "--no-grpc",
         "--async-repo-connect", f"--address=127.0.0.1:{port}", "--shutdown-on-stdin",
         "--kopiaui-notifications", "--error-notifications=always",
     ]
@@ -295,15 +325,16 @@ def _start(repo: str) -> _Server | None:
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                             stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
                             env=env, creationflags=_NO_WINDOW)
-    srv = _Server(repo, proc, port, ui_pw, ctl_pw, log_path)
-    _log_line(srv, f"=== KopiaLens started its kopia server (pid {proc.pid}, port {port}) ===")
+    srv = _Server(repo, proc, port, ui_pw, ctl_pw, log_path, pair[0] if pair else None)
+    _log_line(srv, f"=== KopiaLens started its kopia server (pid {proc.pid}, port {port}, "
+                   f"{'HTTPS' if pair else 'HTTP'}) ===")
     threading.Thread(target=_reader, args=(srv,), name=f"engine-out-{repo}", daemon=True).start()
-    log.warning("ENGINE START repo=%s pid=%s port=%s", repo, proc.pid, port)
+    log.info("engine started repo=%s pid=%s port=%s %s", repo, proc.pid, port, "https" if pair else "http")
     _audit("engine-start", repo, {"pid": proc.pid})
     return srv
 
 
-def _stop_server(srv: _Server, reason: str) -> None:
+def _stop_server(srv: _Server, reason: str, normal: bool = False) -> None:
     srv.stopping = True
     try:
         if srv.proc.stdin:
@@ -323,7 +354,8 @@ def _stop_server(srv: _Server, reason: str) -> None:
                 pass
     srv.close()
     _log_line(srv, f"=== KopiaLens stopped its kopia server ({reason}) ===")
-    log.warning("ENGINE STOP repo=%s reason=%s", srv.repo, reason)
+    normal = normal or reason in ("off", "paused", "write_mode", "removed", "KopiaLens is closing")
+    (log.info if normal else log.warning)("engine stopped repo=%s reason=%s", srv.repo, reason)
     _audit("engine-stop", srv.repo, {"reason": reason})
 
 
@@ -401,7 +433,7 @@ def _note_failure(repo: str, error: str) -> None:
     f["next_try"] = time.time() + min(60 * 2 ** (f["count"] - 1), 1800)
     if f["count"] in (1, 3) or f["count"] % 10 == 0:
         alert(repo, "error", f"Backups for {_repo_label(repo)} stopped", error[-200:])
-    log.error("engine repo=%s failed (%d): %s", repo, f["count"], error)
+    REPEATS.failed(log, logging.ERROR, ("engine", repo), "engine repo=%s failed (%d): %s", repo, f["count"], error)
 
 
 # ---- polling ---------------------------------------------------------------------------------
@@ -418,12 +450,21 @@ def _poll_one(srv: _Server) -> None:
             with _lock:
                 _servers.pop(srv.repo, None)
             srv.close()
+            _tls_broke(srv)
             _note_failure(srv.repo, srv.last_err or f"kopia server exited ({srv.proc.returncode})")
         return
     try:
         st = _get(srv.ctl, "/api/v1/control/status")
-    except Exception:  # noqa: BLE001 - still starting up
+    except Exception as exc:  # noqa: BLE001 - still starting up
+        if srv.tls and "ssl" in repr(exc).lower():   # listening, but HTTPS itself fails
+            _tls_broke(srv)
+            _stop_server(srv, "HTTPS failed")
+            with _lock:
+                _servers.pop(srv.repo, None)
+            _note_failure(srv.repo, f"KopiaLens couldn't talk to its kopia server over HTTPS: {exc}")
+            return
         if time.time() - srv.started > CONNECT_TIMEOUT:
+            _tls_broke(srv)
             _stop_server(srv, "did not open the repository")
             with _lock:
                 _servers.pop(srv.repo, None)
@@ -444,7 +485,8 @@ def _poll_one(srv: _Server) -> None:
         srv.connected_at = time.time()
         _states[srv.repo] = "running"
     if time.time() - srv.connected_at > 600:
-        _fail.pop(srv.repo, None)
+        if _fail.pop(srv.repo, None):
+            REPEATS.cleared(log, ("engine", srv.repo), "engine repo=%s running again", srv.repo)
     try:
         srv.sources = (_get(srv.ctl, "/api/v1/control/sources") or {}).get("sources") or []
         _apply_source_pauses(srv.repo)
@@ -499,7 +541,7 @@ def restart(repo: str, reason: str) -> bool:
         srv = _servers.pop(repo, None)
     if srv is None:
         return False
-    _stop_server(srv, reason)
+    _stop_server(srv, reason, normal=True)
     wake()
     return True
 

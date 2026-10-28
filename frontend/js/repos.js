@@ -562,20 +562,21 @@ const reposPart = {
       if (!k) return "";
       if (!k.available) return "Not found";
       const src = { bundled: "bundled", setting: "chosen here", environment: "set by environment", PATH: "on PATH", "install location": "installed", KopiaUI: "from KopiaUI" }[k.source] || k.source || "";
-      const fit = { older: `older than KopiaLens supports (${k.minimum} or newer)`, newer: `newer than tested (${k.tested})` }[k.compat] || "";
+      const fit = { older: `older than KopiaLens supports (${k.minimum} or newer)`, behind: `older than tested (${k.tested})`, newer: `newer than tested (${k.tested})` }[k.compat] || "";
       return [k.version ? `kopia ${k.version}` : "kopia", src, fit].filter(Boolean).join(" · ");
     },
-    // Once per kopia version: a kopia newer than tested gets a note; one older than supported
-    // gets a warning on every start (some screens can't work with it).
+    // Once per kopia version: a kopia newer or older than tested gets a note; one older than
+    // supported gets a warning on every start (some screens can't work with it).
     kopiaCompatNote(k) {
-      if (!k || !k.version || !["older", "newer"].includes(k.compat)) return;
+      if (!k || !k.version || !["older", "behind", "newer"].includes(k.compat)) return;
       if (k.compat === "older") {
         this.klNotify(`kopia ${k.version} is older than KopiaLens supports (${k.minimum} or newer). Policies and notifications won't work. Update kopia, or pick another kopia in Settings → Repositories.`, "warn");
         return;
       }
       const key = "kl-kopia-newer-seen";
       try { if (localStorage.getItem(key) === k.version) return; localStorage.setItem(key, k.version); } catch (e) { /* show it anyway */ }
-      this.klNotify(`kopia ${k.version} is newer than the version KopiaLens was tested with (${k.tested}). If something doesn't work, report it from Help.`);
+      const side = k.compat === "behind" ? "older" : "newer";
+      this.klNotify(`kopia ${k.version} is ${side} than the version KopiaLens was tested with (${k.tested}). If something doesn't work, report it from Help.`);
     },
     async raKopiaSave(path) {
       try {

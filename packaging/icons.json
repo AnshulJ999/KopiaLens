@@ -103,7 +103,7 @@
   "tf-file-db": "tabler-filled/database",
   "tf-file-font": "tabler-filled/file-typography",
   "time-auto": "phosphor/calendar-dots",
-  "view-tabs": "phosphor/tabs",
+  "view-tabs": "phosphor/cards",
   "view-rows": "phosphor/rows",
   "_variants": {
     "header-light": {
@@ -217,10 +217,10 @@
         "view-tabs": "phosphor/browsers"
       }
     },
-    "view-tabs-cards": {
-      "selector": "html[data-d-tabsicon=\"cards\"] .ic-{name}",
+    "view-tabs-tabs": {
+      "selector": "html[data-d-tabsicon=\"tabs\"] .ic-{name}",
       "icons": {
-        "view-tabs": "phosphor/cards"
+        "view-tabs": "phosphor/tabs"
       }
     },
     "view-tabs-window": {

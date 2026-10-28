@@ -842,8 +842,8 @@ def _establish(verb: str, provider: str, fields: dict, password: str, name: str,
     })
     repos.capture_status(rid, status or None)
     status = repos.storage_info(rid)
-    log.warning("repo=%s %s (%s, %s)", rid, "created" if verb == "create" else "connected",
-                provider, status.get("type") or "?")
+    log.info("repo=%s %s (%s, %s)", rid, "created" if verb == "create" else "connected",
+             provider, status.get("type") or "?")
     audit.audit("executed", f"repo-{verb}", repo=rid,
                 summary={"provider": provider, "ok": True, "config": config_file,
                          "storage": status.get("type")})
@@ -1193,7 +1193,7 @@ def reconnect(repo: str, password: str, keys: dict | None = None) -> dict:
         _disconnect(repo, cfg)
         _remove_config_files(cfg)
         raise ValueError("That storage now holds a different repository. Remove this one and add it again.")
-    log.warning("repo=%s connection file rebuilt at %s", repo, cfg)
+    log.info("repo=%s connection file rebuilt at %s", repo, cfg)
     return {"ok": True, "status": probe(repo=repo)}
 
 
@@ -1255,7 +1255,7 @@ def take_connection(repo: str, mode: str, password: str) -> dict:
     repos.set_engine_fields(repo, fields)
     audit.audit("executed", "repo-take-connection", repo=repo,
                 summary={"mode": mode, "from": src, "to": dst})
-    log.warning("repo=%s connection %s to %s", repo, "moved" if mode == "move" else "copied", dst)
+    log.info("repo=%s connection %s to %s", repo, "moved" if mode == "move" else "copied", dst)
     if engine.running(repo) is not None:
         engine.restart(repo, "connection file changed")
     return {"ok": True, "repo": repos.detail(config.repo_record(repo)), "to": dst}
@@ -1306,7 +1306,7 @@ def set_readonly(repo: str, on: bool, shared_ok: bool = False) -> dict:
     if not ok:
         raise ValueError(_last_meaningful_line((res.get("stderr") or "") + "\n" + (res.get("stdout") or ""))
                          or "kopia could not change the connection.")
-    log.warning("repo=%s kopia read-only connection %s", repo, "on" if on else "off")
+    log.info("repo=%s kopia read-only connection %s", repo, "on" if on else "off")
     try:
         from . import engine
         engine.wake()

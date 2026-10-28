@@ -124,8 +124,8 @@ def migrate(root: str, manifest: dict) -> dict | None:
         log.error("index migration %r returned no usable manifest for %s - rebuilding", step["name"],
                   root)
         return None
-    log.warning("index migrated in place: %s (format %s -> %s, %.2fs)", root, found,
-                MANIFEST_VERSION, time.time() - t0)
+    log.info("index migrated in place: %s (format %s -> %s, %.2fs)", root, found,
+             MANIFEST_VERSION, time.time() - t0)
     return out
 
 
@@ -174,8 +174,8 @@ def request_rebuild(repo: str, trigger: str = "upgrade") -> dict:
         return {"started": True, "queued": False}
     with _QUEUE_LOCK:
         _REBUILD_QUEUE.setdefault(repo, time.time())
-    log.warning("repo=%s needs an index rebuild; a pass is busy (%s) so it is queued",
-                repo, started.get("reason"))
+    log.info("repo=%s needs an index rebuild; a pass is busy (%s) so it is queued",
+             repo, started.get("reason"))
     return {"started": False, "queued": True}
 
 
@@ -200,7 +200,7 @@ def drain_queue() -> list[str]:
         with _QUEUE_LOCK:
             _REBUILD_QUEUE.pop(repo, None)
         started.append(repo)
-        log.warning("queued index rebuild for repo=%s started", repo)
+        log.info("queued index rebuild for repo=%s started", repo)
     return started
 
 
@@ -237,8 +237,8 @@ def migrate_all_repos(repos: list) -> dict:
             continue
         if nightly.is_running(repo):
             skipped.append(repo)
-            log.warning("repo=%s has an older index format but its worker is running - the migration "
-                        "waits for the next start", repo)
+            log.info("repo=%s has an older index format but its worker is running - the migration "
+                     "waits for the next start", repo)
             continue
         import json
         root = repo_dir(repo)

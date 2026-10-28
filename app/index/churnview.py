@@ -493,7 +493,7 @@ def prewarm(repo: str, depth: int | None = None, windows=WINDOWS) -> None:
             cur.execute(_SHARED_SQL.format(tmp=table), _qualify_params(widest))
             shared = (cur, table)
         except Exception as exc:  # noqa: BLE001 - each window then groups on its own, as before
-            log.error("churn prewarm repo=%s: shared set failed, per-window passes: %s", repo, exc)
+            log.warning("churn prewarm repo=%s: shared set failed, per-window passes: %s", repo, exc)
         currents: dict[int, dict | None] = {}
         for d in dict.fromkeys((depth, _PANEL_DEPTH)):
             try:

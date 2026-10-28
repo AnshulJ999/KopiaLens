@@ -11,13 +11,14 @@ elsewhere) - this module never writes to kopia.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
 
 from config import CACHEDIR
 
-from .applog import get_logger
+from .applog import REPEATS, get_logger
 from .kopia import kopia, page_kopia_ok
 from .paths import path_sep
 
@@ -95,7 +96,8 @@ def refresh_policies(repo: str, force: bool = False) -> dict:
     failed = 0
     resolved = _resolve_all(repo, sorted(live))
     if resolved is None:
-        log.warning("repo=%s policy export unavailable - falling back to one policy show per source", repo)
+        REPEATS.failed(log, logging.WARNING, ("policy-resolve", repo),
+                       "repo=%s policy export unavailable - falling back to one policy show per source", repo)
         for key in sorted(live):
             try:
                 policies[key] = show_policy(repo, key)
@@ -114,8 +116,14 @@ def refresh_policies(repo: str, force: bool = False) -> dict:
         policies.pop(gone)      # source no longer exists; do not keep its policy forever
     if policies:
         _write_policies(repo, policies)
-    (log.warning if failed else log.debug)("policies repo=%s: %d known, %d failed this pass",
-                                           repo, len(policies), failed)
+    if failed:
+        REPEATS.failed(log, logging.WARNING, ("policy-read", repo),
+                       "policies repo=%s: %d known, %d failed this pass", repo, len(policies), failed)
+    else:
+        if resolved is not None:
+            REPEATS.cleared(log, ("policy-resolve", repo), "repo=%s policy export works again", repo)
+        REPEATS.cleared(log, ("policy-read", repo), "policies repo=%s: all %d read again", repo, len(policies))
+        log.debug("policies repo=%s: %d known", repo, len(policies))
     return policies
 
 
@@ -222,7 +230,10 @@ def _refresh_policies_bg(repo: str) -> None:
     try:
         refresh_policies(repo, force=True)
     except Exception as exc:  # noqa: BLE001 - the stale cache stands; the next pass retries
-        log.warning("background policy refresh repo=%s failed: %s", repo, exc)
+        REPEATS.failed(log, logging.WARNING, ("policy-bg", repo),
+                       "background policy refresh repo=%s failed: %s", repo, exc)
+    else:
+        REPEATS.cleared(log, ("policy-bg", repo), "background policy refresh repo=%s works again", repo)
     finally:
         with _REFRESH_LOCK:
             _REFRESHING.discard(repo)
@@ -309,17 +320,19 @@ def _export_defined(repo: str, cached: dict) -> tuple[dict, bool]:
     try:
         res = kopia(repo, ["policy", "export", "--to-file", tmp, "--overwrite"])
         if res.returncode != 0:
-            log.warning("policy export failed repo=%s rc=%d: %s", repo, res.returncode,
-                        (res.stderr or "").strip()[:300])
+            REPEATS.failed(log, logging.WARNING, ("policy-export", repo), "policy export failed repo=%s rc=%d: %s",
+                           repo, res.returncode, (res.stderr or "").strip()[:300])
             return cached, False
         with open(tmp, encoding="utf-8") as fh:
             data = json.load(fh)
         if not isinstance(data, dict):
             raise ValueError("policy export produced %s, expected an object" % type(data).__name__)
         _write_defined(repo, data)
+        REPEATS.cleared(log, ("policy-export", repo), "policy export repo=%s works again", repo)
         return {"ts": time.time(), "policies": data}, True
     except Exception as exc:  # noqa: BLE001 - a failed export must not blank the tab
-        log.warning("policy export/verify failed repo=%s (keeping previous): %s", repo, exc)
+        REPEATS.failed(log, logging.WARNING, ("policy-export", repo),
+                       "policy export/verify failed repo=%s (keeping previous): %s", repo, exc)
         return cached, False
     finally:
         try:

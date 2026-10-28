@@ -204,10 +204,10 @@ def recover(repo: str, reason: str) -> dict | None:
         when = (man.get("kept") or {}).get("published_at") or (man.get("backup") or {}).get("at")
         info = {"repo": repo, "from": where, "generation": new["generation"],
                 "version_at": when, "reason": str(reason)[:300]}
-        log.error("repo=%s the index was damaged (%s) - switched to the %s from %s; the next "
-                  "index run brings it up to date", repo, reason,
-                  "kept version" if where == "kept" else "folder copy",
-                  time.strftime("%Y-%m-%d %H:%M", time.localtime(when)) if when else "?")
+        log.warning("repo=%s the index was damaged (%s) - switched to the %s from %s; the next "
+                    "index run brings it up to date", repo, reason,
+                    "kept version" if where == "kept" else "folder copy",
+                    time.strftime("%Y-%m-%d %H:%M", time.localtime(when)) if when else "?")
         _add_notice(info)
         try:
             from ..core import audit

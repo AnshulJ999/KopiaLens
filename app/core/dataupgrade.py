@@ -163,7 +163,7 @@ def prune_dead_settings() -> list[str]:
         if removed:
             atomic_json(SETTINGS_FILE, data)
     if removed:
-        log.warning("settings: removed dead key(s) %s", ", ".join(removed))
+        log.info("settings: removed dead key(s) %s", ", ".join(removed))
     return removed
 
 
@@ -243,8 +243,8 @@ def run_pending() -> dict:
             elapsed = round(time.time() - t0, 2)
             ran.append({"from": version - 1, "to": version, "name": step["name"],
                         "seconds": elapsed, "report": report})
-            log.warning("data upgrade step %r done (v%s -> v%s, %.2fs) %s", step["name"],
-                        version - 1, version, elapsed, report or "")
+            log.info("data upgrade step %r done (v%s -> v%s, %.2fs) %s", step["name"],
+                     version - 1, version, elapsed, report or "")
     finally:
         with _LOCK:
             _STATE["running"] = False

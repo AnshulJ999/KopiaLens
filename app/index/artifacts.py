@@ -453,11 +453,11 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
         saved = None
     tsaved = resume.load_tree(staging, repo, encrypted, base) if saved is None else None
     if saved is not None:
-        log.warning("repo=%s continuing the index read where it stopped (level %s, %s folders read)",
-                    repo, saved.get("level"), saved.get("fetched"))
+        log.info("repo=%s continuing the index read where it stopped (level %s, %s folders read)",
+                 repo, saved.get("level"), saved.get("fetched"))
     elif tsaved is not None:
-        log.warning("repo=%s continuing from the saved read; only what is new since is read from "
-                    "kopia", repo)
+        log.info("repo=%s continuing from the saved read; only what is new since is read from "
+                 "kopia", repo)
     scratch, con = _scratch(staging, keep=saved is not None)
     prev_art = (prev or {}).get("artifacts", {})
     moves: list[tuple[str, str]] = []

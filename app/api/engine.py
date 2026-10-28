@@ -48,9 +48,13 @@ def repo_detail(repo: str) -> dict:
                 "view": {"engine": "kopialens", "running": [], "conflict": False},
                 "health": None, "hints": [], "identity": None, "sources": []}
     _need_repo(repo)
-    return {"status": engine.repo_status(repo), "view": coexist.repo_view(repo, with_owner=True),
-            "health": engine.health(repo), "hints": engine.hints(repo),
-            "identity": coexist.identity_check(repo), "sources": engine.source_status(repo)}
+    from ..core.kopia import page_kopia_ok
+    # The Backups dialog, opened by a click; kopia runs only before the first maintenance-info answer
+    # is cached (the light pass keeps it fresh after that).
+    with page_kopia_ok("no saved maintenance info yet"):
+        return {"status": engine.repo_status(repo), "view": coexist.repo_view(repo, with_owner=True),
+                "health": engine.health(repo), "hints": engine.hints(repo),
+                "identity": coexist.identity_check(repo), "sources": engine.source_status(repo)}
 
 
 @router.get("/engine/sources")

@@ -27,7 +27,109 @@ function klDur(prop, key) {
   };
 }
 
+// The Settings section list: [group, [[section id, title], ...]].
+const SETTINGS_NAV = [
+  ["App", [["general", "General"], ["appearance", "Appearance"], ["desktop", "Desktop app"], ["notifications", "Notifications"]]],
+  ["Data", [["repositories", "Repositories"], ["indexing", "Indexing"], ["diskscan", "Disk scanning"], ["backblaze", "Backblaze"]]],
+  ["Access", [["account", "Account"], ["encryption", "Encryption"], ["remote", "Remote access"], ["writemode", "Permissions"], ["tokens", "API tokens"]]],
+  ["More", [["licence", "Licence"], ["updates", "Updates"], ["backups", "Config"], ["advanced", "Advanced"], ["experimental", "Experimental"], ["about", "About"]]],
+];
+// Other words people search for a section by.
+const SETTINGS_SYNONYMS = {
+  general: "numbers dates time format language", appearance: "theme dark light colour color density font logo layout",
+  desktop: "tray startup autostart window", notifications: "webhook ntfy alerts email",
+  repositories: "repo connect kopia path", indexing: "index schedule memory threads refresh", diskscan: "disk drives scanner",
+  account: "password sign in login logout user", encryption: "password key encrypt unlock", remote: "network lan https certificate address browser",
+  writemode: "permissions read only write mode", tokens: "api key token", licence: "license pro key activate patreon",
+  updates: "update beta channel version usage statistics", backups: "config backup export import restore settings file",
+  advanced: "debug log timeout", about: "version help support",
+};
+
+// Built from the page's own markup before Alpine runs, so every setting (even one shown only in some
+// cases) is searchable with no upkeep: each label in a section, with the help line under it.
+function _settingsIndex() {
+  const titles = Object.fromEntries(SETTINGS_NAV.flatMap((g) => g[1]));
+  const norm = (t) => (t || "").replace(/\s+/g, " ").trim();
+  const out = [];
+  for (const sec of document.querySelectorAll('section[x-show^="settingsTab"]')) {
+    const tab = (/settingsTab==='(\w+)'/.exec(sec.getAttribute("x-show")) || [])[1];
+    if (!titles[tab]) continue;
+    out.push({ tab, label: titles[tab], desc: "", section: true,
+      hay: (titles[tab] + " " + (SETTINGS_SYNONYMS[tab] || "")).toLowerCase() });
+    const seen = new Set([titles[tab].toLowerCase()]);
+    const walk = (root) => {
+      for (const el of root.querySelectorAll("*")) {
+        if (el.tagName === "TEMPLATE") { if (!el.hasAttribute("x-for")) walk(el.content); continue; }
+        if (!/^(SPAN|LABEL|DIV|H3|H4|LEGEND)$/.test(el.tagName) || el.closest("button, select, option, a, textarea, [x-text], [x-html]")) continue;
+        const label = norm([...el.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent).join(" "));
+        if (label.length < 3 || label.length > 70 || /[.:]$/.test(label) || !/^[A-Za-z]/.test(label) || seen.has(label.toLowerCase())) continue;
+        seen.add(label.toLowerCase());
+        const p = _settingsRow(el) && [..._settingsRow(el).children].find((c) => c.tagName === "P");
+        const desc = p ? norm(p.textContent) : "";
+        out.push({ tab, label, desc, hay: (label + " " + desc).toLowerCase() });
+      }
+    };
+    walk(sec);
+  }
+  return out;
+}
+// The block a setting's label belongs to: its row, or the row's wrapper when the help line sits under it.
+function _settingsRow(el) {
+  let box = el.parentElement;
+  if (box && box.classList.contains("flex") && box.parentElement && box.parentElement.tagName !== "SECTION") box = box.parentElement;
+  return box;
+}
+const SETTINGS_INDEX = _settingsIndex();
+
 const settingsPart = {
+
+    settingsNav() {
+      return SETTINGS_NAV.map(([g, items]) => [g, items.filter(([id]) => id !== "experimental" || this.experimental)]);
+    },
+    // Best first: the label itself matches, then its help line; within that the docs search's tiers.
+    settingsResults() {
+      const q = this.settingsQuery.trim().toLowerCase();
+      if (!q) return [];
+      const words = q.split(/\s+/);
+      const titles = Object.fromEntries(this.settingsNav().flatMap((g) => g[1]));
+      const hits = [];
+      SETTINGS_INDEX.forEach((r, n) => {
+        if (!titles[r.tab]) return;
+        const own = docsMatch(r.label.toLowerCase(), q, words).tier;
+        const tier = own || docsMatch(r.hay, q, words).tier;
+        if (tier) hits.push({ ...r, title: titles[r.tab], rank: (own ? 10 : 0) + tier * 2 + (r.section ? 1 : 0), n });
+      });
+      return hits.sort((a, b) => b.rank - a.rank || a.n - b.n).slice(0, 40);
+    },
+    settingsGo(r) {
+      this.settingsTab = r.tab;
+      this.settingsQuery = "";
+      if (r.section) return;
+      this.$nextTick(() => {
+        const sec = [...document.querySelectorAll('[data-testid="settings-modal"] section[x-show^="settingsTab"]')]
+          .find((s) => (/settingsTab==='(\w+)'/.exec(s.getAttribute("x-show")) || [])[1] === r.tab);
+        const el = sec && [...sec.querySelectorAll("span, label, div, h3, h4, legend")].find((e) => e.offsetParent !== null
+          && [...e.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent).join(" ").replace(/\s+/g, " ").trim() === r.label);
+        if (!el) return;   // not shown on this install (another platform, a feature that's off)
+        const box = _settingsRow(el) || el;
+        box.scrollIntoView({ block: "center" });
+        box.classList.remove("kl-flash");
+        void box.offsetWidth;
+        box.classList.add("kl-flash");
+        setTimeout(() => box.classList.remove("kl-flash"), 1800);
+      });
+    },
+    // Ctrl+F (Cmd+F) or "/" while Settings is open; Escape in the box clears it first.
+    settingsSearchKey(e) {
+      if (!this.showSettings) return;
+      const act = document.activeElement;
+      const typing = act && (/^(INPUT|TEXTAREA|SELECT)$/.test(act.tagName) || act.isContentEditable);
+      if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") || (e.key === "/" && !typing && !e.ctrlKey && !e.metaKey)) {
+        e.preventDefault();
+        const box = document.querySelector('[data-testid="settings-search"]');
+        if (box) { box.focus(); box.select(); }
+      }
+    },
 
     async openSettings() {  // re-read the live settings file each open so the modal can't show stale state
       this.acc = null; this.accErr = "";
@@ -109,6 +211,7 @@ const settingsPart = {
       this.savedPorts = { port: this.appPort, control_port: this.controlPort };
       this.trayClick = kl.tray_click === "menu" ? "menu" : "window";
       this.trayDoubleClick = kl.tray_double_click === "none" ? "none" : "window";
+      this.desktopSignin = kl.desktop_signin === true;
       this.notifyLevel = ["all", "off"].includes(kl.notifications) ? kl.notifications : "warnings";
       this.logCleanupDays = Number(kl.log_cleanup_days ?? 90);
       this.taskHistoryKeep = Number(kl.task_history_days ?? 90);
@@ -204,6 +307,7 @@ const settingsPart = {
       control_port: { s: "controlPort", t: "int", min: 1024, max: 65535, restart: true },
       tray_click: { s: "trayClick", t: "choice", of: ["window", "menu"] },
       tray_double_click: { s: "trayDoubleClick", t: "choice", of: ["window", "none"] },
+      desktop_signin: { s: "desktopSignin", t: "bool" },
       notifications: { s: "notifyLevel", t: "choice", of: ["all", "warnings", "off"] },
       duckdb_memory: { s: "duckdbMemory", t: "choice", of: ["", ...MEMORY_CHOICES], restart: true },
       duckdb_threads: { s: "duckdbThreads", t: "int", min: 0, max: 256, restart: true },

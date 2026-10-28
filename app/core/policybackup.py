@@ -198,8 +198,8 @@ def restore_backup(repo: str, name: str, mirror: bool = False) -> dict:
         except OSError:
             pass
     invalidate_after_write(repo, targets=None)
-    log.warning("policy restore repo=%s file=%s mirror=%s rc=%d", repo, name, mirror,
-                res.get("returncode"))
+    log.info("policy restore repo=%s file=%s mirror=%s rc=%d", repo, name, mirror,
+             res.get("returncode"))
     audit.audit("executed", "policy-restore", repo=repo,
                 summary={"file": name, "mirror": bool(mirror),
                          "pre_restore_backup": pre["name"]},

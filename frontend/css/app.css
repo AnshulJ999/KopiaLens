@@ -326,3 +326,7 @@ html[data-d-menumark="off"] .kl-hasmenu::after { display: none; }
 .driver-popover.kl-tour .driver-popover-arrow { display: none; }
 
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* Settings search: the setting a result opens is highlighted briefly. */
+@keyframes kl-flash { 0%, 40% { background: var(--accent-bg); box-shadow: 0 0 0 4px var(--accent-bg); } 100% { background: transparent; box-shadow: 0 0 0 4px transparent; } }
+.kl-flash { animation: kl-flash 1.8s ease-out; border-radius: 0.25rem; }

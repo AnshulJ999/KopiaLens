@@ -72,8 +72,8 @@ def load_sizemap(repo: str, refresh: bool = False) -> dict[str, int]:
         # it with the partial result.
         stale = _read_pkl(pf)
         if stale is not None:
-            log.error("repo=%s sizemap rebuild failed (%s); serving the previous map (%d contents)",
-                      repo, exc, len(stale))
+            log.warning("repo=%s sizemap rebuild failed (%s); serving the previous map (%d contents)",
+                        repo, exc, len(stale))
             return _memo_put(repo, stale)
         raise
 

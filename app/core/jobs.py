@@ -27,6 +27,7 @@ delete's kopia commands; a failed step holds the delete.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import threading
@@ -434,7 +435,7 @@ def start_job(kind: str, repo: str, params: dict, label: str | None = None,
         from . import reindexq  # lazy: reindexq reads the job registry
         reindexq.touch(repo)
     threading.Thread(target=_run, args=(job, cmds), daemon=True).start()
-    log.warning("JOB START %s repo=%s %s", kind, repo, job["label"])
+    log.info("JOB START %s repo=%s %s", kind, repo, job["label"])
     return job
 
 
@@ -793,8 +794,9 @@ def _run(job: dict, cmds: list[list[str]]) -> None:
                              "stopped": job["stop_requested"]},
                     rc=job["rc"] if job["rc"] is not None else rc,
                     duration_s=job["finished"] - job["started"], log_file=job["log_path"])
-        log.warning("JOB %s %s repo=%s done=%d/%d errors=%d",
-                    job["state"], job["kind"], job["repo"], job["done"], job["total"], job["errors"])
+        level = logging.INFO if job["state"] in ("done", "stopped") and not job["errors"] else logging.WARNING
+        log.log(level, "JOB %s %s repo=%s done=%d/%d errors=%d",
+                job["state"], job["kind"], job["repo"], job["done"], job["total"], job["errors"])
         if job["on_done"]:
             try:
                 job["on_done"](job)
@@ -854,7 +856,7 @@ def stop_job(job_id: str) -> dict:
         else:
             _terminate(proc)
             how = "terminated"
-    log.warning("JOB STOP %s %s how=%s", job_id, job["kind"], how)
+    log.info("JOB STOP %s %s how=%s", job_id, job["kind"], how)
     return {"ok": True, "how": how, "state": job["state"]}
 
 

@@ -41,5 +41,5 @@ def replace(src, dst, *, quiet: bool = False) -> None:
             waited += wait
             continue
         if waited and not quiet:
-            log.warning("Saved %s after waiting %.1f s for another program to let go of it", dst, waited)
+            log.debug("Saved %s after waiting %.1f s for another program to let go of it", dst, waited)
         return

@@ -11,12 +11,13 @@ server). Subprocess falls through automatically if the server path errors.
 from __future__ import annotations
 
 import collections
+import logging
 import json
 import threading
 import time
 
 from ..settings import load_settings
-from .applog import get_logger
+from .applog import REPEATS, get_logger
 from .kopia import kopia, page_kopia_ok
 from .server import SERVERS
 
@@ -124,9 +125,11 @@ def _build_now(repo: str) -> dict:
         with _LOCK:
             _LAST_ERROR[repo] = str(getattr(exc, "reason", exc))[:500]
             _REFRESHING.discard(repo)
-        log.error("sources_index repo=%s listing FAILED, keeping the previous listing: %s", repo, exc)
+        REPEATS.failed(log, logging.WARNING, ("listing", repo),
+                       "repo=%s snapshot listing failed, keeping the previous listing: %s", repo, exc)
         raise
 
+    REPEATS.cleared(log, ("listing", repo), "repo=%s snapshot listing works again", repo)
     entry = {"srcs": srcs, "meta": meta, "built": time.time()}
     with _LOCK:
         _CACHE[repo] = entry

@@ -51,7 +51,9 @@ def _excl_cache_put(key: str, val: tuple) -> None:
 
 def _require_data() -> None:
     if not paths.exists():
-        raise HTTPException(status_code=503, detail=f"Backblaze data not found at {paths.bzdata_root()}")
+        # 404, not 5xx: an install without Backblaze data is a normal state, not a server fault.
+        raise HTTPException(status_code=404, detail=f"No Backblaze data found in {paths.bzdata_root()}. "
+                                                    "Set its folder in Settings > Backblaze.")
 
 
 def _bz_settings() -> dict:
