@@ -2,12 +2,12 @@
 
 Churn shows what keeps adding new data to your backups. Files that are rewritten again and again, such as caches, databases and logs, can cost far more space than their size suggests. They are often worth excluding.
 
-![Screenshot: Churn by source over the last 30 days](images/churn.png)
+![Screenshot: Churn by folder over the last 30 days](images/churn.png)
 
 ## Choose a view
 
-- **By source**: which sources added the most new data.
-- **By folder**: which folders added it, grouped to the **Depth** you pick (how many folder levels deep to group by, 4 by default).
+- **By folder**: which folders added the most new data, grouped to the **Depth** you pick (how many folder levels deep to group by, 4 by default).
+- **By source**: which sources added it.
 - **By file type**: which extensions added it.
 
 The time window is set in the list next to the views, from **Last 24 hours** to **Last year**. The default is 30 days. All three views come from one calculation, so their numbers always agree.
@@ -29,8 +29,6 @@ The line above the table gives the totals for the window: the new data with shar
 | **Physical (all versions)** | The space every kept version takes. In the folder view, worked out for the rows on screen as you scroll |
 | **Mostly from** | By source: the folder that added the most |
 | **Sources** | By folder: how many sources added churn in this folder |
-
-**inside** next to a source means another source also covers this folder. Its data is snapshotted twice and counted in both rows.
 
 Several sources in one folder usually means subfolders with their own policies, not duplicated data. Open the folder to see which sources cover it.
 

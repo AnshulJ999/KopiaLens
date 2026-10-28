@@ -1,10 +1,18 @@
 # How indexing works
 
-KopiaUI asks kopia for every answer while you wait. KopiaLens reads your snapshots ahead of time and keeps the answers in its own [index](glossary.md#index). This page explains what the index holds, how it's built, and what that means for your computer.
+KopiaLens reads your kopia repositories and snapshots ahead of time and keeps the answers in its own [index](glossary.md#index). This page explains what the index holds, how it's built, and what that means for your computer.
+
+## What the index is, and why KopiaLens needs one
+
+Kopia keeps your backups as encrypted pieces. Each snapshot holds a list of which pieces make up each file. That works well for backing up and restoring, but not for questions like "which snapshots hold this file?" or "how much would deleting this folder free?". To answer one of those, kopia would have to read through every snapshot, which can take hours on a large repository.
+
+So KopiaLens reads your snapshots once and keeps what it learns in its index: every file and folder in every snapshot, with their sizes, dates and versions. Search, the Tree and the space numbers look things up in the index and answer in a moment.
+
+The index holds names, sizes and dates. It never holds the contents of your files. File and folder names can still be private, so first-time setup encrypts the index by default, and that's recommended for most people ([Encryption](encryption.md)).
 
 ## What KopiaLens reads
 
-An index run reads from kopia, through kopia's own commands, using the same repository connection KopiaUI or the kopia command line use:
+An index run reads from kopia, through kopia's own commands:
 
 1. **The snapshot list**: every snapshot of every source.
 2. **The folders inside each snapshot**: names, sizes, times, and which pieces each file is made of.
@@ -18,7 +26,11 @@ Indexing only reads. It never changes your snapshots, policies or repository.
 
 Kopia stores a folder that didn't change between two snapshots only once. KopiaLens uses that: when it reaches a folder it has read before, it skips it. So after the first index, a run reads only the folders that changed in the new snapshots. On a typical repository, that takes minutes.
 
-The first index reads everything once. For a repository on cloud storage, kopia downloads the folder listings during that first read and keeps them in its own cache, so later runs read locally.
+The first index reads everything once, so it takes the longest ([First index](indexing.md#first-index)).
+
+## Before the first index finishes
+
+The **Snapshots** tab, browsing a snapshot's files, restoring from it and the **Policies** tab work straight away, because they read kopia directly. The **Dashboard**, **Tree**, **Search**, **Churn** and **Repository** tabs need the index. Until the first index finishes, they show a notice with **Start indexing**.
 
 ## Where the index lives
 

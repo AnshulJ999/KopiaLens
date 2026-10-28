@@ -18,7 +18,7 @@ When you click **Install and restart**, the app asks the update service for the 
 | Update channel | `stable` or `beta` |
 | Install type | `windows`, `linux`, `macos`, `docker` or `source` |
 | Operating system | `windows`, `linux` or `macos` |
-| Usage stats | `on`, `off`, or `waiting` (an install's first day). Once, after you turn usage stats off, it also says so. No install ID is sent with this. |
+| Usage stats | `off`, or `waiting` (an install's first day, or a Docker container whose data folder isn't on a volume). Not sent when usage stats are on. Once, after you turn usage stats off, it also says so. No install ID is sent with this. |
 
 **Anonymous usage stats** add:
 
@@ -32,12 +32,13 @@ When you click **Install and restart**, the app asks the update service for the 
 | Backblaze | Whether the Backblaze view is set up |
 | Opened | Whether KopiaLens was opened since the last check (not just running in the background) |
 | Features used | The names of the features used since the last check: `search`, `tree`, `prune`, `restore`, `csv_export`, ... Names only, no counts. |
-| Setup | `finished` or `not_yet` |
+| Setup | `finished`, `skipped` or `not_yet` |
+| Used kopia before | The answer on the welcome screen: `yes` or `no`. `unanswered` when setup was skipped |
 | First index | Whether a repository has been indexed |
 | kopia | kopia's version, and whether it's the copy that came with KopiaLens |
 | Own kopia server | Whether KopiaLens runs the backups for a repository |
 | Index size | A rough size class of KopiaLens's own index: under 100 MB, 100 MB-1 GB, 1-5 GB, 5-20 GB or over 20 GB |
-| Memory | A rough size class of this computer's memory: under 4 GB, 4-8 GB, 8-16 GB or over 16 GB |
+| Memory | A rough size class of this computer's memory, or the container's limit if lower: under 4 GB, 4-8 GB, 8-16 GB or over 16 GB |
 | Failed update | If an in-app update failed, the step it stopped at (`downloading`, `installing`, ...), sent once |
 
 The service also records the **country** the request came from (worked out by Cloudflare), only when usage stats are on.
@@ -55,6 +56,10 @@ The service also records the **country** the request came from (worked out by Cl
 - Your IP address is **not** stored.
 - With usage stats on: one row per install with the fields above, the first and last day it checked in, and how many days it was opened. An install that hasn't checked in for 90 days is deleted.
 - Daily totals: how many checks came in per version, install type, OS and licence, how many installs were opened, and how many used each feature. For checks without usage stats: whether stats were off or not started yet, and how many installs turned them off that day. The update channel is kept only in the install's row.
+
+## Feedback
+
+**? → Give feedback…** is separate from these checks. It sends only what you type, plus the KopiaLens version, install type and operating system, and only when you select **Send**. No install ID is sent with it. The update service uses your IP address only to limit how many messages one address can send in a minute, and doesn't store it.
 
 ## Revoked licences
 

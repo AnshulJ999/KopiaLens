@@ -23,6 +23,7 @@ The logs live in the KopiaLens data folder, under `logs`:
 - `logs/app`: the app log and the debug log, with older copies.
 - `logs/indexing`: one log per repository's index runs.
 - `logs/jobs`: one log per job, dry run and mount.
+- `logs/kopia`: kopia's own logs for the kopia commands KopiaLens runs, kept apart from your usual kopia logs. kopia clears old ones itself.
 
 Old job logs are removed after 90 days by default. The newest 100 are always kept. Change it in **Settings → Advanced → Log cleanup**.
 

@@ -1,6 +1,6 @@
 # Indexing
 
-KopiaLens reads your snapshots from kopia and keeps what it learns in its own [index](glossary.md#index), on the computer running KopiaLens. Search, the Tree, the space columns and the delete plans all read the index, which is why they answer in a moment. This page explains how the index is built and kept current.
+KopiaLens reads your snapshots from kopia and keeps what it learns in its own [index](glossary.md#index), on the computer running KopiaLens. Search, the Tree, the space columns and the delete plans all read the index, which is why they answer in a moment. Without it, each of those answers would mean reading through every snapshot again. This page explains how the index is built and kept current.
 
 ![Screenshot: the indexing panel during a first index](images/indexing.png)
 
@@ -26,7 +26,7 @@ By default, KopiaLens updates the index once a day at 23:00. Change it in **Sett
 - **Every N hours**: every 4, 6, 12 or 24 hours.
 - **Off, only when I start it**.
 
-Indexing runs one repository at a time, in its own process, so KopiaLens stays light while it runs. If the computer was off at the set time, the run starts at the next opportunity. A failed run is tried once more after 15 minutes. Both are set in **Settings → Advanced**.
+Indexing runs one repository at a time, in its own process, so KopiaLens stays light while it runs. If the computer was off at the set time, the run starts at the next opportunity. A failed run is tried once more after 15 minutes (**Settings → Advanced**).
 
 After you delete files or snapshots, KopiaLens updates the index on its own 5 minutes after the last delete. Back-to-back deletes share one update.
 

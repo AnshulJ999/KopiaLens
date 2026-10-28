@@ -29,6 +29,8 @@ The sign-in page asks for your username and password.
 - **Keep me signed in**: when ticked, the browser stays signed in for the time set in **Settings → Account → Stay signed in for** (30 days by default). When unticked, you're signed out when the browser closes.
 - If your KopiaLens password also unlocks encryption and the index is locked, the button reads **Sign in and unlock** and does both. See [Encryption](encryption.md).
 
+In the desktop app you can skip the sign-in page: turn on **Settings → Desktop app → Sign in automatically**. Only the app's own window is signed in; browsers still ask for the password.
+
 After several wrong passwords, KopiaLens makes you wait a little longer before each new attempt, up to 30 seconds. It never locks the account.
 
 ## Manage your account

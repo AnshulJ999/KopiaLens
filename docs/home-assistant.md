@@ -15,7 +15,7 @@ The add-on runs on 64-bit Intel and AMD (`amd64`) and 64-bit ARM (`aarch64`) sys
 
 **From the sidebar.** Open **KopiaLens** in the Home Assistant sidebar. Home Assistant signs you in, so KopiaLens doesn't ask again. Only Home Assistant administrators see it.
 
-**On its own port.** To open KopiaLens from another device without Home Assistant, enter a port under **Network** in the add-on's **Configuration** tab, for example `7123`. Then open `http://<home-assistant-address>:7123`. This address doesn't go through Home Assistant's sign-in. If you set up KopiaLens's own sign-in in first-time setup, it asks for that; without it, anyone who can reach the port can open KopiaLens ([Sign-in and your account](sign-in.md)).
+**On its own port.** To open KopiaLens from another device without Home Assistant, enter a port under **Network** in the add-on's **Configuration** tab, for example `7123`. Then open `http://<home-assistant-address>:7123`. This address doesn't go through Home Assistant's sign-in. If you set up KopiaLens's own sign-in in first-time setup, it asks for that. Without it, anyone who can reach the port can open KopiaLens ([Sign-in and your account](sign-in.md)).
 
 The port is off until you enter a number.
 

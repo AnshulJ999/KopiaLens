@@ -1,6 +1,8 @@
 # First-time setup
 
-The first time you open KopiaLens, it walks you through three steps: **Connect**, **Protect** and **Start**. Everything you choose here can be changed later in Settings.
+The first time you open KopiaLens, a welcome screen says what it does and asks whether you've used kopia before. Setup then walks you through **Connect**, **Protect** and **Build the index**, and ends on a **Summary** where you can change anything before indexing starts. Everything you choose here can be changed later in Settings.
+
+Each step has a **?** next to its title that opens its help. **Report a problem**, under each step, works before setup is finished.
 
 New to kopia and backups? [Start backing up from scratch](guide-start-from-scratch.md) walks you through it from the beginning.
 
@@ -47,8 +49,25 @@ This screen estimates how long the first index takes and how much disk space it 
 
 Once indexing starts, the progress bar narrows the estimate. The pages open as soon as the index is ready. A few figures, such as the space each snapshot uses, fill in a few minutes later.
 
-- **Update automatically every day at**: keeps the index current with one update a day. Change the time, or turn it off, here or in **Settings → Indexing**.
+- **Update automatically every day**: keeps the index current with one update a day. Pick **Overnight**, **Morning** or **Evening**, or **Custom…** to type your own time. Change it, or turn it off, here or in **Settings → Indexing**.
 - **Start indexing** builds the index now.
 - **Skip for now** leaves it for later. If automatic updates are on, indexing starts at the next scheduled time. Otherwise, start it with **Index now** in the top bar.
 
 A repository that hasn't been indexed yet shows a notice at the top of the page with a **Start indexing** button.
+
+## The summary and the tour
+
+The last step is a **Summary** of what you chose: repositories, sign-in, encryption, who runs your backups and when the index updates. **Change** next to a row takes you back to that step. **Start indexing** finishes setup and starts the first index. **Skip for now** finishes without it. **Where to start** links open help pages without leaving setup.
+
+When KopiaLens opens, a short tour walks you through the main parts of the screen. Close it any time with ✕ or Esc. It's always in **? → Take the tour**.
+
+## Skip setup or finish it later
+
+- **Skip setup** on the welcome screen opens KopiaLens without setting anything up.
+- **Finish setup later**, under each step, opens KopiaLens and keeps what you already set up.
+
+Before either one, KopiaLens shows what isn't set up yet. If you haven't set up sign-in, sign-in stays off. On a server install, KopiaLens warns that anyone who can reach its address can then open it.
+
+KopiaLens then shows a **Finish setup** banner at the top. Select **Finish setup** to continue at the step you left.
+
+**Run setup again** in **Settings → Repositories** has a close button (×) at the top right, because KopiaLens is already set up.

@@ -40,7 +40,7 @@ This section breaks the file's stored data down across all its versions:
 - **Download**: downloads that version.
 - **Restore**: restores that version to disk ([Restore, download and mount](restore.md)).
 
-**Prune versions…** deletes old versions and keeps the newest ([Prune versions](prune.md)).
+**Prune versions…** removes old versions and keeps the ones you choose ([Prune versions](prune.md)).
 
 ## Delete it from your backups
 

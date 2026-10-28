@@ -70,7 +70,7 @@ The numbers come from the last [index run](glossary.md#index-run). Pieces added 
 
 Deleting snapshots or removing files doesn't make the repository smaller straight away. It removes the references to the pieces. Kopia deletes the unused pieces later, during **full maintenance**.
 
-Kopia waits on purpose, so that a computer backing up at the same time can't lose data. With kopia's default settings, a piece is deleted only after two full maintenance runs, at least 4 hours apart, have both found it unused. Full maintenance runs once a day by default. So expect the space back a day or two after a delete.
+Kopia waits on purpose, so that a computer backing up at the same time can't lose data. With kopia's default settings, one full maintenance run marks a piece as unused, the next run (at least 4 hours later) checks it again, and the run after that deletes it. Full maintenance runs once a day by default. So expect most of the space back two or three days after a delete.
 
 To start maintenance by hand, select **Run maintenance…** in the Repository tab. Full maintenance can take hours on a large repository.
 

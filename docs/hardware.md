@@ -4,16 +4,18 @@ KopiaLens runs on an ordinary desktop, laptop or home server. This page says how
 
 ## Memory
 
-KopiaLens limits the memory its index may use, based on how much memory the computer has:
+KopiaLens limits the memory its index may use to an eighth of the computer's memory, between 512 MB and 3 GB:
 
 | Computer's memory | Index memory limit |
 |---|---|
-| 8 GB or less | 512 MB |
-| Up to 16 GB | 1 GB |
-| Up to 32 GB | 2 GB |
-| More than 32 GB | 3 GB |
+| 4 GB | 512 MB |
+| 8 GB | 1 GB |
+| 16 GB | 2 GB |
+| 24 GB or more | 3 GB |
 
-The limit applies per repository, in the app and during indexing. To change it, set **Settings → Advanced → Memory limit** and restart KopiaLens.
+The limit is a ceiling, used only while big queries run: the memory is released after 30 minutes without use, and when an indexing run ends. It applies per repository, in the app and during indexing. To change it, set **Settings → Advanced → Memory limit** and restart KopiaLens.
+
+While you browse, KopiaLens uses at most half the computer's processor cores, and fewer with a small memory limit, so the computer stays responsive. Indexing uses up to 4. To change either, set **Settings → Advanced → Processor threads** and restart KopiaLens.
 
 Both repositories in [Tested setups](#tested-setups) built their full first index within the smallest limit, 512 MB. A smaller limit makes some work slower, not impossible.
 

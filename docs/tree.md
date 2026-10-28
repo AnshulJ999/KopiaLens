@@ -56,7 +56,7 @@ Right-click a row:
 - **Show in Search** lists the folder's files, or files with that name, in [Search](search.md).
 - **Restore…**, **Download** or **Mount** ([Restore, download and mount](restore.md)).
 - **Exclude…** keeps it out of future snapshots ([Exclude](exclude.md)).
-- **Prune versions…** deletes old versions and keeps the newest ([Prune versions](prune.md)).
+- **Prune versions…** removes old versions and keeps the ones you choose ([Prune versions](prune.md)).
 - **Delete from backups…** or **Delete folder from backups…** removes it from existing snapshots ([Delete from backups](delete-files.md)).
 - **Exclude & delete…** does both: no future snapshots and none of the old ones.
 - **Copy path**.

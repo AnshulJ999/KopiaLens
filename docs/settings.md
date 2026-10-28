@@ -1,8 +1,10 @@
 # Settings
 
-Settings holds everything you can change in KopiaLens. Open it with the gear button at the top right. Changes save as you make them. A few are marked **restart**: they apply after you quit and reopen KopiaLens.
+Settings holds everything you can change in KopiaLens. Open it with the gear button at the top right. Changes save as you make them. A few are marked **restart**: they apply after KopiaLens restarts. **Restart…** at the bottom of Settings, next to Close, restarts it (desktop app, Docker and Home Assistant).
 
 ![Screenshot: Settings, open on General](images/settings.png)
+
+To find a setting, type in **Search settings** above the section list (or press **Ctrl+F** or **/** while Settings is open). Pick a result to open its section with the setting highlighted.
 
 Each section has a **?** button that opens its help. Some sections have their own page:
 
@@ -25,7 +27,7 @@ The other sections are described below.
 |---|---|
 | **Numbers** | How numbers are written, for example `1,234,567.8` or `1.234.567,8`. **System** follows your computer |
 | **Sizes** | **Decimal** (1 GB = 1000 MB, as kopia shows them) or **Binary** (1 GiB = 1024 MiB) |
-| **Dates**, **Times** | How dates and clock times are written. **Exact** shows the time, **Relative** shows how long ago. The clock button in the header switches between them too |
+| **Dates**, **Times** | How dates and clock times are written. **Automatic** (the default) shows how long ago for recent activity (Dashboard, Tasks, backups) and dates for history (Snapshots, Search, Tree, versions). **Relative** always shows how long ago. **Exact** always shows the time. The clock button in the header switches between them. Right-click a time column's header to give it its own choice, including date and how long ago together |
 | **Search boxes** | **Header and Search tab**, or **Header only**: the Search tab then uses the box at the top of the window |
 | **Dedupe in Search merges** | What **Dedupe** in Search merges: **Same path** or **Identical content** ([Search](search.md#filters)) |
 | **Ask before Snapshot now** | On by default. Off: **Snapshot now** starts straight away, as in KopiaUI |
@@ -42,6 +44,7 @@ The other sections are described below.
 | **Table alignment** | How table columns line up unless a table or column has its own choice ([Tables](tables.md#table-layout)). **Auto**, the default, puts numbers on the right and text on the left |
 | **Tab order** | **Reset to default** puts the tabs back in their first order. To move a tab, drag it in the tab row |
 | **Font** | The font for the whole app |
+| **File and folder icons** | The icons before names in Tree, Search, Churn, Excluded and the panels: **Material** (the default, an icon per file type), **Filled**, **Outline**, **Fluent Emoji** or **System Emoji** (drawn by your device, so it looks different on other systems) |
 | **Sort arrows in table headers** | **Sorted column only** or **Every column** |
 | **Detail panel layout** | **Classic** shows every section of the file and folder panels in one scroll. **Tabbed** keeps the summary on screen and groups the rest |
 | **Documentation opens as** | **A popup** or **A side panel** |
@@ -60,6 +63,8 @@ These apply to the KopiaLens desktop app and its tray icon.
 
 | Setting | What it does |
 |---|---|
+| **Start at logon** | KopiaLens starts in the tray when you sign in to the computer. The same switch as in the tray menu |
+| **Sign in automatically** | The desktop app's window opens signed in, with no password asked. A browser, even on the same computer, still asks for it. Off by default |
 | **Clicking the tray icon** | **Opens KopiaLens** or **Shows the menu**. Right-clicking always shows the menu |
 | **Double-clicking the tray icon** | **Opens KopiaLens** or **Does nothing** |
 | **Tray icon** | The icon in the system tray |
@@ -78,7 +83,7 @@ These apply to the KopiaLens desktop app and its tray icon.
 | **Full rebuild** | | **Rebuild full index** reads every snapshot again. Rarely needed, and much slower |
 | **Index backups** | | Older versions of the index and a copy in another folder ([Index backups](indexing.md#index-backups)) |
 | **Quick refresh** | 30 minutes | How often next snapshot times, repository details and the Search start page are brought up to date |
-| **Dashboard auto-refresh** | 15 minutes | How often an open Dashboard checks for new numbers |
+| **Dashboard auto-refresh** | 30 minutes | How often an open Dashboard checks for new numbers |
 | **Dashboard rebuild interval** | 4 hours | With **Also rebuild during the day**: how often the size columns are rebuilt |
 
 ## Disk scanning
@@ -137,6 +142,7 @@ These have sensible defaults. Change them when you have a reason.
 | Setting | Default | What it does |
 |---|---|---|
 | **Memory limit** | Automatic | The most memory each repository's index may use, in the app and while indexing. Automatic is based on the computer's memory (restart) |
+| **Processor threads** | Automatic | How many processor threads each repository's index may use, in the app and while indexing. Automatic is up to half the computer's processors in the app (fewer with a small memory limit) and up to 4 while indexing. More threads are faster but need more memory (restart) |
 | **Indexing time limit** | 4 hours | A run that takes longer is stopped. The next run continues where it left off |
 | **First index time limit** | 24 hours | The same for a first index |
 | **Give up on an unreachable repository after** | 30 minutes | The run stops, keeps its progress, and the next repository can index |
@@ -148,7 +154,7 @@ These have sensible defaults. Change them when you have a reason.
 | **When quitting KopiaLens** | Let indexing finish | Or **Stop indexing**. **Restart** always lets indexing finish |
 | **Folder reclaimable space ahead of time** | 15 minutes | How long each night's run spends working out folder sizes ahead of time, biggest folders first. Other folders are worked out when you open them. 0 turns it off |
 | **Quiet period after startup** | 5 minutes | How long after KopiaLens starts before background work begins (restart) |
-| **Gap between background runs** | | With **Every N hours**: the least time between two runs |
+
 | **Ranked files** | 10000 | How many of the biggest files are ranked exactly for Search's sorting |
 | **Listing backend** | Run kopia when needed | How KopiaLens asks kopia for snapshot lists. **Keep a kopia server running** is the other choice (restart) |
 

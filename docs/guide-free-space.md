@@ -6,7 +6,7 @@ This guide frees space in a repository without losing anything you want to keep.
 
 - Find out where the space goes first ([Find what's using the most space](guide-find-space.md)).
 - Deleting from backups can't be undone. Every step below shows exactly what goes and runs a dry run first. Read it.
-- The space comes back only after kopia's next full maintenance, usually a day or two later ([When the space comes back](space.md#when-the-space-comes-back)).
+- The space comes back only after kopia's full maintenance runs, usually a few days later ([When the space comes back](space.md#when-the-space-comes-back)).
 
 ## 1. Stop the growth
 
@@ -35,7 +35,7 @@ Pinned snapshots are restore points you chose to keep. The panel lists them sepa
 
 When a few big files cause most of the cost, remove just them and keep the snapshots ([Pro](licensing.md)):
 
-- **Prune versions…** keeps the newest versions of a file and removes the old ones ([Prune versions](prune.md)).
+- **Prune versions…** removes old versions of a file and keeps the ones you choose ([Prune versions](prune.md)).
 - **Delete from backups…** removes a file or folder from every snapshot that holds it ([Delete from backups](delete-files.md)).
 
 Check the file panel's **Reclaimable** first. If identical copies elsewhere keep the data stored, removing one copy frees nothing.

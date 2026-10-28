@@ -63,7 +63,7 @@ Docker Desktop (Windows and macOS) runs containers inside a hidden Linux machine
 
 ## Restarting and updating
 
-- **Restart** in Settings stops the container, and Docker starts it again through `restart: unless-stopped`.
+- **Restart…** at the bottom of Settings, next to Close, stops the container, and Docker starts it again through `restart: unless-stopped`.
 - `docker compose stop` stops KopiaLens cleanly. An index pass that was running is picked up again later. The previous index stays usable.
 - To update, pull or build the new image and run `docker compose up -d`. Your `/config` folder carries everything over.
 

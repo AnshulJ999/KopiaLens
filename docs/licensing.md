@@ -6,6 +6,7 @@ Everything KopiaLens shows you is free: sizes, duplicates, reclaimable space, ch
 - deleting every snapshot that holds a file
 - smart exclude rules (same name, same extension or similar names anywhere)
 - exclude & delete
+- pruning versions: removing old versions of a file and keeping the ones you choose
 
 Deleting snapshots you pick yourself, running maintenance, and excluding a single file or folder stay free.
 
