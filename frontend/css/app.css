@@ -327,14 +327,17 @@ html[data-d-menumark="off"] .kl-hasmenu::after { display: none; }
 
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
-/* Settings search: the setting a result opens is highlighted briefly. */
-@keyframes kl-flash { 0%, 40% { background: var(--accent-bg); box-shadow: 0 0 0 4px var(--accent-bg); } 100% { background: transparent; box-shadow: 0 0 0 4px transparent; } }
-.kl-flash { animation: kl-flash 1.8s ease-out; border-radius: 0.25rem; }
-/* Settings: the dot before a changed setting's label and its reset button (settings.js x-kl-default). */
+/* Settings: a changed setting's reset button (settings.js x-kl-default). */
 .kl-setting { position: relative; }
-.kl-changed-dot { position: absolute; left: -0.75rem; top: 0.45em; width: 6px; height: 6px; border-radius: 9999px; background: var(--accent); }
 .kl-reset-one { margin-left: 0.375rem; padding: 0.125rem; border-radius: var(--r-md); color: var(--muted); line-height: 1; vertical-align: middle; visibility: hidden; }
 .kl-reset-one:hover { color: var(--fg); background: var(--hover); }
 :hover > .kl-setting > .kl-reset-one, :focus-within > .kl-setting > .kl-reset-one { visibility: visible; }
 @media (hover: none) { .kl-reset-one { visibility: visible; } }
-.kl-nav-dot { display: inline-block; width: 6px; height: 6px; margin-left: 0.375rem; border-radius: 9999px; background: var(--accent); vertical-align: middle; }
+/* Settings search, in place (settings.js _klSearchSetup): sections in list order, only the matching rows. */
+.kl-searching { display: flex; flex-direction: column; gap: 1.5rem; }
+.kl-searching > .kl-search-top { order: -1; }
+.kl-searching section > :not(.kl-search-head):not([data-kl-row]):not([data-kl-rows]),
+.kl-searching section[data-kl-app] > :not(.kl-search-head),
+.kl-searching .kl-miss { display: none !important; }
+.kl-search-head { display: flex; align-items: center; gap: 0.75rem; min-width: 0; padding-bottom: 0.375rem; border-bottom: 1px solid var(--bd-soft); font-size: 0.75rem; }
+.kl-nav-count { display: inline-block; margin-left: 0.375rem; padding: 0 0.375rem; border-radius: 9999px; background: var(--sel); color: var(--muted); font-size: 0.6875rem; line-height: 1.25rem; vertical-align: middle; }

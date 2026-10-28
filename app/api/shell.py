@@ -13,7 +13,7 @@ from config import APP_VERSION, DATA_DIR
 from ..core import engine, jobs, netaccess
 from ..core.applog import LOG_DIR
 from . import appconfig
-from ..settings import load_settings, mutate_settings
+from ..settings import drop_defaults, load_settings, mutate_settings
 
 router = APIRouter(prefix="/shell")
 
@@ -133,5 +133,9 @@ def set_prefs(payload: dict) -> dict:
     bad = [k for k, v in payload.items() if k not in PREFS or v not in PREFS[k]]
     if bad:
         raise HTTPException(status_code=400, detail=f"Not a tray preference value: {', '.join(bad)}")
-    mutate_settings(lambda s: s.setdefault("kopialens", {}).update(payload))
+    def _apply(s: dict) -> None:
+        s.setdefault("kopialens", {}).update(payload)
+        drop_defaults(s, {("kopialens", k) for k in payload})   # a default is not kept, as in Settings
+
+    mutate_settings(_apply)
     return _prefs(load_settings().get("kopialens") or {})

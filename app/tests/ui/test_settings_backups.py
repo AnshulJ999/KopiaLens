@@ -89,20 +89,25 @@ def test_settings_search_finds_a_setting_and_opens_it(fresh_server, fixture_repo
     page.keyboard.press("Control+f")
     box = page.get_by_test_id("settings-search")
     expect(box).to_be_focused()
-    box.fill("debug log")
-    results = page.get_by_test_id("settings-results")
-    results.get_by_role("button", name="Debug log").first.click()
+    body = page.get_by_test_id("settings-body")
+    box.fill("debug log")               # the matching setting itself, with its control, and nothing else
+    expect(body.get_by_text("Debug log", exact=True)).to_be_visible()
+    expect(body.get_by_text("Experimental features", exact=True)).to_be_hidden()
+    expect(body.get_by_text("Numbers", exact=True)).to_be_hidden()
+    expect(page.get_by_test_id("settings-results")).to_contain_text("1 result")
+    page.locator("section[data-kl-tab=advanced] .kl-search-head").get_by_role("button", name="Open section").click()
     expect(box).to_have_value("")
-    row = page.locator(".kl-flash", has_text="Debug log")
-    expect(row).to_be_visible()
+    expect(body.get_by_text("Experimental features", exact=True)).to_be_visible()
 
-    box.fill("pasword")                 # one letter off still finds the Account section
-    expect(results.get_by_role("button", name="Account Section", exact=True)).to_be_visible()
+    box.fill("pasword")                 # one letter off still finds the Account section, as a line that opens it
+    account = page.locator("section[data-kl-tab=account]")
+    expect(account.locator(".kl-search-head")).to_be_visible()
+    expect(account.get_by_text("Sign-in", exact=True).first).to_be_hidden()
     box.fill("zzqx")
-    expect(results.get_by_text("No settings match")).to_be_visible()
+    expect(page.get_by_test_id("settings-results")).to_contain_text("No settings match")
     box.press("Escape")
     expect(box).to_have_value("")
-    expect(page.locator("nav button", has_text="Repositories")).to_be_visible()
+    expect(body.get_by_text("Experimental features", exact=True)).to_be_visible()
 
 
 def test_desktop_window_signs_in_by_itself_only_when_turned_on(fresh_server, fixture_repo, open_page):

@@ -134,7 +134,7 @@ document.addEventListener("alpine:init", () => {
     // Free/Pro (licence.js): GET /api/licence; proNotice = the open upgrade notice.
     lic: { state: "none", locked: [], features: {}, pricing_url: "" }, proNotice: null,
     licKey: "", licBusy: false, licError: "", licPatreonWaiting: false, licAdding: false,
-    showSettings: false, settingsTab: "general", settingsQuery: "", backend: "subprocess", repoPinned: false, dashRefresh: 1800,
+    showSettings: false, settingsTab: "general", settingsQuery: "", settingsSearching: false, settingsCounts: {}, backend: "subprocess", repoPinned: false, dashRefresh: 1800,
     excludedTolerance: 0.05, esPath: "",
     // Advanced settings. These existed in settings.json all along and had no UI, so the only way to
     // change them was to edit the file by hand. Defaults here mirror app/settings.py.

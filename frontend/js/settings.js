@@ -100,6 +100,47 @@ function _klTabKeys() {
   return out;
 }
 const KL_TAB_KEYS = _klTabKeys();
+
+// Settings search, in place: matching rows show with their own controls. These sections are small
+// apps rather than lists of settings, so a match shows a line that opens them instead.
+const KL_APP_TABS = new Set(["notifications", "repositories", "account", "encryption", "remote", "writemode", "tokens", "licence", "backups", "about"]);
+// Every settings row (x-kl-row in the markup), read before Alpine runs: {id, tab, hay, keys}. Each
+// section also gets its search heading, its place in section-list order, and a search-aware x-show.
+function _klSearchSetup() {
+  const titles = Object.fromEntries(SETTINGS_NAV.flatMap((g) => g[1]));
+  const order = SETTINGS_NAV.flatMap((g) => g[1].map((s) => s[0]));
+  const text = (el) => [...el.childNodes].map((c) => c.nodeType === 3 ? c.textContent
+    : c.nodeType === 1 && !/^(SELECT|OPTION|BUTTON|TEXTAREA|INPUT|TEMPLATE|SCRIPT)$/.test(c.tagName) ? text(c) : "").join(" ");
+  const rows = [];
+  for (const sec of document.querySelectorAll('section[x-show^="settingsTab"]')) {
+    const tab = (/settingsTab==='(\w+)'/.exec(sec.getAttribute("x-show")) || [])[1];
+    if (!titles[tab]) continue;
+    const app = KL_APP_TABS.has(tab);
+    sec.dataset.klTab = tab;
+    if (app) sec.dataset.klApp = "";
+    sec.style.order = order.indexOf(tab);
+    sec.setAttribute("x-show", `settingsSearching ? klSearchShows('${tab}') : (${sec.getAttribute("x-show")})`);
+    const head = document.createElement("div");
+    head.className = "kl-search-head";
+    head.setAttribute("x-show", "settingsSearching");
+    head.innerHTML = `<span class="font-medium shrink-0">${titles[tab]}</span>`
+      + (app ? `<span class="min-w-0 truncate text-muted" x-text="klSearchLabels('${tab}')"></span>` : "")
+      + `<button type="button" class="kl-btn quiet ml-auto shrink-0" @click="settingsGo('${tab}')">Open section ›</button>`;
+    sec.prepend(head);
+    const walk = (root) => {
+      for (const el of root.querySelectorAll("[x-kl-row], template")) {
+        if (el.tagName === "TEMPLATE") { if (!el.hasAttribute("x-for")) walk(el.content); continue; }
+        el.dataset.klRow = rows.length;
+        const keys = [...el.querySelectorAll("[x-kl-default]")].map((k) => k.getAttribute("x-kl-default").trim()).join(",");
+        rows.push({ id: rows.length, tab, hay: text(el).replace(/\s+/g, " ").trim().toLowerCase(), keys });
+      }
+    };
+    walk(sec);
+  }
+  return rows;
+}
+const KL_ROWS = _klSearchSetup();
+let _klHits = null;   // the last search's matches (every row asks, so it runs once per query)
 // Reset one at a time only: a port change needs a restart, and update checks and usage stats are
 // the user's privacy choice.
 const KL_RESET_SKIP = new Set(["port", "control_port", "update_check", "usage_stats"]);
@@ -126,6 +167,9 @@ const KL_DEFAULT_TEXT = {
   es_path: { "": "Found automatically" },
   bzdata_path: { "": "Found automatically" },
   mount_dir: { "": "In KopiaLens's data folder" },
+  mount_host_path: { "": "Not set" },
+  collapse_prefixes: { "": "No paths" },
+  eventlog_archive_path: { "": "Off" },
 };
 function _klSecs(s) {
   if (s % 86400 === 0) return s / 86400 + (s === 86400 ? " day" : " days");
@@ -134,18 +178,13 @@ function _klSecs(s) {
   return s + " seconds";
 }
 
-// x-kl-default="key" on a setting's label: a dot when the value differs from its default, and a
-// reset button shown on hover or keyboard focus (always on touch screens).
+// x-kl-default="key" on a setting's label: when the value differs from its default, a reset button
+// shown on hover or keyboard focus (always on touch screens) and the default in the label's tooltip.
 document.addEventListener("alpine:init", () => {
   Alpine.directive("kl-default", (el, { expression }, { effect }) => {
     const keys = expression.trim();
     const label = [...el.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent).join(" ").replace(/\s+/g, " ").trim();
     el.classList.add("kl-setting");
-    const dot = document.createElement("span");
-    dot.className = "kl-changed-dot";
-    dot.setAttribute("role", "img");
-    dot.setAttribute("aria-label", "Changed");
-    dot.hidden = true;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "kl-reset-one";
@@ -154,14 +193,21 @@ document.addEventListener("alpine:init", () => {
     btn.innerHTML = '<i class="ic ic-restore"></i>';
     btn.hidden = true;
     btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); Alpine.$data(el).klResetOne(keys); });
-    el.prepend(dot);
     el.append(btn);
     effect(() => {
       const vm = Alpine.$data(el);
       const changed = vm.klChanged(keys);
-      dot.hidden = btn.hidden = !changed;
+      btn.hidden = !changed;
       if (changed) el.title = "Changed. Default: " + vm.klDefaultText(keys);
       else el.removeAttribute("title");
+    });
+  });
+  // x-kl-row: hidden while a search is typed that it doesn't match.
+  Alpine.directive("kl-row", (el, _, { effect }) => {
+    const id = Number(el.dataset.klRow);
+    effect(() => {
+      const hits = Alpine.$data(el).settingsHits();
+      el.classList.toggle("kl-miss", !!hits && !hits.rows.has(id));
     });
   });
 });
@@ -171,42 +217,77 @@ const settingsPart = {
     settingsNav() {
       return SETTINGS_NAV.map(([g, items]) => [g, items.filter(([id]) => id !== "experimental" || this.experimental)]);
     },
-    // Best first: the label itself matches, then its help line; within that the docs search's tiers.
-    settingsResults() {
+    // The search's matches: {rows: Set of row ids, tabs: {tab: [matched labels]}} for sections shown
+    // as a heading only (the app-like ones, or a section named by its other words). Null with no search.
+    // A section's own name shows all its rows; "changed" shows every setting that differs from its default.
+    settingsHits() {
       const q = this.settingsQuery.trim().toLowerCase();
-      if (!q) return [];
-      const words = q.split(/\s+/);
+      if (!q) return null;
+      const changed = q === "changed";
+      const exp = !!this.experimental;
+      if (!changed && _klHits && _klHits.q === q && _klHits.exp === exp) return _klHits.out;
       const titles = Object.fromEntries(this.settingsNav().flatMap((g) => g[1]));
-      if (q === "changed") {   // every setting that differs from its default
-        return Object.entries(KL_TAB_KEYS).flatMap(([tab, ks]) => !titles[tab] ? []
-          : ks.filter((k) => this.klChanged(k.key)).map((k, n) => ({ tab, label: k.label, desc: "", title: titles[tab], n })));
+      const words = q.split(/\s+/);
+      const out = { rows: new Set(), tabs: {} };
+      for (const tab of Object.keys(titles)) {
+        const sec = SETTINGS_INDEX.find((r) => r.tab === tab && r.section);
+        const named = !changed && sec && docsMatch(sec.hay, q, words).tier > 0;
+        if (KL_APP_TABS.has(tab)) {
+          if (changed) continue;
+          const labels = SETTINGS_INDEX.filter((r) => r.tab === tab && !r.section && docsMatch(r.hay, q, words).tier).map((r) => r.label);
+          if (named || labels.length) out.tabs[tab] = labels.slice(0, 3);
+          continue;
+        }
+        const all = !changed && docsMatch(titles[tab].toLowerCase(), q, words).tier >= 2;
+        let n = 0;
+        for (const r of KL_ROWS) {
+          if (r.tab !== tab) continue;
+          if (changed ? r.keys && this.klChanged(r.keys) : all || docsMatch(r.hay, q, words).tier) { out.rows.add(r.id); n++; }
+        }
+        if (!n && named) out.tabs[tab] = [];
       }
-      const hits = [];
-      SETTINGS_INDEX.forEach((r, n) => {
-        if (!titles[r.tab]) return;
-        const own = docsMatch(r.label.toLowerCase(), q, words).tier;
-        const tier = own || docsMatch(r.hay, q, words).tier;
-        if (tier) hits.push({ ...r, title: titles[r.tab], rank: (own ? 10 : 0) + tier * 2 + (r.section ? 1 : 0), n });
-      });
-      return hits.sort((a, b) => b.rank - a.rank || a.n - b.n).slice(0, 40);
+      if (!changed) _klHits = { q, exp, out };
+      return out;
     },
-    settingsGo(r) {
-      this.settingsTab = r.tab;
-      this.settingsQuery = "";
-      if (r.section) return;
+    // Matches per section once the rows have updated; a row this install doesn't show (another
+    // platform, a feature that's off) doesn't count. Re-run when Desktop app's data arrives.
+    klMeasure() {
       this.$nextTick(() => {
-        const sec = [...document.querySelectorAll('[data-testid="settings-modal"] section[x-show^="settingsTab"]')]
-          .find((s) => (/settingsTab==='(\w+)'/.exec(s.getAttribute("x-show")) || [])[1] === r.tab);
-        const el = sec && [...sec.querySelectorAll("span, label, div, h3, h4, legend")].find((e) => e.offsetParent !== null
-          && [...e.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent).join(" ").replace(/\s+/g, " ").trim() === r.label);
-        if (!el) return;   // not shown on this install (another platform, a feature that's off)
-        const box = _settingsRow(el) || el;
-        box.scrollIntoView({ block: "center" });
-        box.classList.remove("kl-flash");
-        void box.offsetWidth;
-        box.classList.add("kl-flash");
-        setTimeout(() => box.classList.remove("kl-flash"), 1800);
+        const hits = this.settingsHits();
+        const counts = {};
+        if (hits) {
+          for (const sec of document.querySelectorAll('[data-testid="settings-modal"] section[data-kl-tab]')) {
+            const tab = sec.dataset.klTab;
+            let n = 0;
+            for (const el of sec.querySelectorAll("[data-kl-row]")) {
+              if (!hits.rows.has(Number(el.dataset.klRow))) continue;
+              let shown = true;
+              for (let e = el; e && e !== sec; e = e.parentElement) if (e.style.display === "none") { shown = false; break; }
+              if (shown) n++;
+            }
+            if (n || hits.tabs[tab]) counts[tab] = n;
+          }
+        }
+        this.settingsCounts = counts;
       });
+    },
+    klSearchShows(tab) { return tab in this.settingsCounts; },
+    klSearchLabels(tab) {
+      const hits = this.settingsHits();
+      return (hits && hits.tabs[tab] || []).join(" · ");
+    },
+    klSearchTotal() { return Object.values(this.settingsCounts).reduce((n, c) => n + (c || 1), 0); },
+    settingsQueryChanged(q) {
+      const on = !!q.trim();
+      if (on !== this.settingsSearching) {
+        this.settingsSearching = on;
+        if (this.$refs.settingsBody) this.$refs.settingsBody.scrollTop = 0;
+      }
+      if (!on) this.settingsCounts = {};
+    },
+    settingsGo(tab) {
+      this.settingsQuery = "";
+      this.settingsTab = tab;
     },
     // Ctrl+F (Cmd+F) or "/" while Settings is open; Escape in the box clears it first.
     settingsSearchKey(e) {
@@ -273,9 +354,7 @@ const settingsPart = {
         return String(d);
       }).join(", ");
     },
-    klTabChanged(tab) {
-      return (KL_TAB_KEYS[tab] || []).some((k) => this.klChanged(k.key));
-    },
+
     klPageChanged() {
       const tab = this.settingsTab === "refresh" ? "indexing" : this.settingsTab;
       return (KL_TAB_KEYS[tab] || []).filter((k) => !k.key.split(",").some((x) => KL_RESET_SKIP.has(x)) && this.klChanged(k.key));
@@ -342,6 +421,7 @@ const settingsPart = {
 
     async openSettings() {  // re-read the live settings file each open so the modal can't show stale state
       this.acc = null; this.accErr = "";
+      this.settingsQuery = "";
       this._klLoadDefaults();
       try {
         const data = await getJson("/api/repos");
