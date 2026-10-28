@@ -19,6 +19,7 @@ The connect/attach flows themselves live in ``core/repoconnect.py``.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import threading
@@ -26,7 +27,7 @@ import time
 
 import config
 
-from .applog import get_logger
+from .applog import REPEATS, get_logger
 from .kopia import kopia
 
 log = get_logger("repos")
@@ -306,12 +307,15 @@ def read_status(repo: str, timeout: float | None = None) -> dict:
     try:
         res = kopia(repo, ["repository", "status", "--json"], timeout=timeout)
         if res.returncode != 0:
-            log.warning("repo=%s repository status failed: %s", repo, (res.stderr or "").strip()[:300])
+            REPEATS.failed(log, logging.WARNING, ("repo-status", repo), "repo=%s repository status failed: %s",
+                           repo, (res.stderr or "").strip()[:300])
             return {}
         out = json.loads(res.stdout) if (res.stdout or "").strip() else {}
+        REPEATS.cleared(log, ("repo-status", repo), "repo=%s repository status works again", repo)
         return out if isinstance(out, dict) else {}
     except Exception as exc:  # noqa: BLE001 - status capture must never break a caller
-        log.warning("repo=%s repository status read failed: %s", repo, exc)
+        REPEATS.failed(log, logging.WARNING, ("repo-status", repo), "repo=%s repository status read failed: %s",
+                       repo, exc)
         return {}
 
 
@@ -377,8 +381,8 @@ def scrub_stored_records() -> list[str]:
             cleaned.append(str(rec.get("id")))
     if cleaned:
         config.save_records(config.RECORDS)
-        log.warning("scrubbed credentials from %d stored repo record(s): %s", len(cleaned),
-                    ", ".join(cleaned))
+        log.info("scrubbed credentials from %d stored repo record(s): %s", len(cleaned),
+                 ", ".join(cleaned))
     return cleaned
 
 
@@ -553,7 +557,7 @@ def remove_record(repo: str) -> dict:
         config.RECORDS["repos"] = before
         raise
     config.reload_repos()
-    log.warning("repo=%s removed from the record store", repo)
+    log.info("repo=%s removed from the record store", repo)
     return rec
 
 

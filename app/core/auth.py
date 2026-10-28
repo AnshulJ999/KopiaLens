@@ -279,7 +279,7 @@ def announce_setup() -> None:
         return
     msg = (f"Setup is open for {SETUP_WINDOW // 60} minutes. After that, enter this setup code: "
            f"{setup_code()} (restarting KopiaLens also reopens setup).")
-    log.warning(msg)
+    log.info(msg)
     print(f"KopiaLens: {msg}", flush=True)
 
 

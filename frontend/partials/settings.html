@@ -3,7 +3,8 @@
       <!-- One fixed height with a scrolling body, so the section list never moves. Every control
            SAVES ITSELF on change (saveKl), so the footer carries no Save button and closing the
            modal can never discard an edit. -->
-      <div class="w-[60rem] max-w-full h-[min(88vh,50rem)] flex flex-col rounded-lg border border-bd bg-surface shadow-xl">
+      <div class="w-[60rem] max-w-full h-[min(88vh,50rem)] flex flex-col rounded-lg border border-bd bg-surface shadow-xl"
+           data-testid="settings-modal" @keydown.window="settingsSearchKey($event)">
 
         <div class="flex items-center gap-2 shrink-0 border-b border-bd px-4 py-3">
           <div class="font-medium">Settings</div>
@@ -13,17 +14,37 @@
 
         <div class="flex min-h-0 flex-1">
           <nav class="w-36 sm:w-44 shrink-0 overflow-y-auto border-r border-bd p-2 text-sm">
-            <template x-for="g in [['App', [['general','General'],['appearance','Appearance'],['desktop','Desktop app'],['notifications','Notifications']]],
-                                   ['Data', [['repositories','Repositories'],['indexing','Indexing'],['diskscan','Disk scanning'],['backblaze','Backblaze']]],
-                                   ['Access', [['account','Account'],['encryption','Encryption'],['remote','Remote access'],['writemode','Permissions'],['tokens','API tokens']]],
-                                   ['More', [['licence','Licence'],['updates','Updates'],['backups','Config'],['advanced','Advanced'],...(experimental ? [['experimental','Experimental']] : []),['about','About']]]]" :key="g[0]">
-              <div class="mb-2">
-                <div class="px-2 pt-1 pb-0.5 text-[0.6875rem] text-faint" x-text="g[0]"></div>
-                <template x-for="s in g[1]" :key="s[0]">
-                  <button @click="settingsTab=s[0]"
-                          :class="(settingsTab===s[0] || (s[0]==='indexing' && settingsTab==='refresh')) ? 'w-full text-left rounded px-2 py-1.5 bg-sel text-fg font-medium' : 'w-full text-left rounded px-2 py-1.5 hover:bg-head'"
-                          x-text="s[1]"></button>
+            <input type="search" autocomplete="off" x-model="settingsQuery" placeholder="Search settings" aria-label="Search settings"
+                   title="Search settings (Ctrl+F or /)" data-testid="settings-search"
+                   @keydown.escape="if (settingsQuery) { settingsQuery = ''; $event.stopPropagation(); }"
+                   @keydown.enter.prevent="settingsResults().length && settingsGo(settingsResults()[0])"
+                   class="fld border border-bd bg-surface2 w-full mb-2 text-xs">
+            <template x-if="!settingsQuery.trim()">
+              <div>
+                <template x-for="g in settingsNav()" :key="g[0]">
+                  <div class="mb-2">
+                    <div class="px-2 pt-1 pb-0.5 text-[0.6875rem] text-faint" x-text="g[0]"></div>
+                    <template x-for="s in g[1]" :key="s[0]">
+                      <button @click="settingsTab=s[0]"
+                              :class="(settingsTab===s[0] || (s[0]==='indexing' && settingsTab==='refresh')) ? 'w-full text-left rounded px-2 py-1.5 bg-sel text-fg font-medium' : 'w-full text-left rounded px-2 py-1.5 hover:bg-head'"
+                              x-text="s[1]"></button>
+                    </template>
+                  </div>
                 </template>
+              </div>
+            </template>
+            <template x-if="settingsQuery.trim()">
+              <div data-testid="settings-results">
+                <template x-for="r in settingsResults()" :key="r.tab + '|' + r.label">
+                  <button @click="settingsGo(r)" class="w-full text-left rounded px-2 py-1.5 hover:bg-head" :title="r.desc || null">
+                    <div class="truncate" x-text="r.label"></div>
+                    <div class="truncate text-[0.6875rem] text-faint" x-text="r.section ? 'Section' : r.title"></div>
+                  </button>
+                </template>
+                <div x-show="!settingsResults().length" class="px-2 py-1.5 text-xs text-muted">
+                  <span x-text="'No settings match \u201c' + settingsQuery.trim() + '\u201d.'"></span>
+                  <button class="underline" @click="settingsQuery = ''">Clear</button>
+                </div>
               </div>
             </template>
           </nav>
@@ -238,6 +259,12 @@
                   <button @click="setAutostart(!autostart.on)" :disabled="autostartBusy" class="h-8 rounded border border-bd px-3" data-testid="autostart"
                           x-text="autostartBusy ? 'Changing…' : autostart && autostart.on ? 'On' : 'Off'"></button></div>
                 <p class="text-[0.6875rem] text-muted mt-1">KopiaLens starts in the tray when you sign in to this computer.</p>
+              </div>
+              <div>
+                <div class="flex items-center justify-between gap-3"><span>Sign in automatically</span>
+                  <button @click="desktopSignin = !desktopSignin; saveKl('desktop_signin')" class="h-8 rounded border border-bd px-3" data-testid="desktop-signin"
+                          x-text="desktopSignin ? 'On' : 'Off'"></button></div>
+                <p class="text-[0.6875rem] text-muted mt-1">The desktop app opens signed in. Browsers still ask for the password.</p>
               </div>
               <template x-if="!about || about.platform !== 'linux'">
                 <div class="space-y-4">

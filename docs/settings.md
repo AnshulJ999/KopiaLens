@@ -4,6 +4,8 @@ Settings holds everything you can change in KopiaLens. Open it with the gear but
 
 ![Screenshot: Settings, open on General](images/settings.png)
 
+To find a setting, type in **Search settings** above the section list (or press **Ctrl+F** or **/** while Settings is open). Pick a result to open its section with the setting highlighted.
+
 Each section has a **?** button that opens its help. Some sections have their own page:
 
 | Section | Page |
@@ -62,6 +64,7 @@ These apply to the KopiaLens desktop app and its tray icon.
 | Setting | What it does |
 |---|---|
 | **Start at logon** | KopiaLens starts in the tray when you sign in to the computer. The same switch as in the tray menu |
+| **Sign in automatically** | The desktop app's window opens signed in, with no password asked. A browser, even on the same computer, still asks for it. Off by default |
 | **Clicking the tray icon** | **Opens KopiaLens** or **Shows the menu**. Right-clicking always shows the menu |
 | **Double-clicking the tray icon** | **Opens KopiaLens** or **Does nothing** |
 | **Tray icon** | The icon in the system tray |

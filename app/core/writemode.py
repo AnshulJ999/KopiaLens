@@ -198,7 +198,7 @@ def set_mode(repo: str | None, new: str | None, password: str | None = None) -> 
     else:
         from . import repos
         repos.set_write_mode(repo, new)
-    log.warning("write mode %s: %s -> %s", f"repo={repo}" if repo else "app-wide", before, mode(repo))
+    log.info("write mode %s: %s -> %s", f"repo={repo}" if repo else "app-wide", before, mode(repo))
     try:
         from . import audit
         audit.audit("executed", "write-mode", repo=repo or "", summary={"from": before, "to": mode(repo)})

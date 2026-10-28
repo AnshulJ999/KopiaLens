@@ -504,7 +504,7 @@ def restore(backup_id: str, groups=DEFAULT_RESTORE, keep=()) -> dict:
     with _LOCK:
         safety = create("safety", note=f"before restoring {backup_id}")
         restored = _put_back(files, groups)
-    log.warning("config restored from %s: %s", backup_id, ", ".join(restored) or "nothing")
+    log.info("config restored from %s: %s", backup_id, ", ".join(restored) or "nothing")
     return {"restored": restored, "safety": safety["id"] if safety else None, "restart_needed": True}
 
 
@@ -536,8 +536,8 @@ def recover(name: str) -> bool:
         if source:
             _atomic_write(path, source[1])
             notice.update(kind="recovered", backup_id=source[0]["id"], backup_at=source[0]["at"])
-            log.error("%s could not be read; restored the copy from %s (damaged file kept as %s)",
-                      name, source[0]["id"], notice["kept_as"])
+            log.warning("%s could not be read; restored the copy from %s (damaged file kept as %s)",
+                        name, source[0]["id"], notice["kept_as"])
         else:
             notice.update(kind="reset")
             log.error("%s could not be read and no backup holds a good copy; starting from defaults "
@@ -640,5 +640,5 @@ def import_apply(token: str, groups, keep=()) -> dict:
     with _LOCK:
         safety = create("safety", note="before an import")
         restored = _put_back(_keep_current(pending["files"], keep), groups)
-    log.warning("config imported: %s", ", ".join(restored) or "nothing")
+    log.info("config imported: %s", ", ".join(restored) or "nothing")
     return {"restored": restored, "safety": safety["id"] if safety else None, "restart_needed": True}

@@ -311,14 +311,17 @@ def _vtuple(ver: str) -> tuple[int, ...] | None:
 
 
 def compat(ver: str | None) -> str:
-    """How this kopia compares: "older" than KopiaLens supports, "newer" than tested, "ok", or
-    "unknown" (no version read)."""
+    """How this kopia compares: "older" than KopiaLens supports, "behind" the tested version,
+    "newer" than tested, "ok", or "unknown" (no version read)."""
     have = _vtuple(ver or "")
     if have is None:
         return "unknown"
     if have < _vtuple(MIN_VERSION):
         return "older"
-    return "newer" if have > _vtuple(TESTED_VERSION) else "ok"
+    tested = _vtuple(TESTED_VERSION)
+    if have < tested:
+        return "behind"
+    return "newer" if have > tested else "ok"
 
 
 _FORMAT_ERRORS = ("can't handle repositories created using version", "unsupported format version",

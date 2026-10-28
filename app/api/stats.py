@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import os
 import re
 import threading
@@ -20,7 +21,7 @@ from pydantic import BaseModel
 
 from config import DATA_DIR
 
-from ..core.applog import get_logger
+from ..core.applog import REPEATS, get_logger
 from ..core import audit
 from ..core.kopia import kopia, page_kopia_ok
 from ..index import sidecache
@@ -430,8 +431,9 @@ def refresh_stats(repo: str) -> None:
         _stats_refreshing.add(repo)
     try:
         _compute_stats(repo)
+        REPEATS.cleared(log, ("stats", repo), "stats refresh repo=%s works again", repo)
     except Exception as exc:  # noqa: BLE001
-        log.warning("stats refresh repo=%s failed: %s", repo, exc)
+        REPEATS.failed(log, logging.WARNING, ("stats", repo), "stats refresh repo=%s failed: %s", repo, exc)
         with _stats_lock:
             _stats_refreshing.discard(repo)
 

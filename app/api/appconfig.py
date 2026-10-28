@@ -89,7 +89,7 @@ def restart() -> dict:
 
     def _exit() -> None:
         time.sleep(0.5)
-        log.warning("restart requested: exiting for the container to restart")
+        log.info("restart requested: exiting for the container to restart")
         os.kill(os.getpid(), signal.SIGTERM)
 
     threading.Thread(target=_exit, name="restart-request", daemon=True).start()

@@ -251,18 +251,22 @@ def _cert_ok(cert_path: str) -> bool:
 
 def ensure_self_signed() -> tuple[str, str]:
     """The certificate KopiaLens makes for itself: created on first use, renewed near expiry."""
+    return ensure_cert(_tls_dir(), "kopialens", *_names())
+
+
+def ensure_cert(d: str, base: str, dns: list[str], ips: list[str]) -> tuple[str, str]:
+    """A self-signed certificate + key ``<d>/<base>.crt|.key`` for these names: made on first
+    use, replaced near expiry."""
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.x509.oid import NameOID
 
-    d = _tls_dir()
-    cert_path, key_path = os.path.join(d, "kopialens.crt"), os.path.join(d, "kopialens.key")
+    cert_path, key_path = os.path.join(d, f"{base}.crt"), os.path.join(d, f"{base}.key")
     if os.path.isfile(cert_path) and os.path.isfile(key_path) and _cert_ok(cert_path):
         return cert_path, key_path
     os.makedirs(d, exist_ok=True)
     key = ec.generate_private_key(ec.SECP256R1())
-    dns, ips = _names()
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "KopiaLens"),
                       x509.NameAttribute(NameOID.ORGANIZATION_NAME, "KopiaLens (self-signed)")])
     alt = [x509.DNSName(n) for n in dns] + [x509.IPAddress(ipaddress.ip_address(i)) for i in ips]

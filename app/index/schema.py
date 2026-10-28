@@ -174,7 +174,7 @@ def get_db(repo: str) -> duckdb.DuckDBPyConnection:
                 con.execute("PRAGMA preserve_insertion_order=false")
             except Exception as exc:  # noqa: BLE001 - never block startup on a pragma
                 log.warning("repo=%s memory_limit/temp_directory pragma failed: %s", repo, exc)
-            log.info("repo=%s DuckDB connection opened (memory_limit=%s)", repo, MEMORY_LIMIT)
+            log.debug("repo=%s DuckDB connection opened (memory_limit=%s)", repo, MEMORY_LIMIT)
             init_schema(con)
             _POOL[repo] = con
         return con

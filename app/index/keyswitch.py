@@ -582,7 +582,7 @@ def reset(keep_copy: bool = False) -> dict:
             log.warning("backblaze rebuild after the reset could not start: %s", exc)
     summary = {"removed": len(done), "failed": len(failed), "kept_copy": aside,
                "reindex": plan["reindex"]}
-    log.warning("encryption reset: %s", summary)
+    log.info("encryption reset: %s", summary)
     for item in failed:
         log.warning("encryption reset could not remove %s: %s", item["path"], item["error"])
     audit.audit("executed", "encryption-reset", summary=summary)

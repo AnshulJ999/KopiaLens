@@ -301,10 +301,10 @@ def repo_view(repo: str, with_owner: bool = False) -> dict:
     if not key:
         return view
     for srv in kopia_servers():
-        if srv["readonly"]:
-            continue            # a read-only server never schedules or runs maintenance
         # A server keeps running on a config KopiaLens renamed until its app restarts.
         other = read_config(srv["config"]) or read_config(srv["config"] + MOVED_SUFFIX)
+        if srv["readonly"] or other.get("readonly"):
+            continue            # a read-only connection never schedules or runs maintenance
         if _same_file(srv["config"], path) or storage_key(other) == key:
             view["running"].append({"app": srv["app"], "label": APP_LABELS[srv["app"]],
                                     "pid": srv["pid"], "config": srv["config"],

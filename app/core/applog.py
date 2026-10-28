@@ -9,6 +9,8 @@ under the noisy ones:
                  ``kopia-server-*.log``.
 - ``indexing/``  one ``index_worker_repoN.log`` per repo, size-rolled.
 - ``jobs/``      job logs, dry runs and mount logs - the files that accumulate per action.
+- ``kopia/``     kopia's own logs for the kopia commands KopiaLens runs (``KOPIA_LOG_DIR``), so
+                 they stay out of the user's kopia log folder; kopia prunes it with its own limits.
 
 Legacy flat files are moved into these folders once at startup (:func:`migrate`); ``jobs/`` is
 pruned by the ``log_cleanup_days`` setting, always keeping the newest hundred.
@@ -33,6 +35,7 @@ LOG_DIR = os.path.join(DATA_DIR, "logs")
 APP_LOG_DIR = os.path.join(LOG_DIR, "app")
 INDEX_LOG_DIR = os.path.join(LOG_DIR, "indexing")
 JOB_LOG_DIR = os.path.join(LOG_DIR, "jobs")
+KOPIA_LOG_DIR = os.path.join(LOG_DIR, "kopia")
 LOG_FILE = os.path.join(APP_LOG_DIR, "kopialens.log")
 DEBUG_LOG_FILE = os.path.join(APP_LOG_DIR, "kopialens-debug.log")
 
@@ -60,6 +63,11 @@ class _CryptoRotatingFileHandler(RotatingFileHandler):
 def ensure_dirs() -> None:
     for d in (LOG_DIR, APP_LOG_DIR, INDEX_LOG_DIR, JOB_LOG_DIR):
         os.makedirs(d, exist_ok=True)
+
+
+def route_kopia_logs() -> None:
+    """Every kopia this process starts (and its children) logs under ``logs/kopia/``."""
+    os.environ["KOPIA_LOG_DIR"] = KOPIA_LOG_DIR
 
 
 def _dest_for(name: str) -> str | None:
@@ -138,6 +146,7 @@ def setup_logging(level: int = logging.INFO) -> None:
     if _configured:
         return
     moved = migrate()
+    route_kopia_logs()
     handler = _CryptoRotatingFileHandler(LOG_FILE, maxBytes=1_000_000, backupCount=15,
                                          encoding="utf-8")
     handler.setFormatter(logging.Formatter(_FORMAT))
@@ -269,6 +278,46 @@ class RequestStats:
             self._paths = {}
             self._since = now
         return f"polling requests, last {minutes:.0f} min: {total} total - " + "; ".join(parts)
+
+
+class Repeats:
+    """A failure or skip that repeats on a timer (a repository that is offline for days): logged at
+    its level when it starts, then as a reminder with a count every ``remind`` seconds, and once
+    at INFO when it clears. The repeats in between go to DEBUG."""
+
+    def __init__(self, remind: float = 6 * 3600):
+        self.remind = remind
+        self._lock = threading.Lock()
+        self._open: dict = {}   # key -> [first seen, last logged, count]
+
+    def failed(self, logger: logging.Logger, level: int, key, msg: str, *args) -> None:
+        now = time.time()
+        with self._lock:
+            st = self._open.get(key)
+            if st is None:
+                self._open[key] = [now, now, 1]
+                logger.log(level, msg, *args)
+                return
+            st[2] += 1
+            if now - st[1] < self.remind:
+                logger.debug(msg, *args)
+                return
+            st[1] = now
+            count, since = st[2], st[0]
+        logger.log(level, msg + " (%d times since %s)", *args, count, _stamp(since))
+
+    def cleared(self, logger: logging.Logger, key, msg: str, *args) -> None:
+        with self._lock:
+            st = self._open.pop(key, None)
+        if st:
+            logger.info(msg + " (after %d times since %s)", *args, st[2], _stamp(st[0]))
+
+
+def _stamp(t: float) -> str:
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(t))
+
+
+REPEATS = Repeats()
 
 
 def get_logger(name: str) -> logging.Logger:

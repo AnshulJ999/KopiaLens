@@ -103,7 +103,7 @@ def _note_page_spawn(args: list[str]) -> None:
         raise PageSpawn(f"GET {sc.path} started kopia ({what})")
     if (sc.path, what) not in _PAGE_SPAWNS:
         _PAGE_SPAWNS.add((sc.path, what))
-        log.warning("a page load started kopia: GET %s ran kopia %s", sc.path, what)
+        log.info("a page load started kopia: GET %s ran kopia %s", sc.path, what)
 
 
 @dataclass
@@ -1177,7 +1177,7 @@ def policy_set_command(repo: str, target: str | None = None, global_: bool = Fal
 def _run_policy_write(repo: str, cmd: list[str], action: str, summary: dict) -> dict:
     """Run one mutating policy command synchronously. Logged + audited; the kopia timeout
     applies. Returns the raw result - the caller decides ok/fail from the returncode."""
-    log.warning("EXECUTING %s repo=%s cmd=%s", action, repo, " ".join(cmd[:8]))
+    log.info("EXECUTING %s repo=%s cmd=%s", action, repo, " ".join(cmd[:8]))
     t0 = time.time()
     sim = _demo_args(cmd)
     try:
@@ -1326,7 +1326,7 @@ def restore_execute(repo: str, source_id: str, target: str, options: dict | None
     """ACTUALLY run a restore (writes files/archive to ``target``). Logged. Non-destructive for a
     new folder / archive; can overwrite when the overwrite/delete-extra options are enabled."""
     full = restore_command_full(repo, source_id, target, options) + ["--no-progress"]
-    log.warning("EXECUTING restore repo=%s snapshot=%s", repo, source_id)
+    log.info("EXECUTING restore repo=%s snapshot=%s", repo, source_id)
     log.debug("restore target %s", target)
     _refuse_demo(full)
     t0 = time.time()

@@ -7,6 +7,7 @@ import datetime as dt
 import gc
 import ipaddress
 import json
+import logging
 import os
 import re
 import threading
@@ -32,7 +33,7 @@ from .api import (access, account, actions, appconfig, audit, backblaze, cli, da
                   help, insights, jobs, licence, logs, newsnapshot, notify, onboarding, policies, prune, restore, search, setup, shell, simulate,
                   snapshots, stats, tree, writemode)
 from .api import tokens as tokens_api
-from .core import auth, basepath, checkin, devaddons, devnotes, netaccess, pause, tokens
+from .core import auth, basepath, checkin, devaddons, devnotes, netaccess, pause, tokens, users
 from .core import engine as backup_engine
 from .core import jobs as jobrunner
 from .index.crypto import StoreLocked
@@ -40,7 +41,7 @@ from .index import crypto as crypto_mod
 from .core import kopia as kopia_mod
 from .core import nightly
 from .core import repos as repos_store
-from .core.applog import RequestStats, apply_logging_settings, debug_on, get_logger, setup_logging
+from .core.applog import REPEATS, RequestStats, apply_logging_settings, debug_on, get_logger, setup_logging
 from .core.instrument import log_memory, memory_snapshot
 from .core.metrics import table_rows
 from .core.schedule import compute_next_snapshots
@@ -348,8 +349,9 @@ def _refresh_dashboard(repo: str) -> None:
     try:
         data = table_rows(repo, refresh=False)
         log.info("dashboard refreshed repo=%s in %.1fs", repo, float(data.get("elapsed") or 0))
-    except Exception as exc:  # noqa: BLE001
-        log.error("dashboard refresh repo=%s failed: %s", repo, exc)
+        REPEATS.cleared(log, ("dashboard", repo), "dashboard refresh repo=%s works again", repo)
+    except Exception as exc:  # noqa: BLE001 - the previous dashboard stays on screen
+        REPEATS.failed(log, logging.WARNING, ("dashboard", repo), "dashboard refresh repo=%s failed: %s", repo, exc)
 
 
 _warm_search_failed: dict[str, int] = {}   # repo -> manifest stamp of the index the warm failed on
@@ -397,8 +399,9 @@ def _warm(repo: str) -> None:
     SUBPROCESS, which is what keeps this long-lived process's memory flat."""
     try:
         compute_next_snapshots(repo)
-    except Exception as exc:  # noqa: BLE001
-        log.error("warm next_snapshots repo=%s failed: %s", repo, exc)
+        REPEATS.cleared(log, ("warm-next", repo), "warm next_snapshots repo=%s works again", repo)
+    except Exception as exc:  # noqa: BLE001 - the last answer stays cached
+        REPEATS.failed(log, logging.WARNING, ("warm-next", repo), "warm next_snapshots repo=%s failed: %s", repo, exc)
     try:
         from .core import coexist                 # the Backups panel reads it on open
         coexist.maintenance_info(repo)
@@ -437,7 +440,9 @@ def _light_pass() -> None:
     if locked:
         # Every read raises while the store is locked, and the nightly records its own skip.
         # One line here instead of one error per repo every interval.
-        log.info("light pass skipped: the index is encrypted and locked")
+        REPEATS.failed(log, logging.INFO, ("light-locked",), "light pass skipped: the index is encrypted and locked")
+    else:
+        REPEATS.cleared(log, ("light-locked",), "light pass running again: the index is unlocked")
     for repo in list(REPOS):
         if _bg_stop.is_set():
             return
@@ -449,10 +454,11 @@ def _light_pass() -> None:
             continue  # locked, or the worker owns the DuckDB right now
         try:
             _warm(repo)
+            REPEATS.cleared(log, ("light", repo), "light pass repo=%s works again", repo)
         except RepoOffline:
             continue  # raced with the start of a nightly pass; nothing to do
         except Exception as exc:  # noqa: BLE001
-            log.error("light pass repo=%s failed: %s", repo, exc)
+            REPEATS.failed(log, logging.ERROR, ("light", repo), "light pass repo=%s failed: %s", repo, exc)
 
 
 _DEFAULT_BZ_REINDEX_GAP = 21600   #: min seconds between real BZ reindexes (detect runs far more often)
@@ -601,7 +607,7 @@ def _tick() -> None:
                 continue  # a demo copy has no kopia to index from
             slot = _due_slot(repo, now_dt, now_ts)
             if slot is not None:
-                log.info("heavy pass due for repo=%s (mode=%s, slot=%s)", repo, _index_mode(), int(slot))
+                log.debug("heavy pass due for repo=%s (mode=%s, slot=%s)", repo, _index_mode(), int(slot))
                 # Launch FIRST, record second. Recording before reserving meant a manual Index
                 # winning the race left the slot marked attempted but never completed, so that
                 # night's run was silently lost.
@@ -609,8 +615,12 @@ def _tick() -> None:
                                                          trigger="nightly")
                 if started.get("started"):
                     _mark_nightly(repo, slot)
+                    log.info("heavy pass started for repo=%s (mode=%s, slot=%s)", repo, _index_mode(), int(slot))
+                    REPEATS.cleared(log, ("heavy-wait", repo), "heavy pass for repo=%s no longer deferred", repo)
                 else:
-                    log.info("heavy pass for repo=%s deferred: %s", repo, started.get("reason"))
+                    # Retried every tick while another pass runs: logged once, not per tick.
+                    REPEATS.failed(log, logging.INFO, ("heavy-wait", repo), "heavy pass for repo=%s deferred: %s",
+                                   repo, started.get("reason"))
                 break  # strictly sequential - the next repo gets its turn on a later tick
         if _bz_reindex_due(now_ts):
             # Same single global slot as every heavy pass: a kopia run defers this to a later
@@ -619,8 +629,9 @@ def _tick() -> None:
             if started.get("started"):
                 _BZ_LAST_ATTEMPT = now_ts
                 log.info("BZ reindex started (detect flagged a change, min-gap opened)")
+                REPEATS.cleared(log, ("bz-wait",), "BZ reindex no longer deferred")
             else:
-                log.info("BZ reindex deferred: %s", started.get("reason"))
+                REPEATS.failed(log, logging.INFO, ("bz-wait",), "BZ reindex deferred: %s", started.get("reason"))
     index_upgrade.drain_queue()   # an index a user cannot read must not wait for its next slot
     if now_ts - _last_light >= _light_interval():
         _last_light = now_ts
@@ -696,8 +707,8 @@ async def lifespan(_app: FastAPI):
         if seeded and not users.has_accounts():
             name = (os.environ.get("KOPIALENS_USERNAME") or "admin").strip()
             users.create(name, auth.hash_password(seeded))
-            log.warning("account %r seeded from KOPIALENS_PASSWORD (first boot only - an account "
-                        "that already exists is never overwritten)", name)
+            log.info("account %r seeded from KOPIALENS_PASSWORD (first boot only - an account "
+                     "that already exists is never overwritten)", name)
         auth.mark_started()
         auth.announce_setup()
     except Exception as exc:  # noqa: BLE001 - seeding must never block startup
@@ -709,7 +720,7 @@ async def lifespan(_app: FastAPI):
         elif crypto.enabled() and not crypto.unlocked() and crypto.unlock_from_file():
             pass
         elif crypto.enabled() and not crypto.unlocked():
-            log.warning("the index is encrypted and locked - reads and the nightly wait for an unlock")
+            log.info("the index is encrypted and locked - reads and the nightly wait for an unlock")
         crypto.sweep_all()   # session databases and temp folders a crashed process left behind
     except Exception as exc:  # noqa: BLE001 - never block startup on the keystore
         log.error("keystore check failed: %s", exc)
@@ -758,7 +769,7 @@ async def lifespan(_app: FastAPI):
         try:
             report = index_upgrade.migrate_all_repos(list(REPOS))
             if any(report.values()):
-                log.warning("index format pass: %s", report)
+                log.info("index format pass: %s", report)
         except Exception as exc:  # noqa: BLE001 - never block startup
             log.error("index format migration failed: %s", exc, exc_info=True)
 
@@ -884,7 +895,15 @@ def shell_open(code: str = "", next: str = "/") -> Response:
     if token:
         resp.set_cookie(netaccess.WINDOW_COOKIE, token, httponly=True, samesite="strict", path="/",
                         secure=auth.request_secure())
+        # Only the desktop app can get a code, so with the switch on its window is signed in too.
+        user = users.primary() if auth.enabled() and _desktop_signin() else None
+        if user:
+            resp.set_cookie(auth.COOKIE_NAME, auth.issue_session(user, True), **auth.cookie_kwargs(True))
     return resp
+
+
+def _desktop_signin() -> bool:
+    return auth._kl().get("desktop_signin") is True
 
 
 @app.middleware("http")

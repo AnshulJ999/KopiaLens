@@ -215,7 +215,7 @@ def migrate_legacy() -> dict:
             mutate_settings(lambda s: s.setdefault("kopialens", {}).pop("auth_password_hash", None))
         _MIGRATED = True
     if moved:
-        log.warning("the shared password moved to the account 'admin' in users.json")
+        log.info("the shared password moved to the account 'admin' in users.json")
     return {"moved": moved}
 
 
