@@ -4,19 +4,49 @@ KopiaLens runs as a single container with kopia built in. You open it in a brows
 
 ## Quick start
 
-1. Copy `packaging/docker/compose.example.yml` to a folder of your own as `compose.yml`.
-2. Change the paths under `volumes` (see below).
+1. Download [`compose.example.yml`](https://github.com/AnshulJ999/KopiaLens/blob/main/compose.example.yml) into a folder of your own and rename it `compose.yml`. This is the file:
+
+   ```yaml
+   # KopiaLens with Docker Compose. Save as compose.yml, change the time zone and paths, then: docker compose up -d
+   services:
+     kopialens:
+       image: anshulj99/kopialens:latest
+       container_name: kopialens
+       hostname: kopialens
+       restart: unless-stopped         # also how the Restart button in Settings works
+       stop_grace_period: 30s
+       ports:
+         - "7123:7123"
+       environment:
+         TZ: "Europe/London"           # your time zone, for the nightly index time
+         # PUID: "1000"                # run as this user and group (files in /config belong to them)
+         # PGID: "1000"
+       volumes:
+         # Required: settings, the index and kopia's cache. Without it everything is lost on recreate.
+         - ./kopialens:/config
+         # Your repository, at the same path kopia uses for it.
+         - /mnt/backups/kopia:/mnt/backups/kopia
+         # Optional: backed-up folders, at the same paths as in your snapshots. Read-only is enough.
+         - /home:/home:ro
+         # Optional: snapshot mounts, visible on the host in this folder.
+         - /mnt/kopialens-mounts:/mounts:shared
+       # Optional: needed only for mounting snapshots.
+       devices:
+         - /dev/fuse:/dev/fuse
+       cap_add:
+         - SYS_ADMIN
+       security_opt:
+         - apparmor:unconfined
+   ```
+
+2. Change the time zone and the paths under `volumes` (see below).
 3. Run `docker compose up -d` and open `https://<server address>:7123`.
 
 KopiaLens serves HTTPS with a certificate it makes itself, so the browser warns about the certificate once. Accept it, or use your own certificate or a reverse proxy instead (see [Remote access and HTTPS](remote-access.md)). To serve plain HTTP, set `KOPIALENS_HTTPS=off`.
 
 The first run shows setup: connect your repositories, choose a password, and start the first index (see [First-time setup](getting-started.md)). For the first 30 minutes after a start, setup is open to anyone who can reach the port. After that it asks for a **setup code**, printed in the container log (`docker logs kopialens`).
 
-Until the image is published, build it from the KopiaLens folder:
-
-```bash
-docker build -f packaging/docker/Dockerfile -t kopialens:local .
-```
+The image is on Docker Hub as `anshulj99/kopialens` and on GitHub as `ghcr.io/anshulj999/kopialens`, for amd64 and arm64. `latest` is the newest release; a version tag such as `1.0.0` stays on that release.
 
 ## Folders
 

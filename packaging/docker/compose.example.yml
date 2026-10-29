@@ -1,8 +1,8 @@
-# KopiaLens with Docker Compose. Copy this file, change the paths, then: docker compose up -d
-# Guide: docs/docker.md
+# KopiaLens with Docker Compose. Save as compose.yml, change the time zone and paths, then: docker compose up -d
+# Guide: https://kopialens.com/docs/docker
 services:
   kopialens:
-    image: kopialens:local          # built with: docker build -f packaging/docker/Dockerfile -t kopialens:local .
+    image: anshulj99/kopialens:latest
     container_name: kopialens
     hostname: kopialens
     restart: unless-stopped         # also how the Restart button in Settings works

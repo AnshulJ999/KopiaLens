@@ -269,3 +269,12 @@ def test_stated_defaults_match_the_code(page, pattern, value):
     want = value()
     want = want if isinstance(want, tuple) else (want,)
     assert tuple(_number(g) for g in m.groups()) == tuple(want), f"{page}: docs say {m.group(0)!r}, the code has {want}"
+
+
+def test_docker_page_shows_the_compose_example_as_published():
+    """docker.md shows compose.example.yml inline (the site sync publishes the file); they must not drift."""
+    m = re.search(r"^ *```yaml\n(.*?)^ *```", PAGES["docker"], re.S | re.M)
+    assert m, "docker.md no longer has the compose example"
+    shown = "\n".join(line[3:] if line.startswith("   ") else line for line in m.group(1).splitlines())
+    example = (ROOT / "packaging" / "docker" / "compose.example.yml").read_text(encoding="utf-8")
+    assert shown.strip() == example.strip(), "docker.md's compose block differs from packaging/docker/compose.example.yml"
