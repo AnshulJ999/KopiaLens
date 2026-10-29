@@ -12,7 +12,13 @@
             <option value="all">All repos</option>
             <template x-for="r in repos" :key="r.id"><option :value="r.id" :selected="r.id == logsRepo" x-text="r.name"></option></template>
           </select>
-          <label class="flex items-center gap-1.5 text-xs" x-show="logsTab === 'audit'" title="Hides snapshots you started, previews and checks">
+          <span class="kl-chips" x-show="logsTab === 'audit' && auditChips" data-testid="audit-chips">
+            <template x-for="g in auditGroupList()" :key="g[0]">
+              <button type="button" class="kl-chip" :class="auditGroups.includes(g[0]) ? 'on' : ''" :title="g[2]" @click="toggleAuditGroup(g[0])"
+                      x-text="g[1] + ' ' + (auditCounts[g[0]] ?? '')" :data-testid="'audit-chip-' + g[0]"></button>
+            </template>
+          </span>
+          <label class="flex items-center gap-1.5 text-xs" x-show="logsTab === 'audit' && !auditChips" title="Hides snapshots you started, previews and checks">
             <input autocomplete="off" type="checkbox" x-model="auditHideRoutine" @change="klSet({ audit_hide_routine: auditHideRoutine }); loadAudit()" data-testid="audit-hide-routine">Hide routine</label>
           <template x-if="logsTab === 'app'">
             <span class="flex items-center gap-2">
@@ -41,17 +47,16 @@
         <div x-show="logsTab === 'audit'" class="rounded border border-bd bg-surface p-3">
           <div class="overflow-auto max-h-[70vh] rounded border border-bd-soft">
             <table class="w-full text-[0.6875rem]">
-              <thead class="bg-surface2 text-left text-muted"><tr><th class="p-1.5">When</th><th class="p-1.5">Event</th><th class="p-1.5">Action</th><th class="p-1.5">Repo</th><th class="p-1.5">By</th><th class="p-1.5">Summary</th><th class="p-1.5">Exit code</th></tr></thead>
+              <thead class="bg-surface2 text-left text-muted"><tr><th class="p-1.5">When</th><th class="p-1.5">Event</th><th class="p-1.5">Action</th><th class="p-1.5">Repo</th><th class="p-1.5">Summary</th><th class="p-1.5">By</th></tr></thead>
               <tbody>
                 <template x-for="(r, i) in logsAudit()" :key="i">
                   <tr class="border-t border-bd-soft">
                     <td class="p-1.5 whitespace-nowrap" x-text="humanTime(r.ts)"></td>
-                    <td class="p-1.5" x-text="auditEvent(r)"></td>
+                    <td class="p-1.5" :class="auditFailed(r) ? 'text-danger font-medium' : ''" :title="r.rc ? 'Exit code ' + r.rc : ''" x-text="auditEvent(r)"></td>
                     <td class="p-1.5" x-text="auditAction(r)" :title="r.action"></td>
                     <td class="p-1.5" x-text="r.repo ? repoLabel(r.repo) : ''"></td>
-                    <td class="p-1.5 whitespace-nowrap" x-text="auditActor(r)"></td>
                     <td class="p-1.5 break-all max-w-[36rem]" x-text="auditSummary(r)" :title="auditRaw(r)"></td>
-                    <td class="p-1.5" :class="r.rc ? 'text-danger' : ''" x-text="r.rc ?? ''"></td>
+                    <td class="p-1.5 whitespace-nowrap" x-text="auditActor(r)"></td>
                   </tr>
                 </template>
               </tbody>

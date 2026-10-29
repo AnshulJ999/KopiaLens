@@ -76,33 +76,61 @@ def audit(event: str, action: str, repo: str | None = None, summary: dict | None
 
 # Automatic policy backups: not audited, the save or restore that made one names it.
 AUTOMATIC_BACKUPS = ("nightly", "pre-write", "pre-restore")
-# Snapshots someone started, previews and read-only checks: the Logs tab's Hide routine.
-ROUTINE = frozenset({"snapshot-create", "remove-plan", "snapshot-estimate", "snapshot-verify", "blob-stats"})
+# The Logs tab's filter chips. Previews: dry runs and read-only checks.
+GROUPS = ("changes", "snapshots", "previews", "failed")
+PREVIEWS = frozenset({"remove-plan", "snapshot-estimate", "snapshot-verify", "blob-stats"})
 _MAX_WINDOW = 100_000
 
 
 def _retired(rec: dict) -> bool:
     """Kinds no longer written; their old rows are not shown."""
     action = rec.get("action")
+    s = rec.get("summary") or {}
     if action in ("engine-start", "engine-stop", "unmount"):
         return True
-    return action == "policy-backup" and (rec.get("summary") or {}).get("trigger") in AUTOMATIC_BACKUPS
+    if action == "policy-write":
+        return not s.get("then")         # a plain save: its policy-set line has the detail
+    return action == "policy-backup" and s.get("trigger") in AUTOMATIC_BACKUPS
 
 
-def routine(rec: dict) -> bool:
-    return rec.get("action") in ROUTINE or (rec.get("summary") or {}).get("dry") is True
+def group(rec: dict) -> str:
+    action = rec.get("action")
+    if (rec.get("summary") or {}).get("dry") is True or action in PREVIEWS:
+        return "previews"
+    return "snapshots" if action == "snapshot-create" else "changes"
 
 
-def read_view(limit: int = 200, hide_routine: bool = False) -> list[dict]:
+def failed(rec: dict) -> bool:
+    try:
+        return rec.get("rc") not in (None, 0) or int((rec.get("summary") or {}).get("errors") or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def in_groups(rec: dict, groups: set[str]) -> bool:
+    """No chip selected shows everything; otherwise a row shows when any of its chips is on."""
+    return not groups or group(rec) in groups or ("failed" in groups and failed(rec))
+
+
+def read_view(limit: int = 200, keep=None) -> list[dict]:
     """The last ``limit`` rows the Logs tab shows, oldest first. Reads a growing tail window
-    until enough rows pass the filter or the file runs out."""
+    until enough rows pass ``keep`` or the file runs out."""
     window = limit
     while True:
         tail = read_tail(window)
-        rows = [r for r in tail if not _retired(r) and not (hide_routine and routine(r))]
+        rows = [r for r in tail if not _retired(r) and (keep is None or keep(r))]
         if len(rows) >= limit or len(tail) < window or window >= _MAX_WINDOW:
             return rows[-limit:]
         window *= 4
+
+
+def group_counts() -> dict[str, int]:
+    out = dict.fromkeys(GROUPS, 0)
+    for r in read_tail(_MAX_WINDOW):
+        if not _retired(r):
+            out[group(r)] += 1
+            out["failed"] += failed(r)
+    return out
 
 
 def size_bytes() -> int:

@@ -7,6 +7,14 @@
 // All four sections fetch a tail and filter by repo client-side; the records already carry a
 // repo field (the app log is app-wide by nature and shows as such). Every section is
 // info-heavy but plain tables - debugging KopiaLens itself, not a Kopia repo.
+// Logs > Audit filter chips: [group, label, tooltip]. The groups are decided in app/core/audit.py.
+const AUDIT_GROUPS = [
+  ["changes", "Changes", "Everything that changed something, plus approvals, tokens and commands handed out"],
+  ["snapshots", "Snapshots", "Snapshots you started"],
+  ["previews", "Previews", "Dry runs and read-only checks"],
+  ["failed", "Failed", "Actions that ended with an error"],
+];
+
 const logsPart = {
 
     setLogsTab(t) {
@@ -24,10 +32,22 @@ const logsPart = {
     // ---- Audit (moved from Stats,) ----
     async loadAudit() {
       const seq = ++this._logsSeq;
-      const aud = await getJson(`/api/audit?limit=500&hide_routine=${this.auditHideRoutine ? 1 : 0}`).catch(() => ({ records: [], size: 0 }));
+      const filter = this.auditChips ? `groups=${this.auditGroups.join(",")}` : `hide_routine=${this.auditHideRoutine ? 1 : 0}`;
+      const aud = await getJson(`/api/audit?limit=500&${filter}`).catch(() => ({ records: [], size: 0 }));
       if (seq !== this._logsSeq || this.logsTab !== "audit") return;
       this.auditRows = aud.records || [];
       this.auditSize = aud.size || 0;
+      this.auditCounts = aud.counts || {};
+    },
+    auditGroupList() { return AUDIT_GROUPS; },
+    // No chip on shows everything, the same as all of them on.
+    toggleAuditGroup(g) {
+      this.auditGroups = this.auditGroups.includes(g) ? this.auditGroups.filter((x) => x !== g) : [...this.auditGroups, g];
+      this.klSet({ audit_groups: this.auditGroups });
+      this.loadAudit();
+    },
+    auditFailed(r) {
+      return (r.rc != null && r.rc !== 0) || Number((r.summary || {}).errors || 0) > 0;
     },
     // The raw record, for the tooltip.
     auditRaw(r) {
@@ -40,11 +60,13 @@ const logsPart = {
       return a.startsWith("token:") ? `${a.slice(6)} (token)` : a;
     },
     auditEvent(r) {
+      if (this.auditFailed(r)) return "Failed";
       if ((r.summary || {}).dry === true) return "Dry run";
       return { executed: "Done", generated: "Prepared", "dry-run": "Dry run", mount: "Mounted", unmount: "Unmounted", config: "Settings" }[r.event] || capFirst(String(r.event || ""));
     },
     auditAction(r) {
       const a = String(r.action || "");
+      if (a === "policy-write" && (r.summary || {}).then) return "Exclude and delete";
       return {
         "remove-files": "Remove files", "remove-files-chunked": "Remove folder", "remove-files-commands": "Remove files (commands)",
         "snapshot-delete": "Delete snapshots", "snapshot-delete-commands": "Delete snapshots (commands)", "remove-plan": "Removal plan",
@@ -73,7 +95,10 @@ const logsPart = {
         case "maintenance":
           line = `${s.full ? "Full" : "Quick"} maintenance` + (s.safety === "none" ? ", safety none" : ""); break;
         case "policy-write":
-          line = `Saved ${countOf(s.writes, "policy", "policies")}`; break;
+          line = s.then
+            ? `${done ? "Removed" : "Would remove"} ${countOf((s.then_detail || {}).items, "item")} after excluding them in ${countOf(s.writes, "policy", "policies")}`
+            : `Saved ${countOf(s.writes, "policy", "policies")}`;
+          break;
         case "snapshot-create":
           line = `Snapshot of ${s.path || "?"}`; break;
         case "snapshot-pin":

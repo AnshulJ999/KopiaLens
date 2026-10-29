@@ -106,7 +106,8 @@ document.addEventListener("alpine:init", () => {
     simMode: "all", simMeta: "", simText: "", actionText: "", simEmpty: true, simPolicyByRepo: {}, _simRepo: null, _simRunOnOpen: false,
     mounts: [],
     statsData: null, blobStats: "", blobLoading: false, _statsLoading: false,
-    auditRows: [], auditSize: 0, auditHideRoutine: true,
+    auditRows: [], auditSize: 0, auditHideRoutine: true, auditGroups: ["changes"], auditCounts: {},
+    auditChips: true,   // Logs > Audit: filter chips; false brings back the Hide routine tickbox
     // Logs tab (): four sections (audit/activity/indexing/app log), all repos in one
     // view with a client-side repo filter; the app log is app-wide by nature.
     logsTab: "audit", logsRepo: "all", jobHistory: [], indexRuns: [], noticeLog: [],

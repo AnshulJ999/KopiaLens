@@ -792,12 +792,14 @@ def _run(job: dict, cmds: list[list[str]]) -> None:
             threading.Timer(_KOPIA_LOG_SETTLE, encrypt_kopia_logs, args=(job,)).start()
         _prune_history()
         _record_history(job)
-        audit.audit("generated" if job["dry"] else "executed", AUDIT_ACTION.get(job["kind"], job["kind"]),
-                    repo=job["repo"],
-                    summary={**job["detail"], "batches": job["total"], "errors": job["errors"],
-                             "stopped": job["stop_requested"]},
-                    rc=job["rc"] if job["rc"] is not None else rc,
-                    duration_s=job["finished"] - job["started"], log_file=job["log_path"])
+        # A plain policy save is audited by its policy-set line; Exclude and delete keeps this one.
+        if job["kind"] != "policy_write" or job["detail"].get("then"):
+            audit.audit("generated" if job["dry"] else "executed", AUDIT_ACTION.get(job["kind"], job["kind"]),
+                        repo=job["repo"],
+                        summary={**job["detail"], "batches": job["total"], "errors": job["errors"],
+                                 "stopped": job["stop_requested"]},
+                        rc=job["rc"] if job["rc"] is not None else rc,
+                        duration_s=job["finished"] - job["started"], log_file=job["log_path"])
         level = logging.INFO if job["state"] in ("done", "stopped") and not job["errors"] else logging.WARNING
         log.log(level, "JOB %s %s repo=%s done=%d/%d errors=%d",
                 job["state"], job["kind"], job["repo"], job["done"], job["total"], job["errors"])

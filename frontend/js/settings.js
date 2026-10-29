@@ -523,6 +523,8 @@ const settingsPart = {
       this.taskView = kl.task_view === "panel" ? "panel" : "popup";
       this.taskHideRoutine = kl.task_hide_routine !== false;
       this.auditHideRoutine = kl.audit_hide_routine !== false;
+      this.auditGroups = Array.isArray(kl.audit_groups)
+        ? kl.audit_groups.filter((g) => ["changes", "snapshots", "previews", "failed"].includes(g)) : ["changes"];
       this.taskRoutineSecs = Number(kl.task_routine_seconds ?? 1);
       this.taskRoutineHours = Number(kl.task_routine_hours ?? 48);
       this.retentionChips = ["uniform", "custom"].includes(kl.retention_chips) ? kl.retention_chips : "kopiaui";
