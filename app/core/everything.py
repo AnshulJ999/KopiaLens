@@ -51,7 +51,9 @@ def _run(args: list[str]) -> str:
             encoding="utf-8", errors="replace", timeout=60, creationflags=_NOWINDOW,
         )
         if r.returncode != 0:
-            log.warning("es.exe rc=%d args=%s stderr=%s", r.returncode, args[:2], (r.stderr or "").strip()[:200])
+            # rc 8: Everything isn't running, which is normal where it isn't installed.
+            (log.debug if r.returncode == 8 else log.warning)(
+                "es.exe rc=%d args=%s stderr=%s", r.returncode, args[:2], (r.stderr or "").strip()[:200])
             return ""
         return r.stdout
     except Exception as exc:  # noqa: BLE001 - es missing / not running: surface empty, don't crash

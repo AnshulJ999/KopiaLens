@@ -266,3 +266,20 @@ def test_the_upgrade_step_folds_the_old_boolean_into_the_level(layer, monkeypatc
     monkeypatch.setattr("app.settings.raw_kopialens_settings",
                         lambda: {"encryption_level": "full"})
     assert filecrypto.upgrade_step()["pending"] == 1
+
+
+def test_demo_replies_still_answer_after_the_full_level_encrypted_them(layer, monkeypatch):
+    # Sample data answers kopia from this file; a plain read of the encrypted file answered nothing.
+    from app.core import demoreplies
+    monkeypatch.setattr(demoreplies, "DATA_DIR", str(layer))
+    monkeypatch.setattr(demoreplies, "_CACHE", {})
+    monkeypatch.setattr(demoreplies, "_BACKEND", None)
+    args = ["snapshot", "list", "--json"]
+    path = demoreplies.replies_path("9")
+    assert filecrypto.write_json(path, {demoreplies.key(args): {"rc": 0, "out": "[]", "err": ""}})
+    assert filecrypto.is_encrypted_file(path)
+
+    crypto.lock()
+    assert demoreplies.reply("9", args)[2] == demoreplies.UNAVAILABLE   # locked: no answer yet
+    assert crypto.unlock("pw")
+    assert demoreplies.reply("9", args) == (0, "[]", "")                # and it recovers on unlock

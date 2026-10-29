@@ -86,12 +86,16 @@ def key(args: list[str]) -> str:
 
 
 def _load(repo: str) -> dict:
+    from .filecrypto import read_text   # the Full encryption level encrypts this file
     with _LOCK:
         if repo not in _CACHE:
+            path = replies_path(repo)
+            text = read_text(path)
+            if text is None and os.path.isfile(path):
+                return {}   # can't be decrypted yet (index locked): read it again next time
             try:
-                with open(replies_path(repo), encoding="utf-8") as fh:
-                    _CACHE[repo] = json.load(fh)
-            except (OSError, ValueError):
+                _CACHE[repo] = json.loads(text) if text else {}
+            except ValueError:
                 _CACHE[repo] = {}
         return _CACHE[repo]
 

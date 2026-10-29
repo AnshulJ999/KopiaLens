@@ -69,11 +69,12 @@ def _clock(t: float) -> str:
 
 
 def _snapshots(repo: str) -> list[dict]:
+    from . import filecrypto   # the Full encryption level encrypts the replies file
     try:
-        with open(demoreplies.replies_path(repo), encoding="utf-8") as fh:
-            rec = json.load(fh).get(demoreplies.key(["snapshot", "list", "--json"])) or {}
+        replies = filecrypto.read_json(demoreplies.replies_path(repo), {}) or {}
+        rec = replies.get(demoreplies.key(["snapshot", "list", "--json"])) or {}
         return json.loads(rec.get("out") or "[]")
-    except (OSError, ValueError):
+    except (AttributeError, ValueError):
         return []
 
 
