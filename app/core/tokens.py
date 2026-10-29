@@ -426,9 +426,10 @@ _WRITES: dict[str, object] = {
     **{f"POST /api/approvals/{{approval_id}}/{p}": NEVER for p in ("approve", "deny")},
     # Test copies send their review notes here with a token (devnotes.py); the rest stays a person's.
     **{f"{m} /api/devnotes/{p}": APP for m, p in (
-        ("POST", "notes"), ("PATCH", "notes/{note_id}"), ("DELETE", "notes/{note_id}"))},
+        ("POST", "notes"), ("PATCH", "notes/{note_id}"), ("DELETE", "notes/{note_id}"),
+        ("POST", "backup"))},
     **{f"{m} /api/devnotes/{p}": PERSON for m, p in (
-        ("POST", "backup"), ("PUT", "reviews/{slug}/verdicts/{card}"),
+        ("PUT", "reviews/{slug}/verdicts/{card}"),
         ("DELETE", "reviews/{slug}/verdicts/{card}"), ("POST", "round"), ("POST", "state"))},
 }
 # Reads a token may not make: they hand out credentials or manage tokens.

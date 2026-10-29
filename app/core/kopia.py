@@ -1217,9 +1217,10 @@ def policy_delete_command(repo: str, target: str | None = None, global_: bool = 
     return [_kopia_exe()] + _repo_args(repo) + ["policy", "delete"] + _policy_target_args(target, global_)
 
 
-def policy_delete_execute(repo: str, target: str | None = None, global_: bool = False) -> dict:
+def policy_delete_execute(repo: str, target: str | None = None, global_: bool = False,
+                          backup: str = "") -> dict:
     cmd = policy_delete_command(repo, target, global_) + ["--no-progress"]
-    summary = {"target": "global" if global_ else target, "delete": True}
+    summary = {"target": "global" if global_ else target, "delete": True, "backup": backup or None}
     return _run_policy_write(repo, cmd, "policy-delete", summary)
 
 
@@ -1248,7 +1249,7 @@ def policy_import_execute(repo: str, file_path: str, mirror: bool = False) -> di
 
 
 def policy_write_rules_execute(repo: str, target: str | None, global_: bool, policy: dict,
-                               add: int = 0, remove: int = 0) -> dict:
+                               add: int = 0, remove: int = 0, backup: str = "") -> dict:
     """Write one whole policy (ignore list already in its final order) via a target-limited
     `policy import`. `policy set --add-ignore` re-sorts the list alphabetically; import stores it
     as given. Mutating; the save endpoint takes the pre-write backup first."""
@@ -1263,7 +1264,8 @@ def policy_write_rules_execute(repo: str, target: str | None, global_: bool, pol
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump({key: policy}, fh)
         cmd = policy_import_command(repo, path, target=target, global_=global_) + ["--no-progress"]
-        summary = {"target": "global" if global_ else target, "add": add, "remove": remove}
+        summary = {"target": "global" if global_ else target, "add": add, "remove": remove,
+                   "backup": backup or None}
         return _run_policy_write(repo, cmd, "policy-set", summary)
     finally:
         try:

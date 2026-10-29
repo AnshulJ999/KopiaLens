@@ -74,6 +74,37 @@ def audit(event: str, action: str, repo: str | None = None, summary: dict | None
         log.warning("audit write failed (%s %s): %s", event, action, exc)
 
 
+# Automatic policy backups: not audited, the save or restore that made one names it.
+AUTOMATIC_BACKUPS = ("nightly", "pre-write", "pre-restore")
+# Snapshots someone started, previews and read-only checks: the Logs tab's Hide routine.
+ROUTINE = frozenset({"snapshot-create", "remove-plan", "snapshot-estimate", "snapshot-verify", "blob-stats"})
+_MAX_WINDOW = 100_000
+
+
+def _retired(rec: dict) -> bool:
+    """Kinds no longer written; their old rows are not shown."""
+    action = rec.get("action")
+    if action in ("engine-start", "engine-stop", "unmount"):
+        return True
+    return action == "policy-backup" and (rec.get("summary") or {}).get("trigger") in AUTOMATIC_BACKUPS
+
+
+def routine(rec: dict) -> bool:
+    return rec.get("action") in ROUTINE or (rec.get("summary") or {}).get("dry") is True
+
+
+def read_view(limit: int = 200, hide_routine: bool = False) -> list[dict]:
+    """The last ``limit`` rows the Logs tab shows, oldest first. Reads a growing tail window
+    until enough rows pass the filter or the file runs out."""
+    window = limit
+    while True:
+        tail = read_tail(window)
+        rows = [r for r in tail if not _retired(r) and not (hide_routine and routine(r))]
+        if len(rows) >= limit or len(tail) < window or window >= _MAX_WINDOW:
+            return rows[-limit:]
+        window *= 4
+
+
 def size_bytes() -> int:
     try:
         return os.path.getsize(_path())

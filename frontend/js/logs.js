@@ -24,7 +24,7 @@ const logsPart = {
     // ---- Audit (moved from Stats,) ----
     async loadAudit() {
       const seq = ++this._logsSeq;
-      const aud = await getJson(`/api/audit?limit=500`).catch(() => ({ records: [], size: 0 }));
+      const aud = await getJson(`/api/audit?limit=500&hide_routine=${this.auditHideRoutine ? 1 : 0}`).catch(() => ({ records: [], size: 0 }));
       if (seq !== this._logsSeq || this.logsTab !== "audit") return;
       this.auditRows = aud.records || [];
       this.auditSize = aud.size || 0;
@@ -33,6 +33,11 @@ const logsPart = {
     auditRaw(r) {
       const s = r.summary || {};
       return Object.entries(s).map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`).join("  ");
+    },
+    auditActor(r) {
+      const a = String(r.actor || "");
+      if (a === "system") return "KopiaLens";
+      return a.startsWith("token:") ? `${a.slice(6)} (token)` : a;
     },
     auditEvent(r) {
       if ((r.summary || {}).dry === true) return "Dry run";

@@ -418,6 +418,8 @@ def start_job(kind: str, repo: str, params: dict, label: str | None = None,
     pasteable = [c if callable(c) else [_kopia_exe()] + _repo_args(repo) + c for c in cmds]
     job = _new_job(kind, repo, label or _default_label(kind, params, meta), meta, cmds,
                    pasteable, on_done)
+    from .auth import current_actor
+    job["actor"] = current_actor()   # the job thread audits as whoever started it
     with _JOBS_LOCK:
         # The write-at-a-time check and the registration are one atomic step: two rapid starts
         # must not both pass the check and register.
@@ -738,6 +740,8 @@ def _run(job: dict, cmds: list[list[str]]) -> None:
     """The job thread: chunk by chunk, stopping before the next chunk once stop_requested is
     set (a stop landing between the check and the spawn runs at most one extra batch -
     bounded and per-snapshot atomic)."""
+    from .auth import set_actor
+    set_actor(job.get("actor"))
     job["started"] = time.time()
     rc = 0
     try:

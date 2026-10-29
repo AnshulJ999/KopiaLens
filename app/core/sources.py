@@ -216,6 +216,14 @@ def rebuild(repo: str) -> None:
         pass
 
 
+def mark_stale(repo: str) -> None:
+    """The next read serves this listing and refreshes it in the background."""
+    with _LOCK:
+        entry = _CACHE.get(repo)
+        if entry:
+            entry["built"] = 0.0
+
+
 def invalidate(repo: str | None = None) -> None:
     with _LOCK:
         if repo is None:

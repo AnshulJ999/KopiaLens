@@ -11,8 +11,7 @@ router = APIRouter(tags=["audit"])
 
 
 @router.get("/audit")
-def audit_tail(limit: int = 200) -> dict:
-    """The last ``limit`` audit records (oldest first) + the file size, so the Stats tab can show
-    growth at a glance without anyone having to go look at the file."""
+def audit_tail(limit: int = 200, hide_routine: bool = False) -> dict:
+    """The last ``limit`` audit rows the Logs tab shows (oldest first) + the file size."""
     limit = max(1, min(limit, 2000))
-    return {"records": audit.read_tail(limit), "size": audit.size_bytes()}
+    return {"records": audit.read_view(limit, hide_routine), "size": audit.size_bytes()}

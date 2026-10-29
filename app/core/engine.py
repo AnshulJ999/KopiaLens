@@ -330,7 +330,6 @@ def _start(repo: str) -> _Server | None:
                    f"{'HTTPS' if pair else 'HTTP'}) ===")
     threading.Thread(target=_reader, args=(srv,), name=f"engine-out-{repo}", daemon=True).start()
     log.info("engine started repo=%s pid=%s port=%s %s", repo, proc.pid, port, "https" if pair else "http")
-    _audit("engine-start", repo, {"pid": proc.pid})
     return srv
 
 
@@ -356,7 +355,6 @@ def _stop_server(srv: _Server, reason: str, normal: bool = False) -> None:
     _log_line(srv, f"=== KopiaLens stopped its kopia server ({reason}) ===")
     normal = normal or reason in ("off", "paused", "write_mode", "removed", "KopiaLens is closing")
     (log.info if normal else log.warning)("engine stopped repo=%s reason=%s", srv.repo, reason)
-    _audit("engine-stop", srv.repo, {"reason": reason})
 
 
 def want(repo: str) -> tuple[bool, str]:
@@ -496,7 +494,7 @@ def _poll_one(srv: _Server) -> None:
         tasks = (_get(srv.ui, "/api/v1/tasks") or {}).get("tasks") or []
     except Exception:  # noqa: BLE001
         return
-    changed = False
+    changed = backed_up = False
     for t in tasks:
         srv.tasks[t["id"]] = t
         if t["id"] in srv.recorded:
@@ -507,12 +505,20 @@ def _poll_one(srv: _Server) -> None:
             srv.recorded.add(t["id"])
             _record(srv, t)
             changed = changed or t.get("kind") != "Repository"
+            backed_up = backed_up or t.get("kind") == "Snapshot"
     if changed:
-        # A backup or maintenance changed kopia's snapshot list: rebuild it here, off any page
-        # load, before the screens are told to reload.
-        from .sources import rebuild
-        rebuild(srv.repo)
+        if backed_up:
+            # A backup changed kopia's snapshot list. In use: rebuild it here, off any page load,
+            # before the screens are told to reload. Idle: the next look refreshes it.
+            from .sources import mark_stale, rebuild
+            (rebuild if _in_use() else mark_stale)(srv.repo)
         _done_seq[srv.repo] = _done_seq.get(srv.repo, 0) + 1
+
+
+def _in_use() -> bool:
+    """Someone clicked in KopiaLens within the idle window (polling screens do not count)."""
+    from ..index import store
+    return time.time() - store.last_activity() < store.idle_seconds()
 
 
 def _poll_loop() -> None:
@@ -769,7 +775,7 @@ def _record(srv: _Server, t: dict) -> None:
         alert(srv.repo, "error", f"Maintenance failed on {_repo_label(srv.repo)}", rec["error"][:200])
     if rec["kind"] == "Maintenance":
         from . import coexist           # its last and next run times changed
-        threading.Thread(target=coexist.read_maintenance_info, args=(srv.repo,), daemon=True).start()
+        coexist.mark_maintenance_stale(srv.repo)
 
 
 def history(limit: int = 2000) -> list[dict]:

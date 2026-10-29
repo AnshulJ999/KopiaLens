@@ -298,13 +298,14 @@ def _refresh_defined_later(repo: str) -> None:
     threading.Thread(target=run, name=f"policy-export-{repo}", daemon=True).start()
 
 
-def refresh_defined_policies(repo: str, force: bool = False) -> tuple[dict, bool]:
-    """(defined policies, fresh). A saved export is served at once; one older than ``_DEFINED_TTL``
+def refresh_defined_policies(repo: str, force: bool = False,
+                             max_age: float = _DEFINED_TTL) -> tuple[dict, bool]:
+    """(defined policies, fresh). A saved export is served at once; one older than ``max_age``
     is re-exported in the background. A FAILED export keeps serving the previous cache and reports
     ``fresh=False`` - stale definitions beat no definitions (the tab marks itself stale)."""
     cached = load_defined_policies(repo)
     if not force and cached.get("policies"):
-        if time.time() - float(cached.get("ts") or 0) >= _DEFINED_TTL:
+        if time.time() - float(cached.get("ts") or 0) >= max_age:
             _refresh_defined_later(repo)
         return cached, True
     with page_kopia_ok("no saved policy list yet"):

@@ -214,7 +214,6 @@ def unmount(pid: int) -> bool:
         _RECORDS.pop(pid, None)
         _PROCS.pop(pid, None)
         _save()
-    audit.audit("unmount", "unmount", repo=rec.get("repo"), summary={"pid": pid, "mountpoint": rec.get("mountpoint")})
     return True
 
 

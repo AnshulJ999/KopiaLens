@@ -28,7 +28,8 @@ log = get_logger("coexist")
 _SCAN_TTL = 10.0
 _scan_lock = threading.Lock()
 _scan_cache: tuple[float, tuple[list[dict], bool]] = (0.0, ([], False))
-_OWNER_TTL = 3600.0
+_OWNER_TTL = 86400.0            # maintenance owner and run times change rarely
+OWNER_OPEN_MAX_AGE = 3600.0     # a screen that shows them refreshes an answer older than this
 _owner_cache: dict[str, tuple[float, dict]] = {}
 
 MOVED_SUFFIX = ".moved-to-kopialens"   # a KopiaUI config KopiaLens took over (engine.set_choice)
@@ -249,12 +250,12 @@ def is_blinkdisk_vault(unique_id_hex: str | None) -> bool:
 
 # ---- per-repository view ---------------------------------------------------------------------
 
-def maintenance_info(repo: str, force: bool = False) -> dict:
-    """`maintenance info --json`, cached. An old answer is served while a background thread asks
-    kopia again, so a page load waits for kopia only the first time."""
+def maintenance_info(repo: str, force: bool = False, max_age: float = _OWNER_TTL) -> dict:
+    """`maintenance info --json`, cached. An answer older than ``max_age`` is served while a
+    background thread asks kopia again, so a page load waits for kopia only the first time."""
     hit = _owner_cache.get(repo)
     if hit and not force:
-        if time.time() - hit[0] >= _OWNER_TTL and repo not in _owner_refreshing:
+        if time.time() - hit[0] >= max_age and repo not in _owner_refreshing:
             _owner_refreshing.add(repo)
             threading.Thread(target=_refresh_maintenance_info, args=(repo,), daemon=True).start()
         return hit[1]
@@ -267,6 +268,13 @@ _owner_refreshing: set[str] = set()
 def read_maintenance_info(repo: str) -> dict:
     """Ask kopia now and keep the answer for the Backups panel ({} when kopia can't answer)."""
     return _read_maintenance_info(repo)
+
+
+def mark_maintenance_stale(repo: str) -> None:
+    """A maintenance run changed the answer: the next read refreshes it in the background."""
+    hit = _owner_cache.get(repo)
+    if hit:
+        _owner_cache[repo] = (0.0, hit[1])
 
 
 def _refresh_maintenance_info(repo: str) -> None:

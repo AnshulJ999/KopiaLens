@@ -265,7 +265,7 @@ def test_route_refresh_re_exports_policies_only_when_asked(wired, monkeypatch):
     monkeypatch.setattr(api, "repo_kind", lambda r: "kopia")
     calls = []
     monkeypatch.setattr(api, "refresh_defined_policies",
-                        lambda repo, force=False: calls.append((repo, force)) or ({"policies": DEFINED}, True))
+                        lambda repo, force=False, max_age=None: calls.append((repo, force)) or ({"policies": DEFINED}, True))
     api.exclusion_targets(api.TargetsBody(repo="1", path=FILE, source=PS, refresh=True))
     assert calls == [("1", True)]
     api.exclusion_targets(api.TargetsBody(repo="1", path=FILE, source=PS, shape="name"))

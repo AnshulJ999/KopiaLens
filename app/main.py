@@ -412,7 +412,7 @@ def _warm_search(repo: str) -> None:
 
 def _warm(repo: str, kopia_ok: bool) -> None:
     """LIGHT warm pass, in-process, on the light interval: next-snapshot times (the snapshot list,
-    plus a policy export when the saved one is over an hour old) and the Search start page.
+    plus a policy export when the saved one is over a day old) and the Search start page.
     Repository details are read once a day instead (``_details_pass``). The heavy work runs in the
     nightly worker SUBPROCESS, which is what keeps this long-lived process's memory flat."""
     if kopia_ok:

@@ -36,7 +36,7 @@ def wired(monkeypatch):
     monkeypatch.setattr(api, "load_policies", lambda repo: {"policies": EFFECTIVE})
     monkeypatch.setattr(api, "load_defined_policies", lambda repo: {"policies": DEFINED})
     monkeypatch.setattr(api, "refresh_defined_policies",
-                        lambda repo, force=False: ({"policies": DEFINED}, True))
+                        lambda repo, force=False, max_age=None: ({"policies": DEFINED}, True))
     import app.core.policy as pol
     import app.core.rulelayers as rl
     monkeypatch.setattr(pol, "load_defined_policies", lambda repo: {"policies": DEFINED})
@@ -167,7 +167,7 @@ def test_save_runs_backup_write_then_invalidation(wired, monkeypatch):
                         lambda repo, trigger: order.append(f"backup:{trigger}") or {
                             "name": "x_pre-write.json", "path": "p", "verified": True})
     monkeypatch.setattr(api, "policy_write_rules_execute",
-                        lambda repo, target, global_, policy, add=0, remove=0: order.append("write") or {
+                        lambda repo, target, global_, policy, add=0, remove=0, backup="": order.append("write") or {
                             "returncode": 0, "stdout": "done", "stderr": "",
                             "command": ["kopia", "policy", "import"]})
     monkeypatch.setattr(api, "invalidate_after_write",
@@ -188,7 +188,7 @@ def _capture_write(monkeypatch, store):
     """Fake write that records the policy and updates the fake export like kopia would."""
     seen = {}
 
-    def fake_write(repo, target, global_, policy, add=0, remove=0):
+    def fake_write(repo, target, global_, policy, add=0, remove=0, backup=""):
         key = "(global)" if global_ else target
         seen.update(target=target, global_=global_, policy=policy)
         store[key] = policy
@@ -208,7 +208,7 @@ def test_save_keeps_rule_order_appends_and_removes_in_place(wired, monkeypatch):
              SRC: {"files": {"ignore": ["zeta", "/Temp/**", "alpha"], "noParentIgnore": False},
                    "retention": {"keepLatest": 5}}}
     monkeypatch.setattr(api, "load_defined_policies", lambda repo: {"policies": store})
-    monkeypatch.setattr(api, "refresh_defined_policies", lambda repo, force=False: ({"policies": store}, True))
+    monkeypatch.setattr(api, "refresh_defined_policies", lambda repo, force=False, max_age=None: ({"policies": store}, True))
     seen = _capture_write(monkeypatch, store)
     out = api.save(api.SaveBody(repo="1", target=SRC,
                                 changes=api.Changes(add=["mid"], remove=["/Temp/**"]), confirmed=True))
@@ -223,7 +223,7 @@ def test_save_writes_the_typed_order_and_refuses_an_order_naming_other_rules(wir
     typed order is what gets written, not the stored order with additions appended."""
     store = {"(global)": DEFINED["(global)"], SRC: {"files": {"ignore": ["!important.log", "zeta"]}}}
     monkeypatch.setattr(api, "load_defined_policies", lambda repo: {"policies": store})
-    monkeypatch.setattr(api, "refresh_defined_policies", lambda repo, force=False: ({"policies": store}, True))
+    monkeypatch.setattr(api, "refresh_defined_policies", lambda repo, force=False, max_age=None: ({"policies": store}, True))
     seen = _capture_write(monkeypatch, store)
     typed = ["*.log", "!important.log", "zeta"]
     d = api.diff(api.DiffBody(repo="1", target=SRC, changes=api.Changes(add=["*.log"], order=typed), price=False))
@@ -239,7 +239,7 @@ def test_save_writes_the_typed_order_and_refuses_an_order_naming_other_rules(wir
 def test_save_global_and_new_policy_and_last_rule_removed(wired, monkeypatch):
     store = {"(global)": {"files": {"ignore": ["b", "a"]}, "retention": {"keepDaily": 7}}}
     monkeypatch.setattr(api, "load_defined_policies", lambda repo: {"policies": store})
-    monkeypatch.setattr(api, "refresh_defined_policies", lambda repo, force=False: ({"policies": store}, True))
+    monkeypatch.setattr(api, "refresh_defined_policies", lambda repo, force=False, max_age=None: ({"policies": store}, True))
     seen = _capture_write(monkeypatch, store)
     api.save(api.SaveBody(repo="1", target="global", changes=api.Changes(add=["c"]), confirmed=True))
     assert seen["global_"] is True and seen["target"] is None

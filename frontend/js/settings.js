@@ -522,6 +522,7 @@ const settingsPart = {
       this.askSnapshotNow = kl.ask_snapshot_now !== false;
       this.taskView = kl.task_view === "panel" ? "panel" : "popup";
       this.taskHideRoutine = kl.task_hide_routine !== false;
+      this.auditHideRoutine = kl.audit_hide_routine !== false;
       this.taskRoutineSecs = Number(kl.task_routine_seconds ?? 1);
       this.taskRoutineHours = Number(kl.task_routine_hours ?? 48);
       this.retentionChips = ["uniform", "custom"].includes(kl.retention_chips) ? kl.retention_chips : "kopiaui";

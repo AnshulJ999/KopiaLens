@@ -468,7 +468,7 @@ def _to_local_naive(iso: str | None, fallback: dt.datetime) -> dt.datetime:
         return fallback
 
 
-_POLICY_REUSE_MAX_AGE = 3600     # how fresh core.policy's cache must be to stand in for a spawn
+_POLICY_REUSE_MAX_AGE = 86400    # how fresh core.policy's cache must be to stand in for a spawn
 
 
 def _recent_policies(repo: str) -> dict:
@@ -477,8 +477,8 @@ def _recent_policies(repo: str) -> dict:
     The nightly's `policies` stage refreshes the per-source effective-policy cache moments before
     this stage runs, so a fresh cache is used directly. A stale one (the 30-minute light loop)
     resolves from ONE `policy export` instead of ~100 `policy show` calls, and the export itself is
-    re-read once it is older than the reuse window - so a schedule edited in KopiaUI still lands
-    within the hour, the same as before. Returns {} when neither is readable, which is the caller's
+    re-read once it is older than the reuse window - so a schedule edited in KopiaUI lands within
+    a day, or when the Policies tab is opened. Returns {} when neither is readable, which is the caller's
     cue to fall back to a spawn per source.
     """
     try:

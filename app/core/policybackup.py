@@ -107,7 +107,8 @@ def create_backup_from_text(repo: str, text: str, trigger: str) -> dict:
         raise BackupError(f"could not write the backup file {name}")
     size = os.path.getsize(path)
     log.info("policy backup repo=%s trigger=%s file=%s (%d bytes)", repo, trigger, name, size)
-    audit.audit("executed", "policy-backup", repo=repo, summary={"trigger": trigger, "file": name}, rc=0)
+    if trigger not in audit.AUTOMATIC_BACKUPS:   # a save or restore names its own backup
+        audit.audit("executed", "policy-backup", repo=repo, summary={"trigger": trigger, "file": name}, rc=0)
     _prune(repo)
     return {"name": name, "path": path, "verified": True, "size": size}
 

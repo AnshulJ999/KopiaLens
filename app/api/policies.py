@@ -187,7 +187,7 @@ class VariantsBody(BaseModel):
 def overview(repo: str) -> dict:
     """Left-rail data: the global policy + every source with its inheritance state."""
     _kopia_repo(repo)
-    defined, fresh = refresh_defined_policies(repo)
+    defined, fresh = refresh_defined_policies(repo, max_age=3600)   # opening the tab
     defined_policies = defined.get("policies") or {}
     effective = load_policies(repo).get("policies") or {}
 
@@ -842,7 +842,8 @@ def _write_rules(repo: str, target: str, changes: Changes, log=None) -> dict:
     label = "Global" if is_global else target
     if changes.delete_policy:
         say(f"Deleting the policy for {label}")
-        res = policy_delete_execute(repo, None if is_global else target, global_=is_global)
+        res = policy_delete_execute(repo, None if is_global else target, global_=is_global,
+                                    backup=backup.get("name", ""))
     else:
         if changes.fields:
             n = len(changes.fields)
@@ -856,7 +857,8 @@ def _write_rules(repo: str, target: str, changes: Changes, log=None) -> dict:
                                        fields=changes.fields, order=changes.order))
         res = policy_write_rules_execute(repo, None if is_global else target, is_global, policy,
                                          add=len(diff_payload["added"]),
-                                         remove=len(diff_payload["removed"]))
+                                         remove=len(diff_payload["removed"]),
+                                         backup=backup.get("name", ""))
     invalidate_after_write(repo, targets=[target_key],
                            ignore_only=not changes.delete_policy and not changes.fields)
     say("Re-reading from kopia")

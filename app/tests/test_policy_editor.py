@@ -175,7 +175,7 @@ def wired(monkeypatch):
     monkeypatch.setattr(api, "kopia_repos", lambda: ["3"])
     monkeypatch.setattr(api, "repo_kind", lambda r: "kopia")
     monkeypatch.setattr(api, "load_defined_policies", lambda repo: {"policies": DEFINED})
-    monkeypatch.setattr(api, "refresh_defined_policies", lambda repo, force=False: ({"policies": DEFINED}, True))
+    monkeypatch.setattr(api, "refresh_defined_policies", lambda repo, force=False, max_age=None: ({"policies": DEFINED}, True))
     monkeypatch.setattr(api, "load_policies", lambda repo: {"policies": {}})
     monkeypatch.setattr(api, "_last_snapshot", lambda repo, key: None)
     monkeypatch.setattr("app.core.sources.sources_index", lambda repo, force=False: {PD: []})
@@ -209,7 +209,7 @@ def test_save_writes_fields_with_the_rules(wired, monkeypatch):
     monkeypatch.setattr(api.policybackup, "create_backup", lambda repo, trigger: {"name": "b.json"})
     monkeypatch.setattr(api, "invalidate_after_write", lambda repo, targets, ignore_only: written.setdefault("ignore_only", ignore_only))
 
-    def fake_write(repo, target, global_, policy, add=0, remove=0):
+    def fake_write(repo, target, global_, policy, add=0, remove=0, backup=""):
         written["policy"] = policy
         DEFINED_AFTER = dict(DEFINED)
         DEFINED_AFTER[PD] = policy

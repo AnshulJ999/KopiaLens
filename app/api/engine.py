@@ -50,8 +50,9 @@ def repo_detail(repo: str) -> dict:
     _need_repo(repo)
     from ..core.kopia import page_kopia_ok
     # The Backups dialog, opened by a click; kopia runs only before the first maintenance-info answer
-    # is cached (the light pass keeps it fresh after that).
+    # is cached, and an answer over an hour old is refreshed in the background.
     with page_kopia_ok("no saved maintenance info yet"):
+        coexist.maintenance_info(repo, max_age=coexist.OWNER_OPEN_MAX_AGE)
         return {"status": engine.repo_status(repo), "view": coexist.repo_view(repo, with_owner=True),
                 "health": engine.health(repo), "hints": engine.hints(repo),
                 "identity": coexist.identity_check(repo), "sources": engine.source_status(repo)}

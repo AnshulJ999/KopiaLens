@@ -56,6 +56,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "task_routine_seconds": 1,   # a task that finished without errors faster than this is routine
         "task_routine_hours": 48,    # how long routine tasks stay in the history
         "task_hide_routine": True,   # Tasks tab hides routine tasks
+        "audit_hide_routine": True,  # Logs > Audit hides snapshots you started, previews and checks
         "engine_takeback": "auto",
         "notify_webhook": {},        # KopiaLens's own notifications: {url, format text|json, headers [..], level info|warn|error}   # when another app stops running a repo's backups: auto = take over again | wait = stay paused
         "rank_count": 10000,         # exact top entries the nightly ranks for the Search columns
