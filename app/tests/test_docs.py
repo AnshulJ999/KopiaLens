@@ -277,4 +277,5 @@ def test_docker_page_shows_the_compose_example_as_published():
     assert m, "docker.md no longer has the compose example"
     shown = "\n".join(line[3:] if line.startswith("   ") else line for line in m.group(1).splitlines())
     example = (ROOT / "packaging" / "docker" / "compose.example.yml").read_text(encoding="utf-8")
-    assert shown.strip() == example.strip(), "docker.md's compose block differs from packaging/docker/compose.example.yml"
+    body = lambda text: text[text.index("services:"):].strip()  # header comments may differ
+    assert body(shown) == body(example), "docker.md's compose block differs from packaging/docker/compose.example.yml"

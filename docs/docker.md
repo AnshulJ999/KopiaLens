@@ -26,7 +26,8 @@ KopiaLens runs as a single container with kopia built in. You open it in a brows
          - ./kopialens:/config
          # Your repository, at the same path kopia uses for it.
          - /mnt/backups/kopia:/mnt/backups/kopia
-         # Optional: backed-up folders, at the same paths as in your snapshots. Read-only is enough.
+         # Optional: backed-up folders, at the same paths as in your snapshots, so the Excluded
+         # browser can compare the disk with your backups. Read-only is enough.
          - /home:/home:ro
          # Optional: snapshot mounts, visible on the host in this folder.
          - /mnt/kopialens-mounts:/mounts:shared
