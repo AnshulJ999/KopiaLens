@@ -5,7 +5,7 @@ KopiaLens runs as a Home Assistant add-on, so you can manage the kopia repositor
 ## Install the add-on
 
 1. In Home Assistant, open **Settings → Add-ons → Add-on store**.
-2. Open the **⋮** menu, select **Repositories**, and add the KopiaLens add-on repository.
+2. Open the **⋮** menu, select **Repositories**, and add `https://github.com/AnshulJ999/homeassistant-addons`.
 3. Find **KopiaLens** in the store and select **Install**.
 4. Select **Start**. Turn on **Show in sidebar** if you'd like it there.
 
