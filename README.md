@@ -34,12 +34,24 @@ It works on the repository you already have, beside KopiaUI and the kopia comman
 | Windows 10 and 11 | Installer or portable zip |
 | macOS (Apple silicon) | App (.dmg) |
 | Linux (x64, arm64) | AppImage, .deb, .rpm |
-| Docker (amd64, arm64) | `ghcr.io/anshulj999/kopialens` |
-| Home Assistant | Add-on repository |
+| Docker (amd64, arm64) | `anshulj99/kopialens` or `ghcr.io/anshulj999/kopialens`: [compose example](compose.example.yml), [guide](https://kopialens.com/docs/docker) |
+| Home Assistant | [Add-on repository](https://github.com/AnshulJ999/homeassistant-addons) |
 
 All files are on the [releases page](../../releases/latest), with checksums. Install steps for each: [kopialens.com/download](https://kopialens.com/download).
 
+The Windows and macOS apps aren't code-signed, so Windows shows a SmartScreen warning and macOS blocks the first open. The [download page](https://kopialens.com/download) shows how to get past both.
+
 KopiaLens needs an ordinary desktop, laptop or home server; how much memory and disk it uses: [Hardware and memory](https://kopialens.com/docs/hardware).
+
+
+
+## Getting started
+
+1. **Install** it from the [download page](https://kopialens.com/download) or from GitHub Releases.
+2. **Connect your repository.** KopiaLens finds the ones KopiaUI and the kopia command line already use, or you can connect any other or create a new one.
+3. **Build the index.** The first run reads the whole repository once; after that it keeps up by itself.
+
+The [first-time setup guide](https://kopialens.com/docs/getting-started) walks through each step.
 
 ## Free and Pro
 
@@ -54,8 +66,6 @@ Everything KopiaLens shows you is free, with no time limit. Pro adds the actions
 
 - Found a bug or want a feature? [Open an issue](../../issues/new/choose).
 - Questions and setup help: [the docs](https://kopialens.com/docs), [Discord](https://discord.gg/22EU4cqEf6) or support@kopialens.com.
-
-This repository holds KopiaLens's releases and issue tracker.
 
 ## Thanks to Kopia
 
