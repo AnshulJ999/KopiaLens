@@ -8,7 +8,7 @@ The Logs tab shows what KopiaLens did: the changes it made, the jobs it ran, eve
 
 | Log | What it holds |
 |---|---|
-| **Audit** | Every action KopiaLens ran or prepared, in every repository: deletes, restores, pins, policy changes, mounts and more. Each row has the time, what happened, the repository, who did it, a summary and kopia's exit code. **Hide routine** (on by default) hides snapshots you started, previews and checks. Housekeeping KopiaLens does by itself, like starting its engine or the nightly policy backup, isn't recorded. The audit log is never trimmed |
+| **Audit** | Every action KopiaLens ran or prepared, in every repository: deletes, restores, pins, policy changes, mounts and more. Each row has the time, what happened, the repository, a summary and who did it; an action that ended with an error says Failed. Filter chips pick what shows: **Changes** (on by default), **Snapshots** you started, **Previews** (dry runs and read-only checks) and **Failed**; with none selected, everything shows. Housekeeping KopiaLens does by itself, like starting its engine or the nightly policy backup, isn't recorded. The audit log is never trimmed |
 | **Activity** | Past jobs: deletes, restores, dry runs and the rest, with their state, progress and how long they took. Kept on disk, so the history survives a restart |
 | **Indexing** | Every index run: when it finished, what started it, the result, how long it took, and the time per stage. Runs that timed out or were stopped appear too |
 | **App log** | What the app did and what went wrong, newest first. Pick a level: **Everything**, **Info and above**, **Warnings and errors** or **Errors only**. With the debug log on, you can also switch to **Debug log** |
