@@ -1,6 +1,7 @@
 # Runs inside Windows Sandbox for packaging/installer_test.py: the installer's PATH edits on PATHs
-# longer than an NSIS string, in both install modes, and closing a running copy without touching an
-# unrelated program of the same name. Writes C:\kltest\out\result.json, then shuts the Sandbox down.
+# longer than an NSIS string, in both install modes, closing a running copy without touching an
+# unrelated program of the same name, and Start at logon (only our own Run entry counts, a Task
+# Manager "Disabled" survives upgrades). Writes C:\kltest\out\result.json, then shuts the Sandbox down.
 $in = 'C:\kltest\in'
 $out = 'C:\kltest\out'
 $setup = Join-Path $in 'setup.exe'
@@ -162,6 +163,64 @@ function Test-CloseRunning {
     [void](Run-Uninstall $userDir)
 }
 
+$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$approvedKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
+
+function Get-RunEntry {
+    [string](Get-ItemProperty -Path $runKey -Name 'KopiaLens' -ErrorAction SilentlyContinue).KopiaLens
+}
+
+# Task Manager's state for the entry: 02... enabled, 03... disabled, '' none.
+function Get-Approved {
+    $v = (Get-ItemProperty -Path $approvedKey -Name 'KopiaLens' -ErrorAction SilentlyContinue).KopiaLens
+    if ($v) { [BitConverter]::ToString([byte[]]$v) } else { '' }
+}
+
+function Clear-Startup {
+    Remove-ItemProperty -Path $runKey -Name 'KopiaLens' -ErrorAction SilentlyContinue
+    Remove-ItemProperty -Path $approvedKey -Name 'KopiaLens' -ErrorAction SilentlyContinue
+}
+
+function Test-Startup {
+    $ours = '"{0}" --hidden' -f (Join-Path $userDir 'KopiaLens.exe')
+    $other = '"C:\kltest\other\KopiaLens.exe" --hidden'
+    Clear-Startup
+
+    Check 'startup: install with /NOSTARTUP exits 0' ((Run-Setup @('/S', '/CURRENTUSER', '/NOSTARTUP')) -eq 0)
+    Check 'startup: unticked leaves no entry' (-not (Get-RunEntry)) (Get-RunEntry)
+    [void](Run-Uninstall $userDir)
+
+    Check 'startup: fresh install exits 0' ((Run-Setup @('/S', '/CURRENTUSER')) -eq 0)
+    Check 'startup: fresh install turns it on' ((Get-RunEntry) -ceq $ours) (Get-RunEntry)
+    Check 'startup: fresh install marks it enabled' ((Get-Approved) -like '02-*') (Get-Approved)
+    Check 'startup: upgrade exits 0' ((Run-Setup @('/S')) -eq 0)
+    Check 'startup: upgrade keeps our entry' ((Get-RunEntry) -ceq $ours) (Get-RunEntry)
+
+    # Task Manager > Startup apps > Disabled.
+    New-ItemProperty -Path $approvedKey -Name 'KopiaLens' -PropertyType Binary -Force `
+        -Value ([byte[]](3, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8)) | Out-Null
+    $disabled = Get-Approved
+    Check 'startup: upgrade after Disabled exits 0' ((Run-Setup @('/S')) -eq 0)
+    Check 'startup: upgrade keeps Disabled' ((Get-Approved) -eq $disabled) (Get-Approved)
+    Check 'startup: in-app update exits 0' ((Run-Setup @('/P', '/UPDATE')) -eq 0)
+    Check 'startup: in-app update keeps the entry' ((Get-RunEntry) -ceq $ours) (Get-RunEntry)
+    Check 'startup: in-app update keeps Disabled' ((Get-Approved) -eq $disabled) (Get-Approved)
+    [void](Run-Uninstall $userDir)
+    Check 'startup: uninstall removes our entry' (-not (Get-RunEntry)) (Get-RunEntry)
+    Check 'startup: uninstall removes its Task Manager state' (-not (Get-Approved)) (Get-Approved)
+
+    # Another copy (portable, an old dev build) owns the name.
+    Check 'startup: install for the other-copy case exits 0' ((Run-Setup @('/S', '/CURRENTUSER', '/NOSTARTUP')) -eq 0)
+    Set-ItemProperty -Path $runKey -Name 'KopiaLens' -Value $other
+    Check 'startup: upgrade beside another copy exits 0' ((Run-Setup @('/S')) -eq 0)
+    Check "startup: upgrade leaves the other copy's entry alone" ((Get-RunEntry) -ceq $other) (Get-RunEntry)
+    Check 'startup: in-app update beside another copy exits 0' ((Run-Setup @('/P', '/UPDATE')) -eq 0)
+    Check "startup: in-app update leaves the other copy's entry alone" ((Get-RunEntry) -ceq $other) (Get-RunEntry)
+    [void](Run-Uninstall $userDir)
+    Check "startup: uninstall leaves the other copy's entry alone" ((Get-RunEntry) -ceq $other) (Get-RunEntry)
+    Clear-Startup
+}
+
 $result = [ordered]@{ ok = $false; checks = $checks; error = $null }
 try {
     Log "started as $env:USERNAME"
@@ -172,6 +231,7 @@ try {
     Test-Mode 'everyone' '/ALLUSERS' $allDir 'machine' 'user'
     Test-NoPath
     Test-CloseRunning
+    Test-Startup
     $result.ok = ($checks.Count -gt 0) -and -not ($checks | Where-Object { -not $_.ok })
 } catch {
     $result.error = $_.ToString()

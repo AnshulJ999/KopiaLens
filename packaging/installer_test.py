@@ -1,7 +1,8 @@
 """Tests the Windows installer inside Windows Sandbox, a throwaway Windows that shares nothing with this
 PC except two folders: PATH edits on PATHs longer than an NSIS string in both install modes (install,
-reinstall, update, uninstall, no PATH), and closing a running copy without touching an unrelated
-program of the same name. The checks themselves: installer_test_sandbox.ps1.
+reinstall, update, uninstall, no PATH), closing a running copy without touching an unrelated program
+of the same name, and Start at logon (own entry only, Task Manager's Disabled kept). The checks
+themselves: installer_test_sandbox.ps1.
 
     python packaging\\installer_test.py [path\\to\\setup.exe]
 
