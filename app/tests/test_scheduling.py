@@ -135,6 +135,7 @@ def test_nightly_state_prefers_the_per_repo_timestamp(monkeypatch, tmp_path):
 
 def _bz_due(monkeypatch, *, pending, anchor, gap=21600.0, last_attempt=0.0, now=1_000_000.0):
     kv = {"reindex_pending": 1.0 if pending else 0.0, "last_reindex_ts": anchor}
+    monkeypatch.setattr(m, "_bz_present", lambda: True)
     monkeypatch.setattr(m, "_bz_kv_float", lambda key: kv[key])
     monkeypatch.setattr(m, "_bz_min_gap", lambda: gap)
     monkeypatch.setattr(m, "_retry_delay", lambda: 900.0)
