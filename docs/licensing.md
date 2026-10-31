@@ -1,6 +1,6 @@
 # Free and Pro
 
-Everything KopiaLens shows you is free: sizes, duplicates, reclaimable space, churn, search, snapshots, policies, restore and every preview. **Pro** adds the actions that remove data from inside your backups:
+The whole backup app is free: backups on a schedule, restore, verify, alerts and maintenance, and every view inside your backups (sizes, duplicates, reclaimable space, churn, search, snapshots, policies) with every preview. **Pro** adds the actions that remove data from inside your backups:
 
 - removing files from snapshots (the file panel, folder and filter removals, their dry runs, commands and scripts)
 - deleting every snapshot that holds a file
