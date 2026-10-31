@@ -29,6 +29,8 @@ body { font-family: var(--font-sans); }
 .tabulator .tabulator-row.tabulator-selected:hover { background: color-mix(in srgb, var(--link) 22%, var(--surface)) !important; }
 .tabulator .tabulator-row .tabulator-cell { border-right: 1px solid var(--bd); user-select: text; -webkit-user-select: text; padding: var(--cell-py) var(--cell-px); }
 .tabulator .tabulator-header .tabulator-col .tabulator-col-content { padding: var(--cell-py) var(--cell-px); }
+/* Matches Tabulator's own sortable-header hover rule, which would paint it light grey in every theme. */
+.tabulator .tabulator-header .tabulator-col.tabulator-sortable.tabulator-col-sorter-element:hover { background: var(--hover); }
 .crumb { cursor: pointer; color: var(--fg); }
 .crumb:hover { text-decoration: underline; }
 .tabulator .tabulator-placeholder, .tabulator .tabulator-placeholder-contents { color: var(--muted); }
