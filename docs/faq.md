@@ -24,6 +24,17 @@ When KopiaLens runs backups for a repository, or when **Listing backend** is set
 
 In its data folder. **Settings → About** shows where it is. It holds the settings, the index, logs and history, never your backups.
 
+| Install | Data folder |
+|---|---|
+| Windows | `%LOCALAPPDATA%\KopiaLens` |
+| Windows portable | The `data` folder beside `KopiaLens.exe` |
+| macOS | `~/Library/Application Support/KopiaLens` |
+| Linux | `$XDG_DATA_HOME/kopialens`, or `~/.local/share/kopialens` |
+| Docker | `/config` ([Folders](docker.md#folders)) |
+| Home Assistant | The add-on's own `/data` folder |
+
+To use a different folder, set the `KOPIALENS_DATA_DIR` environment variable before you start KopiaLens. A portable copy ignores this variable and always uses its own `data` folder.
+
 ### How do I move KopiaLens to another computer?
 
 Use **Export to a file** in **Settings → Config** on the old computer, and **Import from a file** on the new one ([Config](settings.md#config)). The new install builds its index again from the repositories.

@@ -38,3 +38,7 @@ KopiaLens lives in the system tray. On GNOME, the tray needs the AppIndicator ex
 ## Docker
 
 See [Running in Docker](docker.md).
+
+## Where your data goes
+
+KopiaLens keeps its settings and index in a data folder, separate from your backups. To find the folder for your install, see [Where does KopiaLens keep its data?](faq.md#where-does-kopialens-keep-its-data)
