@@ -2,7 +2,7 @@
 // when indexing or a job finishes.
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use tauri::image::Image;
@@ -16,6 +16,21 @@ use crate::server::ApiError;
 use crate::Shell;
 
 const TRAY_ID: &str = "kopialens";
+
+/// The shortest gap between rebuilds that only refresh clock-driven text. State changes rebuild at once.
+const TEXT_REFRESH: Duration = Duration::from_secs(120);
+
+/// What the tray menu was last built from.
+#[derive(Default)]
+pub struct MenuShown {
+    state: String,
+    text: String,
+    built: Option<Instant>,
+}
+
+/// The thread that owns the tray menu; 0 until known.
+#[cfg(windows)]
+static MENU_THREAD: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Health {
@@ -377,8 +392,51 @@ fn build_menu(app: &AppHandle, h: Health, state: Option<&Value>) -> tauri::Resul
     Ok(menu)
 }
 
+/// Whether the tray menu is on screen. Replacing it then empties it down to a dot, so rebuilds wait.
+#[cfg(windows)]
+fn menu_open() -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetGUIThreadInfo, GUITHREADINFO, GUI_POPUPMENUMODE};
+    let thread = MENU_THREAD.load(std::sync::atomic::Ordering::Relaxed);
+    if thread == 0 {
+        return false;
+    }
+    let mut info: GUITHREADINFO = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+    unsafe { GetGUIThreadInfo(thread, &mut info) != 0 && info.flags & GUI_POPUPMENUMODE != 0 }
+}
+
+#[cfg(not(windows))]
+fn menu_open() -> bool {
+    false
+}
+
+/// The menu's state without clock-driven text: a change here is a real event.
+fn menu_state(st: &Value) -> String {
+    let rows: Vec<Value> = repos(st).iter().map(|r| {
+        let key = repo_key(r);
+        let b = backups(st, &key).map(|b| json!([s(&b, "choice"), s(&b, "state"), s(&b, "engine"), b.get("paused")]));
+        json!([key, s(r, "name"), r.get("running"), !s(r, "error").is_empty(), r.get("last_index"), b])
+    }).collect();
+    json!([rows, paused(st), backups_paused(st), pref(Some(st), "notifications", "warnings"), s(st, "version"), s(st, "access"), st.get("update")]).to_string()
+}
+
+/// The clock-driven text in the menu: times ago and left, and index progress.
+fn menu_text(st: &Value) -> String {
+    let rows: Vec<String> = repos(st).iter().map(|r| {
+        let b = backups(st, &repo_key(r)).map(|b| backups_text(&b)).unwrap_or_default();
+        format!("{}|{}", repo_status(r), b)
+    }).collect();
+    let bp = backups_paused(st).map(|u| u.map(|t| ((t - now()) / 60.0).round() as i64));
+    json!([rows, paused(st).map(pause_text), bp]).to_string()
+}
+
 /// Builds (or rebuilds) the tray icon. Left-click-shows-menu can only be set at build time.
 pub fn create(app: &AppHandle, shell: &Arc<Shell>) -> tauri::Result<()> {
+    #[cfg(windows)]
+    let _ = app.run_on_main_thread(|| {
+        let thread = unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() };
+        MENU_THREAD.store(thread, std::sync::atomic::Ordering::Relaxed);
+    });
     let state = shell.state.lock().unwrap().clone();
     let click = pref(state.as_ref(), "tray_click", "window");
     *shell.tray_click.lock().unwrap() = click.clone();
@@ -417,7 +475,7 @@ pub fn create(app: &AppHandle, shell: &Arc<Shell>) -> tauri::Result<()> {
             }
         })
         .build(app)?;
-    *shell.menu_sig.lock().unwrap() = String::new();
+    *shell.menu_shown.lock().unwrap() = MenuShown::default();
     Ok(())
 }
 
@@ -444,25 +502,21 @@ pub fn refresh(app: &AppHandle, shell: &Arc<Shell>, h: Health) {
         }
     }
     let tip = tooltip(h, state.as_ref());
-    let menu_view = state.as_ref().map(|st| {
-        let rows: Vec<String> = repos(st).iter().map(|r| {
-            let key = repo_key(r);
-            let b = backups(st, &key).map(|b| format!("{}|{}", backups_text(&b), b.get("paused").and_then(Value::as_bool).unwrap_or(false))).unwrap_or_default();
-            format!("{}|{}|{}|{}", key, s(r, "name"), repo_status(r), b)
-        }).collect();
-        let bp = backups_paused(st).map(|u| u.map(|t| ((t - now()) / 60.0).round() as i64));
-        json!([rows, paused(st).map(|u| pause_text(u)), bp, pref(Some(st), "notifications", "warnings"), s(st, "version"), s(st, "access"), st.get("update").cloned()]).to_string()
-    });
     let autostart = autostart_on(app);
-    let sig = format!("{:?}|{}|{}", menu_view, h as u8, autostart);
+    let menu_now = format!("{:?}|{}|{}", state.as_ref().map(menu_state), h as u8, autostart);
+    let text_now = state.as_ref().map(menu_text).unwrap_or_default();
     *shell.health.lock().unwrap() = h;
     let _ = tray.set_tooltip(Some(tip));
-    let mut prev = shell.menu_sig.lock().unwrap();
-    if *prev != sig {
+    let mut shown = shell.menu_shown.lock().unwrap();
+    let due = shown.state != menu_now
+        || (shown.text != text_now && shown.built.is_none_or(|t| t.elapsed() >= TEXT_REFRESH));
+    if due && !menu_open() {
         match build_menu(app, h, state.as_ref()) {
+            // Opened while this was being built: try again on a later poll.
+            Ok(_) if menu_open() => {}
             Ok(menu) => {
                 let _ = tray.set_menu(Some(menu));
-                *prev = sig;
+                *shown = MenuShown { state: menu_now, text: text_now, built: Some(Instant::now()) };
             }
             Err(e) => shell.server.log(&format!("tray menu build failed: {e}")),
         }

@@ -31,3 +31,8 @@ getrandom = "0.3"
 
 [target."cfg(windows)".dependencies]
 winreg = "0.56.0"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+
+# Tray menu clicks stop working after about 64.5k menu items; see vendor/muda/KOPIALENS-PATCH.md.
+[patch.crates-io]
+muda = { path = "../vendor/muda" }

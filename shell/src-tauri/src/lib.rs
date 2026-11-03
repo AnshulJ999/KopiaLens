@@ -26,7 +26,7 @@ pub struct Shell {
     pub state: Mutex<Option<Value>>,
     pub health: Mutex<Health>,
     pub tray_click: Mutex<String>,
-    pub menu_sig: Mutex<String>,
+    pub menu_shown: Mutex<tray::MenuShown>,
     pub seen: Mutex<tray::Seen>,
     started: Instant,
     quitting: AtomicBool,
@@ -296,7 +296,9 @@ pub fn on_menu(app: &AppHandle, id: &str) {
                 sh.server.log(&format!("start at logon change failed: {e}"));
                 tray::toast(app, "Couldn't change Start at logon", &e.to_string());
             }
-            poll_once(app);
+            // Off the window thread: a tray refresh waits on it while rebuilding the menu.
+            let app = app.clone();
+            thread::spawn(move || poll_once(&app));
         }
         ["data"] => { let _ = tauri_plugin_opener::open_path(&sh.server.data_dir, None::<&str>); }
         ["logs"] => { let _ = tauri_plugin_opener::open_path(sh.server.data_dir.join("logs"), None::<&str>); }
@@ -479,7 +481,7 @@ pub fn run() {
                 state: Mutex::new(None),
                 health: Mutex::new(Health::Starting),
                 tray_click: Mutex::new(String::new()),
-                menu_sig: Mutex::new(String::new()),
+                menu_shown: Mutex::new(tray::MenuShown::default()),
                 seen: Mutex::new(tray::Seen::default()),
                 started: Instant::now(),
                 quitting: AtomicBool::new(false),
