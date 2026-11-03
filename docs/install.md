@@ -1,6 +1,6 @@
 # Installing KopiaLens
 
-KopiaLens runs on Windows, macOS and Linux, and in Docker. Each download comes with kopia, so you don't need to install kopia separately. Downloads: the [releases page](https://github.com/AnshulJ999/KopiaLens/releases).
+KopiaLens runs on Windows, macOS and Linux, in Docker and in Home Assistant. Each download comes with kopia, so you don't need to install kopia separately. Downloads: the [releases page](https://github.com/AnshulJ999/KopiaLens/releases).
 
 ## Windows
 
@@ -39,6 +39,25 @@ KopiaLens lives in the system tray. On GNOME, the tray needs the AppIndicator ex
 
 See [Running in Docker](docker.md).
 
+## Home Assistant
+
+See [Home Assistant](home-assistant.md).
+
 ## Where your data goes
 
 KopiaLens keeps its settings and index in a data folder, separate from your backups. To find the folder for your install, see [Where does KopiaLens keep its data?](faq.md#where-does-kopialens-keep-its-data)
+
+## Uninstall KopiaLens
+
+Uninstalling removes the app. It doesn't touch your backups or kopia repositories, and KopiaUI and the kopia command line can still open them.
+
+If you activated Pro with a key, first select **Settings → Licence → Remove licence…**. This frees the key's place, so you can activate it again on another computer.
+
+- **Windows installer:** open **Settings → Apps → Installed apps**, then uninstall KopiaLens. To also remove its data, select **Also delete KopiaLens settings and index**.
+- **Windows portable:** delete the KopiaLens folder. Its data is inside that folder.
+- **macOS:** move **KopiaLens** from **Applications** to the Trash.
+- **Linux:** delete the AppImage, or remove the package with `apt` or `dnf`.
+- **Docker:** run `docker compose down`, then delete your config folder if you don't need it.
+- **Home Assistant:** uninstall the add-on from its page.
+
+The data folder stays on macOS and Linux. To remove it, delete the folder yourself: [Where does KopiaLens keep its data?](faq.md#where-does-kopialens-keep-its-data)
