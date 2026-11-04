@@ -29,7 +29,7 @@ I built it for my own backups: about 5 TB across two repositories. It found 400+
 ### Back up
 
 - **Scheduled backups on Kopia's engine:** encrypted, compressed and deduplicated, to any storage Kopia supports (local or network drives, SFTP, S3 and S3-compatible, Backblaze B2, Azure, Google Cloud and more).
-- **Restore, download or mount** any file or folder from any snapshot.
+- **Restore, download or mount** any file or folder, any version, from any snapshot.
 - **Policies and retention**, with an editor that shows what each folder inherits.
 - **Maintenance, verify and notifications:** email, Pushover, webhooks and ntfy.
 - **Desktop app with a tray**, or headless in Docker and Home Assistant, used from any browser.
@@ -37,7 +37,7 @@ I built it for my own backups: about 5 TB across two repositories. It found 400+
 ### See inside
 
 - **Real sizes** for every folder and source: logical, physical after deduplication, and reclaimable.
-- **Search** every file in every snapshot. On my main repository, 19 million file versions take about a second.
+- **Search** every file in every snapshot, across all your Kopia repositories.
 - **Tree:** browse any snapshot like a disk, largest folders first.
 - **Churn:** the files and folders that add new data on every backup.
 - **Simulate** a retention policy before you use it.
