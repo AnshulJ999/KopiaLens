@@ -22,7 +22,7 @@ KopiaLens is a desktop and server app for [Kopia](https://github.com/kopia/kopia
 
 It's designed to answer questions that Kopia can't answer quickly: what each folder really costs after deduplication (the real physical size), which snapshots hold a file, how your backups grow every night, what isn't backed up on your machine, and how much deleting something would actually free.
 
-I built it for my own backups: about 5 TB across two repositories, where it found 400+ GB of junk I'd been paying to keep, and helped re-organize my backup strategy with its analysis features.
+I built it for my own backups: about 5 TB across two repositories. It found 400+ GB of junk, which I reclaimed, and helped re-organize my backup strategy with its analysis features.
 
 ## Features
 
@@ -65,9 +65,9 @@ I built it for my own backups: about 5 TB across two repositories, where it foun
 | Docker (amd64, arm64) | `anshulj99/kopialens` or `ghcr.io/anshulj999/kopialens`: [compose example](compose.example.yml), [guide](https://kopialens.com/docs/docker) |
 | Home Assistant | [Add-on repository](https://github.com/AnshulJ999/homeassistant-addons) |
 
-All files are on the [releases page](../../releases/latest), with checksums. Install steps for each: [kopialens.com/download](https://kopialens.com/download).
+All files are on the [releases page](../../releases/latest), with checksums. Install steps for each: [kopialens.com/download](https://kopialens.com/download). Every download includes kopia.
 
-The Windows and macOS apps aren't code-signed, so Windows shows a SmartScreen warning and macOS blocks the first open. The [download page](https://kopialens.com/download) shows how to get past both. Memory and disk use: [Hardware and memory](https://kopialens.com/docs/hardware).
+The Windows and macOS apps aren't code-signed, so Windows shows a SmartScreen warning and macOS blocks the first open. The [download page](https://kopialens.com/download) shows how to get past both.
 
 ## Getting started
 
@@ -79,6 +79,8 @@ The [first-time setup guide](https://kopialens.com/docs/getting-started) walks t
 
 Coming from KopiaUI or BlinkDisk? [KopiaLens alongside KopiaUI](https://kopialens.com/docs/kopiaui) and [Using KopiaLens with BlinkDisk](https://kopialens.com/docs/blinkdisk) cover sharing a repository and moving your schedules over.
 
+Using another backup app or still deciding? [See how KopiaLens compares](https://kopialens.com/compare).
+
 ## Free and Pro
 
 The whole backup app is free: backups, restore, search, and every analysis view, with no time limit and no account. Pro enables the actions that remove junk from inside your old backups. Most Pro actions have cleanup previews, and all Pro actions can be tested on sample data. [See pricing](https://kopialens.com/pricing).
@@ -89,13 +91,30 @@ The whole backup app is free: backups, restore, search, and every analysis view,
 - **Reading is the default.** Nothing in a repository changes unless you start an action, and every action shows exactly what it will do first.
 - **You choose how much it may change.** Permissions range from read-only to full access, for the whole app or per repository.
 - **Everything is on the record.** The audit log lists every action, and whether a person, a token or an agent started it.
-- **Your file names stay on your computer.** No file names, paths or contents are ever sent anywhere ([what is sent](https://kopialens.com/docs/usage-stats)).
+- **Your file names stay on your computer.** No file names, paths or contents are ever sent anywhere. A daily update check sends anonymous usage numbers, and you can turn off either one ([what is sent](https://kopialens.com/docs/usage-stats)).
+
+More detail: [How KopiaLens works](ARCHITECTURE.md) and [Security](SECURITY.md).
+
+## Tested on
+
+I test KopiaLens on my own backups every day. They're two very different shapes:
+
+| | Main repository | Big repository |
+|---|---|---|
+| What's in it | A whole PC: system, apps, documents | Large data and media |
+| Shape | Many small files, very frequent snapshots | Fewer, much bigger files |
+| Stored data | About 1 TB | About 4 TB |
+| Snapshots | About 7,500 | About 3,500 |
+| Paths | About 5.4 million | About 3.2 million |
+| File versions | About 19.5 million | About 18.5 million |
+
+Both are on local disks, so I haven't measured speed at this size on cloud storage, and I haven't tried repositories much bigger than these. If you do, I'd love to hear how it goes!
+
+More on memory and disk use: [Hardware and memory](https://kopialens.com/docs/hardware).
 
 ## AI Disclosure
 
-I built KopiaLens with a lot of AI help, and more than 500 hours of my own. I've used it for my own backups every day since June 2026. The design, the decisions and the responsibility are mine, so if something's wrong, please open an issue and I'll fix it.
-
-Under the hood: a Python server, Kopia, Parquet and DuckDB for the index, and a Tauri desktop app ([How KopiaLens works](ARCHITECTURE.md), [Security](SECURITY.md)).
+I built KopiaLens with a lot of AI help, mainly Claude Opus, and more than 500 hours of my own. I designed it, planned it and reviewed the work, and I've used it for my own backups every day since June 2026. If something's wrong, that's on me, so please open an issue and I'll fix it.
 
 ## Feedback and Bugs
 
