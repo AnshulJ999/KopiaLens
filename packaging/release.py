@@ -165,10 +165,11 @@ def updater_keys() -> tuple[str, str]:
 
 
 def rust_env(*flags: str) -> dict:
-    """Compiler flags for a Rust build: the builder's home folder is written as "~" in the
-    binaries (cargo embeds dependency source paths, which name the user)."""
+    """Compiler flags for a Rust build: the builder's home folder is written as "~" and the checkout
+    as "." in the binaries (cargo embeds the source paths of dependencies, the vendored ones included)."""
     home = os.path.expanduser("~")
-    return {"CARGO_ENCODED_RUSTFLAGS": "\x1f".join([*flags, f"--remap-path-prefix={home}=~"])}
+    return {"CARGO_ENCODED_RUSTFLAGS": "\x1f".join(
+        [*flags, f"--remap-path-prefix={home}=~", f"--remap-path-prefix={KL_ROOT}=."])}
 
 
 def signing_env() -> dict:
