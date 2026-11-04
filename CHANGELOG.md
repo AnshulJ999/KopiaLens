@@ -2,6 +2,24 @@
 
 Every KopiaLens release, newest first. The release pipeline copies a version's section into its GitHub release notes, so each heading must read `## [X.Y.Z] - YYYY-MM-DD`. Sections use `### Added`, `### Changed`, `### Fixed` (and `### Important` above them when something needs the reader's attention). One short line per change, in the user's words. 
 
+## [1.0.1] - 2026-11-04
+
+A small fix release for the tray menu.
+
+### Fixed
+
+- Windows: the tray menu no longer stops responding after KopiaLens has been running for a long time.
+- Windows: the tray menu no longer closes by itself while it's open.
+- Windows: changing Start at logon from the tray can no longer freeze the tray.
+- The notice about snapshots not taken by KopiaLens now reads correctly for a single snapshot.
+- Table headers keep the right hover colour in every theme.
+
+### Changed
+
+- The times in the tray menu update every 2 minutes. The tooltip stays live, and changes like pausing or a finished index still show right away.
+- The install guide now covers Home Assistant, where your data is kept, and how to uninstall.
+- The usage stats page now lists every value KopiaLens sends.
+
 ## [1.0.0] - 2026-10-30
 
 KopiaLens 1.0 is the first public release: a backup app for [Kopia](https://github.com/kopia/kopia), with an analysis engine built in. It creates repositories, runs your backups on a schedule and restores files, and it shows you what's inside your backups: the real size of every folder, every version of every file, and what grows each night.
