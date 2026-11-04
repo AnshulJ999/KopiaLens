@@ -1080,7 +1080,8 @@ def hints(repo: str) -> list[dict]:
             if t and t >= week and not by_us(t):
                 foreign.append(t)
     if foreign:
-        out.append({"level": "info", "title": f"{len(foreign)} snapshot(s) here weren't taken by KopiaLens",
+        n = len(foreign)
+        out.append({"level": "info", "title": f"{n} snapshot{'' if n == 1 else 's'} here {'was' if n == 1 else 'were'}n't taken by KopiaLens",
                     "detail": "Latest " + time.strftime("%Y-%m-%d %H:%M", time.localtime(max(foreign)))})
     runs = (coexist.maintenance_info(repo).get("schedule") or {}).get("runs") or {}
     other_maint = [t for rs in runs.values() for r in rs

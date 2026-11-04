@@ -289,7 +289,8 @@ def _job(w: _Writer, info: _Repo, t: float, kind: str, opts: dict, rng: random.R
         snaps = info.old_snaps(int(opts.get("count") or 1))
         ids = [s["id"] for s in snaps]
         lines = _sim(repo, ["snapshot", "delete", *ids] + ([] if dry else ["--delete"]))
-        label, detail = f"{len(ids)} snapshot(s)" + (" - dry run" if dry else ""), {"snapshots": len(ids)}
+        label = f"{len(ids)} snapshot{'' if len(ids) == 1 else 's'}" + (" - dry run" if dry else "")
+        detail = {"snapshots": len(ids)}
         w.add_audit(t - 30, "generated", "snapshot-delete-commands", repo, {"ids": len(ids)})
         took = rng.uniform(2, 8)
     elif kind == "maintenance":
