@@ -4,7 +4,7 @@ KopiaLens can remove files and folders from snapshots you already have, to free 
 
 ![Screenshot: the delete panel for one file](images/delete-files.png)
 
-**Before you start:** a delete removes data from your backups for good. You can't restore a removed file from any snapshot afterwards. Every delete shows exactly what goes, runs a dry run first, and asks you to confirm.
+**Before you start:** a delete removes data from your backups for good. You can't restore a removed file from any snapshot afterwards. Every delete shows exactly what goes, lets you run a dry run first, and asks you to confirm.
 
 ## Remove or delete snapshots
 

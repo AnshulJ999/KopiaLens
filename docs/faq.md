@@ -6,7 +6,7 @@ Answers to common questions, and what to do when something doesn't work. If your
 
 ### Can KopiaLens damage my backups?
 
-KopiaLens only reads your repository unless you start an action that changes it. Every such action shows exactly what it does first, runs a dry run where kopia has one, asks you to confirm, and is recorded in **Logs → Audit**. Indexing never changes the repository. [Permissions](settings.md#permissions) can limit what KopiaLens may change in each repository.
+KopiaLens only reads your repository unless you start an action that changes it. Every such action shows exactly what it does first, lets you run a dry run where kopia has one, asks you to confirm, and is recorded in **Logs → Audit**. Indexing never changes the repository. [Permissions](settings.md#permissions) can limit what KopiaLens may change in each repository.
 
 ### Do I need KopiaUI?
 
