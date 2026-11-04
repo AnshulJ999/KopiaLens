@@ -16,7 +16,7 @@ When you click **Install and restart**, the app asks the update service for the 
 |---|---|
 | KopiaLens version | `1.2.0` |
 | Update channel | `stable` or `beta` |
-| Install type | `windows`, `linux`, `macos`, `docker` or `source` |
+| Install type | `windows`, `linux`, `macos`, `docker`, `ha_addon` (Home Assistant add-on) or `source` |
 | Operating system | `windows`, `linux` or `macos` |
 | Usage stats | `off`, or `waiting` (an install's first day, or a Docker container whose data folder isn't on a volume). Not sent when usage stats are on. Once, after you turn usage stats off, it also says so. No install ID is sent with this. |
 
@@ -26,7 +26,7 @@ When you click **Install and restart**, the app asks the update service for the 
 |---|---|
 | Install ID | A random ID created by KopiaLens and kept in its data folder (`checkin.json`). It counts this install once instead of once a day. It isn't linked to you, your computer or your licence. Usage stats start on an install's second day, and never from a Docker container whose data folder isn't on a volume. |
 | CPU type | `amd64`, `arm64` |
-| Licence | `free`, or the licence plan (`pro`, `lifetime`, `business`) |
+| Licence | `free`, or the licence plan's name (`pro-yearly`, `lifetime`); a subscription ends in `-sub` (`pro-yearly-sub`) |
 | Repositories | How many kopia repositories KopiaLens has |
 | Storage types | kopia's storage type names: `filesystem`, `sftp`, `b2`, `s3`, ... |
 | Backblaze | Whether the Backblaze view is set up |
