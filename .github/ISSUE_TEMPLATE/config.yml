@@ -1,8 +1,17 @@
-blank_issues_enabled: false
+blank_issues_enabled: true
 contact_links:
+  - name: Questions and ideas
+    url: https://github.com/AnshulJ999/KopiaLens/discussions
+    about: Ask anything, or talk through an idea before filing it.
+  - name: Discord
+    url: https://discord.gg/22EU4cqEf6
+    about: Chat and setup help.
   - name: Docs
     url: https://kopialens.com/docs
     about: Setup, repositories, Docker and remote access.
+  - name: A bug in Kopia itself
+    url: https://github.com/kopia/kopia/issues
+    about: If KopiaUI or the kopia command does the same thing, please report it to the Kopia project.
   - name: Email support
     url: mailto:support@kopialens.com
     about: Questions about licences, purchases or anything private.

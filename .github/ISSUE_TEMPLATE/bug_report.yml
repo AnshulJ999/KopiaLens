@@ -34,6 +34,15 @@ body:
         - Other
     validations:
       required: true
+  - type: dropdown
+    id: kopia-check
+    attributes:
+      label: Does the same thing happen in KopiaUI or the kopia command?
+      description: If it does, it's likely a Kopia problem, and the Kopia project is the best place to report it.
+      options:
+        - "No, only in KopiaLens"
+        - "Yes, Kopia does it too"
+        - "I haven't checked"
   - type: input
     id: storage
     attributes:
@@ -44,4 +53,4 @@ body:
     id: logs
     attributes:
       label: Logs or screenshots
-      description: Anything that helps. Remove private paths or names first.
+      description: Anything that helps. A diagnostics bundle (? → Create diagnostics bundle) helps most. Remove private paths or names from logs first.
