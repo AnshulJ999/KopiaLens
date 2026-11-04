@@ -1,33 +1,61 @@
 <h1 align="center"><a href="https://kopialens.com"><img src="assets/logo-heading.svg" width="48" height="56" align="absmiddle" alt="KopiaLens logo"></a> KopiaLens</h1>
 
-<p align="center"><b>Find what's bloating your Kopia backups. Get the space back.</b></p>
+<p align="center"><b>A backup app for Kopia, with an analysis engine built in.</b></p>
+
+<p align="center">Windows · macOS · Linux · Docker · Home Assistant</p>
 
 <p align="center">
   <a href="https://kopialens.com/download">Download</a> ·
   <a href="https://kopialens.com/docs">Docs</a> ·
   <a href="https://kopialens.com/pricing">Pricing</a> ·
+  <a href="ROADMAP.md">Roadmap</a> ·
   <a href="https://discord.gg/22EU4cqEf6">Discord</a>
 </p>
 
 ![The KopiaLens dashboard, showing the real size of each backed-up folder](assets/dashboard.webp)
 
-KopiaLens shows the real size of everything in your [Kopia](https://kopia.io) repository, finds the files you never meant to keep, and removes them from every snapshot that holds them, with a dry run first.
+<p align="center"><a href="https://kopialens.com/#demo"><b>▶ Watch the video demo</b></a></p>
 
-It works on the repository you already have, beside KopiaUI and the kopia command line, or on its own: it includes kopia and can run your backups too.
+## Overview
 
-## What it does
+KopiaLens is a desktop and server app for [Kopia](https://github.com/kopia/kopia) backups. It creates repositories, runs your backups on a schedule, restores files, runs maintenance, and much more. It works on the repositories you already have, and KopiaUI and the kopia CLI can keep working alongside it.
 
-- See where the space goes: every backed-up folder with its real cost after deduplication
-- Find any file in any snapshot, with every version of it
-- Rank snapshots by how much deleting them would free
-- Catch the folders that rewrite themselves on every backup
-- Browse any snapshot like a disk
-- Try a retention policy before you use it
-- Write exclusions that do what you meant, and check what isn't backed up
-- Run backups on schedule, restore, mount and edit policies
-- Remove files and folders from existing snapshots (Pro)
+It's designed to answer questions that Kopia can't answer quickly: what each folder really costs after deduplication (the real physical size), which snapshots hold a file, how your backups grow every night, what isn't backed up on your machine, and how much deleting something would actually free.
 
-## Download
+I built it for my own backups: about 5 TB across two repositories, where it found 400+ GB of junk I'd been paying to keep, and helped re-organize my backup strategy with its analysis features.
+
+## Features
+
+### Back up
+
+- **Scheduled backups on Kopia's engine:** encrypted, compressed and deduplicated, to any storage Kopia supports (local or network drives, SFTP, S3 and S3-compatible, Backblaze B2, Azure, Google Cloud and more).
+- **Restore, download or mount** any file or folder from any snapshot.
+- **Policies and retention**, with an editor that shows what each folder inherits.
+- **Maintenance, verify and notifications:** email, Pushover, webhooks and ntfy.
+- **Desktop app with a tray**, or headless in Docker and Home Assistant, used from any browser.
+
+### See inside
+
+- **Real sizes** for every folder and source: logical, physical after deduplication, and reclaimable.
+- **Search** every file in every snapshot. On my main repository, 19 million file versions take about a second.
+- **Tree:** browse any snapshot like a disk, largest folders first.
+- **Churn:** the files and folders that add new data on every backup.
+- **Simulate** a retention policy before you use it.
+- **Excluded:** the folders on your disks that no backup covers.
+- **Backblaze:** see what Backblaze Personal Backup is really backing up. (Windows-only for now)
+
+### Clean up (Pro)
+
+- **Remove files and folders** from every snapshot that holds them, without deleting the snapshots.
+- **Prune versions:** keep the versions of a file you want and remove the rest.
+- **Smart excludes and exclude & delete:** stop backing something up and take it out of the past in one step.
+
+### Scripts and AI agents
+
+- **[`klens` command line](https://kopialens.com/docs/cli) and an [HTTP API](https://kopialens.com/docs/api)**, with a token per script or agent.
+- **Approvals:** an agent can plan a removal, and nothing is deleted until you approve it in the app.
+
+## Install
 
 | Platform | Get it |
 |---|---|
@@ -39,11 +67,7 @@ It works on the repository you already have, beside KopiaUI and the kopia comman
 
 All files are on the [releases page](../../releases/latest), with checksums. Install steps for each: [kopialens.com/download](https://kopialens.com/download).
 
-The Windows and macOS apps aren't code-signed, so Windows shows a SmartScreen warning and macOS blocks the first open. The [download page](https://kopialens.com/download) shows how to get past both.
-
-KopiaLens needs an ordinary desktop, laptop or home server; how much memory and disk it uses: [Hardware and memory](https://kopialens.com/docs/hardware).
-
-
+The Windows and macOS apps aren't code-signed, so Windows shows a SmartScreen warning and macOS blocks the first open. The [download page](https://kopialens.com/download) shows how to get past both. Memory and disk use: [Hardware and memory](https://kopialens.com/docs/hardware).
 
 ## Getting started
 
@@ -53,23 +77,37 @@ KopiaLens needs an ordinary desktop, laptop or home server; how much memory and 
 
 The [first-time setup guide](https://kopialens.com/docs/getting-started) walks through each step.
 
+Coming from KopiaUI or BlinkDisk? [KopiaLens alongside KopiaUI](https://kopialens.com/docs/kopiaui) and [Using KopiaLens with BlinkDisk](https://kopialens.com/docs/blinkdisk) cover sharing a repository and moving your schedules over.
+
 ## Free and Pro
 
-Everything KopiaLens shows you is free, with no time limit. Pro adds the actions that remove data from inside your backups. [See pricing](https://kopialens.com/pricing).
+The whole backup app is free: backups, restore, search, and every analysis view, with no time limit and no account. Pro enables the actions that remove junk from inside your old backups. Most Pro actions have cleanup previews, and all Pro actions can be tested on sample data. [See pricing](https://kopialens.com/pricing).
 
-## Your backups stay yours
+## How KopiaLens handles your backups
 
-- Nothing in your repository changes unless you start an action, and every action shows exactly what it will do first.
-- No file names, paths or backup contents leave your computer. A daily update check sends anonymous usage numbers, and both can be turned off ([what is sent](https://kopialens.com/docs/usage-stats)).
+- **Your backups are standard Kopia backups.** KopiaUI and the kopia command line can always open, restore and keep running them. Your backups don't depend on KopiaLens.
+- **Reading is the default.** Nothing in a repository changes unless you start an action, and every action shows exactly what it will do first.
+- **You choose how much it may change.** Permissions range from read-only to full access, for the whole app or per repository.
+- **Everything is on the record.** The audit log lists every action, and whether a person, a token or an agent started it.
+- **Your file names stay on your computer.** No file names, paths or contents are ever sent anywhere ([what is sent](https://kopialens.com/docs/usage-stats)).
 
-## Bugs, ideas and questions
+## AI Disclosure
 
-- Found a bug or want a feature? [Open an issue](../../issues/new/choose).
+I built KopiaLens with a lot of AI help, and more than 500 hours of my own. I've used it for my own backups every day since June 2026. The design, the decisions and the responsibility are mine, so if something's wrong, please open an issue and I'll fix it.
+
+Under the hood: a Python server, Kopia, Parquet and DuckDB for the index, and a Tauri desktop app ([How KopiaLens works](ARCHITECTURE.md), [Security](SECURITY.md)).
+
+## Feedback and Bugs
+
+- Found a bug or want a feature? [Open an issue](../../issues/new/choose). 
 - Questions and setup help: [the docs](https://kopialens.com/docs), [Discord](https://discord.gg/22EU4cqEf6) or support@kopialens.com.
+- Found a security problem? Please report it privately: [SECURITY.md](SECURITY.md).
 
 ## Thanks to Kopia
 
-❤️ Thank you to the Kopia team and contributors. KopiaLens wouldn't exist without Kopia. It's one of the best backup engines out there: fast, secure and dependable, and I'm grateful to be able to build on it. KopiaLens is an independent project, not affiliated with or endorsed by the Kopia project.
+❤️ Thank you to the Kopia team and contributors. KopiaLens wouldn't exist without Kopia. It's one of the best backup engines out there: fast, secure and dependable. 
+
+KopiaLens is an independent project, not affiliated with or endorsed by the Kopia project.
 
 ## Support the project
 
@@ -77,4 +115,18 @@ KopiaLens is built by one independent developer. If you'd like to back its devel
 
 ---
 
-Third-party licences: Settings → About → Third-party notices in the app.
+## Credits
+
+KopiaLens is built on the work of these open-source projects:
+
+- [Kopia](https://github.com/kopia/kopia): the backup engine underneath everything
+- [DuckDB](https://github.com/duckdb/duckdb) and [Apache Arrow / Parquet](https://github.com/apache/arrow): the index
+- [FastAPI](https://github.com/fastapi/fastapi) and [Uvicorn](https://github.com/encode/uvicorn): the server
+- [Tauri](https://github.com/tauri-apps/tauri): the desktop app
+- [Alpine.js](https://github.com/alpinejs/alpine), [Tailwind CSS](https://github.com/tailwindlabs/tailwindcss) and [Tabulator](https://github.com/olifolkerd/tabulator): the interface
+- [Phosphor Icons](https://github.com/phosphor-icons/core): icons
+- [cryptography](https://github.com/pyca/cryptography) and [argon2-cffi](https://github.com/hynek/argon2-cffi): encryption
+- [Nuitka](https://github.com/Nuitka/Nuitka): compiling the server
+- [Everything](https://www.voidtools.com) by voidtools: fast disk lookups on Windows
+
+The full list of components and their licences ships with every release (`THIRD-PARTY-NOTICES.txt`) and is in the app under **Settings → About → Third-party notices**.
