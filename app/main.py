@@ -773,8 +773,7 @@ async def lifespan(_app: FastAPI):
     threading.Thread(target=_mount_cleanup, name="mount-cleanup", daemon=True).start()
     try:  # point the read-only Backblaze backend at the configured bzdata root
         from .backblaze import paths as bz_paths
-        bz_paths.set_bzdata_root(load_settings().get("backblaze", {}).get("bzdata_path")
-                                 or bz_paths.default_bzdata() or bz_paths.bzdata_root())
+        bz_paths.apply_configured_root(load_settings())
     except Exception as exc:  # noqa: BLE001
         log.error("BZ bzdata path setup failed: %s", exc)
     if load_settings().get("listing_backend") == "server":

@@ -546,6 +546,7 @@ const settingsPart = {
     threadChoices() { return THREAD_CHOICES.filter((n) => n <= (this.cpuCount || 64)); },
     _readBackblaze(bz) {
       this.bzDataPath = bz.bzdata_path || "";
+      this.bzComputer = ["this", "other"].includes(bz.computer) ? bz.computer : "auto";
       this.bzUpdates = bz.updates === "off" ? "off" : "auto";
       this.bzReindexMinGap = Number(bz.bz_reindex_min_gap || 21600);
       this.bzHistoryDays = Number(bz.history_days || 90);
@@ -624,7 +625,8 @@ const settingsPart = {
       update_check: { s: "updateCheck", t: "bool" },
       usage_stats: { s: "usageStats", t: "bool" },
       update_channel: { s: "updateChannel", t: "choice", of: ["stable", "beta"] },
-      bzdata_path: { s: "bzDataPath", t: "str", block: "backblaze", restart: true },
+      bzdata_path: { s: "bzDataPath", t: "str", block: "backblaze" },
+      computer: { s: "bzComputer", t: "choice", of: ["auto", "this", "other"], block: "backblaze" },
       store: { s: "bzStore", t: "choice", of: ["parquet", "sqlite"], block: "backblaze" },
       updates: { s: "bzUpdates", t: "choice", of: ["auto", "off"], block: "backblaze" },
       bz_reindex_min_gap: { s: "bzReindexMinGap", t: "int", min: 300, block: "backblaze" },
@@ -763,6 +765,9 @@ const settingsPart = {
           if (key.startsWith("disk_") || key === "es_path") { this._excludedDrivesStale = true; this._refreshDiskLookup(); }
           if (key in this.savedPorts) this.savedPorts[key] = v;
           if (key === "update_channel") { this.loadUsagePreview(); if (this.updateCheck) this.checkUpdatesNow(); }
+          if (f.block === "backblaze" && (key === "bzdata_path" || key === "computer")) {   // applies now, no restart
+            this._excludedDrivesStale = true; this.raLoad(); this.bzRefreshStatus();
+          }
           return true;
         })
         .catch((e) => {

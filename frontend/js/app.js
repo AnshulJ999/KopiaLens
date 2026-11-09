@@ -166,7 +166,7 @@ document.addEventListener("alpine:init", () => {
     repoLabels: "short",  // repo chips and columns: "short" (Repo 1) | "full" (the name from repos.json)
     // Backblaze settings. Defaults mirror app/settings.py; each control saves its own key into
     // the nested "backblaze" dict (KL_FIELDS in settings.js).
-    bzDataPath: "", bzReindexMinGap: 21600, bzHistoryDays: 90,
+    bzDataPath: "", bzComputer: "auto", bzReindexMinGap: 21600, bzHistoryDays: 90,
     bzCollapsePrefixes: "", bzEventlogArchive: "", bzStore: "parquet", bzUpdates: "auto",
     raBz: null,   // Backblaze on this computer (GET /api/setup/backblaze), for Settings
     analyzingAll: false, showDelete: false, deletePlan: null, _autoRefresh: null,

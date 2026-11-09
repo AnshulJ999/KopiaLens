@@ -705,7 +705,7 @@
             <section x-show="settingsTab==='backblaze'" class="space-y-4">
               <template x-if="raBz && !raBz.added">
                 <div class="kl-callout flex flex-wrap items-center gap-2" data-testid="bz-not-added">
-                  <span class="min-w-0 flex-1" x-text="raBz.found ? 'Backblaze is on this computer. Add it to see what it backs up.' : 'Backblaze wasn’t found on this computer.'"></span>
+                  <span class="min-w-0 flex-1" x-text="raBz.found ? (raBz.this_computer === false ? 'Found Backblaze from ' + raBz.computer + '. Add it to see what it backs up.' : 'Backblaze is on this computer. Add it to see what it backs up.') : 'Backblaze wasn’t found on this computer. If it runs on another computer, share its data folder and enter it below.'"></span>
                   <button x-show="raBz.found" @click="raAddBackblaze()" class="kl-btn primary">Add Backblaze</button>
                 </div>
               </template>
@@ -718,9 +718,18 @@
                 <p class="text-[0.6875rem] text-muted mt-1">Separate from kopia indexing. Off keeps what KopiaLens already read.</p>
               </div>
               <div x-kl-row>
-                <div class="flex items-center justify-between gap-3"><span x-kl-default="bzdata_path">Backblaze data folder <span class="text-[0.625rem] text-warn">restart</span></span>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="bzdata_path">Backblaze data folder</span>
                   <input autocomplete="off" x-model="bzDataPath" @change="saveKl('bzdata_path')" class="fld border border-bd bg-surface2 min-w-[18rem]" :placeholder="(raBz && raBz.default) || 'Path to Backblaze’s bzdata folder'"></div>
-                <p class="text-[0.6875rem] text-muted mt-1">Where the Backblaze client keeps its file lists. Empty finds it automatically. Read-only - KopiaLens never writes here.</p>
+                <p class="text-[0.6875rem] text-muted mt-1">Where the Backblaze client keeps its file lists. Empty finds it automatically. Another computer's shared folder works too. Read-only - KopiaLens never writes here.</p>
+              </div>
+              <div x-kl-row>
+                <div class="flex items-center justify-between gap-3"><span x-kl-default="computer">Backblaze data is from</span>
+                  <select autocomplete="off" x-model="bzComputer" @change="saveKl('computer')" class="fld border border-bd bg-surface2" data-testid="bz-computer-setting">
+                    <option value="auto">Detect automatically</option>
+                    <option value="this">This computer</option>
+                    <option value="other">Another computer</option>
+                  </select></div>
+                <p class="text-[0.6875rem] text-muted mt-1">Another computer turns off the comparison with this computer's Kopia backups.<span x-show="raBz && raBz.computer" x-text="' Backblaze calls it ' + (raBz && raBz.computer) + '.'"></span></p>
               </div>
               <div x-kl-row>
                 <div class="flex items-center justify-between gap-3"><span x-kl-default="store">File index format</span>

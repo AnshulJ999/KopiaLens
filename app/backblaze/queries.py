@@ -16,8 +16,25 @@ import time
 from . import bbdb, parsers, paths, pq
 from ..core.paths import prefix_bounds
 
-_SEP = "\\"
 _CHURN_TAIL = 30 * 1024 * 1024  # bytes of the bzfileids tail scanned for "recently added"
+
+
+def _sep() -> str:
+    """The data's own path separator ("\\" for a Windows bzdata, "/" for a Mac's)."""
+    return paths.sep()
+
+
+def _with_volumes(rows: list[dict]) -> list[dict]:
+    """Add each row's volume `label` and `root` (served fresh, so old cached rows get them too)."""
+    vols = paths.volume_info()
+    info = {v["drive"]: v for v in vols}
+    for r in rows:
+        v = info.get(r.get("drive"))
+        r["label"] = v["label"] if v else f"{r.get('drive')}:"
+        r["root"] = v["root"] if v else f"{r.get('drive')}:\\"
+    order = {v["drive"]: i for i, v in enumerate(vols)}   # drive letters, or a Mac's "/" first
+    rows.sort(key=lambda r: (order.get(r.get("drive"), len(order)), str(r.get("drive"))))
+    return rows
 _CHURN_CACHE: dict = {}         # (top, depth, collapse_key) -> (ts, result)
 
 
@@ -87,12 +104,13 @@ def _dict_rows(cur, rows) -> list[dict]:
 def _apply_collapse(path: str, depth: int, collapse_lc):
     """Roll a path up to a folder key at `depth`, EXCEPT paths under a collapse prefix (e.g.
     `E:\\Kopia`) which roll up to that prefix as a single unit. `collapse_lc` = [(lower, original)]."""
+    sep = _sep()
     pl = path.lower()
     for clc, corig in collapse_lc:
-        if pl == clc or pl.startswith(clc + _SEP):
+        if pl == clc or pl.startswith(clc + sep):
             return corig
-    comps = path.split(_SEP)
-    return _SEP.join(comps[:depth + 1]) if len(comps) > depth else path
+    comps = path.split(sep)
+    return sep.join(comps[:depth + 1]) if len(comps) > depth else path
 
 _SORT_COLS = {"size": "size", "name": "name", "path": "path_lc", "drive": "drive", "ext": "ext"}
 
@@ -180,11 +198,14 @@ def overview() -> dict:
     cached = bbdb.kv_get(con, "cache_overview")
     if cached:
         try:
-            return json.loads(cached)
+            out = json.loads(cached)
+            _with_volumes(out.get("rows") or [])
+            return out
         except Exception:
             pass
     out = _overview_live()
     out["cached_at"] = None
+    _with_volumes(out.get("rows") or [])
     return out
 
 
@@ -195,9 +216,9 @@ def _overview_live() -> dict:
     if raw:
         d = json.loads(raw)
         per_guid = d.get("per_guid", {})
-        guid_letter = {v.guid: v.letter for v in paths.volumes()}
+        guid_key = {v.guid: v.key for v in paths.volumes()}
         for guid, (nf, nb) in per_guid.items():
-            L = guid_letter.get(guid)
+            L = guid_key.get(guid)
             if L:
                 auth[L] = (nf, nb)
     with _files_cursor() as fc:
@@ -266,6 +287,8 @@ def generate_exclusion(kind: str, value: str) -> dict:
     """Generate a paste-ready exclusion (NO file write). kind: 'editable_endswith' | 'editable_contains' | 'folder'."""
     value = value.strip()
     if kind == "folder":
+        if paths.platform() == "mac":
+            return {"how": "Backblaze -> Settings -> Exclusions -> add this folder", "snippet": value}
         return {"how": "Backblaze app -> Settings -> Exclusions -> add this folder (relative, applies to all drives)",
                 "snippet": value}
     crit = {"editable_endswith": ("endsWith", value.lower()),
@@ -273,7 +296,7 @@ def generate_exclusion(kind: str, value: str) -> dict:
     if not crit:
         return {"error": f"unknown kind {kind!r}"}
     key, val = crit
-    attrs = {"plat": "win", "osVers": "*", "ruleIsOptional": "t",
+    attrs = {"plat": "mac" if paths.platform() == "mac" else "win", "osVers": "*", "ruleIsOptional": "t",
              "skipFirstCharThenStartsWith": "*", "contains_1": "*", "contains_2": "*",
              "doesNotContain": "*", "endsWith": "*", "hasFileExtension": "*"}
     attrs[key] = val
@@ -339,13 +362,28 @@ def health() -> dict:
     ov = overview()
     for r in ov["rows"]:
         if (r["auth_files"] == 0) or (r["total"] == 0):
-            issues.append(f"Drive {r['drive']}: 0 files selected (possible aborted scan / F:-bug)")
+            issues.append(f"Drive {r['label'].rstrip(':')}: 0 files selected (possible aborted scan / F:-bug)")
     for r in con.execute("SELECT detail FROM events WHERE kind='scan_stub'"):
         issues.append(r["detail"])
     for r in con.execute("SELECT detail, src FROM events WHERE kind='bz_done_big' AND detail LIKE '%ACTIVE%'"):
         issues.append(f"{r['src']}: {r['detail']} mass-deletion event")
     remaining = json.loads(bbdb.kv_get(con, "remaining") or "{}")
-    return {"issues": issues, "ok": not issues, "drives": ov["rows"], "remaining": remaining}
+    return {"issues": issues, "ok": not issues, "drives": ov["rows"], "remaining": remaining,
+            "version": client_version(con)}
+
+
+def client_version(con=None) -> dict:
+    """Installed vs newest Backblaze version (both read from Backblaze's own files at refresh).
+    `outdated` only when both are known and the installed one is older."""
+    con = con or bbdb.connect()
+    try:
+        v = json.loads(bbdb.kv_get(con, "client_version") or "{}")
+    except Exception:  # noqa: BLE001
+        v = {}
+    inst, new = v.get("installed") or "", v.get("newest") or ""
+    it, nt = parsers.version_tuple(inst), parsers.version_tuple(new)
+    return {"installed": inst, "newest": new, "platform": v.get("platform") or paths.platform(),
+            "outdated": bool(it and nt and it < nt)}
 
 
 # ---- duplicate candidates (heuristic, NOT BZ's real server-side dedup) -----------------
@@ -361,8 +399,13 @@ def dupes(min_size=50 * 1_000_000, top=200) -> list[dict]:
 # ---- coverage for the Excluded browser merge (called by index/excluded.py BZ branch) ---
 def coverage_children(folder: str) -> dict[str, dict]:
     """Per immediate child segment under `folder`: backed (excluded=0) coverage from the BZ index.
-    Shape mirrors index/excluded.py's backed_children: {seg_lc: {logical, files, has_file}}."""
-    lo = folder.lower().rstrip(_SEP) + _SEP
+    Shape mirrors index/excluded.py's backed_children: {seg: {logical, files, has_file}}. Windows
+    data is keyed case-folded (seg_lc); a Mac's by the exact names, which is how the Kopia side
+    keys "/" paths (both read the same disk, so the names match)."""
+    sep = _sep()
+    fold = sep == "\\"
+    col = "path_lc" if fold else "full_path"
+    lo = (folder.lower() if fold else folder).rstrip(sep) + sep
     _, hi = prefix_bounds(lo)                 # not lo + U+FFFF: emoji sort above it
     plen = len(lo)
     agg: dict[str, dict] = {}
@@ -371,10 +414,10 @@ def coverage_children(folder: str) -> dict[str, dict]:
             "SELECT seg, max(has_file) has_file, sum(size) logical, count(*) cnt FROM ("
             "  SELECT substr(rem,1,CASE WHEN instr(rem,?)>0 THEN instr(rem,?)-1 ELSE length(rem) END) seg,"
             "         (instr(rem,?)=0) has_file, size FROM ("
-            "    SELECT substr(path_lc, ?) rem, size FROM files"
-            "    WHERE excluded=0 AND path_lc>=? AND path_lc<?))"
+            f"    SELECT substr({col}, ?) rem, size FROM files"
+            f"    WHERE excluded=0 AND {col}>=? AND {col}<?))"
             " WHERE seg<>'' GROUP BY seg",
-            [_SEP, _SEP, _SEP, plen + 1, lo, hi])
+            [sep, sep, sep, plen + 1, lo, hi])
         cov_rows = _dict_rows(cur, cur.fetchall())
     for r in cov_rows:
         agg[r["seg"]] = {"logical": int(r["logical"] or 0), "files": int(r["cnt"] or 0),
@@ -404,7 +447,8 @@ def folder_children(prefix: str) -> list[dict]:
     from the precomputed folder_rollup (instant); deeper levels use a fast SQL-optimized live scan
     (one substr + one instr per row, original-case name from a representative path)."""
     con = bbdb.connect()
-    lo = prefix.lower().rstrip(_SEP) + _SEP
+    sep = _sep()
+    lo = prefix.lower().rstrip(sep) + sep
     rr = con.execute(
         "SELECT child_lc, name, is_dir, backed_files, backed_bytes, excluded_files, excluded_bytes, excl_rule "
         "FROM folder_rollup WHERE parent_lc=?", [lo]).fetchall()
@@ -426,7 +470,7 @@ def folder_children(prefix: str) -> list[dict]:
             "      SELECT substr(path_lc, ?) remlc, full_path, excluded, size, excl_rule "
             "      FROM files WHERE path_lc>=? AND path_lc<?)))"
             " WHERE seg_lc<>'' GROUP BY seg_lc",
-            [_SEP, plen + 1, lo, hi])
+            [sep, plen + 1, lo, hi])
         rows = _dict_rows(cur, cur.fetchall())
     out = []
     for r in rows:
@@ -434,7 +478,7 @@ def folder_children(prefix: str) -> list[dict]:
         bb, eb = r["backed_bytes"] or 0, r["excluded_bytes"] or 0
         is_file = bool(r["is_file"])
         rem = (r["fp"] or "")[plen:]
-        si = rem.find(_SEP)
+        si = rem.find(sep)
         name = rem if si < 0 else rem[:si]
         status = ("backed" if bf else "excluded") if is_file else (
             "excluded" if bf == 0 else ("backed" if ef == 0 else "mixed"))
@@ -464,9 +508,10 @@ def naming_gap(query: str, depth: int = 2, top: int = 300) -> list[dict]:
             rows = fc.execute(
                 "SELECT full_path, size, excluded FROM files WHERE path_lc LIKE ?", ["%" + q + "%"]).fetchall()
     agg: dict[str, dict] = {}
+    sep = _sep()
     for full_path, size, excluded in rows:
-        comps = full_path.split(_SEP)
-        key = _SEP.join(comps[:depth + 1]) if len(comps) > depth else full_path
+        comps = full_path.split(sep)
+        key = sep.join(comps[:depth + 1]) if len(comps) > depth else full_path
         e = agg.get(key)
         if not e:
             e = agg[key] = {"folder": key, "backed_files": 0, "backed_bytes": 0,
@@ -556,14 +601,16 @@ def _churn_build(top: int, depth: int, cl) -> dict:
     has_hist = (con.execute("SELECT count(DISTINCT day) FROM folder_snapshots").fetchone()[0] or 0) >= 2
     top_folders = sorted(raw.items(), key=lambda x: x[1], reverse=True)[:int(top)]
     folders = []
+    sep = _sep()
     for folder, _cnt in top_folders:
-        lo = folder.lower().rstrip(_SEP) + _SEP
+        lo = folder.lower().rstrip(sep) + sep
         _, hi = prefix_bounds(lo)             #
         folders.append((folder, lo, hi))
     stats = _churn_folder_stats(folders)
+    vols = paths.volumes()
     rows = []
     for folder, cnt in top_folders:
-        drive = folder[0].upper() if len(folder) > 1 and folder[1] == ":" else ""
+        drive = paths.volume_key_for(folder, vols)
         tcnt, bcnt, bbytes = stats[folder]
         status = "gone" if tcnt == 0 else ("active" if bcnt > 0 else "excluded")
         delta = None
@@ -671,16 +718,21 @@ def status() -> dict:
             return {}
 
     cached = bbdb.kv_get(con, "cache_status")
+    out = None
     if cached:
         try:
             out = json.loads(cached)
-            out["remaining"] = _remaining()
-            return out
         except Exception:
-            pass
-    out = _status_live()
+            out = None
+    if out is None:
+        out = _status_live()
+        out["cached_at"] = None
     out["remaining"] = _remaining()
-    out["cached_at"] = None
+    _with_volumes(out.get("drives") or [])
+    out["platform"] = paths.platform()
+    out["sep"] = _sep()
+    out["computer"] = paths.computer_name()
+    out["this_computer"] = paths.is_this_computer()
     return out
 
 

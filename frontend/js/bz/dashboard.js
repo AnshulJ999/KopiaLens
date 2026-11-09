@@ -14,7 +14,7 @@ const bzDashboardPart = {
         this.bzChurnRows = this._bzChurnAll.filter((r) => r.status !== "gone").slice(0, 10);  // drop deleted folders from the at-a-glance panel
         this.bzChurnTotal = ch.total_recent || 0;
         setTable("#bzDashTable", ov.rows || [], [
-          { title: "Drive", field: "drive", width: 70, formatter: (c) => c.getValue() + ":" },
+          { title: "Drive", field: "drive", width: this.bzDriveWidth(), formatter: (c) => escHtml(this.bzLabel(c.getValue())) },
           { title: "Backed files", field: "backed_files", hozAlign: "right", width: 120, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Backed size", field: "backed_bytes", hozAlign: "right", width: 120, sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
           { title: "Excluded files", field: "excluded_files", hozAlign: "right", width: 120, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },

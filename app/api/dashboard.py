@@ -313,6 +313,9 @@ def post_settings(payload: dict) -> dict:
         apply_logging_settings(saved)
     except Exception:  # noqa: BLE001 - a logging toggle must never fail a settings save
         pass
+    if isinstance(bz, dict) and {"bzdata_path", "computer"} & set(bz):
+        from .backblaze import apply_folder_setting   # the Backblaze folder applies live too
+        apply_folder_setting(saved)
     return saved
 
 

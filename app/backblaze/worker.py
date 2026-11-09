@@ -21,8 +21,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 def main(argv: list) -> int:
     from app.core.applog import setup_worker_logging
     setup_worker_logging(os.environ.get("KOPIALENS_WORKER_LOG"))
-    from app.backblaze import indexer
+    from app.backblaze import indexer, paths
     from app.index import crypto
+    paths.apply_configured_root()   # the Backblaze folder setting (a shared folder from another computer)
     if not crypto.worker_key(crypto.read_key_payload(os.environ.get("KOPIALENS_KEY_STDIN") == "1")):
         print(json.dumps({"ok": False, "skipped": True,
                           "reason": "the Backblaze store is encrypted and locked - "

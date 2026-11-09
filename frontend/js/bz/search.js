@@ -38,7 +38,7 @@ const bzSearchPart = {
           H("Ext", "ext", { width: 70 }),
           { title: "Status", field: "excluded", headerSort: false, width: 95, formatter: (c) => statusPill(c.getValue() ? "excluded" : "backed") },
           { title: "Excluded by", field: "excl_rule", headerSort: false, widthGrow: 2, minWidth: 160, formatter: (c) => escHtml(c.getValue() || "") },
-          H("Drive", "drive", { width: 70, formatter: (c) => c.getValue() + ":" }),
+          H("Drive", "drive", { width: this.bzDriveWidth(), formatter: (c) => escHtml(this.bzLabel(c.getValue())) }),
         ], {
           persistSort: false,
           onRowDblClick: (_e, row) => this.bzOpenDetail(row.getData()),

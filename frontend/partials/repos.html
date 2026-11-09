@@ -80,7 +80,7 @@
                 <div class="rounded-md border border-dashed border-bd p-3 flex items-center gap-3" data-testid="ra-bz-found">
                   <div class="min-w-0 flex-1">
                     <div class="font-medium">Backblaze Personal Backup</div>
-                    <div class="text-xs text-muted" x-text="'Found on this computer · ' + countOf(raBz.drives, 'drive') + ' backed up'"></div>
+                    <div class="text-xs text-muted" x-text="(raBz.this_computer === false ? 'From ' + raBz.computer : 'Found on this computer') + ' · ' + countOf(raBz.drives, 'drive') + ' backed up'"></div>
                   </div>
                   <button @click="raAddBackblaze()" :disabled="!!raBz.busy" class="kl-btn" x-text="raBz.busy ? 'Adding…' : 'Add'"></button>
                 </div>

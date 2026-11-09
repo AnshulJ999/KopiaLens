@@ -18,7 +18,10 @@ Backblaze's four layers (outermost to innermost):
   - doesNotContain: "|"-separated alternatives; if ANY is present the rule does NOT match.
   - endsWith: path must end with this.
   - hasFileExtension: the file's extension must equal this.
-  - plat: only "win" rules apply here; osVers "*" (or matching "eleven") applies, "xp" is skipped.
+  - plat: the data's own platform ("win" or "mac"). Windows: osVers "*" (or matching "eleven")
+    applies, "xp" is skipped. Mac: only osVers "*" (the rest name long-gone macOS releases).
+  - On a Mac, rules see the path relative to its volume's mount ("/Volumes/X/a" -> "/a"), and
+    skipFirstCharThenStartsWith drops the leading "/" the way Windows drops the drive letter.
 
 This is what bbtoolkit DID NOT do (it only matched bare folder names + extensions, so its C:/E:
 counts ran high). Validate the result per-drive against bzstat_totalbackup.xml.
@@ -66,14 +69,17 @@ def _star(v: str) -> bool:
     return v == "" or v == "*"
 
 
-def _load_pattern_rules(xml_text: str, source_label: str) -> list[PatternRule]:
+def _load_pattern_rules(xml_text: str, source_label: str, plat: str = "win") -> list[PatternRule]:
     rules: list[PatternRule] = []
     for m in re.finditer(r"<excludefname_rule\b([^>]*)/?>", xml_text):
         a = _attrs(m.group(1))
-        if a.get("plat", "").lower() != "win":
+        if a.get("plat", "").lower() != plat:
             continue
         osv = a.get("osvers", "*").lower()
-        if osv not in _OS_OK and "eleven" not in osv:
+        if plat == "mac":
+            if osv != "*":
+                continue
+        elif osv not in _OS_OK and "eleven" not in osv:
             continue
         skip = a.get("skipfirstcharthenstartswith", "*")
         c1 = a.get("contains_1", "*")
@@ -97,11 +103,15 @@ def _load_pattern_rules(xml_text: str, source_label: str) -> list[PatternRule]:
     return rules
 
 
-def _load_bzinfo(xml_text: str) -> tuple[list[str], set[str]]:
-    """Return (relative excluded-folder prefixes lowercased, excluded-extension set)."""
+def _load_bzinfo(xml_text: str, mac: bool = False) -> tuple[list[str], set[str]]:
+    """Return (excluded-folder prefixes lowercased, excluded-extension set). Windows prefixes are
+    relative to the drive root; a Mac's keep their leading "/" and always end with one."""
     dirs: list[str] = []
     for m in re.finditer(r'<bzdirfilter\s+dir="([^"]+)"\s+whichfiles="none"', xml_text):
         p = m.group(1).lower()
+        if mac:
+            dirs.append(p if p.endswith("/") else p + "/")
+            continue
         rel = p[2:] if len(p) > 2 and p[1] == ":" else p  # strip "x:" -> "\folder\..."
         dirs.append(rel)
     exts: set[str] = set()
@@ -111,8 +121,8 @@ def _load_bzinfo(xml_text: str) -> tuple[list[str], set[str]]:
     return sorted(set(dirs)), exts
 
 
-def _ext_of(path_lc: str) -> str:
-    base = path_lc.rsplit("\\", 1)[-1]
+def _ext_of(path_lc: str, sep: str = "\\") -> str:
+    base = path_lc.rsplit(sep, 1)[-1]
     dot = base.rfind(".")
     return base[dot + 1:] if dot > 0 else ""
 
@@ -120,7 +130,9 @@ def _ext_of(path_lc: str) -> str:
 class RuleEngine:
     """Loaded exclusion rules + a fast classify(full_path) -> (excluded, rule_label)."""
 
-    def __init__(self, dir_prefixes: list[str], ext_set: set[str], pattern_rules: list[PatternRule]):
+    def __init__(self, dir_prefixes: list[str], ext_set: set[str], pattern_rules: list[PatternRule],
+                 sep: str = "\\"):
+        self.sep = sep
         self.dir_prefixes = dir_prefixes
         self.ext_set = ext_set
         self.pattern_rules = pattern_rules
@@ -132,19 +144,27 @@ class RuleEngine:
                 self._by_prefix.setdefault(r.skip, []).append(r)
         self._prefix_items = list(self._by_prefix.items())
 
-    def classify(self, full_path: str) -> tuple[bool, str | None]:
+    def classify(self, full_path: str, mount: str | None = None) -> tuple[bool, str | None]:
+        """`mount` is the volume's mount point (a Mac's "/Volumes/X"); Windows paths ignore it."""
         plc = full_path.lower()
+        posix = self.sep == "/"
         # Layer 3: extension
-        ext = _ext_of(plc)
+        ext = _ext_of(plc, self.sep)
         if ext and ext in self.ext_set:
             return True, f"globalext:{ext}"
         # Layer 4: user folder exclusions (relative, all-drives)
-        rel = plc[2:] if len(plc) > 2 and plc[1] == ":" else plc
+        if posix:
+            m = (mount or "/").lower().rstrip("/")
+            rel = plc[len(m):] if m and plc.startswith(m + "/") else plc
+        else:
+            rel = plc[2:] if len(plc) > 2 and plc[1] == ":" else plc
         for d in self.dir_prefixes:
-            if rel.startswith(d):
+            if rel.startswith(d) or (posix and plc.startswith(d)):
                 return True, f"folder:{d}"
-        # Layers 1-2: pattern rules
-        tail = plc[1:]  # drop drive letter for skipFirstChar tests
+        # Layers 1-2: pattern rules (a Mac's are matched on the volume-relative path)
+        if posix:
+            plc = rel
+        tail = plc[1:]  # drop drive letter (Windows) or the leading "/" (Mac) for skipFirstChar tests
         candidates = self._always
         if self._prefix_items:
             extra = [r for pfx, rs in self._prefix_items if tail.startswith(pfx) for r in rs]
@@ -179,19 +199,25 @@ def engine_digest(engine: RuleEngine) -> str:
     return h.hexdigest()
 
 
+def _plat() -> str:
+    return "mac" if paths.platform() == "mac" else "win"
+
+
 def load_engine() -> RuleEngine:
-    """Load all four layers from the live bzdata (read-only)."""
-    dirs, exts = _load_bzinfo(_read(paths.bzinfo_path()))
-    pats = _load_pattern_rules(_read(paths.mandatory_rules_path()), "mandatory")
-    pats += _load_pattern_rules(_read(paths.editable_rules_path()), "editable")
-    return RuleEngine(dirs, exts, pats)
+    """Load all four layers from the live bzdata (read-only), for the data's own platform."""
+    plat = _plat()
+    dirs, exts = _load_bzinfo(_read(paths.bzinfo_path()), plat == "mac")
+    pats = _load_pattern_rules(_read(paths.mandatory_rules_path()), "mandatory", plat)
+    pats += _load_pattern_rules(_read(paths.editable_rules_path()), "editable", plat)
+    return RuleEngine(dirs, exts, pats, paths.sep())
 
 
 def list_layers() -> dict:
     """Structured view of all 4 layers for the Exclusions tab (counts + raw entries)."""
-    dirs, exts = _load_bzinfo(_read(paths.bzinfo_path()))
-    mand = _load_pattern_rules(_read(paths.mandatory_rules_path()), "mandatory")
-    edit = _load_pattern_rules(_read(paths.editable_rules_path()), "editable")
+    plat = _plat()
+    dirs, exts = _load_bzinfo(_read(paths.bzinfo_path()), plat == "mac")
+    mand = _load_pattern_rules(_read(paths.mandatory_rules_path()), "mandatory", plat)
+    edit = _load_pattern_rules(_read(paths.editable_rules_path()), "editable", plat)
     return {
         "folders": dirs,            # layer 4 (user, editable via app UI)
         "extensions": sorted(exts), # layer 3 (user, editable via app UI)

@@ -89,6 +89,7 @@ const reposPart = {
         this.cx.formatChoices = p.format_choices || {};
         this.cx.bz = bz;
         this.cx.bzPicked = !!(bz && bz.found && !bz.added);   // found = offered ticked
+        Object.assign(this.cx, { bzOther: false, bzFolder: "", bzFolderError: "", bzFolderBusy: false });
       } catch (e) { this.cx.error = e.message || String(e); }
       this.cx.loading = false;
       for (const a of this.cx.added) this.cxSummary(a);
@@ -107,6 +108,15 @@ const reposPart = {
     cxBzOffered() { const b = this.cx && this.cx.bz; return !!(b && b.found && !b.added); },
     cxPickedCount() {
       return this.cxCandidates().filter((c) => this.cx.picked[c.config_file]).length + (this.cxBzOffered() && this.cx.bzPicked ? 1 : 0);
+    },
+    async cxBzFolder() {   // Backblaze on another computer: its shared data folder
+      const cx = this.cx;
+      cx.bzFolderBusy = true; cx.bzFolderError = "";
+      try {
+        const bz = await _setupPost("/api/setup/backblaze/folder", { path: (cx.bzFolder || "").trim() });
+        cx.bz = bz; cx.bzPicked = !!(bz.found && !bz.added); cx.bzOther = false;
+      } catch (e) { cx.bzFolderError = e.message || String(e); }
+      cx.bzFolderBusy = false;
     },
     async cxAddBackblaze() {
       const cx = this.cx;

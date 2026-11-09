@@ -3,21 +3,17 @@ const bzTreePart = {
 
     // ---- Tree ----
     bzOpenTree() {
-      if (!this.bzTreeDrive) this.bzTreeDrive = (this.bzStatus.drives && this.bzStatus.drives[0] && this.bzStatus.drives[0].drive) || "C";
-      if (this.bzTreeDrive !== "*ALL*" && (!this.bzTreePrefix || this.bzTreePrefix[0].toUpperCase() !== this.bzTreeDrive)) this.bzTreePrefix = this.bzTreeDrive + ":\\";
+      const first = this.bzStatus.drives && this.bzStatus.drives[0];
+      if (!this.bzTreeDrive || (this.bzTreeDrive !== "*ALL*" && first && !this.bzVol(this.bzTreeDrive))) this.bzTreeDrive = (first && first.drive) || "C";
+      if (this.bzTreeDrive !== "*ALL*" && (!this.bzTreePrefix || this.bzVolOf(this.bzTreePrefix) !== this.bzTreeDrive)) this.bzTreePrefix = this.bzRoot(this.bzTreeDrive);
       return this.bzLoadTree();
     },
-    bzTreeChanged() { this.bzTreePrefix = this.bzTreeDrive === "*ALL*" ? "" : this.bzTreeDrive + ":\\"; this.klSet({ bz_tree_drive: this.bzTreeDrive }); this.bzLoadTree(); },
+    bzTreeChanged() { this.bzTreePrefix = this.bzTreeDrive === "*ALL*" ? "" : this.bzRoot(this.bzTreeDrive); this.klSet({ bz_tree_drive: this.bzTreeDrive }); this.bzLoadTree(); },
     bzTreeNav(prefix) { this.bzTreePrefix = prefix; this.bzLoadTree(); },
     bzTreeCrumbs() {
       const out = [];
       if (this.bzTreeDrive === "*ALL*") out.push({ label: "All drives", prefix: "" });
-      const p = (this.bzTreePrefix || "").replace(/\\+$/, "");
-      if (p) {
-        let acc = "";
-        p.split("\\").forEach((seg, i) => { acc = i === 0 ? seg + "\\" : acc + (acc.endsWith("\\") ? "" : "\\") + seg; out.push({ label: seg || acc, prefix: acc }); });
-      }
-      return out;
+      return out.concat(this.bzCrumbs(this.bzTreePrefix || ""));
     },
     bzTreeUp() { const c = this.bzTreeCrumbs(); if (c.length > 1) this.bzTreeNav(c[c.length - 2].prefix); },
     async bzLoadTree() {
@@ -30,7 +26,7 @@ const bzTreePart = {
           const ov = {}; ((this.bzOverview && this.bzOverview.rows) || []).forEach((r) => { ov[r.drive] = r; });
           kids = (this.bzStatus.drives || []).map((d) => {
             const o = ov[d.drive] || {};
-            return { name: d.drive + ":", is_dir: true, status: "drive", _root: d.drive + ":\\", excl_rule: "",
+            return { name: d.label || d.drive + ":", is_dir: true, status: "drive", _root: d.root || d.drive + ":\\", excl_rule: "",
                      backed_bytes: o.backed_bytes || 0, excluded_bytes: o.excluded_bytes || 0, total_files: d.total };
           });
         } else {
@@ -51,20 +47,22 @@ const bzTreePart = {
           { title: "Excluded by", field: "excl_rule", widthGrow: 2, minWidth: 140, formatter: (c) => escHtml(c.getValue() || "") },
         ], {
           initialSort: [{ column: atRoot ? "name" : "total_bytes", dir: atRoot ? "asc" : "desc" }],
-          onRowDblClick: (_e, row) => { const d = row.getData(); if (d._root) return this.bzTreeNav(d._root); if (d.is_dir) this.bzTreeNav(this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); },
+          onRowDblClick: (_e, row) => { const d = row.getData(); if (d._root) return this.bzTreeNav(d._root); if (d.is_dir) this.bzTreeNav(this.bzJoin(this.bzTreePrefix, d.name)); },
           rowMenu: [
-            { label: "Open", action: (_e, row) => { const d = row.getData(); if (d._root) return this.bzTreeNav(d._root); if (d.is_dir) this.bzTreeNav(this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); } },
-            { label: "Generate exclusion (this folder)", action: (_e, row) => { const d = row.getData(); const full = d._root || (this.bzTreePrefix.replace(/\\+$/, "") + "\\" + d.name); const rel = full.length > 2 && full[1] === ":" ? full.slice(2) : full; this.bzOpenGen("folder", rel.replace(/\\+$/, "") + "\\"); } },
-            { label: "Generate exclusion (any folder with this name)", action: (_e, row) => this.bzOpenGen("folder", "\\" + row.getData().name + "\\") },
+            { label: "Open", action: (_e, row) => { const d = row.getData(); if (d._root) return this.bzTreeNav(d._root); if (d.is_dir) this.bzTreeNav(this.bzJoin(this.bzTreePrefix, d.name)); } },
+            { label: "Generate exclusion (this folder)", action: (_e, row) => { const d = row.getData(); this.bzGenFolder(d._root || this.bzJoin(this.bzTreePrefix, d.name)); } },
+            { label: "Generate exclusion (any folder with this name)", action: (_e, row) => this.bzGenName(row.getData().name) },
             { label: "Show in Search", action: (_e, row) => { this.query = row.getData().name; this.active = "bz-search"; this.bzLoadSearch(); } },
-            { label: "Copy path", action: (_e, row) => this.copyText(row.getData()._root || (this.bzTreePrefix.replace(/\\+$/, "") + "\\" + row.getData().name)) },
+            { label: "Copy path", action: (_e, row) => this.copyText(row.getData()._root || this.bzJoin(this.bzTreePrefix, row.getData().name)) },
           ],
         });
       }, "Loading folder…");
     },
     bzJumpTree(item) {
-      const fp = item.full_path; const drive = fp[0].toUpperCase();
-      const parent = fp.includes("\\") ? fp.slice(0, fp.lastIndexOf("\\")) : drive + ":\\";
+      const fp = item.full_path; const s = this.bzSep();
+      const drive = item.drive || this.bzVolOf(fp) || fp[0].toUpperCase();
+      const root = this.bzRoot(drive); const idx = fp.lastIndexOf(s);
+      const parent = idx >= root.length ? fp.slice(0, idx) : root;
       this.bzTreeDrive = drive; this.bzTreePrefix = parent; this.active = "bz-tree"; this.bzLoadTree();
     },
 };

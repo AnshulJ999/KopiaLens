@@ -31,6 +31,7 @@ def _fmt(n):
 
 def main(force: bool) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
+    paths.apply_configured_root()
     if not paths.exists():
         print(f"bzdata not found at {paths.bzdata_root()}")
         return 1
@@ -38,7 +39,7 @@ def main(force: bool) -> int:
     print(f"sqlite: {bbdb.db_path()}")
     print(f"FTS5 trigram available: {bbdb.fts_available()}")
     vols = paths.volumes()
-    print(f"volumes: {', '.join(f'{v.letter}({v.guid[:5]})' for v in vols)}\n")
+    print(f"volumes: {', '.join(f'{v.label}({v.guid[:5]})' for v in vols)}\n")
 
     t0 = time.time()
     summary = indexer.refresh(force=force)
@@ -53,7 +54,7 @@ def main(force: bool) -> int:
     for r in ov["rows"]:
         tot_backed += r["backed_files"]
         diff = f"{r['diff']:+,}" if r["diff"] is not None else "n/a"
-        print(f"{r['drive']+':':<4}{r['total']:>12,}{r['backed_files']:>12,}{r['excluded_files']:>11,}"
+        print(f"{r['label']:<4}{r['total']:>12,}{r['backed_files']:>12,}{r['excluded_files']:>11,}"
               f"{_fmt(r['auth_files']):>12}{diff:>11}{_gb(r['backed_bytes']):>12.1f}")
     print("-" * 74)
     print(f"{'ALL':<4}{'':>12}{tot_backed:>12,}{'':>11}{_fmt(ov['auth_grand_files']):>12}"

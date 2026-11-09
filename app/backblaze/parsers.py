@@ -74,9 +74,11 @@ def iter_fileids_from(path: str, byte_offset: int = 0):
             yield line[t + 1:].rstrip("\n")
 
 
-def folder_key(path: str, depth: int) -> str:
-    comps = path.split(_SEP)
-    return _SEP.join(comps[:depth + 1]) if len(comps) > depth else path
+def folder_key(path: str, depth: int, sep: str = _SEP) -> str:
+    """The folder `depth` levels below the drive root. A POSIX path's first component is the
+    empty string before the leading "/", standing where a Windows drive letter stands."""
+    comps = path.split(sep)
+    return sep.join(comps[:depth + 1]) if len(comps) > depth else path
 
 
 # ---- upload queue (bz_todo) ------------------------------------------------------------
@@ -277,6 +279,52 @@ def read_zbytes_history(path: str) -> list[dict]:
         dt, rb, nz, tb = m.groups()
         out.append({"date_time": dt, "rollback": rb, "z_lines": int(nz), "z_bytes": int(tb)})
     return out
+
+
+# ---- Backblaze client versions ----------------------------------------------------------
+_VERSION_RES = (re.compile(r"\bversion=(\d+\.\d+\.\d+\.\d+)"),             # bzfilelist logs
+                re.compile(r"running version: (\d+\.\d+\.\d+\.\d+)"))       # bzbui logs
+_LOG_TAIL = 2 * 1024 * 1024
+
+
+def installed_version(log_dirs: list[str]) -> str:
+    """The Backblaze version that wrote the newest log line naming one: the scan logs first, the
+    UI logs as a fallback. "" when no readable log names it (rotated .zip logs are locked)."""
+    for d, rx in zip(log_dirs, _VERSION_RES):
+        try:
+            logs = sorted((os.path.join(d, f) for f in os.listdir(d) if f.endswith(".log")),
+                          key=os.path.getmtime, reverse=True)
+        except OSError:
+            continue
+        for fp in logs:
+            try:
+                with open_ro(fp, mode="rb") as fh:
+                    size = os.path.getsize(fp)
+                    if size > _LOG_TAIL:
+                        fh.seek(size - _LOG_TAIL)
+                    found = rx.findall(fh.read().decode("utf-8", "replace"))
+            except OSError:
+                continue
+            if found:
+                return found[-1]
+    return ""
+
+
+def newest_version(path: str, platform: str) -> str:
+    """The newest release Backblaze lists in its own bzupdates/clientversion.xml."""
+    m = re.search(r"<release\b[^>]*>", _slurp(path))
+    if not m:
+        return ""
+    attr = "mac_version" if platform == "mac" else "win32_version"
+    v = re.search(rf'\b{attr}="([\d.]+)"', m.group(0))
+    return v.group(1) if v else ""
+
+
+def version_tuple(v: str) -> tuple:
+    try:
+        return tuple(int(x) for x in v.split("."))
+    except ValueError:
+        return ()
 
 
 def _slurp(path: str) -> str:

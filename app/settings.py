@@ -195,7 +195,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "backblaze": {
         "bzdata_path": "",           # read-only source root (never written); "" = this OS's default
-        "updates": "auto",           # auto = refresh when Backblaze's file lists change | off = only when started by hand
+        "computer": "auto",          # whose Backblaze it is: auto (compare names) | this | other (no Kopia cross-check)
+        "updates": "auto",          # auto = refresh when Backblaze's file lists change | off = only when started by hand
         # where the `files` index lives: "parquet" (data/bz/ per-drive Parquet generations
         # read via DuckDB - the DEFAULT) or "sqlite" (kopialens_bz.sqlite + FTS5, the LEGACY path
         # kept for rollback). Switching stores triggers a full rebuild of the missing store on the

@@ -397,7 +397,7 @@ _WRITES: dict[str, object] = {
                                                    "answer", "resume", "close", "dismiss")},
     "POST /api/onboarding/skip": PERSON,   # can switch sign-in off on a fresh install
     "POST /api/onboarding/setup-code": NEVER,
-    **{f"POST /api/setup/{p}": APP for p in ("attach", "backblaze", "connect", "create",
+    **{f"POST /api/setup/{p}": APP for p in ("attach", "backblaze", "backblaze/folder", "connect", "create",
                                              "index/rebuild", "sample", "repos/{repo}/unlock",
                                              "repos/{repo}/reconnect")},
     "PATCH /api/setup/repos/{repo}": APP,

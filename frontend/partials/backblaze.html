@@ -11,6 +11,7 @@
         <div class="flex items-center gap-2 text-sm">
           <span class="font-medium">Per-drive coverage</span>
           <span class="text-muted text-xs">double-click a drive to browse · diff vs Backblaze's own count should be +0</span>
+          <span x-show="!bzCross() && bzStatus.computer" class="ml-auto text-xs text-muted" data-testid="bz-computer" x-text="'Backblaze on ' + bzStatus.computer"></span>
         </div>
         <div id="bzDashTable" class="min-h-[16rem]"></div>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -43,7 +44,7 @@
           <input autocomplete="off" x-model="query" @input.debounce.300ms="bzLoadSearch()" class="fld border border-bd bg-surface min-w-[22rem]" placeholder="Search Backblaze paths (substring)">
           <select autocomplete="off" x-model="bzSearchDrive" @change="bzLoadSearch()" class="fld border border-bd bg-surface">
             <option value="">All drives</option>
-            <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" :selected="d.drive == bzSearchDrive" x-text="d.drive + ':'"></option></template>
+            <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" :selected="d.drive == bzSearchDrive" x-text="d.label || d.drive + ':'"></option></template>
           </select>
           <select autocomplete="off" x-model="bzSearchStatus" @change="bzLoadSearch()" class="fld border border-bd bg-surface">
             <option value="all">Backed + excluded</option>
@@ -79,7 +80,7 @@
         <div class="flex flex-wrap items-center gap-2">
           <select autocomplete="off" x-model="bzTreeDrive" @change="bzTreeChanged()" class="fld border border-bd bg-surface">
             <option value="*ALL*">All drives</option>
-            <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" :selected="d.drive == bzTreeDrive" x-text="d.drive + ':\\'"></option></template>
+            <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" :selected="d.drive == bzTreeDrive" x-text="d.root || d.drive + ':\\'"></option></template>
           </select>
           <button @click="bzTreeUp()" class="h-8 rounded border border-bd px-3 text-sm" title="Up one level"><i class="ic ic-arrow-up"></i> Up</button>
           <span class="text-xs text-muted">Status shows backed, excluded or mixed</span>
@@ -108,7 +109,7 @@
             <span><span class="crumb" @click="bzExclNav(c.path)" x-text="c.label"></span><span class="text-faint" x-show="i < bzExclCrumbs().length - 1"> › </span></span>
           </template>
         </div>
-        <div class="text-[0.6875rem] text-muted px-1">Backblaze's own scan + 4-layer exclusion rules (exact, no Everything needed). "Also in Kopia" = this folder is ALSO backed by a Kopia repo.</div>
+        <div class="text-[0.6875rem] text-muted px-1">Backblaze's own scan + 4-layer exclusion rules (exact, no Everything needed).<span x-show="bzCross()"> "Also in Kopia" = this folder is ALSO backed by a Kopia repo.</span></div>
         <div id="bzExcludedTable" class="flex-1 min-h-0"></div>
       </section>
 
@@ -153,7 +154,7 @@
           <button @click="bzToggleChurnActive()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzChurnActiveOnly ? 'bg-sel' : ''" title="Show only folders that still have backed files (hide excluded / deleted)"><span x-text="bzChurnActiveOnly ? 'Active only' : 'Showing all'"></span></button>
           <select autocomplete="off" x-model="bzChurnDrive" @change="_bzDrawChurn()" class="fld h-8 border border-bd bg-surface text-xs">
             <option value="">All drives</option>
-            <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" :selected="d.drive == bzChurnDrive" x-text="d.drive + ':'"></option></template>
+            <template x-for="d in (bzStatus.drives||[])" :key="d.drive"><option :value="d.drive" :selected="d.drive == bzChurnDrive" x-text="d.label || d.drive + ':'"></option></template>
           </select>
           <span class="text-muted text-xs">total recent IDs: <span x-text="Number(bzChurnTotal||0).toLocaleString(NUM_LOCALE)"></span></span>
         </div>
@@ -175,7 +176,7 @@
         </div>
         <div class="flex flex-wrap gap-2 text-xs" x-show="bzQueue">
           <template x-for="(d,i) in (bzQueue ? bzQueue.by_drive : [])" :key="i">
-            <span class="rounded border border-bd-soft px-2 py-1" x-text="d.drive + ': ' + Number(d.files||0).toLocaleString(NUM_LOCALE) + ' · ' + fmtB(d.bytes)"></span>
+            <span class="rounded border border-bd-soft px-2 py-1" x-text="bzLabel(d.drive) + ' ' + Number(d.files||0).toLocaleString(NUM_LOCALE) + ' · ' + fmtB(d.bytes)"></span>
           </template>
         </div>
         <div id="bzQueueTable" class="flex-1 min-h-0"></div>
@@ -224,6 +225,13 @@
             <div class="text-[0.75rem] text-danger">• <span x-text="iss"></span></div>
           </template>
         </div>
+        <template x-if="bzHealth && bzHealth.version && bzHealth.version.installed">
+          <div class="rounded p-2 text-sm flex flex-wrap items-center gap-x-2" :class="bzHealth.version.outdated ? 'border border-warn-bd bg-warn-bg/20' : 'border border-bd-soft'" data-testid="bz-version">
+            <span x-show="bzHealth.version.outdated" x-text="'Backblaze ' + bzHealth.version.installed + '. A newer version, ' + bzHealth.version.newest + ', is out. Backblaze may take time to update itself.'"></span>
+            <span x-show="!bzHealth.version.outdated" class="text-muted" x-text="'Backblaze ' + bzHealth.version.installed + (bzHealth.version.newest ? ' · up to date' : '')"></span>
+            <a x-show="bzHealth.version.outdated" :href="bzReleaseNotesUrl()" target="_blank" rel="noopener" class="text-link underline underline-offset-2">Release notes</a>
+          </div>
+        </template>
         <div class="text-[0.6875rem] text-muted px-1">Signs of a lost file list: a drive showing 0 backed files, a stub file list, or a recent bz_done over 100 MB (a mass deletion). <span x-show="bzHealth && bzHealth.remaining && bzHealth.remaining.remaining_files">Files remaining to upload: <span class="font-medium" x-text="bzHealth && Number(bzHealth.remaining.remaining_files||0).toLocaleString(NUM_LOCALE)"></span>.</span></div>
         <div id="bzHealthTable" class="min-h-[14rem]"></div>
       </section>

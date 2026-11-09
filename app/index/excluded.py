@@ -164,7 +164,9 @@ def backed_children(folder: str) -> dict[str, dict]:
     supersede the per-repo numbers)."""
     agg = kopia_backed_children(folder)
     try:
-        from ..backblaze import queries as bzq
+        from ..backblaze import paths as bzp, queries as bzq
+        if not bzp.is_this_computer():
+            return agg   # another computer's Backblaze: nothing to compare with this disk
         for seg, cov in bzq.coverage_children(folder).items():
             a = agg.setdefault(seg, {"logical": 0, "files": 0, "has_file": False,
                                      "last_seen": "", "repos": set()})
@@ -177,9 +179,13 @@ def backed_children(folder: str) -> dict[str, dict]:
 
 
 def kopia_drive_backed() -> dict[str, tuple]:
-    """{DRIVE_LETTER: (files, bytes)} of kopia-backed (in_latest, deduped by path) per local drive
-    letter. Used by the BZ Excluded drive view for its Kopia cross-coverage column. Overlap between
-    repo1/repo2 on the same path is counted once per repo (a coarse cross-coverage hint, not exact)."""
+    """{Backblaze volume key: (files, bytes)} of kopia-backed (in_latest, deduped by path) per
+    volume: the drive letter on Windows, the mount on a Mac. Used by the BZ Excluded drive view for
+    its Kopia cross-coverage column. Overlap between repo1/repo2 on the same path is counted once
+    per repo (a coarse cross-coverage hint, not exact)."""
+    from ..backblaze import paths as bzp
+    if bzp.platform() == "mac":
+        return _kopia_mount_backed(bzp.volumes())
     out: dict[str, tuple] = {}
     for repo in coverage_repos():
         cur = read_cursor(repo)
@@ -196,6 +202,29 @@ def kopia_drive_backed() -> dict[str, tuple]:
             f0, b0 = out.get(drive, (0, 0))
             out[drive] = (f0 + int(c or 0), b0 + int(b or 0))
     return out
+
+
+def _kopia_mount_backed(vols) -> dict[str, tuple]:
+    """Per Mac volume: kopia-backed (files, bytes) under its mount. A volume mounted inside
+    another ("/Volumes/X" inside "/") counts there only."""
+    gen = _generation_key()
+    tot = {v.key: _drive_backed(v.mount, gen) for v in vols}   # (bytes, files)
+    out: dict[str, tuple] = {}
+    for v in vols:
+        b, f = tot[v.key]
+        for o in vols:
+            if o is not v and o.root != v.root and o.root.startswith(v.root):
+                b -= tot[o.key][0]
+                f -= tot[o.key][1]
+        out[v.key] = (max(0, f), max(0, b))
+    return out
+
+
+def _bz_drive_key(path: str) -> str:
+    """Match a disk with a Backblaze volume: the drive letter, or the mount without its trailing "/"."""
+    if len(path) > 1 and path[1] == ":":
+        return path[:1].upper()
+    return path.rstrip("/") or "/"
 
 
 def _newest_snapshot() -> str:
@@ -365,11 +394,12 @@ def drive_stats() -> list[dict]:
     Parallel es calls. Used by the drives ('This PC') view so each drive shows its REAL excluded
     total, not its used-disk size."""
     drives = list_drives()  # [{path, used, total}]
-    bz_by_letter: dict[str, tuple] = {}
+    bz_by_drive: dict[str, tuple] = {}
     try:
-        from ..backblaze import queries as bzq
-        for r in bzq.overview()["rows"]:
-            bz_by_letter[str(r["drive"]).upper()] = (r["backed_files"], r["backed_bytes"])
+        from ..backblaze import paths as bzp, queries as bzq
+        if bzp.is_this_computer():   # another computer's Backblaze doesn't describe these disks
+            for r in bzq.overview()["rows"]:
+                bz_by_drive[_bz_drive_key(r["root"])] = (r["backed_files"], r["backed_bytes"])
     except Exception:  # bzdata missing / BZ index not built - drive view still works without it
         pass
 
@@ -387,7 +417,7 @@ def drive_stats() -> list[dict]:
                 bzf = bzb = 0
             else:
                 bs, bc = _drive_backed(p, gen)
-                bzf, bzb = bz_by_letter.get(p[:1].upper(), (0, 0)) if not place else (0, 0)
+                bzf, bzb = bz_by_drive.get(_bz_drive_key(p), (0, 0)) if not place else (0, 0)
         return {
             "path": p, "used": d["used"], "total_size": ts, "total_files": tc,
             "counting": tot["state"] == "counting", "state": tot["state"], "counted_at": tot.get("counted_at"),

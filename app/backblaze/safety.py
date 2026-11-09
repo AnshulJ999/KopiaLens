@@ -1,34 +1,46 @@
 """Read-only guard for the Backblaze data tree.
 
-The whole BZ backend is read-only on `C:\\ProgramData\\Backblaze`. Every file read
-goes through ``open(..., 'r')`` / ``zipfile`` only. This module is belt-and-suspenders:
-any code path that ever tries to WRITE under the Backblaze root raises immediately, so
-a future bug (or a careless edit) can never modify the user's live backup state.
+The whole BZ backend is read-only on the Backblaze data it reads (this computer's install or a
+shared folder). Every file read goes through ``open_ro`` / ``zipfile`` only. This module is
+belt-and-suspenders: any code path that ever tries to WRITE under a Backblaze root raises
+immediately, so a future bug (or a careless edit) can never modify the user's live backup state.
 """
 
 from __future__ import annotations
 
 import os
 
-# The whole Backblaze install tree is off-limits for writes (covers bzdata + anything else).
+# The Backblaze install trees (Windows, Mac) are off-limits for writes, plus whatever bzdata
+# folder is being read (a shared folder from another computer).
 BZ_PROTECTED_ROOT = os.path.normcase(os.path.normpath(r"C:\ProgramData\Backblaze"))
+_INSTALL_ROOTS = (r"C:\ProgramData\Backblaze", "/Library/Backblaze.bzpkg")
+
+
+def _norm(path: str) -> str:
+    return os.path.normcase(os.path.normpath(os.path.abspath(path)))
+
+
+def _protected_roots() -> list[str]:
+    from . import paths
+    return [_norm(r) for r in (*_INSTALL_ROOTS, paths.bzdata_root()) if r]
 
 
 def _under_protected(path: str) -> bool:
     try:
-        p = os.path.normcase(os.path.normpath(os.path.abspath(path)))
+        p = _norm(path)
+        roots = _protected_roots()
     except Exception:
         return False
-    return p == BZ_PROTECTED_ROOT or p.startswith(BZ_PROTECTED_ROOT + os.sep)
+    return any(p == r or p.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
 
 
 def guard_no_write(path: str) -> None:
-    """Raise if `path` resolves under the protected Backblaze tree. Call this before ANY
+    """Raise if `path` resolves under a protected Backblaze tree. Call this before ANY
     open-for-write / rename / delete that could touch a Backblaze-controlled path."""
     if _under_protected(path):
         raise PermissionError(
-            f"Refusing to write under the read-only Backblaze tree: {path!r}. "
-            "The BZ backend is strictly read-only on C:\\ProgramData\\Backblaze."
+            f"Refusing to write under the read-only Backblaze data: {path!r}. "
+            "KopiaLens only ever reads Backblaze's files."
         )
 
 

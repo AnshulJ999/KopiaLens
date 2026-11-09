@@ -118,16 +118,23 @@ def _acc_roll(roll: dict, parent_lc: str, child: str, is_dir: bool, is_excl: boo
         e[2] += 1; e[3] += size
 
 
-def _write_rollup(con, root_lc: str, roll1: dict, roll2: dict) -> None:
-    """Persist depth-1 child aggregates (always) + depth-2 (only for big depth-1 folders) for a drive."""
+def _write_rollup(con, root_lc: str, roll1: dict, roll2: dict, sep: str = "\\", nested: bool = False) -> None:
+    """Persist depth-1 child aggregates (always) + depth-2 (only for big depth-1 folders) for a drive.
+    `nested`: another volume is mounted inside this one (a Mac's "/" holds "/Volumes/X"), so only
+    this volume's own rows go, never everything under its root."""
     big = set()
     for (plc, clc), e in roll1.items():
         if (e[2] + e[4]) >= _ROLLUP_MIN:  # this depth-1 folder is large -> precompute its children too
-            big.add(plc + clc + "\\")
+            big.add(plc + clc + sep)
     rows = [(plc, clc, e[0], e[1], e[2], e[3], e[4], e[5], e[6]) for (plc, clc), e in roll1.items()]
     rows += [(plc, clc, e[0], e[1], e[2], e[3], e[4], e[5], e[6]) for (plc, clc), e in roll2.items() if plc in big]
-    _, root_hi = prefix_bounds(root_lc)       # lo + U+FFFF misses emoji names
-    con.execute("DELETE FROM folder_rollup WHERE parent_lc >= ? AND parent_lc < ?", [root_lc, root_hi])
+    if nested:
+        kids = [r[0] for r in con.execute("SELECT child_lc FROM folder_rollup WHERE parent_lc=?", [root_lc])]
+        con.executemany("DELETE FROM folder_rollup WHERE parent_lc=?",
+                        [(root_lc,)] + [(root_lc + k + sep,) for k in kids])
+    else:
+        _, root_hi = prefix_bounds(root_lc)       # lo + U+FFFF misses emoji names
+        con.execute("DELETE FROM folder_rollup WHERE parent_lc >= ? AND parent_lc < ?", [root_lc, root_hi])
     if rows:
         con.executemany("INSERT INTO folder_rollup VALUES(?,?,?,?,?,?,?,?,?)", rows)
 
@@ -141,35 +148,44 @@ def _walk_drive(vol, engine, emit) -> tuple[int, int, int, dict, dict]:
     Dedupes by path: a Backblaze per-volume filelist can list each entry TWICE (the committed
     .dat sometimes contains the whole body duplicated - e.g. E: had 1.19M lines / 595k unique).
     Backblaze's own bzstat count dedupes, so we must too, else backed counts come out ~2x.
-    Deduping before classify also halves the rule work."""
+    Deduping before classify also halves the rule work.
+
+    Paths split by the data's own separator, relative to the volume's root. A Mac file list whose
+    paths don't start with the volume's mount (volume-relative) gets the mount prefixed, so every
+    path is absolute and two volumes never share one."""
     total = backed = excluded = 0
     seen: set[str] = set()
     batch: list[tuple] = []
     roll1: dict = {}  # depth-1 children of the drive root
     roll2: dict = {}  # depth-2 children (filtered to big depth-1 folders in _write_rollup)
-    root_lc = vol.letter.lower() + ":\\"
+    sep = paths.sep()
+    root = vol.root
+    root_lc = root.lower()
+    prefix = vol.mount.rstrip("/") if sep == "/" else ""
     for mtime_hex, size, full_path in parsers.iter_filelist(vol.filelist):
+        if prefix and full_path.startswith("/") and not full_path.lower().startswith(root_lc):
+            full_path = prefix + full_path
         plc = full_path.lower()
         if plc in seen:
             continue
         seen.add(plc)
-        is_excl, rule = engine.classify(full_path)
-        name = full_path.rsplit("\\", 1)[-1]
+        is_excl, rule = engine.classify(full_path, vol.mount)
+        name = full_path.rsplit(sep, 1)[-1]
         base = name.lower()
         dot = base.rfind(".")
         ext = base[dot + 1:] if dot > 0 else ""
-        batch.append((vol.letter, full_path, plc, name, ext, size, mtime_hex,
+        batch.append((vol.key, full_path, plc, name, ext, size, mtime_hex,
                       1 if is_excl else 0, rule))
         total += 1
         if is_excl:
             excluded += 1
         else:
             backed += 1
-        comps = full_path.split("\\")
-        if len(comps) >= 2:
-            _acc_roll(roll1, root_lc, comps[1], len(comps) > 2, is_excl, size, rule)
-            if len(comps) >= 3:
-                _acc_roll(roll2, (comps[0] + "\\" + comps[1] + "\\").lower(), comps[2], len(comps) > 3, is_excl, size, rule)
+        rel = full_path[len(root):].split(sep) if plc.startswith(root_lc) else full_path.split(sep)[1:]
+        if rel and rel[0]:
+            _acc_roll(roll1, root_lc, rel[0], len(rel) > 1, is_excl, size, rule)
+            if len(rel) >= 2:
+                _acc_roll(roll2, root_lc + rel[0].lower() + sep, rel[1], len(rel) > 2, is_excl, size, rule)
         if len(batch) >= _BATCH:
             emit(batch)
             batch.clear()
@@ -178,16 +194,22 @@ def _walk_drive(vol, engine, emit) -> tuple[int, int, int, dict, dict]:
     return total, backed, excluded, roll1, roll2
 
 
-def _reindex_drive(con, vol, engine) -> tuple[int, int, int]:
+def _nested(vol, vols) -> bool:
+    """Another volume is mounted inside this one (a Mac's "/" holds "/Volumes/X")."""
+    r = vol.root.lower()
+    return any(o is not vol and o.root.lower() != r and o.root.lower().startswith(r) for o in vols)
+
+
+def _reindex_drive(con, vol, engine, vols=()) -> tuple[int, int, int]:
     """Replace one drive's `files` rows in the SQLite store from its filelist. Returns
     (total, backed, excluded) counts."""
-    con.execute("DELETE FROM files WHERE drive=?", [vol.letter])
+    con.execute("DELETE FROM files WHERE drive=?", [vol.key])
 
     def emit(batch):
         con.executemany("INSERT INTO files VALUES(?,?,?,?,?,?,?,?,?)", batch)
 
     total, backed, excluded, roll1, roll2 = _walk_drive(vol, engine, emit)
-    _write_rollup(con, vol.letter.lower() + ":\\", roll1, roll2)
+    _write_rollup(con, vol.root.lower(), roll1, roll2, paths.sep(), _nested(vol, vols))
     return total, backed, excluded
 
 
@@ -232,10 +254,10 @@ def import_eventlog_archive(eventlog_dir: str) -> dict:
 def _refresh_queue(con) -> int:
     con.execute("DELETE FROM queue")
     rows = parsers.parse_queue(paths.datacenter_dir())
+    vols = paths.volumes()
     data = []
     for sz, p in rows:
-        drive = p[0].upper() if len(p) > 1 and p[1] == ":" else ""
-        data.append((drive, p, sz))
+        data.append((paths.volume_key_for(p, vols), p, sz))
     if data:
         con.executemany("INSERT INTO queue VALUES(?,?,?)", data)
     return len(data)
@@ -291,8 +313,8 @@ def _refresh_events(con) -> int:
     # stub filelists (aborted scan signature)
     for vol in paths.volumes():
         if parsers.is_stub_filelist(vol.filelist):
-            evs.append((time.strftime("%Y-%m-%d %H:%M:%S"), "scan_stub", vol.letter, 0, 0,
-                        f"{vol.letter}: filelist is a stub (aborted scan)", os.path.basename(vol.filelist)))
+            evs.append((time.strftime("%Y-%m-%d %H:%M:%S"), "scan_stub", vol.key, 0, 0,
+                        f"{vol.label.rstrip(':')}: filelist is a stub (aborted scan)", os.path.basename(vol.filelist)))
     if evs:
         con.executemany("INSERT INTO events VALUES(?,?,?,?,?,?,?)", evs)
     return len(evs)
@@ -316,6 +338,10 @@ def _refresh_stats_kv(con) -> None:
     bbdb.kv_set(con, "overview", json.dumps(ver))
     bbdb.kv_set(con, "zbytes_history", json.dumps(
         parsers.read_zbytes_history(paths.report("zbytes_history.xml"))[:120]))
+    bbdb.kv_set(con, "client_version", json.dumps({
+        "installed": parsers.installed_version([paths.log_dir("bzfilelist"), paths.log_dir("bzbui")]),
+        "newest": parsers.newest_version(paths.client_version_path(), paths.platform()),
+        "platform": paths.platform()}))
 
 
 def _refresh_churn(con) -> None:
@@ -326,8 +352,9 @@ def _refresh_churn(con) -> None:
         return
     offset = max(0, size - _CHURN_TAIL_BYTES)
     counts: dict[str, int] = {}
+    sep = paths.sep()
     for path in parsers.iter_fileids_from(fp, offset):
-        k = parsers.folder_key(path, 2)
+        k = parsers.folder_key(path, 2, sep)
         counts[k] = counts.get(k, 0) + 1
     con.execute("DELETE FROM churn")
     top = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:200]
@@ -344,6 +371,7 @@ def _refresh_folder_snapshots(con, history_days: int = 90) -> None:
     if con.execute("SELECT 1 FROM folder_snapshots WHERE day=? LIMIT 1", [day]).fetchone():
         return  # already captured today's rollup
     agg: dict[tuple, list] = {}
+    sep = paths.sep()
     with queries._files_cursor() as fc:
         cur = fc.execute("SELECT drive, full_path, size FROM files WHERE excluded=0")
         while True:
@@ -351,8 +379,8 @@ def _refresh_folder_snapshots(con, history_days: int = 90) -> None:
             if not batch:
                 break
             for drive, full_path, size in batch:
-                comps = full_path.split("\\")
-                folder = "\\".join(comps[:3]) if len(comps) > 2 else full_path
+                comps = full_path.split(sep)
+                folder = sep.join(comps[:3]) if len(comps) > 2 else full_path
                 e = agg.get((drive, folder))
                 if e:
                     e[0] += 1; e[1] += size
@@ -455,18 +483,18 @@ def detect_changes() -> dict:
     changed = False
     drives: dict[str, dict] = {}
     for vol in paths.volumes():
-        src = f"filelist:{vol.letter}"
+        src = f"filelist:{vol.key}"
         try:
             st = os.stat(vol.filelist)
         except OSError:
             continue
         entry = {"watermark_moved": False, "changed": False}
-        drives[vol.letter] = entry
+        drives[vol.key] = entry
         if parsers.is_stub_filelist(vol.filelist):
             continue  # aborted scan: flag nothing, watermark nothing (mirrors refresh())
         prev = bbdb.ingest_get(con, src)  # (mtime, size, digest) or None
-        have_rows = (pq.has_drive(vol.letter) if queries._store() == "parquet" else
-                     con.execute("SELECT 1 FROM files WHERE drive=? LIMIT 1", [vol.letter]).fetchone())
+        have_rows = (pq.has_drive(vol.key) if queries._store() == "parquet" else
+                     con.execute("SELECT 1 FROM files WHERE drive=? LIMIT 1", [vol.key]).fetchone())
         if prev is not None and have_rows and prev[0] == st.st_mtime and prev[1] == st.st_size:
             continue  # untouched since the last check - pure stat
         entry["watermark_moved"] = True
@@ -475,7 +503,7 @@ def detect_changes() -> dict:
         except OSError as exc:
             # Cannot verify -> flag nothing. A transient read error must not trigger a doomed
             # reindex; the next detect retries the hash and a warning that repeats is the signal.
-            log.warning("BZ %s: filelist unreadable during detect (%s) - skipping", vol.letter, exc)
+            log.warning("BZ %s: filelist unreadable during detect (%s) - skipping", vol.label, exc)
             continue
         if prev is not None and have_rows and digest and digest == prev[2]:
             bbdb.ingest_set(con, src, st.st_mtime, st.st_size, digest)  # header-only rewrite
@@ -484,6 +512,10 @@ def detect_changes() -> dict:
             changed = True  # watermark left alone: refresh() re-derives it when it reindexes
     if rules_changed:
         changed = True
+    name = paths.computer_key()
+    prev_name = bbdb.kv_get(con, "bz_computer")
+    if name and prev_name and name != prev_name:
+        changed = True   # another computer's data: refresh() sets the old index aside and rebuilds
     if changed:
         bbdb.kv_set(con, "reindex_pending", "1")
     bbdb.kv_set(con, "last_check_ts", str(time.time()))
@@ -508,6 +540,82 @@ def freshness() -> dict:
     except Exception:  # noqa: BLE001 - a freshness read must never break its caller
         pass
     return out
+
+
+_HISTORY_TABLES = ("folder_snapshots", "events_archive", "backup_days")
+_ALL_TABLES = ("files", "queue", "events", "churn", "folder_snapshots", "folder_rollup",
+               "events_archive", "backup_days", "kv", "ingest")
+
+
+def _previous_dir() -> str:
+    import config
+    return os.path.join(config.DATA_DIR, "bz-previous")
+
+
+def _safe_name(name: str) -> str:
+    import re
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "computer"
+
+
+def _switch_computer(con) -> bool:
+    """When the data now comes from a different computer: copy the slim SQLite aside (its history
+    can't be rebuilt), clear every BZ table, bring back that computer's own history from its newest
+    copy if one exists, and return True so every drive rebuilds. The first refresh that sees a
+    name only records it. Names compare without Backblaze's set-up-again date (computer_key)."""
+    name = paths.computer_key()
+    if not name:
+        return False
+    prev = bbdb.kv_get(con, "bz_computer")
+    if prev is None:
+        bbdb.kv_set(con, "bz_computer", name)
+        return False
+    if prev == name:
+        return False
+    import sqlite3
+    os.makedirs(_previous_dir(), exist_ok=True)
+    keep = os.path.join(_previous_dir(), f"{_safe_name(prev)}-{time.strftime('%Y%m%d-%H%M%S')}.sqlite")
+    con.commit()
+    dst = sqlite3.connect(keep)
+    try:
+        con.backup(dst)
+    finally:
+        dst.close()
+    have = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    for t in _ALL_TABLES:
+        if t in have:
+            con.execute(f"DELETE FROM {t}")
+    restored = _restore_history(con, name)
+    bbdb.kv_set(con, "bz_computer", name)
+    con.commit()
+    bbdb.rebuild_fts(con)
+    log.info("BZ data is now from %s (was %s): previous index kept as %s%s", name, prev,
+             os.path.basename(keep), f", restored {restored} history rows" if restored else "")
+    return True
+
+
+def _restore_history(con, name: str) -> int:
+    """Bring back a computer's history tables from its newest set-aside copy (0 when none)."""
+    try:
+        cands = sorted(f for f in os.listdir(_previous_dir())
+                       if f.startswith(_safe_name(name) + "-") and f.endswith(".sqlite"))
+    except OSError:
+        return 0
+    if not cands:
+        return 0
+    src = os.path.join(_previous_dir(), cands[-1])
+    n = 0
+    con.commit()
+    con.execute("ATTACH DATABASE ? AS prev", [src])
+    try:
+        for t in _HISTORY_TABLES:
+            try:
+                n += con.execute(f"INSERT INTO {t} SELECT * FROM prev.{t}").rowcount or 0
+            except Exception as exc:  # noqa: BLE001 - one unreadable table must not block the rest
+                log.warning("BZ history restore skipped %s: %s", t, exc)
+        con.commit()
+    finally:
+        con.execute("DETACH DATABASE prev")
+    return n
 
 
 def refresh(force: bool = False) -> dict:
@@ -536,6 +644,10 @@ def refresh(force: bool = False) -> dict:
     drives: dict[str, dict] = {}
     try:
       with _LOCKED(con):
+        switched = _switch_computer(con)
+        if switched:
+            force = True
+            prev_rules_hash = None   # the cleared kv no longer holds it
         parquet = queries._store() == "parquet"
         pq_lock = None
         pq_gen = 0
@@ -550,16 +662,18 @@ def refresh(force: bool = False) -> dict:
                 pq_lock.__enter__()
                 manifest = pq.read_manifest()
                 pq_gen = int((manifest or {}).get("generation") or 0) + 1
-                pq_rels = dict((manifest or {}).get("drives", {}))
-            for vol in paths.volumes():
-                src = f"filelist:{vol.letter}"
+                # Another computer's data starts an empty store: the old drives aren't carried over.
+                pq_rels = {} if switched else dict((manifest or {}).get("drives", {}))
+            vols = paths.volumes()
+            for vol in vols:
+                src = f"filelist:{vol.key}"
                 try:
                     st = os.stat(vol.filelist)
                 except OSError:
                     continue
                 prev = bbdb.ingest_get(con, src)  # (mtime, size, digest) or None
-                have_rows = (pq.has_drive(vol.letter) if parquet else
-                             con.execute("SELECT 1 FROM files WHERE drive=? LIMIT 1", [vol.letter]).fetchone())
+                have_rows = (vol.key in pq_rels if parquet else
+                             con.execute("SELECT 1 FROM files WHERE drive=? LIMIT 1", [vol.key]).fetchone())
                 reindex = True
                 trigger = "file list"
                 digest = None
@@ -570,7 +684,7 @@ def refresh(force: bool = False) -> dict:
                 # half-written list.
                 if parsers.is_stub_filelist(vol.filelist):
                     if have_rows:
-                        log.warning("BZ %s: filelist is a stub (aborted scan) - keeping the existing index", vol.letter)
+                        log.warning("BZ %s: filelist is a stub (aborted scan) - keeping the existing index", vol.label)
                     reindex = False
                 else:
                     body_same = False
@@ -588,51 +702,51 @@ def refresh(force: bool = False) -> dict:
                             if digest and digest == prev[2]:
                                 body_same = True
                                 bbdb.ingest_set(con, src, st.st_mtime, st.st_size, digest)
-                                log.debug("BZ %s: filelist body unchanged (digest match), skipping reindex", vol.letter)
+                                log.debug("BZ %s: filelist body unchanged (digest match), skipping reindex", vol.label)
                     if body_same:
                         reindex = rules_changed  # unchanged body still reclassifies when the rules moved
                         if reindex:
                             trigger = "rules changed"
                 # bootstrap: a drive with no Parquet file (freshly switched store) rebuilds
                 # regardless of the digest watermarks - the watermarks describe the OTHER store.
-                if parquet and vol.letter not in pq_rels and not parsers.is_stub_filelist(vol.filelist):
+                if parquet and vol.key not in pq_rels and not parsers.is_stub_filelist(vol.filelist):
                     reindex = True
                     trigger = "missing in parquet store"
                 if reindex:
                     if parquet:
-                        _write_progress(f"reindexing {vol.letter}")
-                        staged = pq.staged_path(vol.letter, pq_gen)
+                        _write_progress(f"reindexing {vol.label}")
+                        staged = pq.staged_path(vol.key, pq_gen)
                         total, backed, excluded, roll1, roll2 = _reindex_drive_pq(vol, engine, staged)
                         if pq.ensure_staged_state(staged):   # Everything level
-                            _write_progress(f"encrypting {vol.letter}")
-                        _write_rollup(con, vol.letter.lower() + ":\\", roll1, roll2)
-                        rel = pq.pool_rel(vol.letter, pq_gen)
+                            _write_progress(f"encrypting {vol.label}")
+                        _write_rollup(con, vol.root.lower(), roll1, roll2, paths.sep(), _nested(vol, vols))
+                        rel = pq.pool_rel(vol.key, pq_gen)
                         pq_moves.append((staged, rel))
-                        pq_rels[vol.letter] = rel
+                        pq_rels[vol.key] = rel
                     else:
-                        total, backed, excluded = _reindex_drive(con, vol, engine)
-                    _write_progress(f"indexing {vol.letter}")
+                        total, backed, excluded = _reindex_drive(con, vol, engine, vols)
+                    _write_progress(f"indexing {vol.label}")
                     if digest is None:
                         try:
                             digest = _filelist_digest(vol.filelist)
                         except OSError:
                             digest = ""
                     bbdb.ingest_set(con, src, st.st_mtime, st.st_size, digest or "")
-                    drives[vol.letter] = {"total": total, "backed": backed, "excluded": excluded, "reindexed": True}
-                    changed.append(vol.letter)
+                    drives[vol.key] = {"total": total, "backed": backed, "excluded": excluded, "reindexed": True}
+                    changed.append(vol.key)
                     log.info("BZ reindex %s (%s): %d files (%d backed / %d excluded)",
-                             vol.letter, trigger, total, backed, excluded)
+                             vol.label, trigger, total, backed, excluded)
                 else:
                     if parquet:
-                        t, b, e = pq.drive_counts(vol.letter)
-                        drives[vol.letter] = {"total": t, "backed": b, "excluded": e, "reindexed": False}
+                        t, b, e = pq.drive_counts(vol.key)
+                        drives[vol.key] = {"total": t, "backed": b, "excluded": e, "reindexed": False}
                     else:
                         row = con.execute(
                             "SELECT count(*), sum(CASE WHEN excluded=0 THEN 1 ELSE 0 END), "
                             "sum(CASE WHEN excluded=1 THEN 1 ELSE 0 END) FROM files WHERE drive=?",
-                            [vol.letter]).fetchone()
-                        drives[vol.letter] = {"total": row[0] or 0, "backed": row[1] or 0,
-                                              "excluded": row[2] or 0, "reindexed": False}
+                            [vol.key]).fetchone()
+                        drives[vol.key] = {"total": row[0] or 0, "backed": row[1] or 0,
+                                           "excluded": row[2] or 0, "reindexed": False}
             if changed or force:
                 _write_progress("publishing")
                 if parquet:
@@ -810,8 +924,12 @@ def refresh_via_worker(force: bool = False) -> dict:
             return {"ok": False, "reason": "timeout"}
         if res.returncode != 0:
             log.error("BZ worker failed (rc=%d): %s", res.returncode, (res.stderr or "")[-2000:])
-            _STATE["last_error"] = f"worker exit {res.returncode}"
-            return {"ok": False, "reason": f"worker exit {res.returncode}", "stderr": (res.stderr or "")[-2000:]}
+            try:   # a worker that reached its summary says why (folder unreachable, locked store...)
+                reason = str(json.loads(res.stdout.strip()).get("reason") or "")
+            except Exception:  # noqa: BLE001 - a crash prints no summary
+                reason = ""
+            _STATE["last_error"] = reason or f"worker exit {res.returncode}"
+            return {"ok": False, "reason": _STATE["last_error"], "stderr": (res.stderr or "")[-2000:]}
         try:
             summary = json.loads(res.stdout.strip())
         except Exception as exc:  # noqa: BLE001 - malformed worker output should never crash the caller

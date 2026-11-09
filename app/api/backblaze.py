@@ -52,8 +52,33 @@ def _excl_cache_put(key: str, val: tuple) -> None:
 def _require_data() -> None:
     if not paths.exists():
         # 404, not 5xx: an install without Backblaze data is a normal state, not a server fault.
-        raise HTTPException(status_code=404, detail=f"No Backblaze data found in {paths.bzdata_root()}. "
-                                                    "Set its folder in Settings > Backblaze.")
+        raise HTTPException(status_code=404, detail=f"Can't reach the Backblaze data folder {paths.bzdata_root()}. "
+                                                    "Check that it's there, or set it in Settings > Backblaze.")
+
+
+def apply_folder_setting(settings: dict | None = None) -> str:
+    """Apply the Backblaze folder setting now (no restart): point the reader at it, drop cached
+    views, and queue a rebuild when the folder changed. The rebuild itself notices another
+    computer's data and sets the old index aside."""
+    old = paths.bzdata_root()
+    new = paths.apply_configured_root(settings)
+    with _EXCL_LOCK:
+        _EXCL_CACHE.clear()
+    try:
+        from ..index.excluded import forget_listings
+        forget_listings()
+    except Exception:  # noqa: BLE001 - only a cache
+        pass
+    if new != old and paths.exists():
+        from ..core import reindexq, repos
+        if repos.exists(repos.BACKBLAZE_ID):
+            reindexq.request(repos.BACKBLAZE_ID, wait=0, reason="first")
+    return new
+
+
+def _cross_check() -> bool:
+    """The Kopia cross-check compares with THIS computer's backups: off for another computer's data."""
+    return paths.is_this_computer()
 
 
 def _bz_settings() -> dict:
@@ -249,23 +274,26 @@ def excluded_drives() -> dict:
         return hit[1]
     ov = bzq.overview()
     kd: dict = {}
-    try:
-        from ..index.excluded import kopia_drive_backed
-        kd = kopia_drive_backed()
-    except Exception:  # noqa: BLE001 - cross-coverage is optional
-        kd = {}
+    cross = _cross_check()
+    if cross:
+        try:
+            from ..index.excluded import kopia_drive_backed
+            kd = kopia_drive_backed()
+        except Exception:  # noqa: BLE001 - cross-coverage is optional
+            kd = {}
     drives = []
     for r in ov["rows"]:
-        letter = str(r["drive"]).upper()
-        kf, kb = kd.get(letter, (0, 0))
+        key = str(r["drive"])
+        kf, kb = kd.get(key, (0, 0))
         drives.append({
-            "drive": letter, "path": f"{letter}:\\", "total_files": r["total"],
+            "drive": key, "label": r["label"], "path": r["root"], "total_files": r["total"],
             "backed_files": r["backed_files"], "backed_bytes": r["backed_bytes"],
             "excluded_files": r["excluded_files"], "excluded_bytes": r["excluded_bytes"],
             "auth_files": r["auth_files"], "diff": r["diff"],
             "kopia_backed_files": kf, "kopia_backed_bytes": kb,
         })
-    result = {"drives": drives, "grand_files": ov["auth_grand_files"], "grand_bytes": ov["auth_grand_bytes"]}
+    result = {"drives": drives, "grand_files": ov["auth_grand_files"], "grand_bytes": ov["auth_grand_bytes"],
+              "cross_check": cross}
     _excl_cache_put("*drives*", (time.time(), result))
     return result
 
@@ -296,9 +324,10 @@ def excluded_kopia_coverage(prefix: str) -> dict:
         return hit[1]
     cov: dict = {}
     try:
-        from ..index.excluded import kopia_backed_children
-        for seg, b in kopia_backed_children(prefix).items():
-            cov[seg] = {"bytes": int(b["logical"]), "files": int(b["files"]), "repos": sorted(b["repos"])}
+        if _cross_check():
+            from ..index.excluded import kopia_backed_children
+            for seg, b in kopia_backed_children(prefix).items():
+                cov[seg] = {"bytes": int(b["logical"]), "files": int(b["files"]), "repos": sorted(b["repos"])}
     except Exception:  # noqa: BLE001 - cross-coverage is optional
         cov = {}
     result = {"prefix": prefix, "coverage": cov}

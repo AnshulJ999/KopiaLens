@@ -144,6 +144,46 @@ const bzIndexPart = {
       }, 3000);
     },
 
+    // ---- paths: the data's own separator ("\\" Windows, "/" Mac) and its volumes ----
+    bzSep() { return this.bzStatus.sep || "\\"; },
+    bzVol(key) { return (this.bzStatus.drives || []).find((d) => d.drive === key) || null; },
+    bzLabel(key) { const v = this.bzVol(key); return v ? v.label : (key ? key + ":" : ""); },
+    bzRoot(key) { const v = this.bzVol(key); return v ? v.root : key + ":\\"; },
+    bzDriveWidth() { return this.bzSep() === "/" ? 170 : 70; },
+    bzCross() { return this.bzStatus.this_computer !== false; },   // another computer's data: no Kopia cross-check
+    bzVolOf(path) {   // the volume a path is on (longest matching root)
+      const p = String(path || "").toLowerCase(); let best = null, len = -1;
+      for (const d of (this.bzStatus.drives || [])) {
+        const r = String(d.root || "").toLowerCase(); const bare = r.length > 1 ? r.slice(0, -1) : r;
+        if ((p.startsWith(r) || p === bare) && r.length > len) { best = d.drive; len = r.length; }
+      }
+      if (best === null && this.bzSep() === "\\" && p.length > 1 && p[1] === ":") best = p[0].toUpperCase();
+      return best;
+    },
+    bzJoin(base, name) { const s = this.bzSep(); let b = base || ""; while (b.endsWith(s)) b = b.slice(0, -1); return b + s + name; },
+    bzCrumbs(path) {   // [{label, prefix}] from the volume root down
+      const s = this.bzSep(); const out = [];
+      if (!path) return out;
+      const key = this.bzVolOf(path);
+      const root = key !== null ? this.bzRoot(key) : path.split(s)[0] + s;
+      out.push({ label: key !== null ? this.bzLabel(key) : (path.split(s)[0] || s), prefix: root });
+      let acc = root;
+      path.slice(Math.min(root.length, path.length)).split(s).filter(Boolean).forEach((seg) => {
+        acc = acc + (acc.endsWith(s) ? "" : s) + seg; out.push({ label: seg, prefix: acc });
+      });
+      return out;
+    },
+    bzGenFolder(full) {   // Windows folder rules are relative to the drive; a Mac's are full paths
+      const s = this.bzSep(); let f = full || "";
+      if (s === "\\" && f.length > 2 && f[1] === ":") f = f.slice(2);
+      while (f.endsWith(s)) f = f.slice(0, -1);
+      this.bzOpenGen("folder", f + s);
+    },
+    bzGenName(name) {
+      if (this.bzSep() === "/") return this.bzOpenGen("editable_contains", "/" + name + "/");
+      this.bzOpenGen("folder", "\\" + name + "\\");
+    },
+
     // ---- file detail ----
     async bzOpenDetail(item) {
       this.bzDetail = { ...item, gen: null };
@@ -151,6 +191,6 @@ const bzIndexPart = {
     bzDetailRoot() {
       if (!this.bzDetail) return "";
       const f = this.bzDetail.full_path || "";
-      return f.length > 2 && f[1] === ":" ? f.slice(2) : f;
+      return this.bzSep() === "\\" && f.length > 2 && f[1] === ":" ? f.slice(2) : f;
     },
 };

@@ -9,7 +9,7 @@
                   <div class="rounded-md border p-3 space-y-2" :class="a.error ? 'border-warn-bd' : 'border-ok-bd'">
                     <div class="flex items-start gap-2">
                       <span class="pill" :class="a.error ? 'warn' : (a.summary ? 'ok' : '')" x-text="a.error ? 'Needs attention' : (a.summary ? (a.sample ? 'Ready' : 'Connected') : 'Checking…')"></span>
-                      <span class="min-w-0 flex-1 text-xs text-muted truncate" :title="a.where" x-text="a.sample ? 'Made on this computer' : (a.backblaze ? 'Backblaze on this computer' : [cxTypeLabel(a.type), a.where].filter(Boolean).join(' · '))"></span>
+                      <span class="min-w-0 flex-1 text-xs text-muted truncate" :title="a.where" x-text="a.sample ? 'Made on this computer' : (a.backblaze ? (cx.bz && cx.bz.this_computer === false ? 'Backblaze on ' + cx.bz.computer : 'Backblaze on this computer') : [cxTypeLabel(a.type), a.where].filter(Boolean).join(' · '))"></span>
                       <button type="button" @click="cxRemoveAdded(a)" class="text-xs text-muted hover:text-fg">Remove</button>
                     </div>
                     <p x-show="a.summary" class="text-xs" x-text="cxSummaryLine(a)"></p>
@@ -38,14 +38,14 @@
                 <!-- Found on this computer -->
                 <template x-if="!cx.loading && (cxCandidates().length || cxBzOffered())">
                   <div class="kl-sec">
-                    <div class="h">Found on this computer</div>
+                    <div class="h" x-text="cx.bz && cx.bz.this_computer === false && !cxCandidates().length ? 'Backblaze on another computer' : 'Found on this computer'"></div>
                     <div class="rounded-md border border-bd divide-y divide-[var(--bd)]">
                       <template x-if="cxBzOffered()">
                         <label class="flex items-start gap-3 p-3 cursor-pointer hover:bg-head" data-testid="cx-backblaze">
                           <input autocomplete="off" type="checkbox" class="mt-0.5" x-model="cx.bzPicked">
                           <span class="min-w-0 flex-1">
                             <span class="block font-medium">Backblaze Personal Backup</span>
-                            <span class="block text-xs text-muted" x-text="countOf(cx.bz.drives, 'drive') + ' backed up · see what Backblaze backs up and what it skips'"></span>
+                            <span class="block text-xs text-muted" x-text="(cx.bz.this_computer === false ? 'From ' + cx.bz.computer + ' · ' : '') + countOf(cx.bz.drives, 'drive') + ' backed up · see what Backblaze backs up and what it skips'"></span>
                           </span>
                         </label>
                       </template>
@@ -70,6 +70,8 @@
                   </div>
                 </template>
 
+
+
                 <!-- Add another: connect an existing repository or create one -->
                 <template x-if="!cx.loading && !cx.mode && cxKopiaOk()">
                   <div class="kl-sec">
@@ -82,6 +84,23 @@
                         <span class="block font-medium">Create a new repository<span x-show="obNewcomer()" class="pill ok ml-1.5">Recommended</span></span>
                         <span class="block text-xs text-muted">Start backing up with kopia</span></button>
                     </div>
+                  </div>
+                </template>
+
+                <!-- Backblaze on another computer: read its shared data folder -->
+                <template x-if="!cx.loading && !cx.mode && cx.bz && !cx.bz.found && !cx.bz.added">
+                  <div data-testid="cx-bz-other">
+                    <button type="button" x-show="!cx.bzOther" @click="cx.bzOther = true" class="text-xs text-link">Backblaze on another computer?</button>
+                    <form x-show="cx.bzOther" @submit.prevent="cxBzFolder()" class="kl-sec space-y-2">
+                      <div class="h">Backblaze on another computer</div>
+                      <p class="kl-note">Share its Backblaze data folder (bzdata) and enter it here. KopiaLens only reads it.</p>
+                      <div class="flex flex-wrap items-end gap-2">
+                        <label class="flex flex-col gap-1 text-xs font-medium flex-1 min-w-[16rem]">Backblaze data folder
+                          <input autocomplete="off" type="text" x-model="cx.bzFolder" class="fld border border-bd bg-surface2" placeholder="e.g. \\OTHER-PC\bzdata or /Volumes/bzdata"></label>
+                        <button type="submit" class="kl-btn" :disabled="!(cx.bzFolder || '').trim() || cx.bzFolderBusy" x-text="cx.bzFolderBusy ? 'Checking…' : 'Use folder'"></button>
+                      </div>
+                      <p x-show="cx.bzFolderError" class="text-xs break-words" style="color:var(--warn)" x-text="cx.bzFolderError"></p>
+                    </form>
                   </div>
                 </template>
 

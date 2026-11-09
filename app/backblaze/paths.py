@@ -2,7 +2,11 @@
 
 Do NOT hardcode the GUID->letter map (bbtoolkit did, via GUID2LETTER) - it breaks if a
 drive/GUID changes. We derive it from `bzvolumes.xml` (decode mountPointPathHex) and the
-on-disk per-volume filelist filenames (`v{guid}_{letter}____filelist.dat`).
+on-disk per-volume filelist filenames (`v{guid}_{letter}____filelist.dat` on Windows,
+`v{guid}_root_filelist.dat` / `v{guid}_{name}_filelist.dat` on a Mac).
+
+The data's platform (Windows or Mac) comes from the bzdata itself, never from the computer
+KopiaLens runs on: a shared folder from a Mac can be read on Windows, Linux or in Docker.
 """
 
 from __future__ import annotations
@@ -10,18 +14,24 @@ from __future__ import annotations
 import glob
 import os
 import re
-from dataclasses import dataclass, field
+import socket
+import sys
+from dataclasses import dataclass
 
-# Default install location. Overridable by callers (e.g. a settings value) via set_bzdata_root.
+# Default install locations. Overridable by the `backblaze.bzdata_path` setting (apply_configured_root).
 DEFAULT_BZDATA = r"C:\ProgramData\Backblaze\bzdata"
+MAC_BZDATA = "/Library/Backblaze.bzpkg/bzdata"
+WIN_SEP = "\\"
+POSIX_SEP = "/"
 
 
 def default_bzdata() -> str | None:
-    """Where Backblaze keeps its data on this OS, or None where KopiaLens can't read it yet.
-    macOS keeps the same layout in /Library/Backblaze.bzpkg/bzdata but is unsupported for now."""
-    if os.name != "nt":
-        return None
-    return os.path.join(os.environ.get("ProgramData") or r"C:\ProgramData", "Backblaze", "bzdata")
+    """Where Backblaze keeps its data on this computer, or None where Backblaze doesn't run."""
+    if os.name == "nt":
+        return os.path.join(os.environ.get("ProgramData") or r"C:\ProgramData", "Backblaze", "bzdata")
+    if sys.platform == "darwin":
+        return MAC_BZDATA
+    return None
 
 
 def looks_like_bzdata(path: str | None) -> bool:
@@ -43,6 +53,25 @@ def set_bzdata_root(path: str) -> None:
 
 
 def bzdata_root() -> str:
+    return _bzdata_root
+
+
+def configured_root(settings: dict | None = None) -> str:
+    """The folder the settings point at: `backblaze.bzdata_path`, else this computer's default."""
+    if settings is None:
+        try:
+            from ..settings import load_settings
+            settings = load_settings()
+        except Exception:  # noqa: BLE001 - standalone tooling without the app's settings
+            settings = {}
+    path = str((settings.get("backblaze") or {}).get("bzdata_path") or "").strip()
+    return path or default_bzdata() or _bzdata_root
+
+
+def apply_configured_root(settings: dict | None = None) -> str:
+    """Point the reader at the configured folder. Every process that reads bzdata calls this
+    (the app at start and on a settings change, the refresh worker, bz_verify)."""
+    set_bzdata_root(configured_root(settings))
     return _bzdata_root
 
 
@@ -103,25 +132,43 @@ def report(name: str) -> str:
     return _p("bzreports", name)
 
 
+def client_version_path() -> str:
+    return _p("bzupdates", "clientversion.xml")
+
+
+def log_dir(name: str) -> str:
+    return _p("bzlogs", name)
+
+
 # ---- drive / volume map ----------------------------------------------------------------
-_FILELIST_RE = re.compile(r"^(v[0-9a-f]+)_([a-z])_+filelist\.dat$", re.IGNORECASE)
+# The token is the drive letter on Windows (padded with underscores) and "root" or the start of
+# the drive's name on a Mac.
+_FILELIST_RE = re.compile(r"^(v[0-9a-f]+)_(.+?)_+filelist\.dat$", re.IGNORECASE)
+_PLATFORM: dict[str, str] = {}   # bzdata root -> "windows" | "mac" (only once the data says so)
 
 
 @dataclass
 class Volume:
-    letter: str                 # 'C'..'I'
+    key: str                    # 'C' on Windows; the file list's own name on a Mac ('root', 'Seagate')
     guid: str                   # 'v0005...'
-    mount: str                  # 'C:\\'
+    mount: str                  # 'C:\\', '/', '/Volumes/Seagate HD'
+    label: str = ""             # shown in the UI: 'C:' or the mount path
     filelist: str = ""          # absolute path to the per-volume filelist (.dat), or ""
     free: int = 0
     used: int = 0
     total: int = 0
 
+    @property
+    def root(self) -> str:
+        """The mount with its trailing separator: every path on this volume starts with it."""
+        sep = POSIX_SEP if self.mount.startswith(POSIX_SEP) else WIN_SEP
+        return self.mount if self.mount.endswith(sep) else self.mount + sep
+
 
 def _decode_mountpoint_hex(h: str) -> str:
-    """'433a5c' -> 'C:\\' (hex pairs -> ascii bytes)."""
+    """'433a5c' -> 'C:\\' (hex pairs -> bytes; Mac drive names can be UTF-8)."""
     try:
-        return bytes.fromhex(h).decode("ascii", "replace")
+        return bytes.fromhex(h).decode("utf-8", "replace")
     except Exception:
         return ""
 
@@ -150,28 +197,161 @@ def _parse_bzvolumes() -> dict[str, dict]:
     return out
 
 
+def _filelists() -> list[tuple[str, str, str]]:
+    """[(path, guid, token)] for every committed per-volume file list (never the .future scans)."""
+    out = []
+    for fp in sorted(glob.glob(os.path.join(filelists_dir(), "v*_*filelist.dat"))):
+        m = _FILELIST_RE.match(os.path.basename(fp))
+        if m:
+            out.append((fp, m.group(1), m.group(2)))
+    return out
+
+
+def platform() -> str:
+    """"mac" or "windows" for the data being read. A Mac's file lists are named "root" or by
+    drive name and its mount points start with "/"; Windows' are single drive letters."""
+    root = _bzdata_root
+    hit = _PLATFORM.get(root)
+    if hit:
+        return hit
+    tokens = [t for _fp, _g, t in _filelists()]
+    mounts = [v.get("mount") or "" for v in _parse_bzvolumes().values()]
+    if any(len(t) != 1 for t in tokens) or any(m.startswith(POSIX_SEP) for m in mounts):
+        plat = "mac"
+    elif tokens or mounts:
+        plat = "windows"
+    else:
+        return "windows"   # nothing to go on yet: not remembered, the folder may fill in later
+    _PLATFORM[root] = plat
+    return plat
+
+
+def sep() -> str:
+    return POSIX_SEP if platform() == "mac" else WIN_SEP
+
+
+def _safe_key(token: str) -> str:
+    """A Mac drive's key: its file list token, safe for file names (per-drive index files)."""
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", token).strip("_") or "volume"
+
+
 def volumes() -> list[Volume]:
     """All backed volumes, joined from the filelist filenames (authoritative for what's scanned)
-    + bzvolumes.xml metadata. Sorted by drive letter."""
-    vols: dict[str, Volume] = {}
-    # 1) on-disk filelists -> letter + guid (the things we actually index)
-    for fp in glob.glob(os.path.join(filelists_dir(), "v*_*____filelist.dat")):
-        m = _FILELIST_RE.match(os.path.basename(fp))
-        if not m:
-            continue
-        guid, letter = m.group(1), m.group(2).upper()
-        vols[letter] = Volume(letter=letter, guid=guid, mount=f"{letter}:\\", filelist=fp)
-    # 2) enrich with bzvolumes.xml (free/used/total + canonical mount)
+    + bzvolumes.xml metadata (matched by guid). Sorted by drive letter / mount."""
+    mac = platform() == "mac"
     meta = _parse_bzvolumes()
-    by_guid = {v["mount"][:1].upper(): v for g, v in meta.items() if v.get("mount")}
-    for letter, v in vols.items():
-        info = by_guid.get(letter)
+    by_letter = {v["mount"][:1].upper(): v for v in meta.values() if v.get("mount")}
+    vols: dict[str, Volume] = {}
+    for fp, guid, token in _filelists():
+        info = meta.get(guid)
+        if mac:
+            key = base = _safe_key(token)
+            n = 2
+            while key in vols:
+                key = f"{base}-{n}"
+                n += 1
+            mount = (info or {}).get("mount") or ("/" if token.lower() == "root" else "/Volumes/" + token)
+            mount = mount.rstrip(POSIX_SEP) or POSIX_SEP
+            label = mount
+        else:
+            key = token.upper()
+            info = info or by_letter.get(key)
+            mount = (info or {}).get("mount") or f"{key}:\\"
+            label = f"{key}:"
+        v = Volume(key=key, guid=guid, mount=mount, label=label, filelist=fp)
         if info:
             v.free, v.used, v.total = info["free"], info["used"], info["total"]
-            if info.get("mount"):
-                v.mount = info["mount"]
-    return [vols[k] for k in sorted(vols)]
+        vols[key] = v
+    return sorted(vols.values(), key=(lambda v: v.mount.lower()) if mac else (lambda v: v.key))
 
 
 def drive_letters() -> list[str]:
-    return [v.letter for v in volumes()]
+    return [v.key for v in volumes()]
+
+
+def volume_info() -> list[dict]:
+    """What the UI needs per volume: its key (the `drive` value in every row), label and root."""
+    return [{"drive": v.key, "label": v.label, "root": v.root} for v in volumes()]
+
+
+def volume_key_for(path: str, vols: list[Volume] | None = None) -> str:
+    """The volume a Backblaze path is on: its drive letter on Windows, the longest matching
+    mount on a Mac ("" when none matches)."""
+    if platform() != "mac":
+        return path[0].upper() if len(path) > 1 and path[1] == ":" else ""
+    pl = path.lower()
+    best, blen = "", -1
+    for v in (vols if vols is not None else volumes()):
+        r = v.root.lower()
+        if (pl.startswith(r) or pl == r.rstrip(POSIX_SEP)) and len(r) > blen:
+            best, blen = v.key, len(r)
+    return best
+
+
+# ---- which computer the data belongs to -------------------------------------------------
+_NAME_CACHE: dict[str, tuple] = {}
+
+
+def computer_name() -> str:
+    """The Backblaze computer's name from bzinfo.xml (`online_hostname`, the name Backblaze shows
+    online, e.g. "my-pc_2025_09_19"); "" when the file or the field is missing."""
+    path = bzinfo_path()
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return ""
+    hit = _NAME_CACHE.get(path)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    name = ""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            m = re.search(r'\bonline_hostname="([^"]*)"', fh.read())
+        name = (m.group(1) if m else "").strip()
+    except OSError:
+        pass
+    _NAME_CACHE[path] = (mtime, name)
+    return name
+
+
+def computer_key(name: str | None = None) -> str:
+    """The computer's name without the date Backblaze adds when it is set up again
+    ("my-pc_2025_09_19" -> "my-pc"): the same computer keeps one key."""
+    name = computer_name() if name is None else name
+    return re.sub(r"_\d{4}_\d{2}_\d{2}$", "", name.strip().lower())
+
+
+def _short(name: str) -> str:
+    return name.split(".")[0].strip().lower()
+
+
+def _same_root(a: str, b: str | None) -> bool:
+    return bool(b) and os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+def is_this_computer(settings: dict | None = None) -> bool:
+    """Whether the data is this computer's own Backblaze. Setting `backblaze.computer`: "this",
+    "other", or "auto": this computer's own install folder always is; elsewhere (a shared folder)
+    Backblaze's name for the computer must be this computer's name, or start with it plus "_"
+    (Backblaze adds a date when a computer is set up again). No name to compare counts as this
+    computer, as before."""
+    if DEMO_BZDATA is not None:
+        return True
+    if settings is None:
+        try:
+            from ..settings import load_settings
+            settings = load_settings()
+        except Exception:  # noqa: BLE001
+            settings = {}
+    mode = str((settings.get("backblaze") or {}).get("computer") or "auto")
+    if mode == "this":
+        return True
+    if mode == "other":
+        return False
+    if _same_root(_bzdata_root, default_bzdata()):
+        return True
+    name = computer_name().strip().lower()
+    if not name:
+        return True
+    here = {_short(socket.gethostname()), _short(os.environ.get("COMPUTERNAME") or "")} - {""}
+    return any(name == h or name.startswith(h + "_") for h in here)

@@ -25,11 +25,11 @@ const bzChurnPart = {
         { title: "Backed now", field: "backed_now", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
         { title: "Size", field: "bytes_now", width: 92, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
         { title: "Δ vs first", field: "delta", width: 92, hozAlign: "right", sorter: "number", formatter: (c) => { const v = c.getValue(); if (v === null || v === undefined) return "<span style='color:#cbd5e1'>—</span>"; const col = v > 0 ? "#dc2626" : (v < 0 ? "#16a34a" : "#64748b"); return `<span style="color:${col}">${v > 0 ? "+" : ""}${Number(v).toLocaleString(NUM_LOCALE)}</span>`; } },
-        { title: "Drive", field: "drive", width: 58, formatter: (c) => c.getValue() ? c.getValue() + ":" : "" },
+        { title: "Drive", field: "drive", width: this.bzSep() === "/" ? 170 : 58, formatter: (c) => c.getValue() ? escHtml(this.bzLabel(c.getValue())) : "" },
       ], {
         initialSort: [{ column: "count", dir: "desc" }],
         rowMenu: [
-          { label: "Generate exclusion (this folder)", action: (_e, row) => { const f = row.getData().folder; const rel = f.length > 2 && f[1] === ":" ? f.slice(2) : f; this.bzOpenGen("folder", rel.replace(/\\+$/, "") + "\\"); } },
+          { label: "Generate exclusion (this folder)", action: (_e, row) => this.bzGenFolder(row.getData().folder) },
           { label: "Show in Search", action: (_e, row) => { this.query = row.getData().folder; this.active = "bz-search"; this.bzLoadSearch(); } },
         ],
       });

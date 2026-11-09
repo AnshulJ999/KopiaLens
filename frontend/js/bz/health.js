@@ -48,11 +48,15 @@ const bzHealthPart = {
       await this.wrap(async () => {
         this.bzHealth = await getJson("/api/backblaze/health");
         setTable("#bzHealthTable", this.bzHealth.drives || [], [
-          { title: "Drive", field: "drive", width: 70, formatter: (c) => c.getValue() + ":" },
+          { title: "Drive", field: "drive", width: this.bzDriveWidth(), formatter: (c) => escHtml(this.bzLabel(c.getValue())) },
           { title: "Backed files", field: "backed_files", hozAlign: "right", width: 130, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "BZ authoritative", field: "auth_files", hozAlign: "right", width: 140, sorter: "number", formatter: (c) => c.getValue() == null ? "—" : Number(c.getValue()).toLocaleString(NUM_LOCALE) },
           { title: "Diff", field: "diff", hozAlign: "right", width: 90, formatter: (c) => { const v = c.getValue(); return v == null ? "—" : (v === 0 ? "<span style='color:#16a34a'>+0</span>" : `<span style='color:#dc2626'>${v}</span>`); } },
         ], { initialSort: [{ column: "drive", dir: "asc" }] });
       }, "Running health check…");
+    },
+    bzReleaseNotesUrl() {
+      const mac = this.bzHealth && this.bzHealth.version && this.bzHealth.version.platform === "mac";
+      return `https://www.backblaze.com/computer-backup/docs/backup-client-release-notes-${mac ? "mac" : "windows"}`;
     },
 };

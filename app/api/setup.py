@@ -325,7 +325,38 @@ def backblaze_state() -> dict:
     return {"found": found, "path": path if found else "",
             "added": repos.exists(repos.BACKBLAZE_ID),
             "drives": len(bz_paths.volumes()) if found else 0,
-            "default": bz_paths.default_bzdata() or ""}
+            "default": bz_paths.default_bzdata() or "",
+            "computer": bz_paths.computer_name() if found else "",
+            "this_computer": bz_paths.is_this_computer() if found else True,
+            "platform": bz_paths.platform() if found else ""}
+
+
+class BackblazeFolderRequest(BaseModel):
+    path: str
+
+
+@router.post("/setup/backblaze/folder")
+def backblaze_folder(payload: BackblazeFolderRequest) -> dict:
+    """Read Backblaze from a folder: another computer's shared bzdata, or a non-default install."""
+    from ..backblaze import paths as bz_paths
+    from .backblaze import apply_folder_setting
+    path = payload.path.strip().strip('"')
+    if not path:
+        raise HTTPException(status_code=400, detail="Enter the Backblaze data folder.")
+    if not bz_paths.looks_like_bzdata(path):
+        sub = os.path.join(path, "bzdata")
+        if bz_paths.looks_like_bzdata(sub):
+            path = sub
+        else:
+            raise HTTPException(status_code=400, detail=(
+                "That folder isn't Backblaze's data folder. Choose the bzdata folder, "
+                "the one that holds bzfilelists."))
+
+    def _apply(settings: dict) -> None:
+        settings["backblaze"] = {**settings.get("backblaze", {}), "bzdata_path": path}
+
+    apply_folder_setting(mutate_settings(_apply))
+    return backblaze_state()
 
 
 @router.post("/setup/backblaze")
