@@ -76,15 +76,15 @@ def apply_folder_setting(settings: dict | None = None) -> str:
     if new != old and paths.exists():
         from ..core import reindexq, repos
         if repos.exists(repos.BACKBLAZE_ID):
-            reindexq.request(repos.BACKBLAZE_ID, wait=0, reason="first")
-            reindexq.run_now(repos.BACKBLAZE_ID)   # a user-changed folder starts now, not on the next tick
-            try:   # the status/UI keeps waiting for the rebuild even while a kopia pass holds the slot
+            try:   # set before queueing (the rebuild clears it); the UI waits even behind a kopia pass
                 from ..backblaze import bbdb
                 con = bbdb.connect()
                 bbdb.kv_set(con, "folder_change_pending", "1")
                 con.commit()
-            except Exception as exc:  # noqa: BLE001 - the rebuild itself is already queued
+            except Exception as exc:  # noqa: BLE001 - the rebuild is still queued below
                 indexer.log.warning("could not mark the Backblaze folder change pending: %s", exc)
+            reindexq.request(repos.BACKBLAZE_ID, wait=0, reason="first")
+            reindexq.run_now(repos.BACKBLAZE_ID)   # a user-changed folder starts now, not on the next tick
     return new
 
 

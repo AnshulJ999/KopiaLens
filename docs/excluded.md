@@ -11,7 +11,7 @@ A file counts as backed up when the latest snapshot of any repository holds it. 
 - It checks the disks of the computer running KopiaLens. On Windows, that's the local fixed drives. On Linux, macOS and in Docker, it's the mounted folders a user could back up. System folders such as `/proc` and KopiaLens's own data folder are left out.
 - It also checks the places you add in **Settings → Disk scanning**, such as a network share of another computer ([Check other places](disk-scanning.md#check-other-places)).
 - Every kopia repository counts, unless you turn off **Counts as a backup** for it in **Settings → Repositories**. Turn it off for a test repository, so it doesn't make folders look backed up.
-- Backblaze Personal Backup doesn't count, but the **Also in BZ** column shows what it holds of each folder.
+- Backblaze Personal Backup doesn't count, but the **Also in BZ** column shows what it holds of each folder. It only shows when Backblaze's data comes from this computer.
 
 To read the disk, KopiaLens uses the **Read the disk with** setting in **Settings → Disk scanning**. On Windows, it uses Everything (a free file index by voidtools), which answers at once. The KopiaLens scanner is off until you choose it there. It counts the folder you open for up to the **Scan time limit** (15 seconds by default), and a subfolder that needs longer shows **Not counted**. Right-click it and select **Count size** to count it to the end ([Disk scanning](disk-scanning.md)).
 

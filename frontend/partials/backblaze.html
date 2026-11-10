@@ -3,7 +3,7 @@
       <div x-show="bzWaiting()" x-cloak class="h-full flex flex-col items-center justify-center gap-2 text-center p-6" data-testid="bz-waiting">
         <i class="ic ic-mount text-3xl text-muted"></i>
         <div class="text-base font-medium">Waiting for Backblaze's first scan<span x-show="bzStatus.computer" x-text="' on ' + bzStatus.computer"></span></div>
-        <p class="text-sm text-muted max-w-lg">This computer hasn't finished a file list yet. These pages fill in when it does.</p>
+        <p class="text-sm text-muted max-w-lg">Backblaze on that computer hasn't finished its first scan yet. These pages fill in when it does.</p>
       </div>
       <div x-show="bzRebuilding && !bzWaiting()" x-cloak class="h-full flex flex-col items-center justify-center gap-2 text-center p-6" data-testid="bz-rebuilding">
         <i class="ic ic-refresh text-3xl text-muted"></i>
@@ -13,7 +13,7 @@
 
       <section x-show="active==='bz-dashboard' && !bzWaiting() && !bzRebuilding" class="h-full flex flex-col gap-3 overflow-auto">
         <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2" x-show="bzStats">
-          <div class="rounded border border-bd-soft p-2" title="Files Backblaze backs up on this computer"><div class="text-[0.625rem] uppercase text-muted">Selected files</div><div class="font-medium" x-text="bzStats && Number(bzStats.grand_files||0).toLocaleString(NUM_LOCALE)"></div></div>
+          <div class="rounded border border-bd-soft p-2" title="Files Backblaze backs up"><div class="text-[0.625rem] uppercase text-muted">Selected files</div><div class="font-medium" x-text="bzStats && Number(bzStats.grand_files||0).toLocaleString(NUM_LOCALE)"></div></div>
           <div class="rounded border border-bd-soft p-2" title="How much those files add up to"><div class="text-[0.625rem] uppercase text-muted">Selected size</div><div class="font-medium" x-text="bzStats && fmtB(bzStats.grand_bytes)"></div></div>
           <div class="rounded border border-warn-bd p-2" title="Files waiting in Backblaze's upload queue"><div class="text-[0.625rem] uppercase text-muted">Remaining to upload</div><div class="font-medium" x-text="bzStats && bzStats.remaining ? Number(bzStats.remaining.remaining_files||0).toLocaleString(NUM_LOCALE) : '—'"></div></div>
           <div class="rounded border border-bd-soft p-2" title="Every file Backblaze has ever seen, including deleted and replaced ones"><div class="text-[0.625rem] uppercase text-muted">Cumulative IDs</div><div class="font-medium" x-text="bzStats && bzStats.fileids_total != null ? Number(bzStats.fileids_total).toLocaleString(NUM_LOCALE) : '—'"></div></div>
@@ -204,7 +204,7 @@
           <div id="bzBackupDaysTable" class="mt-2"></div>
         </div>
         <div>
-          <div class="text-sm font-medium mb-1">Recent backup sessions <span class="text-muted text-xs font-normal">(live log + archived history)</span></div>
+          <div class="text-sm font-medium mb-1">Recent backup sessions <span class="text-muted text-xs font-normal">(from Backblaze's event log)</span></div>
           <div id="bzSessionsTable"></div>
         </div>
         <div>

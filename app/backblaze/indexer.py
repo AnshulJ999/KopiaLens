@@ -966,6 +966,19 @@ def refresh_transmit_side() -> dict:
         return {"ok": False, "reason": str(exc)}
 
 
+def _fail(reason: str) -> str:
+    """Record a failed refresh. A pending folder change ends too, so the screens show the error and
+    whatever data there is instead of waiting for a rebuild that already failed."""
+    _STATE["last_error"] = reason
+    try:
+        con = bbdb.connect()
+        bbdb.kv_set(con, "folder_change_pending", "0")
+        con.commit()
+    except Exception:  # noqa: BLE001 - the error itself is already recorded
+        pass
+    return reason
+
+
 def refresh_via_worker(force: bool = False) -> dict:
     """Run refresh() in a separate subprocess so the app's own request-handling threads never share
     the GIL / disk contention with the ~4 min reindex (reads stay responsive throughout). The worker
@@ -997,7 +1010,7 @@ def refresh_via_worker(force: bool = False) -> dict:
             )
         except subprocess.TimeoutExpired:
             log.error("BZ worker timed out after 45 min")
-            _STATE["last_error"] = "timeout after 45 min"
+            _fail("timeout after 45 min")
             return {"ok": False, "reason": "timeout"}
         if res.returncode != 0:
             log.error("BZ worker failed (rc=%d): %s", res.returncode, (res.stderr or "")[-2000:])
@@ -1005,13 +1018,13 @@ def refresh_via_worker(force: bool = False) -> dict:
                 reason = str(json.loads(res.stdout.strip()).get("reason") or "")
             except Exception:  # noqa: BLE001 - a crash prints no summary
                 reason = ""
-            _STATE["last_error"] = reason or f"worker exit {res.returncode}"
+            _fail(reason or f"worker exit {res.returncode}")
             return {"ok": False, "reason": _STATE["last_error"], "stderr": (res.stderr or "")[-2000:]}
         try:
             summary = json.loads(res.stdout.strip())
         except Exception as exc:  # noqa: BLE001 - malformed worker output should never crash the caller
             log.error("BZ worker produced unparsable output: %s", exc)
-            _STATE["last_error"] = f"bad worker output: {exc}"
+            _fail(f"bad worker output: {exc}")
             return {"ok": False, "reason": f"bad worker output: {exc}"}
         _STATE["last_summary"] = summary
         _STATE["last_run"] = time.time()

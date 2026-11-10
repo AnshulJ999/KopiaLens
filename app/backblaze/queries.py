@@ -15,7 +15,7 @@ import time
 
 from . import bbdb, parsers, paths, pq
 from ..core.paths import prefix_bounds
-from ..core.textmatch import ESCAPE_SQL, like_literal, search_patterns
+from ..core.textmatch import ESCAPE_SQL, search_patterns
 
 _CHURN_TAIL = 30 * 1024 * 1024  # bytes of the bzfileids tail scanned for "recently added"
 
@@ -692,7 +692,7 @@ def churn(top: int = 200, depth: int = 2, collapse=None) -> dict:
     default_lc = _default_collapse_lc()
     is_default = int(depth) == 2 and int(top) <= 200 and sorted(c[0] for c in cl) == default_lc
     if is_default:
-        full = _CHURN_CACHE.get((200, 2, tuple(sorted(cl))))
+        full = _CHURN_CACHE.get((200, 2, ckey[2]))
         if full and now - full[0] < 120:
             return {**full[1], "rows": full[1]["rows"][:int(top)]}   # the smaller request, fresh
     if is_default:
