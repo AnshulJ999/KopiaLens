@@ -1,4 +1,5 @@
-"""Locate the Backblaze bzdata files and build the drive<->volume map dynamically.
+"""Locate the Backblaze bzdata files (this computer's install, or any configured folder) and
+build the drive<->volume map dynamically.
 
 Do NOT hardcode the GUID->letter map (bbtoolkit did, via GUID2LETTER) - it breaks if a
 drive/GUID changes. We derive it from `bzvolumes.xml` (decode mountPointPathHex) and the
@@ -41,15 +42,25 @@ try:
     from config import DATA_DIR, DEMO_INSTANCE
 except ImportError:   # standalone tooling outside the app
     DATA_DIR, DEMO_INSTANCE = "", False
-# A demo data folder only ever reads its own generated bzdata, never this machine's.
+# A demo data folder only ever reads bzdata generated inside its own data folder (the Windows set,
+# or a second folder such as bzdata-mac switched in Settings), never this machine's.
 DEMO_BZDATA = os.path.join(DATA_DIR, "bzdata") if DEMO_INSTANCE else None
+_DEMO_ROOT = os.path.dirname(DEMO_BZDATA) if DEMO_BZDATA else None
 _bzdata_root = DEMO_BZDATA or DEFAULT_BZDATA
+
+
+def _inside_demo(path: str | None) -> bool:
+    if not _DEMO_ROOT or not path:
+        return False
+    root = os.path.normcase(os.path.abspath(_DEMO_ROOT)) + os.sep
+    return os.path.normcase(os.path.abspath(path)).startswith(root)
 
 
 def set_bzdata_root(path: str) -> None:
     global _bzdata_root
-    if DEMO_BZDATA is None:
+    if DEMO_BZDATA is None or _inside_demo(path):
         _bzdata_root = path
+    # A demo folder outside its own data is ignored: a demo never reads this machine's Backblaze.
 
 
 def bzdata_root() -> str:
@@ -102,6 +113,11 @@ def bzvolumes_path() -> str:
 
 def fileids_path() -> str:
     return _p("bzbackup", "bzfileids.dat")
+
+
+def fileids_total_hint_path() -> str:
+    """Demo data only: the full file-id count, kept after `trim` shortens bzfileids.dat."""
+    return _p("bzbackup", "bzfileids_total.txt")
 
 
 def datacenter_dir() -> str:
@@ -205,6 +221,14 @@ def _filelists() -> list[tuple[str, str, str]]:
         if m:
             out.append((fp, m.group(1), m.group(2)))
     return out
+
+
+def forget_platform(path: str | None = None) -> None:
+    """Drop the remembered platform for one root (a switched folder), or for every root."""
+    if path is None:
+        _PLATFORM.clear()
+    else:
+        _PLATFORM.pop(path, None)
 
 
 def platform() -> str:
@@ -314,11 +338,46 @@ def computer_name() -> str:
     return name
 
 
-def computer_key(name: str | None = None) -> str:
+def computer_display(name: str | None = None) -> str:
     """The computer's name without the date Backblaze adds when it is set up again
-    ("my-pc_2025_09_19" -> "my-pc"): the same computer keeps one key."""
+    ("my-pc_2025_09_19" -> "my-pc")."""
     name = computer_name() if name is None else name
-    return re.sub(r"_\d{4}_\d{2}_\d{2}$", "", name.strip().lower())
+    return re.sub(r"_\d{4}_\d{2}_\d{2}$", "", name.strip())
+
+
+def computer_key(name: str | None = None) -> str:
+    """The computer's identity: `computer_display` lowercased (the same computer keeps one key)."""
+    return computer_display(name).lower()
+
+
+_SCAN_CACHE: dict[str, tuple] = {}
+
+
+def newest_scan_ts() -> float | None:
+    """Backblaze's own newest scan start (epoch), from the committed file lists' header line.
+    None when no list carries one. Backblaze rewrites this header on every scan pass."""
+    best = None
+    for fp, _guid, _token in _filelists():
+        try:
+            mtime = os.path.getmtime(fp)
+        except OSError:
+            continue
+        hit = _SCAN_CACHE.get(fp)
+        if hit and hit[0] == mtime:
+            ts = hit[1]
+        else:
+            ts = None
+            try:
+                with open(fp, encoding="utf-8", errors="replace") as fh:
+                    m = re.search(r"#\s*GmtMillisThisListWasStarted\s+(\d+)", fh.readline())
+                if m:
+                    ts = int(m.group(1)) / 1000.0
+            except OSError:
+                pass
+            _SCAN_CACHE[fp] = (mtime, ts)
+        if ts and (best is None or ts > best):
+            best = ts
+    return best
 
 
 def _short(name: str) -> str:
@@ -335,8 +394,6 @@ def is_this_computer(settings: dict | None = None) -> bool:
     Backblaze's name for the computer must be this computer's name, or start with it plus "_"
     (Backblaze adds a date when a computer is set up again). No name to compare counts as this
     computer, as before."""
-    if DEMO_BZDATA is not None:
-        return True
     if settings is None:
         try:
             from ..settings import load_settings
@@ -348,6 +405,8 @@ def is_this_computer(settings: dict | None = None) -> bool:
         return True
     if mode == "other":
         return False
+    if DEMO_BZDATA is not None:
+        return True   # a demo's own bzdata stands for this computer unless "Another computer" is picked
     if _same_root(_bzdata_root, default_bzdata()):
         return True
     name = computer_name().strip().lower()

@@ -98,12 +98,12 @@ How KopiaLens reads your disks for the Excluded tab and rule previews, and the n
 |---|---|
 | **Add Backblaze** | Adds the Backblaze view when Backblaze Personal Backup is on this computer ([Backblaze](backblaze.md)) |
 | **Backblaze updates** | **When Backblaze's file lists change**, or **Off, only when I start it**. Separate from kopia indexing |
-| **Backblaze data folder** | Where the Backblaze client keeps its file lists. Empty finds it on its own. KopiaLens never writes there |
+| **Backblaze data folder** | Where the Backblaze client keeps its file lists, on this computer or a shared folder from another one. Empty finds it on its own. KopiaLens never writes there |
+| **Backblaze data is from** | **Detect automatically**, **This computer** or **Another computer**. Another computer turns off the comparison with this computer's Kopia backups |
 | **File index format** | **Parquet** (the default, smaller and faster) or **SQLite** (the older format). Switching rebuilds it at the next Backblaze update |
 | **Reindex minimum gap** | How long to wait after Backblaze's own scan changes before reading it again |
 | **History retention** | How many days of folder history to keep for the trends |
 | **Collapse prefixes** | Paths that show as one row in the Queue, Churn and folder views, instead of one row per subfolder |
-| **Session history folder** | A readable copy of Backblaze's older event logs, for **Import archived history** in the Sessions tab |
 
 ## Permissions
 

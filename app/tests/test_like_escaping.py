@@ -90,3 +90,10 @@ def test_a_plain_search_term_still_matches_substrings(rows):
     pattern = "%" + like_literal("Done") + "%"
     found = rows.execute("SELECT p FROM t WHERE p ILIKE ?" + _ESC, [pattern]).fetchall()
     assert len(found) == 3
+
+
+def test_star_is_the_only_wildcard_in_a_search_term():
+    from app.core.textmatch import search_patterns
+    assert search_patterns("a*b") == ["%a%b%"]          # the same ASCII form once
+    assert len(search_patterns("café")) == 2             # NFC and NFD both match a Mac name
+    assert search_patterns("100%_done*") == ["%100!%!_done%%"]

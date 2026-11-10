@@ -9,7 +9,6 @@ from __future__ import annotations
 import os
 import threading
 import time
-import unicodedata
 import uuid
 from typing import NamedTuple
 
@@ -17,36 +16,22 @@ from config import DEMO_INSTANCE, is_demo
 
 from ..core import paths as pathrules
 from ..core.applog import get_logger
+from ..core.textmatch import ESCAPE_SQL as _ESC
+from ..core.textmatch import like_literal, search_patterns
 from . import entries, lanes, resolve
 from .store import read_cursor
 
 log = get_logger("queries")
-
-# LIKE wildcard escaping. `_` matches ANY single character and `%` matches anything, so a literal
-# one in a user's query or folder name silently broadens the match: `Backup_2024` also matches
-# `BackupX2024`. Harmless in a listing; not harmless in `remove_targets`, which enumerates what a
-# chunked DELETE will remove. Verified live before this fix: searching for `_` returned all
-# 5,193,822 paths in repo 1 rather than the ones containing an underscore.
-#
-# The escape character is `!`, deliberately NOT backslash - backslash is the path separator here,
-# so using it would mean escaping every separator in every Windows path.
-_LIKE_ESC = "!"
-_ESC = " ESCAPE '" + _LIKE_ESC + "'"
-
-
-def like_literal(value: str) -> str:
-    """Quote a string so LIKE/ILIKE matches it literally (pair with the _ESC clause)."""
-    for ch in (_LIKE_ESC, "%", "_"):
-        value = value.replace(ch, _LIKE_ESC + ch)
-    return value
+# `like_literal` is re-exported: physical, policypricing and foldercache import it from here.
 
 
 def _text_match(query: str, alias: str = "p") -> tuple[str, list]:
-    """``(sql, params)``: the path contains ``query``, case-insensitively, in either Unicode form -
-    "café" typed as one character also finds a name stored decomposed (macOS), and back."""
-    forms = list(dict.fromkeys(unicodedata.normalize(f, query) for f in ("NFC", "NFD")))
-    sql = " OR ".join([f"{alias}.full_path ILIKE ?{_ESC}"] * len(forms))
-    return f"({sql})", [f"%{like_literal(f)}%" for f in forms]
+    """``(sql, params)``: the path contains the typed text (case-insensitively), with ``*`` as a
+    wildcard and either Unicode form matching - "café" typed as one character also finds a name
+    stored decomposed (macOS), and back."""
+    patterns = search_patterns(query)
+    sql = " OR ".join([f"{alias}.full_path ILIKE ?{_ESC}"] * len(patterns))
+    return f"({sql})", patterns
 
 
 def _rows(cur, sql: str, params: list | None = None) -> list[dict]:

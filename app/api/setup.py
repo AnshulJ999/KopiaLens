@@ -326,7 +326,7 @@ def backblaze_state() -> dict:
             "added": repos.exists(repos.BACKBLAZE_ID),
             "drives": len(bz_paths.volumes()) if found else 0,
             "default": bz_paths.default_bzdata() or "",
-            "computer": bz_paths.computer_name() if found else "",
+            "computer": bz_paths.computer_display() if found else "",
             "this_computer": bz_paths.is_this_computer() if found else True,
             "platform": bz_paths.platform() if found else ""}
 

@@ -49,7 +49,7 @@ _KEPT_COLUMNS = {"ext", "repo"}
 _KEEP = {"cache", "demo.json", "repos.json", "settings.json", "ui_state.json", "data_version.json"}
 _KEEP_LOGS = {"jobs", "engine"}   # the invented task history's logs (demohistory)
 # A demo with Backblaze also keeps its generated bzdata, the BZ index (and kopialens_bz.sqlite*).
-BZ_KEEP = {"bzdata", "bz"}
+BZ_KEEP = {"bzdata", "bzdata-mac", "bz"}
 _DOT_IGNORE_KEPT = {".kopiaignore", ".gitignore", ".nobackup", ".backupignore"}
 # kopia's own words in its replies (cache report, stats); never data.
 _KOPIA_WORDS = {"content", "contents", "indexes", "metadata", "own-writes", "blob-list",
@@ -1072,7 +1072,7 @@ def _json_strings(value: str):
     yield value
 
 
-_DERIVED_DIRS = {"bz", "bzdata"}   # built only from the already-faked index
+_DERIVED_DIRS = {"bz", "bzdata", "bzdata-mac"}   # built only from the already-faked index
 
 
 def _leak_warnings(leaks: dict, finished: dict) -> dict | None:
@@ -1219,7 +1219,8 @@ def _finish_child() -> None:
 
 
 def _demo_backblaze(repos: list[str]) -> None:
-    """Fake Backblaze data from the copy's own latest files (already faked), then indexed."""
+    """Fake Backblaze data from the copy's own latest files (already faked), then indexed: the
+    Windows shape, plus a Mac's own folder kept as a second Backblaze source for the folder switch."""
     from . import demobz
     files, user, host = [], "demo", "DEMO-PC"
     for repo in repos:
@@ -1233,10 +1234,25 @@ def _demo_backblaze(repos: list[str]) -> None:
             gen.release()
         if row:
             user, host, _path = _source_parts(row[0])
-    root = os.path.join(DATA_DIR, "bzdata")
-    demobz.write(root, files, user=user, host=host)
-    out = demobz.index(root)
-    demobz.trim(root)
+    full = len(files) >= 1_500_000     # the showcase copy gets the real shape; small copies stay small
+    win_root = os.path.join(DATA_DIR, "bzdata")
+    demobz.write(win_root, files, user=user, host=host, seed=1, profile=None if full else "sample")
+    out = demobz.index(win_root)
+    mac_root = os.path.join(DATA_DIR, "bzdata-mac")
+    try:
+        from app.backblaze import paths as bz_paths
+        if full:
+            demobz.write(mac_root, [], user=user, host="studio-mac", seed=2, platform="mac")
+            demobz.index(mac_root)
+            demobz.trim(mac_root, keep_lists=True)
+    except Exception as exc:  # noqa: BLE001 - the Windows demo is still a complete copy
+        log.warning("demo Backblaze Mac data skipped: %s", exc)
+    finally:
+        from app.backblaze import paths as bz_paths
+        bz_paths.forget_platform()
+        bz_paths.set_bzdata_root(win_root)
+        out = demobz.index(win_root)   # the copy opens on the Windows data; the Mac folder is switchable
+        demobz.trim(win_root, keep_lists=True)   # after the last index, so the full id count is kept
     if not out.get("ok", True):
         raise RuntimeError(f"Backblaze index: {out.get('reason')}")
 

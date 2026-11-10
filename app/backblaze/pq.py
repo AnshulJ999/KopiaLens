@@ -67,7 +67,10 @@ def read_manifest() -> dict | None:
 
 
 def available() -> bool:
-    return os.path.exists(manifest_path())
+    """True when a published generation holds at least one drive file. A cleared store (another
+    computer whose first scan has not landed) keeps a manifest with no files, so reads stay empty."""
+    manifest = read_manifest() or {}
+    return bool((manifest.get("artifacts") or {}).get("files"))
 
 
 def staging_dir() -> str:
@@ -182,6 +185,28 @@ def open_writer(staged: str) -> pqt.ParquetWriter:
 def table_from_rows(batch: list[tuple]) -> pa.Table:
     """One batch of plain tuples (in SCHEMA column order) -> an Arrow table."""
     return pa.table(dict(zip(COLUMNS, zip(*batch))), schema=SCHEMA)
+
+
+def clear(gen: int) -> None:
+    """Publish an EMPTY generation: no drives, no files. Used when the folder now points at another
+    computer whose first scan has not produced a usable file list, so no reader can see the old
+    computer's data under the new name. The old pool files are cleaned by the next real publish."""
+    global _GEN
+    state = target_state()
+    manifest = {"generation": gen, "schema": SCHEMA_VERSION,
+                "artifacts": {"files": []}, "drives": {}, "encrypted": state}
+    path = manifest_path()
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh)
+        fh.flush()
+        os.fsync(fh.fileno())
+    atomicfile.replace(tmp, path)
+    with _LOCK:
+        if _GEN is not None and _GEN._refs <= 0:
+            _GEN.close()
+            _GEN = None
+    log.info("published an empty BZ parquet generation %s (waiting for Backblaze's first scan)", gen)
 
 
 def publish(gen: int, drive_rels: dict[str, str], moves: list[tuple[str, str]],
@@ -369,6 +394,8 @@ def current() -> _Generation:
     mtime = os.stat(p).st_mtime_ns
     with open(p, encoding="utf-8") as fh:
         manifest = json.load(fh)
+    if not (manifest.get("artifacts") or {}).get("files"):
+        raise FileNotFoundError("BZ parquet store is empty (waiting for Backblaze's first scan)")
     fresh = _open_generation(manifest.get("generation"), manifest, mtime)
     with _LOCK:
         old = _GEN

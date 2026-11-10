@@ -203,13 +203,14 @@ def _plat() -> str:
     return "mac" if paths.platform() == "mac" else "win"
 
 
-def load_engine() -> RuleEngine:
-    """Load all four layers from the live bzdata (read-only), for the data's own platform."""
-    plat = _plat()
+def load_engine(plat: str | None = None) -> RuleEngine:
+    """Load all four layers from the live bzdata (read-only), for the data's own platform.
+    ``plat`` ("win"/"mac") is for a generator whose file lists are not written yet."""
+    plat = plat or _plat()
     dirs, exts = _load_bzinfo(_read(paths.bzinfo_path()), plat == "mac")
     pats = _load_pattern_rules(_read(paths.mandatory_rules_path()), "mandatory", plat)
     pats += _load_pattern_rules(_read(paths.editable_rules_path()), "editable", plat)
-    return RuleEngine(dirs, exts, pats, paths.sep())
+    return RuleEngine(dirs, exts, pats, "/" if plat == "mac" else "\\")
 
 
 def list_layers() -> dict:

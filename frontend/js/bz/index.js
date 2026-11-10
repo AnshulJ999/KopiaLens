@@ -2,6 +2,22 @@
 // /api/backblaze/* (never the kopia/DuckDB routes). Reuses the shared helpers from util.js
 // (fmtBytes, humanTime, timeCell, sourcePath, getJson, setTable) plus the bz-local helpers below.
   const bzFmt = (v) => fmtBytes(v);
+  const bzAge = (ts) => {
+    const d = Math.max(0, Date.now() / 1000 - Number(ts || 0));
+    return d < 60 ? "just now" : d < 3600 ? `${Math.round(d / 60)}m ago` : d < 86400 ? `${Math.round(d / 3600)}h ago` : `${Math.round(d / 86400)}d ago`;
+  };
+  // The Diff cell: green at +0, quiet when the queue explains the gap, red only when it doesn't.
+  const bzDiffHtml = (v, row) => {
+    if (v == null || v === undefined) return "—";
+    const n = Number(v);
+    if (n === 0) return `<span class="text-ok" title="Backblaze and KopiaLens agree">+0</span>`;
+    const txt = (n > 0 ? "+" : "") + n.toLocaleString(NUM_LOCALE);
+    const queued = Number((row && row.queue_files) || 0);
+    if (n > 0 && queued && n <= queued) {
+      return `<span class="text-muted" title="${escHtml(countOf(queued, 'file'))} waiting to upload">${txt}</span>`;
+    }
+    return `<span class="text-danger" title="KopiaLens's count and Backblaze's own count disagree">${txt}</span>`;
+  };
   const statusPill = (s) => {
     const m = {
       backed: ["#dcfce7", "#166534", "backed up"], excluded: ["#fee2e2", "#991b1b", "excluded"],
@@ -55,7 +71,7 @@ const bzIndexPart = {
     bzExclusions: null, bzNamingQuery: "", bzNamingRows: [],
     bzGen: null, bzShowGen: false, bzRefreshResult: "",
     bzQueue: null, bzQueueDepth: 1, bzQueueCollapse: true, bzSessions: null, bzHealth: null,
-    bzDetail: null, bzDrives: [], _bzPoll: null,
+    bzDetail: null, bzDrives: [], _bzPoll: null, bzRebuilding: false,
 
     // ---- lifecycle ----
     bzApplySettings(kl) {  // restore persisted BZ prefs (called from app.js init with the kopialens settings)
@@ -68,7 +84,9 @@ const bzIndexPart = {
     async bzInit() {
       await this.wrap(async () => {
         await this.bzRefreshStatus();
+        if (this.bzStatus.folder_change_pending) this.bzRebuilding = true;
         if (this.bzStatus.building) this.bzPollRefresh();  // a bg-cycle refresh was already in flight
+        else if (this.bzStatus.folder_change_pending) this.bzPollRefresh(true);
         await this.bzLoadDashboard();
       }, "Loading Backblaze…");
     },
@@ -89,9 +107,17 @@ const bzIndexPart = {
       const s = await getJson("/api/backblaze/status").catch(() => null);
       if (s) this.bzStatus = s;
     },
+    bzRebuildInProgress() {
+      return this.bzRebuilding || !!(this.bzStatus && (this.bzStatus.rebuild_queued || this.bzStatus.folder_change_pending));
+    },
+    bzWaiting() {   // another computer's folder before its first finished scan
+      const s = this.bzStatus || {};
+      return !!s.waiting_for_scan && !s.built && !s.building;
+    },
     bzStatusLine() {
       const s = this.bzStatus;
-      if (s.building) return "Indexing Backblaze…";
+      if (s.building || this.bzRebuildInProgress()) return "Indexing Backblaze…";
+      if (this.bzWaiting()) return "BZ: waiting for its first scan";
       if (!s.built) return "BZ: not indexed";
       // Remaining to upload - the "is my backup done" number (2026-09-13). The backed/on-disk
       // counts live in the tooltip (bzStatusTitle); they are identity stats, not actions.
@@ -110,8 +136,10 @@ const bzIndexPart = {
       const ts = Number(s.last_check_ts || 0);
       if (ts) {
         const mins = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
-        parts.push("checked " + (mins < 60 ? mins + "m ago" : mins < 1440 ? Math.round(mins / 60) + "h ago" : Math.round(mins / 1440) + "d ago"));
+        parts.push("checked for changes " + (mins < 60 ? mins + "m ago" : mins < 1440 ? Math.round(mins / 60) + "h ago" : Math.round(mins / 1440) + "d ago"));
       }
+      const scan = Number(s.last_scan || 0);
+      if (scan) parts.push("Backblaze's last scan " + bzAge(scan));
       return parts.join(" · ");
     },
     async bzRefresh() {
@@ -123,13 +151,20 @@ const bzIndexPart = {
         if (r && r.started !== false) this.bzPollRefresh();
       }, "Starting Backblaze refresh…");
     },
-    bzPollRefresh() {
+    bzPollRefresh(waitForStart = false) {
       if (this._bzPoll) clearInterval(this._bzPoll);
+      let seenBuilding = false;
       this._bzPoll = setInterval(async () => {
         try {
           await this.bzRefreshStatus();
+          if (this.bzStatus.building) seenBuilding = true;
           if (!this.bzStatus.building) {
+            // A user-changed folder is queued: keep waiting for the heavy slot (a kopia pass may be
+            // running) instead of calling "not building" done.
+            if (waitForStart && !seenBuilding && !this.bzStatus.last_error
+                && (this.bzStatus.folder_change_pending || this.bzStatus.rebuild_queued)) return;
             clearInterval(this._bzPoll); this._bzPoll = null;
+            this.bzRebuilding = false;
             // Own status slot, NOT this.error: wrap() clears this.error on entry, so a failure
             // message set here was wiped by the very next tab activation. Stale data still beats
             // no data, but the user must see that it happened.
@@ -138,10 +173,19 @@ const bzIndexPart = {
             } else {
               this.bzRefreshResult = "BZ refresh completed " + humanTime(Date.now());
             }
-            await this.bzActivate();
+            if (String(this.active).startsWith("bz-")) await this.bzActivate();
           }
         } catch (e) { /* transient fetch error - ignore and let the next 3s tick retry */ }
       }, 3000);
+    },
+    async bzAfterFolderChange() {
+      // Only a user-changed folder does this: a background refresh stays quiet. Old drive filters
+      // would point at drives that no longer exist, and the old rows are another folder's.
+      this.bzSearchDrive = ""; this.bzChurnDrive = ""; this.bzExclPath = ""; this.bzExclFilter = "all";
+      this._bzExclItems = []; this.bzTreeDrive = ""; this.bzTreePrefix = "";
+      this.bzSearchPage = 1; this.bzRefreshResult = ""; this.bzRebuilding = true;
+      await this.bzRefreshStatus();
+      this.bzPollRefresh(true);
     },
 
     // ---- paths: the data's own separator ("\\" Windows, "/" Mac) and its volumes ----
@@ -149,7 +193,7 @@ const bzIndexPart = {
     bzVol(key) { return (this.bzStatus.drives || []).find((d) => d.drive === key) || null; },
     bzLabel(key) { const v = this.bzVol(key); return v ? v.label : (key ? key + ":" : ""); },
     bzRoot(key) { const v = this.bzVol(key); return v ? v.root : key + ":\\"; },
-    bzDriveWidth() { return this.bzSep() === "/" ? 170 : 70; },
+    bzDriveWidth() { return this.bzSep() === "/" ? 210 : 70; },
     bzCross() { return this.bzStatus.this_computer !== false; },   // another computer's data: no Kopia cross-check
     bzVolOf(path) {   // the volume a path is on (longest matching root)
       const p = String(path || "").toLowerCase(); let best = null, len = -1;

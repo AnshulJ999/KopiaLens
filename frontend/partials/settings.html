@@ -767,11 +767,6 @@
                   <input autocomplete="off" x-model="bzCollapsePrefixes" @change="saveKl('collapse_prefixes')" class="fld border border-bd bg-surface2 min-w-[18rem]" placeholder="D:\Kopia, E:\Backups\Kopia"></div>
                 <p class="text-[0.6875rem] text-muted mt-1">Comma-separated paths that show as one row in the Queue, Churn and by-folder views instead of splitting into their chunk-named subfolders.</p>
               </div>
-              <div x-kl-row>
-                <div class="flex items-center justify-between gap-3"><span x-kl-default="eventlog_archive_path">Session history folder <span class="text-[0.625rem] text-muted">(advanced)</span></span>
-                  <input autocomplete="off" x-model="bzEventlogArchive" @change="saveKl('eventlog_archive_path')" class="fld border border-bd bg-surface2 min-w-[18rem]" placeholder="D:\Backblaze logs"></div>
-                <p class="text-[0.6875rem] text-muted mt-1">Readable copy of the rotated Backblaze event logs, used by "Import archived history" on the Sessions tab. Leave empty to skip.</p>
-              </div>
             </section>
 
             <div x-show="!settingsSearching && klPageChanged().length" class="mt-6 pt-3 border-t border-bd-soft flex justify-end" data-testid="settings-reset-page">

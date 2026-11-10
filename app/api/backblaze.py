@@ -62,6 +62,10 @@ def apply_folder_setting(settings: dict | None = None) -> str:
     computer's data and sets the old index aside."""
     old = paths.bzdata_root()
     new = paths.apply_configured_root(settings)
+    if new != old:                    # detection, churn rows and drive filters belong to the old folder
+        paths.forget_platform(old)
+        paths.forget_platform(new)
+        bzq._CHURN_CACHE.clear()
     with _EXCL_LOCK:
         _EXCL_CACHE.clear()
     try:
@@ -73,6 +77,14 @@ def apply_folder_setting(settings: dict | None = None) -> str:
         from ..core import reindexq, repos
         if repos.exists(repos.BACKBLAZE_ID):
             reindexq.request(repos.BACKBLAZE_ID, wait=0, reason="first")
+            reindexq.run_now(repos.BACKBLAZE_ID)   # a user-changed folder starts now, not on the next tick
+            try:   # the status/UI keeps waiting for the rebuild even while a kopia pass holds the slot
+                from ..backblaze import bbdb
+                con = bbdb.connect()
+                bbdb.kv_set(con, "folder_change_pending", "1")
+                con.commit()
+            except Exception as exc:  # noqa: BLE001 - the rebuild itself is already queued
+                indexer.log.warning("could not mark the Backblaze folder change pending: %s", exc)
     return new
 
 
@@ -108,6 +120,11 @@ def status() -> dict:
     except Exception as exc:  # noqa: BLE001 - report, don't 500 (lets the UI show "not built yet")
         out["error"] = str(exc)
     out.update(indexer.freshness())  #: pending / last_check_ts / last_reindex_ts
+    try:
+        from ..core import reindexq
+        out["rebuild_queued"] = any(p.get("repo") == "bz" for p in reindexq.pending())
+    except Exception:  # noqa: BLE001 - a queue read must not break status
+        out["rebuild_queued"] = False
     return out
 
 

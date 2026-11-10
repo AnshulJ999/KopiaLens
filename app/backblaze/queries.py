@@ -15,6 +15,7 @@ import time
 
 from . import bbdb, parsers, paths, pq
 from ..core.paths import prefix_bounds
+from ..core.textmatch import ESCAPE_SQL, like_literal, search_patterns
 
 _CHURN_TAIL = 30 * 1024 * 1024  # bytes of the bzfileids tail scanned for "recently added"
 
@@ -120,15 +121,29 @@ def _ext_list(raw):
     return [e for e in (x.strip().lower().lstrip(".") for x in str(raw).split(",")) if e] if raw else []
 
 
+def _text_cond(query: str) -> tuple[str, list]:
+    """Path contains the typed text: literal except `*`, matched in both Unicode forms (Mac names)."""
+    patterns = [p.lower() for p in search_patterns(query)]
+    sql = " OR ".join(f"path_lc LIKE ?{ESCAPE_SQL}" for _ in patterns)
+    return f"({sql})", patterns
+
+
+def _fts_ok(query: str, store: str) -> bool:
+    """The legacy FTS store only for plain words: `*` and LIKE metacharacters need the LIKE path."""
+    return (store == "sqlite" and bool(query) and len(query) >= 3 and query.isascii()
+            and "*" not in query and not any(c in query for c in "_%")
+            and bbdb.fts_available())
+
+
 def _where(query, drive, ext, status, min_size, ext_exclude=None, store=None):
     store = store or _store()
     sql, params = [], []
-    if query and len(query) >= 3 and store == "sqlite" and bbdb.fts_available():
+    if query and _fts_ok(query, store):
         sql.append("rowid IN (SELECT rowid FROM files_fts WHERE files_fts MATCH ?)")
         params.append('"' + query.replace('"', '""') + '"')
     elif query:
-        sql.append("path_lc LIKE ?")
-        params.append("%" + query.lower() + "%")
+        cond, cp = _text_cond(query)
+        sql.append(cond); params += cp
     if drive:
         sql.append("drive = ?"); params.append(drive.upper())
     exts = _ext_list(ext)                       # multi-ext include (comma list)
@@ -190,6 +205,13 @@ def export_iter(query="", drive=None, ext=None, status="all", min_size=0,
 
 
 # ---- per-drive overview (vs Backblaze authoritative) ----------------------------------
+def queue_counts() -> dict[str, int]:
+    """Files waiting in Backblaze's upload queue, per drive (a small SQLite table, read live)."""
+    con = bbdb.connect()
+    return {r["drive"] or "": r["n"] for r in con.execute(
+        "SELECT drive, count(*) n FROM queue GROUP BY drive")}
+
+
 def overview() -> dict:
     """Instant-open reader: serves the kv snapshot written at the end of the last refresh() (the
     `files` table only changes during a refresh, so the aggregate stays exact between them). Falls
@@ -199,12 +221,14 @@ def overview() -> dict:
     if cached:
         try:
             out = json.loads(cached)
-            _with_volumes(out.get("rows") or [])
-            return out
         except Exception:
-            pass
-    out = _overview_live()
-    out["cached_at"] = None
+            cached = None
+    if not cached:
+        out = _overview_live()
+        out["cached_at"] = None
+    counts = queue_counts()
+    for r in out.get("rows") or []:
+        r["queue_files"] = counts.get(r["drive"], 0)
     _with_volumes(out.get("rows") or [])
     return out
 
@@ -495,18 +519,19 @@ def naming_gap(query: str, depth: int = 2, top: int = 300) -> list[dict]:
     Surfaces 'you excluded \\google takeout\\ but F:\\GoogleTakeout is still backed up' gaps."""
     if not query or not query.strip():
         return []
-    q = query.strip().lower()
+    q = query.strip()
     store = _store()
-    if len(q) >= 3 and store == "sqlite" and bbdb.fts_available():
+    if _fts_ok(q, store):
         with _files_cursor(store) as fc:
             rows = fc.execute(
                 "SELECT full_path, size, excluded FROM files WHERE rowid IN "
                 "(SELECT rowid FROM files_fts WHERE files_fts MATCH ?)",
-                ['"' + q.replace('"', '""') + '"']).fetchall()
+                ['"' + q.lower().replace('"', '""') + '"']).fetchall()
     else:
+        cond, cp = _text_cond(q)
         with _files_cursor(store) as fc:
             rows = fc.execute(
-                "SELECT full_path, size, excluded FROM files WHERE path_lc LIKE ?", ["%" + q + "%"]).fetchall()
+                f"SELECT full_path, size, excluded FROM files WHERE {cond}", cp).fetchall()
     agg: dict[str, dict] = {}
     sep = _sep()
     for full_path, size, excluded in rows:
@@ -664,7 +689,13 @@ def churn(top: int = 200, depth: int = 2, collapse=None) -> dict:
     hit = _CHURN_CACHE.get(ckey)
     if hit and now - hit[0] < 120:
         return hit[1]
-    if int(depth) == 2 and int(top) <= 200 and sorted(c[0] for c in cl) == _default_collapse_lc():
+    default_lc = _default_collapse_lc()
+    is_default = int(depth) == 2 and int(top) <= 200 and sorted(c[0] for c in cl) == default_lc
+    if is_default:
+        full = _CHURN_CACHE.get((200, 2, tuple(sorted(cl))))
+        if full and now - full[0] < 120:
+            return {**full[1], "rows": full[1]["rows"][:int(top)]}   # the smaller request, fresh
+    if is_default:
         cached = bbdb.kv_get(bbdb.connect(), "cache_churn_default")
         if cached:
             try:
@@ -731,7 +762,7 @@ def status() -> dict:
     _with_volumes(out.get("drives") or [])
     out["platform"] = paths.platform()
     out["sep"] = _sep()
-    out["computer"] = paths.computer_name()
+    out["computer"] = paths.computer_display()
     out["this_computer"] = paths.is_this_computer()
     return out
 

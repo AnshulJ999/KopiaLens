@@ -213,3 +213,24 @@ def _run_all():
 
 if __name__ == "__main__":
     _run_all()
+
+
+@pytest.mark.parametrize("store", STORES)
+def test_search_is_literal_and_star_is_the_wildcard(store, tmp_path):
+    """A typed `_` or `%` is a character; only `*` widens the match."""
+    _db(store, tmp_path)
+    assert queries.search(query="_")["total"] == 0
+    assert queries.search(query="%")["total"] == 0
+    assert queries.search(query="*")["total"] == 8
+    assert queries.search(query="movie*.mkv")["total"] == 2
+    assert queries.search(query="PHOTO.JPG")["total"] == 1
+
+
+@pytest.mark.parametrize("store", STORES)
+def test_overview_marks_the_queue_per_drive(store, tmp_path):
+    con = _db(store, tmp_path)
+    con.execute("INSERT INTO queue VALUES('C', ?, 10)", [r"C:\Users\me\new.txt"])
+    con.commit()
+    rows = {r["drive"]: r for r in queries.overview()["rows"]}
+    assert rows["E"]["queue_files"] == 1
+    assert rows["C"]["queue_files"] == 1

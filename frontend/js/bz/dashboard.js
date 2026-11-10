@@ -19,9 +19,9 @@ const bzDashboardPart = {
           { title: "Backed size", field: "backed_bytes", hozAlign: "right", width: 120, sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
           { title: "Excluded files", field: "excluded_files", hozAlign: "right", width: 120, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Excluded size", field: "excluded_bytes", hozAlign: "right", width: 120, sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
-          { title: "Scanned", field: "total", hozAlign: "right", width: 110, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
-          { title: "BZ authoritative", field: "auth_files", hozAlign: "right", width: 130, sorter: "number", formatter: (c) => c.getValue() == null ? "—" : Number(c.getValue()).toLocaleString(NUM_LOCALE) },
-          { title: "Diff", field: "diff", hozAlign: "right", width: 80, formatter: (c) => { const v = c.getValue(); return v == null ? "—" : (v === 0 ? "<span style='color:#16a34a'>+0</span>" : `<span style='color:#dc2626'>${v > 0 ? "+" : ""}${v}</span>`); } },
+          { title: "Scanned", field: "total", hozAlign: "right", width: 110, sorter: "number", headerTooltip: "Files Backblaze found on this drive, including excluded ones", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
+          { title: "BZ authoritative", field: "auth_files", hozAlign: "right", width: 130, sorter: "number", headerTooltip: "The number Backblaze itself reports for this drive", formatter: (c) => c.getValue() == null ? "—" : Number(c.getValue()).toLocaleString(NUM_LOCALE) },
+          { title: "Diff", field: "diff", hozAlign: "right", width: 80, headerTooltip: "KopiaLens's backed-up count minus Backblaze's own count", formatter: (c) => bzDiffHtml(c.getValue(), c.getRow().getData()) },
         ], {
           initialSort: [{ column: "drive", dir: "asc" }],
           onRowDblClick: (_e, row) => { this.bzTreeDrive = row.getData().drive; this.active = "bz-tree"; this.bzOpenTree(); },
@@ -36,6 +36,14 @@ const bzDashboardPart = {
       const fs = (this.bzStats && this.bzStats.filestats) || {};
       const order = ["everything", "video", "music", "pict", "docs", "spreadsheets", "presentations", "financial", "email", "zips", "browserfavorites", "other"];
       return order.filter((k) => fs[k]).map((k) => ({ name: k, num: fs[k].num, bytes: fs[k].bytes }));
+    },
+    bzCatTitle(name) {
+      return {
+        everything: "All backed-up files", pict: "Pictures and images", zips: "Archives",
+        browserfavorites: "Bookmarks", docs: "Documents", spreadsheets: "Spreadsheets",
+        presentations: "Presentations", financial: "Financial files", email: "Email files",
+        video: "Video files", music: "Music files", other: "Other files",
+      }[name] || "Files in this category";
     },
     bzCatSearch(cat) {  // click a category -> Search pre-filtered by its extensions ("other" = exclude all known)
       this.bzSearchExt = ""; this.bzSearchExtExclude = ""; this.bzSearchStatus = "all";

@@ -71,12 +71,12 @@ const bzExcludedPart = {
       setTable("#bzExcludedTable", items, [
         { title: "Name", field: "name", widthGrow: 4, minWidth: 240, formatter: (c) => itemIconHtml(c.getValue(), c.getRow().getData().is_dir) + escHtml(c.getValue()) },
         { title: "Status", field: "status", width: 105, formatter: (c) => statusPill(c.getValue()) },
-        { title: "Backed Up", field: "backed_bytes", width: 105, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
-        { title: "Excluded", field: "excluded_bytes", width: 105, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
-        { title: "Backed Files", field: "backed_files", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
-        { title: "Excl Files", field: "excluded_files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
-        { title: "Excluded by", field: "excl_rule", widthGrow: 2, minWidth: 150, formatter: (c) => escHtml(c.getValue() || "") },
-        ...(this.bzCross() ? [{ title: "Also in Kopia", field: "kopia_backed_bytes", width: 130, hozAlign: "right", sorter: "number", formatter: (c) => { const d = c.getRow().getData(); const v = c.getValue(); if (v === null || v === undefined) return "<span style='color:#cbd5e1'>…</span>"; return d.kopia_backed_files ? `${reposBadges(d.kopia_repos)} ${bzFmt(v)}` : "<span style='color:#94a3b8'>—</span>"; } }] : []),
+        { title: "Backed Up", field: "backed_bytes", width: 105, hozAlign: "right", sorter: "number", headerTooltip: "Size Backblaze backs up here", formatter: (c) => bzFmt(c.getValue()) },
+        { title: "Excluded", field: "excluded_bytes", width: 105, hozAlign: "right", sorter: "number", headerTooltip: "Size Backblaze leaves out here", formatter: (c) => bzFmt(c.getValue()) },
+        { title: "Backed Files", field: "backed_files", width: 110, hozAlign: "right", sorter: "number", headerTooltip: "Files Backblaze backs up here", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
+        { title: "Excl Files", field: "excluded_files", width: 95, hozAlign: "right", sorter: "number", headerTooltip: "Files Backblaze leaves out here", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
+        { title: "Excluded by", field: "excl_rule", widthGrow: 2, minWidth: 150, headerTooltip: "The rule that leaves these files out", formatter: (c) => escHtml(c.getValue() || "") },
+        ...(this.bzCross() ? [{ title: "Also in Kopia", field: "kopia_backed_bytes", width: 130, hozAlign: "right", sorter: "number", headerTooltip: "This folder is also in a Kopia backup", formatter: (c) => { const d = c.getRow().getData(); const v = c.getValue(); if (v === null || v === undefined) return "<span class='text-faint'>…</span>"; return d.kopia_backed_files ? `${reposBadges(d.kopia_repos)} ${bzFmt(v)}` : "<span class='text-muted'>—</span>"; } }] : []),
       ], {
         persistSort: !isDrives,
         initialSort: isDrives ? [{ column: "name", dir: "asc" }] : [{ column: "excluded_bytes", dir: "desc" }],

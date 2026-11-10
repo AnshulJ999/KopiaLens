@@ -1237,7 +1237,7 @@ def _child() -> None:
         bz_root = os.path.join(DATA_DIR, "bzdata")
         bz = demobz.write(bz_root, sample.latest_files(), user=sample.identity["user"],
                           host=sample.identity["host"], now=sample.now,
-                          seed=int(os.environ["KOPIALENS_SAMPLE_SEED"]))
+                          seed=int(os.environ["KOPIALENS_SAMPLE_SEED"]), profile="sample")
         bz_index = demobz.index(bz_root)
         demobz.trim(bz_root)
     history: dict = {}

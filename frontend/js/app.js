@@ -613,13 +613,18 @@ document.addEventListener("alpine:init", () => {
     freshAge(row) {
       if (row.via_server) return "browse-only";
       if (row.running) return "indexing now";
+      if (row.waiting_for_scan) return "waiting for first scan";
       if (!row.last_index) return "never";
       const mins = Math.round((Date.now() / 1000 - row.last_index) / 60);
       if (mins < 60) return `${mins}m ago`;
       const hrs = Math.round(mins / 60);
       return hrs < 36 ? `${hrs}h ago` : `${Math.round(hrs / 24)}d ago`;
     },
-    freshStale(row) {  // amber past a day and a half - long enough that a missed run is the reason
+    freshStale(row) {
+      // Backblaze: warn only when KopiaLens is behind Backblaze (the detect found a real change).
+      // An old index with no newer Backblaze data is normal, so age alone never turns it amber.
+      if (row.kind === "backblaze") return !row.via_server && !row.running && !!row.pending;
+      // Amber past a day and a half - long enough that a missed run is the reason.
       return !row.via_server && !row.running && (!row.last_index || (Date.now() / 1000 - row.last_index) > 36 * 3600);
     },
     // Tooltip per strip row. BZ: verification age ("checked Xm ago") + queued/failed states -
@@ -627,12 +632,19 @@ document.addEventListener("alpine:init", () => {
     freshTitle(row) {
       if (row.via_server) return row.name + " - reached through a kopia server, so it has no index";
       if (row.kind !== "backblaze") return row.name + (row.error ? " - last run failed: " + row.error : "");
+      if (row.waiting_for_scan) {
+        return "Waiting for Backblaze's first scan" + (row.computer ? " on " + row.computer : "") + ".";
+      }
       const parts = [];
       if (row.last_check_ts) {
-        const mins = Math.max(0, Math.round((Date.now() / 1000 - row.last_check_ts) / 60));
-        parts.push("checked for changes " + (mins < 60 ? mins + "m ago" : mins < 1440 ? Math.round(mins / 60) + "h ago" : Math.round(mins / 1440) + "d ago"));
+        const mins = Math.max(0, (Date.now() / 1000 - row.last_check_ts) / 60);
+        parts.push("checked " + (mins < 1 ? "just now" : mins < 60 ? Math.round(mins) + " min ago" : mins < 1440 ? Math.round(mins / 60) + " h ago" : Math.round(mins / 1440) + " d ago"));
       }
-      if (row.pending) parts.push("new data queued");
+      if (row.last_scan) {
+        const mins = Math.max(0, (Date.now() / 1000 - row.last_scan) / 60);
+        parts.push("Backblaze's last scan " + (mins < 60 ? Math.round(mins) + " min ago" : mins < 1440 ? Math.round(mins / 60) + " h ago" : Math.round(mins / 1440) + " d ago"));
+      }
+      if (row.pending) parts.push("new data waiting to be indexed");
       if (row.error) parts.push("last run failed: " + row.error);
       return row.name + (parts.length ? " - " + parts.join(" · ") : "");
     },

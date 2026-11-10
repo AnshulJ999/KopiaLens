@@ -1,7 +1,7 @@
 """Backblaze (BZ) backend for KopiaLens.
 
-A read-only provider that indexes the local Backblaze Personal Backup state
-(`C:\\ProgramData\\Backblaze\\bzdata`) and exposes the same kinds of
+A read-only provider that indexes Backblaze Backup state: this computer's own data folder, or
+a shared folder from another computer, on Windows or Mac. It exposes the same kinds of
 views KopiaLens gives Kopia repos (search / tree / dashboard / excluded coverage)
 plus BZ-only tabs (exclusions / queue / sessions / health).
 

@@ -60,7 +60,7 @@ const bzSearchPart = {
         const rows = data.rows || [];
         this.bzSearchMeta = `${countOf(rows.length, "folder")} · depth ${data.depth}`;
         setTable("#bzGroupTable", rows, [
-          { title: "Folder", field: "folder", widthGrow: 5, minWidth: 320 },
+          { title: "Folder", field: "folder", widthGrow: 5, minWidth: 320, formatter: (c) => itemIconHtml("", true) + escHtml(c.getValue()) },
           { title: "Files", field: "files", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Size", field: "bytes", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
         ], {

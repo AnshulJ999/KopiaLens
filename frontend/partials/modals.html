@@ -583,7 +583,7 @@
         <div class="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2" x-show="bzDetail">
           <div class="rounded border border-bd p-2"><div class="text-[0.6875rem] text-muted">Size</div><div class="font-medium" x-text="bzDetail && fmtB(bzDetail.size)"></div></div>
           <div class="rounded p-2" :class="bzDetail && bzDetail.excluded ? 'border border-danger-bd' : 'border border-ok-bd'"><div class="text-[0.6875rem] text-muted">Status</div><div class="font-medium" x-text="bzDetail && (bzDetail.excluded ? 'Excluded' : 'Backed up')"></div></div>
-          <div class="rounded border border-bd p-2"><div class="text-[0.6875rem] text-muted">Drive</div><div class="font-medium" x-text="bzDetail && (bzDetail.drive + ':')"></div></div>
+          <div class="rounded border border-bd p-2"><div class="text-[0.6875rem] text-muted">Drive</div><div class="font-medium" x-text="bzDetail && bzLabel(bzDetail.drive)"></div></div>
         </div>
         <div class="mt-2 text-[0.75rem]" x-show="bzDetail && bzDetail.excl_rule"><span class="text-muted">Excluded by rule:</span> <span class="font-mono" x-text="bzDetail && bzDetail.excl_rule"></span></div>
         <div class="mt-3 flex flex-wrap gap-2">

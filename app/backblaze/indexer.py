@@ -398,6 +398,15 @@ def _refresh_folder_snapshots(con, history_days: int = 90) -> None:
 def _refresh_ids_count(con) -> None:
     """Count the cumulative bzfileids.dat lines (the ~4M total vs ~1.15M selected = dead/historical).
     A full 452 MB scan, so only run on a forced/first build and cache in kv."""
+    hint = paths.fileids_total_hint_path()
+    try:
+        if os.path.exists(hint):
+            with open(hint, encoding="utf-8") as fh:
+                n = int(fh.read().strip())
+            bbdb.kv_set(con, "fileids_total", json.dumps(n))
+            return
+    except Exception:  # noqa: BLE001 - a bad hint falls back to counting the real file
+        pass
     fp = paths.fileids_path()
     if not os.path.exists(fp):
         return
@@ -528,7 +537,8 @@ def freshness() -> dict:
     """The kv freshness triple (): when the data was last verified (detect or refresh), when
     it was last actually rebuilt, and whether a detected change is still waiting. Reads the bz
     SQLite kv table, so it survives restarts; a missing/unbuilt DB reads as never."""
-    out = {"last_check_ts": None, "last_reindex_ts": None, "pending": False}
+    out = {"last_check_ts": None, "last_reindex_ts": None, "pending": False,
+           "waiting_for_scan": False, "folder_change_pending": False, "data_ts": None}
     try:
         con = bbdb.connect()
         for key in ("last_check_ts", "last_reindex_ts"):
@@ -537,8 +547,15 @@ def freshness() -> dict:
             except (TypeError, ValueError):
                 pass
         out["pending"] = bbdb.kv_get(con, "reindex_pending") == "1"
+        out["waiting_for_scan"] = bbdb.kv_get(con, "waiting_for_scan") == "1"
+        out["folder_change_pending"] = bbdb.kv_get(con, "folder_change_pending") == "1"
     except Exception:  # noqa: BLE001 - a freshness read must never break its caller
         pass
+    try:
+        out["last_scan"] = paths.newest_scan_ts()
+    except Exception:  # noqa: BLE001
+        out["last_scan"] = None
+    out["computer"] = paths.computer_display()
     return out
 
 
@@ -557,11 +574,66 @@ def _safe_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "computer"
 
 
+def _copy_computer(path: str) -> str:
+    """kv.bz_computer inside a set-aside copy, or "" when it cannot be read."""
+    import sqlite3
+    try:
+        c = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            row = c.execute("SELECT v FROM kv WHERE k='bz_computer'").fetchone()
+            return str(row[0] or "") if row else ""
+        finally:
+            c.close()
+    except sqlite3.Error:
+        return ""
+
+
+def _previous_copies(name: str) -> list[str]:
+    """Set-aside copies that belong to `name`, read from each copy's own kv (never its file name -
+    "PC-A" also prefixes "PC-A-2"). Oldest first."""
+    want = paths.computer_key(name)
+    try:
+        files = [f for f in os.listdir(_previous_dir()) if f.endswith(".sqlite")]
+    except OSError:
+        return []
+    found = [f for f in files if _copy_computer(os.path.join(_previous_dir(), f)) == want]
+    return sorted(found)
+
+
+def _set_aside(con, name: str) -> str:
+    """Copy the slim SQLite aside atomically (its history cannot be rebuilt), keep the newest two
+    copies per computer, and return the new copy's path."""
+    import sqlite3
+    os.makedirs(_previous_dir(), exist_ok=True)
+    keep = os.path.join(_previous_dir(), f"{_safe_name(name)}-{time.strftime('%Y%m%d-%H%M%S')}.sqlite")
+    tmp = keep + ".tmp"
+    con.commit()
+    dst = sqlite3.connect(tmp)
+    try:
+        con.backup(dst)
+    finally:
+        dst.close()
+    atomicfile.replace(tmp, keep)
+    for old in _previous_copies(name)[:-2]:
+        try:
+            os.remove(os.path.join(_previous_dir(), old))
+        except OSError as exc:  # noqa: BLE001 - an old derived copy is safe to keep
+            log.warning("BZ set-aside cleanup skipped %s: %s", old, exc)
+    return keep
+
+
+def _usable_volumes() -> list:
+    """Volumes whose file list is committed and not a stub (an aborted scan)."""
+    return [v for v in paths.volumes() if not parsers.is_stub_filelist(v.filelist)]
+
+
 def _switch_computer(con) -> bool:
     """When the data now comes from a different computer: copy the slim SQLite aside (its history
     can't be rebuilt), clear every BZ table, bring back that computer's own history from its newest
     copy if one exists, and return True so every drive rebuilds. The first refresh that sees a
-    name only records it. Names compare without Backblaze's set-up-again date (computer_key)."""
+    name only records it. Names compare without Backblaze's set-up-again date (computer_key).
+    A folder with no finished file list still switches (the old index is never shown under the new
+    name) and waits for the first scan."""
     name = paths.computer_key()
     if not name:
         return False
@@ -571,21 +643,14 @@ def _switch_computer(con) -> bool:
         return False
     if prev == name:
         return False
-    import sqlite3
-    os.makedirs(_previous_dir(), exist_ok=True)
-    keep = os.path.join(_previous_dir(), f"{_safe_name(prev)}-{time.strftime('%Y%m%d-%H%M%S')}.sqlite")
-    con.commit()
-    dst = sqlite3.connect(keep)
-    try:
-        con.backup(dst)
-    finally:
-        dst.close()
+    keep = _set_aside(con, prev)
     have = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     for t in _ALL_TABLES:
         if t in have:
             con.execute(f"DELETE FROM {t}")
     restored = _restore_history(con, name)
     bbdb.kv_set(con, "bz_computer", name)
+    bbdb.kv_set(con, "waiting_for_scan", "0" if _usable_volumes() else "1")
     con.commit()
     bbdb.rebuild_fts(con)
     log.info("BZ data is now from %s (was %s): previous index kept as %s%s", name, prev,
@@ -594,28 +659,30 @@ def _switch_computer(con) -> bool:
 
 
 def _restore_history(con, name: str) -> int:
-    """Bring back a computer's history tables from its newest set-aside copy (0 when none)."""
-    try:
-        cands = sorted(f for f in os.listdir(_previous_dir())
-                       if f.startswith(_safe_name(name) + "-") and f.endswith(".sqlite"))
-    except OSError:
-        return 0
-    if not cands:
-        return 0
-    src = os.path.join(_previous_dir(), cands[-1])
-    n = 0
-    con.commit()
-    con.execute("ATTACH DATABASE ? AS prev", [src])
-    try:
-        for t in _HISTORY_TABLES:
-            try:
-                n += con.execute(f"INSERT INTO {t} SELECT * FROM prev.{t}").rowcount or 0
-            except Exception as exc:  # noqa: BLE001 - one unreadable table must not block the rest
-                log.warning("BZ history restore skipped %s: %s", t, exc)
+    """Bring back a computer's history tables from its newest readable set-aside copy (0 when none)."""
+    for cand in reversed(_previous_copies(name)):
+        src = os.path.join(_previous_dir(), cand)
+        n = 0
         con.commit()
-    finally:
-        con.execute("DETACH DATABASE prev")
-    return n
+        try:
+            con.execute("ATTACH DATABASE ? AS prev", [src])
+        except Exception as exc:  # noqa: BLE001 - a damaged copy must not block a switch
+            log.warning("BZ history copy %s could not be opened: %s", cand, exc)
+            continue
+        try:
+            for t in _HISTORY_TABLES:
+                try:
+                    n += con.execute(f"INSERT INTO {t} SELECT * FROM prev.{t}").rowcount or 0
+                except Exception as exc:  # noqa: BLE001 - one unreadable table must not block the rest
+                    log.warning("BZ history restore skipped %s: %s", t, exc)
+            con.commit()
+            return n
+        finally:
+            try:
+                con.execute("DETACH DATABASE prev")
+            except Exception:  # noqa: BLE001
+                pass
+    return 0
 
 
 def refresh(force: bool = False) -> dict:
@@ -665,6 +732,13 @@ def refresh(force: bool = False) -> dict:
                 # Another computer's data starts an empty store: the old drives aren't carried over.
                 pq_rels = {} if switched else dict((manifest or {}).get("drives", {}))
             vols = paths.volumes()
+            usable = [v for v in vols if not parsers.is_stub_filelist(v.filelist)]
+            if parquet and switched and not usable:
+                # No committed, non-stub file list yet: publish an EMPTY generation so no reader
+                # sees the previous computer's files under this computer's name. Status says
+                # "waiting for Backblaze's first scan"; the next refresh rebuilds once one lands.
+                pq.clear(pq_gen)
+                pq_rels = {}
             for vol in vols:
                 src = f"filelist:{vol.key}"
                 try:
@@ -770,8 +844,11 @@ def refresh(force: bool = False) -> dict:
             # handshake with the scheduler's detect: a completed refresh has absorbed whatever
             # the detect flagged, and (when it actually reindexed) becomes the new throttle anchor.
             # Same transaction as the data, so a crash cannot clear pending without the fresh rows.
-            if changed or force:
+            if changed or (force and usable):
                 bbdb.kv_set(con, "last_reindex_ts", str(time.time()))
+            if usable:
+                bbdb.kv_set(con, "waiting_for_scan", "0")
+            bbdb.kv_set(con, "folder_change_pending", "0")
             bbdb.kv_set(con, "last_check_ts", str(time.time()))
             bbdb.kv_set(con, "reindex_pending", "0")
             con.commit()

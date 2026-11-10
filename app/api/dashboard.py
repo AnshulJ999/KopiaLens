@@ -268,6 +268,9 @@ def index_freshness() -> dict:
                 row["last_index"] = info["last_reindex_ts"]
                 row["last_check_ts"] = info["last_check_ts"]
                 row["pending"] = info["pending"]
+                row["last_scan"] = info.get("last_scan")
+                row["waiting_for_scan"] = info.get("waiting_for_scan", False)
+                row["computer"] = info.get("computer", "")
             except Exception:  # noqa: BLE001 - the strip degrades to the nightly timestamps
                 pass
         if row["running"]:

@@ -7,9 +7,9 @@ const bzExclusionsPart = {
         const r = await getJson("/api/backblaze/exclusions");
         this.bzExclusions = r;
         setTable("#bzImpactTable", r.impact || [], [
-          { title: "Rule", field: "rule", widthGrow: 4, minWidth: 280 },
-          { title: "Files", field: "files", width: 120, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
-          { title: "Size", field: "bytes", width: 130, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
+          { title: "Rule", field: "rule", widthGrow: 4, minWidth: 280, headerTooltip: "The Backblaze rule, as Backblaze stores it", formatter: (c) => { const v = c.getValue() || ""; return (v.startsWith("folder:") ? itemIconHtml("", true) : "") + escHtml(v); } },
+          { title: "Files", field: "files", width: 120, hozAlign: "right", sorter: "number", headerTooltip: "Files this rule leaves out", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
+          { title: "Size", field: "bytes", width: 130, hozAlign: "right", sorter: "number", headerTooltip: "Size this rule leaves out", formatter: (c) => bzFmt(c.getValue()) },
         ], { initialSort: [{ column: "bytes", dir: "desc" }] });
       }, "Loading exclusions…");
     },
@@ -19,7 +19,7 @@ const bzExclusionsPart = {
         const r = await getJson(`/api/backblaze/naming-gap?q=${encodeURIComponent(this.bzNamingQuery)}`);
         this.bzNamingRows = r.rows || [];
         setTable("#bzNamingTable", this.bzNamingRows, [
-          { title: "Folder", field: "folder", widthGrow: 5, minWidth: 300 },
+          { title: "Folder", field: "folder", widthGrow: 5, minWidth: 300, formatter: (c) => itemIconHtml("", true) + escHtml(c.getValue()) },
           { title: "Status", field: "status", width: 100, formatter: (c) => statusPill(c.getValue()) },
           { title: "Backed Files", field: "backed_files", width: 110, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Excl Files", field: "excluded_files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },

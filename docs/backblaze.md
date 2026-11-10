@@ -1,17 +1,17 @@
 # Backblaze
 
-KopiaLens can show what Backblaze Personal Backup backs up on the same computer, next to your kopia backups. It reads the Backblaze client's own file lists and never changes anything in Backblaze.
+KopiaLens can show what Backblaze Personal Backup backs up on this computer, or on another computer whose data folder it can read, next to your kopia backups. It reads Backblaze's own file lists and never writes to them.
 
 ![Screenshot: the Backblaze dashboard](images/backblaze.png)
 
 ## Add Backblaze
 
-The Backblaze view works on Windows, with the Backblaze Personal Backup client installed.
+Backblaze Personal Backup runs on Windows and Mac. KopiaLens reads its data on this computer, or a shared folder from another computer.
 
 1. Open **Settings → Backblaze**.
 2. Select **Add Backblaze**. KopiaLens finds the client's data folder on its own.
 
-Backblaze then appears in the repository list at the top of the window. Select it there to open its tabs. If KopiaLens doesn't find the client, the section says so. To point it at the folder by hand, enter it in **Backblaze data folder**.
+Backblaze then appears in the repository list at the top of the window. Select it there to open its tabs. If Backblaze isn't on this computer, select **Backblaze on another computer?** and enter the shared **bzdata** folder. You can also point at a folder by hand in **Backblaze data folder**.
 
 KopiaLens only reads the Backblaze folder. It never writes there, and it can't delete, restore or change anything in Backblaze.
 
@@ -27,9 +27,9 @@ KopiaLens only reads the Backblaze folder. It never writes there, and it can't d
 | **Churn** | Recently added files by folder, to spot folders that keep changing |
 | **Queue** | Files waiting to be uploaded, and what was backed up in the last 30 days |
 | **Sessions** | Recent backup sessions and a daily upload history |
-| **Health** | Signs that Backblaze's file lists are damaged, such as a drive suddenly showing no backed-up files |
+| **Health** | Signs that Backblaze's file lists are damaged, such as a drive suddenly showing no backed-up files. It also shows the installed Backblaze version and whether a newer one is out |
 
-Backblaze scans the disk about once or twice a day, so most numbers change about once a day.
+Backblaze writes a new file list about once or twice a day, so most numbers change about that often. The upload queue updates every few minutes.
 
 ## Naming-gap hunter
 

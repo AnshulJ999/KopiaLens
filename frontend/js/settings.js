@@ -766,7 +766,9 @@ const settingsPart = {
           if (key in this.savedPorts) this.savedPorts[key] = v;
           if (key === "update_channel") { this.loadUsagePreview(); if (this.updateCheck) this.checkUpdatesNow(); }
           if (f.block === "backblaze" && (key === "bzdata_path" || key === "computer")) {   // applies now, no restart
-            this._excludedDrivesStale = true; this.raLoad(); this.bzRefreshStatus();
+            this._excludedDrivesStale = true; this.raLoad();
+            if (key === "bzdata_path") this.bzAfterFolderChange();
+            else this.bzRefreshStatus().then(() => this.bzActivate());
           }
           return true;
         })

@@ -91,6 +91,8 @@ def env(tmp_path, monkeypatch):
 
 
 def _files() -> dict[str, tuple]:
+    if not pq.available():
+        return {}
     with pq.files_cursor() as cur:
         return {r[0]: (r[1], r[2], r[3]) for r in cur.execute(
             "SELECT full_path, drive, excluded, excl_rule FROM files").fetchall()}
@@ -193,3 +195,51 @@ def test_installed_and_newest_backblaze_versions(tmp_path):
     assert parsers.newest_version(str(cv), "mac") == "10.0.4.1082"
     assert parsers.version_tuple("10.0.1.1037") < parsers.version_tuple("10.0.4.1081")
     assert json.dumps(parsers.version_tuple("x")) == "[]"
+
+
+def _empty_bzdata(root: str, host: str) -> None:
+    _write(root, "bzinfo.xml", f'<bzinfo><myidentity online_hostname="{host}" bzlogin="x"/></bzinfo>')
+    os.makedirs(os.path.join(root, "bzfilelists"), exist_ok=True)
+
+
+def test_a_folder_with_no_finished_scan_waits_instead_of_showing_the_old_computer(env, monkeypatch):
+    """the old computer's files must never sit on screen under the new computer's name."""
+    con, tmp = env
+    a, b = str(tmp / "a"), str(tmp / "b")
+    _win_bzdata(a, "PC-A", "alpha")
+    _empty_bzdata(b, "PC-B")
+    monkeypatch.setattr(paths, "_bzdata_root", a)
+    assert indexer.refresh()["ok"]
+    assert r"C:\alpha\a.txt" in set(_files())
+
+    monkeypatch.setattr(paths, "_bzdata_root", b)
+    assert indexer.refresh()["ok"]
+    assert indexer.freshness()["waiting_for_scan"] is True
+    assert queries.status()["built"] is False
+    assert queries.status()["computer"] == "PC-B"
+    assert queries.overview()["rows"] == []
+    assert queries.search(query="")["total"] == 0
+    assert not pq.available()
+    assert set(_files()) == set()
+
+
+def test_set_aside_history_belongs_to_the_computer_named_inside_it(env, monkeypatch):
+    """PC-A-2's newest copy must not be restored as PC-A's history."""
+    con, tmp = env
+    a, a2 = str(tmp / "a"), str(tmp / "a2")
+    _win_bzdata(a, "PC-A", "alpha")
+    _win_bzdata(a2, "PC-A-2", "beta")
+    snaps = lambda: {r[0] for r in con.execute("SELECT folder FROM folder_snapshots")}  # noqa: E731
+
+    monkeypatch.setattr(paths, "_bzdata_root", a)
+    assert indexer.refresh()["ok"]
+    assert snaps() == {r"C:\alpha\a.txt"}
+
+    monkeypatch.setattr(paths, "_bzdata_root", a2)
+    assert indexer.refresh()["ok"]
+    assert snaps() == {r"C:\beta\a.txt"}
+
+    # The PC-A-2 copy is now the newest file, but it is not PC-A's history.
+    monkeypatch.setattr(paths, "_bzdata_root", a)
+    assert indexer.refresh()["ok"]
+    assert snaps() == {r"C:\alpha\a.txt"}

@@ -179,7 +179,10 @@ def test_forced_refresh_counts_as_a_reindex(bz_env):
 
 def test_freshness_on_an_unbuilt_db_reads_never(bz_env):
     con, root = bz_env
-    assert indexer.freshness() == {"last_check_ts": None, "last_reindex_ts": None, "pending": False}
+    fresh = indexer.freshness()
+    assert fresh["last_check_ts"] is None and fresh["last_reindex_ts"] is None
+    assert fresh["pending"] is False and fresh["waiting_for_scan"] is False
+    assert fresh["folder_change_pending"] is False
 
 
 if __name__ == "__main__":
