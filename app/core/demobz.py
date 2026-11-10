@@ -1,25 +1,26 @@
 """Fake Backblaze data for a demo folder, read by the real Backblaze indexer.
 
-``write`` lays out one bzdata folder (Windows, or a Mac's when ``platform="mac"``) from per-drive
-targets shaped like a real Backblaze setup, each moved by about 10-20%. Everyday files come from
-the demo's own already-faked Kopia names; the rest are made from the word lists in ``fakenames``.
-Excluded files sit in the places Backblaze excludes (Windows, Program Files, AppData, Temp, Games,
-and a Mac's system folders).
+``write`` lays out one bzdata folder (Windows, or a Mac's when ``platform="mac"``) shaped like
+a real Backblaze setup: per-drive counts and sizes, where the excluded files sit, the file-type
+mix and the upload rhythm, each number moved by about 10-20%. Numbers come from the real data;
+names never do. Everyday files are the demo's own already-faked Kopia files plus word-list files;
+excluded areas have made-up folder names.
 
-Every displayed number comes from those fake files: the report XMLs are counted from the same
-rule-engine classification the indexer uses, so per-drive Diff is +0 except for the upload queue,
-the type categories add up to the backed total, and the file-id history is several times the live
-file count the way Backblaze's own is.
+Every displayed number comes from these files: the report XMLs are counted from the same
+classification the indexer uses, so per-drive Diff is +0 except for new files still in the upload
+queue, the type categories add up to the backed total, and the file-id history is several times
+the live file count the way Backblaze's own is.
 
-``index`` runs the real indexer. ``trim`` drops what only indexing reads (per-day upload records;
-file-list bodies too unless ``keep_lists``, which a demo needs so switching folders rebuilds).
+``index`` runs the real indexer. ``trim`` drops what only indexing reads.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
+import math
 import os
 import random
+import re
 
 from . import fakenames
 from .applog import get_logger
@@ -28,7 +29,9 @@ log = get_logger("demobz")
 
 BZ_RECORD = {"id": "bz", "name": "Backblaze", "short_name": "Backblaze", "kind": "backblaze"}
 _DAY = 86400.0
-_EXCLUDED_TYPES = "sys,tmp,lck,iso,dmg,vhd,vhdx,vmdk,swapfile"
+_BS = chr(92)
+# Backblaze's default excluded file types.
+_EXCLUDED_TYPES = "wab~,vmc,vhd,vhdx,vdi,vo1,vo2,vsv,vud,sparseimage,qtch,ithmb,vmdk,vmem,vmsd,vmsn,vmss,vmx,vmxf"
 _CATEGORY = {  # filestats.xml buckets
     "docs": {"doc", "docx", "pdf", "txt", "md", "odt", "rtf", "epub"},
     "spreadsheets": {"xls", "xlsx", "csv", "ods"},
@@ -37,9 +40,9 @@ _CATEGORY = {  # filestats.xml buckets
     "music": {"mp3", "wav", "flac", "ogg", "m4a", "aac", "mid"},
     "video": {"mp4", "mkv", "mov", "avi", "webm"},
     "zips": {"zip", "7z", "rar", "gz", "tar", "msi", "exe"},
+    "email": {"eml", "msg"},
+    "browserfavorites": {"url"},
 }
-_SAFE_EXTS = {c: sorted(e for e in exts if e not in _EXCLUDED_TYPES.split(","))
-              for c, exts in fakenames.CATEGORY_EXTS.items()}
 
 # A real setup's shape (queries.overview on the live bzdata): per drive, backed files,
 # excluded files, backed bytes, excluded bytes. The generator moves each of these by +-15%.
@@ -89,13 +92,113 @@ _TEST_MAC = {
     "Archive": {"backed": 25, "excluded": 4, "backed_bytes": 60_000_000, "excluded_bytes": 1_000_000},
 }
 
+# The real file-type mix (filestats.xml, 2026-11-10): bucket -> (files, bytes).
+_REAL_TYPES = {
+    "video": (60_714, 1_820_000_000_000), "music": (97_187, 515_500_000_000),
+    "pict": (243_611, 218_000_000_000), "docs": (36_008, 38_500_000_000),
+    "spreadsheets": (1_074, 740_000_000), "presentations": (979, 4_360_000_000),
+    "email": (21, 350_000), "zips": (4_236, 393_000_000_000), "browserfavorites": (602, 110_000),
+    "other": (685_867, 7_840_000_000_000),
+}
+_BUCKET_FILES = {   # bucket -> (fakenames template group, extensions)
+    "video": ("Videos", ["mp4", "mp4", "mkv", "mov"]),
+    "music": ("Music", ["mp3", "mp3", "flac", "m4a", "wav"]),
+    "pict": ("Photos", ["jpg", "jpg", "jpg", "png", "heic", "jpeg"]),
+    "docs": ("Documents", ["pdf", "pdf", "docx", "txt", "epub"]),
+    "spreadsheets": ("Documents", ["xlsx", "csv"]),
+    "presentations": ("Documents", ["pptx"]),
+    "zips": ("Archives", ["zip", "zip", "7z", "rar"]),
+    "email": ("Documents", ["eml"]),
+    "browserfavorites": ("Mixed", ["url"]),
+    "other": ("Code", ["cr2", "nef", "arw", "psd", "json", "py", "db", "dat", "xml", "blend", "iso", "bak"]),
+}
+_BUCKET_FOLDERS = {"video": "Videos", "music": "Music", "pict": "Photos", "docs": "Documents",
+                   "spreadsheets": "Documents", "presentations": "Documents", "zips": "Archives",
+                   "email": "Documents", "browserfavorites": "Mixed", "other": "Code"}
+
+# The real upload rhythm (bz_done, the 45 days before 2026-11-10): (days before, files, bytes).
+_REAL_UPLOADS = [(1, 2607, 9_901_688_793), (4, 1891, 7_962_714_999), (5, 3044, 12_696_319_699),
+                 (6, 5174, 9_120_857_907), (11, 2828, 11_934_155_782), (14, 6889, 23_905_170_984),
+                 (20, 3601, 15_167_507_526), (22, 959, 4_026_132_853), (24, 2205, 8_564_480_209),
+                 (25, 937, 3_770_118_807), (27, 923, 3_552_960_130), (28, 2994, 11_225_458_721),
+                 (30, 1530, 5_920_064_316), (31, 1525, 6_317_632_501), (32, 8550, 28_184_994_951),
+                 (37, 3032, 12_002_713_105), (40, 6203, 22_064_916_864)]
+
+# Where a drive's excluded files sit: (area, share of the drive's excluded files, share of its
+# excluded bytes). Shaped from the real drive tops; every name is made up.
+_WIN_AREAS = {
+    "C": [("appdata", 0.915, 0.36), ("games", 0.046, 0.46), ("programdata", 0.032, 0.06),
+          ("vendor", 0.007, 0.01)],
+    "D": [("games", 0.68, 0.70), ("repacks", 0.16, 0.06), ("parked", 0.16, 0.24)],
+    "E": [("phone", 0.50, 0.32), ("export", 0.24, 0.16), ("old_media", 0.13, 0.33),
+          ("tablet", 0.10, 0.17), ("parked", 0.03, 0.02)],
+    "F": [("laptop", 0.90, 0.09), ("repacks", 0.065, 0.06), ("movies", 0.02, 0.70), ("tv", 0.015, 0.15)],
+    "G": [("code", 0.58, 0.10), ("emulator", 0.20, 0.04), ("ai_models", 0.10, 0.03),
+          ("games", 0.07, 0.80), ("docker", 0.05, 0.03)],
+    "H": [("media_server", 0.66, 0.21), ("photo_server", 0.14, 0.02), ("experiments", 0.09, 0.08),
+          ("emulator", 0.07, 0.01), ("games", 0.04, 0.68)],
+    "I": [("system_image", 0.87, 0.17), ("vms", 0.003, 0.55), ("parked", 0.06, 0.16),
+          ("games", 0.054, 0.11), ("temp", 0.013, 0.01)],
+}
+_MAC_AREAS = {
+    "root": [("mac_library", 0.62, 0.30), ("mac_apps", 0.18, 0.40), ("mac_private", 0.12, 0.05),
+             ("mac_syslib", 0.06, 0.10), ("mac_system", 0.02, 0.05)],
+    "Archive": [("mac_exports", 0.45, 0.80), ("mac_spotlight", 0.30, 0.10), ("mac_events", 0.25, 0.10)],
+    "Photos": [("mac_derivatives", 1.0, 1.0)],
+}
+_GAMES = ["Starfall Drift", "Iron Harbor", "Neon Tides", "Echo Ridge", "Skyward Forge", "Crimson Outpost",
+          "Hollow Peaks", "Atlas Frontier", "Silent Meridian", "Frostline Rally", "Ember Keep",
+          "Tidal Run", "Quantum Siege", "Velvet Circuit", "Last Lantern", "Copper Canyon", "Wild Orbit"]
+_VENDORS = ["NVIDIA Corporation", "Package Cache", "Razer", "Adobe", "Intel", "Logitech", "Oracle",
+            "Epic", "Microsoft" + _BS + "Windows" + _BS + "WER", "Microsoft" + _BS + "Search" + _BS + "Data",
+            "Docker", "Corsair"]
+_APPS = [("Local", "Google" + _BS + "Chrome" + _BS + "User Data" + _BS + "Default",
+          ["Cache" + _BS + "Cache_Data", "Code Cache" + _BS + "js", "Service Worker" + _BS + "CacheStorage", "GPUCache", "IndexedDB"]),
+         ("Local", "Microsoft" + _BS + "Edge" + _BS + "User Data" + _BS + "Default",
+          ["Cache" + _BS + "Cache_Data", "Code Cache" + _BS + "js", "Service Worker" + _BS + "CacheStorage"]),
+         ("Roaming", "Mozilla" + _BS + "Firefox" + _BS + "Profiles" + _BS + "k3x9.default-release",
+          ["storage" + _BS + "default", "cache2" + _BS + "entries"]),
+         ("Roaming", "discord", ["Cache" + _BS + "Cache_Data", "Code Cache" + _BS + "js"]),
+         ("Local", "Spotify", ["Data", "Storage"]), ("Local", "NVIDIA", ["DXCache", "GLCache"]),
+         ("Local", "JetBrains" + _BS + "PyCharm2024.2", ["caches", "index"]),
+         ("Local", "npm-cache", ["_cacache" + _BS + "content-v2" + _BS + "sha512"]),
+         ("Local", "pip", ["cache" + _BS + "http-v2"]), ("Local", "Temp", ["{h8}"]),
+         ("Local", "Packages", ["Microsoft.Windows.Photos_8wekyb3d8bbwe" + _BS + "LocalState"]),
+         ("Roaming", "Code", ["CachedData", "User" + _BS + "workspaceStorage"]),
+         ("LocalLow", "Unity", ["cache"]), ("Local", "Steam", ["htmlcache" + _BS + "Cache"])]
+
+# Folder rules that match nothing today: a real exclusion list carries plenty of these.
+_WIN_SPARE_RULES = [
+    "downloads" + _BS + "incomplete", "steamlibrary", "obs recordings" + _BS + "raw", "$windows.~bt",
+    "$windows.~ws", "windows.old", "msocache", "intel", "perflogs", "recovery", "swsetup", "drivers",
+    "esd", "onedrivetemp", "xboxgames", "riot games", "battle.net", "ea games", "gog games",
+    "ubisoft" + _BS + "cache", "origin games", "emulators" + _BS + "shaders", "emulators" + _BS + "cache",
+    "vm images", "virtual machines", "hyper-v", "wsl", "android" + _BS + "sdk", "android" + _BS + "avd",
+    "gradle" + _BS + "caches", "unity" + _BS + "cache", "unreal projects" + _BS + "intermediate",
+    "render cache", "proxy media", "premiere cache", "davinci cache", "lightroom previews",
+    "capture one cache", "photo previews", "thumbnails", "torrents" + _BS + "incomplete", "scratch",
+    "tmp", "temp downloads", "old installers", "iso images", "disk images", "backups" + _BS + "old",
+    "phone backup" + _BS + "whatsapp" + _BS + "databases", "phone backup" + _BS + "thumbnails",
+    "media server" + _BS + "transcodes", "media server" + _BS + "metadata", "photo server" + _BS + "thumbs",
+    "code" + _BS + "node_modules", "code" + _BS + "venv", "code" + _BS + "build", "ai models" + _BS + "cache",
+    "docker" + _BS + "volumes", "minecraft servers", "game saves" + _BS + "cloud", "screen recordings" + _BS + "raw",
+    "camera imports" + _BS + "duplicates"]
+_MAC_SPARE_RULES = ["Downloads/Incomplete/", "Movies/Final Cut Backups/", "Music/Logic/Bounces Cache/",
+                    "Library/Developer/", "Library/Mobile Documents/", "Parallels/", "VirtualBox VMs/",
+                    "Pictures/Lightroom Previews/", "Projects/node_modules/", "Projects/venv/",
+                    "Movies/Proxy Media/", "Desktop/Scratch/", "Documents/Temp/"]
+
 
 def _stamp(t: float) -> str:
     return _dt.datetime.fromtimestamp(t).strftime("%Y%m%d%H%M%S")
 
 
+def _gmt(t: float) -> str:
+    return _dt.datetime.fromtimestamp(t, _dt.timezone.utc).strftime("%Y%m%d%H%M%S")
+
+
 def _gmt_day(t: float) -> str:
-    return _dt.datetime.fromtimestamp(t, _dt.timezone.utc).strftime("%Y%m%d")
+    return _gmt(t)[:8]
 
 
 def _hex(s: str) -> str:
@@ -116,151 +219,320 @@ def _targets(profile, platform: str) -> dict:
     return dict(_MAC_REAL if platform == "mac" else _WINDOWS_REAL)
 
 
-def _sizes(count: int, total: int, r: random.Random) -> list[int]:
-    """`count` file sizes adding up to `total`, clustered around the average."""
+def _lognormal_sizes(count: int, total: int, sigma: float, r: random.Random) -> list[int]:
+    """`count` varied sizes adding up to about `total` (heavy-tailed, the way real files are)."""
     if count <= 0:
         return []
-    if count == 1:
-        return [max(1, int(total))]
     mean = max(1.0, total / count)
-    out = [max(1, int(r.uniform(0.2, 1.8) * mean)) for _ in range(count)]
-    scale = total / max(1, sum(out))
-    out = [max(1, int(x * scale)) for x in out]
-    diff = total - sum(out)
-    if diff:
-        out[-1] = max(1, out[-1] + diff)
-    return out
+    mu = math.log(mean) - sigma * sigma / 2
+    out = [r.lognormvariate(mu, sigma) for _ in range(count)]
+    scale = total / max(1.0, sum(out))
+    return [max(1, int(x * scale)) for x in out]
 
 
-def _template_name(r: random.Random, cat: str) -> str:
-    tpl = r.choice(fakenames.FILE_TEMPLATES.get(cat) or fakenames.FILE_TEMPLATES["Mixed"])
-    year = r.randint(2019, 2025)
-    name = tpl.format(n4=f"{r.randint(1, 9999):04d}", n3=f"{r.randint(1, 999):03d}",
-                      n2=f"{r.randint(1, 99):02d}", date=f"{year}-{r.randint(1, 12):02d}",
-                      yr=year)
-    exts = _SAFE_EXTS.get(cat) or _SAFE_EXTS["Documents"]
-    return name + "." + r.choice(exts)
+def _bucket_of(name: str) -> str:
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    for cat, exts in _CATEGORY.items():
+        if ext in exts:
+            return cat
+    return "other"
 
 
-def _folder_pool(platform: str, drive: str, user: str, r: random.Random) -> list[tuple[str, str]]:
-    """[(category, folder)] for the synthetic everyday files on this drive."""
-    out, seen = [], set()
-    categories = ["Photos", "Videos", "Music", "Books", "Code", "Archives", "Documents", "Mixed"]
-    for _ in range(180):
-        cat = r.choice(categories)
-        base = r.choice(fakenames.FOLDER_WORDS[cat])
-        qual = r.choice(fakenames.QUALIFIERS)
+def _leaf(path: str) -> str:
+    return path.rsplit(_BS, 1)[-1] if _BS in path else path.rsplit("/", 1)[-1]
+
+
+# ---- excluded areas ------------------------------------------------------------------------
+
+def _area_spec(kind: str, user: str, sep: str) -> dict:
+    """An excluded area: its top folder parts, sub-folder shapes, file names and size spread."""
+    games = {"top": ["Games"],
+             "branches": [("{game}" + sep + "Content" + sep + "Paks", ["pakchunk{n}-Windows.pak", "pakchunk{n}optional-Windows.pak"], True),
+                          ("{game}" + sep + "Data" + sep + "StreamingAssets", ["sharedassets{n}.assets", "level{n}.assets", "audio_{n}.bank"], True),
+                          ("{game}" + sep + "Movies", ["intro_{n}.bk2", "cutscene_{n}.bk2"], True),
+                          ("{game}" + sep + "Binaries" + sep + "Win64", ["{word}{n}.dll", "{word}{n}.exe"], False),
+                          ("{game}" + sep + "Shaders", ["shader_{h6}.cache"], False)],
+             "cap": (8, 220), "sigma": 2.2}
+    specs = {
+        "appdata": {"top": ["Users", user, "AppData"], "app": True,
+                    "names": ["f_{h6}", "data_{n}", "{h16}_0", "{h16}", "{h8}.tmp", "{h8}.ldb"],
+                    "cap": (200, 2400), "sigma": 1.6},
+        "games": games,
+        "programdata": {"top": ["ProgramData"], "branch": ["{vendor}" + sep + "{h4}", "{vendor}" + sep + "Logs",
+                                                           "{vendor}" + sep + "Cache" + sep + "{h2}"],
+                        "names": ["{h8}.dat", "log_{n}.txt", "{h8}.bin", "setup_{n}.msi", "{h8}.db"],
+                        "cap": (60, 900), "sigma": 2.0},
+        "vendor": {"top": ["RGB Sync"], "branch": ["Profiles", "Firmware", "Logs"],
+                   "names": ["profile_{n}.json", "fw_{h6}.bin", "log_{n}.txt"], "cap": (40, 400), "sigma": 1.4},
+        "repacks": {"top": ["Repacks"], "branch": ["{game}", "{game}" + sep + "Setup"],
+                    "names": ["setup-{n}.bin", "data-{n}.bin", "fg-{n}.bin", "setup-{n}.exe"], "cap": (6, 60), "sigma": 1.2},
+        "parked": {"top": ["Excluded from Backblaze"], "branch": ["{word}", "{word}" + sep + "{word2}"],
+                   "names": ["{word}-{n}.bin", "{h8}.dat", "export-{n}.zip", "capture-{n}.mkv"], "cap": (20, 600), "sigma": 2.4},
+        "phone": {"top": ["Phone Backup", "Internal", "Android", "media"],
+                  "branch": ["com.chat.app" + sep + "Media" + sep + "Images", "com.chat.app" + sep + "Media" + sep + "Video",
+                             "com.chat.app" + sep + "Media" + sep + "Voice Notes" + sep + "{n}", "com.social.app" + sep + "cache"],
+                  "names": ["IMG-{date}-WA{n4}.jpg", "VID-{date}-WA{n4}.mp4", "PTT-{date}-WA{n4}.opus", "{h16}.0"],
+                  "cap": (300, 2500), "sigma": 1.5},
+        "export": {"top": ["Cloud Export"], "branch": ["Takeout-{n}" + sep + "Photos from {year}", "Takeout-{n}" + sep + "Drive",
+                                                      "Takeout-{n}" + sep + "Mail"],
+                   "names": ["IMG_{n4}.jpg", "IMG_{n4}.jpg.json", "doc-{n}.pdf", "mbox-{n}.mbox"], "cap": (200, 2400), "sigma": 1.6},
+        "old_media": {"top": ["Personal", "Phone Media Old"], "branch": ["{year}", "{year}" + sep + "{month}"],
+                      "names": ["IMG_{date}_{n4}.jpg", "VID_{date}_{n4}.mp4"], "cap": (100, 1200), "sigma": 1.9},
+        "tablet": {"top": ["Tablet Mirror", "$sbv$"], "branch": ["{h8}", "{h8}" + sep + "{h4}"],
+                   "names": ["{h16}", "{h8}.blob"], "cap": (100, 1500), "sigma": 1.7},
+        "laptop": {"top": ["Old Laptop Backup"], "branch": ["Windows" + sep + "System32" + sep + "{word}",
+                                                             "Program Files" + sep + "{vendor}", "Users" + sep + "Laptop" + sep + "AppData" + sep + "{h4}"],
+                   "names": ["{h8}.dll", "{word}{n}.exe", "{h8}.mui", "{h8}.dat"], "cap": (300, 2400), "sigma": 1.3},
+        "movies": {"top": ["Movies"], "branch": ["{title} ({year})"],
+                   "names": ["{title} ({year}).mkv", "{title} ({year}).srt"], "cap": (1, 3), "sigma": 0.9},
+        "tv": {"top": ["TV Shows"], "branch": ["{title}" + sep + "Season {n2}"],
+               "names": ["{title} - S{n2}E{n2}.mkv"], "cap": (6, 14), "sigma": 0.7},
+        "code": {"top": ["Code"], "branch": ["{project}" + sep + "node_modules" + sep + "{pkg}", "{project}" + sep + ".git" + sep + "objects" + sep + "{h2}",
+                                             "{project}" + sep + ".venv" + sep + "Lib" + sep + "site-packages" + sep + "{pkg}"],
+                 "names": ["{h8}.js", "{pkg}-{h4}.js", "{h16}", "{h8}.py", "{h4}.d.ts", "{h8}.pyc"],
+                 "cap": (40, 900), "sigma": 1.5},
+        "emulator": {"top": ["Emulators", "{console}"], "branch": ["shaders" + sep + "{h8}", "textures" + sep + "{h8}", "cache"],
+                     "names": ["{h16}.png", "{h8}.bin", "shader_{n}.cache"], "cap": (200, 2000), "sigma": 1.4},
+        "ai_models": {"top": ["AI Models"], "branch": ["checkpoints", "loras", "cache" + sep + "{h4}", "outputs" + sep + "temp"],
+                      "names": ["model-{n}.safetensors", "lora-{word}-{n}.safetensors", "{h16}.bin", "tmp_{n}.png"],
+                      "cap": (20, 1500), "sigma": 2.6},
+        "docker": {"top": ["Docker"], "branch": ["volumes" + sep + "{h8}" + sep + "_data", "wsl" + sep + "data"],
+                   "names": ["{h8}.log", "{h16}", "data-{n}.db"], "cap": (100, 1500), "sigma": 2.2},
+        "media_server": {"top": ["Media Server"], "branch": ["metadata" + sep + "{h2}" + sep + "{h8}", "cache" + sep + "transcodes",
+                                                             "generated" + sep + "{h2}"],
+                         "names": ["poster-{h4}.jpg", "fanart-{h4}.jpg", "{h16}.webp", "{h8}.ts", "{h16}.jpg"],
+                         "cap": (200, 2400), "sigma": 1.7},
+        "photo_server": {"top": ["Photo Server"], "branch": ["thumbs" + sep + "{h8}" + sep + "{h2}", "encoded-video" + sep + "{h8}"],
+                         "names": ["{h16}-thumbnail.webp", "{h16}-preview.jpeg", "{h16}.mp4"], "cap": (200, 2400), "sigma": 1.5},
+        "experiments": {"top": ["Experiments"], "branch": ["{word}-{n}", "{word}-{n}" + sep + "data"],
+                        "names": ["run-{n}.log", "{h8}.parquet", "scratch-{n}.db", "{h8}.tmp"], "cap": (100, 1800), "sigma": 2.2},
+        "system_image": {"top": ["System Image"], "branch": ["Windows" + sep + "WinSxS" + sep + "{h8}", "Program Files" + sep + "{vendor}",
+                                                             "Users" + sep + "Old" + sep + "AppData" + sep + "{h4}"],
+                         "names": ["{h8}.dll", "{h8}.cat", "{word}{n}.exe", "{h8}.mum"], "cap": (300, 2400), "sigma": 1.4},
+        "vms": {"top": ["VM Images"], "branch": ["{word} VM"],
+                "names": ["{word}-disk{n}.vhdx", "{word}.vmdk"], "cap": (1, 3), "sigma": 0.5},
+        "temp": {"top": ["Temp"], "branch": ["{h8}"], "names": ["{h8}.tmp", "tmp{n}.dat"], "cap": (20, 300), "sigma": 1.0},
+        # Mac
+        "mac_library": {"top": ["Users", user, "Library"], "branch": ["Caches" + sep + "com.{brand}.{word}", "Caches" + sep + "com.{brand}.{word}" + sep + "{h8}",
+                                                                       "Application Support" + sep + "{brand}" + sep + "Cache",
+                                                                       "Containers" + sep + "com.{brand}.{word}" + sep + "Data" + sep + "Library" + sep + "Caches"],
+                        "names": ["Cache-{n}.db", "{h16}", "data_{n}", "{h8}.cache", "fsCachedData_{h8}"],
+                        "cap": (200, 2400), "sigma": 1.6},
+        "mac_apps": {"top": ["Applications"], "branch": ["{app}.app" + sep + "Contents" + sep + "Frameworks",
+                                                         "{app}.app" + sep + "Contents" + sep + "Resources" + sep + "{h4}",
+                                                         "{app}.app" + sep + "Contents" + sep + "MacOS"],
+                     "names": ["{word}{n}.dylib", "{word}{n}.nib", "{h8}.png", "{word}{n}.car", "{h8}"], "cap": (40, 900), "sigma": 1.9},
+        "mac_private": {"top": ["private", "var", "folders"], "branch": ["{h2}" + sep + "{h16}" + sep + "C" + sep + "com.{brand}.{word}",
+                                                                          "{h2}" + sep + "{h16}" + sep + "T"],
+                        "names": ["{h8}.tmp", "data_{n}", "{h16}"], "cap": (100, 1500), "sigma": 1.5},
+        "mac_syslib": {"top": ["Library"], "branch": ["Application Support" + sep + "{brand}", "Caches" + sep + "com.{brand}.{word}"],
+                       "names": ["{h8}.db", "{word}{n}.plist", "{h16}"], "cap": (60, 900), "sigma": 1.8},
+        "mac_system": {"top": ["System", "Library"], "branch": ["Frameworks" + sep + "{app}.framework", "PrivateFrameworks" + sep + "{app}.framework"],
+                       "names": ["{word}{n}", "{word}{n}.plist", "{h8}.dylib"], "cap": (40, 600), "sigma": 1.6},
+        "mac_exports": {"top": ["Old Exports"], "branch": ["{year}" + sep + "{word}", "Renders" + sep + "{word}"],
+                        "names": ["render-{n}.mov", "export-{n}.mp4", "{word}-{n}.prores.mov"], "cap": (10, 300), "sigma": 1.6},
+        "mac_spotlight": {"top": [".Spotlight-V100", "Store-V2", "{uuid}"], "branch": ["{h8}"],
+                          "names": ["store-{n}.db", "{h8}.indexHead", "live.{n}.indexPostings"], "cap": (100, 1500), "sigma": 1.4},
+        "mac_events": {"top": [".fseventsd"], "branch": ["{h2}"], "names": ["{h16}"], "cap": (200, 2000), "sigma": 0.8},
+        "mac_derivatives": {"top": ["Photos Library.photoslibrary", "resources", "derivatives"], "branch": ["{h1}", "masters" + sep + "{h1}"],
+                            "names": ["{uuid}_1_105_c.jpeg", "{uuid}_4_5005_c.jpeg"], "cap": (200, 1200), "sigma": 0.8},
+    }
+    spec = dict(specs[kind])
+    spec["kind"] = kind
+    spec["sep"] = sep
+    return spec
+
+
+_BRANDS = ["apple", "google", "microsoft", "adobe", "spotify", "slack", "figma", "zoom", "docker", "jetbrains"]
+_MAC_APPS = ["Photon", "Mixboard", "Notecraft", "Lumen", "Taskline", "Framewise", "Soundloop", "Ledger", "Pixelate"]
+_CONSOLES = ["Console A", "Console B", "Handheld"]
+_TITLES = ["The Quiet Coast", "Northern Lights", "Paper Moons", "Long Road Home", "The Glass House",
+           "Silver Lining", "Harbor Nights", "City of Echoes", "Distant Shores", "Morning Static",
+           "The Last Orchard", "Winter Station", "Open Water", "Blue Hour", "The Night Shift"]
+_PROJECTS = [w + s for w in fakenames.PROJECT_WORDS for s in fakenames.PROJECT_SUFFIXES]
+_PKGS = ["lodash", "react", "chalk", "commander", "express", "requests", "numpy", "pillow", "yaml", "ms",
+         "debug", "semver", "tslib", "urllib3", "certifi", "idna", "zod", "axios"]
+
+
+def _fill(template: str, ctx: dict, r: random.Random) -> str:
+    def rep(m):
+        key = m.group(1)
+        if key in ctx:
+            return str(ctx[key])
+        if key == "h1":
+            return f"{r.getrandbits(4):x}"
+        if key.startswith("h") and key[1:].isdigit():
+            n = int(key[1:])
+            return f"{r.getrandbits(4 * n):0{n}x}"
+        if key == "n":
+            return str(r.randint(1, 400))
+        if key == "n2":
+            return f"{r.randint(1, 12):02d}"
+        if key == "n4":
+            return f"{r.randint(1, 9999):04d}"
+        if key == "year":
+            return str(r.randint(2016, 2025))
+        if key == "month":
+            return f"{r.randint(1, 12):02d}"
+        if key == "date":
+            return f"{r.randint(2018, 2025)}{r.randint(1, 12):02d}{r.randint(1, 28):02d}"
+        if key == "word":
+            return r.choice(fakenames.FOLDER_WORDS["Mixed"]).replace(" ", "")
+        if key == "word2":
+            return r.choice(fakenames.FOLDER_WORDS["Documents"])
+        if key == "uuid":
+            return f"{r.getrandbits(32):08X}-{r.getrandbits(16):04X}-{r.getrandbits(16):04X}-{r.getrandbits(16):04X}-{r.getrandbits(48):012X}"
+        return m.group(0)
+    return re.sub(r"\{(\w+)\}", rep, template)
+
+
+def _rule_top(spec: dict) -> str:
+    """The area's folder as a rule: its fixed parts, up to the first made-up one."""
+    parts = []
+    for p in spec["top"]:
+        if "{" in p:
+            break
+        parts.append(p)
+    return spec["sep"].join(parts)
+
+
+def _title(r: random.Random) -> str:
+    return ("The " if r.random() < 0.4 else "") + r.choice(fakenames.CODE_ADJ).title() + " " + \
+        r.choice(fakenames.CODE_NOUN).title()
+
+
+_FOLDER_MAX = 2500   # files in one folder at most
+
+
+def _area_files(spec: dict, root: str, count: int, total_bytes: int, r: random.Random):
+    """Yield (path, size) for one area, nested leaf folders of at most a few thousand files."""
+    if count <= 0:
+        return
+    sep = spec["sep"]
+    # Biggest sizes first: folders that hold big files (game paks, movies) take from the front,
+    # the rest from the back.
+    sizes = sorted(_lognormal_sizes(count, total_bytes, spec["sigma"], r), reverse=True)
+    front, back = 0, count - 1
+    ctx_top ={"console": r.choice(_CONSOLES), "uuid": _fill("{uuid}", {}, r)}
+    top = sep.join(_fill(p, ctx_top, r) for p in spec["top"])
+    base = root + top if root.endswith(sep) else root + sep + top
+    i = 0
+    leaves: dict[str, list] = {}   # folder -> [files, names used]
+    while i < count:
+        ctx = {"game": r.choice(_GAMES), "vendor": r.choice(_VENDORS), "title": _title(r),
+               "project": r.choice(_PROJECTS), "pkg": r.choice(_PKGS), "brand": r.choice(_BRANDS),
+               "app": r.choice(_MAC_APPS)}
+        names_of, big = spec.get("names"), None
+        if spec.get("app"):
+            where, app, subs = r.choice(_APPS)
+            sub = _fill(r.choice(subs), ctx, r)
+            if sep != _BS:
+                app, sub = app.replace(_BS, sep), sub.replace(_BS, sep)
+            leaf = sep.join([base, where, app, sub])
+            if r.random() < 0.5:
+                leaf += sep + f"{r.getrandbits(8):02x}"
+        elif spec.get("branches"):
+            branch, names_of, big = r.choice(spec["branches"])
+            leaf = base + sep + _fill(branch, ctx, r)
+        else:
+            leaf = base + sep + _fill(r.choice(spec["branch"]), ctx, r)
+        st = leaves.get(leaf.lower())
+        if st and st[0] >= _FOLDER_MAX:   # a full folder spills into a numbered sub-folder
+            leaf += sep + f"{r.randint(1, 99):02d}"
+            st = leaves.get(leaf.lower())
+            if st and st[0] >= _FOLDER_MAX:
+                continue
+        if not st:
+            st = leaves[leaf.lower()] = [0, set()]
+        lo, hi = spec["cap"]
+        n = min(count - i, r.randint(lo, hi), _FOLDER_MAX - st[0])
+        for _k in range(n):
+            name = _fill(r.choice(names_of), ctx, r).replace(sep, "_")
+            if name.lower() in st[1]:
+                stem, dot, ext = name.rpartition(".")
+                c = 2
+                while True:
+                    cand = f"{stem} ({c}).{ext}" if dot else f"{name} ({c})"
+                    if cand.lower() not in st[1]:
+                        name = cand
+                        break
+                    c += 1
+            st[1].add(name.lower())
+            st[0] += 1
+            if big is None:
+                size = sizes[r.randint(front, back)] if back > front else sizes[front]
+            elif big:
+                size = sizes[front]
+                front += 1
+            else:
+                size = sizes[back]
+                back -= 1
+            yield leaf + sep + name, size
+            i += 1
+
+
+# ---- everyday (backed) files ---------------------------------------------------------------
+
+def _folder_pool(platform: str, drive: str, user: str, n: int, r: random.Random) -> dict[str, list[str]]:
+    """{fakenames category: [folders]} for the word-list files on a drive; no repeated words."""
+    sep = _BS if platform == "windows" else "/"
+    pool: dict[str, list[str]] = {}
+    seen = set()
+    cats = ["Photos", "Videos", "Music", "Books", "Code", "Archives", "Documents", "Mixed"]
+    if drive == "Photos":   # a drive named for photos holds photos and videos
+        cats = ["Photos", "Photos", "Videos"]
+    tries = 0
+    while sum(len(v) for v in pool.values()) < n and tries < n * 20:
+        tries += 1
+        cat = r.choice(cats)
+        words = fakenames.FOLDER_WORDS[cat]
+        first = r.choice(words) + r.choice(fakenames.QUALIFIERS)
         if platform == "windows":
             if drive == "C":
-                top = "C:" + chr(92) + "Users" + chr(92) + user + chr(92) + r.choice(
-                    ["Documents", "Downloads", "Pictures", "Videos", "Music", "Desktop", "Projects"])
+                top = sep.join(["C:", "Users", user, r.choice(["Documents", "Downloads", "Pictures", "Videos",
+                                                               "Music", "Desktop", "Projects"])])
+                folder = top + sep + first
             else:
-                top = f"{drive}:" + chr(92) + base + qual
-            folder = top
-            if r.random() < 0.35:
-                folder += chr(92) + r.choice(fakenames.FOLDER_WORDS["Mixed"])
-            if r.random() < 0.5:
-                folder += chr(92) + base + qual
+                folder = f"{drive}:" + sep + first
         else:
-            top = ("/Users/" + user + "/" + r.choice(
-                ["Documents", "Pictures", "Movies", "Music", "Desktop", "Projects"])
-                   if drive == "root" else f"/Volumes/{drive}/{base}{qual}")
-            folder = top
-            if r.random() < 0.35:
-                folder += "/" + r.choice(fakenames.FOLDER_WORDS["Mixed"])
-            if r.random() < 0.5:
-                folder += "/" + base + qual
-        if folder not in seen:
-            seen.add(folder)
-            out.append((cat, folder))
-    return out
+            folder = ("/Users/" + user + "/" + r.choice(["Documents", "Pictures", "Movies", "Music", "Desktop",
+                                                          "Projects"]) + "/" + first if drive == "root"
+                      else f"/Volumes/{drive}/{first}")
+        if r.random() < 0.85:
+            second = r.choice([w for w in words if w not in first] or words)
+            year = str(r.randint(2016, 2025))
+            folder += sep + (second if r.random() < 0.6 or year in first else year)
+        if r.random() < 0.25:
+            folder += sep + r.choice(fakenames.FOLDER_WORDS["Mixed"])
+        key = folder.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        pool.setdefault(cat, []).append(folder)
+    return pool
 
 
-def _area_pool(platform: str, drive: str, user: str, r: random.Random) -> list[tuple[str, str]]:
-    """[(kind, folder)] for excluded files on this drive. The paths sit under the rules below."""
-    sep = chr(92) if platform == "windows" else "/"
-    if platform == "windows":
-        if drive == "C":
-            return [("win", "C:\\Windows\\System32"), ("win", "C:\\Windows\\WinSxS"),
-                    ("pf", "C:\\Program Files"), ("pf", "C:\\Program Files (x86)"),
-                    ("pd", "C:\\ProgramData"),
-                    ("appdata", "C:\\Users\\" + user + "\\AppData\\Local"),
-                    ("games", "C:\\Games"), ("recycle", "C:\\$Recycle.Bin")]
-        return [("games", f"{drive}:\\Games"), ("recycle", f"{drive}:\\$Recycle.Bin"),
-                ("svi", f"{drive}:\\System Volume Information")]
-    if drive == "root":
-        return [("system", "/System/Library"), ("system", "/System/Volumes"),
-                ("library", "/Library/Application Support"), ("apps", "/Applications"),
-                ("tmp", "/private/var/tmp"),
-                ("cache", "/Users/" + user + "/Library/Caches"),
-                ("trash", "/Users/" + user + "/.Trash"),
-                ("spot", "/.Spotlight-V100"), ("private", "/private/var/db")]
-    return [("spot", f"/Volumes/{drive}/.Spotlight-V100"),
-            ("cache", f"/Volumes/{drive}/.Trashes")]
+_OTHER_TEMPLATES = ["IMG_{n4}.cr2", "DSC_{n4}.nef", "_DSC{n4}.arw", "{word} {n3}.psd", "export-{n4}.json",
+                    "save_{n4}.dat", "project-{n3}.blend", "backup-{date}.bak", "disk-{n3}.iso", "data_{n4}.db",
+                    "{word} {n3}.xml", "session-{n4}.log", "layout-{n3}.indd", "scan-{n4}.raw"]
 
 
-def _excluded_name(kind: str, r: random.Random) -> str:
-    if kind == "win":
-        stem = r.choice(["ntoskrnl", "win32k", "kernel32", "ntdll", "apphelp", "sechost",
-                         "msvcrt", "shell32", "user32", "gdi32", "combase", "bcrypt"])
-        return f"{stem}{r.randint(1, 9999)}." + r.choice(["dll", "sys", "mui", "cat"])
-    if kind == "pf":
-        return f"{r.choice(['lib', 'module', 'plugin', 'app', 'helper'])}{r.randint(1, 999)}." + r.choice(
-            ["dll", "exe", "dat", "pak", "json", "msi"])
-    if kind == "pd":
-        return f"{r.choice(['cache', 'settings', 'store', 'meta', 'state'])}_{r.getrandbits(32):08x}." + r.choice(
-            ["dat", "db", "json", "log", "bak"])
-    if kind == "appdata":
-        return f"{r.choice(['cache', 'index', 'session', 'blob'])}_{r.getrandbits(32):08x}." + r.choice(
-            ["dat", "db", "tmp", "bin", "log"])
-    if kind == "games":
-        return r.choice(["pak0.pak", f"data_{r.randint(0, 99)}.bin", f"shader_{r.randint(1, 500)}.cache",
-                         f"audio_{r.randint(1, 99)}.bank", f"level_{r.randint(1, 80)}.map",
-                         f"asset_{r.getrandbits(24):06x}.pak"])
-    if kind in ("recycle", "svi"):
-        return f"{r.getrandbits(32):08x}_{r.randint(1, 999)}." + r.choice(["tmp", "dat", "bin", "vhd"])
-    if kind == "system":
-        return f"{r.choice(['libSystem', 'libobjc', 'libc++', 'CoreFoundation', 'IOKit'])}_{r.randint(1, 999)}.dylib"
-    if kind == "library":
-        return f"{r.choice(['cache', 'index', 'store', 'settings'])}.{r.choice(['db', 'plist', 'dat', 'json'])}"
-    if kind == "apps":
-        return f"{r.choice(['Assets', 'Resources', 'Frameworks'])}/{r.choice(['data', 'config', 'index'])}.{r.choice(['dat', 'plist', 'pak'])}"
-    if kind == "tmp":
-        return f"tmp_{r.getrandbits(32):08x}.{r.choice(['tmp', 'log', 'dat'])}"
-    if kind == "cache":
-        return f"{r.choice(['com.apple', 'com.google', 'org.mozilla'])}.{r.getrandbits(24):06x}." + r.choice(
-            ["cache", "db", "tmp", "dat"])
-    if kind == "trash":
-        return f"{r.choice(['IMG', 'DOC', 'MOV', 'backup'])}-{r.randint(1, 9999)}.{r.choice(['jpg', 'pdf', 'mov', 'zip'])}"
-    if kind == "spot":
-        return f"store_{r.getrandbits(32):08x}.db"
-    return f"private_{r.getrandbits(32):08x}.{r.choice(['db', 'dat', 'log'])}"
+def _filler_name(bucket: str, seq: int, start: int, r: random.Random) -> str:
+    group, exts = _BUCKET_FILES[bucket]
+    year = r.randint(2016, 2025)
+    num = start + seq
+    fmt = {"n4": f"{num % 10000:04d}", "n3": f"{num % 1000:03d}", "n2": f"{num % 100:02d}",
+           "date": f"{year}-{r.randint(1, 12):02d}", "yr": year,
+           "word": r.choice(fakenames.FOLDER_WORDS["Mixed"])}
+    if bucket == "other":
+        return r.choice(_OTHER_TEMPLATES).format(**fmt)
+    if bucket == "browserfavorites":
+        return r.choice(fakenames.COMMON_SITES) + ".url"
+    tpl = r.choice(fakenames.FILE_TEMPLATES.get(group) or fakenames.FILE_TEMPLATES["Mixed"])
+    return tpl.format(**fmt) + "." + r.choice(exts)
 
 
-def _fixed_excluded(platform: str, drive: str, total: int, r: random.Random) -> list[tuple[str, int]]:
-    """A few big, rule-excluded files (pagefile, volume shadow, game data) so the bytes look real."""
-    if platform == "windows":
-        if drive == "C":
-            return [("C:\\pagefile.sys", 16 * 1024**3), ("C:\\hiberfil.sys", 12 * 1024**3),
-                    ("C:\\swapfile.sys", 4 * 1024**3), ("C:\\Windows\\MEMORY.DMP", 3 * 1024**3)]
-        if drive in ("G", "H"):
-            n = 3
-            per = max(1, int(total * 0.12 / n))
-            return [(f"{drive}:\\Games\\Archived Game {i + 1}\\data{chr(92)}game_data.bin", per)
-                    for i in range(n)]
-        n = 2
-        per = max(1, int(total * 0.10 / n))
-        return [(f"{drive}:\\System Volume Information\\{{guid}}\\shadow{i}.bin", per) for i in range(n)]
-    if drive == "root":
-        return [("/private/var/vm/swapfile0", 8 * 1024**3),
-                ("/private/var/vm/sleepimage", 4 * 1024**3),
-                ("/System/Library/Caches/com.apple.coresymbolicationd/data", 3 * 1024**3)]
-    n = 2
-    per = max(1, int(total * 0.12 / n))
-    return [(f"/Volumes/{drive}/.Spotlight-V100/shadow{i}.db", per) for i in range(n)]
-
-
-def _pick_kopia(by_drive: dict, drive: str, target: int, engine, mount: str, r: random.Random):
+def _pick_kopia(by_drive: dict, drive: str, target: int, engine, mount: str):
     """A representative 70% slice of the demo's own (already faked) files on this drive."""
     cands = sorted(by_drive.get(drive, {}).values(), key=lambda f: f[0].lower())
     cands = [c for c in cands if not engine.classify(c[0], mount)[0]]
@@ -273,56 +545,48 @@ def _pick_kopia(by_drive: dict, drive: str, target: int, engine, mount: str, r: 
     return [cands[int(i * step)] for i in range(want)]
 
 
-def _make_backed(platform: str, drive: str, target: int, target_bytes: int,
-                 selected: list, user: str, r: random.Random) -> list[tuple[str, int, float]]:
-    """Selected demo files + synthetic everyday files, reaching the target count and size."""
-    out = [(p, int(s), float(m)) for p, s, m in selected]
-    seen = {p.lower() for p, _s, _m in out}
-    extra = max(0, target - len(out))
-    extra_bytes = max(1, target_bytes - sum(f[1] for f in out))
-    folders = _folder_pool(platform, drive, user, r)
-    sep = chr(92) if platform == "windows" else "/"
-    for i, size in enumerate(_sizes(extra, extra_bytes, r)):
-        cat, folder = r.choice(folders)
-        if size > 300_000_000:   # a big file gets a big-media name
-            cat = r.choice(["Videos", "Archives"])
-        path = folder + sep + _template_name(r, cat)
-        if path.lower() in seen:
-            base, dot, ext = path.rpartition(".")
-            path = f"{base}_{i:06d}.{ext}" if dot else f"{path}_{i:06d}"
-        while path.lower() in seen:
-            path += "_"
-        seen.add(path.lower())
-        out.append((path, size, (r.uniform(0, 900) * _DAY)))
-    return out
+def _make_filler(platform: str, drive: str, user: str, count: int, total: int, weights: dict,
+                 engine, mount: str, now: float, r: random.Random) -> list[tuple[str, int, float]]:
+    """Word-list files for a drive: types from `weights`, sized by type, added 2-4 years ago."""
+    if count <= 0:
+        return []
+    sep = _BS if platform == "windows" else "/"
+    pool = _folder_pool(platform, drive, user, max(8, count // 450), r)
+    pool = {c: [f for f in fs if not engine.classify(f + sep + "x.jpg", mount)[0]] for c, fs in pool.items()}
+    buckets = list(weights)
+    wts = [weights[b] for b in buckets]
+    seqs: dict[str, list[int]] = {}
+    out = []
+    raw_sizes = []
+    for _ in range(count):
+        b = r.choices(buckets, wts)[0]
+        folders = pool.get(_BUCKET_FOLDERS[b]) or [f for fs in pool.values() for f in fs]
+        folder = r.choice(folders)
+        st = seqs.setdefault(folder, [0, r.randint(10, 7000)])
+        st[0] += 1
+        name = _filler_name(b, st[0], st[1], r)
+        mean = _REAL_TYPES[b][1] / max(1, _REAL_TYPES[b][0])
+        raw_sizes.append(r.lognormvariate(math.log(max(1.0, mean)) - 0.72, 1.2))
+        out.append((folder + sep + name, now - r.uniform(60, 1500) * _DAY))
+    scale = total / max(1.0, sum(raw_sizes))
+    scale = min(4.0, max(0.3, scale))
+    files, names = [], set()
+    for (path, t), s in zip(out, raw_sizes):
+        if path.lower() in names:
+            stem, dot, ext = path.rpartition(".")
+            c = 2
+            while True:
+                cand = f"{stem} ({c}).{ext}" if dot else f"{path} ({c})"
+                if cand.lower() not in names:
+                    path = cand
+                    break
+                c += 1
+        names.add(path.lower())
+        files.append((path, max(1, int(s * scale)), t))
+    return files
 
 
-def _make_excluded(platform: str, drive: str, user: str, count: int, total_bytes: int,
-                   r: random.Random):
-    """Yield (path, size, age_seconds) for excluded files, from this drive's excluded areas."""
-    fixed = _fixed_excluded(platform, drive, total_bytes, r)
-    remaining = max(0, int(total_bytes) - sum(s for _p, s in fixed))
-    sizes = _sizes(max(0, count - len(fixed)), remaining, r)
-    areas = _area_pool(platform, drive, user, r)
-    sep = chr(92) if platform == "windows" else "/"
-    seen = set()
-    def unique(path: str) -> str:
-        if path.lower() not in seen:
-            seen.add(path.lower())
-            return path
-        base, dot, ext = path.rpartition(".")
-        p2 = (f"{base}_{len(seen):07d}.{ext}" if dot else f"{path}_{len(seen):07d}")
-        while p2.lower() in seen:
-            p2 += "_"
-        seen.add(p2.lower())
-        return p2
-    for path, size in fixed:
-        seen.add(path.lower())
-        yield path, size, r.uniform(10, 180) * _DAY
-    for size in sizes:
-        kind, folder = r.choice(areas)
-        yield unique(folder + sep + _excluded_name(kind, r)), size, r.uniform(1, 1200) * _DAY
-
+# ---- rules ---------------------------------------------------------------------------------
 
 def _rule(attrs: str = "", *, plat: str = "win", optional: bool = False) -> str:
     base = {"plat": plat, "osVers": "*", "ruleIsOptional": "t" if optional else "f",
@@ -335,51 +599,52 @@ def _rule(attrs: str = "", *, plat: str = "win", optional: bool = False) -> str:
     return "<excludefname_rule " + " ".join(f'{k}="{v}"' for k, v in base.items()) + " />"
 
 
-def _rules(root: str, platform: str, user: str, host: str) -> None:
+def _builtin_rules(platform: str) -> tuple[list[str], list[str]]:
+    """(mandatory, editable) rule lines when Backblaze's own rule files are not on this PC."""
     if platform == "windows":
-        mand = [
-            _rule("skipFirstCharThenStartsWith=:\\windows\\"),
-            _rule("skipFirstCharThenStartsWith=:\\program files\\"),
-            _rule("skipFirstCharThenStartsWith=:\\program files (x86)\\"),
-            _rule("skipFirstCharThenStartsWith=:\\programdata\\"),
-            _rule("skipFirstCharThenStartsWith=:\\$recycle.bin\\"),
-            _rule("skipFirstCharThenStartsWith=:\\system volume information\\"),
-            _rule("skipFirstCharThenStartsWith=:\\games\\"),
-            _rule("hasFileExtension=sys"),
-        ]
-        edit = [
-            _rule("contains_1=\\appdata\\local\\"),
-            _rule("contains_1=\\node_modules\\.cache\\", optional=True),
-            _rule("endsWith=.tmp", optional=True),
-        ]
-        info = (f'<myidentity online_hostname="{host}" bzlogin="{user}@example.com" />'
-                f'<globalexcludes excludefiletypes="{_EXCLUDED_TYPES}" />'
-                f'<do_backup><bzdirfilter dir="\\Games\\" whichfiles="none" /></do_backup>')
-    else:
-        mand = [
-            _rule("skipFirstCharThenStartsWith=private/var/tmp/", plat="mac"),
-            _rule("skipFirstCharThenStartsWith=.spotlight-v100/", plat="mac"),
-            _rule("skipFirstCharThenStartsWith=.trashes/", plat="mac"),
-            _rule("skipFirstCharThenStartsWith=.fseventsd/", plat="mac"),
-            _rule("skipFirstCharThenStartsWith=system/", plat="mac"),
-            _rule("skipFirstCharThenStartsWith=library/", plat="mac"),
-            _rule("skipFirstCharThenStartsWith=applications/", plat="mac"),
-            _rule("skipFirstCharThenStartsWith=usr/", plat="mac"),
-            _rule("skipFirstCharThenStartsWith=bin/", plat="mac"),
-            _rule("skipFirstCharThenStartsWith=sbin/", plat="mac"),
-            _rule("skipFirstCharThenStartsWith=cores/", plat="mac"),
-            _rule("skipFirstCharThenStartsWith=private/", plat="mac"),
-            _rule("skipFirstCharThenStartsWith=users/|contains_1=/library/caches/", plat="mac"),
-            _rule("skipFirstCharThenStartsWith=users/|contains_1=/.trash/", plat="mac"),
-            _rule("skipFirstCharThenStartsWith=users/|contains_1=/library/saved application state/", plat="mac"),
-        ]
-        edit = [_rule("contains_1=/node_modules/.cache/", plat="mac", optional=True)]
-        info = (f'<myidentity online_hostname="{host}" bzlogin="{user}@example.com" />'
-                f'<globalexcludes excludefiletypes="{_EXCLUDED_TYPES}" />'
-                f'<do_backup><bzdirfilter dir="/Users/{user}/Downloads/" whichfiles="none" /></do_backup>')
-    _xml(root, "bzexcluderules_mandatory.xml", "bzexclusions", ["<!-- Mandatory Exclusions -->"] + mand)
-    _xml(root, "bzexcluderules_editable.xml", "bzexclusions", ["<!-- Editable Exclusions -->"] + edit)
-    _xml(root, "bzinfo.xml", "bzinfo", [info])
+        mand = [_rule("skipFirstCharThenStartsWith=:" + _BS + "windows" + _BS),
+                _rule("skipFirstCharThenStartsWith=:" + _BS + "program files" + _BS),
+                _rule("skipFirstCharThenStartsWith=:" + _BS + "$recycle.bin" + _BS),
+                _rule("skipFirstCharThenStartsWith=:" + _BS + "system volume information" + _BS),
+                _rule("endsWith=" + _BS + "pagefile.sys|hasFileExtension=sys"),
+                _rule("endsWith=" + _BS + "hiberfil.sys|hasFileExtension=sys"),
+                _rule("endsWith=" + _BS + "swapfile.sys|hasFileExtension=sys")]
+        edit = [_rule("skipFirstCharThenStartsWith=:" + _BS + "users" + _BS + "|contains_1=" + _BS + "appdata" + _BS + "local" + _BS + "temp" + _BS),
+                _rule("contains_1=" + _BS + ".gradle" + _BS, optional=True)]
+        return mand, edit
+    mand = [_rule(f"skipFirstCharThenStartsWith={p}", plat="mac") for p in
+            ("private/var/", ".spotlight-v100/", ".fseventsd/", "system/", "library/", "applications/",
+             "usr/", "bin/", "sbin/", "cores/", "private/")]
+    mand.append(_rule("skipFirstCharThenStartsWith=users/|contains_1=/library/caches/", plat="mac"))
+    return mand, [_rule("contains_1=/node_modules/.cache/", plat="mac", optional=True)]
+
+
+def _installed_rules(platform: str) -> tuple[list[str], list[str]] | None:
+    """Backblaze's own default rule files from this PC (generic rules, no user data); rules naming
+    this PC's user are dropped. None when Backblaze is not installed here."""
+    root = os.path.join(os.environ.get("ProgramData", "C:" + _BS + "ProgramData"), "Backblaze", "bzdata")
+    me = (os.environ.get("USERNAME") or "").lower()
+    out = []
+    for name in ("bzexcluderules_mandatory.xml", "bzexcluderules_editable.xml"):
+        try:
+            with open(os.path.join(root, name), encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError:
+            return None
+        rules = [m.group(0) for m in re.finditer(r"<excludefname_rule\b[^>]*/?>", text)]
+        out.append([x for x in rules if not (me and me in x.lower())])
+    return out[0], out[1]
+
+
+def _write_rules(root: str, platform: str, user: str, host: str, folders: list[str], full: bool) -> None:
+    rules = (_installed_rules(platform) if full else None) or _builtin_rules(platform)
+    _xml(root, "bzexcluderules_mandatory.xml", "bzexclusions", ["<!-- Mandatory Exclusions -->"] + rules[0])
+    _xml(root, "bzexcluderules_editable.xml", "bzexclusions", ["<!-- Editable Exclusions -->"] + rules[1])
+    dirs = "".join(f'<bzdirfilter dir="{d}" whichfiles="none" />' for d in folders)
+    _xml(root, "bzinfo.xml", "bzinfo",
+         [f'<myidentity online_hostname="{host}" bzlogin="{user}@example.com" />'
+          f'<globalexcludes excludefiletypes="{_EXCLUDED_TYPES}" />'
+          f"<do_backup>{dirs}</do_backup>"])
 
 
 def _xml(root: str, rel: str, top: str, lines: list[str]) -> None:
@@ -391,25 +656,14 @@ def _xml(root: str, rel: str, top: str, lines: list[str]) -> None:
         fh.write(f"\n</{top}>\n")
 
 
-def _category_of(path: str) -> str:
-    name = path.rsplit(chr(92), 1)[-1] if chr(92) in path else path.rsplit("/", 1)[-1]
-    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-    for cat, exts in _CATEGORY.items():
-        if ext in exts:
-            return cat
-    return "other"
-
+# ---- reports -------------------------------------------------------------------------------
 
 def _filestats(root: str, files: list, host: str, now: float, platform: str) -> None:
-    acc = {c: [0, 0] for c in (*_CATEGORY, "financial", "email", "browserfavorites", "other", "everything")}
+    acc = {c: [0, 0] for c in (*_CATEGORY, "financial", "other", "everything")}
     for path, size, _m in files:
-        cat = _category_of(path)
-        for c in (cat, "everything"):
+        for c in (_bucket_of(_leaf(path)), "everything"):
             acc[c][0] += 1
             acc[c][1] += size
-    # "other" = everything that is in no named bucket
-    known = sum(acc[c][0] for c in _CATEGORY)
-    acc["other"] = [acc["everything"][0] - known, acc["everything"][1] - sum(acc[c][1] for c in _CATEGORY)]
     attrs = " ".join(f'{c}num="{n}" {c}totbytes="{b}"' for c, (n, b) in acc.items())
     _xml(root, os.path.join("bzfilelists", "filestats.xml"), "filestats",
          ['<progress good_for_installer="true" totally_final="true" />',
@@ -417,53 +671,84 @@ def _filestats(root: str, files: list, host: str, now: float, platform: str) -> 
           f'osdetail="{"macOS" if platform == "mac" else "Windows11"}" {attrs} />'])
 
 
-def _history(root: str, backed: list, queued: list, now: float, r: random.Random) -> None:
-    """bzfileids (cumulative, ~3.7x the live files), the upload queue, 45 days of bz_done records,
-    the event log, and the upload-success history. All from the same fake files."""
+def _history(root: str, backed: list, queued: list, now: float, scale: bool, r: random.Random) -> None:
+    """bzfileids (cumulative, ~3.7x the live files, oldest first), the upload queue, the per-day
+    upload records in the real rhythm, the event log and the upload-success history."""
     dc = os.path.join(root, "bzbackup", "bzdatacenter")
     os.makedirs(dc, exist_ok=True)
-    seq = 0x1000000000000000
     current = sorted(backed, key=lambda f: f[2])
-    target_total = max(len(current), int(len(backed) * 3.7))
-    hist = max(0, target_total - len(current))
+    hist = max(0, int(len(current) * 2.7))
     with open(os.path.join(root, "bzbackup", "bzfileids.dat"), "w", encoding="utf-8", newline="\n") as fh:
+        seq = 0x1000000000000000
         if current:
-            for i in range(hist):
-                p = current[i % len(current)][0]
-                suffix = r.choice([f" (old {r.randint(1, 9)})", f"_{r.randint(2019, 2024)}",
-                                   f" (copy {r.randint(1, 9)})", " (1)"])
-                base, dot, ext = p.rpartition(".")
-                hist_path = (f"{base}{suffix}.{ext}" if dot and not any(c in ext for c in "/\\") else p + suffix)
-                fh.write(f"{seq + i:016x}\t{hist_path}\n")
-        for j, (p, _s, _m) in enumerate(current):
-            fh.write(f"{seq + hist + j:016x}\t{p}\n")
-    with open(os.path.join(dc, f"bz_todo_{int(now * 1000)}_0.dat"), "w", encoding="utf-8", newline="\n") as fh:
-        for p, s, m in queued:
-            fh.write(f"1\t+\t{r.getrandbits(64):016x}\t{int(m * 1000):016x}\t{s}\t{p}\n")
-    events, upload_days = [], []
-    for d in range(45, 0, -1):
-        day_start = now - d * _DAY
-        start = day_start + r.uniform(8, 20) * 3600
-        todays = [f for f in backed if day_start <= f[2] < day_start + _DAY]
-        if not todays and r.random() < 0.6:
-            todays = r.sample(backed, min(len(backed), r.randint(5, 60)))
-        name = f"bz_done_{int(start * 1000)}_0.dat"
-        with open(os.path.join(dc, name), "w", encoding="utf-8", newline="\n") as fh:
-            for path, size, _m in todays:
-                t = start + r.uniform(0, 1800)
-                fh.write("\t".join(["5", "-", "---", _stamp(t), "f_" + f"{r.getrandbits(80):020x}", "n--",
-                                    f"{size:016x}", "n-_a-----", "-" * 20, "-" * 16, "-" * 16, "-", "0",
-                                    path]) + "\n")
-        os.utime(os.path.join(dc, name), (start + 1800, start + 1800))
-        mb = sum(f[1] for f in todays) // 1_000_000
+            for i in range(hist):   # replaced and deleted files, all older than the recent window
+                p = current[r.randrange(len(current))][0]
+                if r.random() < 0.3:
+                    stem, dot, ext = p.rpartition(".")
+                    p = f"{stem} (old).{ext}" if dot and ext.isalnum() else p + " (old)"
+                fh.write(f"{seq:016x}\t{p}\n")
+                seq += 1
+        for p, _s, _t in current:
+            fh.write(f"{seq:016x}\t{p}\n")
+            seq += 1
+    todo = os.path.join(dc, f"bz_todo_{_stamp(now)[:8]}_0.dat")
+    with open(todo, "w", encoding="utf-8", newline="\n") as fh:
+        for p, s, t in queued:
+            fh.write(f"1\t+\t{r.getrandbits(64):016x}\t{int(t * 1000):016x}\t{s}\t{p}\n")
+    os.utime(todo, (now - 1320, now - 1320))
+
+    pattern = _REAL_UPLOADS if scale else [(d, max(1, len(backed) // 200), 0) for d in (1, 3, 6, 9, 14)]
+    by_time = sorted(backed, key=lambda f: f[2])
+    small = [f for f in backed if f[1] < 20_000_000] or backed
+    events, upload_days, prev = [], [], now - 45 * _DAY
+    records: dict[str, list[str]] = {}
+    for days, files_n, bytes_n in sorted(pattern, key=lambda x: -x[0]):
+        day0 = _dt.datetime.fromtimestamp(now - days * _DAY).replace(hour=0, minute=0, second=0, microsecond=0)
+        start = day0.timestamp() + r.uniform(9, 19) * 3600   # one upload day stays inside its own date
+        want = max(1, int(files_n * r.uniform(0.85, 1.15)))
+        want_bytes = int(bytes_n * r.uniform(0.85, 1.15)) if bytes_n else 0
+        new = [f for f in by_time if prev < f[2] <= start]
+        r.shuffle(new)
+        todays, total = [], 0
+        for f in new:   # files added since the last upload day, within the day's real size
+            if len(todays) >= want:
+                break
+            if not want_bytes or total + f[1] <= want_bytes or f[1] < 5_000_000:
+                todays.append(f)
+                total += f[1]
+        tries = 0
+        while len(todays) < want and tries < want * 6:
+            tries += 1
+            f = r.choice(small)
+            if not want_bytes or total + f[1] <= want_bytes * 1.05 or f[1] < 2_000_000:
+                todays.append(f)
+                total += f[1]
+        prev = start
+        name = f"bz_done_{_stamp(start)[:8]}_0.dat"
+        lines = records.setdefault(name, [])
+        for path, size, _t in todays:
+            t = start + r.uniform(0, 5400)
+            lines.append("\t".join(["5", "-", "---", _stamp(t), "f_" + f"{r.getrandbits(80):020x}", "n--",
+                                    f"{size:016x}", "n-_a-----", "-" * 20, "-" * 16, "-" * 16, "-", "0", path]))
         events.append(f"{_dt.datetime.fromtimestamp(start):%Y-%m-%d %H:%M:%S} - STARTBACKUP")
-        if r.random() < 0.35:
-            end = start + r.uniform(300, 3000)
+        if r.random() < 0.3:
+            end = start + r.uniform(900, 7200)
             events.append(f"{_dt.datetime.fromtimestamp(end):%Y-%m-%d %H:%M:%S} - END_BACKUP: "
-                          f"Backed up {len(todays)} FILES / {mb} MB")
+                          f"Backed up {len(todays)} FILES / {total // 1_000_000} MB")
         upload_days.append(f'<one_upload_success_stat date_gmt="{_gmt_day(start)}" '
                            f'num_upload_success="{len(todays)}" num_upload_fail_CvtTooBusy="{r.choice([0, 0, 0, 1])}" '
                            f'num_upload_fail_CvtNoRoom="0" num_upload_fail_UnknownReason="0" />')
+    for name, lines in records.items():
+        fp = os.path.join(dc, name)
+        with open(fp, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("\n".join(lines) + "\n")
+        t = _dt.datetime.strptime(name[8:16], "%Y%m%d").timestamp() + 86000
+        os.utime(fp, (min(t, now), min(t, now)))
+    for d in range(45, 0, -1):   # Backblaze starts a pass most days, even with nothing to send
+        if r.random() < 0.3:
+            t = now - d * _DAY + r.uniform(1, 23) * 3600
+            events.append(f"{_dt.datetime.fromtimestamp(t):%Y-%m-%d %H:%M:%S} - STARTBACKUP")
+    events.sort()
     os.makedirs(os.path.join(root, "bzlogs", "bzreports_eventlog"), exist_ok=True)
     with open(os.path.join(root, "bzlogs", "bzreports_eventlog", "01.log"), "w", encoding="utf-8",
               newline="\n") as fh:
@@ -475,119 +760,180 @@ def _history(root: str, backed: list, queued: list, now: float, r: random.Random
           for d in range(10, 0, -1)])
 
 
+def _fixed_excluded(platform: str, drive: str, r: random.Random) -> list[tuple[str, int]]:
+    """Single big system files a real scan lists (Backblaze excludes them)."""
+    if platform == "windows" and drive == "C":
+        return [("C:" + _BS + "pagefile.sys", int(64 * 1024**3 * r.uniform(0.85, 1.15))),
+                ("C:" + _BS + "hiberfil.sys", int(25 * 1024**3 * r.uniform(0.85, 1.15))),
+                ("C:" + _BS + "swapfile.sys", 16 * 1024**2)]
+    if platform == "mac" and drive == "root":
+        return [("/private/var/vm/swapfile0", 2 * 1024**3), ("/private/var/vm/swapfile1", 2 * 1024**3),
+                ("/private/var/vm/sleepimage", int(16 * 1024**3 * r.uniform(0.85, 1.15)))]
+    return []
+
+
 def write(root: str, files: list[tuple[str, int, float]], *, user: str, host: str,
           now: float | None = None, seed: int = 1, platform: str = "windows",
           profile=None) -> dict:
-    """Write ``root`` (a ``bzdata`` folder) for the targets of ``profile`` (None = full scale)."""
+    """Write ``root`` (a ``bzdata`` folder) for the targets of ``profile`` (None = full scale).
+    ``files``: the demo's own files as (path, size, first seen)."""
     from ..backblaze import paths, rules
     r = random.Random(f"bz-{seed}-{platform}")
     now = now or _dt.datetime.now().timestamp()
+    full = profile is None
     targets = _targets(profile, platform)
-    move = profile is None
-    if move:
+    if full:
         targets = {d: {k: _moved(v, r) for k, v in t.items()} for d, t in targets.items()}
     for sub in ("bzfilelists", "bzreports", os.path.join("bzbackup", "bzdatacenter"),
                 os.path.join("bzlogs", "bzreports_eventlog"), os.path.join("bzlogs", "bzfilelist"),
                 "bzupdates"):
         os.makedirs(os.path.join(root, sub), exist_ok=True)
+    mac = platform == "mac"
+    sep = "/" if mac else _BS
+    areas_of = _MAC_AREAS if mac else _WIN_AREAS
 
+    # Folder rules: one per excluded area that Backblaze's own rules don't already cover, plus
+    # spare rules that match nothing (real lists have many).
     paths.set_bzdata_root(root)
-    _rules(root, platform, user, host)
-    engine = rules.load_engine("mac" if platform == "mac" else "win")
+    _write_rules(root, platform, user, host, [], full)
+    base_engine = rules.load_engine("mac" if mac else "win")
+    folders, specs = [], {}
+    for drive, areas in sorted(areas_of.items()):
+        mount = ("/" if drive == "root" else f"/Volumes/{drive}") if mac else f"{drive}:" + _BS
+        for kind, _c, _b in areas:
+            spec = _area_spec(kind, user, sep)
+            specs[(drive, kind)] = spec
+            top = _rule_top(spec)
+            probe = (mount.rstrip("/") + "/" + top + "/x/y.dat") if mac else (mount + top + _BS + "x" + _BS + "y.dat")
+            if base_engine.classify(probe, mount)[0]:
+                continue   # Backblaze's own rules exclude it already
+            if mac:
+                rel = (mount.rstrip("/") + "/" + top + "/") if drive != "root" else "/" + top + "/"
+            else:
+                rel = (_BS + top + _BS).lower()
+            if rel.lower() not in {f.lower() for f in folders}:
+                folders.append(rel)
+    spare = [("/Users/" + user + "/" + s) if mac else (_BS + s + _BS)
+             for s in (_MAC_SPARE_RULES if mac else _WIN_SPARE_RULES)]
+    folders += spare if full else spare[:3]
+    _write_rules(root, platform, user, host, folders, full)
+    engine = rules.load_engine("mac" if mac else "win")
 
-    by_drive = {}
-    if platform == "windows" and files:
+    by_drive: dict[str, dict] = {}
+    if not mac and files:
         for f in files:
             p = f[0]
             if len(p) > 2 and p[1] == ":" and p[0].upper() in targets:
                 by_drive.setdefault(p[0].upper(), {}).setdefault(p.lower(), (p, int(f[1]), float(f[2])))
 
+    def mount_of(drive: str) -> str:
+        return ("/" if drive == "root" else f"/Volumes/{drive}") if mac else f"{drive}:" + _BS
+
+    # Pass 1: the demo's own files; pass 2: word-list files filling each type up to the real mix.
+    picked = {d: _pick_kopia(by_drive, d, targets[d]["backed"], engine, mount_of(d)) if by_drive else []
+              for d in targets}
+    total_backed = sum(t["backed"] for t in targets.values())
+    real_total = sum(c for c, _b in _REAL_TYPES.values())
+    have = {b: 0 for b in _REAL_TYPES}
+    for sel in picked.values():
+        for p, _s, _t in sel:
+            have[_bucket_of(_leaf(p))] += 1
+    weights = {b: max(0.0, c / real_total * total_backed - have[b]) for b, (c, _bb) in _REAL_TYPES.items()}
+    if sum(weights.values()) <= 0:
+        weights = {b: c for b, (c, _bb) in _REAL_TYPES.items()}
+
     vols, packed = [], {}
-    all_backed, all_queued = [], []
-    grand_uploaded = [0, 0]
     for drive in sorted(targets):
         t = targets[drive]
-        if platform == "windows":
-            key, mount = drive, f"{drive}:\\"
-            token = drive.lower()
-        else:
-            key = "root" if drive == "root" else drive
-            mount = "/" if drive == "root" else f"/Volumes/{drive}"
-            token = "root" if drive == "root" else drive
+        mount = mount_of(drive)
+        key = drive
+        token = drive.lower() if not mac else drive
         guid = "v" + f"{r.getrandbits(92):023x}"
-        selected = _pick_kopia(by_drive, drive, t["backed"], engine, mount, r) if by_drive else []
-        backed = _make_backed(platform, key, t["backed"], t["backed_bytes"], selected, user, r)
-        # Keep the generated files off the rule-excluded paths, then fill any shortfall.
-        safe = []
-        for p, s, m in backed:
-            if not engine.classify(p, mount)[0]:
-                safe.append((p, s, m))
-        if platform == "windows":
-            fallback = (("C:" + chr(92) + "Users" + chr(92) + user + chr(92) + "Documents")
-                        if key == "C" else f"{key}:" + chr(92) + "Documents")
-        else:
-            fallback = (f"/Users/{user}/Documents" if key == "root" else f"/Volumes/{key}/Documents")
-        sep = chr(92) if platform == "windows" else "/"
-        seen_safe = {p.lower() for p, _s, _m in safe}
-        tries = 0
-        while len(safe) < t["backed"] and tries < t["backed"] * 5 + 100:
-            tries += 1
-            cat, folder = r.choice(_folder_pool(platform, key, user, r))
-            p = folder + sep + _template_name(r, cat)
-            if engine.classify(p, mount)[0] or p.lower() in seen_safe:
-                p = fallback + sep + f"file_{len(safe):06d}.dat"
-            while p.lower() in seen_safe:
-                p = fallback + sep + f"file_{len(safe):06d}_{tries}.dat"
-            if not engine.classify(p, mount)[0]:
-                seen_safe.add(p.lower())
-                safe.append((p, max(1, t["backed_bytes"] // max(1, t["backed"])), now - r.uniform(0, 900) * _DAY))
-        while len(safe) < t["backed"]:   # the fallback folder can never be excluded
-            safe.append((fallback + (chr(92) if platform == "windows" else "/") + f"file_extra_{len(safe):06d}.dat",
-                         max(1, t["backed_bytes"] // max(1, t["backed"])), now - r.uniform(0, 900) * _DAY))
-        backed = safe[:t["backed"]]
-        # A small upload queue, as Backblaze always has: those files are in the list but not counted.
-        qn = min(len(backed), max(3, int(len(backed) * 0.004))) if profile != "test" else 2
-        queued = sorted(backed, key=lambda f: -f[2])[:qn]
-        queued_set = {p for p, _s, _m in queued}
-        uploaded = [f for f in backed if f[0] not in queued_set]
-        excluded_count = t["excluded"]
-        excluded_bytes = t["excluded_bytes"]
-        sep = chr(92) if platform == "windows" else "/"
-        fp = os.path.join(root, "bzfilelists",
-                          f"{guid}_{token.lower()}____filelist.dat" if platform == "windows"
-                          else f"{guid}_{token}_filelist.dat")
-        count = 0
-        with open(fp, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(f"# GmtMillisThisListWasStarted {int(now * 1000)}\n#\n# Dir: {mount}\n")
-            for path, size, mtime in backed:
-                fh.write(f"f\t{int(mtime * 1000):x}\t{size}\t{path}\n")
-                count += 1
-            for path, size, age in _make_excluded(platform, key, user, excluded_count, excluded_bytes, r):
-                fh.write(f"f\t{int((now - age) * 1000):x}\t{size}\t{path}\n")
-                count += 1
-            if count < 20:
-                fh.write("# " + "x" * 1200 + "\n")   # never read as an aborted (stub) scan
+        selected = picked[drive]
+        need = max(0, t["backed"] - len(selected))
+        need_bytes = max(1, t["backed_bytes"] - sum(f[1] for f in selected))
+        filler = _make_filler(platform, drive, user, need, need_bytes, weights, engine, mount, now, r)
+        backed, seen = [], set()
+        for p, s, ts in [*selected, *filler]:   # a word-list name can land on a demo file's path
+            if p.lower() not in seen:
+                seen.add(p.lower())
+                backed.append((p, int(s), float(ts)))
+        # A drive with almost nothing added lately gets a few active folders, like any real drive.
+        recent = sum(1 for f in backed if f[2] > now - 45 * _DAY)
+        if filler and recent < len(backed) * 0.003:
+            hot = {f[0].rsplit(sep, 1)[0] for f in r.sample(filler, min(len(filler), 3))}
+            budget = max(2, int(len(backed) * 0.004))
+            moved = []
+            for p, s, ts in backed:
+                if budget and p.rsplit(sep, 1)[0] in hot:
+                    budget -= 1
+                    moved.append((p, s, now - r.uniform(0.2, 44) * _DAY))
+                else:
+                    moved.append((p, s, ts))
+            backed = moved
+        packed[key] = {"guid": guid, "backed": backed, "mount": mount, "token": token}
         vols.append((guid, mount, key))
-        packed[key] = {"guid": guid, "backed": backed, "uploaded": uploaded, "queued": queued,
-                       "backed_bytes": sum(f[1] for f in uploaded),
-                       "queued_bytes": sum(f[1] for f in queued),
-                       "excluded_bytes": int(excluded_bytes), "excluded": excluded_count}
-        all_backed += backed
-        all_queued += queued
-        grand_uploaded[0] += len(uploaded)
-        grand_uploaded[1] += sum(f[1] for f in uploaded)
 
-    used = {k: v["backed_bytes"] + v["queued_bytes"] + v["excluded_bytes"] for k, v in packed.items()}
+    # The upload queue: changed files everywhere (already counted by Backblaze) plus a few new
+    # ones on one or two drives - so most drives read +0 and the Diff shows only those.
+    keys = sorted(packed, key=lambda k: -sum(1 for f in packed[k]["backed"] if f[2] > now - 3 * _DAY))
+    new_drives = set(keys[: (2 if full else 1)])
+    for key, v in packed.items():
+        newest = sorted(v["backed"], key=lambda f: -f[2])
+        n_new = (r.randint(4, 40) if full else 2) if key in new_drives else 0
+        v["new"] = newest[:n_new]
+        pool = [f for f in newest[n_new: n_new + 4000] if f[1] < 400_000_000]
+        n_changed = min(len(pool), int(len(v["backed"]) * r.uniform(0.0008, 0.0025))) if full else min(len(pool), 1)
+        v["changed"] = r.sample(pool, n_changed)
+        new_set = {p for p, _s, _t in v["new"]}
+        v["uploaded"] = [f for f in v["backed"] if f[0] not in new_set]
+
+    for key, v in packed.items():
+        t = targets[key]
+        fp = os.path.join(root, "bzfilelists",
+                          f"{v['guid']}_{v['token']}____filelist.dat" if not mac else f"{v['guid']}_{v['token']}_filelist.dat")
+        scan = now - r.uniform(0.3, 1.8) * _DAY
+        excl_n = excl_b = 0
+        with open(fp, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(f"# GmtMillisThisListWasStarted: {int(scan * 1000):016x}, GmtDateTime: {_gmt(scan)}\n"
+                     f"#\n# Dir: {v['mount']}\n")
+            for path, size, ts in v["backed"]:
+                fh.write(f"f\t{int(ts * 1000):x}\t{size}\t{path}\n")
+            fixed = _fixed_excluded(platform, key, r)
+            rest = max(0, int(t["excluded_bytes"]) - sum(s for _p, s in fixed))
+            for path, size in fixed:
+                fh.write(f"f\t{int((now - r.uniform(1, 30) * _DAY) * 1000):x}\t{size}\t{path}\n")
+                excl_n += 1
+                excl_b += size
+            areas = areas_of.get(key) or areas_of[sorted(areas_of)[0]]
+            share_n = sum(a[1] for a in areas)
+            share_b = sum(a[2] for a in areas)
+            left = max(0, t["excluded"] - len(fixed))
+            for kind, cshare, bshare in areas:
+                spec = specs.get((key, kind)) or _area_spec(kind, user, sep)
+                count = int(left * cshare / share_n)
+                for path, size in _area_files(spec, v["mount"], count, int(rest * bshare / share_b), r):
+                    fh.write(f"f\t{int((now - r.uniform(1, 1200) * _DAY) * 1000):x}\t{size}\t{path}\n")
+                    excl_n += 1
+                    excl_b += size
+            if len(v["backed"]) + excl_n < 20:
+                fh.write("# " + "x" * 1200 + "\n")   # never read as an aborted (stub) scan
+        os.utime(fp, (scan + 3600, scan + 3600))
+        v["excluded_bytes"] = excl_b
+
+    used = {k: sum(f[1] for f in v["backed"]) + v["excluded_bytes"] for k, v in packed.items()}
     _volumes(root, vols, now, used)
-    _reports(root, packed, grand_uploaded, now, host, platform)
-    _filestats(root, [f for k in packed for f in packed[k]["uploaded"]], host, now, platform)
-    _history(root, all_backed, all_queued, now, r)
+    _reports(root, packed, now, platform)
+    uploaded = [f for v in packed.values() for f in v["uploaded"]]
+    _filestats(root, uploaded, host, now, platform)
+    queued = [f for v in packed.values() for f in v["new"] + v["changed"]]
+    _history(root, [f for v in packed.values() for f in v["backed"]], queued, now, full, r)
     _versions(root, platform)
-    nfiles = sum(len(v["uploaded"]) for v in packed.values())
-    nbytes = sum(v["backed_bytes"] for v in packed.values())
+    nfiles = len(uploaded)
+    nbytes = sum(f[1] for f in uploaded)
     log.info("demo bzdata: %d drives, %d backed up (%d bytes), platform %s", len(packed), nfiles, nbytes, platform)
-    return {"drives": sorted(packed), "files": len(all_backed), "backed": nfiles, "bytes": nbytes,
-            "platform": platform}
+    return {"drives": sorted(packed), "files": sum(len(v["backed"]) for v in packed.values()),
+            "backed": nfiles, "bytes": nbytes, "platform": platform}
 
 
 def _volumes(root: str, vols: list, now: float, used: dict) -> None:
@@ -595,7 +941,7 @@ def _volumes(root: str, vols: list, now: float, used: dict) -> None:
              f'gmtMillisThisFileWasWritten="{int(now * 1000)}" gmtDateTimeFileWasWritten="{_stamp(now)}" />']
     for guid, mount, key in vols:
         u = int(used.get(key, 0))
-        total = max(u * 3, 500 * 10**9)
+        total = max(int(u * 1.6), 500 * 10**9)
         lines.append(f'<bzvolume bzVolumeGuid="{guid}" mountPointPathHex="{_hex(mount)}" '
                      f'typeOfVolumeTwoCharCode="hd" lastTimeVolumeWasSeenAttachedGmtMillis="{int(now * 1000)}" '
                      f'numBytesFreeOnVolume="{total - u}" numBytesUsedOnVolume="{u}" '
@@ -603,19 +949,28 @@ def _volumes(root: str, vols: list, now: float, used: dict) -> None:
     _xml(root, "bzvolumes.xml", "contents", lines)
 
 
-def _reports(root: str, packed: dict, grand_uploaded: tuple, now: float, host: str, platform: str) -> None:
+def _reports(root: str, packed: dict, now: float, platform: str) -> None:
     totals, rem = [], []
-    for key, v in packed.items():
-        totals.append(f'<bzvolume bzVolumeGuid="{v["guid"]}" pervol_sel_for_backup_numfiles="{len(v["uploaded"])}" '
-                      f'pervol_sel_for_backup_numbytes="{v["backed_bytes"]}" />')
-        rem.append(f'<bzvolume bzVolumeGuid="{v["guid"]}" pervol_remaining_files_numfiles="{len(v["queued"])}" '
-                   f'pervol_remaining_files_numbytes="{v["queued_bytes"]}" />')
+    grand = [0, 0]
+    rem_all = [0, 0]
+    for _key, v in packed.items():
+        up_n, up_b = len(v["uploaded"]), sum(f[1] for f in v["uploaded"])
+        q = v["new"] + v["changed"]
+        q_n, q_b = len(q), sum(f[1] for f in q)
+        grand[0] += up_n
+        grand[1] += up_b
+        rem_all[0] += q_n
+        rem_all[1] += q_b
+        totals.append(f'<bzvolume bzVolumeGuid="{v["guid"]}" pervol_sel_for_backup_numfiles="{up_n}" '
+                      f'pervol_sel_for_backup_numbytes="{up_b}" />')
+        rem.append(f'<bzvolume bzVolumeGuid="{v["guid"]}" pervol_remaining_files_numfiles="{q_n}" '
+                   f'pervol_remaining_files_numbytes="{q_b}" />')
     _xml(root, os.path.join("bzreports", "bzstat_totalbackup.xml"), "contents",
-         [f'<totals totnumfilesforbackup="{grand_uploaded[0]}" totnumbytesforbackup="{grand_uploaded[1]}" />'] + totals)
+         [f'<totals totnumfilesforbackup="{grand[0]}" totnumbytesforbackup="{grand[1]}" />'] + totals)
     _xml(root, os.path.join("bzreports", "bzstat_remainingbackup.xml"), "contents",
-         [f'<remaining remainingnumfilesforbackup="{sum(len(v["queued"]) for v in packed.values())}" '
-          f'remainingnumbytesforbackup="{sum(v["queued_bytes"] for v in packed.values())}" />'] + rem)
-    last = now - 600
+         [f'<remaining remainingnumfilesforbackup="{rem_all[0]}" '
+          f'remainingnumbytesforbackup="{rem_all[1]}" />'] + rem)
+    last = now - 1500
     _xml(root, os.path.join("bzreports", "bzstat_lastbackupcompleted.xml"), "contents",
          [f'<lastbackupcompleted gmt_millis="{int(last * 1000)}" localdatetime="{_stamp(last)}" />'])
     _xml(root, "overviewstatus.xml", "status",
@@ -627,7 +982,7 @@ def _versions(root: str, platform: str) -> None:
     win, mac = "10.0.4.1081", "10.0.4.1082"
     _xml(root, os.path.join("bzupdates", "clientversion.xml"), "clientversion",
          [f'<release win32_version="{win}" mac_version="{mac}" />',
-          f'<autoupdate win32_version="9.2.2.897" mac_version="9.2.2.898" />'])
+          '<autoupdate win32_version="9.2.2.897" mac_version="9.2.2.898" />'])
     os.makedirs(os.path.join(root, "bzlogs", "bzfilelist"), exist_ok=True)
     with open(os.path.join(root, "bzlogs", "bzfilelist", "bzfilelist01.log"), "w",
               encoding="utf-8", newline="\n") as fh:
@@ -635,28 +990,12 @@ def _versions(root: str, platform: str) -> None:
                  f"os={'mac' if platform == 'mac' else 'win'}\n")
 
 
-def trim(root: str, keep_lists: bool = False) -> int:
-    """After indexing, drop what only the indexer reads: per-day upload records and all but the tail
-    of the file ids. ``keep_lists`` keeps the per-drive file-list bodies, so switching to another
-    folder and back can rebuild (a demo folder needs that). Returns bytes freed."""
+def trim(root: str, keep_lists: bool = False, keep_ids: bool = False) -> int:
+    """After indexing, drop what only the indexer reads: per-day upload records, the file-list
+    bodies unless ``keep_lists`` (a folder switch rebuilds from them), and all but the tail of the
+    file ids unless ``keep_ids`` (a rebuild then counts the full history again). Returns bytes freed."""
     from ..backblaze.queries import _CHURN_TAIL
     freed = 0
-    # The indexer has already counted the full file-id file; keep that number for a later rebuild
-    # after this trim (a demo can switch folders and rebuild from the same read-only data).
-    total = 0
-    try:
-        from ..backblaze import bbdb
-        total = int(bbdb.kv_get(bbdb.connect(), "fileids_total") or 0)
-    except Exception:  # noqa: BLE001 - count the lines below instead
-        total = 0
-    ids_path = os.path.join(root, "bzbackup", "bzfileids.dat")
-    if not total and os.path.exists(ids_path):
-        with open(ids_path, encoding="utf-8", errors="replace") as fh:
-            total = sum(1 for _ in fh)
-    if total:
-        with open(os.path.join(root, "bzbackup", "bzfileids_total.txt"), "w", encoding="utf-8",
-                  newline="\n") as fh:
-            fh.write(str(total))
     dc = os.path.join(root, "bzbackup", "bzdatacenter")
     for name in os.listdir(dc):
         if name.startswith("bz_done_"):
@@ -676,7 +1015,7 @@ def trim(root: str, keep_lists: bool = False) -> int:
                 freed += before - os.path.getsize(path)
     ids = os.path.join(root, "bzbackup", "bzfileids.dat")
     size = os.path.getsize(ids)
-    if size > _CHURN_TAIL:
+    if not keep_ids and size > _CHURN_TAIL:
         with open(ids, "rb") as fh:
             fh.seek(size - _CHURN_TAIL)
             fh.readline()   # a partial first line

@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 import duckdb
 import pyarrow as pa
@@ -1219,15 +1220,18 @@ def _finish_child() -> None:
 
 
 def _demo_backblaze(repos: list[str]) -> None:
-    """Fake Backblaze data from the copy's own latest files (already faked), then indexed: the
-    Windows shape, plus a Mac's own folder kept as a second Backblaze source for the folder switch."""
+    """Fake Backblaze data from the copy's own latest files (already faked), dated by when each
+    first appeared, then indexed once: the Windows shape, plus a Mac's own folder kept unindexed
+    as a second Backblaze source for the folder switch (Settings indexes it when switched to)."""
+    from app.backblaze import paths as bz_paths
+
     from . import demobz
     files, user, host = [], "demo", "DEMO-PC"
     for repo in repos:
         gen = store.current(repo)
         try:
             cur = gen.cursor()
-            files += cur.execute("SELECT full_path, size::BIGINT, epoch(last_seen) FROM pathx "
+            files += cur.execute("SELECT full_path, size::BIGINT, epoch(first_seen) FROM pathx "
                                  "WHERE in_latest").fetchall()
             row = cur.execute("SELECT source FROM src LIMIT 1").fetchone()
         finally:
@@ -1237,24 +1241,61 @@ def _demo_backblaze(repos: list[str]) -> None:
     full = len(files) >= 1_500_000     # the showcase copy gets the real shape; small copies stay small
     win_root = os.path.join(DATA_DIR, "bzdata")
     demobz.write(win_root, files, user=user, host=host, seed=1, profile=None if full else "sample")
+    if full:
+        try:
+            demobz.write(os.path.join(DATA_DIR, "bzdata-mac"), [], user=user, host="studio-mac", seed=2,
+                         platform="mac")
+        except Exception as exc:  # noqa: BLE001 - the Windows demo is still a complete copy
+            log.warning("demo Backblaze Mac data skipped: %s", exc)
+    bz_paths.forget_platform()
+    bz_paths.set_bzdata_root(win_root)
     out = demobz.index(win_root)
-    mac_root = os.path.join(DATA_DIR, "bzdata-mac")
-    try:
-        from app.backblaze import paths as bz_paths
-        if full:
-            demobz.write(mac_root, [], user=user, host="studio-mac", seed=2, platform="mac")
-            demobz.index(mac_root)
-            demobz.trim(mac_root, keep_lists=True)
-    except Exception as exc:  # noqa: BLE001 - the Windows demo is still a complete copy
-        log.warning("demo Backblaze Mac data skipped: %s", exc)
-    finally:
-        from app.backblaze import paths as bz_paths
-        bz_paths.forget_platform()
-        bz_paths.set_bzdata_root(win_root)
-        out = demobz.index(win_root)   # the copy opens on the Windows data; the Mac folder is switchable
-        demobz.trim(win_root, keep_lists=True)   # after the last index, so the full id count is kept
+    # The showcase copy keeps its file lists (the folder switch rebuilds from them) and the whole
+    # file-id history (a rebuild counts it again); small copies keep only what the screens read.
+    demobz.trim(win_root, keep_lists=full, keep_ids=full)
     if not out.get("ok", True):
         raise RuntimeError(f"Backblaze index: {out.get('reason')}")
+
+
+_BZ_DERIVED = ("bzdata", "bzdata-mac", "bz", "kopialens_bz.sqlite", "kopialens_bz.sqlite-wal",
+               "kopialens_bz.sqlite-shm")
+
+
+def _bz_child() -> None:
+    """Runs inside a copy: replace only its Backblaze data (Kopia side and demo clock untouched)."""
+    from config import kopia_repos
+    for name in _BZ_DERIVED:
+        path = os.path.join(DATA_DIR, name)
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+        elif os.path.isfile(path):
+            os.remove(path)
+    _demo_backblaze(kopia_repos())
+    print(json.dumps({"ok": True}))
+
+
+def refresh_backblaze(name: str) -> dict:
+    """Rebuild only the Backblaze data of demo copy ``name`` (data/demo/<name>), never its Kopia
+    side or its clock. demo.json is rewritten (same content plus the time), so the browsing copies
+    copy it again."""
+    folder = os.path.join(DATA_DIR, DEMO_DIR, name)
+    meta_path = os.path.join(folder, "demo.json")
+    if not os.path.isfile(meta_path):
+        raise RuntimeError(f"not a demo copy: {folder}")
+    with open(meta_path, encoding="utf-8") as fh:
+        meta = json.load(fh)
+    if not meta.get("backblaze"):
+        raise RuntimeError(f"demo copy {name} has no Backblaze data")
+    env = _child_env(folder)
+    env.update(KOPIALENS_DEMO_BUILD="1")
+    t0 = time.time()
+    res = subprocess.run([sys.executable, "-m", "app.core.demo", "--bz-child"], cwd=HERE, env=env,
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3600)
+    if res.returncode != 0 or '"ok": true' not in (res.stdout or ""):
+        raise RuntimeError(f"Backblaze refresh failed (exit {res.returncode}): {(res.stderr or '')[-800:]}")
+    meta["backblaze_built_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+    _dump(meta_path, meta)
+    return {"copy": name, "seconds": round(time.time() - t0, 1)}
 
 
 def _sweep(salt: str, check_path: str, repos: list[str]) -> dict:
@@ -1366,8 +1407,15 @@ def menu() -> None:
     from config import REPOS
     print("KopiaLens demo copies\n")
     action = _choose("What would you like to do", ["Open a demo copy", "Make a demo copy",
+                                                   "Rebuild a copy's Backblaze data only",
                                                    "Make sample data (invented, no repo needed)",
                                                    "Open the web demo (in your browser)"])
+    if action and action.startswith("Rebuild a copy's Backblaze"):
+        copies = _copies()
+        if (name := _choose("Which copy", copies) if copies else None):
+            print("Working - this rewrites the copy's Backblaze data and indexes it (a few minutes).")
+            r = refresh_backblaze(name)
+            print(f"Done in {r['seconds']:.0f} s.")
     if action and action.startswith("Open the web demo"):
         print("Building the web demo if anything changed, then opening it. Close this window to stop it.")
         subprocess.run([sys.executable, os.path.join(HERE, "packaging", "build_webdemo.py"),
@@ -1411,9 +1459,15 @@ def main() -> None:
     ap.add_argument("--check", action="store_true", help="also count real names in the copy's files and screens")
     ap.add_argument("--fresh", action="store_true", help="rebuild every repo, even unchanged ones")
     ap.add_argument("--finish", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--bz-child", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--bz-only", metavar="COPY", help="rebuild only a copy's Backblaze data")
     args = ap.parse_args()
     if args.finish:
         _finish_child()
+    elif args.bz_child:
+        _bz_child()
+    elif args.bz_only:
+        print(json.dumps(refresh_backblaze(args.bz_only)))
     elif args.open:
         open_copy(args.open, args.port)
     elif args.repo:

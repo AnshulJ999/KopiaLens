@@ -194,6 +194,11 @@ const bzIndexPart = {
     bzLabel(key) { const v = this.bzVol(key); return v ? v.label : (key ? key + ":" : ""); },
     bzRoot(key) { const v = this.bzVol(key); return v ? v.root : key + ":\\"; },
     bzDriveWidth() { return this.bzSep() === "/" ? 210 : 70; },
+    bzTableId(name) { return this.bzSep() === "/" ? name + "Mac" : name; },   // a Mac's wider Drive column keeps its own saved layout
+    bzDriveSorter() {   // the data's own volume order ("/" first on a Mac), not the key's
+      const idx = (k) => { const i = (this.bzStatus.drives || []).findIndex((d) => d.drive === k); return i < 0 ? 999 : i; };
+      return (a, b) => idx(a) - idx(b);
+    },
     bzCross() { return this.bzStatus.this_computer !== false; },   // another computer's data: no Kopia cross-check
     bzVolOf(path) {   // the volume a path is on (longest matching root)
       const p = String(path || "").toLowerCase(); let best = null, len = -1;

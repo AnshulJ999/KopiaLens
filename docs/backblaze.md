@@ -29,7 +29,7 @@ KopiaLens only reads the Backblaze folder. It never writes there, and it can't d
 | **Sessions** | What was backed up in the last 30 days, recent backup sessions and a daily upload history |
 | **Health** | Signs that Backblaze's file lists are damaged, such as a drive suddenly showing no backed-up files. It also shows the installed Backblaze version and whether a newer one is out |
 
-Backblaze writes a new file list about once or twice a day, so most numbers change about that often. The upload queue updates every few minutes.
+Backblaze writes a new file list about once or twice a day, so most numbers change about that often. The upload queue changes as Backblaze uploads; the Queue page shows when Backblaze last updated it.
 
 ## Backblaze on another computer
 

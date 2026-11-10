@@ -14,7 +14,7 @@ const bzDashboardPart = {
         this.bzChurnRows = this._bzChurnAll.filter((r) => r.status !== "gone").slice(0, 10);  // drop deleted folders from the at-a-glance panel
         this.bzChurnTotal = ch.total_recent || 0;
         setTable("#bzDashTable", ov.rows || [], [
-          { title: "Drive", field: "drive", width: this.bzDriveWidth(), formatter: (c) => escHtml(this.bzLabel(c.getValue())) },
+          { title: "Drive", field: "drive", width: this.bzDriveWidth(), sorter: this.bzDriveSorter(), formatter: (c) => escHtml(this.bzLabel(c.getValue())) },
           { title: "Backed files", field: "backed_files", hozAlign: "right", width: 120, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Backed size", field: "backed_bytes", hozAlign: "right", width: 120, sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
           { title: "Excluded files", field: "excluded_files", hozAlign: "right", width: 120, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
@@ -24,6 +24,7 @@ const bzDashboardPart = {
           { title: "Diff", field: "diff", hozAlign: "right", width: 80, headerTooltip: "KopiaLens's backed-up count minus Backblaze's own count", formatter: (c) => bzDiffHtml(c.getValue(), c.getRow().getData()) },
         ], {
           initialSort: [{ column: "drive", dir: "asc" }],
+          persistenceID: this.bzTableId("bzDashTable"),
           onRowDblClick: (_e, row) => { this.bzTreeDrive = row.getData().drive; this.active = "bz-tree"; this.bzOpenTree(); },
           rowMenu: [
             { label: "Browse drive (Tree)", action: (_e, row) => { this.bzTreeDrive = row.getData().drive; this.active = "bz-tree"; this.bzOpenTree(); } },
@@ -38,12 +39,13 @@ const bzDashboardPart = {
       return order.filter((k) => fs[k]).map((k) => ({ name: k, num: fs[k].num, bytes: fs[k].bytes }));
     },
     bzCatTitle(name) {
-      return {
+      const title = {
         everything: "All backed-up files", pict: "Pictures and images", zips: "Archives",
         browserfavorites: "Bookmarks", docs: "Documents", spreadsheets: "Spreadsheets",
         presentations: "Presentations", financial: "Financial files", email: "Email files",
         video: "Video files", music: "Music files", other: "Other files",
       }[name] || "Files in this category";
+      return title + " · click to search";
     },
     bzCatSearch(cat) {  // click a category -> Search pre-filtered by its extensions ("other" = exclude all known)
       this.bzSearchExt = ""; this.bzSearchExtExclude = ""; this.bzSearchStatus = "all";

@@ -252,14 +252,23 @@ def import_eventlog_archive(eventlog_dir: str) -> dict:
 
 
 def _refresh_queue(con) -> int:
+    dcenter = paths.datacenter_dir()
+    ts = parsers.queue_file_ts(dcenter)
+    if ts is None:
+        left = parsers.read_simple_xml(paths.report("bzstat_remainingbackup.xml"),
+                                       {"files": r'remainingnumfilesforbackup="(\d+)"'})
+        if int(left.get("files") or 0) > 0:
+            # Backblaze is rewriting its queue file (it is briefly missing): keep the last rows.
+            return con.execute("SELECT count(*) FROM queue").fetchone()[0]
     con.execute("DELETE FROM queue")
-    rows = parsers.parse_queue(paths.datacenter_dir())
+    rows = parsers.parse_queue(dcenter)
     vols = paths.volumes()
     data = []
     for sz, p in rows:
         data.append((paths.volume_key_for(p, vols), p, sz))
     if data:
         con.executemany("INSERT INTO queue VALUES(?,?,?)", data)
+    bbdb.kv_set(con, "queue_file_ts", str(ts) if ts else "")
     return len(data)
 
 
@@ -398,15 +407,6 @@ def _refresh_folder_snapshots(con, history_days: int = 90) -> None:
 def _refresh_ids_count(con) -> None:
     """Count the cumulative bzfileids.dat lines (the ~4M total vs ~1.15M selected = dead/historical).
     A full 452 MB scan, so only run on a forced/first build and cache in kv."""
-    hint = paths.fileids_total_hint_path()
-    try:
-        if os.path.exists(hint):
-            with open(hint, encoding="utf-8") as fh:
-                n = int(fh.read().strip())
-            bbdb.kv_set(con, "fileids_total", json.dumps(n))
-            return
-    except Exception:  # noqa: BLE001 - a bad hint falls back to counting the real file
-        pass
     fp = paths.fileids_path()
     if not os.path.exists(fp):
         return
@@ -538,7 +538,7 @@ def freshness() -> dict:
     it was last actually rebuilt, and whether a detected change is still waiting. Reads the bz
     SQLite kv table, so it survives restarts; a missing/unbuilt DB reads as never."""
     out = {"last_check_ts": None, "last_reindex_ts": None, "pending": False,
-           "waiting_for_scan": False, "folder_change_pending": False, "data_ts": None}
+           "waiting_for_scan": False, "folder_change_pending": False}
     try:
         con = bbdb.connect()
         for key in ("last_check_ts", "last_reindex_ts"):
@@ -548,7 +548,7 @@ def freshness() -> dict:
                 pass
         out["pending"] = bbdb.kv_get(con, "reindex_pending") == "1"
         out["waiting_for_scan"] = bbdb.kv_get(con, "waiting_for_scan") == "1"
-        out["folder_change_pending"] = bbdb.kv_get(con, "folder_change_pending") == "1"
+        out["folder_change_pending"] = _change_pending(bbdb.kv_get(con, "folder_change_pending"))
     except Exception:  # noqa: BLE001 - a freshness read must never break its caller
         pass
     try:
@@ -848,7 +848,10 @@ def refresh(force: bool = False) -> dict:
                 bbdb.kv_set(con, "last_reindex_ts", str(time.time()))
             if usable:
                 bbdb.kv_set(con, "waiting_for_scan", "0")
-            bbdb.kv_set(con, "folder_change_pending", "0")
+            # A folder change is done only by a pass that read that folder ("1": marked before
+            # the marker named its folder).
+            if bbdb.kv_get(con, "folder_change_pending") in ("1", folder_change_key()):
+                bbdb.kv_set(con, "folder_change_pending", "0")
             bbdb.kv_set(con, "last_check_ts", str(time.time()))
             bbdb.kv_set(con, "reindex_pending", "0")
             con.commit()
@@ -966,6 +969,36 @@ def refresh_transmit_side() -> dict:
         return {"ok": False, "reason": str(exc)}
 
 
+def folder_change_key() -> str:
+    """The pending-change marker for the folder the reader points at now."""
+    return os.path.normcase(os.path.abspath(paths.bzdata_root()))
+
+
+def _change_pending(value) -> bool:
+    return bool(value) and value != "0"
+
+
+def reconcile_folder_change() -> bool:
+    """A folder change still pending with no rebuild running or queued gets one rebuild: after a
+    quit or crash during the rebuild, or when the pass that finished had read the previous folder."""
+    try:
+        if not _change_pending(bbdb.kv_get(bbdb.connect(), "folder_change_pending")):
+            return False
+    except Exception:  # noqa: BLE001 - no database yet means nothing is pending
+        return False
+    if _STATE["building"] or leftover_worker_running():
+        return False
+    from ..core import reindexq, repos
+    if not repos.exists(repos.BACKBLAZE_ID):
+        return False
+    if any(p.get("repo") == repos.BACKBLAZE_ID for p in reindexq.pending()):
+        return False
+    log.info("Backblaze folder change still pending with no rebuild queued: queueing one")
+    reindexq.request(repos.BACKBLAZE_ID, wait=0, reason="first")
+    reindexq.run_now(repos.BACKBLAZE_ID)
+    return True
+
+
 def _fail(reason: str) -> str:
     """Record a failed refresh. A pending folder change ends too, so the screens show the error and
     whatever data there is instead of waiting for a rebuild that already failed."""
@@ -1026,6 +1059,9 @@ def refresh_via_worker(force: bool = False) -> dict:
             log.error("BZ worker produced unparsable output: %s", exc)
             _fail(f"bad worker output: {exc}")
             return {"ok": False, "reason": f"bad worker output: {exc}"}
+        if summary.get("ok") is False:   # e.g. the store is encrypted and locked: nothing was read
+            _fail(str(summary.get("reason") or "refresh skipped"))
+            return summary
         _STATE["last_summary"] = summary
         _STATE["last_run"] = time.time()
         _STATE["last_error"] = None
@@ -1033,6 +1069,10 @@ def refresh_via_worker(force: bool = False) -> dict:
     finally:
         _STATE["building"] = False
         _WORKER_LOCK.release()
+        try:
+            reconcile_folder_change()
+        except Exception as exc:  # noqa: BLE001 - the refresh result stands either way
+            log.warning("Backblaze folder change check failed: %s", exc)
 
 
 class _LOCKED:

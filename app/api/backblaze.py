@@ -79,7 +79,7 @@ def apply_folder_setting(settings: dict | None = None) -> str:
             try:   # set before queueing (the rebuild clears it); the UI waits even behind a kopia pass
                 from ..backblaze import bbdb
                 con = bbdb.connect()
-                bbdb.kv_set(con, "folder_change_pending", "1")
+                bbdb.kv_set(con, "folder_change_pending", indexer.folder_change_key())
                 con.commit()
             except Exception as exc:  # noqa: BLE001 - the rebuild is still queued below
                 indexer.log.warning("could not mark the Backblaze folder change pending: %s", exc)

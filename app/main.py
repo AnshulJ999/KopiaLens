@@ -537,6 +537,17 @@ def _bz_reindex_due(now_ts: float) -> bool:
     return now_ts - _BZ_LAST_ATTEMPT >= _retry_delay()
 
 
+def _bz_reconcile() -> None:
+    """A Backblaze folder change left pending (quit mid-rebuild) gets its rebuild."""
+    if DEMO_INSTANCE or not _bz_present():
+        return
+    try:
+        from .backblaze import indexer as bz_indexer
+        bz_indexer.reconcile_folder_change()
+    except Exception as exc:  # noqa: BLE001 - must never kill the tick
+        log.error("BZ folder change check failed: %s", exc)
+
+
 def _bz_detect_pass() -> None:
     """Cheap BZ freshness detect on the light interval (): stat + body-hash in this process
     (chunked I/O, GIL released) - never the ~4 min reindex, which stays a worker subprocess behind
@@ -544,6 +555,7 @@ def _bz_detect_pass() -> None:
     file right now and its success re-derives everything the detect would have learned."""
     if DEMO_INSTANCE or not _bz_present():
         return   # a demo never reads this machine's Backblaze data
+    _bz_reconcile()
     try:
         from .backblaze import indexer as bz_indexer
         if bz_indexer.state().get("building"):
@@ -678,6 +690,7 @@ def _bg_worker() -> None:
     work when something is actually due: at most one heavy pass at a time (delegated to a worker
     subprocess), plus a cheap warm pass on its own interval."""
     global _last_light
+    _bz_reconcile()   # a folder change the last run didn't finish shouldn't wait for the first pass
     wait = _startup_wait()
     log.debug("bg worker: waiting %.0fs before the first pass", wait)
     if _bg_stop.wait(wait):

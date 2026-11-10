@@ -82,6 +82,21 @@ def folder_key(path: str, depth: int, sep: str = _SEP) -> str:
 
 
 # ---- upload queue (bz_todo) ------------------------------------------------------------
+def queue_file_ts(dcenter_dir: str) -> float | None:
+    """When Backblaze last wrote its upload queue (the newest bz_todo_*.dat), as epoch seconds."""
+    best = None
+    if not os.path.isdir(dcenter_dir):
+        return None
+    for fn in os.listdir(dcenter_dir):
+        if fn.startswith("bz_todo_") and fn.endswith(".dat"):
+            try:
+                t = os.path.getmtime(os.path.join(dcenter_dir, fn))
+            except OSError:
+                continue
+            best = t if best is None else max(best, t)
+    return best
+
+
 def parse_queue(dcenter_dir: str) -> list[tuple[int, str]]:
     """All bz_todo_*.dat rows -> [(size, full_path)]."""
     out: list[tuple[int, str]] = []

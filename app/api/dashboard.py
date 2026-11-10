@@ -55,6 +55,7 @@ def _ordered(rows: list[dict], order: list) -> list[dict]:
 
 # A showcase copy's stand-in index time, fixed once per run so each poll doesn't read as a new index.
 _SHOW_INDEXED: dict[str, float] = {}
+_SERVER_START = time.time()
 
 
 def _showcase(rec: dict) -> dict:
@@ -254,10 +255,6 @@ def index_freshness() -> dict:
             "error": st.get("error") or stored.get("reason") or (last_listing_error(key) or None),
             "error_at": stored.get("at"),
         }
-        # A demo's clock restarts at demo.json "now" on every start, so a pass saved in an earlier
-        # session can read as later than now.
-        if DEMO_SHOW is not None and is_demo(key) and (not row["last_index"] or row["last_index"] > time.time()):
-            row["last_index"] = row["last_attempt"] = _SHOW_INDEXED.setdefault(key, time.time() - 2 * 3600)
         if cfg.get("kind") == "backblaze":
             #: the badge shows REBUILD age - how old the data actually is.
             # Verification age ("checked Xm ago") rides the row tooltip; a detected
@@ -273,6 +270,11 @@ def index_freshness() -> dict:
                 row["computer"] = info.get("computer", "")
             except Exception:  # noqa: BLE001 - the strip degrades to the nightly timestamps
                 pass
+        # A showcase copy's chips all read "2h ago" unless a pretend pass ran since this server
+        # started: its clock restarts at demo.json "now", so times saved earlier read wrong.
+        if DEMO_SHOW is not None and not (row["last_index"] and _SERVER_START <= row["last_index"] <= time.time()):
+            row["last_index"] = row["last_attempt"] = _SHOW_INDEXED.setdefault(key, time.time() - 2 * 3600)
+            row["pending"] = False
         if row["running"]:
             row["progress"] = worker_progress(key)
         out.append(row)

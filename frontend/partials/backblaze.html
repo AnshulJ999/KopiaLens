@@ -1,11 +1,11 @@
 
       <!-- ===================== BACKBLAZE (kind=backblaze) ===================== -->
-      <div x-show="bzWaiting()" x-cloak class="h-full flex flex-col items-center justify-center gap-2 text-center p-6" data-testid="bz-waiting">
+      <div x-show="repoKind==='backblaze' && bzWaiting()" x-cloak class="h-full flex flex-col items-center justify-center gap-2 text-center p-6" data-testid="bz-waiting">
         <i class="ic ic-mount text-3xl text-muted"></i>
         <div class="text-base font-medium">Waiting for Backblaze's first scan<span x-show="bzStatus.computer" x-text="' on ' + bzStatus.computer"></span></div>
         <p class="text-sm text-muted max-w-lg">Backblaze on that computer hasn't finished its first scan yet. These pages fill in when it does.</p>
       </div>
-      <div x-show="bzRebuilding && !bzWaiting()" x-cloak class="h-full flex flex-col items-center justify-center gap-2 text-center p-6" data-testid="bz-rebuilding">
+      <div x-show="repoKind==='backblaze' && bzRebuilding && !bzWaiting()" x-cloak class="h-full flex flex-col items-center justify-center gap-2 text-center p-6" data-testid="bz-rebuilding">
         <i class="ic ic-refresh text-3xl text-muted"></i>
         <div class="text-base font-medium">Indexing Backblaze…</div>
         <p class="text-sm text-muted max-w-lg">Reading the new folder. These pages reload when it finishes.</p>
@@ -183,7 +183,7 @@
         <div class="flex flex-wrap items-center gap-3 text-sm" x-show="bzQueue">
           <span class="font-medium">Upload queue (scheduled for backup)</span>
           <span x-text="bzQueue && (countOf(bzQueue.total_files, 'file') + ' · ' + fmtB(bzQueue.total_bytes))"></span>
-          <span class="text-muted text-xs">Backblaze updates this every few minutes.</span>
+          <span class="text-muted text-xs" x-show="bzQueue && bzQueue.updated" x-text="bzQueue && bzQueue.updated ? 'Updated ' + fmtRel(new Date(bzQueue.updated * 1000).toISOString()) : ''"></span>
         </div>
         <div class="flex flex-wrap gap-2 text-xs" x-show="bzQueue">
           <template x-for="(d,i) in (bzQueue ? bzQueue.by_drive : [])" :key="i">

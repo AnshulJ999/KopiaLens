@@ -185,5 +185,49 @@ def test_freshness_on_an_unbuilt_db_reads_never(bz_env):
     assert fresh["folder_change_pending"] is False
 
 
+def test_last_scan_reads_backblazes_real_header(bz_env):
+    """Backblaze 10.x writes the scan start as hex milliseconds after a colon (seen on a real list)."""
+    con, root = bz_env
+    fp = _write_filelist(root, "C", "aaa")
+    with open(fp, encoding="utf-8") as fh:
+        body = fh.read().split("\n", 1)[1]
+    with open(fp, "w", encoding="utf-8") as fh:
+        fh.write("# GmtMillisThisListWasStarted: 000001a1bf34e5bc, GmtDateTime: 20261109072757\n" + body)
+    paths._SCAN_CACHE.clear()
+    assert paths.newest_scan_ts() == 0x1a1bf34e5bc / 1000.0
+
+
+def test_the_queue_survives_backblaze_rewriting_its_queue_file(bz_env):
+    """Backblaze's bz_todo file is briefly gone while it is rewritten; a read then must not empty
+    the queue while Backblaze still reports files left to upload."""
+    con, root = bz_env
+    dc = os.path.join(root, "bzbackup", "bzdatacenter")
+    os.makedirs(dc)
+    todo = os.path.join(dc, "bz_todo_20261110_0.dat")
+    with open(todo, "w", encoding="utf-8") as fh:
+        fh.write("1\t+\t0000000000000001\t0000000000000001\t1234\tC:\\data\\a.bin\n")
+    os.makedirs(os.path.join(root, "bzreports"))
+    with open(os.path.join(root, "bzreports", "bzstat_remainingbackup.xml"), "w", encoding="utf-8") as fh:
+        fh.write('<contents><remaining remainingnumfilesforbackup="1" remainingnumbytesforbackup="1234" /></contents>')
+    assert indexer._refresh_queue(con) == 1
+    os.remove(todo)
+    assert indexer._refresh_queue(con) == 1
+    assert queries.queue()["total_files"] == 1
+
+
+def test_a_folder_change_ends_only_with_a_pass_that_read_that_folder(bz_env):
+    """A pass that read another folder (it started before the change) leaves the change pending."""
+    con, root = bz_env
+    fp = _write_filelist(root, "C", "aaa")
+    _seed_watermark(con, fp)
+    _add_drive_row(con)
+    bbdb.kv_set(con, "folder_change_pending", os.path.normcase(os.path.abspath(root + "-other")))
+    assert indexer.refresh(force=True)["ok"]
+    assert indexer.freshness()["folder_change_pending"] is True
+    bbdb.kv_set(con, "folder_change_pending", indexer.folder_change_key())
+    assert indexer.refresh(force=True)["ok"]
+    assert indexer.freshness()["folder_change_pending"] is False
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

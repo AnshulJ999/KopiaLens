@@ -115,9 +115,7 @@ def fileids_path() -> str:
     return _p("bzbackup", "bzfileids.dat")
 
 
-def fileids_total_hint_path() -> str:
-    """Demo data only: the full file-id count, kept after `trim` shortens bzfileids.dat."""
-    return _p("bzbackup", "bzfileids_total.txt")
+
 
 
 def datacenter_dir() -> str:
@@ -372,6 +370,19 @@ def computer_key(name: str | None = None) -> str:
 _SCAN_CACHE: dict[str, tuple] = {}
 
 
+def _scan_start(line: str) -> float | None:
+    """The scan start (epoch) from a file list's first line. Backblaze writes
+    "# GmtMillisThisListWasStarted: 000001a1bf34e5bc, GmtDateTime: ..." (hex milliseconds);
+    a plain decimal value without the colon is read as decimal."""
+    m = re.match(r"#\s*GmtMillisThisListWasStarted(:?)\s*([0-9a-fA-F]+)", line)
+    if not m:
+        return None
+    try:
+        return int(m.group(2), 16 if m.group(1) else 10) / 1000.0
+    except ValueError:
+        return None
+
+
 def newest_scan_ts() -> float | None:
     """Backblaze's own newest scan start (epoch), from the committed file lists' header line.
     None when no list carries one. Backblaze rewrites this header on every scan pass."""
@@ -388,9 +399,7 @@ def newest_scan_ts() -> float | None:
             ts = None
             try:
                 with open(fp, encoding="utf-8", errors="replace") as fh:
-                    m = re.search(r"#\s*GmtMillisThisListWasStarted\s+(\d+)", fh.readline())
-                if m:
-                    ts = int(m.group(1)) / 1000.0
+                    ts = _scan_start(fh.readline())
             except OSError:
                 pass
             _SCAN_CACHE[fp] = (mtime, ts)

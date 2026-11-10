@@ -378,7 +378,9 @@ def queue(depth=1, collapse=None) -> dict:
     top = sorted(({"folder": k, "files": v[0], "bytes": v[1]} for k, v in folders.items()),
                  key=lambda x: x["bytes"], reverse=True)[:150]
     tot = con.execute("SELECT count(*), coalesce(sum(size),0) FROM queue").fetchone()
-    return {"total_files": tot[0], "total_bytes": tot[1], "by_drive": by_drive, "by_folder": top}
+    ts = bbdb.kv_get(con, "queue_file_ts")
+    return {"total_files": tot[0], "total_bytes": tot[1], "by_drive": by_drive, "by_folder": top,
+            "updated": float(ts) if ts else None}
 
 
 # ---- health ---------------------------------------------------------------------------
