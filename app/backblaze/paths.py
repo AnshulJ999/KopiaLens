@@ -293,6 +293,25 @@ def drive_letters() -> list[str]:
     return [v.key for v in volumes()]
 
 
+def mount_roots() -> list[str]:
+    """A Mac's volume mounts other than "/", longest first. Folder depth on those drives counts from
+    the mount, as it counts from the drive letter on Windows. Empty for Windows data."""
+    if platform() != "mac":
+        return []
+    return sorted((v.mount for v in volumes() if v.mount != POSIX_SEP), key=len, reverse=True)
+
+
+def folder_at(path: str, depth: int, sep: str, mounts=()) -> str:
+    """`path` rolled up to the folder `depth` levels below its drive ("C:\\a\\b" or "/Volumes/X/a/b")."""
+    base = 1
+    for m in mounts:
+        if path == m or path.startswith(m + sep):
+            base = m.count(sep) + 1
+            break
+    comps = path.split(sep)
+    return sep.join(comps[:base + depth]) if len(comps) > base + depth - 1 else path
+
+
 def volume_info() -> list[dict]:
     """What the UI needs per volume: its key (the `drive` value in every row), label and root."""
     return [{"drive": v.key, "label": v.label, "root": v.root} for v in volumes()]

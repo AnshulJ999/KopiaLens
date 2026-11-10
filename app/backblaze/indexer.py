@@ -372,6 +372,7 @@ def _refresh_folder_snapshots(con, history_days: int = 90) -> None:
         return  # already captured today's rollup
     agg: dict[tuple, list] = {}
     sep = paths.sep()
+    mounts = paths.mount_roots()
     with queries._files_cursor() as fc:
         cur = fc.execute("SELECT drive, full_path, size FROM files WHERE excluded=0")
         while True:
@@ -379,8 +380,7 @@ def _refresh_folder_snapshots(con, history_days: int = 90) -> None:
             if not batch:
                 break
             for drive, full_path, size in batch:
-                comps = full_path.split(sep)
-                folder = sep.join(comps[:3]) if len(comps) > 2 else full_path
+                folder = paths.folder_at(full_path, 2, sep, mounts)
                 e = agg.get((drive, folder))
                 if e:
                     e[0] += 1; e[1] += size

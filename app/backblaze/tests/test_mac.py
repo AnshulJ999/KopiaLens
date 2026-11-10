@@ -127,6 +127,9 @@ def test_mac_bzdata_indexes_with_backblazes_mac_rules(env, monkeypatch):
     assert root_kids == {"Users", "private", ".Spotlight-V100"}       # no external volume inside "/"
     assert {c["name"] for c in queries.folder_children("/Volumes/Seagate HD")} == {"Photos", ".bzvol", ".Spotlight-V100"}
     assert set(queries.coverage_children("/Users/me")) == {"Documents", "Library"}   # exact case, as kopia keys "/"
+    # Folder depth on an external drive counts from its mount, as from a drive letter on Windows.
+    groups = {g["folder"] for g in queries.group_by_folder(depth=1, status="backed")}
+    assert groups == {"/Users", "/Volumes/Seagate HD/Photos"}
 
     # Rebuilding only the startup disk keeps the external drive's own rows.
     _write(root, "bzfilelists/v0013aaaa_root_filelist.dat", _filelist(BOOT + [(4, "/Users/me/new.txt")]))

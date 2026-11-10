@@ -615,7 +615,7 @@ document.addEventListener("alpine:init", () => {
       if (row.running) return "indexing now";
       if (row.waiting_for_scan) return "waiting for first scan";
       if (!row.last_index) return "never";
-      const mins = Math.round((Date.now() / 1000 - row.last_index) / 60);
+      const mins = Math.max(0, Math.round((Date.now() / 1000 - row.last_index) / 60));   // a clock a little ahead never reads "-1m"
       if (mins < 60) return `${mins}m ago`;
       const hrs = Math.round(mins / 60);
       return hrs < 36 ? `${hrs}h ago` : `${Math.round(hrs / 24)}d ago`;

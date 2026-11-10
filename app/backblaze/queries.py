@@ -102,16 +102,16 @@ def _dict_rows(cur, rows) -> list[dict]:
     return [dict(zip(cols, r)) for r in rows]
 
 
-def _apply_collapse(path: str, depth: int, collapse_lc):
+def _apply_collapse(path: str, depth: int, collapse_lc, mounts=()):
     """Roll a path up to a folder key at `depth`, EXCEPT paths under a collapse prefix (e.g.
-    `E:\\Kopia`) which roll up to that prefix as a single unit. `collapse_lc` = [(lower, original)]."""
+    `E:\\Kopia`) which roll up to that prefix as a single unit. `collapse_lc` = [(lower, original)];
+    `mounts` = `paths.mount_roots()`, so depth on a Mac's external drive counts from its mount."""
     sep = _sep()
     pl = path.lower()
     for clc, corig in collapse_lc:
         if pl == clc or pl.startswith(clc + sep):
             return corig
-    comps = path.split(sep)
-    return sep.join(comps[:depth + 1]) if len(comps) > depth else path
+    return paths.folder_at(path, depth, sep, mounts)
 
 _SORT_COLS = {"size": "size", "name": "name", "path": "path_lc", "drive": "drive", "ext": "ext"}
 
@@ -272,6 +272,7 @@ def _overview_live() -> dict:
 def group_by_folder(drive=None, depth=2, status="backed", min_files=1, top=300, collapse=None) -> list[dict]:
     where, params = _where("", drive, None, status, 0)
     cl = [(c.lower(), c) for c in (collapse or [])]
+    mounts = paths.mount_roots()
     counts: dict[str, list] = {}
     with _files_cursor() as fc:
         cur = fc.execute(f"SELECT full_path, size FROM files{where}", params)
@@ -280,7 +281,7 @@ def group_by_folder(drive=None, depth=2, status="backed", min_files=1, top=300, 
             if not batch:
                 break
             for full_path, size in batch:
-                key = _apply_collapse(full_path, depth, cl)
+                key = _apply_collapse(full_path, depth, cl, mounts)
                 e = counts.get(key)
                 if e:
                     e[0] += 1; e[1] += size
@@ -365,9 +366,10 @@ def queue(depth=1, collapse=None) -> dict:
     by_drive = [dict(r) for r in con.execute(
         "SELECT drive, count(*) files, sum(size) bytes FROM queue GROUP BY drive ORDER BY drive")]
     cl = [(c.lower(), c) for c in (collapse or [])]
+    mounts = paths.mount_roots()
     folders: dict[str, list] = {}
     for full_path, size in con.execute("SELECT full_path, size FROM queue"):
-        key = _apply_collapse(full_path, depth, cl)
+        key = _apply_collapse(full_path, depth, cl, mounts)
         e = folders.get(key)
         if e:
             e[0] += 1; e[1] += size
@@ -534,9 +536,9 @@ def naming_gap(query: str, depth: int = 2, top: int = 300) -> list[dict]:
                 f"SELECT full_path, size, excluded FROM files WHERE {cond}", cp).fetchall()
     agg: dict[str, dict] = {}
     sep = _sep()
+    mounts = paths.mount_roots()
     for full_path, size, excluded in rows:
-        comps = full_path.split(sep)
-        key = sep.join(comps[:depth + 1]) if len(comps) > depth else full_path
+        key = paths.folder_at(full_path, depth, sep, mounts)
         e = agg.get(key)
         if not e:
             e = agg[key] = {"folder": key, "backed_files": 0, "backed_bytes": 0,
@@ -563,8 +565,9 @@ def _churn_recompute(depth: int, collapse_lc) -> dict:
     counts: dict = {}
     if not size:
         return counts
+    mounts = paths.mount_roots()
     for path in parsers.iter_fileids_from(fp, max(0, size - _CHURN_TAIL)):
-        k = _apply_collapse(path, depth, collapse_lc)
+        k = _apply_collapse(path, depth, collapse_lc, mounts)
         counts[k] = counts.get(k, 0) + 1
     return counts
 
