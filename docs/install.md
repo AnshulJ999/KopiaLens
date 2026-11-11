@@ -11,7 +11,7 @@ The first run may show a "Windows protected your PC" notice, which Windows shows
 
 ## macOS
 
-Download the `.dmg`, open it, and drag **KopiaLens** to **Applications**.
+Download the `.dmg` for your Mac: `arm64` for Apple silicon (M1 and later), `x64` for Intel. Open it, and drag **KopiaLens** to **Applications**.
 
 KopiaLens isn't notarized by Apple, so macOS blocks it the first time:
 

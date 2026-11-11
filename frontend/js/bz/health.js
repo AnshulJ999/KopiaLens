@@ -48,7 +48,7 @@ const bzHealthPart = {
       await this.wrap(async () => {
         this.bzHealth = await getJson("/api/backblaze/health");
         setTable("#bzHealthTable", this.bzHealth.drives || [], [
-          { title: "Drive", field: "drive", width: this.bzDriveWidth(), sorter: this.bzDriveSorter(), formatter: (c) => iconHtml("mount", "kl-name-ic mr-1") + escHtml(this.bzLabel(c.getValue())) },
+          { title: "Drive", field: "drive", width: this.bzDriveWidth(), sorter: this.bzDriveSorter(), formatter: (c) => escHtml(this.bzLabel(c.getValue())) },
           { title: "Backed files", field: "backed_files", hozAlign: "right", width: 130, sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "BZ authoritative", field: "auth_files", hozAlign: "right", width: 140, sorter: "number", headerTooltip: "The number Backblaze itself reports for this drive", formatter: (c) => c.getValue() == null ? "—" : Number(c.getValue()).toLocaleString(NUM_LOCALE) },
           { title: "Diff", field: "diff", hozAlign: "right", width: 90, headerTooltip: "KopiaLens's backed-up count minus Backblaze's own count", formatter: (c) => bzDiffHtml(c.getValue(), c.getRow().getData()) },
