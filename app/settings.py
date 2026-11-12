@@ -9,7 +9,8 @@ import time
 from copy import deepcopy
 from typing import Any
 
-from config import COMPILED, SETTINGS_FILE, TESTING_BUILD
+from appversion import prerelease
+from config import APP_VERSION, COMPILED, SETTINGS_FILE, TESTING_BUILD
 from .core import atomicfile
 
 
@@ -140,7 +141,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "retention_chip_color": "#2563eb",  # the custom chip colour
         "update_check": True,        # daily check for a newer version (docs/usage-stats.md)
         "usage_stats": True,         # anonymous usage stats sent with that check
-        "update_channel": "stable",  # stable | beta (beta also offers beta versions)
+        # stable | beta (beta also offers beta versions); a beta build starts on beta
+        "update_channel": "beta" if prerelease(APP_VERSION) else "stable",
         "debug_log": False,          # also write data/logs/kopialens-debug.log at DEBUG (env KOPIALENS_DEBUG_LOG overrides)
         # Settings > Experimental (shown when "experimental" is on); a testing build starts with both on.
         "experimental": TESTING_BUILD,
@@ -238,7 +240,7 @@ OWN_ROUTE_SETTINGS = {
 # file's own value on purpose, or their default depends on the build.
 KEEP_EXPLICIT = frozenset(OWN_ROUTE_SETTINGS) | {
     "auth_enabled", "bind_host", "base_path", "encryption", "encryption_level", "kopia_path",
-    "experimental", "exp_notes", "control_api"}
+    "experimental", "exp_notes", "control_api", "update_channel"}
 
 
 def _same(a: Any, b: Any) -> bool:

@@ -79,20 +79,18 @@ def test_an_update_the_licence_does_not_cover_names_the_newest_covered_version(m
     assert st["licence"] == {"covers_through": 2, "latest_covered": "2.9.3"}
 
 
-def test_usage_stats_wait_for_a_day_old_persistent_install(monkeypatch, sent):
-    """A container recreated without a data volume gets a new id each time; it must never count."""
+def test_usage_stats_start_on_the_first_check_of_a_persistent_install(monkeypatch, sent):
+    """A copy tried once still counts; a container recreated without a data volume gets a new id
+    each time, so it must never count."""
     from app.core import host
     monkeypatch.setattr(checkin, "stats_ready", _real_stats_ready)
     monkeypatch.setattr(host, "data_persistent", lambda: True)
     _switches(monkeypatch, True, True)
     checkin.check_now()
-    assert "install_id" not in sent[-1]                       # first day: update check only
-    checkin._write_state(install_created_at=time.time() - checkin.STATS_AFTER - 1)
-    checkin.check_now()
     assert "install_id" in sent[-1]
     monkeypatch.setattr(host, "data_persistent", lambda: False)
     checkin.check_now()
-    assert "install_id" not in sent[-1]
+    assert "install_id" not in sent[-1] and sent[-1]["stats"] == "waiting"
 
 
 def test_check_now_compares_even_with_automatic_checks_off(monkeypatch, sent):

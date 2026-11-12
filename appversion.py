@@ -39,6 +39,11 @@ def order_key(version: str) -> tuple:
     return nums, 0, tuple((0, int(p), "") if p.isdigit() else (1, 0, p) for p in pre.split("."))
 
 
+def prerelease(version: str) -> bool:
+    """True for an alpha, beta or rc version ("1.1.0-beta.1")."""
+    return order_key(version)[1] == 0
+
+
 def _read(path: str) -> str:
     try:
         with open(path, encoding="utf-8") as fh:

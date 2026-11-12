@@ -113,20 +113,11 @@ def install_id() -> str:
     return _write_state(install_id=secrets.token_hex(16), install_created_at=time.time())["install_id"]
 
 
-STATS_AFTER = 24 * 3600
-
-
 def stats_ready() -> bool:
-    """Usage stats start once the install id is a day old and the data folder survives a restart,
-    so a container recreated without a volume (a new id each time) is never counted."""
+    """Usage stats need a data folder that survives a restart, so a container recreated without a
+    volume (a new id each time) is never counted. They start with an install's first check-in."""
     from .host import data_persistent
-    if not data_persistent():
-        return False
-    install_id()
-    created = _read_state().get("install_created_at")
-    if not isinstance(created, (int, float)):
-        created = _write_state(install_created_at=time.time())["install_created_at"]
-    return time.time() - created >= STATS_AFTER
+    return data_persistent()
 
 
 def install_type() -> str:
@@ -180,7 +171,7 @@ def _index_bytes(repos: list[str]) -> int:
 
 
 def _stats_state() -> str:
-    """Why usage stats are or aren't sent: on, off, or waiting (first day, or a data folder that isn't kept)."""
+    """Why usage stats are or aren't sent: on, off, or waiting (a data folder that isn't kept)."""
     if not stats_enabled():
         return "off"
     return "on" if stats_ready() else "waiting"

@@ -759,6 +759,8 @@ def refresh(force: bool = False) -> dict:
                 if parsers.is_stub_filelist(vol.filelist):
                     if have_rows:
                         log.warning("BZ %s: filelist is a stub (aborted scan) - keeping the existing index", vol.label)
+                    else:
+                        log.warning("BZ %s: filelist is a stub (aborted scan) - nothing to index until Backblaze rescans it", vol.label)
                     reindex = False
                 else:
                     body_same = False
@@ -812,7 +814,8 @@ def refresh(force: bool = False) -> dict:
                              vol.label, trigger, total, backed, excluded)
                 else:
                     if parquet:
-                        t, b, e = pq.drive_counts(vol.key)
+                        # Only a published drive has counts: a first build or a cleared store has none yet.
+                        t, b, e = pq.drive_counts(vol.key) if have_rows else (0, 0, 0)
                         drives[vol.key] = {"total": t, "backed": b, "excluded": e, "reindexed": False}
                     else:
                         row = con.execute(
