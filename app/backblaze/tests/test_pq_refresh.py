@@ -79,6 +79,23 @@ def test_parquet_refresh_bootstraps_and_rebuilds(pq_env):
         assert cur.execute("SELECT count(*) FROM files").fetchone()[0] == 2
 
 
+def test_first_build_with_an_aborted_scan_and_a_small_drive(pq_env):
+    """A first build once failed on any header-only (aborted) filelist: the drive's counts were read
+    from a store not published yet, so every retry failed the same way. A drive with only a few
+    files is a real scan, however small its filelist."""
+    con, root, bzroot = pq_env
+    _write_filelist(root, "C", "aaa")
+    d = os.path.join(root, "bzfilelists")
+    with open(os.path.join(d, "v0005_d____filelist.dat"), "w", encoding="utf-8") as fh:
+        fh.write(f"{HEADER}\n#\n# Dir: D:\\\nf\t{'0' * 16}\t5\tD:\\a.txt\n")
+    with open(os.path.join(d, "v0005_h____filelist.dat"), "w", encoding="utf-8") as fh:
+        fh.write(HEADER + "\n")
+    summary = indexer.refresh()
+    assert summary["ok"] and summary["changed"] == ["C", "D"]
+    assert summary["drives"]["H"] == {"total": 0, "backed": 0, "excluded": 0, "reindexed": False}
+    assert set(pq.read_manifest()["drives"]) == {"C", "D"}
+
+
 def test_parquet_store_switch_leaves_queue_and_kv_in_sqlite(pq_env):
     con, root, bzroot = pq_env
     dcenter = os.path.join(root, "bzbackup", "bzdatacenter")

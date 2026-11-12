@@ -171,6 +171,29 @@ def _index_sizes() -> dict:
         return {}
 
 
+def _bz_drive_lines() -> list[str]:
+    """Each Backblaze drive: its filelist's size, whether it is an aborted scan, whether the index holds it."""
+    try:
+        from ..backblaze import parsers, paths, pq, queries
+        if not paths.exists():
+            return ["  Backblaze data folder not found"]
+        parquet = queries._store() == "parquet"
+        out = []
+        for vol in paths.volumes():
+            try:
+                size = f"{os.path.getsize(vol.filelist)} bytes"
+            except OSError:
+                size = "missing"
+            state = "aborted scan" if parsers.is_stub_filelist(vol.filelist) else "ok"
+            line = f"  Drive {vol.letter}: filelist {size}, {state}"
+            if parquet:
+                line += ", in the index" if pq.has_drive(vol.letter) else ", not in the index"
+            out.append(line)
+        return out
+    except Exception as exc:  # noqa: BLE001 - the bundle never fails over one section
+        return [f"  Backblaze drives could not be read: {exc}"]
+
+
 def _repo_lines() -> list[str]:
     from . import repos as repos_mod
     from .runhistory import read_tail
@@ -180,6 +203,8 @@ def _repo_lines() -> list[str]:
         kind = rec.get("kind", "kopia")
         if kind != "kopia":
             lines.append(f"Repository {rid}: {kind}")
+            if kind == "backblaze":
+                lines += _bz_drive_lines()
             continue
         info = repos_mod.storage_info(rid)
         line = f"Repository {rid}: kopia, storage {info.get('type') or 'unknown'}"

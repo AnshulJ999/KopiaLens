@@ -42,9 +42,12 @@ def iter_filelist(path: str):
 
 
 def is_stub_filelist(path: str) -> bool:
-    """A filelist left as a tiny header-only stub = aborted scan (the F:-drive bug signature)."""
+    """An aborted scan: the filelist holds its header line and nothing after it (the 77-byte F:-drive
+    signature). A finished scan lists folders after the header, however few files the drive has."""
     try:
-        return os.path.getsize(path) < 1000
+        with open_ro(path, mode="rb") as fh:
+            fh.readline()
+            return not fh.read(4096).strip()
     except OSError:
         return True
 
