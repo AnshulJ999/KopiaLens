@@ -18,13 +18,13 @@ When you click **Install and restart**, the app asks the update service for the 
 | Update channel | `stable` or `beta` |
 | Install type | `windows`, `linux`, `macos`, `docker`, `ha_addon` (Home Assistant add-on) or `source` |
 | Operating system | `windows`, `linux` or `macos` |
-| Usage stats | `off`, or `waiting` (an install's first day, or a Docker container whose data folder isn't on a volume). Not sent when usage stats are on. Once, after you turn usage stats off, it also says so. No install ID is sent with this. |
+| Usage stats | `off`, or `waiting` (a Docker container whose data folder isn't on a volume). Not sent when usage stats are on. Once, after you turn usage stats off, it also says so. No install ID is sent with this. |
 
 **Anonymous usage stats** add:
 
 | Field | Example |
 |---|---|
-| Install ID | A random ID created by KopiaLens and kept in its data folder (`checkin.json`). It counts this install once instead of once a day. It isn't linked to you, your computer or your licence. Usage stats start on an install's second day, and never from a Docker container whose data folder isn't on a volume. |
+| Install ID | A random ID created by KopiaLens and kept in its data folder (`checkin.json`). It counts this install once instead of once a day. It isn't linked to you, your computer or your licence. Usage stats start with an install's first check, and never come from a Docker container whose data folder isn't on a volume. |
 | CPU type | `amd64`, `arm64` |
 | Licence | `free`, or the licence plan's name (`pro-yearly`, `lifetime`); a subscription ends in `-sub` (`pro-yearly-sub`) |
 | Repositories | How many kopia repositories KopiaLens has |
@@ -41,7 +41,7 @@ When you click **Install and restart**, the app asks the update service for the 
 | Memory | A rough size class of this computer's memory, or the container's limit if lower: under 4 GB, 4-8 GB, 8-16 GB or over 16 GB |
 | Failed update | If an in-app update failed, the step it stopped at (`downloading`, `installing`, ...), sent once |
 
-The service also records the **country** the request came from (worked out by Cloudflare), only when usage stats are on.
+The service also records the **country** the request came from (worked out by Cloudflare), only when usage stats are on, including while they're `waiting`. Never when they're off.
 
 ## What's never sent
 
@@ -55,7 +55,7 @@ The service also records the **country** the request came from (worked out by Cl
 
 - Your IP address is **not** stored.
 - With usage stats on: one row per install with the fields above, the first and last day it checked in, and how many days it was opened. An install that hasn't checked in for 90 days is deleted.
-- Daily totals: how many checks came in per version, install type, OS and licence, how many installs were opened, and how many used each feature. For checks without usage stats: whether stats were off or not started yet, and how many installs turned them off that day. The update channel is kept only in the install's row.
+- Daily totals: how many checks came in per version, install type, OS and licence, how many installs were opened, and how many used each feature. For checks without usage stats: whether stats were off or waiting, how many installs turned them off that day, and for a waiting check, the country. The update channel is kept only in the install's row.
 
 ## Feedback
 
