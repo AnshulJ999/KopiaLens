@@ -28,8 +28,8 @@ On a Mac, macOS can stop KopiaLens from reading Backblaze's data folder. Setup t
 | **Exclusions** | Backblaze's exclusion rules: your folder rules, excluded extensions, and its built-in rules. Shows what each rule keeps out, and rules that match nothing on disk now |
 | **Churn** | Recently added files by folder, to spot folders that keep changing |
 | **Queue** | Files waiting to be uploaded, by folder and by drive |
-| **Sessions** | What Backblaze uploaded each day, its backup runs, and its own count of uploads that worked or failed ([more below](#sessions)) |
-| **Health** | Signs of trouble in Backblaze's own records, the installed Backblaze version and whether a newer one is out ([more below](#health)) |
+| **Sessions** | What Backblaze uploaded each day, its backup runs, and its own count of uploads that worked or failed |
+| **Health** | Signs of trouble in Backblaze's own records, the installed Backblaze version and whether a newer one is out |
 
 Backblaze writes a new file list about once or twice a day, so most numbers change about that often. The upload queue changes as Backblaze uploads; the Queue page shows when Backblaze last updated it.
 
