@@ -38,6 +38,25 @@ def default_bzdata() -> str | None:
 def looks_like_bzdata(path: str | None) -> bool:
     """A Backblaze data folder: it holds the per-drive file lists."""
     return bool(path) and os.path.isdir(os.path.join(path, "bzfilelists"))
+
+
+def access(path: str | None = None) -> str:
+    """"ok" when the folder holds Backblaze's file lists, "blocked" when it or its file lists can't
+    be listed (folder permissions, or macOS privacy settings), "missing" otherwise."""
+    path = path if path is not None else _bzdata_root
+    if not path:
+        return "missing"
+    for folder in (path, os.path.join(path, "bzfilelists")):
+        try:
+            os.listdir(folder)
+        except PermissionError:
+            return "blocked"
+        except OSError:
+            return "missing"
+    return "ok"
+
+
+BLOCKED_HELP_MAC = "allow KopiaLens in System Settings › Privacy & Security › Full Disk Access"
 try:
     from config import DATA_DIR, DEMO_INSTANCE
 except ImportError:   # standalone tooling outside the app

@@ -7,9 +7,25 @@ KopiaLens is not affiliated with Backblaze.
 ## What it does
 
 - **Reads only.** It never writes, renames, or deletes anything in Backblaze's data folder. Every read goes through `safety.py`, which refuses any write mode and any write under Backblaze's folders.
-- **Finds what Backblaze backs up.** It reads Backblaze's per-drive file lists and applies Backblaze's own exclusion rules (mandatory rules, your exclusions, file types, and folder choices), so the result matches Backblaze's own counts.
+- **Finds what Backblaze backs up.** Backblaze's file lists include files it skips, so the engine applies Backblaze's own exclusion rules (mandatory rules, your exclusions, file types, and folder choices) to tell them apart. Its counts match Backblaze's own on every drive: checked on 7 drives and about 1.1 million files.
 - **Reads Windows and Mac data**, on this computer or from another computer's shared `bzdata` folder.
 - **Builds an index** of every file (Parquet files read with DuckDB), plus small history tables in SQLite: the upload queue, upload days, folder history, and Backblaze's own problem reports.
+- **Checks Backblaze's health** from Backblaze's own records: a drive that suddenly lists no backed-up files, an interrupted drive scan, a mass deletion, files Backblaze lost track of and queued again, and an outdated Backblaze version.
+
+## What it reads
+
+All inside Backblaze's data folder (`C:\ProgramData\Backblaze\bzdata` on Windows, `/Library/Backblaze.bzpkg/bzdata` on a Mac):
+
+| What | Why |
+|---|---|
+| `bzfilelists/` | Every file on each drive that Backblaze scanned |
+| `bzvolumes.xml`, `bzinfo.xml` | Drives, this computer's name, your exclusions and folder choices |
+| `bzexcluderules_*.xml` | Backblaze's exclusion rules |
+| `bzbackup/bzdatacenter/bz_done_*.dat`, `bz_todo_*.dat` | What was uploaded, and what's waiting |
+| `bzbackup/bzfileids.dat` | File history, for the folders that change most |
+| `bzreports/` | Backblaze's own counts and problem reports |
+| `bzlogs/` | Backup sessions, the installed version, and self-heal results |
+| `bzupdates/clientversion.xml` | The newest Backblaze version |
 
 ## Files
 
@@ -29,16 +45,14 @@ KopiaLens is not affiliated with Backblaze.
 
 `app/core/textmatch.py` (search matching) and `app/core/atomicfile.py` (safe file writes) are published with it.
 
-## What's not here
-
-The code imports a few parts of KopiaLens that aren't published yet: its settings, configuration, logging, encryption, path helpers, and scheduler. So this folder is for reading, not for running on its own.
+The code published here is for auditing only right now. It can't be run on its own without the rest of KopiaLens.
 
 ## Licence
 
-Copyright (C) 2025-2026 Anshul Jain.
+Copyright (C) 2026 Anshul Jain.
 
-GNU Affero General Public License v3.0 (`LICENSE`), for the files in this folder and the two files above. The rest of KopiaLens has its own licence.
+GNU Affero General Public License v3.0 (`LICENSE`), for the files in this folder and the two files above.
 
 ## Contributing
 
-Bug reports and questions are welcome in the [KopiaLens issues](https://github.com/AnshulJ999/KopiaLens/issues). Pull requests aren't open yet: they'll need a short contributor agreement, which isn't set up.
+Bug reports and questions are welcome in the [KopiaLens issues](https://github.com/AnshulJ999/KopiaLens/issues). Pull requests aren't open yet.

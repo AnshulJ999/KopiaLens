@@ -717,6 +717,10 @@ def refresh(force: bool = False) -> dict:
     """Incremental refresh of the whole BZ index. Returns a per-drive summary."""
     if not paths.exists():
         return {"ok": False, "reason": f"bzdata not found at {paths.bzdata_root()}"}
+    if paths.access() == "blocked":
+        mac = f"; on a Mac, {paths.BLOCKED_HELP_MAC}" if sys.platform == "darwin" else ""
+        return {"ok": False, "reason": f"KopiaLens can't open Backblaze's data folder ({paths.bzdata_root()}): "
+                                       f"permission denied{mac}"}
     from ..index import crypto
     if pq.target_state() and not crypto.unlocked():
         # The BZ store is encrypted and this process holds no key: nothing may index in the clear.

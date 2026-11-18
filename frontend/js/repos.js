@@ -118,6 +118,15 @@ const reposPart = {
       } catch (e) { cx.bzFolderError = e.message || String(e); }
       cx.bzFolderBusy = false;
     },
+    async cxBzRecheck() {   // after the user allows access to a blocked Backblaze folder
+      const cx = this.cx;
+      cx.bzFolderBusy = true;
+      try {
+        const bz = await getJson("/api/setup/backblaze");
+        cx.bz = bz; cx.bzPicked = !!(bz.found && !bz.added);
+      } catch (e) { cx.bzFolderError = e.message || String(e); }
+      cx.bzFolderBusy = false;
+    },
     async cxAddBackblaze() {
       const cx = this.cx;
       const r = await _setupPost("/api/setup/backblaze", { index: !this.ob });

@@ -8,6 +8,7 @@ call only ever happens because the user asked for one (a probe, a create/connect
 from __future__ import annotations
 
 import os
+import sys
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
@@ -321,8 +322,11 @@ def backblaze_state() -> dict:
     from config import DEMO_INSTANCE
     from ..backblaze import paths as bz_paths
     path = bz_paths.bzdata_root()
-    found = not DEMO_INSTANCE and bz_paths.looks_like_bzdata(path)
+    state = "missing" if DEMO_INSTANCE else bz_paths.access(path)
+    found = state == "ok"
     return {"found": found, "path": path if found else "",
+            "blocked": state == "blocked", "blocked_path": path if state == "blocked" else "",
+            "host_mac": sys.platform == "darwin",
             "added": repos.exists(repos.BACKBLAZE_ID),
             "drives": len(bz_paths.volumes()) if found else 0,
             "default": bz_paths.default_bzdata() or "",
@@ -343,10 +347,16 @@ def backblaze_folder(payload: BackblazeFolderRequest) -> dict:
     path = payload.path.strip().strip('"')
     if not path:
         raise HTTPException(status_code=400, detail="Enter the Backblaze data folder.")
-    if not bz_paths.looks_like_bzdata(path):
+    state = bz_paths.access(path)
+    if state != "ok":
         sub = os.path.join(path, "bzdata")
-        if bz_paths.looks_like_bzdata(sub):
+        sub_state = bz_paths.access(sub)
+        if sub_state == "ok":
             path = sub
+        elif "blocked" in (state, sub_state):
+            mac = f" On a Mac, also {bz_paths.BLOCKED_HELP_MAC}." if sys.platform == "darwin" else ""
+            raise HTTPException(status_code=400, detail=(
+                f"KopiaLens can't open that folder. Check that this account can read it.{mac}"))
         else:
             raise HTTPException(status_code=400, detail=(
                 "That folder isn't Backblaze's data folder. Choose the bzdata folder, "

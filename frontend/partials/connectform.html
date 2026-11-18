@@ -87,6 +87,16 @@
                   </div>
                 </template>
 
+                <!-- Backblaze is here but its data folder can't be read (permissions, macOS privacy settings) -->
+                <template x-if="!cx.loading && !cx.mode && cx.bz && cx.bz.blocked && !cx.bz.added">
+                  <div class="kl-sec space-y-2" data-testid="cx-bz-blocked">
+                    <p class="text-xs" x-text="cx.bz.host_mac
+                      ? 'Backblaze is on this Mac, but macOS isn\'t letting KopiaLens read its data. Allow KopiaLens in System Settings › Privacy & Security › Full Disk Access, then check again.'
+                      : 'Backblaze\'s data folder is here, but KopiaLens can\'t open it. Check that this account can read ' + cx.bz.blocked_path + ', then check again.'"></p>
+                    <button type="button" class="kl-btn" :disabled="cx.bzFolderBusy" @click="cxBzRecheck()" x-text="cx.bzFolderBusy ? 'Checking…' : 'Check again'"></button>
+                  </div>
+                </template>
+
                 <!-- Backblaze on another computer: read its shared data folder -->
                 <template x-if="!cx.loading && !cx.mode && cx.bz && !cx.bz.found && !cx.bz.added">
                   <div data-testid="cx-bz-other">
