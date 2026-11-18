@@ -113,7 +113,8 @@ def refresh() -> bool:
         with urllib.request.urlopen(_request(), timeout=10) as resp:
             token = (json.loads(resp.read(262144)) or {}).get("token") or ""
     except Exception as exc:  # noqa: BLE001 - offline, or no list published yet
-        log.debug("revoked list not fetched: %s", exc)
+        from ..core import tls
+        tls.note_failure("revoked list", exc, log)
         _write({**stored, "retry_at": now + RETRY_AFTER_FAILURE})
         return False
     payload = _decode(token)

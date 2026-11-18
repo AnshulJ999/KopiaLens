@@ -299,7 +299,8 @@ def check_now(manual: bool = False) -> bool:
     try:
         data = _post(build_payload(want_stats))
     except Exception as exc:  # noqa: BLE001 - offline is normal
-        log.debug("check-in failed: %s", exc)
+        from . import tls
+        tls.note_failure("check-in", exc, log)
         data = None
     now = time.time()
     if data is None:
