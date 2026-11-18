@@ -150,6 +150,11 @@ def _system_lines() -> list[str]:
     except Exception:  # noqa: BLE001
         pass
     lines.append(f"Kopia: {kopiabin.version() or 'not found'} ({kopiabin.source() or 'unknown'})")
+    from . import tls
+    lines.append(f"HTTPS certificates: {tls.describe()}")
+    for what, err in sorted(tls.LAST_ERRORS.items()):
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(err["at"]))
+        lines.append(f"Last {what} failure ({when}{', certificate' if err['cert'] else ''}): {err['error']}")
     try:
         from ..index import crypto
         lines.append(f"Encryption: {crypto.level()}")

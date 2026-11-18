@@ -419,6 +419,37 @@ def check_running(base: str, version: str, data_root: str, kopia_root: str) -> N
         fail(f"smoke: bundled kopia not in use: {about.get('kopia')}")
     if not about.get("compiled"):
         fail("smoke: the server is not the compiled build")
+    status, body = http(base + "/api/app/web-check", timeout=30)
+    web = json.loads(body) if status == 200 else {}
+    if not web.get("ok"):
+        fail(f"smoke: the server can't make an HTTPS request ({web.get('error') or status}); "
+             f"certificates: {web.get('certificates')}")
+    log(f"  smoke: HTTPS certificates: {web.get('certificates')}")
+    smoke_sample(base)
+
+
+def smoke_sample(base: str) -> None:
+    """The sample data end to end: a worker process builds a small repository and its index, then a
+    search reads it - the packaged build's own subprocess, DuckDB and Parquet paths."""
+    status, body = http(base + "/api/setup/sample", "POST", timeout=30)
+    if status != 200:
+        fail(f"smoke: sample data did not start ({status}): {body[:200]!r}")
+
+    def ready() -> bool:
+        st = json.loads(http(base + "/api/setup/sample")[1])
+        if st.get("state") == "error":
+            fail(f"smoke: sample data failed: {st.get('error')}")
+        return st.get("state") == "done"
+
+    started = time.time()
+    if not wait(ready, 600):
+        fail("smoke: sample data was not ready within 10 minutes")
+    repo = json.loads(http(base + "/api/setup/sample")[1]).get("repo")
+    status, body = http(f"{base}/api/search?repo={repo}&q=a", timeout=60)
+    found = json.loads(body) if status == 200 else {}
+    if not (found.get("results") if isinstance(found, dict) else None):
+        fail(f"smoke: searching the sample data returned nothing ({status}): {body[:200]!r}")
+    log(f"  smoke: sample data built and indexed in {time.time() - started:.0f} s, search OK")
 
 
 def smoke_portable(zip_path: str, version: str) -> None:
@@ -441,7 +472,7 @@ def smoke_portable(zip_path: str, version: str) -> None:
                              capture_output=True, text=True, timeout=60)
         if cli.returncode != 0 or json.loads(cli.stdout or "{}").get("kopialens") != version:
             fail(f"smoke: bin/klens.exe version failed ({cli.returncode}): {cli.stderr.strip()[:200]}")
-        log(f"  smoke: version {version}, page OK, portable data + bundled kopia OK, klens OK")
+        log(f"  smoke: version {version}, page OK, portable data + bundled kopia OK, klens OK, HTTPS OK")
         http(f"http://127.0.0.1:{ctl}/quit", "POST")
         if not wait(lambda: proc.poll() is not None, 30):
             fail("smoke: the desktop app did not quit within 30 s")
@@ -475,7 +506,7 @@ def smoke_server(version: str) -> None:
                              capture_output=True, text=True, timeout=60, env=env)
         if cli.returncode != 0 or json.loads(cli.stdout or "{}").get("kopialens") != version:
             fail(f"smoke: bin/klens version failed ({cli.returncode}): {cli.stderr.strip()[:200]}")
-        log(f"  smoke: version {version}, page OK, data folder + bundled kopia OK, klens OK")
+        log(f"  smoke: version {version}, page OK, data folder + bundled kopia OK, klens OK, HTTPS OK")
     finally:
         proc.terminate()
         try:

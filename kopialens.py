@@ -17,6 +17,8 @@ USAGE = "usage: kopialens-server --server | --reset-password | --cli (the deskto
 
 
 def run() -> int:
+    from app.core import tls
+    tls.setup()  # before any role makes an HTTPS request
     argv = sys.argv[1:]
     if argv[:2] == ["-m", "app.index.worker"]:
         from app.index import worker

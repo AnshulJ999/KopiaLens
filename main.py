@@ -39,8 +39,11 @@ def _record_server() -> None:
 
 
 def run() -> None:
+    from app.core import tls
+    tls.setup()
     setup_logging()
     log = get_logger("startup")
+    log.info("HTTPS certificates: %s", tls.describe())
     if _already_running(GUARD_HOST, PORT):
         log.warning("port %s is already in use (another KopiaLens, or another program) - this instance is "
                     "exiting. Set another port in Settings > Advanced, or KOPIALENS_PORT.", PORT)

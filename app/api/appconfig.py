@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 import config
 
-from ..core import audit, configbackup, exportname, pause
+from ..core import audit, configbackup, exportname, pause, tls
 from ..core.applog import get_logger
 
 log = get_logger("app")
@@ -55,7 +55,28 @@ def about() -> dict:
         "os": f"{platform.system()} {platform.release()}",
         "compiled": config.COMPILED,
         "platform": sys.platform,
+        "certificates": tls.describe(),
     }
+
+
+@router.get("/app/web-check")
+def web_check() -> dict:
+    """One HTTPS request to the licence service: can this copy reach the internet securely? The
+    release smoke test calls it on every platform; nothing else does."""
+    import urllib.error
+    import urllib.request
+    from ..licensing.revoked import PRODUCT
+    url = f"{config.LICENCE_SERVICE_URL.rstrip('/')}/v1/revoked?product={PRODUCT}"
+    req = urllib.request.Request(url, headers={"User-Agent": f"KopiaLens/{config.APP_VERSION}"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            status = resp.status
+    except urllib.error.HTTPError as err:   # the service answered, so the connection itself worked
+        status = err.code
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "cert_error": tls.is_cert_error(exc), "error": str(exc)[:300],
+                "certificates": tls.describe()}
+    return {"ok": True, "status": status, "certificates": tls.describe()}
 
 
 _restart_requested = False
