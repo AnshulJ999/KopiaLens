@@ -1,6 +1,6 @@
 """Read queries over the Backblaze index. Pure reads; safe to call concurrently.
 
-The `files` table reads from the ACTIVE store (): Parquet generations (`pq.py`, the default,
+The `files` table reads from the ACTIVE store: Parquet generations (`pq.py`, the default,
 `backblaze.store` = "parquet") or the legacy SQLite `files` table + FTS5 ("sqlite", kept for
 rollback). Everything else (kv, folder_snapshots, events_archive, backup_days, queue, events,
 churn, folder_rollup) always reads the slim SQLite via bbdb.
@@ -39,7 +39,7 @@ def _with_volumes(rows: list[dict]) -> list[dict]:
 _CHURN_CACHE: dict = {}         # (top, depth, collapse_key) -> (ts, result)
 
 
-# ---- active store for the `files` table (: "sqlite" | "parquet") -------------------
+# ---- active store for the `files` table ("sqlite" | "parquet") -------------------
 _STORE_OVERRIDE: str | None = None  # test hook - beats the setting
 
 
@@ -396,8 +396,9 @@ def health() -> dict:
     for r in con.execute("SELECT detail, src FROM events WHERE kind='bz_done_big' AND detail LIKE '%ACTIVE%'"):
         issues.append(f"{r['src']}: {r['detail']} mass-deletion event")
     remaining = json.loads(bbdb.kv_get(con, "remaining") or "{}")
-    return {"issues": issues, "ok": not issues, "drives": ov["rows"], "remaining": remaining,
-            "version": client_version(con)}
+    from . import checks
+    return {"issues": issues, "ok": not issues, "notices": checks.notices(con), "drives": ov["rows"],
+            "remaining": remaining, "version": client_version(con)}
 
 
 def client_version(con=None) -> dict:

@@ -1,4 +1,4 @@
-"""++ tests for the parquet refresh path, the worker progress file, and the
+"""Tests for the parquet refresh path, the worker progress file, and the
 transmit-side light refresh.
 
 Run with pytest or directly (`python app/backblaze/tests/test_pq_refresh.py`).

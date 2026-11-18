@@ -197,6 +197,15 @@ def _bz_drive_lines() -> list[str]:
         return [f"  Backblaze drives could not be read: {exc}"]
 
 
+def _bz_check_lines() -> list[str]:
+    """Backblaze's own problem reports: retransmits, shrunk upload records, self-heal results."""
+    try:
+        from ..backblaze import bbdb, checks
+        return checks.diagnostics_lines(bbdb.connect())
+    except Exception as exc:  # noqa: BLE001 - the bundle never fails over one section
+        return [f"  Backblaze checks could not be read: {exc}"]
+
+
 def _repo_lines() -> list[str]:
     from . import repos as repos_mod
     from .runhistory import read_tail
@@ -208,6 +217,7 @@ def _repo_lines() -> list[str]:
             lines.append(f"Repository {rid}: {kind}")
             if kind == "backblaze":
                 lines += _bz_drive_lines()
+                lines += _bz_check_lines()
             continue
         info = repos_mod.storage_info(rid)
         line = f"Repository {rid}: kopia, storage {info.get('type') or 'unknown'}"

@@ -1,6 +1,6 @@
 """SQLite store for the Backblaze index (read-only on bzdata; this DB lives under KopiaLens/data).
 
-Since the big `files` table + FTS5 here are the LEGACY store (``backblaze.store`` = "sqlite",
+The big `files` table + FTS5 here are the LEGACY store (``backblaze.store`` = "sqlite",
 kept for rollback) - the default store is the Parquet generations in pq.py. This file remains the
 authoritative home of the small tables that never moved: queue, events, events_archive, churn,
 folder_snapshots, folder_rollup, backup_days, kv, ingest. Detect writes its kv handshake here in

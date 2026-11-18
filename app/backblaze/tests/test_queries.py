@@ -2,7 +2,7 @@
 
 Covers the query functions that the live harness only smoke-tested: search filters/sort/paging,
 overview, group_by_folder, dupes, exclusions impact, and (critically for Phase 3) coverage_children.
-Every test runs against BOTH `files` stores (): the SQLite table and the Parquet generation
+Every test runs against BOTH `files` stores: the SQLite table and the Parquet generation
 store - the small-table (queue etc.) reads always go through the injected SQLite connection.
 
 Run with pytest or directly (`python app/backblaze/tests/test_queries.py`).

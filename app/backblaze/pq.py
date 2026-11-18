@@ -1,4 +1,4 @@
-"""Parquet store for the Backblaze `files` table ().
+"""Parquet store for the Backblaze `files` table.
 
 Mirrors app/index/store.py + publish.py's generation machinery, scoped to the BZ index:
 immutable per-drive Parquet files under ``data/bz/pool/`` published as numbered generations via

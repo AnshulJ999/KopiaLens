@@ -40,7 +40,7 @@ _ROLLUP_MIN = 20_000  # depth-1 folders with >= this many files also get a depth
 _STATE: dict = {"building": False, "last_run": 0.0, "last_summary": None, "last_error": None}
 
 
-# ---- worker progress file () ------------------------------------------------------
+# ---- worker progress file ------------------------------------------------------
 def _progress_path() -> str:
     import config
     return os.path.join(config.DATA_DIR, "index_progress_repobz.json")
@@ -214,7 +214,7 @@ def _reindex_drive(con, vol, engine, vols=()) -> tuple[int, int, int]:
 
 
 def _reindex_drive_pq(vol, engine, staged: str) -> tuple[int, int, int, dict, dict]:
-    """Build one drive's rows into a staged Parquet file (); the SQLite `files` table is
+    """Build one drive's rows into a staged Parquet file; the SQLite `files` table is
     untouched. Returns (total, backed, excluded, roll1, roll2) - the caller writes the rollups
     to the slim SQLite and publishes the staged file into the new generation."""
     writer = pq.open_writer(staged)
@@ -278,15 +278,35 @@ def _refresh_backup_days(con) -> int:
     parsers.parse_bz_done_day_totals).
 
     Watermarked by (mtime, size) in `ingest`: a rotated bz_done file never changes again, so after
-    the first pass only the newest one is re-read. Returns the number of files re-parsed."""
+    the first pass only the newest one is re-read. A file that got smaller keeps each day's larger
+    total (the uploads did happen) and is noted for Health. Returns the number of files re-parsed."""
+    from . import checks
     dcenter = paths.datacenter_dir()
     parsed = 0
     for fn, mtime, size in parsers.bz_done_files(dcenter):
         key = f"bzdone:{fn}"
-        row = con.execute("SELECT mtime, size FROM ingest WHERE source=?", (key,)).fetchone()
+        row = con.execute("SELECT mtime, size, extra FROM ingest WHERE source=?", (key,)).fetchone()
         if row and abs((row[0] or 0) - mtime) < 1e-6 and (row[1] or 0) == size:
             continue  # unchanged since last time
         totals = parsers.parse_bz_done_day_totals(os.path.join(dcenter, fn))
+        listed = {"files": sum(v["files"] for v in totals.values()),
+                  "bytes": sum(v["bytes"] for v in totals.values())}
+        if row and size < (row[1] or 0):
+            old = {d: {"files": f, "bytes": b} for d, f, b in
+                   con.execute("SELECT day, files, bytes FROM backup_days WHERE src=?", (fn,))}
+            try:
+                prev = json.loads(row[2]) if row[2] else None   # what the file listed at the last read
+            except ValueError:
+                prev = None
+            if not isinstance(prev, dict):
+                prev = {"files": sum(v["files"] for v in old.values()), "bytes": sum(v["bytes"] for v in old.values())}
+            lost_b, lost_f = prev.get("bytes", 0) - listed["bytes"], prev.get("files", 0) - listed["files"]
+            checks.note_shrink(con, fn, row[1], size, max(lost_b, 0), max(lost_f, 0))
+            log.warning("bz_done %s got smaller (%d -> %d bytes, %d files no longer listed)",
+                        fn, row[1], size, max(lost_f, 0))
+            for day, v in old.items():
+                if v["bytes"] > totals.get(day, {}).get("bytes", 0):
+                    totals[day] = v
         con.execute("DELETE FROM backup_days WHERE src=?", (fn,))
         if totals:
             con.executemany(
@@ -294,11 +314,19 @@ def _refresh_backup_days(con) -> int:
                 [(day, fn, v["files"], v["bytes"]) for day, v in totals.items()],
             )
         con.execute("INSERT OR REPLACE INTO ingest (source, mtime, size, extra) VALUES(?,?,?,?)",
-                    (key, mtime, size, None))
+                    (key, mtime, size, json.dumps(listed)))
         parsed += 1
     if parsed:
         log.info("backup_days: re-parsed %d bz_done file(s)", parsed)
     return parsed
+
+
+def _refresh_selfheal(con) -> None:
+    from . import checks
+    try:
+        checks.refresh_selfheal(con)
+    except Exception as exc:  # noqa: BLE001 - a log Backblaze is writing must never break the refresh
+        log.warning("self-heal results not read: %s", exc)
 
 
 def _refresh_events(con) -> int:
@@ -473,7 +501,7 @@ def _refresh_cache_aggregates(con) -> None:
 
 
 def detect_changes() -> dict:
-    """Cheap freshness detect for the scheduler's light pass (). Stat every filelist; hash the
+    """Cheap freshness detect for the scheduler's light pass. Stat every filelist; hash the
     body only where the (mtime,size) watermark moved; skip stubs. NEVER touches the files tables -
     the only writes are the ingest watermark update on a digest match (mirroring refresh()'s own
     no-reindex bookkeeping, so consecutive detects are pure stat) and the kv flags the due check
@@ -534,7 +562,7 @@ def detect_changes() -> dict:
 
 
 def freshness() -> dict:
-    """The kv freshness triple (): when the data was last verified (detect or refresh), when
+    """The kv freshness triple: when the data was last verified (detect or refresh), when
     it was last actually rebuilt, and whether a detected change is still waiting. Reads the bz
     SQLite kv table, so it survives restarts; a missing/unbuilt DB reads as never."""
     out = {"last_check_ts": None, "last_reindex_ts": None, "pending": False,
@@ -793,7 +821,7 @@ def refresh(force: bool = False) -> dict:
                         _write_progress(f"reindexing {vol.label}")
                         staged = pq.staged_path(vol.key, pq_gen)
                         total, backed, excluded, roll1, roll2 = _reindex_drive_pq(vol, engine, staged)
-                        if pq.ensure_staged_state(staged):   # Everything level
+                        if pq.ensure_staged_state(staged):   # the highest encryption level
                             _write_progress(f"encrypting {vol.label}")
                         _write_rollup(con, vol.root.lower(), roll1, roll2, paths.sep(), _nested(vol, vols))
                         rel = pq.pool_rel(vol.key, pq_gen)
@@ -839,6 +867,7 @@ def refresh(force: bool = False) -> dict:
             _refresh_queue(con)
             _refresh_events(con)
             _refresh_backup_days(con)
+            _refresh_selfheal(con)
             _refresh_stats_kv(con)
             _refresh_folder_snapshots(con, _history_days())
             if force or not bbdb.kv_get(con, "fileids_total"):  # populate once, then only on a forced rebuild
@@ -916,7 +945,7 @@ def _vacuum_legacy(con) -> bool:
 
 
 def _reclaim_legacy_files(con) -> bool:
-    """ After a successful Parquet publish, the legacy sqlite `files` table (+ its
+    """After a successful Parquet publish, the legacy sqlite `files` table (+ its
     FTS5 index) is dead weight - ~3.4 GB of stale rows inside the SAME file that holds the small
     history/state tables (which must never be dropped). Drop the legacy structures, recreate them
     EMPTY (so switching back to the sqlite store rebuilds instead of erroring), and VACUUM to hand
@@ -948,7 +977,7 @@ def _reclaim_legacy_files(con) -> bool:
 
 
 def refresh_transmit_side() -> dict:
-    """ Light in-process refresh of the TRANSMIT-side data only: the upload-queue table
+    """Light in-process refresh of the TRANSMIT-side data only: the upload-queue table
     (bz_todo_*.dat) and the stats-kv (remaining / totalbackup / last_completed / filestats /
     overview). Backblaze rewrites these every ~10 minutes, independent of the scan-side filelists
     the detect+throttle cycle watches - so they ride the 30-min light loop (main._bz_transmit_pass)

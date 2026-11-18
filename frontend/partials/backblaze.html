@@ -227,11 +227,18 @@
 
       <section x-show="active==='bz-health' && !bzWaiting() && !bzRebuilding" class="h-full flex flex-col gap-3 overflow-auto">
         <div class="rounded p-3" :class="bzHealth && bzHealth.ok ? 'border border-ok-bd bg-ok-bg/20' : 'border border-danger-bd bg-danger-bg/20'" x-show="bzHealth">
-          <div class="font-medium text-sm" x-text="bzHealth && (bzHealth.ok ? 'No anomalies detected — backup state looks healthy.' : (countOf(bzHealth.issues.length, 'potential issue') + ' detected:'))"></div>
+          <div class="font-medium text-sm" x-text="bzHealth && (bzHealth.ok ? 'No known problems found.' : (countOf(bzHealth.issues.length, 'potential issue') + ' detected:'))"></div>
           <template x-for="(iss,i) in (bzHealth ? bzHealth.issues : [])" :key="i">
             <div class="text-[0.75rem] text-danger">• <span x-text="iss"></span></div>
           </template>
         </div>
+        <template x-if="bzHealth && bzHealth.notices && bzHealth.notices.length">
+          <div class="rounded p-2 text-sm border border-bd-soft flex flex-col gap-1" data-testid="bz-notices">
+            <template x-for="n in bzHealth.notices" :key="n.id">
+              <div x-text="n.text"></div>
+            </template>
+          </div>
+        </template>
         <template x-if="bzHealth && bzHealth.version && bzHealth.version.installed">
           <div class="rounded p-2 text-sm flex flex-wrap items-center gap-x-2" :class="bzHealth.version.outdated ? 'border border-warn-bd bg-warn-bg/20' : 'border border-bd-soft'" data-testid="bz-version">
             <span x-show="bzHealth.version.outdated" x-text="'Backblaze ' + bzHealth.version.installed + '. A newer version, ' + bzHealth.version.newest + ', is out. Backblaze may take time to update itself.'"></span>
@@ -239,6 +246,6 @@
             <a x-show="bzHealth.version.outdated" :href="bzReleaseNotesUrl()" target="_blank" rel="noopener" class="text-link underline underline-offset-2">Release notes</a>
           </div>
         </template>
-        <div class="text-[0.6875rem] text-muted px-1">Signs of a lost file list: a drive showing 0 backed files, a stub file list, or a recent bz_done over 100 MB (a mass deletion). <span x-show="bzHealth && bzHealth.remaining && bzHealth.remaining.remaining_files">Files remaining to upload: <span class="font-medium" x-text="bzHealth && Number(bzHealth.remaining.remaining_files||0).toLocaleString(NUM_LOCALE)"></span>.</span></div>
+        <div class="text-[0.6875rem] text-muted px-1">Checks: a drive showing 0 backed files, an unfinished drive scan, a mass deletion, and files Backblaze lost track of and queued again. <span x-show="bzHealth && bzHealth.remaining && bzHealth.remaining.remaining_files">Files remaining to upload: <span class="font-medium" x-text="bzHealth && Number(bzHealth.remaining.remaining_files||0).toLocaleString(NUM_LOCALE)"></span>.</span></div>
         <div id="bzHealthTable" class="min-h-[14rem]"></div>
       </section>

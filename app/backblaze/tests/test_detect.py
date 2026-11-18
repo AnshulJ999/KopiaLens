@@ -1,4 +1,4 @@
-""" detect_changes + the detect/refresh kv handshake (reindex_pending, freshness stamps).
+"""detect_changes + the detect/refresh kv handshake (reindex_pending, freshness stamps).
 
 The invariant: the detect flags a pending reindex exactly when refresh() would actually rewrite
 rows - a moved watermark with a new body, a drive never indexed, or a rules change - and NEVER

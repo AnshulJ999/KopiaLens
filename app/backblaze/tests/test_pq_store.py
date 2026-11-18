@@ -1,4 +1,4 @@
-"""Tests for the BZ Parquet store machinery (): publish/carry-forward, read-after-swap
+"""Tests for the BZ Parquet store machinery: publish/carry-forward, read-after-swap
 (retire-on-last-reader), per-drive counts, and GC.
 
 Run with pytest or directly (`python app/backblaze/tests/test_pq_store.py`).

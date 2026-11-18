@@ -335,7 +335,7 @@ _NAME_CACHE: dict[str, tuple] = {}
 
 def computer_name() -> str:
     """The Backblaze computer's name from bzinfo.xml (`online_hostname`, the name Backblaze shows
-    online, e.g. "my-pc_2025_09_19"); "" when the file or the field is missing."""
+    online, e.g. "my-pc_2026_08_19"); "" when the file or the field is missing."""
     path = bzinfo_path()
     try:
         mtime = os.path.getmtime(path)
@@ -357,7 +357,7 @@ def computer_name() -> str:
 
 def computer_display(name: str | None = None) -> str:
     """The computer's name without the date Backblaze adds when it is set up again
-    ("my-pc_2025_09_19" -> "my-pc")."""
+    ("my-pc_2026_08_19" -> "my-pc")."""
     name = computer_name() if name is None else name
     return re.sub(r"_\d{4}_\d{2}_\d{2}$", "", name.strip())
 
