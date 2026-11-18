@@ -82,9 +82,9 @@ def main(force: bool) -> int:
         print("   - " + i)
 
     s = queries.sessions(limit=4)
-    print(f"\nrecent sessions ({len(s['sessions'])} shown of history):")
-    for e in s["sessions"][:4]:
-        print(f"   {e['ts']}  {e['kind']}  files={e['files']}  {_gb(e['bytes']):.2f}G")
+    print(f"\nrecent backup runs ({len(s['runs'])} shown of history):")
+    for e in s["runs"][:4]:
+        print(f"   {e['started']} -> {e['ended']}  files={e['files']}  {_gb(e['bytes']):.2f}G")
 
     print(f"\ntotal harness time: {time.time() - t0:.1f}s")
     return 0

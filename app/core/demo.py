@@ -1250,9 +1250,9 @@ def _demo_backblaze(repos: list[str]) -> None:
     bz_paths.forget_platform()
     bz_paths.set_bzdata_root(win_root)
     out = demobz.index(win_root)
-    # The showcase copy keeps its file lists (the folder switch rebuilds from them) and the whole
-    # file-id history (a rebuild counts it again); small copies keep only what the screens read.
-    demobz.trim(win_root, keep_lists=full, keep_ids=full)
+    # Every copy keeps its file lists (Index BZ and the folder switch rebuild from them); the showcase
+    # copy also keeps the whole file-id history (a rebuild counts it again).
+    demobz.trim(win_root, keep_lists=True, keep_ids=full)
     if not out.get("ok", True):
         raise RuntimeError(f"Backblaze index: {out.get('reason')}")
 
@@ -1264,12 +1264,19 @@ _BZ_DERIVED = ("bzdata", "bzdata-mac", "bz", "kopialens_bz.sqlite", "kopialens_b
 def _bz_child() -> None:
     """Runs inside a copy: replace only its Backblaze data (Kopia side and demo clock untouched)."""
     from config import kopia_repos
-    for name in _BZ_DERIVED:
+
+    from ..settings import load_settings, mutate_settings
+    for name in (*_BZ_DERIVED, "bz-previous"):
         path = os.path.join(DATA_DIR, name)
         if os.path.isdir(path):
             shutil.rmtree(path)
         elif os.path.isfile(path):
             os.remove(path)
+
+    def _default_folder(s: dict) -> None:   # a copy switched to the Mac folder starts on Windows again
+        s.get("backblaze", {}).pop("bzdata_path", None)
+    if (load_settings().get("backblaze") or {}).get("bzdata_path"):
+        mutate_settings(_default_folder)
     _demo_backblaze(kopia_repos())
     print(json.dumps({"ok": True}))
 

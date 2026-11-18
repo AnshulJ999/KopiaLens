@@ -18,18 +18,18 @@
     }
     return `<span class="text-danger" title="KopiaLens's count and Backblaze's own count disagree">${txt}</span>`;
   };
-  const statusPill = (s) => {
-    const m = {
-      backed: ["#dcfce7", "#166534", "backed up"], excluded: ["#fee2e2", "#991b1b", "excluded"],
-      mixed: ["#fef9c3", "#854d0e", "mixed"], drive: ["#e2e8f0", "#334155", "drive"],
-    };
-    const [bg, fg, label] = m[s] || ["#e2e8f0", "#334155", s];
-    return `<span class="pill" style="background:${bg};color:${fg}">${label}</span>`;
+  // Pill colours from the theme, so they follow light and dark themes.
+  const bzPill = (tone, label) => {
+    const t = { ok: "ok", danger: "danger", warn: "warn", accent: "accent" }[tone];
+    const style = t ? `background:var(--${t}-bg);color:var(--${t})` : "background:var(--sel);color:var(--fg)";
+    return `<span class="pill" style="${style}">${label}</span>`;
   };
-  const reposBadges = (arr) => (arr || []).map((r) => {
-    const c = { "1": ["#dbeafe", "#1e40af"], "2": ["#ede9fe", "#5b21b6"], "bz": ["#fee2e2", "#991b1b"] }[r] || ["#e2e8f0", "#334155"];
-    return `<span class="pill" style="background:${c[0]};color:${c[1]}">${r}</span>`;
-  }).join("");
+  const statusPill = (s) => {
+    const m = { backed: ["ok", "backed up"], excluded: ["danger", "excluded"], mixed: ["warn", "mixed"], drive: ["", "drive"] };
+    const [tone, label] = m[s] || ["", s];
+    return bzPill(tone, label);
+  };
+  const reposBadges = (arr) => (arr || []).map((r) => bzPill({ "1": "accent", "bz": "danger" }[r] || "", r)).join("");
   // Backblaze defines categories internally (no on-disk map), so these are sensible hardcoded sets.
   const CAT_EXT = {
     video: "mp4,mkv,mov,avi,wmv,flv,m4v,mpg,mpeg,webm,3gp,m2ts,mts,vob,ogv,divx,rm,rmvb,asf,ts",
@@ -169,9 +169,9 @@ const bzIndexPart = {
             // message set here was wiped by the very next tab activation. Stale data still beats
             // no data, but the user must see that it happened.
             if (this.bzStatus.last_error) {
-              this.bzRefreshResult = "Last BZ refresh FAILED: " + this.bzStatus.last_error;
+              this.bzRefreshResult = `Couldn't index Backblaze: ${this.bzStatus.last_error}. Showing the last index.`;
             } else {
-              this.bzRefreshResult = "BZ refresh completed " + humanTime(Date.now());
+              this.bzRefreshResult = "Backblaze indexed " + humanTime(Date.now());
             }
             if (String(this.active).startsWith("bz-")) await this.bzActivate();
           }

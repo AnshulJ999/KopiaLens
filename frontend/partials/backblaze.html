@@ -119,8 +119,9 @@
           <template x-for="(c, i) in bzExclCrumbs()" :key="i">
             <span><span class="crumb" @click="bzExclNav(c.path)" x-text="c.label"></span><span class="text-faint" x-show="i < bzExclCrumbs().length - 1"> › </span></span>
           </template>
+          <span class="kl-help" tabindex="0" title="What Backblaze leaves out, worked out from its own scan and its exclusion rules">?</span>
         </div>
-        <div class="text-[0.6875rem] text-muted px-1">Backblaze's own scan + 4-layer exclusion rules (exact, no Everything needed).<span x-show="bzCross()"> "Also in Kopia" = this folder is ALSO backed by a Kopia repo.</span></div>
+
         <div id="bzExcludedTable" class="flex-1 min-h-0"></div>
       </section>
 
@@ -136,7 +137,7 @@
           <div class="text-[0.6875rem] text-muted mb-2">Rules match exact paths, so the same data can be excluded in one place and backed up in another. Type a name (e.g. <span class="font-mono">Downloads</span>, <span class="font-mono">cache</span>) to find every folder with that name and its backed-vs-excluded state.</div>
           <div class="flex items-center gap-2">
             <input autocomplete="off" x-model="bzNamingQuery" @keydown.enter="bzNamingGap()" class="fld border border-bd bg-surface min-w-[18rem]" placeholder="folder name fragment">
-            <button @click="bzNamingGap()" class="h-8 rounded bg-accent-solid px-3 text-sm text-white">Find gaps</button>
+            <button @click="bzNamingGap()" class="kl-btn primary">Find gaps</button>
           </div>
           <div id="bzNamingTable" class="mt-2" x-show="bzNamingRows.length"></div>
         </div>
@@ -161,7 +162,7 @@
           <select autocomplete="off" x-model.number="bzChurnDepth" @change="bzChurnChanged()" class="fld h-8 border border-bd bg-surface text-xs">
             <template x-for="n in [1,2,3,4,5,6,7,8]" :key="n"><option :value="n" :selected="n == bzChurnDepth" x-text="n"></option></template>
           </select>
-          <button @click="bzChurnCollapse=!bzChurnCollapse; bzChurnChanged()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzChurnCollapse ? 'bg-sel' : ''" title="Roll the Kopia repos up to one row each"><i class="ic ic-collapse"></i> Collapse Kopia</button>
+          <button x-show="(bzCollapsePrefixes || '').trim()" @click="bzChurnCollapse=!bzChurnCollapse; bzChurnChanged()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzChurnCollapse ? 'bg-sel' : ''" title="Roll the Kopia repos up to one row each"><i class="ic ic-collapse"></i> Collapse Kopia</button>
           <button @click="bzToggleChurnActive()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzChurnActiveOnly ? 'bg-sel' : ''" title="Show only folders that still have backed files (hide excluded / deleted)"><span x-text="bzChurnActiveOnly ? 'Active only' : 'Showing all'"></span></button>
           <select autocomplete="off" x-model="bzChurnDrive" @change="_bzDrawChurn()" class="fld h-8 border border-bd bg-surface text-xs">
             <option value="">All drives</option>
@@ -178,7 +179,7 @@
           <select autocomplete="off" x-model.number="bzQueueDepth" @change="bzQueueChanged()" class="fld h-8 border border-bd bg-surface text-xs">
             <template x-for="n in [1,2,3,4,5,6,7,8]" :key="n"><option :value="n" :selected="n == bzQueueDepth" x-text="n"></option></template>
           </select>
-          <button @click="bzQueueCollapse=!bzQueueCollapse; bzQueueChanged()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzQueueCollapse ? 'bg-sel' : ''" title="Roll the Kopia repos up to one row each"><i class="ic ic-collapse"></i> Collapse Kopia</button>
+          <button x-show="(bzCollapsePrefixes || '').trim()" @click="bzQueueCollapse=!bzQueueCollapse; bzQueueChanged()" class="h-8 rounded border border-bd px-2 text-xs" :class="bzQueueCollapse ? 'bg-sel' : ''" title="Roll the Kopia repos up to one row each"><i class="ic ic-collapse"></i> Collapse Kopia</button>
         </div>
         <div class="flex flex-wrap items-center gap-3 text-sm" x-show="bzQueue">
           <span class="font-medium">Upload queue (scheduled for backup)</span>
@@ -227,7 +228,8 @@
 
       <section x-show="active==='bz-health' && !bzWaiting() && !bzRebuilding" class="h-full flex flex-col gap-3 overflow-auto">
         <div class="rounded p-3" :class="bzHealth && bzHealth.ok ? 'border border-ok-bd bg-ok-bg/20' : 'border border-danger-bd bg-danger-bg/20'" x-show="bzHealth">
-          <div class="font-medium text-sm" x-text="bzHealth && (bzHealth.ok ? ((bzHealth.notices && bzHealth.notices.length) ? 'No problems found. See the notes below.' : 'No known problems found.') : (countOf(bzHealth.issues.length, 'potential issue') + ' detected:'))"></div>
+          <div class="font-medium text-sm flex items-center gap-1"><span x-text="bzHealth && (bzHealth.ok ? ((bzHealth.notices && bzHealth.notices.length) ? 'No problems found. See the notes below.' : 'No known problems found. Backup state looks healthy.') : (countOf(bzHealth.issues.length, 'potential issue') + ' detected:'))"></span>
+            <span class="kl-help font-normal" tabindex="0" title="Health looks for:&#10;• A drive that suddenly shows no backed-up files&#10;• A drive scan Backblaze didn't finish&#10;• Many files removed from the backup at once&#10;• Files Backblaze forgot it had uploaded, so they upload again">?</span></div>
           <template x-for="(iss,i) in (bzHealth ? bzHealth.issues : [])" :key="i">
             <div class="text-[0.75rem] text-danger">• <span x-text="iss"></span></div>
           </template>
@@ -246,6 +248,6 @@
             <a x-show="bzHealth.version.outdated" :href="bzReleaseNotesUrl()" target="_blank" rel="noopener" class="text-link underline underline-offset-2">Release notes</a>
           </div>
         </template>
-        <div class="text-[0.6875rem] text-muted px-1">Checks: a drive showing 0 backed files, an unfinished drive scan, a mass deletion, a rolled-back upload record, and files Backblaze lost track of and queued again. <span x-show="bzHealth && bzHealth.remaining && bzHealth.remaining.remaining_files">Files remaining to upload: <span class="font-medium" x-text="bzHealth && Number(bzHealth.remaining.remaining_files||0).toLocaleString(NUM_LOCALE)"></span>.</span></div>
+
         <div id="bzHealthTable" class="min-h-[14rem]"></div>
       </section>

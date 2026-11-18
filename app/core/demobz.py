@@ -188,6 +188,22 @@ _MAC_SPARE_RULES = ["Downloads/Incomplete/", "Movies/Final Cut Backups/", "Music
                     "Pictures/Lightroom Previews/", "Projects/node_modules/", "Projects/venv/",
                     "Movies/Proxy Media/", "Desktop/Scratch/", "Documents/Temp/"]
 
+# Dashboard "Recently added": the folders a viewer sees first, with their recent file-id counts
+# (each moved a few percent). Windows: the list the demo showed before 2026-11-11; Mac: hand-picked,
+# about 40% on the external drives.
+_WIN_RECENT = [("G:" + _BS + "Downloads" + _BS + "Trip 2019", 84485),
+               ("G:" + _BS + "GitHub" + _BS + "photo-sorter", 19118), ("C:" + _BS + "Users" + _BS + "{user}", 17390),
+               ("G:" + _BS + "GitHub" + _BS + "home-lab", 13475), ("G:" + _BS + "Project Restore" + _BS + "Scripts", 13076),
+               ("G:" + _BS + "GitHub" + _BS + "task-runner", 11766), ("G:" + _BS + "GitHub" + _BS + "awesome-scripts", 6219),
+               ("G:" + _BS + "GitHub" + _BS + "home-config", 5557),
+               ("G:" + _BS + "GitHub" + _BS + "photo-sorter Combined", 5372),
+               ("G:" + _BS + "GitHub" + _BS + "Solace-Synth", 5050)]
+_MAC_RECENT = [("/Users/{user}", 61200), ("/Volumes/Photos/Iceland 2024/Raw", 24800),
+               ("/Volumes/Archive/Projects/photo-sorter", 16300), ("/Volumes/Photos/Camera Roll/2025", 13900),
+               ("/Volumes/Archive/Client Work/2025", 11200), ("/Volumes/Archive/Music Production/Stems", 9400),
+               ("/Volumes/Photos/Lisbon 2023/Edited", 7300), ("/Volumes/Archive/Exports/Video 2024", 6100),
+               ("/Volumes/Archive/Scans/Family Albums", 5400), ("/Volumes/Photos/Drone/2025", 4900)]
+
 
 def _stamp(t: float) -> str:
     return _dt.datetime.fromtimestamp(t).strftime("%Y%m%d%H%M%S")
@@ -512,24 +528,62 @@ def _folder_pool(platform: str, drive: str, user: str, n: int, r: random.Random)
     return pool
 
 
-_OTHER_TEMPLATES = ["IMG_{n4}.cr2", "DSC_{n4}.nef", "_DSC{n4}.arw", "{word} {n3}.psd", "export-{n4}.json",
-                    "save_{n4}.dat", "project-{n3}.blend", "backup-{date}.bak", "disk-{n3}.iso", "data_{n4}.db",
-                    "{word} {n3}.xml", "session-{n4}.log", "layout-{n3}.indd", "scan-{n4}.raw"]
+_OTHER_TEMPLATES = ["IMG_{n4}.cr2", "IMG_{n4}.CR3", "DSC_{n4}.nef", "_DSC{n4}.arw", "DSCF{n4}.raf", "P{n4}.rw2",
+                    "{topic} {yr}.psd", "{topic} poster v{n1}.psd", "{topic} mockup.ai", "{topic} edit.prproj",
+                    "{topic} {yr}.lrcat", "{topic} timeline.drp", "{topic} scene.blend", "{topic} {n2}.blend",
+                    "{topic} brochure.indd", "{topic} map.dwg", "{topic} {yr}.sketch", "{topic} final.aep",
+                    "{topic} session.als", "{topic} mix.logicx", "{topic} {yr}.cpr", "{topic}.flp",
+                    "settings-{yr}.json", "{topic} notes.json", "library.db", "{topic}.sqlite", "contacts {yr}.vcf",
+                    "{topic} {yr}.iso", "Windows {yr} install.iso", "{topic} backup {yr}.bak",
+                    "{topic} save {n2}.sav", "slot{n1}.sav", "{topic} {yr}.kdbx", "{topic}.gpx", "{topic} route.kml",
+                    "{topic} model.stl", "{topic} part {n2}.step", "{topic} {yr}.obj", "{topic} dataset.parquet"]
+# Stems that read like files someone named, not like a generator's counters.
+_TOPICS = ["Iceland", "Lisbon", "Wedding", "Birthday", "Garden", "Kitchen", "Studio", "Holiday", "Portfolio",
+           "Client", "Album", "Thesis", "Budget", "Recipe", "Renovation", "Road Trip", "Concert", "Podcast",
+           "Product", "Family", "Hiking", "Beach", "Cabin", "Workshop", "Launch", "Course", "Garage", "Festival"]
+_MIXED_STEMS = ["{topic} {yr}", "{topic} notes", "{topic} ({n2})", "{topic} final", "{topic} copy", "Scan {date}",
+                "{topic} draft {n1}", "New {topic}", "{topic} export", "{topic} v{n1}"]
+_TEMPLATE_NAME = re.compile(r"^(?:data|file|doc|blob|item|mbox)-\d+\.([A-Za-z0-9]+)$")
+
+
+def _name_fmt(num: int, r: random.Random) -> dict:
+    year = r.randint(2016, 2025)
+    return {"n4": f"{num % 10000:04d}", "n3": f"{num % 1000:03d}", "n2": f"{num % 100:02d}",
+            "n1": str(num % 9 + 1), "date": f"{year}-{r.randint(1, 12):02d}", "yr": year,
+            "word": r.choice(fakenames.FOLDER_WORDS["Mixed"]), "topic": r.choice(_TOPICS)}
 
 
 def _filler_name(bucket: str, seq: int, start: int, r: random.Random) -> str:
     group, exts = _BUCKET_FILES[bucket]
-    year = r.randint(2016, 2025)
-    num = start + seq
-    fmt = {"n4": f"{num % 10000:04d}", "n3": f"{num % 1000:03d}", "n2": f"{num % 100:02d}",
-           "date": f"{year}-{r.randint(1, 12):02d}", "yr": year,
-           "word": r.choice(fakenames.FOLDER_WORDS["Mixed"])}
+    fmt = _name_fmt(start + seq, r)
     if bucket == "other":
         return r.choice(_OTHER_TEMPLATES).format(**fmt)
     if bucket == "browserfavorites":
         return r.choice(fakenames.COMMON_SITES) + ".url"
-    tpl = r.choice(fakenames.FILE_TEMPLATES.get(group) or fakenames.FILE_TEMPLATES["Mixed"])
+    tpls = fakenames.FILE_TEMPLATES.get(group) if group != "Mixed" else None
+    tpl = r.choice(tpls or _MIXED_STEMS)
     return tpl.format(**fmt) + "." + r.choice(exts)
+
+
+def _believable(path: str, sep: str, used: set, r: random.Random) -> str:
+    """A counter-style name from the Kopia demo's hidden areas (``data-956.mbox``) renamed to one a
+    person would give that kind of file; the folder and extension stay."""
+    folder, _, leaf = path.rpartition(sep)
+    m = _TEMPLATE_NAME.match(leaf)
+    if not m:
+        return path
+    ext = m.group(1)
+    fmt = _name_fmt(r.randint(1, 9999), r)
+    if _bucket_of(leaf) in ("other", "email"):
+        stem = r.choice(_MIXED_STEMS).format(**fmt)
+    else:
+        group = _BUCKET_FILES[_bucket_of(leaf)][0]
+        stem = r.choice(fakenames.FILE_TEMPLATES.get(group) if group != "Mixed" else _MIXED_STEMS).format(**fmt)
+    out, c = f"{folder}{sep}{stem}.{ext}", 2
+    while out.lower() in used:
+        out, c = f"{folder}{sep}{stem} ({c}).{ext}", c + 1
+    used.add(out.lower())
+    return out
 
 
 def _pick_kopia(by_drive: dict, drive: str, target: int, engine, mount: str):
@@ -546,8 +600,10 @@ def _pick_kopia(by_drive: dict, drive: str, target: int, engine, mount: str):
 
 
 def _make_filler(platform: str, drive: str, user: str, count: int, total: int, weights: dict,
-                 engine, mount: str, now: float, r: random.Random) -> list[tuple[str, int, float]]:
-    """Word-list files for a drive: types from `weights`, sized by type, added 2-4 years ago."""
+                 engine, mount: str, now: float, r: random.Random,
+                 capped: bool = True) -> list[tuple[str, int, float]]:
+    """Word-list files for a drive: types from `weights`, sized by type, added 2-4 years ago.
+    Uncapped (the full demo), the sizes stretch to reach the drive's real total."""
     if count <= 0:
         return []
     sep = _BS if platform == "windows" else "/"
@@ -569,7 +625,7 @@ def _make_filler(platform: str, drive: str, user: str, count: int, total: int, w
         raw_sizes.append(r.lognormvariate(math.log(max(1.0, mean)) - 0.72, 1.2))
         out.append((folder + sep + name, now - r.uniform(60, 1500) * _DAY))
     scale = total / max(1.0, sum(raw_sizes))
-    scale = min(4.0, max(0.3, scale))
+    scale = max(0.3, min(4.0, scale) if capped else scale)
     files, names = [], set()
     for (path, t), s in zip(out, raw_sizes):
         if path.lower() in names:
@@ -671,9 +727,11 @@ def _filestats(root: str, files: list, host: str, now: float, platform: str) -> 
           f'osdetail="{"macOS" if platform == "mac" else "Windows11"}" {attrs} />'])
 
 
-def _history(root: str, backed: list, queued: list, now: float, scale: bool, r: random.Random) -> None:
-    """bzfileids (cumulative, ~3.7x the live files, oldest first), the upload queue, the per-day
-    upload records in the real rhythm, the event log and the upload-success history."""
+def _history(root: str, backed: list, queued: list, now: float, scale: bool, r: random.Random,
+             tail: list[str] | None = None) -> None:
+    """bzfileids (cumulative, ~3.7x the live files, oldest first, then ``tail``: the newest ids,
+    which Recently added reads), the upload queue, the per-day upload records in the real rhythm,
+    the event log and the upload-success history."""
     dc = os.path.join(root, "bzbackup", "bzdatacenter")
     os.makedirs(dc, exist_ok=True)
     current = sorted(backed, key=lambda f: f[2])
@@ -691,7 +749,10 @@ def _history(root: str, backed: list, queued: list, now: float, scale: bool, r: 
         for p, _s, _t in current:
             fh.write(f"{seq:016x}\t{p}\n")
             seq += 1
-    todo = os.path.join(dc, f"bz_todo_{_stamp(now)[:8]}_0.dat")
+        for p in tail or []:
+            fh.write(f"{seq:016x}\t{p}\n")
+            seq += 1
+    todo =os.path.join(dc, f"bz_todo_{_stamp(now)[:8]}_0.dat")
     with open(todo, "w", encoding="utf-8", newline="\n") as fh:
         for p, s, t in queued:
             fh.write(f"1\t+\t{r.getrandbits(64):016x}\t{int(t * 1000):016x}\t{s}\t{p}\n")
@@ -772,6 +833,81 @@ def _fixed_excluded(platform: str, drive: str, r: random.Random) -> list[tuple[s
     return []
 
 
+def _top2(path: str, sep: str) -> str:
+    """The folder Recently added rolls a path up to (two levels below its drive)."""
+    parts = path.split(sep)
+    if sep == "/" and path.startswith("/Volumes/"):
+        return "/".join(parts[:5])
+    return sep.join(parts[:3])
+
+
+def _add_folder(v: dict, folder: str, count: int, engine, now: float, r: random.Random) -> list[str]:
+    """Recent files for a hand-picked folder the Mac data doesn't have yet."""
+    low = folder.lower()
+    if any(w in low for w in ("photo", "camera", "raw", "drone", "edited", "album", "scan")):
+        bucket = "pict"
+    elif "video" in low or "export" in low:
+        bucket = "video"
+    elif "music" in low or "stem" in low:
+        bucket = "music"
+    else:
+        bucket = "other"
+    mean = _REAL_TYPES[bucket][1] / _REAL_TYPES[bucket][0]
+    start, names, out = r.randint(10, 7000), set(), []
+    for i in range(max(40, min(1500, count // 10))):
+        name = _filler_name(bucket, i, start, r)
+        p = folder + "/" + name
+        if name.lower() in names or engine.classify(p, v["mount"])[0]:
+            continue
+        names.add(name.lower())
+        out.append((p, max(1, int(r.lognormvariate(math.log(mean) - 0.72, 1.2))), now - r.uniform(1, 40) * _DAY))
+    v["backed"].extend(out)
+    return [p for p, _s, _t in out]
+
+
+def _recent_tail(packed: dict, platform: str, user: str, engine, now: float, r: random.Random) -> list[str]:
+    """The newest file ids: the pinned Recently added folders with their counts, then other folders
+    (each below the smallest pin) until the tail fills the window Recently added reads."""
+    from ..backblaze.queries import _CHURN_TAIL
+    mac = platform == "mac"
+    sep = "/" if mac else _BS
+    pins = []
+    for folder, count in (_MAC_RECENT if mac else _WIN_RECENT):
+        folder = folder.replace("{user}", user)
+        drive = (folder.split("/")[2] if folder.startswith("/Volumes/") else "root") if mac else folder[0]
+        v = packed.get(drive)
+        if not v:
+            continue
+        lo = folder.lower() + sep
+        files = [f[0] for f in v["backed"] if f[0].lower().startswith(lo)]
+        if not files and mac:
+            files = _add_folder(v, folder, count, engine, now, r)
+        if files:
+            pins.append((folder.lower(), files, int(count * r.uniform(0.96, 1.04))))
+    out, size = [], 0
+    for _f, files, n in pins:
+        for _ in range(n):
+            p = r.choice(files)
+            out.append(p)
+            size += 18 + len(p.encode("utf-8"))
+    pinned = {f for f, _fs, _n in pins}
+    cap = int(min((n for _f, _fs, n in pins), default=5000) * 0.8)
+    pool = [f[0] for v in packed.values() for f in v["backed"] if _top2(f[0], sep).lower() not in pinned]
+    per: dict[str, int] = {}
+    tries = 0
+    while pool and size < _CHURN_TAIL + 65536 and tries < 3_000_000:
+        tries += 1
+        p = r.choice(pool)
+        k = _top2(p, sep).lower()
+        if per.get(k, 0) >= cap:
+            continue
+        per[k] = per.get(k, 0) + 1
+        out.append(p)
+        size += 18 + len(p.encode("utf-8"))
+    r.shuffle(out)
+    return out
+
+
 def write(root: str, files: list[tuple[str, int, float]], *, user: str, host: str,
           now: float | None = None, seed: int = 1, platform: str = "windows",
           profile=None) -> dict:
@@ -791,6 +927,9 @@ def write(root: str, files: list[tuple[str, int, float]], *, user: str, host: st
     mac = platform == "mac"
     sep = "/" if mac else _BS
     areas_of = _MAC_AREAS if mac else _WIN_AREAS
+    if not mac:   # made-up folders take the demo files' spelling of the user folder (one case on C:)
+        home = ("c:" + _BS + "users" + _BS + user + _BS).lower()
+        user = next((f[0].split(_BS)[2] for f in files if f[0].lower().startswith(home)), user)
 
     # Folder rules: one per excluded area that Backblaze's own rules don't already cover, plus
     # spare rules that match nothing (real lists have many).
@@ -816,6 +955,8 @@ def write(root: str, files: list[tuple[str, int, float]], *, user: str, host: st
     spare = [("/Users/" + user + "/" + s) if mac else (_BS + s + _BS)
              for s in (_MAC_SPARE_RULES if mac else _WIN_SPARE_RULES)]
     folders += spare if full else spare[:3]
+    if not mac and "I" in targets:   # the real list excludes a whole-drive copy kept on I:
+        folders.append("i:" + _BS + "c drive backup" + _BS)
     _write_rules(root, platform, user, host, folders, full)
     engine = rules.load_engine("mac" if mac else "win")
 
@@ -832,12 +973,22 @@ def write(root: str, files: list[tuple[str, int, float]], *, user: str, host: st
     # Pass 1: the demo's own files; pass 2: word-list files filling each type up to the real mix.
     picked = {d: _pick_kopia(by_drive, d, targets[d]["backed"], engine, mount_of(d)) if by_drive else []
               for d in targets}
+    used = {p.lower() for sel in picked.values() for p, _s, _t in sel}
+    picked = {d: [(_believable(p, sep, used, r), s, t) for p, s, t in sel] for d, sel in picked.items()}
     total_backed = sum(t["backed"] for t in targets.values())
     real_total = sum(c for c, _b in _REAL_TYPES.values())
     have = {b: 0 for b in _REAL_TYPES}
     for sel in picked.values():
         for p, _s, _t in sel:
             have[_bucket_of(_leaf(p))] += 1
+    if full:   # the demo's own files over-supply some types (archives, email): keep the real mix
+        for b, (c, _bb) in _REAL_TYPES.items():
+            extra = have[b] - int(c / real_total * total_backed * 1.05)
+            if extra > 0:
+                of_b = [(d, f[0]) for d, sel in picked.items() for f in sel if _bucket_of(_leaf(f[0])) == b]
+                drop = set(r.sample(of_b, min(extra, len(of_b))))
+                picked = {d: [f for f in sel if (d, f[0]) not in drop] for d, sel in picked.items()}
+                have[b] -= len(drop)
     weights = {b: max(0.0, c / real_total * total_backed - have[b]) for b, (c, _bb) in _REAL_TYPES.items()}
     if sum(weights.values()) <= 0:
         weights = {b: c for b, (c, _bb) in _REAL_TYPES.items()}
@@ -852,7 +1003,8 @@ def write(root: str, files: list[tuple[str, int, float]], *, user: str, host: st
         selected = picked[drive]
         need = max(0, t["backed"] - len(selected))
         need_bytes = max(1, t["backed_bytes"] - sum(f[1] for f in selected))
-        filler = _make_filler(platform, drive, user, need, need_bytes, weights, engine, mount, now, r)
+        filler = _make_filler(platform, drive, user, need, need_bytes, weights, engine, mount, now, r,
+                              capped=not full)
         backed, seen = [], set()
         for p, s, ts in [*selected, *filler]:   # a word-list name can land on a demo file's path
             if p.lower() not in seen:
@@ -873,6 +1025,8 @@ def write(root: str, files: list[tuple[str, int, float]], *, user: str, host: st
             backed = moved
         packed[key] = {"guid": guid, "backed": backed, "mount": mount, "token": token}
         vols.append((guid, mount, key))
+
+    tail = _recent_tail(packed, platform, user, engine, now, r) if full else None
 
     # The upload queue: changed files everywhere (already counted by Backblaze) plus a few new
     # ones on one or two drives - so most drives read +0 and the Diff shows only those.
@@ -927,7 +1081,7 @@ def write(root: str, files: list[tuple[str, int, float]], *, user: str, host: st
     uploaded = [f for v in packed.values() for f in v["uploaded"]]
     _filestats(root, uploaded, host, now, platform)
     queued = [f for v in packed.values() for f in v["new"] + v["changed"]]
-    _history(root, [f for v in packed.values() for f in v["backed"]], queued, now, full, r)
+    _history(root, [f for v in packed.values() for f in v["backed"]], queued, now, full, r, tail)
     _versions(root, platform)
     nfiles = len(uploaded)
     nbytes = sum(f[1] for f in uploaded)

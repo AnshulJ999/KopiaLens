@@ -334,16 +334,29 @@ def generate_exclusion(kind: str, value: str) -> dict:
 # ---- sessions / history ----------------------------------------------------------------
 def sessions(limit=400) -> dict:
     con = bbdb.connect()
-    # live session events (last ~day) UNION the permanent imported archive (~1 year); dedupe overlap
-    ses = [dict(r) for r in con.execute(
-        "SELECT ts, kind, files, bytes, detail, src FROM ("
-        "  SELECT ts, kind, files, bytes, detail, src FROM events WHERE kind IN ('session_start','session_end') "
-        "  UNION ALL SELECT ts, kind, files, bytes, detail, src FROM events_archive) "
-        "GROUP BY ts, kind ORDER BY ts DESC LIMIT ?", [limit])]
+    # Today's log (events) plus everything kept from earlier days (events_archive).
+    marks = con.execute(
+        "SELECT ts, kind, max(files), max(bytes) FROM ("
+        "  SELECT ts, kind, files, bytes FROM events WHERE kind IN ('session_start','session_end') "
+        "  UNION ALL SELECT ts, kind, files, bytes FROM events_archive "
+        "  WHERE kind IN ('session_start','session_end')) "
+        "GROUP BY ts, kind ORDER BY ts").fetchall()
+    # One row per backup run: an end paired with the start before it. A start with no end carries
+    # nothing to show (Backblaze writes an end line for runs that uploaded files).
+    runs, started = [], None
+    for ts, kind, files, nbytes in marks:
+        if kind == "session_start":
+            started = ts
+        else:
+            runs.append({"started": started or ts, "ended": ts, "files": files or 0, "bytes": nbytes or 0})
+            started = None
+    runs = runs[::-1][:limit]
     # upload_day rows store success in `files` and fail count in `bytes` (repurposed slot)
     uploads = [dict(r) for r in con.execute(
-        "SELECT ts AS date, files AS success, bytes AS fail, detail FROM events WHERE kind='upload_day' "
-        "ORDER BY ts DESC LIMIT ?", [limit])]
+        "SELECT ts AS date, max(files) AS success, max(bytes) AS fail FROM ("
+        "  SELECT ts, files, bytes FROM events WHERE kind='upload_day' "
+        "  UNION ALL SELECT ts, files, bytes FROM events_archive WHERE kind='upload_day') "
+        "GROUP BY ts ORDER BY ts DESC LIMIT ?", [limit])]
     deletions = [dict(r) for r in con.execute(
         "SELECT ts, bytes, detail, src FROM events WHERE kind='bz_done_big' ORDER BY ts DESC")]
     # Per-day totals from bz_done - the real "how much was uploaded" figure. The session rows above
@@ -352,10 +365,11 @@ def sessions(limit=400) -> dict:
     days = [dict(r) for r in con.execute(
         "SELECT day, sum(files) AS files, sum(bytes) AS bytes FROM backup_days "
         "GROUP BY day ORDER BY day DESC LIMIT ?", [limit])]
+    since = time.strftime("%Y-%m-%d", time.localtime(time.time() - 30 * 86400))   # the app's clock, not SQLite's
     total_30 = con.execute(
         "SELECT COALESCE(sum(files), 0), COALESCE(sum(bytes), 0) FROM backup_days "
-        "WHERE day >= date('now', '-30 day')").fetchone()
-    return {"sessions": ses, "uploads": uploads, "deletion_events": deletions,
+        "WHERE day >= ?", [since]).fetchone()
+    return {"runs": runs, "uploads": uploads, "deletion_events": deletions,
             "backup_days": days,
             "last_30d": {"files": total_30[0] or 0, "bytes": total_30[1] or 0}}
 

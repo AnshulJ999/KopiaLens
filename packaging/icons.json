@@ -31,6 +31,8 @@
   "upload": "phosphor/upload-simple",
   "restore": "phosphor/arrow-counter-clockwise",
   "mount": "phosphor/hard-drives",
+  "drive-b": "phosphor/hard-drive",
+  "drive-d": "tabler/device-desktop",
   "copy": "phosphor/copy",
   "edit": "phosphor/pencil-simple",
   "external": "phosphor/arrow-square-out",

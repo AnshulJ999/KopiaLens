@@ -128,7 +128,7 @@
         </button>
         <button x-show="repoKind==='kopia' && !isDemo()" @click="buildIndex()" :disabled="!!indexStatus.building" class="kl-fill h-8 rounded px-3 disabled:opacity-50" :title="indexStatus.never_indexed ? 'Build the first index for this repo' : 'Update index (incremental)'" x-text="indexStatus.never_indexed ? 'Index now' : 'Index'">Index</button>
         <span x-show="repoKind==='backblaze'" class="rounded border border-bd bg-surface2 px-2 py-1" x-text="bzStatusLine()" :title="bzStatusTitle()"></span>
-        <span x-show="repoKind==='backblaze' && bzRefreshResult" class="text-xs px-2 py-1 rounded" :class="bzRefreshResult.includes('FAILED') ? 'bg-danger-bg text-danger' : 'bg-ok-bg text-ok'" x-text="bzRefreshResult"></span>
+        <span x-show="repoKind==='backblaze' && bzRefreshResult" class="text-xs px-2 py-1 rounded" :class="bzRefreshResult.startsWith('Couldn') ? 'bg-danger-bg text-danger' : 'bg-ok-bg text-ok'" x-text="bzRefreshResult"></span>
         <button x-show="repoKind==='backblaze'" @click="bzRefresh()" class="kl-fill h-8 rounded px-3 flex items-center gap-1.5" title="Re-scan the read-only Backblaze index"><i class="ic ic-refresh"></i>Index BZ</button>
         <button x-show="!noRepos" @click="refreshAll()" class="h-8 w-8 rounded border border-bd kl-ibtn" title="Refresh this view and the snapshot list" aria-label="Refresh"><i class="ic ic-refresh"></i></button>
         <div class="relative" @click.outside="timeMenu = false">

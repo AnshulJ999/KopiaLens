@@ -286,11 +286,13 @@ def _refresh_backup_days(con) -> int:
     for fn, mtime, size in parsers.bz_done_files(dcenter):
         key = f"bzdone:{fn}"
         row = con.execute("SELECT mtime, size, extra FROM ingest WHERE source=?", (key,)).fetchone()
-        if row and abs((row[0] or 0) - mtime) < 1e-6 and (row[1] or 0) == size:
-            continue  # unchanged since last time
+        if (row and abs((row[0] or 0) - mtime) < 1e-6 and (row[1] or 0) == size
+                and '"purged"' in (row[2] or "")):
+            continue  # unchanged since last time (and read since purges are counted)
         totals = parsers.parse_bz_done_day_totals(os.path.join(dcenter, fn))
         listed = {"files": sum(v["files"] for v in totals.values()),
-                  "bytes": sum(v["bytes"] for v in totals.values())}
+                  "bytes": sum(v["bytes"] for v in totals.values()),
+                  "purged": parsers.count_purged(os.path.join(dcenter, fn))}
         if row and size < (row[1] or 0):
             old = {d: {"files": f, "bytes": b} for d, f, b in
                    con.execute("SELECT day, files, bytes FROM backup_days WHERE src=?", (fn,))}
@@ -355,7 +357,24 @@ def _refresh_events(con) -> int:
                         f"{vol.label.rstrip(':')}: filelist is a stub (aborted scan)", os.path.basename(vol.filelist)))
     if evs:
         con.executemany("INSERT INTO events VALUES(?,?,?,?,?,?,?)", evs)
+    _keep_history(con, evs)
     return len(evs)
+
+
+def _keep_history(con, evs: list[tuple]) -> None:
+    """Backblaze locks each day's event log once the day is over and keeps about 20 days of upload
+    counts, so the sessions and upload days read now are copied to the permanent archive."""
+    sessions = [(e[0], e[1], e[3], e[4], e[5], e[6]) for e in evs if e[1] in ("session_start", "session_end")]
+    if sessions:
+        have = {(r[0], r[1]) for r in con.execute(
+            "SELECT ts, kind FROM events_archive WHERE kind IN ('session_start','session_end')")}
+        new = [s for s in sessions if (s[0], s[1]) not in have]
+        if new:
+            con.executemany("INSERT INTO events_archive VALUES(?,?,?,?,?,?)", new)
+    days = [(e[0], e[1], e[3], e[4], e[5], e[6]) for e in evs if e[1] == "upload_day"]
+    if days:   # today's counts still grow: replace the days Backblaze still lists
+        con.executemany("DELETE FROM events_archive WHERE kind='upload_day' AND ts=?", [(d[0],) for d in days])
+        con.executemany("INSERT INTO events_archive VALUES(?,?,?,?,?,?)", days)
 
 
 def _refresh_stats_kv(con) -> None:

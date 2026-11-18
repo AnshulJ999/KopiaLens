@@ -15,6 +15,8 @@ Backblaze then appears in the repository list at the top of the window. Select i
 
 KopiaLens only reads the Backblaze folder. It never writes there, and it can't delete, restore or change anything in Backblaze.
 
+On a Mac, macOS can stop KopiaLens from reading Backblaze's data folder. Setup then says so: allow KopiaLens in **System Settings → Privacy & Security → Full Disk Access**, and select **Check again**.
+
 ## The tabs
 
 | Tab | What it shows |
@@ -26,8 +28,8 @@ KopiaLens only reads the Backblaze folder. It never writes there, and it can't d
 | **Exclusions** | Backblaze's exclusion rules: your folder rules, excluded extensions, and its built-in rules. Shows what each rule keeps out, and rules that match nothing on disk now |
 | **Churn** | Recently added files by folder, to spot folders that keep changing |
 | **Queue** | Files waiting to be uploaded, by folder and by drive |
-| **Sessions** | What was backed up in the last 30 days, recent backup sessions and a daily upload history |
-| **Health** | Signs that Backblaze's file lists are damaged, such as a drive suddenly showing no backed-up files. It also shows the installed Backblaze version and whether a newer one is out |
+| **Sessions** | What Backblaze uploaded each day, its backup runs, and its own count of uploads that worked or failed ([more below](#sessions)) |
+| **Health** | Signs of trouble in Backblaze's own records, the installed Backblaze version and whether a newer one is out ([more below](#health)) |
 
 Backblaze writes a new file list about once or twice a day, so most numbers change about that often. The upload queue changes as Backblaze uploads; the Queue page shows when Backblaze last updated it.
 

@@ -185,6 +185,24 @@ def parse_bz_done_day_totals(path: str) -> dict[str, dict]:
     return out
 
 
+def count_purged(path: str) -> int:
+    """Files Backblaze's server asked it to upload again, in one bz_done file. Backblaze keeps such a
+    line but comments it out (first field ``#``) and tags its path ``_purge_<id>``. A large file has
+    several lines, so distinct paths are counted. Other ``#`` lines (padding) carry no tag."""
+    seen: set[str] = set()
+    try:
+        with open_ro(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if line.startswith("#") and "_purge_" in line:
+                    seen.add(_PURGE_TAG.sub("", line.rstrip("\n").split("\t")[-1]))
+    except OSError:
+        return 0
+    return len(seen)
+
+
+_PURGE_TAG = re.compile(r"_purge_\w*$")
+
+
 # ---- eventlog (backup session history) -------------------------------------------------
 _EVT_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s*-\s*(.*)$")
 _END_RE = re.compile(r"END_BACKUP:\s*Backed up\s*(\d+)\s*FILES\s*/\s*(\d+)\s*MB", re.IGNORECASE)

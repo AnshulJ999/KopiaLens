@@ -16,7 +16,7 @@ const bzChurnPart = {
       const all = this._bzChurnAll || [];
       let rows = this.bzChurnActiveOnly ? all.filter((r) => r.status === "active") : all;
       if (this.bzChurnDrive) rows = rows.filter((r) => r.drive === this.bzChurnDrive);
-      const cs = (s) => { const m = { active: ["#dcfce7", "#166534"], excluded: ["#fef9c3", "#854d0e"], gone: ["#e2e8f0", "#475569"] }[s] || ["#e2e8f0", "#475569"]; return `<span class="pill" style="background:${m[0]};color:${m[1]}">${s}</span>`; };
+      const cs = (s) => bzPill({ active: "ok", excluded: "warn" }[s] || "", s);
       setTable("#bzChurnTable", rows, [
         { title: "Folder (recently added)", field: "folder", widthGrow: 5, minWidth: 270, formatter: (c) => itemIconHtml("", true) + escHtml(c.getValue()) },
         { title: "Status", field: "status", width: 88, formatter: (c) => cs(c.getValue()) },
@@ -24,7 +24,7 @@ const bzChurnPart = {
         { title: "% recent", field: "pct", width: 85, hozAlign: "right", sorter: "number", formatter: (c) => `${fmtFix(c.getValue() || 0, 1)}%` },
         { title: "Backed now", field: "backed_now", width: 100, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
         { title: "Size", field: "bytes_now", width: 92, hozAlign: "right", sorter: "number", formatter: (c) => bzFmt(c.getValue()) },
-        { title: "Δ vs first", field: "delta", width: 92, hozAlign: "right", sorter: "number", formatter: (c) => { const v = c.getValue(); if (v === null || v === undefined) return "<span style='color:#cbd5e1'>—</span>"; const col = v > 0 ? "#dc2626" : (v < 0 ? "#16a34a" : "#64748b"); return `<span style="color:${col}">${v > 0 ? "+" : ""}${Number(v).toLocaleString(NUM_LOCALE)}</span>`; } },
+        { title: "Δ vs first", field: "delta", width: 92, hozAlign: "right", sorter: "number", formatter: (c) => { const v = c.getValue(); if (v === null || v === undefined) return "<span class='text-faint'>—</span>"; const col = v > 0 ? "text-danger" : (v < 0 ? "text-ok" : "text-muted"); return `<span class="${col}">${v > 0 ? "+" : ""}${Number(v).toLocaleString(NUM_LOCALE)}</span>`; } },
         { title: "Drive", field: "drive", width: this.bzSep() === "/" ? 210 : 58, sorter: this.bzDriveSorter(), formatter: (c) => c.getValue() ? escHtml(this.bzLabel(c.getValue())) : "" },
       ], {
         initialSort: [{ column: "count", dir: "desc" }],
