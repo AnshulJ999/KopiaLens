@@ -18,7 +18,7 @@ RETRANSMIT_REPORT = "bzlist_bzdone_retransmit.txt"
 SELFHEAL_MARK = "SelfHealBzDoneFiles - "
 SELFHEAL_OK = "healthy checkup"
 SHRINK_MIN_BYTES = 1_000_000_000    # Backblaze trims a few lines in routine cleanups; a rollback loses far more
-SHRINK_RECENT_DAYS = 60
+RECENT_DAYS = 60                    # older evidence leaves Health
 KEEP = 20
 
 
@@ -29,6 +29,8 @@ def retransmit_report() -> dict | None:
     path = paths.report(RETRANSMIT_REPORT)
     try:
         updated = os.path.getmtime(path)
+        if updated < time.time() - RECENT_DAYS * 86400:
+            return None
         with open_ro(path, encoding="utf-8", errors="replace") as fh:
             count = sum(1 for line in fh if "wrong_size" in line)
     except OSError:
@@ -46,7 +48,7 @@ def note_shrink(con, fn: str, old_size: int, new_size: int, lost_bytes: int, los
 
 
 def recent_shrinks(con) -> list[dict]:
-    cutoff = time.time() - SHRINK_RECENT_DAYS * 86400
+    cutoff = time.time() - RECENT_DAYS * 86400
     return [r for r in _kv_list(con, "bz_done_shrinks")
             if r.get("at", 0) >= cutoff and r.get("lost_bytes", 0) >= SHRINK_MIN_BYTES]
 

@@ -3,8 +3,8 @@ recorded in ``data/audit.jsonl``.
 
 The app log ROTATES (1 MB x 15), so it is not an audit trail. This file is never rotated and
 never truncated, by design: a few lines per action, one JSON object per line, greppable forever.
-Growth is tiny (kilobytes a year of normal use) and the Stats tab shows its size so it can never
-surprise anyone; an archive/trim hatch is deliberately deferred until it would ever matter.
+Growth is tiny (kilobytes a year of normal use); an archive/trim hatch is deliberately deferred
+until it would ever matter.
 
 Best-effort by contract: a write failure logs a warning and NEVER raises into the caller - an
 audit gap must not turn into a failed delete or a failed restore.

@@ -302,8 +302,9 @@ def _refresh_backup_days(con) -> int:
                 prev = {"files": sum(v["files"] for v in old.values()), "bytes": sum(v["bytes"] for v in old.values())}
             lost_b, lost_f = prev.get("bytes", 0) - listed["bytes"], prev.get("files", 0) - listed["files"]
             checks.note_shrink(con, fn, row[1], size, max(lost_b, 0), max(lost_f, 0))
-            log.warning("bz_done %s got smaller (%d -> %d bytes, %d files no longer listed)",
-                        fn, row[1], size, max(lost_f, 0))
+            log.log(logging.WARNING if lost_b >= checks.SHRINK_MIN_BYTES else logging.INFO,
+                    "bz_done %s got smaller (%d -> %d bytes, %d files no longer listed)",
+                    fn, row[1], size, max(lost_f, 0))
             for day, v in old.items():
                 if v["bytes"] > totals.get(day, {}).get("bytes", 0):
                     totals[day] = v

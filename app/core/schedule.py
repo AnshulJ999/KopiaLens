@@ -478,7 +478,7 @@ def _recent_policies(repo: str) -> dict:
     this stage runs, so a fresh cache is used directly. A stale one (the 30-minute light loop)
     resolves from ONE `policy export` instead of ~100 `policy show` calls, and the export itself is
     re-read once it is older than the reuse window - so a schedule edited in KopiaUI lands within
-    a day, or when the Policies tab is opened. Returns {} when neither is readable, which is the caller's
+    a day. Returns {} when neither is readable, which is the caller's
     cue to fall back to a spawn per source.
     """
     try:

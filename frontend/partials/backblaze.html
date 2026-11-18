@@ -227,7 +227,7 @@
 
       <section x-show="active==='bz-health' && !bzWaiting() && !bzRebuilding" class="h-full flex flex-col gap-3 overflow-auto">
         <div class="rounded p-3" :class="bzHealth && bzHealth.ok ? 'border border-ok-bd bg-ok-bg/20' : 'border border-danger-bd bg-danger-bg/20'" x-show="bzHealth">
-          <div class="font-medium text-sm" x-text="bzHealth && (bzHealth.ok ? 'No known problems found.' : (countOf(bzHealth.issues.length, 'potential issue') + ' detected:'))"></div>
+          <div class="font-medium text-sm" x-text="bzHealth && (bzHealth.ok ? ((bzHealth.notices && bzHealth.notices.length) ? 'No problems found. See the notes below.' : 'No known problems found.') : (countOf(bzHealth.issues.length, 'potential issue') + ' detected:'))"></div>
           <template x-for="(iss,i) in (bzHealth ? bzHealth.issues : [])" :key="i">
             <div class="text-[0.75rem] text-danger">• <span x-text="iss"></span></div>
           </template>
@@ -246,6 +246,6 @@
             <a x-show="bzHealth.version.outdated" :href="bzReleaseNotesUrl()" target="_blank" rel="noopener" class="text-link underline underline-offset-2">Release notes</a>
           </div>
         </template>
-        <div class="text-[0.6875rem] text-muted px-1">Checks: a drive showing 0 backed files, an unfinished drive scan, a mass deletion, and files Backblaze lost track of and queued again. <span x-show="bzHealth && bzHealth.remaining && bzHealth.remaining.remaining_files">Files remaining to upload: <span class="font-medium" x-text="bzHealth && Number(bzHealth.remaining.remaining_files||0).toLocaleString(NUM_LOCALE)"></span>.</span></div>
+        <div class="text-[0.6875rem] text-muted px-1">Checks: a drive showing 0 backed files, an unfinished drive scan, a mass deletion, a rolled-back upload record, and files Backblaze lost track of and queued again. <span x-show="bzHealth && bzHealth.remaining && bzHealth.remaining.remaining_files">Files remaining to upload: <span class="font-medium" x-text="bzHealth && Number(bzHealth.remaining.remaining_files||0).toLocaleString(NUM_LOCALE)"></span>.</span></div>
         <div id="bzHealthTable" class="min-h-[14rem]"></div>
       </section>

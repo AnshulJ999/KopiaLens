@@ -22,7 +22,7 @@ import time
 
 from config import DATA_DIR
 
-from . import audit, filecrypto
+from . import filecrypto
 from .applog import get_logger
 
 log = get_logger("mounts")
