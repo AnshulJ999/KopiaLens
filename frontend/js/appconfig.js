@@ -313,7 +313,8 @@ const appConfigPart = {
       const k = a.kopia || {};
       return [`KopiaLens ${a.version}${a.commit ? ` (${a.commit})` : ""}`, `kopia ${k.version || "unknown"} (${k.path || "not found"})`,
         `Data format ${a.data_format}`, `${a.os} · Python ${a.python}${a.compiled ? " · compiled" : ""}`,
-        `Running as ${a.profile === "desktop" ? "desktop app" : "server"}`, `Data folder ${a.data_dir}`].join("\n");
+        `Running as ${a.profile === "desktop" ? "desktop app" : "server"}`, `Data folder ${a.data_dir}`,
+        `HTTPS certificates: ${a.certificates || "unknown"}`].join("\n");
     },
     async copyAbout() {
       try { await navigator.clipboard.writeText(this.aboutText()); this.klNotify("Copied"); }

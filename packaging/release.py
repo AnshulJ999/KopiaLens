@@ -419,11 +419,17 @@ def check_running(base: str, version: str, data_root: str, kopia_root: str) -> N
         fail(f"smoke: bundled kopia not in use: {about.get('kopia')}")
     if not about.get("compiled"):
         fail("smoke: the server is not the compiled build")
-    status, body = http(base + "/api/app/web-check", timeout=30)
-    web = json.loads(body) if status == 200 else {}
+    for attempt in range(2):   # one retry: the licence service it calls may blink
+        status, body = http(base + "/api/app/web-check", timeout=30)
+        web = json.loads(body) if status == 200 else {}
+        if web.get("ok") or web.get("cert_error"):
+            break
+        time.sleep(10)
     if not web.get("ok"):
+        hint = ("" if web.get("cert_error") else
+                " - if licence.kopialens.com is down, the build itself may be fine; check it and run smoke again")
         fail(f"smoke: the server can't make an HTTPS request ({web.get('error') or status}); "
-             f"certificates: {web.get('certificates')}")
+             f"certificates: {web.get('certificates')}{hint}")
     log(f"  smoke: HTTPS certificates: {web.get('certificates')}")
     smoke_sample(base)
 

@@ -65,6 +65,7 @@
                   <div class="flex items-center justify-between gap-3"><span>Data folder</span><span class="text-xs text-right min-w-0 truncate" :title="about.data_dir" x-text="about.data_dir"></span></div>
                   <div class="flex items-center justify-between gap-3"><span>Data format</span><span class="text-xs" x-text="about.data_format"></span></div>
                   <div class="flex items-center justify-between gap-3"><span>System</span><span class="text-xs" x-text="about.os + ' · Python ' + about.python"></span></div>
+                  <div x-show="about.certificates" class="flex items-center justify-between gap-3"><span>HTTPS certificates</span><span class="text-xs text-right min-w-0 truncate" :title="about.certificates" x-text="about.certificates"></span></div>
                   <div class="flex items-center justify-between gap-3"><span>Updates</span>
                     <span class="flex items-center gap-2 text-xs">
                       <span x-text="update().available ? update().latest + ' is out' : (update().checked_at ? 'Up to date' : 'Not checked yet')"></span>
