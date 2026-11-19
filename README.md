@@ -42,13 +42,25 @@ I built it for my own backups: about 5 TB across two repositories. It found 400+
 - **Churn:** the files and folders that add new data on every backup.
 - **Simulate** a retention policy before you use it.
 - **Excluded:** the folders on your disks that no backup covers.
-- **Backblaze:** see what Backblaze Personal Backup is really backing up. (Windows-only for now)
+- **Backblaze:** see what Backblaze Personal Backup is really backing up ([more below](#backblaze-personal-backup)).
 
 ### Clean up (Pro)
 
 - **Remove files and folders** from every snapshot that holds them, without deleting the snapshots.
 - **Prune versions:** keep the versions of a file you want and remove the rest.
 - **Smart excludes and exclude & delete:** stop backing something up and take it out of the past in one step.
+
+### Backblaze Personal Backup
+
+I've used Backblaze Personal Backup for over 5 years, and its app tells you very little about what it's actually backing up. KopiaLens reads Backblaze's own data folder (`bzdata`) and shows you:
+
+- **Every file Backblaze knows about,** backed up or excluded, searchable, plus a folder tree with each folder's status.
+- **What it skips, and why:** the rule that keeps each file out, and your rules that match nothing.
+- **Coverage per drive,** checked against Backblaze's own counts.
+- **What's waiting to upload,** which folders keep adding new files, and what was backed up each day.
+- **Health checks:** a drive that suddenly shows no backed-up files (a lost file list), an interrupted drive scan, a mass deletion, files Backblaze lost track of and queued again, and whether a newer Backblaze version is out.
+
+It only reads, and never changes anything in Backblaze. It's free, you don't need Kopia for it, it works with Backblaze on Windows and Mac, and it can even read another computer's Backblaze folder over your network. [Backblaze docs](https://kopialens.com/docs/backblaze)
 
 ### Scripts and AI agents
 
