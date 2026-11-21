@@ -168,19 +168,6 @@ def _write_state(data: dict) -> None:
         log.warning("bg worker state write failed")
 
 
-def _read_last_cycle_ts() -> float | None:
-    try:
-        return float(_read_state()["ts"])
-    except Exception:
-        return None
-
-
-def _write_last_cycle_ts() -> None:
-    data = _read_state()
-    data["ts"] = time.time()
-    _write_state(data)
-
-
 def nightly_ts(repo: str) -> float:
     """When this repo's heavy pass last STARTED. Used only to decide whether a slot has been
     attempted - NOT for display. NO FALLBACK, deliberately (mirrors nightly_success_ts() below): a
@@ -251,7 +238,6 @@ def _mark_nightly(repo: str, slot: float) -> None:
     retries = int(prev.get("retries", 0)) + 1 if prev.get("slot") == slot else 0
     data.setdefault("attempts", {})[repo] = {"slot": slot, "at": now, "retries": retries, "ok": None}
     data.setdefault("nightly", {})[repo] = now
-    data["ts"] = now
     _write_state(data)
 
 
@@ -267,7 +253,6 @@ def mark_index_stopped(repo: str) -> None:
     data.setdefault("attempts", {})[repo] = rec
     data.setdefault("errors", {})[repo] = {"at": time.time(),
                                            "reason": "Stopped by you. It will not restart on its own."}
-    data["ts"] = time.time()
     _write_state(data)
 
 
@@ -329,19 +314,6 @@ def _max_retries() -> int:
         return max(0, int(_kl().get("index_max_retries", 1)))
     except Exception:
         return 1
-
-
-def _startup_wait() -> float:
-    """Seconds to wait before the FIRST bg pass after this process started: at least
-    startup_delay (flat boot/restart quiet period), and never less than whatever remains of
-    the index interval since the last completed cycle - so a restart doesn't bring a run forward."""
-    if _index_mode() == "daily":
-        return _startup_delay()  # the clock decides when the heavy pass runs; nothing to defer to
-    last = _read_last_cycle_ts()
-    if last is None:
-        return _startup_delay()
-    remaining = _index_interval() - (time.time() - last)
-    return max(_startup_delay(), remaining)
 
 
 def _reclaim_interval() -> float:
@@ -678,7 +650,8 @@ def _bg_worker() -> None:
     work when something is actually due: at most one heavy pass at a time (delegated to a worker
     subprocess), plus a cheap warm pass on its own interval."""
     global _last_light
-    wait = _startup_wait()
+    # A heavy pass can't run early after a restart: _due_slot counts from when the last one started.
+    wait = _startup_delay()
     log.debug("bg worker: waiting %.0fs before the first pass", wait)
     if _bg_stop.wait(wait):
         return  # shutdown requested during the startup delay
@@ -688,7 +661,6 @@ def _bg_worker() -> None:
     _bz_detect_pass()  # BZ catch-up: after the PC was off, the first detect flags any missed change
     _bz_transmit_pass()  #: the pill/queue/dashboard cards are fresh from the first tick
     gc.collect()
-    _write_last_cycle_ts()
     log_memory("startup light pass done")
     while not _bg_stop.wait(_TICK):
         try:

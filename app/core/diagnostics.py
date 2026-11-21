@@ -199,6 +199,31 @@ def _bz_drive_lines() -> list[str]:
         return [f"  Backblaze drives could not be read: {exc}"]
 
 
+def _bz_queue_lines() -> list[str]:
+    """Backblaze's upload queue file, what Backblaze says is left, and KopiaLens's copy of the queue."""
+    try:
+        from ..backblaze import bbdb, parsers, paths
+        if not paths.exists():
+            return []
+        dc = paths.datacenter_dir()
+        names = [n for n in os.listdir(dc) if n.startswith("bz_todo_") and n.endswith(".dat")] if os.path.isdir(dc) else []
+        if names:
+            size = sum(os.path.getsize(os.path.join(dc, n)) for n in names)
+            age = int((time.time() - (parsers.queue_file_ts(dc) or time.time())) / 60)
+            out = [f"  Upload queue file: {len(names)} file(s), {size} bytes, written {age} min ago"]
+        else:
+            out = ["  Upload queue file: none"]
+        left = parsers.read_simple_xml(paths.report("bzstat_remainingbackup.xml"),
+                                       {"files": r'remainingnumfilesforbackup="(\d+)"',
+                                        "bytes": r'remainingnumbytesforbackup="(\d+)"'})
+        out.append(f"  Backblaze reports left: {left.get('files', 'unknown')} files, {left.get('bytes', 'unknown')} bytes")
+        rows = bbdb.connect().execute("SELECT count(*) FROM queue").fetchone()[0]
+        out.append(f"  Upload queue in KopiaLens: {rows} files")
+        return out
+    except Exception as exc:  # noqa: BLE001 - the bundle never fails over one section
+        return [f"  Backblaze upload queue could not be read: {exc}"]
+
+
 def _repo_lines() -> list[str]:
     from . import repos as repos_mod
     from .runhistory import read_tail
@@ -210,6 +235,7 @@ def _repo_lines() -> list[str]:
             lines.append(f"Repository {rid}: {kind}")
             if kind == "backblaze":
                 lines += _bz_drive_lines()
+                lines += _bz_queue_lines()
             continue
         info = repos_mod.storage_info(rid)
         line = f"Repository {rid}: kopia, storage {info.get('type') or 'unknown'}"

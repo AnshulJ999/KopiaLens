@@ -131,6 +131,24 @@ def test_nightly_state_prefers_the_per_repo_timestamp(monkeypatch, tmp_path):
     assert m.nightly_ts("2") == 0.0  # no per-repo entry -> never, NOT the shared ts
 
 
+@pytest.mark.parametrize("mode", ["off", "interval"])
+def test_first_background_pass_waits_only_the_startup_delay(monkeypatch, tmp_path, mode):
+    """A restart soon after the last cycle once held all background work for the rest of the
+    24-hour index interval (Backblaze queue and stats included)."""
+    recent = time.time() - 60
+    f = tmp_path / "bg_worker_state.json"
+    f.write_text(f'{{"ts": {recent}, "nightly": {{"1": {recent}}}}}', encoding="utf-8")
+    monkeypatch.setattr(m, "_LAST_CYCLE_FILE", str(f))
+    monkeypatch.setattr(m, "_index_mode", lambda: mode)
+    monkeypatch.setattr(m, "_index_interval", lambda: 86400.0)
+    monkeypatch.setattr(m, "_startup_delay", lambda: 300.0)
+    monkeypatch.setattr(m, "_bz_reconcile", lambda: None, raising=False)
+    waits = []
+    monkeypatch.setattr(m._bg_stop, "wait", lambda t: waits.append(t) or True)   # True = stop
+    m._bg_worker()
+    assert waits == [300.0]
+
+
 # ----: BZ's own detect-driven due check --------------------------------------------
 
 def _bz_due(monkeypatch, *, pending, anchor, gap=21600.0, last_attempt=0.0, now=1_000_000.0):
