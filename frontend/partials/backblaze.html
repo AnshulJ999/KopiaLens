@@ -186,6 +186,7 @@
           <span x-text="bzQueue && (countOf(bzQueue.total_files, 'file') + ' · ' + fmtB(bzQueue.total_bytes))"></span>
           <span class="text-muted text-xs" x-show="bzQueue && bzQueue.updated" x-text="bzQueue && bzQueue.updated ? 'Updated ' + fmtRel(new Date(bzQueue.updated * 1000).toISOString()) : ''"></span>
         </div>
+        <div class="text-sm" x-show="bzQueue && !bzQueue.has_list && !bzQueue.total_files && bzQueue.left_files" x-text="bzQueue ? 'Backblaze\'s upload queue isn\'t available right now. It reports ' + countOf(bzQueue.left_files, 'file') + ' (' + fmtB(bzQueue.left_bytes) + ') left to upload.' : ''"></div>
         <div class="flex flex-wrap gap-2 text-xs" x-show="bzQueue">
           <template x-for="(d,i) in (bzQueue ? bzQueue.by_drive : [])" :key="i">
             <span class="rounded border border-bd-soft px-2 py-1" x-text="bzLabel(d.drive) + ' ' + Number(d.files||0).toLocaleString(NUM_LOCALE) + ' · ' + fmtB(d.bytes)"></span>

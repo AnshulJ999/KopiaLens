@@ -393,8 +393,12 @@ def queue(depth=1, collapse=None) -> dict:
                  key=lambda x: x["bytes"], reverse=True)[:150]
     tot = con.execute("SELECT count(*), coalesce(sum(size),0) FROM queue").fetchone()
     ts = bbdb.kv_get(con, "queue_file_ts")
+    left = json.loads(bbdb.kv_get(con, "remaining") or "{}")
     return {"total_files": tot[0], "total_bytes": tot[1], "by_drive": by_drive, "by_folder": top,
-            "updated": float(ts) if ts else None}
+            "updated": float(ts) if ts else None,
+            "has_list": parsers.queue_file_ts(paths.datacenter_dir()) is not None,
+            "left_files": int(left.get("remaining_files") or 0),
+            "left_bytes": int(left.get("remaining_bytes") or 0)}
 
 
 # ---- health ---------------------------------------------------------------------------
