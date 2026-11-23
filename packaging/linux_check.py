@@ -21,9 +21,23 @@ from pathlib import Path
 
 IMAGES = ("fedora:43", "archlinux:latest", "ubuntu:24.04")
 SERVER = "squashfs-root/usr/lib/KopiaLens/server/kopialens-server"
-# Docker's minimal Debian/Ubuntu images lack the CA certificates every real install has.
-SETUP = {"ubuntu": "apt-get update -qq && apt-get install -y -qq ca-certificates >/dev/null && ",
-         "debian": "apt-get update -qq && apt-get install -y -qq ca-certificates >/dev/null && "}
+# Docker's minimal Debian/Ubuntu images lack the CA certificates every real install has; a local image
+# with them is built once and reused, so package-mirror speed never counts against the start-up wait.
+CERTS_RUN = "RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*"
+NEEDS_CERTS = ("ubuntu", "debian")
+
+
+def prepared(image: str) -> str:
+    if image.split(":")[0] not in NEEDS_CERTS:
+        return image
+    local = "kl-linuxcheck-" + image.replace(":", "-").replace("/", "-")
+    if subprocess.run(["docker", "image", "inspect", local], capture_output=True).returncode:
+        print(f"  preparing {local} (once): {image} with ca-certificates", flush=True)
+        built = subprocess.run(["docker", "build", "-q", "-t", local, "-"], input=f"FROM {image}\n{CERTS_RUN}\n",
+                               capture_output=True, text=True)
+        if built.returncode:
+            raise RuntimeError(f"could not prepare {local}: {built.stderr.strip()[-300:]}")
+    return local
 
 
 def free_port() -> int:
@@ -75,14 +89,17 @@ def check(appimage: Path, image: str) -> tuple[bool, str]:
     port = free_port()
     env = {"KOPIALENS_PORT": "7123", "KOPIALENS_DATA_DIR": "/tmp/data", "KOPIALENS_HTTPS": "off",
            "KOPIALENS_BIND_HOST": "0.0.0.0", "KOPIALENS_NO_USAGE_STATS": "1", "HOME": "/tmp"}
-    inside = (SETUP.get(image.split(":")[0], "") +
-              f"cp '/kl/{appimage.name}' /tmp/app && chmod +x /tmp/app && cd /tmp && "
+    try:
+        run_image = prepared(image)
+    except RuntimeError as e:
+        return False, str(e)
+    inside = (f"cp '/kl/{appimage.name}' /tmp/app && chmod +x /tmp/app && cd /tmp && "
               f"./app --appimage-extract >/dev/null && exec {SERVER} --server")
     cmd = ["docker", "run", "-d", "--rm", "--name", name, "-p", f"127.0.0.1:{port}:7123",
            "-v", f"{appimage.parent.as_posix()}:/kl:ro"]
     for k, v in env.items():
         cmd += ["-e", f"{k}={v}"]
-    cmd += [image, "sh", "-c", inside]
+    cmd += [run_image, "sh", "-c", inside]
     run = subprocess.run(cmd, capture_output=True, text=True, env={**os.environ, "MSYS_NO_PATHCONV": "1"})
     if run.returncode:
         return False, f"container did not start: {run.stderr.strip()[:200]}"
