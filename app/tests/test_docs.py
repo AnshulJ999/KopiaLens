@@ -101,6 +101,11 @@ def _setup_minutes():
     return auth.SETUP_WINDOW // 60
 
 
+def _find_depth():
+    from app.core import repoconnect
+    return repoconnect.FIND_DEPTH
+
+
 def _session_range():
     from app.core import auth
     return min(auth.SESSION_CHOICES), max(auth.SESSION_CHOICES) // 365
@@ -198,6 +203,7 @@ DEFAULTS = [
     ("sign-in.md", r"up to (\d+) seconds", _sign_in_wait),
     ("getting-started.md", r"setup is open for (\d+) minutes", _setup_minutes),
     ("docker.md", r"For the first (\d+) minutes after a start", _setup_minutes),
+    ("docker.md", r"up to (\d+) folders deep", _find_depth),
     ("glossary.md", r"more than (\d+) minutes after KopiaLens started", _setup_minutes),
     ("indexing.md", r"\((\d+) by default, up to (\d+)", _keep_versions),
     ("api-tokens.md", r"expires after (\w+) hours?", _approval_hours),

@@ -4,6 +4,7 @@ show the Windows folder picker, mount snapshots, keep its data across restarts."
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -32,6 +33,39 @@ def os_name() -> str:
 
 def in_docker() -> bool:
     return os.environ.get("KOPIALENS_IN_DOCKER") == "1" or os.path.exists("/.dockerenv")
+
+
+MOUNTINFO = "/proc/self/mountinfo"
+_SYSTEM_MOUNTS = ("/proc", "/sys", "/dev", "/etc", "/run")
+
+
+def _under(path: str, root: str) -> bool:
+    root = root.rstrip("/\\")
+    return path == root or path.startswith(root + "/") or path.startswith(root + "\\")
+
+
+def attached_folders() -> list[str]:
+    """In Docker: the folders attached to the container (volumes), apart from KopiaLens's own."""
+    if not in_docker():
+        return []
+    try:
+        with open(MOUNTINFO, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return []
+    own = [os.path.abspath(DATA_DIR)] + [os.path.abspath(d) for d in (mount_dir(),) if d]
+    out: list[str] = []
+    for line in lines:
+        parts = line.split(" ")
+        if len(parts) < 5:
+            continue
+        # The mount point is the fifth field; the kernel writes spaces and the like as octal escapes.
+        point = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), parts[4])
+        if point in ("/", "") or any(_under(point, r) for r in _SYSTEM_MOUNTS + tuple(own)):
+            continue
+        if point not in out and os.path.isdir(point):
+            out.append(point)
+    return sorted(out)
 
 
 def has_desktop() -> bool:

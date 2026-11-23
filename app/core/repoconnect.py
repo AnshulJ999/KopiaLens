@@ -894,6 +894,73 @@ def describe_config(config_file: str) -> dict:
             "config": repos.scrub_storage_config(storage.get("config") or {})}
 
 
+def _known_connections() -> tuple[dict[str, str], dict[str, str]]:
+    """The store's kopia repositories by config file and by storage location (repo id values)."""
+    from . import coexist
+    default_cfg = os.path.join(kopia_config_dir(), "repository.config")
+    known: dict[str, str] = {}
+    known_storage: dict[str, str] = {}
+    for rec in repos.all_records():
+        if rec.get("kind", "kopia") != "kopia" or rec.get("demo"):
+            continue   # a demo repo (the sample data) has no kopia connection at all
+        # no config_file = kopia's own default connection
+        path = rec.get("config_file") or default_cfg
+        known[os.path.normcase(os.path.abspath(path))] = str(rec.get("id"))
+        skey = coexist.storage_key(coexist.read_config(path))
+        if skey:
+            known_storage[skey] = str(rec.get("id"))
+    return known, known_storage
+
+
+# kopia writes this file at the top of every repository it keeps in a folder.
+REPO_MARKER = "kopia.repository.f"
+FIND_DEPTH = 3          # folder levels searched below each attached folder
+_FIND_FOLDERS = 2000    # bounds for a slow or huge network share
+_FIND_SECONDS = 3.0
+
+
+def find_repo_folders(roots: list[str], depth: int = FIND_DEPTH) -> list[str]:
+    """Folders under ``roots`` (breadth first, at most ``depth`` levels down) that hold a kopia
+    repository. A repository's own folders are not searched."""
+    found: list[str] = []
+    queue = [(r, 0) for r in roots]
+    deadline = time.monotonic() + _FIND_SECONDS
+    seen = 0
+    while queue and seen < _FIND_FOLDERS and time.monotonic() < deadline:
+        folder, level = queue.pop(0)
+        seen += 1
+        if os.path.isfile(os.path.join(folder, REPO_MARKER)):
+            if folder not in found:
+                found.append(folder)
+            continue
+        if level >= depth:
+            continue
+        try:
+            with os.scandir(folder) as it:
+                subs = sorted(e.path for e in it if not e.name.startswith(".") and e.is_dir(follow_symlinks=False))
+        except OSError:
+            continue
+        queue.extend((s, level + 1) for s in subs)
+    if queue:
+        log.info("repository search stopped after %d folders", seen)
+    return found
+
+
+def detect_folders() -> dict:
+    """In Docker: the attached folders, and the kopia repositories inside them for setup to offer.
+    Already-connected ones are marked, the same way as `detect_configs`."""
+    from . import coexist, host
+    if config.DEMO_INSTANCE or not host.in_docker():
+        return {"docker": False, "attached": [], "folders": []}
+    attached = host.attached_folders()
+    _, known_storage = _known_connections()
+    folders = []
+    for path in find_repo_folders(attached):
+        skey = coexist.storage_key({"storage": {"type": "filesystem", "config": {"path": path}}})
+        folders.append({"path": path, "in_store": bool(skey and known_storage.get(skey))})
+    return {"docker": True, "attached": attached, "folders": folders}
+
+
 def detect_configs() -> list[dict]:
     """Every kopia connection config found on this machine - the zero-typing path into KopiaLens.
 
@@ -907,17 +974,7 @@ def detect_configs() -> list[dict]:
     ours = os.path.join(config.DATA_DIR, "configs")
     default_cfg = os.path.join(base, "repository.config")
     from . import coexist
-    known: dict[str, str] = {}
-    known_storage: dict[str, str] = {}
-    for rec in repos.all_records():
-        if rec.get("kind", "kopia") != "kopia" or rec.get("demo"):
-            continue   # a demo repo (the sample data) has no kopia connection at all
-        # no config_file = kopia's own default connection
-        path = rec.get("config_file") or default_cfg
-        known[os.path.normcase(os.path.abspath(path))] = str(rec.get("id"))
-        skey = coexist.storage_key(coexist.read_config(path))
-        if skey:
-            known_storage[skey] = str(rec.get("id"))
+    known, known_storage = _known_connections()
 
     kopiaui = kopiabin.kopiaui_uses_kopia_folder()
     blinkdisk = coexist.blinkdisk_vault_dir()

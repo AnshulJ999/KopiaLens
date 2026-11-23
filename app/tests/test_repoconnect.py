@@ -218,6 +218,52 @@ def test_detect_configs_scans_both_folders(store, monkeypatch):
     assert by_name["repo7.config"]["folder"] == "data" and by_name["repo7.config"]["managed"] is True
 
 
+def test_docker_setup_finds_repositories_in_attached_folders(store, monkeypatch):
+    """Folders come from the kernel's mountinfo format (octal-escaped spaces); KopiaLens's own data
+    folder and system mounts are skipped; repositories are found up to FIND_DEPTH levels down and
+    an already-connected one is marked."""
+    from app.core import host, repoconnect
+
+    def repo_at(*parts):
+        folder = store.joinpath("vol", *parts)
+        folder.mkdir(parents=True)
+        (folder / repoconnect.REPO_MARKER).write_bytes(b"x")
+        return str(folder)
+
+    top = repo_at("My Backups")
+    deep = repo_at("nas", "kopia", "repo")
+    repo_at("nas", "a", "b", "c", "too-deep")
+    (store / "vol" / "My Backups" / "p00").mkdir()              # a repository's own folders
+    (store / "vol" / "My Backups" / "p00" / repoconnect.REPO_MARKER).write_bytes(b"x")
+    nas = str(store / "vol" / "nas")
+
+    def line(point):
+        return f"36 35 98:0 /src {point.replace(' ', chr(92) + '040')} rw,noatime - ext4 /dev/sda1 rw"
+
+    mountinfo = store / "mountinfo"
+    mountinfo.write_text("\n".join([
+        "20 1 0:30 / / rw - overlay overlay rw",
+        "21 20 0:31 / /proc rw - proc proc rw",
+        line(str(store / "data")),              # KopiaLens's own data folder
+        line(str(store / "vol" / "My Backups")),
+        line(nas),
+    ]) + "\n", encoding="utf-8")
+    monkeypatch.setattr(host, "MOUNTINFO", str(mountinfo))
+    (store / "data").mkdir()
+    monkeypatch.setattr(host, "DATA_DIR", str(store / "data"))
+    monkeypatch.setattr(host, "in_docker", lambda: True)
+
+    cfg = store / "configs" / "repo3.config"
+    cfg.parent.mkdir()
+    cfg.write_text(json.dumps({"storage": {"type": "filesystem", "config": {"path": deep}}}), encoding="utf-8")
+    config.RECORDS["repos"].append({"id": "3", "kind": "kopia", "config_file": str(cfg)})
+
+    got = repoconnect.detect_folders()
+    assert got["docker"] is True
+    assert got["attached"] == sorted([top, nas])
+    assert got["folders"] == [{"path": top, "in_store": False}, {"path": deep, "in_store": True}]
+
+
 def test_create_in_the_kopia_config_folder(store, fixed_binary, monkeypatch):
     """A connection created in kopia's folder (chosen in the form) gets KopiaUI's naming, and a
     remove with delete_config takes exactly that file."""

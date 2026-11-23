@@ -130,7 +130,8 @@ def get_providers() -> dict:
 def detect_configs() -> dict:
     """kopia connections already on this machine (KopiaUI's, the CLI default) - the zero-typing
     path. Reads the config files only; a reachability check is a separate, explicit probe."""
-    return {"dir": repoconnect.kopia_config_dir(), "configs": repoconnect.detect_configs()}
+    return {"dir": repoconnect.kopia_config_dir(), "configs": repoconnect.detect_configs(),
+            "container": repoconnect.detect_folders()}
 
 
 @router.post("/setup/probe")

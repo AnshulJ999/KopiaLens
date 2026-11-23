@@ -36,9 +36,9 @@
                 </template>
 
                 <!-- Found on this computer -->
-                <template x-if="!cx.loading && (cxCandidates().length || cxBzOffered())">
+                <template x-if="!cx.loading && (cxCandidates().length || cxBzOffered() || cxFolders().length)">
                   <div class="kl-sec">
-                    <div class="h" x-text="cx.bz && cx.bz.this_computer === false && !cxCandidates().length ? 'Backblaze on another computer' : 'Found on this computer'"></div>
+                    <div class="h" x-text="cx.bz && cx.bz.this_computer === false && !cxCandidates().length && !cxFolders().length ? 'Backblaze on another computer' : 'Found on this computer'"></div>
                     <div class="rounded-md border border-bd divide-y divide-[var(--bd)]">
                       <template x-if="cxBzOffered()">
                         <label class="flex items-start gap-3 p-3 cursor-pointer hover:bg-head" data-testid="cx-backblaze">
@@ -48,6 +48,15 @@
                             <span class="block text-xs text-muted" x-text="(cx.bz.this_computer === false ? 'From ' + cx.bz.computer + ' · ' : '') + countOf(cx.bz.drives, 'drive') + ' backed up · see what Backblaze backs up and what it skips'"></span>
                           </span>
                         </label>
+                      </template>
+                      <template x-for="f in cxFolders()" :key="'folder:' + f.path">
+                        <div class="flex items-start gap-3 p-3" data-testid="cx-folder">
+                          <span class="min-w-0 flex-1">
+                            <span class="block font-medium truncate" :title="f.path" x-text="f.path"></span>
+                            <span class="block text-xs text-muted" x-text="cxTypeLabel('filesystem') + ' · needs the repository password'"></span>
+                          </span>
+                          <button type="button" class="kl-btn" @click="cxFromFolder(f)">Connect…</button>
+                        </div>
                       </template>
                       <template x-for="c in cxCandidates()" :key="c.config_file">
                         <label class="flex items-start gap-3 p-3 cursor-pointer hover:bg-head">
@@ -63,7 +72,7 @@
                         </label>
                       </template>
                     </div>
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-2" x-show="cxCandidates().length || cxBzOffered()">
                       <button type="button" @click="cxUseSelected()" class="kl-btn primary" :disabled="!cxPickedCount() || cx.busy"
                               x-text="cx.busy ? 'Connecting…' : (cxPickedCount() > 1 ? 'Use ' + cxPickedCount() + ' repositories' : 'Use this repository')"></button>
                     </div>
@@ -75,7 +84,7 @@
                 <!-- Add another: connect an existing repository or create one -->
                 <template x-if="!cx.loading && !cx.mode && cxKopiaOk()">
                   <div class="kl-sec">
-                    <div class="h" x-text="cxCandidates().length || cx.added.some((a) => !a.backblaze) ? 'Add another repository' : 'No kopia repositories found on this computer'"></div>
+                    <div class="h" x-text="cxCandidates().length || cxFolders().length || cx.added.some((a) => !a.backblaze) ? 'Add another repository' : 'No kopia repositories found on this computer'"></div>
                     <div class="grid gap-2 sm:grid-cols-2">
                       <button type="button" @click="cxStart('existing')" class="rounded-md border border-bd p-3 text-left hover:bg-head">
                         <span class="block font-medium">Connect to an existing one</span>
@@ -84,6 +93,7 @@
                         <span class="block font-medium">Create a new repository<span x-show="obNewcomer()" class="pill ok ml-1.5">Recommended</span></span>
                         <span class="block text-xs text-muted">Start backing up with kopia</span></button>
                     </div>
+                    <p x-show="cxNothingAttached()" class="kl-note mt-2" data-testid="cx-no-folder">No repository folder is attached to this container. To use a folder repository, add it under <code>volumes</code> in your compose file. <button type="button" class="text-link" @click="openDocs('docker', 'folders')">Docker guide</button></p>
                   </div>
                 </template>
 
@@ -217,7 +227,7 @@
                         </details>
                         <div x-show="cxSpec().password" class="grid gap-2" :class="cx.mode === 'create' ? 'sm:grid-cols-2' : ''">
                           <label class="flex flex-col gap-1 text-xs font-medium">Repository password
-                            <input type="password" x-model="cx.password" :autocomplete="cx.mode === 'create' ? 'new-password' : 'off'" class="fld border border-bd bg-surface2"></label>
+                            <input type="password" x-model="cx.password" data-testid="cx-password" :autocomplete="cx.mode === 'create' ? 'new-password' : 'off'" class="fld border border-bd bg-surface2"></label>
                           <label x-show="cx.mode === 'create'" class="flex flex-col gap-1 text-xs font-medium">Confirm password
                             <input type="password" x-model="cx.confirm" autocomplete="new-password" class="fld border border-bd bg-surface2"></label>
                           <span class="kl-note font-normal" :class="cx.mode === 'create' ? 'sm:col-span-2' : ''" x-text="cxPasswordNote()"></span>

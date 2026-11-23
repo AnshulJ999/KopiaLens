@@ -74,7 +74,7 @@ const reposPart = {
     async cxOpen(existing) {
       this.cx = {
         loading: true, error: "", busy: false,
-        detected: [], picked: {}, providers: [], bz: null, bzPicked: false, confirm: "", format: {}, formatChoices: {},
+        detected: [], container: null, picked: {}, providers: [], bz: null, bzPicked: false, confirm: "", format: {}, formatChoices: {},
         mode: "", provider: "", fields: {}, password: "", name: "", serverOk: false,
         cfgLoc: "data", cfgFolder: "", kopiaFolderOk: true,
         added: (existing || []).map((r) => this._cxEntry(r)),
@@ -83,6 +83,7 @@ const reposPart = {
         const [d, p, bz] = await Promise.all([getJson("/api/setup/detect-configs"), getJson("/api/setup/providers"),
                                               getJson("/api/setup/backblaze").catch(() => null)]);
         this.cx.detected = d.configs || [];
+        this.cx.container = d.container || null;
         this.cx.providers = p.providers || [];
         this.cx.cfgLoc = p.config_location || "data";
         this.cx.kopiaFolderOk = p.kopia_folder_ok !== false;
@@ -106,6 +107,23 @@ const reposPart = {
     cxKopiaOk() { return !(this.ob && this.obKopiaMissing()); },
     cxCandidates() { return this.cxKopiaOk() ? ((this.cx && this.cx.detected) || []).filter((c) => !c.in_store) : []; },
     cxBzOffered() { const b = this.cx && this.cx.bz; return !!(b && b.found && !b.added); },
+    // Docker: kopia repositories found in the folders attached to the container.
+    cxFolders() {
+      const c = this.cx && this.cx.container;
+      return this.cxKopiaOk() && c ? (c.folders || []).filter((f) => !f.in_store) : [];
+    },
+    cxNothingAttached() {
+      const c = this.cx && this.cx.container;
+      return !!(c && c.docker && !(c.attached || []).length) && !this.cxCandidates().length
+        && !this.cx.added.some((a) => !a.backblaze);
+    },
+    // A found folder needs its password, so the connect form opens with the folder filled in.
+    cxFromFolder(f) {
+      this.cxStart("existing");
+      this.cxSetProvider("filesystem");
+      this.cx.fields.path = f.path;
+      setTimeout(() => { const el = document.querySelector('[data-testid="cx-password"]'); if (el) el.focus(); }, 50);
+    },
     cxPickedCount() {
       return this.cxCandidates().filter((c) => this.cx.picked[c.config_file]).length + (this.cxBzOffered() && this.cx.bzPicked ? 1 : 0);
     },
@@ -261,6 +279,7 @@ const reposPart = {
                                            ...(cx.mode === "create" ? { options: this.cxFormatOptions() } : {}) });
         if (!r) { cx.busy = false; return; }
         cx.added.push({ ...this._cxEntry(r.repo), managed: true });
+        for (const f of (cx.container && cx.container.folders) || []) if (f.path === fields.path) f.in_store = true;
         cx.mode = ""; cx.password = ""; cx.confirm = ""; cx.name = "";
         this.cxSummary(cx.added[cx.added.length - 1]);   // the tracked copy, so the card updates
         await this._cxRefreshRepos();
