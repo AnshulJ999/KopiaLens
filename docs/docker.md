@@ -23,24 +23,26 @@ KopiaLens runs as a single container with kopia built in. You open it in a brows
          # PGID: "1000"
        volumes:
          # Required: settings, the index and kopia's cache. Without it everything is lost on recreate.
-         - ./kopialens:/config
+         # Use a full path and create the folder first (Synology: /volume1/docker/kopialens, Unraid: /mnt/user/appdata/kopialens).
+         - /opt/kopialens:/config
          # Your repository, at the same path kopia uses for it.
          - /mnt/backups/kopia:/mnt/backups/kopia
          # Optional: backed-up folders, at the same paths as in your snapshots, so the Excluded
          # browser can compare the disk with your backups. Read-only is enough.
          - /home:/home:ro
-         # Optional: snapshot mounts, visible on the host in this folder.
-         - /mnt/kopialens-mounts:/mounts:shared
-       # Optional: needed only for mounting snapshots.
-       devices:
-         - /dev/fuse:/dev/fuse
-       cap_add:
-         - SYS_ADMIN
-       security_opt:
-         - apparmor:unconfined
+         # Optional: snapshot mounts, visible on the host in this folder (see below).
+         # - /mnt/kopialens-mounts:/mounts:shared
+       # Optional: mounting snapshots. Remove the # from these lines and the /mounts line above.
+       # The host needs /dev/fuse, or the container won't start.
+       # devices:
+       #   - /dev/fuse:/dev/fuse
+       # cap_add:
+       #   - SYS_ADMIN
+       # security_opt:
+       #   - apparmor:unconfined
    ```
 
-2. Change the time zone and the paths under `volumes` (see below).
+2. Create the folder for `/config` (see [Folders](#folders)), then change the time zone and the paths under `volumes`.
 3. Run `docker compose up -d` and open `https://<server address>:7123`.
 
 KopiaLens serves HTTPS with a certificate it makes itself, so the browser warns about the certificate once. Accept it, or use your own certificate or a reverse proxy instead (see [Remote access and HTTPS](remote-access.md)). To serve plain HTTP, set `KOPIALENS_HTTPS=off`.
@@ -59,6 +61,18 @@ The image is on Docker Hub as `anshulj99/kopialens` and on GitHub as `ghcr.io/an
 | `/mounts` | Mounted snapshots | Optional |
 
 **Mount `/config` on a volume.** Without it the index, settings and sign-in are lost whenever the container is recreated, and KopiaLens warns you about this.
+
+**Use a full path for `/config`, and create the folder first.** Portainer and other tools that deploy compose files for you can't use a relative path like `./kopialens`. The usual places:
+
+| Where it runs | Folder for `/config` |
+|---|---|
+| Linux server | `/opt/kopialens` |
+| Synology | `/volume1/docker/kopialens` |
+| Unraid | `/mnt/user/appdata/kopialens` |
+| TrueNAS | a dataset, for example `/mnt/tank/apps/kopialens` |
+| Docker Desktop (Windows, macOS) | `./kopialens`, next to the compose file |
+
+On hosts with SELinux (Fedora, RHEL, Rocky), add `:z` to the `/config` line (`/opt/kopialens:/config:z`) if KopiaLens can't write there.
 
 **Use the same paths as on the host.** kopia records each folder by the path it was backed up from. Mount your repository and your backed-up folders at the same paths inside the container (for example `/home:/home:ro`), so KopiaLens finds them where your snapshots say they are.
 
@@ -84,9 +98,11 @@ kopia writes repository files that only their owner can read. So with `PUID` set
 
 ## Mounting snapshots
 
-Mounting shows a snapshot as a read-only folder. In Docker this needs FUSE, which the example file enables with three settings: the `/dev/fuse` device, `SYS_ADMIN` and `apparmor:unconfined`. These are the same settings kopia's own Docker image uses.
+Mounting shows a snapshot as a read-only folder. In Docker this needs FUSE: the `/dev/fuse` device, `SYS_ADMIN` and `apparmor:unconfined`, the same settings kopia's own Docker image uses. They're commented out in the example file. To turn mounting on, remove the `#` from those lines and from the `/mounts` line.
 
-Mounts appear inside the container under `/mounts`. To see them on the host, mount a host folder there with `:shared` (as in the example), then enter that host folder in **Settings → General → Mount folder on the host**, so KopiaLens shows host paths.
+The host must have `/dev/fuse`, or Docker won't start the container with these lines in. In a Proxmox LXC container, turn on **FUSE** under the container's **Options → Features** first.
+
+Mounts appear inside the container under `/mounts`. To see them on the host, mount a host folder there with `:shared` (as in the example), then enter that host folder in **Settings → General → Mount folder on the host**, so KopiaLens shows host paths. Some hosts, Synology among them, refuse `:shared` ("not a shared mount"). Mount `/mounts` without it there: mounting still works, the mounts just don't show on the host.
 
 Without FUSE everything else works, and the Mount buttons say what is missing.
 
@@ -115,7 +131,7 @@ services:
       - kopialens_key
 secrets:
   kopialens_key:
-    file: ./kopialens_key.txt
+    file: /opt/kopialens_key.txt
 ```
 
 The file holds the encryption password (your KopiaLens password if you chose to use it for encryption too). Anyone who can read the file can unlock the index.
