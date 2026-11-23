@@ -49,6 +49,8 @@ KopiaLens serves HTTPS with a certificate it makes itself, so the browser warns 
 
 The first run shows setup: connect your repositories, choose a password, and start the first index (see [First-time setup](getting-started.md)). For the first 30 minutes after a start, setup is open to anyone who can reach the port. After that it asks for a **setup code**, printed in the container log (`docker logs kopialens`).
 
+A new container has no kopia connections yet, so setup shows **No kopia repositories found on this computer** at first. For a folder repository, choose **Connect to an existing one**, then **Local folder**, and pick the repository's path inside the container (the right-hand side of its `volumes` line). If that folder isn't there, the running container was started without that line: `docker inspect kopialens --format '{{json .Mounts}}'` shows what it has.
+
 The image is on Docker Hub as `anshulj99/kopialens` and on GitHub as `ghcr.io/anshulj999/kopialens`, for amd64 and arm64. `latest` is the newest release; a version tag such as `1.0.0` stays on that release.
 
 ## Folders
