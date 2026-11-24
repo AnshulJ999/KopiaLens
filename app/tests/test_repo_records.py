@@ -1,4 +1,4 @@
-"""Repository records: id allocation, the record rules, and the per-repo file map ().
+"""Repository records: id allocation, the record rules, and the per-repo file map.
 
 The id is embedded in on-disk names (`data/repo<id>/`, `cache/*_repo<id>.*`), which is why a
 user-chosen id is not a thing: ids are allocated, validated, and never changed.

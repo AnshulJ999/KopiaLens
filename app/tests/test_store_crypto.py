@@ -1,4 +1,4 @@
-"""Step 1 of: the keystore, encrypted sessions, RAM tiers and the idle close.
+"""The keystore, encrypted sessions, RAM tiers and the idle close.
 
 These are the load-bearing checks for encryption at rest. The ones that matter most are the
 negative ones: a wrong password must be REFUSED (DuckDB's database encryption is authenticated,

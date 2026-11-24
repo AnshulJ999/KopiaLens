@@ -1,8 +1,8 @@
-"""Policies tab API ( +).
+"""Policies tab API.
 
 Read half: overview (global + sources with inheritance state), detail, "keeping out" pricing
 against the index. Write half: staged diff -> fail-closed pre-write backup -> `kopia policy
-set/delete` -> cache invalidation; backups list/read/manual/restore. 
+set/delete` -> cache invalidation; backups list/read/manual/restore.
 """
 
 from __future__ import annotations
@@ -79,8 +79,8 @@ def _own_rules(defined_policies: dict, target: str) -> list[str]:
 def _pricing_scope(repo: str, target: str) -> list[dict]:
     """Every backup a write to ``target`` can affect, each with the anchor its rules price at.
 
-    Root layer: the target itself plus sources whose root list comes from it ( - a rule at
-    an ancestor policy re-anchors to each inheritor's walk root). Folder layer (): every
+    Root layer: the target itself plus sources whose root list comes from it (a rule at
+    an ancestor policy re-anchors to each inheritor's walk root). Folder layer: every
     source whose walk passes through the target's folder applies its rules there anchored at that
     folder - pricing that ignores this undercounts what the policy keeps out."""
     # The API says "global"; the policy layer keys it as kopia does, "(global)".
@@ -236,7 +236,7 @@ def overview(repo: str) -> dict:
             "others": others}
 
 
-# ---- editor () ---------------------------------------------------------------------------
+# ---- editor ---------------------------------------------------------------------------
 
 _CLIENT_CACHE: dict[str, tuple[float, dict]] = {}
 
@@ -637,7 +637,7 @@ def stored_prices(repo: str, target: str = "") -> dict:
 @router.get("/policies/ignore-files")
 def ignore_files(repo: str, target: str = "") -> dict:
     """Dot-ignore files found under a target (whole repo when omitted) with the rules each holds
-    and what they keep out (). Read from the nightly artifact - no kopia calls."""
+    and what they keep out. Read from the nightly artifact - no kopia calls."""
     _kopia_repo(repo)
     out = policypricing.ignore_files_for(repo, target or None)
     out["repo"] = repo

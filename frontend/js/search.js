@@ -221,7 +221,7 @@ const searchPart = {
           { title: "Size", field: "logical", width: 110, hozAlign: "right", sorter: "number", headerTooltip: "Logical size. " + termTip("logical"), formatter: (c) => fmtBytes(c.getValue()) },
           { title: "Src", field: "sources", width: 62, hozAlign: "right", sorter: "number", headerTooltip: "How many sources hold files in this folder",
             formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="Held by ${v} sources">${v}</span>` : "1"; } },
-          // Excl column hidden here too - same reason as the Search table ().
+          // Excl column hidden here too - same reason as the Search table.
           { title: "Files", field: "files", width: 95, hozAlign: "right", sorter: "number", formatter: (c) => Number(c.getValue() || 0).toLocaleString(NUM_LOCALE) },
           { title: "Versions", field: "folder_versions", width: 85, hozAlign: "right", sorter: "number",
             headerTooltip: "How many different states the folder has had across its snapshots",
@@ -293,7 +293,7 @@ const searchPart = {
       folder = folder || d.folder;
       const key = this._folderValKey(folder, d.loose);
       const cur = this.groupReclaim[key];
-      if (cur === "pending") return;  // block repeats only while in flight; a deliberate
+      if (cur === "pending") return;  // Block repeats only while in flight; a deliberate
                                       // second pick recomputes - that pick IS the manual refresh
       this.groupReclaim[key] = "pending";
       row.reformat();
@@ -387,7 +387,7 @@ const searchPart = {
             formatter: (c) => (isFolder(c) ? this.folderPhysCell(c.getRow().getData(), c.getRow().getData().full_path) : fmtPhys(c.getValue())) }),
           // Excl column intentionally hidden: paths.exclusive is unfilled (the fill was removed -
           // wrong semantics for shared indirect content + write amplification) and its per-object
-          // semantics overstated exclusivity. Returns with the proper implementation ().
+          // semantics overstated exclusivity. Returns with the proper implementation.
           { title: "Src", field: "sources", headerSort: false, width: 62, hozAlign: "right",
             headerTooltip: "How many sources hold this content. Copies inside one source count once.",
             formatter: (c) => { const v = Number(c.getValue() || 1); return v > 1 ? `<span style="color:var(--warn)" title="Held by ${v} sources">${v}</span>` : "1"; } },

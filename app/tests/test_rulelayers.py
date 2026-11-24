@@ -1,4 +1,4 @@
-"""The shared rule layer (/): the rule lists that apply inside a folder of a source.
+"""The shared rule layer: the rule lists that apply inside a folder of a source.
 
 Pins the kopia semantics verified against ``fs/ignorefs/ignorefs.go`` and a live repo:
 root list + folder policies + dot-ignore files, evaluated level by level (a deeper level can

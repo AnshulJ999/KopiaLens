@@ -1,4 +1,5 @@
-"""List every KopiaLens dependency that is behind its latest release (the first step of a release). Read-only: it changes nothing.
+"""List every KopiaLens dependency that is behind its latest release (the first step of a release).
+Read-only: it changes nothing.
 
     python packaging\\check_updates.py
 """

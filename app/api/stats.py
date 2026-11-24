@@ -1,6 +1,6 @@
 """Repo-level stats: content stats, repository status, cache info, maintenance info.
 
-the Stats tab no longer dumps these four raw blocks - the same payloads are parsed into
+The Stats tab no longer dumps these four raw blocks - the same payloads are parsed into
 readable cards plus a set of repository HEALTH checks on top (the owner-mismatch that silently
 killed GC for 5.5 months was visible here the whole time, in raw form nobody read). The raw
 output is still served for the collapsible "raw output" sections.

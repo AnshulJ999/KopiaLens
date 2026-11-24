@@ -1,9 +1,9 @@
-"""Source-level pins for the Policies tab wiring (KL23 frontend).
+"""Source-level pins for the Policies tab wiring.
 
 The composed shell must carry the tab (an include or script tag dropped in a merge silently
 kills the tab), and every pol* symbol the partial binds must exist in the JS sources - the
 compose test cannot see identifiers, and a binding with no method behind it only fails at
-click time (the gap class: two agents, one file, nobody owning the wiring).
+click time.
 """
 
 import re

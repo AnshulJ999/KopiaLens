@@ -1,6 +1,6 @@
 """Policy write path: command builders, the fail-closed backup, and the save/restore flow.
 
-The backup rule is the point of the whole file (/ design section 4): a policy write
+The backup rule is the point of the whole file: a policy write
 without a VERIFIED pre-write backup is refused. An export that kopia truncated must read as "no
 backup", never as an empty one.
 """
@@ -109,7 +109,7 @@ def test_new_builders_reject_a_non_kopia_repo():
 
 
 def test_read_export_args_pass_the_readonly_gate(tmp_path, monkeypatch):
-    """_read_export used to pass a FULL command (with the
+    """The RO gate rejects a doubled command: _read_export used to pass a FULL command (with the
     'kopia' binary prefix) into kopia(), which re-prefixes it and then the RO gate refuses its
     own doubled command - so every backup, and therefore every fail-closed save, failed. The
     args _read_export sends must pass the REAL gate untouched."""
@@ -259,7 +259,7 @@ def test_effective_ignore_origin_walks_ancestors_then_global():
 
 
 def test_drive_root_policies_are_found_not_read_as_global():
-    """the ancestor walk used to yield 'G:' while kopia spells the
+    """The ancestor walk used to yield 'G:' while kopia spells the
     drive-root target 'G:\\' - drive-root-owned sources read as global-inherited (7 of 85 on
     repo 1). The walk must produce the drive root in kopia's own spelling."""
     uh = "Anshul@anshul-desktop"
@@ -306,7 +306,7 @@ def _patch_refresh(monkeypatch, defined):
 
 
 def test_invalidate_after_write_reaches_every_source_the_write_touches(monkeypatch):
-    """a write reaches the source itself, every source
+    """A write reaches the source itself, every source
     whose rules are owned by the written target, and - for a Global write - every source that
     inherits global. A Global-only write used to refresh NOTHING (the effective view then mixed
     fresh defined rules with up-to-24h-stale effective ones)."""
@@ -372,7 +372,7 @@ def _patch_fastpath(monkeypatch, defined, cached_policies):
 
 
 def test_ignore_only_write_patches_the_cache_with_zero_subprocesses(monkeypatch):
-    """a Global add-ignore write used to fire one `policy show` per inheriting source
+    """A Global add-ignore write used to fire one `policy show` per inheriting source
     inside the save request. The fast path patches files.ignore from the export it already took."""
     import app.core.policy as pol
     uh = "u@h"

@@ -61,7 +61,7 @@ def _resolve_params(kind: str, repo: str, params: dict) -> dict:
             if plan is not None and plan.get("repo") != repo:
                 plan = None          # a ticket from another repo: never run it here
             if plan is not None:
-                # exactly the list the preview showed - never re-derived, so a reindex that
+                # Exactly the list the preview showed - never re-derived, so a reindex that
                 # lands between preview and execute cannot add files nobody approved.
                 out = {"items": plan["items"], "flag": plan["flag"], "dry": dry,
                        "source": plan["source"], "resolved": "preview"}
@@ -72,7 +72,7 @@ def _resolve_params(kind: str, repo: str, params: dict) -> dict:
                     out["note"] = ("The index changed since your preview. Removing exactly the "
                                    "files you approved - nothing else.")
                 return out
-            # option (a): a MUTATING plan delete never re-derives silently - an expired or
+            # A MUTATING plan delete never re-derives silently - an expired or
             # absent ticket refuses, and the panel re-previews so the user approves the fresh list.
             # Dry runs mutate nothing, so they keep the old filter fallback.
             if not dry:
@@ -344,7 +344,7 @@ def stop(payload: JobStopRequest) -> dict:
 @router.get("/jobs/list")
 def list_all() -> dict:
     """In-memory registry (running + the last 50 finished) merged with the on-disk history
-    () so Activity survives a restart. Memory wins per job_id; newest first."""
+    so Activity survives a restart. Memory wins per job_id; newest first."""
     jobs_by_id = {j["job_id"]: j for j in jobs.list_jobs()}
     for rec in jobs.read_job_history(limit=300):
         jobs_by_id.setdefault(rec.get("job_id"), rec)

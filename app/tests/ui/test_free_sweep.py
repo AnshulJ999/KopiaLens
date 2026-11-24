@@ -1,7 +1,7 @@
 """A Free install never receives what rebuilds a Pro delete: object ids, snapshot ids or kopia
 remove/delete commands. Every read route (and the preview routes below) is called on a real,
 indexed Free server and its reply scanned. A place ruled fine is listed in ALLOWED
-with the reason; anything else fails here and goes to him first."""
+with the reason; anything else fails here and needs a ruling first."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("/api/audit", "records[].summary.source_id"): _SNAP,
 }
 # An allowance covers snapshot ids only: an object id or a content delete command never is.
-# A Free snapshot delete's own job shows its command (allowed, Free deletes
+# A Free snapshot delete's own job shows its command (allowed: Free deletes
 # whole snapshots), so the job list may also carry "snapshot delete".
 _ALLOWED_KINDS = {("/api/jobs/list", "jobs[].commands_text"): {"snapshot", "snapshot delete"}}
 

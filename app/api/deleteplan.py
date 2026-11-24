@@ -70,8 +70,8 @@ def selection_facts(repo: str, files: list[tuple[str, str]]) -> dict:
     oids: list[str] = []
     seen: set[str] = set()
     versions = 0
-    # one batched lookup for the whole selection - the per-file-per-holder shape scanned
-    # pathx once per pair and is what made DEL2's panel take minutes on a 500-file selection.
+    # One batched lookup for the whole selection - the per-file-per-holder shape scanned
+    # pathx once per pair and is what made the delete panel take minutes on a 500-file selection.
     vers = versions_many(repo, [(h, fp) for (_src, fp), hs in zip(files, holders) for h in hs])
     for (src, fp), hs in zip(files, holders):
         for h in hs:
@@ -194,7 +194,7 @@ def delete_plan(body: PlanBody) -> dict:
 def _removal_price(repo: str, by: str, scope: list[str], facts: dict) -> dict:
     """What a removal frees. By content: the selected files' objects leave every path holding them
     in ``scope`` and nothing else goes. By file name: exactly the same-named files in ``scope``
-    go, every version; an identical file under another name keeps its data ()."""
+    go, every version; an identical file under another name keeps its data."""
     if by == "filename":
         found = paths_named(repo, scope, facts["names"], cap=PRICE_CAP)
         pairs = [(s, r["full_path"]) for r in found["rows"] for s in r["sources"]]

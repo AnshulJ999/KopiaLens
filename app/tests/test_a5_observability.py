@@ -1,4 +1,4 @@
-""" The three observability fixes: a 5xx logs its cause, the cold listing is single-flight,
+"""The three observability fixes: a 5xx logs its cause, the cold listing is single-flight,
 and a request's kopia spawn count belongs to that request."""
 
 from __future__ import annotations

@@ -394,7 +394,7 @@ const deletePart = {
     flowDeleteSpec() {
       if (!this.flow) return null;
       if (this.flow.kind === "folder") {
-        // the ticket travels with the delete step (including policy_write's `then`), so the
+        // The ticket travels with the delete step (including policy_write's `then`), so the
         // job removes exactly the previewed list - an expired one refuses server-side.
         return { kind: "remove_files",
                  params: { ...this._removeBody(), form: "plan",

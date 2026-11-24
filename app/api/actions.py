@@ -583,7 +583,7 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
             "filename_extra_physical": max(0, int(found["physical"]) - int(t["physical"] or 0)),
         }
     elif t["pairs"]:
-        # [DEL7 F8] ``--object-id`` removes that content at every path in the scoped sources, so
+        # ``--object-id`` removes that content at every path in the scoped sources, so
         # identical copies outside the plan lose those versions too.
         copies = copies_outside(payload.repo, t["pairs"], sources=scope, cap=extra_cap,
                                 all_versions=payload.all_versions)
@@ -614,7 +614,7 @@ def remove_plan(payload: RemovePlanRequest) -> dict:
         "content_extra_count": 0, "content_extra": [], "content_extra_capped": False,
         "content_extra_logical": 0, "content_extra_physical": 0,
         **extra,
-        # the job start passes plan_token back; index_generation is what it compares.
+        # The job start passes plan_token back; index_generation is what it compares.
         "plan_token": plan_token, "index_generation": generation,
     }
 
@@ -644,7 +644,7 @@ def _filename_detail(payload: RemovePlanRequest) -> dict:
     """A file-name delete removes every same-named file in the scoped backups, not only the plan's
     own set, and every version of each (kopia rewrites every snapshot), so the detail prices that
     whole set across all versions. It removes those paths and nothing else: an identical file under
-    another name keeps its data, so those pieces stay () - listed as ``kept_files``."""
+    another name keeps its data, so those pieces stay - listed as ``kept_files``."""
     t = _remove_targets(payload)
     if not t["names"]:
         return {"found": False}
@@ -665,7 +665,7 @@ def _remove_detail(payload: RemovePlanRequest) -> dict:
     if payload.by == "filename":
         return _filename_detail(payload)
     if payload.parts is not None:
-        # the light read per part: totals and the files' pairs, never the full row set.
+        # The light read per part: totals and the files' pairs, never the full row set.
         parts = _remove_parts(payload.parts)
         if not parts:
             return {"found": False}

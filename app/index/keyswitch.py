@@ -1,4 +1,4 @@
-"""The encryption switch (): rewrite local data between plaintext and encrypted.
+"""The encryption switch: rewrite local data between plaintext and encrypted.
 
 Scope is KopiaLens's own files only - the kopia repository is never touched, and the rewrite is
 a DuckDB re-encode (repo 1: 699 MB, 15 artifacts, 65M rows, 6.9 s measured).
@@ -48,7 +48,7 @@ def repo_states() -> list[dict]:
     out = []
     for repo in list(REPOS):
         if repo_kind(repo) == "backblaze":
-            continue                    # the BZ store follows on its own item ()
+            continue                    # the BZ store follows on its own item
         manifest = store.read_manifest(repo)
         if manifest is None:
             out.append({"repo": repo, "generation": None, "encrypted": want, "pending": False})
@@ -65,7 +65,7 @@ def pending() -> list[str]:
 
 
 def bz_state() -> dict:
-    """The Backblaze parquet store's own state line (): the level covers it at Full."""
+    """The Backblaze parquet store's own state line: the level covers it at Full."""
     from ..backblaze import pq as bz_pq
     from . import crypto
     manifest = bz_pq.read_manifest()
@@ -140,11 +140,11 @@ def switch_repo(repo: str, on: bool, say=None) -> dict:
 
 
 def switch_bz(on: bool, say=None) -> dict:
-    """Rewrite the Backblaze parquet generations between plaintext and encrypted ().
+    """Rewrite the Backblaze parquet generations between plaintext and encrypted.
 
     The BZ store is covered at the Full level and uses the same DuckDB footer key as the
-    index. The slim SQLite (history/state tables) is NOT covered yet - see the report: its
-    path-bearing tables are queried by SQL, so encrypting them needs a query-layer change.
+    index. The slim SQLite (history/state tables) is not covered yet: its path-bearing tables
+    are queried by SQL, so encrypting them needs a query-layer change.
     """
     from ..backblaze import pq as bz_pq
     say = say or (lambda text: None)

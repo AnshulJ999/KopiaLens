@@ -740,7 +740,7 @@ const detailPart = {
       });
       if (!ok) return;
       await this.wrap(async () => {
-        // the ticket makes the job delete exactly the previewed list; when it has expired
+        // The ticket makes the job delete exactly the previewed list; when it has expired
         // the server refuses, so refresh the preview and let the user review the fresh list.
         const started = await this.startJob("remove_files",
           { ...this._removeBody(), form: "plan", plan_token: this.removePlan.plan_token },

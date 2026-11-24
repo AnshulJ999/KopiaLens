@@ -128,7 +128,7 @@ def test_the_line_parsers_accumulate_across_batches():
 
 
 def test_a_multi_batch_remove_summary_does_not_lose_the_fixed_count():
-    """every batch prints its own 'Fixed N snapshots' line, so a later batch's 0 used to
+    """Every batch prints its own 'Fixed N snapshots' line, so a later batch's 0 used to
     overwrite the total and read the whole multi-batch run as 0."""
     acc: dict = {}
     _parse_remove_line("Fixed 12 snapshots, but snapshot manifests were not updated.", acc)

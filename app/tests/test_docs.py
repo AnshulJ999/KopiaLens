@@ -1,5 +1,5 @@
 """The user docs (docs/*.md): links and "?" buttons resolve, no internal words leak, and the
-defaults the pages state match the code (kopialens-docs-guide.md, sections 5, 9 and 10)."""
+defaults the pages state match the code."""
 
 from __future__ import annotations
 

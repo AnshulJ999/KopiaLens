@@ -1,4 +1,4 @@
-"""Step 3 of: the object maps rebuilt from the tree.
+"""The object maps rebuilt from the tree.
 
 ``crefs`` decides what the app calls freeable, and a content id MISSING from it does not read as
 unknown - it reads as zero references, i.e. safe to delete. So these tests lean on the things

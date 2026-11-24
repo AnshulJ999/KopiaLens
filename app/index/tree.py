@@ -1,4 +1,4 @@
-"""Layer 1 of the unified store: the object tree ( section 3).
+"""Layer 1 of the unified store: the object tree.
 
 This replaces the zstd SQLite walk cache. Same information - what kopia says is inside every
 folder object - held as three Parquet tables inside the generation instead of a separate

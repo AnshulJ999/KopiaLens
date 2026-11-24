@@ -1,4 +1,4 @@
-""" the whole-run estimate + stop means stop."""
+"""The whole-run estimate + stop means stop."""
 
 from __future__ import annotations
 
@@ -60,7 +60,6 @@ def test_worker_log_tail_reads_the_last_lines(monkeypatch, tmp_path):
     assert nightly.worker_log_tail("3") == []
 
 
-# ---- KL103 ---------------------------------------------------------------------------------------
 
 def _due(monkeypatch, record):
     from app import main

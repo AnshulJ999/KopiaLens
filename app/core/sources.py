@@ -155,7 +155,7 @@ _COLD_LOCKS: dict[str, threading.Lock] = {}
 
 
 def _cold_lock(repo: str) -> threading.Lock:
-    """ One COLD listing per repo at a time. A cold cache is what an app start looks like, and
+    """One COLD listing per repo at a time. A cold cache is what an app start looks like, and
     the UI fires its first requests together: each one used to run `kopia snapshot list` on its own
     (eight simultaneous listings of the same repo). Callers that arrive while a build is in flight
     wait for it and read its result instead of starting a second one."""

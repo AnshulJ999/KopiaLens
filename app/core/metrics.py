@@ -44,7 +44,7 @@ def gb(value: int | float) -> float:
 def build_global(repo: str) -> tuple[dict[str, dict], float, int]:
     """Per-source physical/freeable for the dashboard, from ONE pass over the tree.
 
-    This is's dashboard headline. What it replaces walked every source separately in
+    This is the dashboard headline. What it replaces walked every source separately in
     Python, unioned the content-id sets, and cached each source's set in its own pickle so the
     second pass could reload it - 67 s and 3.3 GB on repo 1, plus hundreds of MB of pickles on
     disk that were really just a slower copy of what the index already held.
@@ -81,7 +81,7 @@ def build_global(repo: str) -> tuple[dict[str, dict], float, int]:
 def cached_refcount(repo: str) -> dict[str, int]:
     """content_id -> how many sources reach it, from the tree.
 
-    Only the cold start uses this: every generation publishes carries a ``crefs`` map, and
+    Only the cold start uses this: every generation carries a ``crefs`` map, and
     ``physical._refcount_map`` reads that. A generation from before the upgrade has none, and this
     answers until the first build replaces it. The per-mode pickle it replaces is gone - it cached
     a number the generation now owns.
@@ -176,7 +176,7 @@ def _read_cache(repo: str, want_hash: str | None) -> dict | None:
     if data is None:
         return None
     data = dict(data)
-    # carry the blob's snaphash so the frontend's change detection can tell a re-render-worthy
+    # Carry the blob's snaphash so the frontend's change detection can tell a re-render-worthy
     # change from an unchanged table. The stale-serve path gets the STALE blob's own hash, which is
     # correct: it describes the data actually being served.
     data["hash"] = blob.get("hash")

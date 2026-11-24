@@ -1,4 +1,4 @@
-// Settings Account + Encryption sections and the unlock box (,). One dialog
+// Settings Account + Encryption sections and the unlock box. One dialog
 // (acctDialog, partials/lock.html) serves every account and encryption form; each route answers
 // with the current state, which replaces acct / encStatus.
 const _acctPost = (url, body) => getJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });

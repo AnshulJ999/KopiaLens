@@ -9,7 +9,7 @@
 // are removed at the policy that owns them, never on the inheritor. Zero-match priced rules are
 // worded neutrally: they may simply not match anything on disk today.
 //
-// Backend shapes (the /api/policies/*, verified against app/api/policies.py):
+// Backend shapes (/api/policies/*, verified against app/api/policies.py):
 //   GET  /api/policies/overview?repo=  -> {stale, global: {rule_count, no_parent_ignore, summarized},
 //        sources: [{source, root, defined, has_own_rules, rule_count, effective_origin,
 //                   effective_origin_target, effective_rule_count, global_shadowed,
@@ -21,7 +21,7 @@
 //                       total_examples, capped, negated}]}
 //        Capped at 32 patterns per request; a larger ask 400s with a detail pointing at
 //        stored-prices (surfaced in the UI, never swallowed).
-//   GET  /api/policies/stored-prices?repo=&target=   ( nightly precompute)
+//   GET  /api/policies/stored-prices?repo=&target=   (nightly precompute)
 //        -> {stored: true, ts, results: <same shape as price>}, or
 //           {stored: false, ts: null, results: [], detail} when the nightly has not priced yet.
 //   POST /api/policies/diff    {repo, target, changes: {add, remove, delete_policy}}
@@ -310,7 +310,7 @@ const policiesPart = {
     },
 
     // Price the selected policy's own rules when its detail lands: stored numbers first
-    // (); a small non-global policy with nothing stored yet falls back to live so the
+    // A small non-global policy with nothing stored yet falls back to live so the
     // table is not empty on a fresh install. Global never live-prices automatically - one
     // ask fans out to every inheriting source, and the nightly covers it.
     async polAutoPrice(target) {
@@ -344,7 +344,7 @@ const policiesPart = {
     },
 
     // Where the on-screen numbers came from. Stored prices predate any policy save until the
-    // next nightly re-prices, so the ts is always shown ( contract).
+    // next nightly re-prices, so the ts is always shown.
     polPricingNote() {
       const ts = (this.polStoredTs || {})[this.polSel];
       if (ts) {
@@ -544,7 +544,7 @@ const policiesPart = {
       const pat = (this.polAddText || "").trim();
       if (!row || !pat) { this.polAddPrice = null; return; }
       // Global is skipped: one pattern there still fans out to every inheriting source
-      // (); the impact surfaces in the review diff instead of a live preview.
+      // The impact surfaces in the review diff instead of a live preview.
       if (row.isGlobal) { this.polAddPrice = null; return; }
       // Seq at call time: a slow answer for an older keystroke must never overwrite the
       // preview of the pattern now in the box (polSelect clears it, this guards races).

@@ -1,4 +1,4 @@
-"""The freshness strip's bz row ().
+"""The freshness strip's bz row.
 
 The badge shows REBUILD age (last_reindex_ts - how old the data actually is); verification age
 rides last_check_ts for the tooltip, and a change waiting on the min-gap is `pending`. The kopia

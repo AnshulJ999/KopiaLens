@@ -1,4 +1,4 @@
-"""In-place index migration registry (, index level).
+"""In-place index migration registry (index level).
 
 The manifest's ``schema_version`` used to be a rebuild trigger: a mismatch meant "walk kopia again"
 - 10-40 minutes per repo, and it loses the sticky first-seen dates (they come from snapshots that
@@ -212,7 +212,7 @@ def migrate_all_repos(repos: list) -> dict:
     running): an index the user cannot read must not sit broken until the nightly.
 
     A repo whose worker is still running is skipped and retried next start: the app deliberately
-    takes over live workers (), and rewriting files under one either fails (Windows) or
+    takes over live workers, and rewriting files under one either fails (Windows) or
     publishes a manifest built from the pre-migration snapshot (POSIX). Returns a report."""
     from ..core import nightly
     from . import publish

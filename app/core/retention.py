@@ -413,7 +413,7 @@ def validate_retention(repo: str, source: str) -> dict:
         with page_kopia_ok("no saved policy for this source"):
             policy, raw = parse_policy_retention(repo, key)
         try:
-            json.loads(raw)    # all-zero is a KEEP-EVERYTHING policy now, not a parse failure ()
+            json.loads(raw)    # all-zero is a KEEP-EVERYTHING policy now, not a parse failure
         except Exception:      # noqa: BLE001 - unreadable output is the failure this guard is for
             return {"source": key, "ok": False, "error": "could not parse policy retention", "raw": raw[:1200]}
 

@@ -1,4 +1,4 @@
-"""the dashboard payload must carry the cache snaphash.
+"""The dashboard payload must carry the cache snaphash.
 
 The frontend's dashboard change detection keys its re-render signature on ``data.hash`` so a
 change in ANY source's numbers re-renders, not just a change in the first row's last_time.

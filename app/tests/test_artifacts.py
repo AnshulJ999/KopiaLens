@@ -1,6 +1,6 @@
 """`build_repo` and `publish` edge cases.
 
-The schema transform and its verifier were deleted in step 7 - layer 3 rebuilds the history
+The schema transform and its verifier were deleted: layer 3 rebuilds the history
 straight from the tree, so the old current-schema -> skinny-id transform has no caller. What is
 pinned here is the behaviour around it: a repo with no sources still publishes an openable
 generation, GC protects a manifest path written with backslashes, and `replace_artifacts` reads the

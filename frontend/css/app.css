@@ -187,7 +187,7 @@ html.dark { --folder-ic: #f0b93a; }
 .kl-ibtn { display: inline-flex; align-items: center; justify-content: center; }
 .kl-ibtn .ic { font-size: 0.875rem; }
 
-/* Design menu choices (dev add-on, Widgets/design): html[data-d-<key>]. Absent = what ships.
+/* Design menu choices (dev add-on): html[data-d-<key>]. Absent = what ships.
    Icon swaps for these live in packaging/icons.json _variants. Remove a block once its choice is final. */
 html[data-d-chrome="tint"] .kl-chrome { background: var(--chrome-tint, var(--surface)); }
 html[data-d-hdrsize="15"] header .kl-ibtn .ic { font-size: 0.8125rem; }

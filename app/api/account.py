@@ -1,4 +1,4 @@
-"""Account routes (,): the first account, password, username, sign-in on/off,
+"""Account routes: the first account, password, username, sign-in on/off,
 sign out all devices, and the link between the sign-in password and the encryption password.
 
 v1 acts on the one admin account (``users.primary()``). When the account's password is also the

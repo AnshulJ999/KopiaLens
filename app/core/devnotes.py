@@ -3,7 +3,7 @@ a screenshot. Every build ships it as ``devnotes/`` beside the server (packaging
 it runs only while "Experimental features" (Settings > Advanced) and "Notes" (Settings >
 Experimental) are on, and nothing of it is served otherwise.
 
-Notes are kept in ``<data>/notes`` by the widget's own store (Widgets/notes/notes_server). A copy can
+Notes are kept in ``<data>/notes`` by the widget's own store. A copy can
 send every note to another KopiaLens instead, so test copies share one list: ``<data>/devnotes.json``
 ``{"send_to": "http://<host>:7123", "token": "kl_...", "name": "installed"}`` or the variables
 KOPIALENS_NOTES_SEND_TO / _TOKEN / _NAME, read at start. The token is an API token of the receiving
@@ -82,7 +82,7 @@ def _set_enabled(on: bool) -> None:
 
 
 def _notes_server():
-    """The widget's store and router: compiled into a build, else from this repo's Widgets/notes."""
+    """The widget's store and router: compiled into a build, else from the dev source tree."""
     try:
         from notes_server.fastapi_router import make_router
         from notes_server.notes_store import NotesStore

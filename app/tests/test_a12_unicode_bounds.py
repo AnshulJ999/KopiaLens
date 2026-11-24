@@ -1,4 +1,4 @@
-""" Prefix range bounds must cover names that start above the BMP (emoji, rare glyphs)."""
+"""Prefix range bounds must cover names that start above the BMP (emoji, rare glyphs)."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def test_backblaze_rollup_bounds_match_the_helper():
 
 
 def test_backblaze_rollup_clears_astral_named_children():
-    """ ``_write_rollup`` rewrites a drive's rows with the same bound the folder
+    """``_write_rollup`` rewrites a drive's rows with the same bound the folder
     views use. The old ``lo + U+FFFF`` left every row whose parent name starts above the BMP
     behind - and the helper was not even imported in this module (8 red BZ tests)."""
     import sqlite3

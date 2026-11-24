@@ -42,7 +42,7 @@ def cur(monkeypatch):
         (5, 3, 3, "C:" + SEP + "A, docs" + SEP + "f.txt", "f.txt", "txt", 30, 9, 1, None, None, True, None),
     ]
     con.executemany("INSERT INTO pathx VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
-    # folder scopes resolve through dir/anc, which a generation always carries.
+    # Folder scopes resolve through dir/anc, which a generation always carries.
     add_tree_tables(con, [], [(r[1], r[3]) for r in rows])
     # A fresh cursor per call: the query layer closes what read_cursor hands it, so returning the
     # connection itself would leave the second call in a test talking to a closed connection.
@@ -77,7 +77,7 @@ def test_copies_column_counts_locations_not_source_rows(cur):
 
 def test_a_file_held_by_two_overlapping_sources_counts_once(cur):
     """The folder list and Search's one-row-per-file view merge a path held by nested sources
-    into one file, while still counting both sources ()."""
+    into one file, while still counting both sources."""
     users = "C:" + SEP + "Users"
     row = next(r for r in queries.group_by_folder("1", depth=2)["rows"] if r["folder"] == users)
     assert (row["files"], row["sources"], row["logical"]) == (1, 2, 10)

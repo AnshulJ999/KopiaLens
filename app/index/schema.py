@@ -240,7 +240,7 @@ def exclusive_offline(repo: str, reason: str = "indexing", drain_timeout: float 
 
     Drain, close, hand over, reopen - the file is released to an external owner, and the window is
     long, so in-process readers get ``RepoOffline`` instead of blocking. (This shared its
-    choreography with the in-place compactor, removed with ``: immutable Parquet artifacts
+    choreography with the in-place compactor, removed; immutable Parquet artifacts
     have no dead space to reclaim.)
 
     Sequence: take the dashboard build lock -> mark offline (new reads fail fast) -> wait for

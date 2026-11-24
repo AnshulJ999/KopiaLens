@@ -1,8 +1,7 @@
-// Logs tab (): ONE home for everything log-shaped, unified across repos - the audit
+// Logs tab: ONE home for everything log-shaped, unified across repos - the audit
 // trail (moved out of Stats), Activity (the job runner in past tense, persisted so it survives
 // a restart), Indexing (per-run history from the app-side run records - stage timings, errors,
-// killed runs included) and the app log. "Audit, Activity - these
-// things can go in a new panel called Logs. It doesn't belong in a panel called Stats."
+// killed runs included) and the app log. Audit and Activity belong in Logs, not Stats.
 //
 // All four sections fetch a tail and filter by repo client-side; the records already carry a
 // repo field (the app log is app-wide by nature and shows as such). Every section is
@@ -29,7 +28,7 @@ const logsPart = {
       if (this.logsTab === "app") return this.loadAppLog();
     },
 
-    // ---- Audit (moved from Stats,) ----
+    // ---- Audit (moved from Stats) ----
     async loadAudit() {
       const seq = ++this._logsSeq;
       const filter = this.auditChips ? `groups=${this.auditGroups.join(",")}` : `hide_routine=${this.auditHideRoutine ? 1 : 0}`;

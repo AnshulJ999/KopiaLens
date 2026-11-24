@@ -1,4 +1,4 @@
-"""Encryption at rest for the unified store ( section 7).
+"""Encryption at rest for the unified store.
 
 One install-wide data key protects every local Parquet file (index, tree, maps, side caches).
 The data key is random and never derived: a password change re-wraps it, it does not re-encrypt
@@ -10,7 +10,7 @@ derived from the password with Argon2id.
   recovery key          --wraps--> data key        (optional, shown once at setup)
   OS keychain           holds     data key         ("remember on this machine")
 
-Encryption is OFF until onboarding () turns it on; every entry point here is a no-op in
+Encryption is OFF until onboarding turns it on; every entry point here is a no-op in
 that state, so callers never branch.
 
 The setting is the INTENT, the data is the FACT. Each generation records its own state in the

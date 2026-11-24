@@ -1,4 +1,4 @@
-"""Step 2 of: the tree sync, with kopia faked at the subprocess boundary.
+"""The tree sync, with kopia faked at the subprocess boundary.
 
 The live proof that the tree equals the old walker runs against a real repository; these pin the
 rules that a live run on healthy data would never exercise - a batch that aborts halfway, an

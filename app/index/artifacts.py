@@ -387,7 +387,7 @@ def _file_src_map(con, root: str, rels: list[str]) -> dict[int, list[str]]:
 
 def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: dict,
                        force: frozenset) -> dict:
-    """Per-source update of the published generation under ``root`` (plan 2.10). Unchanged
+    """Per-source update of the published generation under ``root``. Unchanged
     sources are carried into the new manifest by reference - no walk, no rewrite, ids
     untouched. A changed source is re-walked (append fast path when the change is strictly new
     snapshots on top, else a full source rebuild), its new paths anti-joined against its
@@ -400,9 +400,9 @@ def _build_incremental(repo: str, root: str, prev: dict | None, gen: int, job: d
     (accepted, ~40 MB); ``sanalysis`` is carried by reference unchanged.
 
     ``prev=None`` means a FULL rebuild: the dictionaries start empty, every source is a target,
-    and nothing is carried. folded the two build paths together - a full rebuild used to
-    be a separate function with its own id assignment, which meant the incremental path's
-    verification only ever ran on incremental builds.
+    and nothing is carried. The unified store folded the two build paths together - a full
+    rebuild used to be a separate function with its own id assignment, which meant the
+    incremental path's verification only ever ran on incremental builds.
 
     Sources are rebuilt from the TREE, not by walking kopia one folder at a time. A changed
     source costs about a second, so there is no append fast path and no special case for

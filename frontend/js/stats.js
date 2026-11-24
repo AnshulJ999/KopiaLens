@@ -1,5 +1,5 @@
 // Stats tab: parsed kopia cards, health checks, blob stats. The audit trail moved to the
-// Logs tab () - Stats stays repository facts + space/dedup + health.
+// Logs tab - Stats stays repository facts + space/dedup + health.
 const statsPart = {
 
     // ---------- Stats ----------

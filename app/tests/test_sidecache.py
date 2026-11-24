@@ -1,4 +1,4 @@
-"""`sidecache` - the one-row-Parquet side caches ( step 6).
+"""`sidecache` - the one-row-Parquet side caches.
 
 Pins the three rules that matter: a round trip preserves the payload, a locked encrypted store is
 never written in cleartext, and anything unreadable reads as "no cache" rather than raising.

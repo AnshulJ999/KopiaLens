@@ -1,7 +1,7 @@
 """First-index estimates: index size and run time, always as ranges.
 
-Fitted on measured first indexes of real repositories on local storage; see the PERF5 measurements
-report. The tree a first index reads grows with how much each source changed between snapshots,
+Fitted on measured first indexes of real repositories on local storage. The tree a first index
+reads grows with how much each source changed between snapshots,
 which the snapshot listing cannot tell, hence a range rather than one figure.
 """
 

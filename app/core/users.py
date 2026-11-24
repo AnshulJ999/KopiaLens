@@ -1,4 +1,4 @@
-"""Account store (): the list of accounts behind sign-in.
+"""Account store: the list of accounts behind sign-in.
 
 v1 holds one admin account; the store is a list so more accounts (and roles) are an addition, not
 a rewrite. Passwords are hashed by ``core/auth.py``; this module only stores and finds records.

@@ -212,7 +212,7 @@ def worker_log_path(repo: str) -> str:
 
 
 def worker_log_lines(repo: str, after: int = 0, limit: int = 400) -> tuple[list[str], int]:
-    """ ``(the lines after ``after``, the new cursor)`` - the panel's poll.
+    """``(the lines after ``after``, the new cursor)`` - the panel's poll.
 
     ``after`` is the cursor a previous call returned (a line count). A first call (0) starts at the
     latest run's first line - the file holds many nights. A cursor above the current length means
@@ -256,7 +256,7 @@ def queued_repo(active: str) -> str | None:
 
 
 def worker_log_tail(repo: str, limit: int = 200) -> list[str]:
-    """ The last ``limit`` lines of this repo's worker log, for the progress panel's live
+    """The last ``limit`` lines of this repo's worker log, for the progress panel's live
     log pane. Read-only and bounded; nothing here can block the run it describes."""
     from . import filecrypto
     try:
@@ -289,7 +289,7 @@ def _stage_weights(repo: str, full: bool) -> dict[str, float]:
 
 
 def run_progress(repo: str, prog: dict | None = None) -> dict:
-    """ One whole-run percentage and ETA, never a lame per-stage bar.
+    """One whole-run percentage and ETA, never a lame per-stage bar.
 
     Completed stages' typical seconds plus the current stage's own fraction, over the sum of the
     typical seconds. Where a stage has a REAL fraction (``prog["pct"]`` - the index stage's folder
@@ -325,7 +325,7 @@ def run_progress(repo: str, prog: dict | None = None) -> dict:
 
 
 def stop_index_pass(repo: str) -> dict:
-    """ Terminate this repo's in-flight worker and report what was stopped.
+    """Terminate this repo's in-flight worker and report what was stopped.
 
     The worker writes its pid into the progress file and ``our_worker`` confirms the pid is really
     ours (never a pid alone - they get recycled). A kill LOOKS like a crash to the scheduler, which
@@ -728,7 +728,7 @@ def run_index_pass(repo: str, full: bool = False, _owned: bool = False,
     ``_owned`` means the caller already holds the slot for this repo (``start_index_pass_async``
     reserves synchronously so its return value is truthful) and is handing ownership over; this
     call then releases it at the end as usual. ``trigger`` labels the run history record
-    (): "nightly" (the scheduler) or "manual" (the Index button)."""
+    ``trigger`` is "nightly" (the scheduler) or "manual" (the Index button)."""
     if repo not in REPOS:
         if _owned:
             _release(repo)   # the caller reserved for us; bailing must not strand the slot
@@ -761,7 +761,7 @@ def run_index_pass(repo: str, full: bool = False, _owned: bool = False,
             "last": summary,
         }
         _release(repo)
-        #: every outcome (worker summary, timeout, launch failure) is visible right here,
+        # Every outcome (worker summary, timeout, launch failure) is visible right here,
         # so the run history is written by the app - including for runs the worker never
         # survived to report.
         from . import runhistory  # lazy: keeps nightly import-light

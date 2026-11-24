@@ -1,4 +1,4 @@
-"""Folder entries from the generation's tree, with a kopia fallback ( 4b/4c).
+"""Folder entries from the generation's tree, with a kopia fallback.
 
 Every folder the last sync read lives in the tree, so a click reads the generation. A snapshot
 created since that sync has folders the tree has never seen, and a click still has to answer - it

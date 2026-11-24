@@ -3,8 +3,7 @@ from cutting paths, so a backslash inside a Linux name is just a character.
 
 The fixture mirrors the build: one ``dir`` row per folder prefix of each path, split by the
 SOURCE's own separator (the POSIX root and a UNC share's leading levels are empty names), plus the
-``anc`` closure. The names are the Linux test bed's awkward ones
-.
+``anc`` closure. The names are the Linux test bed's awkward ones.
 """
 
 from __future__ import annotations

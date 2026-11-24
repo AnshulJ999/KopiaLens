@@ -72,7 +72,7 @@ document.addEventListener("alpine:init", () => {
     snapshots: [], selectedSnapshot: "",
     showChurn: localStorage.getItem("kl-churn") === "1",
     analyzing: false,
-    snapStaleAnalysis: false,  // analysis rows exist but belong to the previous index run
+    snapStaleAnalysis: false,  // Analysis rows exist but belong to the previous index run
     treeMode: "full",
     treeWeek: "",
     treeDeletedOnly: false, treeOverGb: false, treeExt: "", treeFlat: false, treeView: "list",
@@ -108,7 +108,7 @@ document.addEventListener("alpine:init", () => {
     statsData: null, blobStats: "", blobLoading: false, _statsLoading: false,
     auditRows: [], auditSize: 0, auditHideRoutine: true, auditGroups: ["changes"], auditCounts: {},
     auditChips: true,   // Logs > Audit: filter chips; false brings back the Hide routine tickbox
-    // Logs tab (): four sections (audit/activity/indexing/app log), all repos in one
+    // Logs tab: four sections (audit/activity/indexing/app log), all repos in one
     // view with a client-side repo filter; the app log is app-wide by nature.
     logsTab: "audit", logsRepo: "all", jobHistory: [], indexRuns: [], noticeLog: [],
     appLogRecords: [], appLogLoaded: false, appLogFile: "app", appLogLevel: "info",
@@ -170,7 +170,7 @@ document.addEventListener("alpine:init", () => {
     bzCollapsePrefixes: "", bzEventlogArchive: "", bzStore: "parquet", bzUpdates: "auto",
     raBz: null,   // Backblaze on this computer (GET /api/setup/backblaze), for Settings
     analyzingAll: false, showDelete: false, deletePlan: null, _autoRefresh: null,
-    // detail-panel layout ("classic" | "tabbed"), persisted server-side, default Classic.
+    // Detail-panel layout ("classic" | "tabbed"), persisted server-side, default Classic.
     panelLayout: "tabbed", hideOverdue: false,
     confirmBox: null,  // the shared confirm dialog; truthy while it is open
     // Policies tab: overview + per-target detail from /api/policies/*; edits stage in
@@ -206,7 +206,7 @@ document.addEventListener("alpine:init", () => {
       }
       return s.note || "Disk scanning isn't available.";
     },
-    // exclusion dialog: priced-before-commit pattern adder over the file/folder panels.
+    // Exclusion dialog: priced-before-commit pattern adder over the file/folder panels.
     exDialog: null, showExclude: false, _exOpenSeq: 0, _exTargetsSeq: 0, _exPriceSeq: 0, _exCustomTimer: null, _exPriceTimer: null,
     _exDiffSeq: 0, _exDiffTimer: null, _exLeafTimer: null,
     exVariants: null, _exVarSeq: 0,   // file/folder panel "Stop backing this up" rows
@@ -470,7 +470,7 @@ document.addEventListener("alpine:init", () => {
         this.dateStyle = kl.date_style || "system";
         this.clock = String(kl.clock || "system");
         setFormatStyles(kl);
-        this.panelLayout = kl.panel_layout === "classic" ? "classic" : "tabbed";  //
+        this.panelLayout = kl.panel_layout === "classic" ? "classic" : "tabbed";
         this.hideOverdue = kl.hide_overdue === true;
         this.docsView = kl.docs_view === "side" ? "side" : "popup";
         this.polLayout = kl.policy_layout === "scroll" ? "scroll" : "tabs";

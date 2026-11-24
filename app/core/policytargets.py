@@ -184,7 +184,7 @@ def _root_rules(repo: str, source_key: str, defined: dict) -> tuple[str, str | N
 def _excluded_in(repo: str, source_key: str, rel: str, is_folder: bool, defined: dict) -> bool:
     """Is ``rel`` (relative to the source root) kept out of this source's snapshots?
 
-    Delegates to the shared rule layer (/): the root list, the rules of every path
+    Delegates to the shared rule layer: the root list, the rules of every path
     policy on a folder the walk passes through, and every dot-ignore file in effect, evaluated in
     kopia's order (parent context first, a deeper level can negate it). A folder equal to the
     source root counts as left out when its rules leave out everything inside it."""

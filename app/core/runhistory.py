@@ -1,4 +1,4 @@
-"""Per-run index history (): one JSONL line per heavy pass, written by the APP.
+"""Per-run index history: one JSONL line per heavy pass, written by the APP.
 
 The worker's own stdout summary dies with its process, and the rolling worker log is prose -
 answering "how did the last three nightlies go" meant reading logs. ``nightly.run_index_pass``

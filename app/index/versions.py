@@ -5,7 +5,6 @@ A kept version is the manifest an index build replaced (``versions/g<N>.json``),
 per index run: the later stages of a run publish further generations on top of the same build.
 GC keeps every file a kept version names. The copy folder mirrors the current version's files
 (names are generation-stamped and never reused, so only new files are copied).
-
 """
 
 from __future__ import annotations

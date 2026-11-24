@@ -49,7 +49,7 @@ def _week_bounds(week: str) -> tuple[dt.datetime, dt.datetime]:
 
 
 def _snapshot_ids_in_week(repo: str, week: str) -> list[str]:
-    """Every snapshot, any source, that STARTED inside the chosen week (KL13 "Week" view).
+    """Every snapshot, any source, that STARTED inside the chosen week ("Week" view).
 
     Bounded at BOTH ends on purpose. Taking the latest snapshot at-or-before the week's end had
     no lower bound, so a source last backed up in July answered a query about a week in August -
@@ -137,7 +137,7 @@ def _covering_sources(repo: str, path: str) -> list[str]:
 
 @router.post("/tree/holders")
 def tree_holders(body: HoldersBody) -> dict:
-    """Which backups hold each of these paths - the All-sources tree's file actions [B4].
+    """Which backups hold each of these paths - the All-sources tree's file actions.
 
     A row in All-sources mode is a MERGED path: ``tree_children_all`` dedupes by full_path and
     carries no source, so an action there has none to run against. Resolve the holders at action

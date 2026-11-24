@@ -19,7 +19,7 @@ def _tree_children_all(repo: str, rows: list[tuple], prefix: str = "") -> list[d
                 "physical BIGINT, last_seen TIMESTAMP, in_latest BOOLEAN, versions INTEGER DEFAULT 1)")
     con.executemany("INSERT INTO pathx (full_path, size, physical, last_seen, in_latest) VALUES (?,?,?,?,?)",
                     [r[2:] for r in rows])
-    # the folder scope resolves through dir/anc; a generation always carries them.
+    # The folder scope resolves through dir/anc; a generation always carries them.
     srcs = list(dict.fromkeys(r[1] for r in rows))
     add_tree_tables(con, srcs, [(srcs.index(r[1]) + 1, r[2]) for r in rows])
     orig = queries.read_cursor

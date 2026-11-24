@@ -96,7 +96,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "recent_backup": "",       # default "Backed up" filter in days ("" = Any); user changes persist
         "tree_dedupe": False,      # persisted dedupe toggle (tree)
         "docs_view": "popup",       # the docs browser: "popup" | "side"
-        "panel_layout": "tabbed",  # detail-panel layout (): "classic" | "tabbed"
+        "panel_layout": "tabbed",  # detail-panel layout: "classic" | "tabbed"
         "hide_overdue": False,      # Dashboard: no "overdue" badge on Next snapshot
         "policy_layout": "tabs",    # policy editor: "tabs" (one section at a time) | "scroll" (stacked, jump strip)
         "policy_leave": "ask",      # leaving a policy with unsaved changes: "ask" | "keep" (drafts stay until saved)
@@ -156,8 +156,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "tray_double_click": "window",  # tray icon double-click (Windows): window | none
         "desktop_signin": False,     # the desktop app's window opens signed in; browsers still sign in
         "notifications": "warnings",  # desktop app toasts: all | warnings | off
-        # ---- unified store () ---------------------------------------------------------
-        # Encryption at rest (). Three levels, decided in onboarding ():
+        # ---- unified store ---------------------------------------------------------
+        # Encryption at rest. Three levels, decided in onboarding:
         #   "off"        nothing
         #   "index"      the index generations + side caches + policy caches (the full map) -
         #                kopia's own posture: its repository and cache encrypted, config and logs not
@@ -199,13 +199,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "bzdata_path": "",           # read-only source root (never written); "" = this OS's default
         "computer": "auto",          # whose Backblaze it is: auto (compare names) | this | other (no Kopia cross-check)
         "updates": "auto",          # auto = refresh when Backblaze's file lists change | off = only when started by hand
-        # where the `files` index lives: "parquet" (data/bz/ per-drive Parquet generations
+        # Where the `files` index lives: "parquet" (data/bz/ per-drive Parquet generations
         # read via DuckDB - the DEFAULT) or "sqlite" (kopialens_bz.sqlite + FTS5, the LEGACY path
         # kept for rollback). Switching stores triggers a full rebuild of the missing store on the
         # next refresh; the small history/state tables always stay in the SQLite file.
         "store": "parquet",
         "history_days": 90,          # how many days of the daily per-folder rollup to retain (growth/churn trend)
-        # minimum seconds between real BZ reindexes (): the cheap detect runs on the light
+        # minimum seconds between real BZ reindexes: the cheap detect runs on the light
         # interval, but a change it finds waits for this gap before the expensive reindex starts
         "bz_reindex_min_gap": 21600,
         # folder-rollup views (Queue/Churn/by-folder) roll these prefixes up to a single row instead

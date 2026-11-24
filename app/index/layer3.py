@@ -1,4 +1,4 @@
-"""Rebuild a source's file history from the tree, in one level pass ( plan 4a step 3).
+"""Rebuild a source's file history from the tree, in one level pass.
 
 This replaces the walk. ``builder._build_source`` descends kopia's directory objects one folder
 at a time in Python and takes about five minutes on repo 1, plus six more for the first-seen
@@ -37,7 +37,7 @@ MAX_DEPTH = 512          # kopia's tree is content-addressed and cannot contain 
 
 # How tied snapshots are ordered. Kopia checkpoint snapshots share a start time exactly (up to 12
 # in one source on repo 2), so the tiebreak decides which of them a file version is credited to.
-#   "id"      start_time DESC, then snapshot_id ASC - the rule. Within a tie group the
+#   "id"      start_time DESC, then snapshot_id ASC (the default). Within a tie group the
 #             lowest snapshot id takes the newest rank. Which direction matters far less than
 #             that it is fixed: it is reproducible and independent of kopia's listing order.
 #   "listing" start_time, then the position in the live listing - what today's index does, kept so

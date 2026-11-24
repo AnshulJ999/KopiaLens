@@ -472,7 +472,7 @@ _POLICY_REUSE_MAX_AGE = 86400    # how fresh core.policy's cache must be to stan
 
 
 def _recent_policies(repo: str) -> dict:
-    """Scheduling blocks for every source, without a `policy show` per source ( +).
+    """Scheduling blocks for every source, without a `policy show` per source.
 
     The nightly's `policies` stage refreshes the per-source effective-policy cache moments before
     this stage runs, so a fresh cache is used directly. A stale one (the 30-minute light loop)

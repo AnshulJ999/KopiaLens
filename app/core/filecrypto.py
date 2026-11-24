@@ -1,4 +1,4 @@
-"""Whole-file and per-line encryption for everything that is not the index ( part 2).
+"""Whole-file and per-line encryption for everything that is not the index.
 
 The index stays on DuckDB's Parquet encryption - it keeps row-group skipping, which the speed
 test proved matters. Everything else is encrypted here, with the ``cryptography`` library:
@@ -727,16 +727,16 @@ def pending_files() -> list[str]:
     return [p for p in covered_paths() if os.path.exists(p) and file_state(p) != want]
 
 
-# ---------------------------------------------------------------------------- REL30 conversion
+# ---------------------------------------------------------------------------- conversion
 
 def upgrade_step() -> dict:
-    """The REL30 data-folder step for this layer: convert the encryption settings, report files.
+    """The data-folder step for this layer: convert the encryption settings, report files.
 
     ``encryption`` (the old on/off boolean) becomes ``encryption_level``: on read as index-level
     from now on, written once here. Files the level covers but that are still plaintext are
     REPORTED, never rewritten - a data rewrite is the user's explicit switch, not an upgrade.
 
-    A1's REL30 routine registers this; it is safe to call twice and safe to call at level off.
+    The data-folder upgrade registers this; it is safe to call twice and safe to call at level off.
     """
     from ..index import crypto
     from ..settings import mutate_settings

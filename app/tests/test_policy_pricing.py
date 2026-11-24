@@ -416,7 +416,7 @@ def test_precompute_without_a_fingerprint_block_prices_fresh(priced, tmp_path, m
 
 def test_stored_file_from_an_older_code_version_reads_as_absent(priced, tmp_path, monkeypatch):
     """The version bump is the guard against fingerprint-reusing prices written by older pricing
-    code (KL70/KL71 changed the semantics): a v1 file must be ignored entirely, forcing the
+    code (the pricing semantics changed): a v1 file must be ignored entirely, forcing the
     first nightly after the merge into one full reprice."""
     import json
     snaps = {SRC: "aa", SRC2: "bb"}

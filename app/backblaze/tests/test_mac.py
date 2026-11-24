@@ -206,7 +206,7 @@ def _empty_bzdata(root: str, host: str) -> None:
 
 
 def test_a_folder_with_no_finished_scan_waits_instead_of_showing_the_old_computer(env, monkeypatch):
-    """the old computer's files must never sit on screen under the new computer's name."""
+    """The old computer's files must never sit on screen under the new computer's name."""
     con, tmp = env
     a, b = str(tmp / "a"), str(tmp / "b")
     _win_bzdata(a, "PC-A", "alpha")

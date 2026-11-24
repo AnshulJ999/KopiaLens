@@ -1,4 +1,4 @@
-"""User-facing copy must not leak item codes or names (kopialens-copy-guide.md)."""
+"""User-facing copy must not leak item codes or names."""
 
 from __future__ import annotations
 
@@ -69,4 +69,4 @@ def test_backend_notes_have_no_item_codes():
 
 
 def test_scanner_skips_comments():
-    assert _js_strings('// "KL1"\nconst a = "x"; /* "KL2" */') == ["x"]
+    assert _js_strings('// "AA1"\nconst a = "x"; /* "AA2" */') == ["x"]

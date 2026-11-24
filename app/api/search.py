@@ -27,7 +27,7 @@ router = APIRouter(tags=["search"])
 
 def _saved_folder_values(repo: str, rows: list[dict], filtered: bool) -> dict[str, dict]:
     """Last night's whole-folder values for unfiltered, whole-folder rows. A filtered list or a
-    loose-files row describes other files, so it fills on screen instead ()."""
+    loose-files row describes other files, so it fills on screen instead."""
     if filtered:
         return {}
     return foldercache.saved_values(repo, [r["folder"] for r in rows if not r.get("loose")])
@@ -69,7 +69,7 @@ class FolderVersionsRequest(BaseModel):
 
 @router.post("/search/folder-versions")
 def search_folder_versions(body: FolderVersionsRequest) -> dict:
-    """How many distinct states each folder on screen has had (): one tree walk per source
+    """How many distinct states each folder on screen has had: one tree walk per source
     for the whole page (capped at 100 folders)."""
     from ..core.sources import sources_index
     from ..index.holding import folder_states
@@ -141,7 +141,7 @@ def _bounds(over_gb: float, largest: bool, min_gb: float, max_gb: float) -> tupl
 
 
 def _no_ids(rows: list) -> list:
-    """Search rows go out without the object id: nothing on screen uses it ()."""
+    """Search rows go out without the object id: nothing on screen uses it."""
     for r in rows:
         r.pop("content_id", None)
     return rows

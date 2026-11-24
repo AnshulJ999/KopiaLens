@@ -1,4 +1,4 @@
-"""The data-folder version + upgrade routine ().
+"""The data-folder version + upgrade routine.
 
 The failure this exists for: a format change in a file with no version of its own was silently
 ignored or misread (the 2026-09-17 60-second folder panel). The routine also refuses a folder from

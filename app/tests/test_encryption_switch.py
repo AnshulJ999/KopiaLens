@@ -1,4 +1,4 @@
-"""The encryption switch (): the state rules, the rewrite, the caches, the key hand-off.
+"""The encryption switch: the state rules, the rewrite, the caches, the key hand-off.
 
 The load-bearing checks, in the order the risk sits:
 

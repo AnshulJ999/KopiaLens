@@ -75,7 +75,7 @@ def _key(name: str, fold: bool) -> str:
 
 def _prefix_bounds(folder: str) -> tuple[str, str, int]:
     """[lo, hi) range (case-folded for Windows paths) that captures everything under `folder`,
-    plus the prefix length (chars to strip to get the path relative to the folder). the
+    plus the prefix length (chars to strip to get the path relative to the folder). The
     bound comes from ``paths.prefix_bounds`` - ``lo + U+FFFF`` dropped every child whose name
     starts above U+FFFF."""
     sep, fold = _rules(folder)

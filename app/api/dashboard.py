@@ -177,7 +177,7 @@ def index_notice_dismiss(notice_id: str) -> dict:
 
 @router.get("/index/log")
 def index_log(repo: str, after: int = 0, limit: int = 400) -> dict:
-    """ Paged tail of this repo's worker log for the panel's log pane. ``after`` is the
+    """Paged tail of this repo's worker log for the panel's log pane. ``after`` is the
     cursor the previous call returned; only lines after it come back, and the cursor advances by
     exactly what was returned so a burst pages through instead of being skipped."""
     from ..core.nightly import worker_log_lines
@@ -202,7 +202,7 @@ def index_pending_run(repo: str) -> dict:
 
 @router.get("/index/runs")
 def index_runs(limit: int = 100) -> dict:
-    """ Per-run index history, ALL repos in one list (newest first) - the Logs tab's
+    """Per-run index history, ALL repos in one list (newest first) - the Logs tab's
     Indexing section. Records cover every outcome: the worker's stage timings, a timeout, or a
     launch failure (the app writes the record, so a killed run is still on the list)."""
     from ..core import runhistory
@@ -256,8 +256,8 @@ def index_freshness() -> dict:
             "error_at": stored.get("at"),
         }
         if cfg.get("kind") == "backblaze":
-            #: the badge shows REBUILD age - how old the data actually is.
-            # Verification age ("checked Xm ago") rides the row tooltip; a detected
+            # The badge shows REBUILD age - how old the data actually is. Verification age
+            # ("checked Xm ago") rides the row tooltip; a detected
             # change waiting on the min-gap is flagged via `pending`.
             try:
                 from ..backblaze import indexer as bz_indexer

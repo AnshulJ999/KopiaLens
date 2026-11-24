@@ -1,4 +1,4 @@
-"""Setup routes + the API contract they hold to (/ backend).
+"""Setup routes + the API contract they hold to.
 
 Two invariants live here beyond the routes themselves: no route or request model may default
 `repo` to a personal id ("1"), and no route may spawn kopia unless the user asked for it.

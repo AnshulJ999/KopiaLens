@@ -1,6 +1,6 @@
 """Free installs get no object ids: an object id is the ingredient a content delete (Pro) is built
 from. These trims run on Free replies only; Pro replies are unchanged. Snapshot ids stay (Free
-deletes, restores and mounts whole snapshots). 
+deletes, restores and mounts whole snapshots).
 """
 
 from __future__ import annotations

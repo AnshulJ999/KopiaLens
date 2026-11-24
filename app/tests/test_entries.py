@@ -1,4 +1,4 @@
-"""`entries.children_of` - the tree read with the kopia fallback ( 4b/4c).
+"""`entries.children_of` - the tree read with the kopia fallback.
 
 The tree is the store for every folder the last sync saw. This pins the three rules that matter:
 entries come from the tree, a folder the tree does not hold comes from kopia, and a read that

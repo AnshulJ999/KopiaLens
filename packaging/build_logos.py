@@ -9,7 +9,6 @@ Writes:
   shell/src-tauri/icons/tray/<id>.rgba   the tray icons themselves, 64x64 raw RGBA, read by tray.rs
                                          (<id>-light.rgba for a light taskbar)
 
-
 Rendering needs Playwright's Chromium and Pillow.
 
     python packaging/build_logos.py

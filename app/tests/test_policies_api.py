@@ -1,6 +1,6 @@
 """The Policies API surface - routes called directly with fakes at the kopia boundary.
 
-Pins the contract the tab builds against:
+Pins the contract the Policies tab builds against:
 inheritance state in overview/detail, the fail-closed save, and diff validation (an inherited
 rule is NOT removable on the source - the global policy owns it).
 """
@@ -177,7 +177,7 @@ def test_save_runs_backup_write_then_invalidation(wired, monkeypatch):
                                 confirmed=True))
     assert order[0] == "backup:pre-write"
     assert order[1] == "write"
-    # exactly the saved target, nothing else; an add-ignore write is ignore-only ()
+    # exactly the saved target, nothing else; an add-ignore write is ignore-only
     assert order[2] == f"invalidate:{[SRC]}:True"
     assert out["ok"] is True and out["returncode"] == 0
     assert out["backup"]["verified"] is True
@@ -287,7 +287,7 @@ def test_restore_cmd_carries_the_mirror_flag(wired, monkeypatch):
     assert "--delete-other-policies" in out["command"]
 
 
-# ----: live-price cap, opt-in target pricing, stored numbers ---------------------
+# ---- live-price cap, opt-in target pricing, stored numbers --------------------
 
 def test_live_pricing_caps_large_rule_sets(wired):
     from fastapi import HTTPException

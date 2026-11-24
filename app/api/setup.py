@@ -1,6 +1,6 @@
 """Setup endpoints: the kopia program, and creating/connecting/editing/removing repositories.
 
-The screens for these live with onboarding () and the repo-management design session; this
+The screens for these live with onboarding and repository management; this
 router is the backend contract they sit on. Nothing here runs kopia on a polled request - a live
 call only ever happens because the user asked for one (a probe, a create/connect, an unlock).
 """
@@ -89,7 +89,7 @@ def get_kopia() -> dict:
 @router.get("/setup/data")
 def get_data_status() -> dict:
     """The data folder's format version and what (if anything) is pending, plus each repo's index
-    format - the `` state, for the Settings/diagnostics surfaces."""
+    format - the current state, for the Settings/diagnostics surfaces."""
     from ..core import dataupgrade
     from ..index import upgrade as index_upgrade
 

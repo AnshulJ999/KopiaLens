@@ -1,4 +1,4 @@
-"""Write modes (): every write route and job kind is sorted into a mode, and the server-side
+"""Write modes: every write route and job kind is sorted into a mode, and the server-side
 gate refuses what a repository's mode does not allow."""
 
 from __future__ import annotations

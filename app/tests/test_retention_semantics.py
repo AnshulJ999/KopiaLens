@@ -1,7 +1,7 @@
 """Retention replica semantics - the kopia divergences this repo's own data cannot show.
 
-Every real source here runs keepLatest 100/200, which hides the three differences found by
-reading kopia's retention_policy.go against the replica: the age cutoffs (kopia's "48 hourly" is
+Every real source here runs keepLatest 100/200, which hides the three differences between kopia's
+retention_policy.go and the replica: the age cutoffs (kopia's "48 hourly" is
 "within the last 48 hours", not "the 48 latest distinct hours"), Go's AddDate month-overflow
 arithmetic behind those cutoffs, and the rules for incomplete snapshots. An all-zero policy is the
 fourth: kopia keeps EVERYTHING, not nothing.

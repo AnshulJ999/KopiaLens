@@ -1,4 +1,4 @@
-"""Anchored pricing () and the ignore-file artifact ().
+"""Anchored pricing and the ignore-file artifact.
 
 A rule list that lives on a folder inside a source is anchored there: it prices only that
 subtree and matches text relative to the folder. The ignore-file stage discovers those files,

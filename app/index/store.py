@@ -11,7 +11,7 @@ old table shapes here - every read path resolves integer ids directly through
 The writer (``publish.py``, ``artifacts.py``, ``ids.py``) lands in the same pass; this module
 only ever READS. No directory is ever globbed - the manifest names every file.
 
- added three things here: the tree artifacts (layer 1) bind alongside the index ones, every
+The unified store adds three things here: the tree artifacts (layer 1) bind alongside the index ones, every
 connection is an encrypted session when encryption is on, and nothing stays open - the generation
 opens on first use and closes again after ``store_idle_close`` seconds without a user request.
 """

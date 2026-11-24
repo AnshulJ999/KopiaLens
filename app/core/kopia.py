@@ -1142,7 +1142,7 @@ def source_delete_commands(repo: str, source: str, delete_policy: bool, dry: boo
     return cmds
 
 
-# ---- policy editing (/) ----------------------------------------------------
+# ---- policy editing ----------------------------------------------------
 # Policy writes are fast kopia calls (seconds - not job-runner material). Every write is backed
 # up first by the caller (core.policybackup, FAIL-CLOSED: no verified backup, no write); these
 # functions only build the command, run it, log it loudly and audit it.

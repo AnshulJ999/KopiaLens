@@ -1,6 +1,6 @@
 """Natural-key -> integer-id resolution at the storage boundary (M2).
 
-The rule every M2 rewrite follows: resolve INPUTS by
+The rule every resolver rewrite follows: resolve INPUTS by
 lookup - turn each natural key into its integer with one small query, then run the real query
 on ids. Resolve OUTPUTS by joining the dictionary against the result set, never the whole
 table. This module is the input side; no integer id ever leaves the storage layer through it.
@@ -127,7 +127,7 @@ def path_ids(cur, pairs) -> dict[tuple, int]:
     """Batched ``path_id``: one scan per source group for the whole set, not one scan per pair.
 
     ``physical.batch_detail`` passes hundreds of (source, path) pairs; per-pair lookups there
-    re-scanned pathx hundreds of times (the KL47 regression shape - correct answers, minutes
+    re-scanned pathx hundreds of times (correct answers, but minutes
     of wall time, invisible to a value-based gate). Matching is RAW-EXACT within each source
     group - one registered-join per group rather than a single IN list. Unresolvable pairs are
     absent from the result, never errors. ``dir_id`` carries the same caution: batch, never
@@ -229,7 +229,7 @@ def cid_id(cur, content_id: str) -> int | None:
 
 
 def _join_dict(cur, values, col: str, want: str, kind) -> dict:
-    """One hash join for a set too big to bind as IN-lists ().
+    """One hash join for a set too big to bind as IN-lists.
 
     An IN-list costs a scan of `cid` per 900 ids, so a folder holding 170k chunks paid ~190 of
     them for a single lookup. Binding the set once is the same answer in one pass. Only the LARGE

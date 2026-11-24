@@ -242,7 +242,7 @@ def _mark_nightly(repo: str, slot: float) -> None:
 
 
 def mark_index_stopped(repo: str) -> None:
-    """ Record a DELIBERATE stop for the current slot so the retry never brings it back.
+    """Record a DELIBERATE stop for the current slot so the retry never brings it back.
 
     A stopped worker exits non-zero, which is indistinguishable from a crash - and the retry arm
     exists exactly for crashes. The error text is replaced too: "stopped by you" is not a failure
@@ -463,7 +463,7 @@ def _details_pass() -> None:
             log.debug("details pass repo=%s: %s", repo, exc)
 
 
-_DEFAULT_BZ_REINDEX_GAP = 21600   #: min seconds between real BZ reindexes (detect runs far more often)
+_DEFAULT_BZ_REINDEX_GAP = 21600   # Min seconds between real BZ reindexes (detect runs far more often)
 _BZ_LAST_ATTEMPT = 0.0            # in-memory on purpose: after a restart an immediate retry is correct
 
 
@@ -492,7 +492,7 @@ def _bz_present() -> bool:
 
 
 def _bz_reindex_due(now_ts: float) -> bool:
-    """BZ's own due check () - the daily slot never applies to it. Due when the 30-min detect
+    """BZ's own due check - the daily slot never applies to it. Due when the 30-min detect
     has flagged a change no successful refresh has absorbed yet, the min-gap since the last real
     reindex has opened, and a FAILED attempt has had its retry window (a failing worker must not
     be relaunched every tick)."""
@@ -521,7 +521,7 @@ def _bz_reconcile() -> None:
 
 
 def _bz_detect_pass() -> None:
-    """Cheap BZ freshness detect on the light interval (): stat + body-hash in this process
+    """Cheap BZ freshness detect on the light interval: stat + body-hash in this process
     (chunked I/O, GIL released) - never the ~4 min reindex, which stays a worker subprocess behind
     the global heavy-pass slot. Skipped while a BZ refresh runs: the worker owns the same SQLite
     file right now and its success re-derives everything the detect would have learned."""
@@ -541,7 +541,7 @@ def _bz_detect_pass() -> None:
 
 
 def _bz_transmit_pass() -> None:
-    """ Transmit-side refresh on the light interval: the upload-queue table + the
+    """Transmit-side refresh on the light interval: the upload-queue table + the
     remaining/totalbackup kv - the Backblaze files that move every ~10 min independent of the
     filelists, so the pill/Queue/dashboard cards cannot go stale for a whole reindex gap.
     refresh_transmit_side() carries its own building guard and never raises."""
@@ -614,7 +614,7 @@ def _tick() -> None:
             if _bg_stop.is_set():
                 return
             if repo_kind(repo) == "backblaze":
-                continue  # BZ left the daily slot () - its detect-driven check runs below
+                continue  # BZ left the daily slot - its detect-driven check runs below
             if repos_store.via_server(repo):
                 continue  # browse-only: kopia refuses the reads an index needs
             if is_demo(repo):
@@ -672,7 +672,7 @@ def _bg_worker() -> None:
     _light_pass()
     _details_pass()
     _bz_detect_pass()  # BZ catch-up: after the PC was off, the first detect flags any missed change
-    _bz_transmit_pass()  #: the pill/queue/dashboard cards are fresh from the first tick
+    _bz_transmit_pass()  # The pill/queue/dashboard cards are fresh from the first tick
     gc.collect()
     log_memory("startup light pass done")
     while not _bg_stop.wait(_TICK):
@@ -713,7 +713,7 @@ async def lifespan(_app: FastAPI):
         configbackup.on_startup()
     except Exception as exc:  # noqa: BLE001 - a backup problem must not block startup
         log.warning("config backup at startup failed: %s", exc)
-    try:  # the folder's own version stamp + any registered migration step (background)
+    try:  # The folder's own version stamp + any registered migration step (background)
         from .core import dataupgrade
         dataupgrade.start_background()
     except Exception as exc:  # noqa: BLE001 - an upgrade problem must not block startup
@@ -777,7 +777,7 @@ async def lifespan(_app: FastAPI):
             log.warning("repository unique-id capture failed: %s", exc)
 
     def _upgrade_indexes() -> None:
-        """ Migrate any generation still in an older format, ONCE, off the startup path.
+        """Migrate any generation still in an older format, ONCE, off the startup path.
 
         Before this, a format bump silently rebuilt every repo on its next pass (10-40 min each,
         and the sticky first-seen dates were lost). A generation from a NEWER app is refused here
@@ -1058,7 +1058,7 @@ async def auth_login(request: Request):
     password = str(form.get("password") or "")
     persist = bool(form.get("remember"))
     address = request.client.host if request.client else "?"
-    wait = auth.login_delay(address)                      # increasing wait, never a lockout
+    wait = auth.login_delay(address)                      # Increasing wait, never a lockout
     if wait:
         return HTMLResponse(_login_html(f"Too many attempts. Try again in {int(wait)} s.", username),
                             status_code=429, headers={"Retry-After": str(int(wait) + 1)})
@@ -1078,7 +1078,7 @@ async def auth_login(request: Request):
 
 @app.post("/api/index/stop")
 def post_index_stop(repo: str):
-    """ Stop this repo's index run AND keep it stopped.
+    """Stop this repo's index run AND keep it stopped.
 
     The worker is terminated, then the slot is closed so the scheduler's retry (a killed worker
     looks like a crash) does not relaunch it 15 minutes later. A later manual Index or the next
@@ -1235,7 +1235,7 @@ class LaneMiddleware:
 @app.middleware("http")
 async def timing_middleware(request: Request, call_next):
     start = time.perf_counter()
-    slot = [0, 0.0]                                  # this request's own spawns
+    slot = [0, 0.0]                                  # This request's own spawns
     db = [0, 0.0]                                    # this request's index queries
     token = kopia_mod.REQUEST_CALLS.set(slot)
     db_token = store.REQUEST_DB.set(db)

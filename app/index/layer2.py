@@ -1,4 +1,4 @@
-"""Layer 2 of the unified store: the object maps ( section 3).
+"""Layer 2 of the unified store: the object maps.
 
 Three maps, all keyed on ``cid_id`` against the generation's shared dictionary:
 
@@ -405,7 +405,7 @@ def source_totals(repo: str, recent: int | None = None) -> tuple[dict[str, dict]
 def source_refcounts(repo: str) -> dict[str, int]:
     """content_id -> how many sources reach it, computed from the tree in one query.
 
-    Only for the cold start where the generation carries no ``crefs`` map (a pre- generation,
+    Only for the cold start where the generation carries no ``crefs`` map (a pre-upgrade generation,
     i.e. the first run after the upgrade). Every other caller reads the published map.
     """
     f, d = tree.TYPES.index("f"), tree.TYPES.index("d")

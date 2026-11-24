@@ -1,7 +1,7 @@
 """A failed repository listing must never look like an empty repository, plus the
 smaller hardening items shipped alongside it.
 
-KL35 was the serious one: `kopia snapshot list` returning an error was read as "this repo has no
+The serious one: `kopia snapshot list` returning an error was read as "this repo has no
 snapshots", the builder then read every source as removed and deleted its rows, and the pass
 reported success. Two independent protections are asserted here - the checked listing boundary,
 and the builder's own refusal to treat an empty list as a mass removal.
@@ -173,7 +173,7 @@ def _run_worker_with(monkeypatch, tmp_path, out: str, rc: int) -> dict:
 
 
 def test_the_workers_own_reason_survives_its_non_zero_exit(monkeypatch, tmp_path):
-    """the worker prints WHY it failed and then exits 1. Reading the exit
+    """The worker prints WHY it failed and then exits 1. Reading the exit
     code first discarded the explanation and reported "worker exit 1" - the exact message the
     freshness strip exists to replace."""
     out = json.dumps({"ok": False, "repo": "1", "reason": "repository unavailable"})
@@ -300,7 +300,7 @@ def test_a_timed_out_kopia_call_comes_back_as_a_failed_result(monkeypatch):
 
 
 def test_the_streaming_reader_kills_a_child_that_goes_silent(monkeypatch):
-    """iterating stdout BLOCKS, so a deadline checked inside the read loop
+    """Iterating stdout BLOCKS, so a deadline checked inside the read loop
     never runs against the failure it exists for. The watchdog has to kill the child instead.
     Uses a real subprocess that produces no output at all."""
     import sys as _sys

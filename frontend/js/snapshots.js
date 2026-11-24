@@ -10,7 +10,7 @@ const snapshotsPart = {
         if (seq !== this._snapSeq) return;  // a newer load superseded this one
         this.snapshots = this.snapSource === "*ALL*" ? (data.snapshots || []).filter((x) => this.ownerMatch(x.source)) : (data.snapshots || []);
         this.analyzing = !!data.analyzing;
-        // the churn/reclaim numbers can belong to the previous index run - say so
+        // The churn/reclaim numbers can belong to the previous index run - say so
         this.snapStaleAnalysis = !!data.analyzed && data.analysis_fresh === false;
         if (!this.snapshots.find((x) => x.id === this.selectedSnapshot)) this.selectedSnapshot = this.snapshots.length ? this.snapshots[this.snapshots.length - 1].id : "";
         const allSrc = this.snapSource === "*ALL*";

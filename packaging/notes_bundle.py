@@ -1,6 +1,6 @@
 """Stage the Notes widget (Settings > Experimental) for a build: release.py and build_server.py do
 it themselves; the Docker build needs it staged into packaging/docker/devnotes first (its build
-context has no Widgets folder), and a WSL source run stages it for itself.
+context has no widget sources), and a WSL source run stages it for itself.
 
     python packaging/notes_bundle.py <folder> [--testing]
 

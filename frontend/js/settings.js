@@ -464,7 +464,7 @@ const settingsPart = {
         this.sessionDays = Number(kl.session_days || 30);
         this.loadAccount();
         this.raLoad();
-        this.panelLayout = kl.panel_layout === "classic" ? "classic" : "tabbed";  //
+        this.panelLayout = kl.panel_layout === "classic" ? "classic" : "tabbed";
         this.docsView = kl.docs_view === "side" ? "side" : "popup";
         this._readAdvanced(kl);
         this._readBackblaze(data.settings?.backblaze || {});

@@ -104,7 +104,7 @@ def index_summary(repo: str) -> dict:
 
 
 # Whitelisted sort columns (server-side sort over the FULL filtered set, never the page).
-# "stored"/"frees" order by the nightly ranked list () through a joined column, not pathx.
+# "stored"/"frees" order by the nightly ranked list through a joined column, not pathx.
 _SEARCH_SORT = {
     "size": "size", "physical": "physical", "full_path": "full_path", "name": "name",
     "ext": "ext", "versions": "versions", "last_seen": "last_seen", "first_seen": "first_seen",
@@ -119,7 +119,7 @@ _HOST_SQL = "lower(regexp_extract(s.source, '^[^@]*@([^:]*)', 1))"
 
 
 def _per_file(where_sql: str, extra: str = "", joins: str = "") -> str:
-    """SQL: the ``pathx`` rows matching ``where_sql`` folded to one row per FILE (). A path
+    """SQL: the ``pathx`` rows matching ``where_sql`` folded to one row per FILE. A path
     held by nested sources on one computer is one file; ``sources`` lists every source holding it
     and ``source`` is the first of them. Sizes are the newest version's (the holder that saw it last)."""
     return (f"SELECT {_HOST_SQL} AS host, p.full_path, min(s.source) AS source, "
@@ -253,7 +253,7 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
     ``dedupe_by="path"`` gives one row per file path (nested sources hold the same file; the
     newest version's values are shown), ``"content"`` one row per identical content.
 
-    Sorting by ``stored``/``frees`` uses the nightly ranked list (): ranked rows come first
+    Sorting by ``stored``/``frees`` uses the nightly ranked list: ranked rows come first
     (each carrying its exact value in ``stored_all_versions``/``frees_all_versions``), unranked
     rows after them. With no exact list yet the sort falls back to physical and ``ranked`` says so.
     """
@@ -428,7 +428,7 @@ def search_paths(repo: str, query: str = "", deleted_only: bool = False, min_siz
             )
         if not dedupe or by_path:
             # copies = how many distinct paths share each row's exact content (1 = unique); sources =
-            # across how many SOURCES (KL10 - within-source copies keep nothing alive elsewhere). One
+            # across how many SOURCES (within-source copies keep nothing alive elsewhere). One
             # grouped query over just this page's content ids, then mapped back.
             page_cids = list({r["content_id"] for r in rows if r.get("content_id")})
             cp: dict[str, int] = {}
@@ -644,7 +644,7 @@ def versions(repo: str, source: str, full_path: str) -> list[dict]:
 def versions_many(repo: str, pairs: list[tuple[str, str]]) -> dict[tuple[str, str], list[dict]]:
     """Batched ``versions``: one path resolution per source group, one filev scan per 900 paths.
 
- ``selection_facts`` priced a 500-file selection at one full 5.3M-row pathx scan PER FILE
+    ``selection_facts`` priced a 500-file selection at one full 5.3M-row pathx scan PER FILE
     PER HOLDER - a thousand scans, minutes before the delete panel could open. Rows come
     back in the same order ``versions`` returns: snapshot start DESC, snapshot id DESC."""
     want = list(dict.fromkeys((s, p) for s, p in pairs if s and p))
@@ -839,9 +839,9 @@ def group_by_folder(repo: str, depth: int = 3, query: str = "", source: str | No
     - ``own``: every folder from ``min_depth`` to ``depth``, each with only the files directly in it.
 
     Levels count a network share like a drive letter (both level 1). Counts are per file: a path
-    held by nested sources is one file (). ``phys`` adds up the files' own Physical - a
+    held by nested sources is one file. ``phys`` adds up the files' own Physical - a
     ranking estimate, since identical pieces count again; the exact newest-versions Physical comes
-    from ``physical.folder_detail`` ()."""
+    from ``physical.folder_detail``."""
     cur = read_cursor(repo)
     try:
         conds, params = folder_file_filter(cur, query, source, ext, ext_exclude, deleted_only)
@@ -1024,7 +1024,7 @@ def holders_for_paths(repo: str, full_paths: list[str]) -> dict[str, list[str]]:
 def _file_rows(where_sql: str) -> str:
     """SQL: one ``pathx``-shaped row per FILE under ``where_sql`` (columns dir_id, src_id, source,
     full_path, name, ext, size, physical, versions, first_seen, last_seen, in_latest), for folder
-    breakdowns: a path held by nested sources counts once ()."""
+    breakdowns: a path held by nested sources counts once."""
     return (f"SELECT p.full_path, any_value(p.dir_id) AS dir_id, min(p.src_id) AS src_id, "
             f"min(s.source) AS source, any_value(p.name) AS name, any_value(p.ext) AS ext, "
             f"max(p.size) AS size, max(p.physical) AS physical, max(p.versions) AS versions, "
@@ -1184,7 +1184,7 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
             min_versions=min_versions, shared_min=shared_min, ext_exclude=ext_exclude,
             first_from=first_from, prefix=prefix)
         # Unbounded totals for the SAME filter, so the UI can say "the 100 biggest files are 8.2 GiB
-        # = 70% of this folder". Counted per file: nested sources hold one file once ().
+        # = 70% of this folder". Counted per file: nested sources hold one file once.
         base = _per_file(where_sql, ", any_value(p.name) AS name, any_value(p.ext) AS ext, "
                                     "list(DISTINCT c.content_id) AS content_ids",
                          joins="LEFT JOIN cid c ON c.cid_id = p.cid_id")
@@ -1205,7 +1205,7 @@ def remove_targets(repo: str, *, query: str = "", deleted_only: bool = False, mi
         seen: set[str] = set()
         if all_versions:
             # Map (source, full_path) -> all version object-ids: one batched path resolution per
-            # source group (never a per-path loop - the KL47 regression shape), then one filev scan
+            # source group (never a per-path loop, which rescans pathx once per path), then one filev scan
             # per 900 path ids. Emitted in the files' physical-desc order so the biggest files'
             # objects come first.
             sid_of = resolve.src_map(cur)
@@ -1271,7 +1271,7 @@ def remove_targets_summary(repo: str, *, query: str = "", deleted_only: bool = F
                            min_versions: int = 0, shared_min: int = 0, first_from: str | None = None,
                            prefix: str | None = None, cap: int = 200000,
                            detail_limit: int = 5000) -> dict:
-    """ The cheap pre-read /actions/remove-detail needs: uncapped totals, the distinct
+    """The cheap pre-read /actions/remove-detail needs: uncapped totals, the distinct
     sources of the WHOLE match (the folder-vs-selection decision) and only the top
     ``detail_limit`` (source, full_path) pairs the detail walk actually uses. Never builds the
     full top-``cap`` row set, never expands versions or names - the 200k-row materialization that

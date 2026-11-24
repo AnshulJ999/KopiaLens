@@ -8,7 +8,6 @@ Two save points, both in ``_staging/``:
 
 Either belongs to one published index (``base_of``): a save made on top of another generation is
 dropped. kopia objects never change, so folders read earlier stay correct after new snapshots.
-
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Price a policy's exclusion rules against the index ("keeping out" numbers,/).
+"""Price a policy's exclusion rules against the index ("keeping out" numbers).
 
 For a source and a set of ignore patterns, counts the files + bytes the source CURRENTLY backs up
 (``pathx`` rows with ``in_latest``) that the patterns keep out - directly, or through a matched
@@ -145,7 +145,7 @@ def _cond_for_inner(rel: str, rx: str, fragments: list[str], root_len: int, sep:
     return " AND ".join(f"({c})" for c in conds), params
 
 
-_MAT_PX = "px_priced"        # prefix of the per-call temp tables the batch scans read
+_MAT_PX = "px_priced"        # Prefix of the per-call temp tables the batch scans read
 _MAT_DIR = "dir_priced"
 
 
@@ -163,7 +163,7 @@ def _anchor_conds(cur, anchor: str | None, px_table: str, dir_table: str) -> tup
 
 
 def _materialize_source(cur, src: int, ns: str) -> tuple[str, str]:
-    """ One source's ``in_latest`` paths and its dir rows, as TEMP TABLES.
+    """One source's ``in_latest`` paths and its dir rows, as TEMP TABLES.
 
     DuckDB plans a 40-rule FILTER list over the multi-file Parquet view badly - 0.78 s for 567
     rows against 0.035 s for the same rows in a temp table, and superlinear in rule count, which
@@ -516,7 +516,7 @@ def _compute(repo: str, source_key: str, patterns: list[str],
                 results[i] = {"pattern": pat, "files": 0, "bytes": 0, "dirs": 0, "examples": [],
                               "error": None, "negated": compiled.negated}
             return {"results": results, "slow_path": False}
-        # one batch is a single scan either way; more than one is where the temp tables pay.
+        # One batch is a single scan either way; more than one is where the temp tables pay.
         if len(entries) > _BATCH:
             mat = _materialize_source(cur, src, uuid.uuid4().hex[:8])
             px, dr = mat
@@ -548,21 +548,21 @@ def _compute(repo: str, source_key: str, patterns: list[str],
         cur.close()
 
 
-# ---- nightly-stored pricing ( half 2) -------------------------------------------
+# ---- nightly-stored pricing -------------------------------------------
 # Whole-policy pricing runs in the worker as a stored stage; the tab reads the numbers
 # instantly (the serve-stale-recompute-in-background rule). A stored number ages gracefully:
 # after a policy save the file keeps serving with its old ts until the next nightly recomputes.
 # LIVE pricing remains for the one case no cache can cover - a rule the user is about to add
 # (and small rule sets generally, capped at _LIVE_PRICE_CAP per request).
 
-# v2: the fingerprint skip landed as KL70/KL71 changed pricing semantics - a v1 file (or any
+# v2: the fingerprint skip changed pricing semantics - a v1 file (or any
 # file written by older pricing code) must read as absent so the first post-merge nightly
 # reprices everything once instead of fingerprint-reusing old-code prices.
 # v3: a target's price now covers every backup its rules reach, including the ones whose walk
-# passes through its folder () - old numbers were priced against the owning source only.
+# passes through its folder - old numbers were priced against the owning source only.
 _STORE_VERSION = 3
 
-# Ignore files (): rules read from dot-ignore files, priced over every walk that reaches
+# Ignore files: rules read from dot-ignore files, priced over every walk that reaches
 # their folder. The budget stops PRICING (never discovery/reading) on an outlier repo.
 _IGNORE_NAME = "policy_ignore_files_repo%s"
 _IGNORE_VERSION = 1
@@ -604,12 +604,12 @@ def _snapset_hashes(repo: str) -> dict[str, str]:
 
 
 def precompute(repo: str) -> dict:
-    """ worker stage: price EVERY policy's own rules over every backup its rules reach
-    (its own source and sources inheriting its list at their roots, plus - - every source
-    whose walk passes through the policy's folder, anchored there; folds the ignore
-    files' rules in afterwards). The tab reads the result instantly.
+    """A worker stage: price EVERY policy's own rules over every backup its rules reach
+    (its own source and sources inheriting its list at their roots, plus every source
+    whose walk passes through the policy's folder, anchored there; the ignore
+    files' rules fold in afterwards). The tab reads the result instantly.
 
-    Skip-when-unchanged (): a (target, source, anchor) price is reused from the previous
+    Skip-when-unchanged: a (target, source, anchor) price is reused from the previous
     night when the rule list's hash and that source's indexed snapshot-set hash are unchanged -
     on a quiet night this skips most of the stage. Returns the stored payload."""
     from ..core.policy import (
@@ -758,7 +758,7 @@ def stored_for_target(repo: str, target: str) -> dict | None:
             "scope": scope, "breakdown": breakdown}
 
 
-# ---- ignore files () -------------------------------------------------------------
+# ---- ignore files -------------------------------------------------------------
 
 def stored_ignore_files(repo: str) -> dict | None:
     """The nightly's dot-ignore-file payload (rules + what they keep out), or None."""
@@ -775,7 +775,7 @@ def _name_in_effect(repo: str, source: str, folder: str, name: str, defined: dic
 
 
 def precompute_ignore_files(repo: str) -> dict:
-    """Worker stage (): discover the dot-ignore files (index, plus disk for local sources),
+    """Worker stage: discover the dot-ignore files (index, plus disk for local sources),
     read the ones whose content changed, and price each file's rules over every backup whose walk
     reaches its folder. Files whose name is not in the folder's effective dot-ignore list are
     listed but priced at zero - kopia never reads them.

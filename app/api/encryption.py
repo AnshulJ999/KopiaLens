@@ -1,6 +1,6 @@
-"""Encryption routes (): status, setup, unlock, lock, password/recovery, the switch.
+"""Encryption routes: status, setup, unlock, lock, password/recovery, the switch.
 
-This is the backend the onboarding screens and the Settings section () call. Onboarding
+This is the backend the onboarding screens and the Settings section call. Onboarding
 POLICY - the default-ticked box and its level, the pros and cons copy, the Docker choice -
 is the UI's job; these routes only do what they say, and every one of them answers with the
 current status so the caller never has to guess what state it left the install in.
@@ -74,7 +74,7 @@ def _set_level(level: str) -> None:
     def _apply(settings: dict) -> None:
         kl = settings.setdefault("kopialens", {})
         kl["encryption_level"] = level
-        kl.pop("encryption", None)        # the old boolean is folded in by the REL30 step
+        kl.pop("encryption", None)        # the data-folder upgrade folds the old boolean in
     mutate_settings(_apply)
 
 

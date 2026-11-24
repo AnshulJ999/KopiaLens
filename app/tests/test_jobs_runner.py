@@ -402,7 +402,7 @@ def test_shutdown_terminates_running_job_children(monkeypatch, isolated):
 
 def test_a_plan_form_start_resolves_like_remove_execute(monkeypatch, isolated):
     """A plan-form start resolves through the same legacy helpers - as a DRY run: a mutating plan
-    delete requires the preview's ticket ( option (a)), so a ticket-less one refuses."""
+    delete requires the preview's ticket, so a ticket-less one refuses."""
     from app.api import actions, jobs as api_jobs
     monkeypatch.setattr(actions, "_remove_targets",
                         lambda p: {"object_ids": ["o1"], "names": ["n1"], "sources": ["s1"],

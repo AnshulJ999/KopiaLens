@@ -453,7 +453,7 @@ def coverage_children(folder: str) -> dict[str, dict]:
     fold = sep == "\\"
     col = "path_lc" if fold else "full_path"
     lo = (folder.lower() if fold else folder).rstrip(sep) + sep
-    _, hi = prefix_bounds(lo)                 # not lo + U+FFFF: emoji sort above it
+    _, hi = prefix_bounds(lo)                 # Not lo + U+FFFF: emoji sort above it
     plen = len(lo)
     agg: dict[str, dict] = {}
     with _files_cursor() as fc:
@@ -501,7 +501,7 @@ def folder_children(prefix: str) -> list[dict]:
         "FROM folder_rollup WHERE parent_lc=?", [lo]).fetchall()
     if rr:
         return _rollup_to_children(rr)
-    _, hi = prefix_bounds(lo)                 #
+    _, hi = prefix_bounds(lo)
     plen = len(lo)
     with _files_cursor() as fc:
         cur = fc.execute(
@@ -653,7 +653,7 @@ def _churn_build(top: int, depth: int, cl) -> dict:
     sep = _sep()
     for folder, _cnt in top_folders:
         lo = folder.lower().rstrip(sep) + sep
-        _, hi = prefix_bounds(lo)             #
+        _, hi = prefix_bounds(lo)
         folders.append((folder, lo, hi))
     stats = _churn_folder_stats(folders)
     vols = paths.volumes()

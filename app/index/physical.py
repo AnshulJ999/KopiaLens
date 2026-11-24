@@ -1,6 +1,6 @@
 """Per-file footprint analysis: physical, freeable, dedup, and what a delete would reclaim.
 
-Everything comes from the generation the app is already reading ( step 4): the content
+Everything comes from the generation the app is already reading: the content
 sizes and reference counts are the published ``csize`` / ``crefs`` maps, and a split file's chunks
 come from the tree's ``tpart`` piece lists. Nothing here walks kopia or touches the walk cache.
 
@@ -121,7 +121,7 @@ def _chunks_memo(repo: str, obj: str, memo: dict, *, fetch: bool = False) -> set
 
 
 def fill_paths_physical(con, repo: str) -> None:
-    """Fill ``paths.physical`` from the generation's own maps ( layer 2).
+    """Fill ``paths.physical`` from the generation's own maps (layer 2).
 
     ``csize``/``iphys`` are keyed on ``cid_id``; ``paths`` still carries the string content id,
     so the join goes through ``cid_rev``. Same target as ``materialize_physical``: only rows at
@@ -146,10 +146,9 @@ def fill_paths_physical(con, repo: str) -> None:
 
 def materialize_exclusive(con, repo: str) -> None:
     """Fill ``paths.exclusive``: how many packed bytes of each path's content are held ONLY by this
-    source. NOT WIRED - the blanket UPDATE rewrote the whole paths table every dashboard build, and
-    counting sources per content_id is WRONG for shared indirect/split content (two split objects
-    sharing chunks each read as fully exclusive). Callers were removed 2026-09-06; the correct
-    reference-count + chunk-expansion implementation is still to do. Kept as the baseline."""
+    source. NOT WIRED. The blanket UPDATE rewrote the whole paths table every dashboard build, and
+    counting sources per content_id is wrong for shared indirect/split content (two split objects
+    sharing chunks each read as fully exclusive). Kept as the baseline."""
     con.execute(
         """
         UPDATE paths SET exclusive = CASE WHEN srcs.n <= 1 THEN COALESCE(paths.physical, 0) ELSE 0 END
@@ -162,7 +161,7 @@ def materialize_exclusive(con, repo: str) -> None:
 
 
 def _values_by_content_id(cur, cids: list[str], table: str, col: str) -> dict[str, int]:
-    """``{content_id: value}`` from a per-chunk map, as ONE join ().
+    """``{content_id: value}`` from a per-chunk map, as ONE join.
 
     What this replaces resolved the ids through `cid` in batches of 900 and then queried the map
     the same way - two scans of a multi-million row view per batch. Fine for a file panel holding
@@ -239,7 +238,7 @@ def _sizes_for(repo: str, cids) -> dict[str, int]:
     """Targeted packed sizes for just these chunks, from the generation's `csize` map.
 
     One join, exactly like `_refcount_for`, instead of building the whole multi-million row map:
-    a page of file panels would otherwise pay seconds and hundreds of MB per open (the KL47
+    a page of file panels would otherwise pay seconds and hundreds of MB per open (the
     lesson - never full-map on a per-item path). Missing chunks are simply absent, and every
     caller reads them with `.get(c, 0)` - the same default the sizemap had.
     """
@@ -555,7 +554,7 @@ def _host_table() -> str:
 
 
 def frees_sql(targets: str) -> str:
-    """SQL yielding ``(t, value)``: what removing each target FILE frees (). ``targets`` yields
+    """SQL yielding ``(t, value)``: what removing each target FILE frees. ``targets`` yields
     ``(t, src_id, path_id)`` - every holder path of each file (nested sources on one computer hold
     one file). Every version goes, from every holder; an object another path still holds keeps its
     pieces; a piece is freed when every source and (source, object) pair using it is the file's.
@@ -616,13 +615,13 @@ def folder_detail(repo: str, source: str | None, prefix: str, all_versions: bool
                   filters: dict | None = None, loose: bool = False) -> dict:
     """What deleting a folder frees, over every version (or each path's newest, matching a
     latest-only delete plan), plus the folder's Physical for its newest versions
-    (``physical_newest``: each stored piece once -).
+    (``physical_newest``: each stored piece once).
 
     ``source=None`` spans EVERY source covering the folder: a piece held by two sources only counts
     as freeable when both are inside the folder. ``filters`` (``queries.folder_file_filter``
     keywords) narrow it to the files matching a Search filter; ``loose`` to the files lying
     directly in it. Files and Logical count each file once - a path held by nested sources is one
-    file ()."""
+    file."""
     from .queries import _folder_dirs, folder_file_filter
     cur = read_cursor(repo)
     try:
@@ -854,7 +853,7 @@ def _price_file_now(repo: str, source: str, full_path: str):
             "WHERE f.path_id = ? ORDER BY sn.start_time DESC, sn.snapshot_id DESC",
             [pid],
         ).fetchall()
-        # the SOURCES holding this exact PATH (raw-exact identity) on this computer; another
+        # The SOURCES holding this exact PATH (raw-exact identity) on this computer; another
         # computer's identical path is a different file.
         host = pathrules.host(source)
         holders = [source] + [r[0] for r in cur.execute(
@@ -1005,7 +1004,7 @@ def file_detail(repo: str, source: str, full_path: str, others_cap: int = 500) -
         "chunks": chunk_rows,
         "chunk_count": len(latest_chunks),
         "other_paths": [{"source": s, "full_path": p} for s, p in others],
-        "holders": holders,                       # every source backing up this exact path
+        "holders": holders,                       # Every source backing up this exact path
         # content-centric / purge-everywhere
         "locations": n_dup,                       # distinct sources holding this exact content
         # distinct files holding it: one per (computer, path), this one included

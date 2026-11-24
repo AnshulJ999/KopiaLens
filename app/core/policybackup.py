@@ -1,4 +1,4 @@
-"""Policy backups (/ design section 4): KopiaLens-owned exports of every defined
+"""Policy backups: KopiaLens-owned exports of every defined
 policy, under ``data/policy-backups/repo<N>/`` - travels with the install, Docker users already
 mount ``data/`` persistently.
 

@@ -1,4 +1,4 @@
-""" A mutating delete runs exactly the previewed list: the token, the moved-index note, the
+"""A mutating delete runs exactly the previewed list: the token, the moved-index note, the
 refusal when the preview is gone, and the dry-run fallback that may still re-plan."""
 
 from __future__ import annotations

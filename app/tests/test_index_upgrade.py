@@ -1,4 +1,4 @@
-"""In-place index migration (, index level).
+"""In-place index migration (index level).
 
 A schema-version change used to mean an automatic rebuild: 10-40 minutes per repo, and the sticky
 first-seen dates (which come from snapshots that have since expired) were lost. The registry lets a

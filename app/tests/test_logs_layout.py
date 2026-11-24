@@ -1,5 +1,5 @@
 """The log layout: app/ + indexing/ + jobs/, the one-time move, the cleanup setting, and the
-readable index-pass line ( covers the test-side isolation in conftest).
+readable index-pass line. The test-side isolation lives in conftest.
 """
 
 from __future__ import annotations

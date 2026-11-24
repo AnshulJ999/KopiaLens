@@ -1,4 +1,4 @@
-"""Accounts and sign-in (,): sessions, the on/off switch, the legacy move, the
+"""Accounts and sign-in: sessions, the on/off switch, the legacy move, the
 first-run window, and the shared sign-in/encryption password."""
 
 from __future__ import annotations

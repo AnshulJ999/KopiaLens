@@ -47,7 +47,7 @@ def isolate_disk_side_channels(tmp_path, monkeypatch):
     monkeypatch.setattr(tokens, "_CACHE", {"mtime": None, "data": None})
     monkeypatch.setattr(runhistory, "_runs_dir", lambda: str(tmp_path / "runs"))
     monkeypatch.setattr(jobs, "_history_path", lambda: str(tmp_path / "jobs_history.jsonl"))
-    #: every log writer too. The dry-run tests used to drop `dry_run_*.log` files into
+    # Every log writer too. The dry-run tests used to drop `dry_run_*.log` files into
     # the developer's real data folder on every suite run (the paths are read from applog at call
     # time by kopia/jobs/nightly, so patching here covers all of them).
     log_dir = tmp_path / "logs"

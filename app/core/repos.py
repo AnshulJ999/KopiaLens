@@ -261,7 +261,7 @@ def storage_kind(storage_type: str) -> str:
 
 def storage_info(repo: str) -> dict:
     """The CACHED storage facts for a repo (type, kind, capacity, when captured). Never spawns -
-    the polled `/api/repos` must not launch kopia ().
+    the polled `/api/repos` must not launch kopia.
 
     The config is scrubbed AGAIN on the way out: a record written before the scrub existed (or by
     an older version) must not leak a credential into a response even once."""

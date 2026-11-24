@@ -1,4 +1,4 @@
-"""The kopia binary: one resolver, and no builder may hardcode a name ().
+"""The kopia binary: one resolver, and no builder may hardcode a name.
 
 The failure this pins: nothing ever checked which kopia ran. A KopiaUI user HAS kopia but not on
 PATH, and every command started with the bare string ``kopia`` - so the app either failed with a

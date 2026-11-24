@@ -377,7 +377,7 @@
 {{ history_rows('fileHistoryRows()') }}
 <div class="kl-sec">
   <div class="h">Backed up by <span class="count" x-text="countOf(detail.holders && detail.holders.length ? detail.holders.length : 1, 'source')"></span></div>
-  <!-- every source holding THIS exact path (was hardcoded to "1 source"). Click a row
+  <!-- Every source holding THIS exact path (was hardcoded to "1 source"). Click a row
        to open the same file from that source's point of view. -->
   <div class="flex items-center gap-2" x-show="(detail.holders || []).length > 1">
     <span class="kl-note grow" x-text="'Stored in every one of these until removed from all ' + (detail.holders || []).length + '.'"></span>

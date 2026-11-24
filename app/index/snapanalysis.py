@@ -6,8 +6,8 @@ Reclaimable = chunks that exist ONLY in this snapshot (their oldest and newest s
 same one) and in no OTHER source (global source refcount == 1). Deleting it frees exactly those.
 Physical = the snapshot's own footprint: the packed bytes of every file it reaches.
 
-All three come from ONE recursive pass per source recording which snapshots reach which folders
-(). They were three separate whole-tree passes PER snapshot, which is why a 514-snapshot
+All three come from ONE recursive pass per source, recording which snapshots reach which folders.
+They were three separate whole-tree passes PER snapshot, which is why a 514-snapshot
 source took 662 s.
 """
 

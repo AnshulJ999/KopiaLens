@@ -69,7 +69,7 @@ def test_holders_stay_on_the_selected_files_machine(monkeypatch):
         seen.extend(src for src, _fp in pairs)
         return {(src, _fp): [{"content_id": "c-" + src}] for src, _fp in pairs}
 
-    monkeypatch.setattr(deleteplan, "versions_many", fake_versions)   # batched lookup
+    monkeypatch.setattr(deleteplan, "versions_many", fake_versions)   # Batched lookup
     facts = deleteplan.selection_facts("3", [(mine, fp)])
     assert facts["holders"] == [[mine, nested]]
     assert facts["holder_union"] == [mine, nested]

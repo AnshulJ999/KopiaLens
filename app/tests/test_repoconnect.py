@@ -1,5 +1,5 @@
 """Connecting to a repository of any type kopia supports, and attaching existing connections
-( backend).
+(backend routes).
 
 Facts pinned here come from kopia's own source (cli/storage_*.go) and from a live check against
 kopia 0.23.1: `connect from-config --file <same file>` re-persists a password; a prompt with no tty

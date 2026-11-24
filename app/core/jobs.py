@@ -63,7 +63,7 @@ log = get_logger("jobs")
 
 BUFFER_LINES = 2000        # in-memory ring; the full raw output always lands in the log file
 HISTORY_JOBS = 50          # finished jobs kept in memory (their log files persist regardless)
-HISTORY_FILE_LINES = 1000  # on-disk history cap: a restart must not blank the Activity view
+HISTORY_FILE_LINES = 1000  # On-disk history cap: a restart must not blank the Activity view
 EVENT_FORCE_AFTER = 300.0  # seconds a graceful stop (Ctrl+Break / SIGTERM) gets before Stop kills
 
 KINDS = {
@@ -80,7 +80,7 @@ KINDS = {
     "move_history": {"label": "Merging snapshot histories", "mutating": True},
     # Read-only: reads every directory and, optionally, a share of the files.
     "snapshot_verify": {"label": "Verifying backups", "mutating": False},
-    # Local-only (): rewrites KopiaLens's own files, never the kopia repository.
+    # Local-only: rewrites KopiaLens's own files, never the kopia repository.
     # Install-wide level change: every repo's generation, the file layer, Backblaze. Mutating,
     # but tolerant - a busy repo is deferred and reported rather than failing the job.
     "encryption_level": {"label": "Changing encryption level", "mutating": True},
@@ -138,7 +138,7 @@ def _history_path() -> str:
 
 
 def _record_history(job: dict) -> None:
-    """ Append the finished job to the on-disk history so Activity survives a restart
+    """Append the finished job to the on-disk history so Activity survives a restart
     (the in-memory registry is lost every exit; the log files alone are not a list). Capped by a
     rewrite at HISTORY_FILE_LINES - old records fall off the end. Best-effort."""
     rec = {
@@ -198,7 +198,7 @@ def _build_commands(kind: str, repo: str, params: dict) -> tuple[list[list[str]]
             max_chars=32000, flag=params.get("flag", "--object-id"))
         meta = {"items": len(items), "dry": dry}
         if params.get("resolved"):
-            meta["resolved"] = params["resolved"]      # preview vs filter
+            meta["resolved"] = params["resolved"]      # Preview vs filter
         if params.get("index_changed"):
             meta["index_changed"] = True
         if params.get("note"):

@@ -1,8 +1,8 @@
 """Index status/summary, and the two scratch-schema helpers the build still reuses.
 
 The walker that used to live here - kopia's directory objects descended one folder at a time, with
-an accumulating ``seen_dirs`` delta and an oldest-first first-seen backfill - is gone ( step
-7). Layer 3 rebuilds a source's history from the tree in one level pass, so the delta walk, the
+an accumulating ``seen_dirs`` delta and an oldest-first first-seen backfill - is gone. Layer 3
+rebuilds a source's history from the tree in one level pass, so the delta walk, the
 append path and the backfill have no caller.
 
 What remains:
@@ -125,7 +125,7 @@ def index_status(repo: str) -> dict:
             "stage": prog.get("stage"),
             "current_source": prog.get("current_source"), "targets": prog.get("targets"),
             "error": prog.get("error"),
-            # the rest of the worker's progress, which nothing read until now: the phase
+            # The rest of the worker's progress, which nothing read until now: the phase
             # name, the sync/seed counters, the honest per-stage pct, the whole-run estimate and
             # the live log tail the panel renders. ``progress`` is the flat block the panel reads
             # (``indexStatus.progress``); the same numbers also ride the top level.

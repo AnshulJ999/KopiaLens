@@ -1,4 +1,4 @@
-"""Step 3 of: layer 3 rebuilt from the tree.
+"""Layer 3 rebuilt from the tree.
 
 The full proof is the P1 parity run against a real frozen index (19M rows). These pin the rules
 that make that run correct, on trees small enough to reason about by hand - delta attribution,
@@ -81,7 +81,7 @@ def test_first_seen_is_the_oldest_snapshot_reaching_the_file(con, monkeypatch):
 
 
 def test_first_seen_is_right_when_two_snapshots_land_in_one_pass(con, monkeypatch):
-    # The live bug removes: a file new to the source appearing in two snapshots added
+    # The live bug this removes: a file new to the source appearing in two snapshots added
     # together, inside an otherwise unchanged folder, used to be dated to the LATER one.
     build_tree(con, monkeypatch,
                {"r1": [_d("sub", "ksub")], "ksub": [_f("new.txt", "c9")]}, ["r1"])

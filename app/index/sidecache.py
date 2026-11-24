@@ -1,4 +1,4 @@
-"""Side caches as one-row Parquet ( step 6).
+"""Side caches as one-row Parquet.
 
 The small derived caches - churn rollups, folder prewarm, policy prices, the dashboard table,
 simulate results, next-snapshot times - are kopia-derived metadata (paths, sizes, dates). As plain

@@ -1,4 +1,4 @@
-""": per-snapshot churn, physical and reclaimable as set operations over the tree.
+"""Per-snapshot churn, physical and reclaimable as set operations over the tree.
 
 The shape this replaced ran two whole-tree reaches plus a Python folder walk PER snapshot. These
 pin the answers, not the speed - a rewrite from three passes to three group-bys can be fast and
@@ -99,7 +99,7 @@ def test_a_chunk_missing_from_the_refcount_map_counts_as_unreferenced(con, monke
 def test_physical_counts_a_folder_at_two_paths_only_once(con, monkeypatch):
     # Kopia stores identical directories once, so one object legitimately sits at several paths.
     # The Python walk this replaced added its bytes per path; SQL counts the folder once per
-    # snapshot, which is the correct footprint ( rule 4, a deliberate change).
+    # snapshot, which is the correct footprint (a deliberate change).
     churn, phys, _recl = analyse(
         con, monkeypatch,
         {"r1": [_d("x", "kd"), _d("y", "kd")], "kd": [_f("big.bin", "c9")]},
@@ -121,7 +121,7 @@ def test_a_split_object_contributes_its_index_content_and_every_piece(con, monke
 def test_snapshots_sharing_a_start_time_are_ordered_by_snapshot_id(con, monkeypatch):
     # Kopia checkpoints share a start time exactly, so the tiebreak decides which snapshot gets
     # credited with the content. Layer 3 ranks newest-first by (start time DESC, id ASC), so the
-    # HIGHER id is the older snapshot and the content is attributed there ( rule 3).
+    # HIGHER id is the older snapshot and the content is attributed there.
     tie = "2026-01-01T00:00:00Z"
     churn, _phys, _recl = analyse(
         con, monkeypatch, {"ra": [_f("a.txt", "c1")], "rb": [_f("a.txt", "c1")]},

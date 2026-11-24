@@ -1,4 +1,4 @@
-"""Data-folder version + the upgrade routine ().
+"""Data-folder version + the upgrade routine.
 
 One version stamp for the whole data folder, a registry of steps that move a folder from N to N+1,
 and a refusal to touch a folder written by a NEWER KopiaLens.
@@ -273,7 +273,7 @@ def start_background() -> None:
     if info["version"] > DATA_VERSION:
         # "Refuse" is scoped to the MIGRATION: nothing is migrated and the version stamp is left
         # alone. The rest of the app still writes its own files (settings, logs, side caches) - the
-        # user-facing banner is's, and `status()['newer']` is what it reads.
+        # user-facing banner comes from the format upgrade, and `status()['newer']` is what it reads.
         log.error("REFUSING to migrate: the data folder is from a newer KopiaLens (v%s vs v%s) - "
                   "no step runs and the version stamp is untouched. Use the newer app.", info["version"],
                   DATA_VERSION)

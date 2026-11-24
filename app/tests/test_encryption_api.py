@@ -1,6 +1,6 @@
-"""The encryption API surface (): routes called directly, fakes at the edges.
+"""The encryption API surface: routes called directly, fakes at the edges.
 
-Pins the contract's screens build against - the status shape, the distinct unlock
+Pins the contract the onboarding screens build against - the status shape, the distinct unlock
 reasons, the refusal to set up twice, the remember/lock rules, and the switch route (intent
 flipped, one job started, nothing rewritten inline). Route-level tests are the only place some
 of this is caught: a unit test can pass the wrong reason code straight through.

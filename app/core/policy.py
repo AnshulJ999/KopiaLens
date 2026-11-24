@@ -137,7 +137,7 @@ def _user_host(source_key: str) -> str:
 def effective_for_path(repo: str, source_key: str, path: str) -> dict:
     """Effective policy for an arbitrary folder under a source (kopia resolves inheritance).
 
- Resolved in-process from the defined-policies export - the same verified merge the nightly
+    Resolved in-process from the defined-policies export - the same verified merge the nightly
     checks against ``policy show`` - so opening a folder panel no longer launches kopia. Falls back
     to the one-subprocess lookup only when the export cannot be read. Cached ~15 min either way."""
     target = f"{_user_host(source_key)}:{path}"
@@ -371,7 +371,7 @@ def invalidate_after_write(repo: str, targets: list[str] | None = None,
     the write may have changed who owns whom (a Global write turns a no-rules source into a
     global-inheriting one). With no targets (a mirror restore) everything is refreshed.
 
-    ``ignore_only`` (, add/remove-ignore writes only): the effective policies of reached
+    ``ignore_only`` (add/remove-ignore writes only): the effective policies of reached
     sources change in exactly one field - ``files.ignore`` - and the NEW export already carries
     every defined rule, so the cache is patched from the export with ZERO extra subprocesses.
     A Global write that used to fire dozens of ``policy show`` calls inside one save request now
@@ -398,7 +398,7 @@ def invalidate_after_write(repo: str, targets: list[str] | None = None,
 
 
 def _patch_ignore_only(repo: str, targets: list[str], defined: dict) -> bool:
-    """ Fast path: rewrite ``files.ignore`` on the cached EFFECTIVE policies of every
+    """Fast path: rewrite ``files.ignore`` on the cached EFFECTIVE policies of every
     source the write reached, computed from the fresh export with the same ownership walk the
     per-source fallback uses. Returns False (caller falls back) when the cache is missing an
     entry or the patch fails - a silently half-updated cache would feed pricing and targeting

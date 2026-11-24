@@ -1,4 +1,4 @@
-"""Configuration backups, damaged-file recovery and the cross-process settings lock (,).
+"""Configuration backups, damaged-file recovery and the cross-process settings lock.
 
 The failure behind them (2026-09-09): a second process wrote settings.json concurrently, the file
 went bad, and the app silently reset to defaults - losing the bind address and table layouts.

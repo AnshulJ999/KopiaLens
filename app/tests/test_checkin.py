@@ -120,7 +120,7 @@ def test_usage_stats_name_the_plan(monkeypatch, status, tier):
 
 
 def test_switching_usage_stats_off_is_counted_once_without_an_id(monkeypatch, sent):
-    """opt-outs must be visible, with nothing that identifies the install."""
+    """Opt-outs must be visible, with nothing that identifies the install."""
     _switches(monkeypatch, True, True)
     checkin.check_now()
     _switches(monkeypatch, True, False)

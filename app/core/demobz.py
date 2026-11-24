@@ -44,7 +44,7 @@ _CATEGORY = {  # filestats.xml buckets
     "browserfavorites": {"url"},
 }
 
-# A real setup's shape (queries.overview on the live bzdata): per drive, backed files,
+# A real setup's shape (queries.overview on a live bzdata): per drive, backed files,
 # excluded files, backed bytes, excluded bytes. The generator moves each of these by +-15%.
 _WINDOWS_REAL = {
     "C": {"backed": 62402, "excluded": 1820687, "backed_bytes": 112_717_561_051,

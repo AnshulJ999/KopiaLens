@@ -1,4 +1,4 @@
-"""One-off conversion of the SQLite walk cache into the tree ( section 10).
+"""One-off conversion of the SQLite walk cache into the tree.
 
 For an install that already has a warm walk cache, this produces layer 1 without asking kopia
 for anything: the cache already holds exactly the folder listings the tree wants. On repo 1 that

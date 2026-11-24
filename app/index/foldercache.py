@@ -251,7 +251,7 @@ def _compute_now(repo: str, prefix: str, source: str | None = None) -> dict:
 
 
 def _save_versions(repo: str, prefixes: list[str]) -> None:
-    """Store each folder's distinct-state count () beside its saved values - one tree walk
+    """Store each folder's distinct-state count beside its saved values - one tree walk
     per source for the whole list."""
     start = time.time()
     try:
@@ -348,9 +348,9 @@ def prewarm(repo: str, top: int = _PREWARM_TOP, depths=None) -> None:
                 skipped += 1
                 continue
             # Skip-when-unchanged: a folder whose covering sources' snapshot sets did not change
-            # re-verifies its numbers against the same index - pure waste (
-            # unchanged folders may serve slightly stale freeable/shared; opening the
-            # panel refreshes in the background, and _FULL_REFRESH_DAYS bounds the drift).
+            # re-verifies its numbers against the same index - pure waste. Unchanged
+            # folders may serve slightly stale freeable/shared; opening the panel refreshes
+            # in the background, and _FULL_REFRESH_DAYS bounds the drift.
             entry = _load(repo).get(_key(prefix, None))
             if entry:
                 try:

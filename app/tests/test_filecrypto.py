@@ -1,5 +1,5 @@
-"""The files layer ( part 2): whole-file and per-line encryption, the level model, the
-switch over the non-index files, the log handler, and the REL30 conversion step.
+"""The files layer (part 2): whole-file and per-line encryption, the level model, the
+switch over the non-index files, the log handler, and the conversion step.
 
 The load-bearing checks: a file and a line round-trip byte-for-byte; the state is knowable from
 the bytes (no key needed) so a half-switched folder stays readable; a torn line is skipped and
@@ -240,7 +240,7 @@ def test_the_logs_tab_reader_decrypts_a_bounded_tail(layer):
     assert "C:\\x\\39.bin" in tail
 
 
-# ---------------------------------------------------------------------------- REL30 conversion
+# ---------------------------------------------------------------------------- conversion
 
 def test_the_upgrade_step_folds_the_old_boolean_into_the_level(layer, monkeypatch):
     written = {}

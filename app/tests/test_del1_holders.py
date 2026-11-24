@@ -1,4 +1,4 @@
-""" the filename collateral on a plan, and [B4] the tree holders route."""
+"""The filename collateral on a plan, and the tree holders route."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ SEP = chr(92)
 FOLDER = f"G:{SEP}Apps"
 
 
-# ---- DEL1 --------------------------------------------------------------------------------------
 
 def _plan(**kw):
     return actions.RemovePlanRequest(repo="3", prefix=FOLDER, by="filename", **kw)
@@ -95,7 +94,7 @@ def test_an_object_id_plan_carries_empty_collateral_fields(monkeypatch):
     assert out["filename_match_total"] is None and out["filename_extra_count"] == 0
 
 
-# ---- B4 ----------------------------------------------------------------------------------------
+# ---- holders ------------------------------------------------------------------------------------
 
 def test_holders_resolve_per_path_without_detail(monkeypatch):
     monkeypatch.setattr(tree, "holders_for_paths",

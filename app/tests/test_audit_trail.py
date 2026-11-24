@@ -1,4 +1,4 @@
-"""KL12 audit trail: append-only, best-effort, one JSON object per line, optional actor field."""
+"""Audit trail: append-only, best-effort, one JSON object per line, optional actor field."""
 
 from __future__ import annotations
 

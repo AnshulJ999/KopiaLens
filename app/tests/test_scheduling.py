@@ -149,7 +149,7 @@ def test_first_background_pass_waits_only_the_startup_delay(monkeypatch, tmp_pat
     assert waits == [300.0]
 
 
-# ----: BZ's own detect-driven due check --------------------------------------------
+# ---- BZ's own detect-driven due check -------------------------------------------
 
 def _bz_due(monkeypatch, *, pending, anchor, gap=21600.0, last_attempt=0.0, now=1_000_000.0):
     kv = {"reindex_pending": 1.0 if pending else 0.0, "last_reindex_ts": anchor}
@@ -212,7 +212,7 @@ def test_tick_never_gives_bz_the_daily_slot(monkeypatch):
     monkeypatch.setattr(m, "_bz_reindex_due", lambda ts: False)
     monkeypatch.setattr(m, "_last_light", time.time())
     m._tick()
-    assert "bz" not in seen  # BZ left the daily slot () - detect drives it instead
+    assert "bz" not in seen  # BZ left the daily slot - detect drives it instead
 
 
 def test_tick_starts_the_bz_reindex_through_the_global_slot(monkeypatch):

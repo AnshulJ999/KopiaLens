@@ -1,4 +1,4 @@
-"""Nightly exact top lists for the Search all-versions columns ().
+"""Nightly exact top lists for the Search all-versions columns.
 
 The on-demand columns (Stored / Frees, every version) need piece-by-piece maths per file, which is
 fine for a page of rows and far too heavy for millions of paths every night. The nightly therefore
@@ -7,7 +7,7 @@ ranks the top ``rank_count`` entries exactly, using a sound upper bound to prune
 * **Stored** (per path): bound = the sum of the path's DISTINCT version objects' packed sizes
   (chunks shared between its own versions count once in the exact value, so the bound is never
   below it).
-* **Frees** (per FILE - every holder path of one computer's path,): bound = the sum of the
+* **Frees** (per FILE - every holder path of one computer's path): bound = the sum of the
   bound above over the file's holders; removing a file can never free more than its holders store.
 
 Descend the bounds, work out the exact value per candidate, stop when the next candidate's bound is
@@ -32,7 +32,7 @@ from .store import read_cursor
 log = get_logger("rankpaths")
 
 _NAME = "rank_paths_repo%s"
-_VERSION = 2                 # 2: frees keyed by path, per file (); 1 keyed it by content
+_VERSION = 2                 # 2: frees keyed by path, per file; 1 keyed it by content
 DEFAULT_COUNT = 10000
 _BOUND_BATCH = 2000          # paths per exact-math batch in the stored descent
 _FREES_BATCH = 2000          # files per exact-math batch in the frees descent

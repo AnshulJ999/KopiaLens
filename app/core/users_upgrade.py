@@ -1,4 +1,4 @@
-"""Data-folder step v2 -> v3 (): the shared password becomes the admin account."""
+"""Data-folder step v2 -> v3: the shared password becomes the admin account."""
 
 from . import dataupgrade, users
 

@@ -1,4 +1,4 @@
-"""Data-folder step v1 -> v2 ( +): the encryption boolean becomes a level."""
+"""Data-folder step v1 -> v2: the encryption boolean becomes a level."""
 
 from . import dataupgrade, filecrypto
 

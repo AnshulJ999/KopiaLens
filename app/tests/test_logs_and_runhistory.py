@@ -1,4 +1,4 @@
-""" run history + job history, and the never-indexed status shape ().
+"""Run history + job history, and the never-indexed status shape.
 
 The Logs tab reads these records; the invariants are: append-only, best-effort (a history
 failure never breaks the pass or job it describes), newest-first reads, and a run record that

@@ -128,7 +128,7 @@ class _Reporter:
         self.repo = repo
         self.full = full
         self.stage = "starting"
-        self.stage_started = time.time()      # the panel's live stage fraction needs it
+        self.stage_started = time.time()      # The panel's live stage fraction needs it
         self.started = time.time()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -318,7 +318,7 @@ def run(repo: str, full: bool = False, skip_index: bool = False) -> dict:
                 logging.error("retention check repo=%s failed: %s", repo, exc)
 
         def _policy_prices() -> None:
-            #: whole-policy "keeping out" pricing as a STORED stage - the tab reads the
+            # Whole-policy "keeping out" pricing as a STORED stage - the tab reads the
             # numbers instantly instead of fanning out per-source scans per request. Same
             # buffer-pool rationale as churn: everything before this filled the pool.
             from .store import close_all
@@ -328,7 +328,7 @@ def run(repo: str, full: bool = False, skip_index: bool = False) -> dict:
             policypricing.precompute(repo)
 
         def _rank_paths() -> None:
-            #: the exact top lists Search sorts the all-versions columns by.
+            # The exact top lists Search sorts the all-versions columns by.
             from .store import close_all
             close_all()
             gc.collect()
@@ -336,7 +336,7 @@ def run(repo: str, full: bool = False, skip_index: bool = False) -> dict:
             rankpaths.precompute(repo)
 
         def _ignore_files() -> None:
-            #: dot-ignore files - discover, read the changed ones, price their rules over
+            # Dot-ignore files - discover, read the changed ones, price their rules over
             # every walk that reaches their folder. Zero files on most installs.
             from .store import close_all
             close_all()

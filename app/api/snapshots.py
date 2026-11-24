@@ -79,7 +79,7 @@ def snapshots(repo: str, source: str | None = None, source_index: int | None = N
     available; computed by the background pre-warm or the analyze endpoint). source="*ALL*"
     returns every snapshot across all sources (for the repo-wide by-reclaimable view).
     ``analysis_fresh`` is false when the numbers on screen belong to the previous index run
-    () - rows exist but their snaphash predates the current snapshot set."""
+    (rows exist, but their snaphash predates the current snapshot set)."""
     ids = not freeids.free(repo)
     if source == "*ALL*":
         rows, analyzed_sources = [], 0

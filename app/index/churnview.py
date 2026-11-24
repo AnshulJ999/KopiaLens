@@ -476,7 +476,7 @@ def ui_depth() -> int:
 def prewarm(repo: str, depth: int | None = None, windows=WINDOWS) -> None:
     """Nightly: build EVERY standard window at the depth the UI reads, plus the folder panel's row.
 
- The tab rolls up at ``churn_depth`` while ``cached_folder_window`` reads depth 4, so one
+    The tab rolls up at ``churn_depth`` while ``cached_folder_window`` reads depth 4, so one
     hardcoded depth left the other recomputing from scratch on its first open - the nightly built 4
     deep against a tab that read 8. Each pass is ~5s and happens in the worker process (which then
     exits) rather than in the long-lived app."""

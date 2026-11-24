@@ -460,7 +460,7 @@ FORMAT_CHOICES = {
 
 
 def provider_list() -> list[dict]:
-    """The provider specs for the screens (/ UI) - one source with both flows."""
+    """The provider specs for the screens - one source with both flows."""
     out = []
     ident = default_identity()
     for key, spec in PROVIDERS.items():

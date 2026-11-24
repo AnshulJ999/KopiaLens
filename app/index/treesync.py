@@ -1,4 +1,4 @@
-"""Sync the object tree from kopia ( plan 4a step 1) - the writer for layer 1.
+"""Sync the object tree from kopia - the writer for layer 1.
 
 Replaces the one-folder-at-a-time Python walk. Each level of the tree is fetched in batches of
 800 with ``kopia content show``, kopia's whole stdout is handed to DuckDB as ONE string, split
@@ -11,7 +11,7 @@ Every invariant of the old walker is carried, and they are the reason this file 
     is POSITION, and the command ABORTS THE WHOLE BATCH at the first unreadable object - printing
     the answers up to that point and exiting non-zero. So pairing by position is sound, but the
     unanswered TAIL must never be recorded as empty folders - nor written off, which is why the
-    batch retries past the one dead object instead of losing everything behind it ().
+    batch retries past the one dead object instead of losing everything behind it.
   * A transient failure must never become permanent state. An object we could not read is left
     out of the tree entirely and reported, so the next run retries it. Writing it down as "empty"
     is how 492,587 file rows once went missing.
@@ -20,7 +20,7 @@ Every invariant of the old walker is carried, and they are the reason this file 
     ``content show`` the rest to get the piece list, and the index object itself counts as a piece.
     A file large enough that its piece list was split again (``IIx...``) is read level by level
     in ``split_pieces``.
-  * A short batch leaves its sources marked incomplete so they rebuild next run (), rather
+  * A short batch leaves its sources marked incomplete so they rebuild next run, rather
     than being recorded as fully indexed and then skipped forever.
 """
 

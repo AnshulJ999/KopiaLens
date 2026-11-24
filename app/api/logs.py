@@ -1,4 +1,4 @@
-"""Logs tab routes () - the pieces that are not audit, jobs or index runs.
+"""Logs tab routes - the pieces that are not audit, jobs or index runs.
 
 The app log (data/logs/kopialens.log) and, when enabled, the debug log
 (data/logs/kopialens-debug.log) are surfaced here as parsed records, newest first, so "what has

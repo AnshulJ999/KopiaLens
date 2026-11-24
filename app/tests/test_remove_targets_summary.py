@@ -1,4 +1,4 @@
-""" remove_targets_summary: the cheap pre-read /actions/remove-detail uses.
+"""remove_targets_summary: the cheap pre-read /actions/remove-detail uses.
 
 Invariants: the summary's totals and sources agree with the full remove_targets for the same
 filter; it never materializes more than ``detail_limit`` pairs (the 200k-row blowout that
@@ -38,7 +38,7 @@ def scratch(monkeypatch):
                 "ext VARCHAR, last_seen TIMESTAMP, first_seen TIMESTAMP, versions INTEGER)")
     con.executemany("INSERT INTO pathx VALUES (?, ?, ?, ?, ?, ?, true, '', '2026-09-13', '2026-09-13', 1)",
                     rows)
-    # folder scopes resolve through dir/anc, so the fixture carries them like a generation.
+    # Folder scopes resolve through dir/anc, so the fixture carries them like a generation.
     add_tree_tables(con, ["s1", "s2"], [(r[1], r[2]) for r in rows])
 
     class _NoCloseCursor:
@@ -137,7 +137,7 @@ def test_remove_detail_folder_shortcut_needs_one_source_and_no_filters(monkeypat
 
 
 def test_remove_detail_cap_bounds_the_detail_set(monkeypatch):
-    """a "Largest 100" plan must be detailed over those 100
+    """A "Largest 100" plan must be detailed over those 100
     files, not the top of the whole match - the summary's limit is the plan's own cap."""
     seen = {}
 

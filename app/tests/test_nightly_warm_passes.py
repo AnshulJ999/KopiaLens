@@ -29,7 +29,7 @@ def test_churn_prewarm_honours_an_explicit_depth(monkeypatch):
 
 
 def test_pricing_materializes_before_batching(monkeypatch):
-    """ More than one batch must read the per-source temp tables, not the Parquet view: the
+    """More than one batch must read the per-source temp tables, not the Parquet view: the
     FILTER list's planning cost is superlinear in rule count and was the 193 s stage."""
     from app.index import policypricing as pp
 
@@ -59,7 +59,7 @@ def test_pricing_materializes_before_batching(monkeypatch):
     assert out["slow_path"] is False
     assert any(pp._MAT_PX in s for s in seen), "the source was not materialized"
     assert any(s.startswith(f"batch:{pp._MAT_PX}") for s in seen), "the batches ran against the Parquet view"
-    # the per-call tables are dropped again: the read connection is shared and long-lived.
+    # The per-call tables are dropped again: the read connection is shared and long-lived.
     assert any("DROP TABLE IF EXISTS " + pp._MAT_PX in s for s in seen), "the temp tables were left behind"
 
 
