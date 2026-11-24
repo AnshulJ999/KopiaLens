@@ -168,5 +168,5 @@ def test_free_replies_carry_no_delete_ingredients(app_server, fixture_repo, kopi
     new = sorted({(r, k) for r, k, _v, kinds in found
                   if (r, k) not in ALLOWED or not kinds <= _ALLOWED_KINDS.get((r, k), {"snapshot"})})
     examples = {(r, k): f"{sorted(kinds)}: {v}" for r, k, v, kinds in found}
-    assert not new, "Free replies carry ids or commands (ask Anshul before allowing any):\n" + "\n".join(
+    assert not new, "Free replies carry ids or commands (get a ruling before allowing any):\n" + "\n".join(
         f"  {r}  {k}  e.g. {examples[(r, k)]}" for r, k in new)

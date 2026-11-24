@@ -462,7 +462,7 @@ def _bat() -> str:
 def test_the_bat_calls_find_and_findstr_by_full_path():
     """Bare `find` picks up GNU find from Git for Windows / Cygwin / GnuWin32 when one of those
     is ahead of System32 on PATH, and GNU find with these arguments starts recursively scanning
-    the drive - the script appears to hang. Found by running a generated .bat, not by review."""
+    the drive - the script appears to hang."""
     text = _bat()
     assert "%SystemRoot%\\System32\\find.exe" in text
     assert "%SystemRoot%\\System32\\findstr.exe" in text

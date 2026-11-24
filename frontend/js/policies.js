@@ -323,7 +323,7 @@ const policiesPart = {
     },
 
     // The one place that talks to the live pricing endpoint. Null on failure - an empty array
-    // would leave the table silently unpriced (swallowed errors). The HTTP 400
+    // would leave the table silently unpriced. The HTTP 400
     // over the 32-pattern cap carries a detail pointing at stored-prices; it lands in
     // polPriceError so the header shows it instead of eating it.
     async polPricePatterns(target, patterns, limit = 10) {

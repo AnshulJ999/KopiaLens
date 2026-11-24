@@ -1,9 +1,8 @@
 """The Full encryption level end to end: every reader of a covered file must decrypt it.
 
-The 2026-09-24 review found the Full level writing files encrypted that half the app still read
-as plain JSON - the scheduler forgot every run and re-indexed nonstop, the size history wiped
-itself, Stop could not find the worker. These tests run the app's own writer/reader pairs at the
-Full level, plus the smaller fixes from the same review.
+At the Full level, a file written encrypted but read as plain JSON breaks quietly: the scheduler
+forgets every run and re-indexes nonstop, the size history wipes itself, Stop cannot find the
+worker. These tests run the app's own writer/reader pairs at the Full level, plus related fixes.
 """
 
 from __future__ import annotations
