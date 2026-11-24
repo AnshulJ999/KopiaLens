@@ -11,7 +11,6 @@ A file's stored ``content_id`` is the object id: a single content for small file
 from __future__ import annotations
 
 import collections
-import json
 import threading
 import uuid
 import weakref
@@ -34,17 +33,9 @@ def _chunks_from_kopia(repo: str, obj: str) -> set[str] | None:
     answer. Same shape the sync writes: the index object is chunk ordinal 0, so it belongs in the
     set. A failed read stays None - unknown is not zero bytes.
     """
-    from ..core.kopia import kopia
-    res = kopia(repo, ["content", "show", obj[1:]])
-    if res.returncode != 0:
-        log.warning("chunks: kopia content show failed for %s (rc=%d)", obj, res.returncode)
-        return None
-    try:
-        entries = json.loads(res.stdout).get("entries") or []
-    except ValueError:
-        log.warning("chunks: unparseable content show output for %s", obj)
-        return None
-    return {e["o"] for e in entries if e.get("o")} | {obj[1:]}
+    from .treesync import split_pieces
+    pieces = split_pieces(repo, obj)
+    return set(pieces) if pieces is not None else None
 
 
 def _chunks_for_obj(repo: str, obj: str, *, fetch: bool = False) -> set[str] | None:

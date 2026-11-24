@@ -200,8 +200,8 @@ def index_stage(repo: str, full: bool = False) -> None:
     # reads the same flag off the manifest and rebuilds every source from the repaired tree.
     unread = ((body.get("_checks") or {}).get("tree") or {}).get("incomplete") or []
     if unread:
-        logging.warning("repo=%s: kopia would not read %d folder object(s) - their subtrees are "
-                        "INCOMPLETE in this generation and every source rebuilds next run. "
+        logging.warning("repo=%s: kopia would not read %d object(s) - folders or large files the "
+                        "index is INCOMPLETE without, and every source rebuilds next run. "
                         "e.g. %s", repo, len(unread), unread[:5])
 
 

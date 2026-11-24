@@ -18,6 +18,8 @@ Every invariant of the old walker is carried, and they are the reason this file 
   * Indirect DIRECTORIES (``Ik...``) need ``kopia show``, one serial call each - ``content show``
     errors on them. Indirect FILES (``Ix...``) are split objects: strip the leading ``I`` and
     ``content show`` the rest to get the piece list, and the index object itself counts as a piece.
+    A file large enough that its piece list was split again (``IIx...``) is read level by level
+    in ``split_pieces``.
   * A short batch leaves its sources marked incomplete so they rebuild next run (), rather
     than being recorded as fully indexed and then skipped forever.
 """
@@ -25,6 +27,7 @@ Every invariant of the old walker is carried, and they are the reason this file 
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import time
 
@@ -381,13 +384,43 @@ def _fetch_dirs(con, repo: str, oids: list[str], result: SyncResult, out: str,
         result.fetched += 1
 
 
+def split_pieces(repo: str, obj: str) -> list[str] | None:
+    """Every piece of a split object, index pieces first and the top index content at 0.
+
+    kopia adds one ``I`` per level of splitting. The top content lists the pieces of the level
+    below it, and ``kopia show`` with one ``I`` fewer than the object reassembles each lower
+    level's list, so this is one kopia call per level. None when kopia could not read it.
+    """
+    n = len(obj) - len(obj.lstrip("I"))
+    top = obj[n:]
+    pieces = [top]
+    for level in range(n):
+        args = ["content", "show", top] if level == 0 else ["show", "I" * level + top]
+        res = kopia(repo, args)
+        entries = None
+        if res.returncode == 0:
+            try:
+                entries = json.loads(res.stdout).get("entries") or []
+            except ValueError:
+                pass
+        if entries is None:
+            log.warning("repo=%s could not read the piece list of %s (rc=%d): %s", repo, obj,
+                        res.returncode, (res.stderr or "").strip()[:200])
+            return None
+        pieces += [e["o"] for e in entries if e.get("o")]
+    return pieces
+
+
 def _fetch_parts(con, repo: str, iobjs: list[str], result: SyncResult, out: str,
                  tick=lambda done: None) -> None:
     """Piece lists of split objects. ``Ix...`` -> ``content show x...``; the index object itself
-    is a piece, so it leads the list and its ordinal is 0."""
+    is a piece, so it leads the list and its ordinal is 0. Objects split more than once are read
+    one at a time with ``split_pieces``."""
     import pyarrow as pa
     con.execute(f"""CREATE TABLE IF NOT EXISTS {out} (
         iobj VARCHAR, part VARCHAR, ord INTEGER)""")
+    multi = [o for o in iobjs if o.startswith("II")]
+    iobjs = [o for o in iobjs if not o.startswith("II")]
     # the object's own index content always counts
     con.register("_seed_arrow", pa.table({"iobj": pa.array(iobjs, pa.string()),
                                           "part": pa.array([o[1:] for o in iobjs], pa.string())}))
@@ -429,6 +462,22 @@ def _fetch_parts(con, repo: str, iobjs: list[str], result: SyncResult, out: str,
         gone = sorted(set(batch) - answered_all)
         if gone:
             con.execute(f"DELETE FROM {out} WHERE iobj IN ({','.join('?' * len(gone))})", gone)
+    rows: dict[str, list] = {"iobj": [], "part": [], "ord": []}
+    for oid, pieces in _in_order(lambda o: (o, split_pieces(repo, o)), multi, kopia_parallel()):
+        done += 1
+        tick(done)
+        if pieces is None:
+            result.unreadable.append(oid)
+            continue
+        rows["iobj"] += [oid] * len(pieces)
+        rows["part"] += pieces
+        rows["ord"] += range(len(pieces))
+    if rows["iobj"]:
+        con.register("_multi_arrow", pa.table({"iobj": pa.array(rows["iobj"], pa.string()),
+                                               "part": pa.array(rows["part"], pa.string()),
+                                               "ord": pa.array(rows["ord"], pa.int32())}))
+        con.execute(f"INSERT INTO {out} SELECT iobj, part, ord FROM _multi_arrow")
+        con.unregister("_multi_arrow")
     result.parts = con.execute(f"SELECT count(*) FROM {out}").fetchone()[0]
 
 
@@ -728,7 +777,7 @@ def materialize(con, alloc: ids.Allocator, *, base_known: str | None = None,
         SELECT DISTINCT content_id FROM (
             SELECT oid AS content_id FROM _fetched
             UNION ALL SELECT obj FROM _sync_ent WHERE obj IS NOT NULL
-            UNION ALL SELECT substr(obj, 2) FROM _sync_ent WHERE starts_with(obj, 'I')
+            UNION ALL SELECT ltrim(obj, 'I') FROM _sync_ent WHERE starts_with(obj, 'I')
             UNION ALL SELECT iobj FROM _sync_part
             UNION ALL SELECT part FROM _sync_part)
         WHERE content_id IS NOT NULL""")
@@ -782,7 +831,7 @@ def materialize(con, alloc: ids.Allocator, *, base_known: str | None = None,
         -- the join key is NULL for a normal object, so only split objects probe this side
         LEFT JOIN cid_rev omi
                ON omi.content_id = CASE WHEN starts_with(e.obj, 'I')
-                                        THEN substr(e.obj, 2) END""")
+                                        THEN ltrim(e.obj, 'I') END""")
     con.execute("INSERT INTO _tdir_new SELECT * FROM _tdir_seg")
 
     con.execute("""INSERT INTO _tpart_new
