@@ -31,7 +31,10 @@ log = get_logger("tree")
 # Entry type and mode are dictionary-encoded exactly as the verified bench codec did it; an
 # unexpected value falls through to `extra` rather than being lost or silently mapped.
 TYPES = ("f", "d", "s")
-MODES = ("0666", "0777", "0555", "0444")
+# Windows values first; new values are only ever appended, since stored rows hold the position.
+MODES = ("0666", "0777", "0555", "0444",
+         "0644", "0755", "0600", "0700", "0640", "0750", "0664", "0775", "0660", "0770",
+         "0400", "0500", "040000755", "020000755", "04000777")
 
 TDIR_COLS = "dir_id, cid_id, row_lo, row_hi, ind"
 TENT_COLS = ("dir_id, pos, name, etype, mode, size, mtime, cid_id, ind, ind_cid, child, "

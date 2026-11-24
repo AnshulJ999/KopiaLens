@@ -146,7 +146,7 @@ def convert(con, repo: str, *, progress=None, alloc=None,
     def _flush_parts(oids: list[str], texts: list[str]) -> None:
         # The index object itself is a piece (ordinal 0), exactly as the live sync records it.
         con.execute("CREATE OR REPLACE TEMP TABLE _seed (iobj VARCHAR, part VARCHAR)")
-        con.executemany("INSERT INTO _seed VALUES (?, ?)", [(o, o[1:]) for o in oids])
+        con.executemany("INSERT INTO _seed VALUES (?, ?)", [(o, o.lstrip("I")) for o in oids])
         con.execute("INSERT INTO _sync_part SELECT iobj, part, 0 FROM _seed")
         # The cached piece list is an array of chunk id STRINGS, not kopia's {"o": ...} objects -
         # walk.py stored the extracted ids. Parsed once into its own table, same reason as above.

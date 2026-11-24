@@ -33,6 +33,9 @@ class FakeKopia:
         out, rc, err = [], 0, ""
         if args[:2] == ["content", "show"]:
             for oid in args[2:]:
+                if oid.startswith("I"):   # kopia refuses an object id here, as the real CLI does
+                    rc, err = 1, "error parsing content ID: invalid content hash"
+                    break
                 key = oid if oid in self.dirs or oid in self.parts else oid
                 if key in self.broken:
                     rc, err = 1, "content not found"
@@ -198,6 +201,25 @@ def test_a_split_file_keeps_its_index_object_and_every_piece(con, monkeypatch):
     got = [r[0] for r in con.execute("""SELECT pc.content_id FROM tpart_final p
         JOIN cid pc ON pc.cid_id = p.part_cid ORDER BY p.ord""").fetchall()]
     assert got == ["xidx", "p1", "p2", "p3"]
+
+
+def test_a_file_split_twice_is_read_level_by_level(con, monkeypatch):
+    # A piece list big enough to be split again gets a second I. The top content lists the index
+    # pieces; `kopia show` with one I fewer lists the data pieces (shapes from kopia 0.23.1).
+    fake = FakeKopia({"root": [_f("huge.bin", "IIxtop", size=99)],
+                      "Ixtop": [{"o": "p1"}, {"o": "p2"}]},
+                     parts={"xtop": ["xi1", "xi2"]})
+    res, _s, _m = run(con, fake, ["root"], monkeypatch)
+    assert res.complete and res.unreadable == []
+    got = [r[0] for r in con.execute("""SELECT pc.content_id FROM tpart_final p
+        JOIN cid pc ON pc.cid_id = p.part_cid ORDER BY p.ord""").fetchall()]
+    assert got == ["xtop", "xi1", "xi2", "p1", "p2"]
+
+
+def test_linux_permissions_are_stored_compactly(con, monkeypatch):
+    fake = FakeKopia({"root": [_f("a", "c1", mode="0644"), _d("b", "kb", mode="0755")], "kb": []})
+    _res, stats, _m = run(con, fake, ["root"], monkeypatch)
+    assert stats["unknown_mode"] == 0 and stats["kept_raw"] == 0
 
 
 def test_an_unreadable_piece_list_is_dropped_not_half_stored(con, monkeypatch):
